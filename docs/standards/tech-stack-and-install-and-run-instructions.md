@@ -7,13 +7,13 @@
 * **React 19** – UI framework
 * **TypeScript** – type-safe development
 * **Vite** – frontend build tool and development server
-* **PixiJS 8** – GPU-accelerated 2D rendering engine
-* **Material UI (MUI)** – user interface components
+* **PixiJS 8** – GPU-accelerated 2D rendering engine (installs with the Core Engine spec)
 * **Zustand** – client state management
-* **TanStack Query** – backend communication and caching
-* **React Flow** – node/graph editor (storyboards, workflows)
-* **Monaco Editor** – shader, JSON and prompt editor
-* **Axios** – HTTP client
+* **React Router** – application routing
+* **Custom panel UI** – no component library (no MUI / React Flow / Monaco / TanStack Query / Axios)
+* **Vitest + React Testing Library** – frontend testing
+* **ESLint + Prettier** – linting and formatting
+* **Husky + lint-staged** – git hooks
 
 ---
 
@@ -128,22 +128,6 @@ git --version
 
 ---
 
-## 5. Install FFmpeg
-
-macOS
-
-```bash
-brew install ffmpeg
-```
-
-Verify:
-
-```bash
-ffmpeg -version
-```
-
----
-
 # Frontend Setup
 
 Create the frontend project:
@@ -169,20 +153,28 @@ Install dependencies:
 npm install
 ```
 
-Install project libraries:
+Install project libraries (bootstrap only — see Spec 01 — Foundation; PixiJS, SQLAlchemy, LangGraph/LangChain, Pillow arrive with their specs):
 
 ```bash
 npm install \
-pixi.js \
-@mui/material \
-@emotion/react \
-@emotion/styled \
+react \
+react-dom \
 zustand \
-@tanstack/react-query \
-reactflow \
-axios \
-monaco-editor \
-@monaco-editor/react
+react-router-dom
+```
+
+Install dev tooling:
+
+```bash
+npm install -D \
+vite \
+typescript \
+eslint \
+prettier \
+vitest \
+@testing-library/react \
+husky \
+lint-staged
 ```
 
 Start the frontend:
@@ -228,19 +220,16 @@ macOS / Linux
 source .venv/bin/activate
 ```
 
-Install backend dependencies:
+Install backend dependencies (bootstrap only — see Spec 01 — Foundation):
 
 ```bash
 uv add \
 fastapi \
 uvicorn \
-sqlalchemy \
-pydantic \
-langgraph \
-langchain \
-python-multipart \
-pillow
+pydantic
 ```
+
+Other stack packages (SQLAlchemy, LangGraph, LangChain, python-multipart, Pillow) are added by their specs (Core Engine/Assets, AI, Asset Pipeline).
 
 Run backend:
 
@@ -252,6 +241,24 @@ Swagger API documentation:
 
 ```
 http://localhost:8000/docs
+```
+
+---
+
+## 5. Install FFmpeg
+
+FFmpeg runs on the backend only (browser renders frames, backend encodes — see the Export spec).
+
+macOS
+
+```bash
+brew install ffmpeg
+```
+
+Verify:
+
+```bash
+ffmpeg -version
 ```
 
 ---
@@ -317,12 +324,12 @@ No additional shutdown steps are required.
 | Build Tool             | Vite           |
 | Renderer               | PixiJS 8       |
 | Shaders                | GLSL           |
-| UI                     | Material UI    |
+| UI                     | Custom panel UI (no component library) |
 | State                  | Zustand        |
-| API Cache              | TanStack Query |
-| Graph Editor           | React Flow     |
-| Code Editor            | Monaco Editor  |
-| HTTP                   | Axios          |
+| Routing                | React Router   |
+| Frontend Testing       | Vitest + React Testing Library |
+| Linting/Formatting     | ESLint + Prettier |
+| Git Hooks              | Husky + lint-staged |
 | Backend                | FastAPI        |
 | AI Workflow            | LangGraph      |
 | LLM Integration        | LangChain      |
@@ -330,7 +337,7 @@ No additional shutdown steps are required.
 | Validation             | Pydantic       |
 | Database               | SQLite         |
 | Image Processing       | Pillow         |
-| Video Export           | FFmpeg         |
+| Video Export           | FFmpeg (backend only) |
 | Python Package Manager | uv             |
 | JS Package Manager     | npm            |
 | Version Control        | Git            |
