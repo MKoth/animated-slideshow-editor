@@ -243,11 +243,9 @@ Swagger API documentation:
 http://localhost:8000/docs
 ```
 
----
+### Install FFmpeg (backend)
 
-## 5. Install FFmpeg
-
-FFmpeg runs on the backend only (browser renders frames, backend encodes — see the Export spec).
+FFmpeg runs on the backend only (the browser renders frames, the backend encodes — see the Export spec).
 
 macOS
 

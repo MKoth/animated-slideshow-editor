@@ -1,0 +1,30 @@
+[project]
+name = "animated-slideshow-editor-backend"
+version = "0.1.0"
+description = "Backend API for the AI Slideshow Editor"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.9",
+]
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.10.0",
+    "mypy>=1.11",
+    "pytest>=8.3",
+    "ruff>=0.7",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[tool.pytest.ini_options]
+testpaths = ["app/tests"]

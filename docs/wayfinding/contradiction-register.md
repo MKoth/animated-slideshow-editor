@@ -163,3 +163,15 @@ This register **records problems, resolves nothing**. Every spec ticket resolves
 - "Event System" references in Steps 23/30 — live (built at Step 3).
 - Step 26's "reuse Step 21" naming — correct as written (P11-2).
 - Undo/Redo promised before Step 20/27 in Steps 1–7 — Steps 2/5 correctly defer (residue only: Step 2's placeholder shortcut registrations, P1-3).
+
+## Resolved by Spec 01 — Foundation (issue #20)
+
+| ID | Outcome |
+|---|---|
+| P1-1 | Resolved — R4 enumerates the canonical dependency list (no React Flow / Monaco / MUI / TanStack Query / Axios; Zustand kept; custom panel UI). Tech-stack doc now mirrors it. |
+| P1-2 | Resolved — R29: UI prefs (theme, panel sizes, visible panels, selected sidebar tab) persist in browser `localStorage` via the Zustand `persist` middleware; works with the backend down. |
+| P1-3 | Resolved — R31: Step 2 registrations are explicitly provisional; `shortcutRegistry.ts` is a single binding map so later specs rebind without restructuring. |
+| P1-4 | Resolved — R1: toolchain confirmed as Node.js 22 LTS, Python 3.12, uv; README lists all three with minimum versions. |
+| CC-1 | Resolved — web-only language applied throughout the spec; the editor is a full-window paneled browser layout (R17); "desktop" vocabulary dropped. |
+| CC-2 | Resolved — FFmpeg install note moved under the Backend section of the tech-stack doc; encoder boundary (browser renders frames, backend encodes) stated there. |
+| CC-3 | Resolved — Spec 01's Scope/Out and R8/R9/R29 apply the web-runtime decisions (same-origin production hosting, degraded mode with backend down, localStorage persistence). |
