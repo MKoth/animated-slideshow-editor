@@ -1,6 +1,6 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { fireEvent } from '@testing-library/react'
+import { fireEvent, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import App from '../app/App'
@@ -11,6 +11,11 @@ import {
   DEFAULT_TIMELINE_HEIGHT,
 } from '../stores/uiPrefs'
 import { useUiStore } from '../stores/uiStore'
+
+vi.mock('pixi.js', async () => {
+  const { createPixiFake } = await import('./renderer/pixiFake')
+  return createPixiFake()
+})
 
 function renderEditor() {
   return render(
@@ -40,16 +45,17 @@ beforeEach(() => {
 })
 
 describe('editor shell', () => {
-  it('renders the full editor layout', () => {
-    renderEditor()
+  it('renders the full editor layout', async () => {
+    const { container } = renderEditor()
 
     expect(screen.getByText('AI Slideshow Editor')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'New Project' })).toBeInTheDocument()
     expect(sidebar().getByRole('button', { name: 'Assets' })).toBeInTheDocument()
     expect(sidebar().getByRole('button', { name: 'Slides' })).toBeInTheDocument()
     expect(screen.getByText('No assets imported.')).toBeInTheDocument()
-    expect(screen.getByText('Canvas Placeholder')).toBeInTheDocument()
-    expect(screen.getByText('Renderer not initialized.')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(container.querySelector('.canvas-host canvas')).not.toBeNull()
+    })
     expect(screen.getByText('Nothing selected.')).toBeInTheDocument()
     expect(screen.getByText('No animation loaded.')).toBeInTheDocument()
     expect(screen.getByText('Ready')).toBeInTheDocument()
