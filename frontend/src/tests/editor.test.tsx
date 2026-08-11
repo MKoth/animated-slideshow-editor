@@ -29,6 +29,15 @@ function sidebar() {
   return within(screen.getByRole('complementary'))
 }
 
+function stubLibraryResponse() {
+  vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+    if (String(input).startsWith('/api/assets')) {
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
+    }
+    return Promise.reject(new Error('connection refused'))
+  })
+}
+
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn())
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
@@ -46,13 +55,16 @@ beforeEach(() => {
 
 describe('editor shell', () => {
   it('renders the full editor layout', async () => {
+    stubLibraryResponse()
     const { container } = renderEditor()
 
     expect(screen.getByText('AI Slideshow Editor')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'New Project' })).toBeInTheDocument()
     expect(sidebar().getByRole('button', { name: 'Assets' })).toBeInTheDocument()
     expect(sidebar().getByRole('button', { name: 'Slides' })).toBeInTheDocument()
-    expect(screen.getByText('No assets imported.')).toBeInTheDocument()
+    expect(
+      await screen.findByText('No assets imported. Import images to build your library.'),
+    ).toBeInTheDocument()
     await waitFor(() => {
       expect(container.querySelector('.canvas-host canvas')).not.toBeNull()
     })
@@ -76,18 +88,23 @@ describe('editor shell', () => {
   })
 
   it('switches between the Assets and Slides sidebar tabs', async () => {
+    stubLibraryResponse()
     const user = userEvent.setup()
     renderEditor()
 
     await user.click(sidebar().getByRole('button', { name: 'Slides' }))
 
     expect(screen.getByText('No slides created.')).toBeInTheDocument()
-    expect(screen.queryByText('No assets imported.')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('No assets imported. Import images to build your library.'),
+    ).not.toBeInTheDocument()
     expect(useUiStore.getState().activeSidebarTab).toBe('slides')
 
     await user.click(sidebar().getByRole('button', { name: 'Assets' }))
 
-    expect(screen.getByText('No assets imported.')).toBeInTheDocument()
+    expect(
+      await screen.findByText('No assets imported. Import images to build your library.'),
+    ).toBeInTheDocument()
     expect(useUiStore.getState().activeSidebarTab).toBe('assets')
   })
 
@@ -160,6 +177,31 @@ describe('editor shell', () => {
     await user.keyboard('{Control>}n{/Control}')
 
     expect(screen.getByText('Not implemented yet.')).toBeInTheDocument()
+  })
+
+  it('opens the import file picker from the Assets menu', async () => {
+    stubLibraryResponse()
+    const user = userEvent.setup()
+    const { container } = renderEditor()
+    await screen.findByText('No assets imported. Import images to build your library.')
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    const clickSpy = vi.spyOn(input, 'click')
+
+    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'Assets' }))
+    await user.click(screen.getByRole('menuitem', { name: 'Import Assets' }))
+
+    expect(clickSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables the Import Assets menu item while the backend is down', async () => {
+    const user = userEvent.setup()
+    renderEditor()
+    await screen.findByText('Asset library unavailable — start the backend')
+
+    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'Assets' }))
+
+    expect(screen.getByRole('menuitem', { name: 'Import Assets' })).toBeDisabled()
   })
 
   it('shows the too-small message below the minimum supported width', () => {

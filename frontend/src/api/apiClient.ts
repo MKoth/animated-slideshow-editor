@@ -1,16 +1,50 @@
+export class ApiError extends Error {
+  readonly status: number
+  readonly path: string
+
+  constructor(message: string, status: number, path: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.path = path
+  }
+}
+
 export class ApiClient {
   async get<T>(path: string): Promise<T> {
+    const response = await this.request(path, { headers: { Accept: 'application/json' } })
+    return (await response.json()) as T
+  }
+
+  async postForm<T>(path: string, formData: FormData): Promise<T> {
+    const response = await this.request(path, {
+      method: 'POST',
+      body: formData,
+      headers: { Accept: 'application/json' },
+    })
+    return (await response.json()) as T
+  }
+
+  async delete(path: string): Promise<void> {
+    await this.request(path, { method: 'DELETE' })
+  }
+
+  private async request(path: string, init: RequestInit): Promise<Response> {
     let response: Response
     try {
-      response = await globalThis.fetch(path, { headers: { Accept: 'application/json' } })
+      response = await globalThis.fetch(path, init)
     } catch (error) {
-      console.error(`API GET ${path} failed:`, error)
+      console.error(`API ${init.method ?? 'GET'} ${path} failed:`, error)
       throw error
     }
     if (!response.ok) {
-      console.error(`API GET ${path} returned ${response.status}`)
-      throw new Error(`Request to ${path} failed with status ${response.status}`)
+      console.error(`API ${init.method ?? 'GET'} ${path} returned ${response.status}`)
+      throw new ApiError(
+        `Request to ${path} failed with status ${response.status}`,
+        response.status,
+        path,
+      )
     }
-    return (await response.json()) as T
+    return response
   }
 }
