@@ -34,6 +34,7 @@ export class FakeContainer {
 
   addChild(...children: FakeContainer[]): FakeContainer | FakeContainer[] {
     for (const child of children) {
+      child.parent?.removeChild(child)
       child.parent = this
       this.children.push(child)
     }

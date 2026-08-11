@@ -23,6 +23,11 @@ export interface NodeRemoved {
   readonly nodeId: string
 }
 
+export interface NodeReparented {
+  readonly type: 'NodeReparented'
+  readonly nodeId: string
+}
+
 export interface TransformChanged {
   readonly type: 'TransformChanged'
   readonly nodeId: string
@@ -39,6 +44,7 @@ export type EngineEvent =
   | SlideRemoved
   | NodeCreated
   | NodeRemoved
+  | NodeReparented
   | TransformChanged
   | VisibilityChanged
 

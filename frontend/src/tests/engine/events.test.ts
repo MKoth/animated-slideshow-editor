@@ -22,6 +22,7 @@ const canonicalTypes = [
   'SlideRemoved',
   'NodeCreated',
   'NodeRemoved',
+  'NodeReparented',
   'TransformChanged',
   'VisibilityChanged',
 ] as const
@@ -104,13 +105,27 @@ describe('canonical events', () => {
     expect(events).toEqual([{ type: 'NodeCreated', nodeId: node.id }])
   })
 
+  it('emits NodeReparented with the affected node id', () => {
+    const { engine, sceneId, rootId } = setup()
+    const events = collectEvents(engine)
+    const a = engine.createNode(sceneId, rootId, 'A')
+    const b = engine.createNode(sceneId, rootId, 'B')
+
+    engine.reparentNode(a.id, b.id)
+
+    expect(events).toEqual([
+      { type: 'NodeCreated', nodeId: a.id },
+      { type: 'NodeCreated', nodeId: b.id },
+      { type: 'NodeReparented', nodeId: a.id },
+    ])
+  })
+
   it('emits nothing for operations without a canonical event', () => {
     const { engine, sceneId, rootId } = setup()
-    const a = engine.createNode(sceneId, rootId, 'A')
+    engine.createNode(sceneId, rootId, 'A')
     const events = collectEvents(engine)
 
     engine.defineAsset('Wolf')
-    engine.reparentNode(a.id, rootId)
 
     expect(events).toEqual([])
   })

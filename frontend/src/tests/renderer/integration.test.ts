@@ -5,6 +5,7 @@ import {
   CreateSlideCommand,
   DeleteNodeCommand,
   MoveNodeCommand,
+  ReparentNodeCommand,
   SetVisibilityCommand,
   createCommandSystem,
 } from '../../engine/commands'
@@ -126,5 +127,60 @@ describe('engine to renderer integration', () => {
     expect(result.ok).toBe(true)
     expect(hero.destroyed).toBe(true)
     expect(findByLabel(root ?? { children: [] }, 'Hero')).toBeUndefined()
+  })
+
+  it('reparents the display object and its subtree under the new parent display object, in the same turn', async () => {
+    const { system, app } = await setup()
+    const slide = system.engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('Slide was not created')
+    }
+    const groupResult = system.dispatcher.dispatch(
+      new CreateNodeCommand({
+        sceneId: slide.scene.id,
+        parentId: slide.scene.root.id,
+        name: 'Group',
+      }),
+    )
+    const leafResult = system.dispatcher.dispatch(
+      new CreateNodeCommand({
+        sceneId: slide.scene.id,
+        parentId: slide.scene.root.id,
+        name: 'Leaf',
+      }),
+    )
+    if (!groupResult.ok || !leafResult.ok || !groupResult.inverse || !leafResult.inverse) {
+      throw new Error('Nodes were not created')
+    }
+    system.dispatcher.dispatch(
+      new CreateNodeCommand({
+        sceneId: slide.scene.id,
+        parentId: leafResult.inverse.nodeId,
+        name: 'Child',
+      }),
+    )
+    const root = findByLabel(worldOf(app), 'Root')
+    if (!root) {
+      throw new Error('Root container not found')
+    }
+    const group = findByLabel(root, 'Group')
+    const leaf = findByLabel(root, 'Leaf')
+    if (!group || !leaf) {
+      throw new Error('Containers not found')
+    }
+    expect(findByLabel(leaf, 'Child')).toBeDefined()
+
+    const result = system.dispatcher.dispatch(
+      new ReparentNodeCommand({
+        nodeId: leafResult.inverse.nodeId,
+        parentId: groupResult.inverse.nodeId,
+      }),
+    )
+
+    expect(result.ok).toBe(true)
+    expect(findByLabel(root, 'Leaf')).toBeUndefined()
+    const rehomed = findByLabel(group, 'Leaf')
+    expect(rehomed).toBeDefined()
+    expect(findByLabel(rehomed ?? { children: [] }, 'Child')).toBeDefined()
   })
 })

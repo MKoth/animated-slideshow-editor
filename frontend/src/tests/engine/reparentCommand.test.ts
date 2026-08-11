@@ -96,7 +96,7 @@ describe('ReparentNodeCommand', () => {
       inverse,
     })
     expect(log).toHaveBeenCalledWith(`ReparentNode nodeId=${aId} parentId=${bId}`)
-    expect(events).toEqual([])
+    expect(events).toEqual([{ type: 'NodeReparented', nodeId: aId }])
   })
 
   it('moves a node with its entire subtree intact', () => {

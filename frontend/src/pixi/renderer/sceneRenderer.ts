@@ -98,10 +98,25 @@ export class SceneRenderer {
     container.visible = this.#engine.getNode(nodeId).visible
   }
 
+  handleNodeReparented(nodeId: string): void {
+    if (!this.#scene?.getNode(nodeId)) {
+      return
+    }
+    const container = this.#containers.get(nodeId)
+    if (!container) {
+      return
+    }
+    this.#attachToParent(container, this.#engine.getNode(nodeId))
+  }
+
   #addNode(node: SceneNode): void {
     const container = createNodeContainer(this.#pixi, node)
     this.#containers.set(node.id, container)
     this.#nodeIds.set(container, node.id)
+    this.#attachToParent(container, node)
+  }
+
+  #attachToParent(container: PixiContainer, node: SceneNode): void {
     const parentContainer = node.parent ? this.#containers.get(node.parent.id) : undefined
     ;(parentContainer ?? this.#world).addChild(container)
   }

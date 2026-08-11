@@ -144,6 +144,7 @@ export class NodeManager {
     detachFromParent(node)
     newParent.children.push(node)
     node.parent = newParent
+    this.#bus.emit({ type: 'NodeReparented', nodeId })
   }
 
   setTransform(nodeId: string, transform: Transform): void {

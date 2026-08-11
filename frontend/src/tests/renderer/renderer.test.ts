@@ -174,6 +174,40 @@ describe('Renderer', () => {
     expect(group?.children.map((entry) => entry.label)).toContain('Child')
   })
 
+  it('moves a display object and its whole subtree under the new parent on reparent', async () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'P' })
+    engine.createSlide('S1')
+    const slide = engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('Slide was not created')
+    }
+    const group = engine.createNode(slide.scene.id, slide.scene.root.id, 'Group')
+    const leaf = engine.createNode(slide.scene.id, slide.scene.root.id, 'Leaf')
+    engine.createNode(slide.scene.id, leaf.id, 'Child')
+    const { app } = await mountRenderer(engine)
+
+    const root = findByLabel(worldOf(app), 'Root')
+    if (!root) {
+      throw new Error('Root container not found')
+    }
+    const groupContainer = findByLabel(root, 'Group')
+    const leafContainer = findByLabel(root, 'Leaf')
+    if (!groupContainer || !leafContainer) {
+      throw new Error('Containers not found')
+    }
+    expect(findByLabel(leafContainer, 'Child')).toBeDefined()
+
+    engine.reparentNode(leaf.id, group.id)
+
+    expect(root.children.map((entry) => entry.label)).not.toContain('Leaf')
+    expect(groupContainer.children.map((entry) => entry.label)).toContain('Leaf')
+    expect(findByLabel(leafContainer, 'Child')).toBeDefined()
+
+    engine.reparentNode(leaf.id, slide.scene.root.id)
+    expect(root.children.map((entry) => entry.label)).toContain('Leaf')
+  })
+
   it('ignores events for nodes in other scenes', async () => {
     const engine = createEngine()
     engine.createProject({ name: 'P' })
@@ -188,8 +222,10 @@ describe('Renderer', () => {
 
     const before = world.children.length
     const foreign = engine.createNode(second.scene.id, second.scene.root.id, 'Foreign')
+    const sibling = engine.createNode(second.scene.id, second.scene.root.id, 'Sibling')
     engine.setTransform(foreign.id, { x: 1, y: 1, rotation: 0, scaleX: 1, scaleY: 1 })
     engine.setVisibility(foreign.id, false)
+    engine.reparentNode(foreign.id, sibling.id)
 
     expect(world.children).toHaveLength(before)
   })
