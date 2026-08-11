@@ -67,13 +67,17 @@ def list_assets(
     return [definition_to_schema(definition) for definition in library.list(search, sort, order)]
 
 
+def _asset_not_found(asset_id: str, exc: AssetNotFoundError) -> HTTPException:
+    return HTTPException(status_code=404, detail=f"asset {asset_id} not found")
+
+
 @router.get("/assets/{asset_id}", response_model=AssetDefinitionOut)
 def get_asset(request: Request, asset_id: str) -> AssetDefinitionOut:
     library: AssetLibrary = request.app.state.asset_library
     try:
         definition = library.get(asset_id)
     except AssetNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"asset {asset_id} not found") from exc
+        raise _asset_not_found(asset_id, exc) from exc
     return definition_to_schema(definition)
 
 
@@ -83,4 +87,4 @@ def delete_asset(request: Request, asset_id: str) -> None:
     try:
         library.delete(asset_id)
     except AssetNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"asset {asset_id} not found") from exc
+        raise _asset_not_found(asset_id, exc) from exc

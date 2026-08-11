@@ -23,12 +23,18 @@ class AssetLibrary:
         self._database = database
         self._storage = storage
 
+    @staticmethod
+    def _escape_like(pattern: str) -> str:
+        return pattern.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
     def list(
         self, search: str | None = None, sort: str = "import_date", order: str = "desc"
     ) -> list[AssetDefinition]:
         statement = select(AssetDefinition)
         if search:
-            statement = statement.where(AssetDefinition.name.ilike(f"%{search}%"))
+            statement = statement.where(
+                AssetDefinition.name.ilike(f"%{self._escape_like(search)}%", escape="\\")
+            )
         statement = statement.order_by(
             ORDER_DIRECTIONS[order](SORT_COLUMNS[sort]), AssetDefinition.id
         )

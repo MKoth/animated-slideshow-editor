@@ -75,6 +75,20 @@ def test_search_matches_name_substring_case_insensitively(
     assert client.get("/api/assets", params={"search": "zebra"}).json() == []
 
 
+def test_search_treats_wildcards_as_literal_characters(
+    client: TestClient, settings: Settings
+) -> None:
+    database = Database(settings.database_url)
+    seed_names(database, ["100% off", "plain"])
+
+    assert [d["name"] for d in client.get("/api/assets", params={"search": "%"}).json()] == [
+        "100% off"
+    ]
+    assert [d["name"] for d in client.get("/api/assets", params={"search": "0%"}).json()] == [
+        "100% off"
+    ]
+
+
 def test_sort_by_name_in_both_directions(client: TestClient, settings: Settings) -> None:
     database = Database(settings.database_url)
     seed_names(database, ["apple", "banana", "cherry"])
