@@ -29,3 +29,30 @@ export type {
   AssetDefinitionJSON,
   ProjectMetadataJSON,
 } from './json'
+export { CommandDispatcher, UndoStack, createCommandSystem } from './commands'
+export type {
+  Command,
+  CommandResult,
+  CommandLogger,
+  CommandSystem,
+  UndoStackEntry,
+} from './commands'
+export {
+  CreateProjectCommand,
+  CreateSlideCommand,
+  DeleteSlideCommand,
+  CreateNodeCommand,
+  DeleteNodeCommand,
+} from './commands'
+export type {
+  CreateProjectInverse,
+  CreateProjectParameters,
+  CreateSlideInverse,
+  CreateSlideParameters,
+  DeleteSlideInverse,
+  DeleteSlideParameters,
+  CreateNodeInverse,
+  CreateNodeParameters,
+  DeleteNodeInverse,
+  DeleteNodeParameters,
+} from './commands'

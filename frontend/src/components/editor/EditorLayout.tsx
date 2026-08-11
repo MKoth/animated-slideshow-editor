@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useUiStore } from '../../stores/uiStore'
+import { DebugPanel } from '../debug/DebugPanel'
 import { CanvasPanel } from '../panels/CanvasPanel'
 import { InspectorPanel } from '../panels/InspectorPanel'
 import { TimelinePanel } from '../panels/TimelinePanel'
@@ -70,6 +71,7 @@ export function EditorLayout() {
         <TimelinePanel height={timelineHeight} />
       </div>
       <StatusBar />
+      <DebugPanel />
     </div>
   )
 }

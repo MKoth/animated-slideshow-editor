@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Engine } from '../../engine/engine'
+import type { Engine } from '../../engine/internal'
 import { createEngine } from '../../engine/internal'
 
 function cameraSetup(secondSlide = false): Engine {

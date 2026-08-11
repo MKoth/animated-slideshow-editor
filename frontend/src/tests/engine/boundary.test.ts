@@ -35,6 +35,19 @@ describe('engine module boundary', () => {
     expect((readOnly as unknown as Record<string, unknown>).createProject).toBeUndefined()
   })
 
+  it('keeps the write API out of the public engine facade module', () => {
+    const facadeFile = Object.keys(engineSources).find((file) => file.endsWith('engine.ts'))
+    const internalFile = Object.keys(engineSources).find((file) => file.endsWith('internal.ts'))
+
+    expect(facadeFile).toBeDefined()
+    expect(internalFile).toBeDefined()
+    const facade = engineSources[facadeFile!]
+    const internal = engineSources[internalFile!]
+
+    expect(facade).not.toMatch(/createEngineInternal|export class Engine/)
+    expect(internal).toMatch(/export class Engine/)
+  })
+
   it('engine modules import no React, PixiJS, or AI dependencies', () => {
     const files = Object.keys(engineSources)
 
