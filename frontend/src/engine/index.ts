@@ -43,6 +43,10 @@ export {
   DeleteSlideCommand,
   CreateNodeCommand,
   DeleteNodeCommand,
+  MoveNodeCommand,
+  RotateNodeCommand,
+  ScaleNodeCommand,
+  SetVisibilityCommand,
 } from './commands'
 export type {
   CreateProjectInverse,
@@ -55,4 +59,12 @@ export type {
   CreateNodeParameters,
   DeleteNodeInverse,
   DeleteNodeParameters,
+  MoveNodeInverse,
+  MoveNodeParameters,
+  RotateNodeInverse,
+  RotateNodeParameters,
+  ScaleNodeInverse,
+  ScaleNodeParameters,
+  SetVisibilityInverse,
+  SetVisibilityParameters,
 } from './commands'
