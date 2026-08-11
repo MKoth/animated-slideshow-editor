@@ -1,14 +1,19 @@
 import type { SceneNode } from '../../engine'
 import type { PixiContainer, RendererPixi } from './pixi'
 import { createPlaceholder } from './placeholder'
+import type { TextureCache } from './textureCache'
 
-export function createNodeContainer(pixi: RendererPixi, node: SceneNode): PixiContainer {
+export function createNodeContainer(
+  pixi: RendererPixi,
+  node: SceneNode,
+  cache: TextureCache,
+): PixiContainer {
   const container = new pixi.Container()
   container.label = node.name
   applyTransform(container, node)
   container.visible = node.visible
   if (node.components.assetInstance || node.components.text) {
-    container.addChild(createPlaceholder(pixi, node))
+    container.addChild(createPlaceholder(pixi, node, cache))
   }
   return container
 }

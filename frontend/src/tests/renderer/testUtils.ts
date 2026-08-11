@@ -14,6 +14,7 @@ export interface FakeChild {
   kind: string
   text?: string
   ops?: string[]
+  texture?: { destroyed: boolean }
 }
 
 export async function mountRenderer(engine: EngineReadOnly) {

@@ -132,6 +132,32 @@ export class FakeText extends FakeContainer {
   }
 }
 
+export class FakeTexture {
+  destroyed = false
+
+  destroy(): void {
+    this.destroyed = true
+  }
+}
+
+export class FakeSprite extends FakeContainer {
+  readonly kind = 'sprite'
+  readonly texture: FakeTexture
+
+  constructor(texture: FakeTexture) {
+    super()
+    this.texture = texture
+  }
+}
+
+export const fakeTexture = {
+  calls: [] as unknown[][],
+  from(source?: unknown): FakeTexture {
+    this.calls.push([source])
+    return new FakeTexture()
+  },
+}
+
 export class FakeTicker {
   readonly listeners = new Set<() => void>()
   FPS = 60
@@ -199,5 +225,7 @@ export function createPixiFake() {
     Container: FakeContainer,
     Graphics: FakeGraphics,
     Text: FakeText,
+    Sprite: FakeSprite,
+    Texture: fakeTexture,
   }
 }

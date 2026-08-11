@@ -11,6 +11,7 @@ import { DEFAULT_MAJOR_COLOR, DEFAULT_MINOR_COLOR, GridRenderer } from './gridRe
 import { realPixi } from './pixi'
 import type { PixiApplication, RendererPixi } from './pixi'
 import { SceneRenderer } from './sceneRenderer'
+import { TextureCache } from './textureCache'
 
 const DEFAULT_CANVAS_BACKGROUND = 0xffffff
 
@@ -27,6 +28,7 @@ export class Renderer {
   readonly #pixi: RendererPixi
   #app: PixiApplication | null = null
   #sceneRenderer: SceneRenderer | null = null
+  #textureCache: TextureCache | null = null
   #camera: Camera | null = null
   #grid: GridRenderer | null = null
   #gridColors: GridColors = {
@@ -82,7 +84,8 @@ export class Renderer {
       world.addChild(createAxisLines(this.#pixi))
       app.stage.addChild(world)
 
-      this.#sceneRenderer = new SceneRenderer(this.#engine, world, this.#pixi)
+      this.#textureCache = new TextureCache(this.#pixi)
+      this.#sceneRenderer = new SceneRenderer(this.#engine, world, this.#pixi, this.#textureCache)
       this.#unsubscribe = this.#engine.subscribe((event) => this.#handleEvent(event))
       this.#syncScene(this.#sceneRenderer)
 
@@ -121,6 +124,8 @@ export class Renderer {
       app.canvas.remove()
       app.destroy()
     }
+    this.#textureCache?.dispose()
+    this.#textureCache = null
   }
 
   readonly #tick = (): void => {

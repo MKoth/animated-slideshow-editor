@@ -61,7 +61,7 @@ describe('engine to renderer integration', () => {
     expect(hero?.position.x).toBe(10)
     expect(hero?.position.y).toBe(20)
     const placeholder = hero?.children[0]
-    expect(placeholder?.children.some((child) => child.kind === 'graphics')).toBe(true)
+    expect(placeholder?.children.some((child) => child.kind === 'sprite')).toBe(true)
     expect(
       placeholder?.children.some((child) => child.kind === 'text' && child.text === 'Hero'),
     ).toBe(true)

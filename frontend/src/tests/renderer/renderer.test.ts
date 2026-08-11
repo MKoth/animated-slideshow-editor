@@ -67,8 +67,8 @@ describe('Renderer', () => {
     expect(hero).toBeDefined()
     expect(hero?.children).toHaveLength(1)
     const heroPlaceholder = hero?.children[0]
-    const heroBox = heroPlaceholder?.children.find((child) => child.kind === 'graphics')
-    expect(heroBox?.ops).toEqual(expect.arrayContaining(['rect', 'fill', 'stroke']))
+    const heroBox = heroPlaceholder?.children.find((child) => child.kind === 'sprite')
+    expect(heroBox).toBeDefined()
     expect(
       heroPlaceholder?.children.some((child) => child.kind === 'text' && child.text === 'Hero'),
     ).toBe(true)
@@ -350,5 +350,25 @@ describe('Renderer', () => {
 
     engine.createNode(slide.scene.id, slide.scene.root.id, 'AfterDispose')
     expect(findByLabel(root, 'AfterDispose')).toBeUndefined()
+  })
+
+  it('releases every cached placeholder texture on dispose', async () => {
+    const { renderer, app } = await mountRenderer(seededEngine())
+    const root = findByLabel(worldOf(app), 'Root')
+    const hero = findByLabel(root ?? { children: [] }, 'Hero')
+    const title = findByLabel(root ?? { children: [] }, 'Title')
+    const textures = [hero, title]
+      .filter((node) => node !== undefined)
+      .flatMap((node) => node?.children ?? [])
+      .flatMap((placeholder) => placeholder?.children ?? [])
+      .filter((child) => child.kind === 'sprite')
+      .map((sprite) => sprite.texture)
+    expect(textures.length).toBeGreaterThan(0)
+
+    renderer.dispose()
+
+    for (const texture of textures) {
+      expect(texture?.destroyed).toBe(true)
+    }
   })
 })

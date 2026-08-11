@@ -4,19 +4,27 @@ import type { SceneNode } from '../../engine'
 import { walkPreOrder } from '../../engine/sceneNode'
 import type { PixiContainer, RendererPixi } from './pixi'
 import { applyTransform, createNodeContainer } from './nodeRenderer'
+import type { TextureCache } from './textureCache'
 
 export class SceneRenderer {
   readonly #engine: EngineReadOnly
   readonly #pixi: RendererPixi
+  readonly #textureCache: TextureCache
   readonly #world: PixiContainer
   readonly #containers = new Map<string, PixiContainer>()
   readonly #nodeIds = new WeakMap<PixiContainer, string>()
   #scene: Scene | null = null
 
-  constructor(engine: EngineReadOnly, world: PixiContainer, pixi: RendererPixi) {
+  constructor(
+    engine: EngineReadOnly,
+    world: PixiContainer,
+    pixi: RendererPixi,
+    textureCache: TextureCache,
+  ) {
     this.#engine = engine
     this.#world = world
     this.#pixi = pixi
+    this.#textureCache = textureCache
   }
 
   get boundSceneId(): string | null {
@@ -110,7 +118,7 @@ export class SceneRenderer {
   }
 
   #addNode(node: SceneNode): void {
-    const container = createNodeContainer(this.#pixi, node)
+    const container = createNodeContainer(this.#pixi, node, this.#textureCache)
     this.#containers.set(node.id, container)
     this.#nodeIds.set(container, node.id)
     this.#attachToParent(container, node)
