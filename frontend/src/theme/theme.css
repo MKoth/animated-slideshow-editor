@@ -12,6 +12,9 @@
   --color-danger: #dc2626;
   --canvas-checker-light: #ffffff;
   --canvas-checker-dark: #e5e7eb;
+  --canvas-background: #f5f6f8;
+  --grid-minor: #c3c8cf;
+  --grid-major: #8f96a0;
 }
 
 [data-theme='dark'] {
@@ -28,4 +31,7 @@
   --color-danger: #ef4444;
   --canvas-checker-light: #2a2d34;
   --canvas-checker-dark: #343842;
+  --canvas-background: #17181b;
+  --grid-minor: #3f444d;
+  --grid-major: #656d7a;
 }

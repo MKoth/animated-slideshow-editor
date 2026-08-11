@@ -241,6 +241,21 @@ button:disabled {
   color: var(--color-text-muted);
 }
 
+.canvas-dev-overlay {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: rgba(20, 20, 20, 0.72);
+  color: #e6e6e6;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  pointer-events: none;
+  user-select: none;
+}
+
 .inspector-panel {
   flex-shrink: 0;
   background: var(--color-bg-panel);

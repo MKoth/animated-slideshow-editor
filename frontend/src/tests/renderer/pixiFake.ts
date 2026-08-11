@@ -65,37 +65,56 @@ export class FakeContainer {
   }
 }
 
+export interface FakeGraphicsCall {
+  method: string
+  args: unknown[]
+}
+
 export class FakeGraphics extends FakeContainer {
   readonly kind = 'graphics'
   readonly ops: string[] = []
+  readonly calls: FakeGraphicsCall[] = []
+
+  #record(method: string, args: unknown[]): void {
+    this.ops.push(method)
+    this.calls.push({ method, args })
+  }
+
+  clear(): this {
+    this.calls.length = 0
+    this.calls.push({ method: 'clear', args: [] })
+    this.ops.length = 0
+    this.ops.push('clear')
+    return this
+  }
 
   rect(): this {
-    this.ops.push('rect')
+    this.#record('rect', [])
     return this
   }
 
   roundRect(): this {
-    this.ops.push('roundRect')
+    this.#record('roundRect', [])
     return this
   }
 
-  moveTo(): this {
-    this.ops.push('moveTo')
+  moveTo(x?: number, y?: number): this {
+    this.#record('moveTo', [x, y])
     return this
   }
 
-  lineTo(): this {
-    this.ops.push('lineTo')
+  lineTo(x?: number, y?: number): this {
+    this.#record('lineTo', [x, y])
     return this
   }
 
   fill(): this {
-    this.ops.push('fill')
+    this.#record('fill', [])
     return this
   }
 
-  stroke(): this {
-    this.ops.push('stroke')
+  stroke(options?: unknown): this {
+    this.#record('stroke', [options])
     return this
   }
 }
@@ -112,10 +131,38 @@ export class FakeText extends FakeContainer {
   }
 }
 
+export class FakeTicker {
+  readonly listeners = new Set<() => void>()
+  FPS = 60
+
+  add(listener: () => void): void {
+    this.listeners.add(listener)
+  }
+
+  remove(listener: () => void): void {
+    this.listeners.delete(listener)
+  }
+
+  tick(): void {
+    for (const listener of [...this.listeners]) {
+      listener()
+    }
+  }
+
+  get listenerCount(): number {
+    return this.listeners.size
+  }
+}
+
 export class FakeApplication {
   readonly canvas: HTMLCanvasElement = document.createElement('canvas')
   readonly stage = new FakeContainer()
-  readonly renderer = { resize: (): void => undefined }
+  readonly renderer = {
+    resize: (): void => undefined,
+    background: { color: 0xffffff },
+  }
+  readonly ticker = new FakeTicker()
+  readonly screen = { width: 800, height: 600 }
   initOptions: Record<string, unknown> = {}
   destroyed = false
 

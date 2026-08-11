@@ -23,6 +23,20 @@ export class SceneRenderer {
     return this.#scene?.id ?? null
   }
 
+  get boundCamera(): SceneNode | null {
+    return this.#scene?.camera ?? null
+  }
+
+  get renderedNodeCount(): number {
+    let count = 0
+    for (const container of this.#containers.values()) {
+      if (container.visible) {
+        count += 1
+      }
+    }
+    return count
+  }
+
   bind(scene: Scene | null): void {
     for (const container of this.#containers.values()) {
       container.destroy({ children: true })

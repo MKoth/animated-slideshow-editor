@@ -43,12 +43,13 @@ describe('Renderer', () => {
     expect(host.contains(app.canvas)).toBe(true)
   })
 
-  it('displays an empty scene with axis lines at the origin when no project exists', async () => {
+  it('displays an empty scene with the grid and axis lines at the origin when no project exists', async () => {
     const { app } = await mountRenderer(createEngine())
     const world = worldOf(app)
 
-    expect(world.children).toHaveLength(1)
-    const axisLines = world.children[0]
+    expect(world.children).toHaveLength(2)
+    expect(world.children[0].label).toBe('grid')
+    const axisLines = world.children[1]
     expect(axisLines.position.x).toBe(0)
     expect(axisLines.position.y).toBe(0)
     const lines = axisLines.children[0]
