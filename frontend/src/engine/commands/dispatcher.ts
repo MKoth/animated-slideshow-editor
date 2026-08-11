@@ -7,6 +7,8 @@ import { formatParameters } from './format'
 
 export type CommandLogger = (message: string) => void
 
+export type DispatchCommand = <Inverse>(command: Command<Inverse>) => CommandResult<Inverse>
+
 const defaultLogger: CommandLogger = (message) => {
   console.info(`[command] ${message}`)
 }

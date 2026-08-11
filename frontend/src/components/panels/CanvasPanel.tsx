@@ -3,7 +3,7 @@ import { useEngine } from '../../app/useEngine'
 import { Renderer } from '../../pixi/renderer/renderer'
 
 export function CanvasPanel() {
-  const { engine } = useEngine()
+  const { engine, dispatch } = useEngine()
   const hostRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -11,10 +11,10 @@ export function CanvasPanel() {
     if (!host) {
       return
     }
-    const renderer = new Renderer(host, engine)
+    const renderer = new Renderer(host, engine, dispatch)
     void renderer.start()
     return () => renderer.dispose()
-  }, [engine])
+  }, [engine, dispatch])
 
   return (
     <div className="canvas-panel">

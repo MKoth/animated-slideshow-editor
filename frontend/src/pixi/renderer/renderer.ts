@@ -1,6 +1,8 @@
 import type { EngineReadOnly } from '../../engine'
 import type { EngineEvent } from '../../engine'
 import type { Unsubscribe } from '../../engine'
+import type { CommandResult, DispatchCommand } from '../../engine/commands'
+import { CameraControls } from './cameraControls'
 import { Camera } from './camera'
 import { createAxisLines } from './axisLines'
 import { DevOverlay } from './devOverlay'
@@ -21,6 +23,7 @@ interface GridColors {
 export class Renderer {
   readonly #host: HTMLElement
   readonly #engine: EngineReadOnly
+  readonly #dispatch: DispatchCommand
   readonly #pixi: RendererPixi
   #app: PixiApplication | null = null
   #sceneRenderer: SceneRenderer | null = null
@@ -34,13 +37,20 @@ export class Renderer {
   #themeKey: string | null = null
   #overlay: ErrorOverlay | null = null
   #devOverlay: DevOverlay | null = null
+  #controls: CameraControls | null = null
   #unsubscribe: Unsubscribe | null = null
   #started = false
   #disposed = false
 
-  constructor(host: HTMLElement, engine: EngineReadOnly, pixi: RendererPixi = realPixi) {
+  constructor(
+    host: HTMLElement,
+    engine: EngineReadOnly,
+    dispatch: DispatchCommand = noopDispatch,
+    pixi: RendererPixi = realPixi,
+  ) {
     this.#host = host
     this.#engine = engine
+    this.#dispatch = dispatch
     this.#pixi = pixi
   }
 
@@ -76,6 +86,13 @@ export class Renderer {
       this.#unsubscribe = this.#engine.subscribe((event) => this.#handleEvent(event))
       this.#syncScene(this.#sceneRenderer)
 
+      this.#controls = new CameraControls({
+        canvas: app.canvas,
+        getCamera: () => this.#sceneRenderer?.boundCamera ?? null,
+        dispatch: this.#dispatch,
+      })
+      this.#controls.attach()
+
       app.ticker.add(this.#tick)
       if (import.meta.env.DEV) {
         this.#devOverlay = new DevOverlay(this.#host)
@@ -91,6 +108,8 @@ export class Renderer {
     this.#unsubscribe?.()
     this.#unsubscribe = null
     this.#sceneRenderer = null
+    this.#controls?.detach()
+    this.#controls = null
     const app = this.#app
     app?.ticker.remove(this.#tick)
     this.#app = null
@@ -226,4 +245,8 @@ function resolveGridColors(host: HTMLElement): GridColors {
 function parseGridColor(value: string): number | null {
   const match = /^#([0-9a-f]{6})$/i.exec(value.trim())
   return match ? parseInt(match[1], 16) : null
+}
+
+const noopDispatch: DispatchCommand = <Inverse>(): CommandResult<Inverse> => {
+  throw new Error('The renderer needs a command dispatcher for camera controls')
 }
