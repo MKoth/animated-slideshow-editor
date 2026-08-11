@@ -20,6 +20,22 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/engine/internal'],
+              message:
+                'The engine write API is module-internal to src/engine; app code must mutate through the command dispatcher instead.',
+            },
+          ],
+        },
+      ],
     },
+  },
+  {
+    files: ['src/tests/**', 'src/engine/**'],
+    rules: { 'no-restricted-imports': 'off' },
   },
 )

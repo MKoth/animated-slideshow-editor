@@ -17,7 +17,7 @@ function tree() {
 }
 
 function undoStack() {
-  return within(screen.getByLabelText('Undo stack'))
+  return within(screen.getByLabelText('Command history'))
 }
 
 describe('DebugPanel', () => {

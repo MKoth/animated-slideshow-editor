@@ -57,6 +57,17 @@ describe('camera node', () => {
     expect(engine.getNode(camera.id)).toBe(camera)
   })
 
+  it('cannot be reparented away from the scene root', () => {
+    const engine = cameraSetup()
+    const slide = engine.project?.slides[0]
+    const camera = slide?.scene.camera
+    const node = engine.createNode(slide?.scene.id ?? '', slide?.scene.root.id ?? '', 'A')
+    if (!camera) return
+
+    expect(() => engine.reparentNode(camera.id, node.id)).toThrow(/camera/i)
+    expect(camera.parent).toBe(slide?.scene.root)
+  })
+
   it('cannot change its rotation', () => {
     const engine = cameraSetup()
     const camera = engine.project?.slides[0]?.scene.camera

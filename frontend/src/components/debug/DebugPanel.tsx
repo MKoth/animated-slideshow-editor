@@ -116,9 +116,9 @@ export function DebugPanel() {
       </section>
 
       <section className="debug-panel__section">
-        <h3>Undo Stack</h3>
+        <h3>Command History</h3>
         {entries.length > 0 ? (
-          <ol className="debug-panel__undo" aria-label="Undo stack">
+          <ol className="debug-panel__undo" aria-label="Command history">
             {entries.map((entry) => (
               <li key={entry.id}>
                 <span className="debug-panel__undo-type">{entry.type}</span>{' '}

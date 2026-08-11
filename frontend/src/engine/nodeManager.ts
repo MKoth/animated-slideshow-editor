@@ -50,6 +50,14 @@ export class NodeManager {
     return entry.node
   }
 
+  getSceneOf(nodeId: string): Scene {
+    const entry = this.#byId.get(nodeId)
+    if (!entry) {
+      throw new Error(`Node not found: ${nodeId}`)
+    }
+    return entry.scene
+  }
+
   create(
     sceneId: string,
     parentId: string,
@@ -119,6 +127,9 @@ export class NodeManager {
     const { scene, node } = entry
     if (node === scene.root) {
       throw new Error('The root node cannot be reparented')
+    }
+    if (node.components.camera) {
+      throw new Error('The camera node cannot be reparented')
     }
     const newParent = scene.getNode(newParentId)
     if (!newParent) {

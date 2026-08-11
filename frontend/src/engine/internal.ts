@@ -64,6 +64,10 @@ export class Engine {
     return this.#nodes.getById(nodeId)
   }
 
+  getNodeScene(nodeId: string): Scene {
+    return this.#nodes.getSceneOf(nodeId)
+  }
+
   createNode(
     sceneId: string,
     parentId: string,
