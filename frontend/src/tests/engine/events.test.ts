@@ -1,0 +1,151 @@
+import { describe, expect, it } from 'vitest'
+import type { EngineEvent } from '../../engine/events'
+import { createEngine } from '../../engine/internal'
+import { collectEvents } from './helpers'
+
+function setup() {
+  const engine = createEngine()
+  const project = engine.createProject({ name: 'P' })
+  const slide = engine.createSlide('S1')
+  return {
+    engine,
+    projectId: project.id,
+    slideId: slide.id,
+    sceneId: slide.scene.id,
+    rootId: slide.scene.root.id,
+  }
+}
+
+const canonicalTypes = [
+  'ProjectCreated',
+  'SlideCreated',
+  'SlideRemoved',
+  'NodeCreated',
+  'NodeRemoved',
+  'TransformChanged',
+  'VisibilityChanged',
+] as const
+
+describe('canonical events', () => {
+  it('uses only the canonical vocabulary across a full workflow', () => {
+    const { engine, sceneId, rootId } = setup()
+    const events = collectEvents(engine)
+
+    const node = engine.createNode(sceneId, rootId, 'A')
+    engine.setTransform(node.id, { x: 1, y: 2, rotation: 0, scaleX: 1, scaleY: 1 })
+    engine.setVisibility(node.id, false)
+    engine.reparentNode(node.id, rootId)
+    engine.removeNode(node.id)
+    engine.createSlide('S2')
+
+    for (const event of events) {
+      expect(canonicalTypes).toContain(event.type)
+    }
+  })
+
+  it('emits exactly one event per operation with the affected id', () => {
+    const { engine, sceneId, rootId } = setup()
+    const events = collectEvents(engine)
+
+    const node = engine.createNode(sceneId, rootId, 'A')
+    engine.removeNode(node.id)
+
+    expect(events).toEqual([
+      { type: 'NodeCreated', nodeId: node.id },
+      { type: 'NodeRemoved', nodeId: node.id },
+    ])
+  })
+
+  it('emits TransformChanged with the affected node id', () => {
+    const { engine, sceneId, rootId } = setup()
+    const events = collectEvents(engine)
+    const node = engine.createNode(sceneId, rootId, 'A')
+
+    engine.setTransform(node.id, { x: 10, y: 0, rotation: 0, scaleX: 1, scaleY: 1 })
+
+    expect(events).toEqual([
+      { type: 'NodeCreated', nodeId: node.id },
+      { type: 'TransformChanged', nodeId: node.id },
+    ])
+  })
+
+  it('emits VisibilityChanged with the affected node id', () => {
+    const { engine, sceneId, rootId } = setup()
+    const events = collectEvents(engine)
+    const node = engine.createNode(sceneId, rootId, 'A')
+
+    engine.setVisibility(node.id, false)
+
+    expect(events).toEqual([
+      { type: 'NodeCreated', nodeId: node.id },
+      { type: 'VisibilityChanged', nodeId: node.id },
+    ])
+  })
+
+  it('emits slide events with their ids', () => {
+    const { engine } = setup()
+    const events = collectEvents(engine)
+
+    const slide = engine.createSlide('S2')
+    engine.removeSlide(slide.id)
+
+    expect(events).toEqual([
+      { type: 'SlideCreated', slideId: slide.id },
+      { type: 'SlideRemoved', slideId: slide.id },
+    ])
+  })
+
+  it('emits NodeCreated when an asset instance node is created', () => {
+    const { engine, sceneId, rootId } = setup()
+    const definition = engine.defineAsset('Fox')
+    const events = collectEvents(engine)
+    const node = engine.createAssetInstance(sceneId, rootId, definition.id, 'Fox A')
+
+    expect(events).toEqual([{ type: 'NodeCreated', nodeId: node.id }])
+  })
+
+  it('emits nothing for operations without a canonical event', () => {
+    const { engine, sceneId, rootId } = setup()
+    const a = engine.createNode(sceneId, rootId, 'A')
+    const events = collectEvents(engine)
+
+    engine.defineAsset('Wolf')
+    engine.reparentNode(a.id, rootId)
+
+    expect(events).toEqual([])
+  })
+
+  it('emits nothing when an operation is rejected', () => {
+    const { engine, sceneId, rootId } = setup()
+    const a = engine.createNode(sceneId, rootId, 'A')
+    const b = engine.createNode(sceneId, a.id, 'B')
+    const events = collectEvents(engine)
+
+    expect(() => engine.removeNode(rootId)).toThrow()
+    expect(() => engine.reparentNode(a.id, b.id)).toThrow()
+    expect(() =>
+      engine.setTransform(engine.project?.slides[0]?.scene.camera.id ?? '', {
+        x: 0,
+        y: 0,
+        rotation: 1,
+        scaleX: 1,
+        scaleY: 1,
+      }),
+    ).toThrow()
+
+    expect(events).toEqual([])
+  })
+
+  it('stops delivering events after unsubscribing', () => {
+    const { engine, sceneId, rootId } = setup()
+    const events: EngineEvent[] = []
+    const unsubscribe = engine.subscribe((event) => events.push(event))
+
+    engine.createNode(sceneId, rootId, 'A')
+    unsubscribe()
+    engine.createNode(sceneId, rootId, 'B')
+
+    expect(events).toHaveLength(1)
+    expect(events[0]).toEqual(expect.objectContaining({ type: 'NodeCreated' }))
+  })
+})
