@@ -3,6 +3,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api import assets, health, ping
 from app.assets.importer import AssetImporter
+from app.assets.library import AssetLibrary
 from app.assets.pipeline import ImagePipeline
 from app.assets.storage import AssetStorage
 from app.config import Settings, load_settings
@@ -29,6 +30,7 @@ class AppFactory:
         app.state.asset_importer = AssetImporter(
             database, storage, ImagePipeline(self._settings.max_upload_bytes)
         )
+        app.state.asset_library = AssetLibrary(database, storage)
 
         app.add_middleware(RequestLoggingMiddleware)
         register_error_handlers(app)
