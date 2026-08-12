@@ -7,6 +7,8 @@ import App from '../app/App'
 import type { AssetDefinition } from '../api'
 import { ASSET_DEFINITION_MIME } from '../pixi/renderer/dropPlacement'
 import { useNotificationStore } from '../stores/notificationStore'
+import { useClipboardStore } from '../stores/clipboardStore'
+import { useSelectionStore } from '../stores/selectionStore'
 import {
   DEFAULT_INSPECTOR_WIDTH,
   DEFAULT_LEFT_SIDEBAR_WIDTH,
@@ -83,6 +85,8 @@ beforeEach(() => {
     activeSidebarTab: 'assets',
   })
   useNotificationStore.setState({ notifications: [] })
+  useSelectionStore.setState({ selectedIds: [] })
+  useClipboardStore.setState({ items: [] })
   pixiRegistry.reset()
   resetTextureRegistries()
 })
@@ -386,5 +390,226 @@ describe('drag & drop placement', () => {
     await user.click(boyRow)
 
     await waitFor(() => expect(boyRow).toHaveAttribute('aria-selected', 'true'))
+  })
+})
+
+describe('clipboard, duplicate and delete', () => {
+  function stubLibraryWithBoy() {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      if (String(input).startsWith('/api/assets')) {
+        return Promise.resolve(new Response(JSON.stringify([BOY]), { status: 200 }))
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${String(input)}`))
+    })
+  }
+
+  async function mountSceneWithAsset(): Promise<{
+    container: HTMLElement
+    canvas: HTMLCanvasElement
+  }> {
+    stubLibraryWithBoy()
+    const { container } = renderEditor()
+    await screen.findByRole('button', { name: 'Select Boy' })
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Create Project' }))
+    await user.click(screen.getByRole('button', { name: 'Add Slide' }))
+    await waitFor(() => {
+      const canvas = container.querySelector('.canvas-host canvas') as HTMLCanvasElement | null
+      if (!canvas) {
+        throw new Error('Canvas not mounted')
+      }
+    })
+    const canvas = container.querySelector('.canvas-host canvas') as HTMLCanvasElement
+    return { container, canvas }
+  }
+
+  function dropBoyAt(canvas: HTMLCanvasElement, x: number, y: number): void {
+    const dataTransfer = new DataTransfer()
+    dataTransfer.setData(ASSET_DEFINITION_MIME, BOY.id)
+    fireEvent.drop(canvas, { dataTransfer, clientX: x, clientY: y })
+  }
+
+  async function flushAsync(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+
+  function debugTree(container: HTMLElement): HTMLElement {
+    const tree = container.querySelector('.debug-panel')
+    if (!tree) {
+      throw new Error('Debug panel not found')
+    }
+    return tree as HTMLElement
+  }
+
+  function selectAt(canvas: HTMLCanvasElement, x: number, y: number): void {
+    fireEvent.mouseDown(canvas, { button: 0, buttons: 1, clientX: x, clientY: y })
+    fireEvent.mouseUp(canvas, { clientX: x, clientY: y })
+  }
+
+  it('copies with Ctrl+C and pastes with Ctrl+V, suffixing the name and offsetting by +20/+20', async () => {
+    textureLoads.set(BOY.original_url, BOY_IMAGE)
+    const { container, canvas } = await mountSceneWithAsset()
+    dropBoyAt(canvas, 300, 200)
+    await flushAsync()
+    selectAt(canvas, 300, 200)
+    const user = userEvent.setup()
+
+    await user.keyboard('{Control>}c{/Control}')
+    await user.keyboard('{Control>}v{/Control}')
+    await flushAsync()
+
+    const tree = within(debugTree(container))
+    expect(tree.getByText('Boy')).toBeInTheDocument()
+    expect(tree.getByText('Boy (2)')).toBeInTheDocument()
+    const app = pixiRegistry.applications.at(-1)
+    if (!app) {
+      throw new Error('No pixi application created')
+    }
+    const root = findByLabel(worldOf(app), 'Root')
+    const ghost = findByLabel(root ?? { children: [] }, 'Boy (2)')
+    expect(ghost?.position.x).toBe(320)
+    expect(ghost?.position.y).toBe(220)
+  })
+
+  it('duplicates with Ctrl+D at a +20/+20 offset and prevents the default browser action', async () => {
+    textureLoads.set(BOY.original_url, BOY_IMAGE)
+    const { container, canvas } = await mountSceneWithAsset()
+    dropBoyAt(canvas, 300, 200)
+    await flushAsync()
+    selectAt(canvas, 300, 200)
+
+    const event = new KeyboardEvent('keydown', {
+      key: 'd',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    const keydownResult = window.dispatchEvent(event)
+
+    await flushAsync()
+
+    expect(keydownResult).toBe(false)
+    expect(event.defaultPrevented).toBe(true)
+    const tree = within(debugTree(container))
+    expect(tree.getByText('Boy (2)')).toBeInTheDocument()
+    expect(tree.queryByText('Not implemented yet.')).not.toBeInTheDocument()
+    const app = pixiRegistry.applications.at(-1)
+    if (!app) {
+      throw new Error('No pixi application created')
+    }
+    const root = findByLabel(worldOf(app), 'Root')
+    const ghost = findByLabel(root ?? { children: [] }, 'Boy (2)')
+    expect(ghost?.position.x).toBe(320)
+    expect(ghost?.position.y).toBe(220)
+  })
+
+  it('deletes the selected node with the Delete key', async () => {
+    textureLoads.set(BOY.original_url, BOY_IMAGE)
+    const { container, canvas } = await mountSceneWithAsset()
+    dropBoyAt(canvas, 300, 200)
+    await flushAsync()
+    selectAt(canvas, 300, 200)
+
+    fireEvent.keyDown(window, { key: 'Delete' })
+    await flushAsync()
+
+    const tree = within(debugTree(container))
+    expect(tree.queryByText('Boy')).not.toBeInTheDocument()
+    expect(tree.getByText('Root')).toBeInTheDocument()
+  })
+
+  it('deletes the selected node with the Backspace key', async () => {
+    textureLoads.set(BOY.original_url, BOY_IMAGE)
+    const { container, canvas } = await mountSceneWithAsset()
+    dropBoyAt(canvas, 300, 200)
+    await flushAsync()
+    selectAt(canvas, 300, 200)
+
+    fireEvent.keyDown(window, { key: 'Backspace' })
+    await flushAsync()
+
+    expect(within(debugTree(container)).queryByText('Boy')).not.toBeInTheDocument()
+  })
+
+  it('does not delete the selected node while editing a text input', async () => {
+    textureLoads.set(BOY.original_url, BOY_IMAGE)
+    const { container, canvas } = await mountSceneWithAsset()
+    dropBoyAt(canvas, 300, 200)
+    await flushAsync()
+    selectAt(canvas, 300, 200)
+    const search = screen.getByRole('searchbox', { name: 'Search assets' })
+    search.focus()
+    fireEvent.change(search, { target: { value: 'bo' } })
+
+    fireEvent.keyDown(search, { key: 'Backspace' })
+    fireEvent.keyDown(search, { key: 'Delete' })
+    await flushAsync()
+
+    expect(within(debugTree(container)).getByText('Boy')).toBeInTheDocument()
+  })
+
+  it('cannot delete the root from the hierarchy', async () => {
+    textureLoads.set(BOY.original_url, BOY_IMAGE)
+    const { container, canvas } = await mountSceneWithAsset()
+    dropBoyAt(canvas, 300, 200)
+    await flushAsync()
+    const user = userEvent.setup()
+    await user.click(sidebar().getByRole('button', { name: 'Scene' }))
+    const tree = within(sidebar().getByRole('tree', { name: 'Scene tree of Slide 1' }))
+    const rootRow = await tree.findByRole('treeitem', { name: 'Root' })
+    await user.click(rootRow)
+
+    fireEvent.keyDown(window, { key: 'Delete' })
+    await flushAsync()
+
+    expect(rootRow).toBeInTheDocument()
+    expect(tree.getByText('Boy')).toBeInTheDocument()
+    expect(within(debugTree(container)).getByText('Root')).toBeInTheDocument()
+  })
+
+  it('disables Copy/Paste/Duplicate/Delete in the Edit menu without a selection or clipboard, and enables paste after a copy', async () => {
+    textureLoads.set(BOY.original_url, BOY_IMAGE)
+    stubLibraryWithBoy()
+    const { container } = renderEditor()
+    await screen.findByRole('button', { name: 'Select Boy' })
+    const user = userEvent.setup()
+    const openEditMenu = async () => {
+      await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'Edit' }))
+    }
+
+    await openEditMenu()
+    expect(screen.getByRole('menuitem', { name: 'Copy' })).toBeDisabled()
+    expect(screen.getByRole('menuitem', { name: 'Paste' })).toBeDisabled()
+    expect(screen.getByRole('menuitem', { name: 'Duplicate' })).toBeDisabled()
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeDisabled()
+    await user.click(screen.getByRole('menuitem', { name: 'Undo' }))
+    expect(screen.queryByRole('menuitem', { name: 'Copy' })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Create Project' }))
+    await user.click(screen.getByRole('button', { name: 'Add Slide' }))
+    await waitFor(() => {
+      const canvas = container.querySelector('.canvas-host canvas') as HTMLCanvasElement | null
+      if (!canvas) {
+        throw new Error('Canvas not mounted')
+      }
+    })
+    const canvas = container.querySelector('.canvas-host canvas') as HTMLCanvasElement
+    dropBoyAt(canvas, 100, 100)
+    await flushAsync()
+    selectAt(canvas, 100, 100)
+
+    await openEditMenu()
+    expect(screen.getByRole('menuitem', { name: 'Copy' })).toBeEnabled()
+    expect(screen.getByRole('menuitem', { name: 'Duplicate' })).toBeEnabled()
+    expect(screen.getByRole('menuitem', { name: 'Delete' })).toBeEnabled()
+    expect(screen.getByRole('menuitem', { name: 'Paste' })).toBeDisabled()
+    await user.click(screen.getByRole('menuitem', { name: 'Copy' }))
+
+    await openEditMenu()
+    expect(screen.getByRole('menuitem', { name: 'Paste' })).toBeEnabled()
+    await user.click(screen.getByRole('menuitem', { name: 'Paste' }))
+    await flushAsync()
+
+    expect(within(debugTree(container)).getByText('Boy (2)')).toBeInTheDocument()
   })
 })

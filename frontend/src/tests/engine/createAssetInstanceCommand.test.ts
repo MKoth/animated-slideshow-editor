@@ -388,3 +388,120 @@ describe('CreateAssetInstanceCommand', () => {
     })
   })
 })
+
+describe('CreateAssetInstanceCommand transform parameters', () => {
+  it('creates the instance with the given rotation and scale when provided', () => {
+    const { engine, dispatcher, sceneId, rootId, definitionId } = setup()
+    const events = collectEvents(engine)
+
+    const { nodeId } = expectOk(
+      dispatcher.dispatch(
+        new CreateAssetInstanceCommand({
+          sceneId,
+          parentId: rootId,
+          definitionId,
+          name: 'Boy',
+          position: { x: 12, y: 34 },
+          rotation: 0.5,
+          scaleX: 2,
+          scaleY: 3,
+        }),
+      ),
+    )
+
+    expect(engine.getNode(nodeId).transform).toEqual({
+      x: 12,
+      y: 34,
+      rotation: 0.5,
+      scaleX: 2,
+      scaleY: 3,
+    })
+    expect(events).toEqual([{ type: 'NodeCreated', nodeId }])
+  })
+
+  it('includes the transform parameters in the record and the log when provided', () => {
+    const log = vi.fn()
+    const { dispatcher, undoStack, sceneId, rootId, definitionId } = setup(log)
+    const { nodeId } = expectOk(
+      dispatcher.dispatch(
+        new CreateAssetInstanceCommand({
+          sceneId,
+          parentId: rootId,
+          definitionId,
+          name: 'Boy',
+          position: { x: 12, y: 34 },
+          rotation: 0.5,
+          scaleX: 2,
+          scaleY: 3,
+        }),
+      ),
+    )
+
+    expect(undoStack.entries[0]).toMatchObject({
+      type: 'CreateAssetInstance',
+      parameters: {
+        sceneId,
+        parentId: rootId,
+        definitionId,
+        name: 'Boy',
+        position: { x: 12, y: 34 },
+        rotation: 0.5,
+        scaleX: 2,
+        scaleY: 3,
+      },
+      inverse: { nodeId },
+    })
+    expect(log).toHaveBeenCalledWith(
+      `CreateAssetInstance sceneId=${sceneId} parentId=${rootId} definitionId=${definitionId} ` +
+        `name=Boy position={"x":12,"y":34} rotation=0.5 scaleX=2 scaleY=3`,
+    )
+  })
+
+  it('rejects a non-finite rotation, leaving the engine unchanged', () => {
+    const { engine, undoStack, dispatcher, sceneId, rootId, definitionId } = setup()
+    const events = collectEvents(engine)
+    const undoCount = undoStack.entries.length
+
+    const result = dispatcher.dispatch(
+      new CreateAssetInstanceCommand({
+        sceneId,
+        parentId: rootId,
+        definitionId,
+        name: 'Boy',
+        position: { x: 0, y: 0 },
+        rotation: Number.NaN,
+      }),
+    )
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/finite/i)
+    }
+    expect(undoStack.entries).toHaveLength(undoCount)
+    expect(events).toEqual([])
+  })
+
+  it('rejects a non-finite scale, leaving the engine unchanged', () => {
+    const { engine, undoStack, dispatcher, sceneId, rootId, definitionId } = setup()
+    const events = collectEvents(engine)
+    const undoCount = undoStack.entries.length
+
+    const result = dispatcher.dispatch(
+      new CreateAssetInstanceCommand({
+        sceneId,
+        parentId: rootId,
+        definitionId,
+        name: 'Boy',
+        position: { x: 0, y: 0 },
+        scaleX: Number.POSITIVE_INFINITY,
+      }),
+    )
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/finite/i)
+    }
+    expect(undoStack.entries).toHaveLength(undoCount)
+    expect(events).toEqual([])
+  })
+})

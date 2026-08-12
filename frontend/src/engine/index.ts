@@ -52,6 +52,7 @@ export {
   RenameNodeCommand,
   SetOpacityCommand,
   CreateAssetInstanceCommand,
+  DuplicateNodeCommand,
 } from './commands'
 export type {
   CreateProjectInverse,
@@ -80,4 +81,6 @@ export type {
   SetOpacityParameters,
   CreateAssetInstanceInverse,
   CreateAssetInstanceParameters,
+  DuplicateNodeInverse,
+  DuplicateNodeParameters,
 } from './commands'

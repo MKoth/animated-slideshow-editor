@@ -7,7 +7,6 @@ export const PROVISIONAL_SHORTCUTS = [
   'ctrl+s',
   'ctrl+z',
   'ctrl+y',
-  'delete',
   'space',
 ] as const
 

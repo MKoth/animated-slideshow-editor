@@ -39,3 +39,5 @@ export type {
   CreateAssetInstanceInverse,
   CreateAssetInstanceParameters,
 } from './createAssetInstanceCommand'
+export { DuplicateNodeCommand, DUPLICATE_OFFSET } from './duplicateNodeCommand'
+export type { DuplicateNodeInverse, DuplicateNodeParameters } from './duplicateNodeCommand'
