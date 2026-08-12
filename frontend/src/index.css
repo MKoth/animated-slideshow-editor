@@ -340,6 +340,22 @@ button:disabled {
   gap: 8px;
 }
 
+.asset-preview__actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.asset-preview__delete {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
+.asset-preview__delete:hover {
+  background: var(--color-danger);
+  color: var(--color-bg-panel);
+}
+
 .asset-preview__title {
   margin: 0;
   font-size: 13px;

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AssetDefinition } from '../api'
-import { useAssetLibraryStore } from '../stores/assetLibraryStore'
+import { useAssetLibraryStore, registerAssetUsageCounter } from '../stores/assetLibraryStore'
 import { libraryEventBus, type LibraryEvent } from '../stores/libraryEvents'
 import { useNotificationStore } from '../stores/notificationStore'
 
@@ -55,6 +55,7 @@ describe('assetLibraryStore', () => {
       selectedId: null,
     })
     useNotificationStore.setState({ notifications: [] })
+    registerAssetUsageCounter(() => 0)
   })
 
   afterEach(() => {
@@ -286,5 +287,80 @@ describe('assetLibraryStore', () => {
     expect(useAssetLibraryStore.getState().definitions.map((d) => d.id)).toEqual(['a2'])
     expect(useAssetLibraryStore.getState().selectedId).toBeNull()
     expect(events).toEqual([{ type: 'AssetDeleted', id: 'a1' }])
+  })
+
+  it('refuses to delete an asset referenced by the open project and names the usage', async () => {
+    const deletions: number[] = []
+    stubFetch((_url, init) => {
+      if (init.method === 'DELETE') {
+        deletions.push(1)
+        return Promise.resolve(new Response(null, { status: 204 }))
+      }
+      return Promise.resolve(new Response(JSON.stringify([makeDefinition()]), { status: 200 }))
+    })
+    await useAssetLibraryStore.getState().loadLibrary()
+    useAssetLibraryStore.getState().selectAsset('a1')
+    registerAssetUsageCounter(() => 3)
+    const events = listen()
+
+    await useAssetLibraryStore.getState().deleteAsset('a1')
+
+    expect(useNotificationStore.getState().notifications.map((n) => n.message)).toEqual([
+      'Used by 3 objects',
+    ])
+    expect(useAssetLibraryStore.getState().definitions).toEqual([makeDefinition()])
+    expect(useAssetLibraryStore.getState().selectedId).toBe('a1')
+    expect(events).toEqual([])
+    expect(deletions).toEqual([])
+  })
+
+  it('refuses deletion of a single reference with singular wording', async () => {
+    stubFetch(() =>
+      Promise.resolve(new Response(JSON.stringify([makeDefinition()]), { status: 200 })),
+    )
+    await useAssetLibraryStore.getState().loadLibrary()
+    registerAssetUsageCounter(() => 1)
+
+    await useAssetLibraryStore.getState().deleteAsset('a1')
+
+    expect(useNotificationStore.getState().notifications.map((n) => n.message)).toEqual([
+      'Used by 1 object',
+    ])
+    expect(useAssetLibraryStore.getState().definitions).toEqual([makeDefinition()])
+  })
+
+  it('notifies when the backend rejects the delete and keeps the library unchanged', async () => {
+    stubFetch((_url, init) => {
+      if (init.method === 'DELETE') {
+        return Promise.resolve(new Response('{}', { status: 500 }))
+      }
+      return Promise.resolve(new Response(JSON.stringify([makeDefinition()]), { status: 200 }))
+    })
+    await useAssetLibraryStore.getState().loadLibrary()
+
+    await useAssetLibraryStore.getState().deleteAsset('a1')
+
+    expect(useNotificationStore.getState().notifications.map((n) => n.message)).toEqual([
+      'Asset delete failed.',
+    ])
+    expect(useAssetLibraryStore.getState().definitions).toEqual([makeDefinition()])
+    expect(useAssetLibraryStore.getState().unavailable).toBe(false)
+  })
+
+  it('marks the library unavailable when the backend is down during delete', async () => {
+    stubFetch((_url, init) => {
+      if (init.method === 'DELETE') {
+        return Promise.reject(new Error('connection refused'))
+      }
+      return Promise.resolve(new Response(JSON.stringify([makeDefinition()]), { status: 200 }))
+    })
+    await useAssetLibraryStore.getState().loadLibrary()
+
+    await useAssetLibraryStore.getState().deleteAsset('a1')
+
+    expect(useNotificationStore.getState().notifications.map((n) => n.message)).toEqual([
+      'Asset delete failed — backend unavailable.',
+    ])
+    expect(useAssetLibraryStore.getState().unavailable).toBe(true)
   })
 })

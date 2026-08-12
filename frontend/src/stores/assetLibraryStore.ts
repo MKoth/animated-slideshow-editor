@@ -14,6 +14,43 @@ export const SEARCH_DEBOUNCE_MS = 300
 
 export const IMPORT_FAILED_MESSAGE = 'Asset import failed.'
 export const IMPORT_BACKEND_DOWN_MESSAGE = 'Asset import failed — backend unavailable.'
+export const DELETE_FAILED_MESSAGE = 'Asset delete failed.'
+export const DELETE_BACKEND_DOWN_MESSAGE = 'Asset delete failed — backend unavailable.'
+
+export type AssetUsageCounter = (assetId: string) => number
+
+let usageCounter: AssetUsageCounter = () => 0
+
+export function registerAssetUsageCounter(counter: AssetUsageCounter): () => void {
+  usageCounter = counter
+  return () => {
+    if (usageCounter === counter) {
+      usageCounter = () => 0
+    }
+  }
+}
+
+function usageMessage(usage: number): string {
+  return `Used by ${usage} ${usage === 1 ? 'object' : 'objects'}`
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown error'
+}
+
+function notifyRequestFailure(
+  failedMessage: string,
+  backendDownMessage: string,
+  error: unknown,
+  markUnavailable: () => void,
+): void {
+  if (error instanceof ApiError) {
+    useNotificationStore.getState().notify(failedMessage)
+  } else {
+    useNotificationStore.getState().notify(backendDownMessage)
+    markUnavailable()
+  }
+}
 
 interface AssetLibraryState {
   definitions: AssetDefinition[]
@@ -64,7 +101,7 @@ export const useAssetLibraryStore = create<AssetLibraryState>()((set, get) => ({
         selectedId: null,
         loading: false,
         unavailable: true,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: errorMessage(error),
       })
     }
   },
@@ -92,12 +129,9 @@ export const useAssetLibraryStore = create<AssetLibraryState>()((set, get) => ({
     try {
       result = await assetsApi.uploadAssets(files)
     } catch (error) {
-      if (error instanceof ApiError) {
-        useNotificationStore.getState().notify(IMPORT_FAILED_MESSAGE)
-      } else {
-        useNotificationStore.getState().notify(IMPORT_BACKEND_DOWN_MESSAGE)
-        set({ unavailable: true, error: error instanceof Error ? error.message : 'Unknown error' })
-      }
+      notifyRequestFailure(IMPORT_FAILED_MESSAGE, IMPORT_BACKEND_DOWN_MESSAGE, error, () =>
+        set({ unavailable: true, error: errorMessage(error) }),
+      )
       return { created: [], errors: [] }
     }
     for (const uploadError of result.errors) {
@@ -113,7 +147,19 @@ export const useAssetLibraryStore = create<AssetLibraryState>()((set, get) => ({
   },
 
   deleteAsset: async (assetId) => {
-    await assetsApi.deleteAsset(assetId)
+    const usage = usageCounter(assetId)
+    if (usage > 0) {
+      useNotificationStore.getState().notify(usageMessage(usage))
+      return
+    }
+    try {
+      await assetsApi.deleteAsset(assetId)
+    } catch (error) {
+      notifyRequestFailure(DELETE_FAILED_MESSAGE, DELETE_BACKEND_DOWN_MESSAGE, error, () =>
+        set({ unavailable: true, error: errorMessage(error) }),
+      )
+      return
+    }
     set((state) => ({
       definitions: state.definitions.filter((definition) => definition.id !== assetId),
       selectedId: state.selectedId === assetId ? null : state.selectedId,

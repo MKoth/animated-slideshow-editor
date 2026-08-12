@@ -10,6 +10,7 @@ export type { Scene } from './scene'
 export type { Slide } from './slide'
 export type { Project, ProjectMetadata, CreateProjectInput } from './project'
 export type { Transform } from './transform'
+export { countAssetUsage } from './assetUsage'
 export type {
   NodeComponents,
   CameraComponent,

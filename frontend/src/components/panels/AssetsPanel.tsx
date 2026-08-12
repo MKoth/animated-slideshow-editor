@@ -25,13 +25,20 @@ interface PreviewProps {
 }
 
 function AssetPreview({ definition, onClose }: PreviewProps) {
+  const deleteAsset = useAssetLibraryStore((state) => state.deleteAsset)
+
   return (
     <section className="asset-preview" aria-label="Asset preview">
       <header className="asset-preview__header">
         <h3 className="asset-preview__title">{definition.name}</h3>
-        <button className="asset-preview__close" onClick={onClose}>
-          Close preview
-        </button>
+        <div className="asset-preview__actions">
+          <button className="asset-preview__delete" onClick={() => void deleteAsset(definition.id)}>
+            Delete asset
+          </button>
+          <button className="asset-preview__close" onClick={onClose}>
+            Close preview
+          </button>
+        </div>
       </header>
       <img className="asset-preview__image" src={definition.original_url} alt={definition.name} />
       <dl className="asset-preview__details">

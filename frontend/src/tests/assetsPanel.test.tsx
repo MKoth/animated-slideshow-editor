@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AssetDefinition } from '../api'
 import { AssetsPanel } from '../components/panels/AssetsPanel'
-import { useAssetLibraryStore } from '../stores/assetLibraryStore'
+import { registerAssetUsageCounter, useAssetLibraryStore } from '../stores/assetLibraryStore'
 import { useNotificationStore } from '../stores/notificationStore'
 
 const BOY: AssetDefinition = {
@@ -74,6 +74,7 @@ beforeEach(() => {
     selectedId: null,
   })
   useNotificationStore.setState({ notifications: [] })
+  registerAssetUsageCounter(() => 0)
 })
 
 describe('AssetsPanel', () => {
@@ -262,5 +263,66 @@ describe('AssetsPanel', () => {
     await user.click(within(preview).getByRole('button', { name: 'Close preview' }))
 
     expect(screen.queryByRole('region', { name: 'Asset preview' })).not.toBeInTheDocument()
+  })
+
+  it('deletes an unreferenced asset from the preview and closes it', async () => {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.startsWith('/api/assets') && init?.method === 'DELETE') {
+        return Promise.resolve(new Response(null, { status: 204 }))
+      }
+      if (url.startsWith('/api/assets')) {
+        return Promise.resolve(new Response(JSON.stringify([BOY, GIRL]), { status: 200 }))
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`))
+    })
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByText('Girl')
+
+    await user.click(screen.getByRole('button', { name: 'Select Boy' }))
+    await user.click(
+      within(screen.getByRole('region', { name: 'Asset preview' })).getByRole('button', {
+        name: 'Delete asset',
+      }),
+    )
+
+    expect(screen.queryByRole('region', { name: 'Asset preview' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Boy')).not.toBeInTheDocument()
+    expect(screen.getByText('Girl')).toBeInTheDocument()
+    expect(useNotificationStore.getState().notifications).toEqual([])
+  })
+
+  it('refuses to delete a referenced asset with the usage named', async () => {
+    registerAssetUsageCounter(() => 3)
+    let deleteCalls = 0
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.startsWith('/api/assets') && init?.method === 'DELETE') {
+        deleteCalls += 1
+        return Promise.resolve(new Response(null, { status: 204 }))
+      }
+      if (url.startsWith('/api/assets')) {
+        return Promise.resolve(new Response(JSON.stringify([BOY]), { status: 200 }))
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`))
+    })
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByText('Boy')
+
+    await user.click(screen.getByRole('button', { name: 'Select Boy' }))
+    await user.click(
+      within(screen.getByRole('region', { name: 'Asset preview' })).getByRole('button', {
+        name: 'Delete asset',
+      }),
+    )
+
+    expect(useNotificationStore.getState().notifications.map((n) => n.message)).toEqual([
+      'Used by 3 objects',
+    ])
+    expect(screen.getByRole('region', { name: 'Asset preview' })).toBeInTheDocument()
+    expect(screen.getAllByText('Boy')).toHaveLength(2)
+    expect(deleteCalls).toBe(0)
   })
 })
