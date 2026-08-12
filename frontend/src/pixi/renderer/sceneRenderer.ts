@@ -3,8 +3,9 @@ import type { Scene } from '../../engine'
 import type { SceneNode } from '../../engine'
 import { walkPreOrder } from '../../engine/sceneNode'
 import type { PixiContainer, RendererPixi } from './pixi'
+import type { WorldSize } from './worldGeometry'
 import { applyName, applyTransform, createNodeContainer, placeholderOf } from './nodeRenderer'
-import { applyAssetTexture } from './placeholder'
+import { applyAssetTexture, placeholderSize } from './placeholder'
 import type { ResolveAssetUrl, TextureCache } from './textureCache'
 
 export class SceneRenderer {
@@ -15,6 +16,8 @@ export class SceneRenderer {
   readonly #world: PixiContainer
   readonly #containers = new Map<string, PixiContainer>()
   readonly #nodeIds = new WeakMap<PixiContainer, string>()
+  readonly #sizes = new Map<string, WorldSize>()
+  readonly #onNodeSizeChanged: (nodeId: string) => void
   #scene: Scene | null = null
 
   constructor(
@@ -23,12 +26,18 @@ export class SceneRenderer {
     pixi: RendererPixi,
     textureCache: TextureCache,
     resolveAssetUrl: ResolveAssetUrl,
+    onNodeSizeChanged: (nodeId: string) => void = () => undefined,
   ) {
     this.#engine = engine
     this.#world = world
     this.#pixi = pixi
     this.#textureCache = textureCache
     this.#resolveAssetUrl = resolveAssetUrl
+    this.#onNodeSizeChanged = onNodeSizeChanged
+  }
+
+  nodeSize(nodeId: string): WorldSize | null {
+    return this.#sizes.get(nodeId) ?? null
   }
 
   get boundSceneId(): string | null {
@@ -58,6 +67,7 @@ export class SceneRenderer {
       container.destroy({ children: true })
     }
     this.#containers.clear()
+    this.#sizes.clear()
     this.#scene = scene
     if (!scene) {
       return
@@ -86,6 +96,7 @@ export class SceneRenderer {
       const descendantId = this.#nodeIds.get(descendant)
       if (descendantId) {
         this.#containers.delete(descendantId)
+        this.#sizes.delete(descendantId)
       }
       this.#nodeIds.delete(descendant)
     }
@@ -152,13 +163,22 @@ export class SceneRenderer {
     this.#containers.set(node.id, container)
     this.#nodeIds.set(container, node.id)
     this.#attachToParent(container, node)
+    this.#recordSize(node, container)
     const instance = node.components.assetInstance
     if (instance) {
-      this.#loadAssetTexture(instance.assetDefinitionId, container)
+      this.#loadAssetTexture(instance.assetDefinitionId, node.id, container)
     }
   }
 
-  #loadAssetTexture(definitionId: string, container: PixiContainer): void {
+  #recordSize(node: SceneNode, container: PixiContainer): void {
+    const placeholder = placeholderOf(container)
+    const size = placeholder ? placeholderSize(placeholder) : null
+    if (size) {
+      this.#sizes.set(node.id, size)
+    }
+  }
+
+  #loadAssetTexture(definitionId: string, nodeId: string, container: PixiContainer): void {
     const url = this.#resolveAssetUrl(definitionId)
     if (!url) {
       return
@@ -173,6 +193,11 @@ export class SceneRenderer {
         return
       }
       applyAssetTexture(placeholder, result.texture)
+      const size = placeholderSize(placeholder)
+      if (size) {
+        this.#sizes.set(nodeId, size)
+        this.#onNodeSizeChanged(nodeId)
+      }
     })
   }
 

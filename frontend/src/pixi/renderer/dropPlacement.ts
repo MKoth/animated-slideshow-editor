@@ -3,6 +3,7 @@ import type { Scene } from '../../engine'
 import type { SceneNode } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
 import { CreateAssetInstanceCommand } from '../../engine/commands'
+import { cursorToWorld } from './screenToWorld'
 
 export const ASSET_DEFINITION_MIME = 'application/x-asset-definition'
 
@@ -71,7 +72,11 @@ export class DropPlacement {
     if (!scene) {
       return
     }
-    const position = this.#cursorToWorld(event, this.#getCamera())
+    const camera = this.#getCamera()
+    if (!camera) {
+      return
+    }
+    const position = cursorToWorld(this.#canvas, camera, event.clientX, event.clientY)
     if (!position) {
       return
     }
@@ -92,21 +97,6 @@ export class DropPlacement {
       return this.#engine.getAssetDefinition(definitionId)
     } catch {
       return null
-    }
-  }
-
-  #cursorToWorld(event: DragEvent, camera: SceneNode | null): { x: number; y: number } | null {
-    if (!camera) {
-      return null
-    }
-    const { x, y, scaleX, scaleY } = camera.transform
-    if (scaleX <= 0 || scaleY <= 0) {
-      return null
-    }
-    const rect = this.#canvas.getBoundingClientRect()
-    return {
-      x: x + (event.clientX - rect.left) / scaleX,
-      y: y + (event.clientY - rect.top) / scaleY,
     }
   }
 }

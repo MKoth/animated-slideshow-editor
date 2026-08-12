@@ -91,8 +91,8 @@ export class FakeGraphics extends FakeContainer {
     return this
   }
 
-  rect(): this {
-    this.#record('rect', [])
+  rect(x?: number, y?: number, w?: number, h?: number): this {
+    this.#record('rect', [x, y, w, h])
     return this
   }
 
@@ -111,8 +111,8 @@ export class FakeGraphics extends FakeContainer {
     return this
   }
 
-  fill(): this {
-    this.#record('fill', [])
+  fill(options?: unknown): this {
+    this.#record('fill', [options])
     return this
   }
 

@@ -47,13 +47,14 @@ describe('Renderer', () => {
     const { app } = await mountRenderer(createEngine())
     const world = worldOf(app)
 
-    expect(world.children).toHaveLength(2)
+    expect(world.children).toHaveLength(3)
     expect(world.children[0].label).toBe('grid')
     const axisLines = world.children[1]
     expect(axisLines.position.x).toBe(0)
     expect(axisLines.position.y).toBe(0)
     const lines = axisLines.children[0]
     expect(lines.ops?.filter((op) => op === 'lineTo')).toHaveLength(2)
+    expect(world.children[2].kind).toBe('graphics')
   })
 
   it('renders a placeholder for asset instances and text nodes, and none for the camera', async () => {

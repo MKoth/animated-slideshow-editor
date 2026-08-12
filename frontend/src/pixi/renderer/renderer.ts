@@ -1,9 +1,12 @@
 import type { EngineReadOnly } from '../../engine'
 import type { EngineEvent } from '../../engine'
 import type { Unsubscribe } from '../../engine'
+import { walkPreOrder } from '../../engine/sceneNode'
 import type { CommandResult, DispatchCommand } from '../../engine/commands'
+import { useSelectionStore } from '../../stores/selectionStore'
 import { CameraControls } from './cameraControls'
 import { Camera } from './camera'
+import { CanvasSelection } from './canvasSelection'
 import { createAxisLines } from './axisLines'
 import { DevOverlay } from './devOverlay'
 import { DropPlacement } from './dropPlacement'
@@ -12,6 +15,7 @@ import { DEFAULT_MAJOR_COLOR, DEFAULT_MINOR_COLOR, GridRenderer } from './gridRe
 import { realPixi } from './pixi'
 import type { PixiApplication, RendererPixi } from './pixi'
 import { SceneRenderer } from './sceneRenderer'
+import { SelectionOverlay } from './selectionOverlay'
 import type { ResolveAssetUrl } from './textureCache'
 import { TextureCache } from './textureCache'
 
@@ -43,6 +47,8 @@ export class Renderer {
   #devOverlay: DevOverlay | null = null
   #controls: CameraControls | null = null
   #dropPlacement: DropPlacement | null = null
+  #selection: CanvasSelection | null = null
+  #selectionOverlay: SelectionOverlay | null = null
   #unsubscribe: Unsubscribe | null = null
   #started = false
   #disposed = false
@@ -97,9 +103,29 @@ export class Renderer {
         this.#pixi,
         this.#textureCache,
         this.#resolveAssetUrl,
+        () => this.#selectionOverlay?.redraw(),
       )
       this.#unsubscribe = this.#engine.subscribe((event) => this.#handleEvent(event))
       this.#syncScene(this.#sceneRenderer)
+
+      this.#selectionOverlay = new SelectionOverlay({
+        pixi: this.#pixi,
+        world,
+        engine: this.#engine,
+        getScene: () => this.#sceneRenderer?.boundScene ?? null,
+        getNodeSize: (nodeId) => this.#sceneRenderer?.nodeSize(nodeId) ?? null,
+        store: useSelectionStore,
+      })
+      this.#selectionOverlay.attach()
+
+      this.#selection = new CanvasSelection({
+        canvas: app.canvas,
+        getScene: () => this.#sceneRenderer?.boundScene ?? null,
+        getCamera: () => this.#sceneRenderer?.boundCamera ?? null,
+        getNodeSize: (nodeId) => this.#sceneRenderer?.nodeSize(nodeId) ?? null,
+        store: useSelectionStore.getState(),
+      })
+      this.#selection.attach()
 
       this.#controls = new CameraControls({
         canvas: app.canvas,
@@ -136,6 +162,10 @@ export class Renderer {
     this.#controls = null
     this.#dropPlacement?.detach()
     this.#dropPlacement = null
+    this.#selection?.detach()
+    this.#selection = null
+    this.#selectionOverlay?.detach()
+    this.#selectionOverlay = null
     const app = this.#app
     app?.ticker.remove(this.#tick)
     this.#app = null
@@ -236,6 +266,7 @@ export class Renderer {
         break
       case 'NodeRemoved':
         sceneRenderer.handleNodeRemoved(event.nodeId)
+        this.#pruneSelectionToBoundScene()
         break
       case 'NodeReparented':
         sceneRenderer.handleNodeReparented(event.nodeId)
@@ -260,7 +291,21 @@ export class Renderer {
     const scene = firstSlide ? firstSlide.scene : null
     if (sceneRenderer.boundSceneId !== (scene?.id ?? null)) {
       sceneRenderer.bind(scene)
+      this.#selectionOverlay?.bringToFront()
+      useSelectionStore.getState().clear()
     }
+  }
+
+  #pruneSelectionToBoundScene(): void {
+    const scene = this.#sceneRenderer?.boundScene
+    const valid = new Set<string>()
+    if (scene) {
+      for (const node of walkPreOrder(scene.root)) {
+        valid.add(node.id)
+      }
+      valid.add(scene.camera.id)
+    }
+    useSelectionStore.getState().prune(valid)
   }
 
   #reportFailure(error: unknown): void {

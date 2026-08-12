@@ -8,6 +8,7 @@ import type {
   RendererPixi,
 } from './pixi'
 import type { TextureCache } from './textureCache'
+import type { WorldSize } from './worldGeometry'
 
 const PLACEHOLDER_WIDTH = 160
 const PLACEHOLDER_HEIGHT = 100
@@ -77,4 +78,12 @@ export function applyAssetTexture(group: PixiContainer, texture: PixiTexture): v
   if (label) {
     label.visible = false
   }
+}
+
+export function placeholderSize(group: PixiContainer): WorldSize | null {
+  const body = bodyByGroup.get(group)
+  if (!body) {
+    return null
+  }
+  return { width: body.width, height: body.height }
 }
