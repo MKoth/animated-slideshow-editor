@@ -6,6 +6,7 @@ import { CameraControls } from './cameraControls'
 import { Camera } from './camera'
 import { createAxisLines } from './axisLines'
 import { DevOverlay } from './devOverlay'
+import { DropPlacement } from './dropPlacement'
 import { ErrorOverlay } from './errorOverlay'
 import { DEFAULT_MAJOR_COLOR, DEFAULT_MINOR_COLOR, GridRenderer } from './gridRenderer'
 import { realPixi } from './pixi'
@@ -41,6 +42,7 @@ export class Renderer {
   #overlay: ErrorOverlay | null = null
   #devOverlay: DevOverlay | null = null
   #controls: CameraControls | null = null
+  #dropPlacement: DropPlacement | null = null
   #unsubscribe: Unsubscribe | null = null
   #started = false
   #disposed = false
@@ -106,6 +108,15 @@ export class Renderer {
       })
       this.#controls.attach()
 
+      this.#dropPlacement = new DropPlacement({
+        canvas: app.canvas,
+        engine: this.#engine,
+        getScene: () => this.#sceneRenderer?.boundScene ?? null,
+        getCamera: () => this.#sceneRenderer?.boundCamera ?? null,
+        dispatch: this.#dispatch,
+      })
+      this.#dropPlacement.attach()
+
       app.ticker.add(this.#tick)
       if (import.meta.env.DEV) {
         this.#devOverlay = new DevOverlay(this.#host)
@@ -123,6 +134,8 @@ export class Renderer {
     this.#sceneRenderer = null
     this.#controls?.detach()
     this.#controls = null
+    this.#dropPlacement?.detach()
+    this.#dropPlacement = null
     const app = this.#app
     app?.ticker.remove(this.#tick)
     this.#app = null

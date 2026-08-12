@@ -34,6 +34,31 @@ describe('asset definitions', () => {
 
     expect(() => engine.getAssetDefinition('ghost')).toThrow(/definition.*not found/i)
   })
+
+  it('registers a library definition under its existing id and name', () => {
+    const { engine } = setup()
+
+    engine.registerAssetDefinition('lib-1', 'Boy')
+
+    const definition = engine.getAssetDefinition('lib-1')
+    expect(definition.name).toBe('Boy')
+  })
+
+  it('re-registering the same id updates the name without creating a duplicate', () => {
+    const { engine } = setup()
+    engine.registerAssetDefinition('lib-1', 'Boy')
+
+    engine.registerAssetDefinition('lib-1', 'Boy Updated')
+
+    expect(engine.assetDefinitions).toHaveLength(1)
+    expect(engine.getAssetDefinition('lib-1').name).toBe('Boy Updated')
+  })
+
+  it('rejects an empty registered name', () => {
+    const { engine } = setup()
+
+    expect(() => engine.registerAssetDefinition('lib-1', '')).toThrow(/name/i)
+  })
 })
 
 describe('asset instances', () => {

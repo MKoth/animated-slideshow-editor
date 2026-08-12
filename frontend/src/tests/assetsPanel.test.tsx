@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AssetDefinition } from '../api'
 import { AssetsPanel } from '../components/panels/AssetsPanel'
+import { ASSET_DEFINITION_MIME } from '../pixi/renderer/dropPlacement'
 import { registerAssetUsageCounter, useAssetLibraryStore } from '../stores/assetLibraryStore'
 import { useNotificationStore } from '../stores/notificationStore'
 
@@ -118,6 +119,36 @@ describe('AssetsPanel', () => {
       '/api/assets/thumbnails/a1.png',
     )
     expect(within(grid).getAllByRole('img')).toHaveLength(2)
+  })
+
+  it('makes asset cells draggable and carries the definition id in the drag payload', async () => {
+    stubLibrary([BOY, GIRL])
+    renderPanel()
+    await screen.findByText('Girl')
+
+    const boyCell = screen.getByRole('button', { name: 'Select Boy' })
+    expect(boyCell).toHaveAttribute('draggable', 'true')
+
+    const dataTransfer = new DataTransfer()
+    fireEvent.dragStart(boyCell, { dataTransfer })
+
+    expect(dataTransfer.getData(ASSET_DEFINITION_MIME)).toBe(BOY.id)
+    expect(dataTransfer.effectAllowed).toBe('copy')
+  })
+
+  it('exposes the same drag payload from the list view rows', async () => {
+    stubLibrary([BOY])
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByText('Boy')
+    await user.click(screen.getByRole('button', { name: 'List view' }))
+
+    const row = screen.getByRole('button', { name: 'Select Boy' })
+    const dataTransfer = new DataTransfer()
+    fireEvent.dragStart(row, { dataTransfer })
+
+    expect(dataTransfer.getData(ASSET_DEFINITION_MIME)).toBe(BOY.id)
+    expect(row).toHaveAttribute('draggable', 'true')
   })
 
   it('switches to the list view and back', async () => {

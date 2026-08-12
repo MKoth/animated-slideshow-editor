@@ -33,6 +33,13 @@ export class AssetManager {
     return definition
   }
 
+  register(id: string, name: string): AssetDefinition {
+    requireNonEmpty(name, 'Asset definition name')
+    const definition = new AssetDefinition(id, name)
+    this.#definitions.set(id, definition)
+    return definition
+  }
+
   createInstance(
     sceneId: string,
     parentId: string,

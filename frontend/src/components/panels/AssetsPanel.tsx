@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import type { AssetDefinition } from '../../api'
+import { ASSET_DEFINITION_MIME } from '../../pixi/renderer/dropPlacement'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { registerImportOpener } from '../assets/importTrigger'
 import { SORT_OPTIONS } from '../assets/sortOptions'
@@ -72,11 +73,19 @@ interface AssetCellProps {
 }
 
 function AssetCell({ definition, view, onSelect }: AssetCellProps) {
+  const handleDragStart = (event: React.DragEvent) => {
+    event.dataTransfer.effectAllowed = 'copy'
+    event.dataTransfer.setData(ASSET_DEFINITION_MIME, definition.id)
+    event.dataTransfer.setDragImage(event.currentTarget, 0, 0)
+  }
+
   return (
     <button
       className={view === 'grid' ? 'asset-cell' : 'asset-row'}
       aria-label={`Select ${definition.name}`}
+      draggable
       onClick={() => onSelect(definition.id)}
+      onDragStart={handleDragStart}
     >
       <img
         className={view === 'grid' ? 'asset-cell__thumb' : 'asset-row__thumb'}

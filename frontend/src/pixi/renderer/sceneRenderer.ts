@@ -35,6 +35,10 @@ export class SceneRenderer {
     return this.#scene?.id ?? null
   }
 
+  get boundScene(): Scene | null {
+    return this.#scene
+  }
+
   get boundCamera(): SceneNode | null {
     return this.#scene?.camera ?? null
   }

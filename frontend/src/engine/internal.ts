@@ -105,6 +105,10 @@ export class Engine {
     return this.#assets.defineAsset(name)
   }
 
+  registerAssetDefinition(definitionId: string, name: string): AssetDefinition {
+    return this.#assets.register(definitionId, name)
+  }
+
   getAssetDefinition(definitionId: string): AssetDefinition {
     return this.#assets.getDefinition(definitionId)
   }

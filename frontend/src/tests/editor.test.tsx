@@ -4,6 +4,8 @@ import { fireEvent, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import App from '../app/App'
+import type { AssetDefinition } from '../api'
+import { ASSET_DEFINITION_MIME } from '../pixi/renderer/dropPlacement'
 import { useNotificationStore } from '../stores/notificationStore'
 import {
   DEFAULT_INSPECTOR_WIDTH,
@@ -11,11 +13,41 @@ import {
   DEFAULT_TIMELINE_HEIGHT,
 } from '../stores/uiPrefs'
 import { useUiStore } from '../stores/uiStore'
+import {
+  FakeTexture,
+  pixiRegistry,
+  resetTextureRegistries,
+  textureLoads,
+} from './renderer/pixiFake'
+import { findByLabel, worldOf } from './renderer/testUtils'
 
 vi.mock('pixi.js', async () => {
   const { createPixiFake } = await import('./renderer/pixiFake')
   return createPixiFake()
 })
+
+const BOY: AssetDefinition = {
+  id: 'a1',
+  name: 'Boy',
+  description: '',
+  category: 'Character',
+  tags: [],
+  ai_description: '',
+  original_filename: 'boy.png',
+  import_date: '2026-08-12T10:00:00',
+  width: 100,
+  height: 80,
+  file_size: 1024,
+  aspect_ratio: 1.25,
+  default_scale: 1,
+  default_rotation: 0,
+  pivot: { x: 0.5, y: 0.5 },
+  anchors: [],
+  original_url: '/api/assets/originals/a1.png',
+  thumbnail_url: '/api/assets/thumbnails/a1.png',
+}
+
+const BOY_IMAGE = new FakeTexture('boy.png', { width: 100, height: 80 })
 
 function renderEditor() {
   return render(
@@ -51,6 +83,8 @@ beforeEach(() => {
     activeSidebarTab: 'assets',
   })
   useNotificationStore.setState({ notifications: [] })
+  pixiRegistry.reset()
+  resetTextureRegistries()
 })
 
 describe('editor shell', () => {
@@ -211,5 +245,107 @@ describe('editor shell', () => {
     expect(
       screen.getByText('The editor is intended for larger screens (minimum 1400px width).'),
     ).toBeInTheDocument()
+  })
+})
+
+describe('drag & drop placement', () => {
+  function stubLibraryWithBoy() {
+    vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
+      if (String(input).startsWith('/api/assets')) {
+        return Promise.resolve(new Response(JSON.stringify([BOY]), { status: 200 }))
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${String(input)}`))
+    })
+  }
+
+  async function mountSceneWithAsset(): Promise<{
+    container: HTMLElement
+    cell: HTMLElement
+    canvas: HTMLCanvasElement
+  }> {
+    stubLibraryWithBoy()
+    const { container } = renderEditor()
+    const cell = await screen.findByRole('button', { name: 'Select Boy' })
+    await waitFor(() => {
+      const canvas = container.querySelector('.canvas-host canvas') as HTMLCanvasElement | null
+      if (!canvas) {
+        throw new Error('Canvas not mounted')
+      }
+    })
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Create Project' }))
+    await user.click(screen.getByRole('button', { name: 'Add Slide' }))
+    const canvas = container.querySelector('.canvas-host canvas') as HTMLCanvasElement
+    return { container, cell, canvas }
+  }
+
+  function placeholderOf(container: {
+    children: { kind: string; children: { kind: string; texture?: unknown }[] }[]
+  }) {
+    return container.children[0]?.children.find((child) => child.kind === 'sprite')
+  }
+
+  async function flushAsync(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+
+  it('places a dragged asset at the drop point, under the slide, with its real texture', async () => {
+    textureLoads.set(BOY.original_url, BOY_IMAGE)
+    const { cell, canvas } = await mountSceneWithAsset()
+    const dataTransfer = new DataTransfer()
+    fireEvent.dragStart(cell, { dataTransfer })
+    expect(dataTransfer.getData(ASSET_DEFINITION_MIME)).toBe(BOY.id)
+
+    fireEvent.drop(canvas, { dataTransfer, clientX: 300, clientY: 200 })
+    await flushAsync()
+
+    const app = pixiRegistry.applications.at(-1)
+    if (!app) {
+      throw new Error('No pixi application created')
+    }
+    const root = findByLabel(worldOf(app), 'Root')
+    const boy = findByLabel(root ?? { children: [] }, 'Boy')
+    expect(boy).toBeDefined()
+    expect(boy?.position.x).toBe(300)
+    expect(boy?.position.y).toBe(200)
+    expect(placeholderOf(boy as never)?.texture).toBe(BOY_IMAGE)
+  })
+
+  it('auto-suffixes a second drop of the same asset and keeps the definition intact', async () => {
+    textureLoads.set(BOY.original_url, BOY_IMAGE)
+    const { container, cell, canvas } = await mountSceneWithAsset()
+    const dropOf = () => {
+      const dataTransfer = new DataTransfer()
+      dataTransfer.setData(ASSET_DEFINITION_MIME, BOY.id)
+      fireEvent.drop(canvas, { dataTransfer, clientX: 100, clientY: 100 })
+    }
+    dropOf()
+    dropOf()
+    await flushAsync()
+
+    const app = pixiRegistry.applications.at(-1)
+    if (!app) {
+      throw new Error('No pixi application created')
+    }
+    const root = findByLabel(worldOf(app), 'Root')
+    expect(findByLabel(root ?? { children: [] }, 'Boy')).toBeDefined()
+    expect(findByLabel(root ?? { children: [] }, 'Boy (2)')).toBeDefined()
+    expect(cell).toHaveTextContent('Boy')
+    const debugTree = container.querySelector('.debug-panel')
+    expect(within(debugTree as HTMLElement).getByText('Boy (2)')).toBeInTheDocument()
+  })
+
+  it('ignores a drop without asset data, leaving the scene empty', async () => {
+    const { canvas } = await mountSceneWithAsset()
+
+    fireEvent.drop(canvas, { dataTransfer: new DataTransfer(), clientX: 100, clientY: 100 })
+
+    const app = pixiRegistry.applications.at(-1)
+    if (!app) {
+      throw new Error('No pixi application created')
+    }
+    const root = findByLabel(worldOf(app), 'Root')
+    expect(findByLabel(root ?? { children: [] }, 'Boy')).toBeUndefined()
+    expect(findByLabel(root ?? { children: [] }, 'Boy (2)')).toBeUndefined()
   })
 })
