@@ -96,6 +96,7 @@ describe('editor shell', () => {
     expect(screen.getByRole('button', { name: 'New Project' })).toBeInTheDocument()
     expect(sidebar().getByRole('button', { name: 'Assets' })).toBeInTheDocument()
     expect(sidebar().getByRole('button', { name: 'Slides' })).toBeInTheDocument()
+    expect(sidebar().getByRole('button', { name: 'Scene' })).toBeInTheDocument()
     expect(
       await screen.findByText('No assets imported. Import images to build your library.'),
     ).toBeInTheDocument()
@@ -140,6 +141,17 @@ describe('editor shell', () => {
       await screen.findByText('No assets imported. Import images to build your library.'),
     ).toBeInTheDocument()
     expect(useUiStore.getState().activeSidebarTab).toBe('assets')
+  })
+
+  it('switches to the Scene sidebar tab showing the scene hierarchy', async () => {
+    stubLibraryResponse()
+    const user = userEvent.setup()
+    renderEditor()
+
+    await user.click(sidebar().getByRole('button', { name: 'Scene' }))
+
+    expect(sidebar().getByText('No project. Create one to get started.')).toBeInTheDocument()
+    expect(useUiStore.getState().activeSidebarTab).toBe('scene')
   })
 
   it('resizes the left sidebar by dragging its splitter and clamps to the minimum size', () => {
@@ -347,5 +359,32 @@ describe('drag & drop placement', () => {
     const root = findByLabel(worldOf(app), 'Root')
     expect(findByLabel(root ?? { children: [] }, 'Boy')).toBeUndefined()
     expect(findByLabel(root ?? { children: [] }, 'Boy (2)')).toBeUndefined()
+  })
+
+  it('syncs selection between the canvas and the Scene hierarchy', async () => {
+    textureLoads.set(BOY.original_url, BOY_IMAGE)
+    const { cell, canvas } = await mountSceneWithAsset()
+    const dataTransfer = new DataTransfer()
+    fireEvent.dragStart(cell, { dataTransfer })
+    fireEvent.drop(canvas, { dataTransfer, clientX: 300, clientY: 200 })
+    await flushAsync()
+    const user = userEvent.setup()
+    await user.click(sidebar().getByRole('button', { name: 'Scene' }))
+    const tree = within(sidebar().getByRole('tree', { name: 'Scene tree of Slide 1' }))
+    const boyRow = await tree.findByRole('treeitem', { name: 'Boy' })
+
+    fireEvent.mouseDown(canvas, { button: 0, buttons: 1, clientX: 300, clientY: 200 })
+    fireEvent.mouseUp(canvas, { clientX: 300, clientY: 200 })
+
+    await waitFor(() => expect(boyRow).toHaveAttribute('aria-selected', 'true'))
+
+    fireEvent.mouseDown(canvas, { button: 0, buttons: 1, clientX: 40, clientY: 40 })
+    fireEvent.mouseUp(canvas, { clientX: 40, clientY: 40 })
+
+    await waitFor(() => expect(boyRow).toHaveAttribute('aria-selected', 'false'))
+
+    await user.click(boyRow)
+
+    await waitFor(() => expect(boyRow).toHaveAttribute('aria-selected', 'true'))
   })
 })

@@ -420,6 +420,95 @@ button:disabled {
   text-align: center;
 }
 
+/* ------------------------------------------------------------------ */
+/* Scene hierarchy                                                     */
+/* ------------------------------------------------------------------ */
+
+.scene-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.scene-slide {
+  padding: 8px;
+}
+
+.scene-slide__title {
+  margin: 0 0 6px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+}
+
+.scene-tree,
+.scene-tree ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.scene-tree ul {
+  padding-left: 14px;
+}
+
+.scene-tree__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  padding: 3px 6px;
+  font: inherit;
+  color: var(--color-text);
+  text-align: left;
+}
+
+.scene-tree__row:hover {
+  background: var(--color-bg-elevated);
+}
+
+.scene-tree__row--selected,
+.scene-tree__row--selected:hover {
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+.scene-tree__icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
+.scene-tree__row--selected .scene-tree__icon {
+  color: var(--color-accent-text);
+}
+
+.scene-tree__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scene-tree__indicators {
+  display: inline-flex;
+  gap: 4px;
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
+.scene-tree__row--selected .scene-tree__indicators {
+  color: var(--color-accent-text);
+}
+
+.scene-tree__indicator {
+  display: inline-flex;
+}
+
 .canvas-panel {
   flex: 1;
   min-width: 0;

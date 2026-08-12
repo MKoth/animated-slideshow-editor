@@ -1,15 +1,25 @@
 import { useUiStore } from '../../stores/uiStore'
+import type { SidebarTab } from '../../stores/uiPrefs'
 import { AssetsPanel } from '../panels/AssetsPanel'
+import { ScenePanel } from '../panels/ScenePanel'
 import { SlidesPanel } from '../panels/SlidesPanel'
 
 const TABS = [
   { id: 'assets', label: 'Assets' },
   { id: 'slides', label: 'Slides' },
-] as const
+  { id: 'scene', label: 'Scene' },
+] as const satisfies readonly { id: SidebarTab; label: string }[]
+
+const PANELS: Record<SidebarTab, () => React.JSX.Element> = {
+  assets: AssetsPanel,
+  slides: SlidesPanel,
+  scene: ScenePanel,
+}
 
 export function LeftSidebar({ width }: { width: number }) {
   const activeTab = useUiStore((state) => state.activeSidebarTab)
   const setActiveTab = useUiStore((state) => state.setActiveSidebarTab)
+  const Panel = PANELS[activeTab]
 
   return (
     <aside className="left-sidebar" style={{ width }}>
@@ -25,7 +35,7 @@ export function LeftSidebar({ width }: { width: number }) {
         ))}
       </nav>
       <div className="sidebar-content">
-        {activeTab === 'assets' ? <AssetsPanel /> : <SlidesPanel />}
+        <Panel />
       </div>
     </aside>
   )
