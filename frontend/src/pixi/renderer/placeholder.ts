@@ -1,20 +1,30 @@
 import type { SceneNode } from '../../engine'
-import type { PixiContainer, PixiText, RendererPixi } from './pixi'
+import type {
+  PixiContainer,
+  PixiGraphics,
+  PixiSprite,
+  PixiText,
+  PixiTexture,
+  RendererPixi,
+} from './pixi'
 import type { TextureCache } from './textureCache'
 
 const PLACEHOLDER_WIDTH = 160
 const PLACEHOLDER_HEIGHT = 100
 const labelByGroup = new WeakMap<PixiContainer, PixiText>()
+const outlineByGroup = new WeakMap<PixiContainer, PixiGraphics>()
+const bodyByGroup = new WeakMap<PixiContainer, PixiSprite>()
 
 export function createPlaceholder(
   pixi: RendererPixi,
   node: SceneNode,
   cache: TextureCache,
+  textureKey: string,
 ): PixiContainer {
   const group = new pixi.Container()
   group.label = `placeholder:${node.name}`
 
-  const body = new pixi.Sprite(cache.get(node.id))
+  const body = new pixi.Sprite(cache.get(textureKey))
   body.anchor.set(0.5, 0.5)
   body.width = PLACEHOLDER_WIDTH
   body.height = PLACEHOLDER_HEIGHT
@@ -37,6 +47,8 @@ export function createPlaceholder(
   label.anchor.set(0.5, 0.5)
 
   labelByGroup.set(group, label)
+  outlineByGroup.set(group, outline)
+  bodyByGroup.set(group, body)
   group.addChild(body, outline, label)
   return group
 }
@@ -46,5 +58,23 @@ export function applyPlaceholderName(group: PixiContainer, name: string): void {
   const label = labelByGroup.get(group)
   if (label) {
     label.text = name
+  }
+}
+
+export function applyAssetTexture(group: PixiContainer, texture: PixiTexture): void {
+  const body = bodyByGroup.get(group)
+  if (!body) {
+    return
+  }
+  body.texture = texture
+  body.width = texture.width > 0 ? texture.width : PLACEHOLDER_WIDTH
+  body.height = texture.height > 0 ? texture.height : PLACEHOLDER_HEIGHT
+  const outline = outlineByGroup.get(group)
+  if (outline) {
+    outline.visible = false
+  }
+  const label = labelByGroup.get(group)
+  if (label) {
+    label.visible = false
   }
 }

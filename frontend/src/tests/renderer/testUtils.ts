@@ -13,6 +13,8 @@ export interface FakeChild {
   alpha: number
   destroyed: boolean
   kind: string
+  width: number
+  height: number
   text?: string
   ops?: string[]
   texture?: { destroyed: boolean }

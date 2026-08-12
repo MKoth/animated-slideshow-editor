@@ -3,13 +3,15 @@ import type { Scene } from '../../engine'
 import type { SceneNode } from '../../engine'
 import { walkPreOrder } from '../../engine/sceneNode'
 import type { PixiContainer, RendererPixi } from './pixi'
-import { applyName, applyTransform, createNodeContainer } from './nodeRenderer'
-import type { TextureCache } from './textureCache'
+import { applyName, applyTransform, createNodeContainer, placeholderOf } from './nodeRenderer'
+import { applyAssetTexture } from './placeholder'
+import type { ResolveAssetUrl, TextureCache } from './textureCache'
 
 export class SceneRenderer {
   readonly #engine: EngineReadOnly
   readonly #pixi: RendererPixi
   readonly #textureCache: TextureCache
+  readonly #resolveAssetUrl: ResolveAssetUrl
   readonly #world: PixiContainer
   readonly #containers = new Map<string, PixiContainer>()
   readonly #nodeIds = new WeakMap<PixiContainer, string>()
@@ -20,11 +22,13 @@ export class SceneRenderer {
     world: PixiContainer,
     pixi: RendererPixi,
     textureCache: TextureCache,
+    resolveAssetUrl: ResolveAssetUrl,
   ) {
     this.#engine = engine
     this.#world = world
     this.#pixi = pixi
     this.#textureCache = textureCache
+    this.#resolveAssetUrl = resolveAssetUrl
   }
 
   get boundSceneId(): string | null {
@@ -144,6 +148,28 @@ export class SceneRenderer {
     this.#containers.set(node.id, container)
     this.#nodeIds.set(container, node.id)
     this.#attachToParent(container, node)
+    const instance = node.components.assetInstance
+    if (instance) {
+      this.#loadAssetTexture(instance.assetDefinitionId, container)
+    }
+  }
+
+  #loadAssetTexture(definitionId: string, container: PixiContainer): void {
+    const url = this.#resolveAssetUrl(definitionId)
+    if (!url) {
+      return
+    }
+    const load = this.#textureCache.load(url, definitionId)
+    void load.then((result) => {
+      if (!result.real || container.destroyed) {
+        return
+      }
+      const placeholder = placeholderOf(container)
+      if (!placeholder) {
+        return
+      }
+      applyAssetTexture(placeholder, result.texture)
+    })
   }
 
   #attachToParent(container: PixiContainer, node: SceneNode): void {

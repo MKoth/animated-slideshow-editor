@@ -27,6 +27,8 @@ export class FakeContainer {
   visible = true
   alpha = 1
   anchor: FakePoint = makePoint()
+  width = 0
+  height = 0
 
   get childCount(): number {
     return this.children.length
@@ -134,6 +136,15 @@ export class FakeText extends FakeContainer {
 
 export class FakeTexture {
   destroyed = false
+  readonly url?: string
+  readonly width: number
+  readonly height: number
+
+  constructor(url?: string, options: { width?: number; height?: number } = {}) {
+    this.url = url
+    this.width = options.width ?? 1
+    this.height = options.height ?? 1
+  }
 
   destroy(): void {
     this.destroyed = true
@@ -142,7 +153,7 @@ export class FakeTexture {
 
 export class FakeSprite extends FakeContainer {
   readonly kind = 'sprite'
-  readonly texture: FakeTexture
+  texture: FakeTexture
 
   constructor(texture: FakeTexture) {
     super()
@@ -155,6 +166,69 @@ export const fakeTexture = {
   from(source?: unknown): FakeTexture {
     this.calls.push([source])
     return new FakeTexture()
+  },
+}
+
+export const textureLoads = new Map<string, FakeTexture>()
+export const textureFailures = new Map<string, Error>()
+
+export interface DeferredTexture {
+  promise: Promise<FakeTexture>
+  resolve: (texture: FakeTexture) => void
+  reject: (error: Error) => void
+}
+
+export const textureDeferreds = new Map<string, DeferredTexture>()
+export const assetLoadCalls: string[] = []
+export const assetUnloadCalls: string[] = []
+
+export function deferredTexture(): DeferredTexture {
+  let resolve: (texture: FakeTexture) => void = () => undefined
+  let reject: (error: Error) => void = () => undefined
+  const promise = new Promise<FakeTexture>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+export function resetTextureRegistries(): void {
+  textureLoads.clear()
+  textureFailures.clear()
+  textureDeferreds.clear()
+  assetLoadCalls.length = 0
+  assetUnloadCalls.length = 0
+  fakeAssets.cache.clear()
+}
+
+export const fakeAssets = {
+  cache: new Map<string, FakeTexture>(),
+  async load(url: string): Promise<FakeTexture> {
+    assetLoadCalls.push(url)
+    const cached = this.cache.get(url)
+    if (cached) {
+      return cached
+    }
+    const deferred = textureDeferreds.get(url)
+    if (deferred) {
+      return deferred.promise
+    }
+    const failure = textureFailures.get(url)
+    if (failure) {
+      throw failure
+    }
+    const texture = textureLoads.get(url) ?? new FakeTexture(url)
+    this.cache.set(url, texture)
+    return texture
+  },
+  async unload(url: string): Promise<void> {
+    assetUnloadCalls.push(url)
+    const texture = this.cache.get(url)
+    if (!texture) {
+      return
+    }
+    this.cache.delete(url)
+    texture.destroy()
   },
 }
 
@@ -227,5 +301,6 @@ export function createPixiFake() {
     Text: FakeText,
     Sprite: FakeSprite,
     Texture: fakeTexture,
+    Assets: fakeAssets,
   }
 }

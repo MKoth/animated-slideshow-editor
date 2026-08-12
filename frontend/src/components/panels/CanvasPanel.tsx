@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { useEngine } from '../../app/useEngine'
+import { realPixi } from '../../pixi/renderer/pixi'
 import { Renderer } from '../../pixi/renderer/renderer'
+import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 
 export function CanvasPanel() {
   const { engine, dispatch } = useEngine()
@@ -11,7 +13,13 @@ export function CanvasPanel() {
     if (!host) {
       return
     }
-    const renderer = new Renderer(host, engine, dispatch)
+    const resolveAssetUrl = (definitionId: string): string | null => {
+      const definition = useAssetLibraryStore
+        .getState()
+        .definitions.find((entry) => entry.id === definitionId)
+      return definition?.original_url ?? null
+    }
+    const renderer = new Renderer(host, engine, dispatch, realPixi, resolveAssetUrl)
     void renderer.start()
     return () => renderer.dispose()
   }, [engine, dispatch])

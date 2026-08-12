@@ -3,6 +3,12 @@ import type { PixiContainer, RendererPixi } from './pixi'
 import { applyPlaceholderName, createPlaceholder } from './placeholder'
 import type { TextureCache } from './textureCache'
 
+const placeholderByContainer = new WeakMap<PixiContainer, PixiContainer>()
+
+export function placeholderOf(container: PixiContainer): PixiContainer | undefined {
+  return placeholderByContainer.get(container)
+}
+
 export function createNodeContainer(
   pixi: RendererPixi,
   node: SceneNode,
@@ -14,7 +20,10 @@ export function createNodeContainer(
   container.visible = node.visible
   container.alpha = node.opacity
   if (node.components.assetInstance || node.components.text) {
-    container.addChild(createPlaceholder(pixi, node, cache))
+    const textureKey = node.components.assetInstance?.assetDefinitionId ?? node.id
+    const placeholder = createPlaceholder(pixi, node, cache, textureKey)
+    placeholderByContainer.set(container, placeholder)
+    container.addChild(placeholder)
   }
   return container
 }

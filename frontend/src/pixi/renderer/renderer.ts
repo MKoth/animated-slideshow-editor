@@ -11,6 +11,7 @@ import { DEFAULT_MAJOR_COLOR, DEFAULT_MINOR_COLOR, GridRenderer } from './gridRe
 import { realPixi } from './pixi'
 import type { PixiApplication, RendererPixi } from './pixi'
 import { SceneRenderer } from './sceneRenderer'
+import type { ResolveAssetUrl } from './textureCache'
 import { TextureCache } from './textureCache'
 
 const DEFAULT_CANVAS_BACKGROUND = 0xffffff
@@ -43,17 +44,20 @@ export class Renderer {
   #unsubscribe: Unsubscribe | null = null
   #started = false
   #disposed = false
+  readonly #resolveAssetUrl: ResolveAssetUrl
 
   constructor(
     host: HTMLElement,
     engine: EngineReadOnly,
     dispatch: DispatchCommand = noopDispatch,
     pixi: RendererPixi = realPixi,
+    resolveAssetUrl: ResolveAssetUrl = () => null,
   ) {
     this.#host = host
     this.#engine = engine
     this.#dispatch = dispatch
     this.#pixi = pixi
+    this.#resolveAssetUrl = resolveAssetUrl
   }
 
   async start(): Promise<void> {
@@ -85,7 +89,13 @@ export class Renderer {
       app.stage.addChild(world)
 
       this.#textureCache = new TextureCache(this.#pixi)
-      this.#sceneRenderer = new SceneRenderer(this.#engine, world, this.#pixi, this.#textureCache)
+      this.#sceneRenderer = new SceneRenderer(
+        this.#engine,
+        world,
+        this.#pixi,
+        this.#textureCache,
+        this.#resolveAssetUrl,
+      )
       this.#unsubscribe = this.#engine.subscribe((event) => this.#handleEvent(event))
       this.#syncScene(this.#sceneRenderer)
 
