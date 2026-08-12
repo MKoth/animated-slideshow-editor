@@ -93,6 +93,14 @@ export class Engine {
     this.#nodes.setVisibility(nodeId, visible)
   }
 
+  renameNode(nodeId: string, name: string): void {
+    this.#nodes.renameNode(nodeId, name)
+  }
+
+  setOpacity(nodeId: string, opacity: number): void {
+    this.#nodes.setOpacity(nodeId, opacity)
+  }
+
   defineAsset(name: string): AssetDefinition {
     return this.#assets.defineAsset(name)
   }

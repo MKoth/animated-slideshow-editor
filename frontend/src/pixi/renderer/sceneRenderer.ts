@@ -3,7 +3,7 @@ import type { Scene } from '../../engine'
 import type { SceneNode } from '../../engine'
 import { walkPreOrder } from '../../engine/sceneNode'
 import type { PixiContainer, RendererPixi } from './pixi'
-import { applyTransform, createNodeContainer } from './nodeRenderer'
+import { applyName, applyTransform, createNodeContainer } from './nodeRenderer'
 import type { TextureCache } from './textureCache'
 
 export class SceneRenderer {
@@ -104,6 +104,28 @@ export class SceneRenderer {
       return
     }
     container.visible = this.#engine.getNode(nodeId).visible
+  }
+
+  handleNodeRenamed(nodeId: string): void {
+    if (!this.#scene?.getNode(nodeId)) {
+      return
+    }
+    const container = this.#containers.get(nodeId)
+    if (!container) {
+      return
+    }
+    applyName(container, this.#engine.getNode(nodeId))
+  }
+
+  handleOpacityChanged(nodeId: string): void {
+    if (!this.#scene?.getNode(nodeId)) {
+      return
+    }
+    const container = this.#containers.get(nodeId)
+    if (!container) {
+      return
+    }
+    container.alpha = this.#engine.getNode(nodeId).opacity
   }
 
   handleNodeReparented(nodeId: string): void {

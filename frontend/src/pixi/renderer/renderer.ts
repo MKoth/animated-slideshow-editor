@@ -223,6 +223,12 @@ export class Renderer {
       case 'VisibilityChanged':
         sceneRenderer.handleVisibilityChanged(event.nodeId)
         break
+      case 'NodeRenamed':
+        sceneRenderer.handleNodeRenamed(event.nodeId)
+        break
+      case 'OpacityChanged':
+        sceneRenderer.handleOpacityChanged(event.nodeId)
+        break
     }
   }
 

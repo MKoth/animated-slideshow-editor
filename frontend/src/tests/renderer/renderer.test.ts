@@ -371,4 +371,80 @@ describe('Renderer', () => {
       expect(texture?.destroyed).toBe(true)
     }
   })
+
+  it('applies node opacity to the display object alpha', async () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'P' })
+    engine.createSlide('S1')
+    const slide = engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('Slide was not created')
+    }
+    const translucent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Faded', {
+      opacity: 0.5,
+      components: { assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-1' } },
+    })
+    const { app } = await mountRenderer(engine)
+    const root = findByLabel(worldOf(app), 'Root')
+    const faded = findByLabel(root ?? { children: [] }, 'Faded')
+
+    expect(faded?.alpha).toBe(0.5)
+
+    engine.setOpacity(translucent.id, 0.25)
+    expect(faded?.alpha).toBe(0.25)
+
+    engine.setOpacity(translucent.id, 1)
+    expect(faded?.alpha).toBe(1)
+  })
+
+  it('updates the container label and placeholder text when a node is renamed', async () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'P' })
+    engine.createSlide('S1')
+    const slide = engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('Slide was not created')
+    }
+    const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'Hero', {
+      components: { assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-1' } },
+    })
+    const { app } = await mountRenderer(engine)
+    const root = findByLabel(worldOf(app), 'Root')
+    const hero = findByLabel(root ?? { children: [] }, 'Hero')
+    if (!hero) {
+      throw new Error('Hero container not found')
+    }
+    const placeholder = hero.children[0]
+    const placeholderLabel = placeholder?.children.find((child) => child.kind === 'text')
+
+    engine.renameNode(node.id, 'Fox')
+
+    expect(hero.label).toBe('Fox')
+    expect(placeholder?.label).toBe('placeholder:Fox')
+    expect(placeholderLabel?.kind === 'text' ? placeholderLabel.text : undefined).toBe('Fox')
+    expect(findByLabel(root ?? { children: [] }, 'Hero')).toBeUndefined()
+  })
+
+  it('applies opacity and name changes to nodes in the bound scene only', async () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'P' })
+    engine.createSlide('S1')
+    engine.createSlide('S2')
+    const first = engine.project?.slides[0]
+    const second = engine.project?.slides[1]
+    if (!first || !second) {
+      throw new Error('Slides were not created')
+    }
+    const { app } = await mountRenderer(engine)
+    const world = worldOf(app)
+    const before = world.children.length
+    const foreign = engine.createNode(second.scene.id, second.scene.root.id, 'Foreign', {
+      opacity: 0.25,
+    })
+
+    expect(world.children).toHaveLength(before)
+    engine.setOpacity(foreign.id, 0.5)
+    engine.renameNode(foreign.id, 'Renamed')
+    expect(world.children).toHaveLength(before)
+  })
 })

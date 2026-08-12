@@ -1,17 +1,18 @@
 import type { NodeComponents, TextAlignment } from './components'
 import type { Transform } from './transform'
 import type { NodeJSON } from './json'
-import { requireString } from './guards'
+import { requireOpacity, requireString } from './guards'
 
 const TEXT_ALIGNMENTS: readonly TextAlignment[] = ['left', 'center', 'right']
 
 export class SceneNode {
   readonly id: string
-  readonly name: string
+  name: string
   parent: SceneNode | null
   readonly children: SceneNode[]
   transform: Transform
   visible: boolean
+  opacity: number
   readonly components: NodeComponents
 
   constructor(id: string, name: string, transform: Transform, components: NodeComponents = {}) {
@@ -22,6 +23,7 @@ export class SceneNode {
     this.parent = null
     this.children = []
     this.visible = true
+    this.opacity = 1
   }
 
   toJSON(): NodeJSON {
@@ -31,6 +33,7 @@ export class SceneNode {
       parentId: this.parent ? this.parent.id : null,
       transform: { ...this.transform },
       visible: this.visible,
+      opacity: this.opacity,
       components: { ...this.components },
     }
   }
@@ -41,6 +44,8 @@ export class SceneNode {
     const transform = requireTransform(json.transform, id)
     const node = new SceneNode(id, name, transform, componentsFromJSON(json.components, id))
     node.visible = typeof json.visible === 'boolean' ? json.visible : true
+    node.opacity =
+      typeof json.opacity === 'number' ? requireOpacity(json.opacity, `Node "${id}" opacity`) : 1
     return node
   }
 }

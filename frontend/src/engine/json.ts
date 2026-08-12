@@ -23,6 +23,7 @@ export type NodeJSON = {
   readonly parentId: string | null
   readonly transform: TransformJSON
   readonly visible: boolean
+  readonly opacity?: number
   readonly components: NodeComponentsJSON
 }
 

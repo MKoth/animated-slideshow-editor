@@ -33,6 +33,13 @@ export function requireBoolean(value: unknown, what: string): boolean {
   return value
 }
 
+export function requireOpacity(value: unknown, what: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error(`${what} must be a number between 0 and 1`)
+  }
+  return value
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

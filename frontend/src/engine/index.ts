@@ -49,6 +49,8 @@ export {
   RotateNodeCommand,
   ScaleNodeCommand,
   SetVisibilityCommand,
+  RenameNodeCommand,
+  SetOpacityCommand,
 } from './commands'
 export type {
   CreateProjectInverse,
@@ -71,4 +73,8 @@ export type {
   ScaleNodeParameters,
   SetVisibilityInverse,
   SetVisibilityParameters,
+  RenameNodeInverse,
+  RenameNodeParameters,
+  SetOpacityInverse,
+  SetOpacityParameters,
 } from './commands'

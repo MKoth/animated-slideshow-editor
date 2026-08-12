@@ -28,6 +28,21 @@ export interface NodeReparented {
   readonly nodeId: string
 }
 
+export interface NodeRenamed {
+  readonly type: 'NodeRenamed'
+  readonly nodeId: string
+}
+
+export interface OpacityChanged {
+  readonly type: 'OpacityChanged'
+  readonly nodeId: string
+}
+
+export interface NodeOrderChanged {
+  readonly type: 'NodeOrderChanged'
+  readonly nodeId: string
+}
+
 export interface TransformChanged {
   readonly type: 'TransformChanged'
   readonly nodeId: string
@@ -45,6 +60,9 @@ export type EngineEvent =
   | NodeCreated
   | NodeRemoved
   | NodeReparented
+  | NodeRenamed
+  | OpacityChanged
+  | NodeOrderChanged
   | TransformChanged
   | VisibilityChanged
 

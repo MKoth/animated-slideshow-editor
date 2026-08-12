@@ -25,6 +25,9 @@ const canonicalTypes = [
   'NodeReparented',
   'TransformChanged',
   'VisibilityChanged',
+  'NodeRenamed',
+  'OpacityChanged',
+  'NodeOrderChanged',
 ] as const
 
 describe('canonical events', () => {
@@ -117,6 +120,21 @@ describe('canonical events', () => {
       { type: 'NodeCreated', nodeId: a.id },
       { type: 'NodeCreated', nodeId: b.id },
       { type: 'NodeReparented', nodeId: a.id },
+    ])
+  })
+
+  it('emits NodeRenamed and OpacityChanged with the affected node id', () => {
+    const { engine, sceneId, rootId } = setup()
+    const events = collectEvents(engine)
+    const node = engine.createNode(sceneId, rootId, 'A')
+
+    engine.renameNode(node.id, 'B')
+    engine.setOpacity(node.id, 0.5)
+
+    expect(events).toEqual([
+      { type: 'NodeCreated', nodeId: node.id },
+      { type: 'NodeRenamed', nodeId: node.id },
+      { type: 'OpacityChanged', nodeId: node.id },
     ])
   })
 

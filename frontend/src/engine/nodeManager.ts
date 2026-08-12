@@ -11,12 +11,13 @@ import {
 import type { Transform } from './transform'
 import { identityTransform } from './transform'
 import type { NodeComponents } from './components'
-import { requireNonEmpty } from './guards'
+import { requireNonEmpty, requireOpacity } from './guards'
 
 export interface CreateNodeOptions {
   readonly id?: string
   readonly transform?: Transform
   readonly visible?: boolean
+  readonly opacity?: number
   readonly components?: NodeComponents
 }
 
@@ -79,6 +80,9 @@ export class NodeManager {
     if (options.components?.camera && scene.camera) {
       throw new Error('This scene already has a camera node')
     }
+    if (options.opacity !== undefined) {
+      requireOpacity(options.opacity, 'Opacity')
+    }
     const node = new SceneNodeModel(
       options.id ?? newId('node'),
       name,
@@ -93,6 +97,7 @@ export class NodeManager {
     parent.children.push(node)
     node.parent = parent
     node.visible = options.visible ?? true
+    node.opacity = options.opacity ?? 1
     this.#bus.emit({ type: 'NodeCreated', nodeId: node.id })
     return node
   }
@@ -160,6 +165,20 @@ export class NodeManager {
     const node = this.getById(nodeId)
     node.visible = visible
     this.#bus.emit({ type: 'VisibilityChanged', nodeId })
+  }
+
+  renameNode(nodeId: string, name: string): void {
+    const node = this.getById(nodeId)
+    requireNonEmpty(name, 'Node name')
+    node.name = name
+    this.#bus.emit({ type: 'NodeRenamed', nodeId })
+  }
+
+  setOpacity(nodeId: string, opacity: number): void {
+    const node = this.getById(nodeId)
+    requireOpacity(opacity, 'Opacity')
+    node.opacity = opacity
+    this.#bus.emit({ type: 'OpacityChanged', nodeId })
   }
 
   removeScene(sceneId: string): void {

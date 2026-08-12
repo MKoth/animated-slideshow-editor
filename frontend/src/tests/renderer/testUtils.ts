@@ -10,6 +10,7 @@ export interface FakeChild {
   scale: { x: number; y: number }
   rotation: number
   visible: boolean
+  alpha: number
   destroyed: boolean
   kind: string
   text?: string

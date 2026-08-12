@@ -2,6 +2,7 @@ import type { Engine } from '../internal'
 import type { Command } from './command'
 import type { NodeComponents } from '../components'
 import type { Transform } from '../transform'
+import { requireOpacity } from '../guards'
 
 export interface CreateNodeParameters {
   readonly sceneId: string
@@ -10,6 +11,7 @@ export interface CreateNodeParameters {
   readonly id?: string
   readonly transform?: Transform
   readonly visible?: boolean
+  readonly opacity?: number
   readonly components?: NodeComponents
 }
 
@@ -26,6 +28,7 @@ export class CreateNodeCommand implements Command<CreateNodeInverse> {
   readonly #id: string | undefined
   readonly #transform: Transform | undefined
   readonly #visible: boolean | undefined
+  readonly #opacity: number | undefined
   readonly #components: NodeComponents | undefined
 
   constructor(input: CreateNodeParameters) {
@@ -35,6 +38,7 @@ export class CreateNodeCommand implements Command<CreateNodeInverse> {
     this.#id = input.id
     this.#transform = input.transform ? { ...input.transform } : undefined
     this.#visible = input.visible
+    this.#opacity = input.opacity
     this.#components = input.components ? copyComponents(input.components) : undefined
     this.parameters = {
       sceneId: input.sceneId,
@@ -43,6 +47,7 @@ export class CreateNodeCommand implements Command<CreateNodeInverse> {
       ...(input.id !== undefined && { id: input.id }),
       ...(this.#transform !== undefined && { transform: this.#transform }),
       ...(this.#visible !== undefined && { visible: this.#visible }),
+      ...(this.#opacity !== undefined && { opacity: this.#opacity }),
       ...(this.#components !== undefined && { components: this.#components }),
     }
   }
@@ -50,6 +55,9 @@ export class CreateNodeCommand implements Command<CreateNodeInverse> {
   validate(engine: Engine): void {
     if (this.#name.trim() === '') {
       throw new Error('Node name must not be empty')
+    }
+    if (this.#opacity !== undefined) {
+      requireOpacity(this.#opacity, 'Opacity')
     }
     if (this.#id !== undefined && nodeExists(engine, this.#id)) {
       throw new Error(`A node with id "${this.#id}" already exists`)
@@ -68,6 +76,7 @@ export class CreateNodeCommand implements Command<CreateNodeInverse> {
       ...(this.#id !== undefined && { id: this.#id }),
       ...(this.#transform !== undefined && { transform: this.#transform }),
       ...(this.#visible !== undefined && { visible: this.#visible }),
+      ...(this.#opacity !== undefined && { opacity: this.#opacity }),
       ...(this.#components !== undefined && { components: this.#components }),
     })
     return { nodeId: node.id }

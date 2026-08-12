@@ -1,9 +1,10 @@
 import type { SceneNode } from '../../engine'
-import type { PixiContainer, RendererPixi } from './pixi'
+import type { PixiContainer, PixiText, RendererPixi } from './pixi'
 import type { TextureCache } from './textureCache'
 
 const PLACEHOLDER_WIDTH = 160
 const PLACEHOLDER_HEIGHT = 100
+const labelByGroup = new WeakMap<PixiContainer, PixiText>()
 
 export function createPlaceholder(
   pixi: RendererPixi,
@@ -35,6 +36,15 @@ export function createPlaceholder(
   })
   label.anchor.set(0.5, 0.5)
 
+  labelByGroup.set(group, label)
   group.addChild(body, outline, label)
   return group
+}
+
+export function applyPlaceholderName(group: PixiContainer, name: string): void {
+  group.label = `placeholder:${name}`
+  const label = labelByGroup.get(group)
+  if (label) {
+    label.text = name
+  }
 }

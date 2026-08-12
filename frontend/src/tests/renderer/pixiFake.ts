@@ -122,7 +122,7 @@ export class FakeGraphics extends FakeContainer {
 
 export class FakeText extends FakeContainer {
   readonly kind = 'text'
-  readonly text: string
+  text: string
   readonly style: unknown
 
   constructor(options: { text: string; style?: unknown }) {
