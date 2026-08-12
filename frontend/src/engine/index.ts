@@ -51,6 +51,7 @@ export {
   SetVisibilityCommand,
   RenameNodeCommand,
   SetOpacityCommand,
+  CreateAssetInstanceCommand,
 } from './commands'
 export type {
   CreateProjectInverse,
@@ -77,4 +78,6 @@ export type {
   RenameNodeParameters,
   SetOpacityInverse,
   SetOpacityParameters,
+  CreateAssetInstanceInverse,
+  CreateAssetInstanceParameters,
 } from './commands'

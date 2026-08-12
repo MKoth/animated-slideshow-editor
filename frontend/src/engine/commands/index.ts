@@ -28,3 +28,8 @@ export { RenameNodeCommand } from './renameNodeCommand'
 export type { RenameNodeInverse, RenameNodeParameters } from './renameNodeCommand'
 export { SetOpacityCommand } from './setOpacityCommand'
 export type { SetOpacityInverse, SetOpacityParameters } from './setOpacityCommand'
+export { CreateAssetInstanceCommand } from './createAssetInstanceCommand'
+export type {
+  CreateAssetInstanceInverse,
+  CreateAssetInstanceParameters,
+} from './createAssetInstanceCommand'
