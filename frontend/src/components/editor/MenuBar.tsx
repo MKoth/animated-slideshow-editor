@@ -11,7 +11,7 @@ import {
   Z_ORDER_BY_LABEL,
   Z_ORDER_ITEMS,
 } from '../../app/zOrderActions'
-import { useEngine } from '../../app/useEngine'
+import { useEngine, useEngineEvent } from '../../app/useEngine'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { useClipboardStore } from '../../stores/clipboardStore'
 import { useNotificationStore } from '../../stores/notificationStore'
@@ -138,6 +138,8 @@ function Menu({
 
 export function MenuBar() {
   const { engine, dispatch } = useEngine()
+  const [, setTick] = useState(0)
+  useEngineEvent(() => setTick((tick) => tick + 1))
   const libraryUnavailable = useAssetLibraryStore((state) => state.unavailable)
   const gridSnap = useUiStore((state) => state.gridSnap)
   const selectedIds = useSelectionStore((state) => state.selectedIds)

@@ -100,4 +100,24 @@ describe('MenuBar z-order items', () => {
       slide.scene.root.children.filter((node) => !node.components.camera).map((node) => node.name),
     ).toEqual(['C', 'B', 'A'])
   })
+
+  it('re-evaluates the possible operations after a reorder without reselection', async () => {
+    const { engine } = renderMenuBar()
+    const slide = createProjectAndSlide(engine)
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'A')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'B')
+    const c = engine.createNode(slide.scene.id, slide.scene.root.id, 'C')
+    useSelectionStore.getState().select(c.id)
+    const user = userEvent.setup()
+
+    await openEditMenu()
+    expect(screen.getByRole('menuitem', { name: 'Bring Forward' })).toBeDisabled()
+    expect(screen.getByRole('menuitem', { name: 'Bring To Front' })).toBeDisabled()
+    expect(screen.getByRole('menuitem', { name: 'Send Backward' })).toBeEnabled()
+    await user.click(screen.getByRole('menuitem', { name: 'Send Backward' }))
+
+    await openEditMenu()
+    expect(screen.getByRole('menuitem', { name: 'Bring Forward' })).toBeEnabled()
+    expect(screen.getByRole('menuitem', { name: 'Bring To Front' })).toBeEnabled()
+  })
 })
