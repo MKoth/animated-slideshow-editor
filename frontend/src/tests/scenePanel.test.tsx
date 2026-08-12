@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { EngineContext } from '../app/engineContext'
@@ -152,6 +152,23 @@ describe('ScenePanel', () => {
     await user.click(await screen.findByRole('treeitem', { name: 'Boy' }))
 
     expect(useSelectionStore.getState().selectedIds).toEqual([boy.id])
+  })
+
+  it('extends the selection with shift-click and toggles with ctrl-click like the canvas', async () => {
+    const user = userEvent.setup()
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    const boy = engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy')
+    const cat = engine.createNode(slide.scene.id, slide.scene.root.id, 'Cat')
+
+    await user.click(await screen.findByRole('treeitem', { name: 'Boy' }))
+    fireEvent.click(screen.getByRole('treeitem', { name: 'Cat' }), { shiftKey: true })
+
+    expect(useSelectionStore.getState().selectedIds).toEqual([boy.id, cat.id])
+
+    fireEvent.click(screen.getByRole('treeitem', { name: 'Boy' }), { ctrlKey: true })
+
+    expect(useSelectionStore.getState().selectedIds).toEqual([cat.id])
   })
 
   it('highlights rows in sync with the selection store', async () => {

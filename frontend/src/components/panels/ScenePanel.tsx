@@ -90,7 +90,15 @@ function SceneTreeRow({ node }: SceneTreeRowProps) {
         role="treeitem"
         aria-selected={selected}
         className={`scene-tree__row${selected ? ' scene-tree__row--selected' : ''}`}
-        onClick={() => useSelectionStore.getState().select(node.id)}
+        onClick={(event) => {
+          if (event.ctrlKey || event.metaKey) {
+            useSelectionStore.getState().toggle(node.id)
+          } else if (event.shiftKey) {
+            useSelectionStore.getState().extend(node.id)
+          } else {
+            useSelectionStore.getState().select(node.id)
+          }
+        }}
       >
         <span className="scene-tree__icon" data-icon={iconOf(node)}>
           <NodeIcon node={node} />
