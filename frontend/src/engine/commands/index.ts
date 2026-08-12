@@ -41,3 +41,5 @@ export type {
 } from './createAssetInstanceCommand'
 export { DuplicateNodeCommand, DUPLICATE_OFFSET } from './duplicateNodeCommand'
 export type { DuplicateNodeInverse, DuplicateNodeParameters } from './duplicateNodeCommand'
+export { ChangeZOrderCommand, Z_ORDER_MODES, zOrderTargetsReversed } from './changeZOrderCommand'
+export type { ChangeZOrderInverse, ChangeZOrderParameters, ZOrderMode } from './changeZOrderCommand'

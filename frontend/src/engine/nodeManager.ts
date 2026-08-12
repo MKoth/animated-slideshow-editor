@@ -181,6 +181,34 @@ export class NodeManager {
     this.#bus.emit({ type: 'OpacityChanged', nodeId })
   }
 
+  reorderNode(nodeId: string, index: number): void {
+    const entry = this.#byId.get(nodeId)
+    if (!entry) {
+      throw new Error(`Node not found: ${nodeId}`)
+    }
+    const { scene, node } = entry
+    if (node === scene.root) {
+      throw new Error('The root node cannot be reordered')
+    }
+    if (node.components.camera) {
+      throw new Error('The camera node cannot be reordered')
+    }
+    const parent = node.parent
+    if (!parent) {
+      throw new Error('A node without a parent cannot be reordered')
+    }
+    if (!Number.isInteger(index) || index < 0 || index >= parent.children.length) {
+      throw new Error(`Reorder index out of bounds: ${index}`)
+    }
+    const current = parent.children.indexOf(node)
+    if (current === index) {
+      throw new Error(`Node ${node.name} is already at index ${index}`)
+    }
+    parent.children.splice(current, 1)
+    parent.children.splice(index, 0, node)
+    this.#bus.emit({ type: 'NodeOrderChanged', nodeId })
+  }
+
   removeScene(sceneId: string): void {
     for (const [nodeId, entry] of this.#byId) {
       if (entry.scene.id === sceneId) {

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  ChangeZOrderCommand,
   CreateNodeCommand,
   CreateProjectCommand,
   CreateSlideCommand,
@@ -182,5 +183,44 @@ describe('engine to renderer integration', () => {
     const rehomed = findByLabel(group, 'Leaf')
     expect(rehomed).toBeDefined()
     expect(findByLabel(rehomed ?? { children: [] }, 'Child')).toBeDefined()
+  })
+
+  it('reorders the display objects of siblings immediately after a ChangeZOrder command', async () => {
+    const { system, app } = await setup()
+    const slide = system.engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('Slide was not created')
+    }
+    const ids: string[] = []
+    for (const name of ['A', 'B', 'C']) {
+      const result = system.dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name,
+        }),
+      )
+      if (!result.ok || !result.inverse) {
+        throw new Error('Node was not created')
+      }
+      ids.push(result.inverse.nodeId)
+    }
+    const root = findByLabel(worldOf(app), 'Root')
+    if (!root) {
+      throw new Error('Root container not found')
+    }
+    expect(root.children.map((child) => child.label)).toEqual(['Camera', 'A', 'B', 'C'])
+
+    const forward = system.dispatcher.dispatch(
+      new ChangeZOrderCommand({ nodeId: ids[0], mode: 'bringForward' }),
+    )
+    expect(forward.ok).toBe(true)
+    expect(root.children.map((child) => child.label)).toEqual(['Camera', 'B', 'A', 'C'])
+
+    const front = system.dispatcher.dispatch(
+      new ChangeZOrderCommand({ nodeId: ids[0], mode: 'bringToFront' }),
+    )
+    expect(front.ok).toBe(true)
+    expect(root.children.map((child) => child.label)).toEqual(['Camera', 'B', 'C', 'A'])
   })
 })

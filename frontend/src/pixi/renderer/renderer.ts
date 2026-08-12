@@ -309,6 +309,9 @@ export class Renderer {
       case 'NodeReparented':
         sceneRenderer.handleNodeReparented(event.nodeId)
         break
+      case 'NodeOrderChanged':
+        sceneRenderer.handleNodeOrderChanged(event.nodeId)
+        break
       case 'TransformChanged':
         sceneRenderer.handleTransformChanged(event.nodeId)
         break

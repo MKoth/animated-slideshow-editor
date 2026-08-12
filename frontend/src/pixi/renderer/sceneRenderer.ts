@@ -166,6 +166,36 @@ export class SceneRenderer {
     this.#attachToParent(container, this.#engine.getNode(nodeId))
   }
 
+  handleNodeOrderChanged(nodeId: string): void {
+    if (!this.#scene?.getNode(nodeId)) {
+      return
+    }
+    const container = this.#containers.get(nodeId)
+    if (!container) {
+      return
+    }
+    const node = this.#engine.getNode(nodeId)
+    const parent = node.parent
+    const parentContainer = parent ? this.#containers.get(parent.id) : null
+    if (!parent || !parentContainer) {
+      return
+    }
+    const ordered: PixiContainer[] = []
+    for (const sibling of parent.children) {
+      const siblingContainer = this.#containers.get(sibling.id)
+      if (siblingContainer) {
+        ordered.push(siblingContainer)
+      }
+    }
+    const start = parentContainer.children.indexOf(ordered[0])
+    for (const siblingContainer of ordered) {
+      parentContainer.removeChild(siblingContainer)
+    }
+    ordered.forEach((siblingContainer, offset) => {
+      parentContainer.addChildAt(siblingContainer, Math.max(0, start) + offset)
+    })
+  }
+
   #addNode(node: SceneNode): void {
     const container = createNodeContainer(this.#pixi, node, this.#textureCache)
     this.#containers.set(node.id, container)

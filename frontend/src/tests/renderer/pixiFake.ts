@@ -43,6 +43,13 @@ export class FakeContainer {
     return children.length === 1 ? children[0] : children
   }
 
+  addChildAt(child: FakeContainer, index: number): FakeContainer {
+    child.parent?.removeChild(child)
+    child.parent = this
+    this.children.splice(index, 0, child)
+    return child
+  }
+
   removeChild(child: FakeContainer): void {
     this.children = this.children.filter((entry) => entry !== child)
     child.parent = null

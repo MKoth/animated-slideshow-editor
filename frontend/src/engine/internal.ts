@@ -101,6 +101,10 @@ export class Engine {
     this.#nodes.setOpacity(nodeId, opacity)
   }
 
+  reorderNode(nodeId: string, index: number): void {
+    this.#nodes.reorderNode(nodeId, index)
+  }
+
   defineAsset(name: string): AssetDefinition {
     return this.#assets.defineAsset(name)
   }

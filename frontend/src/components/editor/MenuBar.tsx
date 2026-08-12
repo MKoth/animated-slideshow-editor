@@ -5,6 +5,12 @@ import {
   duplicateSelection,
   pasteClipboard,
 } from '../../app/clipboardActions'
+import {
+  applyZOrder,
+  canApplyZOrder,
+  Z_ORDER_BY_LABEL,
+  Z_ORDER_ITEMS,
+} from '../../app/zOrderActions'
 import { useEngine } from '../../app/useEngine'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { useClipboardStore } from '../../stores/clipboardStore'
@@ -27,7 +33,16 @@ const MENUS = [
   },
   {
     label: 'Edit',
-    items: ['Undo', 'Redo', COPY_ITEM, PASTE_ITEM, DUPLICATE_ITEM, DELETE_ITEM, SNAP_TO_GRID_ITEM],
+    items: [
+      'Undo',
+      'Redo',
+      COPY_ITEM,
+      PASTE_ITEM,
+      DUPLICATE_ITEM,
+      DELETE_ITEM,
+      ...Z_ORDER_ITEMS.map((item) => item.label),
+      SNAP_TO_GRID_ITEM,
+    ],
   },
   {
     label: 'View',
@@ -125,17 +140,22 @@ export function MenuBar() {
   const { engine, dispatch } = useEngine()
   const libraryUnavailable = useAssetLibraryStore((state) => state.unavailable)
   const gridSnap = useUiStore((state) => state.gridSnap)
-  const selectionCount = useSelectionStore((state) => state.selectedIds.length)
+  const selectedIds = useSelectionStore((state) => state.selectedIds)
   const clipboardCount = useClipboardStore((state) => state.items.length)
   const checkedItems = new Set(gridSnap ? [SNAP_TO_GRID_ITEM] : [])
   const disabledItems = new Set<string>()
-  if (selectionCount === 0) {
+  if (selectedIds.length === 0) {
     disabledItems.add(COPY_ITEM)
     disabledItems.add(DUPLICATE_ITEM)
     disabledItems.add(DELETE_ITEM)
   }
   if (clipboardCount === 0) {
     disabledItems.add(PASTE_ITEM)
+  }
+  for (const item of Z_ORDER_ITEMS) {
+    if (!canApplyZOrder(engine, item.mode)) {
+      disabledItems.add(item.label)
+    }
   }
 
   const handleItemClick = (item: string): boolean => {
@@ -148,7 +168,12 @@ export function MenuBar() {
     } else if (item === DELETE_ITEM) {
       deleteSelection(engine, dispatch)
     } else {
-      return false
+      const mode = Z_ORDER_BY_LABEL.get(item)
+      if (mode) {
+        applyZOrder(engine, dispatch, mode)
+      } else {
+        return false
+      }
     }
     return true
   }

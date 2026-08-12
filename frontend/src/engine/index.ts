@@ -53,6 +53,7 @@ export {
   SetOpacityCommand,
   CreateAssetInstanceCommand,
   DuplicateNodeCommand,
+  ChangeZOrderCommand,
 } from './commands'
 export type {
   CreateProjectInverse,
@@ -83,4 +84,7 @@ export type {
   CreateAssetInstanceParameters,
   DuplicateNodeInverse,
   DuplicateNodeParameters,
+  ChangeZOrderInverse,
+  ChangeZOrderParameters,
+  ZOrderMode,
 } from './commands'

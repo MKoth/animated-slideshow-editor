@@ -207,4 +207,73 @@ describe('ScenePanel', () => {
       (await waitForTree('Slide 1')).queryByRole('treeitem', { name: 'Boy' }),
     ).not.toBeInTheDocument()
   })
+
+  it('opens a z-order context menu on right-click, selecting the row', async () => {
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    const boy = engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy')
+    const cat = engine.createNode(slide.scene.id, slide.scene.root.id, 'Cat')
+    useSelectionStore.getState().select(cat.id)
+
+    fireEvent.contextMenu(await screen.findByRole('treeitem', { name: 'Boy' }), {
+      clientX: 120,
+      clientY: 80,
+    })
+
+    const menu = screen.getByRole('menu', { name: 'Z-order' })
+    expect(menu).toBeInTheDocument()
+    expect(menu.style.left).toBe('120px')
+    expect(menu.style.top).toBe('80px')
+    expect(within(menu).getByRole('menuitem', { name: 'Bring Forward' })).toBeInTheDocument()
+    expect(within(menu).getByRole('menuitem', { name: 'Send Backward' })).toBeInTheDocument()
+    expect(within(menu).getByRole('menuitem', { name: 'Bring To Front' })).toBeInTheDocument()
+    expect(within(menu).getByRole('menuitem', { name: 'Send To Back' })).toBeInTheDocument()
+    expect(useSelectionStore.getState().selectedIds).toEqual([boy.id])
+  })
+
+  it('reorders siblings from the context menu and updates the tree order', async () => {
+    const user = userEvent.setup()
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Cat')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Dog')
+
+    fireEvent.contextMenu(await screen.findByRole('treeitem', { name: 'Boy' }), {
+      clientX: 100,
+      clientY: 100,
+    })
+    await user.click(screen.getByRole('menuitem', { name: 'Bring To Front' }))
+
+    expect(
+      slide.scene.root.children.filter((node) => !node.components.camera).map((node) => node.name),
+    ).toEqual(['Cat', 'Dog', 'Boy'])
+    const tree = await waitForTree('Slide 1')
+    expect(
+      tree.getAllByRole('treeitem').map((row) => row.textContent?.replace(/\s+/g, ' ').trim()),
+    ).toEqual(['Root', 'Cat', 'Dog', 'Boy'])
+    expect(screen.queryByRole('menu', { name: 'Z-order' })).not.toBeInTheDocument()
+  })
+
+  it('keeps a multi-selection when right-clicking an already selected row and reorders all of it', async () => {
+    const user = userEvent.setup()
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    const boy = engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy')
+    const cat = engine.createNode(slide.scene.id, slide.scene.root.id, 'Cat')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Dog')
+    useSelectionStore.getState().selectMany([boy.id, cat.id])
+
+    fireEvent.contextMenu(await screen.findByRole('treeitem', { name: 'Cat' }), {
+      clientX: 100,
+      clientY: 100,
+    })
+    expect(useSelectionStore.getState().selectedIds).toEqual([boy.id, cat.id])
+    expect(screen.getByRole('menuitem', { name: 'Send To Back' })).toBeEnabled()
+    await user.click(screen.getByRole('menuitem', { name: 'Send To Back' }))
+
+    expect(
+      slide.scene.root.children.filter((node) => !node.components.camera).map((node) => node.name),
+    ).toEqual(['Boy', 'Cat', 'Dog'])
+  })
 })

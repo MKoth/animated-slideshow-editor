@@ -1,7 +1,14 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
+import { applyZOrder, canApplyZOrder, Z_ORDER_ITEMS } from '../../app/zOrderActions'
 import type { SceneNode } from '../../engine'
+import type { ZOrderMode } from '../../engine/commands'
 import { useSelectionStore } from '../../stores/selectionStore'
+
+interface ContextMenuState {
+  x: number
+  y: number
+}
 
 type IconKind = 'folder' | 'image' | 'text'
 
@@ -79,9 +86,10 @@ function visibleChildren(node: SceneNode): SceneNode[] {
 
 interface SceneTreeRowProps {
   node: SceneNode
+  onContextMenu: (event: React.MouseEvent, node: SceneNode) => void
 }
 
-function SceneTreeRow({ node }: SceneTreeRowProps) {
+function SceneTreeRow({ node, onContextMenu }: SceneTreeRowProps) {
   const selected = useSelectionStore((state) => state.selectedIds.includes(node.id))
   const children = visibleChildren(node)
   return (
@@ -99,6 +107,7 @@ function SceneTreeRow({ node }: SceneTreeRowProps) {
             useSelectionStore.getState().select(node.id)
           }
         }}
+        onContextMenu={(event) => onContextMenu(event, node)}
       >
         <span className="scene-tree__icon" data-icon={iconOf(node)}>
           <NodeIcon node={node} />
@@ -116,7 +125,7 @@ function SceneTreeRow({ node }: SceneTreeRowProps) {
       {children.length > 0 && (
         <ul role="group">
           {children.map((child) => (
-            <SceneTreeRow key={child.id} node={child} />
+            <SceneTreeRow key={child.id} node={child} onContextMenu={onContextMenu} />
           ))}
         </ul>
       )}
@@ -125,9 +134,42 @@ function SceneTreeRow({ node }: SceneTreeRowProps) {
 }
 
 export function ScenePanel() {
-  const { engine } = useEngine()
+  const { engine, dispatch } = useEngine()
   const [, setTick] = useState(0)
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   useEngineEvent(() => setTick((tick) => tick + 1))
+
+  useEffect(() => {
+    if (!contextMenu) {
+      return
+    }
+    const close = () => setContextMenu(null)
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        close()
+      }
+    }
+    document.addEventListener('click', close)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('click', close)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [contextMenu])
+
+  const handleRowContextMenu = (event: React.MouseEvent, node: SceneNode) => {
+    event.preventDefault()
+    const { selectedIds } = useSelectionStore.getState()
+    if (!selectedIds.includes(node.id)) {
+      useSelectionStore.getState().select(node.id)
+    }
+    setContextMenu({ x: event.clientX, y: event.clientY })
+  }
+
+  const handleContextMenuAction = (mode: ZOrderMode) => {
+    applyZOrder(engine, dispatch, mode)
+    setContextMenu(null)
+  }
 
   const project = engine.project
 
@@ -153,10 +195,30 @@ export function ScenePanel() {
         <section className="scene-slide" key={slide.id}>
           <h3 className="scene-slide__title">{slide.name}</h3>
           <ul className="scene-tree" role="tree" aria-label={`Scene tree of ${slide.name}`}>
-            <SceneTreeRow node={slide.scene.root} />
+            <SceneTreeRow node={slide.scene.root} onContextMenu={handleRowContextMenu} />
           </ul>
         </section>
       ))}
+      {contextMenu && (
+        <div
+          className="context-menu"
+          role="menu"
+          aria-label="Z-order"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          {Z_ORDER_ITEMS.map((item) => (
+            <button
+              key={item.label}
+              className="menu__item"
+              role="menuitem"
+              disabled={!canApplyZOrder(engine, item.mode)}
+              onClick={() => handleContextMenuAction(item.mode)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
