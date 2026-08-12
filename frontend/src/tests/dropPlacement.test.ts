@@ -10,6 +10,7 @@ import {
 import { createEngine } from '../engine/internal'
 import { ASSET_DEFINITION_MIME } from '../pixi/renderer/dropPlacement'
 import { Renderer } from '../pixi/renderer/renderer'
+import { useUiStore } from '../stores/uiStore'
 import { pixiRegistry } from './renderer/pixiFake'
 
 vi.mock('pixi.js', async () => {
@@ -118,6 +119,22 @@ describe('drop placement', () => {
     const children = sceneChildren(engine)
     expect(children).toHaveLength(1)
     expect(children[0].transform).toEqual({ x: 270, y: 140, rotation: 0, scaleX: 1, scaleY: 1 })
+  })
+
+  it('snaps the placement to the grid when grid snap is enabled and the pref persists', async () => {
+    useUiStore.getState().setGridSnap(true)
+    try {
+      const { engine, canvas } = await mount()
+      const definition = engine.defineAsset('Boy')
+
+      dropAt(canvas, assetDrag(definition.id), 38, 40)
+
+      const children = sceneChildren(engine)
+      expect(children).toHaveLength(1)
+      expect(children[0].transform).toEqual({ x: 50, y: 50, rotation: 0, scaleX: 1, scaleY: 1 })
+    } finally {
+      useUiStore.getState().setGridSnap(false)
+    }
   })
 
   it('places the instance under the slide root and leaves the definition untouched', async () => {

@@ -114,6 +114,14 @@ export class SceneRenderer {
     applyTransform(container, this.#engine.getNode(nodeId))
   }
 
+  previewTransform(nodeId: string, x: number, y: number): void {
+    const container = this.#containers.get(nodeId)
+    if (!container) {
+      return
+    }
+    container.position.set(x, y)
+  }
+
   handleVisibilityChanged(nodeId: string): void {
     if (!this.#scene?.getNode(nodeId)) {
       return

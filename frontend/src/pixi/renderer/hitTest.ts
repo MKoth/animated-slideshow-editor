@@ -48,21 +48,29 @@ export function worldAabbOf(scene: Scene, nodeId: string, sizes: NodeSizeSource)
     return null
   }
   const transform = worldTransformOf(scene, nodeId)
+  return aabbOf(size, transform)
+}
+
+export function aabbOf(size: WorldSize, transform: WorldTransform | null): WorldRect | null {
   if (!transform || transform.scaleX <= 0 || transform.scaleY <= 0) {
     return null
   }
   const halfWidth = (size.width * transform.scaleX) / 2
   const halfHeight = (size.height * transform.scaleY) / 2
-  const points = rotatedCorners(transform, halfWidth, halfHeight)
+  const corners = rotatedCorners(transform, halfWidth, halfHeight)
   return {
-    minX: Math.min(...points.map((p) => p.x)),
-    minY: Math.min(...points.map((p) => p.y)),
-    maxX: Math.max(...points.map((p) => p.x)),
-    maxY: Math.max(...points.map((p) => p.y)),
+    minX: Math.min(...corners.map((p) => p.x)),
+    minY: Math.min(...corners.map((p) => p.y)),
+    maxX: Math.max(...corners.map((p) => p.x)),
+    maxY: Math.max(...corners.map((p) => p.y)),
   }
 }
 
-export function worldTransformOf(scene: Scene, nodeId: string): WorldTransform | null {
+export function worldTransformOf(
+  scene: Scene,
+  nodeId: string,
+  preview?: WorldPoint,
+): WorldTransform | null {
   const node = scene.getNode(nodeId)
   if (!node) {
     return null
@@ -78,7 +86,10 @@ export function worldTransformOf(scene: Scene, nodeId: string): WorldTransform |
   let scaleX = 1
   let scaleY = 1
   for (const link of chain) {
-    const local = link.transform
+    const local =
+      link.id === nodeId && preview
+        ? { ...link.transform, x: preview.x, y: preview.y }
+        : link.transform
     x += rotateX(local.x * scaleX, local.y * scaleY, rotation)
     y += rotateY(local.x * scaleX, local.y * scaleY, rotation)
     rotation += local.rotation

@@ -4,7 +4,12 @@ import { createEngine } from '../../engine/internal'
 import type { SceneNode } from '../../engine'
 import { Scene } from '../../engine/scene'
 import { SceneNode as SceneNodeModel } from '../../engine/sceneNode'
-import { nodesIntersectingRect, topmostNodeAt, worldAabbOf } from '../../pixi/renderer/hitTest'
+import {
+  nodesIntersectingRect,
+  topmostNodeAt,
+  worldAabbOf,
+  worldTransformOf,
+} from '../../pixi/renderer/hitTest'
 import type { NodeSizeSource } from '../../pixi/renderer/hitTest'
 
 interface SceneHarness {
@@ -270,5 +275,64 @@ describe('worldAabbOf', () => {
     const bare = engine.createNode(slide.scene.id, slide.scene.root.id, 'Bare')
 
     expect(worldAabbOf(sceneOf(engine), bare.id, () => null)).toBeNull()
+  })
+})
+
+describe('worldTransformOf', () => {
+  it('uses the scene transform when no preview is given', () => {
+    const { engine } = harness()
+    const slide = engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('Slide was not created')
+    }
+    const id = engine.createNode(slide.scene.id, slide.scene.root.id, 'Leaf', {
+      transform: { x: 40, y: 60, rotation: 0, scaleX: 1, scaleY: 1 },
+    }).id
+
+    expect(worldTransformOf(sceneOf(engine), id)).toEqual({
+      x: 40,
+      y: 60,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+    })
+  })
+
+  it('overrides only the previewed node position inside the parent chain', () => {
+    const { engine } = harness()
+    const slide = engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('Slide was not created')
+    }
+    const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent', {
+      transform: { x: 0, y: 0, rotation: Math.PI / 2, scaleX: 1, scaleY: 1 },
+    })
+    const child = engine.createNode(slide.scene.id, parent.id, 'Child', {
+      transform: { x: 40, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+    })
+
+    const preview = worldTransformOf(sceneOf(engine), child.id, { x: 0, y: 40 })
+
+    expect(preview?.x).toBeCloseTo(-40)
+    expect(preview?.y).toBeCloseTo(0)
+  })
+
+  it('keeps the committed transform when the node is not previewed', () => {
+    const { engine } = harness()
+    const slide = engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('Slide was not created')
+    }
+    const id = engine.createNode(slide.scene.id, slide.scene.root.id, 'Leaf', {
+      transform: { x: 100, y: 100, rotation: 0, scaleX: 1, scaleY: 1 },
+    }).id
+
+    expect(worldTransformOf(sceneOf(engine), id)).toEqual({
+      x: 100,
+      y: 100,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+    })
   })
 })

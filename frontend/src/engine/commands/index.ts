@@ -18,6 +18,12 @@ export { ReparentNodeCommand } from './reparentNodeCommand'
 export type { ReparentNodeInverse, ReparentNodeParameters } from './reparentNodeCommand'
 export { MoveNodeCommand } from './moveNodeCommand'
 export type { MoveNodeInverse, MoveNodeParameters } from './moveNodeCommand'
+export { TransactionCommand } from './transactionCommand'
+export type {
+  TransactionInverse,
+  TransactionInverseChild,
+  TransactionParameters,
+} from './transactionCommand'
 export { RotateNodeCommand } from './rotateNodeCommand'
 export type { RotateNodeInverse, RotateNodeParameters } from './rotateNodeCommand'
 export { ScaleNodeCommand } from './scaleNodeCommand'

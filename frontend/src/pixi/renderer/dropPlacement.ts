@@ -3,6 +3,7 @@ import type { Scene } from '../../engine'
 import type { SceneNode } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
 import { CreateAssetInstanceCommand } from '../../engine/commands'
+import { DEFAULT_GRID_STEP, snapPoint } from './gridSnap'
 import { cursorToWorld } from './screenToWorld'
 
 export const ASSET_DEFINITION_MIME = 'application/x-asset-definition'
@@ -13,6 +14,7 @@ export interface DropPlacementContext {
   readonly getScene: () => Scene | null
   readonly getCamera: () => SceneNode | null
   readonly dispatch: DispatchCommand
+  readonly getGridSnap?: () => boolean
 }
 
 export class DropPlacement {
@@ -21,6 +23,7 @@ export class DropPlacement {
   readonly #getScene: () => Scene | null
   readonly #getCamera: () => SceneNode | null
   readonly #dispatch: DispatchCommand
+  readonly #getGridSnap?: () => boolean
   #attached = false
 
   constructor(context: DropPlacementContext) {
@@ -29,6 +32,7 @@ export class DropPlacement {
     this.#getScene = context.getScene
     this.#getCamera = context.getCamera
     this.#dispatch = context.dispatch
+    this.#getGridSnap = context.getGridSnap
   }
 
   attach(): void {
@@ -80,6 +84,8 @@ export class DropPlacement {
     if (!position) {
       return
     }
+    const snap = this.#getGridSnap?.() ?? false
+    const target = snap ? snapPoint(position, DEFAULT_GRID_STEP) : position
     event.preventDefault()
     this.#dispatch(
       new CreateAssetInstanceCommand({
@@ -87,7 +93,7 @@ export class DropPlacement {
         parentId: scene.root.id,
         definitionId,
         name: definition.name,
-        position,
+        position: target,
       }),
     )
   }

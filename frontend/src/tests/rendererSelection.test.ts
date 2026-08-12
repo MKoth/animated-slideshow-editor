@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Engine } from '../engine/internal'
 import { createEngine } from '../engine/internal'
+import type { DispatchCommand } from '../engine/commands'
+import { CommandDispatcher, UndoStack } from '../engine/commands'
 import type { ResolveAssetUrl } from '../pixi/renderer/textureCache'
 import { Renderer } from '../pixi/renderer/renderer'
 import { useSelectionStore } from '../stores/selectionStore'
@@ -37,7 +39,9 @@ async function mount(resolveAssetUrl?: ResolveAssetUrl): Promise<Harness> {
   engine.createProject({ name: 'Demo' })
   engine.createSlide('Slide 1')
   const host = document.createElement('div')
-  const renderer = new Renderer(host, engine, undefined, undefined, resolveAssetUrl)
+  const dispatcher = new CommandDispatcher(engine, new UndoStack(), vi.fn())
+  const dispatch: DispatchCommand = (command) => dispatcher.dispatch(command)
+  const renderer = new Renderer(host, engine, dispatch, undefined, resolveAssetUrl)
   await renderer.start()
   const app = pixiRegistry.applications[0]
   if (!app) {
@@ -61,7 +65,9 @@ function overlayGraphics(app: Harness['app']): FakeChild | undefined {
   const world = worldOf(app)
   return [...world.children]
     .reverse()
-    .find((child) => child.kind === 'graphics' && child.label !== 'grid')
+    .find(
+      (child) => child.kind === 'graphics' && child.label !== 'grid' && child.label !== 'guides',
+    )
 }
 
 function overlayRects(app: Harness['app']): { x: number; y: number; w: number; h: number }[] {
@@ -86,6 +92,20 @@ function click(canvas: HTMLCanvasElement, x: number, y: number): void {
   canvas.dispatchEvent(
     new MouseEvent('mousedown', { bubbles: true, button: 0, buttons: 1, clientX: x, clientY: y }),
   )
+  window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y }))
+}
+
+function mouseDown(canvas: HTMLCanvasElement, x: number, y: number): void {
+  canvas.dispatchEvent(
+    new MouseEvent('mousedown', { bubbles: true, button: 0, buttons: 1, clientX: x, clientY: y }),
+  )
+}
+
+function mouseMove(x: number, y: number): void {
+  window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: x, clientY: y }))
+}
+
+function mouseUp(x: number, y: number): void {
   window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: x, clientY: y }))
 }
 
@@ -162,6 +182,22 @@ describe('renderer selection wiring', () => {
     await vi.waitFor(() => {
       expect(overlayRects(app)[0]).toEqual({ x: 44, y: 50, w: 512, h: 300 })
     })
+    expect(useSelectionStore.getState().selectedIds).toEqual([id])
+  })
+
+  it('follows the selected node while it is being dragged', async () => {
+    const { engine, canvas, app } = await mount()
+    const id = nodeAt(engine, 'Hero', 300, 200)
+    mouseDown(canvas, 300, 200)
+
+    mouseMove(330, 200)
+    expect(overlayRects(app)[0]).toEqual({ x: 250, y: 150, w: 160, h: 100 })
+
+    mouseMove(380, 200)
+    expect(overlayRects(app)[0]).toEqual({ x: 300, y: 150, w: 160, h: 100 })
+
+    mouseUp(380, 200)
+    expect(overlayRects(app)[0]).toEqual({ x: 300, y: 150, w: 160, h: 100 })
     expect(useSelectionStore.getState().selectedIds).toEqual([id])
   })
 })

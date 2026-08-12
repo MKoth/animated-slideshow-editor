@@ -1,10 +1,38 @@
 import type { Scene } from '../../engine'
 import type { SceneNode } from '../../engine'
+import { walkPreOrder } from '../../engine/sceneNode'
+import type { DispatchCommand } from '../../engine/commands'
+import { MoveNodeCommand, TransactionCommand } from '../../engine/commands'
 import type { SelectionActions } from '../../stores/selectionStore'
-import { nodesIntersectingRect, topmostNodeAt } from './hitTest'
+import { useSelectionStore } from '../../stores/selectionStore'
+import { findAlignment } from './alignment'
+import { DEFAULT_GRID_STEP, snapDelta } from './gridSnap'
 import type { NodeSizeSource } from './hitTest'
+import {
+  aabbOf,
+  nodesIntersectingRect,
+  topmostNodeAt,
+  worldAabbOf,
+  worldTransformOf,
+} from './hitTest'
 import { cursorToWorld } from './screenToWorld'
-import type { WorldPoint, WorldRect } from './worldGeometry'
+import { expandRect, mergeRect, rectIntersects, rectOf } from './worldGeometry'
+import type { WorldPoint, WorldRect, WorldTransform } from './worldGeometry'
+
+export interface MoveOptions {
+  readonly gridSnap: boolean
+  readonly gridStep: number
+}
+
+export interface PreviewController {
+  setPosition(nodeId: string, x: number, y: number): void
+  clear(): void
+}
+
+export interface GuideController {
+  show(vertical: readonly number[], horizontal: readonly number[], span: WorldRect): void
+  clear(): void
+}
 
 export interface CanvasSelectionContext {
   readonly canvas: HTMLCanvasElement
@@ -12,9 +40,17 @@ export interface CanvasSelectionContext {
   readonly getCamera: () => SceneNode | null
   readonly getNodeSize: NodeSizeSource
   readonly store: SelectionActions
+  readonly dispatch?: DispatchCommand
+  readonly preview?: PreviewController
+  readonly guides?: GuideController
+  readonly onMove?: () => void
+  readonly getMoveOptions?: () => MoveOptions
 }
 
 const MARQUEE_START_DISTANCE = 4
+const MOVE_START_DISTANCE = 2
+const ALIGN_THRESHOLD_PX = 8
+const NEARBY_MARGIN_PX = 150
 
 export class CanvasSelection {
   readonly #canvas: HTMLCanvasElement
@@ -22,6 +58,11 @@ export class CanvasSelection {
   readonly #getCamera: () => SceneNode | null
   readonly #getNodeSize: NodeSizeSource
   readonly #store: SelectionActions
+  readonly #dispatch?: DispatchCommand
+  readonly #preview?: PreviewController
+  readonly #guides?: GuideController
+  readonly #onMove?: () => void
+  readonly #getMoveOptions?: () => MoveOptions
   #attached = false
   #pressed = false
   #pressedOnNode = false
@@ -30,6 +71,14 @@ export class CanvasSelection {
   #startClientY = 0
   #startWorld: WorldPoint | null = null
   #sceneAtDown: Scene | null = null
+  #canMove = false
+  #moveActive = false
+  #moveAnchorId: string | null = null
+  #moveCandidateIds: string[] = []
+  readonly #moveOrigins = new Map<string, { x: number; y: number }>()
+  readonly #moveCurrent = new Map<string, { x: number; y: number }>()
+  readonly #guideOthers: WorldRect[] = []
+  readonly #guideMovingIds = new Set<string>()
 
   constructor(context: CanvasSelectionContext) {
     this.#canvas = context.canvas
@@ -37,6 +86,11 @@ export class CanvasSelection {
     this.#getCamera = context.getCamera
     this.#getNodeSize = context.getNodeSize
     this.#store = context.store
+    this.#dispatch = context.dispatch
+    this.#preview = context.preview
+    this.#guides = context.guides
+    this.#onMove = context.onMove
+    this.#getMoveOptions = context.getMoveOptions
   }
 
   attach(): void {
@@ -84,6 +138,7 @@ export class CanvasSelection {
     if (!point) {
       return
     }
+    this.#resetMove()
     this.#pressed = true
     this.#sceneAtDown = scene
     this.#startClientX = event.clientX
@@ -97,13 +152,27 @@ export class CanvasSelection {
       } else if (event.shiftKey) {
         this.#store.extend(hit)
       } else {
-        this.#store.select(hit)
+        const selected = useSelectionStore.getState().selectedIds
+        if (!selected.includes(hit)) {
+          this.#store.select(hit)
+        }
       }
+    }
+    const modifiers = event.ctrlKey || event.metaKey || event.shiftKey
+    this.#canMove = hit !== null && !modifiers && this.#moveEnabled()
+    if (hit !== null && this.#canMove) {
+      this.#beginMove(hit)
     }
   }
 
   readonly #onMouseMove = (event: MouseEvent): void => {
-    if (!this.#pressed || this.#pressedOnNode) {
+    if (!this.#pressed) {
+      return
+    }
+    if (this.#pressedOnNode) {
+      if (this.#canMove) {
+        this.#handleMove(event)
+      }
       return
     }
     const dx = event.clientX - this.#startClientX
@@ -130,10 +199,206 @@ export class CanvasSelection {
     if (!this.#pressed) {
       return
     }
-    if (!this.#marqueeActive && !this.#pressedOnNode && this.#getScene() === this.#sceneAtDown) {
+    if (this.#moveActive) {
+      this.#commitMove()
+    } else if (
+      !this.#marqueeActive &&
+      !this.#pressedOnNode &&
+      this.#getScene() === this.#sceneAtDown
+    ) {
       this.#store.clear()
     }
     this.#resetGesture()
+  }
+
+  #beginMove(anchorId: string): void {
+    const scene = this.#getScene()
+    if (!scene) {
+      return
+    }
+    const ids = useSelectionStore.getState().selectedIds.filter((id) => scene.getNode(id))
+    if (ids.length === 0) {
+      return
+    }
+    this.#moveAnchorId = anchorId
+    this.#moveCandidateIds = ids
+    for (const id of ids) {
+      const node = scene.getNode(id)
+      if (!node) {
+        continue
+      }
+      this.#moveOrigins.set(id, { x: node.transform.x, y: node.transform.y })
+    }
+  }
+
+  #handleMove(event: MouseEvent): void {
+    const scene = this.#getScene()
+    const camera = this.#getCamera()
+    const start = this.#startWorld
+    if (!scene || !camera || !start) {
+      return
+    }
+    const current = cursorToWorld(this.#canvas, camera, event.clientX, event.clientY)
+    if (!current) {
+      return
+    }
+    const rawDx = current.x - start.x
+    const rawDy = current.y - start.y
+    if (!this.#moveActive && Math.hypot(rawDx, rawDy) < MOVE_START_DISTANCE) {
+      return
+    }
+    const options = this.#moveOptions()
+    let dx = rawDx
+    let dy = rawDy
+    if (options.gridSnap && this.#moveAnchorId) {
+      const origin = this.#moveOrigins.get(this.#moveAnchorId)
+      if (origin) {
+        const snapped = snapDelta(dx, dy, origin.x, origin.y, options.gridStep)
+        dx = snapped.x
+        dy = snapped.y
+      }
+    }
+    this.#moveActive = true
+    for (const id of this.#moveCandidateIds) {
+      const origin = this.#moveOrigins.get(id)
+      if (!origin) {
+        continue
+      }
+      const entry = this.#moveCurrent.get(id)
+      const x = origin.x + dx
+      const y = origin.y + dy
+      if (entry) {
+        entry.x = x
+        entry.y = y
+      } else {
+        this.#moveCurrent.set(id, { x, y })
+      }
+      this.#preview?.setPosition(id, x, y)
+    }
+    this.#updateGuides()
+    this.#onMove?.()
+  }
+
+  #commitMove(): void {
+    const dispatch = this.#dispatch
+    if (!dispatch) {
+      return
+    }
+    const moves: MoveNodeCommand[] = []
+    for (const id of this.#moveCandidateIds) {
+      const current = this.#moveCurrent.get(id)
+      if (!current) {
+        continue
+      }
+      moves.push(new MoveNodeCommand({ nodeId: id, x: current.x, y: current.y }))
+    }
+    if (moves.length === 0) {
+      return
+    }
+    dispatch(new TransactionCommand(moves))
+  }
+
+  #updateGuides(): void {
+    const guides = this.#guides
+    if (!guides) {
+      return
+    }
+    const scene = this.#getScene()
+    const viewport = this.#viewportWorld()
+    const moving = this.#movingBounds()
+    if (!scene || !viewport || !moving) {
+      guides.clear()
+      return
+    }
+    const camera = this.#getCamera()
+    const zoom = camera ? Math.abs(camera.transform.scaleX) || 1 : 1
+    const nearby = expandRect(moving, NEARBY_MARGIN_PX / zoom)
+    this.#guideOthers.length = 0
+    this.#guideMovingIds.clear()
+    for (const id of this.#moveCandidateIds) {
+      this.#guideMovingIds.add(id)
+    }
+    for (const node of walkPreOrder(scene.root)) {
+      if (node.components.camera || this.#guideMovingIds.has(node.id)) {
+        continue
+      }
+      const aabb = worldAabbOf(scene, node.id, this.#getNodeSize)
+      if (aabb && rectIntersects(nearby, aabb)) {
+        this.#guideOthers.push(aabb)
+      }
+    }
+    const threshold = ALIGN_THRESHOLD_PX / zoom
+    const result = findAlignment(
+      moving,
+      this.#guideOthers,
+      { x: (viewport.minX + viewport.maxX) / 2, y: (viewport.minY + viewport.maxY) / 2 },
+      threshold,
+    )
+    if (result.verticalLines.length > 0 || result.horizontalLines.length > 0) {
+      guides.show(result.verticalLines, result.horizontalLines, viewport)
+    } else {
+      guides.clear()
+    }
+  }
+
+  #movingBounds(): WorldRect | null {
+    const scene = this.#getScene()
+    if (!scene) {
+      return null
+    }
+    let union: WorldRect | null = null
+    for (const id of this.#moveCandidateIds) {
+      const node = scene.getNode(id)
+      const size = this.#getNodeSize(id)
+      if (!node || !size) {
+        continue
+      }
+      const transform = worldTransformOf(scene, id)
+      if (!transform) {
+        continue
+      }
+      const current = this.#moveCurrent.get(id)
+      const origin = this.#moveOrigins.get(id)
+      const dx = current && origin ? current.x - origin.x : 0
+      const dy = current && origin ? current.y - origin.y : 0
+      const preview: WorldTransform = {
+        ...transform,
+        x: transform.x + dx,
+        y: transform.y + dy,
+      }
+      const aabb = aabbOf(size, preview)
+      if (!aabb) {
+        continue
+      }
+      union = union ? mergeRect(union, aabb) : aabb
+    }
+    return union
+  }
+
+  #viewportWorld(): WorldRect | null {
+    const camera = this.#getCamera()
+    if (!camera) {
+      return null
+    }
+    const { x, y, scaleX, scaleY } = camera.transform
+    if (scaleX <= 0 || scaleY <= 0) {
+      return null
+    }
+    const rect = this.#canvas.getBoundingClientRect()
+    return {
+      minX: x,
+      minY: y,
+      maxX: x + rect.width / scaleX,
+      maxY: y + rect.height / scaleY,
+    }
+  }
+
+  #moveOptions(): MoveOptions {
+    return this.#getMoveOptions?.() ?? { gridSnap: false, gridStep: DEFAULT_GRID_STEP }
+  }
+
+  #moveEnabled(): boolean {
+    return this.#dispatch !== undefined && this.#preview !== undefined
   }
 
   #resetGesture(): void {
@@ -142,14 +407,17 @@ export class CanvasSelection {
     this.#marqueeActive = false
     this.#startWorld = null
     this.#sceneAtDown = null
+    this.#resetMove()
   }
-}
 
-function rectOf(a: WorldPoint, b: WorldPoint): WorldRect {
-  return {
-    minX: Math.min(a.x, b.x),
-    minY: Math.min(a.y, b.y),
-    maxX: Math.max(a.x, b.x),
-    maxY: Math.max(a.y, b.y),
+  #resetMove(): void {
+    this.#guides?.clear()
+    this.#preview?.clear()
+    this.#canMove = false
+    this.#moveActive = false
+    this.#moveAnchorId = null
+    this.#moveCandidateIds = []
+    this.#moveOrigins.clear()
+    this.#moveCurrent.clear()
   }
 }

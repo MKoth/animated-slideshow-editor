@@ -2,9 +2,10 @@ import type { EngineReadOnly } from '../../engine'
 import type { Scene } from '../../engine'
 import type { Unsubscribe } from '../../engine'
 import type { SelectionStoreApi } from '../../stores/selectionStore'
-import { worldAabbOf } from './hitTest'
+import { aabbOf, worldTransformOf } from './hitTest'
 import type { NodeSizeSource } from './hitTest'
 import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
+import type { WorldTransform } from './worldGeometry'
 
 const OUTLINE_COLOR = 0x1a73e8
 const OUTLINE_WIDTH = 2
@@ -27,6 +28,7 @@ export interface SelectionOverlayContext {
   readonly getScene: () => Scene | null
   readonly getNodeSize: NodeSizeSource
   readonly store: SelectionStoreApi
+  readonly getWorldTransform?: (nodeId: string) => WorldTransform | null
 }
 
 export class SelectionOverlay {
@@ -36,6 +38,7 @@ export class SelectionOverlay {
   readonly #getScene: () => Scene | null
   readonly #getNodeSize: NodeSizeSource
   readonly #store: SelectionStoreApi
+  readonly #getWorldTransform?: (nodeId: string) => WorldTransform | null
   #graphics: PixiGraphics | null = null
   #unsubscribeStore: Unsubscribe | null = null
   #unsubscribeEngine: Unsubscribe | null = null
@@ -48,6 +51,7 @@ export class SelectionOverlay {
     this.#getScene = context.getScene
     this.#getNodeSize = context.getNodeSize
     this.#store = context.store
+    this.#getWorldTransform = context.getWorldTransform
   }
 
   attach(): void {
@@ -98,7 +102,17 @@ export class SelectionOverlay {
       return
     }
     for (const nodeId of this.#store.getState().selectedIds) {
-      const aabb = worldAabbOf(scene, nodeId, this.#getNodeSize)
+      const size = this.#getNodeSize(nodeId)
+      if (!size) {
+        continue
+      }
+      const transform = this.#getWorldTransform
+        ? this.#getWorldTransform(nodeId)
+        : worldTransformOf(scene, nodeId)
+      if (!transform) {
+        continue
+      }
+      const aabb = aabbOf(size, transform)
       if (!aabb) {
         continue
       }

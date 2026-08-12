@@ -4,6 +4,7 @@ import type { Unsubscribe } from '../../engine'
 import { walkPreOrder } from '../../engine/sceneNode'
 import type { CommandResult, DispatchCommand } from '../../engine/commands'
 import { useSelectionStore } from '../../stores/selectionStore'
+import { useUiStore } from '../../stores/uiStore'
 import { CameraControls } from './cameraControls'
 import { Camera } from './camera'
 import { CanvasSelection } from './canvasSelection'
@@ -11,7 +12,10 @@ import { createAxisLines } from './axisLines'
 import { DevOverlay } from './devOverlay'
 import { DropPlacement } from './dropPlacement'
 import { ErrorOverlay } from './errorOverlay'
+import { DEFAULT_GRID_STEP } from './gridSnap'
 import { DEFAULT_MAJOR_COLOR, DEFAULT_MINOR_COLOR, GridRenderer } from './gridRenderer'
+import { GuideOverlay } from './guideOverlay'
+import { worldTransformOf } from './hitTest'
 import { realPixi } from './pixi'
 import type { PixiApplication, RendererPixi } from './pixi'
 import { SceneRenderer } from './sceneRenderer'
@@ -49,6 +53,8 @@ export class Renderer {
   #dropPlacement: DropPlacement | null = null
   #selection: CanvasSelection | null = null
   #selectionOverlay: SelectionOverlay | null = null
+  #guideOverlay: GuideOverlay | null = null
+  #previewPositions = new Map<string, { x: number; y: number }>()
   #unsubscribe: Unsubscribe | null = null
   #started = false
   #disposed = false
@@ -114,9 +120,20 @@ export class Renderer {
         engine: this.#engine,
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
         getNodeSize: (nodeId) => this.#sceneRenderer?.nodeSize(nodeId) ?? null,
+        getWorldTransform: (nodeId) => {
+          const scene = this.#sceneRenderer?.boundScene ?? null
+          if (!scene) {
+            return null
+          }
+          return worldTransformOf(scene, nodeId, this.#previewPositions.get(nodeId))
+        },
         store: useSelectionStore,
       })
       this.#selectionOverlay.attach()
+
+      this.#guideOverlay = new GuideOverlay(this.#pixi, world)
+      this.#guideOverlay.attach()
+      this.#guideOverlay.bringToFront()
 
       this.#selection = new CanvasSelection({
         canvas: app.canvas,
@@ -124,6 +141,24 @@ export class Renderer {
         getCamera: () => this.#sceneRenderer?.boundCamera ?? null,
         getNodeSize: (nodeId) => this.#sceneRenderer?.nodeSize(nodeId) ?? null,
         store: useSelectionStore.getState(),
+        dispatch: this.#dispatch,
+        preview: {
+          setPosition: (nodeId, x, y) => {
+            this.#previewPositions.set(nodeId, { x, y })
+            this.#sceneRenderer?.previewTransform(nodeId, x, y)
+          },
+          clear: () => this.#previewPositions.clear(),
+        },
+        guides: {
+          show: (vertical, horizontal, span) =>
+            this.#guideOverlay?.show(vertical, horizontal, span),
+          clear: () => this.#guideOverlay?.clear(),
+        },
+        onMove: () => this.#selectionOverlay?.redraw(),
+        getMoveOptions: () => ({
+          gridSnap: useUiStore.getState().gridSnap,
+          gridStep: DEFAULT_GRID_STEP,
+        }),
       })
       this.#selection.attach()
 
@@ -140,6 +175,7 @@ export class Renderer {
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
         getCamera: () => this.#sceneRenderer?.boundCamera ?? null,
         dispatch: this.#dispatch,
+        getGridSnap: () => useUiStore.getState().gridSnap,
       })
       this.#dropPlacement.attach()
 
@@ -166,6 +202,8 @@ export class Renderer {
     this.#selection = null
     this.#selectionOverlay?.detach()
     this.#selectionOverlay = null
+    this.#guideOverlay?.detach()
+    this.#guideOverlay = null
     const app = this.#app
     app?.ticker.remove(this.#tick)
     this.#app = null
@@ -292,6 +330,7 @@ export class Renderer {
     if (sceneRenderer.boundSceneId !== (scene?.id ?? null)) {
       sceneRenderer.bind(scene)
       this.#selectionOverlay?.bringToFront()
+      this.#guideOverlay?.bringToFront()
       useSelectionStore.getState().clear()
     }
   }
