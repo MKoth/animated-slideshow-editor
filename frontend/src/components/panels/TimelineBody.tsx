@@ -178,8 +178,13 @@ export function TimelineBody({
 
   return (
     <div className="timeline-body" onPointerMove={recordPointerTime}>
-      <div className="timeline-tracks" ref={tracksRef} onScroll={handleTracksScroll}>
-        <ul className="timeline-tracks__list" style={{ minWidth: TRACK_HEADER_WIDTH }}>
+      <div
+        className="timeline-tracks"
+        ref={tracksRef}
+        style={{ width: TRACK_HEADER_WIDTH }}
+        onScroll={handleTracksScroll}
+      >
+        <ul className="timeline-tracks__list">
           {rows.map((row) => (
             <TrackRow
               key={row.node.id}

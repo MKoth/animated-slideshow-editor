@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EngineContext } from '../app/engineContext'
 import type { EngineContextValue } from '../app/engineContext'
 import { TimelinePanel } from '../components/panels/TimelinePanel'
+import { TRACK_HEADER_WIDTH } from '../components/panels/timelineTracks'
 import { CommandDispatcher, UndoStack } from '../engine/commands'
 import type { Engine } from '../engine/internal'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
@@ -180,6 +181,21 @@ describe('TimelinePanel tracks', () => {
       expect(screen.getByRole('track', { name: 'Girl' })).toBeInTheDocument()
     })
     expect(screen.queryByRole('track', { name: 'Boy' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the track header column at its fixed width despite long names', async () => {
+    const { engine } = renderPanel()
+    createProjectAndSlide(engine)
+    const longName = 'A character with an extremely long asset name for testing purposes.png'
+    const parent = createNode(engine, longName)
+    createNode(engine, 'Nested child with another very long name that must not leak.png', parent.id)
+
+    await screen.findByRole('track', { name: longName })
+
+    const tracks = document.querySelector('.timeline-tracks') as HTMLElement
+    expect(tracks).not.toBeNull()
+    expect(tracks).toHaveStyle({ width: `${TRACK_HEADER_WIDTH}px` })
+    expect(screen.getByRole('track', { name: longName })).toBeInTheDocument()
   })
 })
 
