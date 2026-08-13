@@ -20,6 +20,7 @@ interface UiState {
   activeSidebarTab: SidebarTab
   gridSnap: boolean
   animationMode: boolean
+  cameraAnimationMode: boolean
   setTheme: (theme: Theme) => void
   toggleTheme: () => void
   setLeftSidebarWidth: (width: number) => void
@@ -30,10 +31,30 @@ interface UiState {
   toggleGridSnap: () => void
   setAnimationMode: (enabled: boolean) => void
   toggleAnimationMode: () => void
+  setCameraAnimationMode: (enabled: boolean) => void
+  toggleCameraAnimationMode: () => void
 }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
+}
+
+type ModeKey = 'animationMode' | 'cameraAnimationMode'
+
+function withMode(
+  state: Pick<UiState, 'animationMode' | 'cameraAnimationMode'>,
+  mode: ModeKey,
+  enabled: boolean,
+): Partial<Pick<UiState, 'animationMode' | 'cameraAnimationMode'>> {
+  return mode === 'animationMode'
+    ? {
+        animationMode: enabled,
+        cameraAnimationMode: enabled ? false : state.cameraAnimationMode,
+      }
+    : {
+        animationMode: enabled ? false : state.animationMode,
+        cameraAnimationMode: enabled,
+      }
 }
 
 export const useUiStore = create<UiState>()(
@@ -46,6 +67,7 @@ export const useUiStore = create<UiState>()(
       activeSidebarTab: 'assets',
       gridSnap: false,
       animationMode: false,
+      cameraAnimationMode: false,
       setTheme: (theme) => set({ theme }),
       toggleTheme: () => set((state) => ({ theme: state.theme === 'light' ? 'dark' : 'light' })),
       setLeftSidebarWidth: (width) =>
@@ -57,8 +79,13 @@ export const useUiStore = create<UiState>()(
       setActiveSidebarTab: (tab) => set({ activeSidebarTab: tab }),
       setGridSnap: (enabled) => set({ gridSnap: enabled }),
       toggleGridSnap: () => set((state) => ({ gridSnap: !state.gridSnap })),
-      setAnimationMode: (enabled) => set({ animationMode: enabled }),
-      toggleAnimationMode: () => set((state) => ({ animationMode: !state.animationMode })),
+      setAnimationMode: (enabled) => set((state) => withMode(state, 'animationMode', enabled)),
+      toggleAnimationMode: () =>
+        set((state) => withMode(state, 'animationMode', !state.animationMode)),
+      setCameraAnimationMode: (enabled) =>
+        set((state) => withMode(state, 'cameraAnimationMode', enabled)),
+      toggleCameraAnimationMode: () =>
+        set((state) => withMode(state, 'cameraAnimationMode', !state.cameraAnimationMode)),
     }),
     { name: 'editor-ui-prefs' },
   ),

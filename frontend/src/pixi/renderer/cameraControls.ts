@@ -13,7 +13,7 @@ export interface CameraControlsContext {
   readonly getCamera: () => SceneNode | null
   readonly getCameraTransform: () => ViewportTransform | null
   readonly setCameraPreview: (transform: ViewportTransform | null) => void
-  readonly getAnimationMode?: () => boolean
+  readonly getCameraAnimationMode?: () => boolean
   readonly getTime: () => number
   readonly dispatch: DispatchCommand
 }
@@ -29,7 +29,7 @@ export class CameraControls {
   readonly #getCamera: () => SceneNode | null
   readonly #getCameraTransform: () => ViewportTransform | null
   readonly #setCameraPreview: (transform: ViewportTransform | null) => void
-  readonly #getAnimationMode?: () => boolean
+  readonly #getCameraAnimationMode?: () => boolean
   readonly #getTime: () => number
   readonly #dispatch: DispatchCommand
   #attached = false
@@ -48,7 +48,7 @@ export class CameraControls {
     this.#getCamera = context.getCamera
     this.#getCameraTransform = context.getCameraTransform
     this.#setCameraPreview = context.setCameraPreview
-    this.#getAnimationMode = context.getAnimationMode
+    this.#getCameraAnimationMode = context.getCameraAnimationMode
     this.#getTime = context.getTime
     this.#dispatch = context.dispatch
   }
@@ -86,7 +86,7 @@ export class CameraControls {
     if (!camera) {
       return
     }
-    if (this.#animationMode()) {
+    if (this.#cameraAnimationMode()) {
       this.#zoomAnimated(event, camera.nodeId)
     } else {
       this.#zoomStored(event, camera.nodeId)
@@ -172,7 +172,7 @@ export class CameraControls {
     this.#panGesture.lastClientY = event.clientY
     const next: ViewportTransform = { x: x - dx / scaleX, y: y - dy / scaleY, scaleX, scaleY }
     this.#panGesture.current = next
-    if (!this.#animationMode()) {
+    if (!this.#cameraAnimationMode()) {
       this.#dispatch(new MoveNodeCommand({ nodeId: camera.nodeId, x: next.x, y: next.y }))
       return
     }
@@ -186,7 +186,7 @@ export class CameraControls {
     if (!gesture?.current) {
       return
     }
-    if (!this.#animationMode()) {
+    if (!this.#cameraAnimationMode()) {
       return
     }
     const engine = this.#engine
@@ -206,7 +206,7 @@ export class CameraControls {
     if (!camera) {
       return
     }
-    if (!this.#animationMode()) {
+    if (!this.#cameraAnimationMode()) {
       this.#dispatch(new MoveNodeCommand({ nodeId: camera.id, x: 0, y: 0 }))
       this.#dispatch(new ScaleNodeCommand({ nodeId: camera.id, scaleX: 1, scaleY: 1 }))
       return
@@ -223,8 +223,8 @@ export class CameraControls {
     )
   }
 
-  #animationMode(): boolean {
-    return Boolean(this.#engine) && (this.#getAnimationMode?.() ?? false)
+  #cameraAnimationMode(): boolean {
+    return Boolean(this.#engine) && (this.#getCameraAnimationMode?.() ?? false)
   }
 
   #camera(): { nodeId: string; transform: ViewportTransform } | null {

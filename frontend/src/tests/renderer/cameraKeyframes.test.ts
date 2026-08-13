@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AddKeyframeCommand,
+  BatchMoveKeyframesCommand,
   CreateNodeCommand,
   CreateProjectCommand,
   CreateSlideCommand,
@@ -22,6 +23,7 @@ vi.mock('pixi.js', async () => {
 beforeEach(() => {
   pixiRegistry.reset()
   useUiStore.getState().setAnimationMode(false)
+  useUiStore.getState().setCameraAnimationMode(false)
   useSelectionStore.setState({ selectedIds: [] })
 })
 
@@ -114,6 +116,7 @@ describe('evaluated viewport', () => {
   it('moves and zooms the world container from camera keyframes as the playhead scrubs', async () => {
     const timeSource = new FakeTimeSource()
     const { system, app, cameraId } = await mount(timeSource)
+    useUiStore.getState().setCameraAnimationMode(true)
     dispatchKeyframe(system, cameraId, 'positionX', 0, 0)
     dispatchKeyframe(system, cameraId, 'positionX', 10, 100)
     dispatchKeyframe(system, cameraId, 'positionY', 0, 0)
@@ -146,6 +149,7 @@ describe('evaluated viewport', () => {
   it('keeps the stored camera transform untouched while the viewport follows keyframes', async () => {
     const timeSource = new FakeTimeSource()
     const { system, app, cameraId } = await mount(timeSource)
+    useUiStore.getState().setCameraAnimationMode(true)
     dispatchKeyframe(system, cameraId, 'positionX', 0, 0)
     dispatchKeyframe(system, cameraId, 'positionX', 10, 100)
     timeSource.set(7)
@@ -160,6 +164,87 @@ describe('evaluated viewport', () => {
     })
     expect(worldOf(app).position.x).toBeCloseTo(-70)
   })
+
+  it('ignores camera keyframes while camera animation mode is off: stored pan/zoom still move the viewport', async () => {
+    const timeSource = new FakeTimeSource()
+    const { system, app, canvas, cameraId } = await mount(timeSource)
+    dispatchKeyframe(system, cameraId, 'positionX', 0, 0)
+    dispatchKeyframe(system, cameraId, 'positionX', 10, 100)
+    dispatchKeyframe(system, cameraId, 'positionY', 0, 0)
+    dispatchKeyframe(system, cameraId, 'positionY', 10, 200)
+    timeSource.set(5)
+    app.ticker.tick()
+    expect(worldOf(app).position.x).toBeCloseTo(0)
+
+    middleDrag(canvas, [300, 200], [350, 220])
+    app.ticker.tick()
+
+    expect(worldOf(app).position.x).toBeCloseTo(50)
+    expect(worldOf(app).position.y).toBeCloseTo(20)
+    expect(storedTransformOf(system, cameraId).x).toBeCloseTo(-50)
+    expect(storedTransformOf(system, cameraId).y).toBeCloseTo(-20)
+    expect(keyframesOf(system, cameraId, 'positionX')).toHaveLength(2)
+  })
+
+  it('snaps the viewport to the keyframe at the playhead when camera animation mode turns on', async () => {
+    const timeSource = new FakeTimeSource()
+    const { system, app, cameraId } = await mount(timeSource)
+    dispatchKeyframe(system, cameraId, 'positionX', 0, 0)
+    dispatchKeyframe(system, cameraId, 'positionX', 10, 100)
+    timeSource.set(7)
+    app.ticker.tick()
+    expect(worldOf(app).position.x).toBeCloseTo(0)
+
+    useUiStore.getState().setCameraAnimationMode(true)
+    app.ticker.tick()
+
+    expect(worldOf(app).position.x).toBeCloseTo(-70)
+  })
+
+  it('does not react to moved camera keyframes while camera animation mode is off', async () => {
+    const timeSource = new FakeTimeSource()
+    const { system, app, cameraId } = await mount(timeSource)
+    dispatchKeyframe(system, cameraId, 'positionX', 0, 0)
+    dispatchKeyframe(system, cameraId, 'positionX', 10, 100)
+    timeSource.set(7)
+    app.ticker.tick()
+    expect(worldOf(app).position.x).toBeCloseTo(0)
+
+    const keyframes = keyframesOf(system, cameraId, 'positionX')
+    system.dispatcher.dispatch(
+      new BatchMoveKeyframesCommand({
+        moves: [
+          { nodeId: cameraId, property: 'positionX', keyframeId: keyframes[1].id, newTime: 5 },
+        ],
+      }),
+    )
+    app.ticker.tick()
+
+    expect(worldOf(app).position.x).toBeCloseTo(0)
+  })
+
+  it('moves the viewport when camera keyframes are dragged while camera animation mode is on', async () => {
+    const timeSource = new FakeTimeSource()
+    const { system, app, cameraId } = await mount(timeSource)
+    useUiStore.getState().setCameraAnimationMode(true)
+    dispatchKeyframe(system, cameraId, 'positionX', 0, 0)
+    dispatchKeyframe(system, cameraId, 'positionX', 10, 100)
+    timeSource.set(7)
+    app.ticker.tick()
+    expect(worldOf(app).position.x).toBeCloseTo(-70)
+
+    const keyframes = keyframesOf(system, cameraId, 'positionX')
+    system.dispatcher.dispatch(
+      new BatchMoveKeyframesCommand({
+        moves: [
+          { nodeId: cameraId, property: 'positionX', keyframeId: keyframes[1].id, newTime: 5 },
+        ],
+      }),
+    )
+    app.ticker.tick()
+
+    expect(worldOf(app).position.x).toBeCloseTo(-100)
+  })
 })
 
 describe('animation-mode pan', () => {
@@ -167,7 +252,7 @@ describe('animation-mode pan', () => {
     const timeSource = new FakeTimeSource()
     const { system, canvas, cameraId } = await mount(timeSource)
     timeSource.set(5)
-    useUiStore.getState().setAnimationMode(true)
+    useUiStore.getState().setCameraAnimationMode(true)
     const stored = storedTransformOf(system, cameraId)
     const undoCount = system.undoStack.entries.length
 
@@ -186,7 +271,7 @@ describe('animation-mode pan', () => {
     const timeSource = new FakeTimeSource()
     const { app, canvas } = await mount(timeSource)
     timeSource.set(5)
-    useUiStore.getState().setAnimationMode(true)
+    useUiStore.getState().setCameraAnimationMode(true)
 
     canvas.dispatchEvent(
       new MouseEvent('mousedown', { button: 1, clientX: 300, clientY: 200, bubbles: true }),
@@ -208,7 +293,7 @@ describe('animation-mode pan', () => {
     timeSource.set(5)
     dispatchKeyframe(system, cameraId, 'positionX', 5, 0)
     dispatchKeyframe(system, cameraId, 'positionY', 5, 0)
-    useUiStore.getState().setAnimationMode(true)
+    useUiStore.getState().setCameraAnimationMode(true)
     const undoCount = system.undoStack.entries.length
 
     middleDrag(canvas, [300, 200], [350, 220])
@@ -229,7 +314,7 @@ describe('animation-mode pan', () => {
     dispatchKeyframe(system, cameraId, 'scaleX', 10, 2)
     dispatchKeyframe(system, cameraId, 'scaleY', 10, 2)
     timeSource.set(5)
-    useUiStore.getState().setAnimationMode(true)
+    useUiStore.getState().setCameraAnimationMode(true)
 
     middleDrag(canvas, [100, 100], [120, 110])
 
@@ -241,13 +326,13 @@ describe('animation-mode pan', () => {
     const timeSource = new FakeTimeSource()
     const { app, canvas } = await mount(timeSource)
     timeSource.set(5)
-    useUiStore.getState().setAnimationMode(true)
+    useUiStore.getState().setCameraAnimationMode(true)
 
     canvas.dispatchEvent(
       new MouseEvent('mousedown', { button: 1, clientX: 300, clientY: 200, bubbles: true }),
     )
     window.dispatchEvent(new MouseEvent('mousemove', { clientX: 350, clientY: 220, bubbles: true }))
-    useUiStore.getState().setAnimationMode(false)
+    useUiStore.getState().setCameraAnimationMode(false)
     window.dispatchEvent(new MouseEvent('mouseup', { button: 1, clientX: 350, clientY: 220 }))
     app.ticker.tick()
 
@@ -259,7 +344,7 @@ describe('animation-mode pan', () => {
     const timeSource = new FakeTimeSource()
     const { system, canvas } = await mount(timeSource)
     timeSource.set(5)
-    useUiStore.getState().setAnimationMode(true)
+    useUiStore.getState().setCameraAnimationMode(true)
 
     middleDrag(canvas, [300, 200], [350, 220])
 
@@ -287,7 +372,7 @@ describe('animation-mode zoom', () => {
       const timeSource = new FakeTimeSource()
       const { system, canvas, cameraId } = await mount(timeSource)
       timeSource.set(5)
-      useUiStore.getState().setAnimationMode(true)
+      useUiStore.getState().setCameraAnimationMode(true)
       const stored = storedTransformOf(system, cameraId)
       const undoCount = system.undoStack.entries.length
 
@@ -316,7 +401,7 @@ describe('animation-mode zoom', () => {
       const timeSource = new FakeTimeSource()
       const { app, canvas } = await mount(timeSource)
       timeSource.set(5)
-      useUiStore.getState().setAnimationMode(true)
+      useUiStore.getState().setCameraAnimationMode(true)
 
       wheelAt(canvas, 400, 300, -100)
       app.ticker.tick()
@@ -338,7 +423,7 @@ describe('animation-mode zoom', () => {
       timeSource.set(5)
       dispatchKeyframe(system, cameraId, 'scaleX', 5, 1)
       dispatchKeyframe(system, cameraId, 'scaleY', 5, 1)
-      useUiStore.getState().setAnimationMode(true)
+      useUiStore.getState().setCameraAnimationMode(true)
       const undoCount = system.undoStack.entries.length
 
       wheelAt(canvas, 400, 300, -100)
@@ -359,7 +444,7 @@ describe('animation-mode zoom', () => {
       const timeSource = new FakeTimeSource()
       const { system, canvas, cameraId } = await mount(timeSource)
       timeSource.set(5)
-      useUiStore.getState().setAnimationMode(true)
+      useUiStore.getState().setCameraAnimationMode(true)
 
       wheelAt(canvas, 400, 300, -10_000_000)
       vi.advanceTimersByTime(250)
@@ -382,7 +467,7 @@ describe('animation-mode zoom', () => {
       const timeSource = new FakeTimeSource()
       const { system, canvas, cameraId } = await mount(timeSource)
       timeSource.set(5)
-      useUiStore.getState().setAnimationMode(true)
+      useUiStore.getState().setCameraAnimationMode(true)
 
       wheelAt(canvas, 400, 300, -100)
       vi.advanceTimersByTime(250)
@@ -419,7 +504,7 @@ describe('animation-mode reset', () => {
     middleDrag(canvas, [300, 200], [500, 400])
     wheelAt(canvas, 200, 150, -100)
     timeSource.set(4)
-    useUiStore.getState().setAnimationMode(true)
+    useUiStore.getState().setCameraAnimationMode(true)
     const stored = storedTransformOf(system, cameraId)
     const undoCount = system.undoStack.entries.length
 
@@ -458,6 +543,7 @@ describe('cursor-world consistency', () => {
   it('hit-tests through the evaluated camera: clicking where a node renders selects it', async () => {
     const timeSource = new FakeTimeSource()
     const { system, app, canvas, cameraId } = await mount(timeSource)
+    useUiStore.getState().setCameraAnimationMode(true)
     const slide = system.engine.project?.slides[0]
     if (!slide) {
       throw new Error('Slide was not created')

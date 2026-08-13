@@ -107,7 +107,7 @@ beforeEach(() => {
     expandedNodeIds: {},
   })
   localStorage.clear()
-  useUiStore.setState({ animationMode: false })
+  useUiStore.setState({ animationMode: false, cameraAnimationMode: false })
 })
 
 describe('Animation Mode toggle', () => {
@@ -155,6 +155,91 @@ describe('Animation Mode toggle', () => {
   it('creates no execution-log entries when toggling', async () => {
     const { logger } = await renderWithScene()
     const toggle = screen.getByRole('button', { name: 'Animation Mode' })
+
+    fireEvent.click(toggle)
+    fireEvent.click(toggle)
+
+    expect(logger).not.toHaveBeenCalled()
+  })
+})
+
+describe('Camera Animation Mode toggle', () => {
+  it('sits in the timeline toolbar next to Animation Mode, off by default', async () => {
+    await renderWithScene()
+
+    const toggle = screen.getByRole('button', { name: 'Camera Animation Mode' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('turns on when clicked and persists to localStorage', async () => {
+    await renderWithScene()
+    const toggle = screen.getByRole('button', { name: 'Camera Animation Mode' })
+
+    fireEvent.click(toggle)
+
+    expect(useUiStore.getState().cameraAnimationMode).toBe(true)
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    const stored = JSON.parse(localStorage.getItem(PERSIST_KEY) ?? '{}') as {
+      state?: { cameraAnimationMode?: boolean }
+    }
+    expect(stored.state?.cameraAnimationMode).toBe(true)
+  })
+
+  it('turns off again on a second click', async () => {
+    await renderWithScene()
+    const toggle = screen.getByRole('button', { name: 'Camera Animation Mode' })
+
+    fireEvent.click(toggle)
+    fireEvent.click(toggle)
+
+    expect(useUiStore.getState().cameraAnimationMode).toBe(false)
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('disables Animation Mode when enabled', async () => {
+    await renderWithScene()
+    const animationToggle = screen.getByRole('button', { name: 'Animation Mode' })
+    const cameraToggle = screen.getByRole('button', { name: 'Camera Animation Mode' })
+    fireEvent.click(animationToggle)
+    expect(animationToggle).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(cameraToggle)
+
+    expect(useUiStore.getState().cameraAnimationMode).toBe(true)
+    expect(useUiStore.getState().animationMode).toBe(false)
+    expect(animationToggle).toHaveAttribute('aria-pressed', 'false')
+    expect(cameraToggle).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('is disabled when Animation Mode gets enabled', async () => {
+    await renderWithScene()
+    const animationToggle = screen.getByRole('button', { name: 'Animation Mode' })
+    const cameraToggle = screen.getByRole('button', { name: 'Camera Animation Mode' })
+    fireEvent.click(cameraToggle)
+    expect(cameraToggle).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(animationToggle)
+
+    expect(useUiStore.getState().animationMode).toBe(true)
+    expect(useUiStore.getState().cameraAnimationMode).toBe(false)
+    expect(animationToggle).toHaveAttribute('aria-pressed', 'true')
+    expect(cameraToggle).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('turning camera mode off does not re-enable animation mode', async () => {
+    await renderWithScene()
+    const cameraToggle = screen.getByRole('button', { name: 'Camera Animation Mode' })
+
+    fireEvent.click(cameraToggle)
+    fireEvent.click(cameraToggle)
+
+    expect(useUiStore.getState().cameraAnimationMode).toBe(false)
+    expect(useUiStore.getState().animationMode).toBe(false)
+  })
+
+  it('creates no execution-log entries when toggling', async () => {
+    const { logger } = await renderWithScene()
+    const toggle = screen.getByRole('button', { name: 'Camera Animation Mode' })
 
     fireEvent.click(toggle)
     fireEvent.click(toggle)

@@ -22,7 +22,13 @@ import {
 import type { WorldTransform } from '../engine/worldTransform'
 import { identityTransform } from '../engine/transform'
 import type { Transform } from '../engine/transform'
-import { autoKeyEdit, dispatchCommands, playheadTimeOf, slideOfNode } from './keyframeActions'
+import {
+  autoKeyEdit,
+  dispatchCommands,
+  isAnimatable,
+  playheadTimeOf,
+  slideOfNode,
+} from './keyframeActions'
 import type { KeyframeEdit } from './keyframeActions'
 
 const DEG_TO_RAD = Math.PI / 180
@@ -383,6 +389,7 @@ export function resetNodesTransformAutoKey(
     if (!reading) {
       continue
     }
+    const node = engine.getNode(nodeId)
     const target = reading.parentWorld
       ? relativeTransform(identityTransform(), reading.parentWorld)
       : identityTransform()
@@ -390,7 +397,11 @@ export function resetNodesTransformAutoKey(
       continue
     }
     for (const field of RESET_FIELDS) {
-      edits.push({ nodeId, property: FIELD_PROPERTY[field], value: target[field] })
+      const property = FIELD_PROPERTY[field]
+      if (!isAnimatable(node, property)) {
+        continue
+      }
+      edits.push({ nodeId, property, value: target[field] })
     }
   }
   return autoKeyEdit(engine, dispatch, edits)

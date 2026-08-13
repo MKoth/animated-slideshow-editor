@@ -150,7 +150,7 @@ beforeEach(() => {
   useNotificationStore.setState({ notifications: [] })
   usePlaybackController.setState({ currentTimes: {} })
   localStorage.clear()
-  useUiStore.setState({ animationMode: true })
+  useUiStore.setState({ animationMode: true, cameraAnimationMode: false })
 })
 
 describe('InspectorPanel empty state', () => {
@@ -983,7 +983,17 @@ describe('InspectorPanel multi-selection', () => {
 
 describe('InspectorPanel base mode (Animation Mode off)', () => {
   beforeEach(() => {
-    useUiStore.setState({ animationMode: false })
+    useUiStore.setState({ animationMode: false, cameraAnimationMode: false })
+  })
+
+  it('disables a camera transform field whose property has keyframes', async () => {
+    const { engine, dispatcher } = renderPanel()
+    const { cameraId } = createSceneWithNode(engine)
+    addKeyframe(dispatcher, cameraId, 'positionX', 1, 10)
+    select(cameraId)
+
+    expect(screen.getByLabelText('X')).toBeDisabled()
+    expect(screen.getByLabelText('Y')).not.toBeDisabled()
   })
 
   it('shows stored values regardless of the playhead', () => {
@@ -1122,5 +1132,116 @@ describe('InspectorPanel base mode (Animation Mode off)', () => {
 
     expect(engine.getNode(nodeId).transform.x).toBe(12)
     expect(undoStack.entries).toHaveLength(before)
+  })
+})
+
+describe('InspectorPanel camera animation mode (Camera Animation Mode on)', () => {
+  beforeEach(() => {
+    useUiStore.setState({ animationMode: false, cameraAnimationMode: true })
+  })
+
+  it('auto-keys camera position edits at the playhead, leaving the stored transform untouched', async () => {
+    const { engine, undoStack } = renderPanel()
+    const { cameraId } = createSceneWithNode(engine)
+    select(cameraId)
+    scrub(engine, 3)
+    const user = userEvent.setup()
+    const before = undoStack.entries.length
+
+    const x = fields().X
+    await user.clear(x)
+    await user.type(x, '42')
+    await user.keyboard('{Enter}')
+
+    expect(engine.getNode(cameraId).transform.x).toBe(0)
+    expect(engine.getKeyframes(cameraId, 'positionX')).toHaveLength(1)
+    expect(engine.getKeyframes(cameraId, 'positionX')[0]).toMatchObject({ time: 3, value: 42 })
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].type).toBe('AddKeyframe')
+    expect(fields().X.value).toBe('42')
+  })
+
+  it('keeps camera transform fields enabled even when their property has keyframes', async () => {
+    const { engine, dispatcher } = renderPanel()
+    const { cameraId } = createSceneWithNode(engine)
+    addKeyframe(dispatcher, cameraId, 'positionX', 1, 10)
+    select(cameraId)
+
+    expect(screen.getByLabelText('X')).not.toBeDisabled()
+    expect(screen.getByLabelText('Scale X')).not.toBeDisabled()
+    expect(screen.getByLabelText('Rotation')).toBeDisabled()
+  })
+
+  it('resets the camera through position/scale keyframes only, never rotation', () => {
+    const { engine, dispatcher, undoStack } = renderPanel()
+    const { cameraId } = createSceneWithNode(engine)
+    addKeyframe(dispatcher, cameraId, 'positionX', 0, 50)
+    addKeyframe(dispatcher, cameraId, 'positionY', 0, 30)
+    addKeyframe(dispatcher, cameraId, 'scaleX', 0, 2)
+    addKeyframe(dispatcher, cameraId, 'scaleY', 0, 0.5)
+    select(cameraId)
+    scrub(engine, 3)
+    const before = undoStack.entries.length
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset Transform' }))
+
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].type).toBe('Transaction')
+    const children = (
+      undoStack.entries[0].parameters.commands as {
+        type: string
+        property: string
+      }[]
+    ).map((child) => ({ type: child.type, property: child.property }))
+    expect(children).toEqual([
+      { type: 'AddKeyframe', property: 'positionX' },
+      { type: 'AddKeyframe', property: 'positionY' },
+      { type: 'AddKeyframe', property: 'scaleX' },
+      { type: 'AddKeyframe', property: 'scaleY' },
+    ])
+    expect(engine.getNode(cameraId).transform).toEqual({
+      x: 0,
+      y: 0,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+    })
+  })
+
+  it('keeps opacity edits stored-value even for the camera', async () => {
+    const { engine, undoStack } = renderPanel()
+    const { cameraId } = createSceneWithNode(engine)
+    select(cameraId)
+    const user = userEvent.setup()
+    const before = undoStack.entries.length
+
+    const opacity = screen.getByRole('spinbutton', { name: 'Opacity' }) as HTMLInputElement
+    await user.clear(opacity)
+    await user.type(opacity, '50')
+    await user.keyboard('{Enter}')
+
+    expect(engine.getNode(cameraId).opacity).toBe(0.5)
+    expect(engine.getKeyframes(cameraId, 'opacity')).toHaveLength(0)
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].type).toBe('SetOpacity')
+  })
+
+  it('leaves non-camera nodes on stored-value edits', async () => {
+    const { engine, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    select(nodeId)
+    scrub(engine, 2)
+    const user = userEvent.setup()
+    const before = undoStack.entries.length
+
+    const x = fields().X
+    await user.clear(x)
+    await user.type(x, '42')
+    await user.keyboard('{Enter}')
+
+    expect(engine.getNode(nodeId).transform.x).toBe(42)
+    expect(engine.getKeyframes(nodeId, 'positionX')).toHaveLength(0)
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].type).toBe('MoveNode')
   })
 })

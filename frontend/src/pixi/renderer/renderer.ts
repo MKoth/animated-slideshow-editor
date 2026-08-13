@@ -200,7 +200,7 @@ export class Renderer {
         setCameraPreview: (transform) => {
           this.#cameraPreview = transform
         },
-        getAnimationMode: () => useUiStore.getState().animationMode,
+        getCameraAnimationMode: () => useUiStore.getState().cameraAnimationMode,
         getTime: () => {
           const slideId = this.#sceneRenderer?.boundSlideId
           return slideId ? this.#currentTime.getTime(slideId) : 0
@@ -319,21 +319,34 @@ export class Renderer {
     if (!cameraNode || !slideId) {
       return null
     }
-    let state
-    try {
-      state = this.#engine.evaluateNode(
-        cameraNode.id,
-        this.#currentTime.getTime(slideId),
-        this.#cameraScratch,
-      )
-    } catch {
-      return null
-    }
     const out = this.#viewportScratch
-    out.x = state.transform.x
-    out.y = state.transform.y
-    out.scaleX = state.transform.scaleX
-    out.scaleY = state.transform.scaleY
+    if (!useUiStore.getState().cameraAnimationMode) {
+      let stored
+      try {
+        stored = this.#engine.getNode(cameraNode.id).transform
+      } catch {
+        return null
+      }
+      out.x = stored.x
+      out.y = stored.y
+      out.scaleX = stored.scaleX
+      out.scaleY = stored.scaleY
+    } else {
+      let state
+      try {
+        state = this.#engine.evaluateNode(
+          cameraNode.id,
+          this.#currentTime.getTime(slideId),
+          this.#cameraScratch,
+        )
+      } catch {
+        return null
+      }
+      out.x = state.transform.x
+      out.y = state.transform.y
+      out.scaleX = state.transform.scaleX
+      out.scaleY = state.transform.scaleY
+    }
     if (out.scaleX <= 0 || out.scaleY <= 0) {
       return null
     }

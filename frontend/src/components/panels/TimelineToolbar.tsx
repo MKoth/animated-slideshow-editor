@@ -15,6 +15,7 @@ export function TimelineToolbar({
 }) {
   const currentTime = usePlaybackController((state) => state.currentTimes[slideId] ?? 0)
   const animationMode = useUiStore((state) => state.animationMode)
+  const cameraAnimationMode = useUiStore((state) => state.cameraAnimationMode)
 
   const zoomByStep = (direction: 'in' | 'out') => {
     const state = useTimelineViewStore.getState()
@@ -59,6 +60,19 @@ export function TimelineToolbar({
           onClick={() => useUiStore.getState().toggleAnimationMode()}
         >
           Animation Mode
+        </button>
+        <button
+          className="timeline-toolbar__button"
+          aria-label="Camera Animation Mode"
+          aria-pressed={cameraAnimationMode}
+          title={
+            cameraAnimationMode
+              ? 'Camera animation mode: pan, zoom and reset create camera keyframes'
+              : 'Camera base mode: pan, zoom and reset change stored camera values'
+          }
+          onClick={() => useUiStore.getState().toggleCameraAnimationMode()}
+        >
+          Camera Animation Mode
         </button>
       </div>
       <span className="timeline-time" aria-label="Current time">

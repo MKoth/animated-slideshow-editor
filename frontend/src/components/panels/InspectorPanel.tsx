@@ -290,27 +290,26 @@ export function InspectorPanel({ width }: { width: number }) {
   const notify = useNotificationStore((state) => state.notify)
   const selectedIds = useSelectionStore((state) => state.selectedIds)
   const animationMode = useUiStore((state) => state.animationMode)
+  const cameraAnimationMode = useUiStore((state) => state.cameraAnimationMode)
   usePlaybackController((state) => state.currentTimes)
   const [, setTick] = useState(0)
   useEngineEvent(() => setTick((tick) => tick + 1))
 
   const targets = inspectedTargets(engine, selectedIds)
-  const modeActions = animationMode
-    ? {
-        readWorld: readEvaluatedNodeWorld,
-        opacityOf: (node: SceneNode) =>
-          engine.evaluateNode(node.id, playheadTimeOf(engine, node.id) ?? 0).opacity,
-        applyField: applyNodeFieldAutoKey,
-        applyOpacity: applyNodeOpacityAutoKey,
-        resetTransform: resetNodesTransformAutoKey,
-      }
-    : {
-        readWorld: readStoredNodeWorld,
-        opacityOf: (node: SceneNode) => node.opacity,
-        applyField: applyNodeField,
-        applyOpacity: applyNodeOpacity,
-        resetTransform: resetNodesTransform,
-      }
+  const cameraSelected = targets.length === 1 && Boolean(targets[0]?.components.camera)
+  const animatingCamera = cameraAnimationMode && cameraSelected
+  const transformAutoKey = animationMode || animatingCamera
+  const opacityAutoKey = animationMode
+  const modeActions = {
+    readWorld: transformAutoKey ? readEvaluatedNodeWorld : readStoredNodeWorld,
+    opacityOf: opacityAutoKey
+      ? (node: SceneNode) =>
+          engine.evaluateNode(node.id, playheadTimeOf(engine, node.id) ?? 0).opacity
+      : (node: SceneNode) => node.opacity,
+    applyField: transformAutoKey ? applyNodeFieldAutoKey : applyNodeField,
+    applyOpacity: opacityAutoKey ? applyNodeOpacityAutoKey : applyNodeOpacity,
+    resetTransform: transformAutoKey ? resetNodesTransformAutoKey : resetNodesTransform,
+  }
   const readTarget = targets.length > 0 ? modeActions.readWorld(engine, targets[0].id) : null
 
   if (targets.length === 0 || !readTarget) {
@@ -340,8 +339,8 @@ export function InspectorPanel({ width }: { width: number }) {
   const animatedPropertyOf = (property: AnimationProperty): boolean =>
     targets.some((node) => engine.getKeyframes(node.id, property).length > 0)
   const fieldDisabledOf = (field: InspectorFieldKind): boolean =>
-    !animationMode && animatedPropertyOf(FIELD_PROPERTY[field])
-  const opacityDisabled = !animationMode && animatedPropertyOf('opacity')
+    !transformAutoKey && animatedPropertyOf(FIELD_PROPERTY[field])
+  const opacityDisabled = !opacityAutoKey && animatedPropertyOf('opacity')
 
   const commitField = (field: InspectorFieldKind, raw: string) => {
     try {
