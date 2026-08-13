@@ -5,6 +5,7 @@ import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
 import type { Slide } from './slide'
 import type { Keyframe, AnimationProperty } from './animation'
+import type { EvaluatedNodeScratch, EvaluatedNodeState } from './animationEvaluator'
 import type { EngineEvent, Unsubscribe } from './events'
 import type { LessonJSON } from './json'
 
@@ -17,6 +18,7 @@ export interface EngineReadOnly {
   getScene(sceneId: string): Scene
   getAssetDefinition(definitionId: string): AssetDefinition
   getKeyframes(nodeId: string, property: AnimationProperty): readonly Keyframe[]
+  evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState
   toJSON(): LessonJSON
 }
 

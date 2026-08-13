@@ -5,6 +5,8 @@ import { SlideManager } from './slideManager'
 import { NodeManager } from './nodeManager'
 import { AssetManager } from './assetManager'
 import { AnimationManager } from './animationManager'
+import { AnimationEvaluator } from './animationEvaluator'
+import type { EvaluatedNodeScratch, EvaluatedNodeState } from './animationEvaluator'
 import type { KeyframeMove, KeyframeMoveResult } from './animationManager'
 import type { AnimationProperty, Keyframe } from './animation'
 import type { AssetDefinition } from './assetDefinition'
@@ -28,6 +30,7 @@ export class Engine {
   readonly #assets: AssetManager
   readonly #slides: SlideManager
   readonly #animations: AnimationManager
+  readonly #evaluator: AnimationEvaluator
 
   constructor() {
     this.#projects = new ProjectManager(this.#bus)
@@ -37,6 +40,10 @@ export class Engine {
     this.#slides = new SlideManager(this.#bus, this.#projects, this.#scenes)
     this.#animations = new AnimationManager(
       this.#bus,
+      (nodeId) => this.getNode(nodeId),
+      (nodeId) => this.getSlideOfNode(nodeId),
+    )
+    this.#evaluator = new AnimationEvaluator(
       (nodeId) => this.getNode(nodeId),
       (nodeId) => this.getSlideOfNode(nodeId),
     )
@@ -103,6 +110,10 @@ export class Engine {
 
   getKeyframes(nodeId: string, property: AnimationProperty): readonly Keyframe[] {
     return this.#animations.getKeyframes(nodeId, property)
+  }
+
+  evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState {
+    return this.#evaluator.evaluateNode(nodeId, time, target)
   }
 
   getKeyframe(
@@ -247,6 +258,7 @@ export function toReadOnly(engine: Engine): EngineReadOnly {
     getScene: (sceneId) => engine.getScene(sceneId),
     getAssetDefinition: (definitionId) => engine.getAssetDefinition(definitionId),
     getKeyframes: (nodeId, property) => engine.getKeyframes(nodeId, property),
+    evaluateNode: (nodeId, time, target) => engine.evaluateNode(nodeId, time, target),
     toJSON: () => engine.toJSON(),
   }
 }

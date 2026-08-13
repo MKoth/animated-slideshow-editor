@@ -116,3 +116,5 @@ export {
 } from './animation'
 export type { AnimationProperty, Keyframe } from './animation'
 export type { KeyframeMove, KeyframeMoveResult } from './animation'
+export type { EvaluatedNodeState, EvaluatedNodeScratch } from './animation'
+export { evaluatedNodeScratch } from './animation'

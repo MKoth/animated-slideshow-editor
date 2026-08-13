@@ -19,6 +19,8 @@ import { worldTransformOf } from './hitTest'
 import { realPixi } from './pixi'
 import type { PixiApplication, RendererPixi } from './pixi'
 import { SceneRenderer } from './sceneRenderer'
+import type { CurrentTimeSource } from './sceneRenderer'
+import { ALWAYS_ZERO_TIME } from './sceneRenderer'
 import { SelectionOverlay } from './selectionOverlay'
 import type { ResolveAssetUrl } from './textureCache'
 import { TextureCache } from './textureCache'
@@ -56,9 +58,11 @@ export class Renderer {
   #guideOverlay: GuideOverlay | null = null
   #previewPositions = new Map<string, { x: number; y: number }>()
   #unsubscribe: Unsubscribe | null = null
+  #unsubscribeTime: Unsubscribe | null = null
   #started = false
   #disposed = false
   readonly #resolveAssetUrl: ResolveAssetUrl
+  readonly #currentTime: CurrentTimeSource
 
   constructor(
     host: HTMLElement,
@@ -66,12 +70,14 @@ export class Renderer {
     dispatch: DispatchCommand = noopDispatch,
     pixi: RendererPixi = realPixi,
     resolveAssetUrl: ResolveAssetUrl = () => null,
+    currentTime: CurrentTimeSource = ALWAYS_ZERO_TIME,
   ) {
     this.#host = host
     this.#engine = engine
     this.#dispatch = dispatch
     this.#pixi = pixi
     this.#resolveAssetUrl = resolveAssetUrl
+    this.#currentTime = currentTime
   }
 
   async start(): Promise<void> {
@@ -110,8 +116,10 @@ export class Renderer {
         this.#textureCache,
         this.#resolveAssetUrl,
         () => this.#selectionOverlay?.redraw(),
+        this.#currentTime,
       )
       this.#unsubscribe = this.#engine.subscribe((event) => this.#handleEvent(event))
+      this.#unsubscribeTime = this.#currentTime.subscribe(() => this.#handleTimeChanged())
       this.#syncScene(this.#sceneRenderer)
 
       this.#selectionOverlay = new SelectionOverlay({
@@ -193,6 +201,8 @@ export class Renderer {
     this.#disposed = true
     this.#unsubscribe?.()
     this.#unsubscribe = null
+    this.#unsubscribeTime?.()
+    this.#unsubscribeTime = null
     this.#sceneRenderer = null
     this.#controls?.detach()
     this.#controls = null
@@ -288,6 +298,17 @@ export class Renderer {
     }
   }
 
+  readonly #handleTimeChanged = (): void => {
+    if (!this.#app) {
+      return
+    }
+    try {
+      this.#sceneRenderer?.handleTimeChanged()
+    } catch (error) {
+      this.#reportFailure(error)
+    }
+  }
+
   #applyEvent(event: EngineEvent): void {
     const sceneRenderer = this.#sceneRenderer
     if (!sceneRenderer) {
@@ -324,6 +345,12 @@ export class Renderer {
       case 'OpacityChanged':
         sceneRenderer.handleOpacityChanged(event.nodeId)
         break
+      case 'KeyframeAdded':
+      case 'KeyframeRemoved':
+      case 'KeyframeMoved':
+      case 'KeyframeValueChanged':
+        sceneRenderer.handleKeyframeChanged(event.nodeId)
+        break
     }
   }
 
@@ -331,7 +358,7 @@ export class Renderer {
     const firstSlide = this.#engine.project?.slides[0]
     const scene = firstSlide ? firstSlide.scene : null
     if (sceneRenderer.boundSceneId !== (scene?.id ?? null)) {
-      sceneRenderer.bind(scene)
+      sceneRenderer.bind(scene, firstSlide ? firstSlide.id : null)
       this.#selectionOverlay?.bringToFront()
       this.#guideOverlay?.bringToFront()
       useSelectionStore.getState().clear()

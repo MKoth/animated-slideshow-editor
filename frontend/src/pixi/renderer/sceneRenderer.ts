@@ -1,12 +1,28 @@
-import type { EngineReadOnly } from '../../engine'
+import type { EngineReadOnly, Unsubscribe } from '../../engine'
 import type { Scene } from '../../engine'
 import type { SceneNode } from '../../engine'
 import { walkPreOrder } from '../../engine/sceneNode'
+import type { EvaluatedNodeScratch } from '../../engine/animationEvaluator'
+import {
+  copyEvaluatedState,
+  evaluatedNodeScratch,
+  evaluatedStatesEqual,
+} from '../../engine/animationEvaluator'
 import type { PixiContainer, RendererPixi } from './pixi'
 import type { WorldSize } from './worldGeometry'
-import { applyName, applyTransform, createNodeContainer, placeholderOf } from './nodeRenderer'
+import { applyEvaluatedState, applyName, createNodeContainer, placeholderOf } from './nodeRenderer'
 import { applyAssetTexture, placeholderSize } from './placeholder'
 import type { ResolveAssetUrl, TextureCache } from './textureCache'
+
+export interface CurrentTimeSource {
+  getTime(slideId: string): number
+  subscribe(listener: () => void): Unsubscribe
+}
+
+export const ALWAYS_ZERO_TIME: CurrentTimeSource = {
+  getTime: () => 0,
+  subscribe: () => () => undefined,
+}
 
 export class SceneRenderer {
   readonly #engine: EngineReadOnly
@@ -14,11 +30,15 @@ export class SceneRenderer {
   readonly #textureCache: TextureCache
   readonly #resolveAssetUrl: ResolveAssetUrl
   readonly #world: PixiContainer
+  readonly #currentTime: CurrentTimeSource
   readonly #containers = new Map<string, PixiContainer>()
   readonly #nodeIds = new WeakMap<PixiContainer, string>()
   readonly #sizes = new Map<string, WorldSize>()
+  readonly #lastEvaluated = new Map<string, EvaluatedNodeScratch>()
+  readonly #scratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #onNodeSizeChanged: (nodeId: string) => void
   #scene: Scene | null = null
+  #slideId: string | null = null
 
   constructor(
     engine: EngineReadOnly,
@@ -27,6 +47,7 @@ export class SceneRenderer {
     textureCache: TextureCache,
     resolveAssetUrl: ResolveAssetUrl,
     onNodeSizeChanged: (nodeId: string) => void = () => undefined,
+    currentTime: CurrentTimeSource = ALWAYS_ZERO_TIME,
   ) {
     this.#engine = engine
     this.#world = world
@@ -34,6 +55,7 @@ export class SceneRenderer {
     this.#textureCache = textureCache
     this.#resolveAssetUrl = resolveAssetUrl
     this.#onNodeSizeChanged = onNodeSizeChanged
+    this.#currentTime = currentTime
   }
 
   nodeSize(nodeId: string): WorldSize | null {
@@ -62,13 +84,15 @@ export class SceneRenderer {
     return count
   }
 
-  bind(scene: Scene | null): void {
+  bind(scene: Scene | null, slideId: string | null = null): void {
     for (const container of this.#containers.values()) {
       container.destroy({ children: true })
     }
     this.#containers.clear()
     this.#sizes.clear()
+    this.#lastEvaluated.clear()
     this.#scene = scene
+    this.#slideId = slideId
     if (!scene) {
       return
     }
@@ -97,6 +121,7 @@ export class SceneRenderer {
       if (descendantId) {
         this.#containers.delete(descendantId)
         this.#sizes.delete(descendantId)
+        this.#lastEvaluated.delete(descendantId)
       }
       this.#nodeIds.delete(descendant)
     }
@@ -104,14 +129,21 @@ export class SceneRenderer {
   }
 
   handleTransformChanged(nodeId: string): void {
-    if (!this.#scene?.getNode(nodeId)) {
+    this.#evaluateAndApply(nodeId)
+  }
+
+  handleKeyframeChanged(nodeId: string): void {
+    this.#evaluateAndApply(nodeId)
+  }
+
+  handleTimeChanged(): void {
+    const scene = this.#scene
+    if (!scene) {
       return
     }
-    const container = this.#containers.get(nodeId)
-    if (!container) {
-      return
+    for (const node of walkPreOrder(scene.root)) {
+      this.#evaluateAndApply(node.id)
     }
-    applyTransform(container, this.#engine.getNode(nodeId))
   }
 
   previewTransform(nodeId: string, x: number, y: number): void {
@@ -145,14 +177,7 @@ export class SceneRenderer {
   }
 
   handleOpacityChanged(nodeId: string): void {
-    if (!this.#scene?.getNode(nodeId)) {
-      return
-    }
-    const container = this.#containers.get(nodeId)
-    if (!container) {
-      return
-    }
-    container.alpha = this.#engine.getNode(nodeId).opacity
+    this.#evaluateAndApply(nodeId)
   }
 
   handleNodeReparented(nodeId: string): void {
@@ -208,10 +233,33 @@ export class SceneRenderer {
     this.#nodeIds.set(container, node.id)
     this.#attachToParent(container, node)
     this.#recordSize(node, container)
+    this.#evaluateAndApply(node.id)
     const instance = node.components.assetInstance
     if (instance) {
       this.#loadAssetTexture(instance.assetDefinitionId, node.id, container)
     }
+  }
+
+  #evaluateAndApply(nodeId: string): void {
+    const scene = this.#scene
+    const slideId = this.#slideId
+    const container = this.#containers.get(nodeId)
+    if (!scene || !slideId || !scene.getNode(nodeId) || !container) {
+      return
+    }
+    const state = this.#engine.evaluateNode(
+      nodeId,
+      this.#currentTime.getTime(slideId),
+      this.#scratch,
+    )
+    const previous = this.#lastEvaluated.get(nodeId)
+    if (previous && evaluatedStatesEqual(previous, state)) {
+      return
+    }
+    applyEvaluatedState(container, state)
+    const stored = previous ?? evaluatedNodeScratch()
+    copyEvaluatedState(stored, state)
+    this.#lastEvaluated.set(nodeId, stored)
   }
 
   #recordSize(node: SceneNode, container: PixiContainer): void {
