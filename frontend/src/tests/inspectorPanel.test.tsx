@@ -37,6 +37,7 @@ function createSceneWithNode(
     scaleX?: number
     scaleY?: number
   },
+  opacity = 1,
 ): { nodeId: string; cameraId: string } {
   engine.createProject({ name: 'Demo' })
   const slide = engine.createSlide('Slide 1')
@@ -48,8 +49,37 @@ function createSceneWithNode(
       scaleX: transform?.scaleX ?? 2,
       scaleY: transform?.scaleY ?? 0.5,
     },
+    opacity,
   })
   return { nodeId: node.id, cameraId: slide.scene.camera.id }
+}
+
+function createSecondNode(
+  engine: Engine,
+  name = 'Second',
+  transform?: {
+    x?: number
+    y?: number
+    rotation?: number
+    scaleX?: number
+    scaleY?: number
+  },
+  opacity = 1,
+): string {
+  const slide = engine.project?.slides[0]
+  if (!slide) {
+    throw new Error('expected a slide')
+  }
+  return engine.createNode(slide.scene.id, slide.scene.root.id, name, {
+    transform: {
+      x: transform?.x ?? 0,
+      y: transform?.y ?? 0,
+      rotation: transform?.rotation ?? 0,
+      scaleX: transform?.scaleX ?? 1,
+      scaleY: transform?.scaleY ?? 1,
+    },
+    opacity,
+  }).id
 }
 
 function select(nodeId: string): void {
@@ -116,11 +146,12 @@ describe('InspectorPanel sections', () => {
     expect(screen.getByRole('button', { name: 'Reset Transform' })).toBeInTheDocument()
 
     const name = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement
-    expect(name).toBeDisabled()
+    expect(name).not.toBeDisabled()
     expect(name.value).toBe('Boy')
 
     const opacity = screen.getByRole('spinbutton', { name: 'Opacity' }) as HTMLInputElement
-    expect(opacity).toBeDisabled()
+    expect(opacity).not.toBeDisabled()
+    expect(opacity.value).toBe('100')
 
     const seen = fields()
     expect(seen.X.value).toBe('12')
@@ -287,14 +318,20 @@ describe('InspectorPanel transform editing', () => {
     ).toBeInTheDocument()
   })
 
-  it('shows the first selected object when multiple are selected', () => {
+  it('shows the common value when the selection shares one', () => {
     const { engine } = renderPanel()
-    const { nodeId } = createSceneWithNode(engine)
-    const slide = engine.project?.slides[0]
-    const second = engine.createNode(slide?.scene.id ?? '', slide?.scene.root.id ?? '', 'Second')
-    selectMany([nodeId, second.id])
+    const { nodeId } = createSceneWithNode(engine, { x: 12, y: 12, scaleX: 2, scaleY: 2 })
+    engine.setOpacity(nodeId, 0.5)
+    const secondId = createSecondNode(engine, 'Second', { x: 12, y: 12, scaleX: 2, scaleY: 2 }, 0.5)
+    selectMany([nodeId, secondId])
 
     expect(fields().X.value).toBe('12')
+    expect(fields().Y.value).toBe('12')
+    expect(fields()['Scale X'].value).toBe('2')
+    expect(fields()['Scale Y'].value).toBe('2')
+    expect((screen.getByRole('spinbutton', { name: 'Opacity' }) as HTMLInputElement).value).toBe(
+      '50',
+    )
   })
 })
 
@@ -427,5 +464,358 @@ describe('InspectorPanel live updates', () => {
 
     expect(fields().X.value).toBe('300')
     expect(fields().Y.value).toBe('200')
+  })
+})
+
+describe('InspectorPanel name editing', () => {
+  it('renames the object on Enter, records inverse data, and emits NodeRenamed', async () => {
+    const { engine, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    select(nodeId)
+    const user = userEvent.setup()
+    const before = undoStack.entries.length
+    const events: string[] = []
+    engine.subscribe((event) => events.push(event.type))
+
+    const name = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement
+    await user.clear(name)
+    await user.type(name, 'Hero')
+    await user.keyboard('{Enter}')
+
+    expect(engine.getNode(nodeId).name).toBe('Hero')
+    expect(events).toContain('NodeRenamed')
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].type).toBe('RenameNode')
+    expect(undoStack.entries[0].inverse).toEqual({ nodeId, oldName: 'Boy' })
+    expect(name.value).toBe('Hero')
+  })
+
+  it('auto-suffixes a duplicate name within the slide', async () => {
+    const { engine, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    const kidId = createSecondNode(engine, 'Kid')
+    select(kidId)
+    const user = userEvent.setup()
+    const before = undoStack.entries.length
+
+    const name = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement
+    await user.clear(name)
+    await user.type(name, 'Boy')
+    await user.keyboard('{Enter}')
+
+    expect(engine.getNode(nodeId).name).toBe('Boy')
+    expect(engine.getNode(kidId).name).toBe('Boy (2)')
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].type).toBe('RenameNode')
+    expect(undoStack.entries[0].inverse).toEqual({ nodeId: kidId, oldName: 'Kid' })
+  })
+
+  it('rejects an empty name with a notification and leaves the engine unchanged', async () => {
+    const { engine, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    select(nodeId)
+    const user = userEvent.setup()
+    const before = undoStack.entries.length
+
+    const name = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement
+    await user.clear(name)
+    await user.keyboard('{Enter}')
+
+    expect(engine.getNode(nodeId).name).toBe('Boy')
+    expect(undoStack.entries).toHaveLength(before)
+    expect(useNotificationStore.getState().notifications).toEqual(
+      expect.arrayContaining([expect.objectContaining({ message: 'Node name must not be empty' })]),
+    )
+    expect(name.value).toBe('Boy')
+  })
+
+  it('commits a rename on blur', async () => {
+    const { engine, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    select(nodeId)
+    const user = userEvent.setup()
+    const before = undoStack.entries.length
+
+    const name = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement
+    await user.clear(name)
+    await user.type(name, 'Hero')
+    await user.tab()
+
+    expect(engine.getNode(nodeId).name).toBe('Hero')
+    expect(undoStack.entries).toHaveLength(before + 1)
+  })
+})
+
+describe('InspectorPanel opacity editing', () => {
+  it('clamps an over-100 edit to 100% and records SetOpacity with the old value', async () => {
+    const { engine, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine, {}, 0.5)
+    select(nodeId)
+    const user = userEvent.setup()
+    const before = undoStack.entries.length
+
+    const opacity = screen.getByRole('spinbutton', { name: 'Opacity' }) as HTMLInputElement
+    await user.clear(opacity)
+    await user.type(opacity, '150')
+    await user.keyboard('{Enter}')
+
+    expect(engine.getNode(nodeId).opacity).toBe(1)
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].type).toBe('SetOpacity')
+    expect(undoStack.entries[0].inverse).toEqual({ nodeId, oldOpacity: 0.5 })
+    expect(opacity.value).toBe('100')
+  })
+
+  it('clamps a negative edit to 0%', async () => {
+    const { engine, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine, {}, 0.5)
+    select(nodeId)
+    const user = userEvent.setup()
+    const before = undoStack.entries.length
+
+    const opacity = screen.getByRole('spinbutton', { name: 'Opacity' }) as HTMLInputElement
+    await user.clear(opacity)
+    await user.type(opacity, '-20')
+    await user.keyboard('{Enter}')
+
+    expect(engine.getNode(nodeId).opacity).toBe(0)
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].inverse).toEqual({ nodeId, oldOpacity: 0.5 })
+    expect(opacity.value).toBe('0')
+  })
+
+  it('applies a valid percentage edit and emits OpacityChanged', async () => {
+    const { engine, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine, {}, 0.5)
+    select(nodeId)
+    const user = userEvent.setup()
+    const before = undoStack.entries.length
+    const events: string[] = []
+    engine.subscribe((event) => events.push(event.type))
+
+    const opacity = screen.getByRole('spinbutton', { name: 'Opacity' }) as HTMLInputElement
+    await user.clear(opacity)
+    await user.type(opacity, '33')
+    await user.keyboard('{Enter}')
+
+    expect(engine.getNode(nodeId).opacity).toBe(0.33)
+    expect(events).toContain('OpacityChanged')
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(opacity.value).toBe('33')
+  })
+
+  it('rejects non-numeric input with a notification and leaves the engine unchanged', async () => {
+    const { engine, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine, {}, 0.5)
+    select(nodeId)
+    const user = userEvent.setup()
+    const before = undoStack.entries.length
+
+    const opacity = screen.getByRole('spinbutton', { name: 'Opacity' }) as HTMLInputElement
+    await user.clear(opacity)
+    await user.type(opacity, 'abc')
+    await user.keyboard('{Enter}')
+
+    expect(engine.getNode(nodeId).opacity).toBe(0.5)
+    expect(undoStack.entries).toHaveLength(before)
+    expect(useNotificationStore.getState().notifications).toEqual(
+      expect.arrayContaining([expect.objectContaining({ message: 'Opacity must be a number' })]),
+    )
+    expect(opacity.value).toBe('50')
+  })
+
+  it('adjusts opacity by dragging the field', () => {
+    const { engine, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine, {}, 0.5)
+    select(nodeId)
+    const before = undoStack.entries.length
+    const opacity = screen.getByRole('spinbutton', { name: 'Opacity' }) as HTMLInputElement
+
+    fireEvent.pointerDown(opacity, { clientX: 100, clientY: 10 })
+    fireEvent.pointerMove(window, { clientX: 110, clientY: 10 })
+    fireEvent.pointerUp(window)
+
+    expect(engine.getNode(nodeId).opacity).toBe(0.6)
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(opacity.value).toBe('60')
+  })
+})
+
+describe('InspectorPanel multi-selection', () => {
+  it('shows the object count in the header and a mixed marker for differing values', () => {
+    const { engine } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    const secondId = createSecondNode(engine, 'Second', {}, 0.4)
+    selectMany([nodeId, secondId])
+
+    expect(screen.getByRole('heading', { name: '2 Objects Selected' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'General' })).not.toBeInTheDocument()
+    expect((screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement).value).toBe('—')
+    expect((screen.getByRole('textbox', { name: 'X' }) as HTMLInputElement).value).toBe('—')
+    expect((screen.getByRole('textbox', { name: 'Opacity' }) as HTMLInputElement).value).toBe('—')
+    expect((screen.getByRole('spinbutton', { name: 'Rotation' }) as HTMLInputElement).value).toBe(
+      '0',
+    )
+  })
+
+  it('applies a name edit to every selected object as one composite command', async () => {
+    const { engine, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    const secondId = createSecondNode(engine)
+    selectMany([nodeId, secondId])
+    const user = userEvent.setup()
+    const before = undoStack.entries.length
+
+    const name = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement
+    await user.clear(name)
+    await user.type(name, 'Hero')
+    await user.keyboard('{Enter}')
+
+    expect(engine.getNode(nodeId).name).toBe('Hero')
+    expect(engine.getNode(secondId).name).toBe('Hero (2)')
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].type).toBe('Transaction')
+    const children = (
+      undoStack.entries[0].parameters.commands as {
+        type: string
+        nodeId: string
+        name: string
+      }[]
+    ).map((command) => ({ type: command.type, nodeId: command.nodeId, name: command.name }))
+    expect(children).toEqual([
+      { type: 'RenameNode', nodeId, name: 'Hero' },
+      { type: 'RenameNode', nodeId: secondId, name: 'Hero (2)' },
+    ])
+    expect(name.value).toBe('—')
+  })
+
+  it('applies an opacity edit to every selected object as one composite command', async () => {
+    const { engine, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    const secondId = createSecondNode(engine, 'Second', {}, 0.4)
+    selectMany([nodeId, secondId])
+    const user = userEvent.setup()
+    const before = undoStack.entries.length
+
+    const opacity = screen.getByRole('textbox', { name: 'Opacity' }) as HTMLInputElement
+    await user.clear(opacity)
+    await user.type(opacity, '50')
+    await user.keyboard('{Enter}')
+
+    expect(engine.getNode(nodeId).opacity).toBe(0.5)
+    expect(engine.getNode(secondId).opacity).toBe(0.5)
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].type).toBe('Transaction')
+    const children = (
+      undoStack.entries[0].parameters.commands as {
+        type: string
+        nodeId: string
+        opacity: number
+      }[]
+    ).map((command) => ({ type: command.type, nodeId: command.nodeId, opacity: command.opacity }))
+    expect(children).toEqual([
+      { type: 'SetOpacity', nodeId, opacity: 0.5 },
+      { type: 'SetOpacity', nodeId: secondId, opacity: 0.5 },
+    ])
+    expect((screen.getByRole('spinbutton', { name: 'Opacity' }) as HTMLInputElement).value).toBe(
+      '50',
+    )
+  })
+
+  it('applies an X edit to every selected object as one composite command', async () => {
+    const { engine, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    const secondId = createSecondNode(engine)
+    selectMany([nodeId, secondId])
+    const user = userEvent.setup()
+    const before = undoStack.entries.length
+
+    const x = screen.getByRole('textbox', { name: 'X' }) as HTMLInputElement
+    await user.clear(x)
+    await user.type(x, '42')
+    await user.keyboard('{Enter}')
+
+    expect(engine.getNode(nodeId).transform).toMatchObject({ x: 42, y: -4 })
+    expect(engine.getNode(secondId).transform).toMatchObject({ x: 42, y: 0 })
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].type).toBe('Transaction')
+    const children = (
+      undoStack.entries[0].parameters.commands as {
+        type: string
+        nodeId: string
+      }[]
+    ).map((command) => ({ type: command.type, nodeId: command.nodeId }))
+    expect(children).toEqual([
+      { type: 'MoveNode', nodeId },
+      { type: 'MoveNode', nodeId: secondId },
+    ])
+    expect((screen.getByRole('spinbutton', { name: 'X' }) as HTMLInputElement).value).toBe('42')
+  })
+
+  it('resets the transform of every selected object in one composite command', () => {
+    const { engine, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    const secondId = createSecondNode(engine, 'Second', { x: 5, y: 5 })
+    selectMany([nodeId, secondId])
+    const before = undoStack.entries.length
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset Transform' }))
+
+    expect(engine.getNode(nodeId).transform).toEqual({
+      x: 0,
+      y: 0,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+    })
+    expect(engine.getNode(secondId).transform).toEqual({
+      x: 0,
+      y: 0,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+    })
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].type).toBe('Transaction')
+    const children = (undoStack.entries[0].parameters.commands as { type: string }[]).map(
+      (command) => command.type,
+    )
+    expect(children).toEqual([
+      'MoveNode',
+      'RotateNode',
+      'ScaleNode',
+      'MoveNode',
+      'RotateNode',
+      'ScaleNode',
+    ])
+  })
+
+  it('emits NodeRenamed for every renaming and OpacityChanged for every opacity edit in a multi edit', async () => {
+    const { engine } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    const secondId = createSecondNode(engine, 'Second', {}, 0.4)
+    selectMany([nodeId, secondId])
+    const user = userEvent.setup()
+    const events: string[] = []
+    engine.subscribe((event) => events.push(event.type))
+
+    const name = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement
+    await user.clear(name)
+    await user.type(name, 'Hero')
+    await user.keyboard('{Enter}')
+
+    const renameEvents = events.filter((type) => type === 'NodeRenamed')
+    expect(renameEvents).toHaveLength(2)
+    expect(engine.getNode(nodeId).name).toBe('Hero')
+    expect(engine.getNode(secondId).name).toBe('Hero (2)')
+
+    const opacity = screen.getByRole('textbox', { name: 'Opacity' }) as HTMLInputElement
+    await user.clear(opacity)
+    await user.type(opacity, '80')
+    await user.keyboard('{Enter}')
+
+    expect(events.filter((type) => type === 'OpacityChanged')).toHaveLength(2)
+    expect(engine.getNode(nodeId).opacity).toBe(0.8)
+    expect(engine.getNode(secondId).opacity).toBe(0.8)
   })
 })

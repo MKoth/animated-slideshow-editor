@@ -1,24 +1,27 @@
 import { useRef, useState } from 'react'
-import type { CommandResult } from '../../engine/commands'
-import type { EngineContextValue } from '../../app/engineContext'
 import type { WorldTransform } from '../../engine/worldTransform'
+import { normalizeRotation } from '../../engine'
 import {
-  applyNodePosition,
-  applyNodeRotationDegrees,
-  applyNodeScale,
+  applyField,
+  applyNodeField,
+  applyNodeName,
+  applyNodeOpacity,
   degreesOf,
+  FIELD_LABELS,
   formatDecimal,
   parseFiniteNumber,
   readNodeWorld,
-  resetNodeTransform,
+  resetNodesTransform,
   roundToStep,
 } from '../../app/inspectorActions'
+import type { InspectorFieldKind } from '../../app/inspectorActions'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
 import type { EngineReadOnly, SceneNode } from '../../engine'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 
 const DRAG_THRESHOLD_PX = 3
+const MIXED_MARKER = '—'
 
 const COMING_SOON_SECTIONS = [
   'Material',
@@ -29,78 +32,98 @@ const COMING_SOON_SECTIONS = [
   'AI Metadata',
 ]
 
-type TransformField = 'x' | 'y' | 'rotation' | 'scaleX' | 'scaleY'
-
-const FIELD_LABELS: Record<TransformField, string> = {
-  x: 'X',
-  y: 'Y',
-  rotation: 'Rotation',
-  scaleX: 'Scale X',
-  scaleY: 'Scale Y',
-}
-
-function inspectedNode(engine: EngineReadOnly, selectedIds: readonly string[]): SceneNode | null {
+function inspectedTargets(engine: EngineReadOnly, selectedIds: readonly string[]): SceneNode[] {
+  const targets: SceneNode[] = []
   for (const nodeId of selectedIds) {
     try {
       const node = engine.getNode(nodeId)
       if (!node.components.camera) {
-        return node
+        targets.push(node)
       }
     } catch {
-      // the id is stale (node deleted); try the next selected id
+      // the id is stale (node deleted); skip it
     }
   }
-  return null
+  return targets
 }
 
-function applyField(
-  engine: EngineReadOnly,
-  dispatch: EngineContextValue['dispatch'],
-  node: SceneNode,
-  world: WorldTransform,
-  field: TransformField,
-  value: number,
-): CommandResult<unknown> | null {
-  switch (field) {
-    case 'x':
-      return applyNodePosition(engine, dispatch, node.id, value, world.y)
-    case 'y':
-      return applyNodePosition(engine, dispatch, node.id, world.x, value)
-    case 'rotation':
-      return applyNodeRotationDegrees(engine, dispatch, node.id, value)
-    case 'scaleX':
-      return applyNodeScale(engine, dispatch, node.id, value, world.scaleY)
-    case 'scaleY':
-      return applyNodeScale(engine, dispatch, node.id, world.scaleX, value)
+function commonValueOf<T>(targets: readonly SceneNode[], read: (node: SceneNode) => T): T | null {
+  const first = read(targets[0])
+  for (const node of targets.slice(1)) {
+    if (read(node) !== first) {
+      return null
+    }
+  }
+  return first
+}
+
+function mixedTransformField(
+  readings: readonly (WorldTransform | null)[],
+  field: InspectorFieldKind,
+): number | null {
+  const firstReading = readings[0]
+  if (!firstReading) {
+    return null
+  }
+  const comparable = (reading: WorldTransform): number =>
+    field === 'rotation' ? normalizeRotation(reading.rotation) : reading[field]
+  const first = comparable(firstReading)
+  for (const reading of readings) {
+    if (!reading || comparable(reading) !== first) {
+      return null
+    }
+  }
+  return field === 'rotation' ? degreesOf(firstReading) : first
+}
+
+function useEditBuffer(value: string): {
+  readonly text: string
+  readonly editing: boolean
+  setText: (value: string) => void
+  begin: () => void
+  commit: () => string
+  cancel: () => void
+} {
+  const [text, setText] = useState(value)
+  const [editing, setEditing] = useState(false)
+
+  if (!editing && text !== value) {
+    setText(value)
+  }
+
+  return {
+    text,
+    editing,
+    setText,
+    begin: () => {
+      setEditing(true)
+    },
+    commit: () => {
+      setEditing(false)
+      return text
+    },
+    cancel: () => {
+      setEditing(false)
+    },
   }
 }
 
 interface NumericFieldProps {
   label: string
-  value: number
+  value: number | null
   step: number
   onCommit: (raw: string) => void
   onAdjust: (value: number) => void
 }
 
 function NumericField({ label, value, step, onCommit, onAdjust }: NumericFieldProps) {
-  const [text, setText] = useState(formatDecimal(value))
-  const [editing, setEditing] = useState(false)
+  const display = value === null ? MIXED_MARKER : formatDecimal(value)
+  const buffer = useEditBuffer(display)
   const inputRef = useRef<HTMLInputElement>(null)
   const dragRef = useRef<{ startX: number; startValue: number; dragging: boolean } | null>(null)
 
-  if (!editing && text !== formatDecimal(value)) {
-    setText(formatDecimal(value))
-  }
-
   const commit = () => {
-    setEditing(false)
-    onCommit(text)
-  }
-
-  const cancel = () => {
-    setEditing(false)
-    setText(formatDecimal(value))
+    onCommit(buffer.commit())
   }
 
   const handlePointerMove = (event: PointerEvent) => {
@@ -115,7 +138,7 @@ function NumericField({ label, value, step, onCommit, onAdjust }: NumericFieldPr
     drag.dragging = true
     event.preventDefault()
     const next = roundToStep(drag.startValue + delta * step, step)
-    setText(formatDecimal(next))
+    buffer.setText(formatDecimal(next))
     onAdjust(next)
   }
 
@@ -135,6 +158,9 @@ function NumericField({ label, value, step, onCommit, onAdjust }: NumericFieldPr
   }
 
   const handlePointerDown = (event: React.PointerEvent<HTMLInputElement>) => {
+    if (value === null) {
+      return
+    }
     dragRef.current = { startX: event.clientX, startValue: value, dragging: false }
     event.preventDefault()
     window.addEventListener('pointermove', handlePointerMove)
@@ -150,22 +176,22 @@ function NumericField({ label, value, step, onCommit, onAdjust }: NumericFieldPr
         id={label}
         ref={inputRef}
         className="inspector-field__input"
-        type="number"
+        type={buffer.editing || value !== null ? 'number' : 'text'}
         aria-label={label}
-        value={text}
+        value={buffer.text}
         onChange={(event) => {
-          setEditing(true)
-          setText(event.target.value)
+          buffer.begin()
+          buffer.setText(event.target.value)
         }}
         onKeyDown={(event) => {
           if (event.key === 'Enter') {
             commit()
           } else if (event.key === 'Escape') {
-            cancel()
+            buffer.cancel()
           }
         }}
         onBlur={() => {
-          if (editing) {
+          if (buffer.editing) {
             commit()
           }
         }}
@@ -175,19 +201,41 @@ function NumericField({ label, value, step, onCommit, onAdjust }: NumericFieldPr
   )
 }
 
-function PlaceholderField({ label, value }: { label: string; value: string }) {
+function NameField({ value, onCommit }: { value: string | null; onCommit: (raw: string) => void }) {
+  const display = value === null ? MIXED_MARKER : value
+  const buffer = useEditBuffer(display)
+
+  const commit = () => {
+    onCommit(buffer.commit())
+  }
+
   return (
     <div className="inspector-field">
-      <label className="inspector-field__label" htmlFor={label}>
-        {label}
+      <label className="inspector-field__label" htmlFor="Name">
+        Name
       </label>
       <input
-        id={label}
+        id="Name"
         className="inspector-field__input"
-        type="number"
-        aria-label={label}
-        value={value}
-        disabled
+        type="text"
+        aria-label="Name"
+        value={buffer.text}
+        onChange={(event) => {
+          buffer.begin()
+          buffer.setText(event.target.value)
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            commit()
+          } else if (event.key === 'Escape') {
+            buffer.cancel()
+          }
+        }}
+        onBlur={() => {
+          if (buffer.editing) {
+            commit()
+          }
+        }}
       />
     </div>
   )
@@ -218,10 +266,10 @@ export function InspectorPanel({ width }: { width: number }) {
   const [, setTick] = useState(0)
   useEngineEvent(() => setTick((tick) => tick + 1))
 
-  const target = inspectedNode(engine, selectedIds)
-  const reading = target ? readNodeWorld(engine, target.id) : null
+  const targets = inspectedTargets(engine, selectedIds)
+  const readTarget = targets.length > 0 ? readNodeWorld(engine, targets[0].id) : null
 
-  if (!target || !reading) {
+  if (targets.length === 0 || !readTarget) {
     return (
       <div className="inspector-panel" style={{ width }}>
         <div className="panel-empty-state">
@@ -231,12 +279,20 @@ export function InspectorPanel({ width }: { width: number }) {
     )
   }
 
-  const world = reading.world
+  const multi = targets.length > 1
+  const targetIds = targets.map((node) => node.id)
+  const world = readTarget.world
+  const commonName = commonValueOf(targets, (node) => node.name)
+  const commonOpacity = commonValueOf(targets, (node) => node.opacity)
+  const transformReadings = targets.map((node) => readNodeWorld(engine, node.id)?.world ?? null)
+  const opacityPercent = commonOpacity === null ? null : Math.round(commonOpacity * 100)
 
-  const commitField = (field: TransformField, raw: string) => {
+  const commitField = (field: InspectorFieldKind, raw: string) => {
     try {
       const value = parseFiniteNumber(raw, FIELD_LABELS[field])
-      const result = applyField(engine, dispatch, target, world, field, value)
+      const result = multi
+        ? applyNodeField(engine, dispatch, targetIds, field, value)
+        : applyField(engine, dispatch, targets[0], world, field, value)
       if (result && !result.ok) {
         throw result.error
       }
@@ -245,9 +301,45 @@ export function InspectorPanel({ width }: { width: number }) {
     }
   }
 
-  const adjustField = (field: TransformField, value: number) => {
+  const adjustField = (field: InspectorFieldKind, value: number) => {
     try {
-      const result = applyField(engine, dispatch, target, world, field, value)
+      const result = multi
+        ? applyNodeField(engine, dispatch, targetIds, field, value)
+        : applyField(engine, dispatch, targets[0], world, field, value)
+      if (result && !result.ok) {
+        throw result.error
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const commitName = (raw: string) => {
+    try {
+      const result = applyNodeName(engine, dispatch, targetIds, raw)
+      if (result && !result.ok) {
+        throw result.error
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const commitOpacity = (raw: string) => {
+    try {
+      const percent = parseFiniteNumber(raw, 'Opacity')
+      const result = applyNodeOpacity(engine, dispatch, targetIds, percent / 100)
+      if (result && !result.ok) {
+        throw result.error
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const adjustOpacity = (percent: number) => {
+    try {
+      const result = applyNodeOpacity(engine, dispatch, targetIds, percent / 100)
       if (result && !result.ok) {
         throw result.error
       }
@@ -257,7 +349,7 @@ export function InspectorPanel({ width }: { width: number }) {
   }
 
   const handleResetTransform = () => {
-    const result = resetNodeTransform(engine, dispatch, target.id)
+    const result = resetNodesTransform(engine, dispatch, targetIds)
     if (result && !result.ok) {
       notify(result.error.message)
     }
@@ -266,54 +358,42 @@ export function InspectorPanel({ width }: { width: number }) {
   return (
     <div className="inspector-panel" style={{ width }}>
       <div className="inspector-scroll">
-        <InspectorSection title="General">
-          <div className="inspector-field">
-            <label className="inspector-field__label" htmlFor="Name">
-              Name
-            </label>
-            <input
-              id="Name"
-              className="inspector-field__input"
-              type="text"
-              aria-label="Name"
-              value={target.name}
-              disabled
-            />
-          </div>
+        <InspectorSection title={multi ? `${targets.length} Objects Selected` : 'General'}>
+          <NameField value={commonName} onCommit={commitName} />
         </InspectorSection>
 
         <InspectorSection title="Transform">
           <NumericField
             label="X"
-            value={world.x}
+            value={multi ? mixedTransformField(transformReadings, 'x') : world.x}
             step={1}
             onCommit={(raw) => commitField('x', raw)}
             onAdjust={(value) => adjustField('x', value)}
           />
           <NumericField
             label="Y"
-            value={world.y}
+            value={multi ? mixedTransformField(transformReadings, 'y') : world.y}
             step={1}
             onCommit={(raw) => commitField('y', raw)}
             onAdjust={(value) => adjustField('y', value)}
           />
           <NumericField
             label="Rotation"
-            value={degreesOf(world)}
+            value={multi ? mixedTransformField(transformReadings, 'rotation') : degreesOf(world)}
             step={1}
             onCommit={(raw) => commitField('rotation', raw)}
             onAdjust={(value) => adjustField('rotation', value)}
           />
           <NumericField
             label="Scale X"
-            value={world.scaleX}
+            value={multi ? mixedTransformField(transformReadings, 'scaleX') : world.scaleX}
             step={0.01}
             onCommit={(raw) => commitField('scaleX', raw)}
             onAdjust={(value) => adjustField('scaleX', value)}
           />
           <NumericField
             label="Scale Y"
-            value={world.scaleY}
+            value={multi ? mixedTransformField(transformReadings, 'scaleY') : world.scaleY}
             step={0.01}
             onCommit={(raw) => commitField('scaleY', raw)}
             onAdjust={(value) => adjustField('scaleY', value)}
@@ -324,7 +404,13 @@ export function InspectorPanel({ width }: { width: number }) {
         </InspectorSection>
 
         <InspectorSection title="Appearance">
-          <PlaceholderField label="Opacity" value={String(Math.round(target.opacity * 100))} />
+          <NumericField
+            label="Opacity"
+            value={opacityPercent}
+            step={1}
+            onCommit={commitOpacity}
+            onAdjust={adjustOpacity}
+          />
         </InspectorSection>
 
         {COMING_SOON_SECTIONS.map((title) => (

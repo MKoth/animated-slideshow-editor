@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { DispatchCommand } from '../engine/commands'
 import {
-  CreateAssetInstanceCommand,
+  CommandDispatcher,
   CreateProjectCommand,
   CreateSlideCommand,
-  CommandDispatcher,
   UndoStack,
 } from '../engine/commands'
 import { createEngine } from '../engine/internal'
@@ -16,51 +15,10 @@ import {
   parseFiniteNumber,
   radiansToDegrees,
   readNodeWorld,
-  resetNodeTransform,
+  resetNodesTransform,
   rotationDegreesToRadians,
 } from '../app/inspectorActions'
-
-interface Harness {
-  dispatch: DispatchCommand
-  undoStack: UndoStack
-  engine: ReturnType<typeof createEngine>
-  nodeId: string
-}
-
-function mount(): Harness {
-  const engine = createEngine()
-  const undoStack = new UndoStack()
-  const dispatcher = new CommandDispatcher(engine, undoStack)
-  dispatcher.dispatch(new CreateProjectCommand({ name: 'P' }))
-  dispatcher.dispatch(new CreateSlideCommand({ name: 'S1' }))
-  const slide = engine.project?.slides[0]
-  if (!slide) {
-    throw new Error('expected a slide')
-  }
-  const definition = engine.defineAsset('Boy')
-  const { nodeId } = expectOk(
-    dispatcher.dispatch(
-      new CreateAssetInstanceCommand({
-        sceneId: slide.scene.id,
-        parentId: slide.scene.root.id,
-        definitionId: definition.id,
-        name: 'Boy',
-        position: { x: 10, y: 20 },
-        rotation: 0.5,
-        scaleX: 2,
-        scaleY: 3,
-      }),
-    ),
-  )
-  return { dispatch: (command) => dispatcher.dispatch(command), undoStack, engine, nodeId }
-}
-
-function expectOk<T>(result: { ok: boolean; inverse?: T; error?: Error }): T {
-  if (!result.ok) {
-    throw new Error(`expected success, got: ${result.error?.message ?? 'unknown error'}`)
-  }
-  return result.inverse as T
-}
+import { mountInspector } from './inspectorHarness'
 
 describe('parseFiniteNumber', () => {
   it('parses a plain decimal string', () => {
@@ -105,7 +63,7 @@ describe('rotation unit conversion', () => {
 
 describe('applyNodePosition', () => {
   it('dispatches a MoveNodeCommand and records the old position as inverse', () => {
-    const { dispatch, undoStack, engine, nodeId } = mount()
+    const { dispatch, undoStack, engine, nodeId } = mountInspector()
     const before = undoStack.entries.length
 
     const result = applyNodePosition(engine, dispatch, nodeId, 100, -40)
@@ -121,7 +79,7 @@ describe('applyNodePosition', () => {
 
 describe('applyNodeRotationDegrees', () => {
   it('dispatches a RotateNodeCommand with the normalized radians value', () => {
-    const { dispatch, undoStack, engine, nodeId } = mount()
+    const { dispatch, undoStack, engine, nodeId } = mountInspector()
 
     applyNodeRotationDegrees(engine, dispatch, nodeId, 450)
 
@@ -134,7 +92,7 @@ describe('applyNodeRotationDegrees', () => {
 
 describe('applyNodeScale', () => {
   it('dispatches a ScaleNodeCommand with independent X and Y values', () => {
-    const { dispatch, undoStack, engine, nodeId } = mount()
+    const { dispatch, undoStack, engine, nodeId } = mountInspector()
 
     const result = applyNodeScale(engine, dispatch, nodeId, 4, 0.5)
 
@@ -145,7 +103,7 @@ describe('applyNodeScale', () => {
   })
 
   it('rejects zero scale without dispatching anything', () => {
-    const { dispatch, undoStack, engine, nodeId } = mount()
+    const { dispatch, undoStack, engine, nodeId } = mountInspector()
     const before = undoStack.entries.length
 
     expect(() => applyNodeScale(engine, dispatch, nodeId, 0, 1)).toThrow(/Scale X must not be zero/)
@@ -156,7 +114,7 @@ describe('applyNodeScale', () => {
   })
 
   it('accepts negative scale (mirror) as a finite non-zero value', () => {
-    const { dispatch, engine, nodeId } = mount()
+    const { dispatch, engine, nodeId } = mountInspector()
 
     const result = applyNodeScale(engine, dispatch, nodeId, -1, -2)
 
@@ -167,10 +125,10 @@ describe('applyNodeScale', () => {
 
 describe('resetNodeTransform', () => {
   it('returns a moved/scaled/rotated node to identity as one composite transaction', () => {
-    const { dispatch, undoStack, engine, nodeId } = mount()
+    const { dispatch, undoStack, engine, nodeId } = mountInspector()
     const before = undoStack.entries.length
 
-    const result = resetNodeTransform(engine, dispatch, nodeId)
+    const result = resetNodesTransform(engine, dispatch, [nodeId])
     if (!result) {
       throw new Error('expected a transaction result')
     }
@@ -199,7 +157,7 @@ describe('resetNodeTransform', () => {
   })
 
   it('records nothing when the transform is already identity', () => {
-    const { dispatch, undoStack, engine, nodeId } = mount()
+    const { dispatch, undoStack, engine, nodeId } = mountInspector()
 
     applyNodePosition(engine, dispatch, nodeId, 0, 0)
     applyNodeRotationDegrees(engine, dispatch, nodeId, 0)
@@ -207,7 +165,7 @@ describe('resetNodeTransform', () => {
     expect(result.ok).toBe(true)
     const before = undoStack.entries.length
 
-    const reset = resetNodeTransform(engine, dispatch, nodeId)
+    const reset = resetNodesTransform(engine, dispatch, [nodeId])
 
     expect(reset).toBeNull()
     expect(undoStack.entries).toHaveLength(before)
@@ -300,7 +258,7 @@ describe('world-unit editing under a transformed parent', () => {
     const { engine, dispatch, undoStack, childId } = mountParented()
     const before = undoStack.entries.length
 
-    const result = resetNodeTransform(engine, dispatch, childId)
+    const result = resetNodesTransform(engine, dispatch, [childId])
     if (!result) {
       throw new Error('expected a transaction result')
     }
