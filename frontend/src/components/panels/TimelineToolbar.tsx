@@ -1,6 +1,6 @@
 import { deleteSelectedKeyframes } from '../../app/keyframeSelectionActions'
 import { useEngine } from '../../app/useEngine'
-import { formatTimeCode, usePlaybackController } from '../../stores/playbackStore'
+import { PLAYBACK_SPEEDS, formatTimeCode, usePlaybackController } from '../../stores/playbackStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { pixelsPerSecond, useTimelineViewStore } from '../../stores/timelineViewStore'
 import { useUiStore } from '../../stores/uiStore'
@@ -17,10 +17,17 @@ export function TimelineToolbar({
   zoomAnchor: () => number | null
 }) {
   const currentTime = usePlaybackController((state) => state.currentTimes[slideId] ?? 0)
+  const status = usePlaybackController((state) => state.status)
+  const playbackSpeed = usePlaybackController((state) => state.playbackSpeed)
+  const loopEnabled = usePlaybackController((state) => state.loopEnabled)
   const animationMode = useUiStore((state) => state.animationMode)
   const cameraAnimationMode = useUiStore((state) => state.cameraAnimationMode)
   const keyframeCount = useSelectionStore((state) => state.selectedKeyframeIds.length)
   const { engine, dispatch } = useEngine()
+
+  const playing = status === 'playing'
+  const paused = status === 'paused'
+  const controller = usePlaybackController.getState
 
   const zoomByStep = (direction: 'in' | 'out') => {
     const state = useTimelineViewStore.getState()
@@ -36,21 +43,72 @@ export function TimelineToolbar({
   return (
     <div className="timeline-toolbar">
       <div className="timeline-toolbar__playback">
-        <button className="timeline-toolbar__button" aria-label="Play (timeline)" disabled>
+        <button
+          className="timeline-toolbar__button"
+          aria-label="Play (timeline)"
+          title="Play from the playhead"
+          disabled={playing}
+          onClick={() => controller().play(slideId, duration)}
+        >
           Play
         </button>
-        <button className="timeline-toolbar__button" aria-label="Pause (timeline)" disabled>
+        <button
+          className="timeline-toolbar__button"
+          aria-label="Pause (timeline)"
+          title="Pause playback, keeping the position"
+          disabled={!playing}
+          onClick={() => controller().pause()}
+        >
           Pause
         </button>
-        <button className="timeline-toolbar__button" aria-label="Stop (timeline)" disabled>
+        <button
+          className="timeline-toolbar__button"
+          aria-label="Stop (timeline)"
+          title="Stop playback and reset to 0"
+          onClick={() => controller().stop(slideId)}
+        >
           Stop
         </button>
-        <button className="timeline-toolbar__button" aria-label="Loop (timeline)" disabled>
+        <button
+          className="timeline-toolbar__button"
+          aria-label="Loop (timeline)"
+          aria-pressed={loopEnabled}
+          title="Loop playback from the end back to 0"
+          onClick={() => controller().setLoopEnabled(!loopEnabled)}
+        >
           Loop
         </button>
-        <select className="timeline-toolbar__select" aria-label="Speed (timeline)" disabled>
-          <option>1×</option>
+        <select
+          className="timeline-toolbar__select"
+          aria-label="Speed (timeline)"
+          title="Playback speed"
+          value={playbackSpeed}
+          onChange={(event) => controller().setPlaybackSpeed(Number(event.target.value))}
+        >
+          {PLAYBACK_SPEEDS.map((speed) => (
+            <option key={speed} value={speed}>
+              {speed}×
+            </option>
+          ))}
         </select>
+        <button
+          className="timeline-toolbar__button"
+          aria-label="Previous Frame (timeline)"
+          title="Step back 1/60 s while paused"
+          disabled={!paused}
+          onClick={() => controller().stepFrame('backward', slideId, duration)}
+        >
+          ‹
+        </button>
+        <button
+          className="timeline-toolbar__button"
+          aria-label="Next Frame (timeline)"
+          title="Step forward 1/60 s while paused"
+          disabled={!paused}
+          onClick={() => controller().stepFrame('forward', slideId, duration)}
+        >
+          ›
+        </button>
         <button
           className="timeline-toolbar__button"
           aria-label="Delete Keyframe"

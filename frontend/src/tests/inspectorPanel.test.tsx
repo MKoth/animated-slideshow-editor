@@ -1,7 +1,7 @@
 import { act } from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EngineContext } from '../app/engineContext'
 import type { EngineContextValue } from '../app/engineContext'
 import { InspectorPanel } from '../components/panels/InspectorPanel'
@@ -1243,5 +1243,87 @@ describe('InspectorPanel camera animation mode (Camera Animation Mode on)', () =
     expect(engine.getKeyframes(nodeId, 'positionX')).toHaveLength(0)
     expect(undoStack.entries).toHaveLength(before + 1)
     expect(undoStack.entries[0].type).toBe('MoveNode')
+  })
+})
+
+describe('InspectorPanel during playback', () => {
+  beforeEach(() => {
+    usePlaybackController.setState({ status: 'stopped', playbackSpeed: 1, loopEnabled: false })
+    useUiStore.setState({ animationMode: false, cameraAnimationMode: false })
+  })
+
+  function sceneWithAnimatedX(engine: Engine): {
+    nodeId: string
+    slideId: string
+    duration: number
+  } {
+    const { nodeId, slideId } = createSceneWithNode(engine, { x: 12 })
+    const dispatcher = new CommandDispatcher(engine, new UndoStack(), () => undefined)
+    addKeyframe(dispatcher, nodeId, 'positionX', 0, 0)
+    addKeyframe(dispatcher, nodeId, 'positionX', 10, 100)
+    const slide = engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('expected a slide')
+    }
+    return { nodeId, slideId, duration: slide.duration }
+  }
+
+  it('shows evaluated values with every field read-only while playing', () => {
+    const { engine } = renderPanel()
+    const { nodeId, slideId, duration } = sceneWithAnimatedX(engine)
+    select(nodeId)
+    act(() => {
+      usePlaybackController.getState().setCurrentTime(slideId, 5, duration)
+      usePlaybackController.setState({ status: 'playing' })
+    })
+
+    expect(fields().X.value).toBe('50')
+    expect(fields().X).toBeDisabled()
+    expect(fields().Y).toBeDisabled()
+    expect(fields().Rotation).toBeDisabled()
+    expect(fields()['Scale X']).toBeDisabled()
+    expect(fields()['Scale Y']).toBeDisabled()
+    expect(screen.getByRole('spinbutton', { name: 'Opacity' })).toBeDisabled()
+    expect(screen.getByRole('textbox', { name: 'Name' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Reset Transform' })).toBeDisabled()
+  })
+
+  it('keeps static fields editable while paused', () => {
+    const { engine } = renderPanel()
+    const { nodeId, slideId, duration } = sceneWithAnimatedX(engine)
+    select(nodeId)
+    act(() => {
+      usePlaybackController.getState().setCurrentTime(slideId, 5, duration)
+      usePlaybackController.setState({ status: 'paused' })
+    })
+
+    expect(fields().Y).not.toBeDisabled()
+    expect(screen.getByRole('textbox', { name: 'Name' })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Reset Transform' })).not.toBeDisabled()
+  })
+
+  it('updates the evaluated values as playback advances', async () => {
+    const { engine } = renderPanel()
+    const { nodeId, slideId, duration } = sceneWithAnimatedX(engine)
+    select(nodeId)
+    act(() => {
+      usePlaybackController.getState().setCurrentTime(slideId, 5, duration)
+    })
+    vi.useFakeTimers()
+    try {
+      act(() => {
+        usePlaybackController.getState().play(slideId, duration)
+      })
+      act(() => {
+        vi.advanceTimersByTime(2000)
+      })
+      expect(fields().X.value).toBe('70')
+      expect(usePlaybackController.getState().getTime(slideId)).toBeCloseTo(7, 3)
+    } finally {
+      act(() => {
+        usePlaybackController.getState().pause()
+      })
+      vi.useRealTimers()
+    }
   })
 })

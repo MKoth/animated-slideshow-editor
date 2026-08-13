@@ -227,7 +227,15 @@ function NumericField({
   )
 }
 
-function NameField({ value, onCommit }: { value: string | null; onCommit: (raw: string) => void }) {
+function NameField({
+  value,
+  onCommit,
+  disabled = false,
+}: {
+  value: string | null
+  onCommit: (raw: string) => void
+  disabled?: boolean
+}) {
   const display = value === null ? MIXED_MARKER : value
   const buffer = useEditBuffer(display)
 
@@ -245,6 +253,7 @@ function NameField({ value, onCommit }: { value: string | null; onCommit: (raw: 
         className="inspector-field__input"
         type="text"
         aria-label="Name"
+        disabled={disabled}
         value={buffer.text}
         onChange={(event) => {
           buffer.begin()
@@ -292,6 +301,7 @@ export function InspectorPanel({ width }: { width: number }) {
   const animationMode = useUiStore((state) => state.animationMode)
   const cameraAnimationMode = useUiStore((state) => state.cameraAnimationMode)
   usePlaybackController((state) => state.currentTimes)
+  const playing = usePlaybackController((state) => state.status === 'playing')
   const [, setTick] = useState(0)
   useEngineEvent(() => setTick((tick) => tick + 1))
 
@@ -300,9 +310,10 @@ export function InspectorPanel({ width }: { width: number }) {
   const animatingCamera = cameraAnimationMode && cameraSelected
   const transformAutoKey = animationMode || animatingCamera
   const opacityAutoKey = animationMode
+  const evaluatedDisplay = transformAutoKey || playing
   const modeActions = {
-    readWorld: transformAutoKey ? readEvaluatedNodeWorld : readStoredNodeWorld,
-    opacityOf: opacityAutoKey
+    readWorld: evaluatedDisplay ? readEvaluatedNodeWorld : readStoredNodeWorld,
+    opacityOf: evaluatedDisplay
       ? (node: SceneNode) =>
           engine.evaluateNode(node.id, playheadTimeOf(engine, node.id) ?? 0).opacity
       : (node: SceneNode) => node.opacity,
@@ -339,8 +350,8 @@ export function InspectorPanel({ width }: { width: number }) {
   const animatedPropertyOf = (property: AnimationProperty): boolean =>
     targets.some((node) => engine.getKeyframes(node.id, property).length > 0)
   const fieldDisabledOf = (field: InspectorFieldKind): boolean =>
-    !transformAutoKey && animatedPropertyOf(FIELD_PROPERTY[field])
-  const opacityDisabled = !opacityAutoKey && animatedPropertyOf('opacity')
+    playing || (!transformAutoKey && animatedPropertyOf(FIELD_PROPERTY[field]))
+  const opacityDisabled = playing || (!opacityAutoKey && animatedPropertyOf('opacity'))
 
   const commitField = (field: InspectorFieldKind, raw: string) => {
     try {
@@ -410,7 +421,7 @@ export function InspectorPanel({ width }: { width: number }) {
     <div className="inspector-panel" style={{ width }}>
       <div className="inspector-scroll">
         <InspectorSection title={multi ? `${targets.length} Objects Selected` : 'General'}>
-          <NameField value={commonName} onCommit={commitName} />
+          <NameField value={commonName} onCommit={commitName} disabled={playing} />
         </InspectorSection>
 
         <InspectorSection title="Transform">
@@ -459,7 +470,7 @@ export function InspectorPanel({ width }: { width: number }) {
             onCommit={(raw) => commitField('scaleY', raw)}
             onAdjust={(value) => adjustField('scaleY', value)}
           />
-          <button className="inspector-reset" onClick={handleResetTransform}>
+          <button className="inspector-reset" onClick={handleResetTransform} disabled={playing}>
             Reset Transform
           </button>
         </InspectorSection>

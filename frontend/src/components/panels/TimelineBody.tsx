@@ -51,6 +51,7 @@ export function TimelineBody({
   const scrollTime = useTimelineViewStore((state) => state.scrollTime)
   const expandedNodeIds = useTimelineViewStore((state) => state.expandedNodeIds)
   const currentTime = usePlaybackController((state) => state.currentTimes[slideId] ?? 0)
+  const playbackStatus = usePlaybackController((state) => state.status)
   const selectedKeyframeIds = useSelectionStore((state) => state.selectedKeyframeIds)
   const [menu, setMenu] = useState<TimelineMenuState | null>(null)
   const pps = pixelsPerSecond(zoomLevel)
@@ -84,6 +85,24 @@ export function TimelineBody({
       el.scrollLeft = target
     }
   }, [scrollTime, pps, scrollerRef])
+
+  useEffect(() => {
+    const state = useTimelineViewStore.getState()
+    const p = pixelsPerSecond(state.zoomLevel)
+    const px = currentTime * p
+    const viewLeft = state.scrollTime * p
+    const viewRight = viewLeft + viewportWidth
+    const margin = Math.min(80, viewportWidth / 6)
+    if (playbackStatus === 'playing') {
+      if (px < viewLeft + margin) {
+        state.setScrollTime(currentTime - margin / p, viewportWidth, duration)
+      } else if (px > viewRight - margin) {
+        state.setScrollTime(currentTime + margin / p - viewportWidth / p, viewportWidth, duration)
+      }
+    } else if (playbackStatus === 'stopped' && currentTime === 0 && px < viewLeft) {
+      state.setScrollTime(0, viewportWidth, duration)
+    }
+  }, [currentTime, playbackStatus, viewportWidth, duration])
 
   useEffect(() => {
     const el = scrollerRef.current
