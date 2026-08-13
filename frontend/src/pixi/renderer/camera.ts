@@ -1,5 +1,5 @@
-import type { SceneNode } from '../../engine'
 import type { PixiContainer } from './pixi'
+import type { ViewportTransform } from './worldGeometry'
 
 export class Camera {
   readonly #world: PixiContainer
@@ -8,8 +8,7 @@ export class Camera {
     this.#world = world
   }
 
-  apply(node: SceneNode | null): void {
-    const transform = node?.transform
+  apply(transform: ViewportTransform | null): void {
     if (!transform) {
       this.#world.position.set(0, 0)
       this.#world.scale.set(1, 1)

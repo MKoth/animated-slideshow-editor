@@ -10,10 +10,16 @@ import {
 } from '../engine/commands'
 import { CanvasSelection } from '../pixi/renderer/canvasSelection'
 import type { NodeSizeSource } from '../pixi/renderer/hitTest'
-import type { WorldPoint } from '../pixi/renderer/worldGeometry'
+import type { SceneNode } from '../engine'
+import type { ViewportTransform, WorldPoint } from '../pixi/renderer/worldGeometry'
 import { useSelectionStore } from '../stores/selectionStore'
 
 const PLACEHOLDER = { width: 160, height: 100 }
+
+function viewportOf(camera: SceneNode): ViewportTransform {
+  const { x, y, scaleX, scaleY } = camera.transform
+  return { x, y, scaleX, scaleY }
+}
 
 interface Harness {
   engine: Engine
@@ -45,7 +51,7 @@ function mount(): Harness {
   const selection = new CanvasSelection({
     canvas,
     getScene: () => slide.scene,
-    getCamera: () => slide.scene.camera,
+    getCameraTransform: () => viewportOf(slide.scene.camera),
     getNodeSize: (nodeId) => sizes(nodeId),
     store: { ...useSelectionStore.getState() },
   })
@@ -177,7 +183,7 @@ describe('canvas selection', () => {
     const selection = new CanvasSelection({
       canvas,
       getScene: () => currentScene,
-      getCamera: () => currentScene.camera,
+      getCameraTransform: () => viewportOf(currentScene.camera),
       getNodeSize: (nodeId) => sizes(nodeId),
       store: { ...useSelectionStore.getState() },
     })

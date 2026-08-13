@@ -1,5 +1,4 @@
 import type { EngineReadOnly, Scene } from '../../engine'
-import type { SceneNode } from '../../engine'
 import { walkPreOrder } from '../../engine/sceneNode'
 import { worldTransformOf as storedWorldTransformOf } from '../../engine/worldTransform'
 import type { DispatchCommand } from '../../engine/commands'
@@ -12,7 +11,7 @@ import type { NodeSizeSource, WorldTransformSource } from './hitTest'
 import { aabbOf, nodesIntersectingRect, topmostNodeAt, worldAabbOf } from './hitTest'
 import { cursorToWorld } from './screenToWorld'
 import { expandRect, mergeRect, rectIntersects, rectOf } from './worldGeometry'
-import type { WorldPoint, WorldRect } from './worldGeometry'
+import type { ViewportTransform, WorldPoint, WorldRect } from './worldGeometry'
 import { AnimatedMoveGesture } from './animatedMove'
 import type { PositionCommit } from './animatedMove'
 
@@ -35,7 +34,7 @@ export interface CanvasSelectionContext {
   readonly canvas: HTMLCanvasElement
   readonly engine?: EngineReadOnly
   readonly getScene: () => Scene | null
-  readonly getCamera: () => SceneNode | null
+  readonly getCameraTransform: () => ViewportTransform | null
   readonly getNodeSize: NodeSizeSource
   readonly store: SelectionActions
   readonly dispatch?: DispatchCommand
@@ -55,7 +54,7 @@ const NEARBY_MARGIN_PX = 150
 export class CanvasSelection {
   readonly #canvas: HTMLCanvasElement
   readonly #getScene: () => Scene | null
-  readonly #getCamera: () => SceneNode | null
+  readonly #getCameraTransform: () => ViewportTransform | null
   readonly #getNodeSize: NodeSizeSource
   readonly #store: SelectionActions
   readonly #dispatch?: DispatchCommand
@@ -84,7 +83,7 @@ export class CanvasSelection {
   constructor(context: CanvasSelectionContext) {
     this.#canvas = context.canvas
     this.#getScene = context.getScene
-    this.#getCamera = context.getCamera
+    this.#getCameraTransform = context.getCameraTransform
     this.#getNodeSize = context.getNodeSize
     this.#store = context.store
     this.#dispatch = context.dispatch
@@ -142,7 +141,7 @@ export class CanvasSelection {
     if (!scene) {
       return
     }
-    const camera = this.#getCamera()
+    const camera = this.#getCameraTransform()
     if (!camera) {
       return
     }
@@ -195,7 +194,7 @@ export class CanvasSelection {
       return
     }
     const scene = this.#getScene()
-    const camera = this.#getCamera()
+    const camera = this.#getCameraTransform()
     if (!scene || !camera || !this.#startWorld) {
       return
     }
@@ -254,7 +253,7 @@ export class CanvasSelection {
 
   #handleMove(event: MouseEvent): void {
     const scene = this.#getScene()
-    const camera = this.#getCamera()
+    const camera = this.#getCameraTransform()
     const start = this.#startWorld
     if (!scene || !camera || !start) {
       return
@@ -341,8 +340,8 @@ export class CanvasSelection {
       guides.clear()
       return
     }
-    const camera = this.#getCamera()
-    const zoom = camera ? Math.abs(camera.transform.scaleX) || 1 : 1
+    const camera = this.#getCameraTransform()
+    const zoom = camera ? Math.abs(camera.scaleX) || 1 : 1
     const nearby = expandRect(moving, NEARBY_MARGIN_PX / zoom)
     this.#guideOthers.length = 0
     this.#guideMovingIds.clear()
@@ -398,11 +397,11 @@ export class CanvasSelection {
   }
 
   #viewportWorld(): WorldRect | null {
-    const camera = this.#getCamera()
+    const camera = this.#getCameraTransform()
     if (!camera) {
       return null
     }
-    const { x, y, scaleX, scaleY } = camera.transform
+    const { x, y, scaleX, scaleY } = camera
     if (scaleX <= 0 || scaleY <= 0) {
       return null
     }

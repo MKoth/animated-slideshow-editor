@@ -3,7 +3,10 @@ import type { EngineEvent } from '../../engine'
 import type { Unsubscribe } from '../../engine'
 import { walkPreOrder } from '../../engine/sceneNode'
 import type { CommandResult, DispatchCommand } from '../../engine/commands'
+import type { EvaluatedNodeScratch } from '../../engine/animationEvaluator'
+import { evaluatedNodeScratch } from '../../engine/animationEvaluator'
 import { EvaluatedWorldTransformSource } from '../../engine/worldTransform'
+import type { ViewportTransform } from './worldGeometry'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { useUiStore } from '../../stores/uiStore'
 import { CameraControls } from './cameraControls'
@@ -58,6 +61,9 @@ export class Renderer {
   #guideOverlay: GuideOverlay | null = null
   #transformSource: EvaluatedWorldTransformSource | null = null
   #previewPositions = new Map<string, { x: number; y: number }>()
+  readonly #cameraScratch: EvaluatedNodeScratch = evaluatedNodeScratch()
+  readonly #viewportScratch: ViewportTransform = { x: 0, y: 0, scaleX: 1, scaleY: 1 }
+  #cameraPreview: ViewportTransform | null = null
   #unsubscribe: Unsubscribe | null = null
   #unsubscribeTime: Unsubscribe | null = null
   #resizeObserver: ResizeObserver | null = null
@@ -160,7 +166,7 @@ export class Renderer {
         canvas: app.canvas,
         engine: this.#engine,
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
-        getCamera: () => this.#sceneRenderer?.boundCamera ?? null,
+        getCameraTransform: () => this.#cameraTransform(),
         getNodeSize: (nodeId) => this.#sceneRenderer?.nodeSize(nodeId) ?? null,
         store: useSelectionStore.getState(),
         dispatch: this.#dispatch,
@@ -188,7 +194,17 @@ export class Renderer {
 
       this.#controls = new CameraControls({
         canvas: app.canvas,
+        engine: this.#engine,
         getCamera: () => this.#sceneRenderer?.boundCamera ?? null,
+        getCameraTransform: () => this.#cameraTransform(),
+        setCameraPreview: (transform) => {
+          this.#cameraPreview = transform
+        },
+        getAnimationMode: () => useUiStore.getState().animationMode,
+        getTime: () => {
+          const slideId = this.#sceneRenderer?.boundSlideId
+          return slideId ? this.#currentTime.getTime(slideId) : 0
+        },
         dispatch: this.#dispatch,
       })
       this.#controls.attach()
@@ -197,7 +213,7 @@ export class Renderer {
         canvas: app.canvas,
         engine: this.#engine,
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
-        getCamera: () => this.#sceneRenderer?.boundCamera ?? null,
+        getCameraTransform: () => this.#cameraTransform(),
         dispatch: this.#dispatch,
         getGridSnap: () => useUiStore.getState().gridSnap,
       })
@@ -265,14 +281,13 @@ export class Renderer {
     if (!app || !sceneRenderer || !camera || !grid) {
       return
     }
-    const cameraNode = sceneRenderer.boundCamera
-    const transform = cameraNode?.transform
+    const transform = this.#cameraTransform()
     const x = transform?.x ?? 0
     const y = transform?.y ?? 0
     const zoomX = transform?.scaleX ?? 1
     const zoomY = transform?.scaleY ?? 1
     this.#refreshGridColors()
-    camera.apply(cameraNode)
+    camera.apply(transform)
     grid.update({
       cameraX: x,
       cameraY: y,
@@ -295,6 +310,41 @@ export class Renderer {
         nodeCount: sceneRenderer.renderedNodeCount,
       })
     }
+  }
+
+  #cameraTransform(): ViewportTransform | null {
+    const sceneRenderer = this.#sceneRenderer
+    const cameraNode = sceneRenderer?.boundCamera ?? null
+    const slideId = sceneRenderer?.boundSlideId ?? null
+    if (!cameraNode || !slideId) {
+      return null
+    }
+    let state
+    try {
+      state = this.#engine.evaluateNode(
+        cameraNode.id,
+        this.#currentTime.getTime(slideId),
+        this.#cameraScratch,
+      )
+    } catch {
+      return null
+    }
+    const out = this.#viewportScratch
+    out.x = state.transform.x
+    out.y = state.transform.y
+    out.scaleX = state.transform.scaleX
+    out.scaleY = state.transform.scaleY
+    if (out.scaleX <= 0 || out.scaleY <= 0) {
+      return null
+    }
+    const preview = this.#cameraPreview
+    if (preview) {
+      out.x = preview.x
+      out.y = preview.y
+      out.scaleX = preview.scaleX
+      out.scaleY = preview.scaleY
+    }
+    return out
   }
 
   #refreshGridColors(): void {
@@ -377,6 +427,8 @@ export class Renderer {
     const firstSlide = this.#engine.project?.slides[0]
     const scene = firstSlide ? firstSlide.scene : null
     if (sceneRenderer.boundSceneId !== (scene?.id ?? null)) {
+      this.#controls?.reset()
+      this.#cameraPreview = null
       sceneRenderer.bind(scene, firstSlide ? firstSlide.id : null)
       this.#selectionOverlay?.bringToFront()
       this.#guideOverlay?.bringToFront()

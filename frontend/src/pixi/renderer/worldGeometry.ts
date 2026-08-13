@@ -23,6 +23,13 @@ export interface WorldPoint {
   readonly y: number
 }
 
+export interface ViewportTransform {
+  x: number
+  y: number
+  scaleX: number
+  scaleY: number
+}
+
 export function rectOf(a: WorldPoint, b: WorldPoint): WorldRect {
   return {
     minX: Math.min(a.x, b.x),

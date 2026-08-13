@@ -18,13 +18,19 @@ import type {
 } from '../pixi/renderer/canvasSelection'
 import { BLOCKED_ANIMATED_MOVE_MESSAGE } from '../pixi/renderer/animatedMove'
 import type { NodeSizeSource } from '../pixi/renderer/hitTest'
-import type { WorldPoint, WorldRect } from '../pixi/renderer/worldGeometry'
+import type { SceneNode } from '../engine'
+import type { ViewportTransform, WorldPoint, WorldRect } from '../pixi/renderer/worldGeometry'
 import { useNotificationStore } from '../stores/notificationStore'
 import { usePlaybackController } from '../stores/playbackStore'
 import { useSelectionStore } from '../stores/selectionStore'
 
 const PLACEHOLDER = { width: 160, height: 100 }
 const GRID_STEP = 25
+
+function viewportOf(camera: SceneNode): ViewportTransform {
+  const { x, y, scaleX, scaleY } = camera.transform
+  return { x, y, scaleX, scaleY }
+}
 
 interface FakeGuides extends GuideController {
   shows: { vertical: number[]; horizontal: number[]; span: WorldRect }[]
@@ -101,7 +107,7 @@ function mount(): Harness {
     canvas,
     engine,
     getScene: () => slide.scene,
-    getCamera: () => slide.scene.camera,
+    getCameraTransform: () => viewportOf(slide.scene.camera),
     getNodeSize: (nodeId) => sizes(nodeId),
     store: { ...useSelectionStore.getState() },
     dispatch: (command) => dispatcher.dispatch(command),

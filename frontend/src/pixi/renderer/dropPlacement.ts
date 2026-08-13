@@ -1,10 +1,10 @@
 import type { EngineReadOnly } from '../../engine'
 import type { Scene } from '../../engine'
-import type { SceneNode } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
 import { CreateAssetInstanceCommand } from '../../engine/commands'
 import { DEFAULT_GRID_STEP, snapPoint } from './gridSnap'
 import { cursorToWorld } from './screenToWorld'
+import type { ViewportTransform } from './worldGeometry'
 
 export const ASSET_DEFINITION_MIME = 'application/x-asset-definition'
 
@@ -12,7 +12,7 @@ export interface DropPlacementContext {
   readonly canvas: HTMLCanvasElement
   readonly engine: EngineReadOnly
   readonly getScene: () => Scene | null
-  readonly getCamera: () => SceneNode | null
+  readonly getCameraTransform: () => ViewportTransform | null
   readonly dispatch: DispatchCommand
   readonly getGridSnap?: () => boolean
 }
@@ -21,7 +21,7 @@ export class DropPlacement {
   readonly #canvas: HTMLCanvasElement
   readonly #engine: EngineReadOnly
   readonly #getScene: () => Scene | null
-  readonly #getCamera: () => SceneNode | null
+  readonly #getCameraTransform: () => ViewportTransform | null
   readonly #dispatch: DispatchCommand
   readonly #getGridSnap?: () => boolean
   #attached = false
@@ -30,7 +30,7 @@ export class DropPlacement {
     this.#canvas = context.canvas
     this.#engine = context.engine
     this.#getScene = context.getScene
-    this.#getCamera = context.getCamera
+    this.#getCameraTransform = context.getCameraTransform
     this.#dispatch = context.dispatch
     this.#getGridSnap = context.getGridSnap
   }
@@ -76,7 +76,7 @@ export class DropPlacement {
     if (!scene) {
       return
     }
-    const camera = this.#getCamera()
+    const camera = this.#getCameraTransform()
     if (!camera) {
       return
     }

@@ -7,7 +7,7 @@ import { autoKeyCommands, dispatchKeyframeCommands } from '../../engine/keyframe
 import type { TimedKeyframeEdit } from '../../engine/keyframeEdit'
 import { evaluatedWorldTransformOf, relativeTransform } from '../../engine/worldTransform'
 import { cursorToWorld } from './screenToWorld'
-import type { WorldPoint, WorldTransform } from './worldGeometry'
+import type { ViewportTransform, WorldPoint, WorldTransform } from './worldGeometry'
 
 export const BLOCKED_ANIMATED_MOVE_MESSAGE = 'Animated nodes can only be moved in Animation Mode'
 
@@ -29,7 +29,7 @@ export interface AnimatedMoveGestureContext {
   readonly engine?: EngineReadOnly
   readonly getAnimationMode?: () => boolean
   readonly getScene: () => Scene | null
-  readonly getCamera: () => SceneNode | null
+  readonly getCameraTransform: () => ViewportTransform | null
   readonly dispatch?: DispatchCommand
 }
 
@@ -38,7 +38,7 @@ export class AnimatedMoveGesture {
   readonly #engine?: EngineReadOnly
   readonly #getAnimationMode?: () => boolean
   readonly #getScene: () => Scene | null
-  readonly #getCamera: () => SceneNode | null
+  readonly #getCameraTransform: () => ViewportTransform | null
   readonly #dispatch?: DispatchCommand
   readonly #origins = new Map<string, WorldPoint>()
   readonly #previews = new Map<string, AnimatedPreview>()
@@ -50,7 +50,7 @@ export class AnimatedMoveGesture {
     this.#engine = context.engine
     this.#getAnimationMode = context.getAnimationMode
     this.#getScene = context.getScene
-    this.#getCamera = context.getCamera
+    this.#getCameraTransform = context.getCameraTransform
     this.#dispatch = context.dispatch
   }
 
@@ -122,7 +122,7 @@ export class AnimatedMoveGesture {
     if (this.#blockedNotified) {
       return
     }
-    const camera = this.#getCamera()
+    const camera = this.#getCameraTransform()
     if (!camera || !start) {
       return
     }
