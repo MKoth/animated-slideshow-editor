@@ -14,9 +14,8 @@ import {
 import type { Command } from '../engine/commands'
 import type { RenameNodeInverse, TransactionInverse } from '../engine/commands'
 import {
+  evaluatedWorldTransformOf,
   relativeTransform,
-  rotateX,
-  rotateY,
   transformsEqual,
   worldTransformOf,
 } from '../engine/worldTransform'
@@ -89,38 +88,6 @@ export function readStoredNodeWorld(
 function storedParentWorldScaled(parent: SceneNode, scene: Scene): boolean {
   const parentWorld = worldTransformOf(scene, parent.id)
   return parentWorld !== null && parentWorld.scaleX !== 0 && parentWorld.scaleY !== 0
-}
-
-export function evaluatedWorldTransformOf(
-  engine: EngineReadOnly,
-  nodeId: string,
-  time: number,
-): WorldTransform | null {
-  let node: SceneNode
-  try {
-    node = engine.getNode(nodeId)
-  } catch {
-    return null
-  }
-  const chain: SceneNode[] = []
-  for (let cursor: SceneNode | null = node; cursor !== null; cursor = cursor.parent) {
-    chain.push(cursor)
-  }
-  chain.reverse()
-  let x = 0
-  let y = 0
-  let rotation = 0
-  let scaleX = 1
-  let scaleY = 1
-  for (const link of chain) {
-    const local = engine.evaluateNode(link.id, time).transform
-    x += rotateX(local.x * scaleX, local.y * scaleY, rotation)
-    y += rotateY(local.x * scaleX, local.y * scaleY, rotation)
-    rotation += local.rotation
-    scaleX *= local.scaleX
-    scaleY *= local.scaleY
-  }
-  return { x, y, rotation, scaleX, scaleY }
 }
 
 export function readEvaluatedNodeWorld(

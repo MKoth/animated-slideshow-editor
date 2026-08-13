@@ -1,12 +1,24 @@
 import type { EngineReadOnly, SceneNode } from '../engine'
 import type { AnimationProperty } from '../engine'
 import { ANIMATABLE_PROPERTIES } from '../engine'
-import type { Keyframe } from '../engine'
 import type { Scene } from '../engine'
 import type { CommandResult, DispatchCommand } from '../engine/commands'
-import { AddKeyframeCommand, SetKeyframeValueCommand, TransactionCommand } from '../engine/commands'
+import { AddKeyframeCommand } from '../engine/commands'
 import type { Command } from '../engine/commands'
 import { usePlaybackController } from '../stores/playbackStore'
+import {
+  autoKeyCommands,
+  dispatchKeyframeCommands,
+  evaluatedPropertyValue,
+  keyframeAtTime,
+} from '../engine/keyframeEdit'
+import type { KeyframeEdit, TimedKeyframeEdit } from '../engine/keyframeEdit'
+
+export type { KeyframeEdit } from '../engine/keyframeEdit'
+export {
+  dispatchKeyframeCommands as dispatchCommands,
+  evaluatedPropertyValue,
+} from '../engine/keyframeEdit'
 
 export type PropertyState = 'static' | 'animated' | 'onKeyframe'
 
@@ -42,33 +54,6 @@ export function playheadTimeOf(engine: EngineReadOnly, nodeId: string): number |
   return usePlaybackController.getState().getTime(slide.id)
 }
 
-export function keyframeAtTime(keyframes: readonly Keyframe[], time: number): Keyframe | undefined {
-  return keyframes.find((keyframe) => keyframe.time === time)
-}
-
-export function evaluatedPropertyValue(
-  engine: EngineReadOnly,
-  nodeId: string,
-  property: AnimationProperty,
-  time: number,
-): number {
-  const state = engine.evaluateNode(nodeId, time)
-  switch (property) {
-    case 'positionX':
-      return state.transform.x
-    case 'positionY':
-      return state.transform.y
-    case 'rotation':
-      return state.transform.rotation
-    case 'scaleX':
-      return state.transform.scaleX
-    case 'scaleY':
-      return state.transform.scaleY
-    case 'opacity':
-      return state.opacity
-  }
-}
-
 export function propertyStateOf(
   engine: EngineReadOnly,
   nodeId: string,
@@ -94,53 +79,20 @@ export function propertyStateOf(
   return 'animated'
 }
 
-export interface KeyframeEdit {
-  readonly nodeId: string
-  readonly property: AnimationProperty
-  readonly value: number
-}
-
 export function autoKeyEdit(
   engine: EngineReadOnly,
   dispatch: DispatchCommand,
   edits: readonly KeyframeEdit[],
 ): CommandResult<unknown> | null {
-  const commands: Command<unknown>[] = []
+  const timed: TimedKeyframeEdit[] = []
   for (const edit of edits) {
     const time = playheadTimeOf(engine, edit.nodeId)
     if (time === null) {
       continue
     }
-    const keyframes = engine.getKeyframes(edit.nodeId, edit.property)
-    const existing = keyframeAtTime(keyframes, time)
-    if (existing) {
-      if (existing.value === edit.value) {
-        continue
-      }
-      commands.push(
-        new SetKeyframeValueCommand({
-          nodeId: edit.nodeId,
-          property: edit.property,
-          keyframeId: existing.id,
-          newValue: edit.value,
-        }),
-      )
-      continue
-    }
-    const effective = evaluatedPropertyValue(engine, edit.nodeId, edit.property, time)
-    if (effective === edit.value) {
-      continue
-    }
-    commands.push(
-      new AddKeyframeCommand({
-        nodeId: edit.nodeId,
-        property: edit.property,
-        time,
-        value: edit.value,
-      }),
-    )
+    timed.push({ ...edit, time })
   }
-  return dispatchCommands(dispatch, commands)
+  return dispatchKeyframeCommands(dispatch, autoKeyCommands(engine, timed))
 }
 
 export function addKeyframeAtPlayhead(
@@ -180,18 +132,5 @@ export function addPoseKeyframesAtPlayhead(
       }),
     )
   }
-  return dispatchCommands(dispatch, commands)
-}
-
-export function dispatchCommands(
-  dispatch: DispatchCommand,
-  commands: readonly Command<unknown>[],
-): CommandResult<unknown> | null {
-  if (commands.length === 0) {
-    return null
-  }
-  if (commands.length === 1) {
-    return dispatch(commands[0])
-  }
-  return dispatch(new TransactionCommand(commands))
+  return dispatchKeyframeCommands(dispatch, commands)
 }

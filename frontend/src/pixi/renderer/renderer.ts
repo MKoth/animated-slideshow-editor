@@ -152,6 +152,7 @@ export class Renderer {
 
       this.#selection = new CanvasSelection({
         canvas: app.canvas,
+        engine: this.#engine,
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
         getCamera: () => this.#sceneRenderer?.boundCamera ?? null,
         getNodeSize: (nodeId) => this.#sceneRenderer?.nodeSize(nodeId) ?? null,
@@ -174,6 +175,7 @@ export class Renderer {
           gridSnap: useUiStore.getState().gridSnap,
           gridStep: DEFAULT_GRID_STEP,
         }),
+        getAnimationMode: () => useUiStore.getState().animationMode,
       })
       this.#selection.attach()
 

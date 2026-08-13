@@ -1,4 +1,4 @@
-import type { Scene } from '../../engine'
+import type { EngineReadOnly, Scene } from '../../engine'
 import type { SceneNode } from '../../engine'
 import { walkPreOrder } from '../../engine/sceneNode'
 import type { DispatchCommand } from '../../engine/commands'
@@ -18,6 +18,8 @@ import {
 import { cursorToWorld } from './screenToWorld'
 import { expandRect, mergeRect, rectIntersects, rectOf } from './worldGeometry'
 import type { WorldPoint, WorldRect, WorldTransform } from './worldGeometry'
+import { AnimatedMoveGesture } from './animatedMove'
+import type { PositionCommit } from './animatedMove'
 
 export interface MoveOptions {
   readonly gridSnap: boolean
@@ -36,6 +38,7 @@ export interface GuideController {
 
 export interface CanvasSelectionContext {
   readonly canvas: HTMLCanvasElement
+  readonly engine?: EngineReadOnly
   readonly getScene: () => Scene | null
   readonly getCamera: () => SceneNode | null
   readonly getNodeSize: NodeSizeSource
@@ -45,6 +48,7 @@ export interface CanvasSelectionContext {
   readonly guides?: GuideController
   readonly onMove?: () => void
   readonly getMoveOptions?: () => MoveOptions
+  readonly getAnimationMode?: () => boolean
 }
 
 const MARQUEE_START_DISTANCE = 4
@@ -75,7 +79,7 @@ export class CanvasSelection {
   #moveActive = false
   #moveAnchorId: string | null = null
   #moveCandidateIds: string[] = []
-  readonly #moveOrigins = new Map<string, { x: number; y: number }>()
+  readonly #animatedMove: AnimatedMoveGesture
   readonly #moveCurrent = new Map<string, { x: number; y: number }>()
   readonly #guideOthers: WorldRect[] = []
   readonly #guideMovingIds = new Set<string>()
@@ -91,6 +95,7 @@ export class CanvasSelection {
     this.#guides = context.guides
     this.#onMove = context.onMove
     this.#getMoveOptions = context.getMoveOptions
+    this.#animatedMove = new AnimatedMoveGesture(context)
   }
 
   attach(): void {
@@ -172,6 +177,8 @@ export class CanvasSelection {
     if (this.#pressedOnNode) {
       if (this.#canMove) {
         this.#handleMove(event)
+      } else if (this.#animatedMove.blocked) {
+        this.#handleBlockedMove(event)
       }
       return
     }
@@ -220,15 +227,17 @@ export class CanvasSelection {
     if (ids.length === 0) {
       return
     }
+    this.#animatedMove.begin(ids)
+    if (this.#animatedMove.blocked) {
+      this.#canMove = false
+      return
+    }
     this.#moveAnchorId = anchorId
     this.#moveCandidateIds = ids
-    for (const id of ids) {
-      const node = scene.getNode(id)
-      if (!node) {
-        continue
-      }
-      this.#moveOrigins.set(id, { x: node.transform.x, y: node.transform.y })
-    }
+  }
+
+  #handleBlockedMove(event: MouseEvent): void {
+    this.#animatedMove.handleBlockedMove(event.clientX, event.clientY, this.#startWorld)
   }
 
   #handleMove(event: MouseEvent): void {
@@ -251,29 +260,27 @@ export class CanvasSelection {
     let dx = rawDx
     let dy = rawDy
     if (options.gridSnap && this.#moveAnchorId) {
-      const origin = this.#moveOrigins.get(this.#moveAnchorId)
-      if (origin) {
-        const snapped = snapDelta(dx, dy, origin.x, origin.y, options.gridStep)
+      const anchor = this.#animatedMove.snapAnchorOf(this.#moveAnchorId)
+      if (anchor) {
+        const snapped = snapDelta(dx, dy, anchor.x, anchor.y, options.gridStep)
         dx = snapped.x
         dy = snapped.y
       }
     }
     this.#moveActive = true
     for (const id of this.#moveCandidateIds) {
-      const origin = this.#moveOrigins.get(id)
-      if (!origin) {
+      const position = this.#animatedMove.positionOf(id, dx, dy)
+      if (!position) {
         continue
       }
       const entry = this.#moveCurrent.get(id)
-      const x = origin.x + dx
-      const y = origin.y + dy
       if (entry) {
-        entry.x = x
-        entry.y = y
+        entry.x = position.x
+        entry.y = position.y
       } else {
-        this.#moveCurrent.set(id, { x, y })
+        this.#moveCurrent.set(id, position)
       }
-      this.#preview?.setPosition(id, x, y)
+      this.#preview?.setPosition(id, position.x, position.y)
     }
     this.#updateGuides()
     this.#onMove?.()
@@ -282,6 +289,18 @@ export class CanvasSelection {
   #commitMove(): void {
     const dispatch = this.#dispatch
     if (!dispatch) {
+      return
+    }
+    if (this.#animatedMove.enabled) {
+      const positions: PositionCommit[] = []
+      for (const id of this.#moveCandidateIds) {
+        const current = this.#moveCurrent.get(id)
+        if (!current) {
+          continue
+        }
+        positions.push({ nodeId: id, x: current.x, y: current.y })
+      }
+      this.#animatedMove.commit(positions)
       return
     }
     const moves: MoveNodeCommand[] = []
@@ -358,7 +377,7 @@ export class CanvasSelection {
         continue
       }
       const current = this.#moveCurrent.get(id)
-      const origin = this.#moveOrigins.get(id)
+      const origin = this.#animatedMove.originOf(id)
       const dx = current && origin ? current.x - origin.x : 0
       const dy = current && origin ? current.y - origin.y : 0
       const preview: WorldTransform = {
@@ -417,7 +436,7 @@ export class CanvasSelection {
     this.#moveActive = false
     this.#moveAnchorId = null
     this.#moveCandidateIds = []
-    this.#moveOrigins.clear()
+    this.#animatedMove.reset()
     this.#moveCurrent.clear()
   }
 }

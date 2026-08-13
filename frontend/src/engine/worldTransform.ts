@@ -1,3 +1,4 @@
+import type { EngineReadOnly } from './engine'
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
 import type { Transform } from './transform'
@@ -15,18 +16,40 @@ export function worldTransformOf(scene: Scene, nodeId: string): WorldTransform |
   if (!node) {
     return null
   }
+  return composeChain(chainOf(node), (link) => link.transform)
+}
+
+export function evaluatedWorldTransformOf(
+  engine: EngineReadOnly,
+  nodeId: string,
+  time: number,
+): WorldTransform | null {
+  let node: SceneNode
+  try {
+    node = engine.getNode(nodeId)
+  } catch {
+    return null
+  }
+  return composeChain(chainOf(node), (link) => engine.evaluateNode(link.id, time).transform)
+}
+
+function chainOf(node: SceneNode): SceneNode[] {
   const chain: SceneNode[] = []
   for (let cursor: SceneNode | null = node; cursor !== null; cursor = cursor.parent) {
     chain.push(cursor)
   }
   chain.reverse()
+  return chain
+}
+
+function composeChain(chain: readonly SceneNode[], localOf: (node: SceneNode) => Transform) {
   let x = 0
   let y = 0
   let rotation = 0
   let scaleX = 1
   let scaleY = 1
   for (const link of chain) {
-    const local = link.transform
+    const local = localOf(link)
     x += rotateX(local.x * scaleX, local.y * scaleY, rotation)
     y += rotateY(local.x * scaleX, local.y * scaleY, rotation)
     rotation += local.rotation

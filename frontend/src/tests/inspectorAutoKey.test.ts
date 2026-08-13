@@ -12,10 +12,10 @@ import { usePlaybackController } from '../stores/playbackStore'
 import {
   applyNodeFieldAutoKey,
   applyNodeOpacityAutoKey,
-  evaluatedWorldTransformOf,
   readEvaluatedNodeWorld,
   resetNodesTransformAutoKey,
 } from '../app/inspectorActions'
+import { evaluatedWorldTransformOf } from '../engine/worldTransform'
 import {
   addKeyframeAtPlayhead,
   addPoseKeyframesAtPlayhead,
