@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { EngineEvent } from '../../engine/events'
 import type { CommandResult } from '../../engine/commands'
+import { identityTransform } from '../../engine/transform'
+import { worldTransformOf } from '../../engine/worldTransform'
 import {
   CreateNodeCommand,
   CreateProjectCommand,
@@ -88,7 +90,7 @@ describe('ReparentNodeCommand', () => {
     expect(system.engine.getNode(aId).parent?.id).toBe(bId)
     expect(system.engine.getNode(bId).children.map((child) => child.id)).toEqual([aId])
     expect(system.engine.getNode(rootId).children.map((child) => child.id)).not.toContain(aId)
-    expect(inverse).toEqual({ nodeId: aId, oldParentId: rootId })
+    expect(inverse).toEqual({ nodeId: aId, oldParentId: rootId, oldTransform: identityTransform() })
     expect(system.undoStack.entries[0]).toEqual({
       id: expect.any(String),
       type: 'ReparentNode',
@@ -123,6 +125,113 @@ describe('ReparentNodeCommand', () => {
       nodeId: 'n1',
       parentId: 'p1',
     })
+  })
+
+  it('serializes to JSON with the index when one is given', () => {
+    expect(new ReparentNodeCommand({ nodeId: 'n1', parentId: 'p1', index: 2 }).toJSON()).toEqual({
+      type: 'ReparentNode',
+      nodeId: 'n1',
+      parentId: 'p1',
+      index: 2,
+    })
+  })
+
+  it('reparents a node into an exact slot when an index is given', () => {
+    const { system, rootId, aId, bId } = setupWithNodes()
+    const slide = system.engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('expected a slide')
+    }
+    const { nodeId: cId } = expectOk(
+      system.dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: bId, name: 'B1' }),
+      ),
+    )
+    const { nodeId: dId } = expectOk(
+      system.dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: bId, name: 'B2' }),
+      ),
+    )
+    const events = collectEvents(system)
+
+    const result = system.dispatcher.dispatch(
+      new ReparentNodeCommand({ nodeId: aId, parentId: bId, index: 1 }),
+    )
+
+    const inverse = expectOk(result)
+    expect(system.engine.getNode(aId).parent?.id).toBe(bId)
+    expect(system.engine.getNode(bId).children.map((child) => child.id)).toEqual([cId, aId, dId])
+    expect(system.engine.getNode(rootId).children.map((child) => child.id)).not.toContain(aId)
+    expect(inverse).toEqual({ nodeId: aId, oldParentId: rootId, oldTransform: identityTransform() })
+    expect(system.undoStack.entries[0]).toEqual({
+      id: expect.any(String),
+      type: 'ReparentNode',
+      parameters: { nodeId: aId, parentId: bId, index: 1 },
+      inverse,
+    })
+    expect(events).toEqual([
+      { type: 'NodeReparented', nodeId: aId },
+      { type: 'NodeOrderChanged', nodeId: aId },
+    ])
+  })
+
+  it('accepts an index that equals the append position without reordering', () => {
+    const { system, rootId, aId, bId } = setupWithNodes()
+    const { nodeId: cId } = expectOk(
+      (() => {
+        const slide = system.engine.project?.slides[0]
+        if (!slide) {
+          throw new Error('expected a slide')
+        }
+        return system.dispatcher.dispatch(
+          new CreateNodeCommand({ sceneId: slide.scene.id, parentId: bId, name: 'B1' }),
+        )
+      })(),
+    )
+    const events = collectEvents(system)
+
+    const result = system.dispatcher.dispatch(
+      new ReparentNodeCommand({ nodeId: aId, parentId: bId, index: 1 }),
+    )
+
+    expect(result.ok).toBe(true)
+    expect(system.engine.getNode(bId).children.map((child) => child.id)).toEqual([cId, aId])
+    expect(system.engine.getNode(rootId).children.map((child) => child.id)).not.toContain(aId)
+    expect(events).toEqual([{ type: 'NodeReparented', nodeId: aId }])
+  })
+
+  it('rejects an out-of-bounds index and leaves the engine unchanged', () => {
+    const { system, aId, bId, rootId } = setupWithNodes()
+    const events = collectEvents(system)
+    const undoCount = system.undoStack.entries.length
+
+    const result = system.dispatcher.dispatch(
+      new ReparentNodeCommand({ nodeId: aId, parentId: bId, index: 5 }),
+    )
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/index.*out of bounds/i)
+    }
+    expect(system.engine.getNode(aId).parent?.id).toBe(rootId)
+    expect(system.undoStack.entries).toHaveLength(undoCount)
+    expect(events).toEqual([])
+  })
+
+  it('rejects a negative index and leaves the engine unchanged', () => {
+    const { system, aId, bId, rootId } = setupWithNodes()
+    const undoCount = system.undoStack.entries.length
+
+    const result = system.dispatcher.dispatch(
+      new ReparentNodeCommand({ nodeId: aId, parentId: bId, index: -1 }),
+    )
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/index.*out of bounds/i)
+    }
+    expect(system.engine.getNode(aId).parent?.id).toBe(rootId)
+    expect(system.undoStack.entries).toHaveLength(undoCount)
   })
 
   it('rejects a nonexistent node and leaves engine, history, events, and log unchanged', () => {
@@ -240,5 +349,171 @@ describe('ReparentNodeCommand', () => {
     }
     expect(system.undoStack.entries).toHaveLength(undoCount)
     expect(events).toEqual([])
+  })
+
+  it('keeps the world transform when the node moves under an offset parent', () => {
+    const { system } = setupWithNodes()
+    const slide = system.engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('expected a slide')
+    }
+    const { nodeId: cId } = expectOk(
+      system.dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'C',
+          transform: { x: 10, y: 20, rotation: 0, scaleX: 1, scaleY: 1 },
+        }),
+      ),
+    )
+    const { nodeId: dId } = expectOk(
+      system.dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'D',
+          transform: { x: 30, y: 40, rotation: 0, scaleX: 1, scaleY: 1 },
+        }),
+      ),
+    )
+    const scene = system.engine.getScene(slide.scene.id)
+    const events = collectEvents(system)
+
+    const result = system.dispatcher.dispatch(
+      new ReparentNodeCommand({ nodeId: cId, parentId: dId }),
+    )
+
+    expect(result.ok).toBe(true)
+    expect(system.engine.getNode(cId).transform).toEqual({
+      x: -20,
+      y: -20,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+    })
+    expect(worldTransformOf(scene, cId)).toEqual({
+      x: 10,
+      y: 20,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+    })
+    expect(events).toEqual([
+      { type: 'NodeReparented', nodeId: cId },
+      { type: 'TransformChanged', nodeId: cId },
+    ])
+  })
+
+  it('keeps the world transform when unparenting back to the root', () => {
+    const { system, rootId } = setupWithNodes()
+    const slide = system.engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('expected a slide')
+    }
+    const { nodeId: dId } = expectOk(
+      system.dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'D',
+          transform: { x: 30, y: 40, rotation: 0, scaleX: 1, scaleY: 1 },
+        }),
+      ),
+    )
+    const { nodeId: cId } = expectOk(
+      system.dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: dId,
+          name: 'C',
+          transform: { x: 10, y: 20, rotation: 0, scaleX: 1, scaleY: 1 },
+        }),
+      ),
+    )
+    const scene = system.engine.getScene(slide.scene.id)
+
+    const result = system.dispatcher.dispatch(
+      new ReparentNodeCommand({ nodeId: cId, parentId: rootId }),
+    )
+
+    expect(result.ok).toBe(true)
+    expect(system.engine.getNode(cId).transform).toEqual({
+      x: 40,
+      y: 60,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+    })
+    expect(worldTransformOf(scene, cId)).toEqual({
+      x: 40,
+      y: 60,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+    })
+  })
+
+  it('keeps the world rotation and scale across a scaled and rotated parent', () => {
+    const { system } = setupWithNodes()
+    const slide = system.engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('expected a slide')
+    }
+    const { nodeId: dId } = expectOk(
+      system.dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'D',
+          transform: { x: 100, y: 0, rotation: Math.PI / 2, scaleX: 2, scaleY: 2 },
+        }),
+      ),
+    )
+    const { nodeId: cId } = expectOk(
+      system.dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'C',
+          transform: { x: 5, y: 5, rotation: 0.3, scaleX: 1.5, scaleY: 1.5 },
+        }),
+      ),
+    )
+    const scene = system.engine.getScene(slide.scene.id)
+
+    const result = system.dispatcher.dispatch(
+      new ReparentNodeCommand({ nodeId: cId, parentId: dId }),
+    )
+
+    expect(result.ok).toBe(true)
+    const local = system.engine.getNode(cId).transform
+    expect(local.x).toBeCloseTo(2.5, 5)
+    expect(local.y).toBeCloseTo(47.5, 5)
+    expect(local.rotation).toBeCloseTo(0.3 - Math.PI / 2, 5)
+    expect(local.scaleX).toBeCloseTo(0.75, 5)
+    expect(local.scaleY).toBeCloseTo(0.75, 5)
+    const world = worldTransformOf(scene, cId)
+    if (!world) {
+      throw new Error('expected a world transform')
+    }
+    expect(world.x).toBeCloseTo(5, 5)
+    expect(world.y).toBeCloseTo(5, 5)
+    expect(world.rotation).toBeCloseTo(0.3, 5)
+    expect(world.scaleX).toBeCloseTo(1.5, 5)
+    expect(world.scaleY).toBeCloseTo(1.5, 5)
+  })
+
+  it('leaves the transform untouched when nothing changes (no extra event)', () => {
+    const { system, aId, bId } = setupWithNodes()
+    const events = collectEvents(system)
+
+    const result = system.dispatcher.dispatch(
+      new ReparentNodeCommand({ nodeId: aId, parentId: bId }),
+    )
+
+    expect(result.ok).toBe(true)
+    expect(system.engine.getNode(aId).transform).toEqual(identityTransform())
+    expect(events).toEqual([{ type: 'NodeReparented', nodeId: aId }])
   })
 })

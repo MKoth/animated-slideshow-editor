@@ -54,6 +54,7 @@ export {
   CreateAssetInstanceCommand,
   DuplicateNodeCommand,
   ChangeZOrderCommand,
+  ReorderNodeCommand,
 } from './commands'
 export type {
   CreateProjectInverse,
@@ -87,4 +88,6 @@ export type {
   ChangeZOrderInverse,
   ChangeZOrderParameters,
   ZOrderMode,
+  ReorderNodeInverse,
+  ReorderNodeParameters,
 } from './commands'

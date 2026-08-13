@@ -497,6 +497,34 @@ button:disabled {
   color: var(--color-accent-text);
 }
 
+.scene-tree li {
+  position: relative;
+}
+
+.scene-tree__row--drop-before::before,
+.scene-tree__row--drop-after::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--color-accent);
+  pointer-events: none;
+}
+
+.scene-tree__row--drop-before::before {
+  top: -1px;
+}
+
+.scene-tree__row--drop-after::after {
+  bottom: -1px;
+}
+
+.scene-tree__row--drop-into {
+  background: var(--color-bg-elevated);
+  outline: 1px dashed var(--color-accent);
+}
+
 .scene-tree__icon {
   display: inline-flex;
   flex-shrink: 0;

@@ -1,15 +1,15 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EngineContext } from '../app/engineContext'
 import type { EngineContextValue } from '../app/engineContext'
-import { ScenePanel } from '../components/panels/ScenePanel'
+import { ScenePanel, SCENE_NODE_IDS_MIME } from '../components/panels/ScenePanel'
 import { CommandDispatcher, UndoStack } from '../engine/commands'
 import type { Engine } from '../engine/internal'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
 import { useSelectionStore } from '../stores/selectionStore'
 
-function renderPanel(): { engine: Engine } {
+function renderPanel(): { engine: Engine; undoStack: UndoStack } {
   const engine = createEngineInternal()
   const undoStack = new UndoStack()
   const dispatcher = new CommandDispatcher(engine, undoStack, () => undefined)
@@ -23,7 +23,7 @@ function renderPanel(): { engine: Engine } {
       <ScenePanel />
     </EngineContext.Provider>,
   )
-  return { engine }
+  return { engine, undoStack }
 }
 
 function createProjectAndSlide(engine: Engine) {
@@ -275,5 +275,319 @@ describe('ScenePanel', () => {
     expect(
       slide.scene.root.children.filter((node) => !node.components.camera).map((node) => node.name),
     ).toEqual(['Boy', 'Cat', 'Dog'])
+  })
+})
+
+function mockRowRect(element: HTMLElement, height = 40): void {
+  vi.spyOn(element, 'getBoundingClientRect').mockReturnValue({
+    x: 0,
+    y: 0,
+    top: 0,
+    right: 200,
+    bottom: height,
+    left: 0,
+    width: 200,
+    height,
+    toJSON: () => ({}),
+  } as DOMRect)
+}
+
+function startDrag(row: HTMLElement): DataTransfer {
+  const dataTransfer = new DataTransfer()
+  fireEvent.dragStart(row, { dataTransfer })
+  return dataTransfer
+}
+
+function hoverZone(
+  row: HTMLElement,
+  zone: 'before' | 'into' | 'after',
+  dataTransfer: DataTransfer,
+) {
+  const clientY = zone === 'before' ? 5 : zone === 'into' ? 20 : 35
+  fireEvent.dragOver(row, { dataTransfer, clientY })
+}
+
+function dropOn(row: HTMLElement, zone: 'before' | 'into' | 'after', dataTransfer: DataTransfer) {
+  const clientY = zone === 'before' ? 5 : zone === 'into' ? 20 : 35
+  fireEvent.drop(row, { dataTransfer, clientY })
+}
+
+function transactions(undoStack: UndoStack): number {
+  return undoStack.entries.filter((entry) => entry.type === 'Transaction').length
+}
+
+describe('ScenePanel drag & drop', () => {
+  it('makes every non-root row draggable and leaves the root row fixed', async () => {
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy')
+
+    const tree = await waitForTree('Slide 1')
+    expect(tree.getByRole('treeitem', { name: 'Root' })).not.toHaveAttribute('draggable')
+    expect(tree.getByRole('treeitem', { name: 'Boy' })).toHaveAttribute('draggable', 'true')
+  })
+
+  it('selects an unselected row first and carries it alone in the drag payload', async () => {
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    const boy = engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy')
+    const cat = engine.createNode(slide.scene.id, slide.scene.root.id, 'Cat')
+    useSelectionStore.getState().select(cat.id)
+
+    await waitForTree('Slide 1')
+    const boyRow = screen.getByRole('treeitem', { name: 'Boy' })
+    const dataTransfer = startDrag(boyRow)
+
+    expect(useSelectionStore.getState().selectedIds).toEqual([boy.id])
+    expect(dataTransfer.getData(SCENE_NODE_IDS_MIME)).toBe(JSON.stringify([boy.id]))
+    expect(dataTransfer.effectAllowed).toBe('move')
+  })
+
+  it('carries the whole selection when the drag starts on a selected row', async () => {
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    const boy = engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy')
+    const cat = engine.createNode(slide.scene.id, slide.scene.root.id, 'Cat')
+    const dog = engine.createNode(slide.scene.id, slide.scene.root.id, 'Dog')
+    useSelectionStore.getState().selectMany([boy.id, cat.id])
+
+    await waitForTree('Slide 1')
+    const dataTransfer = startDrag(screen.getByRole('treeitem', { name: 'Boy' }))
+
+    expect(dataTransfer.getData(SCENE_NODE_IDS_MIME)).toBe(JSON.stringify([boy.id, cat.id]))
+    expect(useSelectionStore.getState().selectedIds).toEqual([boy.id, cat.id])
+    void dog
+  })
+
+  it('shows a before/after insertion line and a parent highlight per hover zone', async () => {
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Cat')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Dog')
+
+    await waitForTree('Slide 1')
+    const boyRow = screen.getByRole('treeitem', { name: 'Boy' })
+    const catRow = screen.getByRole('treeitem', { name: 'Cat' })
+    mockRowRect(catRow)
+    const dataTransfer = startDrag(boyRow)
+
+    hoverZone(catRow, 'before', dataTransfer)
+    await waitFor(() => expect(catRow).toHaveClass('scene-tree__row--drop-before'))
+    expect(catRow).not.toHaveClass('scene-tree__row--drop-into')
+
+    hoverZone(catRow, 'into', dataTransfer)
+    await waitFor(() => expect(catRow).toHaveClass('scene-tree__row--drop-into'))
+
+    hoverZone(catRow, 'after', dataTransfer)
+    await waitFor(() => expect(catRow).toHaveClass('scene-tree__row--drop-after'))
+  })
+
+  it('offers no affordance when hovering a dragged row or one of its descendants', async () => {
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    const group = engine.createNode(slide.scene.id, slide.scene.root.id, 'Group')
+    engine.createNode(slide.scene.id, group.id, 'Child')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Other')
+
+    await waitForTree('Slide 1')
+    const groupRow = screen.getByRole('treeitem', { name: 'Group' })
+    const childRow = screen.getByRole('treeitem', { name: 'Child' })
+    mockRowRect(groupRow)
+    mockRowRect(childRow)
+    const dataTransfer = startDrag(groupRow)
+
+    hoverZone(groupRow, 'into', dataTransfer)
+    expect(groupRow).not.toHaveClass('scene-tree__row--drop-before')
+    expect(groupRow).not.toHaveClass('scene-tree__row--drop-into')
+    expect(groupRow).not.toHaveClass('scene-tree__row--drop-after')
+
+    hoverZone(childRow, 'into', dataTransfer)
+    expect(childRow).not.toHaveClass('scene-tree__row--drop-before')
+    expect(childRow).not.toHaveClass('scene-tree__row--drop-into')
+    expect(childRow).not.toHaveClass('scene-tree__row--drop-after')
+  })
+
+  it('ignores a drop onto a dragged row or one of its descendants', async () => {
+    const { engine, undoStack } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    const group = engine.createNode(slide.scene.id, slide.scene.root.id, 'Group')
+    engine.createNode(slide.scene.id, group.id, 'Child')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Other')
+
+    await waitForTree('Slide 1')
+    const groupRow = screen.getByRole('treeitem', { name: 'Group' })
+    const childRow = screen.getByRole('treeitem', { name: 'Child' })
+    mockRowRect(groupRow)
+    mockRowRect(childRow)
+    const dataTransfer = startDrag(groupRow)
+    const before = undoStack.entries.length
+
+    dropOn(groupRow, 'into', dataTransfer)
+    dropOn(childRow, 'into', dataTransfer)
+
+    expect(undoStack.entries).toHaveLength(before)
+    expect(slide.scene.root.children.map((node) => node.name)).toEqual(['Camera', 'Group', 'Other'])
+    expect(slide.scene.root.children[0]?.parent).not.toBeNull()
+  })
+
+  it('reorders a single node by dropping above a sibling row in one transaction', async () => {
+    const { engine, undoStack } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Cat')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Dog')
+
+    await waitForTree('Slide 1')
+    const boyRow = screen.getByRole('treeitem', { name: 'Boy' })
+    const catRow = screen.getByRole('treeitem', { name: 'Cat' })
+    mockRowRect(catRow)
+    const dataTransfer = startDrag(boyRow)
+
+    hoverZone(catRow, 'before', dataTransfer)
+    dropOn(catRow, 'before', dataTransfer)
+
+    expect(
+      slide.scene.root.children.filter((node) => !node.components.camera).map((node) => node.name),
+    ).toEqual(['Cat', 'Boy', 'Dog'])
+    expect(transactions(undoStack)).toBe(1)
+    const tree = await waitForTree('Slide 1')
+    expect(
+      tree.getAllByRole('treeitem').map((row) => row.textContent?.replace(/\s+/g, ' ').trim()),
+    ).toEqual(['Root', 'Cat', 'Boy', 'Dog'])
+  })
+
+  it('reorders a whole selection preserving relative order in one transaction', async () => {
+    const { engine, undoStack } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    const boy = engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy')
+    const cat = engine.createNode(slide.scene.id, slide.scene.root.id, 'Cat')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Dog')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Fox')
+    useSelectionStore.getState().selectMany([boy.id, cat.id])
+
+    await waitForTree('Slide 1')
+    const foxRow = screen.getByRole('treeitem', { name: 'Fox' })
+    await waitForTree('Slide 1')
+    const boyRow = screen.getByRole('treeitem', { name: 'Boy' })
+    mockRowRect(foxRow)
+    const dataTransfer = startDrag(boyRow)
+
+    hoverZone(foxRow, 'before', dataTransfer)
+    dropOn(foxRow, 'before', dataTransfer)
+
+    expect(
+      slide.scene.root.children.filter((node) => !node.components.camera).map((node) => node.name),
+    ).toEqual(['Dog', 'Boy', 'Cat', 'Fox'])
+    expect(transactions(undoStack)).toBe(1)
+  })
+
+  it('reparents a node by dropping into the center of a row', async () => {
+    const { engine, undoStack } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy')
+    const cat = engine.createNode(slide.scene.id, slide.scene.root.id, 'Cat')
+
+    await waitForTree('Slide 1')
+    const boyRow = screen.getByRole('treeitem', { name: 'Boy' })
+    const catRow = screen.getByRole('treeitem', { name: 'Cat' })
+    mockRowRect(catRow)
+    const dataTransfer = startDrag(boyRow)
+
+    hoverZone(catRow, 'into', dataTransfer)
+    dropOn(catRow, 'into', dataTransfer)
+
+    expect(slide.scene.root.children[1]?.name).toBe('Cat')
+    expect(
+      slide.scene.root.children.filter((node) => !node.components.camera).map((node) => node.name),
+    ).toEqual(['Cat'])
+    expect(engine.getNode(cat.id).children.map((child) => child.name)).toEqual(['Boy'])
+    expect(transactions(undoStack)).toBe(1)
+  })
+
+  it('inserts after a row when dropping on its bottom half', async () => {
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Cat')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Dog')
+
+    await waitForTree('Slide 1')
+    const boyRow = screen.getByRole('treeitem', { name: 'Boy' })
+    const catRow = screen.getByRole('treeitem', { name: 'Cat' })
+    mockRowRect(catRow)
+    const dataTransfer = startDrag(boyRow)
+
+    hoverZone(catRow, 'after', dataTransfer)
+    dropOn(catRow, 'after', dataTransfer)
+
+    expect(
+      slide.scene.root.children.filter((node) => !node.components.camera).map((node) => node.name),
+    ).toEqual(['Cat', 'Boy', 'Dog'])
+  })
+
+  it('sends a node to the top level when dropped on the root row', async () => {
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    const group = engine.createNode(slide.scene.id, slide.scene.root.id, 'Group')
+    const leaf = engine.createNode(slide.scene.id, group.id, 'Leaf')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Other')
+
+    await waitForTree('Slide 1')
+    const rootRow = screen.getByRole('treeitem', { name: 'Root' })
+    const leafRow = screen.getByRole('treeitem', { name: 'Leaf' })
+    mockRowRect(rootRow)
+    mockRowRect(leafRow)
+    const dataTransfer = startDrag(leafRow)
+
+    hoverZone(rootRow, 'into', dataTransfer)
+    dropOn(rootRow, 'into', dataTransfer)
+
+    expect(
+      slide.scene.root.children.filter((node) => !node.components.camera).map((node) => node.name),
+    ).toEqual(['Group', 'Other', 'Leaf'])
+    expect(engine.getNode(group.id).children).toHaveLength(0)
+    expect(engine.getNode(leaf.id).parent?.id).toBe(slide.scene.root.id)
+  })
+
+  it('keeps the camera first when a node is dropped above the first child', async () => {
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Girl')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy')
+
+    await waitForTree('Slide 1')
+    const girlRow = screen.getByRole('treeitem', { name: 'Girl' })
+    await waitForTree('Slide 1')
+    const boyRow = screen.getByRole('treeitem', { name: 'Boy' })
+    mockRowRect(girlRow)
+    const dataTransfer = startDrag(boyRow)
+
+    hoverZone(girlRow, 'before', dataTransfer)
+    dropOn(girlRow, 'before', dataTransfer)
+
+    expect(slide.scene.root.children.map((node) => node.name)).toEqual(['Camera', 'Boy', 'Girl'])
+  })
+
+  it('cancels an in-progress drag when Escape is pressed so a drop does nothing', async () => {
+    const { engine, undoStack } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Cat')
+
+    await waitForTree('Slide 1')
+    const catRow = screen.getByRole('treeitem', { name: 'Cat' })
+    mockRowRect(catRow)
+    const dataTransfer = startDrag(screen.getByRole('treeitem', { name: 'Boy' }))
+    const before = undoStack.entries.length
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    dropOn(catRow, 'into', dataTransfer)
+
+    expect(undoStack.entries).toHaveLength(before)
+    expect(
+      slide.scene.root.children.filter((node) => !node.components.camera).map((node) => node.name),
+    ).toEqual(['Boy', 'Cat'])
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 })

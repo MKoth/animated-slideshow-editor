@@ -189,10 +189,16 @@ export class SceneRenderer {
     }
     const start = parentContainer.children.indexOf(ordered[0])
     for (const siblingContainer of ordered) {
-      parentContainer.removeChild(siblingContainer)
+      if (parentContainer.children.includes(siblingContainer)) {
+        parentContainer.removeChild(siblingContainer)
+      }
     }
+    const base = Math.max(0, start)
     ordered.forEach((siblingContainer, offset) => {
-      parentContainer.addChildAt(siblingContainer, Math.max(0, start) + offset)
+      parentContainer.addChildAt(
+        siblingContainer,
+        Math.min(base + offset, parentContainer.children.length),
+      )
     })
   }
 
