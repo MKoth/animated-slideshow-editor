@@ -32,11 +32,32 @@ export type SceneJSON = {
   readonly nodes: readonly NodeJSON[]
 }
 
+export type KeyframeJSON = {
+  readonly id: string
+  readonly time: number
+  readonly value: number
+}
+
+export type PropertyTrackJSON = {
+  readonly property: string
+  readonly keyframes: readonly KeyframeJSON[]
+}
+
+export type NodeAnimationJSON = {
+  readonly nodeId: string
+  readonly tracks: readonly PropertyTrackJSON[]
+}
+
+export type SlideAnimationJSON = {
+  readonly nodes: readonly NodeAnimationJSON[]
+}
+
 export type SlideJSON = {
   readonly id: string
   readonly name: string
   readonly duration: number
   readonly scene: SceneJSON
+  readonly animation?: SlideAnimationJSON
 }
 
 export type ProjectMetadataJSON = {

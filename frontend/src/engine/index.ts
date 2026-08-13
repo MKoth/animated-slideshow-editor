@@ -56,6 +56,11 @@ export {
   DuplicateNodeCommand,
   ChangeZOrderCommand,
   ReorderNodeCommand,
+  AddKeyframeCommand,
+  DeleteKeyframeCommand,
+  MoveKeyframeCommand,
+  SetKeyframeValueCommand,
+  BatchMoveKeyframesCommand,
 } from './commands'
 export type {
   CreateProjectInverse,
@@ -91,4 +96,23 @@ export type {
   ZOrderMode,
   ReorderNodeInverse,
   ReorderNodeParameters,
+  AddKeyframeInverse,
+  AddKeyframeParameters,
+  DeleteKeyframeInverse,
+  DeleteKeyframeParameters,
+  MoveKeyframeInverse,
+  MoveKeyframeParameters,
+  SetKeyframeValueInverse,
+  SetKeyframeValueParameters,
+  BatchMoveKeyframesInverse,
+  BatchMoveKeyframesInverseMove,
+  BatchMoveKeyframesParameters,
 } from './commands'
+export {
+  ANIMATABLE_PROPERTIES,
+  requireAnimatableForNode,
+  requireKeyframeTime,
+  requireKeyframeValue,
+} from './animation'
+export type { AnimationProperty, Keyframe } from './animation'
+export type { KeyframeMove, KeyframeMoveResult } from './animation'

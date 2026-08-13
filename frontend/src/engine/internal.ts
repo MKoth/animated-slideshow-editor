@@ -4,10 +4,14 @@ import { SceneManager } from './sceneManager'
 import { SlideManager } from './slideManager'
 import { NodeManager } from './nodeManager'
 import { AssetManager } from './assetManager'
+import { AnimationManager } from './animationManager'
+import type { KeyframeMove, KeyframeMoveResult } from './animationManager'
+import type { AnimationProperty, Keyframe } from './animation'
 import type { AssetDefinition } from './assetDefinition'
 import type { CreateProjectInput, Project } from './project'
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
+import { walkPreOrder } from './sceneNode'
 import type { Slide } from './slide'
 import type { EngineEvent, Unsubscribe } from './events'
 import type { CreateNodeOptions } from './nodeManager'
@@ -23,6 +27,7 @@ export class Engine {
   readonly #scenes: SceneManager
   readonly #assets: AssetManager
   readonly #slides: SlideManager
+  readonly #animations: AnimationManager
 
   constructor() {
     this.#projects = new ProjectManager(this.#bus)
@@ -30,6 +35,11 @@ export class Engine {
     this.#scenes = new SceneManager(this.#nodes)
     this.#assets = new AssetManager(this.#nodes)
     this.#slides = new SlideManager(this.#bus, this.#projects, this.#scenes)
+    this.#animations = new AnimationManager(
+      this.#bus,
+      (nodeId) => this.getNode(nodeId),
+      (nodeId) => this.getSlideOfNode(nodeId),
+    )
   }
 
   get project(): Project | null {
@@ -78,7 +88,59 @@ export class Engine {
   }
 
   removeNode(nodeId: string): void {
+    const node = this.getNode(nodeId)
+    const descendantIds = [...walkPreOrder(node)].map((entry) => entry.id)
+    const slide = this.getSlideOfNode(nodeId)
     this.#nodes.remove(nodeId)
+    for (const id of descendantIds) {
+      slide.animation.removeNode(id)
+    }
+  }
+
+  getSlideOfNode(nodeId: string): Slide {
+    return this.#slides.getBySceneId(this.getNodeScene(nodeId).id)
+  }
+
+  getKeyframes(nodeId: string, property: AnimationProperty): readonly Keyframe[] {
+    return this.#animations.getKeyframes(nodeId, property)
+  }
+
+  getKeyframe(
+    nodeId: string,
+    property: AnimationProperty,
+    keyframeId: string,
+  ): Keyframe | undefined {
+    return this.#animations.getKeyframe(nodeId, property, keyframeId)
+  }
+
+  addKeyframe(nodeId: string, property: AnimationProperty, time: number, value: number): Keyframe {
+    return this.#animations.addKeyframe(nodeId, property, time, value)
+  }
+
+  deleteKeyframe(nodeId: string, property: AnimationProperty, keyframeId: string): Keyframe {
+    return this.#animations.deleteKeyframe(nodeId, property, keyframeId)
+  }
+
+  moveKeyframe(
+    nodeId: string,
+    property: AnimationProperty,
+    keyframeId: string,
+    newTime: number,
+  ): void {
+    this.#animations.moveKeyframe(nodeId, property, keyframeId, newTime)
+  }
+
+  moveKeyframes(moves: readonly KeyframeMove[]): KeyframeMoveResult[] {
+    return this.#animations.moveKeyframes(moves)
+  }
+
+  setKeyframeValue(
+    nodeId: string,
+    property: AnimationProperty,
+    keyframeId: string,
+    value: number,
+  ): void {
+    this.#animations.setKeyframeValue(nodeId, property, keyframeId, value)
   }
 
   reparentNode(nodeId: string, newParentId: string): void {
@@ -184,6 +246,7 @@ export function toReadOnly(engine: Engine): EngineReadOnly {
     getNode: (nodeId) => engine.getNode(nodeId),
     getScene: (sceneId) => engine.getScene(sceneId),
     getAssetDefinition: (definitionId) => engine.getAssetDefinition(definitionId),
+    getKeyframes: (nodeId, property) => engine.getKeyframes(nodeId, property),
     toJSON: () => engine.toJSON(),
   }
 }

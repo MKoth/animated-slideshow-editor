@@ -1,3 +1,5 @@
+import type { AnimationProperty } from './animation'
+
 export interface ProjectCreated {
   readonly type: 'ProjectCreated'
   readonly projectId: string
@@ -53,6 +55,34 @@ export interface VisibilityChanged {
   readonly nodeId: string
 }
 
+export interface KeyframeAdded {
+  readonly type: 'KeyframeAdded'
+  readonly nodeId: string
+  readonly property: AnimationProperty
+  readonly keyframeId: string
+}
+
+export interface KeyframeRemoved {
+  readonly type: 'KeyframeRemoved'
+  readonly nodeId: string
+  readonly property: AnimationProperty
+  readonly keyframeId: string
+}
+
+export interface KeyframeMoved {
+  readonly type: 'KeyframeMoved'
+  readonly nodeId: string
+  readonly property: AnimationProperty
+  readonly keyframeId: string
+}
+
+export interface KeyframeValueChanged {
+  readonly type: 'KeyframeValueChanged'
+  readonly nodeId: string
+  readonly property: AnimationProperty
+  readonly keyframeId: string
+}
+
 export type EngineEvent =
   | ProjectCreated
   | SlideCreated
@@ -65,6 +95,10 @@ export type EngineEvent =
   | NodeOrderChanged
   | TransformChanged
   | VisibilityChanged
+  | KeyframeAdded
+  | KeyframeRemoved
+  | KeyframeMoved
+  | KeyframeValueChanged
 
 export type EventListener = (event: EngineEvent) => void
 

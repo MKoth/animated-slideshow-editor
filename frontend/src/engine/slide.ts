@@ -1,17 +1,22 @@
 import type { Scene } from './scene'
 import type { SlideJSON } from './json'
+import type { SlideAnimation } from './animation'
+
+export const DEFAULT_SLIDE_DURATION = 10
 
 export class Slide {
   readonly id: string
   readonly name: string
   readonly duration: number
   readonly scene: Scene
+  readonly animation: SlideAnimation
 
-  constructor(id: string, name: string, duration: number, scene: Scene) {
+  constructor(id: string, name: string, duration: number, scene: Scene, animation: SlideAnimation) {
     this.id = id
     this.name = name
     this.duration = duration
     this.scene = scene
+    this.animation = animation
   }
 
   toJSON(): SlideJSON {
@@ -20,6 +25,7 @@ export class Slide {
       name: this.name,
       duration: this.duration,
       scene: this.scene.toJSON(),
+      animation: this.animation.toJSON(),
     }
   }
 }

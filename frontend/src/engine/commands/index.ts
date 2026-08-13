@@ -45,3 +45,17 @@ export { ChangeZOrderCommand, Z_ORDER_MODES, zOrderTargetsReversed } from './cha
 export type { ChangeZOrderInverse, ChangeZOrderParameters, ZOrderMode } from './changeZOrderCommand'
 export { ReorderNodeCommand } from './reorderNodeCommand'
 export type { ReorderNodeInverse, ReorderNodeParameters } from './reorderNodeCommand'
+export { AddKeyframeCommand } from './addKeyframeCommand'
+export type { AddKeyframeInverse, AddKeyframeParameters } from './addKeyframeCommand'
+export { DeleteKeyframeCommand } from './deleteKeyframeCommand'
+export type { DeleteKeyframeInverse, DeleteKeyframeParameters } from './deleteKeyframeCommand'
+export { MoveKeyframeCommand } from './moveKeyframeCommand'
+export type { MoveKeyframeInverse, MoveKeyframeParameters } from './moveKeyframeCommand'
+export { SetKeyframeValueCommand } from './setKeyframeValueCommand'
+export type { SetKeyframeValueInverse, SetKeyframeValueParameters } from './setKeyframeValueCommand'
+export { BatchMoveKeyframesCommand } from './batchMoveKeyframesCommand'
+export type {
+  BatchMoveKeyframesInverse,
+  BatchMoveKeyframesInverseMove,
+  BatchMoveKeyframesParameters,
+} from './batchMoveKeyframesCommand'

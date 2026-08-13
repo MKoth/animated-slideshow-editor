@@ -1,11 +1,12 @@
 import type { EventBus } from './events'
 import { newId } from './ids'
 import type { Slide } from './slide'
-import { Slide as SlideModel } from './slide'
+import { Slide as SlideModel, DEFAULT_SLIDE_DURATION } from './slide'
 import type { ProjectManager } from './projectManager'
 import type { SceneManager } from './sceneManager'
 import type { SlideJSON } from './json'
 import { requireString } from './guards'
+import { SlideAnimation } from './animation'
 
 export class SlideManager {
   readonly #bus: EventBus
@@ -27,7 +28,13 @@ export class SlideManager {
       throw new Error('Slide name must not be empty')
     }
     const scene = this.#scenes.createScene('Root')
-    const slide = new SlideModel(newId('slide'), name, 0, scene)
+    const slide = new SlideModel(
+      newId('slide'),
+      name,
+      DEFAULT_SLIDE_DURATION,
+      scene,
+      new SlideAnimation(),
+    )
     project.slides.push(slide)
     this.#bus.emit({ type: 'SlideCreated', slideId: slide.id })
     return slide
@@ -35,11 +42,16 @@ export class SlideManager {
 
   restore(json: SlideJSON): Slide {
     const scene = this.#scenes.restoreScene(json.scene)
+    const duration = typeof json.duration === 'number' ? json.duration : 0
+    const animation = SlideAnimation.fromJSON(json.animation, duration, (nodeId) =>
+      scene.getNode(nodeId),
+    )
     return new SlideModel(
       requireString(json.id, 'Slide id'),
       requireString(json.name, 'Slide name'),
-      typeof json.duration === 'number' ? json.duration : 0,
+      duration,
       scene,
+      animation,
     )
   }
 
@@ -65,6 +77,18 @@ export class SlideManager {
     const slide = project.slides.find((entry) => entry.id === slideId)
     if (!slide) {
       throw new Error(`Slide not found: ${slideId}`)
+    }
+    return slide
+  }
+
+  getBySceneId(sceneId: string): Slide {
+    const project = this.#projects.current
+    if (!project) {
+      throw new Error('No project exists in memory')
+    }
+    const slide = project.slides.find((entry) => entry.scene.id === sceneId)
+    if (!slide) {
+      throw new Error(`Slide not found for scene: ${sceneId}`)
     }
     return slide
   }
