@@ -122,15 +122,18 @@ describe('InspectorPanel empty state', () => {
     ).toBeInTheDocument()
   })
 
-  it('shows the empty state when the selected node is the camera', () => {
+  it('shows the camera transform when the camera node is selected, with rotation locked', () => {
     const { engine } = renderPanel()
     const { cameraId } = createSceneWithNode(engine)
     select(cameraId)
 
-    expect(
-      screen.getByText('Nothing selected. Select an object to edit its properties.'),
-    ).toBeInTheDocument()
-    expect(screen.queryByRole('heading', { name: 'Transform' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'General' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Transform' })).toBeInTheDocument()
+    const name = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement
+    expect(name.value).toBe('Camera')
+    const rotation = screen.getByRole('spinbutton', { name: 'Rotation' }) as HTMLInputElement
+    expect(rotation).toBeDisabled()
+    expect(screen.getByRole('spinbutton', { name: 'X' })).not.toBeDisabled()
   })
 })
 

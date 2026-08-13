@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useTimelineViewStore } from '../../stores/timelineViewStore'
 import { useUiStore } from '../../stores/uiStore'
 import { DebugPanel } from '../debug/DebugPanel'
 import { CanvasPanel } from '../panels/CanvasPanel'
@@ -28,10 +29,10 @@ export function EditorLayout() {
   const widthSupported = useMinSupportedWidth(MIN_SUPPORTED_WIDTH)
   const leftSidebarWidth = useUiStore((state) => state.leftSidebarWidth)
   const inspectorWidth = useUiStore((state) => state.inspectorWidth)
-  const timelineHeight = useUiStore((state) => state.timelineHeight)
+  const timelineHeight = useTimelineViewStore((state) => state.height)
   const setLeftSidebarWidth = useUiStore((state) => state.setLeftSidebarWidth)
   const setInspectorWidth = useUiStore((state) => state.setInspectorWidth)
-  const setTimelineHeight = useUiStore((state) => state.setTimelineHeight)
+  const setTimelineHeight = useTimelineViewStore((state) => state.setHeight)
 
   if (!widthSupported) {
     return (
@@ -66,7 +67,7 @@ export function EditorLayout() {
         <Splitter
           orientation="horizontal"
           ariaLabel="Resize timeline"
-          onDrag={(delta) => setTimelineHeight(useUiStore.getState().timelineHeight + delta)}
+          onDrag={(delta) => setTimelineHeight(useTimelineViewStore.getState().height + delta)}
         />
         <TimelinePanel height={timelineHeight} />
       </div>

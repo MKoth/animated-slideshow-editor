@@ -36,10 +36,7 @@ function inspectedTargets(engine: EngineReadOnly, selectedIds: readonly string[]
   const targets: SceneNode[] = []
   for (const nodeId of selectedIds) {
     try {
-      const node = engine.getNode(nodeId)
-      if (!node.components.camera) {
-        targets.push(node)
-      }
+      targets.push(engine.getNode(nodeId))
     } catch {
       // the id is stale (node deleted); skip it
     }
@@ -112,11 +109,19 @@ interface NumericFieldProps {
   label: string
   value: number | null
   step: number
+  disabled?: boolean
   onCommit: (raw: string) => void
   onAdjust: (value: number) => void
 }
 
-function NumericField({ label, value, step, onCommit, onAdjust }: NumericFieldProps) {
+function NumericField({
+  label,
+  value,
+  step,
+  disabled = false,
+  onCommit,
+  onAdjust,
+}: NumericFieldProps) {
   const display = value === null ? MIXED_MARKER : formatDecimal(value)
   const buffer = useEditBuffer(display)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -158,7 +163,7 @@ function NumericField({ label, value, step, onCommit, onAdjust }: NumericFieldPr
   }
 
   const handlePointerDown = (event: React.PointerEvent<HTMLInputElement>) => {
-    if (value === null) {
+    if (value === null || disabled) {
       return
     }
     dragRef.current = { startX: event.clientX, startValue: value, dragging: false }
@@ -178,6 +183,7 @@ function NumericField({ label, value, step, onCommit, onAdjust }: NumericFieldPr
         className="inspector-field__input"
         type={buffer.editing || value !== null ? 'number' : 'text'}
         aria-label={label}
+        disabled={disabled}
         value={buffer.text}
         onChange={(event) => {
           buffer.begin()
@@ -281,6 +287,7 @@ export function InspectorPanel({ width }: { width: number }) {
 
   const multi = targets.length > 1
   const targetIds = targets.map((node) => node.id)
+  const cameraTarget = targets.some((node) => Boolean(node.components.camera))
   const world = readTarget.world
   const commonName = commonValueOf(targets, (node) => node.name)
   const commonOpacity = commonValueOf(targets, (node) => node.opacity)
@@ -381,6 +388,7 @@ export function InspectorPanel({ width }: { width: number }) {
             label="Rotation"
             value={multi ? mixedTransformField(transformReadings, 'rotation') : degreesOf(world)}
             step={1}
+            disabled={cameraTarget}
             onCommit={(raw) => commitField('rotation', raw)}
             onAdjust={(value) => adjustField('rotation', value)}
           />

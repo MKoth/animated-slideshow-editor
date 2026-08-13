@@ -7,6 +7,7 @@ import App from '../app/App'
 import type { AssetDefinition } from '../api'
 import { ASSET_DEFINITION_MIME } from '../pixi/renderer/dropPlacement'
 import { useNotificationStore } from '../stores/notificationStore'
+import { usePlaybackController } from '../stores/playbackStore'
 import { useClipboardStore } from '../stores/clipboardStore'
 import { useSelectionStore } from '../stores/selectionStore'
 import {
@@ -14,6 +15,7 @@ import {
   DEFAULT_LEFT_SIDEBAR_WIDTH,
   DEFAULT_TIMELINE_HEIGHT,
 } from '../stores/uiPrefs'
+import { useTimelineViewStore } from '../stores/timelineViewStore'
 import { useUiStore } from '../stores/uiStore'
 import {
   FakeTexture,
@@ -76,17 +78,19 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn())
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1440 })
   useUiStore.persist.clearStorage()
+  useTimelineViewStore.persist.clearStorage()
   useUiStore.setState({
     theme: 'light',
     leftSidebarWidth: DEFAULT_LEFT_SIDEBAR_WIDTH,
     inspectorWidth: DEFAULT_INSPECTOR_WIDTH,
-    timelineHeight: DEFAULT_TIMELINE_HEIGHT,
     visiblePanels: { leftSidebar: true, inspector: true, timeline: true },
     activeSidebarTab: 'assets',
   })
+  useTimelineViewStore.setState({ zoomLevel: 1, scrollTime: 0, height: DEFAULT_TIMELINE_HEIGHT })
   useNotificationStore.setState({ notifications: [] })
   useSelectionStore.setState({ selectedIds: [] })
   useClipboardStore.setState({ items: [] })
+  usePlaybackController.setState({ currentTimes: {} })
   pixiRegistry.reset()
   resetTextureRegistries()
 })
@@ -110,7 +114,11 @@ describe('editor shell', () => {
     expect(
       screen.getByText('Nothing selected. Select an object to edit its properties.'),
     ).toBeInTheDocument()
-    expect(screen.getByText('No animation loaded.')).toBeInTheDocument()
+    const timelinePanel = container.querySelector('.timeline-panel')
+    expect(timelinePanel).not.toBeNull()
+    expect(
+      within(timelinePanel as HTMLElement).getByText('No project. Create one to get started.'),
+    ).toBeInTheDocument()
     expect(screen.getByText('Ready')).toBeInTheDocument()
   })
 
@@ -202,7 +210,7 @@ describe('editor shell', () => {
     fireEvent.mouseDown(timelineSplitter, { clientY: 400 })
     fireEvent.mouseMove(window, { clientY: 550 })
     fireEvent.mouseUp(window)
-    expect(useUiStore.getState().timelineHeight).toBe(350)
+    expect(useTimelineViewStore.getState().height).toBe(350)
   })
 
   it('renders the status bar with backend status, zoom and fps placeholders', () => {
