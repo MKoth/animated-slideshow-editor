@@ -9,6 +9,7 @@ import {
   MoveNodeCommand,
   ScaleNodeCommand,
 } from '../engine/commands'
+import { EvaluatedWorldTransformSource } from '../engine/worldTransform'
 import { CanvasSelection } from '../pixi/renderer/canvasSelection'
 import type {
   GuideController,
@@ -25,25 +26,9 @@ import { useSelectionStore } from '../stores/selectionStore'
 const PLACEHOLDER = { width: 160, height: 100 }
 const GRID_STEP = 25
 
-interface FakePreview extends PreviewController {
-  positions: Map<string, { x: number; y: number }>
-}
-
 interface FakeGuides extends GuideController {
   shows: { vertical: number[]; horizontal: number[]; span: WorldRect }[]
   clears: number
-}
-
-function makePreview(): FakePreview {
-  return {
-    positions: new Map(),
-    setPosition(nodeId, x, y) {
-      this.positions.set(nodeId, { x, y })
-    },
-    clear() {
-      this.positions.clear()
-    },
-  }
 }
 
 function makeGuides(): FakeGuides {
@@ -57,6 +42,10 @@ function makeGuides(): FakeGuides {
       this.clears += 1
     },
   }
+}
+
+interface FakePreview extends PreviewController {
+  positions: Map<string, WorldPoint>
 }
 
 interface Harness {
@@ -86,11 +75,28 @@ function mount(): Harness {
   const known = new Set<string>()
   const sizes: NodeSizeSource = (nodeId) => (known.has(nodeId) ? PLACEHOLDER : null)
   const canvas = document.createElement('canvas')
-  const preview = makePreview()
+  const previewPositions = new Map<string, WorldPoint>()
+  const preview: FakePreview = {
+    positions: previewPositions,
+    setPosition(nodeId, x, y) {
+      previewPositions.set(nodeId, { x, y })
+    },
+    clear() {
+      previewPositions.clear()
+    },
+  }
   const guides = makeGuides()
   let gridSnap = false
   let animationMode = false
   const options: () => MoveOptions = () => ({ gridSnap, gridStep: GRID_STEP })
+  const transforms = new EvaluatedWorldTransformSource(
+    engine,
+    () => {
+      const slide = engine.project?.slides[0]
+      return slide ? usePlaybackController.getState().getTime(slide.id) : 0
+    },
+    previewPositions,
+  )
   const selection = new CanvasSelection({
     canvas,
     engine,
@@ -103,6 +109,7 @@ function mount(): Harness {
     guides,
     getMoveOptions: options,
     getAnimationMode: () => animationMode,
+    getWorldTransform: (nodeId) => transforms.transformOf(nodeId),
   })
   selection.attach()
   return {
@@ -358,12 +365,12 @@ describe('move gesture in animation mode', () => {
     harness.setAnimationMode(true)
     const before = harness.undoStack.entries.length
 
-    mouseDown(harness.canvas, { x: 300, y: 200 })
-    mouseMove({ x: 350, y: 240 })
+    mouseDown(harness.canvas, { x: 400, y: 200 })
+    mouseMove({ x: 450, y: 240 })
 
     expect(harness.preview.positions.get(id)).toEqual({ x: 450, y: 240 })
 
-    mouseUp({ x: 350, y: 240 })
+    mouseUp({ x: 450, y: 240 })
 
     expect(harness.undoStack.entries).toHaveLength(before + 1)
     expect(harness.undoStack.entries[0].type).toBe('Transaction')
@@ -387,7 +394,7 @@ describe('move gesture in animation mode', () => {
     harness.setAnimationMode(true)
     const before = harness.undoStack.entries.length
 
-    drag(harness.canvas, { x: 300, y: 200 }, { x: 350, y: 230 })
+    drag(harness.canvas, { x: 500, y: 200 }, { x: 550, y: 230 })
 
     expect(harness.undoStack.entries).toHaveLength(before + 1)
     expect(harness.undoStack.entries[0].type).toBe('Transaction')
@@ -452,7 +459,7 @@ describe('move gesture in animation mode', () => {
     scrub(harness, 5)
     harness.setAnimationMode(true)
 
-    drag(harness.canvas, { x: 300, y: 200 }, { x: 350, y: 200 })
+    drag(harness.canvas, { x: 400, y: 200 }, { x: 450, y: 200 })
 
     expect(harness.engine.getKeyframes(id, 'positionX').map((keyframe) => keyframe.time)).toEqual([
       0, 5, 10,
@@ -584,5 +591,60 @@ describe('move gesture guard in base mode', () => {
 
     expect(useNotificationStore.getState().notifications).toEqual([])
     expect(transformOf(harness.engine, id)).toEqual({ x: 300, y: 200 })
+  })
+})
+
+describe('hit-testing follows the evaluated state', () => {
+  it('selects an animated node at its rendered position and not at its stored position', () => {
+    const harness = mount()
+    const id = nodeAt(harness, 'Hero', { x: 300, y: 200 })
+    addKeyframe(harness, id, 'positionX', 0, 300)
+    addKeyframe(harness, id, 'positionX', 10, 500)
+    scrub(harness, 5)
+
+    mouseDown(harness.canvas, { x: 400, y: 200 })
+    mouseUp({ x: 400, y: 200 })
+    expect(useSelectionStore.getState().selectedIds).toEqual([id])
+
+    mouseDown(harness.canvas, { x: 300, y: 200 })
+    mouseUp({ x: 300, y: 200 })
+    expect(useSelectionStore.getState().selectedIds).toEqual([])
+  })
+
+  it('selects via marquee only nodes at their rendered positions', () => {
+    const harness = mount()
+    const id = nodeAt(harness, 'Hero', { x: 300, y: 200 })
+    addKeyframe(harness, id, 'positionX', 0, 300)
+    addKeyframe(harness, id, 'positionX', 10, 500)
+    scrub(harness, 5)
+
+    mouseDown(harness.canvas, { x: 330, y: 150 })
+    mouseMove({ x: 470, y: 250 })
+    expect(useSelectionStore.getState().selectedIds).toEqual([id])
+    mouseUp({ x: 470, y: 250 })
+
+    mouseDown(harness.canvas, { x: 220, y: 150 })
+    mouseMove({ x: 300, y: 250 })
+    expect(useSelectionStore.getState().selectedIds).toEqual([])
+    mouseUp({ x: 300, y: 250 })
+  })
+
+  it('aligns the move guides against rendered positions', () => {
+    const harness = mount()
+    const animated = nodeAt(harness, 'Animated', { x: 300, y: 200 })
+    addKeyframe(harness, animated, 'positionX', 0, 300)
+    addKeyframe(harness, animated, 'positionX', 10, 500)
+    scrub(harness, 5)
+    const moving = nodeAt(harness, 'Moving', { x: 300, y: 200 })
+    useSelectionStore.getState().select(moving)
+
+    mouseDown(harness.canvas, { x: 300, y: 200 })
+    mouseMove({ x: 400, y: 200 })
+
+    const lastShow = harness.guides.shows.at(-1)
+    expect(lastShow?.vertical).toContain(400)
+
+    mouseUp({ x: 400, y: 200 })
+    expect(transformOf(harness.engine, moving)).toEqual({ x: 400, y: 200 })
   })
 })

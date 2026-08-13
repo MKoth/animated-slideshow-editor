@@ -3,6 +3,7 @@ import type { EngineEvent } from '../../engine'
 import type { Unsubscribe } from '../../engine'
 import { walkPreOrder } from '../../engine/sceneNode'
 import type { CommandResult, DispatchCommand } from '../../engine/commands'
+import { EvaluatedWorldTransformSource } from '../../engine/worldTransform'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { useUiStore } from '../../stores/uiStore'
 import { CameraControls } from './cameraControls'
@@ -15,7 +16,6 @@ import { ErrorOverlay } from './errorOverlay'
 import { DEFAULT_GRID_STEP } from './gridSnap'
 import { DEFAULT_MAJOR_COLOR, DEFAULT_MINOR_COLOR, GridRenderer } from './gridRenderer'
 import { GuideOverlay } from './guideOverlay'
-import { worldTransformOf } from './hitTest'
 import { realPixi } from './pixi'
 import type { PixiApplication, RendererPixi } from './pixi'
 import { SceneRenderer } from './sceneRenderer'
@@ -56,6 +56,7 @@ export class Renderer {
   #selection: CanvasSelection | null = null
   #selectionOverlay: SelectionOverlay | null = null
   #guideOverlay: GuideOverlay | null = null
+  #transformSource: EvaluatedWorldTransformSource | null = null
   #previewPositions = new Map<string, { x: number; y: number }>()
   #unsubscribe: Unsubscribe | null = null
   #unsubscribeTime: Unsubscribe | null = null
@@ -129,19 +130,24 @@ export class Renderer {
       this.#unsubscribeTime = this.#currentTime.subscribe(() => this.#handleTimeChanged())
       this.#syncScene(this.#sceneRenderer)
 
+      this.#transformSource = new EvaluatedWorldTransformSource(
+        this.#engine,
+        () => {
+          const slideId = this.#sceneRenderer?.boundSlideId ?? null
+          return slideId ? this.#currentTime.getTime(slideId) : 0
+        },
+        this.#previewPositions,
+      )
+      const transformOf = (nodeId: string) => this.#transformSource?.transformOf(nodeId) ?? null
+
       this.#selectionOverlay = new SelectionOverlay({
         pixi: this.#pixi,
         world,
         engine: this.#engine,
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
         getNodeSize: (nodeId) => this.#sceneRenderer?.nodeSize(nodeId) ?? null,
-        getWorldTransform: (nodeId) => {
-          const scene = this.#sceneRenderer?.boundScene ?? null
-          if (!scene) {
-            return null
-          }
-          return worldTransformOf(scene, nodeId, this.#previewPositions.get(nodeId))
-        },
+        getWorldTransform: transformOf,
+        subscribeTime: (listener) => this.#currentTime.subscribe(listener),
         store: useSelectionStore,
       })
       this.#selectionOverlay.attach()
@@ -176,6 +182,7 @@ export class Renderer {
           gridStep: DEFAULT_GRID_STEP,
         }),
         getAnimationMode: () => useUiStore.getState().animationMode,
+        getWorldTransform: transformOf,
       })
       this.#selection.attach()
 
@@ -215,6 +222,7 @@ export class Renderer {
     this.#resizeObserver?.disconnect()
     this.#resizeObserver = null
     this.#sceneRenderer = null
+    this.#transformSource = null
     this.#controls?.detach()
     this.#controls = null
     this.#dropPlacement?.detach()

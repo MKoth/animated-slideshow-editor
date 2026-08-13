@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Engine } from '../engine/internal'
 import { createEngine } from '../engine/internal'
+import { EvaluatedWorldTransformSource } from '../engine/worldTransform'
 import type { PixiContainer, RendererPixi } from '../pixi/renderer/pixi'
 import { SelectionOverlay } from '../pixi/renderer/selectionOverlay'
 import type { NodeSizeSource } from '../pixi/renderer/hitTest'
-import type { WorldRect } from '../pixi/renderer/worldGeometry'
+import type { WorldPoint, WorldRect } from '../pixi/renderer/worldGeometry'
 import { useSelectionStore } from '../stores/selectionStore'
 import { FakeContainer, FakeGraphics } from './renderer/pixiFake'
+import { FakeTimeSource } from './fakeTimeSource'
 
 const PLACEHOLDER = { width: 160, height: 100 }
 
@@ -75,6 +77,77 @@ function rects(graphics: FakeGraphics): WorldRect[] {
       const [x, y, w, h] = call.args as [number, number, number, number]
       return { minX: x, minY: y, maxX: x + w, maxY: y + h }
     })
+}
+
+interface EvaluatedHarness {
+  engine: Engine
+  overlay: SelectionOverlay
+  graphics: FakeGraphics
+  time: FakeTimeSource
+  previews: Map<string, WorldPoint>
+  nodeSizes: { add(nodeId: string): void }
+}
+
+function mountEvaluated(): EvaluatedHarness {
+  const engine = createEngine()
+  engine.createProject({ name: 'Demo' })
+  engine.createSlide('Slide 1')
+  const slide = engine.project?.slides[0]
+  if (!slide) {
+    throw new Error('Slide was not created')
+  }
+  const known = new Set<string>()
+  const sizes: NodeSizeSource = (nodeId) => (known.has(nodeId) ? PLACEHOLDER : null)
+  const world = new FakeContainer() as unknown as PixiContainer
+  const time = new FakeTimeSource()
+  const previews = new Map<string, WorldPoint>()
+  const source = new EvaluatedWorldTransformSource(engine, () => time.getTime(), previews)
+  const overlay = new SelectionOverlay({
+    pixi: { Graphics: FakeGraphics } as unknown as RendererPixi,
+    world,
+    engine,
+    getScene: () => slide.scene,
+    getNodeSize: (nodeId) => sizes(nodeId),
+    getWorldTransform: (nodeId) => source.transformOf(nodeId),
+    subscribeTime: (listener) => time.subscribe(listener),
+    store: useSelectionStore,
+  })
+  overlay.attach()
+  const graphics = world.children.find(
+    (child) => (child as { kind?: string }).kind === 'graphics',
+  ) as unknown as FakeGraphics | undefined
+  if (!graphics) {
+    throw new Error('No overlay graphics found')
+  }
+  return {
+    engine,
+    overlay,
+    graphics,
+    time,
+    previews,
+    nodeSizes: {
+      add(nodeId: string): void {
+        known.add(nodeId)
+      },
+    },
+  }
+}
+
+function evaluatedNode(harness: EvaluatedHarness, name: string, x = 0, y = 0): string {
+  const slide = harness.engine.project?.slides[0]
+  if (!slide) {
+    throw new Error('Slide was not created')
+  }
+  const created = harness.engine.createNode(slide.scene.id, slide.scene.root.id, name, {
+    transform: { x, y, rotation: 0, scaleX: 1, scaleY: 1 },
+    components: { assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-1' } },
+  })
+  harness.nodeSizes.add(created.id)
+  return created.id
+}
+
+function outlineOf(harness: EvaluatedHarness): WorldRect | null {
+  return rects(harness.graphics)[0] ?? null
 }
 
 beforeEach(() => {
@@ -167,5 +240,76 @@ describe('selection overlay', () => {
 
     expect(harness.graphics.calls).toHaveLength(1)
     expect(harness.graphics.calls[0].method).toBe('clear')
+  })
+})
+
+describe('selection overlay evaluated bounds', () => {
+  it('follows the evaluated position when the playhead time changes', () => {
+    const harness = mountEvaluated()
+    const selected = evaluatedNode(harness, 'Animated', 0, 0)
+    harness.engine.addKeyframe(selected, 'positionX', 0, 0)
+    harness.engine.addKeyframe(selected, 'positionX', 10, 100)
+    useSelectionStore.getState().select(selected)
+    expect(outlineOf(harness)).toEqual({ minX: -80, minY: -50, maxX: 80, maxY: 50 })
+
+    harness.time.set(5)
+
+    expect(outlineOf(harness)).toEqual({ minX: -30, minY: -50, maxX: 130, maxY: 50 })
+
+    harness.time.set(10)
+    expect(outlineOf(harness)).toEqual({ minX: 20, minY: -50, maxX: 180, maxY: 50 })
+  })
+
+  it('redraws when keyframes are added, changed and deleted', () => {
+    const harness = mountEvaluated()
+    const selected = evaluatedNode(harness, 'Animated', 0, 0)
+    useSelectionStore.getState().select(selected)
+    harness.time.set(5)
+
+    const first = harness.engine.addKeyframe(selected, 'positionX', 0, 0)
+    const second = harness.engine.addKeyframe(selected, 'positionX', 10, 100)
+    expect(outlineOf(harness)?.minX).toBe(-30)
+
+    harness.engine.setKeyframeValue(selected, 'positionX', second.id, 200)
+    expect(outlineOf(harness)?.minX).toBe(20)
+
+    harness.engine.moveKeyframe(selected, 'positionX', first.id, 2)
+    expect(outlineOf(harness)?.minX).toBe(-5)
+
+    harness.engine.deleteKeyframe(selected, 'positionX', first.id)
+    expect(outlineOf(harness)?.minX).toBe(120)
+
+    harness.engine.deleteKeyframe(selected, 'positionX', second.id)
+    expect(outlineOf(harness)?.minX).toBe(-80)
+  })
+
+  it('previews the dragged position and snaps back to the evaluated position', () => {
+    const harness = mountEvaluated()
+    const selected = evaluatedNode(harness, 'Animated', 0, 0)
+    harness.engine.addKeyframe(selected, 'positionX', 0, 0)
+    harness.engine.addKeyframe(selected, 'positionX', 10, 100)
+    useSelectionStore.getState().select(selected)
+    harness.time.set(5)
+    expect(outlineOf(harness)?.minX).toBe(-30)
+
+    harness.previews.set(selected, { x: 200, y: 0 })
+    harness.overlay.redraw()
+    expect(outlineOf(harness)).toEqual({ minX: 120, minY: -50, maxX: 280, maxY: 50 })
+
+    harness.previews.clear()
+    harness.time.set(7)
+    expect(outlineOf(harness)?.minX).toBe(-10)
+  })
+
+  it('keeps redrawing on time changes after detach stops the subscription', () => {
+    const harness = mountEvaluated()
+    const selected = evaluatedNode(harness, 'Animated', 0, 0)
+    harness.engine.addKeyframe(selected, 'positionX', 0, 0)
+    harness.engine.addKeyframe(selected, 'positionX', 10, 100)
+    useSelectionStore.getState().select(selected)
+    expect(harness.time.listeners.size).toBe(1)
+
+    harness.overlay.detach()
+    expect(harness.time.listeners.size).toBe(0)
   })
 })

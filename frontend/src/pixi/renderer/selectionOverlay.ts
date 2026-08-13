@@ -1,8 +1,9 @@
 import type { EngineReadOnly } from '../../engine'
 import type { Scene } from '../../engine'
 import type { Unsubscribe } from '../../engine'
+import { worldTransformOf as storedWorldTransformOf } from '../../engine/worldTransform'
 import type { SelectionStoreApi } from '../../stores/selectionStore'
-import { aabbOf, worldTransformOf } from './hitTest'
+import { aabbOf } from './hitTest'
 import type { NodeSizeSource } from './hitTest'
 import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
 import type { WorldTransform } from './worldGeometry'
@@ -19,6 +20,10 @@ const REDRAW_EVENTS = new Set([
   'NodeRemoved',
   'NodeReparented',
   'NodeOrderChanged',
+  'KeyframeAdded',
+  'KeyframeRemoved',
+  'KeyframeMoved',
+  'KeyframeValueChanged',
 ])
 
 export interface SelectionOverlayContext {
@@ -29,6 +34,7 @@ export interface SelectionOverlayContext {
   readonly getNodeSize: NodeSizeSource
   readonly store: SelectionStoreApi
   readonly getWorldTransform?: (nodeId: string) => WorldTransform | null
+  readonly subscribeTime?: (listener: () => void) => Unsubscribe
 }
 
 export class SelectionOverlay {
@@ -39,9 +45,11 @@ export class SelectionOverlay {
   readonly #getNodeSize: NodeSizeSource
   readonly #store: SelectionStoreApi
   readonly #getWorldTransform?: (nodeId: string) => WorldTransform | null
+  readonly #subscribeTime?: (listener: () => void) => Unsubscribe
   #graphics: PixiGraphics | null = null
   #unsubscribeStore: Unsubscribe | null = null
   #unsubscribeEngine: Unsubscribe | null = null
+  #unsubscribeTime: Unsubscribe | null = null
   #attached = false
 
   constructor(context: SelectionOverlayContext) {
@@ -52,6 +60,7 @@ export class SelectionOverlay {
     this.#getNodeSize = context.getNodeSize
     this.#store = context.store
     this.#getWorldTransform = context.getWorldTransform
+    this.#subscribeTime = context.subscribeTime
   }
 
   attach(): void {
@@ -68,6 +77,7 @@ export class SelectionOverlay {
         this.redraw()
       }
     })
+    this.#unsubscribeTime = this.#subscribeTime?.(() => this.redraw()) ?? null
     this.redraw()
   }
 
@@ -80,6 +90,8 @@ export class SelectionOverlay {
     this.#unsubscribeStore = null
     this.#unsubscribeEngine?.()
     this.#unsubscribeEngine = null
+    this.#unsubscribeTime?.()
+    this.#unsubscribeTime = null
     this.#graphics?.destroy()
     this.#graphics = null
   }
@@ -108,7 +120,7 @@ export class SelectionOverlay {
       }
       const transform = this.#getWorldTransform
         ? this.#getWorldTransform(nodeId)
-        : worldTransformOf(scene, nodeId)
+        : storedWorldTransformOf(scene, nodeId)
       if (!transform) {
         continue
       }

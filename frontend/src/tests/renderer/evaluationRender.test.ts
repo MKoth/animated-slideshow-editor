@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Unsubscribe } from '../../engine'
 import type { CommandResult } from '../../engine/commands'
 import type { AnimationProperty } from '../../engine'
 import {
@@ -13,37 +12,14 @@ import {
   createCommandSystem,
 } from '../../engine/commands'
 import { Renderer } from '../../pixi/renderer/renderer'
-import type { CurrentTimeSource } from '../../pixi/renderer/sceneRenderer'
 import { pixiRegistry, FakeContainer } from './pixiFake'
 import type { FakeApplication } from './pixiFake'
+import { FakeTimeSource } from '../fakeTimeSource'
 
 vi.mock('pixi.js', async () => {
   const { createPixiFake } = await import('./pixiFake')
   return createPixiFake()
 })
-
-class FakeTimeSource implements CurrentTimeSource {
-  time = 0
-  readonly listeners = new Set<() => void>()
-
-  getTime(): number {
-    return this.time
-  }
-
-  subscribe(listener: () => void): Unsubscribe {
-    this.listeners.add(listener)
-    return () => {
-      this.listeners.delete(listener)
-    }
-  }
-
-  set(time: number): void {
-    this.time = time
-    for (const listener of this.listeners) {
-      listener()
-    }
-  }
-}
 
 interface Mounted {
   system: ReturnType<typeof createCommandSystem>

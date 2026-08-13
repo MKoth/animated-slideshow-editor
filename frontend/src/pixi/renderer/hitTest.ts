@@ -1,18 +1,26 @@
 import type { Scene } from '../../engine'
 import type { SceneNode } from '../../engine'
 import { walkPreOrder } from '../../engine/sceneNode'
+import { worldTransformOf as storedWorldTransformOf } from '../../engine/worldTransform'
 import type { WorldPoint, WorldRect, WorldSize, WorldTransform } from './worldGeometry'
 
 export type NodeSizeSource = (nodeId: string) => WorldSize | null
+
+export type WorldTransformSource = (nodeId: string) => WorldTransform | null
+
+function storedTransformOf(scene: Scene): WorldTransformSource {
+  return (nodeId) => storedWorldTransformOf(scene, nodeId)
+}
 
 export function topmostNodeAt(
   scene: Scene,
   point: WorldPoint,
   sizes: NodeSizeSource,
+  transformOf: WorldTransformSource = storedTransformOf(scene),
 ): string | null {
   let topmost: string | null = null
   for (const node of walkPreOrder(scene.root)) {
-    if (!selectable(node) || !containsPoint(scene, node, point, sizes)) {
+    if (!selectable(node) || !containsPoint(point, sizes(node.id), transformOf(node.id))) {
       continue
     }
     topmost = node.id
@@ -24,13 +32,14 @@ export function nodesIntersectingRect(
   scene: Scene,
   rect: WorldRect,
   sizes: NodeSizeSource,
+  transformOf: WorldTransformSource = storedTransformOf(scene),
 ): readonly string[] {
   const hit: string[] = []
   for (const node of walkPreOrder(scene.root)) {
     if (!selectable(node)) {
       continue
     }
-    const aabb = worldAabbOf(scene, node.id, sizes)
+    const aabb = worldAabbOf(scene, node.id, sizes, transformOf)
     if (aabb && intersects(aabb, rect)) {
       hit.push(node.id)
     }
@@ -38,7 +47,12 @@ export function nodesIntersectingRect(
   return hit
 }
 
-export function worldAabbOf(scene: Scene, nodeId: string, sizes: NodeSizeSource): WorldRect | null {
+export function worldAabbOf(
+  scene: Scene,
+  nodeId: string,
+  sizes: NodeSizeSource,
+  transformOf: WorldTransformSource = storedTransformOf(scene),
+): WorldRect | null {
   const node = scene.getNode(nodeId)
   if (!node) {
     return null
@@ -47,7 +61,7 @@ export function worldAabbOf(scene: Scene, nodeId: string, sizes: NodeSizeSource)
   if (!size) {
     return null
   }
-  const transform = worldTransformOf(scene, nodeId)
+  const transform = transformOf(nodeId)
   return aabbOf(size, transform)
 }
 
@@ -66,51 +80,12 @@ export function aabbOf(size: WorldSize, transform: WorldTransform | null): World
   }
 }
 
-export function worldTransformOf(
-  scene: Scene,
-  nodeId: string,
-  preview?: WorldPoint,
-): WorldTransform | null {
-  const node = scene.getNode(nodeId)
-  if (!node) {
-    return null
-  }
-  const chain: SceneNode[] = []
-  for (let cursor: SceneNode | null = node; cursor !== null; cursor = cursor.parent) {
-    chain.push(cursor)
-  }
-  chain.reverse()
-  let x = 0
-  let y = 0
-  let rotation = 0
-  let scaleX = 1
-  let scaleY = 1
-  for (const link of chain) {
-    const local =
-      link.id === nodeId && preview
-        ? { ...link.transform, x: preview.x, y: preview.y }
-        : link.transform
-    x += rotateX(local.x * scaleX, local.y * scaleY, rotation)
-    y += rotateY(local.x * scaleX, local.y * scaleY, rotation)
-    rotation += local.rotation
-    scaleX *= local.scaleX
-    scaleY *= local.scaleY
-  }
-  return { x, y, rotation, scaleX, scaleY }
-}
-
 function containsPoint(
-  scene: Scene,
-  node: SceneNode,
   point: WorldPoint,
-  sizes: NodeSizeSource,
+  size: WorldSize | null,
+  transform: WorldTransform | null,
 ): boolean {
-  const size = sizes(node.id)
-  if (!size) {
-    return false
-  }
-  const transform = worldTransformOf(scene, node.id)
-  if (!transform || transform.scaleX <= 0 || transform.scaleY <= 0) {
+  if (!size || !transform || transform.scaleX <= 0 || transform.scaleY <= 0) {
     return false
   }
   const dx = point.x - transform.x

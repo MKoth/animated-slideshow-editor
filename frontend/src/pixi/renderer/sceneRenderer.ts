@@ -66,6 +66,10 @@ export class SceneRenderer {
     return this.#scene?.id ?? null
   }
 
+  get boundSlideId(): string | null {
+    return this.#slideId
+  }
+
   get boundScene(): Scene | null {
     return this.#scene
   }

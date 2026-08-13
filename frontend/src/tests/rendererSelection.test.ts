@@ -3,6 +3,7 @@ import type { Engine } from '../engine/internal'
 import { createEngine } from '../engine/internal'
 import type { DispatchCommand } from '../engine/commands'
 import { CommandDispatcher, UndoStack } from '../engine/commands'
+import type { CurrentTimeSource } from '../pixi/renderer/sceneRenderer'
 import type { ResolveAssetUrl } from '../pixi/renderer/textureCache'
 import { Renderer } from '../pixi/renderer/renderer'
 import { useSelectionStore } from '../stores/selectionStore'
@@ -16,6 +17,7 @@ import {
 import type { FakeGraphics } from './renderer/pixiFake'
 import type { FakeChild } from './renderer/testUtils'
 import { worldOf } from './renderer/testUtils'
+import { FakeTimeSource } from './fakeTimeSource'
 
 vi.mock('pixi.js', async () => {
   const { createPixiFake } = await import('./renderer/pixiFake')
@@ -34,14 +36,17 @@ interface Harness {
   app: (typeof pixiRegistry.applications)[number]
 }
 
-async function mount(resolveAssetUrl?: ResolveAssetUrl): Promise<Harness> {
+async function mount(
+  resolveAssetUrl?: ResolveAssetUrl,
+  timeSource?: CurrentTimeSource,
+): Promise<Harness> {
   const engine = createEngine()
   engine.createProject({ name: 'Demo' })
   engine.createSlide('Slide 1')
   const host = document.createElement('div')
   const dispatcher = new CommandDispatcher(engine, new UndoStack(), vi.fn())
   const dispatch: DispatchCommand = (command) => dispatcher.dispatch(command)
-  const renderer = new Renderer(host, engine, dispatch, undefined, resolveAssetUrl)
+  const renderer = new Renderer(host, engine, dispatch, undefined, resolveAssetUrl, timeSource)
   await renderer.start()
   const app = pixiRegistry.applications[0]
   if (!app) {
@@ -199,5 +204,57 @@ describe('renderer selection wiring', () => {
     mouseUp(380, 200)
     expect(overlayRects(app)[0]).toEqual({ x: 300, y: 150, w: 160, h: 100 })
     expect(useSelectionStore.getState().selectedIds).toEqual([id])
+  })
+})
+
+describe('renderer selection with evaluated state', () => {
+  it('moves the selection outline with the rendered object on scrub', async () => {
+    const timeSource = new FakeTimeSource()
+    const { engine, canvas, app } = await mount(undefined, timeSource)
+    const id = nodeAt(engine, 'Hero', 300, 200)
+    engine.addKeyframe(id, 'positionX', 0, 300)
+    engine.addKeyframe(id, 'positionX', 10, 500)
+    click(canvas, 300, 200)
+    expect(useSelectionStore.getState().selectedIds).toEqual([id])
+    expect(overlayRects(app)[0]).toEqual({ x: 220, y: 150, w: 160, h: 100 })
+
+    timeSource.set(5)
+
+    expect(overlayRects(app)[0]).toEqual({ x: 320, y: 150, w: 160, h: 100 })
+    timeSource.set(10)
+    expect(overlayRects(app)[0]).toEqual({ x: 420, y: 150, w: 160, h: 100 })
+  })
+
+  it('selects an animated node at its rendered position on click', async () => {
+    const timeSource = new FakeTimeSource()
+    const { engine, canvas, app } = await mount(undefined, timeSource)
+    const id = nodeAt(engine, 'Hero', 300, 200)
+    engine.addKeyframe(id, 'positionX', 0, 300)
+    engine.addKeyframe(id, 'positionX', 10, 500)
+    timeSource.set(5)
+
+    click(canvas, 400, 200)
+
+    expect(useSelectionStore.getState().selectedIds).toEqual([id])
+    expect(overlayRects(app)[0]).toEqual({ x: 320, y: 150, w: 160, h: 100 })
+
+    click(canvas, 300, 200)
+    expect(useSelectionStore.getState().selectedIds).toEqual([])
+    expect(overlayRects(app).length).toBe(0)
+  })
+
+  it('redraws the outline when keyframes change via the engine', async () => {
+    const timeSource = new FakeTimeSource()
+    const { engine, canvas, app } = await mount(undefined, timeSource)
+    const id = nodeAt(engine, 'Hero', 300, 200)
+    const first = engine.addKeyframe(id, 'positionX', 0, 300)
+    engine.addKeyframe(id, 'positionX', 10, 500)
+    click(canvas, 300, 200)
+    timeSource.set(5)
+    expect(overlayRects(app)[0]).toEqual({ x: 320, y: 150, w: 160, h: 100 })
+
+    engine.setKeyframeValue(id, 'positionX', first.id, 100)
+
+    expect(overlayRects(app)[0]).toEqual({ x: 220, y: 150, w: 160, h: 100 })
   })
 })

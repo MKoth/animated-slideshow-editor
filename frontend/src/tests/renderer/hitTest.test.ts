@@ -4,12 +4,9 @@ import { createEngine } from '../../engine/internal'
 import type { SceneNode } from '../../engine'
 import { Scene } from '../../engine/scene'
 import { SceneNode as SceneNodeModel } from '../../engine/sceneNode'
-import {
-  nodesIntersectingRect,
-  topmostNodeAt,
-  worldAabbOf,
-  worldTransformOf,
-} from '../../pixi/renderer/hitTest'
+import { EvaluatedWorldTransformSource } from '../../engine/worldTransform'
+import type { WorldTransformSource } from '../../pixi/renderer/hitTest'
+import { nodesIntersectingRect, topmostNodeAt, worldAabbOf } from '../../pixi/renderer/hitTest'
 import type { NodeSizeSource } from '../../pixi/renderer/hitTest'
 
 interface SceneHarness {
@@ -278,61 +275,90 @@ describe('worldAabbOf', () => {
   })
 })
 
-describe('worldTransformOf', () => {
-  it('uses the scene transform when no preview is given', () => {
-    const { engine } = harness()
-    const slide = engine.project?.slides[0]
-    if (!slide) {
-      throw new Error('Slide was not created')
-    }
-    const id = engine.createNode(slide.scene.id, slide.scene.root.id, 'Leaf', {
-      transform: { x: 40, y: 60, rotation: 0, scaleX: 1, scaleY: 1 },
-    }).id
+describe('evaluated transform sources', () => {
+  function evaluated(engine: Engine, time: number): WorldTransformSource {
+    const source = new EvaluatedWorldTransformSource(engine, () => time)
+    return (nodeId) => source.transformOf(nodeId)
+  }
 
-    expect(worldTransformOf(sceneOf(engine), id)).toEqual({
-      x: 40,
-      y: 60,
-      rotation: 0,
-      scaleX: 1,
-      scaleY: 1,
-    })
+  function animate(engine: Engine, nodeId: string): void {
+    engine.addKeyframe(nodeId, 'positionX', 0, 0)
+    engine.addKeyframe(nodeId, 'positionX', 10, 100)
+  }
+
+  it('hits the rendered position of an animated node, not its stored position', () => {
+    const { engine, sizes } = harness()
+    const animatedNode = node(engine, 'Animated')
+    animate(engine, animatedNode.id)
+
+    expect(topmostNodeAt(sceneOf(engine), { x: 0, y: 0 }, sizes, evaluated(engine, 0))).toBe(
+      animatedNode.id,
+    )
+    expect(topmostNodeAt(sceneOf(engine), { x: 75, y: 0 }, sizes, evaluated(engine, 5))).toBe(
+      animatedNode.id,
+    )
+    expect(topmostNodeAt(sceneOf(engine), { x: -25, y: 0 }, sizes, evaluated(engine, 5))).toBeNull()
   })
 
-  it('overrides only the previewed node position inside the parent chain', () => {
-    const { engine } = harness()
+  it('uses evaluated ancestor transforms when hitting a child', () => {
+    const { engine, sizes } = harness()
     const slide = engine.project?.slides[0]
     if (!slide) {
       throw new Error('Slide was not created')
     }
-    const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent', {
-      transform: { x: 0, y: 0, rotation: Math.PI / 2, scaleX: 1, scaleY: 1 },
+    const group = engine.createNode(slide.scene.id, slide.scene.root.id, 'Group', {
+      transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
     })
-    const child = engine.createNode(slide.scene.id, parent.id, 'Child', {
-      transform: { x: 40, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+    animate(engine, group.id)
+    const child = engine.createNode(slide.scene.id, group.id, 'Child', {
+      transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+      components: { assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-1' } },
     })
 
-    const preview = worldTransformOf(sceneOf(engine), child.id, { x: 0, y: 40 })
-
-    expect(preview?.x).toBeCloseTo(-40)
-    expect(preview?.y).toBeCloseTo(0)
+    expect(topmostNodeAt(sceneOf(engine), { x: 75, y: 0 }, sizes, evaluated(engine, 5))).toBe(
+      child.id,
+    )
+    expect(topmostNodeAt(sceneOf(engine), { x: -25, y: 0 }, sizes, evaluated(engine, 5))).toBeNull()
   })
 
-  it('keeps the committed transform when the node is not previewed', () => {
-    const { engine } = harness()
-    const slide = engine.project?.slides[0]
-    if (!slide) {
-      throw new Error('Slide was not created')
-    }
-    const id = engine.createNode(slide.scene.id, slide.scene.root.id, 'Leaf', {
-      transform: { x: 100, y: 100, rotation: 0, scaleX: 1, scaleY: 1 },
-    }).id
+  it('selects marquee nodes by their rendered positions', () => {
+    const { engine, sizes } = harness()
+    const animatedNode = node(engine, 'Animated')
+    animate(engine, animatedNode.id)
 
-    expect(worldTransformOf(sceneOf(engine), id)).toEqual({
-      x: 100,
-      y: 100,
-      rotation: 0,
-      scaleX: 1,
-      scaleY: 1,
-    })
+    const ids = nodesIntersectingRect(
+      sceneOf(engine),
+      { minX: -40, minY: -10, maxX: -35, maxY: 10 },
+      sizes,
+      evaluated(engine, 5),
+    )
+
+    expect(ids).toEqual([])
+    const hit = nodesIntersectingRect(
+      sceneOf(engine),
+      { minX: 55, minY: -10, maxX: 90, maxY: 10 },
+      sizes,
+      evaluated(engine, 5),
+    )
+    expect(hit).toEqual([animatedNode.id])
+  })
+
+  it('returns evaluated world bounds for the alignment guides', () => {
+    const { engine, sizes } = harness()
+    const animatedNode = node(engine, 'Animated')
+    animate(engine, animatedNode.id)
+
+    const aabb = worldAabbOf(sceneOf(engine), animatedNode.id, sizes, evaluated(engine, 5))
+
+    expect(aabb).toEqual({ minX: 0, minY: -30, maxX: 100, maxY: 30 })
+  })
+
+  it('falls back to stored transforms when no source is given', () => {
+    const { engine, sizes } = harness()
+    const animatedNode = node(engine, 'Animated')
+    animate(engine, animatedNode.id)
+
+    expect(topmostNodeAt(sceneOf(engine), { x: 0, y: 0 }, sizes)).toBe(animatedNode.id)
+    expect(topmostNodeAt(sceneOf(engine), { x: 75, y: 0 }, sizes)).toBeNull()
   })
 })

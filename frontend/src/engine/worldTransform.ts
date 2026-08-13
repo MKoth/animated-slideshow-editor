@@ -2,6 +2,8 @@ import type { EngineReadOnly } from './engine'
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
 import type { Transform } from './transform'
+import type { EvaluatedNodeScratch } from './animationEvaluator'
+import { evaluatedNodeScratch } from './animationEvaluator'
 
 export interface WorldTransform {
   readonly x: number
@@ -42,7 +44,59 @@ function chainOf(node: SceneNode): SceneNode[] {
   return chain
 }
 
-function composeChain(chain: readonly SceneNode[], localOf: (node: SceneNode) => Transform) {
+export class EvaluatedWorldTransformSource {
+  readonly #engine: EngineReadOnly
+  readonly #getTime: () => number
+  readonly #previews: ReadonlyMap<string, { readonly x: number; readonly y: number }>
+  readonly #scratch: EvaluatedNodeScratch = evaluatedNodeScratch()
+  readonly #chain: SceneNode[] = []
+  #time = 0
+  #previewedNodeId: string | null = null
+  readonly #localOf = (link: SceneNode): Transform => {
+    const local = this.#engine.evaluateNode(link.id, this.#time, this.#scratch).transform
+    if (link.id !== this.#previewedNodeId) {
+      return local
+    }
+    const preview = this.#previews.get(link.id)
+    return preview ? { ...local, x: preview.x, y: preview.y } : local
+  }
+
+  constructor(
+    engine: EngineReadOnly,
+    getTime: () => number,
+    previews: ReadonlyMap<string, { readonly x: number; readonly y: number }> = new Map(),
+  ) {
+    this.#engine = engine
+    this.#getTime = getTime
+    this.#previews = previews
+  }
+
+  transformOf(nodeId: string): WorldTransform | null {
+    let node: SceneNode
+    try {
+      node = this.#engine.getNode(nodeId)
+    } catch {
+      return null
+    }
+    const time = this.#getTime()
+    if (!Number.isFinite(time)) {
+      return null
+    }
+    this.#time = time
+    this.#previewedNodeId = this.#previews.has(nodeId) ? nodeId : null
+    this.#chain.length = 0
+    for (let cursor: SceneNode | null = node; cursor !== null; cursor = cursor.parent) {
+      this.#chain.push(cursor)
+    }
+    this.#chain.reverse()
+    return composeChain(this.#chain, this.#localOf)
+  }
+}
+
+function composeChain(
+  chain: readonly SceneNode[],
+  localOf: (node: SceneNode) => Transform,
+): WorldTransform {
   let x = 0
   let y = 0
   let rotation = 0

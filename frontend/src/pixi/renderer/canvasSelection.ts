@@ -1,23 +1,18 @@
 import type { EngineReadOnly, Scene } from '../../engine'
 import type { SceneNode } from '../../engine'
 import { walkPreOrder } from '../../engine/sceneNode'
+import { worldTransformOf as storedWorldTransformOf } from '../../engine/worldTransform'
 import type { DispatchCommand } from '../../engine/commands'
 import { MoveNodeCommand, TransactionCommand } from '../../engine/commands'
 import type { SelectionActions } from '../../stores/selectionStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { findAlignment } from './alignment'
 import { DEFAULT_GRID_STEP, snapDelta } from './gridSnap'
-import type { NodeSizeSource } from './hitTest'
-import {
-  aabbOf,
-  nodesIntersectingRect,
-  topmostNodeAt,
-  worldAabbOf,
-  worldTransformOf,
-} from './hitTest'
+import type { NodeSizeSource, WorldTransformSource } from './hitTest'
+import { aabbOf, nodesIntersectingRect, topmostNodeAt, worldAabbOf } from './hitTest'
 import { cursorToWorld } from './screenToWorld'
 import { expandRect, mergeRect, rectIntersects, rectOf } from './worldGeometry'
-import type { WorldPoint, WorldRect, WorldTransform } from './worldGeometry'
+import type { WorldPoint, WorldRect } from './worldGeometry'
 import { AnimatedMoveGesture } from './animatedMove'
 import type { PositionCommit } from './animatedMove'
 
@@ -49,6 +44,7 @@ export interface CanvasSelectionContext {
   readonly onMove?: () => void
   readonly getMoveOptions?: () => MoveOptions
   readonly getAnimationMode?: () => boolean
+  readonly getWorldTransform?: WorldTransformSource
 }
 
 const MARQUEE_START_DISTANCE = 4
@@ -67,6 +63,7 @@ export class CanvasSelection {
   readonly #guides?: GuideController
   readonly #onMove?: () => void
   readonly #getMoveOptions?: () => MoveOptions
+  readonly #getWorldTransform?: WorldTransformSource
   #attached = false
   #pressed = false
   #pressedOnNode = false
@@ -95,7 +92,17 @@ export class CanvasSelection {
     this.#guides = context.guides
     this.#onMove = context.onMove
     this.#getMoveOptions = context.getMoveOptions
+    this.#getWorldTransform = context.getWorldTransform
     this.#animatedMove = new AnimatedMoveGesture(context)
+  }
+
+  readonly #transformOf: WorldTransformSource = (nodeId) => {
+    const transform = this.#getWorldTransform
+    if (transform) {
+      return transform(nodeId)
+    }
+    const scene = this.#getScene()
+    return scene ? storedWorldTransformOf(scene, nodeId) : null
   }
 
   attach(): void {
@@ -149,7 +156,7 @@ export class CanvasSelection {
     this.#startClientX = event.clientX
     this.#startClientY = event.clientY
     this.#startWorld = point
-    const hit = topmostNodeAt(scene, point, this.#getNodeSize)
+    const hit = topmostNodeAt(scene, point, this.#getNodeSize, this.#transformOf)
     this.#pressedOnNode = hit !== null
     if (hit) {
       if (event.ctrlKey || event.metaKey) {
@@ -198,7 +205,12 @@ export class CanvasSelection {
     }
     this.#marqueeActive = true
     this.#store.selectMany(
-      nodesIntersectingRect(scene, rectOf(this.#startWorld, current), this.#getNodeSize),
+      nodesIntersectingRect(
+        scene,
+        rectOf(this.#startWorld, current),
+        this.#getNodeSize,
+        this.#transformOf,
+      ),
     )
   }
 
@@ -341,7 +353,7 @@ export class CanvasSelection {
       if (node.components.camera || this.#guideMovingIds.has(node.id)) {
         continue
       }
-      const aabb = worldAabbOf(scene, node.id, this.#getNodeSize)
+      const aabb = worldAabbOf(scene, node.id, this.#getNodeSize, this.#transformOf)
       if (aabb && rectIntersects(nearby, aabb)) {
         this.#guideOthers.push(aabb)
       }
@@ -372,20 +384,11 @@ export class CanvasSelection {
       if (!node || !size) {
         continue
       }
-      const transform = worldTransformOf(scene, id)
+      const transform = this.#transformOf(id)
       if (!transform) {
         continue
       }
-      const current = this.#moveCurrent.get(id)
-      const origin = this.#animatedMove.originOf(id)
-      const dx = current && origin ? current.x - origin.x : 0
-      const dy = current && origin ? current.y - origin.y : 0
-      const preview: WorldTransform = {
-        ...transform,
-        x: transform.x + dx,
-        y: transform.y + dy,
-      }
-      const aabb = aabbOf(size, preview)
+      const aabb = aabbOf(size, transform)
       if (!aabb) {
         continue
       }
