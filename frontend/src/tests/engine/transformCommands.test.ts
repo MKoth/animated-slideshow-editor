@@ -201,6 +201,43 @@ describe('RotateNodeCommand', () => {
   })
 })
 
+describe('rotation normalization', () => {
+  it('stores rotations normalized into the [-π, π] range', () => {
+    const { system, nodeId } = setupWithNode()
+
+    expectOk(system.dispatcher.dispatch(new RotateNodeCommand({ nodeId, rotation: Math.PI * 1.5 })))
+
+    expect(system.engine.getNode(nodeId).transform.rotation).toBeCloseTo(-Math.PI / 2, 10)
+  })
+
+  it('normalizes 450° to 90° and -405° to -45°', () => {
+    const { system, nodeId } = setupWithNode()
+
+    expectOk(
+      system.dispatcher.dispatch(
+        new RotateNodeCommand({ nodeId, rotation: (450 * Math.PI) / 180 }),
+      ),
+    )
+    expect(system.engine.getNode(nodeId).transform.rotation).toBeCloseTo(Math.PI / 2, 10)
+
+    expectOk(
+      system.dispatcher.dispatch(
+        new RotateNodeCommand({ nodeId, rotation: (-405 * Math.PI) / 180 }),
+      ),
+    )
+    expect(system.engine.getNode(nodeId).transform.rotation).toBeCloseTo(-Math.PI / 4, 10)
+  })
+
+  it('records the inverse baseline from the normalized previous value', () => {
+    const { system, nodeId } = setupWithNode()
+    expectOk(system.dispatcher.dispatch(new RotateNodeCommand({ nodeId, rotation: 2 * Math.PI })))
+
+    expect(system.engine.getNode(nodeId).transform.rotation).toBe(0)
+    expect(system.undoStack.entries[0].type).toBe('RotateNode')
+    expect(system.undoStack.entries[0].inverse).toMatchObject({ nodeId, oldRotation: 0 })
+  })
+})
+
 describe('ScaleNodeCommand', () => {
   it('scales a node, emits TransformChanged, records parameters and inverse, and logs it', () => {
     const log = vi.fn()

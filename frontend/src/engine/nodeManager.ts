@@ -9,7 +9,7 @@ import {
   wouldFormCycle,
 } from './sceneNode'
 import type { Transform } from './transform'
-import { identityTransform } from './transform'
+import { identityTransform, normalizeRotation } from './transform'
 import type { NodeComponents } from './components'
 import { requireNonEmpty, requireOpacity } from './guards'
 
@@ -157,7 +157,7 @@ export class NodeManager {
     if (node.components.camera && transform.rotation !== node.transform.rotation) {
       throw new Error('Camera rotation is locked')
     }
-    node.transform = transform
+    node.transform = { ...transform, rotation: normalizeRotation(transform.rotation) }
     this.#bus.emit({ type: 'TransformChanged', nodeId })
   }
 

@@ -107,7 +107,9 @@ describe('editor shell', () => {
     await waitFor(() => {
       expect(container.querySelector('.canvas-host canvas')).not.toBeNull()
     })
-    expect(screen.getByText('Nothing selected.')).toBeInTheDocument()
+    expect(
+      screen.getByText('Nothing selected. Select an object to edit its properties.'),
+    ).toBeInTheDocument()
     expect(screen.getByText('No animation loaded.')).toBeInTheDocument()
     expect(screen.getByText('Ready')).toBeInTheDocument()
   })

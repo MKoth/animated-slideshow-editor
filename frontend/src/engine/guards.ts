@@ -19,9 +19,14 @@ export function requireNonEmpty(value: unknown, what: string): string {
   return value
 }
 
-export function requireFiniteNumber(value: unknown, what: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new Error(`${what} must be a finite number`)
+export function requireFiniteNumber(
+  value: unknown,
+  what: string,
+  predicate: (value: number) => boolean = () => true,
+  description = 'finite number',
+): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || !predicate(value)) {
+    throw new Error(`${what} must be a ${description}`)
   }
   return value
 }
