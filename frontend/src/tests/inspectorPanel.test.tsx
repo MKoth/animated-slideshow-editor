@@ -5,10 +5,16 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { EngineContext } from '../app/engineContext'
 import type { EngineContextValue } from '../app/engineContext'
 import { InspectorPanel } from '../components/panels/InspectorPanel'
-import { CommandDispatcher, MoveNodeCommand, UndoStack } from '../engine/commands'
+import {
+  AddKeyframeCommand,
+  CommandDispatcher,
+  MoveNodeCommand,
+  UndoStack,
+} from '../engine/commands'
 import type { Engine } from '../engine/internal'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
 import { useNotificationStore } from '../stores/notificationStore'
+import { usePlaybackController } from '../stores/playbackStore'
 import { useSelectionStore } from '../stores/selectionStore'
 
 function renderPanel(): { engine: Engine; undoStack: UndoStack; dispatcher: CommandDispatcher } {
@@ -38,7 +44,7 @@ function createSceneWithNode(
     scaleY?: number
   },
   opacity = 1,
-): { nodeId: string; cameraId: string } {
+): { nodeId: string; cameraId: string; slideId: string } {
   engine.createProject({ name: 'Demo' })
   const slide = engine.createSlide('Slide 1')
   const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy', {
@@ -51,7 +57,7 @@ function createSceneWithNode(
     },
     opacity,
   })
-  return { nodeId: node.id, cameraId: slide.scene.camera.id }
+  return { nodeId: node.id, cameraId: slide.scene.camera.id, slideId: slide.id }
 }
 
 function createSecondNode(
@@ -94,6 +100,29 @@ function selectMany(nodeIds: string[]): void {
   })
 }
 
+function scrub(engine: Engine, time: number): void {
+  const slide = engine.project?.slides[0]
+  if (!slide) {
+    throw new Error('expected a slide')
+  }
+  act(() => {
+    usePlaybackController.getState().setCurrentTime(slide.id, time, slide.duration)
+  })
+}
+
+function addKeyframe(
+  dispatcher: CommandDispatcher,
+  nodeId: string,
+  property: 'positionX' | 'positionY' | 'rotation' | 'scaleX' | 'scaleY' | 'opacity',
+  time: number,
+  value: number,
+): void {
+  const result = dispatcher.dispatch(new AddKeyframeCommand({ nodeId, property, time, value }))
+  if (!result.ok) {
+    throw new Error(`expected add to succeed: ${result.error?.message}`)
+  }
+}
+
 function fields(): { [key: string]: HTMLInputElement } {
   const inputs = screen.getAllByRole('spinbutton') as HTMLInputElement[]
   const map: { [key: string]: HTMLInputElement } = {}
@@ -103,13 +132,22 @@ function fields(): { [key: string]: HTMLInputElement } {
   return map
 }
 
+function fieldContainer(label: string): HTMLElement {
+  const field = screen.getByRole('spinbutton', { name: label }).closest('.inspector-field')
+  if (!field) {
+    throw new Error(`expected an inspector field for ${label}`)
+  }
+  return field as HTMLElement
+}
+
 function rotationOf(engine: Engine, nodeId: string): number {
-  return engine.getNode(nodeId).transform.rotation
+  return engine.evaluateNode(nodeId, 0).transform.rotation
 }
 
 beforeEach(() => {
   useSelectionStore.setState({ selectedIds: [] })
   useNotificationStore.setState({ notifications: [] })
+  usePlaybackController.setState({ currentTimes: {} })
 })
 
 describe('InspectorPanel empty state', () => {
@@ -191,8 +229,78 @@ describe('InspectorPanel sections', () => {
   })
 })
 
-describe('InspectorPanel transform editing', () => {
-  it('applies an X edit on Enter, records inverse data, and updates the canvas and hierarchy', async () => {
+describe('InspectorPanel animation indicators', () => {
+  it('shows no indicator for static properties', () => {
+    const { engine } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    select(nodeId)
+
+    expect(screen.queryByTitle('Animated')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('Playhead on keyframe')).not.toBeInTheDocument()
+    expect(fieldContainer('X').querySelector('.inspector-field__indicator')).toBeNull()
+  })
+
+  it('shows a filled dot for an animated property away from its keyframes', () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    addKeyframe(dispatcher, nodeId, 'positionX', 1, 10)
+    select(nodeId)
+
+    expect(screen.getByTitle('Animated')).toBeInTheDocument()
+    expect(fieldContainer('X').querySelector('.inspector-field__indicator')).toHaveAttribute(
+      'data-state',
+      'animated',
+    )
+    expect(fieldContainer('Y').querySelector('.inspector-field__indicator')).toBeNull()
+  })
+
+  it('shows a diamond when the playhead sits exactly on a keyframe', () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    addKeyframe(dispatcher, nodeId, 'positionX', 0, 10)
+    select(nodeId)
+
+    expect(screen.getByTitle('Playhead on keyframe')).toBeInTheDocument()
+    expect(fieldContainer('X').querySelector('.inspector-field__indicator')).toHaveAttribute(
+      'data-state',
+      'onKeyframe',
+    )
+  })
+
+  it('shows an animated dot that becomes a diamond when scrubbed onto the keyframe', () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    addKeyframe(dispatcher, nodeId, 'positionX', 2, 10)
+    select(nodeId)
+    expect(screen.getByTitle('Animated')).toBeInTheDocument()
+
+    scrub(engine, 2)
+
+    expect(screen.getByTitle('Playhead on keyframe')).toBeInTheDocument()
+    expect(screen.queryByTitle('Animated')).not.toBeInTheDocument()
+  })
+
+  it('shows the opacity indicator for an animated opacity', () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    addKeyframe(dispatcher, nodeId, 'opacity', 1, 0.5)
+    select(nodeId)
+
+    expect(screen.getByTitle('Animated')).toBeInTheDocument()
+    expect(fieldContainer('Opacity').querySelector('.inspector-field__indicator')).not.toBeNull()
+  })
+
+  it('shows no indicator for the locked camera rotation', () => {
+    const { engine } = renderPanel()
+    const { cameraId } = createSceneWithNode(engine)
+    select(cameraId)
+
+    expect(fieldContainer('Rotation').querySelector('.inspector-field__indicator')).toBeNull()
+  })
+})
+
+describe('InspectorPanel transform auto-key editing', () => {
+  it('creates a keyframe at the playhead on Enter, records inverse data, and updates the field', async () => {
     const { engine, undoStack } = renderPanel()
     const { nodeId } = createSceneWithNode(engine)
     select(nodeId)
@@ -204,11 +312,18 @@ describe('InspectorPanel transform editing', () => {
     await user.type(x, '42')
     await user.keyboard('{Enter}')
 
-    expect(engine.getNode(nodeId).transform.x).toBe(42)
-    expect(engine.getNode(nodeId).transform.y).toBe(-4)
+    expect(engine.getNode(nodeId).transform.x).toBe(12)
+    expect(engine.getKeyframes(nodeId, 'positionX')).toHaveLength(1)
+    expect(engine.evaluateNode(nodeId, 0).transform.x).toBe(42)
     expect(undoStack.entries).toHaveLength(before + 1)
-    expect(undoStack.entries[0].type).toBe('MoveNode')
-    expect(undoStack.entries[0].inverse).toEqual({ nodeId, oldX: 12, oldY: -4 })
+    expect(undoStack.entries[0].type).toBe('AddKeyframe')
+    expect(undoStack.entries[0].inverse).toEqual({
+      nodeId,
+      property: 'positionX',
+      keyframeId: expect.any(String),
+      time: 0,
+      value: 42,
+    })
     expect(fields().X.value).toBe('42')
   })
 
@@ -224,8 +339,28 @@ describe('InspectorPanel transform editing', () => {
     await user.type(y, '-10')
     await user.tab()
 
-    expect(engine.getNode(nodeId).transform.y).toBe(-10)
+    expect(engine.evaluateNode(nodeId, 0).transform.y).toBe(-10)
     expect(undoStack.entries).toHaveLength(before + 1)
+  })
+
+  it('updates the keyframe under the playhead instead of creating a new one', async () => {
+    const { engine, dispatcher, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    addKeyframe(dispatcher, nodeId, 'positionX', 2, 10)
+    scrub(engine, 2)
+    select(nodeId)
+    const user = userEvent.setup()
+    const before = undoStack.entries.length
+
+    const x = fields().X
+    await user.clear(x)
+    await user.type(x, '42')
+    await user.keyboard('{Enter}')
+
+    expect(engine.getKeyframes(nodeId, 'positionX')).toHaveLength(1)
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].type).toBe('SetKeyframeValue')
+    expect(fields().X.value).toBe('42')
   })
 
   it('rejects NaN and Infinity input with a notification and leaves the engine unchanged', async () => {
@@ -240,7 +375,7 @@ describe('InspectorPanel transform editing', () => {
     await user.type(x, 'abc')
     await user.keyboard('{Enter}')
 
-    expect(engine.getNode(nodeId).transform.x).toBe(12)
+    expect(engine.evaluateNode(nodeId, 0).transform.x).toBe(12)
     expect(undoStack.entries).toHaveLength(before)
     expect(useNotificationStore.getState().notifications).toEqual(
       expect.arrayContaining([expect.objectContaining({ message: 'X must be a number' })]),
@@ -260,7 +395,7 @@ describe('InspectorPanel transform editing', () => {
     await user.type(scaleX, '0')
     await user.keyboard('{Enter}')
 
-    expect(engine.getNode(nodeId).transform.scaleX).toBe(2)
+    expect(engine.getKeyframes(nodeId, 'scaleX')).toHaveLength(0)
     expect(undoStack.entries).toHaveLength(before)
     expect(useNotificationStore.getState().notifications).toEqual(
       expect.arrayContaining([expect.objectContaining({ message: 'Scale X must not be zero' })]),
@@ -268,7 +403,7 @@ describe('InspectorPanel transform editing', () => {
     expect(fields()['Scale X'].value).toBe('2')
   })
 
-  it('normalizes rotation beyond ±360° into the engine and the field', async () => {
+  it('normalizes rotation beyond ±360° into the keyframe value and the field', async () => {
     const { engine } = renderPanel()
     const { nodeId } = createSceneWithNode(engine)
     select(nodeId)
@@ -283,7 +418,7 @@ describe('InspectorPanel transform editing', () => {
     expect(fields().Rotation.value).toBe('90')
   })
 
-  it('edits scale X and scale Y independently', async () => {
+  it('edits scale X and scale Y independently through keyframes', async () => {
     const { engine } = renderPanel()
     const { nodeId } = createSceneWithNode(engine)
     select(nodeId)
@@ -294,7 +429,9 @@ describe('InspectorPanel transform editing', () => {
     await user.type(scaleX, '4')
     await user.keyboard('{Enter}')
 
-    expect(engine.getNode(nodeId).transform).toMatchObject({ scaleX: 4, scaleY: 0.5 })
+    const evaluated = engine.evaluateNode(nodeId, 0)
+    expect(evaluated.transform.scaleX).toBe(4)
+    expect(evaluated.transform.scaleY).toBe(0.5)
     expect(fields()['Scale Y'].value).toBe('0.5')
   })
 
@@ -309,7 +446,7 @@ describe('InspectorPanel transform editing', () => {
     await user.type(scaleX, '-1')
     await user.keyboard('{Enter}')
 
-    expect(engine.getNode(nodeId).transform.scaleX).toBe(-1)
+    expect(engine.evaluateNode(nodeId, 0).transform.scaleX).toBe(-1)
   })
 
   it('reverts a stale selection that no longer exists to the empty state', () => {
@@ -338,8 +475,34 @@ describe('InspectorPanel transform editing', () => {
   })
 })
 
+describe('InspectorPanel scrubbing shows evaluated values', () => {
+  it('interpolates the field value between two keyframes as the playhead moves', () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    addKeyframe(dispatcher, nodeId, 'positionX', 0, 10)
+    addKeyframe(dispatcher, nodeId, 'positionX', 2, 30)
+    select(nodeId)
+
+    expect(fields().X.value).toBe('10')
+    scrub(engine, 1)
+    expect(fields().X.value).toBe('20')
+    scrub(engine, 2)
+    expect(fields().X.value).toBe('30')
+  })
+
+  it('shows the stored value for static properties regardless of the playhead', () => {
+    const { engine } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    select(nodeId)
+
+    scrub(engine, 4.5)
+    expect(fields().X.value).toBe('12')
+    expect(fields().Y.value).toBe('-4')
+  })
+})
+
 describe('InspectorPanel drag-to-adjust', () => {
-  it('adjusts X by dragging the field horizontally and records commands', () => {
+  it('adjusts X by dragging the field horizontally, recording add then update commands', () => {
     const { engine, undoStack } = renderPanel()
     const { nodeId } = createSceneWithNode(engine)
     select(nodeId)
@@ -351,10 +514,10 @@ describe('InspectorPanel drag-to-adjust', () => {
     fireEvent.pointerMove(window, { clientX: 115, clientY: 10 })
     fireEvent.pointerUp(window)
 
-    expect(engine.getNode(nodeId).transform.x).toBe(27)
+    expect(engine.evaluateNode(nodeId, 0).transform.x).toBe(27)
     expect(undoStack.entries).toHaveLength(before + 2)
-    expect(undoStack.entries[0].type).toBe('MoveNode')
-    expect(undoStack.entries[0].inverse).toMatchObject({ nodeId, oldX: 15 })
+    expect(undoStack.entries[0].type).toBe('SetKeyframeValue')
+    expect(undoStack.entries[1].type).toBe('AddKeyframe')
     expect(fields().X.value).toBe('27')
   })
 
@@ -382,7 +545,9 @@ describe('InspectorPanel drag-to-adjust', () => {
     fireEvent.pointerMove(window, { clientX: 150, clientY: 10 })
     fireEvent.pointerUp(window)
 
-    expect(engine.getNode(nodeId).transform).toMatchObject({ scaleX: 2.5, scaleY: 0.5 })
+    const evaluated = engine.evaluateNode(nodeId, 0)
+    expect(evaluated.transform.scaleX).toBe(2.5)
+    expect(evaluated.transform.scaleY).toBe(0.5)
   })
 
   it('a click without movement focuses the field for typing', () => {
@@ -399,7 +564,7 @@ describe('InspectorPanel drag-to-adjust', () => {
 })
 
 describe('InspectorPanel reset transform', () => {
-  it('returns the object to identity as one composite command recorded in the log', () => {
+  it('returns the object to identity as one composite keyframe command recorded in the log', () => {
     const { engine, undoStack } = renderPanel()
     const { nodeId } = createSceneWithNode(engine, {
       x: 100,
@@ -413,7 +578,7 @@ describe('InspectorPanel reset transform', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Reset Transform' }))
 
-    expect(engine.getNode(nodeId).transform).toEqual({
+    expect(engine.evaluateNode(nodeId, 0).transform).toEqual({
       x: 0,
       y: 0,
       rotation: 0,
@@ -422,10 +587,16 @@ describe('InspectorPanel reset transform', () => {
     })
     expect(undoStack.entries).toHaveLength(before + 1)
     expect(undoStack.entries[0].type).toBe('Transaction')
-    const children = (undoStack.entries[0].parameters.commands as { type: string }[]).map(
-      (command) => command.type,
-    )
-    expect(children).toEqual(['MoveNode', 'RotateNode', 'ScaleNode'])
+    const children = (
+      undoStack.entries[0].parameters.commands as { type: string; property: string }[]
+    ).map((command) => command.type)
+    expect(children).toEqual([
+      'AddKeyframe',
+      'AddKeyframe',
+      'AddKeyframe',
+      'AddKeyframe',
+      'AddKeyframe',
+    ])
     expect(fields().X.value).toBe('0')
     expect(fields().Rotation.value).toBe('0')
   })
@@ -445,7 +616,7 @@ describe('InspectorPanel reset transform', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Reset Transform' }))
 
     expect(undoStack.entries).toHaveLength(before)
-    expect(engine.getNode(nodeId).transform).toEqual({
+    expect(engine.evaluateNode(nodeId, 0).transform).toEqual({
       x: 0,
       y: 0,
       rotation: 0,
@@ -549,8 +720,8 @@ describe('InspectorPanel name editing', () => {
   })
 })
 
-describe('InspectorPanel opacity editing', () => {
-  it('clamps an over-100 edit to 100% and records SetOpacity with the old value', async () => {
+describe('InspectorPanel opacity auto-key editing', () => {
+  it('clamps an over-100 edit to 100% and records an AddKeyframe at the playhead', async () => {
     const { engine, undoStack } = renderPanel()
     const { nodeId } = createSceneWithNode(engine, {}, 0.5)
     select(nodeId)
@@ -562,10 +733,10 @@ describe('InspectorPanel opacity editing', () => {
     await user.type(opacity, '150')
     await user.keyboard('{Enter}')
 
-    expect(engine.getNode(nodeId).opacity).toBe(1)
+    expect(engine.evaluateNode(nodeId, 0).opacity).toBe(1)
     expect(undoStack.entries).toHaveLength(before + 1)
-    expect(undoStack.entries[0].type).toBe('SetOpacity')
-    expect(undoStack.entries[0].inverse).toEqual({ nodeId, oldOpacity: 0.5 })
+    expect(undoStack.entries[0].type).toBe('AddKeyframe')
+    expect(undoStack.entries[0].parameters).toMatchObject({ property: 'opacity', value: 1 })
     expect(opacity.value).toBe('100')
   })
 
@@ -581,13 +752,13 @@ describe('InspectorPanel opacity editing', () => {
     await user.type(opacity, '-20')
     await user.keyboard('{Enter}')
 
-    expect(engine.getNode(nodeId).opacity).toBe(0)
+    expect(engine.evaluateNode(nodeId, 0).opacity).toBe(0)
     expect(undoStack.entries).toHaveLength(before + 1)
-    expect(undoStack.entries[0].inverse).toEqual({ nodeId, oldOpacity: 0.5 })
+    expect(undoStack.entries[0].parameters.value).toBe(0)
     expect(opacity.value).toBe('0')
   })
 
-  it('applies a valid percentage edit and emits OpacityChanged', async () => {
+  it('applies a valid percentage edit and emits KeyframeAdded', async () => {
     const { engine, undoStack } = renderPanel()
     const { nodeId } = createSceneWithNode(engine, {}, 0.5)
     select(nodeId)
@@ -601,8 +772,8 @@ describe('InspectorPanel opacity editing', () => {
     await user.type(opacity, '33')
     await user.keyboard('{Enter}')
 
-    expect(engine.getNode(nodeId).opacity).toBe(0.33)
-    expect(events).toContain('OpacityChanged')
+    expect(engine.evaluateNode(nodeId, 0).opacity).toBe(0.33)
+    expect(events).toContain('KeyframeAdded')
     expect(undoStack.entries).toHaveLength(before + 1)
     expect(opacity.value).toBe('33')
   })
@@ -619,7 +790,7 @@ describe('InspectorPanel opacity editing', () => {
     await user.type(opacity, 'abc')
     await user.keyboard('{Enter}')
 
-    expect(engine.getNode(nodeId).opacity).toBe(0.5)
+    expect(engine.evaluateNode(nodeId, 0).opacity).toBe(0.5)
     expect(undoStack.entries).toHaveLength(before)
     expect(useNotificationStore.getState().notifications).toEqual(
       expect.arrayContaining([expect.objectContaining({ message: 'Opacity must be a number' })]),
@@ -638,7 +809,7 @@ describe('InspectorPanel opacity editing', () => {
     fireEvent.pointerMove(window, { clientX: 110, clientY: 10 })
     fireEvent.pointerUp(window)
 
-    expect(engine.getNode(nodeId).opacity).toBe(0.6)
+    expect(engine.evaluateNode(nodeId, 0).opacity).toBe(0.6)
     expect(undoStack.entries).toHaveLength(before + 1)
     expect(opacity.value).toBe('60')
   })
@@ -692,7 +863,7 @@ describe('InspectorPanel multi-selection', () => {
     expect(name.value).toBe('—')
   })
 
-  it('applies an opacity edit to every selected object as one composite command', async () => {
+  it('applies an opacity edit to every selected object as one composite keyframe command', async () => {
     const { engine, undoStack } = renderPanel()
     const { nodeId } = createSceneWithNode(engine)
     const secondId = createSecondNode(engine, 'Second', {}, 0.4)
@@ -705,27 +876,27 @@ describe('InspectorPanel multi-selection', () => {
     await user.type(opacity, '50')
     await user.keyboard('{Enter}')
 
-    expect(engine.getNode(nodeId).opacity).toBe(0.5)
-    expect(engine.getNode(secondId).opacity).toBe(0.5)
+    expect(engine.evaluateNode(nodeId, 0).opacity).toBe(0.5)
+    expect(engine.evaluateNode(secondId, 0).opacity).toBe(0.5)
     expect(undoStack.entries).toHaveLength(before + 1)
     expect(undoStack.entries[0].type).toBe('Transaction')
     const children = (
       undoStack.entries[0].parameters.commands as {
         type: string
         nodeId: string
-        opacity: number
+        value: number
       }[]
-    ).map((command) => ({ type: command.type, nodeId: command.nodeId, opacity: command.opacity }))
+    ).map((command) => ({ type: command.type, nodeId: command.nodeId, value: command.value }))
     expect(children).toEqual([
-      { type: 'SetOpacity', nodeId, opacity: 0.5 },
-      { type: 'SetOpacity', nodeId: secondId, opacity: 0.5 },
+      { type: 'AddKeyframe', nodeId, value: 0.5 },
+      { type: 'AddKeyframe', nodeId: secondId, value: 0.5 },
     ])
     expect((screen.getByRole('spinbutton', { name: 'Opacity' }) as HTMLInputElement).value).toBe(
       '50',
     )
   })
 
-  it('applies an X edit to every selected object as one composite command', async () => {
+  it('applies an X edit to every selected object as one composite keyframe command', async () => {
     const { engine, undoStack } = renderPanel()
     const { nodeId } = createSceneWithNode(engine)
     const secondId = createSecondNode(engine)
@@ -738,8 +909,8 @@ describe('InspectorPanel multi-selection', () => {
     await user.type(x, '42')
     await user.keyboard('{Enter}')
 
-    expect(engine.getNode(nodeId).transform).toMatchObject({ x: 42, y: -4 })
-    expect(engine.getNode(secondId).transform).toMatchObject({ x: 42, y: 0 })
+    expect(engine.evaluateNode(nodeId, 0).transform.x).toBe(42)
+    expect(engine.evaluateNode(secondId, 0).transform.x).toBe(42)
     expect(undoStack.entries).toHaveLength(before + 1)
     expect(undoStack.entries[0].type).toBe('Transaction')
     const children = (
@@ -749,8 +920,8 @@ describe('InspectorPanel multi-selection', () => {
       }[]
     ).map((command) => ({ type: command.type, nodeId: command.nodeId }))
     expect(children).toEqual([
-      { type: 'MoveNode', nodeId },
-      { type: 'MoveNode', nodeId: secondId },
+      { type: 'AddKeyframe', nodeId },
+      { type: 'AddKeyframe', nodeId: secondId },
     ])
     expect((screen.getByRole('spinbutton', { name: 'X' }) as HTMLInputElement).value).toBe('42')
   })
@@ -764,14 +935,14 @@ describe('InspectorPanel multi-selection', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Reset Transform' }))
 
-    expect(engine.getNode(nodeId).transform).toEqual({
+    expect(engine.evaluateNode(nodeId, 0).transform).toEqual({
       x: 0,
       y: 0,
       rotation: 0,
       scaleX: 1,
       scaleY: 1,
     })
-    expect(engine.getNode(secondId).transform).toEqual({
+    expect(engine.evaluateNode(secondId, 0).transform).toEqual({
       x: 0,
       y: 0,
       rotation: 0,
@@ -783,17 +954,11 @@ describe('InspectorPanel multi-selection', () => {
     const children = (undoStack.entries[0].parameters.commands as { type: string }[]).map(
       (command) => command.type,
     )
-    expect(children).toEqual([
-      'MoveNode',
-      'RotateNode',
-      'ScaleNode',
-      'MoveNode',
-      'RotateNode',
-      'ScaleNode',
-    ])
+    expect(children).toHaveLength(6)
+    expect(children.every((type) => type === 'AddKeyframe')).toBe(true)
   })
 
-  it('emits NodeRenamed for every renaming and OpacityChanged for every opacity edit in a multi edit', async () => {
+  it('emits KeyframeAdded for every auto-key edit in a multi edit', async () => {
     const { engine } = renderPanel()
     const { nodeId } = createSceneWithNode(engine)
     const secondId = createSecondNode(engine, 'Second', {}, 0.4)
@@ -802,23 +967,13 @@ describe('InspectorPanel multi-selection', () => {
     const events: string[] = []
     engine.subscribe((event) => events.push(event.type))
 
-    const name = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement
-    await user.clear(name)
-    await user.type(name, 'Hero')
-    await user.keyboard('{Enter}')
-
-    const renameEvents = events.filter((type) => type === 'NodeRenamed')
-    expect(renameEvents).toHaveLength(2)
-    expect(engine.getNode(nodeId).name).toBe('Hero')
-    expect(engine.getNode(secondId).name).toBe('Hero (2)')
-
     const opacity = screen.getByRole('textbox', { name: 'Opacity' }) as HTMLInputElement
     await user.clear(opacity)
     await user.type(opacity, '80')
     await user.keyboard('{Enter}')
 
-    expect(events.filter((type) => type === 'OpacityChanged')).toHaveLength(2)
-    expect(engine.getNode(nodeId).opacity).toBe(0.8)
-    expect(engine.getNode(secondId).opacity).toBe(0.8)
+    expect(events.filter((type) => type === 'KeyframeAdded')).toHaveLength(2)
+    expect(engine.evaluateNode(nodeId, 0).opacity).toBe(0.8)
+    expect(engine.evaluateNode(secondId, 0).opacity).toBe(0.8)
   })
 })

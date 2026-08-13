@@ -1,5 +1,9 @@
-import { memo, useEffect, useLayoutEffect } from 'react'
+import { memo, useEffect, useLayoutEffect, useState } from 'react'
 import type { RefObject } from 'react'
+import type { AnimationProperty } from '../../engine'
+import { addKeyframeAtPlayhead, addPoseKeyframesAtPlayhead } from '../../app/keyframeActions'
+import { useEngine } from '../../app/useEngine'
+import { useNotificationStore } from '../../stores/notificationStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import {
@@ -14,44 +18,82 @@ import {
 } from '../../stores/timelineViewStore'
 import { iconOf } from './nodeIconKinds'
 import { LockIcon, NodeIcon, VisibilityIcon } from './nodeIcons'
-import { ROW_HEIGHT, TRACK_HEADER_WIDTH } from './timelineTracks'
-import type { TrackRowEntry } from './timelineTracks'
+import { PROPERTY_LABELS, ROW_HEIGHT, TRACK_HEADER_WIDTH } from './timelineTracks'
+import type { TimelineRow, TrackRowEntry } from './timelineTracks'
+
+interface TimelineMenuState {
+  readonly x: number
+  readonly y: number
+  readonly nodeId: string
+  readonly property?: AnimationProperty
+}
+
+function ChevronIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 10 10"
+      aria-hidden="true"
+      className={`timeline-track__chevron-icon${expanded ? ' timeline-track__chevron-icon--expanded' : ''}`}
+    >
+      <path d="M3 1l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  )
+}
 
 const TrackRow = memo(
-  function TrackRow({ node, depth, name, visible }: TrackRowEntry) {
+  function TrackRow({
+    node,
+    depth,
+    name,
+    visible,
+    expanded,
+  }: TrackRowEntry & { expanded: boolean }) {
     const selected = useSelectionStore((state) => state.selectedIds.includes(node.id))
     return (
-      <li>
-        <button
-          role="track"
-          aria-label={name}
-          aria-selected={selected}
-          data-depth={depth}
-          className={`timeline-track${selected ? ' timeline-track--selected' : ''}`}
-          style={{ paddingLeft: 12 + depth * 16 }}
-          onClick={(event) => {
-            if (event.ctrlKey || event.metaKey) {
-              useSelectionStore.getState().toggle(node.id)
-            } else if (event.shiftKey) {
-              useSelectionStore.getState().extend(node.id)
-            } else {
-              useSelectionStore.getState().select(node.id)
-            }
-          }}
-        >
-          <span className="timeline-track__icon" data-icon={iconOf(node)}>
-            <NodeIcon node={node} />
-          </span>
-          <span className="timeline-track__name">{name}</span>
-          <span className="timeline-track__indicators">
-            <span className="timeline-track__indicator" title={visible ? 'Visible' : 'Hidden'}>
-              <VisibilityIcon visible={visible} />
+      <li data-node-id={node.id}>
+        <div className="timeline-track-row">
+          <button
+            className="timeline-track__chevron"
+            aria-label={`Toggle subtracks of ${name}`}
+            aria-expanded={expanded}
+            title={expanded ? 'Collapse subtracks' : 'Expand subtracks'}
+            onClick={() => useTimelineViewStore.getState().toggleExpanded(node.id)}
+          >
+            <ChevronIcon expanded={expanded} />
+          </button>
+          <button
+            role="track"
+            aria-label={name}
+            aria-selected={selected}
+            data-depth={depth}
+            className={`timeline-track${selected ? ' timeline-track--selected' : ''}`}
+            style={{ paddingLeft: 12 + depth * 16 }}
+            onClick={(event) => {
+              if (event.ctrlKey || event.metaKey) {
+                useSelectionStore.getState().toggle(node.id)
+              } else if (event.shiftKey) {
+                useSelectionStore.getState().extend(node.id)
+              } else {
+                useSelectionStore.getState().select(node.id)
+              }
+            }}
+          >
+            <span className="timeline-track__icon" data-icon={iconOf(node)}>
+              <NodeIcon node={node} />
             </span>
-            <span className="timeline-track__indicator" title="Locked">
-              <LockIcon />
+            <span className="timeline-track__name">{name}</span>
+            <span className="timeline-track__indicators">
+              <span className="timeline-track__indicator" title={visible ? 'Visible' : 'Hidden'}>
+                <VisibilityIcon visible={visible} />
+              </span>
+              <span className="timeline-track__indicator" title="Locked">
+                <LockIcon />
+              </span>
             </span>
-          </span>
-        </button>
+          </button>
+        </div>
       </li>
     )
   },
@@ -59,7 +101,8 @@ const TrackRow = memo(
     prev.node.id === next.node.id &&
     prev.depth === next.depth &&
     prev.name === next.name &&
-    prev.visible === next.visible,
+    prev.visible === next.visible &&
+    prev.expanded === next.expanded,
 )
 
 export function TimelineBody({
@@ -74,16 +117,20 @@ export function TimelineBody({
 }: {
   slideId: string
   duration: number
-  rows: readonly TrackRowEntry[]
+  rows: readonly TimelineRow[]
   scrollerRef: RefObject<HTMLDivElement | null>
   tracksRef: RefObject<HTMLDivElement | null>
   timeAreaRef: RefObject<HTMLDivElement | null>
   viewportWidth: number
   lastPointerTimeRef: RefObject<number | null>
 }) {
+  const { engine, dispatch } = useEngine()
+  const notify = useNotificationStore((state) => state.notify)
   const zoomLevel = useTimelineViewStore((state) => state.zoomLevel)
   const scrollTime = useTimelineViewStore((state) => state.scrollTime)
+  const expandedNodeIds = useTimelineViewStore((state) => state.expandedNodeIds)
   const currentTime = usePlaybackController((state) => state.currentTimes[slideId] ?? 0)
+  const [menu, setMenu] = useState<TimelineMenuState | null>(null)
   const pps = pixelsPerSecond(zoomLevel)
 
   useLayoutEffect(() => {
@@ -171,6 +218,47 @@ export function TimelineBody({
     window.addEventListener('pointerup', up)
   }
 
+  const handleTrackListContextMenu = (event: React.MouseEvent) => {
+    const target = event.target as HTMLElement
+    const subtrack = target.closest<HTMLElement>('[data-property]')
+    if (subtrack) {
+      const nodeId = subtrack.dataset.nodeId
+      const property = subtrack.dataset.property
+      if (nodeId && property) {
+        event.preventDefault()
+        setMenu({
+          x: event.clientX,
+          y: event.clientY,
+          nodeId,
+          property: property as AnimationProperty,
+        })
+      }
+      return
+    }
+    const row = target.closest<HTMLElement>('[data-node-id]')
+    if (row) {
+      const nodeId = row.dataset.nodeId
+      if (nodeId) {
+        event.preventDefault()
+        setMenu({ x: event.clientX, y: event.clientY, nodeId })
+      }
+    }
+  }
+
+  const addKeyframeFromMenu = () => {
+    const target = menu
+    setMenu(null)
+    if (!target) {
+      return
+    }
+    const result = target.property
+      ? addKeyframeAtPlayhead(engine, dispatch, slideId, target.nodeId, target.property)
+      : addPoseKeyframesAtPlayhead(engine, dispatch, slideId, target.nodeId)
+    if (result && !result.ok) {
+      notify(result.error.message)
+    }
+  }
+
   const step = rulerTickStep(pps)
   const visibleEnd = scrollTime + viewportWidth / pps
   const ticks = rulerTickTimes(scrollTime, visibleEnd, step)
@@ -184,16 +272,46 @@ export function TimelineBody({
         style={{ width: TRACK_HEADER_WIDTH }}
         onScroll={handleTracksScroll}
       >
-        <ul className="timeline-tracks__list">
-          {rows.map((row) => (
-            <TrackRow
-              key={row.node.id}
-              node={row.node}
-              depth={row.depth}
-              name={row.name}
-              visible={row.visible}
-            />
-          ))}
+        <ul className="timeline-tracks__list" onContextMenu={handleTrackListContextMenu}>
+          {rows.map((row) =>
+            row.kind === 'subtrack' ? (
+              <li
+                key={`${row.node.id}:${row.property}`}
+                className="timeline-subtrack"
+                data-node-id={row.node.id}
+                data-property={row.property}
+                data-depth={row.depth}
+                style={{ paddingLeft: 12 + row.depth * 16 }}
+              >
+                <span className="timeline-subtrack__label">{PROPERTY_LABELS[row.property]}</span>
+                <button
+                  className="timeline-subtrack__add"
+                  aria-label={`Add Keyframe to ${PROPERTY_LABELS[row.property]}`}
+                  title="Add keyframe at the playhead"
+                  onClick={() => {
+                    const result = addKeyframeAtPlayhead(
+                      engine,
+                      dispatch,
+                      slideId,
+                      row.node.id,
+                      row.property,
+                    )
+                    if (result && !result.ok) {
+                      notify(result.error.message)
+                    }
+                  }}
+                >
+                  +
+                </button>
+              </li>
+            ) : (
+              <TrackRow
+                key={row.node.id}
+                {...row}
+                expanded={expandedNodeIds[row.node.id] === true}
+              />
+            ),
+          )}
         </ul>
       </div>
       <div
@@ -227,7 +345,33 @@ export function TimelineBody({
             <div
               className="timeline-lanes"
               style={{ height: rows.length * ROW_HEIGHT, width: contentWidth }}
-            />
+            >
+              {rows.map((row, index) => {
+                if (row.kind !== 'subtrack') {
+                  return null
+                }
+                const keyframes = engine.getKeyframes(row.node.id, row.property)
+                return (
+                  <div
+                    key={`${row.node.id}:${row.property}`}
+                    className="timeline-lane-row"
+                    data-property={row.property}
+                    style={{ top: index * ROW_HEIGHT }}
+                  >
+                    {keyframes.map((keyframe) => (
+                      <div
+                        key={keyframe.id}
+                        className="timeline-keyframe"
+                        data-testid="keyframe-marker"
+                        data-property={row.property}
+                        data-time={String(keyframe.time)}
+                        style={{ left: keyframe.time * pps }}
+                      />
+                    ))}
+                  </div>
+                )
+              })}
+            </div>
             <div
               className="timeline-playhead"
               data-testid="timeline-playhead"
@@ -236,6 +380,24 @@ export function TimelineBody({
           </div>
         </div>
       </div>
+      {menu && (
+        <>
+          <div
+            className="timeline-context-menu__backdrop"
+            data-testid="timeline-context-menu-backdrop"
+            onClick={() => setMenu(null)}
+          />
+          <div
+            className="timeline-context-menu"
+            data-testid="timeline-context-menu"
+            style={{ left: menu.x, top: menu.y }}
+          >
+            <button className="timeline-context-menu__item" onClick={addKeyframeFromMenu}>
+              Add Keyframe
+            </button>
+          </div>
+        </>
+      )}
     </div>
   )
 }

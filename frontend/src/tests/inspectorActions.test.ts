@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import type { DispatchCommand } from '../engine/commands'
 import {
+  AddKeyframeCommand,
   CommandDispatcher,
   CreateProjectCommand,
   CreateSlideCommand,
@@ -8,17 +9,29 @@ import {
 } from '../engine/commands'
 import { createEngine } from '../engine/internal'
 import {
-  applyNodePosition,
-  applyNodeRotationDegrees,
-  applyNodeScale,
+  applyNodeFieldAutoKey,
+  applyNodeOpacityAutoKey,
   formatDecimal,
   parseFiniteNumber,
   radiansToDegrees,
-  readNodeWorld,
-  resetNodesTransform,
+  readEvaluatedNodeWorld,
+  resetNodesTransformAutoKey,
   rotationDegreesToRadians,
 } from '../app/inspectorActions'
-import { mountInspector } from './inspectorHarness'
+import { usePlaybackController } from '../stores/playbackStore'
+import { mountInspector, createNamedNode } from './inspectorHarness'
+
+function scrub(engine: ReturnType<typeof createEngine>, time: number): void {
+  const slide = engine.project?.slides[0]
+  if (!slide) {
+    throw new Error('expected a slide')
+  }
+  usePlaybackController.getState().setCurrentTime(slide.id, time, slide.duration)
+}
+
+beforeEach(() => {
+  usePlaybackController.setState({ currentTimes: {} })
+})
 
 describe('parseFiniteNumber', () => {
   it('parses a plain decimal string', () => {
@@ -61,111 +74,156 @@ describe('rotation unit conversion', () => {
   })
 })
 
-describe('applyNodePosition', () => {
-  it('dispatches a MoveNodeCommand and records the old position as inverse', () => {
+describe('applyNodeFieldAutoKey', () => {
+  it('creates a position keyframe with the requested world value at the playhead', () => {
     const { dispatch, undoStack, engine, nodeId } = mountInspector()
+    scrub(engine, 2)
     const before = undoStack.entries.length
 
-    const result = applyNodePosition(engine, dispatch, nodeId, 100, -40)
+    const result = applyNodeFieldAutoKey(engine, dispatch, [nodeId], 'x', 100)
 
-    expect(result.ok).toBe(true)
-    expect(engine.getNode(nodeId).transform.x).toBe(100)
-    expect(engine.getNode(nodeId).transform.y).toBe(-40)
+    expect(result?.ok).toBe(true)
     expect(undoStack.entries).toHaveLength(before + 1)
-    expect(undoStack.entries[0].type).toBe('MoveNode')
-    expect(undoStack.entries[0].inverse).toEqual({ nodeId, oldX: 10, oldY: 20 })
-  })
-})
-
-describe('applyNodeRotationDegrees', () => {
-  it('dispatches a RotateNodeCommand with the normalized radians value', () => {
-    const { dispatch, undoStack, engine, nodeId } = mountInspector()
-
-    applyNodeRotationDegrees(engine, dispatch, nodeId, 450)
-
-    expect(engine.getNode(nodeId).transform.rotation).toBeCloseTo(Math.PI / 2, 10)
-    expect(undoStack.entries[0].type).toBe('RotateNode')
-    expect(undoStack.entries[0].parameters.rotation).toBeCloseTo(Math.PI / 2, 10)
-    expect(undoStack.entries[0].inverse).toEqual({ nodeId, oldRotation: 0.5 })
-  })
-})
-
-describe('applyNodeScale', () => {
-  it('dispatches a ScaleNodeCommand with independent X and Y values', () => {
-    const { dispatch, undoStack, engine, nodeId } = mountInspector()
-
-    const result = applyNodeScale(engine, dispatch, nodeId, 4, 0.5)
-
-    expect(result.ok).toBe(true)
-    expect(engine.getNode(nodeId).transform).toMatchObject({ scaleX: 4, scaleY: 0.5 })
-    expect(undoStack.entries[0].type).toBe('ScaleNode')
-    expect(undoStack.entries[0].inverse).toEqual({ nodeId, oldScaleX: 2, oldScaleY: 3 })
+    expect(undoStack.entries[0].type).toBe('AddKeyframe')
+    expect(undoStack.entries[0].parameters).toMatchObject({
+      nodeId,
+      property: 'positionX',
+      time: 2,
+      value: 100,
+    })
+    expect(engine.evaluateNode(nodeId, 2).transform.x).toBe(100)
   })
 
-  it('rejects zero scale without dispatching anything', () => {
+  it('normalizes a rotation edit into the keyframe value', () => {
     const { dispatch, undoStack, engine, nodeId } = mountInspector()
-    const before = undoStack.entries.length
+    scrub(engine, 0)
 
-    expect(() => applyNodeScale(engine, dispatch, nodeId, 0, 1)).toThrow(/Scale X must not be zero/)
-    expect(() => applyNodeScale(engine, dispatch, nodeId, 1, 0)).toThrow(/Scale Y must not be zero/)
+    applyNodeFieldAutoKey(engine, dispatch, [nodeId], 'rotation', 450)
 
-    expect(engine.getNode(nodeId).transform).toMatchObject({ scaleX: 2, scaleY: 3 })
-    expect(undoStack.entries).toHaveLength(before)
+    expect(undoStack.entries[0].type).toBe('AddKeyframe')
+    expect(undoStack.entries[0].parameters.property).toBe('rotation')
+    expect(undoStack.entries[0].parameters.value).toBeCloseTo(Math.PI / 2, 10)
+    expect(engine.evaluateNode(nodeId, 0).transform.rotation).toBeCloseTo(Math.PI / 2, 10)
+  })
+
+  it('edits scale X independently of scale Y through keyframes', () => {
+    const { dispatch, engine, nodeId } = mountInspector()
+    scrub(engine, 0)
+
+    const result = applyNodeFieldAutoKey(engine, dispatch, [nodeId], 'scaleX', 4)
+
+    expect(result?.ok).toBe(true)
+    expect(engine.evaluateNode(nodeId, 0).transform.scaleX).toBe(4)
+    expect(engine.evaluateNode(nodeId, 0).transform.scaleY).toBe(3)
   })
 
   it('accepts negative scale (mirror) as a finite non-zero value', () => {
     const { dispatch, engine, nodeId } = mountInspector()
+    scrub(engine, 0)
 
-    const result = applyNodeScale(engine, dispatch, nodeId, -1, -2)
+    const result = applyNodeFieldAutoKey(engine, dispatch, [nodeId], 'scaleX', -1)
 
-    expect(result.ok).toBe(true)
-    expect(engine.getNode(nodeId).transform).toMatchObject({ scaleX: -1, scaleY: -2 })
+    expect(result?.ok).toBe(true)
+    expect(engine.evaluateNode(nodeId, 0).transform.scaleX).toBe(-1)
+  })
+
+  it('rejects zero scale without dispatching anything', () => {
+    const { dispatch, undoStack, engine, nodeId } = mountInspector()
+    scrub(engine, 0)
+    const before = undoStack.entries.length
+
+    expect(() => applyNodeFieldAutoKey(engine, dispatch, [nodeId], 'scaleX', 0)).toThrow(
+      /Scale X must not be zero/,
+    )
+
+    expect(undoStack.entries).toHaveLength(before)
+    expect(engine.getKeyframes(nodeId, 'scaleX')).toHaveLength(0)
   })
 })
 
-describe('resetNodeTransform', () => {
-  it('returns a moved/scaled/rotated node to identity as one composite transaction', () => {
+describe('applyNodeOpacityAutoKey', () => {
+  it('creates a clamped opacity keyframe at the playhead', () => {
+    const { dispatch, undoStack, engine } = mountInspector()
+    const nodeId = createNamedNode(engine, 'Kid', { opacity: 0.5 })
+    scrub(engine, 1)
+
+    const result = applyNodeOpacityAutoKey(engine, dispatch, [nodeId], 1.5)
+
+    expect(result?.ok).toBe(true)
+    expect(undoStack.entries[0].type).toBe('AddKeyframe')
+    expect(undoStack.entries[0].parameters.value).toBe(1)
+    expect(engine.evaluateNode(nodeId, 1).opacity).toBe(1)
+  })
+
+  it('updates the keyframe under the playhead', () => {
+    const { dispatch, undoStack, engine } = mountInspector()
+    const nodeId = createNamedNode(engine, 'Kid', { opacity: 0.5 })
+    dispatch(
+      new AddKeyframeCommand({
+        nodeId,
+        property: 'opacity',
+        time: 1,
+        value: 0.5,
+      }),
+    )
+    scrub(engine, 1)
+
+    const result = applyNodeOpacityAutoKey(engine, dispatch, [nodeId], 0.25)
+
+    expect(result?.ok).toBe(true)
+    expect(undoStack.entries[0].type).toBe('SetKeyframeValue')
+    expect(engine.evaluateNode(nodeId, 1).opacity).toBe(0.25)
+  })
+})
+
+describe('resetNodesTransformAutoKey', () => {
+  it('returns a moved/scaled/rotated node to identity as keyframes at the playhead', () => {
     const { dispatch, undoStack, engine, nodeId } = mountInspector()
+    scrub(engine, 3)
     const before = undoStack.entries.length
 
-    const result = resetNodesTransform(engine, dispatch, [nodeId])
+    const result = resetNodesTransformAutoKey(engine, dispatch, [nodeId])
     if (!result) {
       throw new Error('expected a transaction result')
     }
 
     expect(result.ok).toBe(true)
-    expect(engine.getNode(nodeId).transform).toEqual({
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].type).toBe('Transaction')
+    const children = undoStack.entries[0].parameters.commands as {
+      type: string
+      property: string
+    }[]
+    expect(children.map((child) => child.type)).toEqual([
+      'AddKeyframe',
+      'AddKeyframe',
+      'AddKeyframe',
+      'AddKeyframe',
+      'AddKeyframe',
+    ])
+    expect(children.map((child) => child.property)).toEqual([
+      'positionX',
+      'positionY',
+      'rotation',
+      'scaleX',
+      'scaleY',
+    ])
+    expect(engine.evaluateNode(nodeId, 3).transform).toEqual({
       x: 0,
       y: 0,
       rotation: 0,
       scaleX: 1,
       scaleY: 1,
     })
-    expect(undoStack.entries).toHaveLength(before + 1)
-    const entry = undoStack.entries[0]
-    expect(entry.type).toBe('Transaction')
-    const children = entry.parameters.commands as { type: string }[]
-    expect(children.map((child) => child.type)).toEqual(['MoveNode', 'RotateNode', 'ScaleNode'])
-    const inverses = (entry.inverse as { children: { inverse: unknown }[] }).children.map(
-      (child) => child.inverse,
-    )
-    expect(inverses).toEqual([
-      { nodeId, oldX: 10, oldY: 20 },
-      { nodeId, oldRotation: 0.5 },
-      { nodeId, oldScaleX: 2, oldScaleY: 3 },
-    ])
   })
 
   it('records nothing when the transform is already identity', () => {
-    const { dispatch, undoStack, engine, nodeId } = mountInspector()
-
-    applyNodePosition(engine, dispatch, nodeId, 0, 0)
-    applyNodeRotationDegrees(engine, dispatch, nodeId, 0)
-    const result = applyNodeScale(engine, dispatch, nodeId, 1, 1)
-    expect(result.ok).toBe(true)
+    const { dispatch, undoStack, engine } = mountInspector()
+    const cleanId = createNamedNode(engine, 'Clean')
+    scrub(engine, 0)
     const before = undoStack.entries.length
 
-    const reset = resetNodesTransform(engine, dispatch, [nodeId])
+    const reset = resetNodesTransformAutoKey(engine, dispatch, [cleanId])
 
     expect(reset).toBeNull()
     expect(undoStack.entries).toHaveLength(before)
@@ -181,7 +239,7 @@ describe('world-unit editing under a transformed parent', () => {
     undoStack: UndoStack
   }
 
-  function mountParented(): Parented {
+  function mountParented(rotation = Math.PI / 2): Parented {
     const engine = createEngine()
     const undoStack = new UndoStack()
     const dispatcher = new CommandDispatcher(engine, undoStack)
@@ -195,7 +253,7 @@ describe('world-unit editing under a transformed parent', () => {
       transform: {
         x: 100,
         y: 50,
-        rotation: Math.PI / 2,
+        rotation,
         scaleX: 2,
         scaleY: 2,
       },
@@ -214,8 +272,9 @@ describe('world-unit editing under a transformed parent', () => {
 
   it('reads the child position in world units (parent rotated and scaled)', () => {
     const { engine, childId } = mountParented()
+    scrub(engine, 0)
 
-    const reading = readNodeWorld(engine, childId)
+    const reading = readEvaluatedNodeWorld(engine, childId)
 
     expect(reading).not.toBeNull()
     expect(reading?.world.x).toBeCloseTo(60, 10)
@@ -225,52 +284,67 @@ describe('world-unit editing under a transformed parent', () => {
     expect(reading?.world.scaleY).toBeCloseTo(2, 10)
   })
 
-  it('converts a world position edit back into the local transform', () => {
-    const { engine, dispatch, undoStack, childId } = mountParented()
+  it('converts a world position edit back into the local keyframe value', () => {
+    const { engine, dispatch, undoStack, childId } = mountParented(0)
+    scrub(engine, 0)
     const before = undoStack.entries.length
 
-    const result = applyNodePosition(engine, dispatch, childId, 60, 30)
+    const result = applyNodeFieldAutoKey(engine, dispatch, [childId], 'x', 60)
 
-    expect(result.ok).toBe(true)
-    expect(engine.getNode(childId).transform.x).toBeCloseTo(-10, 10)
-    expect(engine.getNode(childId).transform.y).toBeCloseTo(20, 10)
+    expect(result?.ok).toBe(true)
+    const keyframe = engine.getKeyframes(childId, 'positionX')[0]
+    expect(keyframe?.value).toBeCloseTo(-20, 10)
     expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].type).toBe('AddKeyframe')
   })
 
-  it('converts a world rotation edit back into the local transform', () => {
+  it('converts a world rotation edit back into the local keyframe value', () => {
     const { engine, dispatch, childId } = mountParented()
+    scrub(engine, 0)
 
-    applyNodeRotationDegrees(engine, dispatch, childId, 0)
+    applyNodeFieldAutoKey(engine, dispatch, [childId], 'rotation', 0)
 
-    expect(engine.getNode(childId).transform.rotation).toBeCloseTo(-Math.PI / 2, 10)
+    expect(engine.getKeyframes(childId, 'rotation')[0]?.value).toBeCloseTo(-Math.PI / 2, 10)
   })
 
-  it('converts a world scale edit back into the local transform', () => {
+  it('converts a world scale edit back into the local keyframe value', () => {
     const { engine, dispatch, childId } = mountParented()
+    scrub(engine, 0)
 
-    applyNodeScale(engine, dispatch, childId, 3, 1)
+    applyNodeFieldAutoKey(engine, dispatch, [childId], 'scaleX', 3)
 
-    expect(engine.getNode(childId).transform.scaleX).toBeCloseTo(1.5, 10)
-    expect(engine.getNode(childId).transform.scaleY).toBeCloseTo(0.5, 10)
+    expect(engine.getKeyframes(childId, 'scaleX')[0]?.value).toBeCloseTo(1.5, 10)
   })
 
-  it('resets a parented node to world identity through local transforms', () => {
+  it('resets a parented node to world identity through local keyframe values', () => {
     const { engine, dispatch, undoStack, childId } = mountParented()
+    scrub(engine, 0)
     const before = undoStack.entries.length
 
-    const result = resetNodesTransform(engine, dispatch, [childId])
+    const result = resetNodesTransformAutoKey(engine, dispatch, [childId])
     if (!result) {
       throw new Error('expected a transaction result')
     }
 
     expect(result.ok).toBe(true)
-    const transform = engine.getNode(childId).transform
-    expect(transform.x).toBeCloseTo(-25, 10)
-    expect(transform.y).toBeCloseTo(50, 10)
-    expect(transform.rotation).toBeCloseTo(-Math.PI / 2, 10)
-    expect(transform.scaleX).toBeCloseTo(0.5, 10)
-    expect(transform.scaleY).toBeCloseTo(0.5, 10)
+    expect(engine.getKeyframes(childId, 'positionX')[0]?.value).toBeCloseTo(-25, 10)
+    expect(engine.getKeyframes(childId, 'positionY')[0]?.value).toBeCloseTo(50, 10)
+    expect(engine.getKeyframes(childId, 'rotation')[0]?.value).toBeCloseTo(-Math.PI / 2, 10)
+    expect(engine.getKeyframes(childId, 'scaleX')[0]?.value).toBeCloseTo(0.5, 10)
+    expect(engine.getKeyframes(childId, 'scaleY')[0]?.value).toBeCloseTo(0.5, 10)
     expect(undoStack.entries).toHaveLength(before + 1)
     expect(undoStack.entries[0].type).toBe('Transaction')
+  })
+
+  it('reflects parent animation in the world read', () => {
+    const { engine, dispatch, childId } = mountParented(0)
+    dispatch(new AddKeyframeCommand({ nodeId: childId, property: 'positionX', time: 0, value: 10 }))
+    dispatch(new AddKeyframeCommand({ nodeId: childId, property: 'positionX', time: 2, value: 30 }))
+    scrub(engine, 1)
+
+    const reading = readEvaluatedNodeWorld(engine, childId)
+
+    // child world x interpolates 120 -> 160 while the parent is static
+    expect(reading?.world.x).toBeCloseTo(140, 10)
   })
 })

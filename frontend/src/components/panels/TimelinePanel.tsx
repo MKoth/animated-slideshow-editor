@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
-import { DEFAULT_TIMELINE_VIEWPORT_WIDTH } from '../../stores/timelineViewStore'
-import { sceneHasObjects, trackRows } from './timelineTracks'
+import {
+  DEFAULT_TIMELINE_VIEWPORT_WIDTH,
+  useTimelineViewStore,
+} from '../../stores/timelineViewStore'
+import { sceneHasObjects, timelineRows } from './timelineTracks'
 import { TimelineBody } from './TimelineBody'
 import { TimelineToolbar } from './TimelineToolbar'
 
@@ -37,8 +40,9 @@ export function TimelinePanel({ height }: { height: number }) {
   const slide = project?.slides[0] ?? null
   const scene = slide?.scene ?? null
   const hasObjects = scene ? sceneHasObjects(scene) : false
+  const expandedNodeIds = useTimelineViewStore((state) => state.expandedNodeIds)
   const viewportWidth = useViewportWidth(scrollerRef, [slide?.id ?? null, hasObjects])
-  const rows = scene ? trackRows(scene) : []
+  const rows = scene ? timelineRows(scene, expandedNodeIds) : []
 
   let body: React.ReactNode
   if (!project) {

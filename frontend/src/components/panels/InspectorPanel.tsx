@@ -2,22 +2,25 @@ import { useRef, useState } from 'react'
 import type { WorldTransform } from '../../engine/worldTransform'
 import { normalizeRotation } from '../../engine'
 import {
-  applyField,
-  applyNodeField,
+  applyNodeFieldAutoKey,
   applyNodeName,
-  applyNodeOpacity,
+  applyNodeOpacityAutoKey,
   degreesOf,
   FIELD_LABELS,
+  FIELD_PROPERTY,
   formatDecimal,
   parseFiniteNumber,
-  readNodeWorld,
-  resetNodesTransform,
+  readEvaluatedNodeWorld,
+  resetNodesTransformAutoKey,
   roundToStep,
 } from '../../app/inspectorActions'
 import type { InspectorFieldKind } from '../../app/inspectorActions'
+import type { PropertyState } from '../../app/keyframeActions'
+import { playheadTimeOf, propertyStateOf } from '../../app/keyframeActions'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
 import type { EngineReadOnly, SceneNode } from '../../engine'
 import { useNotificationStore } from '../../stores/notificationStore'
+import { usePlaybackController } from '../../stores/playbackStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 
 const DRAG_THRESHOLD_PX = 3
@@ -110,6 +113,7 @@ interface NumericFieldProps {
   value: number | null
   step: number
   disabled?: boolean
+  state?: PropertyState | null
   onCommit: (raw: string) => void
   onAdjust: (value: number) => void
 }
@@ -119,6 +123,7 @@ function NumericField({
   value,
   step,
   disabled = false,
+  state = null,
   onCommit,
   onAdjust,
 }: NumericFieldProps) {
@@ -177,6 +182,15 @@ function NumericField({
       <label className="inspector-field__label" htmlFor={label}>
         {label}
       </label>
+      {state && state !== 'static' && (
+        <span
+          className="inspector-field__indicator"
+          data-state={state}
+          title={state === 'animated' ? 'Animated' : 'Playhead on keyframe'}
+        >
+          {state === 'animated' ? '●' : '◆'}
+        </span>
+      )}
       <input
         id={label}
         ref={inputRef}
@@ -269,11 +283,12 @@ export function InspectorPanel({ width }: { width: number }) {
   const { engine, dispatch } = useEngine()
   const notify = useNotificationStore((state) => state.notify)
   const selectedIds = useSelectionStore((state) => state.selectedIds)
+  usePlaybackController((state) => state.currentTimes)
   const [, setTick] = useState(0)
   useEngineEvent(() => setTick((tick) => tick + 1))
 
   const targets = inspectedTargets(engine, selectedIds)
-  const readTarget = targets.length > 0 ? readNodeWorld(engine, targets[0].id) : null
+  const readTarget = targets.length > 0 ? readEvaluatedNodeWorld(engine, targets[0].id) : null
 
   if (targets.length === 0 || !readTarget) {
     return (
@@ -289,17 +304,24 @@ export function InspectorPanel({ width }: { width: number }) {
   const targetIds = targets.map((node) => node.id)
   const cameraTarget = targets.some((node) => Boolean(node.components.camera))
   const world = readTarget.world
+  const indicatorTime = playheadTimeOf(engine, targets[0].id) ?? 0
+  const indicatorOf = (field: InspectorFieldKind): PropertyState | null =>
+    propertyStateOf(engine, targets[0].id, FIELD_PROPERTY[field], indicatorTime)
+  const opacityIndicator = propertyStateOf(engine, targets[0].id, 'opacity', indicatorTime)
   const commonName = commonValueOf(targets, (node) => node.name)
-  const commonOpacity = commonValueOf(targets, (node) => node.opacity)
-  const transformReadings = targets.map((node) => readNodeWorld(engine, node.id)?.world ?? null)
+  const commonOpacity = commonValueOf(
+    targets,
+    (node) => engine.evaluateNode(node.id, playheadTimeOf(engine, node.id) ?? 0).opacity,
+  )
+  const transformReadings = targets.map(
+    (node) => readEvaluatedNodeWorld(engine, node.id)?.world ?? null,
+  )
   const opacityPercent = commonOpacity === null ? null : Math.round(commonOpacity * 100)
 
   const commitField = (field: InspectorFieldKind, raw: string) => {
     try {
       const value = parseFiniteNumber(raw, FIELD_LABELS[field])
-      const result = multi
-        ? applyNodeField(engine, dispatch, targetIds, field, value)
-        : applyField(engine, dispatch, targets[0], world, field, value)
+      const result = applyNodeFieldAutoKey(engine, dispatch, targetIds, field, value)
       if (result && !result.ok) {
         throw result.error
       }
@@ -310,9 +332,7 @@ export function InspectorPanel({ width }: { width: number }) {
 
   const adjustField = (field: InspectorFieldKind, value: number) => {
     try {
-      const result = multi
-        ? applyNodeField(engine, dispatch, targetIds, field, value)
-        : applyField(engine, dispatch, targets[0], world, field, value)
+      const result = applyNodeFieldAutoKey(engine, dispatch, targetIds, field, value)
       if (result && !result.ok) {
         throw result.error
       }
@@ -335,7 +355,7 @@ export function InspectorPanel({ width }: { width: number }) {
   const commitOpacity = (raw: string) => {
     try {
       const percent = parseFiniteNumber(raw, 'Opacity')
-      const result = applyNodeOpacity(engine, dispatch, targetIds, percent / 100)
+      const result = applyNodeOpacityAutoKey(engine, dispatch, targetIds, percent / 100)
       if (result && !result.ok) {
         throw result.error
       }
@@ -346,7 +366,7 @@ export function InspectorPanel({ width }: { width: number }) {
 
   const adjustOpacity = (percent: number) => {
     try {
-      const result = applyNodeOpacity(engine, dispatch, targetIds, percent / 100)
+      const result = applyNodeOpacityAutoKey(engine, dispatch, targetIds, percent / 100)
       if (result && !result.ok) {
         throw result.error
       }
@@ -356,7 +376,7 @@ export function InspectorPanel({ width }: { width: number }) {
   }
 
   const handleResetTransform = () => {
-    const result = resetNodesTransform(engine, dispatch, targetIds)
+    const result = resetNodesTransformAutoKey(engine, dispatch, targetIds)
     if (result && !result.ok) {
       notify(result.error.message)
     }
@@ -374,6 +394,7 @@ export function InspectorPanel({ width }: { width: number }) {
             label="X"
             value={multi ? mixedTransformField(transformReadings, 'x') : world.x}
             step={1}
+            state={indicatorOf('x')}
             onCommit={(raw) => commitField('x', raw)}
             onAdjust={(value) => adjustField('x', value)}
           />
@@ -381,6 +402,7 @@ export function InspectorPanel({ width }: { width: number }) {
             label="Y"
             value={multi ? mixedTransformField(transformReadings, 'y') : world.y}
             step={1}
+            state={indicatorOf('y')}
             onCommit={(raw) => commitField('y', raw)}
             onAdjust={(value) => adjustField('y', value)}
           />
@@ -389,6 +411,7 @@ export function InspectorPanel({ width }: { width: number }) {
             value={multi ? mixedTransformField(transformReadings, 'rotation') : degreesOf(world)}
             step={1}
             disabled={cameraTarget}
+            state={indicatorOf('rotation')}
             onCommit={(raw) => commitField('rotation', raw)}
             onAdjust={(value) => adjustField('rotation', value)}
           />
@@ -396,6 +419,7 @@ export function InspectorPanel({ width }: { width: number }) {
             label="Scale X"
             value={multi ? mixedTransformField(transformReadings, 'scaleX') : world.scaleX}
             step={0.01}
+            state={indicatorOf('scaleX')}
             onCommit={(raw) => commitField('scaleX', raw)}
             onAdjust={(value) => adjustField('scaleX', value)}
           />
@@ -403,6 +427,7 @@ export function InspectorPanel({ width }: { width: number }) {
             label="Scale Y"
             value={multi ? mixedTransformField(transformReadings, 'scaleY') : world.scaleY}
             step={0.01}
+            state={indicatorOf('scaleY')}
             onCommit={(raw) => commitField('scaleY', raw)}
             onAdjust={(value) => adjustField('scaleY', value)}
           />
@@ -416,6 +441,7 @@ export function InspectorPanel({ width }: { width: number }) {
             label="Opacity"
             value={opacityPercent}
             step={1}
+            state={opacityIndicator}
             onCommit={commitOpacity}
             onAdjust={adjustOpacity}
           />

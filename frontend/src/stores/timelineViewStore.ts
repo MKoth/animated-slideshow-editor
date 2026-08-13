@@ -75,6 +75,8 @@ export interface TimelineViewState {
   readonly zoomLevel: number
   readonly scrollTime: number
   readonly height: number
+  readonly expandedNodeIds: Readonly<Record<string, boolean>>
+  toggleExpanded(nodeId: string): void
   setZoom(zoomLevel: number, anchorTime: number, viewportWidth: number, duration: number): void
   zoomIn(anchorTime: number, viewportWidth: number, duration: number): void
   zoomOut(anchorTime: number, viewportWidth: number, duration: number): void
@@ -89,6 +91,15 @@ export const useTimelineViewStore = create<TimelineViewState>()(
       zoomLevel: 1,
       scrollTime: 0,
       height: DEFAULT_TIMELINE_HEIGHT,
+      expandedNodeIds: {},
+
+      toggleExpanded: (nodeId) =>
+        set((state) => ({
+          expandedNodeIds: {
+            ...state.expandedNodeIds,
+            [nodeId]: state.expandedNodeIds[nodeId] !== true,
+          },
+        })),
 
       setHeight: (height) =>
         set({ height: clamp(height, MIN_TIMELINE_HEIGHT, MAX_TIMELINE_HEIGHT) }),
