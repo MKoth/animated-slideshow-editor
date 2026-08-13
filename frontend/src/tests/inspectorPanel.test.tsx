@@ -16,6 +16,7 @@ import { createEngineInternal, toReadOnly } from '../engine/internal'
 import { useNotificationStore } from '../stores/notificationStore'
 import { usePlaybackController } from '../stores/playbackStore'
 import { useSelectionStore } from '../stores/selectionStore'
+import { useUiStore } from '../stores/uiStore'
 
 function renderPanel(): { engine: Engine; undoStack: UndoStack; dispatcher: CommandDispatcher } {
   const engine = createEngineInternal()
@@ -148,6 +149,8 @@ beforeEach(() => {
   useSelectionStore.setState({ selectedIds: [] })
   useNotificationStore.setState({ notifications: [] })
   usePlaybackController.setState({ currentTimes: {} })
+  localStorage.clear()
+  useUiStore.setState({ animationMode: true })
 })
 
 describe('InspectorPanel empty state', () => {
@@ -975,5 +978,149 @@ describe('InspectorPanel multi-selection', () => {
     expect(events.filter((type) => type === 'KeyframeAdded')).toHaveLength(2)
     expect(engine.evaluateNode(nodeId, 0).opacity).toBe(0.8)
     expect(engine.evaluateNode(secondId, 0).opacity).toBe(0.8)
+  })
+})
+
+describe('InspectorPanel base mode (Animation Mode off)', () => {
+  beforeEach(() => {
+    useUiStore.setState({ animationMode: false })
+  })
+
+  it('shows stored values regardless of the playhead', () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine, { x: 12 })
+    addKeyframe(dispatcher, nodeId, 'positionX', 0, 200)
+    addKeyframe(dispatcher, nodeId, 'positionX', 2, 400)
+    scrub(engine, 1)
+    select(nodeId)
+
+    expect(fields().X.value).toBe('12')
+    expect(screen.getByTitle('Animated')).toBeInTheDocument()
+  })
+
+  it('dispatches a MoveNode with inverse data on Enter, touching no keyframes', async () => {
+    const { engine, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    select(nodeId)
+    scrub(engine, 3)
+    const user = userEvent.setup()
+    const before = undoStack.entries.length
+
+    const x = fields().X
+    await user.clear(x)
+    await user.type(x, '42')
+    await user.keyboard('{Enter}')
+
+    expect(engine.getNode(nodeId).transform.x).toBe(42)
+    expect(engine.getKeyframes(nodeId, 'positionX')).toHaveLength(0)
+    expect(engine.evaluateNode(nodeId, 3).transform.x).toBe(42)
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].type).toBe('MoveNode')
+    expect(undoStack.entries[0].inverse).toEqual({ nodeId, oldX: 12, oldY: -4 })
+    expect(fields().X.value).toBe('42')
+  })
+
+  it('dispatches a SetOpacity with inverse data for an opacity edit', async () => {
+    const { engine, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    select(nodeId)
+    const user = userEvent.setup()
+    const before = undoStack.entries.length
+
+    const opacity = screen.getByRole('spinbutton', { name: 'Opacity' }) as HTMLInputElement
+    await user.clear(opacity)
+    await user.type(opacity, '33')
+    await user.keyboard('{Enter}')
+
+    expect(engine.getNode(nodeId).opacity).toBe(0.33)
+    expect(engine.getKeyframes(nodeId, 'opacity')).toHaveLength(0)
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].type).toBe('SetOpacity')
+    expect(undoStack.entries[0].inverse).toEqual({ nodeId, oldOpacity: 1 })
+    expect(opacity.value).toBe('33')
+  })
+
+  it('disables a field whose property has any keyframe and still shows the indicator', () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    addKeyframe(dispatcher, nodeId, 'positionX', 1, 10)
+    select(nodeId)
+
+    expect(screen.getByLabelText('X')).toBeDisabled()
+    expect(screen.getByLabelText('Y')).not.toBeDisabled()
+    expect(screen.getByLabelText('Rotation')).not.toBeDisabled()
+    expect(fieldContainer('X').querySelector('.inspector-field__indicator')).toHaveAttribute(
+      'data-state',
+      'animated',
+    )
+  })
+
+  it('disables the opacity field when opacity has keyframes', () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    addKeyframe(dispatcher, nodeId, 'opacity', 1, 0.5)
+    select(nodeId)
+
+    expect(screen.getByLabelText('Opacity')).toBeDisabled()
+    expect(fieldContainer('Opacity').querySelector('.inspector-field__indicator')).not.toBeNull()
+  })
+
+  it('disables a field when any selected node is animated, even if others are static', () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine, { x: 12, y: 12 })
+    const secondId = createSecondNode(engine, 'Second', { x: 12, y: 12 })
+    addKeyframe(dispatcher, secondId, 'positionX', 1, 5)
+    selectMany([nodeId, secondId])
+
+    expect(screen.getByLabelText('X')).toBeDisabled()
+    expect(screen.getByLabelText('Y')).not.toBeDisabled()
+  })
+
+  it('resets the transform through stored Move/Rotate/Scale commands with inverse data', () => {
+    const { engine, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine, {
+      x: 100,
+      y: 200,
+      rotation: Math.PI / 4,
+      scaleX: 3,
+      scaleY: 2,
+    })
+    select(nodeId)
+    const before = undoStack.entries.length
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset Transform' }))
+
+    expect(engine.getNode(nodeId).transform).toEqual({
+      x: 0,
+      y: 0,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+    })
+    expect(engine.getKeyframes(nodeId, 'positionX')).toHaveLength(0)
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].type).toBe('Transaction')
+    const children = (undoStack.entries[0].parameters.commands as { type: string }[]).map(
+      (command) => command.type,
+    )
+    expect(children).toEqual(['MoveNode', 'RotateNode', 'ScaleNode'])
+    expect(fields().X.value).toBe('0')
+    expect(fields().Rotation.value).toBe('0')
+  })
+
+  it('edits a disabled animated field are impossible while other fields stay editable', () => {
+    const { engine, dispatcher, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    addKeyframe(dispatcher, nodeId, 'positionX', 1, 10)
+    select(nodeId)
+    const before = undoStack.entries.length
+    const x = screen.getByLabelText('X') as HTMLInputElement
+
+    fireEvent.pointerDown(x, { clientX: 100, clientY: 10 })
+    fireEvent.pointerMove(window, { clientX: 120, clientY: 10 })
+    fireEvent.pointerUp(window)
+
+    expect(engine.getNode(nodeId).transform.x).toBe(12)
+    expect(undoStack.entries).toHaveLength(before)
   })
 })

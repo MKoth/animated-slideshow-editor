@@ -1,5 +1,6 @@
 import { formatTimeCode, usePlaybackController } from '../../stores/playbackStore'
 import { pixelsPerSecond, useTimelineViewStore } from '../../stores/timelineViewStore'
+import { useUiStore } from '../../stores/uiStore'
 
 export function TimelineToolbar({
   slideId,
@@ -13,6 +14,7 @@ export function TimelineToolbar({
   zoomAnchor: () => number | null
 }) {
   const currentTime = usePlaybackController((state) => state.currentTimes[slideId] ?? 0)
+  const animationMode = useUiStore((state) => state.animationMode)
 
   const zoomByStep = (direction: 'in' | 'out') => {
     const state = useTimelineViewStore.getState()
@@ -43,6 +45,21 @@ export function TimelineToolbar({
         <select className="timeline-toolbar__select" aria-label="Speed (timeline)" disabled>
           <option>1×</option>
         </select>
+      </div>
+      <div className="timeline-toolbar__mode">
+        <button
+          className="timeline-toolbar__button"
+          aria-label="Animation Mode"
+          aria-pressed={animationMode}
+          title={
+            animationMode
+              ? 'Animation mode: Inspector edits create keyframes'
+              : 'Base mode: Inspector edits change stored values'
+          }
+          onClick={() => useUiStore.getState().toggleAnimationMode()}
+        >
+          Animation Mode
+        </button>
       </div>
       <span className="timeline-time" aria-label="Current time">
         {formatTimeCode(currentTime)}

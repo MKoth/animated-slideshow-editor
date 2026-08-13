@@ -743,10 +743,15 @@ button:disabled {
 }
 
 .timeline-toolbar__playback,
+.timeline-toolbar__mode,
 .timeline-toolbar__zoom {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.timeline-toolbar__mode {
+  margin-left: 12px;
 }
 
 .timeline-toolbar__zoom {
@@ -765,6 +770,16 @@ button:disabled {
 
 .timeline-toolbar__button:hover:not(:disabled) {
   background: var(--color-bg-elevated);
+}
+
+.timeline-toolbar__button[aria-pressed='true'] {
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  border-color: var(--color-accent);
+}
+
+.timeline-toolbar__button[aria-pressed='true']:hover:not(:disabled) {
+  background: var(--color-accent);
 }
 
 .timeline-toolbar__button:disabled {

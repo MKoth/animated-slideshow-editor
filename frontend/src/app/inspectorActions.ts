@@ -1,16 +1,29 @@
-import type { EngineReadOnly, SceneNode } from '../engine'
+import type { EngineReadOnly, Scene, SceneNode } from '../engine'
 import { normalizeRotation } from '../engine'
 import { requireFiniteNumber, requireNonEmpty } from '../engine/guards'
 import { namesInTree, uniqueNodeName } from '../engine/naming'
 import type { CommandResult, DispatchCommand } from '../engine/commands'
-import { RenameNodeCommand, TransactionCommand } from '../engine/commands'
+import {
+  MoveNodeCommand,
+  RenameNodeCommand,
+  RotateNodeCommand,
+  ScaleNodeCommand,
+  SetOpacityCommand,
+  TransactionCommand,
+} from '../engine/commands'
 import type { Command } from '../engine/commands'
 import type { RenameNodeInverse, TransactionInverse } from '../engine/commands'
-import { relativeTransform, rotateX, rotateY } from '../engine/worldTransform'
+import {
+  relativeTransform,
+  rotateX,
+  rotateY,
+  transformsEqual,
+  worldTransformOf,
+} from '../engine/worldTransform'
 import type { WorldTransform } from '../engine/worldTransform'
 import { identityTransform } from '../engine/transform'
 import type { Transform } from '../engine/transform'
-import { autoKeyEdit, playheadTimeOf, slideOfNode } from './keyframeActions'
+import { autoKeyEdit, dispatchCommands, playheadTimeOf, slideOfNode } from './keyframeActions'
 import type { KeyframeEdit } from './keyframeActions'
 
 const DEG_TO_RAD = Math.PI / 180
@@ -47,6 +60,35 @@ export function roundToStep(value: number, step: number): number {
 export interface NodeWorldReading {
   readonly world: WorldTransform
   readonly parentWorld: WorldTransform | null
+}
+
+export function readStoredNodeWorld(
+  engine: EngineReadOnly,
+  nodeId: string,
+): NodeWorldReading | null {
+  const scene = slideOfNode(engine, nodeId)
+  if (!scene) {
+    return null
+  }
+  const world = worldTransformOf(scene, nodeId)
+  if (!world) {
+    return null
+  }
+  const node = scene.getNode(nodeId)
+  if (!node) {
+    return null
+  }
+  const parent = node.parent
+  if (!parent || !storedParentWorldScaled(parent, scene)) {
+    return { world, parentWorld: null }
+  }
+  const parentWorld = worldTransformOf(scene, parent.id)
+  return parentWorld ? { world, parentWorld } : { world, parentWorld: null }
+}
+
+function storedParentWorldScaled(parent: SceneNode, scene: Scene): boolean {
+  const parentWorld = worldTransformOf(scene, parent.id)
+  return parentWorld !== null && parentWorld.scaleX !== 0 && parentWorld.scaleY !== 0
 }
 
 export function evaluatedWorldTransformOf(
@@ -138,28 +180,36 @@ export const FIELD_LABELS: Record<InspectorFieldKind, string> = {
 
 interface FieldRules {
   readonly apply: (world: WorldTransform, value: number) => WorldTransform
+  readonly build: (nodeId: string, local: Transform) => Command<unknown>
   readonly needsNonZeroScale: boolean
 }
 
 const FIELD_RULES: Record<InspectorFieldKind, FieldRules> = {
   x: {
     apply: (world, value) => ({ ...world, x: value }),
+    build: (nodeId, local) => new MoveNodeCommand({ nodeId, x: local.x, y: local.y }),
     needsNonZeroScale: false,
   },
   y: {
     apply: (world, value) => ({ ...world, y: value }),
+    build: (nodeId, local) => new MoveNodeCommand({ nodeId, x: local.x, y: local.y }),
     needsNonZeroScale: false,
   },
   rotation: {
     apply: (world, value) => ({ ...world, rotation: normalizeRotation(value * DEG_TO_RAD) }),
+    build: (nodeId, local) => new RotateNodeCommand({ nodeId, rotation: local.rotation }),
     needsNonZeroScale: false,
   },
   scaleX: {
     apply: (world, value) => ({ ...world, scaleX: value }),
+    build: (nodeId, local) =>
+      new ScaleNodeCommand({ nodeId, scaleX: local.scaleX, scaleY: local.scaleY }),
     needsNonZeroScale: true,
   },
   scaleY: {
     apply: (world, value) => ({ ...world, scaleY: value }),
+    build: (nodeId, local) =>
+      new ScaleNodeCommand({ nodeId, scaleX: local.scaleX, scaleY: local.scaleY }),
     needsNonZeroScale: true,
   },
 }
@@ -232,6 +282,81 @@ export function applyNodeName(
     return null
   }
   return dispatch(new TransactionCommand(children))
+}
+
+export function applyNodeField(
+  engine: EngineReadOnly,
+  dispatch: DispatchCommand,
+  nodeIds: readonly string[],
+  field: InspectorFieldKind,
+  value: number,
+): CommandResult<unknown> | null {
+  const rules = FIELD_RULES[field]
+  if (rules.needsNonZeroScale) {
+    requireNonZeroScale(value, FIELD_LABELS[field])
+  }
+  const children: Command<unknown>[] = []
+  for (const nodeId of nodeIds) {
+    const reading = readStoredNodeWorld(engine, nodeId)
+    if (!reading) {
+      continue
+    }
+    const local = toLocalTransformOf(reading, (world) => rules.apply(world, value))
+    if (!local) {
+      continue
+    }
+    if (transformsEqual(engine.getNode(nodeId).transform, local)) {
+      continue
+    }
+    children.push(rules.build(nodeId, local))
+  }
+  return dispatchCommands(dispatch, children)
+}
+
+export function applyNodeOpacity(
+  engine: EngineReadOnly,
+  dispatch: DispatchCommand,
+  nodeIds: readonly string[],
+  opacity: number,
+): CommandResult<unknown> | null {
+  const clamped = clampFraction(opacity)
+  const children: Command<unknown>[] = []
+  for (const nodeId of nodeIds) {
+    const node = engine.getNode(nodeId)
+    if (node.opacity !== clamped) {
+      children.push(new SetOpacityCommand({ nodeId, opacity: clamped }))
+    }
+  }
+  return dispatchCommands(dispatch, children)
+}
+
+export function resetNodesTransform(
+  engine: EngineReadOnly,
+  dispatch: DispatchCommand,
+  nodeIds: readonly string[],
+): CommandResult<unknown> | null {
+  const children: Command<unknown>[] = []
+  for (const nodeId of nodeIds) {
+    const reading = readStoredNodeWorld(engine, nodeId)
+    if (!reading) {
+      continue
+    }
+    if (transformsEqual(reading.world, identityTransform())) {
+      continue
+    }
+    const target = reading.parentWorld
+      ? relativeTransform(identityTransform(), reading.parentWorld)
+      : identityTransform()
+    if (!target) {
+      continue
+    }
+    children.push(
+      new MoveNodeCommand({ nodeId, x: target.x, y: target.y }),
+      new RotateNodeCommand({ nodeId, rotation: target.rotation }),
+      new ScaleNodeCommand({ nodeId, scaleX: target.scaleX, scaleY: target.scaleY }),
+    )
+  }
+  return dispatchCommands(dispatch, children)
 }
 
 export function applyNodeFieldAutoKey(

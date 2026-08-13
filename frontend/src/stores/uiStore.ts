@@ -19,6 +19,7 @@ interface UiState {
   visiblePanels: VisiblePanels
   activeSidebarTab: SidebarTab
   gridSnap: boolean
+  animationMode: boolean
   setTheme: (theme: Theme) => void
   toggleTheme: () => void
   setLeftSidebarWidth: (width: number) => void
@@ -27,6 +28,8 @@ interface UiState {
   setActiveSidebarTab: (tab: SidebarTab) => void
   setGridSnap: (enabled: boolean) => void
   toggleGridSnap: () => void
+  setAnimationMode: (enabled: boolean) => void
+  toggleAnimationMode: () => void
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -42,6 +45,7 @@ export const useUiStore = create<UiState>()(
       visiblePanels: { leftSidebar: true, inspector: true, timeline: true },
       activeSidebarTab: 'assets',
       gridSnap: false,
+      animationMode: false,
       setTheme: (theme) => set({ theme }),
       toggleTheme: () => set((state) => ({ theme: state.theme === 'light' ? 'dark' : 'light' })),
       setLeftSidebarWidth: (width) =>
@@ -53,6 +57,8 @@ export const useUiStore = create<UiState>()(
       setActiveSidebarTab: (tab) => set({ activeSidebarTab: tab }),
       setGridSnap: (enabled) => set({ gridSnap: enabled }),
       toggleGridSnap: () => set((state) => ({ gridSnap: !state.gridSnap })),
+      setAnimationMode: (enabled) => set({ animationMode: enabled }),
+      toggleAnimationMode: () => set((state) => ({ animationMode: !state.animationMode })),
     }),
     { name: 'editor-ui-prefs' },
   ),
