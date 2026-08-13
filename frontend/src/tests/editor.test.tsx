@@ -353,6 +353,36 @@ describe('drag & drop placement', () => {
     expect(within(debugTree as HTMLElement).getByText('Boy (2)')).toBeInTheDocument()
   })
 
+  it('drags the debug panel by its header and pins the new position', () => {
+    const { container } = renderEditor()
+    const panel = container.querySelector('.debug-panel') as HTMLElement
+    expect(panel).toBeInTheDocument()
+    vi.spyOn(panel, 'getBoundingClientRect').mockReturnValue({
+      left: 400,
+      top: 90,
+      width: 340,
+      height: 400,
+      right: 740,
+      bottom: 490,
+      x: 400,
+      y: 90,
+      toJSON: () => ({}),
+    })
+    const header = within(panel).getByText('Debug')
+
+    fireEvent.pointerDown(header, { clientX: 400, clientY: 90 })
+    fireEvent.pointerMove(window, { clientX: 420, clientY: 150 })
+    fireEvent.pointerUp(window)
+
+    expect(panel.style.left).toBe('420px')
+    expect(panel.style.top).toBe('150px')
+    expect(panel.style.right).toBe('auto')
+    fireEvent.pointerDown(header, { clientX: 420, clientY: 150 })
+    fireEvent.pointerMove(window, { clientX: 1000, clientY: 150 })
+    expect(panel.style.left).toBe('980px')
+    fireEvent.pointerUp(window)
+  })
+
   it('ignores a drop without asset data, leaving the scene empty', async () => {
     const { canvas } = await mountSceneWithAsset()
 

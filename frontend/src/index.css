@@ -813,8 +813,22 @@ button:disabled {
   z-index: 50;
 }
 
+.debug-panel__header {
+  display: flex;
+  align-items: center;
+  margin: -4px -4px 8px;
+  padding: 4px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.debug-panel__header:active {
+  cursor: grabbing;
+}
+
 .debug-panel__title {
-  margin: 0 0 8px;
+  margin: 0;
   font-size: 14px;
 }
 

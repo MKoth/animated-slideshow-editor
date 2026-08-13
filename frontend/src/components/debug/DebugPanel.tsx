@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from 'react'
+import { useRef, useState, useSyncExternalStore } from 'react'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
 import type { SceneNode } from '../../engine'
 import type { Slide } from '../../engine'
@@ -11,6 +11,8 @@ import {
   formatParameters,
 } from '../../engine/commands'
 
+const MIN_VISIBLE_PX = 48
+
 export function DebugPanel() {
   const { engine, dispatch, undoStack } = useEngine()
   const [, setTick] = useState(0)
@@ -22,6 +24,9 @@ export function DebugPanel() {
   const [projectName, setProjectName] = useState('Demo Project')
   const [slideName, setSlideName] = useState('Slide 1')
   const [nodeName, setNodeName] = useState('Node A')
+  const panelRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef<{ startX: number; startY: number; left: number; top: number } | null>(null)
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
 
   if (!import.meta.env.DEV) {
     return null
@@ -59,9 +64,60 @@ export function DebugPanel() {
     dispatch(new DeleteNodeCommand({ nodeId: node.id }))
   }
 
+  const handlePointerMove = (event: PointerEvent) => {
+    const drag = dragRef.current
+    if (!drag) {
+      return
+    }
+    const panel = panelRef.current
+    if (!panel) {
+      return
+    }
+    event.preventDefault()
+    const width = panel.getBoundingClientRect().width
+    const maxLeft = window.innerWidth - MIN_VISIBLE_PX
+    const maxTop = window.innerHeight - MIN_VISIBLE_PX
+    setPosition({
+      left: Math.min(
+        Math.max(drag.left + event.clientX - drag.startX, -width + MIN_VISIBLE_PX),
+        maxLeft,
+      ),
+      top: Math.min(Math.max(drag.top + event.clientY - drag.startY, 0), maxTop),
+    })
+  }
+
+  const handlePointerUp = () => {
+    dragRef.current = null
+    window.removeEventListener('pointermove', handlePointerMove)
+    window.removeEventListener('pointerup', handlePointerUp)
+  }
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    const panel = panelRef.current
+    if (!panel) {
+      return
+    }
+    const rect = panel.getBoundingClientRect()
+    dragRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      left: rect.left,
+      top: rect.top,
+    }
+    event.preventDefault()
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+  }
+
   return (
-    <div className="debug-panel">
-      <h2 className="debug-panel__title">Debug</h2>
+    <div
+      className="debug-panel"
+      ref={panelRef}
+      style={position ? { left: position.left, top: position.top, right: 'auto' } : undefined}
+    >
+      <div className="debug-panel__header" onPointerDown={handlePointerDown}>
+        <h2 className="debug-panel__title">Debug</h2>
+      </div>
 
       <section className="debug-panel__section">
         <h3>Project Tree</h3>
