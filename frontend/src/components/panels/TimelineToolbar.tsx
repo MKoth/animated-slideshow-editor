@@ -1,4 +1,7 @@
+import { deleteSelectedKeyframes } from '../../app/keyframeSelectionActions'
+import { useEngine } from '../../app/useEngine'
 import { formatTimeCode, usePlaybackController } from '../../stores/playbackStore'
+import { useSelectionStore } from '../../stores/selectionStore'
 import { pixelsPerSecond, useTimelineViewStore } from '../../stores/timelineViewStore'
 import { useUiStore } from '../../stores/uiStore'
 
@@ -16,6 +19,8 @@ export function TimelineToolbar({
   const currentTime = usePlaybackController((state) => state.currentTimes[slideId] ?? 0)
   const animationMode = useUiStore((state) => state.animationMode)
   const cameraAnimationMode = useUiStore((state) => state.cameraAnimationMode)
+  const keyframeCount = useSelectionStore((state) => state.selectedKeyframeIds.length)
+  const { engine, dispatch } = useEngine()
 
   const zoomByStep = (direction: 'in' | 'out') => {
     const state = useTimelineViewStore.getState()
@@ -46,6 +51,14 @@ export function TimelineToolbar({
         <select className="timeline-toolbar__select" aria-label="Speed (timeline)" disabled>
           <option>1×</option>
         </select>
+        <button
+          className="timeline-toolbar__button"
+          aria-label="Delete Keyframe"
+          disabled={keyframeCount === 0}
+          onClick={() => deleteSelectedKeyframes(engine, dispatch)}
+        >
+          Delete Keyframe
+        </button>
       </div>
       <div className="timeline-toolbar__mode">
         <button

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
+import { pruneKeyframeSelection } from '../../app/keyframeSelectionActions'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
 import {
   DEFAULT_TIMELINE_VIEWPORT_WIDTH,
@@ -30,7 +31,12 @@ function useViewportWidth(
 export function TimelinePanel({ height }: { height: number }) {
   const { engine } = useEngine()
   const [, setTick] = useState(0)
-  useEngineEvent(() => setTick((tick) => tick + 1))
+  useEngineEvent((event) => {
+    setTick((tick) => tick + 1)
+    if (event.type === 'KeyframeRemoved' || event.type === 'NodeRemoved') {
+      pruneKeyframeSelection(engine)
+    }
+  })
   const scrollerRef = useRef<HTMLDivElement>(null)
   const tracksRef = useRef<HTMLDivElement>(null)
   const timeAreaRef = useRef<HTMLDivElement>(null)
@@ -57,7 +63,7 @@ export function TimelinePanel({ height }: { height: number }) {
         <p>No slides created.</p>
       </div>
     )
-  } else if (!hasObjects) {
+  } else if (!hasObjects || !scene) {
     body = (
       <div className="panel-empty-state">
         <p>No objects in the scene. Drag assets into the scene to begin animating.</p>
@@ -68,6 +74,7 @@ export function TimelinePanel({ height }: { height: number }) {
       <TimelineBody
         slideId={slide.id}
         duration={slide.duration}
+        scene={scene}
         rows={rows}
         scrollerRef={scrollerRef}
         tracksRef={tracksRef}

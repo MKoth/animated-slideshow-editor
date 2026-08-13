@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { useSelectionStore } from '../stores/selectionStore'
 
 beforeEach(() => {
-  useSelectionStore.setState({ selectedIds: [] })
+  useSelectionStore.setState({ selectedIds: [], selectedKeyframeIds: [] })
 })
 
 describe('selectionStore', () => {
@@ -53,5 +53,69 @@ describe('selectionStore', () => {
     useSelectionStore.getState().prune(new Set(['a', 'c', 'd']))
 
     expect(useSelectionStore.getState().selectedIds).toEqual(['a', 'c', 'd'])
+  })
+
+  it('selects keyframes, clearing any node selection', () => {
+    useSelectionStore.getState().selectMany(['a', 'b'])
+
+    useSelectionStore.getState().selectKeyframes(['k1', 'k2'])
+
+    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual(['k1', 'k2'])
+    expect(useSelectionStore.getState().selectedIds).toEqual([])
+  })
+
+  it('toggles a keyframe in and out of the selection', () => {
+    useSelectionStore.getState().selectKeyframes(['k1'])
+
+    useSelectionStore.getState().toggleKeyframe('k2')
+    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual(['k1', 'k2'])
+
+    useSelectionStore.getState().toggleKeyframe('k1')
+    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual(['k2'])
+  })
+
+  it('clears the keyframe selection without touching node selection', () => {
+    useSelectionStore.getState().selectKeyframes(['k1', 'k2'])
+
+    useSelectionStore.getState().clearKeyframes()
+
+    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([])
+  })
+
+  it('prunes the keyframe selection to keyframes that still exist', () => {
+    useSelectionStore.getState().selectKeyframes(['k1', 'k2', 'k3'])
+
+    useSelectionStore.getState().pruneKeyframes(new Set(['k2']))
+
+    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual(['k2'])
+  })
+
+  it('clears both node and keyframe selection', () => {
+    useSelectionStore.getState().selectMany(['a'])
+    useSelectionStore.getState().selectKeyframes(['k1'])
+
+    useSelectionStore.getState().clear()
+
+    expect(useSelectionStore.getState().selectedIds).toEqual([])
+    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([])
+  })
+
+  it('node selection actions clear the keyframe selection', () => {
+    useSelectionStore.getState().selectKeyframes(['k1'])
+
+    useSelectionStore.getState().select('a')
+    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([])
+
+    useSelectionStore.getState().selectKeyframes(['k1'])
+    useSelectionStore.getState().selectMany(['b'])
+    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([])
+
+    useSelectionStore.getState().selectKeyframes(['k1'])
+    useSelectionStore.getState().toggle('b')
+    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([])
+
+    useSelectionStore.getState().selectKeyframes(['k1'])
+    useSelectionStore.getState().extend('c')
+    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([])
   })
 })

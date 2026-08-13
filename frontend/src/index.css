@@ -1022,7 +1022,24 @@ button:disabled {
   height: 9px;
   background: var(--color-accent);
   transform: translate(-50%, -50%) rotate(45deg);
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: pointer;
+  touch-action: none;
+  border-radius: 1px;
+}
+
+.timeline-keyframe:hover {
+  filter: brightness(1.25);
+}
+
+.timeline-keyframe--selected {
+  background: var(--color-bg);
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.timeline-keyframe--selected:hover {
+  filter: none;
 }
 
 .timeline-context-menu {

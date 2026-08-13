@@ -4,6 +4,7 @@ import {
   duplicateSelection,
   pasteClipboard,
 } from '../app/clipboardActions'
+import { deleteSelectedKeyframes } from '../app/keyframeSelectionActions'
 import type { EngineReadOnly } from '../engine'
 import type { DispatchCommand } from '../engine/commands'
 import { registerShortcut } from './shortcutRegistry'
@@ -16,7 +17,9 @@ export interface ClipboardShortcutDeps {
 export function registerClipboardShortcuts(getDeps: () => ClipboardShortcutDeps): () => void {
   const deleteHandler = () => {
     const { engine, dispatch } = getDeps()
-    deleteSelection(engine, dispatch)
+    if (!deleteSelectedKeyframes(engine, dispatch)) {
+      deleteSelection(engine, dispatch)
+    }
   }
   const disposers = [
     registerShortcut('ctrl+c', () => {

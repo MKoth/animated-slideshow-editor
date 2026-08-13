@@ -1,8 +1,10 @@
-import { memo, useEffect, useLayoutEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import type { RefObject } from 'react'
-import type { AnimationProperty } from '../../engine'
+import type { AnimationProperty, Scene } from '../../engine'
 import { addKeyframeAtPlayhead, addPoseKeyframesAtPlayhead } from '../../app/keyframeActions'
+import { deleteSelectedKeyframes, keyframeRefsOfScene } from '../../app/keyframeSelectionActions'
 import { useEngine } from '../../app/useEngine'
+import { DeleteKeyframeCommand } from '../../engine/commands'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { useSelectionStore } from '../../stores/selectionStore'
@@ -16,98 +18,16 @@ import {
   TRAILING_SCROLL_PADDING_PX,
   useTimelineViewStore,
 } from '../../stores/timelineViewStore'
-import { iconOf } from './nodeIconKinds'
-import { LockIcon, NodeIcon, VisibilityIcon } from './nodeIcons'
-import { PROPERTY_LABELS, ROW_HEIGHT, TRACK_HEADER_WIDTH } from './timelineTracks'
-import type { TimelineRow, TrackRowEntry } from './timelineTracks'
-
-interface TimelineMenuState {
-  readonly x: number
-  readonly y: number
-  readonly nodeId: string
-  readonly property?: AnimationProperty
-}
-
-function ChevronIcon({ expanded }: { expanded: boolean }) {
-  return (
-    <svg
-      width="10"
-      height="10"
-      viewBox="0 0 10 10"
-      aria-hidden="true"
-      className={`timeline-track__chevron-icon${expanded ? ' timeline-track__chevron-icon--expanded' : ''}`}
-    >
-      <path d="M3 1l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
-  )
-}
-
-const TrackRow = memo(
-  function TrackRow({
-    node,
-    depth,
-    name,
-    visible,
-    expanded,
-  }: TrackRowEntry & { expanded: boolean }) {
-    const selected = useSelectionStore((state) => state.selectedIds.includes(node.id))
-    return (
-      <li data-node-id={node.id}>
-        <div className="timeline-track-row">
-          <button
-            className="timeline-track__chevron"
-            aria-label={`Toggle subtracks of ${name}`}
-            aria-expanded={expanded}
-            title={expanded ? 'Collapse subtracks' : 'Expand subtracks'}
-            onClick={() => useTimelineViewStore.getState().toggleExpanded(node.id)}
-          >
-            <ChevronIcon expanded={expanded} />
-          </button>
-          <button
-            role="track"
-            aria-label={name}
-            aria-selected={selected}
-            data-depth={depth}
-            className={`timeline-track${selected ? ' timeline-track--selected' : ''}`}
-            style={{ paddingLeft: 12 + depth * 16 }}
-            onClick={(event) => {
-              if (event.ctrlKey || event.metaKey) {
-                useSelectionStore.getState().toggle(node.id)
-              } else if (event.shiftKey) {
-                useSelectionStore.getState().extend(node.id)
-              } else {
-                useSelectionStore.getState().select(node.id)
-              }
-            }}
-          >
-            <span className="timeline-track__icon" data-icon={iconOf(node)}>
-              <NodeIcon node={node} />
-            </span>
-            <span className="timeline-track__name">{name}</span>
-            <span className="timeline-track__indicators">
-              <span className="timeline-track__indicator" title={visible ? 'Visible' : 'Hidden'}>
-                <VisibilityIcon visible={visible} />
-              </span>
-              <span className="timeline-track__indicator" title="Locked">
-                <LockIcon />
-              </span>
-            </span>
-          </button>
-        </div>
-      </li>
-    )
-  },
-  (prev, next) =>
-    prev.node.id === next.node.id &&
-    prev.depth === next.depth &&
-    prev.name === next.name &&
-    prev.visible === next.visible &&
-    prev.expanded === next.expanded,
-)
+import { useKeyframeDrag } from './keyframeDrag'
+import { ROW_HEIGHT, TRACK_HEADER_WIDTH, PROPERTY_LABELS } from './timelineTracks'
+import type { TimelineRow } from './timelineTracks'
+import { KeyframeMarker, TimelineContextMenu, TrackRow } from './timelineComponents'
+import type { TimelineMenuState } from './timelineComponents'
 
 export function TimelineBody({
   slideId,
   duration,
+  scene,
   rows,
   scrollerRef,
   tracksRef,
@@ -117,6 +37,7 @@ export function TimelineBody({
 }: {
   slideId: string
   duration: number
+  scene: Scene
   rows: readonly TimelineRow[]
   scrollerRef: RefObject<HTMLDivElement | null>
   tracksRef: RefObject<HTMLDivElement | null>
@@ -130,8 +51,28 @@ export function TimelineBody({
   const scrollTime = useTimelineViewStore((state) => state.scrollTime)
   const expandedNodeIds = useTimelineViewStore((state) => state.expandedNodeIds)
   const currentTime = usePlaybackController((state) => state.currentTimes[slideId] ?? 0)
+  const selectedKeyframeIds = useSelectionStore((state) => state.selectedKeyframeIds)
   const [menu, setMenu] = useState<TimelineMenuState | null>(null)
   const pps = pixelsPerSecond(zoomLevel)
+
+  const timeFromClientX = (clientX: number): number => {
+    const rect = timeAreaRef.current?.getBoundingClientRect()
+    const state = useTimelineViewStore.getState()
+    const p = pixelsPerSecond(state.zoomLevel)
+    return state.scrollTime + (clientX - (rect?.left ?? 0)) / p
+  }
+
+  const keyframeRefs = new Map(
+    keyframeRefsOfScene(engine, scene).map((ref) => [ref.keyframeId, ref] as const),
+  )
+  const { dragPreview, selectForDrag, startDrag } = useKeyframeDrag({
+    keyframeRefs,
+    duration,
+    pps,
+    timeFromClientX,
+    dispatch,
+    notify,
+  })
 
   useLayoutEffect(() => {
     const el = scrollerRef.current
@@ -197,13 +138,10 @@ export function TimelineBody({
   }
 
   const dragPlayhead = (clientX: number) => {
-    const rect = timeAreaRef.current?.getBoundingClientRect()
-    const state = useTimelineViewStore.getState()
-    const p = pixelsPerSecond(state.zoomLevel)
-    const raw = state.scrollTime + (clientX - (rect?.left ?? 0)) / p
+    const raw = timeFromClientX(clientX)
     usePlaybackController
       .getState()
-      .setCurrentTime(slideId, snapTimeToGrid(raw, rulerTickStep(p)), duration)
+      .setCurrentTime(slideId, snapTimeToGrid(raw, rulerTickStep(pps)), duration)
   }
 
   const startPlayheadDrag = (event: React.PointerEvent) => {
@@ -216,6 +154,34 @@ export function TimelineBody({
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
+  }
+
+  const handleKeyframePointerDown = (event: React.PointerEvent, keyframe: { id: string }) => {
+    if (event.button !== 0) {
+      return
+    }
+    event.preventDefault()
+    event.stopPropagation()
+    const additive = event.ctrlKey || event.metaKey
+    if (selectForDrag(keyframe.id, additive)) {
+      startDrag(event.clientX)
+    }
+  }
+
+  const handleKeyframeContextMenu = (
+    event: React.MouseEvent,
+    row: Extract<TimelineRow, { kind: 'subtrack' }>,
+    keyframe: { id: string },
+  ) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setMenu({
+      x: event.clientX,
+      y: event.clientY,
+      nodeId: row.node.id,
+      property: row.property,
+      keyframeId: keyframe.id,
+    })
   }
 
   const handleTrackListContextMenu = (event: React.MouseEvent) => {
@@ -257,6 +223,29 @@ export function TimelineBody({
     if (result && !result.ok) {
       notify(result.error.message)
     }
+  }
+
+  const deleteKeyframeFromMenu = () => {
+    const target = menu
+    setMenu(null)
+    if (!target?.property || !target.keyframeId) {
+      return
+    }
+    if (useSelectionStore.getState().selectedKeyframeIds.includes(target.keyframeId)) {
+      deleteSelectedKeyframes(engine, dispatch)
+      return
+    }
+    const result = dispatch(
+      new DeleteKeyframeCommand({
+        nodeId: target.nodeId,
+        property: target.property,
+        keyframeId: target.keyframeId,
+      }),
+    )
+    if (result && !result.ok) {
+      notify(result.error.message)
+    }
+    useSelectionStore.getState().clearKeyframes()
   }
 
   const step = rulerTickStep(pps)
@@ -358,16 +347,24 @@ export function TimelineBody({
                     data-property={row.property}
                     style={{ top: index * ROW_HEIGHT }}
                   >
-                    {keyframes.map((keyframe) => (
-                      <div
-                        key={keyframe.id}
-                        className="timeline-keyframe"
-                        data-testid="keyframe-marker"
-                        data-property={row.property}
-                        data-time={String(keyframe.time)}
-                        style={{ left: keyframe.time * pps }}
-                      />
-                    ))}
+                    {keyframes.map((keyframe) => {
+                      const previewTime = dragPreview?.get(keyframe.id)
+                      const shownTime = previewTime ?? keyframe.time
+                      const selected = selectedKeyframeIds.includes(keyframe.id)
+                      return (
+                        <KeyframeMarker
+                          key={keyframe.id}
+                          keyframeId={keyframe.id}
+                          shownTime={shownTime}
+                          property={row.property}
+                          selected={selected}
+                          pps={pps}
+                          step={step}
+                          onPointerDown={(event) => handleKeyframePointerDown(event, keyframe)}
+                          onContextMenu={(event) => handleKeyframeContextMenu(event, row, keyframe)}
+                        />
+                      )
+                    })}
                   </div>
                 )
               })}
@@ -381,22 +378,12 @@ export function TimelineBody({
         </div>
       </div>
       {menu && (
-        <>
-          <div
-            className="timeline-context-menu__backdrop"
-            data-testid="timeline-context-menu-backdrop"
-            onClick={() => setMenu(null)}
-          />
-          <div
-            className="timeline-context-menu"
-            data-testid="timeline-context-menu"
-            style={{ left: menu.x, top: menu.y }}
-          >
-            <button className="timeline-context-menu__item" onClick={addKeyframeFromMenu}>
-              Add Keyframe
-            </button>
-          </div>
-        </>
+        <TimelineContextMenu
+          menu={menu}
+          onAdd={addKeyframeFromMenu}
+          onDelete={deleteKeyframeFromMenu}
+          onClose={() => setMenu(null)}
+        />
       )}
     </div>
   )
