@@ -286,6 +286,8 @@ button:disabled {
   flex-direction: column;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+  width: 100%;
   padding: 8px;
   text-align: center;
 }
@@ -299,6 +301,7 @@ button:disabled {
 .asset-cell__name {
   font-size: 12px;
   max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

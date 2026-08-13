@@ -202,15 +202,15 @@ describe('editor shell', () => {
 
     const inspectorSplitter = screen.getByRole('separator', { name: 'Resize inspector' })
     fireEvent.mouseDown(inspectorSplitter, { clientX: 700 })
-    fireEvent.mouseMove(window, { clientX: 650 })
+    fireEvent.mouseMove(window, { clientX: 660 })
     fireEvent.mouseUp(window)
-    expect(useUiStore.getState().inspectorWidth).toBe(220)
+    expect(useUiStore.getState().inspectorWidth).toBe(300)
 
     const timelineSplitter = screen.getByRole('separator', { name: 'Resize timeline' })
     fireEvent.mouseDown(timelineSplitter, { clientY: 400 })
-    fireEvent.mouseMove(window, { clientY: 550 })
+    fireEvent.mouseMove(window, { clientY: 300 })
     fireEvent.mouseUp(window)
-    expect(useTimelineViewStore.getState().height).toBe(350)
+    expect(useTimelineViewStore.getState().height).toBe(300)
   })
 
   it('renders the status bar with backend status, zoom and fps placeholders', () => {

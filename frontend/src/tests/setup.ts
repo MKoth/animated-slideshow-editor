@@ -81,3 +81,66 @@ if (typeof globalThis.DataTransfer === 'undefined') {
 
   Object.assign(globalThis, { DataTransfer: FakeDataTransfer, DragEvent: FakeDragEvent })
 }
+
+interface FakeContentRect {
+  readonly x: number
+  readonly y: number
+  readonly top: number
+  readonly left: number
+  readonly width: number
+  readonly height: number
+  readonly bottom: number
+  readonly right: number
+}
+
+class FakeResizeObserver {
+  readonly callback: ResizeObserverCallback
+  readonly targets = new Set<Element>()
+  static readonly instances: FakeResizeObserver[] = []
+
+  constructor(callback: ResizeObserverCallback) {
+    this.callback = callback
+    FakeResizeObserver.instances.push(this)
+  }
+
+  observe(target: Element): void {
+    this.targets.add(target)
+  }
+
+  unobserve(target: Element): void {
+    this.targets.delete(target)
+  }
+
+  disconnect(): void {
+    this.targets.clear()
+  }
+
+  trigger(): void {
+    const entries = [...this.targets].map((target) => {
+      const width = (target as HTMLElement).clientWidth
+      const height = (target as HTMLElement).clientHeight
+      const contentRect: FakeContentRect = {
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        width,
+        height,
+        bottom: height,
+        right: width,
+      }
+      return { target, contentRect }
+    })
+    this.callback(entries as unknown as ResizeObserverEntry[], this)
+  }
+}
+
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  Object.assign(globalThis, { ResizeObserver: FakeResizeObserver })
+}
+
+export function resizeObserverFor(
+  target: Element,
+): InstanceType<typeof FakeResizeObserver> | undefined {
+  return FakeResizeObserver.instances.find((observer) => observer.targets.has(target))
+}

@@ -59,7 +59,7 @@ export function EditorLayout() {
         <Splitter
           orientation="vertical"
           ariaLabel="Resize inspector"
-          onDrag={(delta) => setInspectorWidth(useUiStore.getState().inspectorWidth + delta)}
+          onDrag={(delta) => setInspectorWidth(useUiStore.getState().inspectorWidth - delta)}
         />
         <InspectorPanel width={inspectorWidth} />
       </div>
@@ -67,7 +67,7 @@ export function EditorLayout() {
         <Splitter
           orientation="horizontal"
           ariaLabel="Resize timeline"
-          onDrag={(delta) => setTimelineHeight(useTimelineViewStore.getState().height + delta)}
+          onDrag={(delta) => setTimelineHeight(useTimelineViewStore.getState().height - delta)}
         />
         <TimelinePanel height={timelineHeight} />
       </div>

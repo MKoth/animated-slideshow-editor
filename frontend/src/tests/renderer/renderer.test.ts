@@ -3,6 +3,7 @@ import type { Engine } from '../../engine/internal'
 import { createEngine } from '../../engine/internal'
 import { Renderer } from '../../pixi/renderer/renderer'
 import { pixiRegistry } from './pixiFake'
+import { resizeObserverFor } from '../setup'
 import { findByLabel, mountRenderer, worldOf } from './testUtils'
 
 vi.mock('pixi.js', async () => {
@@ -41,6 +42,20 @@ describe('Renderer', () => {
     expect(app.initOptions.resizeTo).toBe(host)
     expect(app.initOptions.autoDensity).toBe(true)
     expect(host.contains(app.canvas)).toBe(true)
+  })
+
+  it('resizes the renderer to match the host element when it changes size', async () => {
+    const { host, app } = await mountRenderer(createEngine())
+    const observer = resizeObserverFor(host)
+    expect(observer).toBeDefined()
+
+    const resize = vi.spyOn(app.renderer, 'resize')
+    Object.defineProperty(host, 'clientWidth', { configurable: true, value: 420 })
+    Object.defineProperty(host, 'clientHeight', { configurable: true, value: 310 })
+
+    observer?.trigger()
+
+    expect(resize).toHaveBeenCalledWith(420, 310)
   })
 
   it('displays an empty scene with the grid and axis lines at the origin when no project exists', async () => {

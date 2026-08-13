@@ -59,6 +59,7 @@ export class Renderer {
   #previewPositions = new Map<string, { x: number; y: number }>()
   #unsubscribe: Unsubscribe | null = null
   #unsubscribeTime: Unsubscribe | null = null
+  #resizeObserver: ResizeObserver | null = null
   #started = false
   #disposed = false
   readonly #resolveAssetUrl: ResolveAssetUrl
@@ -100,6 +101,12 @@ export class Renderer {
       }
       this.#app = app
       this.#host.appendChild(app.canvas)
+
+      const resizeObserver = new ResizeObserver(() => {
+        app.renderer.resize(this.#host.clientWidth, this.#host.clientHeight)
+      })
+      resizeObserver.observe(this.#host)
+      this.#resizeObserver = resizeObserver
 
       const world = new this.#pixi.Container()
       world.label = 'world'
@@ -203,6 +210,8 @@ export class Renderer {
     this.#unsubscribe = null
     this.#unsubscribeTime?.()
     this.#unsubscribeTime = null
+    this.#resizeObserver?.disconnect()
+    this.#resizeObserver = null
     this.#sceneRenderer = null
     this.#controls?.detach()
     this.#controls = null
