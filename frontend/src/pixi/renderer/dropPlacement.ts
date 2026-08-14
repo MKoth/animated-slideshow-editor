@@ -15,6 +15,7 @@ export interface DropPlacementContext {
   readonly getCameraTransform: () => ViewportTransform | null
   readonly dispatch: DispatchCommand
   readonly getGridSnap?: () => boolean
+  readonly onAssetPlaced?: (definitionId: string) => void
 }
 
 export class DropPlacement {
@@ -24,6 +25,7 @@ export class DropPlacement {
   readonly #getCameraTransform: () => ViewportTransform | null
   readonly #dispatch: DispatchCommand
   readonly #getGridSnap?: () => boolean
+  readonly #onAssetPlaced?: (definitionId: string) => void
   #attached = false
 
   constructor(context: DropPlacementContext) {
@@ -33,6 +35,7 @@ export class DropPlacement {
     this.#getCameraTransform = context.getCameraTransform
     this.#dispatch = context.dispatch
     this.#getGridSnap = context.getGridSnap
+    this.#onAssetPlaced = context.onAssetPlaced
   }
 
   attach(): void {
@@ -96,6 +99,7 @@ export class DropPlacement {
         position: target,
       }),
     )
+    this.#onAssetPlaced?.(definitionId)
   }
 
   #definition(definitionId: string): { name: string } | null {

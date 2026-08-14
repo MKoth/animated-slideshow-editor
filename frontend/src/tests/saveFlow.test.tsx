@@ -101,7 +101,7 @@ describe('save flow', () => {
 
     expect(keydownResult).toBe(false)
     expect(event.defaultPrevented).toBe(true)
-    expect(posts).toHaveLength(2)
+    await waitFor(() => expect(posts).toHaveLength(2))
     for (const body of posts) {
       expect(JSON.parse(body)).toMatchObject({ version: 1, project: { name: 'Demo' } })
     }
@@ -118,7 +118,7 @@ describe('save flow', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
-    expect(posts).toHaveLength(2)
+    await waitFor(() => expect(posts).toHaveLength(2))
   })
 
   it('autosaves after a successful command, clearing the title asterisk', async () => {

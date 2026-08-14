@@ -15,6 +15,7 @@ export interface PersistenceDeps {
   readonly engine: EnginePublic
   readonly upsert: (blob: string) => Promise<unknown>
   readonly notify?: (message: string) => void
+  readonly ensureEmbedded?: () => Promise<void>
 }
 
 export interface PersistenceService {
@@ -38,7 +39,7 @@ export function createPersistenceService(deps: PersistenceDeps): PersistenceServ
     if (!project) {
       return
     }
-    writeShadow(serialize(project))
+    void writeShadow(serialize(project)).catch(() => undefined)
   }
 
   const performSave = async (): Promise<void> => {
@@ -52,11 +53,12 @@ export function createPersistenceService(deps: PersistenceDeps): PersistenceServ
     }
     saveInFlight = true
     const generation = projectGeneration
-    const blob = serialize(project)
     try {
+      await deps.ensureEmbedded?.()
+      const blob = serialize(project)
       await deps.upsert(blob)
       useBackendStore.getState().markAvailable()
-      recordLastSaved(blob)
+      void recordLastSaved(blob).catch(() => undefined)
       if (generation === projectGeneration) {
         usePersistenceStore.getState().markSaved()
       }

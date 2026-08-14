@@ -9,7 +9,8 @@ import { AnimationEvaluator } from './animationEvaluator'
 import type { EvaluatedNodeScratch, EvaluatedNodeState } from './animationEvaluator'
 import type { KeyframeMove, KeyframeMoveResult } from './animationManager'
 import type { AnimationProperty, Keyframe } from './animation'
-import type { AssetDefinition } from './assetDefinition'
+import { AssetDefinition } from './assetDefinition'
+import type { EmbeddedAsset } from './embeddedAsset'
 import type { CreateProjectInput, Project } from './project'
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
@@ -32,6 +33,7 @@ export class Engine {
   readonly #slides: SlideManager
   readonly #animations: AnimationManager
   readonly #evaluator: AnimationEvaluator
+  readonly #embeddedAssets = new Map<string, EmbeddedAsset>()
   #activeSlideId: string | null = null
 
   constructor() {
@@ -81,6 +83,7 @@ export class Engine {
   }
 
   createProject(input: CreateProjectInput): Project {
+    this.#embeddedAssets.clear()
     return this.#projects.create(input)
   }
 
@@ -241,7 +244,28 @@ export class Engine {
   }
 
   getAssetDefinition(definitionId: string): AssetDefinition {
+    const embedded = this.#embeddedAssets.get(definitionId)
+    if (embedded) {
+      return new AssetDefinition(embedded.id, embedded.name)
+    }
     return this.#assets.getDefinition(definitionId)
+  }
+
+  getEmbeddedAsset(definitionId: string): EmbeddedAsset | undefined {
+    return this.#embeddedAssets.get(definitionId)
+  }
+
+  get embeddedAssets(): readonly EmbeddedAsset[] {
+    return [...this.#embeddedAssets.values()]
+  }
+
+  embedAsset(asset: EmbeddedAsset): void {
+    const project = this.#projects.current
+    if (!project) {
+      throw new Error('No project exists in memory')
+    }
+    project.embedAsset(asset)
+    this.#embeddedAssets.set(asset.id, asset)
   }
 
   get assetDefinitions(): readonly AssetDefinition[] {
@@ -255,7 +279,8 @@ export class Engine {
     name: string,
     options?: Omit<CreateNodeOptions, 'components'>,
   ): SceneNode {
-    return this.#assets.createInstance(sceneId, parentId, definitionId, name, options)
+    const definition = this.getAssetDefinition(definitionId)
+    return this.#assets.createInstanceFromDefinition(sceneId, parentId, definition, name, options)
   }
 
   toJSON(): LessonJSON {
@@ -289,6 +314,10 @@ export class Engine {
   #replaceProject(project: Project): void {
     this.#nodes.clear()
     this.#scenes.clear()
+    this.#embeddedAssets.clear()
+    for (const asset of project.embeddedAssets) {
+      this.#embeddedAssets.set(asset.id, asset)
+    }
     for (const slide of project.slides) {
       this.#scenes.install(slide.scene)
     }
@@ -310,6 +339,9 @@ export function toReadOnly(engine: Engine): EnginePublic {
     get assetDefinitions() {
       return engine.assetDefinitions
     },
+    get embeddedAssets() {
+      return engine.embeddedAssets
+    },
     get activeSlideId() {
       return engine.activeSlideId
     },
@@ -321,6 +353,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getNode: (nodeId) => engine.getNode(nodeId),
     getScene: (sceneId) => engine.getScene(sceneId),
     getAssetDefinition: (definitionId) => engine.getAssetDefinition(definitionId),
+    getEmbeddedAsset: (definitionId) => engine.getEmbeddedAsset(definitionId),
+    embedAsset: (asset) => engine.embedAsset(asset),
     getKeyframes: (nodeId, property) => engine.getKeyframes(nodeId, property),
     evaluateNode: (nodeId, time, target) => engine.evaluateNode(nodeId, time, target),
     toJSON: () => engine.toJSON(),

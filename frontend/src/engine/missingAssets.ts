@@ -12,6 +12,19 @@ export interface MissingAssetsReport {
   readonly names: readonly string[]
 }
 
+export function collectReferencedDefinitionIds(project: Project): Set<string> {
+  const ids = new Set<string>()
+  for (const slide of project.slides) {
+    for (const node of walkPreOrder(slide.scene.root)) {
+      const instance = node.components.assetInstance
+      if (instance) {
+        ids.add(instance.assetDefinitionId)
+      }
+    }
+  }
+  return ids
+}
+
 export function reconcileMissingAssets(
   project: Project,
   availableDefinitionIds: ReadonlySet<string>,

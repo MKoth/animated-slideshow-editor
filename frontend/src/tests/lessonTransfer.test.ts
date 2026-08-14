@@ -161,6 +161,32 @@ describe('importLessonFile', () => {
     expect(messages.some((message) => message.includes('unsupported version'))).toBe(true)
   })
 
+  it('imports a self-contained lesson with its embedded assets, never registering them in the library', async () => {
+    const { project } = makeProjectWithAssets('Self-Contained', [
+      { name: 'Boy', definitionId: 'def-boy' },
+    ])
+    project.embedAsset({
+      id: 'def-boy',
+      name: 'Boy',
+      data: 'QUJD',
+      mimeType: 'image/png',
+      metadata: { category: 'Character' },
+    })
+    const file = new File([serialize(project)], 'self-contained.lesson', {
+      type: 'application/json',
+    })
+    useAssetLibraryStore.setState({ definitions: [], loaded: true, unavailable: false })
+    const target = setupEditor()
+
+    await importLessonFile(target, file)
+
+    expect(target.embeddedAssets.map((asset) => asset.id)).toEqual(['def-boy'])
+    expect(target.getEmbeddedAsset('def-boy')?.data).toBe('QUJD')
+    expect(target.project?.embeddedAssets.map((asset) => asset.id)).toEqual(['def-boy'])
+    expect(useAssetLibraryStore.getState().definitions).toEqual([])
+    expect(useMissingAssetsStore.getState().report).toBeNull()
+  })
+
   it('runs the missing-assets reconciliation on import', async () => {
     const { project } = makeProjectWithAssets('With Assets', [
       { name: 'Boy', definitionId: 'def-boy' },
@@ -203,9 +229,9 @@ describe('importLessonFile', () => {
 })
 
 describe('downloadLessonCopy', () => {
-  function anchorFromDownload(engine: Engine): HTMLAnchorElement {
+  async function anchorFromDownload(engine: Engine): Promise<HTMLAnchorElement> {
     const appendSpy = vi.spyOn(document.body, 'appendChild')
-    const result = downloadLessonCopy(engine)
+    const result = await downloadLessonCopy(engine)
     expect(result).toBe(true)
     expect(appendSpy).toHaveBeenCalledTimes(1)
     return appendSpy.mock.calls[0][0] as HTMLAnchorElement
@@ -216,7 +242,7 @@ describe('downloadLessonCopy', () => {
     const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
     const engine = setupEditor()
 
-    const anchor = anchorFromDownload(engine)
+    const anchor = await anchorFromDownload(engine)
 
     expect(anchor.download).toBe('Current.lesson')
     expect(anchor.href).toBe('blob:mock-lesson')
@@ -227,23 +253,55 @@ describe('downloadLessonCopy', () => {
     clickSpy.mockRestore()
   })
 
-  it('works in degraded mode with the backend unreachable', () => {
+  it('embeds the referenced bytes before downloading', async () => {
+    stubObjectURL()
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    const { project } = makeProjectWithAssets('With Assets', [
+      { name: 'Boy', definitionId: 'def-boy' },
+    ])
+    project.embedAsset({
+      id: 'def-boy',
+      name: 'Boy',
+      data: 'QUJD',
+      mimeType: 'image/png',
+      metadata: { category: 'Character' },
+    })
+    const engine = setupEditor()
+    engine.openProject(project)
+
+    await downloadLessonCopy(engine)
+
+    const json = JSON.parse(serialize(engine.project as never)) as {
+      library: { assets: Array<{ id: string; data: string; mimeType: string }> }
+    }
+    expect(json.library.assets).toEqual([
+      {
+        id: 'def-boy',
+        name: 'Boy',
+        data: 'QUJD',
+        mimeType: 'image/png',
+        metadata: { category: 'Character' },
+      },
+    ])
+  })
+
+  it('works in degraded mode with the backend unreachable', async () => {
     vi.mocked(fetch).mockRejectedValue(new TypeError('connection refused'))
     stubObjectURL()
     vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
     const engine = setupEditor()
 
-    const result = downloadLessonCopy(engine)
+    const result = await downloadLessonCopy(engine)
 
     expect(result).toBe(true)
     expect(vi.mocked(fetch)).not.toHaveBeenCalled()
   })
 
-  it('fails gracefully when no project is open', () => {
+  it('fails gracefully when no project is open', async () => {
     stubObjectURL()
     const engine = createEngine()
 
-    const result = downloadLessonCopy(engine)
+    const result = await downloadLessonCopy(engine)
 
     expect(result).toBe(false)
   })

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { captureAssetSnapshot, embeddedDataUrl } from '../../app/assetSnapshot'
 import { useEngine } from '../../app/useEngine'
 import { realPixi } from '../../pixi/renderer/pixi'
 import { Renderer } from '../../pixi/renderer/renderer'
@@ -17,10 +18,18 @@ export function CanvasPanel() {
       return
     }
     const resolveAssetUrl = (definitionId: string): string | null => {
+      const embedded = engine.getEmbeddedAsset(definitionId)
+      if (embedded) {
+        return embeddedDataUrl(embedded)
+      }
       const definition = useAssetLibraryStore
         .getState()
         .definitions.find((entry) => entry.id === definitionId)
-      return definition?.original_url ?? null
+      const url = definition?.original_url ?? null
+      if (url) {
+        void captureAssetSnapshot(engine, definitionId)
+      }
+      return url
     }
     const isAssetMissing = (definitionId: string): boolean => {
       const report = useMissingAssetsStore.getState().report
@@ -38,6 +47,10 @@ export function CanvasPanel() {
       resolveAssetUrl,
       currentTime,
       isAssetMissing,
+      undefined,
+      (definitionId) => {
+        void captureAssetSnapshot(engine, definitionId)
+      },
     )
     let knownDefinitions = useAssetLibraryStore.getState().definitions
     const unsubscribeLibrary = useAssetLibraryStore.subscribe((state) => {

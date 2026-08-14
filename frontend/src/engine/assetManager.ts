@@ -46,7 +46,22 @@ export class AssetManager {
     name: string,
     options: Omit<CreateNodeOptions, 'components'> = {},
   ): SceneNode {
-    const definition = this.getDefinition(definitionId)
+    return this.createInstanceFromDefinition(
+      sceneId,
+      parentId,
+      this.getDefinition(definitionId),
+      name,
+      options,
+    )
+  }
+
+  createInstanceFromDefinition(
+    sceneId: string,
+    parentId: string,
+    definition: AssetDefinition,
+    name: string,
+    options: Omit<CreateNodeOptions, 'components'> = {},
+  ): SceneNode {
     const components = {
       assetInstance: Object.freeze({
         kind: 'assetInstance' as const,

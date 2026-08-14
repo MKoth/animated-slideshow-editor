@@ -70,8 +70,23 @@ export type LessonProjectJSON = {
   readonly settings?: Readonly<Record<string, unknown>>
 }
 
+export type EmbeddedAssetJSON = {
+  readonly id: string
+  readonly name: string
+  readonly data: string
+  readonly mimeType: string
+  readonly metadata?: Readonly<Record<string, unknown>>
+}
+
+export type LessonLibraryJSON = {
+  readonly assets?: readonly EmbeddedAssetJSON[]
+  readonly materials?: readonly unknown[]
+  readonly shaders?: readonly unknown[]
+}
+
 export type LessonJSON = {
   readonly version: 1
   readonly project: LessonProjectJSON
   readonly slides: readonly SlideJSON[]
+  readonly library?: LessonLibraryJSON
 }

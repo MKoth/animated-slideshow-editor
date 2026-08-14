@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../api/apiClient'
 import { createPersistenceService } from '../app/persistence'
 import type { PersistenceDeps, PersistenceService } from '../app/persistence'
-import { LAST_SAVED_KEY, readShadow, recordLastSaved } from '../app/recoveryShadow'
+import {
+  clearRecoveryStorage,
+  readLastSaved,
+  readShadow,
+  recordLastSaved,
+} from '../app/recoveryShadow'
 import { serialize } from '../engine/lessonSerializer'
 import { createEngine } from '../engine/internal'
 import type { Engine } from '../engine/internal'
@@ -41,6 +46,16 @@ afterEach(() => {
 
 function flushAsync(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+async function waitForLastSaved(expected: string): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if ((await readLastSaved()) === expected) {
+      return
+    }
+    await flushAsync()
+  }
+  expect(await readLastSaved()).toBe(expected)
 }
 
 describe('createPersistenceService', () => {
@@ -115,7 +130,9 @@ describe('createPersistenceService', () => {
   })
 
   it('marks the project dirty on a successful command and autosaves, clearing it', async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+    })
     try {
       const { service, upsert } = createService()
 
@@ -132,7 +149,9 @@ describe('createPersistenceService', () => {
   })
 
   it('coalesces rapid commands into a single autosave', async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+    })
     try {
       const { service, upsert } = createService()
 
@@ -149,7 +168,9 @@ describe('createPersistenceService', () => {
   })
 
   it('autosaves a dirty project on the 30-second timer and skips a clean one', async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+    })
     try {
       const { service, upsert } = createService()
 
@@ -172,7 +193,9 @@ describe('createPersistenceService', () => {
   })
 
   it('does not autosave while the backend is unavailable', async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+    })
     try {
       const { service, upsert } = createService()
       useBackendStore.getState().markUnavailable()
@@ -189,7 +212,9 @@ describe('createPersistenceService', () => {
   })
 
   it('does not autosave while the backend availability is unknown', async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+    })
     try {
       const { service, upsert } = createService()
       useBackendStore.setState({ status: 'checking' })
@@ -210,7 +235,9 @@ describe('createPersistenceService', () => {
   })
 
   it('a save completing after the project is opened does not clear the new dirty flag', async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+    })
     try {
       const resolveFirst = vi.fn()
       const upsert = vi.fn().mockImplementation(
@@ -235,7 +262,9 @@ describe('createPersistenceService', () => {
   })
 
   it('autosaves again once the backend recovers', async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+    })
     try {
       const { service, upsert } = createService()
       useBackendStore.getState().markUnavailable()
@@ -270,7 +299,9 @@ describe('createPersistenceService', () => {
   })
 
   it('cancels a pending autosave when a new project is opened', async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+    })
     try {
       const { service, engine, upsert } = createService()
 
@@ -285,7 +316,9 @@ describe('createPersistenceService', () => {
   })
 
   it('edits during an in-flight save trigger exactly one follow-up save', async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+    })
     try {
       const resolveFirst = vi.fn()
       const upsert = vi.fn().mockImplementation(
@@ -312,7 +345,9 @@ describe('createPersistenceService', () => {
   })
 
   it('stops the 30-second timer once disposed', async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+    })
     try {
       const { service, upsert } = createService()
 
@@ -332,108 +367,114 @@ describe('createPersistenceService', () => {
 })
 
 describe('recovery shadow writes', () => {
-  beforeEach(() => {
-    localStorage.clear()
+  beforeEach(async () => {
+    await clearRecoveryStorage()
     useBackendStore.setState({ status: 'available' })
     usePersistenceStore.setState({ dirty: false })
   })
 
-  afterEach(() => {
-    localStorage.clear()
+  afterEach(async () => {
+    await clearRecoveryStorage()
     useBackendStore.setState({ status: 'checking' })
     usePersistenceStore.setState({ dirty: false })
   })
 
-  it('writes the shadow after a successful command', () => {
+  it('writes the shadow after a successful command', async () => {
     const { service, engine } = createService()
 
     service.onCommandSucceeded()
+    await flushAsync()
 
-    expect(readShadow()).toBe(serialize(engine.project!))
+    expect(await readShadow()).toBe(serialize(engine.project!))
   })
 
   it('writes the shadow on the 30-second timer', async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+    })
     const { service, engine } = createService()
     try {
       service.onCommandSucceeded()
-      expect(readShadow()).toBe(serialize(engine.project!))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(await readShadow()).toBe(serialize(engine.project!))
 
       const opened = makeProject('Timer', ['T1'])
       engine.openProject(opened)
-      expect(readShadow()).not.toBe(serialize(opened))
-
       await vi.advanceTimersByTimeAsync(30000)
 
-      expect(readShadow()).toBe(serialize(opened))
+      expect(await readShadow()).toBe(serialize(opened))
     } finally {
       vi.useRealTimers()
     }
   })
 
   it('rewrites the shadow on the 30-second timer in degraded mode', async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+    })
     const { service, engine } = createService()
     try {
       useBackendStore.getState().markUnavailable()
       service.onCommandSucceeded()
+      await vi.advanceTimersByTimeAsync(0)
 
       const opened = makeProject('Degraded', ['D1'])
       engine.openProject(opened)
       await vi.advanceTimersByTimeAsync(30000)
 
-      expect(readShadow()).toBe(serialize(opened))
+      expect(await readShadow()).toBe(serialize(opened))
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('writes the shadow on beforeunload without preventing the tab close', () => {
+  it('writes the shadow on beforeunload without preventing the tab close', async () => {
     const { engine } = createService()
 
     const event = new Event('beforeunload', { cancelable: true })
     window.dispatchEvent(event)
+    await flushAsync()
 
-    expect(readShadow()).toBe(serialize(engine.project!))
+    expect(await readShadow()).toBe(serialize(engine.project!))
     expect(event.defaultPrevented).toBe(false)
   })
 
-  it('does not write a shadow on beforeunload once disposed', () => {
+  it('does not write a shadow on beforeunload once disposed', async () => {
     const { service } = createService()
     service.dispose()
 
     window.dispatchEvent(new Event('beforeunload'))
+    await flushAsync()
 
-    expect(readShadow()).toBeNull()
+    expect(await readShadow()).toBeNull()
   })
 
-  it('does not write a shadow before any project exists', () => {
+  it('does not write a shadow before any project exists', async () => {
     const { service } = createService({ engine: createEngine() })
 
     service.onCommandSucceeded()
     window.dispatchEvent(new Event('beforeunload'))
+    await flushAsync()
 
-    expect(readShadow()).toBeNull()
+    expect(await readShadow()).toBeNull()
   })
 
   it('records the blob of a successful save as the last saved state', async () => {
     const { service, engine } = createService()
 
     service.save()
-    await flushAsync()
-
-    expect(localStorage.getItem(LAST_SAVED_KEY)).toBe(serialize(engine.project!))
+    await waitForLastSaved(serialize(engine.project!))
   })
 
   it('does not record a save that failed', async () => {
     const { service } = createService({
       upsert: vi.fn().mockRejectedValue(new TypeError('connection refused')),
     })
-    recordLastSaved('{"version":1}')
+    await recordLastSaved('{"version":1}')
 
     service.save()
     await flushAsync()
 
-    expect(localStorage.getItem(LAST_SAVED_KEY)).toBe('{"version":1}')
+    expect(await readLastSaved()).toBe('{"version":1}')
   })
 })

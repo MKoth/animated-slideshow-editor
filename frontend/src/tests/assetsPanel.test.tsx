@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AssetDefinition } from '../api'
 import { AssetsPanel } from '../components/panels/AssetsPanel'
 import { ASSET_DEFINITION_MIME } from '../pixi/renderer/dropPlacement'
-import { registerAssetUsageCounter, useAssetLibraryStore } from '../stores/assetLibraryStore'
+import { useAssetLibraryStore } from '../stores/assetLibraryStore'
 import { useNotificationStore } from '../stores/notificationStore'
 
 const BOY: AssetDefinition = {
@@ -75,7 +75,6 @@ beforeEach(() => {
     selectedId: null,
   })
   useNotificationStore.setState({ notifications: [] })
-  registerAssetUsageCounter(() => 0)
 })
 
 describe('AssetsPanel', () => {
@@ -324,8 +323,7 @@ describe('AssetsPanel', () => {
     expect(useNotificationStore.getState().notifications).toEqual([])
   })
 
-  it('refuses to delete a referenced asset with the usage named', async () => {
-    registerAssetUsageCounter(() => 3)
+  it('deletes a referenced asset without refusal', async () => {
     let deleteCalls = 0
     vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
@@ -349,11 +347,8 @@ describe('AssetsPanel', () => {
       }),
     )
 
-    expect(useNotificationStore.getState().notifications.map((n) => n.message)).toEqual([
-      'Used by 3 objects',
-    ])
-    expect(screen.getByRole('region', { name: 'Asset preview' })).toBeInTheDocument()
-    expect(screen.getAllByText('Boy')).toHaveLength(2)
-    expect(deleteCalls).toBe(0)
+    expect(useNotificationStore.getState().notifications).toEqual([])
+    expect(deleteCalls).toBe(1)
+    expect(screen.queryByRole('region', { name: 'Asset preview' })).not.toBeInTheDocument()
   })
 })

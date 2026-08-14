@@ -1,5 +1,6 @@
 import { Engine, toReadOnly } from './internal'
 import type { AssetDefinition } from './assetDefinition'
+import type { EmbeddedAsset } from './embeddedAsset'
 import type { Project } from './project'
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
@@ -12,6 +13,7 @@ import type { LessonJSON } from './json'
 export interface EnginePublic {
   readonly project: Project | null
   readonly assetDefinitions: readonly AssetDefinition[]
+  readonly embeddedAssets: readonly EmbeddedAsset[]
   readonly activeSlideId: string | null
   subscribe(listener: (event: EngineEvent) => void): Unsubscribe
   openProject(project: Project): void
@@ -21,6 +23,8 @@ export interface EnginePublic {
   getNode(nodeId: string): SceneNode
   getScene(sceneId: string): Scene
   getAssetDefinition(definitionId: string): AssetDefinition
+  getEmbeddedAsset(definitionId: string): EmbeddedAsset | undefined
+  embedAsset(asset: EmbeddedAsset): void
   getKeyframes(nodeId: string, property: AnimationProperty): readonly Keyframe[]
   evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState
   toJSON(): LessonJSON

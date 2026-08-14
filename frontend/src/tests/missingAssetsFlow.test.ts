@@ -147,6 +147,48 @@ describe('openProjectInEditor missing-assets reconciliation', () => {
     expect(state.dialogVisible).toBe(true)
   })
 
+  it('reports nothing for references satisfied by the embedded snapshot when the library asset is gone', () => {
+    const engine = setupEditor()
+    const { project } = makeProjectWithAssets('New', [{ name: 'Boy', definitionId: 'def-boy' }])
+    project.embedAsset({
+      id: 'def-boy',
+      name: 'Boy',
+      data: 'QUJD',
+      mimeType: 'image/png',
+    })
+    setLibraryDefinitions([])
+
+    openProjectInEditor(engine, project)
+
+    expect(useMissingAssetsStore.getState().report).toBeNull()
+    expect(useMissingAssetsStore.getState().dialogVisible).toBe(false)
+  })
+
+  it('reports only references missing from both the embedded snapshot and the live library', () => {
+    const engine = setupEditor()
+    const { project, placed } = makeProjectWithAssets('New', [
+      { name: 'Boy', definitionId: 'def-boy' },
+      { name: 'Cat', definitionId: 'def-cat' },
+      { name: 'Dog', definitionId: 'def-dog' },
+    ])
+    project.embedAsset({
+      id: 'def-boy',
+      name: 'Boy',
+      data: 'QUJD',
+      mimeType: 'image/png',
+    })
+    setLibraryDefinitions(['def-cat'])
+
+    openProjectInEditor(engine, project)
+
+    const state = useMissingAssetsStore.getState()
+    expect(state.report?.names).toEqual(['Dog'])
+    expect(state.report?.missing).toEqual([
+      { assetDefinitionId: 'def-dog', nodeIds: [placed[2].nodeId] },
+    ])
+    expect(state.dialogVisible).toBe(true)
+  })
+
   it('clears the report instead of reporting when the loaded library holds every definition', () => {
     const engine = setupEditor()
     const { project } = makeProjectWithAssets('New', [{ name: 'Boy', definitionId: 'def-boy' }])

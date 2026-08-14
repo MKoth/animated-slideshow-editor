@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { openProjectInEditor } from '../../app/openProjectActions'
 import { clearShadow, loadRecoverableProject } from '../../app/recoveryShadow'
 import { useEngine } from '../../app/useEngine'
@@ -6,7 +6,26 @@ import type { Project } from '../../engine'
 
 export function RecoveryDialog() {
   const { engine } = useEngine()
-  const [recovered, setRecovered] = useState<Project | null>(loadRecoverableProject)
+  const [recovered, setRecovered] = useState<Project | null>(null)
+
+  useEffect(() => {
+    let settled = false
+    void loadRecoverableProject()
+      .then((project) => {
+        if (settled) {
+          return
+        }
+        setRecovered(project)
+      })
+      .catch(() => {
+        if (!settled) {
+          setRecovered(null)
+        }
+      })
+    return () => {
+      settled = true
+    }
+  }, [])
 
   if (recovered === null) {
     return null
@@ -18,7 +37,7 @@ export function RecoveryDialog() {
   }
 
   const discard = (): void => {
-    clearShadow()
+    void clearShadow().catch(() => undefined)
     setRecovered(null)
   }
 

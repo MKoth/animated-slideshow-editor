@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AssetDefinition } from '../api'
-import { useAssetLibraryStore, registerAssetUsageCounter } from '../stores/assetLibraryStore'
+import { useAssetLibraryStore } from '../stores/assetLibraryStore'
 import { libraryEventBus, type LibraryEvent } from '../stores/libraryEvents'
 import { useNotificationStore } from '../stores/notificationStore'
 
@@ -55,7 +55,6 @@ describe('assetLibraryStore', () => {
       selectedId: null,
     })
     useNotificationStore.setState({ notifications: [] })
-    registerAssetUsageCounter(() => 0)
   })
 
   afterEach(() => {
@@ -289,7 +288,7 @@ describe('assetLibraryStore', () => {
     expect(events).toEqual([{ type: 'AssetDeleted', id: 'a1' }])
   })
 
-  it('refuses to delete an asset referenced by the open project and names the usage', async () => {
+  it('deletes an asset referenced by the open project without refusal', async () => {
     const deletions: number[] = []
     stubFetch((_url, init) => {
       if (init.method === 'DELETE') {
@@ -300,33 +299,15 @@ describe('assetLibraryStore', () => {
     })
     await useAssetLibraryStore.getState().loadLibrary()
     useAssetLibraryStore.getState().selectAsset('a1')
-    registerAssetUsageCounter(() => 3)
     const events = listen()
 
     await useAssetLibraryStore.getState().deleteAsset('a1')
 
-    expect(useNotificationStore.getState().notifications.map((n) => n.message)).toEqual([
-      'Used by 3 objects',
-    ])
-    expect(useAssetLibraryStore.getState().definitions).toEqual([makeDefinition()])
-    expect(useAssetLibraryStore.getState().selectedId).toBe('a1')
-    expect(events).toEqual([])
-    expect(deletions).toEqual([])
-  })
-
-  it('refuses deletion of a single reference with singular wording', async () => {
-    stubFetch(() =>
-      Promise.resolve(new Response(JSON.stringify([makeDefinition()]), { status: 200 })),
-    )
-    await useAssetLibraryStore.getState().loadLibrary()
-    registerAssetUsageCounter(() => 1)
-
-    await useAssetLibraryStore.getState().deleteAsset('a1')
-
-    expect(useNotificationStore.getState().notifications.map((n) => n.message)).toEqual([
-      'Used by 1 object',
-    ])
-    expect(useAssetLibraryStore.getState().definitions).toEqual([makeDefinition()])
+    expect(useNotificationStore.getState().notifications).toEqual([])
+    expect(useAssetLibraryStore.getState().definitions).toEqual([])
+    expect(useAssetLibraryStore.getState().selectedId).toBeNull()
+    expect(events).toEqual([{ type: 'AssetDeleted', id: 'a1' }])
+    expect(deletions).toEqual([1])
   })
 
   it('notifies when the backend rejects the delete and keeps the library unchanged', async () => {

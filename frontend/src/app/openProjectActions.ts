@@ -9,10 +9,10 @@ export function openProjectInEditor(engine: EnginePublic, project: Project): voi
   engine.openProject(project)
   usePlaybackController.getState().reset()
   useSelectionStore.getState().clear()
-  reconcileWhenLibraryReady(project)
+  reconcileWhenLibraryReady(engine, project)
 }
 
-function reconcileWhenLibraryReady(project: Project): void {
+function reconcileWhenLibraryReady(engine: EnginePublic, project: Project): void {
   const library = useAssetLibraryStore.getState()
   if (library.unavailable) {
     useMissingAssetsStore.getState().setReport(null)
@@ -21,7 +21,7 @@ function reconcileWhenLibraryReady(project: Project): void {
   if (library.loaded) {
     useMissingAssetsStore
       .getState()
-      .setReport(reconcileAgainstLibrary(project, library.definitions))
+      .setReport(reconcileAgainstLibrary(engine, project, library.definitions))
     return
   }
   let settled = false
@@ -39,15 +39,18 @@ function reconcileWhenLibraryReady(project: Project): void {
     } else {
       useMissingAssetsStore
         .getState()
-        .setReport(reconcileAgainstLibrary(project, state.definitions))
+        .setReport(reconcileAgainstLibrary(engine, project, state.definitions))
     }
   })
 }
 
 function reconcileAgainstLibrary(
+  engine: EnginePublic,
   project: Project,
   definitions: readonly AssetDefinition[],
 ): MissingAssetsReport {
-  const availableDefinitionIds = new Set(definitions.map((definition) => definition.id))
+  const availableDefinitionIds = new Set(
+    engine.embeddedAssets.map((asset) => asset.id).concat(definitions.map((d) => d.id)),
+  )
   return reconcileMissingAssets(project, availableDefinitionIds)
 }

@@ -75,6 +75,7 @@ export class Renderer {
   readonly #resolveAssetUrl: ResolveAssetUrl
   readonly #currentTime: CurrentTimeSource
   readonly #isAssetMissing: (definitionId: string) => boolean
+  readonly #onAssetPlaced: (definitionId: string) => void
   readonly #thumbnails: ThumbnailRecorder
 
   constructor(
@@ -86,6 +87,7 @@ export class Renderer {
     currentTime: CurrentTimeSource = ALWAYS_ZERO_TIME,
     isAssetMissing: (definitionId: string) => boolean = () => false,
     captureThumbnail: CanvasCapture = extractCanvasCapture,
+    onAssetPlaced: (definitionId: string) => void = () => undefined,
   ) {
     this.#host = host
     this.#engine = engine
@@ -94,6 +96,7 @@ export class Renderer {
     this.#resolveAssetUrl = resolveAssetUrl
     this.#currentTime = currentTime
     this.#isAssetMissing = isAssetMissing
+    this.#onAssetPlaced = onAssetPlaced
     this.#thumbnails = new ThumbnailRecorder(captureThumbnail)
   }
 
@@ -227,6 +230,7 @@ export class Renderer {
         getCameraTransform: () => this.#cameraTransform(),
         dispatch: this.#dispatch,
         getGridSnap: () => useUiStore.getState().gridSnap,
+        onAssetPlaced: this.#onAssetPlaced,
       })
       this.#dropPlacement.attach()
 

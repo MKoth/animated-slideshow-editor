@@ -3,6 +3,7 @@ import { newId } from '../engine/ids'
 import { deserialize, serialize } from '../engine/lessonSerializer'
 import { Project } from '../engine/project'
 import { useNotificationStore } from '../stores/notificationStore'
+import { ensureReferencedEmbedded } from './assetSnapshot'
 import { openProjectInEditor } from './openProjectActions'
 
 export const IMPORT_FAILED_MESSAGE = 'Could not import the lesson.'
@@ -46,15 +47,17 @@ function withFreshProjectId(project: Project): Project {
     },
     project.slides,
     project.settings,
+    project.embeddedAssets,
   )
 }
 
-export function downloadLessonCopy(engine: EnginePublic): boolean {
+export async function downloadLessonCopy(engine: EnginePublic): Promise<boolean> {
   const project = engine.project
   if (!project) {
     return false
   }
   try {
+    await ensureReferencedEmbedded(engine)
     const blob = new Blob([serialize(project)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')

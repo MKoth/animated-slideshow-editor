@@ -6,6 +6,7 @@ import { Scene as SceneModel } from './scene'
 import { SceneNode, wouldFormCycle } from './sceneNode'
 import { SlideAnimation } from './animation'
 import type { LessonJSON, SceneJSON, SlideJSON } from './json'
+import { buildEmbeddedAssetsFromJSON, embeddedLibraryJSON, validateLibrary } from './librarySection'
 import { ANIMATABLE_PROPERTIES } from './animationProperties'
 import type { AnimationProperty } from './animationProperties'
 import { isRecord, requireString, requireStringAllowEmpty } from './guards'
@@ -21,6 +22,8 @@ export function serialize(project: Project): string {
 }
 
 export function toLessonJSON(project: Project): LessonJSON {
+  const library =
+    project.embeddedAssets.length > 0 ? embeddedLibraryJSON(project.embeddedAssets) : undefined
   return {
     version: LESSON_VERSION,
     project: {
@@ -33,6 +36,7 @@ export function toLessonJSON(project: Project): LessonJSON {
       settings: { ...project.settings },
     },
     slides: project.slides.map((slide) => slide.toJSON()),
+    ...(library !== undefined ? { library } : {}),
   }
 }
 
@@ -86,6 +90,7 @@ export function validate(json: unknown): string[] {
   if (!isRecord(project)) {
     return errors
   }
+  validateLibrary(errors, json.library)
   const slideIds = new Set<string>()
   const sceneIds = new Set<string>()
   const nodeIds = new Set<string>()
@@ -404,7 +409,7 @@ export function buildProjectFromJSON(json: LessonJSON): Project {
   }
   const settings = isRecord(projectJson.settings) ? projectJson.settings : {}
   const slides = json.slides.map((slideJson) => buildSlideFromJSON(slideJson))
-  return new Project(metadata, slides, settings)
+  return new Project(metadata, slides, settings, buildEmbeddedAssetsFromJSON(json.library))
 }
 
 function buildSlideFromJSON(json: SlideJSON): Slide {

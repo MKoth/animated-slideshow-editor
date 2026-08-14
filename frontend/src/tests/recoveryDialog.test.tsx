@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EngineContextValue } from '../app/engineContext'
 import { EngineProvider } from '../app/EngineProvider'
-import { readShadow, recordLastSaved, writeShadow } from '../app/recoveryShadow'
+import {
+  clearRecoveryStorage,
+  readShadow,
+  recordLastSaved,
+  writeShadow,
+} from '../app/recoveryShadow'
 import { useEngine } from '../app/useEngine'
 import { RecoveryDialog } from '../components/recovery/RecoveryDialog'
 import { serialize } from '../engine/lessonSerializer'
@@ -39,54 +44,57 @@ function renderHost() {
   )
 }
 
-function seedRecovery(): void {
-  writeShadow(serialize(makeProject('Recovered', ['R1', 'R2'])))
-  recordLastSaved(serialize(makeProject('Saved', ['S1'])))
+async function seedRecovery(): Promise<void> {
+  await writeShadow(serialize(makeProject('Recovered', ['R1', 'R2'])))
+  await recordLastSaved(serialize(makeProject('Saved', ['S1'])))
 }
 
-beforeEach(() => {
-  localStorage.clear()
+beforeEach(async () => {
+  await clearRecoveryStorage()
   usePlaybackController.getState().reset()
   useSelectionStore.setState({ selectedIds: [], selectedKeyframeIds: [] })
 })
 
-afterEach(() => {
-  localStorage.clear()
+afterEach(async () => {
+  await clearRecoveryStorage()
 })
 
 describe('RecoveryDialog', () => {
-  it('does not appear when no shadow exists', () => {
+  it('does not appear when no shadow exists', async () => {
     renderHost()
 
     expect(screen.queryByText(RECOVERY_MESSAGE)).not.toBeInTheDocument()
+    await screen.findByTestId('project-name')
   })
 
-  it('does not appear when the shadow matches the last saved state', () => {
+  it('does not appear when the shadow matches the last saved state', async () => {
     const blob = serialize(makeProject('Saved', ['S1']))
-    writeShadow(blob)
-    recordLastSaved(blob)
+    await writeShadow(blob)
+    await recordLastSaved(blob)
 
     renderHost()
 
     expect(screen.queryByText(RECOVERY_MESSAGE)).not.toBeInTheDocument()
+    await screen.findByTestId('project-name')
   })
 
-  it('appears when the shadow differs from the last saved state', () => {
-    seedRecovery()
+  it('appears when the shadow differs from the last saved state', async () => {
+    await seedRecovery()
 
     renderHost()
 
-    expect(screen.getByText(RECOVERY_MESSAGE)).toBeInTheDocument()
+    expect(await screen.findByText(RECOVERY_MESSAGE)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Restore' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument()
   })
 
-  it('Restore opens the shadow through the openProject flow and keeps the shadow', () => {
-    seedRecovery()
+  it('Restore opens the shadow through the openProject flow and keeps the shadow', async () => {
+    await seedRecovery()
     usePlaybackController.getState().setCurrentTime('stale-slide', 4.5, 10)
     useSelectionStore.getState().select('node-1')
 
     renderHost()
+    await screen.findByText(RECOVERY_MESSAGE)
     fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
 
     const engine = engineValue!.engine
@@ -95,52 +103,57 @@ describe('RecoveryDialog', () => {
     expect(engine.activeSlideId).toBe(engine.project?.slides[0].id)
     expect(usePlaybackController.getState().currentTimes).toEqual({})
     expect(useSelectionStore.getState().selectedIds).toEqual([])
-    expect(readShadow()).not.toBeNull()
+    expect(await readShadow()).not.toBeNull()
     expect(screen.queryByText(RECOVERY_MESSAGE)).not.toBeInTheDocument()
   })
 
-  it('offers recovery again after a reload following a restore without a save', () => {
-    seedRecovery()
+  it('offers recovery again after a reload following a restore without a save', async () => {
+    await seedRecovery()
 
     const { unmount } = renderHost()
+    await screen.findByText(RECOVERY_MESSAGE)
     fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
     unmount()
 
     renderHost()
 
-    expect(screen.getByText(RECOVERY_MESSAGE)).toBeInTheDocument()
+    expect(await screen.findByText(RECOVERY_MESSAGE)).toBeInTheDocument()
   })
 
-  it('Discard clears the shadow and leaves the project untouched', () => {
-    seedRecovery()
+  it('Discard clears the shadow and leaves the project untouched', async () => {
+    await seedRecovery()
 
     renderHost()
+    await screen.findByText(RECOVERY_MESSAGE)
     fireEvent.click(screen.getByRole('button', { name: 'Discard' }))
 
     expect(screen.getByTestId('project-name').textContent).toBe('none')
-    expect(readShadow()).toBeNull()
+    expect(await readShadow()).toBeNull()
     expect(screen.queryByText(RECOVERY_MESSAGE)).not.toBeInTheDocument()
   })
 
-  it('appears and restores in degraded mode with the backend unreachable', () => {
+  it('appears and restores in degraded mode with the backend unreachable', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('connection refused')))
-    seedRecovery()
+    await seedRecovery()
 
     renderHost()
+    await screen.findByText(RECOVERY_MESSAGE)
     fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
 
     expect(screen.getByTestId('project-name').textContent).toBe('Recovered')
-    expect(readShadow()).not.toBeNull()
+    expect(await readShadow()).not.toBeNull()
     vi.unstubAllGlobals()
   })
 
-  it('clears a corrupt shadow and does not offer a restore', () => {
-    writeShadow('{not valid json')
-    recordLastSaved('{"version":1}')
+  it('clears a corrupt shadow and does not offer a restore', async () => {
+    await writeShadow('{not valid json')
+    await recordLastSaved('{"version":1}')
 
     renderHost()
 
+    await waitFor(async () => {
+      expect(await readShadow()).toBeNull()
+    })
     expect(screen.queryByText(RECOVERY_MESSAGE)).not.toBeInTheDocument()
-    expect(readShadow()).toBeNull()
   })
 })

@@ -4,6 +4,7 @@ import { projectsApi } from '../api'
 import { createCommandSystem } from '../engine/commands'
 import type { PersistenceService } from './persistence'
 import { createPersistenceService } from './persistence'
+import { ensureReferencedEmbedded } from './assetSnapshot'
 import { EngineContext } from './engineContext'
 import type { EngineContextValue } from './engineContext'
 import { registerActiveSlideSync } from './activeSlideSync'
@@ -26,6 +27,7 @@ export function EngineProvider({ children }: { children: ReactNode }) {
     const persistence = createPersistenceService({
       engine: system.engine,
       upsert: (blob) => projectsApi.upsert(blob),
+      ensureEmbedded: () => ensureReferencedEmbedded(system.engine),
     })
     persistenceRef.current = persistence
     system.dispatcher.setOnCommandSucceeded(() => persistence.onCommandSucceeded())

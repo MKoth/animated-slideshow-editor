@@ -17,23 +17,6 @@ export const IMPORT_BACKEND_DOWN_MESSAGE = 'Asset import failed — backend unav
 export const DELETE_FAILED_MESSAGE = 'Asset delete failed.'
 export const DELETE_BACKEND_DOWN_MESSAGE = 'Asset delete failed — backend unavailable.'
 
-export type AssetUsageCounter = (assetId: string) => number
-
-let usageCounter: AssetUsageCounter = () => 0
-
-export function registerAssetUsageCounter(counter: AssetUsageCounter): () => void {
-  usageCounter = counter
-  return () => {
-    if (usageCounter === counter) {
-      usageCounter = () => 0
-    }
-  }
-}
-
-function usageMessage(usage: number): string {
-  return `Used by ${usage} ${usage === 1 ? 'object' : 'objects'}`
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error'
 }
@@ -150,11 +133,6 @@ export const useAssetLibraryStore = create<AssetLibraryState>()((set, get) => ({
   },
 
   deleteAsset: async (assetId) => {
-    const usage = usageCounter(assetId)
-    if (usage > 0) {
-      useNotificationStore.getState().notify(usageMessage(usage))
-      return
-    }
     try {
       await assetsApi.deleteAsset(assetId)
     } catch (error) {

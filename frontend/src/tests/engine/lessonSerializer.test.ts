@@ -551,3 +551,144 @@ describe('lesson serializer project metadata', () => {
     expect(restored.updatedAt).toBe(engine.project.updatedAt)
   })
 })
+
+describe('lesson serializer embedded library', () => {
+  it('omits the library section when the project embeds nothing', () => {
+    const engine = buildPopulatedEngine()
+    expect(projectJson(engine)).not.toHaveProperty('library')
+  })
+
+  it('embeds the project snapshot in the library section with bytes, mime, and metadata', () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'P' })
+    engine.createSlide('S1')
+    const project = engine.project
+    if (!project) {
+      throw new Error('expected a project')
+    }
+    project.embedAsset({
+      id: 'def-boy',
+      name: 'Boy',
+      data: 'QUJDREU=',
+      mimeType: 'image/png',
+      metadata: { category: 'Character', original_filename: 'boy.png' },
+    })
+
+    const json = projectJson(engine)
+
+    expect(json.library).toEqual({
+      assets: [
+        {
+          id: 'def-boy',
+          name: 'Boy',
+          data: 'QUJDREU=',
+          mimeType: 'image/png',
+          metadata: { category: 'Character', original_filename: 'boy.png' },
+        },
+      ],
+      materials: [],
+      shaders: [],
+    })
+    expect(json.version).toBe(1)
+  })
+
+  it('round-trips ids and bytes through deserialize', () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'P' })
+    engine.createSlide('S1')
+    const project = engine.project
+    if (!project) {
+      throw new Error('expected a project')
+    }
+    project.embedAsset({
+      id: 'def-boy',
+      name: 'Boy',
+      data: 'QUJDREU=',
+      mimeType: 'image/png',
+      metadata: { category: 'Character' },
+    })
+
+    const restored = deserialize(serialize(project))
+
+    expect(restored.embeddedAssets).toEqual([
+      {
+        id: 'def-boy',
+        name: 'Boy',
+        data: 'QUJDREU=',
+        mimeType: 'image/png',
+        metadata: { category: 'Character' },
+      },
+    ])
+  })
+
+  it('keeps slim v1 files without a library section readable', () => {
+    const engine = buildPopulatedEngine()
+    const slim = JSON.parse(serialize(engine.project as never)) as LessonJSON & {
+      library?: unknown
+    }
+    delete slim.library
+
+    const restored = deserialize(JSON.stringify(slim))
+
+    expect(restored.embeddedAssets).toEqual([])
+    expect(restored.slides.map((slide) => slide.id)).toEqual(
+      engine.project?.slides.map((slide) => slide.id),
+    )
+  })
+
+  it('validates library assets: missing ids, names, data, and duplicate ids', () => {
+    const populated = buildPopulatedEngine()
+    const json = JSON.parse(serialize(populated.project as never)) as LessonJSON
+    expect(
+      validate({
+        ...json,
+        library: {
+          assets: [
+            { id: 'a1', name: 'A', data: 'QUJD', mimeType: 'image/png' },
+            { id: 'a1', name: 'B', data: 'QUJD', mimeType: 'image/png' },
+          ],
+          materials: [],
+          shaders: [],
+        },
+      }),
+    ).toEqual(expect.arrayContaining([expect.stringMatching(/asset with id "a1" already exists/i)]))
+    expect(
+      validate({
+        ...json,
+        library: { assets: [{ id: 'a1', data: 'QUJD', mimeType: 'image/png' }] },
+      }),
+    ).toEqual(expect.arrayContaining([expect.stringMatching(/library asset name/i)]))
+    expect(
+      validate({ ...json, library: { assets: [{ id: 'a1', name: 'A', mimeType: 'image/png' }] } }),
+    ).toEqual(expect.arrayContaining([expect.stringMatching(/data must be a non-empty base64/i)]))
+    expect(validate({ ...json, library: { assets: 'nope' } })).toEqual(
+      expect.arrayContaining([expect.stringMatching(/library.assets must be an array/i)]),
+    )
+    expect(validate({ ...json, library: { materials: 'nope' } })).toEqual(
+      expect.arrayContaining([expect.stringMatching(/library.materials must be an array/i)]),
+    )
+  })
+
+  it('restores the embedded snapshot into the engine on openProject', () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'P' })
+    engine.createSlide('S1')
+    const project = engine.project
+    if (!project) {
+      throw new Error('expected a project')
+    }
+    project.embedAsset({
+      id: 'def-boy',
+      name: 'Boy',
+      data: 'QUJD',
+      mimeType: 'image/png',
+    })
+
+    const target = createEngine()
+    target.openProject(deserialize(serialize(project)))
+
+    expect(target.embeddedAssets.map((asset) => asset.id)).toEqual(['def-boy'])
+    expect(target.getEmbeddedAsset('def-boy')?.data).toBe('QUJD')
+    expect(target.getAssetDefinition('def-boy').name).toBe('Boy')
+  })
+})
