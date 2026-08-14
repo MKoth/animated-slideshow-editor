@@ -9,6 +9,7 @@ interface ProjectBrowserState {
   newProjectName: string
   pendingOpen: ProjectSummary | null
   pendingNew: boolean
+  pendingImport: File | null
   projects: ProjectSummary[]
   loading: boolean
   error: string | null
@@ -19,6 +20,7 @@ interface ProjectBrowserState {
   setNewProjectName: (name: string) => void
   requestOpen: (project: ProjectSummary) => void
   setPendingNew: (pending: boolean) => void
+  requestImport: (file: File) => void
   clearPending: () => void
   setProjects: (projects: ProjectSummary[]) => void
   setLoading: (loading: boolean) => void
@@ -32,18 +34,26 @@ export const useProjectBrowserStore = create<ProjectBrowserState>()((set) => ({
   newProjectName: DEFAULT_PROJECT_NAME,
   pendingOpen: null,
   pendingNew: false,
+  pendingImport: null,
   projects: [],
   loading: false,
   error: null,
   show: () => set({ visible: true }),
   hide: () =>
-    set({ visible: false, newProjectVisible: false, pendingOpen: null, pendingNew: false }),
+    set({
+      visible: false,
+      newProjectVisible: false,
+      pendingOpen: null,
+      pendingNew: false,
+      pendingImport: null,
+    }),
   showNewProject: () => set({ newProjectVisible: true, newProjectName: DEFAULT_PROJECT_NAME }),
   hideNewProject: () => set({ newProjectVisible: false }),
   setNewProjectName: (name) => set({ newProjectName: name }),
   requestOpen: (project) => set({ pendingOpen: project }),
   setPendingNew: (pending) => set({ pendingNew: pending }),
-  clearPending: () => set({ pendingOpen: null, pendingNew: false }),
+  requestImport: (file) => set({ pendingImport: file }),
+  clearPending: () => set({ pendingOpen: null, pendingNew: false, pendingImport: null }),
   setProjects: (projects) => set({ projects }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),

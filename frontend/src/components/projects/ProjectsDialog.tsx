@@ -1,4 +1,5 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
+import type { ChangeEvent } from 'react'
 import type { ProjectSummary } from '../../api'
 import {
   createAndOpenFreshProject,
@@ -8,6 +9,7 @@ import {
   refreshProjects,
   requestNewProject,
 } from '../../app/projectBrowser'
+import { downloadLessonCopy, importLessonFile } from '../../app/lessonTransfer'
 import { useEngine } from '../../app/useEngine'
 import { usePersistenceStore } from '../../stores/persistenceStore'
 import { useProjectBrowserStore } from '../../stores/projectBrowserStore'
@@ -19,10 +21,12 @@ export function ProjectsDialog() {
   const newProjectName = useProjectBrowserStore((state) => state.newProjectName)
   const pendingOpen = useProjectBrowserStore((state) => state.pendingOpen)
   const pendingNew = useProjectBrowserStore((state) => state.pendingNew)
+  const pendingImport = useProjectBrowserStore((state) => state.pendingImport)
   const projects = useProjectBrowserStore((state) => state.projects)
   const loading = useProjectBrowserStore((state) => state.loading)
   const error = useProjectBrowserStore((state) => state.error)
   const dirty = usePersistenceStore((state) => state.dirty)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (visible) {
@@ -37,6 +41,33 @@ export function ProjectsDialog() {
   const openProject = async (project: ProjectSummary): Promise<void> => {
     if (await openLibraryProject(engine, project.id)) {
       useProjectBrowserStore.getState().hide()
+    }
+  }
+
+  const importNow = async (file: File): Promise<void> => {
+    if (await importLessonFile(engine, file)) {
+      useProjectBrowserStore.getState().hide()
+    }
+  }
+
+  const handleImportFiles = (event: ChangeEvent<HTMLInputElement>): void => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) {
+      return
+    }
+    if (dirty) {
+      useProjectBrowserStore.getState().requestImport(file)
+    } else {
+      void importNow(file)
+    }
+  }
+
+  const handleConfirmImport = (): void => {
+    const file = pendingImport
+    useProjectBrowserStore.getState().clearPending()
+    if (file) {
+      void importNow(file)
     }
   }
 
@@ -109,6 +140,26 @@ export function ProjectsDialog() {
             </button>
             <button className="projects-dialog__button" onClick={handleConfirmNew}>
               Discard &amp; Create
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (pendingImport) {
+    return (
+      <div className="projects-overlay">
+        <div className="projects-dialog" role="dialog" aria-label="Projects">
+          <p className="projects-dialog__message">
+            {`Discard unsaved changes to the current project and import "${pendingImport.name}"?`}
+          </p>
+          <div className="projects-dialog__actions">
+            <button className="projects-dialog__button" onClick={handleCancelPending}>
+              Cancel
+            </button>
+            <button className="projects-dialog__button" onClick={handleConfirmImport}>
+              Discard &amp; Import
             </button>
           </div>
         </div>
@@ -204,7 +255,24 @@ export function ProjectsDialog() {
           <button className="projects-dialog__button" onClick={() => requestNewProject()}>
             New Project
           </button>
+          <button className="projects-dialog__button" onClick={() => fileInputRef.current?.click()}>
+            Import .lesson
+          </button>
+          <button
+            className="projects-dialog__button"
+            disabled={!engine.project}
+            onClick={() => downloadLessonCopy(engine)}
+          >
+            Download .lesson copy
+          </button>
         </footer>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".lesson"
+          hidden
+          onChange={handleImportFiles}
+        />
       </div>
     </div>
   )

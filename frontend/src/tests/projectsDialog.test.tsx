@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EngineProvider } from '../app/EngineProvider'
@@ -8,6 +8,7 @@ import { Toolbar } from '../components/editor/Toolbar'
 import { ProjectsDialog } from '../components/projects/ProjectsDialog'
 import { createEngine } from '../engine/internal'
 import { serialize } from '../engine/lessonSerializer'
+import { useNotificationStore } from '../stores/notificationStore'
 import { usePersistenceStore } from '../stores/persistenceStore'
 import { useProjectBrowserStore } from '../stores/projectBrowserStore'
 
@@ -19,6 +20,29 @@ function makeBlob(name: string): string {
     throw new Error('No project created')
   }
   return serialize(engine.project)
+}
+
+function makeLessonFile(name: string): File {
+  return new File([makeBlob(name)], `${name}.lesson`, { type: 'application/json' })
+}
+
+function stubObjectURL(): {
+  createObjectURL: ReturnType<typeof vi.fn>
+  revokeObjectURL: ReturnType<typeof vi.fn>
+} {
+  const createObjectURL = vi.fn(() => 'blob:mock-lesson')
+  const revokeObjectURL = vi.fn()
+  Object.defineProperty(URL, 'createObjectURL', {
+    configurable: true,
+    writable: true,
+    value: createObjectURL,
+  })
+  Object.defineProperty(URL, 'revokeObjectURL', {
+    configurable: true,
+    writable: true,
+    value: revokeObjectURL,
+  })
+  return { createObjectURL, revokeObjectURL }
 }
 
 const LIBRARY = [
@@ -251,5 +275,137 @@ describe('ProjectsDialog', () => {
     await user.click(within(dialog()).getByRole('button', { name: 'Close' }))
 
     expect(screen.queryByRole('dialog', { name: 'Projects' })).not.toBeInTheDocument()
+  })
+
+  it('opens the .lesson file picker from the Import .lesson button', async () => {
+    stubBackend()
+    const user = userEvent.setup()
+    const { container } = renderHost()
+
+    await user.click(screen.getByRole('button', { name: 'Open' }))
+    await within(dialog()).findByText('Spanish Lesson')
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    const clickSpy = vi.spyOn(input, 'click')
+
+    await user.click(within(dialog()).getByRole('button', { name: 'Import .lesson' }))
+
+    expect(clickSpy).toHaveBeenCalledTimes(1)
+    expect(input.accept).toBe('.lesson')
+  })
+
+  it('imports a valid .lesson file through the open flow and closes the overlay', async () => {
+    stubBackend()
+    const user = userEvent.setup()
+    const { container } = renderHost()
+
+    await user.click(screen.getByRole('button', { name: 'Open' }))
+    await within(dialog()).findByText('Spanish Lesson')
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    const file = makeLessonFile('Imported Lesson')
+    Object.defineProperty(input, 'files', { value: [file], configurable: true })
+    fireEvent.change(input)
+
+    await waitFor(() => expect(document.title).toBe('Imported Lesson'))
+    expect(screen.queryByRole('dialog', { name: 'Projects' })).not.toBeInTheDocument()
+  })
+
+  it('reports import validation errors and keeps the overlay open', async () => {
+    stubBackend()
+    const user = userEvent.setup()
+    const { container } = renderHost()
+
+    await user.click(screen.getByRole('button', { name: 'Open' }))
+    await within(dialog()).findByText('Spanish Lesson')
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    const broken = new File(['{not json'], 'broken.lesson', { type: 'application/json' })
+    Object.defineProperty(input, 'files', { value: [broken], configurable: true })
+    fireEvent.change(input)
+
+    await waitFor(() => {
+      const messages = useNotificationStore.getState().notifications.map((n) => n.message)
+      expect(messages.some((message) => message.includes('Invalid lesson JSON'))).toBe(true)
+    })
+    expect(document.title).toBe('AI Slideshow Editor')
+    expect(within(dialog()).getByText('Spanish Lesson')).toBeInTheDocument()
+  })
+
+  it('confirms before importing when the current project is dirty, and Cancel keeps it', async () => {
+    stubBackend()
+    usePersistenceStore.setState({ dirty: true })
+    const user = userEvent.setup()
+    const { container } = renderHost()
+
+    await user.click(screen.getByRole('button', { name: 'Open' }))
+    await within(dialog()).findByText('Spanish Lesson')
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    const file = makeLessonFile('Imported Lesson')
+    Object.defineProperty(input, 'files', { value: [file], configurable: true })
+    fireEvent.change(input)
+
+    expect(
+      screen.getByText(
+        /Discard unsaved changes to the current project and import "Imported Lesson.lesson"/,
+      ),
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(document.title).toBe('AI Slideshow Editor')
+    expect(within(dialog()).getByText('Spanish Lesson')).toBeInTheDocument()
+  })
+
+  it('imports the lesson after confirming the dirty discard', async () => {
+    stubBackend()
+    usePersistenceStore.setState({ dirty: true })
+    const user = userEvent.setup()
+    const { container } = renderHost()
+
+    await user.click(screen.getByRole('button', { name: 'Open' }))
+    await within(dialog()).findByText('Spanish Lesson')
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    const file = makeLessonFile('Imported Lesson')
+    Object.defineProperty(input, 'files', { value: [file], configurable: true })
+    fireEvent.change(input)
+    await user.click(screen.getByRole('button', { name: 'Discard & Import' }))
+
+    await waitFor(() => expect(document.title).toBe('Imported Lesson'))
+    expect(screen.queryByRole('dialog', { name: 'Projects' })).not.toBeInTheDocument()
+  })
+
+  it('downloads a .lesson copy of the open project with the backend unreachable', async () => {
+    stubBackend()
+    const { createObjectURL, revokeObjectURL } = stubObjectURL()
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    const appendSpy = vi.spyOn(document.body, 'appendChild')
+    const user = userEvent.setup()
+    renderHost()
+
+    await user.click(screen.getByRole('button', { name: 'Open' }))
+    await within(dialog()).findByText('Spanish Lesson')
+    await user.click(within(dialog()).getByRole('button', { name: 'Open Spanish Lesson' }))
+    await user.click(screen.getByRole('button', { name: 'Open' }))
+    await within(dialog()).findByText('Spanish Lesson')
+
+    vi.mocked(fetch).mockRejectedValue(new TypeError('connection refused'))
+    await user.click(within(dialog()).getByRole('button', { name: 'Download .lesson copy' }))
+
+    const anchor = appendSpy.mock.calls
+      .map((call) => call[0])
+      .find((node) => (node as HTMLElement).tagName === 'A') as HTMLAnchorElement
+    expect(anchor.download).toBe('Spanish Lesson.lesson')
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
+    expect(clickSpy).toHaveBeenCalledTimes(1)
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:mock-lesson')
+    clickSpy.mockRestore()
+  })
+
+  it('disables download when no project is open', async () => {
+    stubBackend()
+    const user = userEvent.setup()
+    renderHost()
+
+    await user.click(screen.getByRole('button', { name: 'Open' }))
+    await within(dialog()).findByText('Spanish Lesson')
+
+    expect(within(dialog()).getByRole('button', { name: 'Download .lesson copy' })).toBeDisabled()
   })
 })
