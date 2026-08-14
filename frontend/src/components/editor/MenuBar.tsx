@@ -12,6 +12,7 @@ import {
   Z_ORDER_ITEMS,
 } from '../../app/zOrderActions'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
+import { openProjectBrowser, requestNewProject } from '../../app/projectBrowser'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { useClipboardStore } from '../../stores/clipboardStore'
 import { useNotificationStore } from '../../stores/notificationStore'
@@ -164,6 +165,10 @@ export function MenuBar() {
   const handleItemClick = (item: string): boolean => {
     if (item === SAVE_ITEM) {
       persistence.save()
+    } else if (item === 'Open') {
+      openProjectBrowser()
+    } else if (item === 'New Project') {
+      requestNewProject()
     } else if (item === COPY_ITEM) {
       copySelection(engine)
     } else if (item === PASTE_ITEM) {

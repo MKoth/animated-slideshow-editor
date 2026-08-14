@@ -1,3 +1,4 @@
+import { openProjectBrowser, requestNewProject } from '../../app/projectBrowser'
 import { useEngine } from '../../app/useEngine'
 import { useNotificationStore } from '../../stores/notificationStore'
 
@@ -19,6 +20,14 @@ export function Toolbar() {
   const handleClick = (label: string) => {
     if (label === 'Save') {
       persistence.save()
+      return
+    }
+    if (label === 'Open') {
+      openProjectBrowser()
+      return
+    }
+    if (label === 'New Project') {
+      requestNewProject()
       return
     }
     useNotificationStore.getState().notify('Not implemented yet.')

@@ -4,6 +4,7 @@ import { useEngine } from '../app/useEngine'
 import { DocumentTitle } from '../components/editor/DocumentTitle'
 import { EditorLayout } from '../components/editor/EditorLayout'
 import { MissingAssetsDialog } from '../components/missingAssets/MissingAssetsDialog'
+import { ProjectsDialog } from '../components/projects/ProjectsDialog'
 import { RecoveryDialog } from '../components/recovery/RecoveryDialog'
 import { registerClipboardShortcuts } from '../shortcuts/clipboardShortcuts'
 import { registerProvisionalShortcuts } from '../shortcuts/provisionalShortcuts'
@@ -32,6 +33,7 @@ export function EditorPage() {
       <EditorLayout />
       <RecoveryDialog />
       <MissingAssetsDialog />
+      <ProjectsDialog />
     </>
   )
 }

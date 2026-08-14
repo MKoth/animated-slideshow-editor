@@ -29,3 +29,13 @@ export interface EnginePublic {
 export function createEngine(): EnginePublic {
   return toReadOnly(new Engine())
 }
+
+export function createBlankProject(name: string): Project {
+  const engine = new Engine()
+  engine.createProject({ name })
+  engine.createSlide()
+  if (!engine.project) {
+    throw new Error('Fresh project creation failed')
+  }
+  return engine.project
+}

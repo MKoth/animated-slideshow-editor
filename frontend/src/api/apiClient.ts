@@ -16,6 +16,11 @@ export class ApiClient {
     return (await response.json()) as T
   }
 
+  async getText(path: string): Promise<string> {
+    const response = await this.request(path, { headers: { Accept: 'application/json' } })
+    return response.text()
+  }
+
   async post<T>(path: string, body: string): Promise<T> {
     const response = await this.request(path, {
       method: 'POST',

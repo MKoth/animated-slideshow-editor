@@ -1,7 +1,7 @@
-import { createEngine } from './engine'
+import { createBlankProject, createEngine } from './engine'
 import type { EnginePublic } from './engine'
 
-export { createEngine }
+export { createEngine, createBlankProject }
 export type { EnginePublic }
 export type { EngineEvent } from './events'
 export type { SlideActivated } from './events'

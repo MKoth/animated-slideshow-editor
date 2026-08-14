@@ -13,4 +13,4 @@ export const projectsApi = new ProjectsApi(apiClient)
 export type { AssetDefinition, AssetSortKey, AssetSortOrder, AssetUploadResult } from './assetsApi'
 export type { HealthResponse } from './healthApi'
 export type { PingResponse } from './pingApi'
-export type { StoredProject } from './projectsApi'
+export type { ProjectSummary, StoredProject } from './projectsApi'
