@@ -62,14 +62,17 @@ describe('slide lifecycle', () => {
     expect(scene.getNode(scene.root.id)).toBe(scene.root)
   })
 
-  it('emits SlideCreated for each slide', () => {
+  it('emits SlideCreated and SlideActivated for each slide', () => {
     const engine = createEngine()
     engine.createProject({ name: 'P' })
     const events = collectEvents(engine)
 
     const slide = engine.createSlide('Intro')
 
-    expect(events).toEqual([{ type: 'SlideCreated', slideId: slide.id }])
+    expect(events).toEqual([
+      { type: 'SlideCreated', slideId: slide.id },
+      { type: 'SlideActivated', slideId: slide.id },
+    ])
   })
 
   it('removes a slide and emits SlideRemoved', () => {

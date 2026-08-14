@@ -28,10 +28,24 @@ function expectOk<T>(result: CommandResult<T>): T {
 }
 
 describe('active slide', () => {
-  it('has no active slide before one is set', () => {
-    const { engine } = setup()
+  it('has no active slide in a fresh engine before any slide exists', () => {
+    const engine = createEngine()
 
     expect(engine.activeSlideId).toBeNull()
+  })
+
+  it('creates a slide as the active slide and emits SlideActivated', () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'P' })
+    const events = collectEvents(engine)
+
+    const slide = engine.createSlide('First')
+
+    expect(engine.activeSlideId).toBe(slide.id)
+    expect(events).toEqual([
+      { type: 'SlideCreated', slideId: slide.id },
+      { type: 'SlideActivated', slideId: slide.id },
+    ])
   })
 
   it('setActiveSlide updates the active slide and emits SlideActivated with the id', () => {
@@ -77,14 +91,45 @@ describe('active slide', () => {
     expect(engine.activeSlideId).toBeNull()
   })
 
-  it('clears the active slide when the active slide is removed', () => {
+  it('repoints the active slide to the slide now at the deleted index when the active slide is removed', () => {
     const { engine, firstId, secondId } = setup()
     engine.setActiveSlide(secondId)
+    const events = collectEvents(engine)
 
     engine.removeSlide(secondId)
 
-    expect(engine.activeSlideId).toBeNull()
-    expect(engine.setActiveSlide(firstId)).toBeUndefined()
+    expect(engine.activeSlideId).toBe(firstId)
+    expect(events).toEqual([
+      { type: 'SlideRemoved', slideId: secondId },
+      { type: 'SlideActivated', slideId: firstId },
+    ])
+  })
+
+  it('repoints the active slide to the new last slide when the last slide is removed', () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'P' })
+    const first = engine.createSlide('First')
+    const second = engine.createSlide('Second')
+    const third = engine.createSlide('Third')
+    engine.setActiveSlide(third.id)
+    const events = collectEvents(engine)
+
+    engine.removeSlide(third.id)
+
+    expect(engine.activeSlideId).toBe(second.id)
+    expect(events).toEqual([
+      { type: 'SlideRemoved', slideId: third.id },
+      { type: 'SlideActivated', slideId: second.id },
+    ])
+    expect(engine.setActiveSlide(first.id)).toBeUndefined()
+  })
+
+  it('refuses to remove the last remaining slide', () => {
+    const { engine, firstId, secondId } = setup()
+    engine.removeSlide(firstId)
+
+    expect(() => engine.removeSlide(secondId)).toThrow(/last/i)
+    expect(engine.project?.slides).toHaveLength(1)
   })
 
   it('keeps the active slide when a different slide is removed', () => {

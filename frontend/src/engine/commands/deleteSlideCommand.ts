@@ -22,10 +22,14 @@ export class DeleteSlideCommand implements Command<DeleteSlideInverse> {
   }
 
   validate(engine: Engine): void {
-    if (!engine.project) {
+    const project = engine.project
+    if (!project) {
       throw new Error('No project exists in memory')
     }
     engine.getSlide(this.#slideId)
+    if (project.slides.length === 1) {
+      throw new Error('The last remaining slide cannot be deleted')
+    }
   }
 
   execute(engine: Engine): DeleteSlideInverse {

@@ -1,8 +1,9 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
+import { requireNonEmpty } from '../guards'
 
 export interface CreateSlideParameters {
-  readonly name: string
+  readonly name?: string
 }
 
 export interface CreateSlideInverse {
@@ -12,19 +13,19 @@ export interface CreateSlideInverse {
 export class CreateSlideCommand implements Command<CreateSlideInverse> {
   readonly type = 'CreateSlide'
   readonly parameters: Readonly<Record<string, unknown>>
-  readonly #name: string
+  readonly #name: string | undefined
 
-  constructor(input: CreateSlideParameters) {
+  constructor(input: CreateSlideParameters = {}) {
     this.#name = input.name
-    this.parameters = { name: input.name }
+    this.parameters = input.name !== undefined ? { name: input.name } : {}
   }
 
   validate(engine: Engine): void {
     if (!engine.project) {
       throw new Error('No project exists in memory')
     }
-    if (this.#name.trim() === '') {
-      throw new Error('Slide name must not be empty')
+    if (this.#name !== undefined) {
+      requireNonEmpty(this.#name, 'Slide name')
     }
   }
 

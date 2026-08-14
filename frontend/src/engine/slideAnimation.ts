@@ -2,6 +2,15 @@ import type { SceneNode } from './sceneNode'
 import { requireString } from './guards'
 import { NodeAnimation } from './nodeAnimation'
 import type { NodeAnimationJSON, SlideAnimationJSON } from './json'
+import { ANIMATABLE_PROPERTIES } from './animationProperties'
+import type { AnimationProperty } from './animationProperties'
+
+export interface ClampedKeyframe {
+  readonly nodeId: string
+  readonly property: AnimationProperty
+  readonly keyframeId: string
+  readonly oldTime: number
+}
 
 export class SlideAnimation {
   readonly #nodes = new Map<string, NodeAnimation>()
@@ -21,6 +30,26 @@ export class SlideAnimation {
 
   removeNode(nodeId: string): void {
     this.#nodes.delete(nodeId)
+  }
+
+  clampKeyframesTo(duration: number): ClampedKeyframe[] {
+    const clamped: ClampedKeyframe[] = []
+    for (const [nodeId, animation] of this.#nodes) {
+      for (const property of ANIMATABLE_PROPERTIES) {
+        for (const keyframe of animation.keyframes(property)) {
+          if (keyframe.time > duration) {
+            clamped.push({
+              nodeId,
+              property,
+              keyframeId: keyframe.id,
+              oldTime: keyframe.time,
+            })
+            keyframe.time = duration
+          }
+        }
+      }
+    }
+    return clamped
   }
 
   toJSON(): SlideAnimationJSON {

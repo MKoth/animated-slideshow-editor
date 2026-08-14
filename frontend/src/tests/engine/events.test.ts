@@ -21,6 +21,9 @@ const canonicalTypes = [
   'SlideCreated',
   'SlideRemoved',
   'SlideActivated',
+  'SlideRenamed',
+  'SlideMoved',
+  'SlideDurationChanged',
   'NodeCreated',
   'NodeRemoved',
   'NodeReparented',
@@ -88,7 +91,7 @@ describe('canonical events', () => {
   })
 
   it('emits slide events with their ids', () => {
-    const { engine } = setup()
+    const { engine, slideId: firstId } = setup()
     const events = collectEvents(engine)
 
     const slide = engine.createSlide('S2')
@@ -96,7 +99,25 @@ describe('canonical events', () => {
 
     expect(events).toEqual([
       { type: 'SlideCreated', slideId: slide.id },
+      { type: 'SlideActivated', slideId: slide.id },
       { type: 'SlideRemoved', slideId: slide.id },
+      { type: 'SlideActivated', slideId: firstId },
+    ])
+  })
+
+  it('emits SlideRenamed, SlideMoved, and SlideDurationChanged with the slide id', () => {
+    const { engine } = setup()
+    const slide = engine.createSlide('S2')
+    const events = collectEvents(engine)
+
+    engine.renameSlide(slide.id, 'Renamed')
+    engine.moveSlide(slide.id, 0)
+    engine.setSlideDuration(slide.id, 20)
+
+    expect(events).toEqual([
+      { type: 'SlideRenamed', slideId: slide.id },
+      { type: 'SlideMoved', slideId: slide.id },
+      { type: 'SlideDurationChanged', slideId: slide.id },
     ])
   })
 

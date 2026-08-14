@@ -15,6 +15,7 @@ import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
 import { walkPreOrder } from './sceneNode'
 import type { Slide } from './slide'
+import type { SlideDurationChange } from './slideManager'
 import type { EngineEvent, Unsubscribe } from './events'
 import type { CreateNodeOptions } from './nodeManager'
 import type { Transform } from './transform'
@@ -72,15 +73,33 @@ export class Engine {
     return this.#projects.create(input)
   }
 
-  createSlide(name: string): Slide {
-    return this.#slides.create(name)
+  createSlide(name?: string): Slide {
+    const slide = this.#slides.create(name)
+    this.setActiveSlide(slide.id)
+    return slide
   }
 
   removeSlide(slideId: string): void {
-    this.#slides.remove(slideId)
+    const index = this.#slides.remove(slideId)
     if (this.#activeSlideId === slideId) {
-      this.#activeSlideId = null
+      const slides = this.#projects.current?.slides
+      const repoint = slides?.[Math.min(index, slides.length - 1)]
+      if (repoint) {
+        this.setActiveSlide(repoint.id)
+      }
     }
+  }
+
+  renameSlide(slideId: string, name: string): void {
+    this.#slides.rename(slideId, name)
+  }
+
+  moveSlide(slideId: string, index: number): void {
+    this.#slides.move(slideId, index)
+  }
+
+  setSlideDuration(slideId: string, duration: number): SlideDurationChange {
+    return this.#slides.setDuration(slideId, duration)
   }
 
   getSlide(slideId: string): Slide {

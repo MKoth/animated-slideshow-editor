@@ -393,6 +393,72 @@ describe('lesson serializer', () => {
     ).toEqual(expect.arrayContaining([expect.stringMatching(/duplicate keyframe/i)]))
   })
 
+  it('validate allows duplicate keyframe times only at the slide duration', () => {
+    const base = {
+      version: 1 as const,
+      project: {
+        id: 'p1',
+        name: 'P',
+        description: '',
+        author: '',
+        createdAt: 't',
+        modifiedAt: 't',
+      },
+      slides: [] as unknown[],
+    }
+    const node = {
+      id: 'root',
+      name: 'Root',
+      parentId: null,
+      transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+      visible: true,
+      components: {},
+    }
+    const camera = {
+      id: 'cam',
+      name: 'Camera',
+      parentId: 'root',
+      transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+      visible: true,
+      components: { camera: { kind: 'camera' } },
+    }
+    const scene = { id: 'sc', nodes: [node, camera] }
+    const slideJson = { id: 's1', name: 'S', duration: 5, scene }
+    const animation = (keyframes: unknown[]) => ({
+      animation: { nodes: [{ nodeId: 'root', tracks: [{ property: 'positionX', keyframes }] }] },
+    })
+
+    expect(
+      validate({
+        ...base,
+        slides: [
+          {
+            ...slideJson,
+            ...animation([
+              { id: 'k1', time: 2, value: 10 },
+              { id: 'k2', time: 2, value: 20 },
+            ]),
+          },
+        ],
+      }),
+    ).toEqual(expect.arrayContaining([expect.stringMatching(/duplicate time/i)]))
+
+    expect(
+      validate({
+        ...base,
+        slides: [
+          {
+            ...slideJson,
+            ...animation([
+              { id: 'k1', time: 5, value: 10 },
+              { id: 'k2', time: 5, value: 20 },
+            ]),
+          },
+        ],
+      }),
+    ).toEqual([])
+  })
+
   it('deserialize rejects corrupted JSON with a user-friendly message', () => {
     expect(() => deserialize('{ nope')).toThrow(/invalid.*json|json.*invalid/i)
     expect(() => deserialize('')).toThrow(/invalid.*json|json.*invalid/i)

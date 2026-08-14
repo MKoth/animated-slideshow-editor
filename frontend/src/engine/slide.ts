@@ -3,11 +3,13 @@ import type { SlideJSON } from './json'
 import type { SlideAnimation } from './animation'
 
 export const DEFAULT_SLIDE_DURATION = 10
+export const MIN_SLIDE_DURATION = 0.1
+export const MAX_SLIDE_DURATION = 3600
 
 export class Slide {
   readonly id: string
-  readonly name: string
-  readonly duration: number
+  name: string
+  duration: number
   readonly scene: Scene
   readonly animation: SlideAnimation
 

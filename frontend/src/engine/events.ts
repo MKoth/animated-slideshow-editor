@@ -20,6 +20,21 @@ export interface SlideActivated {
   readonly slideId: string
 }
 
+export interface SlideRenamed {
+  readonly type: 'SlideRenamed'
+  readonly slideId: string
+}
+
+export interface SlideMoved {
+  readonly type: 'SlideMoved'
+  readonly slideId: string
+}
+
+export interface SlideDurationChanged {
+  readonly type: 'SlideDurationChanged'
+  readonly slideId: string
+}
+
 export interface NodeCreated {
   readonly type: 'NodeCreated'
   readonly nodeId: string
@@ -93,6 +108,9 @@ export type EngineEvent =
   | SlideCreated
   | SlideRemoved
   | SlideActivated
+  | SlideRenamed
+  | SlideMoved
+  | SlideDurationChanged
   | NodeCreated
   | NodeRemoved
   | NodeReparented

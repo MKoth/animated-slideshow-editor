@@ -366,9 +366,13 @@ function validateAnimation(
         const time = keyframeJson.time
         if (typeof time !== 'number' || !Number.isFinite(time) || time < 0 || time > duration) {
           errors.push(`Keyframe "${String(keyframeJson.id)}" time must be within [0, ${duration}]`)
-        } else if (time <= previousTime) {
+        } else if (time < previousTime) {
           errors.push(
-            `Track "${property}" keyframe times must be strictly increasing (duplicate or out-of-order time ${time})`,
+            `Track "${property}" keyframe times must not decrease (out-of-order time ${time})`,
+          )
+        } else if (time === previousTime && time !== duration) {
+          errors.push(
+            `Track "${property}" keyframe times must be distinct (duplicate time ${time} not at the slide duration)`,
           )
         } else {
           previousTime = time

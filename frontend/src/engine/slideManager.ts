@@ -1,10 +1,24 @@
 import type { EventBus } from './events'
 import { newId } from './ids'
 import type { Slide } from './slide'
-import { Slide as SlideModel, DEFAULT_SLIDE_DURATION } from './slide'
+import {
+  Slide as SlideModel,
+  DEFAULT_SLIDE_DURATION,
+  MIN_SLIDE_DURATION,
+  MAX_SLIDE_DURATION,
+} from './slide'
 import type { ProjectManager } from './projectManager'
 import type { SceneManager } from './sceneManager'
 import { SlideAnimation } from './animation'
+import type { ClampedKeyframe } from './slideAnimation'
+import { requireFiniteNumber, requireNonEmpty } from './guards'
+
+const SLIDE_ORDINAL_PATTERN = /^Slide (\d+)$/
+
+export interface SlideDurationChange {
+  readonly oldDuration: number
+  readonly clampedKeyframes: readonly ClampedKeyframe[]
+}
 
 export class SlideManager {
   readonly #bus: EventBus
@@ -17,18 +31,18 @@ export class SlideManager {
     this.#scenes = scenes
   }
 
-  create(name: string): Slide {
+  create(name?: string): Slide {
     const project = this.#projects.current
     if (!project) {
       throw new Error('No project exists in memory')
     }
-    if (!name || name.trim() === '') {
-      throw new Error('Slide name must not be empty')
+    if (name !== undefined) {
+      requireNonEmpty(name, 'Slide name')
     }
     const scene = this.#scenes.createScene('Root')
     const slide = new SlideModel(
       newId('slide'),
-      name,
+      name ?? nextSlideName(project.slides),
       DEFAULT_SLIDE_DURATION,
       scene,
       new SlideAnimation(),
@@ -38,7 +52,7 @@ export class SlideManager {
     return slide
   }
 
-  remove(slideId: string): void {
+  remove(slideId: string): number {
     const project = this.#projects.current
     if (!project) {
       throw new Error('No project exists in memory')
@@ -47,9 +61,51 @@ export class SlideManager {
     if (index === -1) {
       throw new Error(`Slide not found: ${slideId}`)
     }
+    if (project.slides.length === 1) {
+      throw new Error('The last remaining slide cannot be deleted')
+    }
     const [slide] = project.slides.splice(index, 1)
     this.#scenes.removeScene(slide.scene.id)
     this.#bus.emit({ type: 'SlideRemoved', slideId })
+    return index
+  }
+
+  rename(slideId: string, name: string): void {
+    const slide = this.get(slideId)
+    requireNonEmpty(name, 'Slide name')
+    slide.name = name
+    this.#bus.emit({ type: 'SlideRenamed', slideId })
+  }
+
+  move(slideId: string, index: number): void {
+    const project = this.#projects.current
+    if (!project) {
+      throw new Error('No project exists in memory')
+    }
+    const slide = this.get(slideId)
+    if (!Number.isInteger(index) || index < 0 || index >= project.slides.length) {
+      throw new Error(`Move index out of bounds: ${index}`)
+    }
+    const current = project.slides.indexOf(slide)
+    project.slides.splice(current, 1)
+    project.slides.splice(index, 0, slide)
+    this.#bus.emit({ type: 'SlideMoved', slideId })
+  }
+
+  setDuration(slideId: string, duration: number): SlideDurationChange {
+    const slide = this.get(slideId)
+    requireFiniteNumber(
+      duration,
+      'Slide duration',
+      (value) => value >= MIN_SLIDE_DURATION && value <= MAX_SLIDE_DURATION,
+      `a number within [${MIN_SLIDE_DURATION}, ${MAX_SLIDE_DURATION}]`,
+    )
+    const oldDuration = slide.duration
+    const clampedKeyframes =
+      duration < oldDuration ? slide.animation.clampKeyframesTo(duration) : []
+    slide.duration = duration
+    this.#bus.emit({ type: 'SlideDurationChanged', slideId })
+    return { oldDuration, clampedKeyframes }
   }
 
   get(slideId: string): Slide {
@@ -75,4 +131,19 @@ export class SlideManager {
     }
     return slide
   }
+}
+
+function nextSlideName(slides: readonly Slide[]): string {
+  const used = new Set<number>()
+  for (const slide of slides) {
+    const match = SLIDE_ORDINAL_PATTERN.exec(slide.name)
+    if (match) {
+      used.add(Number(match[1]))
+    }
+  }
+  let ordinal = 1
+  while (used.has(ordinal)) {
+    ordinal += 1
+  }
+  return `Slide ${ordinal}`
 }

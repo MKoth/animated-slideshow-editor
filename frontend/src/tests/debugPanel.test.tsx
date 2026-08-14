@@ -80,6 +80,9 @@ describe('DebugPanel', () => {
 
     await user.click(screen.getByRole('button', { name: 'Create Project' }))
     await user.click(screen.getByRole('button', { name: 'Add Slide' }))
+    await user.clear(screen.getByLabelText('Slide name'))
+    await user.type(screen.getByLabelText('Slide name'), 'Slide 2')
+    await user.click(screen.getByRole('button', { name: 'Add Slide' }))
     await user.click(screen.getByRole('button', { name: 'Add Node' }))
 
     await user.click(screen.getByRole('button', { name: 'Delete node Node A' }))
@@ -87,6 +90,7 @@ describe('DebugPanel', () => {
 
     await user.click(screen.getByRole('button', { name: 'Delete slide Slide 1' }))
     expect(tree().queryByText('Slide 1')).not.toBeInTheDocument()
+    expect(tree().getByText('Slide 2')).toBeInTheDocument()
     expect(tree().getByText('Demo Project')).toBeInTheDocument()
     expect(screen.queryByText('No project. Create one to get started.')).not.toBeInTheDocument()
   })

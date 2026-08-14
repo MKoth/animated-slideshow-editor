@@ -92,9 +92,14 @@ export class NodeAnimation {
         }
         seenIds.add(id)
         const time = requireKeyframeTime(keyframeRecord.time, duration, `Keyframe "${id}" time`)
-        if (time <= previousTime) {
+        if (time < previousTime) {
           throw new Error(
-            `Track "${property}" keyframe times must be strictly increasing (duplicate or out-of-order time ${time})`,
+            `Track "${property}" keyframe times must not decrease (out-of-order time ${time})`,
+          )
+        }
+        if (time === previousTime && time !== duration) {
+          throw new Error(
+            `Track "${property}" keyframe times must be distinct (duplicate time ${time} not at the slide duration)`,
           )
         }
         previousTime = time

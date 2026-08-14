@@ -141,7 +141,7 @@ describe('command dispatcher', () => {
 })
 
 describe('CreateSlideCommand', () => {
-  it('creates a slide through the dispatcher and emits SlideCreated', () => {
+  it('creates a slide through the dispatcher, emits SlideCreated, and activates it', () => {
     const system = createCommandSystem()
     expectOk(system.dispatcher.dispatch(new CreateProjectCommand({ name: 'P' })))
     const events = collectEvents(system)
@@ -150,7 +150,11 @@ describe('CreateSlideCommand', () => {
 
     const { slideId } = expectOk(result)
     expect(system.engine.project?.slides.map((slide) => slide.name)).toEqual(['Intro'])
-    expect(events).toEqual([{ type: 'SlideCreated', slideId }])
+    expect(system.engine.activeSlideId).toBe(slideId)
+    expect(events).toEqual([
+      { type: 'SlideCreated', slideId },
+      { type: 'SlideActivated', slideId },
+    ])
     expect(system.undoStack.entries[0]).toMatchObject({
       type: 'CreateSlide',
       parameters: { name: 'Intro' },
@@ -190,12 +194,13 @@ describe('CreateSlideCommand', () => {
 describe('DeleteSlideCommand', () => {
   it('removes a slide and records its removal snapshot as inverse', () => {
     const { system, slideId } = setupProjectWithSlide()
+    expectOk(system.dispatcher.dispatch(new CreateSlideCommand({ name: 'S2' })))
     const events = collectEvents(system)
 
     const result = system.dispatcher.dispatch(new DeleteSlideCommand({ slideId }))
 
     const inverse = expectOk(result)
-    expect(system.engine.project?.slides).toEqual([])
+    expect(system.engine.project?.slides.map((slide) => slide.name)).toEqual(['S2'])
     expect(events).toEqual([{ type: 'SlideRemoved', slideId }])
     expect(inverse).toMatchObject({ slideId })
     expect(inverse.slideJSON).toMatchObject({ id: slideId, name: 'S1' })
@@ -203,6 +208,21 @@ describe('DeleteSlideCommand', () => {
       type: 'DeleteSlide',
       parameters: { slideId },
     })
+  })
+
+  it('rejects deleting the last remaining slide, leaving the engine unchanged', () => {
+    const { system, slideId } = setupProjectWithSlide()
+    const events = collectEvents(system)
+
+    const result = system.dispatcher.dispatch(new DeleteSlideCommand({ slideId }))
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/last/i)
+    }
+    expect(system.engine.project?.slides.map((slide) => slide.name)).toEqual(['S1'])
+    expect(system.undoStack.entries).toHaveLength(2)
+    expect(events).toEqual([])
   })
 
   it('rejects deleting a slide that does not exist', () => {
