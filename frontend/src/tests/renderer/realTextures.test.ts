@@ -13,6 +13,7 @@ import type { Engine } from '../../engine/internal'
 import { createEngine } from '../../engine/internal'
 import { realPixi } from '../../pixi/renderer/pixi'
 import { Renderer } from '../../pixi/renderer/renderer'
+import { ALWAYS_ZERO_TIME } from '../../pixi/renderer/sceneRenderer'
 import {
   FakeTexture,
   assetLoadCalls,
@@ -218,6 +219,52 @@ describe('real textures in the renderer', () => {
     expect(assetLoadCalls).toHaveLength(0)
     expect(consoleError).not.toHaveBeenCalled()
     consoleError.mockRestore()
+  })
+
+  it('renders a grey-box placeholder for a missing definition, with the name label kept', async () => {
+    const engine = createEngine()
+    const dispatcher = new CommandDispatcher(engine, new UndoStack())
+    const host = document.createElement('div')
+    const orphan = engine.defineAsset('Orphan')
+    const renderer = new Renderer(
+      host,
+      engine,
+      undefined,
+      realPixi,
+      (definitionId) => (definitionId === orphan.id ? null : ORIGINAL_URL),
+      ALWAYS_ZERO_TIME,
+      (definitionId) => definitionId === orphan.id,
+    )
+    await renderer.start()
+    dispatcher.dispatch(new CreateProjectCommand({ name: 'Demo' }))
+    dispatcher.dispatch(new CreateSlideCommand({ name: 'Slide 1' }))
+    const app = pixiRegistry.applications.at(-1)
+    if (!app) {
+      throw new Error('No pixi application was created')
+    }
+    const system = { engine, dispatcher }
+    const root = findByLabel(worldOf(app), 'Root')
+
+    placeInstance(system, orphan.id, 'Orphan')
+    await flushAsync()
+
+    const container = instanceContainer(root, 'Orphan')
+    const sprite = spriteOf(container)
+    expect(sprite?.tint).not.toBe(0xffffff)
+    expect(labelOf(container)?.visible).toBe(true)
+    expect(labelOf(container)?.text).toBe('Orphan')
+    expect(assetLoadCalls).toHaveLength(0)
+  })
+
+  it('resets the grey missing tint when the definition texture loads', async () => {
+    textureLoads.set(ORIGINAL_URL, BOY_IMAGE)
+    const { system, app, definitionId } = await setup()
+    const root = findByLabel(worldOf(app), 'Root')
+
+    placeInstance(system, definitionId, 'Boy')
+    await flushAsync()
+
+    expect(spriteOf(instanceContainer(root, 'Boy'))?.tint).toBe(0xffffff)
   })
 
   it('ignores a texture that finishes loading after its node was removed', async () => {

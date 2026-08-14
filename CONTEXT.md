@@ -65,6 +65,10 @@ A named attachment point defined on an asset definition (e.g. Head, Speech Bubbl
 The canonical classification label on an asset definition: Character, Character Part, Animal, Plant, Object, Background, UI, Decoration, Speech Bubble, Icon, Effect, Particle, Text, or Uncategorized (default). Shared by the asset library, asset authoring, and the AI asset pipeline.
 _Avoid_: Fish, Flowers, custom per-step category vocabularies
 
+**Missing Assets Report**:
+The reconciliation of a project's asset-definition references against the live library store, run on open/import: references with no definition in the store are listed by the affected nodes' names ("Missing Assets: Clock.png, Boy.png"), and the user continues with those nodes rendered as grey-box placeholders on the canvas and marked in the scene tree. Purely store-based — asset references are never embedded in the `.lesson` file.
+_Avoid_: Broken asset, unresolved reference
+
 **Material Instance**:
 The per-node rendering settings (tint, opacity multiplier, and shader-uniform values) owned by every renderable node — asset instances and text nodes alike. References a material definition and may override its parameter defaults.
 _Avoid_: Style, fill color

@@ -5,9 +5,10 @@ import { useEngine, useEngineEvent } from '../../app/useEngine'
 import { applyZOrder, canApplyZOrder, Z_ORDER_ITEMS } from '../../app/zOrderActions'
 import type { SceneNode } from '../../engine'
 import type { ZOrderMode } from '../../engine/commands'
+import { useMissingAssetsStore } from '../../stores/missingAssetsStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { iconOf } from './nodeIconKinds'
-import { LockIcon, NodeIcon, VisibilityIcon } from './nodeIcons'
+import { LockIcon, MissingAssetIcon, NodeIcon, VisibilityIcon } from './nodeIcons'
 
 interface ContextMenuState {
   x: number
@@ -20,6 +21,7 @@ function visibleChildren(node: SceneNode): SceneNode[] {
 
 interface SceneTreeRowProps {
   node: SceneNode
+  missingNodeIds: ReadonlySet<string>
   onContextMenu: (event: React.MouseEvent, node: SceneNode) => void
   onDragStart: (event: React.DragEvent<HTMLButtonElement>, nodeId: string) => void
   onDragOver: (event: React.DragEvent<HTMLButtonElement>, nodeId: string) => void
@@ -31,6 +33,7 @@ interface SceneTreeRowProps {
 
 function SceneTreeRow({
   node,
+  missingNodeIds,
   onContextMenu,
   onDragStart,
   onDragOver,
@@ -41,6 +44,7 @@ function SceneTreeRow({
 }: SceneTreeRowProps) {
   const selected = useSelectionStore((state) => state.selectedIds.includes(node.id))
   const children = visibleChildren(node)
+  const missing = missingNodeIds.has(node.id)
   let affordanceClass = ''
   if (dropOver?.targetId === node.id) {
     affordanceClass = ` scene-tree__row--drop-${dropOver.zone}`
@@ -51,7 +55,7 @@ function SceneTreeRow({
         role="treeitem"
         aria-selected={selected}
         draggable={node.parent !== null || undefined}
-        className={`scene-tree__row${selected ? ' scene-tree__row--selected' : ''}${affordanceClass}`}
+        className={`scene-tree__row${selected ? ' scene-tree__row--selected' : ''}${missing ? ' scene-tree__row--missing' : ''}${affordanceClass}`}
         onClick={(event) => {
           if (event.ctrlKey || event.metaKey) {
             useSelectionStore.getState().toggle(node.id)
@@ -79,6 +83,14 @@ function SceneTreeRow({
           <span className="scene-tree__indicator" title="Locked">
             <LockIcon />
           </span>
+          {missing && (
+            <span
+              className="scene-tree__indicator scene-tree__indicator--missing"
+              title="Missing asset"
+            >
+              <MissingAssetIcon />
+            </span>
+          )}
         </span>
       </button>
       {children.length > 0 && (
@@ -87,6 +99,7 @@ function SceneTreeRow({
             <SceneTreeRow
               key={child.id}
               node={child}
+              missingNodeIds={missingNodeIds}
               onContextMenu={onContextMenu}
               onDragStart={onDragStart}
               onDragOver={onDragOver}
@@ -111,6 +124,7 @@ export function ScenePanel() {
     targetId: string
     zone: 'before' | 'into' | 'after'
   } | null>(null)
+  const missingNodeIds = useMissingAssetsStore((state) => state.report?.affectedNodeIds)
   useEngineEvent(() => setTick((tick) => tick + 1))
 
   // Close context menu on click or Escape
@@ -275,6 +289,7 @@ export function ScenePanel() {
         <ul className="scene-tree" role="tree" aria-label={`Scene tree of ${slide.name}`}>
           <SceneTreeRow
             node={slide.scene.root}
+            missingNodeIds={new Set(missingNodeIds ?? [])}
             onContextMenu={handleRowContextMenu}
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}

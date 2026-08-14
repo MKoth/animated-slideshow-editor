@@ -1,0 +1,102 @@
+import { describe, expect, it } from 'vitest'
+import { reconcileMissingAssets } from '../../engine/missingAssets'
+import { createEngine } from '../../engine/internal'
+import { makeProjectWithAssets } from './helpers'
+
+describe('reconcileMissingAssets', () => {
+  it('reports nothing when every definition reference is available', () => {
+    const { project } = makeProjectWithAssets('Demo', [
+      { name: 'Boy', definitionId: 'def-boy' },
+      { name: 'Cat', definitionId: 'def-cat' },
+    ])
+
+    const report = reconcileMissingAssets(project, new Set(['def-boy', 'def-cat']))
+
+    expect(report.missing).toEqual([])
+    expect(report.affectedNodeIds).toEqual([])
+    expect(report.names).toEqual([])
+  })
+
+  it('groups missing references by definition id with their nodes, in encounter order', () => {
+    const { project, placed } = makeProjectWithAssets('Demo', [
+      { name: 'Boy', definitionId: 'def-boy' },
+      { name: 'Cat', definitionId: 'def-cat' },
+      { name: 'Dog', definitionId: 'def-boy' },
+      { name: 'Fox', definitionId: 'def-fox' },
+    ])
+    const [boy, , dog, fox] = placed
+
+    const report = reconcileMissingAssets(project, new Set(['def-cat']))
+
+    expect(report.missing).toEqual([
+      { assetDefinitionId: 'def-boy', nodeIds: [boy.nodeId, dog.nodeId] },
+      { assetDefinitionId: 'def-fox', nodeIds: [fox.nodeId] },
+    ])
+  })
+
+  it('reports the deduplicated names of the affected nodes for the friendly message', () => {
+    const { project } = makeProjectWithAssets('Demo', [
+      { name: 'Boy', definitionId: 'def-boy' },
+      { name: 'Girl', definitionId: 'def-girl' },
+      { name: 'Boy', definitionId: 'def-other' },
+    ])
+
+    const report = reconcileMissingAssets(project, new Set([]))
+
+    expect(report.names).toEqual(['Boy', 'Girl'])
+  })
+
+  it('collects affected node ids across every slide of the project', () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'Demo' })
+    engine.createSlide('Slide 1')
+    engine.createSlide('Slide 2')
+    const slides = engine.project?.slides ?? []
+    const first = engine.createNode(slides[0].scene.id, slides[0].scene.root.id, 'On One', {
+      components: {
+        assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-one' },
+      },
+    })
+    const second = engine.createNode(slides[1].scene.id, slides[1].scene.root.id, 'On Two', {
+      components: {
+        assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-two' },
+      },
+    })
+    if (!engine.project) {
+      throw new Error('Project was not created')
+    }
+
+    const report = reconcileMissingAssets(engine.project, new Set([]))
+
+    expect(report.affectedNodeIds).toEqual([first.id, second.id])
+  })
+
+  it('ignores nodes without asset instances, including text and camera nodes', () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'Demo' })
+    engine.createSlide('Slide 1')
+    const slide = engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('Slide was not created')
+    }
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Label', {
+      components: { text: { kind: 'text', content: 'Hi', fontSize: 20, alignment: 'left' } },
+    })
+    const folder = engine.createNode(slide.scene.id, slide.scene.root.id, 'Group')
+    engine.createNode(slide.scene.id, folder.id, 'Nested Image', {
+      components: {
+        assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-missing' },
+      },
+    })
+    if (!engine.project) {
+      throw new Error('Project was not created')
+    }
+
+    const report = reconcileMissingAssets(engine.project, new Set([]))
+
+    expect(report.names).toEqual(['Nested Image'])
+    expect(report.missing).toEqual([
+      { assetDefinitionId: 'def-missing', nodeIds: [expect.any(String)] },
+    ])
+  })
+})

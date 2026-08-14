@@ -8,6 +8,7 @@ import { CommandDispatcher, UndoStack } from '../engine/commands'
 import type { Engine } from '../engine/internal'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
 import { noopPersistence } from './contextHarness'
+import { useMissingAssetsStore } from '../stores/missingAssetsStore'
 import { useSelectionStore } from '../stores/selectionStore'
 
 function renderPanel(): { engine: Engine; undoStack: UndoStack } {
@@ -39,6 +40,7 @@ async function waitForTree(slideName: string) {
 
 beforeEach(() => {
   useSelectionStore.setState({ selectedIds: [] })
+  useMissingAssetsStore.setState({ report: null, dialogVisible: false })
 })
 
 describe('ScenePanel', () => {
@@ -292,6 +294,66 @@ describe('ScenePanel', () => {
     expect(
       slide.scene.root.children.filter((node) => !node.components.camera).map((node) => node.name),
     ).toEqual(['Boy', 'Cat', 'Dog'])
+  })
+
+  it('marks rows whose nodes reference missing asset definitions', async () => {
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    const boy = engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy', {
+      components: {
+        assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-boy' },
+      },
+    })
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Cat', {
+      components: {
+        assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-cat' },
+      },
+    })
+    useMissingAssetsStore.setState({
+      report: {
+        missing: [{ assetDefinitionId: 'def-boy', nodeIds: [boy.id] }],
+        affectedNodeIds: [boy.id],
+        names: ['Boy'],
+      },
+      dialogVisible: true,
+    })
+
+    const tree = await waitForTree('Slide 1')
+    const boyRow = await tree.findByRole('treeitem', { name: 'Boy' })
+    const catRow = tree.getByRole('treeitem', { name: 'Cat' })
+
+    expect(within(boyRow).getByTitle('Missing asset')).toBeInTheDocument()
+    expect(boyRow).toHaveClass('scene-tree__row--missing')
+    expect(within(catRow).queryByTitle('Missing asset')).not.toBeInTheDocument()
+    expect(catRow).not.toHaveClass('scene-tree__row--missing')
+  })
+
+  it('clears the missing-asset marks when the report is gone', async () => {
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    const boy = engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy', {
+      components: {
+        assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-boy' },
+      },
+    })
+    useMissingAssetsStore.setState({
+      report: {
+        missing: [{ assetDefinitionId: 'def-boy', nodeIds: [boy.id] }],
+        affectedNodeIds: [boy.id],
+        names: ['Boy'],
+      },
+      dialogVisible: true,
+    })
+
+    const tree = await waitForTree('Slide 1')
+    const boyRow = await tree.findByRole('treeitem', { name: 'Boy' })
+    expect(within(boyRow).getByTitle('Missing asset')).toBeInTheDocument()
+
+    useMissingAssetsStore.setState({ report: null, dialogVisible: false })
+
+    await waitFor(() => {
+      expect(within(boyRow).queryByTitle('Missing asset')).not.toBeInTheDocument()
+    })
   })
 })
 

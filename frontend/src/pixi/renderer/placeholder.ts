@@ -12,6 +12,7 @@ import type { WorldSize } from './worldGeometry'
 
 const PLACEHOLDER_WIDTH = 160
 const PLACEHOLDER_HEIGHT = 100
+const MISSING_TINT = 0x808080
 const labelByGroup = new WeakMap<PixiContainer, PixiText>()
 const outlineByGroup = new WeakMap<PixiContainer, PixiGraphics>()
 const bodyByGroup = new WeakMap<PixiContainer, PixiSprite>()
@@ -62,11 +63,19 @@ export function applyPlaceholderName(group: PixiContainer, name: string): void {
   }
 }
 
+export function applyMissingPlaceholder(group: PixiContainer): void {
+  const body = bodyByGroup.get(group)
+  if (body) {
+    body.tint = MISSING_TINT
+  }
+}
+
 export function applyAssetTexture(group: PixiContainer, texture: PixiTexture): void {
   const body = bodyByGroup.get(group)
   if (!body) {
     return
   }
+  body.tint = 0xffffff
   body.texture = texture
   body.width = texture.width > 0 ? texture.width : PLACEHOLDER_WIDTH
   body.height = texture.height > 0 ? texture.height : PLACEHOLDER_HEIGHT

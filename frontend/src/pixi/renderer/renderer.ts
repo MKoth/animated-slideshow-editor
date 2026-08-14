@@ -71,6 +71,7 @@ export class Renderer {
   #disposed = false
   readonly #resolveAssetUrl: ResolveAssetUrl
   readonly #currentTime: CurrentTimeSource
+  readonly #isAssetMissing: (definitionId: string) => boolean
 
   constructor(
     host: HTMLElement,
@@ -79,6 +80,7 @@ export class Renderer {
     pixi: RendererPixi = realPixi,
     resolveAssetUrl: ResolveAssetUrl = () => null,
     currentTime: CurrentTimeSource = ALWAYS_ZERO_TIME,
+    isAssetMissing: (definitionId: string) => boolean = () => false,
   ) {
     this.#host = host
     this.#engine = engine
@@ -86,6 +88,7 @@ export class Renderer {
     this.#pixi = pixi
     this.#resolveAssetUrl = resolveAssetUrl
     this.#currentTime = currentTime
+    this.#isAssetMissing = isAssetMissing
   }
 
   async start(): Promise<void> {
@@ -131,6 +134,7 @@ export class Renderer {
         this.#resolveAssetUrl,
         () => this.#selectionOverlay?.redraw(),
         this.#currentTime,
+        this.#isAssetMissing,
       )
       this.#unsubscribe = this.#engine.subscribe((event) => this.#handleEvent(event))
       this.#unsubscribeTime = this.#currentTime.subscribe(() => this.#handleTimeChanged())

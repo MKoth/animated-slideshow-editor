@@ -11,7 +11,7 @@ import {
 import type { PixiContainer, RendererPixi } from './pixi'
 import type { WorldSize } from './worldGeometry'
 import { applyEvaluatedState, applyName, createNodeContainer, placeholderOf } from './nodeRenderer'
-import { applyAssetTexture, placeholderSize } from './placeholder'
+import { applyAssetTexture, applyMissingPlaceholder, placeholderSize } from './placeholder'
 import type { ResolveAssetUrl, TextureCache } from './textureCache'
 
 export interface CurrentTimeSource {
@@ -29,6 +29,7 @@ export class SceneRenderer {
   readonly #pixi: RendererPixi
   readonly #textureCache: TextureCache
   readonly #resolveAssetUrl: ResolveAssetUrl
+  readonly #isAssetMissing: (definitionId: string) => boolean
   readonly #world: PixiContainer
   readonly #currentTime: CurrentTimeSource
   readonly #containers = new Map<string, PixiContainer>()
@@ -48,6 +49,7 @@ export class SceneRenderer {
     resolveAssetUrl: ResolveAssetUrl,
     onNodeSizeChanged: (nodeId: string) => void = () => undefined,
     currentTime: CurrentTimeSource = ALWAYS_ZERO_TIME,
+    isAssetMissing: (definitionId: string) => boolean = () => false,
   ) {
     this.#engine = engine
     this.#world = world
@@ -56,6 +58,7 @@ export class SceneRenderer {
     this.#resolveAssetUrl = resolveAssetUrl
     this.#onNodeSizeChanged = onNodeSizeChanged
     this.#currentTime = currentTime
+    this.#isAssetMissing = isAssetMissing
   }
 
   nodeSize(nodeId: string): WorldSize | null {
@@ -275,6 +278,14 @@ export class SceneRenderer {
   }
 
   #loadAssetTexture(definitionId: string, nodeId: string, container: PixiContainer): void {
+    const placeholder = placeholderOf(container)
+    if (!placeholder) {
+      return
+    }
+    if (this.#isAssetMissing(definitionId)) {
+      applyMissingPlaceholder(placeholder)
+      return
+    }
     const url = this.#resolveAssetUrl(definitionId)
     if (!url) {
       return
@@ -282,10 +293,6 @@ export class SceneRenderer {
     const load = this.#textureCache.load(url, definitionId)
     void load.then((result) => {
       if (!result.real || container.destroyed) {
-        return
-      }
-      const placeholder = placeholderOf(container)
-      if (!placeholder) {
         return
       }
       applyAssetTexture(placeholder, result.texture)

@@ -161,6 +161,7 @@ export class FakeTexture {
 export class FakeSprite extends FakeContainer {
   readonly kind = 'sprite'
   texture: FakeTexture
+  tint = 0xffffff
 
   constructor(texture: FakeTexture) {
     super()

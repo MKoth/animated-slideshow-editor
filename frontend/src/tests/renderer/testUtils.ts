@@ -16,6 +16,7 @@ export interface FakeChild {
   width: number
   height: number
   text?: string
+  tint?: number
   ops?: string[]
   texture?: { destroyed: boolean }
 }

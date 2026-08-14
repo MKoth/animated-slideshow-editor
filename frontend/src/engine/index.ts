@@ -14,6 +14,8 @@ export type { Project, ProjectMetadata, CreateProjectInput } from './project'
 export type { Transform } from './transform'
 export { normalizeRotation } from './transform'
 export { countAssetUsage } from './assetUsage'
+export { reconcileMissingAssets } from './missingAssets'
+export type { MissingAssetReference, MissingAssetsReport } from './missingAssets'
 export type {
   NodeComponents,
   CameraComponent,
