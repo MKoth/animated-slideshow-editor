@@ -77,6 +77,25 @@ export class SlideManager {
     this.#bus.emit({ type: 'SlideRenamed', slideId })
   }
 
+  duplicate(slideId: string): Slide {
+    const project = this.#projects.current
+    if (!project) {
+      throw new Error('No project exists in memory')
+    }
+    const source = this.get(slideId)
+    const { scene, nodeIds } = this.#scenes.copyScene(source.scene)
+    const copy = new SlideModel(
+      newId('slide'),
+      source.name,
+      source.duration,
+      scene,
+      source.animation.copyFor(nodeIds),
+    )
+    project.slides.splice(project.slides.indexOf(source) + 1, 0, copy)
+    this.#bus.emit({ type: 'SlideDuplicated', slideId: copy.id })
+    return copy
+  }
+
   move(slideId: string, index: number): void {
     const project = this.#projects.current
     if (!project) {

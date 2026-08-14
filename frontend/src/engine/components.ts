@@ -21,3 +21,11 @@ export interface NodeComponents {
   readonly assetInstance?: AssetInstanceComponent
   readonly text?: TextComponent
 }
+
+export function copyComponents(components: NodeComponents): NodeComponents {
+  return {
+    camera: components.camera ? { ...components.camera } : undefined,
+    assetInstance: components.assetInstance ? { ...components.assetInstance } : undefined,
+    text: components.text ? { ...components.text } : undefined,
+  }
+}

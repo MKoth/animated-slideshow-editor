@@ -94,6 +94,12 @@ export class Engine {
     this.#slides.rename(slideId, name)
   }
 
+  duplicateSlide(slideId: string): Slide {
+    const slide = this.#slides.duplicate(slideId)
+    this.setActiveSlide(slide.id)
+    return slide
+  }
+
   moveSlide(slideId: string, index: number): void {
     this.#slides.move(slideId, index)
   }

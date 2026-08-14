@@ -2,7 +2,7 @@ import type { SceneNode } from './sceneNode'
 import { requireString } from './guards'
 import type { AnimationProperty } from './animationProperties'
 import type { Keyframe } from './keyframe'
-import { Keyframe as KeyframeModel } from './keyframe'
+import { Keyframe as KeyframeModel, newKeyframeId } from './keyframe'
 import type { PropertyTrackJSON } from './json'
 import {
   requireAnimationProperty,
@@ -54,6 +54,19 @@ export class NodeAnimation {
 
   get(property: AnimationProperty, keyframeId: string): Keyframe | undefined {
     return this.#tracks.get(property)?.find((entry) => entry.id === keyframeId)
+  }
+
+  copy(): NodeAnimation {
+    const copy = new NodeAnimation()
+    for (const [property, keyframes] of this.#tracks) {
+      copy.#tracks.set(
+        property,
+        keyframes.map(
+          (keyframe) => new KeyframeModel(newKeyframeId(), keyframe.time, keyframe.value),
+        ),
+      )
+    }
+    return copy
   }
 
   toJSON(): PropertyTrackJSON[] {

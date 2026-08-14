@@ -32,6 +32,18 @@ export class SlideAnimation {
     this.#nodes.delete(nodeId)
   }
 
+  copyFor(nodeIdMap: ReadonlyMap<string, string>): SlideAnimation {
+    const copy = new SlideAnimation()
+    for (const [nodeId, animation] of this.#nodes) {
+      const copiedNodeId = nodeIdMap.get(nodeId)
+      if (!copiedNodeId) {
+        throw new Error(`No copied node for animation node: ${nodeId}`)
+      }
+      copy.#nodes.set(copiedNodeId, animation.copy())
+    }
+    return copy
+  }
+
   clampKeyframesTo(duration: number): ClampedKeyframe[] {
     const clamped: ClampedKeyframe[] = []
     for (const [nodeId, animation] of this.#nodes) {

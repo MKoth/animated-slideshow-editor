@@ -4,6 +4,12 @@ import { Scene as SceneModel } from './scene'
 import { SceneNode, walkPreOrder } from './sceneNode'
 import { identityTransform } from './transform'
 import type { NodeManager } from './nodeManager'
+import { copyComponents } from './components'
+
+export interface CopiedScene {
+  readonly scene: Scene
+  readonly nodeIds: ReadonlyMap<string, string>
+}
 
 export class SceneManager {
   readonly #scenes = new Map<string, Scene>()
@@ -24,6 +30,18 @@ export class SceneManager {
     this.#scenes.set(scene.id, scene)
     this.#nodes.registerRoot(scene)
     return scene
+  }
+
+  copyScene(source: Scene): CopiedScene {
+    const nodeIds = new Map<string, string>()
+    const root = copyNodeDeep(source.root, null, nodeIds)
+    const cameraId = nodeIds.get(source.camera.id)
+    if (!cameraId) {
+      throw new Error('Copied scene has no camera node')
+    }
+    const scene = new SceneModel(newId('scene'), root, findNodeById(root, cameraId))
+    this.install(scene)
+    return { scene, nodeIds }
   }
 
   install(scene: Scene): void {
@@ -52,4 +70,38 @@ export class SceneManager {
   clear(): void {
     this.#scenes.clear()
   }
+}
+
+function copyNodeDeep(
+  source: SceneNode,
+  parent: SceneNode | null,
+  nodeIds: Map<string, string>,
+): SceneNode {
+  const id = newId('node')
+  nodeIds.set(source.id, id)
+  const copy = new SceneNode(
+    id,
+    source.name,
+    { ...source.transform },
+    copyComponents(source.components),
+  )
+  copy.visible = source.visible
+  copy.opacity = source.opacity
+  copy.parent = parent
+  if (parent) {
+    parent.children.push(copy)
+  }
+  for (const child of source.children) {
+    copyNodeDeep(child, copy, nodeIds)
+  }
+  return copy
+}
+
+function findNodeById(root: SceneNode, id: string): SceneNode {
+  for (const node of walkPreOrder(root)) {
+    if (node.id === id) {
+      return node
+    }
+  }
+  throw new Error(`Copied node not found: ${id}`)
 }

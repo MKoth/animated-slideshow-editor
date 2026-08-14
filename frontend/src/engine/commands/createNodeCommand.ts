@@ -1,6 +1,6 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
-import type { NodeComponents } from '../components'
+import { copyComponents, type NodeComponents } from '../components'
 import type { Transform } from '../transform'
 import { requireOpacity } from '../guards'
 
@@ -93,13 +93,5 @@ function nodeExists(engine: Engine, nodeId: string): boolean {
     return true
   } catch {
     return false
-  }
-}
-
-function copyComponents(components: NodeComponents): NodeComponents {
-  return {
-    camera: components.camera ? { ...components.camera } : undefined,
-    assetInstance: components.assetInstance ? { ...components.assetInstance } : undefined,
-    text: components.text ? { ...components.text } : undefined,
   }
 }
