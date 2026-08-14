@@ -1,14 +1,10 @@
 from datetime import datetime
 
 from sqlalchemy import JSON, CheckConstraint, DateTime, Float, Integer, String, Text
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.assets.categories import ASSET_CATEGORIES, DEFAULT_ASSET_CATEGORY
-
-
-class Base(DeclarativeBase):
-    pass
-
+from app.model import Base
 
 _CATEGORY_CHECK = CheckConstraint(
     f"category IN ({', '.join(repr(category) for category in ASSET_CATEGORIES)})",
