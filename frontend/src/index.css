@@ -561,6 +561,127 @@ button:disabled {
   display: inline-flex;
 }
 
+/* ------------------------------------------------------------------ */
+/* Slides panel                                                        */
+/* ------------------------------------------------------------------ */
+
+.slides-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.slides-toolbar {
+  display: flex;
+  align-items: center;
+  padding: 8px;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.slides-toolbar__add {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.slides-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: auto;
+}
+
+.slides-list__item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.slides-list__row {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.slides-list__row:hover {
+  background: var(--color-bg-elevated);
+}
+
+.slides-list__row--selected,
+.slides-list__row--selected:hover {
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+.slides-list__thumb {
+  width: 40px;
+  height: 30px;
+  flex-shrink: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-elevated);
+}
+
+.slides-list__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slides-list__duration {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.slides-list__row--selected .slides-list__duration {
+  color: var(--color-accent-text);
+}
+
+.slides-list__indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  flex-shrink: 0;
+}
+
+.slides-list__row--selected .slides-list__indicator {
+  background: var(--color-accent-text);
+}
+
+.slides-list__delete {
+  flex-shrink: 0;
+  padding: 2px 6px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.slides-list__delete:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.slides-list__delete:disabled:hover {
+  background: var(--color-bg-panel);
+}
+
 .canvas-panel {
   flex: 1;
   min-width: 0;
