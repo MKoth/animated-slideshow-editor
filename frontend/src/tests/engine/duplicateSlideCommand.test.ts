@@ -265,6 +265,19 @@ describe('DuplicateSlideCommand', () => {
     expect(engine.getKeyframes(sourceBoy.id, 'positionX')).toHaveLength(2)
   })
 
+  it('registers every copied node in the copy scene, so the copy resolves like any scene', () => {
+    const { engine, dispatcher, slide } = setup()
+    const copy = engine.getSlide(
+      expectOk(dispatcher.dispatch(new DuplicateSlideCommand({ slideId: slide.id }))).slideId,
+    )
+
+    for (const node of walkPreOrder(copy.scene.root)) {
+      expect(copy.scene.getNode(node.id)).toBe(node)
+    }
+    expect(copy.scene.getNode(copy.scene.camera.id)).toBe(copy.scene.camera)
+    expect(copy.scene.getNode(copy.scene.root.id)).toBe(copy.scene.root)
+  })
+
   it('keeps the copied animation fully independent: editing the copy leaves the source untouched', () => {
     const { engine, dispatcher, slide } = setup()
     const copy = engine.getSlide(

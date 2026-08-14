@@ -1,4 +1,4 @@
-import type { EnginePublic, MissingAssetsReport, Project } from '../engine'
+import type { AssetDefinition, EnginePublic, MissingAssetsReport, Project } from '../engine'
 import { reconcileMissingAssets } from '../engine'
 import { useAssetLibraryStore } from '../stores/assetLibraryStore'
 import { useMissingAssetsStore } from '../stores/missingAssetsStore'
@@ -9,12 +9,45 @@ export function openProjectInEditor(engine: EnginePublic, project: Project): voi
   engine.openProject(project)
   usePlaybackController.getState().reset()
   useSelectionStore.getState().clear()
-  const report = reconcileAgainstLibrary(project)
-  useMissingAssetsStore.getState().setReport(report)
+  reconcileWhenLibraryReady(project)
 }
 
-function reconcileAgainstLibrary(project: Project): MissingAssetsReport {
-  const definitions = useAssetLibraryStore.getState().definitions
+function reconcileWhenLibraryReady(project: Project): void {
+  const library = useAssetLibraryStore.getState()
+  if (library.unavailable) {
+    useMissingAssetsStore.getState().setReport(null)
+    return
+  }
+  if (library.loaded) {
+    useMissingAssetsStore
+      .getState()
+      .setReport(reconcileAgainstLibrary(project, library.definitions))
+    return
+  }
+  let settled = false
+  const unsubscribe = useAssetLibraryStore.subscribe((state, prev) => {
+    if (settled || prev.loaded || prev.unavailable) {
+      return
+    }
+    if (!state.loaded && !state.unavailable) {
+      return
+    }
+    settled = true
+    unsubscribe()
+    if (state.unavailable) {
+      useMissingAssetsStore.getState().setReport(null)
+    } else {
+      useMissingAssetsStore
+        .getState()
+        .setReport(reconcileAgainstLibrary(project, state.definitions))
+    }
+  })
+}
+
+function reconcileAgainstLibrary(
+  project: Project,
+  definitions: readonly AssetDefinition[],
+): MissingAssetsReport {
   const availableDefinitionIds = new Set(definitions.map((definition) => definition.id))
   return reconcileMissingAssets(project, availableDefinitionIds)
 }

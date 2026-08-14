@@ -39,8 +39,18 @@ export function CanvasPanel() {
       currentTime,
       isAssetMissing,
     )
+    let knownDefinitions = useAssetLibraryStore.getState().definitions
+    const unsubscribeLibrary = useAssetLibraryStore.subscribe((state) => {
+      if (state.definitions !== knownDefinitions) {
+        knownDefinitions = state.definitions
+        renderer.refreshAssetTextures()
+      }
+    })
     void renderer.start()
-    return () => renderer.dispose()
+    return () => {
+      unsubscribeLibrary()
+      renderer.dispose()
+    }
   }, [engine, dispatch])
 
   return (

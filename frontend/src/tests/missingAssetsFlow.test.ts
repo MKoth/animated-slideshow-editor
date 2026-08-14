@@ -31,6 +31,8 @@ function setLibraryDefinitions(ids: readonly string[]): void {
       original_url: '',
       thumbnail_url: '',
     })),
+    loaded: true,
+    unavailable: false,
   })
 }
 
@@ -51,7 +53,7 @@ describe('openProjectInEditor missing-assets reconciliation', () => {
     })
     useSelectionStore.setState({ selectedIds: [], selectedKeyframeIds: [] })
     useMissingAssetsStore.setState({ report: null, dialogVisible: false })
-    setLibraryDefinitions([])
+    useAssetLibraryStore.setState({ definitions: [], loaded: false, unavailable: false })
   })
 
   afterEach(() => {
@@ -90,6 +92,7 @@ describe('openProjectInEditor missing-assets reconciliation', () => {
   })
 
   it('keeps the report as the marking source after the dialog is dismissed', () => {
+    setLibraryDefinitions([])
     const engine = setupEditor()
     const { project } = makeProjectWithAssets('New', [{ name: 'Boy', definitionId: 'def-boy' }])
 
@@ -118,5 +121,53 @@ describe('openProjectInEditor missing-assets reconciliation', () => {
     const state = useMissingAssetsStore.getState()
     expect(state.report?.names).toEqual(['Dog'])
     expect(state.dialogVisible).toBe(true)
+  })
+
+  it('shows no report while the library has not loaded, instead of a false "all missing" report', () => {
+    const engine = setupEditor()
+    const { project } = makeProjectWithAssets('New', [{ name: 'Boy', definitionId: 'def-boy' }])
+
+    openProjectInEditor(engine, project)
+
+    expect(useMissingAssetsStore.getState().report).toBeNull()
+    expect(useMissingAssetsStore.getState().dialogVisible).toBe(false)
+  })
+
+  it('reports the missing assets once the library finishes loading after the open', () => {
+    const engine = setupEditor()
+    const { project } = makeProjectWithAssets('New', [{ name: 'Boy', definitionId: 'def-boy' }])
+
+    openProjectInEditor(engine, project)
+    expect(useMissingAssetsStore.getState().report).toBeNull()
+
+    setLibraryDefinitions([])
+
+    const state = useMissingAssetsStore.getState()
+    expect(state.report?.names).toEqual(['Boy'])
+    expect(state.dialogVisible).toBe(true)
+  })
+
+  it('clears the report instead of reporting when the loaded library holds every definition', () => {
+    const engine = setupEditor()
+    const { project } = makeProjectWithAssets('New', [{ name: 'Boy', definitionId: 'def-boy' }])
+
+    openProjectInEditor(engine, project)
+    expect(useMissingAssetsStore.getState().report).toBeNull()
+
+    setLibraryDefinitions(['def-boy'])
+
+    expect(useMissingAssetsStore.getState().report).toBeNull()
+    expect(useMissingAssetsStore.getState().dialogVisible).toBe(false)
+  })
+
+  it('shows no report when the library settles as unavailable (degraded mode)', () => {
+    useAssetLibraryStore.setState({ definitions: [], loaded: false, unavailable: true })
+    const engine = setupEditor()
+    const { project } = makeProjectWithAssets('New', [{ name: 'Boy', definitionId: 'def-boy' }])
+
+    openProjectInEditor(engine, project)
+
+    expect(useMissingAssetsStore.getState().report).toBeNull()
+    expect(useMissingAssetsStore.getState().dialogVisible).toBe(false)
   })
 })

@@ -49,6 +49,9 @@ export class SceneManager {
     this.#nodes.registerRoot(scene)
     for (const node of walkPreOrder(scene.root)) {
       if (node !== scene.root && node !== scene.camera) {
+        if (!scene.getNode(node.id)) {
+          scene.register(node)
+        }
         this.#nodes.register(scene, node)
       }
     }

@@ -77,7 +77,7 @@ beforeEach(() => {
     playbackSpeed: 1,
     loopEnabled: false,
   })
-  useAssetLibraryStore.setState({ definitions: [] })
+  useAssetLibraryStore.setState({ definitions: [], loaded: false, unavailable: false })
 })
 
 afterEach(() => {
@@ -133,7 +133,7 @@ describe('openLibraryProject', () => {
     const { project } = makeProjectWithAssets('With Assets', [
       { name: 'Boy', definitionId: 'def-boy' },
     ])
-    useAssetLibraryStore.setState({ definitions: [] })
+    useAssetLibraryStore.setState({ definitions: [], loaded: true, unavailable: false })
     stubProjects([SUMMARY_1], { 'p-1': serialize(project) })
 
     await openLibraryProject(engine, 'p-1')

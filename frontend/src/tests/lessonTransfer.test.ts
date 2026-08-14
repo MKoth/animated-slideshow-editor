@@ -73,7 +73,7 @@ beforeEach(() => {
     playbackSpeed: 1,
     loopEnabled: false,
   })
-  useAssetLibraryStore.setState({ definitions: [] })
+  useAssetLibraryStore.setState({ definitions: [], loaded: false, unavailable: false })
 })
 
 afterEach(() => {
@@ -165,7 +165,7 @@ describe('importLessonFile', () => {
     const { project } = makeProjectWithAssets('With Assets', [
       { name: 'Boy', definitionId: 'def-boy' },
     ])
-    useAssetLibraryStore.setState({ definitions: [] })
+    useAssetLibraryStore.setState({ definitions: [], loaded: true, unavailable: false })
     const file = new File([serialize(project)], 'lesson.lesson', { type: 'application/json' })
     const engine = setupEditor()
 

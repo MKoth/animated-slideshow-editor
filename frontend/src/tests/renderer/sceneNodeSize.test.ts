@@ -120,4 +120,41 @@ describe('SceneRenderer nodeSize', () => {
 
     expect(renderer.nodeSize(nodeId)).toBeNull()
   })
+
+  it('loads a texture that was unresolved at bind time once refreshAssetTextures runs', async () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'Demo' })
+    engine.createSlide('Slide 1')
+    const slide = engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('Slide was not created')
+    }
+    const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'Hero', {
+      components: { assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-1' } },
+    })
+    let assetUrl: string | null = null
+    const pixi = createPixiFake() as unknown as RendererPixi
+    const world = new FakeContainer() as unknown as PixiContainer
+    const renderer = new SceneRenderer(
+      engine,
+      world,
+      pixi,
+      new TextureCache(pixi),
+      () => assetUrl,
+      () => undefined,
+    )
+    renderer.bind(slide.scene)
+    expect(renderer.nodeSize(node.id)).toEqual({ width: 160, height: 100 })
+
+    const deferred = deferredTexture()
+    textureDeferreds.set('/api/assets/originals/def-1.png', deferred)
+    assetUrl = '/api/assets/originals/def-1.png'
+    renderer.refreshAssetTextures()
+    void deferred.resolve(new FakeTexture('boy.png', { width: 512, height: 300 }))
+
+    await deferred.promise
+    await vi.waitFor(() => {
+      expect(renderer.nodeSize(node.id)).toEqual({ width: 512, height: 300 })
+    })
+  })
 })

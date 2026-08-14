@@ -54,6 +54,7 @@ function notifyRequestFailure(
 
 interface AssetLibraryState {
   definitions: AssetDefinition[]
+  loaded: boolean
   loading: boolean
   error: string | null
   unavailable: boolean
@@ -74,6 +75,7 @@ let requestSeq = 0
 
 export const useAssetLibraryStore = create<AssetLibraryState>()((set, get) => ({
   definitions: [],
+  loaded: false,
   loading: false,
   error: null,
   unavailable: false,
@@ -91,7 +93,7 @@ export const useAssetLibraryStore = create<AssetLibraryState>()((set, get) => ({
       if (seq !== requestSeq) {
         return
       }
-      set({ definitions, loading: false, unavailable: false })
+      set({ definitions, loaded: true, loading: false, unavailable: false })
     } catch (error) {
       if (seq !== requestSeq) {
         return
@@ -99,6 +101,7 @@ export const useAssetLibraryStore = create<AssetLibraryState>()((set, get) => ({
       set({
         definitions: [],
         selectedId: null,
+        loaded: false,
         loading: false,
         unavailable: true,
         error: errorMessage(error),

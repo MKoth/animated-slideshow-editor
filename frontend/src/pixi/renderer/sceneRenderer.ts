@@ -304,6 +304,24 @@ export class SceneRenderer {
     })
   }
 
+  refreshAssetTextures(): void {
+    const scene = this.#scene
+    if (!scene) {
+      return
+    }
+    for (const node of walkPreOrder(scene.root)) {
+      const instance = node.components.assetInstance
+      if (!instance) {
+        continue
+      }
+      const container = this.#containers.get(node.id)
+      if (!container) {
+        continue
+      }
+      this.#loadAssetTexture(instance.assetDefinitionId, node.id, container)
+    }
+  }
+
   #attachToParent(container: PixiContainer, node: SceneNode): void {
     const parentContainer = node.parent ? this.#containers.get(node.parent.id) : undefined
     ;(parentContainer ?? this.#world).addChild(container)

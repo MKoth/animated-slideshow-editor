@@ -240,6 +240,10 @@ export class Renderer {
     }
   }
 
+  refreshAssetTextures(): void {
+    this.#sceneRenderer?.refreshAssetTextures()
+  }
+
   dispose(): void {
     this.#disposed = true
     this.#unsubscribe?.()
