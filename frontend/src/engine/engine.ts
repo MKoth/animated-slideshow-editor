@@ -14,6 +14,7 @@ export interface EnginePublic {
   readonly assetDefinitions: readonly AssetDefinition[]
   readonly activeSlideId: string | null
   subscribe(listener: (event: EngineEvent) => void): Unsubscribe
+  openProject(project: Project): void
   setActiveSlide(slideId: string): void
   getSlide(slideId: string): Slide
   getNode(nodeId: string): SceneNode

@@ -22,6 +22,16 @@ export class UndoStack {
     }
   }
 
+  clear(): void {
+    if (this.#entries.length === 0) {
+      return
+    }
+    this.#entries = []
+    for (const listener of this.#listeners) {
+      listener()
+    }
+  }
+
   subscribe = (listener: UndoStackListener): (() => void) => {
     this.#listeners.add(listener)
     return () => {

@@ -5,6 +5,7 @@ export { createEngine }
 export type { EnginePublic }
 export type { EngineEvent } from './events'
 export type { SlideActivated } from './events'
+export type { ProjectLoaded } from './events'
 export type { EventListener, Unsubscribe } from './events'
 export type { SceneNode } from './sceneNode'
 export type { Scene } from './scene'

@@ -53,6 +53,11 @@ export interface CommandSystem {
 export function createCommandSystem(logger: CommandLogger = defaultLogger): CommandSystem {
   const engine = createEngineInternal()
   const undoStack = new UndoStack()
+  engine.subscribe((event) => {
+    if (event.type === 'ProjectLoaded') {
+      undoStack.clear()
+    }
+  })
   return {
     engine: toReadOnly(engine),
     assetLibrarySync: new AssetLibrarySync(engine),

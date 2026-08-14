@@ -5,6 +5,11 @@ export interface ProjectCreated {
   readonly projectId: string
 }
 
+export interface ProjectLoaded {
+  readonly type: 'ProjectLoaded'
+  readonly projectId: string
+}
+
 export interface SlideCreated {
   readonly type: 'SlideCreated'
   readonly slideId: string
@@ -110,6 +115,7 @@ export interface KeyframeValueChanged {
 
 export type EngineEvent =
   | ProjectCreated
+  | ProjectLoaded
   | SlideCreated
   | SlideRemoved
   | SlideActivated

@@ -69,6 +69,17 @@ export class Engine {
     this.#bus.emit({ type: 'SlideActivated', slideId })
   }
 
+  openProject(project: Project): void {
+    this.#validateOrThrow(toLessonJSON(project))
+    this.#replaceProject(project)
+    const first = project.slides[0]
+    this.#activeSlideId = first ? first.id : null
+    this.#bus.emit({ type: 'ProjectLoaded', projectId: project.id })
+    if (first) {
+      this.#bus.emit({ type: 'SlideActivated', slideId: first.id })
+    }
+  }
+
   createProject(input: CreateProjectInput): Project {
     return this.#projects.create(input)
   }
@@ -252,24 +263,32 @@ export class Engine {
   }
 
   restoreFromJSON(json: LessonJSON): void {
-    const errors = validate(json)
-    if (errors.length > 0) {
-      throw new Error(errors.join('; '))
-    }
+    this.#validateOrThrow(json)
     const project = buildProjectFromJSON(json)
     try {
-      this.#nodes.clear()
-      this.#scenes.clear()
-      for (const slide of project.slides) {
-        this.#scenes.install(slide.scene)
-      }
-      this.#projects.install(project)
+      this.#replaceProject(project)
     } catch (error) {
       this.#nodes.clear()
       this.#scenes.clear()
       this.#projects.clear()
       throw error
     }
+  }
+
+  #validateOrThrow(json: unknown): void {
+    const errors = validate(json)
+    if (errors.length > 0) {
+      throw new Error(errors.join('; '))
+    }
+  }
+
+  #replaceProject(project: Project): void {
+    this.#nodes.clear()
+    this.#scenes.clear()
+    for (const slide of project.slides) {
+      this.#scenes.install(slide.scene)
+    }
+    this.#projects.install(project)
   }
 }
 
@@ -291,6 +310,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
       return engine.activeSlideId
     },
     subscribe: (listener) => engine.subscribe(listener),
+    openProject: (project) => engine.openProject(project),
     setActiveSlide: (slideId) => engine.setActiveSlide(slideId),
     getSlide: (slideId) => engine.getSlide(slideId),
     getNode: (nodeId) => engine.getNode(nodeId),

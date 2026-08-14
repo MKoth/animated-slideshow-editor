@@ -85,6 +85,7 @@ export interface PlaybackControllerState {
   setLoopEnabled(enabled: boolean): void
   setPlaybackSpeed(speed: number): void
   stepFrame(direction: 'forward' | 'backward', slideId: string, duration: number): void
+  reset(): void
   subscribe(listener: () => void): Unsubscribe
   subscribeEvents(listener: PlaybackEventListener): Unsubscribe
 }
@@ -266,5 +267,11 @@ export const usePlaybackController = create<PlaybackControllerState>()((set, get
     return () => {
       listeners.delete(listener)
     }
+  },
+
+  reset: (): void => {
+    cancelLoop()
+    activePlayback = null
+    set({ currentTimes: {}, status: 'stopped' })
   },
 }))

@@ -472,3 +472,59 @@ describe('PlaybackController playback', () => {
     expect(Object.keys(localStorage)).toHaveLength(0)
   })
 })
+
+describe('PlaybackController reset', () => {
+  beforeEach(() => {
+    usePlaybackController.setState({
+      currentTimes: {},
+      status: 'stopped',
+      playbackSpeed: 1,
+      loopEnabled: false,
+    })
+    localStorage.clear()
+  })
+
+  it('clears every per-slide current time and stops playback', () => {
+    const state = usePlaybackController.getState()
+    state.setCurrentTime('slide-a', 3, 10)
+    state.setCurrentTime('slide-b', 7, 10)
+    usePlaybackController.setState({ status: 'playing' })
+
+    usePlaybackController.getState().reset()
+
+    const after = usePlaybackController.getState()
+    expect(after.currentTimes).toEqual({})
+    expect(after.getTime('slide-a')).toBe(0)
+    expect(after.getTime('slide-b')).toBe(0)
+    expect(after.status).toBe('stopped')
+  })
+
+  it('stops an active playback loop and never advances afterwards', () => {
+    vi.useFakeTimers()
+    try {
+      usePlaybackController.getState().play('slide-a', 10)
+      vi.advanceTimersByTime(500)
+
+      usePlaybackController.getState().reset()
+      expect(usePlaybackController.getState().status).toBe('stopped')
+
+      vi.advanceTimersByTime(2000)
+      expect(usePlaybackController.getState().getTime('slide-a')).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('emits no playback events', () => {
+    const events: PlaybackEvent[] = []
+    const unsubscribe = usePlaybackController
+      .getState()
+      .subscribeEvents((event) => events.push(event))
+    usePlaybackController.getState().setCurrentTime('slide-a', 3, 10)
+
+    usePlaybackController.getState().reset()
+
+    expect(events).toEqual([{ type: 'CurrentTimeChanged', slideId: 'slide-a', time: 3 }])
+    unsubscribe()
+  })
+})
