@@ -6,6 +6,7 @@ import type { PersistenceService } from './persistence'
 import { createPersistenceService } from './persistence'
 import { EngineContext } from './engineContext'
 import type { EngineContextValue } from './engineContext'
+import { registerActiveSlideSync } from './activeSlideSync'
 import { registerLibrarySync } from './librarySync'
 
 export function EngineProvider({ children }: { children: ReactNode }) {
@@ -29,7 +30,9 @@ export function EngineProvider({ children }: { children: ReactNode }) {
     persistenceRef.current = persistence
     system.dispatcher.setOnCommandSucceeded(() => persistence.onCommandSucceeded())
     const disposeLibrarySync = registerLibrarySync(system.assetLibrarySync)
+    const disposeActiveSlideSync = registerActiveSlideSync(system.engine)
     return () => {
+      disposeActiveSlideSync()
       disposeLibrarySync()
       persistence.dispose()
       if (persistenceRef.current === persistence) {

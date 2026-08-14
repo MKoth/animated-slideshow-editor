@@ -82,6 +82,7 @@ export interface PlaybackControllerState {
   play(slideId: string, duration: number): void
   pause(): void
   stop(slideId: string): void
+  stopPreservingTimes(): void
   setLoopEnabled(enabled: boolean): void
   setPlaybackSpeed(speed: number): void
   stepFrame(direction: 'forward' | 'backward', slideId: string, duration: number): void
@@ -122,6 +123,15 @@ function cancelLoop(): void {
     cancelAnimationFrame(rafId)
     rafId = null
   }
+}
+
+function teardownActivePlayback(): { slideId: string | null; time: number } {
+  const state = usePlaybackController.getState()
+  const slideId = activePlayback?.slideId ?? null
+  const time = slideId !== null ? (state.currentTimes[slideId] ?? 0) : 0
+  cancelLoop()
+  activePlayback = null
+  return { slideId, time }
 }
 
 function setTimeAndEmit(slideId: string, time: number): void {
@@ -210,14 +220,10 @@ export const usePlaybackController = create<PlaybackControllerState>()((set, get
   },
 
   pause: (): void => {
-    const state = get()
-    if (state.status !== 'playing') {
+    if (get().status !== 'playing') {
       return
     }
-    cancelLoop()
-    const slideId = activePlayback?.slideId ?? null
-    const time = slideId !== null ? (state.currentTimes[slideId] ?? 0) : 0
-    activePlayback = null
+    const { slideId, time } = teardownActivePlayback()
     set({ status: 'paused' })
     if (slideId !== null) {
       emit({ type: 'PlaybackPaused', slideId, time })
@@ -227,14 +233,26 @@ export const usePlaybackController = create<PlaybackControllerState>()((set, get
   stop: (slideId: string): void => {
     const wasActive = get().status !== 'stopped'
     const previous = get().currentTimes[slideId] ?? 0
-    cancelLoop()
-    activePlayback = null
+    teardownActivePlayback()
     set({ status: 'stopped', currentTimes: withTime(get().currentTimes, slideId, 0) })
     if (wasActive) {
       emit({ type: 'PlaybackStopped', slideId, time: previous })
     }
     if (previous !== 0) {
       emit({ type: 'CurrentTimeChanged', slideId, time: 0 })
+    }
+  },
+
+  stopPreservingTimes: (): void => {
+    if (get().status === 'stopped') {
+      return
+    }
+    const { slideId, time } = teardownActivePlayback()
+    set({ status: 'stopped' })
+    // PlaybackStopped carries the slide that was actually playing; a paused
+    // or already-finished switch emits nothing extra.
+    if (slideId !== null) {
+      emit({ type: 'PlaybackStopped', slideId, time })
     }
   },
 

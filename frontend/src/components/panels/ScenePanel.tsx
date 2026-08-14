@@ -250,6 +250,7 @@ export function ScenePanel() {
   }
 
   const project = engine.project
+  const slide = engine.getActiveSlide()
 
   if (!project) {
     return (
@@ -259,7 +260,7 @@ export function ScenePanel() {
     )
   }
 
-  if (project.slides.length === 0) {
+  if (!slide) {
     return (
       <div className="panel-empty-state">
         <p>No slides created.</p>
@@ -269,23 +270,21 @@ export function ScenePanel() {
 
   return (
     <div className="scene-panel">
-      {project.slides.map((slide) => (
-        <section className="scene-slide" key={slide.id}>
-          <h3 className="scene-slide__title">{slide.name}</h3>
-          <ul className="scene-tree" role="tree" aria-label={`Scene tree of ${slide.name}`}>
-            <SceneTreeRow
-              node={slide.scene.root}
-              onContextMenu={handleRowContextMenu}
-              onDragStart={handleDragStart}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              onDragEnd={handleDragEnd}
-              dropOver={dropOver}
-            />
-          </ul>
-        </section>
-      ))}
+      <section className="scene-slide" key={slide.id}>
+        <h3 className="scene-slide__title">{slide.name}</h3>
+        <ul className="scene-tree" role="tree" aria-label={`Scene tree of ${slide.name}`}>
+          <SceneTreeRow
+            node={slide.scene.root}
+            onContextMenu={handleRowContextMenu}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onDragEnd={handleDragEnd}
+            dropOver={dropOver}
+          />
+        </ul>
+      </section>
       {contextMenu && (
         <div
           className="context-menu"

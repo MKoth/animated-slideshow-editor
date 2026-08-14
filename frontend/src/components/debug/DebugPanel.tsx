@@ -43,14 +43,14 @@ export function DebugPanel() {
   }
 
   const handleAddNode = () => {
-    const firstSlide = project?.slides[0]
-    if (!firstSlide) {
+    const targetSlide = engine.getActiveSlide()
+    if (!targetSlide) {
       return
     }
     dispatch(
       new CreateNodeCommand({
-        sceneId: firstSlide.scene.id,
-        parentId: firstSlide.scene.root.id,
+        sceneId: targetSlide.scene.id,
+        parentId: targetSlide.scene.root.id,
         name: nodeName,
       }),
     )

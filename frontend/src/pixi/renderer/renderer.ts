@@ -398,8 +398,10 @@ export class Renderer {
     }
     switch (event.type) {
       case 'ProjectCreated':
+      case 'ProjectLoaded':
       case 'SlideCreated':
       case 'SlideRemoved':
+      case 'SlideActivated':
         this.#syncScene(sceneRenderer)
         break
       case 'NodeCreated':
@@ -437,12 +439,12 @@ export class Renderer {
   }
 
   #syncScene(sceneRenderer: SceneRenderer): void {
-    const firstSlide = this.#engine.project?.slides[0]
-    const scene = firstSlide ? firstSlide.scene : null
+    const slide = this.#engine.getActiveSlide()
+    const scene = slide ? slide.scene : null
     if (sceneRenderer.boundSceneId !== (scene?.id ?? null)) {
       this.#controls?.reset()
       this.#cameraPreview = null
-      sceneRenderer.bind(scene, firstSlide ? firstSlide.id : null)
+      sceneRenderer.bind(scene, slide ? slide.id : null)
       this.#selectionOverlay?.bringToFront()
       this.#guideOverlay?.bringToFront()
       useSelectionStore.getState().clear()

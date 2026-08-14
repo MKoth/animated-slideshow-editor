@@ -42,10 +42,18 @@ const COMING_SOON_SECTIONS = [
 ]
 
 function inspectedTargets(engine: EnginePublic, selectedIds: readonly string[]): SceneNode[] {
+  const activeSlide = engine.getActiveSlide()
+  if (!activeSlide) {
+    return []
+  }
+  const activeScene = activeSlide.scene
   const targets: SceneNode[] = []
   for (const nodeId of selectedIds) {
     try {
-      targets.push(engine.getNode(nodeId))
+      const node = engine.getNode(nodeId)
+      if (activeScene.getNode(nodeId)) {
+        targets.push(node)
+      }
     } catch {
       // the id is stale (node deleted); skip it
     }

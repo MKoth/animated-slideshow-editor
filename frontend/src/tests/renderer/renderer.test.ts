@@ -5,6 +5,7 @@ import { Renderer } from '../../pixi/renderer/renderer'
 import { pixiRegistry } from './pixiFake'
 import { resizeObserverFor } from '../setup'
 import { findByLabel, mountRenderer, worldOf } from './testUtils'
+import { useSelectionStore } from '../../stores/selectionStore'
 
 vi.mock('pixi.js', async () => {
   const { createPixiFake } = await import('./pixiFake')
@@ -228,8 +229,9 @@ describe('Renderer', () => {
   it('ignores events for nodes in other scenes', async () => {
     const engine = createEngine()
     engine.createProject({ name: 'P' })
-    engine.createSlide('S1')
+    const first = engine.createSlide('S1')
     engine.createSlide('S2')
+    engine.setActiveSlide(first.id)
     const second = engine.project?.slides[1]
     if (!second) {
       throw new Error('Slide was not created')
@@ -247,14 +249,14 @@ describe('Renderer', () => {
     expect(world.children).toHaveLength(before)
   })
 
-  it('rebinds to the first remaining slide when the bound slide is removed', async () => {
+  it('rebinds to the slide that becomes active when the bound slide is removed', async () => {
     const engine = createEngine()
     engine.createProject({ name: 'P' })
-    engine.createSlide('S1')
+    const first = engine.createSlide('S1')
     engine.createSlide('S2')
-    const first = engine.project?.slides[0]
+    engine.setActiveSlide(first.id)
     const second = engine.project?.slides[1]
-    if (!first || !second) {
+    if (!second) {
       throw new Error('Slides were not created')
     }
     engine.createNode(first.scene.id, first.scene.root.id, 'FirstNode')
@@ -273,23 +275,27 @@ describe('Renderer', () => {
     expect(findByLabel(newRoot ?? { children: [] }, 'SecondNode')).toBeDefined()
   })
 
-  it('keeps the bound scene while slides are added after the first', async () => {
+  it('follows the active slide when a new slide is added', async () => {
     const engine = createEngine()
     engine.createProject({ name: 'P' })
-    engine.createSlide('S1')
-    const first = engine.project?.slides[0]
-    if (!first) {
-      throw new Error('Slide was not created')
-    }
-    const firstNode = engine.createNode(first.scene.id, first.scene.root.id, 'FirstNode')
+    const first = engine.createSlide('S1')
+    engine.setActiveSlide(first.id)
+    engine.createNode(first.scene.id, first.scene.root.id, 'FirstNode')
     const { app } = await mountRenderer(engine)
     const world = worldOf(app)
     const root = findByLabel(world, 'Root')
+    if (!root) {
+      throw new Error('Root container not found')
+    }
 
-    engine.createSlide('S2')
-    engine.setTransform(firstNode.id, { x: 9, y: 9, rotation: 0, scaleX: 1, scaleY: 1 })
+    const second = engine.createSlide('S2')
+    const secondNode = engine.createNode(second.scene.id, second.scene.root.id, 'SecondNode')
+    engine.setTransform(secondNode.id, { x: 9, y: 9, rotation: 0, scaleX: 1, scaleY: 1 })
 
-    expect(findByLabel(root ?? { children: [] }, 'FirstNode')).toBeDefined()
+    expect(findByLabel(world, 'FirstNode')).toBeUndefined()
+    const newRoot = findByLabel(world, 'Root')
+    expect(findByLabel(newRoot ?? { children: [] }, 'SecondNode')).toBeDefined()
+    expect(findByLabel(newRoot ?? { children: [] }, 'SecondNode')?.position.x).toBe(9)
   })
 
   it('shows an error overlay and logs details when initialization fails, without crashing', async () => {
@@ -445,9 +451,9 @@ describe('Renderer', () => {
   it('applies opacity and name changes to nodes in the bound scene only', async () => {
     const engine = createEngine()
     engine.createProject({ name: 'P' })
-    engine.createSlide('S1')
+    const first = engine.createSlide('S1')
     engine.createSlide('S2')
-    const first = engine.project?.slides[0]
+    engine.setActiveSlide(first.id)
     const second = engine.project?.slides[1]
     if (!first || !second) {
       throw new Error('Slides were not created')
@@ -463,5 +469,66 @@ describe('Renderer', () => {
     engine.setOpacity(foreign.id, 0.5)
     engine.renameNode(foreign.id, 'Renamed')
     expect(world.children).toHaveLength(before)
+  })
+
+  it('binds the active slide scene and rebinds on SlideActivated', async () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'P' })
+    const first = engine.createSlide('S1')
+    const second = engine.createSlide('S2')
+    engine.setActiveSlide(first.id)
+    engine.createNode(first.scene.id, first.scene.root.id, 'FirstNode')
+    engine.createNode(second.scene.id, second.scene.root.id, 'SecondNode')
+    const { app } = await mountRenderer(engine)
+    const world = worldOf(app)
+
+    const firstRoot = findByLabel(world, 'Root')
+    expect(findByLabel(firstRoot ?? { children: [] }, 'FirstNode')).toBeDefined()
+    expect(findByLabel(world, 'SecondNode')).toBeUndefined()
+
+    engine.setActiveSlide(second.id)
+
+    const secondRoot = findByLabel(world, 'Root')
+    expect(findByLabel(world, 'FirstNode')).toBeUndefined()
+    expect(findByLabel(secondRoot ?? { children: [] }, 'SecondNode')).toBeDefined()
+    const previous = world.children.find((child) => child.label === 'Root')
+    expect(previous === secondRoot || previous?.destroyed).toBe(true)
+  })
+
+  it('rebinds to the first slide of the incoming project on openProject', async () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'P' })
+    const first = engine.createSlide('S1')
+    engine.createNode(first.scene.id, first.scene.root.id, 'OldNode')
+    const { app } = await mountRenderer(engine)
+    const world = worldOf(app)
+    const initialRoot = findByLabel(world, 'Root')
+    expect(findByLabel(initialRoot ?? { children: [] }, 'OldNode')).toBeDefined()
+
+    const incoming = createEngine()
+    incoming.createProject({ name: 'Fresh' })
+    const freshFirst = incoming.createSlide('F1')
+    incoming.createSlide('F2')
+    incoming.createNode(freshFirst.scene.id, freshFirst.scene.root.id, 'FreshNode')
+    engine.openProject(incoming.project!)
+
+    const root = findByLabel(world, 'Root')
+    expect(findByLabel(world, 'OldNode')).toBeUndefined()
+    expect(findByLabel(root ?? { children: [] }, 'FreshNode')).toBeDefined()
+  })
+
+  it('clears the scene-node selection when the bound scene changes', async () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'P' })
+    const first = engine.createSlide('S1')
+    const second = engine.createSlide('S2')
+    engine.setActiveSlide(first.id)
+    const node = engine.createNode(first.scene.id, first.scene.root.id, 'FirstNode')
+    await mountRenderer(engine)
+    useSelectionStore.getState().select(node.id)
+
+    engine.setActiveSlide(second.id)
+
+    expect(useSelectionStore.getState().selectedIds).toEqual([])
   })
 })

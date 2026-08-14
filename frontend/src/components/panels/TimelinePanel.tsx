@@ -43,7 +43,7 @@ export function TimelinePanel({ height }: { height: number }) {
   const lastPointerTimeRef = useRef<number | null>(null)
 
   const project = engine.project
-  const slide = project?.slides[0] ?? null
+  const slide = engine.getActiveSlide()
   const scene = slide?.scene ?? null
   const hasObjects = scene ? sceneHasObjects(scene) : false
   const expandedNodeIds = useTimelineViewStore((state) => state.expandedNodeIds)

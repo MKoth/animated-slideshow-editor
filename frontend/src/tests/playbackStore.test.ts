@@ -270,6 +270,73 @@ describe('PlaybackController playback', () => {
     }
   })
 
+  it('stopPreservingTimes stops playback without touching any current time', () => {
+    vi.useFakeTimers()
+    try {
+      const events: PlaybackEvent[] = []
+      const unsubscribe = usePlaybackController
+        .getState()
+        .subscribeEvents((event) => events.push(event))
+      usePlaybackController.getState().setCurrentTime(SLIDE, 3, 10)
+      play()
+      vi.advanceTimersByTime(500)
+      const playingTime = usePlaybackController.getState().getTime(SLIDE)
+
+      usePlaybackController.getState().stopPreservingTimes()
+
+      const state = usePlaybackController.getState()
+      expect(state.status).toBe('stopped')
+      expect(state.getTime(SLIDE)).toBe(playingTime)
+      expect(events.some((event) => event.type === 'PlaybackStopped')).toBe(true)
+
+      vi.advanceTimersByTime(2000)
+      expect(usePlaybackController.getState().getTime(SLIDE)).toBe(playingTime)
+      unsubscribe()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stopPreservingTimes leaves every slide time in place, including other slides', () => {
+    usePlaybackController.getState().setCurrentTime(SLIDE, 4, 10)
+    usePlaybackController.getState().setCurrentTime('slide-2', 7, 10)
+    usePlaybackController.getState().play(SLIDE, 10)
+
+    usePlaybackController.getState().stopPreservingTimes()
+
+    const state = usePlaybackController.getState()
+    expect(state.status).toBe('stopped')
+    expect(state.getTime(SLIDE)).toBe(4)
+    expect(state.getTime('slide-2')).toBe(7)
+  })
+
+  it('stopPreservingTimes from paused goes to stopped and keeps the time', () => {
+    const store = usePlaybackController.getState()
+    store.setCurrentTime(SLIDE, 6, 10)
+    store.pause()
+
+    usePlaybackController.getState().stopPreservingTimes()
+
+    const state = usePlaybackController.getState()
+    expect(state.status).toBe('stopped')
+    expect(state.getTime(SLIDE)).toBe(6)
+  })
+
+  it('stopPreservingTimes from stopped is a no-op', () => {
+    const events: PlaybackEvent[] = []
+    usePlaybackController.getState().setCurrentTime(SLIDE, 2, 10)
+    const unsubscribe = usePlaybackController
+      .getState()
+      .subscribeEvents((event) => events.push(event))
+
+    usePlaybackController.getState().stopPreservingTimes()
+
+    expect(usePlaybackController.getState().status).toBe('stopped')
+    expect(usePlaybackController.getState().getTime(SLIDE)).toBe(2)
+    expect(events).toEqual([])
+    unsubscribe()
+  })
+
   it('advances at every supported speed', () => {
     vi.useFakeTimers()
     try {

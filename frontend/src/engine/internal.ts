@@ -119,6 +119,10 @@ export class Engine {
     return this.#slides.setDuration(slideId, duration)
   }
 
+  getActiveSlide(): Slide | null {
+    return this.#activeSlideId ? this.getSlide(this.#activeSlideId) : null
+  }
+
   getSlide(slideId: string): Slide {
     return this.#slides.get(slideId)
   }
@@ -312,6 +316,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     subscribe: (listener) => engine.subscribe(listener),
     openProject: (project) => engine.openProject(project),
     setActiveSlide: (slideId) => engine.setActiveSlide(slideId),
+    getActiveSlide: () => engine.getActiveSlide(),
     getSlide: (slideId) => engine.getSlide(slideId),
     getNode: (nodeId) => engine.getNode(nodeId),
     getScene: (sceneId) => engine.getScene(sceneId),

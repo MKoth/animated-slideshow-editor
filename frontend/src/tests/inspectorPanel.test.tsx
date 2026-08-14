@@ -178,8 +178,28 @@ describe('InspectorPanel empty state', () => {
     expect(rotation).toBeDisabled()
     expect(screen.getByRole('spinbutton', { name: 'X' })).not.toBeDisabled()
   })
-})
 
+  it('drops back to the empty state when the active slide changes', () => {
+    const { engine } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    const second = engine.createSlide('Slide 2')
+    act(() => {
+      engine.setActiveSlide(engine.project?.slides[0].id ?? '')
+    })
+    select(nodeId)
+    expect(
+      screen.queryByText('Nothing selected. Select an object to edit its properties.'),
+    ).not.toBeInTheDocument()
+
+    act(() => {
+      engine.setActiveSlide(second.id)
+    })
+
+    expect(
+      screen.getByText('Nothing selected. Select an object to edit its properties.'),
+    ).toBeInTheDocument()
+  })
+})
 describe('InspectorPanel sections', () => {
   it('shows the selected object properties with placeholder and transform sections', () => {
     const { engine } = renderPanel()

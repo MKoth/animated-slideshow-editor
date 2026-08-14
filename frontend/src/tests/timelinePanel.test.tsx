@@ -328,6 +328,58 @@ describe('TimelinePanel ruler', () => {
   })
 })
 
+describe('TimelinePanel active slide', () => {
+  it('shows tracks and duration of the active slide, switching with it', async () => {
+    const { engine } = renderPanel()
+    const first = createProjectAndSlide(engine)
+    engine.setSlideDuration(first.id, 5)
+    const second = engine.createSlide('Slide 2')
+    engine.setSlideDuration(second.id, 20)
+    engine.setActiveSlide(first.id)
+    engine.createNode(first.scene.id, first.scene.root.id, 'Only First')
+    engine.createNode(second.scene.id, second.scene.root.id, 'Only Second')
+
+    expect(await screen.findByRole('track', { name: 'Only First' })).toBeInTheDocument()
+    expect(screen.queryByRole('track', { name: 'Only Second' })).not.toBeInTheDocument()
+    expect(screen.getByRole('slider', { name: 'Playhead' })).toHaveAttribute('aria-valuemax', '5')
+
+    act(() => {
+      engine.setActiveSlide(second.id)
+    })
+
+    await waitFor(() => {
+      expect(screen.getByRole('track', { name: 'Only Second' })).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('track', { name: 'Only First' })).not.toBeInTheDocument()
+    expect(screen.getByRole('slider', { name: 'Playhead' })).toHaveAttribute('aria-valuemax', '20')
+  })
+
+  it('restores the per-slide playhead when switching back', async () => {
+    const { engine } = renderPanel()
+    const first = createProjectAndSlide(engine)
+    const second = engine.createSlide('Slide 2')
+    engine.setActiveSlide(first.id)
+    engine.createNode(first.scene.id, first.scene.root.id, 'Boy')
+    await screen.findByRole('track', { name: 'Boy' })
+    const display = screen.getByLabelText('Current time')
+
+    act(() => {
+      usePlaybackController.getState().setCurrentTime(first.id, 3.5, first.duration)
+    })
+    await waitFor(() => expect(display).toHaveTextContent('00:03.500'))
+
+    act(() => {
+      engine.setActiveSlide(second.id)
+    })
+    await waitFor(() => expect(display).toHaveTextContent('00:00.000'))
+
+    act(() => {
+      engine.setActiveSlide(first.id)
+    })
+    await waitFor(() => expect(display).toHaveTextContent('00:03.500'))
+  })
+})
+
 describe('TimelinePanel view state', () => {
   it('zooms in and out with the toolbar buttons centered on the viewport', async () => {
     const { engine } = renderPanel()

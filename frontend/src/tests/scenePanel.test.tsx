@@ -117,32 +117,47 @@ describe('ScenePanel', () => {
     expect(within(hiddenRow).getByTitle('Locked')).toBeInTheDocument()
   })
 
-  it('renders a tree for every slide', async () => {
+  it('renders only the active slide tree', async () => {
     const { engine } = renderPanel()
     const first = createProjectAndSlide(engine)
     const second = engine.createSlide('Slide 2')
+    engine.setActiveSlide(first.id)
     engine.createNode(first.scene.id, first.scene.root.id, 'Only First')
     engine.createNode(second.scene.id, second.scene.root.id, 'Only Second')
 
     await waitFor(() => {
       expect(screen.getByRole('tree', { name: 'Scene tree of Slide 1' })).toBeInTheDocument()
-      expect(screen.getByRole('tree', { name: 'Scene tree of Slide 2' })).toBeInTheDocument()
     })
+    expect(screen.queryByRole('tree', { name: 'Scene tree of Slide 2' })).not.toBeInTheDocument()
     expect(
       within(screen.getByRole('tree', { name: 'Scene tree of Slide 1' })).getByRole('treeitem', {
         name: 'Only First',
       }),
     ).toBeInTheDocument()
     expect(
-      within(screen.getByRole('tree', { name: 'Scene tree of Slide 2' })).queryByRole('treeitem', {
-        name: 'Only First',
-      }),
-    ).not.toBeInTheDocument()
-    expect(
-      within(screen.getByRole('tree', { name: 'Scene tree of Slide 2' })).getByRole('treeitem', {
+      within(screen.getByRole('tree', { name: 'Scene tree of Slide 1' })).queryByRole('treeitem', {
         name: 'Only Second',
       }),
-    ).toBeInTheDocument()
+    ).not.toBeInTheDocument()
+  })
+
+  it('switches the shown tree to the active slide', async () => {
+    const { engine } = renderPanel()
+    const first = createProjectAndSlide(engine)
+    const second = engine.createSlide('Slide 2')
+    engine.setActiveSlide(first.id)
+    engine.createNode(first.scene.id, first.scene.root.id, 'Only First')
+    engine.createNode(second.scene.id, second.scene.root.id, 'Only Second')
+    await screen.findByRole('treeitem', { name: 'Only First' })
+
+    engine.setActiveSlide(second.id)
+
+    await waitFor(() => {
+      expect(screen.getByRole('tree', { name: 'Scene tree of Slide 2' })).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('tree', { name: 'Scene tree of Slide 1' })).not.toBeInTheDocument()
+    expect(screen.getByRole('treeitem', { name: 'Only Second' })).toBeInTheDocument()
+    expect(screen.queryByRole('treeitem', { name: 'Only First' })).not.toBeInTheDocument()
   })
 
   it('selects the node in the selection store when its row is clicked', async () => {

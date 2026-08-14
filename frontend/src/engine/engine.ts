@@ -16,6 +16,7 @@ export interface EnginePublic {
   subscribe(listener: (event: EngineEvent) => void): Unsubscribe
   openProject(project: Project): void
   setActiveSlide(slideId: string): void
+  getActiveSlide(): Slide | null
   getSlide(slideId: string): Slide
   getNode(nodeId: string): SceneNode
   getScene(sceneId: string): Scene
