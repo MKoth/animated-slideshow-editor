@@ -1,4 +1,4 @@
-import type { EngineReadOnly, Scene } from '../../engine'
+import type { EnginePublic, Scene } from '../../engine'
 import type { SceneNode } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
 import { useNotificationStore } from '../../stores/notificationStore'
@@ -26,7 +26,7 @@ interface AnimatedPreview {
 
 export interface AnimatedMoveGestureContext {
   readonly canvas: HTMLCanvasElement
-  readonly engine?: EngineReadOnly
+  readonly engine?: EnginePublic
   readonly getAnimationMode?: () => boolean
   readonly getScene: () => Scene | null
   readonly getCameraTransform: () => ViewportTransform | null
@@ -35,7 +35,7 @@ export interface AnimatedMoveGestureContext {
 
 export class AnimatedMoveGesture {
   readonly #canvas: HTMLCanvasElement
-  readonly #engine?: EngineReadOnly
+  readonly #engine?: EnginePublic
   readonly #getAnimationMode?: () => boolean
   readonly #getScene: () => Scene | null
   readonly #getCameraTransform: () => ViewportTransform | null
@@ -164,7 +164,7 @@ export class AnimatedMoveGesture {
   }
 }
 
-function hasPositionKeyframes(engine: EngineReadOnly, nodeId: string): boolean {
+function hasPositionKeyframes(engine: EnginePublic, nodeId: string): boolean {
   return (
     engine.getKeyframes(nodeId, 'positionX').length > 0 ||
     engine.getKeyframes(nodeId, 'positionY').length > 0
@@ -172,7 +172,7 @@ function hasPositionKeyframes(engine: EngineReadOnly, nodeId: string): boolean {
 }
 
 function evaluatedLocalPositionOf(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   nodeId: string,
   time: number,
 ): WorldPoint | null {
@@ -185,7 +185,7 @@ function evaluatedLocalPositionOf(
 }
 
 function animatedPreviewOf(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   nodeId: string,
   time: number,
 ): AnimatedPreview | null {
@@ -224,7 +224,7 @@ function previewLocalOf(preview: AnimatedPreview, dx: number, dy: number): World
   return target
 }
 
-function playheadTimeOf(engine: EngineReadOnly | undefined, scene: Scene | null): number | null {
+function playheadTimeOf(engine: EnginePublic | undefined, scene: Scene | null): number | null {
   if (!engine || !scene) {
     return null
   }

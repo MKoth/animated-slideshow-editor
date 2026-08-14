@@ -1,4 +1,4 @@
-import type { EngineReadOnly, Scene } from '../../engine'
+import type { EnginePublic, Scene } from '../../engine'
 import { walkPreOrder } from '../../engine/sceneNode'
 import { worldTransformOf as storedWorldTransformOf } from '../../engine/worldTransform'
 import type { DispatchCommand } from '../../engine/commands'
@@ -32,7 +32,7 @@ export interface GuideController {
 
 export interface CanvasSelectionContext {
   readonly canvas: HTMLCanvasElement
-  readonly engine?: EngineReadOnly
+  readonly engine?: EnginePublic
   readonly getScene: () => Scene | null
   readonly getCameraTransform: () => ViewportTransform | null
   readonly getNodeSize: NodeSizeSource

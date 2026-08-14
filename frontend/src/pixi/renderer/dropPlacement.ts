@@ -1,4 +1,4 @@
-import type { EngineReadOnly } from '../../engine'
+import type { EnginePublic } from '../../engine'
 import type { Scene } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
 import { CreateAssetInstanceCommand } from '../../engine/commands'
@@ -10,7 +10,7 @@ export const ASSET_DEFINITION_MIME = 'application/x-asset-definition'
 
 export interface DropPlacementContext {
   readonly canvas: HTMLCanvasElement
-  readonly engine: EngineReadOnly
+  readonly engine: EnginePublic
   readonly getScene: () => Scene | null
   readonly getCameraTransform: () => ViewportTransform | null
   readonly dispatch: DispatchCommand
@@ -19,7 +19,7 @@ export interface DropPlacementContext {
 
 export class DropPlacement {
   readonly #canvas: HTMLCanvasElement
-  readonly #engine: EngineReadOnly
+  readonly #engine: EnginePublic
   readonly #getScene: () => Scene | null
   readonly #getCameraTransform: () => ViewportTransform | null
   readonly #dispatch: DispatchCommand

@@ -1,4 +1,4 @@
-import type { EngineReadOnly } from '../../engine'
+import type { EnginePublic } from '../../engine'
 import type { SceneNode } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
 import { MoveNodeCommand } from '../../engine/commands'
@@ -9,7 +9,7 @@ import type { ViewportTransform } from './worldGeometry'
 
 export interface CameraControlsContext {
   readonly canvas: HTMLCanvasElement
-  readonly engine?: EngineReadOnly
+  readonly engine?: EnginePublic
   readonly getCamera: () => SceneNode | null
   readonly getCameraTransform: () => ViewportTransform | null
   readonly setCameraPreview: (transform: ViewportTransform | null) => void
@@ -25,7 +25,7 @@ const ZOOM_GESTURE_IDLE_MS = 200
 
 export class CameraControls {
   readonly #canvas: HTMLCanvasElement
-  readonly #engine?: EngineReadOnly
+  readonly #engine?: EnginePublic
   readonly #getCamera: () => SceneNode | null
   readonly #getCameraTransform: () => ViewportTransform | null
   readonly #setCameraPreview: (transform: ViewportTransform | null) => void

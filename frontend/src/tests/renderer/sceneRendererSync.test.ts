@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { EngineReadOnly } from '../../engine'
+import type { EnginePublic } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
 import {
   createCommandSystem,
@@ -48,7 +48,7 @@ async function mount() {
   return { system, dispatcher, renderer, app }
 }
 
-function nodeNamed(engine: EngineReadOnly, name: string): string {
+function nodeNamed(engine: EnginePublic, name: string): string {
   const slide = engine.project?.slides[0]
   if (!slide) {
     throw new Error('Slide was not created')
@@ -60,7 +60,7 @@ function nodeNamed(engine: EngineReadOnly, name: string): string {
   return node.id
 }
 
-function assertDisplayTreeMatchesScene(engine: EngineReadOnly, root: FakeContainer): void {
+function assertDisplayTreeMatchesScene(engine: EnginePublic, root: FakeContainer): void {
   const slide = engine.project?.slides[0]
   if (!slide) {
     throw new Error('Slide was not created')

@@ -1,4 +1,4 @@
-import type { EngineReadOnly } from '../../engine'
+import type { EnginePublic } from '../../engine'
 import { Renderer } from '../../pixi/renderer/renderer'
 import { pixiRegistry } from './pixiFake'
 import type { FakeApplication } from './pixiFake'
@@ -20,7 +20,7 @@ export interface FakeChild {
   texture?: { destroyed: boolean }
 }
 
-export async function mountRenderer(engine: EngineReadOnly) {
+export async function mountRenderer(engine: EnginePublic) {
   const host = document.createElement('div')
   const renderer = new Renderer(host, engine)
   await renderer.start()

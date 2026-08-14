@@ -20,6 +20,7 @@ const canonicalTypes = [
   'ProjectCreated',
   'SlideCreated',
   'SlideRemoved',
+  'SlideActivated',
   'NodeCreated',
   'NodeRemoved',
   'NodeReparented',

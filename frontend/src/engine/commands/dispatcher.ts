@@ -1,5 +1,5 @@
 import { createEngineInternal, toReadOnly } from '../internal'
-import type { Engine, EngineReadOnly } from '../internal'
+import type { Engine, EnginePublic } from '../internal'
 import { AssetLibrarySync } from '../assetLibrarySync'
 import type { Command, CommandResult } from './command'
 import { UndoStack } from './undoStack'
@@ -44,7 +44,7 @@ export class CommandDispatcher {
 }
 
 export interface CommandSystem {
-  readonly engine: EngineReadOnly
+  readonly engine: EnginePublic
   readonly assetLibrarySync: AssetLibrarySync
   readonly dispatcher: CommandDispatcher
   readonly undoStack: UndoStack

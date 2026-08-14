@@ -1,4 +1,4 @@
-import type { EngineReadOnly } from '../engine'
+import type { EnginePublic } from '../engine'
 import type { SceneNode } from '../engine'
 import type { DispatchCommand } from '../engine/commands'
 import { ChangeZOrderCommand } from '../engine/commands'
@@ -19,7 +19,7 @@ export const Z_ORDER_BY_LABEL = new Map<string, ZOrderMode>(
 )
 
 export function applyZOrder(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   dispatch: DispatchCommand,
   mode: ZOrderMode,
 ): void {
@@ -31,7 +31,7 @@ export function applyZOrder(
   }
 }
 
-export function canApplyZOrder(engine: EngineReadOnly, mode: ZOrderMode): boolean {
+export function canApplyZOrder(engine: EnginePublic, mode: ZOrderMode): boolean {
   const selected = new Set(useSelectionStore.getState().selectedIds)
   for (const node of liveNodes(engine)) {
     if (selected.has(node.id) && ChangeZOrderCommand.canApply(engine, node.id, mode)) {
@@ -41,7 +41,7 @@ export function canApplyZOrder(engine: EngineReadOnly, mode: ZOrderMode): boolea
   return false
 }
 
-function zOrderTargets(engine: EngineReadOnly, mode: ZOrderMode): string[] {
+function zOrderTargets(engine: EnginePublic, mode: ZOrderMode): string[] {
   const selected = new Set(useSelectionStore.getState().selectedIds)
   const targets: string[] = []
   for (const slide of engine.project?.slides ?? []) {
@@ -57,7 +57,7 @@ function zOrderTargets(engine: EngineReadOnly, mode: ZOrderMode): string[] {
   return targets
 }
 
-function liveNodes(engine: EngineReadOnly): SceneNode[] {
+function liveNodes(engine: EnginePublic): SceneNode[] {
   const nodes: SceneNode[] = []
   for (const slide of engine.project?.slides ?? []) {
     for (const node of walkPreOrder(slide.scene.root)) {

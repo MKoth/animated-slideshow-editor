@@ -1,4 +1,4 @@
-import type { EngineReadOnly, Scene, SceneNode } from '../engine'
+import type { EnginePublic, Scene, SceneNode } from '../engine'
 import { normalizeRotation } from '../engine'
 import { requireFiniteNumber, requireNonEmpty } from '../engine/guards'
 import { namesInTree, uniqueNodeName } from '../engine/naming'
@@ -67,10 +67,7 @@ export interface NodeWorldReading {
   readonly parentWorld: WorldTransform | null
 }
 
-export function readStoredNodeWorld(
-  engine: EngineReadOnly,
-  nodeId: string,
-): NodeWorldReading | null {
+export function readStoredNodeWorld(engine: EnginePublic, nodeId: string): NodeWorldReading | null {
   const scene = slideOfNode(engine, nodeId)
   if (!scene) {
     return null
@@ -97,7 +94,7 @@ function storedParentWorldScaled(parent: SceneNode, scene: Scene): boolean {
 }
 
 export function readEvaluatedNodeWorld(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   nodeId: string,
 ): NodeWorldReading | null {
   const scene = slideOfNode(engine, nodeId)
@@ -117,7 +114,7 @@ export function readEvaluatedNodeWorld(
   return parentWorld ? { world, parentWorld } : { world, parentWorld: null }
 }
 
-function parentWorldScaled(parent: SceneNode, engine: EngineReadOnly, time: number): boolean {
+function parentWorldScaled(parent: SceneNode, engine: EnginePublic, time: number): boolean {
   const parentWorld = evaluatedWorldTransformOf(engine, parent.id, time)
   return parentWorld !== null && parentWorld.scaleX !== 0 && parentWorld.scaleY !== 0
 }
@@ -196,7 +193,7 @@ export const FIELD_PROPERTY: Record<InspectorFieldKind, KeyframeEdit['property']
 }
 
 export function applyNodeName(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   dispatch: DispatchCommand,
   nodeIds: readonly string[],
   requested: string,
@@ -258,7 +255,7 @@ export function applyNodeName(
 }
 
 export function applyNodeField(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   dispatch: DispatchCommand,
   nodeIds: readonly string[],
   field: InspectorFieldKind,
@@ -287,7 +284,7 @@ export function applyNodeField(
 }
 
 export function applyNodeOpacity(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   dispatch: DispatchCommand,
   nodeIds: readonly string[],
   opacity: number,
@@ -304,7 +301,7 @@ export function applyNodeOpacity(
 }
 
 export function resetNodesTransform(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   dispatch: DispatchCommand,
   nodeIds: readonly string[],
 ): CommandResult<unknown> | null {
@@ -333,7 +330,7 @@ export function resetNodesTransform(
 }
 
 export function applyNodeFieldAutoKey(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   dispatch: DispatchCommand,
   nodeIds: readonly string[],
   field: InspectorFieldKind,
@@ -363,7 +360,7 @@ function clampFraction(value: number): number {
 }
 
 export function applyNodeOpacityAutoKey(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   dispatch: DispatchCommand,
   nodeIds: readonly string[],
   opacity: number,
@@ -379,7 +376,7 @@ export function applyNodeOpacityAutoKey(
 const RESET_FIELDS: readonly InspectorFieldKind[] = ['x', 'y', 'rotation', 'scaleX', 'scaleY']
 
 export function resetNodesTransformAutoKey(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   dispatch: DispatchCommand,
   nodeIds: readonly string[],
 ): CommandResult<unknown> | null {

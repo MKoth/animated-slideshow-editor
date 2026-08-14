@@ -1,4 +1,4 @@
-import type { EngineReadOnly } from '../../engine'
+import type { EnginePublic } from '../../engine'
 import type { Scene } from '../../engine'
 import type { Unsubscribe } from '../../engine'
 import { worldTransformOf as storedWorldTransformOf } from '../../engine/worldTransform'
@@ -29,7 +29,7 @@ const REDRAW_EVENTS = new Set([
 export interface SelectionOverlayContext {
   readonly pixi: RendererPixi
   readonly world: PixiContainer
-  readonly engine: EngineReadOnly
+  readonly engine: EnginePublic
   readonly getScene: () => Scene | null
   readonly getNodeSize: NodeSizeSource
   readonly store: SelectionStoreApi
@@ -40,7 +40,7 @@ export interface SelectionOverlayContext {
 export class SelectionOverlay {
   readonly #pixi: RendererPixi
   readonly #world: PixiContainer
-  readonly #engine: EngineReadOnly
+  readonly #engine: EnginePublic
   readonly #getScene: () => Scene | null
   readonly #getNodeSize: NodeSizeSource
   readonly #store: SelectionStoreApi

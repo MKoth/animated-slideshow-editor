@@ -1,4 +1,4 @@
-import type { EngineReadOnly } from '../engine'
+import type { EnginePublic } from '../engine'
 import type { SceneNode } from '../engine'
 import type { Command } from '../engine/commands'
 import { ReorderNodeCommand, ReparentNodeCommand, TransactionCommand } from '../engine/commands'
@@ -13,7 +13,7 @@ export interface HierarchyMoveInput {
 }
 
 export function applyHierarchyMove(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   dispatch: DispatchCommand,
   input: HierarchyMoveInput,
 ): void {
@@ -32,7 +32,7 @@ export function applyHierarchyMove(
   dispatch(new TransactionCommand(commands))
 }
 
-function safeGetNode(engine: EngineReadOnly, nodeId: string): SceneNode | null {
+function safeGetNode(engine: EnginePublic, nodeId: string): SceneNode | null {
   try {
     return engine.getNode(nodeId)
   } catch {
@@ -49,7 +49,7 @@ function sceneRootOf(node: SceneNode): SceneNode {
 }
 
 function moveGroup(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   parent: SceneNode,
   targets: readonly string[],
 ): SceneNode[] {

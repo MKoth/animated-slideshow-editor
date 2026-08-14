@@ -9,10 +9,12 @@ import type { EvaluatedNodeScratch, EvaluatedNodeState } from './animationEvalua
 import type { EngineEvent, Unsubscribe } from './events'
 import type { LessonJSON } from './json'
 
-export interface EngineReadOnly {
+export interface EnginePublic {
   readonly project: Project | null
   readonly assetDefinitions: readonly AssetDefinition[]
+  readonly activeSlideId: string | null
   subscribe(listener: (event: EngineEvent) => void): Unsubscribe
+  setActiveSlide(slideId: string): void
   getSlide(slideId: string): Slide
   getNode(nodeId: string): SceneNode
   getScene(sceneId: string): Scene
@@ -22,6 +24,6 @@ export interface EngineReadOnly {
   toJSON(): LessonJSON
 }
 
-export function createEngine(): EngineReadOnly {
+export function createEngine(): EnginePublic {
   return toReadOnly(new Engine())
 }

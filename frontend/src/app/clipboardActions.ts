@@ -1,4 +1,4 @@
-import type { EngineReadOnly } from '../engine'
+import type { EnginePublic } from '../engine'
 import type { SceneNode } from '../engine'
 import type { Slide } from '../engine'
 import type { DispatchCommand } from '../engine/commands'
@@ -13,7 +13,7 @@ import { useClipboardStore } from '../stores/clipboardStore'
 import type { ClipboardItem } from '../stores/clipboardStore'
 import { useSelectionStore } from '../stores/selectionStore'
 
-export function copySelection(engine: EngineReadOnly): void {
+export function copySelection(engine: EnginePublic): void {
   const selectedIds = useSelectionStore.getState().selectedIds
   if (selectedIds.length === 0) {
     return
@@ -76,7 +76,7 @@ export function pasteClipboard(dispatch: DispatchCommand): void {
   }
 }
 
-export function duplicateSelection(engine: EngineReadOnly, dispatch: DispatchCommand): void {
+export function duplicateSelection(engine: EnginePublic, dispatch: DispatchCommand): void {
   const selectedIds = useSelectionStore.getState().selectedIds
   if (selectedIds.length === 0) {
     return
@@ -102,7 +102,7 @@ export function duplicateSelection(engine: EngineReadOnly, dispatch: DispatchCom
   }
 }
 
-export function deleteSelection(engine: EngineReadOnly, dispatch: DispatchCommand): void {
+export function deleteSelection(engine: EnginePublic, dispatch: DispatchCommand): void {
   const selectedIds = useSelectionStore.getState().selectedIds
   if (selectedIds.length === 0) {
     return
@@ -122,7 +122,7 @@ interface LiveNodeEntry {
   readonly node: SceneNode
 }
 
-function liveNodes(engine: EngineReadOnly): LiveNodeEntry[] {
+function liveNodes(engine: EnginePublic): LiveNodeEntry[] {
   const entries: LiveNodeEntry[] = []
   for (const slide of engine.project?.slides ?? []) {
     for (const node of walkPreOrder(slide.scene.root)) {
@@ -132,7 +132,7 @@ function liveNodes(engine: EngineReadOnly): LiveNodeEntry[] {
   return entries
 }
 
-function liveNodeIds(engine: EngineReadOnly): Set<string> {
+function liveNodeIds(engine: EnginePublic): Set<string> {
   const ids = new Set<string>()
   for (const { node } of liveNodes(engine)) {
     ids.add(node.id)

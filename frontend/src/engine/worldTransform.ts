@@ -1,4 +1,4 @@
-import type { EngineReadOnly } from './engine'
+import type { EnginePublic } from './engine'
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
 import type { Transform } from './transform'
@@ -22,7 +22,7 @@ export function worldTransformOf(scene: Scene, nodeId: string): WorldTransform |
 }
 
 export function evaluatedWorldTransformOf(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   nodeId: string,
   time: number,
 ): WorldTransform | null {
@@ -45,7 +45,7 @@ function chainOf(node: SceneNode): SceneNode[] {
 }
 
 export class EvaluatedWorldTransformSource {
-  readonly #engine: EngineReadOnly
+  readonly #engine: EnginePublic
   readonly #getTime: () => number
   readonly #previews: ReadonlyMap<string, { readonly x: number; readonly y: number }>
   readonly #scratch: EvaluatedNodeScratch = evaluatedNodeScratch()
@@ -62,7 +62,7 @@ export class EvaluatedWorldTransformSource {
   }
 
   constructor(
-    engine: EngineReadOnly,
+    engine: EnginePublic,
     getTime: () => number,
     previews: ReadonlyMap<string, { readonly x: number; readonly y: number }> = new Map(),
   ) {

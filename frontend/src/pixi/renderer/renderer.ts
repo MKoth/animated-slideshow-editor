@@ -1,4 +1,4 @@
-import type { EngineReadOnly } from '../../engine'
+import type { EnginePublic } from '../../engine'
 import type { EngineEvent } from '../../engine'
 import type { Unsubscribe } from '../../engine'
 import { walkPreOrder } from '../../engine/sceneNode'
@@ -38,7 +38,7 @@ interface GridColors {
 
 export class Renderer {
   readonly #host: HTMLElement
-  readonly #engine: EngineReadOnly
+  readonly #engine: EnginePublic
   readonly #dispatch: DispatchCommand
   readonly #pixi: RendererPixi
   #app: PixiApplication | null = null
@@ -74,7 +74,7 @@ export class Renderer {
 
   constructor(
     host: HTMLElement,
-    engine: EngineReadOnly,
+    engine: EnginePublic,
     dispatch: DispatchCommand = noopDispatch,
     pixi: RendererPixi = realPixi,
     resolveAssetUrl: ResolveAssetUrl = () => null,

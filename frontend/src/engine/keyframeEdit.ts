@@ -1,4 +1,4 @@
-import type { EngineReadOnly } from './engine'
+import type { EnginePublic } from './engine'
 import type { AnimationProperty, Keyframe } from './animation'
 import type { Command, CommandResult } from './commands/command'
 import type { DispatchCommand } from './commands/dispatcher'
@@ -21,7 +21,7 @@ export function keyframeAtTime(keyframes: readonly Keyframe[], time: number): Ke
 }
 
 export function evaluatedPropertyValue(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   nodeId: string,
   property: AnimationProperty,
   time: number,
@@ -44,7 +44,7 @@ export function evaluatedPropertyValue(
 }
 
 export function autoKeyCommands(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   edits: readonly TimedKeyframeEdit[],
 ): Command<unknown>[] {
   const commands: Command<unknown>[] = []

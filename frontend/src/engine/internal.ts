@@ -20,7 +20,7 @@ import type { CreateNodeOptions } from './nodeManager'
 import type { Transform } from './transform'
 import type { LessonJSON } from './json'
 import { isRecord } from './guards'
-import type { EngineReadOnly } from './engine'
+import type { EnginePublic } from './engine'
 
 export class Engine {
   readonly #bus = new EventBus()
@@ -31,6 +31,7 @@ export class Engine {
   readonly #slides: SlideManager
   readonly #animations: AnimationManager
   readonly #evaluator: AnimationEvaluator
+  #activeSlideId: string | null = null
 
   constructor() {
     this.#projects = new ProjectManager(this.#bus)
@@ -57,6 +58,16 @@ export class Engine {
     return this.#bus.subscribe(listener)
   }
 
+  get activeSlideId(): string | null {
+    return this.#activeSlideId
+  }
+
+  setActiveSlide(slideId: string): void {
+    this.#slides.get(slideId)
+    this.#activeSlideId = slideId
+    this.#bus.emit({ type: 'SlideActivated', slideId })
+  }
+
   createProject(input: CreateProjectInput): Project {
     return this.#projects.create(input)
   }
@@ -67,6 +78,9 @@ export class Engine {
 
   removeSlide(slideId: string): void {
     this.#slides.remove(slideId)
+    if (this.#activeSlideId === slideId) {
+      this.#activeSlideId = null
+    }
   }
 
   getSlide(slideId: string): Slide {
@@ -244,7 +258,7 @@ export function createEngineInternal(): Engine {
 
 export { createEngineInternal as createEngine }
 
-export function toReadOnly(engine: Engine): EngineReadOnly {
+export function toReadOnly(engine: Engine): EnginePublic {
   return {
     get project() {
       return engine.project
@@ -252,7 +266,11 @@ export function toReadOnly(engine: Engine): EngineReadOnly {
     get assetDefinitions() {
       return engine.assetDefinitions
     },
+    get activeSlideId() {
+      return engine.activeSlideId
+    },
     subscribe: (listener) => engine.subscribe(listener),
+    setActiveSlide: (slideId) => engine.setActiveSlide(slideId),
     getSlide: (slideId) => engine.getSlide(slideId),
     getNode: (nodeId) => engine.getNode(nodeId),
     getScene: (sceneId) => engine.getScene(sceneId),
@@ -263,4 +281,4 @@ export function toReadOnly(engine: Engine): EngineReadOnly {
   }
 }
 
-export type { EngineReadOnly } from './engine'
+export type { EnginePublic } from './engine'

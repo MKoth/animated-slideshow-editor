@@ -1,4 +1,4 @@
-import type { EngineReadOnly, Unsubscribe } from '../../engine'
+import type { EnginePublic, Unsubscribe } from '../../engine'
 import type { Scene } from '../../engine'
 import type { SceneNode } from '../../engine'
 import { walkPreOrder } from '../../engine/sceneNode'
@@ -25,7 +25,7 @@ export const ALWAYS_ZERO_TIME: CurrentTimeSource = {
 }
 
 export class SceneRenderer {
-  readonly #engine: EngineReadOnly
+  readonly #engine: EnginePublic
   readonly #pixi: RendererPixi
   readonly #textureCache: TextureCache
   readonly #resolveAssetUrl: ResolveAssetUrl
@@ -41,7 +41,7 @@ export class SceneRenderer {
   #slideId: string | null = null
 
   constructor(
-    engine: EngineReadOnly,
+    engine: EnginePublic,
     world: PixiContainer,
     pixi: RendererPixi,
     textureCache: TextureCache,

@@ -22,7 +22,7 @@ import type { InspectorFieldKind } from '../../app/inspectorActions'
 import type { PropertyState } from '../../app/keyframeActions'
 import { playheadTimeOf, propertyStateOf } from '../../app/keyframeActions'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
-import type { EngineReadOnly, SceneNode } from '../../engine'
+import type { EnginePublic, SceneNode } from '../../engine'
 import type { AnimationProperty } from '../../engine'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { usePlaybackController } from '../../stores/playbackStore'
@@ -41,7 +41,7 @@ const COMING_SOON_SECTIONS = [
   'AI Metadata',
 ]
 
-function inspectedTargets(engine: EngineReadOnly, selectedIds: readonly string[]): SceneNode[] {
+function inspectedTargets(engine: EnginePublic, selectedIds: readonly string[]): SceneNode[] {
   const targets: SceneNode[] = []
   for (const nodeId of selectedIds) {
     try {

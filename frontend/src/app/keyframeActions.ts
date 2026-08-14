@@ -1,4 +1,4 @@
-import type { EngineReadOnly, SceneNode } from '../engine'
+import type { EnginePublic, SceneNode } from '../engine'
 import type { AnimationProperty } from '../engine'
 import { ANIMATABLE_PROPERTIES } from '../engine'
 import type { Scene } from '../engine'
@@ -33,7 +33,7 @@ export function isAnimatable(node: SceneNode, property: AnimationProperty): bool
   return animatablePropertiesOf(node).includes(property)
 }
 
-export function slideOfNode(engine: EngineReadOnly, nodeId: string): Scene | null {
+export function slideOfNode(engine: EnginePublic, nodeId: string): Scene | null {
   for (const slide of engine.project?.slides ?? []) {
     if (slide.scene.getNode(nodeId)) {
       return slide.scene
@@ -42,7 +42,7 @@ export function slideOfNode(engine: EngineReadOnly, nodeId: string): Scene | nul
   return null
 }
 
-export function playheadTimeOf(engine: EngineReadOnly, nodeId: string): number | null {
+export function playheadTimeOf(engine: EnginePublic, nodeId: string): number | null {
   const scene = slideOfNode(engine, nodeId)
   if (!scene) {
     return null
@@ -55,7 +55,7 @@ export function playheadTimeOf(engine: EngineReadOnly, nodeId: string): number |
 }
 
 export function propertyStateOf(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   nodeId: string,
   property: AnimationProperty,
   time: number,
@@ -80,7 +80,7 @@ export function propertyStateOf(
 }
 
 export function autoKeyEdit(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   dispatch: DispatchCommand,
   edits: readonly KeyframeEdit[],
 ): CommandResult<unknown> | null {
@@ -96,7 +96,7 @@ export function autoKeyEdit(
 }
 
 export function addKeyframeAtPlayhead(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   dispatch: DispatchCommand,
   slideId: string,
   nodeId: string,
@@ -111,7 +111,7 @@ export function addKeyframeAtPlayhead(
 }
 
 export function addPoseKeyframesAtPlayhead(
-  engine: EngineReadOnly,
+  engine: EnginePublic,
   dispatch: DispatchCommand,
   slideId: string,
   nodeId: string,

@@ -1,9 +1,10 @@
 import { createEngine } from './engine'
-import type { EngineReadOnly } from './engine'
+import type { EnginePublic } from './engine'
 
 export { createEngine }
-export type { EngineReadOnly }
+export type { EnginePublic }
 export type { EngineEvent } from './events'
+export type { SlideActivated } from './events'
 export type { EventListener, Unsubscribe } from './events'
 export type { SceneNode } from './sceneNode'
 export type { Scene } from './scene'

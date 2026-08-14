@@ -5,12 +5,12 @@ import {
   pasteClipboard,
 } from '../app/clipboardActions'
 import { deleteSelectedKeyframes } from '../app/keyframeSelectionActions'
-import type { EngineReadOnly } from '../engine'
+import type { EnginePublic } from '../engine'
 import type { DispatchCommand } from '../engine/commands'
 import { registerShortcut } from './shortcutRegistry'
 
 export interface ClipboardShortcutDeps {
-  readonly engine: EngineReadOnly
+  readonly engine: EnginePublic
   readonly dispatch: DispatchCommand
 }
 

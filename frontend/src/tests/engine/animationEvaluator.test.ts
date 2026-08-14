@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CommandResult } from '../../engine/commands'
-import type { EngineReadOnly } from '../../engine'
+import type { EnginePublic } from '../../engine'
 import type { AnimationProperty, EvaluatedNodeScratch } from '../../engine'
 import { evaluatedNodeScratch } from '../../engine/animationEvaluator'
 import {
@@ -269,7 +269,7 @@ describe('AnimationEvaluator', () => {
     addKeyframe(system, nodeId, 'positionX', 0, 10)
     addKeyframe(system, nodeId, 'positionX', 10, 20)
 
-    const engine: EngineReadOnly = system.engine
+    const engine: EnginePublic = system.engine
     expect(engine.evaluateNode(nodeId, 5).transform.x).toBe(15)
   })
 })

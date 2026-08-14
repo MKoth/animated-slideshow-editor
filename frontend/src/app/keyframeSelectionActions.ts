@@ -1,4 +1,4 @@
-import type { EngineReadOnly, Scene, SceneNode } from '../engine'
+import type { EnginePublic, Scene, SceneNode } from '../engine'
 import type { AnimationProperty } from '../engine'
 import { DeleteKeyframeCommand } from '../engine/commands'
 import type { DispatchCommand } from '../engine/commands'
@@ -13,7 +13,7 @@ export interface KeyframeRef {
   readonly time: number
 }
 
-export function keyframeRefsOfScene(engine: EngineReadOnly, scene: Scene): KeyframeRef[] {
+export function keyframeRefsOfScene(engine: EnginePublic, scene: Scene): KeyframeRef[] {
   const refs: KeyframeRef[] = []
   const nodes: SceneNode[] = []
   const walk = (node: SceneNode): void => {
@@ -37,7 +37,7 @@ export function keyframeRefsOfScene(engine: EngineReadOnly, scene: Scene): Keyfr
   return refs
 }
 
-function allKeyframeRefs(engine: EngineReadOnly): KeyframeRef[] {
+function allKeyframeRefs(engine: EnginePublic): KeyframeRef[] {
   const refs: KeyframeRef[] = []
   for (const slide of engine.project?.slides ?? []) {
     refs.push(...keyframeRefsOfScene(engine, slide.scene))
@@ -45,7 +45,7 @@ function allKeyframeRefs(engine: EngineReadOnly): KeyframeRef[] {
   return refs
 }
 
-export function selectedKeyframeRefs(engine: EngineReadOnly): KeyframeRef[] {
+export function selectedKeyframeRefs(engine: EnginePublic): KeyframeRef[] {
   const selectedIds = useSelectionStore.getState().selectedKeyframeIds
   if (selectedIds.length === 0) {
     return []
@@ -54,10 +54,7 @@ export function selectedKeyframeRefs(engine: EngineReadOnly): KeyframeRef[] {
   return allKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
 }
 
-export function deleteSelectedKeyframes(
-  engine: EngineReadOnly,
-  dispatch: DispatchCommand,
-): boolean {
+export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: DispatchCommand): boolean {
   const refs = selectedKeyframeRefs(engine)
   if (refs.length === 0) {
     return false
@@ -70,7 +67,7 @@ export function deleteSelectedKeyframes(
   return true
 }
 
-export function pruneKeyframeSelection(engine: EngineReadOnly): void {
+export function pruneKeyframeSelection(engine: EnginePublic): void {
   const valid = new Set(allKeyframeRefs(engine).map((ref) => ref.keyframeId))
   useSelectionStore.getState().pruneKeyframes(valid)
 }

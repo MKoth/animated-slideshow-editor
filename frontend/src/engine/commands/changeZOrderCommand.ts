@@ -1,4 +1,4 @@
-import type { Engine, EngineReadOnly } from '../internal'
+import type { Engine, EnginePublic } from '../internal'
 import type { SceneNode } from '../sceneNode'
 import type { Command } from './command'
 
@@ -61,7 +61,7 @@ export class ChangeZOrderCommand implements Command<ChangeZOrderInverse> {
     this.parameters = { nodeId: input.nodeId, mode: input.mode }
   }
 
-  static canApply(engine: EngineReadOnly, nodeId: string, mode: ZOrderMode): boolean {
+  static canApply(engine: EnginePublic, nodeId: string, mode: ZOrderMode): boolean {
     const node = engine.getNode(nodeId)
     const parent = node.parent
     if (!parent || node.components.camera) {
