@@ -1,5 +1,3 @@
-import type { AssetDefinitionJSON } from './json'
-
 export class AssetDefinition {
   readonly id: string
   readonly name: string
@@ -8,9 +6,5 @@ export class AssetDefinition {
     this.id = id
     this.name = name
     Object.freeze(this)
-  }
-
-  toJSON(): AssetDefinitionJSON {
-    return { id: this.id, name: this.name }
   }
 }

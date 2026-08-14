@@ -1,5 +1,4 @@
 import type { Slide } from './slide'
-import type { ProjectJSON } from './json'
 
 export interface ProjectMetadata {
   readonly id: string
@@ -39,20 +38,5 @@ export class Project {
     this.updatedAt = metadata.updatedAt
     this.slides = slides
     this.settings = settings
-  }
-
-  toJSON(): ProjectJSON {
-    return {
-      metadata: {
-        id: this.id,
-        name: this.name,
-        description: this.description,
-        author: this.author,
-        createdAt: this.createdAt,
-        updatedAt: this.updatedAt,
-      },
-      settings: { ...this.settings },
-      slides: this.slides.map((slide) => slide.toJSON()),
-    }
   }
 }

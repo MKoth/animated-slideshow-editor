@@ -3,8 +3,7 @@ import { AssetDefinition } from './assetDefinition'
 import type { NodeManager } from './nodeManager'
 import type { CreateNodeOptions } from './nodeManager'
 import type { SceneNode } from './sceneNode'
-import type { LessonJSON } from './json'
-import { isRecord, requireNonEmpty, requireString } from './guards'
+import { requireNonEmpty } from './guards'
 
 export class AssetManager {
   readonly #nodeManager: NodeManager
@@ -55,26 +54,6 @@ export class AssetManager {
       }),
     }
     return this.#nodeManager.create(sceneId, parentId, name, { ...options, components })
-  }
-
-  restoreLibrary(library: LessonJSON['library']): void {
-    this.#definitions.clear()
-    if (!Array.isArray(library.assetDefinitions)) {
-      throw new Error('Invalid lesson JSON: assetDefinitions must be an array')
-    }
-    for (const definitionJson of library.assetDefinitions) {
-      if (!isRecord(definitionJson)) {
-        throw new Error('Invalid lesson JSON: each asset definition must be an object')
-      }
-      const definition = new AssetDefinition(
-        requireString(definitionJson.id, 'Asset definition id'),
-        requireString(definitionJson.name, 'Asset definition name'),
-      )
-      if (this.#definitions.has(definition.id)) {
-        throw new Error(`An asset definition with id "${definition.id}" already exists`)
-      }
-      this.#definitions.set(definition.id, definition)
-    }
   }
 
   clear(): void {

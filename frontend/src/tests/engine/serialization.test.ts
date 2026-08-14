@@ -57,8 +57,12 @@ describe('serialization', () => {
 
   it('restores an equivalent project with working reads and writes', () => {
     const engine = buildPopulatedEngine()
+    const fox = engine.assetDefinitions[0]
     const restored = createEngine()
     restored.restoreFromJSON(engine.toJSON())
+    if (fox) {
+      restored.registerAssetDefinition(fox.id, fox.name)
+    }
 
     const project = restored.project
     expect(project?.name).toBe('Lesson')
@@ -79,15 +83,15 @@ describe('serialization', () => {
 
     const tree = scene?.root.children.find((node) => node.name === 'Tree')
     const label = tree?.children.find((node) => node.name === 'Label')
-    const fox = tree?.children.find((node) => node.components.assetInstance)
+    const foxNode = tree?.children.find((node) => node.components.assetInstance)
     expect(label?.components.text).toEqual({
       kind: 'text',
       content: 'Hello',
       fontSize: 24,
       alignment: 'center',
     })
-    expect(fox?.components.assetInstance?.assetDefinitionId).toBe(restored.assetDefinitions[0]?.id)
-    expect(fox?.visible).toBe(false)
+    expect(foxNode?.components.assetInstance?.assetDefinitionId).toBe(fox?.id)
+    expect(foxNode?.visible).toBe(false)
 
     const camera = scene?.camera
     if (camera) {
@@ -104,21 +108,19 @@ describe('serialization', () => {
     expect(() => restoredFromJSON({ nope: true } as unknown as LessonJSON)).toThrow(/invalid/i)
     expect(() => engine.toJSON()).not.toThrow()
 
-    const bogus = {
+    const valid = {
+      version: 1,
       project: {
-        metadata: {
-          id: 'm',
-          name: 'P',
-          description: '',
-          author: '',
-          createdAt: 't',
-          updatedAt: 't',
-        },
-        slides: [],
+        id: 'p',
+        name: 'P',
+        description: '',
+        author: '',
+        createdAt: 't',
+        modifiedAt: 't',
       },
-      library: { assetDefinitions: [] },
+      slides: [],
     }
-    expect(() => restoredFromJSON(bogus as unknown as LessonJSON)).not.toThrow()
+    expect(() => restoredFromJSON(valid as unknown as LessonJSON)).not.toThrow()
   })
 
   it('rejects duplicate node ids in the JSON payload', () => {
@@ -144,20 +146,17 @@ describe('serialization', () => {
     }
     const corrupt: LessonJSON = {
       ...json,
-      project: {
-        ...json.project,
-        slides: [
-          {
-            id: 's1',
-            name: 'S',
-            duration: 0,
-            scene: {
-              id: 'sc',
-              nodes: [nodeJson, { ...nodeJson, name: 'Root copy', parentId: 'dup' }, cameraJson],
-            },
+      slides: [
+        {
+          id: 's1',
+          name: 'S',
+          duration: 0,
+          scene: {
+            id: 'sc',
+            nodes: [nodeJson, { ...nodeJson, name: 'Root copy', parentId: 'dup' }, cameraJson],
           },
-        ],
-      },
+        },
+      ],
     }
 
     expect(() => restoredFromJSON(corrupt)).toThrow(/already exists/i)
@@ -178,17 +177,14 @@ describe('serialization', () => {
     }
     const corrupt: LessonJSON = {
       ...json,
-      project: {
-        ...json.project,
-        slides: [
-          {
-            id: 's1',
-            name: 'S',
-            duration: 0,
-            scene: { id: 'sc', nodes: [nodeJson] },
-          },
-        ],
-      },
+      slides: [
+        {
+          id: 's1',
+          name: 'S',
+          duration: 0,
+          scene: { id: 'sc', nodes: [nodeJson] },
+        },
+      ],
     }
 
     expect(() => restoredFromJSON(corrupt)).toThrow(/camera/i)
@@ -225,17 +221,14 @@ describe('serialization', () => {
     }
     const corrupt: LessonJSON = {
       ...json,
-      project: {
-        ...json.project,
-        slides: [
-          {
-            id: 's1',
-            name: 'S',
-            duration: 0,
-            scene: { id: 'sc', nodes: [rootJson, middleJson, cameraJson] },
-          },
-        ],
-      },
+      slides: [
+        {
+          id: 's1',
+          name: 'S',
+          duration: 0,
+          scene: { id: 'sc', nodes: [rootJson, middleJson, cameraJson] },
+        },
+      ],
     }
 
     expect(() => restoredFromJSON(corrupt)).toThrow(/child of the scene root/i)
@@ -248,47 +241,44 @@ describe('serialization', () => {
 
     const corrupt: LessonJSON = {
       ...json,
-      project: {
-        ...json.project,
-        slides: [
-          {
-            id: 's1',
-            name: 'S',
-            duration: 0,
-            scene: {
-              id: 'sc',
-              nodes: [
-                {
-                  id: 'r1',
-                  name: 'Root',
-                  parentId: null,
-                  transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
-                  visible: true,
-                  components: {},
+      slides: [
+        {
+          id: 's1',
+          name: 'S',
+          duration: 0,
+          scene: {
+            id: 'sc',
+            nodes: [
+              {
+                id: 'r1',
+                name: 'Root',
+                parentId: null,
+                transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+                visible: true,
+                components: {},
+              },
+              {
+                id: 'cam',
+                name: 'Camera',
+                parentId: 'r1',
+                transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+                visible: true,
+                components: { camera: { kind: 'camera' } },
+              },
+              {
+                id: 't1',
+                name: 'Label',
+                parentId: 'r1',
+                transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+                visible: true,
+                components: {
+                  text: { kind: 'text', content: 'Hi', fontSize: 12, alignment: 'bogus' },
                 },
-                {
-                  id: 'cam',
-                  name: 'Camera',
-                  parentId: 'r1',
-                  transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
-                  visible: true,
-                  components: { camera: { kind: 'camera' } },
-                },
-                {
-                  id: 't1',
-                  name: 'Label',
-                  parentId: 'r1',
-                  transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
-                  visible: true,
-                  components: {
-                    text: { kind: 'text', content: 'Hi', fontSize: 12, alignment: 'bogus' },
-                  },
-                },
-              ],
-            },
+              },
+            ],
           },
-        ],
-      },
+        },
+      ],
     }
 
     expect(() => restoredFromJSON(corrupt)).toThrow(/alignment/i)
@@ -302,14 +292,27 @@ describe('serialization', () => {
     const json = engine.toJSON()
     const restored = createEngine()
 
+    const slideJson = json.slides[0]
+    if (!slideJson) {
+      throw new Error('expected a slide')
+    }
+    const rootId = slideJson.scene.nodes.find((node) => node.parentId === null)?.id
+    const duplicateNode = {
+      id: rootId ?? 'root',
+      name: 'Impostor',
+      parentId: null,
+      transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+      visible: true,
+      components: {},
+    }
     const corrupt: LessonJSON = {
       ...json,
-      library: {
-        assetDefinitions: [
-          { id: 'a', name: 'Fox' },
-          { id: 'a', name: 'Wolf' },
-        ],
-      },
+      slides: [
+        {
+          ...slideJson,
+          scene: { id: slideJson.scene.id, nodes: [...slideJson.scene.nodes, duplicateNode] },
+        },
+      ],
     }
     expect(() => restored.restoreFromJSON(corrupt)).toThrow(/already exists/i)
 

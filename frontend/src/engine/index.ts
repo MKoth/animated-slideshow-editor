@@ -23,15 +23,18 @@ export type {
 export type { AssetDefinition } from './assetDefinition'
 export type {
   LessonJSON,
-  ProjectJSON,
+  LessonProjectJSON,
   SlideJSON,
   SceneJSON,
   NodeJSON,
   NodeComponentsJSON,
   TransformJSON,
-  AssetDefinitionJSON,
-  ProjectMetadataJSON,
+  KeyframeJSON,
+  PropertyTrackJSON,
+  NodeAnimationJSON,
+  SlideAnimationJSON,
 } from './json'
+export { LESSON_VERSION, deserialize, serialize, upgrade, validate } from './lessonSerializer'
 export { CommandDispatcher, UndoStack, createCommandSystem } from './commands'
 export type {
   Command,

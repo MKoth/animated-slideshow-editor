@@ -4,8 +4,6 @@ import type { Slide } from './slide'
 import { Slide as SlideModel, DEFAULT_SLIDE_DURATION } from './slide'
 import type { ProjectManager } from './projectManager'
 import type { SceneManager } from './sceneManager'
-import type { SlideJSON } from './json'
-import { requireString } from './guards'
 import { SlideAnimation } from './animation'
 
 export class SlideManager {
@@ -38,21 +36,6 @@ export class SlideManager {
     project.slides.push(slide)
     this.#bus.emit({ type: 'SlideCreated', slideId: slide.id })
     return slide
-  }
-
-  restore(json: SlideJSON): Slide {
-    const scene = this.#scenes.restoreScene(json.scene)
-    const duration = typeof json.duration === 'number' ? json.duration : 0
-    const animation = SlideAnimation.fromJSON(json.animation, duration, (nodeId) =>
-      scene.getNode(nodeId),
-    )
-    return new SlideModel(
-      requireString(json.id, 'Slide id'),
-      requireString(json.name, 'Slide name'),
-      duration,
-      scene,
-      animation,
-    )
   }
 
   remove(slideId: string): void {

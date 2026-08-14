@@ -147,29 +147,26 @@ describe('opacity serialization', () => {
     }
     const legacy: LessonJSON = {
       ...json,
-      project: {
-        ...json.project,
-        slides: [
-          {
-            id: 's1',
-            name: 'S',
-            duration: 0,
-            scene: {
-              id: 'sc',
-              nodes: [
-                nodeJson,
-                {
-                  ...nodeJson,
-                  id: 'cam',
-                  name: 'Camera',
-                  parentId: 'n1',
-                  components: { camera: { kind: 'camera' } },
-                },
-              ],
-            },
+      slides: [
+        {
+          id: 's1',
+          name: 'S',
+          duration: 0,
+          scene: {
+            id: 'sc',
+            nodes: [
+              nodeJson,
+              {
+                ...nodeJson,
+                id: 'cam',
+                name: 'Camera',
+                parentId: 'n1',
+                components: { camera: { kind: 'camera' } },
+              },
+            ],
           },
-        ],
-      },
+        },
+      ],
     }
     const restored = createEngine()
     restored.restoreFromJSON(legacy)
@@ -181,46 +178,44 @@ describe('opacity serialization', () => {
     const engine = createEngine()
     engine.createProject({ name: 'P' })
     const bogus = {
+      version: 1,
       project: {
-        metadata: {
-          id: 'm',
-          name: 'P',
-          description: '',
-          author: '',
-          createdAt: 't',
-          updatedAt: 't',
-        },
-        slides: [
-          {
-            id: 's1',
-            name: 'S',
-            duration: 0,
-            scene: {
-              id: 'sc',
-              nodes: [
-                {
-                  id: 'n1',
-                  name: 'Root',
-                  parentId: null,
-                  opacity: 3,
-                  transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
-                  visible: true,
-                  components: {},
-                },
-                {
-                  id: 'cam',
-                  name: 'Camera',
-                  parentId: 'n1',
-                  transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
-                  visible: true,
-                  components: { camera: { kind: 'camera' } },
-                },
-              ],
-            },
-          },
-        ],
+        id: 'm',
+        name: 'P',
+        description: '',
+        author: '',
+        createdAt: 't',
+        modifiedAt: 't',
       },
-      library: { assetDefinitions: [] },
+      slides: [
+        {
+          id: 's1',
+          name: 'S',
+          duration: 0,
+          scene: {
+            id: 'sc',
+            nodes: [
+              {
+                id: 'n1',
+                name: 'Root',
+                parentId: null,
+                opacity: 3,
+                transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+                visible: true,
+                components: {},
+              },
+              {
+                id: 'cam',
+                name: 'Camera',
+                parentId: 'n1',
+                transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+                visible: true,
+                components: { camera: { kind: 'camera' } },
+              },
+            ],
+          },
+        },
+      ],
     }
     const restored = createEngine()
 

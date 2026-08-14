@@ -19,7 +19,7 @@ import type { EngineEvent, Unsubscribe } from './events'
 import type { CreateNodeOptions } from './nodeManager'
 import type { Transform } from './transform'
 import type { LessonJSON } from './json'
-import { isRecord } from './guards'
+import { buildProjectFromJSON, toLessonJSON, validate } from './lessonSerializer'
 import type { EnginePublic } from './engine'
 
 export class Engine {
@@ -223,27 +223,23 @@ export class Engine {
     if (!project) {
       throw new Error('No project exists in memory')
     }
-    return {
-      project: project.toJSON(),
-      library: {
-        assetDefinitions: this.#assets.definitions.map((definition) => definition.toJSON()),
-      },
-    }
+    return toLessonJSON(project)
   }
 
   restoreFromJSON(json: LessonJSON): void {
-    if (!isRecord(json) || !isRecord(json.project) || !isRecord(json.library)) {
-      throw new Error('Invalid lesson JSON: expected { project, library }')
+    const errors = validate(json)
+    if (errors.length > 0) {
+      throw new Error(errors.join('; '))
     }
+    const project = buildProjectFromJSON(json)
     try {
-      this.#assets.restoreLibrary(json.library)
       this.#nodes.clear()
       this.#scenes.clear()
-      const slides = json.project.slides.map((slideJson) => this.#slides.restore(slideJson))
-      const settings = isRecord(json.project.settings) ? json.project.settings : {}
-      this.#projects.restore(json.project.metadata, slides, settings)
+      for (const slide of project.slides) {
+        this.#scenes.install(slide.scene)
+      }
+      this.#projects.install(project)
     } catch (error) {
-      this.#assets.clear()
       this.#nodes.clear()
       this.#scenes.clear()
       this.#projects.clear()

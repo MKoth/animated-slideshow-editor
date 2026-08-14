@@ -11,57 +11,55 @@ const LIBRARY_ID = 'lib-a1'
 
 function engineWithUsage(): { engine: Engine; definitionId: string } {
   const engine = createEngineInternal()
+  engine.registerAssetDefinition(LIBRARY_ID, 'Boy')
   const lesson: LessonJSON = {
+    version: 1,
     project: {
-      metadata: {
-        id: 'project-1',
-        name: 'P',
-        description: '',
-        author: '',
-        createdAt: '2026-08-11T00:00:00',
-        updatedAt: '2026-08-11T00:00:00',
-      },
-      settings: {},
-      slides: [
-        {
-          id: 'slide-1',
-          name: 'S1',
-          duration: 5,
-          scene: {
-            id: 'scene-1',
-            nodes: [
-              {
-                id: 'root-1',
-                name: 'Root',
-                parentId: null,
-                transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
-                visible: true,
-                components: {},
-              },
-              {
-                id: 'camera-1',
-                name: 'Camera',
-                parentId: 'root-1',
-                transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
-                visible: true,
-                components: { camera: { kind: 'camera' } },
-              },
-              {
-                id: 'boy-1',
-                name: 'Boy',
-                parentId: 'root-1',
-                transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
-                visible: true,
-                components: {
-                  assetInstance: { kind: 'assetInstance', assetDefinitionId: LIBRARY_ID },
-                },
-              },
-            ],
-          },
-        },
-      ],
+      id: 'project-1',
+      name: 'P',
+      description: '',
+      author: '',
+      createdAt: '2026-08-11T00:00:00',
+      modifiedAt: '2026-08-11T00:00:00',
     },
-    library: { assetDefinitions: [{ id: LIBRARY_ID, name: 'Boy' }] },
+    slides: [
+      {
+        id: 'slide-1',
+        name: 'S1',
+        duration: 5,
+        scene: {
+          id: 'scene-1',
+          nodes: [
+            {
+              id: 'root-1',
+              name: 'Root',
+              parentId: null,
+              transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+              visible: true,
+              components: {},
+            },
+            {
+              id: 'camera-1',
+              name: 'Camera',
+              parentId: 'root-1',
+              transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+              visible: true,
+              components: { camera: { kind: 'camera' } },
+            },
+            {
+              id: 'boy-1',
+              name: 'Boy',
+              parentId: 'root-1',
+              transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+              visible: true,
+              components: {
+                assetInstance: { kind: 'assetInstance', assetDefinitionId: LIBRARY_ID },
+              },
+            },
+          ],
+        },
+      },
+    ],
   }
   engine.restoreFromJSON(lesson)
   return { engine, definitionId: LIBRARY_ID }

@@ -60,29 +60,18 @@ export type SlideJSON = {
   readonly animation?: SlideAnimationJSON
 }
 
-export type ProjectMetadataJSON = {
+export type LessonProjectJSON = {
   readonly id: string
   readonly name: string
   readonly description: string
   readonly author: string
   readonly createdAt: string
-  readonly updatedAt: string
-}
-
-export type ProjectJSON = {
-  readonly metadata: ProjectMetadataJSON
+  readonly modifiedAt: string
   readonly settings?: Readonly<Record<string, unknown>>
-  readonly slides: readonly SlideJSON[]
-}
-
-export type AssetDefinitionJSON = {
-  readonly id: string
-  readonly name: string
 }
 
 export type LessonJSON = {
-  readonly project: ProjectJSON
-  readonly library: {
-    readonly assetDefinitions: readonly AssetDefinitionJSON[]
-  }
+  readonly version: 1
+  readonly project: LessonProjectJSON
+  readonly slides: readonly SlideJSON[]
 }

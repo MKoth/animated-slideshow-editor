@@ -42,22 +42,19 @@ describe('keyframe serialization', () => {
     engine.createProject({ name: 'P' })
     engine.createSlide('S1')
     const json = engine.toJSON()
-    const slideJson = json.project.slides[0]
+    const slideJson = json.slides[0]
     if (!slideJson) {
       throw new Error('expected a slide')
     }
     const legacy: LessonJSON = {
       ...json,
-      project: {
-        ...json.project,
-        slides: [{ ...slideJson, animation: undefined }],
-      },
+      slides: [{ ...slideJson, animation: undefined }],
     }
 
     const restored = createEngine()
     restored.restoreFromJSON(legacy)
 
-    expect(restored.toJSON().project.slides[0]?.animation).toEqual({ nodes: [] })
+    expect(restored.toJSON().slides[0]?.animation).toEqual({ nodes: [] })
   })
 
   it('rejects a keyframe on an unknown node in the JSON payload', () => {
@@ -65,30 +62,25 @@ describe('keyframe serialization', () => {
     engine.createProject({ name: 'P' })
     engine.createSlide('S1')
     const json = engine.toJSON()
-    const slideJson = json.project.slides[0]
+    const slideJson = json.slides[0]
     if (!slideJson) {
       throw new Error('expected a slide')
     }
     const corrupt: LessonJSON = {
       ...json,
-      project: {
-        ...json.project,
-        slides: [
-          {
-            ...slideJson,
-            animation: {
-              nodes: [
-                {
-                  nodeId: 'ghost',
-                  tracks: [
-                    { property: 'positionX', keyframes: [{ id: 'k1', time: 1, value: 10 }] },
-                  ],
-                },
-              ],
-            },
+      slides: [
+        {
+          ...slideJson,
+          animation: {
+            nodes: [
+              {
+                nodeId: 'ghost',
+                tracks: [{ property: 'positionX', keyframes: [{ id: 'k1', time: 1, value: 10 }] }],
+              },
+            ],
           },
-        ],
-      },
+        },
+      ],
     }
 
     expect(() => restoredFromJSON(corrupt)).toThrow(/unknown node/i)
@@ -100,30 +92,25 @@ describe('keyframe serialization', () => {
     const slide = engine.createSlide('S1')
     const camera = slide.scene.camera
     const json = engine.toJSON()
-    const slideJson = json.project.slides[0]
+    const slideJson = json.slides[0]
     if (!slideJson) {
       throw new Error('expected a slide')
     }
     const corrupt: LessonJSON = {
       ...json,
-      project: {
-        ...json.project,
-        slides: [
-          {
-            ...slideJson,
-            animation: {
-              nodes: [
-                {
-                  nodeId: camera.id,
-                  tracks: [
-                    { property: 'rotation', keyframes: [{ id: 'k1', time: 1, value: 0.5 }] },
-                  ],
-                },
-              ],
-            },
+      slides: [
+        {
+          ...slideJson,
+          animation: {
+            nodes: [
+              {
+                nodeId: camera.id,
+                tracks: [{ property: 'rotation', keyframes: [{ id: 'k1', time: 1, value: 0.5 }] }],
+              },
+            ],
           },
-        ],
-      },
+        },
+      ],
     }
 
     expect(() => restoredFromJSON(corrupt)).toThrow(/rotation/i)
@@ -135,30 +122,25 @@ describe('keyframe serialization', () => {
     const slide = engine.createSlide('S1')
     const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'A')
     const json = engine.toJSON()
-    const slideJson = json.project.slides[0]
+    const slideJson = json.slides[0]
     if (!slideJson) {
       throw new Error('expected a slide')
     }
     const corrupt: LessonJSON = {
       ...json,
-      project: {
-        ...json.project,
-        slides: [
-          {
-            ...slideJson,
-            animation: {
-              nodes: [
-                {
-                  nodeId: node.id,
-                  tracks: [
-                    { property: 'positionX', keyframes: [{ id: 'k1', time: 99, value: 10 }] },
-                  ],
-                },
-              ],
-            },
+      slides: [
+        {
+          ...slideJson,
+          animation: {
+            nodes: [
+              {
+                nodeId: node.id,
+                tracks: [{ property: 'positionX', keyframes: [{ id: 'k1', time: 99, value: 10 }] }],
+              },
+            ],
           },
-        ],
-      },
+        },
+      ],
     }
 
     expect(() => restoredFromJSON(corrupt)).toThrow(/within/i)
@@ -170,28 +152,25 @@ describe('keyframe serialization', () => {
     const slide = engine.createSlide('S1')
     const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'A')
     const json = engine.toJSON()
-    const slideJson = json.project.slides[0]
+    const slideJson = json.slides[0]
     if (!slideJson) {
       throw new Error('expected a slide')
     }
     const corrupt: LessonJSON = {
       ...json,
-      project: {
-        ...json.project,
-        slides: [
-          {
-            ...slideJson,
-            animation: {
-              nodes: [
-                {
-                  nodeId: node.id,
-                  tracks: [{ property: 'opacity', keyframes: [{ id: 'k1', time: 1, value: 2 }] }],
-                },
-              ],
-            },
+      slides: [
+        {
+          ...slideJson,
+          animation: {
+            nodes: [
+              {
+                nodeId: node.id,
+                tracks: [{ property: 'opacity', keyframes: [{ id: 'k1', time: 1, value: 2 }] }],
+              },
+            ],
           },
-        ],
-      },
+        },
+      ],
     }
 
     expect(() => restoredFromJSON(corrupt)).toThrow(/opacity/i)
@@ -203,28 +182,25 @@ describe('keyframe serialization', () => {
     const slide = engine.createSlide('S1')
     const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'A')
     const json = engine.toJSON()
-    const slideJson = json.project.slides[0]
+    const slideJson = json.slides[0]
     if (!slideJson) {
       throw new Error('expected a slide')
     }
     const corrupt: LessonJSON = {
       ...json,
-      project: {
-        ...json.project,
-        slides: [
-          {
-            ...slideJson,
-            animation: {
-              nodes: [
-                {
-                  nodeId: node.id,
-                  tracks: [{ property: 'content', keyframes: [{ id: 'k1', time: 1, value: 10 }] }],
-                },
-              ],
-            },
+      slides: [
+        {
+          ...slideJson,
+          animation: {
+            nodes: [
+              {
+                nodeId: node.id,
+                tracks: [{ property: 'content', keyframes: [{ id: 'k1', time: 1, value: 10 }] }],
+              },
+            ],
           },
-        ],
-      },
+        },
+      ],
     }
 
     expect(() => restoredFromJSON(corrupt)).toThrow(/unknown animation property/i)
@@ -236,36 +212,33 @@ describe('keyframe serialization', () => {
     const slide = engine.createSlide('S1')
     const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'A')
     const json = engine.toJSON()
-    const slideJson = json.project.slides[0]
+    const slideJson = json.slides[0]
     if (!slideJson) {
       throw new Error('expected a slide')
     }
     const corrupt: LessonJSON = {
       ...json,
-      project: {
-        ...json.project,
-        slides: [
-          {
-            ...slideJson,
-            animation: {
-              nodes: [
-                {
-                  nodeId: node.id,
-                  tracks: [
-                    {
-                      property: 'positionX',
-                      keyframes: [
-                        { id: 'dup', time: 1, value: 10 },
-                        { id: 'dup', time: 2, value: 20 },
-                      ],
-                    },
-                  ],
-                },
-              ],
-            },
+      slides: [
+        {
+          ...slideJson,
+          animation: {
+            nodes: [
+              {
+                nodeId: node.id,
+                tracks: [
+                  {
+                    property: 'positionX',
+                    keyframes: [
+                      { id: 'dup', time: 1, value: 10 },
+                      { id: 'dup', time: 2, value: 20 },
+                    ],
+                  },
+                ],
+              },
+            ],
           },
-        ],
-      },
+        },
+      ],
     }
 
     expect(() => restoredFromJSON(corrupt)).toThrow(/duplicate keyframe/i)
