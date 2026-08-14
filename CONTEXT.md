@@ -31,7 +31,7 @@ The root model of the editor: metadata (id, name, description, author, dates, ve
 The slide the renderer, animation evaluator, and timeline currently operate on. Engine state — set through the engine API, never a command; not undoable and not persisted (the first slide is active after load).
 
 **`.lesson` file**:
-The portable project representation: a single JSON file holding project metadata and slides (scenes, nodes, keyframes). The same format is stored in the backend and exchanged on download/import; it never embeds asset files or editor state. Two states of one schema: the **slim** state (backend blob, definition references only) and the **bundled** state (a downloaded copy carrying an optional `library` section — the referenced asset/material/shader definitions with image bytes — so import restores everything on another machine).
+The portable project representation: a single JSON file holding project metadata, slides (scenes, nodes, keyframes), and the definitions they reference. Self-contained by default: the optional `library` section carries the referenced asset definitions with their image bytes (base64), so the same format stored in the backend and exchanged on download/import restores everything on another machine — including after a library asset is deleted. Slim (reference-only) v1 files remain readable; embedded definitions never appear in the library store. Editor state is never in the file.
 _Avoid_: Package file, project file
 
 ### Export
@@ -47,7 +47,7 @@ _Avoid_: Export transaction, render task
 ### Content
 
 **Asset Definition**:
-An immutable, reusable asset: metadata (name, category, anchors, pivot) plus its image. Lives in the asset library; scenes never edit it.
+An immutable, reusable asset: metadata (name, category, anchors, pivot) plus its image. Lives in the asset library; scenes never edit it. A project embeds a snapshot of each definition its nodes reference at placement — a project-owned copy restored from the file on open, never re-entering the library.
 _Avoid_: Asset
 
 **Asset Instance**:
@@ -66,7 +66,7 @@ The canonical classification label on an asset definition: Character, Character 
 _Avoid_: Fish, Flowers, custom per-step category vocabularies
 
 **Missing Assets Report**:
-The reconciliation of a project's asset-definition references against the live library store, run on open/import: references with no definition in the store are listed by the affected nodes' names ("Missing Assets: Clock.png, Boy.png"), and the user continues with those nodes rendered as grey-box placeholders on the canvas and marked in the scene tree. Purely store-based — asset references are never embedded in the `.lesson` file.
+The reconciliation of a project's asset-definition references against the live library store, run on open/import: references with no definition in the store — and no embedded snapshot in the project — are listed by the affected nodes' names ("Missing Assets: Clock.png, Boy.png"), and the user continues with those nodes rendered as grey-box placeholders on the canvas and marked in the scene tree. Projects are self-contained, so the report applies only to legacy/slim files whose references resolve neither embedded nor store-side.
 _Avoid_: Broken asset, unresolved reference
 
 **Material Instance**:
@@ -173,4 +173,4 @@ _Avoid_: Command History panel, activity log
 ### Content authority
 
 **Definition / instance separation**:
-Definitions (asset, material, shader) are reusable and immutable; instances belong to a project and override parameters.
+Definitions (asset, material, shader) are reusable and immutable; instances belong to a project and override parameters. Projects embed snapshots of the definitions they reference at placement; library definitions stay shared for new placements.
