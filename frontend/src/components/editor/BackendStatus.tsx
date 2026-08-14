@@ -1,10 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { healthApi } from '../../api'
-
-type BackendState = 'checking' | 'connected' | 'unavailable'
+import { useBackendStore } from '../../stores/backendStore'
 
 export function BackendStatus() {
-  const [state, setState] = useState<BackendState>('checking')
+  const status = useBackendStore((state) => state.status)
 
   useEffect(() => {
     let cancelled = false
@@ -12,12 +11,12 @@ export function BackendStatus() {
       .getHealth()
       .then(() => {
         if (!cancelled) {
-          setState('connected')
+          useBackendStore.getState().markAvailable()
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setState('unavailable')
+          useBackendStore.getState().markUnavailable()
         }
       })
     return () => {
@@ -25,10 +24,10 @@ export function BackendStatus() {
     }
   }, [])
 
-  if (state === 'checking') {
+  if (status === 'checking') {
     return <span className="backend-status backend-status--checking">Checking backend…</span>
   }
-  if (state === 'connected') {
+  if (status === 'available') {
     return <span className="backend-status backend-status--connected">Backend connected</span>
   }
   return <span className="backend-status backend-status--unavailable">Backend unavailable</span>

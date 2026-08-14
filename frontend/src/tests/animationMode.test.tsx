@@ -7,6 +7,7 @@ import { TimelinePanel } from '../components/panels/TimelinePanel'
 import { CommandDispatcher, UndoStack } from '../engine/commands'
 import type { Engine } from '../engine/internal'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
+import { noopPersistence } from './contextHarness'
 import { usePlaybackController } from '../stores/playbackStore'
 import { useSelectionStore } from '../stores/selectionStore'
 import { DEFAULT_TIMELINE_HEIGHT } from '../stores/uiPrefs'
@@ -29,6 +30,7 @@ function renderPanel(): {
     engine: toReadOnly(engine),
     undoStack,
     dispatch: (command) => dispatcher.dispatch(command),
+    persistence: noopPersistence,
   }
   render(
     <EngineContext.Provider value={value}>

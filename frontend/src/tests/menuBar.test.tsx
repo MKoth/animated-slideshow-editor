@@ -1,6 +1,6 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EngineContext } from '../app/engineContext'
 import type { EngineContextValue } from '../app/engineContext'
 import { MenuBar } from '../components/editor/MenuBar'
@@ -15,21 +15,36 @@ async function openEditMenu() {
   await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'Edit' }))
 }
 
-function renderMenuBar(): { engine: Engine; undoStack: UndoStack } {
+async function openFileMenu() {
+  const user = userEvent.setup()
+  await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'File' }))
+}
+
+function renderMenuBar(): {
+  engine: Engine
+  undoStack: UndoStack
+  save: ReturnType<typeof vi.fn>
+} {
   const engine = createEngineInternal()
   const undoStack = new UndoStack()
   const dispatcher = new CommandDispatcher(engine, undoStack, () => undefined)
+  const save = vi.fn()
   const value: EngineContextValue = {
     engine: toReadOnly(engine),
     undoStack,
     dispatch: (command) => dispatcher.dispatch(command),
+    persistence: {
+      save,
+      onCommandSucceeded: () => undefined,
+      dispose: () => undefined,
+    },
   }
   render(
     <EngineContext.Provider value={value}>
       <MenuBar />
     </EngineContext.Provider>,
   )
-  return { engine, undoStack }
+  return { engine, undoStack, save }
 }
 
 function createProjectAndSlide(engine: Engine) {
@@ -119,5 +134,17 @@ describe('MenuBar z-order items', () => {
     await openEditMenu()
     expect(screen.getByRole('menuitem', { name: 'Bring Forward' })).toBeEnabled()
     expect(screen.getByRole('menuitem', { name: 'Bring To Front' })).toBeEnabled()
+  })
+})
+
+describe('MenuBar save item', () => {
+  it('saves the project from the File menu', async () => {
+    const { save } = renderMenuBar()
+    const user = userEvent.setup()
+
+    await openFileMenu()
+    await user.click(screen.getByRole('menuitem', { name: 'Save' }))
+
+    expect(save).toHaveBeenCalledTimes(1)
   })
 })

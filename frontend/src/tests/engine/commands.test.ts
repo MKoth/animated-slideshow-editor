@@ -138,6 +138,18 @@ describe('command dispatcher', () => {
     }
     expect(system.undoStack.entries).toEqual([])
   })
+
+  it('notifies the on-command-succeeded listener only for successful dispatches', () => {
+    const listener = vi.fn()
+    const system = createCommandSystem()
+    system.dispatcher.setOnCommandSucceeded(listener)
+
+    system.dispatcher.dispatch(new CreateProjectCommand({ name: 'P' }))
+    system.dispatcher.dispatch(new CreateProjectCommand({ name: 'Second' }))
+
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(system.engine.project?.name).toBe('P')
+  })
 })
 
 describe('CreateSlideCommand', () => {

@@ -13,6 +13,7 @@ import {
 } from '../engine/commands'
 import type { Engine } from '../engine/internal'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
+import { noopPersistence } from './contextHarness'
 import { useNotificationStore } from '../stores/notificationStore'
 import { usePlaybackController } from '../stores/playbackStore'
 import { useSelectionStore } from '../stores/selectionStore'
@@ -26,6 +27,7 @@ function renderPanel(): { engine: Engine; undoStack: UndoStack; dispatcher: Comm
     engine: toReadOnly(engine),
     undoStack,
     dispatch: (command) => dispatcher.dispatch(command),
+    persistence: noopPersistence,
   }
   render(
     <EngineContext.Provider value={value}>

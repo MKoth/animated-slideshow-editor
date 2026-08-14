@@ -25,6 +25,7 @@ const COPY_ITEM = 'Copy'
 const PASTE_ITEM = 'Paste'
 const DUPLICATE_ITEM = 'Duplicate'
 const DELETE_ITEM = 'Delete'
+const SAVE_ITEM = 'Save'
 
 const MENUS = [
   {
@@ -137,7 +138,7 @@ function Menu({
 }
 
 export function MenuBar() {
-  const { engine, dispatch } = useEngine()
+  const { engine, dispatch, persistence } = useEngine()
   const [, setTick] = useState(0)
   useEngineEvent(() => setTick((tick) => tick + 1))
   const libraryUnavailable = useAssetLibraryStore((state) => state.unavailable)
@@ -161,7 +162,9 @@ export function MenuBar() {
   }
 
   const handleItemClick = (item: string): boolean => {
-    if (item === COPY_ITEM) {
+    if (item === SAVE_ITEM) {
+      persistence.save()
+    } else if (item === COPY_ITEM) {
       copySelection(engine)
     } else if (item === PASTE_ITEM) {
       pasteClipboard(dispatch)

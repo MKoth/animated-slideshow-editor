@@ -16,6 +16,15 @@ export class ApiClient {
     return (await response.json()) as T
   }
 
+  async post<T>(path: string, body: string): Promise<T> {
+    const response = await this.request(path, {
+      method: 'POST',
+      body,
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    })
+    return (await response.json()) as T
+  }
+
   async postForm<T>(path: string, formData: FormData): Promise<T> {
     const response = await this.request(path, {
       method: 'POST',

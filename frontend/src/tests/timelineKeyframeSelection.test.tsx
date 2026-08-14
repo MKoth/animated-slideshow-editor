@@ -8,6 +8,7 @@ import { AddKeyframeCommand, DeleteKeyframeCommand } from '../engine/commands'
 import type { Command } from '../engine/commands'
 import type { Engine } from '../engine/internal'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
+import { noopPersistence } from './contextHarness'
 import { registerClipboardShortcuts } from '../shortcuts/clipboardShortcuts'
 import { formatCombo, getShortcutHandler } from '../shortcuts/shortcutRegistry'
 import { usePlaybackController } from '../stores/playbackStore'
@@ -31,6 +32,7 @@ function renderPanel(): {
     engine: toReadOnly(engine),
     undoStack,
     dispatch: (command) => dispatcher.dispatch(command),
+    persistence: noopPersistence,
   }
   render(
     <EngineContext.Provider value={value}>

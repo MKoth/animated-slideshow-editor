@@ -1,5 +1,10 @@
 export { CommandDispatcher, createCommandSystem } from './dispatcher'
-export type { CommandLogger, CommandSystem, DispatchCommand } from './dispatcher'
+export type {
+  CommandLogger,
+  CommandSucceededListener,
+  CommandSystem,
+  DispatchCommand,
+} from './dispatcher'
 export type { Command, CommandResult } from './command'
 export { UndoStack } from './undoStack'
 export type { UndoStackEntry, UndoStackListener } from './undoStack'

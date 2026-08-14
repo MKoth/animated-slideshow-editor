@@ -8,6 +8,8 @@ import { formatParameters } from './format'
 
 export type CommandLogger = (message: string) => void
 
+export type CommandSucceededListener = () => void
+
 export type DispatchCommand = <Inverse>(command: Command<Inverse>) => CommandResult<Inverse>
 
 const defaultLogger: CommandLogger = (message) => {
@@ -18,11 +20,16 @@ export class CommandDispatcher {
   readonly #engine: Engine
   readonly #undoStack: UndoStack
   readonly #log: CommandLogger
+  #onCommandSucceeded: CommandSucceededListener | null = null
 
   constructor(engine: Engine, undoStack: UndoStack, log: CommandLogger = defaultLogger) {
     this.#engine = engine
     this.#undoStack = undoStack
     this.#log = log
+  }
+
+  setOnCommandSucceeded(listener: CommandSucceededListener): void {
+    this.#onCommandSucceeded = listener
   }
 
   dispatch<Inverse>(command: Command<Inverse>): CommandResult<Inverse> {
@@ -36,6 +43,7 @@ export class CommandDispatcher {
         inverse,
       })
       this.#log(`${command.type} ${formatParameters(command.parameters)}`)
+      this.#onCommandSucceeded?.()
       return { ok: true, inverse }
     } catch (error) {
       return { ok: false, error: toError(error) }
