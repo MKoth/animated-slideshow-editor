@@ -3,6 +3,7 @@ import { useAssetUsageGuard } from '../app/useAssetUsageGuard'
 import { useEngine } from '../app/useEngine'
 import { DocumentTitle } from '../components/editor/DocumentTitle'
 import { EditorLayout } from '../components/editor/EditorLayout'
+import { RecoveryDialog } from '../components/recovery/RecoveryDialog'
 import { registerClipboardShortcuts } from '../shortcuts/clipboardShortcuts'
 import { registerProvisionalShortcuts } from '../shortcuts/provisionalShortcuts'
 import { registerSaveShortcut } from '../shortcuts/saveShortcuts'
@@ -28,6 +29,7 @@ export function EditorPage() {
     <>
       <DocumentTitle />
       <EditorLayout />
+      <RecoveryDialog />
     </>
   )
 }

@@ -4,6 +4,7 @@ import { serialize } from '../engine/lessonSerializer'
 import { useBackendStore } from '../stores/backendStore'
 import { usePersistenceStore } from '../stores/persistenceStore'
 import { useNotificationStore } from '../stores/notificationStore'
+import { recordLastSaved, writeShadow } from './recoveryShadow'
 
 export const AUTOSAVE_INTERVAL_MS = 30000
 
@@ -32,6 +33,14 @@ export function createPersistenceService(deps: PersistenceDeps): PersistenceServ
   const notify =
     deps.notify ?? ((message: string) => useNotificationStore.getState().notify(message))
 
+  const writeRecoveryShadow = (): void => {
+    const project = deps.engine.project
+    if (!project) {
+      return
+    }
+    writeShadow(serialize(project))
+  }
+
   const performSave = async (): Promise<void> => {
     if (saveInFlight) {
       saveAgain = true
@@ -43,9 +52,11 @@ export function createPersistenceService(deps: PersistenceDeps): PersistenceServ
     }
     saveInFlight = true
     const generation = projectGeneration
+    const blob = serialize(project)
     try {
-      await deps.upsert(serialize(project))
+      await deps.upsert(blob)
       useBackendStore.getState().markAvailable()
+      recordLastSaved(blob)
       if (generation === projectGeneration) {
         usePersistenceStore.getState().markSaved()
       }
@@ -99,8 +110,15 @@ export function createPersistenceService(deps: PersistenceDeps): PersistenceServ
 
   const ensureTimer = (): void => {
     if (intervalId === null) {
-      intervalId = setInterval(autosave, AUTOSAVE_INTERVAL_MS)
+      intervalId = setInterval(() => {
+        writeRecoveryShadow()
+        autosave()
+      }, AUTOSAVE_INTERVAL_MS)
     }
+  }
+
+  const handleBeforeUnload = (): void => {
+    writeRecoveryShadow()
   }
 
   const unsubscribe = deps.engine.subscribe((event) => {
@@ -109,6 +127,8 @@ export function createPersistenceService(deps: PersistenceDeps): PersistenceServ
     }
   })
 
+  window.addEventListener('beforeunload', handleBeforeUnload)
+
   return {
     save: () => {
       void performSave()
@@ -116,10 +136,12 @@ export function createPersistenceService(deps: PersistenceDeps): PersistenceServ
     onCommandSucceeded: () => {
       ensureTimer()
       usePersistenceStore.getState().markDirty()
+      writeRecoveryShadow()
       requestAutosave()
     },
     dispose: () => {
       unsubscribe()
+      window.removeEventListener('beforeunload', handleBeforeUnload)
       if (intervalId !== null) {
         clearInterval(intervalId)
         intervalId = null
