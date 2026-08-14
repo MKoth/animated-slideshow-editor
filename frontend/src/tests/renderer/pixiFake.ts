@@ -248,6 +248,14 @@ export class FakeTicker {
     this.listeners.add(listener)
   }
 
+  addOnce(listener: () => void): void {
+    const once = (): void => {
+      this.remove(once)
+      listener()
+    }
+    this.add(once)
+  }
+
   remove(listener: () => void): void {
     this.listeners.delete(listener)
   }

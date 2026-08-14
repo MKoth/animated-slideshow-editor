@@ -27,6 +27,9 @@ import { ALWAYS_ZERO_TIME } from './sceneRenderer'
 import { SelectionOverlay } from './selectionOverlay'
 import type { ResolveAssetUrl } from './textureCache'
 import { TextureCache } from './textureCache'
+import { ThumbnailRecorder } from './thumbnailRecorder'
+import { extractCanvasCapture } from './thumbnailRecorder'
+import type { CanvasCapture } from './thumbnailRecorder'
 
 const DEFAULT_CANVAS_BACKGROUND = 0xffffff
 
@@ -72,6 +75,7 @@ export class Renderer {
   readonly #resolveAssetUrl: ResolveAssetUrl
   readonly #currentTime: CurrentTimeSource
   readonly #isAssetMissing: (definitionId: string) => boolean
+  readonly #thumbnails: ThumbnailRecorder
 
   constructor(
     host: HTMLElement,
@@ -81,6 +85,7 @@ export class Renderer {
     resolveAssetUrl: ResolveAssetUrl = () => null,
     currentTime: CurrentTimeSource = ALWAYS_ZERO_TIME,
     isAssetMissing: (definitionId: string) => boolean = () => false,
+    captureThumbnail: CanvasCapture = extractCanvasCapture,
   ) {
     this.#host = host
     this.#engine = engine
@@ -89,6 +94,7 @@ export class Renderer {
     this.#resolveAssetUrl = resolveAssetUrl
     this.#currentTime = currentTime
     this.#isAssetMissing = isAssetMissing
+    this.#thumbnails = new ThumbnailRecorder(captureThumbnail)
   }
 
   async start(): Promise<void> {
@@ -136,6 +142,7 @@ export class Renderer {
         this.#currentTime,
         this.#isAssetMissing,
       )
+      this.#thumbnails.attach(app)
       this.#unsubscribe = this.#engine.subscribe((event) => this.#handleEvent(event))
       this.#unsubscribeTime = this.#currentTime.subscribe(() => this.#handleTimeChanged())
       this.#syncScene(this.#sceneRenderer)
@@ -239,6 +246,7 @@ export class Renderer {
     this.#unsubscribe = null
     this.#unsubscribeTime?.()
     this.#unsubscribeTime = null
+    this.#thumbnails.detach()
     this.#resizeObserver?.disconnect()
     this.#resizeObserver = null
     this.#sceneRenderer = null
@@ -402,10 +410,22 @@ export class Renderer {
     }
     switch (event.type) {
       case 'ProjectCreated':
+        this.#syncScene(sceneRenderer)
+        break
       case 'ProjectLoaded':
+        this.#thumbnails.handleEvent(event)
+        this.#syncScene(sceneRenderer)
+        break
       case 'SlideCreated':
-      case 'SlideRemoved':
+        this.#thumbnails.handleEvent(event)
+        this.#syncScene(sceneRenderer)
+        break
       case 'SlideActivated':
+        this.#syncScene(sceneRenderer)
+        this.#thumbnails.handleEvent(event)
+        break
+      case 'SlideRemoved':
+        this.#thumbnails.handleEvent(event)
         this.#syncScene(sceneRenderer)
         break
       case 'NodeCreated':
@@ -449,6 +469,7 @@ export class Renderer {
       this.#controls?.reset()
       this.#cameraPreview = null
       sceneRenderer.bind(scene, slide ? slide.id : null)
+      this.#thumbnails.setBoundSlideId(slide ? slide.id : null)
       this.#selectionOverlay?.bringToFront()
       this.#guideOverlay?.bringToFront()
       useSelectionStore.getState().clear()

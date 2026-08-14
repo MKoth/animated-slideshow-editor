@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import type { WorldTransform } from '../../engine/worldTransform'
 import { normalizeRotation } from '../../engine'
 import {
@@ -10,13 +10,11 @@ import {
   degreesOf,
   FIELD_LABELS,
   FIELD_PROPERTY,
-  formatDecimal,
   parseFiniteNumber,
   readEvaluatedNodeWorld,
   readStoredNodeWorld,
   resetNodesTransform,
   resetNodesTransformAutoKey,
-  roundToStep,
 } from '../../app/inspectorActions'
 import type { InspectorFieldKind } from '../../app/inspectorActions'
 import type { PropertyState } from '../../app/keyframeActions'
@@ -28,9 +26,9 @@ import { useNotificationStore } from '../../stores/notificationStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { useUiStore } from '../../stores/uiStore'
-
-const DRAG_THRESHOLD_PX = 3
-const MIXED_MARKER = '—'
+import { renameSlide, setSlideDuration } from '../../app/slideActions'
+import type { Slide } from '../../engine'
+import { NameField, NumericField } from './inspectorFields'
 
 const COMING_SOON_SECTIONS = [
   'Material',
@@ -90,206 +88,40 @@ function mixedTransformField(
   return field === 'rotation' ? degreesOf(firstReading) : first
 }
 
-function useEditBuffer(value: string): {
-  readonly text: string
-  readonly editing: boolean
-  setText: (value: string) => void
-  begin: () => void
-  commit: () => string
-  cancel: () => void
-} {
-  const [text, setText] = useState(value)
-  const [editing, setEditing] = useState(false)
-
-  if (!editing && text !== value) {
-    setText(value)
-  }
-
-  return {
-    text,
-    editing,
-    setText,
-    begin: () => {
-      setEditing(true)
-    },
-    commit: () => {
-      setEditing(false)
-      return text
-    },
-    cancel: () => {
-      setEditing(false)
-    },
-  }
-}
-
-interface NumericFieldProps {
-  label: string
-  value: number | null
-  step: number
-  disabled?: boolean
-  state?: PropertyState | null
-  onCommit: (raw: string) => void
-  onAdjust: (value: number) => void
-}
-
-function NumericField({
-  label,
-  value,
-  step,
-  disabled = false,
-  state = null,
-  onCommit,
-  onAdjust,
-}: NumericFieldProps) {
-  const display = value === null ? MIXED_MARKER : formatDecimal(value)
-  const buffer = useEditBuffer(display)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const dragRef = useRef<{ startX: number; startValue: number; dragging: boolean } | null>(null)
-
-  const commit = () => {
-    onCommit(buffer.commit())
-  }
-
-  const handlePointerMove = (event: PointerEvent) => {
-    const drag = dragRef.current
-    if (!drag) {
-      return
-    }
-    const delta = event.clientX - drag.startX
-    if (!drag.dragging && Math.abs(delta) < DRAG_THRESHOLD_PX) {
-      return
-    }
-    drag.dragging = true
-    event.preventDefault()
-    const next = roundToStep(drag.startValue + delta * step, step)
-    buffer.setText(formatDecimal(next))
-    onAdjust(next)
-  }
-
-  const handlePointerUp = () => {
-    const drag = dragRef.current
-    dragRef.current = null
-    window.removeEventListener('pointermove', handlePointerMove)
-    window.removeEventListener('pointerup', handlePointerUp)
-    if (!drag || drag.dragging) {
-      return
-    }
-    const input = inputRef.current
-    if (input) {
-      input.focus()
-      input.select()
-    }
-  }
-
-  const handlePointerDown = (event: React.PointerEvent<HTMLInputElement>) => {
-    if (value === null || disabled) {
-      return
-    }
-    dragRef.current = { startX: event.clientX, startValue: value, dragging: false }
-    event.preventDefault()
-    window.addEventListener('pointermove', handlePointerMove)
-    window.addEventListener('pointerup', handlePointerUp)
-  }
-
-  return (
-    <div className="inspector-field">
-      <label className="inspector-field__label" htmlFor={label}>
-        {label}
-      </label>
-      {state && state !== 'static' && (
-        <span
-          className="inspector-field__indicator"
-          data-state={state}
-          title={state === 'animated' ? 'Animated' : 'Playhead on keyframe'}
-        >
-          {state === 'animated' ? '●' : '◆'}
-        </span>
-      )}
-      <input
-        id={label}
-        ref={inputRef}
-        className="inspector-field__input"
-        type={buffer.editing || value !== null ? 'number' : 'text'}
-        aria-label={label}
-        disabled={disabled}
-        value={buffer.text}
-        onChange={(event) => {
-          buffer.begin()
-          buffer.setText(event.target.value)
-        }}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') {
-            commit()
-          } else if (event.key === 'Escape') {
-            buffer.cancel()
-          }
-        }}
-        onBlur={() => {
-          if (buffer.editing) {
-            commit()
-          }
-        }}
-        onPointerDown={handlePointerDown}
-      />
-    </div>
-  )
-}
-
-function NameField({
-  value,
-  onCommit,
-  disabled = false,
-}: {
-  value: string | null
-  onCommit: (raw: string) => void
-  disabled?: boolean
-}) {
-  const display = value === null ? MIXED_MARKER : value
-  const buffer = useEditBuffer(display)
-
-  const commit = () => {
-    onCommit(buffer.commit())
-  }
-
-  return (
-    <div className="inspector-field">
-      <label className="inspector-field__label" htmlFor="Name">
-        Name
-      </label>
-      <input
-        id="Name"
-        className="inspector-field__input"
-        type="text"
-        aria-label="Name"
-        disabled={disabled}
-        value={buffer.text}
-        onChange={(event) => {
-          buffer.begin()
-          buffer.setText(event.target.value)
-        }}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') {
-            commit()
-          } else if (event.key === 'Escape') {
-            buffer.cancel()
-          }
-        }}
-        onBlur={() => {
-          if (buffer.editing) {
-            commit()
-          }
-        }}
-      />
-    </div>
-  )
-}
-
 function InspectorSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="inspector-section">
       <h3 className="inspector-section__title">{title}</h3>
       {children}
     </section>
+  )
+}
+
+function SlideSection({
+  slide,
+  playing,
+  onCommitName,
+  onCommitDuration,
+  onAdjustDuration,
+}: {
+  slide: Slide
+  playing: boolean
+  onCommitName: (raw: string) => void
+  onCommitDuration: (raw: string) => void
+  onAdjustDuration: (value: number) => void
+}) {
+  return (
+    <InspectorSection title="Slide">
+      <NameField label="Slide Name" value={slide.name} disabled={playing} onCommit={onCommitName} />
+      <NumericField
+        label="Duration"
+        value={slide.duration}
+        step={0.1}
+        disabled={playing}
+        onCommit={onCommitDuration}
+        onAdjust={onAdjustDuration}
+      />
+    </InspectorSection>
   )
 }
 
@@ -314,6 +146,7 @@ export function InspectorPanel({ width }: { width: number }) {
   useEngineEvent(() => setTick((tick) => tick + 1))
 
   const targets = inspectedTargets(engine, selectedIds)
+  const slide = engine.getActiveSlide()
   const cameraSelected = targets.length === 1 && Boolean(targets[0]?.components.camera)
   const animatingCamera = cameraAnimationMode && cameraSelected
   const transformAutoKey = animationMode || animatingCamera
@@ -331,11 +164,59 @@ export function InspectorPanel({ width }: { width: number }) {
   }
   const readTarget = targets.length > 0 ? modeActions.readWorld(engine, targets[0].id) : null
 
+  const commitSlideName = (raw: string) => {
+    if (!slide) {
+      return
+    }
+    try {
+      renameSlide(engine, dispatch, slide.id, raw, notify)
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const commitSlideDuration = (raw: string) => {
+    if (!slide) {
+      return
+    }
+    try {
+      const value = parseFiniteNumber(raw, 'Duration')
+      setSlideDuration(engine, dispatch, slide.id, value, notify)
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const adjustSlideDuration = (value: number) => {
+    if (!slide) {
+      return
+    }
+    setSlideDuration(engine, dispatch, slide.id, value, notify)
+  }
+
   if (targets.length === 0 || !readTarget) {
+    if (!slide) {
+      return (
+        <div className="inspector-panel" style={{ width }}>
+          <div className="panel-empty-state">
+            <p>Nothing selected. Select an object to edit its properties.</p>
+          </div>
+        </div>
+      )
+    }
     return (
       <div className="inspector-panel" style={{ width }}>
-        <div className="panel-empty-state">
-          <p>Nothing selected. Select an object to edit its properties.</p>
+        <div className="inspector-scroll">
+          <SlideSection
+            slide={slide}
+            playing={playing}
+            onCommitName={commitSlideName}
+            onCommitDuration={commitSlideDuration}
+            onAdjustDuration={adjustSlideDuration}
+          />
+          <div className="panel-empty-state">
+            <p>Nothing selected. Select an object to edit its properties.</p>
+          </div>
         </div>
       </div>
     )
@@ -428,6 +309,16 @@ export function InspectorPanel({ width }: { width: number }) {
   return (
     <div className="inspector-panel" style={{ width }}>
       <div className="inspector-scroll">
+        {slide && (
+          <SlideSection
+            slide={slide}
+            playing={playing}
+            onCommitName={commitSlideName}
+            onCommitDuration={commitSlideDuration}
+            onAdjustDuration={adjustSlideDuration}
+          />
+        )}
+
         <InspectorSection title={multi ? `${targets.length} Objects Selected` : 'General'}>
           <NameField value={commonName} onCommit={commitName} disabled={playing} />
         </InspectorSection>
