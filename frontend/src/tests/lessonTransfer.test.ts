@@ -187,6 +187,43 @@ describe('importLessonFile', () => {
     expect(useMissingAssetsStore.getState().report).toBeNull()
   })
 
+  it('imports a lesson with its embedded material and shader definitions', async () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'Embedded' })
+    engine.createSlide('S1')
+    engine.embedMaterial({
+      id: 'mat-1',
+      name: 'Warm',
+      description: '',
+      tags: [],
+      createdAt: '2026-08-15T00:00:00',
+      updatedAt: '2026-08-15T00:00:00',
+      parameters: [{ key: 'tint', kind: 'color', default: '#ff8800' }],
+    })
+    engine.embedShader({
+      id: 'shader-1',
+      name: 'Blur',
+      description: '',
+      tags: [],
+      createdAt: '2026-08-15T00:00:00',
+      updatedAt: '2026-08-15T00:00:00',
+      source: 'void main() {}',
+      defaultUniforms: [],
+      isBuiltin: false,
+    })
+    const file = new File([serialize(engine.project as never)], 'embedded.lesson', {
+      type: 'application/json',
+    })
+    const target = setupEditor()
+
+    await importLessonFile(target, file)
+
+    expect(target.embeddedMaterials.map((material) => material.id)).toEqual(['mat-1'])
+    expect(target.embeddedShaders.map((shader) => shader.id)).toEqual(['shader-1'])
+    expect(target.getEmbeddedMaterial('mat-1')?.parameters[0]?.default).toBe('#ff8800')
+    expect(target.getEmbeddedShader('shader-1')?.source).toBe('void main() {}')
+  })
+
   it('runs the missing-assets reconciliation on import', async () => {
     const { project } = makeProjectWithAssets('With Assets', [
       { name: 'Boy', definitionId: 'def-boy' },

@@ -14,6 +14,11 @@ export type { Project, ProjectMetadata, CreateProjectInput } from './project'
 export type { Transform } from './transform'
 export { normalizeRotation } from './transform'
 export { reconcileMissingAssets } from './missingAssets'
+export {
+  collectReferencedDefinitionIds,
+  collectReferencedMaterialIds,
+  collectReferencedShaderIds,
+} from './missingAssets'
 export type { MissingAssetReference, MissingAssetsReport } from './missingAssets'
 export type {
   NodeComponents,
@@ -24,6 +29,9 @@ export type {
 } from './components'
 export type { AssetDefinition } from './assetDefinition'
 export type { EmbeddedAsset } from './embeddedAsset'
+export type { EmbeddedMaterialDefinition, EmbeddedMaterialParameter } from './embeddedMaterial'
+export type { EmbeddedShaderDefinition } from './embeddedShader'
+export type { FullscreenShaderReference } from './fullscreenShader'
 export {
   DEFAULT_MATERIAL_DEFINITION_ID,
   DEFAULT_MATERIAL_NAME,
@@ -35,6 +43,10 @@ export type {
   LessonProjectJSON,
   LessonLibraryJSON,
   EmbeddedAssetJSON,
+  EmbeddedMaterialJSON,
+  EmbeddedShaderJSON,
+  MaterialJSON,
+  FullscreenShaderJSON,
   SlideJSON,
   SceneJSON,
   NodeJSON,

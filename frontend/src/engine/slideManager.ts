@@ -90,6 +90,12 @@ export class SlideManager {
       source.duration,
       scene,
       source.animation.copyFor(nodeIds),
+      source.fullscreenShader
+        ? {
+            shaderDefinitionId: source.fullscreenShader.shaderDefinitionId,
+            overrides: { ...source.fullscreenShader.overrides },
+          }
+        : null,
     )
     project.slides.splice(project.slides.indexOf(source) + 1, 0, copy)
     this.#bus.emit({ type: 'SlideDuplicated', slideId: copy.id })

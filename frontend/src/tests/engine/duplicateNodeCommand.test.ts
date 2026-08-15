@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from 'vitest'
 import type { EngineEvent } from '../../engine/events'
 import type { CommandLogger, CommandResult } from '../../engine/commands'
 import {
+  AssignMaterialCommand,
   CommandDispatcher,
   CreateAssetInstanceCommand,
   CreateNodeCommand,
   CreateProjectCommand,
   CreateSlideCommand,
   DuplicateNodeCommand,
+  OverrideMaterialParameterCommand,
   UndoStack,
 } from '../../engine/commands'
 import { createEngine } from '../../engine/internal'
@@ -106,6 +108,29 @@ describe('DuplicateNodeCommand', () => {
     expect(engine.getNode(two.nodeId).transform.y).toBe(source.transform.y + 20)
     expect(engine.getNode(three.nodeId).transform.x).toBe(source.transform.x + 20)
     expect(engine.getNode(three.nodeId).transform.y).toBe(source.transform.y + 20)
+  })
+
+  it('copies the material instance with its overrides', () => {
+    const { engine, undoStack, dispatcher, nodeId } = setup()
+    engine.registerMaterialDefinition('mat-1', 'Warm')
+    expectOk(
+      dispatcher.dispatch(new AssignMaterialCommand({ nodeId, materialDefinitionId: 'mat-1' })),
+    )
+    expectOk(
+      dispatcher.dispatch(
+        new OverrideMaterialParameterCommand({ nodeId, parameter: 'tint', value: '#00ff00' }),
+      ),
+    )
+    const before = undoStack.entries.length
+
+    const inverse = expectOk(dispatcher.dispatch(new DuplicateNodeCommand({ nodeId })))
+
+    const source = engine.getNode(nodeId)
+    const copy = engine.getNode(inverse.nodeId)
+    expect(copy.material).toEqual({ materialDefinitionId: 'mat-1', overrides: { tint: '#00ff00' } })
+    expect(copy.material).not.toBe(source.material)
+    expect(copy.material.overrides).not.toBe(source.material.overrides)
+    expect(undoStack.entries).toHaveLength(before + 1)
   })
 
   it('rejects a node without an asset instance, leaving the engine unchanged', () => {

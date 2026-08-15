@@ -17,6 +17,8 @@ import { ShaderDefinition } from './shaderDefinition'
 import { DEFAULT_MATERIAL_DEFINITION_ID, DEFAULT_MATERIAL_NAME } from './materialInstance'
 import type { MaterialOverrideValue } from './materialInstance'
 import type { EmbeddedAsset } from './embeddedAsset'
+import type { EmbeddedMaterialDefinition } from './embeddedMaterial'
+import type { EmbeddedShaderDefinition } from './embeddedShader'
 import type { CreateProjectInput, Project } from './project'
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
@@ -42,6 +44,8 @@ export class Engine {
   readonly #animations: AnimationManager
   readonly #evaluator: AnimationEvaluator
   readonly #embeddedAssets = new Map<string, EmbeddedAsset>()
+  readonly #embeddedMaterials = new Map<string, EmbeddedMaterialDefinition>()
+  readonly #embeddedShaders = new Map<string, EmbeddedShaderDefinition>()
   #activeSlideId: string | null = null
 
   constructor() {
@@ -95,6 +99,8 @@ export class Engine {
 
   createProject(input: CreateProjectInput): Project {
     this.#embeddedAssets.clear()
+    this.#embeddedMaterials.clear()
+    this.#embeddedShaders.clear()
     return this.#projects.create(input)
   }
 
@@ -243,7 +249,7 @@ export class Engine {
   }
 
   assignMaterial(nodeId: string, materialDefinitionId: string): void {
-    this.#materials.getDefinition(materialDefinitionId)
+    this.#resolveMaterialDefinition(materialDefinitionId)
     this.#nodes.assignMaterial(nodeId, materialDefinitionId)
   }
 
@@ -276,10 +282,14 @@ export class Engine {
   }
 
   getMaterialDefinition(definitionId: string): MaterialDefinition {
-    return this.#materials.getDefinition(definitionId)
+    return this.#resolveMaterialDefinition(definitionId)
   }
 
   getShaderDefinition(definitionId: string): ShaderDefinition {
+    const embedded = this.#embeddedShaders.get(definitionId)
+    if (embedded) {
+      return new ShaderDefinition(embedded.id, embedded.name)
+    }
     return this.#shaders.getDefinition(definitionId)
   }
 
@@ -295,8 +305,24 @@ export class Engine {
     return this.#embeddedAssets.get(definitionId)
   }
 
+  getEmbeddedMaterial(definitionId: string): EmbeddedMaterialDefinition | undefined {
+    return this.#embeddedMaterials.get(definitionId)
+  }
+
+  getEmbeddedShader(definitionId: string): EmbeddedShaderDefinition | undefined {
+    return this.#embeddedShaders.get(definitionId)
+  }
+
   get embeddedAssets(): readonly EmbeddedAsset[] {
     return [...this.#embeddedAssets.values()]
+  }
+
+  get embeddedMaterials(): readonly EmbeddedMaterialDefinition[] {
+    return [...this.#embeddedMaterials.values()]
+  }
+
+  get embeddedShaders(): readonly EmbeddedShaderDefinition[] {
+    return [...this.#embeddedShaders.values()]
   }
 
   embedAsset(asset: EmbeddedAsset): void {
@@ -306,6 +332,24 @@ export class Engine {
     }
     project.embedAsset(asset)
     this.#embeddedAssets.set(asset.id, asset)
+  }
+
+  embedMaterial(definition: EmbeddedMaterialDefinition): void {
+    const project = this.#projects.current
+    if (!project) {
+      throw new Error('No project exists in memory')
+    }
+    project.embedMaterial(definition)
+    this.#embeddedMaterials.set(definition.id, definition)
+  }
+
+  embedShader(definition: EmbeddedShaderDefinition): void {
+    const project = this.#projects.current
+    if (!project) {
+      throw new Error('No project exists in memory')
+    }
+    project.embedShader(definition)
+    this.#embeddedShaders.set(definition.id, definition)
   }
 
   get assetDefinitions(): readonly AssetDefinition[] {
@@ -352,6 +396,14 @@ export class Engine {
     }
   }
 
+  #resolveMaterialDefinition(definitionId: string): MaterialDefinition {
+    const embedded = this.#embeddedMaterials.get(definitionId)
+    if (embedded) {
+      return new MaterialDefinition(embedded.id, embedded.name)
+    }
+    return this.#materials.getDefinition(definitionId)
+  }
+
   #validateOrThrow(json: unknown): void {
     const errors = validate(json)
     if (errors.length > 0) {
@@ -365,6 +417,14 @@ export class Engine {
     this.#embeddedAssets.clear()
     for (const asset of project.embeddedAssets) {
       this.#embeddedAssets.set(asset.id, asset)
+    }
+    this.#embeddedMaterials.clear()
+    for (const material of project.embeddedMaterials) {
+      this.#embeddedMaterials.set(material.id, material)
+    }
+    this.#embeddedShaders.clear()
+    for (const shader of project.embeddedShaders) {
+      this.#embeddedShaders.set(shader.id, shader)
     }
     for (const slide of project.slides) {
       this.#scenes.install(slide.scene)
@@ -396,6 +456,12 @@ export function toReadOnly(engine: Engine): EnginePublic {
     get embeddedAssets() {
       return engine.embeddedAssets
     },
+    get embeddedMaterials() {
+      return engine.embeddedMaterials
+    },
+    get embeddedShaders() {
+      return engine.embeddedShaders
+    },
     get activeSlideId() {
       return engine.activeSlideId
     },
@@ -410,7 +476,11 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getMaterialDefinition: (definitionId) => engine.getMaterialDefinition(definitionId),
     getShaderDefinition: (definitionId) => engine.getShaderDefinition(definitionId),
     getEmbeddedAsset: (definitionId) => engine.getEmbeddedAsset(definitionId),
+    getEmbeddedMaterial: (definitionId) => engine.getEmbeddedMaterial(definitionId),
+    getEmbeddedShader: (definitionId) => engine.getEmbeddedShader(definitionId),
     embedAsset: (asset) => engine.embedAsset(asset),
+    embedMaterial: (definition) => engine.embedMaterial(definition),
+    embedShader: (definition) => engine.embedShader(definition),
     getKeyframes: (nodeId, property) => engine.getKeyframes(nodeId, property),
     evaluateNode: (nodeId, time, target) => engine.evaluateNode(nodeId, time, target),
     toJSON: () => engine.toJSON(),

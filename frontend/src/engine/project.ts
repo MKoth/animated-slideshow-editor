@@ -1,5 +1,7 @@
 import type { Slide } from './slide'
 import type { EmbeddedAsset } from './embeddedAsset'
+import type { EmbeddedMaterialDefinition } from './embeddedMaterial'
+import type { EmbeddedShaderDefinition } from './embeddedShader'
 
 export interface ProjectMetadata {
   readonly id: string
@@ -26,12 +28,16 @@ export class Project {
   readonly slides: Slide[]
   readonly settings: Readonly<Record<string, unknown>>
   readonly #embeddedAssets: EmbeddedAsset[]
+  readonly #embeddedMaterials: EmbeddedMaterialDefinition[]
+  readonly #embeddedShaders: EmbeddedShaderDefinition[]
 
   constructor(
     metadata: ProjectMetadata,
     slides: Slide[],
     settings: Readonly<Record<string, unknown>> = {},
     embeddedAssets: readonly EmbeddedAsset[] = [],
+    embeddedMaterials: readonly EmbeddedMaterialDefinition[] = [],
+    embeddedShaders: readonly EmbeddedShaderDefinition[] = [],
   ) {
     this.id = metadata.id
     this.name = metadata.name
@@ -42,10 +48,20 @@ export class Project {
     this.slides = slides
     this.settings = settings
     this.#embeddedAssets = [...embeddedAssets]
+    this.#embeddedMaterials = [...embeddedMaterials]
+    this.#embeddedShaders = [...embeddedShaders]
   }
 
   get embeddedAssets(): readonly EmbeddedAsset[] {
     return this.#embeddedAssets
+  }
+
+  get embeddedMaterials(): readonly EmbeddedMaterialDefinition[] {
+    return this.#embeddedMaterials
+  }
+
+  get embeddedShaders(): readonly EmbeddedShaderDefinition[] {
+    return this.#embeddedShaders
   }
 
   embedAsset(asset: EmbeddedAsset): void {
@@ -54,6 +70,24 @@ export class Project {
       this.#embeddedAssets[index] = asset
     } else {
       this.#embeddedAssets.push(asset)
+    }
+  }
+
+  embedMaterial(definition: EmbeddedMaterialDefinition): void {
+    const index = this.#embeddedMaterials.findIndex((entry) => entry.id === definition.id)
+    if (index >= 0) {
+      this.#embeddedMaterials[index] = definition
+    } else {
+      this.#embeddedMaterials.push(definition)
+    }
+  }
+
+  embedShader(definition: EmbeddedShaderDefinition): void {
+    const index = this.#embeddedShaders.findIndex((entry) => entry.id === definition.id)
+    if (index >= 0) {
+      this.#embeddedShaders[index] = definition
+    } else {
+      this.#embeddedShaders.push(definition)
     }
   }
 }

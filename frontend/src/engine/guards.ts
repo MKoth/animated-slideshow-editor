@@ -52,14 +52,32 @@ export function requireMaterialParameterKey(value: unknown, what: string): strin
   return value
 }
 
-export function requireMaterialOverrideValue(value: unknown, what: string): string | number {
+export function isOverrideValue(value: unknown): value is string | number {
   if (typeof value === 'number') {
-    return requireFiniteNumber(value, what)
+    return Number.isFinite(value)
   }
-  if (typeof value === 'string' && value !== '') {
+  return typeof value === 'string' && value !== ''
+}
+
+export function requireMaterialOverrideValue(value: unknown, what: string): string | number {
+  if (isOverrideValue(value)) {
     return value
   }
   throw new Error(`${what} must be a non-empty string or a finite number`)
+}
+
+export function requireOverrides(value: unknown, what: string): Record<string, string | number> {
+  if (value === undefined) {
+    return {}
+  }
+  if (!isRecord(value)) {
+    throw new Error(`${what} must be an object`)
+  }
+  const overrides: Record<string, string | number> = {}
+  for (const [key, entry] of Object.entries(value)) {
+    overrides[key] = requireMaterialOverrideValue(entry, `${what} value for "${key}"`)
+  }
+  return overrides
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

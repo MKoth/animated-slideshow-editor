@@ -2,7 +2,12 @@ import type { NodeComponents, TextAlignment } from './components'
 import type { Transform } from './transform'
 import type { NodeJSON } from './json'
 import { requireOpacity, requireString } from './guards'
-import { defaultMaterial, type MaterialInstance } from './materialInstance'
+import {
+  defaultMaterial,
+  materialFromJSON,
+  materialToJSON,
+  type MaterialInstance,
+} from './materialInstance'
 
 const TEXT_ALIGNMENTS: readonly TextAlignment[] = ['left', 'center', 'right']
 
@@ -30,6 +35,7 @@ export class SceneNode {
   }
 
   toJSON(): NodeJSON {
+    const material = materialToJSON(this.material)
     return {
       id: this.id,
       name: this.name,
@@ -37,6 +43,7 @@ export class SceneNode {
       transform: { ...this.transform },
       visible: this.visible,
       opacity: this.opacity,
+      ...(material !== undefined ? { material } : {}),
       components: { ...this.components },
     }
   }
@@ -49,6 +56,7 @@ export class SceneNode {
     node.visible = typeof json.visible === 'boolean' ? json.visible : true
     node.opacity =
       typeof json.opacity === 'number' ? requireOpacity(json.opacity, `Node "${id}" opacity`) : 1
+    node.material = materialFromJSON(json.material, id)
     return node
   }
 }

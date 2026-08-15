@@ -1,6 +1,7 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
 import { namesInTree, uniqueNodeName } from '../naming'
+import { copyMaterialInstance } from '../materialInstance'
 
 export const DUPLICATE_OFFSET = { x: 20, y: 20 } as const
 
@@ -49,6 +50,7 @@ export class DuplicateNodeCommand implements Command<DuplicateNodeInverse> {
         },
       },
     )
+    copy.material = copyMaterialInstance(node.material)
     return { nodeId: copy.id }
   }
 

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { reconcileMissingAssets } from '../../engine/missingAssets'
+import {
+  collectReferencedMaterialIds,
+  collectReferencedShaderIds,
+  reconcileMissingAssets,
+} from '../../engine/missingAssets'
 import { createEngine } from '../../engine/internal'
 import { makeProjectWithAssets } from './helpers'
 
@@ -98,5 +102,44 @@ describe('reconcileMissingAssets', () => {
     expect(report.missing).toEqual([
       { assetDefinitionId: 'def-missing', nodeIds: [expect.any(String)] },
     ])
+  })
+})
+
+describe('collectReferencedMaterialIds and collectReferencedShaderIds', () => {
+  it('collects every node material id, including the default, across slides', () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'Demo' })
+    engine.createSlide('Slide 1')
+    engine.createSlide('Slide 2')
+    const slides = engine.project?.slides ?? []
+    const onOne = engine.createNode(slides[0].scene.id, slides[0].scene.root.id, 'On One')
+    const onTwo = engine.createNode(slides[1].scene.id, slides[1].scene.root.id, 'On Two')
+    engine.registerMaterialDefinition('mat-one', 'One')
+    engine.registerMaterialDefinition('mat-two', 'Two')
+    engine.assignMaterial(onOne.id, 'mat-one')
+    engine.assignMaterial(onTwo.id, 'mat-two')
+    if (!engine.project) {
+      throw new Error('Project was not created')
+    }
+
+    expect(collectReferencedMaterialIds(engine.project)).toEqual(
+      new Set(['mat-one', 'mat-two', '0d3f4464-8300-5b6d-ae14-45246fefbeae']),
+    )
+  })
+
+  it('collects the fullscreen shader id of every slide, only when set', () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'Demo' })
+    const first = engine.createSlide('Slide 1')
+    engine.createSlide('Slide 2')
+    engine.getSlide(first.id).fullscreenShader = {
+      shaderDefinitionId: 'shader-one',
+      overrides: {},
+    }
+    if (!engine.project) {
+      throw new Error('Project was not created')
+    }
+
+    expect(collectReferencedShaderIds(engine.project)).toEqual(new Set(['shader-one']))
   })
 })

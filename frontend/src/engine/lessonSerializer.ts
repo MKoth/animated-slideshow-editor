@@ -6,10 +6,18 @@ import { Scene as SceneModel } from './scene'
 import { SceneNode, wouldFormCycle } from './sceneNode'
 import { SlideAnimation } from './animation'
 import type { LessonJSON, SceneJSON, SlideJSON } from './json'
-import { buildEmbeddedAssetsFromJSON, embeddedLibraryJSON, validateLibrary } from './librarySection'
+import {
+  buildEmbeddedAssetsFromJSON,
+  buildEmbeddedMaterialsFromJSON,
+  buildEmbeddedShadersFromJSON,
+  embeddedLibraryJSON,
+  validateLibrary,
+} from './librarySection'
 import { ANIMATABLE_PROPERTIES } from './animationProperties'
 import type { AnimationProperty } from './animationProperties'
 import { isRecord, requireString, requireStringAllowEmpty } from './guards'
+import { fullscreenShaderFromJSON } from './fullscreenShader'
+import { validateFullscreenShader, validateMaterial } from './lessonValidation'
 
 export const LESSON_VERSION = 1
 
@@ -23,7 +31,15 @@ export function serialize(project: Project): string {
 
 export function toLessonJSON(project: Project): LessonJSON {
   const library =
-    project.embeddedAssets.length > 0 ? embeddedLibraryJSON(project.embeddedAssets) : undefined
+    project.embeddedAssets.length > 0 ||
+    project.embeddedMaterials.length > 0 ||
+    project.embeddedShaders.length > 0
+      ? embeddedLibraryJSON(
+          project.embeddedAssets,
+          project.embeddedMaterials,
+          project.embeddedShaders,
+        )
+      : undefined
   return {
     version: LESSON_VERSION,
     project: {
@@ -125,6 +141,9 @@ function validateSlide(
   const duration = slideJson.duration
   if (typeof duration !== 'number' || !Number.isFinite(duration) || duration < 0) {
     errors.push('Slide duration must be a non-negative finite number')
+  }
+  if (slideJson.fullscreenShader !== undefined) {
+    validateFullscreenShader(errors, slideJson.fullscreenShader, String(slideJson.id))
   }
   const scene = slideJson.scene
   if (!isRecord(scene)) {
@@ -249,6 +268,9 @@ function validateNode(errors: string[], nodeJson: unknown, nodeIds: Set<string>)
   }
   if (typeof nodeJson.visible !== 'boolean') {
     errors.push(`Node "${String(nodeJson.id)}" visible must be a boolean`)
+  }
+  if (nodeJson.material !== undefined) {
+    validateMaterial(errors, nodeJson.material, String(nodeJson.id))
   }
   if (nodeJson.opacity !== undefined) {
     if (
@@ -409,7 +431,14 @@ export function buildProjectFromJSON(json: LessonJSON): Project {
   }
   const settings = isRecord(projectJson.settings) ? projectJson.settings : {}
   const slides = json.slides.map((slideJson) => buildSlideFromJSON(slideJson))
-  return new Project(metadata, slides, settings, buildEmbeddedAssetsFromJSON(json.library))
+  return new Project(
+    metadata,
+    slides,
+    settings,
+    buildEmbeddedAssetsFromJSON(json.library),
+    buildEmbeddedMaterialsFromJSON(json.library),
+    buildEmbeddedShadersFromJSON(json.library),
+  )
 }
 
 function buildSlideFromJSON(json: SlideJSON): Slide {
@@ -424,6 +453,12 @@ function buildSlideFromJSON(json: SlideJSON): Slide {
     duration,
     scene,
     animation,
+    json.fullscreenShader === undefined
+      ? null
+      : fullscreenShaderFromJSON(
+          json.fullscreenShader,
+          `Slide "${String(json.id)}" fullscreenShader`,
+        ),
   )
 }
 

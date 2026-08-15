@@ -5,6 +5,7 @@ import { SceneNode, walkPreOrder } from './sceneNode'
 import { identityTransform } from './transform'
 import type { NodeManager } from './nodeManager'
 import { copyComponents } from './components'
+import { copyMaterialInstance } from './materialInstance'
 
 export interface CopiedScene {
   readonly scene: Scene
@@ -90,6 +91,7 @@ function copyNodeDeep(
   )
   copy.visible = source.visible
   copy.opacity = source.opacity
+  copy.material = copyMaterialInstance(source.material)
   copy.parent = parent
   if (parent) {
     parent.children.push(copy)

@@ -3,6 +3,8 @@ import type { AssetDefinition } from './assetDefinition'
 import type { MaterialDefinition } from './materialDefinition'
 import type { ShaderDefinition } from './shaderDefinition'
 import type { EmbeddedAsset } from './embeddedAsset'
+import type { EmbeddedMaterialDefinition } from './embeddedMaterial'
+import type { EmbeddedShaderDefinition } from './embeddedShader'
 import type { Project } from './project'
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
@@ -18,6 +20,8 @@ export interface EnginePublic {
   readonly materialDefinitions: readonly MaterialDefinition[]
   readonly shaderDefinitions: readonly ShaderDefinition[]
   readonly embeddedAssets: readonly EmbeddedAsset[]
+  readonly embeddedMaterials: readonly EmbeddedMaterialDefinition[]
+  readonly embeddedShaders: readonly EmbeddedShaderDefinition[]
   readonly activeSlideId: string | null
   subscribe(listener: (event: EngineEvent) => void): Unsubscribe
   openProject(project: Project): void
@@ -30,7 +34,11 @@ export interface EnginePublic {
   getMaterialDefinition(definitionId: string): MaterialDefinition
   getShaderDefinition(definitionId: string): ShaderDefinition
   getEmbeddedAsset(definitionId: string): EmbeddedAsset | undefined
+  getEmbeddedMaterial(definitionId: string): EmbeddedMaterialDefinition | undefined
+  getEmbeddedShader(definitionId: string): EmbeddedShaderDefinition | undefined
   embedAsset(asset: EmbeddedAsset): void
+  embedMaterial(definition: EmbeddedMaterialDefinition): void
+  embedShader(definition: EmbeddedShaderDefinition): void
   getKeyframes(nodeId: string, property: AnimationProperty): readonly Keyframe[]
   evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState
   toJSON(): LessonJSON

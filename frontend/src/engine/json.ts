@@ -17,6 +17,16 @@ export type NodeComponentsJSON = {
   }
 }
 
+export type MaterialJSON = {
+  readonly definitionId: string
+  readonly overrides: Readonly<Record<string, string | number>>
+}
+
+export type FullscreenShaderJSON = {
+  readonly shaderDefinitionId: string
+  readonly overrides: Readonly<Record<string, string | number>>
+}
+
 export type NodeJSON = {
   readonly id: string
   readonly name: string
@@ -24,6 +34,7 @@ export type NodeJSON = {
   readonly transform: TransformJSON
   readonly visible: boolean
   readonly opacity?: number
+  readonly material?: MaterialJSON
   readonly components: NodeComponentsJSON
 }
 
@@ -58,6 +69,7 @@ export type SlideJSON = {
   readonly duration: number
   readonly scene: SceneJSON
   readonly animation?: SlideAnimationJSON
+  readonly fullscreenShader?: FullscreenShaderJSON
 }
 
 export type LessonProjectJSON = {
@@ -78,10 +90,38 @@ export type EmbeddedAssetJSON = {
   readonly metadata?: Readonly<Record<string, unknown>>
 }
 
+export type MaterialParameterJSON = {
+  readonly key: string
+  readonly kind: string
+  readonly default: string | number
+}
+
+export type EmbeddedMaterialJSON = {
+  readonly id: string
+  readonly name: string
+  readonly description: string
+  readonly tags: readonly string[]
+  readonly created_at: string
+  readonly updated_at: string
+  readonly parameters: readonly MaterialParameterJSON[]
+}
+
+export type EmbeddedShaderJSON = {
+  readonly id: string
+  readonly name: string
+  readonly description: string
+  readonly tags: readonly string[]
+  readonly created_at: string
+  readonly updated_at: string
+  readonly source: string
+  readonly default_uniforms: readonly Readonly<Record<string, unknown>>[]
+  readonly is_builtin: boolean
+}
+
 export type LessonLibraryJSON = {
   readonly assets?: readonly EmbeddedAssetJSON[]
-  readonly materials?: readonly unknown[]
-  readonly shaders?: readonly unknown[]
+  readonly materials?: readonly EmbeddedMaterialJSON[]
+  readonly shaders?: readonly EmbeddedShaderJSON[]
 }
 
 export type LessonJSON = {

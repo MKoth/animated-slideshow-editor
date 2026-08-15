@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { CommandResult } from '../../engine/commands'
 import {
   AddKeyframeCommand,
+  AssignMaterialCommand,
   CommandDispatcher,
   CreateAssetInstanceCommand,
   CreateNodeCommand,
@@ -9,6 +10,7 @@ import {
   CreateSlideCommand,
   DuplicateSlideCommand,
   MoveKeyframeCommand,
+  OverrideMaterialParameterCommand,
   RenameNodeCommand,
   SetSlideDurationCommand,
   UndoStack,
@@ -228,6 +230,50 @@ describe('DuplicateSlideCommand', () => {
     expect(copiedBoy.components.assetInstance?.assetDefinitionId).toBe(
       sourceBoy.components.assetInstance?.assetDefinitionId,
     )
+  })
+
+  it('copies material instances and the fullscreen shader reference with the slide', () => {
+    const { engine, dispatcher, slide } = setup()
+    engine.registerMaterialDefinition('mat-1', 'Warm')
+    const sourceBoy = findNode(slide.scene, 'Boy')
+    const sourceHat = findNode(slide.scene, 'Hat')
+    expectOk(
+      dispatcher.dispatch(
+        new AssignMaterialCommand({ nodeId: sourceBoy.id, materialDefinitionId: 'mat-1' }),
+      ),
+    )
+    expectOk(
+      dispatcher.dispatch(
+        new OverrideMaterialParameterCommand({
+          nodeId: sourceBoy.id,
+          parameter: 'tint',
+          value: '#ff0000',
+        }),
+      ),
+    )
+    slide.fullscreenShader = { shaderDefinitionId: 'shader-1', overrides: { strength: 0.5 } }
+
+    const copy = engine.getSlide(
+      expectOk(dispatcher.dispatch(new DuplicateSlideCommand({ slideId: slide.id }))).slideId,
+    )
+
+    const copiedBoy = findNode(copy.scene, 'Boy')
+    const copiedHat = findNode(copy.scene, 'Hat')
+    expect(copiedBoy.material).toEqual({
+      materialDefinitionId: 'mat-1',
+      overrides: { tint: '#ff0000' },
+    })
+    expect(copiedHat.material).toEqual(sourceHat.material)
+    expect(copy.fullscreenShader).toEqual({
+      shaderDefinitionId: 'shader-1',
+      overrides: { strength: 0.5 },
+    })
+
+    copy.fullscreenShader = null
+    expect(slide.fullscreenShader).toEqual({
+      shaderDefinitionId: 'shader-1',
+      overrides: { strength: 0.5 },
+    })
   })
 
   it('remaps every keyframe to the copied nodes with new ids and identical times and values', () => {

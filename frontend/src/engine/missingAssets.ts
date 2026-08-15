@@ -25,6 +25,26 @@ export function collectReferencedDefinitionIds(project: Project): Set<string> {
   return ids
 }
 
+export function collectReferencedMaterialIds(project: Project): Set<string> {
+  const ids = new Set<string>()
+  for (const slide of project.slides) {
+    for (const node of walkPreOrder(slide.scene.root)) {
+      ids.add(node.material.materialDefinitionId)
+    }
+  }
+  return ids
+}
+
+export function collectReferencedShaderIds(project: Project): Set<string> {
+  const ids = new Set<string>()
+  for (const slide of project.slides) {
+    if (slide.fullscreenShader) {
+      ids.add(slide.fullscreenShader.shaderDefinitionId)
+    }
+  }
+  return ids
+}
+
 export function reconcileMissingAssets(
   project: Project,
   availableDefinitionIds: ReadonlySet<string>,
