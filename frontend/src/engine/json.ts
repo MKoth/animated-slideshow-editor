@@ -93,7 +93,7 @@ export type EmbeddedAssetJSON = {
 export type MaterialParameterJSON = {
   readonly key: string
   readonly kind: string
-  readonly default: string | number
+  readonly default: string | number | boolean | readonly number[]
 }
 
 export type EmbeddedMaterialJSON = {
@@ -104,6 +104,7 @@ export type EmbeddedMaterialJSON = {
   readonly created_at: string
   readonly updated_at: string
   readonly parameters: readonly MaterialParameterJSON[]
+  readonly shader_id?: string | null
 }
 
 export type EmbeddedShaderJSON = {

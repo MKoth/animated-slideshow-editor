@@ -1,5 +1,10 @@
 import { create } from 'zustand'
-import { shadersApi, type ShaderDefinition, type ShaderImportInput } from '../api'
+import {
+  shadersApi,
+  type ShaderDefinition,
+  type ShaderImportInput,
+  type ShaderUniformInput,
+} from '../api'
 import { ApiError } from '../api/apiClient'
 import { compileFragmentShader, type ShaderCompileStatus } from '../shaders/compiler'
 import { reflectUniforms, type ShaderReflection } from '../shaders/reflection'
@@ -63,11 +68,40 @@ function emitCompileResult(id: string, status: ShaderCompileStatus): void {
   }
 }
 
+function uniformsForBackend(reflection: ShaderReflection): ShaderUniformInput[] {
+  return reflection.uniforms.map((uniform) => ({
+    key: uniform.key,
+    kind: uniform.type,
+    default: uniform.default ?? '',
+  }))
+}
+
+async function persistReflectedUniforms(
+  set: ShaderLibrarySetter,
+  definition: ShaderDefinition,
+  reflection: ShaderReflection,
+): Promise<void> {
+  try {
+    const updated = await shadersApi.updateUniformDefaults(
+      definition.id,
+      uniformsForBackend(reflection),
+    )
+    set((state) => ({ definitions: replaceDefinition(state.definitions, updated) }))
+  } catch (error) {
+    notifyRequestFailure(UPDATE_FAILED_MESSAGE, UPDATE_BACKEND_DOWN_MESSAGE, error, () =>
+      set(() => ({ unavailable: true, error: errorMessage(error) })),
+    )
+  }
+}
+
 type ShaderLibrarySetter = (
   update: (state: ShaderLibraryState) => Partial<ShaderLibraryState>,
 ) => void
 
-function registerDefinition(set: ShaderLibrarySetter, definition: ShaderDefinition): void {
+async function registerDefinition(
+  set: ShaderLibrarySetter,
+  definition: ShaderDefinition,
+): Promise<void> {
   const compiled = compileAndReflect(definition)
   set((state) => ({
     definitions: [definition, ...state.definitions],
@@ -76,6 +110,7 @@ function registerDefinition(set: ShaderLibrarySetter, definition: ShaderDefiniti
   }))
   libraryEventBus.emit({ type: 'ShaderCreated', shader: definition })
   emitCompileResult(definition.id, compiled.compileStatus)
+  await persistReflectedUniforms(set, definition, compiled.reflection)
 }
 
 interface ShaderLibraryState {
@@ -93,6 +128,7 @@ interface ShaderLibraryState {
   duplicateShader: (sourceId: string, name: string) => Promise<ShaderDefinition | null>
   renameShader: (shaderId: string, name: string) => Promise<void>
   reuploadSource: (shaderId: string, file: File) => Promise<void>
+  updateUniformDefaults: (shaderId: string, uniforms: ShaderUniformInput[]) => Promise<void>
   deleteShader: (shaderId: string) => Promise<void>
 }
 
@@ -153,7 +189,7 @@ export const useShaderLibraryStore = create<ShaderLibraryState>()((set) => ({
   importShader: async (file, input) => {
     try {
       const created = await shadersApi.importShader(file, input)
-      registerDefinition(set, created)
+      await registerDefinition(set, created)
       return created
     } catch (error) {
       notifyRequestFailure(IMPORT_FAILED_MESSAGE, IMPORT_BACKEND_DOWN_MESSAGE, error, () =>
@@ -166,7 +202,7 @@ export const useShaderLibraryStore = create<ShaderLibraryState>()((set) => ({
   duplicateShader: async (sourceId, name) => {
     try {
       const created = await shadersApi.duplicateShader(sourceId, name)
-      registerDefinition(set, created)
+      await registerDefinition(set, created)
       return created
     } catch (error) {
       notifyRequestFailure(IMPORT_FAILED_MESSAGE, IMPORT_BACKEND_DOWN_MESSAGE, error, () =>
@@ -199,6 +235,19 @@ export const useShaderLibraryStore = create<ShaderLibraryState>()((set) => ({
       }))
       libraryEventBus.emit({ type: 'ShaderUpdated', shader: updated })
       emitCompileResult(updated.id, compiled.compileStatus)
+      await persistReflectedUniforms(set, updated, compiled.reflection)
+    } catch (error) {
+      notifyRequestFailure(UPDATE_FAILED_MESSAGE, UPDATE_BACKEND_DOWN_MESSAGE, error, () =>
+        set({ unavailable: true, error: errorMessage(error) }),
+      )
+    }
+  },
+
+  updateUniformDefaults: async (shaderId, uniforms) => {
+    try {
+      const updated = await shadersApi.updateUniformDefaults(shaderId, uniforms)
+      set((state) => ({ definitions: replaceDefinition(state.definitions, updated) }))
+      libraryEventBus.emit({ type: 'ShaderUpdated', shader: updated })
     } catch (error) {
       notifyRequestFailure(UPDATE_FAILED_MESSAGE, UPDATE_BACKEND_DOWN_MESSAGE, error, () =>
         set({ unavailable: true, error: errorMessage(error) }),

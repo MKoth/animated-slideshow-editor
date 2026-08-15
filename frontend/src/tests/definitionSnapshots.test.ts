@@ -18,6 +18,7 @@ const MATERIAL: MaterialDefinition = {
   tags: ['warm'],
   created_at: '2026-08-15T00:00:00',
   updated_at: '2026-08-15T00:00:00',
+  shader_id: null,
   parameters: [
     { key: 'tint', kind: 'color', default: '#ff8800' },
     { key: 'opacityMultiplier', kind: 'number', default: 1 },
@@ -75,6 +76,7 @@ describe('captureMaterialSnapshot', () => {
       createdAt: MATERIAL.created_at,
       updatedAt: MATERIAL.updated_at,
       parameters: MATERIAL.parameters,
+      shaderId: null,
     })
     expect(engine.project?.embeddedMaterials.map((material) => material.id)).toEqual([MATERIAL.id])
     expect(engine.getMaterialDefinition(MATERIAL.id).name).toBe(MATERIAL.name)
@@ -169,6 +171,29 @@ describe('ensureReferencedMaterialAndShaderSnapshots', () => {
     ensureReferencedMaterialAndShaderSnapshots(engine)
 
     expect(libraryJson(engine)).toBeUndefined()
+  })
+
+  it('embeds the shader referenced by a material alongside the material', () => {
+    const { engine, node } = engineWithMaterial()
+    const withShader = { ...MATERIAL, shader_id: SHADER.id }
+    useMaterialLibraryStore.setState({
+      definitions: [withShader],
+      loaded: true,
+      unavailable: false,
+    })
+    useShaderLibraryStore.setState({ definitions: [SHADER], loaded: true, unavailable: false })
+    engine.registerMaterialDefinition(withShader.id, withShader.name)
+    engine.registerShaderDefinition(SHADER.id, SHADER.name)
+    engine.assignMaterial(node.id, withShader.id)
+
+    ensureReferencedMaterialAndShaderSnapshots(engine)
+
+    const library = libraryJson(engine)
+    expect(library?.materials.map((material) => (material as { id: string }).id)).toEqual([
+      MATERIAL.id,
+    ])
+    expect(library?.shaders.map((shader) => (shader as { id: string }).id)).toEqual([SHADER.id])
+    expect(engine.getEmbeddedMaterial(MATERIAL.id)?.shaderId).toBe(SHADER.id)
   })
 
   it('round-trips the embedded snapshot through the file', () => {

@@ -17,6 +17,7 @@ function makeMaterial(overrides: Partial<MaterialDefinition> = {}): MaterialDefi
     tags: [],
     created_at: '2026-08-15T12:00:00',
     updated_at: '2026-08-15T12:00:00',
+    shader_id: null,
     parameters: [...BUILTIN_PARAMETERS],
     ...overrides,
   }
@@ -204,6 +205,98 @@ describe('materialLibraryStore', () => {
     expect(useMaterialLibraryStore.getState().definitions.map((d) => d.id)).toEqual(['m2'])
     expect(useMaterialLibraryStore.getState().selectedId).toBeNull()
     expect(events).toEqual([{ type: 'MaterialRemoved', id: 'm1' }])
+  })
+
+  it('assigns a shader to a material, updates the library, and emits MaterialUpdated', async () => {
+    const withShader = makeMaterial({
+      shader_id: 'shader-1',
+      parameters: [...BUILTIN_PARAMETERS, { key: 'uIntensity', kind: 'float', default: 0.5 }],
+    })
+    stubFetch((_url, init) => {
+      if (init.method === 'PUT' && String(_url).endsWith('/shader')) {
+        return Promise.resolve(new Response(JSON.stringify(withShader), { status: 200 }))
+      }
+      return Promise.resolve(new Response(JSON.stringify([makeMaterial()]), { status: 200 }))
+    })
+    await useMaterialLibraryStore.getState().loadLibrary()
+    const events = listen()
+
+    await useMaterialLibraryStore.getState().assignShader('m1', 'shader-1')
+
+    expect(useMaterialLibraryStore.getState().definitions).toEqual([withShader])
+    expect(events).toEqual([{ type: 'MaterialUpdated', material: withShader }])
+  })
+
+  it('removes a shader from a material by assigning null and emits MaterialUpdated', async () => {
+    const withoutShader = makeMaterial()
+    stubFetch((_url, init) => {
+      if (init.method === 'PUT' && String(_url).endsWith('/shader')) {
+        return Promise.resolve(new Response(JSON.stringify(withoutShader), { status: 200 }))
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify([makeMaterial({ shader_id: 'shader-1' })]), { status: 200 }),
+      )
+    })
+    await useMaterialLibraryStore.getState().loadLibrary()
+    const events = listen()
+
+    await useMaterialLibraryStore.getState().assignShader('m1', null)
+
+    expect(useMaterialLibraryStore.getState().definitions).toEqual([withoutShader])
+    expect(events).toEqual([{ type: 'MaterialUpdated', material: withoutShader }])
+  })
+
+  it('notifies but keeps the library available when the shader assign is rejected', async () => {
+    stubFetch((_url, init) => {
+      if (init.method === 'PUT' && String(_url).endsWith('/shader')) {
+        return Promise.resolve(new Response('{}', { status: 404 }))
+      }
+      return Promise.resolve(new Response(JSON.stringify([makeMaterial()]), { status: 200 }))
+    })
+    await useMaterialLibraryStore.getState().loadLibrary()
+
+    await useMaterialLibraryStore.getState().assignShader('m1', 'ghost')
+
+    expect(useNotificationStore.getState().notifications.map((n) => n.message)).toEqual([
+      'Material update failed.',
+    ])
+    expect(useMaterialLibraryStore.getState().unavailable).toBe(false)
+    expect(useMaterialLibraryStore.getState().definitions).toEqual([makeMaterial()])
+  })
+
+  it('refreshes materials after a shader uniform update and emits MaterialUpdated for changed ones', async () => {
+    const unchanged = makeMaterial({ id: 'm2', name: 'Blue Slime' })
+    const reseeded = makeMaterial({
+      parameters: [...BUILTIN_PARAMETERS, { key: 'uIntensity', kind: 'float', default: 0.9 }],
+    })
+    let listCalls = 0
+    stubFetch((_url, init) => {
+      if (init.method === undefined) {
+        listCalls += 1
+        const body = listCalls === 1 ? [makeMaterial(), unchanged] : [reseeded, unchanged]
+        return Promise.resolve(new Response(JSON.stringify(body), { status: 200 }))
+      }
+      return Promise.reject(new Error(_url))
+    })
+    await useMaterialLibraryStore.getState().loadLibrary()
+    const events = listen()
+
+    await useMaterialLibraryStore.getState().refreshAfterShaderUniformUpdate()
+
+    expect(useMaterialLibraryStore.getState().definitions).toEqual([reseeded, unchanged])
+    expect(events).toEqual([{ type: 'MaterialUpdated', material: reseeded }])
+  })
+
+  it('marks the library unavailable when the refresh after a uniform update fails', async () => {
+    stubFetch(() => Promise.reject(new Error('connection refused')))
+    await useMaterialLibraryStore.getState().loadLibrary()
+
+    await useMaterialLibraryStore.getState().refreshAfterShaderUniformUpdate()
+
+    expect(useNotificationStore.getState().notifications.map((n) => n.message)).toEqual([
+      'Material update failed — backend unavailable.',
+    ])
+    expect(useMaterialLibraryStore.getState().unavailable).toBe(true)
   })
 
   it('deletes a material referenced by the open project without refusal', async () => {

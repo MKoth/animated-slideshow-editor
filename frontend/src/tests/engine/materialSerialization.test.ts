@@ -15,6 +15,7 @@ const MATERIAL_A = {
   tags: ['warm'],
   createdAt: '2026-08-15T00:00:00',
   updatedAt: '2026-08-15T00:00:00',
+  shaderId: null,
   parameters: [
     { key: 'tint', kind: 'color', default: '#ff8800' },
     { key: 'opacityMultiplier', kind: 'number', default: 1 },
@@ -28,6 +29,7 @@ const MATERIAL_B = {
   tags: [],
   createdAt: '2026-08-15T00:00:00',
   updatedAt: '2026-08-15T00:00:00',
+  shaderId: null,
   parameters: [],
 }
 
@@ -385,7 +387,8 @@ describe('embedded material and shader definitions', () => {
     engine.embedMaterial(MATERIAL_A)
 
     const library = embeddedLibrary(nodeJson(engine))
-    const { createdAt, updatedAt, ...expected } = MATERIAL_A
+    const { createdAt, updatedAt, shaderId, ...expected } = MATERIAL_A
+    expect(shaderId).toBeNull()
     expect(library.materials).toEqual([
       { ...expected, created_at: createdAt, updated_at: updatedAt },
     ])
@@ -419,6 +422,42 @@ describe('embedded material and shader definitions', () => {
 
     expect(restored.embeddedMaterials).toEqual([MATERIAL_A])
     expect(restored.embeddedShaders).toEqual([SHADER_A])
+  })
+
+  it('round-trips a material referencing a shader with its shader id', () => {
+    const { engine } = engineWithProject()
+    engine.embedMaterial({ ...MATERIAL_A, shaderId: 'shader-a' })
+
+    const json = nodeJson(engine)
+    expect(json.library?.materials).toEqual([expect.objectContaining({ shader_id: 'shader-a' })])
+
+    const restored = deserialize(serialize(engine.project as never))
+    expect(restored.embeddedMaterials).toEqual([{ ...MATERIAL_A, shaderId: 'shader-a' }])
+  })
+
+  it('rejects a library material with a malformed shader id', () => {
+    const { engine } = engineWithProject()
+    const json = JSON.parse(serialize(engine.project as never)) as LessonJSON
+
+    expect(
+      validate({
+        ...json,
+        library: {
+          assets: [],
+          materials: [
+            {
+              id: 'm1',
+              name: 'A',
+              description: '',
+              tags: [],
+              parameters: [],
+              shader_id: '',
+            },
+          ],
+          shaders: [],
+        },
+      }),
+    ).toEqual(expect.arrayContaining([expect.stringMatching(/shader_id/i)]))
   })
 
   it('omits the library section when nothing is embedded', () => {

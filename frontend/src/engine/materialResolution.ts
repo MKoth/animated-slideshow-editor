@@ -5,10 +5,12 @@ export const OPACITY_MULTIPLIER_PARAMETER_KEY = 'opacityMultiplier'
 export const DEFAULT_TINT = '#ffffff'
 export const DEFAULT_OPACITY_MULTIPLIER = 1
 
+export type MaterialParameterDefaultValue = string | number | boolean | readonly number[]
+
 export interface MaterialParameterDefault {
   readonly key: string
   readonly kind: string
-  readonly default: string | number
+  readonly default: MaterialParameterDefaultValue
 }
 
 export interface EffectiveMaterialScratch {
@@ -30,6 +32,27 @@ export function resolveMaterial(
     numberValue(parameters, overrides, OPACITY_MULTIPLIER_PARAMETER_KEY),
   )
   return target
+}
+
+/**
+ * Resolve one material parameter (built-in or shader uniform): an instance
+ * override wins, otherwise the definition default applies; a parameter that
+ * neither overrides nor the definition carries resolves to undefined.
+ */
+export function resolveParameterValue(
+  parameters: readonly MaterialParameterDefault[],
+  overrides: Readonly<Record<string, unknown>>,
+  key: string,
+): MaterialParameterDefaultValue | undefined {
+  if (key in overrides) {
+    return overrides[key] as MaterialParameterDefaultValue
+  }
+  for (const parameter of parameters) {
+    if (parameter.key === key) {
+      return parameter.default
+    }
+  }
+  return undefined
 }
 
 function clampOpacityMultiplier(value: number): number {

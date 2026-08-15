@@ -142,4 +142,23 @@ describe('collectReferencedMaterialIds and collectReferencedShaderIds', () => {
 
     expect(collectReferencedShaderIds(engine.project)).toEqual(new Set(['shader-one']))
   })
+
+  it('collects the shaders referenced by node materials via the resolver', () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'Demo' })
+    const slide = engine.createSlide('Slide 1')
+    const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'Box')
+    engine.registerMaterialDefinition('mat-one', 'One', [], 'shader-material')
+    engine.registerMaterialDefinition('mat-two', 'Two', [], null)
+    engine.assignMaterial(node.id, 'mat-one')
+    if (!engine.project) {
+      throw new Error('Project was not created')
+    }
+    const shaderIdOfMaterial = (materialDefinitionId: string) =>
+      engine.getMaterialDefinition(materialDefinitionId).shaderId
+
+    expect(collectReferencedShaderIds(engine.project, shaderIdOfMaterial)).toEqual(
+      new Set(['shader-material']),
+    )
+  })
 })

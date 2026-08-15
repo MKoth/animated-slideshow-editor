@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import math
-import re
 from datetime import UTC, datetime
+from typing import cast
 from uuid import uuid4
 
 from sqlalchemy import desc, select
@@ -18,8 +17,14 @@ from app.materials.model import (
     _builtin_defaults,
 )
 from app.materials.schemas import MaterialParameter, parameter_from_stored
+from app.parameters import (
+    RESERVED_UNIFORM_KEYS,
+    ParameterKind,
+    ParameterValidationError,
+    normalize_parameter_default,
+)
+from app.shaders.model import ShaderDefinition
 
-_COLOR_PATTERN = re.compile(r"^#[0-9a-f]{6}$", flags=re.IGNORECASE)
 _MAX_PARAMETER_KEY_LENGTH = 64
 
 
@@ -33,6 +38,10 @@ class MaterialValidationError(ValueError):
 
 class MaterialProtectedError(ValueError):
     """Raised when the protected default material cannot be deleted."""
+
+
+class ShaderReferenceNotFoundError(KeyError):
+    """Raised when a material references a shader id that does not exist."""
 
 
 class MaterialLibrary:
@@ -141,6 +150,61 @@ class MaterialLibrary:
             session.commit()
         return definition
 
+    def assign_shader(
+        self,
+        material_id: str,
+        shader_id: str | None,
+        now: datetime,
+    ) -> MaterialDefinition:
+        """Assign or remove the shader reference on a material definition.
+
+        Assigning appends the shader's reflected uniforms to the material's
+        parameter list, seeded from the shader's default uniforms; assigning a
+        different shader replaces both the reference and the uniform parameters;
+        removing (shader_id=None) drops them again, keeping only the built-ins.
+        """
+        with self._database.session() as session:
+            definition = session.get(MaterialDefinition, material_id)
+            if definition is None:
+                raise MaterialNotFoundError(material_id)
+            if shader_id is None:
+                definition.shader_id = None
+                definition.parameters = self._normalize_parameters(None, definition.parameters)
+            else:
+                shader = session.get(ShaderDefinition, shader_id)
+                if shader is None:
+                    raise ShaderReferenceNotFoundError(shader_id)
+                definition.shader_id = shader_id
+                definition.parameters = self._parameters_with_uniforms(
+                    definition.parameters, shader.default_uniforms
+                )
+            definition.updated_at = now
+            session.commit()
+        return definition
+
+    def reseed_for_shader(
+        self, shader_id: str, uniforms: list[dict[str, object]], now: datetime
+    ) -> None:
+        """Re-seed the uniform parameters of every material referencing a shader.
+
+        Called after the shader's default uniforms change so the new defaults
+        flow into all materials that reference the shader.
+        """
+        with self._database.session() as session:
+            affected: list[MaterialDefinition] = list(
+                session.scalars(
+                    select(MaterialDefinition).where(MaterialDefinition.shader_id == shader_id)
+                )
+            )
+            if not affected:
+                return
+            for definition in affected:
+                definition.parameters = self._parameters_with_uniforms(
+                    definition.parameters, uniforms
+                )
+                definition.updated_at = now
+            session.commit()
+
     def delete(self, material_id: str) -> None:
         with self._database.session() as session:
             definition = session.get(MaterialDefinition, material_id)
@@ -188,25 +252,43 @@ class MaterialLibrary:
                 normalized.append(by_key.pop(parameter.key))
         return normalized
 
+    def _parameters_with_uniforms(
+        self,
+        existing: list[dict[str, object]],
+        uniforms: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Rebuild a parameter list as built-ins (defaults preserved) plus uniforms."""
+        normalized = self._normalize_parameters(None, existing)
+        for uniform in uniforms:
+            key = str(uniform["key"])
+            if key in RESERVED_UNIFORM_KEYS:
+                raise MaterialValidationError(
+                    f"uniform key {key!r} is reserved and cannot seed a material parameter"
+                )
+            parameter = MaterialParameter(
+                key=key,
+                kind=cast(ParameterKind, str(uniform["kind"])),
+                default=cast(str | float | bool | list[float], uniform["default"]),
+            )
+            normalized.append(_validate_parameter(parameter))
+        return normalized
+
 
 def _validate_parameter(parameter: MaterialParameter) -> dict[str, object]:
     key = parameter.key
-    default: str | float = parameter.default
-    if parameter.kind == "color":
-        if not isinstance(default, str) or not _COLOR_PATTERN.match(default):
-            raise MaterialValidationError(
-                f"parameter {key}: color default must be a hex color like #ff0000"
-            )
-        default = default.lower()
-    else:
-        if not isinstance(default, (int, float)) or not math.isfinite(float(default)):
-            raise MaterialValidationError(
-                f"parameter {key}: number default must be a finite number"
-            )
-        default = float(default)
-        if key == "opacityMultiplier" and not 0.0 <= default <= 1.0:
-            raise MaterialValidationError("opacityMultiplier default must be between 0 and 1")
-    return {"key": key, "kind": parameter.kind, "default": default}
+    kind = parameter.kind
+    try:
+        default = normalize_parameter_default(kind, parameter.default, key)
+    except ParameterValidationError as exc:
+        raise MaterialValidationError(str(exc)) from exc
+    if (
+        kind == "number"
+        and key == "opacityMultiplier"
+        and isinstance(default, (int, float))
+        and not 0.0 <= float(default) <= 1.0
+    ):
+        raise MaterialValidationError("opacityMultiplier default must be between 0 and 1")
+    return {"key": key, "kind": kind, "default": default}
 
 
 def _require_non_empty(value: str, message: str) -> None:

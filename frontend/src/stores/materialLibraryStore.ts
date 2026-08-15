@@ -41,6 +41,16 @@ function replaceDefinition(
   return definitions.map((definition) => (definition.id === updated.id ? updated : definition))
 }
 
+function sameDefinition(first: MaterialDefinition, second: MaterialDefinition): boolean {
+  return (
+    first.shader_id === second.shader_id &&
+    first.parameters.length === second.parameters.length &&
+    first.parameters.every(
+      (parameter, index) => JSON.stringify(parameter) === JSON.stringify(second.parameters[index]),
+    )
+  )
+}
+
 interface MaterialLibraryState {
   definitions: MaterialDefinition[]
   loaded: boolean
@@ -54,6 +64,8 @@ interface MaterialLibraryState {
   duplicateMaterial: (sourceId: string, name: string) => Promise<MaterialDefinition | null>
   renameMaterial: (materialId: string, name: string) => Promise<void>
   updateMaterial: (materialId: string, input: MaterialUpdateInput) => Promise<void>
+  assignShader: (materialId: string, shaderId: string | null) => Promise<void>
+  refreshAfterShaderUniformUpdate: () => Promise<void>
   deleteMaterial: (materialId: string) => Promise<void>
 }
 
@@ -138,6 +150,38 @@ export const useMaterialLibraryStore = create<MaterialLibraryState>()((set) => (
       const updated = await materialsApi.updateMaterial(materialId, input)
       set((state) => ({ definitions: replaceDefinition(state.definitions, updated) }))
       libraryEventBus.emit({ type: 'MaterialUpdated', material: updated })
+    } catch (error) {
+      notifyRequestFailure(UPDATE_FAILED_MESSAGE, UPDATE_BACKEND_DOWN_MESSAGE, error, () =>
+        set({ unavailable: true, error: errorMessage(error) }),
+      )
+    }
+  },
+
+  assignShader: async (materialId, shaderId) => {
+    try {
+      const updated = await materialsApi.assignShader(materialId, shaderId)
+      set((state) => ({ definitions: replaceDefinition(state.definitions, updated) }))
+      libraryEventBus.emit({ type: 'MaterialUpdated', material: updated })
+    } catch (error) {
+      notifyRequestFailure(UPDATE_FAILED_MESSAGE, UPDATE_BACKEND_DOWN_MESSAGE, error, () =>
+        set({ unavailable: true, error: errorMessage(error) }),
+      )
+    }
+  },
+
+  refreshAfterShaderUniformUpdate: async () => {
+    try {
+      const definitions = await materialsApi.listMaterials()
+      set((state) => {
+        const previous = new Map(state.definitions.map((definition) => [definition.id, definition]))
+        for (const definition of definitions) {
+          const before = previous.get(definition.id)
+          if (before && !sameDefinition(before, definition)) {
+            libraryEventBus.emit({ type: 'MaterialUpdated', material: definition })
+          }
+        }
+        return { definitions, unavailable: false }
+      })
     } catch (error) {
       notifyRequestFailure(UPDATE_FAILED_MESSAGE, UPDATE_BACKEND_DOWN_MESSAGE, error, () =>
         set({ unavailable: true, error: errorMessage(error) }),

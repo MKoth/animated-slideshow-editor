@@ -29,6 +29,7 @@ export function embeddedLibraryJSON(
         kind: parameter.kind,
         default: parameter.default,
       })),
+      ...(material.shaderId !== null ? { shader_id: material.shaderId } : {}),
     })),
     shaders: shaders.map((shader) => ({
       id: shader.id,
@@ -136,10 +137,18 @@ function validateLibraryMaterials(errors: string[], materials: unknown): void {
         if (typeof parameter.kind !== 'string' || parameter.kind === '') {
           errors.push(`Library material parameter kind must be a non-empty string`)
         }
-        if (typeof parameter.default !== 'string' && typeof parameter.default !== 'number') {
-          errors.push(`Library material parameter default must be a string or a number`)
+        if (!isParameterDefaultValue(parameter.default)) {
+          errors.push(
+            `Library material parameter default must be a string, number, boolean, or array`,
+          )
         }
       }
+    }
+    if (
+      material.shader_id !== undefined &&
+      (typeof material.shader_id !== 'string' || material.shader_id === '')
+    ) {
+      errors.push(`Library material "${String(material.id)}" shader_id must be a non-empty string`)
     }
     if (typeof material.id === 'string' && material.id !== '') {
       if (materialIds.has(material.id)) {
@@ -250,11 +259,19 @@ export function buildEmbeddedMaterialsFromJSON(library: unknown): EmbeddedMateri
         ) {
           return []
         }
-        if (typeof parameter.default !== 'string' && typeof parameter.default !== 'number') {
+        const value = parameter.default
+        if (!isParameterDefaultValue(value)) {
           return []
         }
-        return [{ key: parameter.key, kind: parameter.kind, default: parameter.default }]
+        return [
+          {
+            key: parameter.key,
+            kind: parameter.kind,
+            default: value,
+          },
+        ]
       }),
+      shaderId: typeof material.shader_id === 'string' ? material.shader_id : null,
     })
   }
   return materials
@@ -300,4 +317,19 @@ function requireNonEmptyString(errors: string[], value: unknown, what: string): 
   if (typeof value !== 'string' || value === '') {
     errors.push(`${what} must be a non-empty string`)
   }
+}
+
+function isNumberArray(value: unknown): value is readonly number[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'number')
+}
+
+function isParameterDefaultValue(
+  value: unknown,
+): value is string | number | boolean | readonly number[] {
+  return (
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    isNumberArray(value)
+  )
 }

@@ -42,3 +42,4 @@ class MaterialDefinition(Base):
     parameters: Mapped[list[dict[str, object]]] = mapped_column(
         JSON, nullable=False, default=_builtin_defaults
     )
+    shader_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None)

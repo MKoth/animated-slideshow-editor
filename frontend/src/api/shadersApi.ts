@@ -1,5 +1,13 @@
 import { ApiClient } from './apiClient'
 
+export type ShaderUniformDefault = string | number | boolean | number[] | null
+
+export interface ShaderUniformInput {
+  key: string
+  kind: string
+  default: ShaderUniformDefault
+}
+
 export interface ShaderDefinition {
   id: string
   name: string
@@ -52,6 +60,16 @@ export class ShadersApi {
 
   async renameShader(shaderId: string, name: string): Promise<ShaderDefinition> {
     return this.client.put<ShaderDefinition>(`/api/shaders/${shaderId}`, JSON.stringify({ name }))
+  }
+
+  async updateUniformDefaults(
+    shaderId: string,
+    uniforms: readonly ShaderUniformInput[],
+  ): Promise<ShaderDefinition> {
+    return this.client.put<ShaderDefinition>(
+      `/api/shaders/${shaderId}/uniforms`,
+      JSON.stringify({ default_uniforms: uniforms }),
+    )
   }
 
   async duplicateShader(sourceId: string, name: string): Promise<ShaderDefinition> {

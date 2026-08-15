@@ -13,6 +13,7 @@ const RED: MaterialDefinition = {
   tags: [],
   created_at: '2026-08-15T12:00:00',
   updated_at: '2026-08-15T12:00:00',
+  shader_id: null,
   parameters: [
     { key: 'tint', kind: 'color', default: '#ff0000' },
     { key: 'opacityMultiplier', kind: 'number', default: 1 },
@@ -36,6 +37,7 @@ const DEFAULT_MATERIAL: MaterialDefinition = {
   tags: ['built-in', 'default'],
   created_at: '2026-08-15T12:00:00',
   updated_at: '2026-08-15T12:00:00',
+  shader_id: null,
   parameters: [
     { key: 'tint', kind: 'color', default: '#ffffff' },
     { key: 'opacityMultiplier', kind: 'number', default: 1 },

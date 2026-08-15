@@ -7,11 +7,13 @@ from app.materials.library import (
     MaterialNotFoundError,
     MaterialProtectedError,
     MaterialValidationError,
+    ShaderReferenceNotFoundError,
     now_utc,
 )
 from app.materials.schemas import (
     MaterialCreateIn,
     MaterialDefinitionOut,
+    MaterialShaderUpdateIn,
     MaterialUpdateIn,
     definition_to_schema,
 )
@@ -21,6 +23,10 @@ router = APIRouter()
 
 def _material_not_found(material_id: str) -> HTTPException:
     return HTTPException(status_code=404, detail=f"material {material_id} not found")
+
+
+def _shader_not_found(shader_id: str) -> HTTPException:
+    return HTTPException(status_code=404, detail=f"shader {shader_id} not found")
 
 
 def _invalid_payload(message: str) -> HTTPException:
@@ -90,6 +96,23 @@ def update_material(
         )
     except MaterialNotFoundError as exc:
         raise _material_not_found(material_id) from exc
+    except MaterialValidationError as exc:
+        raise _invalid_payload(str(exc)) from exc
+    return definition_to_schema(definition)
+
+
+@router.put("/materials/{material_id}/shader", response_model=MaterialDefinitionOut)
+def assign_material_shader(
+    request: Request, material_id: str, payload: MaterialShaderUpdateIn
+) -> MaterialDefinitionOut:
+    """Assign or remove (shader_id=None) the shader reference on a material."""
+    library: MaterialLibrary = request.app.state.material_library
+    try:
+        definition = library.assign_shader(material_id, payload.shader_id, now=now_utc())
+    except MaterialNotFoundError as exc:
+        raise _material_not_found(material_id) from exc
+    except ShaderReferenceNotFoundError as exc:
+        raise _shader_not_found(str(exc.args[0])) from exc
     except MaterialValidationError as exc:
         raise _invalid_payload(str(exc)) from exc
     return definition_to_schema(definition)

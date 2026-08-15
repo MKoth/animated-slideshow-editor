@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { MaterialDefinition } from '../api'
 import type { ShaderDefinition } from '../api'
+import { registerMaterialUniformPropagation } from '../app/librarySync'
 import { useShaderLibraryStore } from '../stores/shaderLibraryStore'
+import { useMaterialLibraryStore } from '../stores/materialLibraryStore'
 import { libraryEventBus, type LibraryEvent } from '../stores/libraryEvents'
 import { useNotificationStore } from '../stores/notificationStore'
 import { setWebGL2ContextFactory } from '../shaders/compiler'
@@ -14,6 +17,18 @@ out vec4 fragColor;
 void main() {
   vec4 color = texture(uTexture, vUv);
   fragColor = color;
+}
+`
+
+const SOURCE_WITH_UNIFORM = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uTexture;
+uniform float uIntensity;
+out vec4 fragColor;
+void main() {
+  vec4 color = texture(uTexture, vUv);
+  fragColor = color * uIntensity;
 }
 `
 
@@ -461,5 +476,159 @@ void main() {
       'Shader delete failed — backend unavailable.',
     ])
     expect(useShaderLibraryStore.getState().unavailable).toBe(true)
+  })
+
+  it('persists the reflected uniform defaults after import', async () => {
+    const created = makeShader({ source: SOURCE_WITH_UNIFORM })
+    const persisted = makeShader({
+      source: SOURCE_WITH_UNIFORM,
+      default_uniforms: [{ key: 'uIntensity', kind: 'float', default: 0 }],
+    })
+    const uniformsBody: unknown[] = []
+    stubFetch((url, init) => {
+      if (init.method === 'POST') {
+        return Promise.resolve(new Response(JSON.stringify(created), { status: 200 }))
+      }
+      if (init.method === 'PUT' && String(url).endsWith('/uniforms')) {
+        uniformsBody.push(JSON.parse(String(init.body)))
+        return Promise.resolve(new Response(JSON.stringify(persisted), { status: 200 }))
+      }
+      return Promise.reject(new Error(String(url)))
+    })
+
+    await useShaderLibraryStore
+      .getState()
+      .importShader(new File([SOURCE_WITH_UNIFORM], 'uniform.glsl'))
+
+    expect(uniformsBody).toEqual([
+      { default_uniforms: [{ key: 'uIntensity', kind: 'float', default: 0 }] },
+    ])
+    expect(useShaderLibraryStore.getState().definitions).toEqual([persisted])
+  })
+
+  it('updates uniform defaults, emits ShaderUpdated, and refreshes referencing materials', async () => {
+    const original = makeShader()
+    const updated = makeShader({
+      default_uniforms: [{ key: 'uIntensity', kind: 'float', default: 0.75 }],
+    })
+    let materialListCalls = 0
+    stubFetch((url, init) => {
+      if (init.method === 'PUT' && String(url).endsWith('/uniforms')) {
+        return Promise.resolve(new Response(JSON.stringify(updated), { status: 200 }))
+      }
+      if (init.method === undefined && String(url).includes('/api/materials')) {
+        materialListCalls += 1
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
+      }
+      return Promise.resolve(new Response(JSON.stringify([original]), { status: 200 }))
+    })
+    await useShaderLibraryStore.getState().loadLibrary()
+    const dispose = registerMaterialUniformPropagation()
+    const events = listen()
+
+    await useShaderLibraryStore
+      .getState()
+      .updateUniformDefaults('s1', [{ key: 'uIntensity', kind: 'float', default: 0.75 }])
+    dispose()
+
+    expect(useShaderLibraryStore.getState().definitions).toEqual([updated])
+    expect(materialListCalls).toBe(1)
+    expect(events).toEqual([{ type: 'ShaderUpdated', shader: updated }])
+  })
+
+  it('propagates new uniform defaults into materials referencing the shader', async () => {
+    const before: MaterialDefinition = {
+      id: 'm1',
+      name: 'Tinted',
+      description: '',
+      tags: [],
+      created_at: '2026-08-15T12:00:00',
+      updated_at: '2026-08-15T12:00:00',
+      shader_id: 's1',
+      parameters: [
+        { key: 'tint', kind: 'color', default: '#ffffff' },
+        { key: 'opacityMultiplier', kind: 'number', default: 1 },
+        { key: 'uIntensity', kind: 'float', default: 0.5 },
+      ],
+    }
+    const after: MaterialDefinition = {
+      ...before,
+      updated_at: '2026-08-15T13:00:00',
+      parameters: [
+        { key: 'tint', kind: 'color', default: '#ffffff' },
+        { key: 'opacityMultiplier', kind: 'number', default: 1 },
+        { key: 'uIntensity', kind: 'float', default: 0.75 },
+      ],
+    }
+    useMaterialLibraryStore.setState({ definitions: [before], unavailable: false })
+    stubFetch((url, init) => {
+      if (init.method === 'PUT' && String(url).endsWith('/uniforms')) {
+        return Promise.resolve(new Response(JSON.stringify(makeShader()), { status: 200 }))
+      }
+      if (init.method === undefined && String(url).includes('/api/materials')) {
+        return Promise.resolve(new Response(JSON.stringify([after]), { status: 200 }))
+      }
+      return Promise.resolve(new Response(JSON.stringify([makeShader()]), { status: 200 }))
+    })
+    const dispose = registerMaterialUniformPropagation()
+    const events = listen()
+
+    await useShaderLibraryStore
+      .getState()
+      .updateUniformDefaults('s1', [{ key: 'uIntensity', kind: 'float', default: 0.75 }])
+    dispose()
+
+    await vi.waitFor(() => {
+      expect(useMaterialLibraryStore.getState().definitions).toEqual([after])
+    })
+    expect(events).toEqual([
+      { type: 'ShaderUpdated', shader: makeShader() },
+      { type: 'MaterialUpdated', material: after },
+    ])
+  })
+
+  it('refreshes referencing materials after a source re-upload changes uniforms', async () => {
+    const replacement = SOURCE_WITH_UNIFORM
+    const updated = makeShader({ source: replacement })
+    let materialListCalls = 0
+    stubFetch((url, init) => {
+      if (init.method === 'PUT' && String(url).endsWith('/source')) {
+        return Promise.resolve(new Response(JSON.stringify(updated), { status: 200 }))
+      }
+      if (init.method === 'PUT' && String(url).endsWith('/uniforms')) {
+        return Promise.resolve(new Response(JSON.stringify(updated), { status: 200 }))
+      }
+      if (init.method === undefined && String(url).includes('/api/materials')) {
+        materialListCalls += 1
+        return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
+      }
+      return Promise.resolve(new Response(JSON.stringify([makeShader()]), { status: 200 }))
+    })
+    await useShaderLibraryStore.getState().loadLibrary()
+    const dispose = registerMaterialUniformPropagation()
+
+    await useShaderLibraryStore.getState().reuploadSource('s1', new File([replacement], 'w.glsl'))
+    dispose()
+
+    expect(materialListCalls).toBe(1)
+  })
+
+  it('notifies when the backend rejects a uniform-defaults update', async () => {
+    stubFetch((_url, init) => {
+      if (init.method === 'PUT') {
+        return Promise.resolve(new Response('{}', { status: 422 }))
+      }
+      return Promise.resolve(new Response(JSON.stringify([makeShader()]), { status: 200 }))
+    })
+    await useShaderLibraryStore.getState().loadLibrary()
+
+    await useShaderLibraryStore
+      .getState()
+      .updateUniformDefaults('s1', [{ key: 'uIntensity', kind: 'float', default: 0.75 }])
+
+    expect(useNotificationStore.getState().notifications.map((n) => n.message)).toEqual([
+      'Shader update failed.',
+    ])
+    expect(useShaderLibraryStore.getState().unavailable).toBe(false)
   })
 })

@@ -13,9 +13,10 @@ export class MaterialManager {
     id: string,
     name: string,
     parameters: readonly MaterialParameterDefault[] = [],
+    shaderId: string | null = null,
   ): MaterialDefinition {
     requireNonEmpty(name, 'Material definition name')
-    const definition = new MaterialDefinition(id, name, parameters)
+    const definition = new MaterialDefinition(id, name, parameters, shaderId)
     this.#definitions.set(id, definition)
     return definition
   }

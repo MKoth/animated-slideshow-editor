@@ -1,11 +1,14 @@
 import { ApiClient } from './apiClient'
 
-export type MaterialParameterKind = 'color' | 'number'
+export type MaterialParameterKind =
+  'color' | 'number' | 'float' | 'int' | 'bool' | 'vec2' | 'vec3' | 'vec4' | 'sampler2D'
+
+export type MaterialParameterDefault = string | number | boolean | number[]
 
 export interface MaterialParameter {
   key: string
   kind: MaterialParameterKind
-  default: string | number
+  default: MaterialParameterDefault
 }
 
 export interface MaterialDefinition {
@@ -16,6 +19,7 @@ export interface MaterialDefinition {
   created_at: string
   updated_at: string
   parameters: MaterialParameter[]
+  shader_id: string | null
 }
 
 export interface MaterialCreateInput {
@@ -59,6 +63,13 @@ export class MaterialsApi {
 
   async renameMaterial(materialId: string, name: string): Promise<MaterialDefinition> {
     return this.updateMaterial(materialId, { name })
+  }
+
+  async assignShader(materialId: string, shaderId: string | null): Promise<MaterialDefinition> {
+    return this.client.put<MaterialDefinition>(
+      `/api/materials/${materialId}/shader`,
+      JSON.stringify({ shader_id: shaderId }),
+    )
   }
 
   async updateMaterial(

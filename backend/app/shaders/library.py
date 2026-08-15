@@ -8,7 +8,14 @@ from uuid import uuid4
 from sqlalchemy import desc, select
 
 from app.database import Database
+from app.parameters import (
+    RESERVED_UNIFORM_KEYS,
+    ParameterValidationError,
+    is_uniform_kind,
+    normalize_parameter_default,
+)
 from app.shaders.model import BUILTIN_SHADERS, ShaderDefinition
+from app.shaders.schemas import ShaderUniform
 
 _VERTEX_MARKERS = re.compile(r"\b(gl_Position|gl_VertexID|gl_InstanceID)\b")
 _ES1_ATTRIBUTE = re.compile(r"^\s*attribute\b", flags=re.MULTILINE)
@@ -129,6 +136,28 @@ class ShaderLibrary:
             session.commit()
         return definition
 
+    def update_default_uniforms(
+        self,
+        shader_id: str,
+        uniforms: list[ShaderUniform],
+        now: datetime,
+    ) -> ShaderDefinition:
+        """Replace the shader's editable uniform defaults.
+
+        Each uniform must carry a supported uniform kind and a default matching
+        its kind; keys must be unique and must not collide with the reserved
+        source sampler or the material built-in parameter keys.
+        """
+        validated = _validate_uniforms(uniforms)
+        with self._database.session() as session:
+            definition = session.get(ShaderDefinition, shader_id)
+            if definition is None:
+                raise ShaderNotFoundError(shader_id)
+            definition.default_uniforms = validated
+            definition.updated_at = now
+            session.commit()
+        return definition
+
     def delete(self, shader_id: str) -> None:
         with self._database.session() as session:
             definition = session.get(ShaderDefinition, shader_id)
@@ -147,6 +176,30 @@ def _require_fragment_source(source: str) -> None:
         raise ShaderValidationError("shader source must not be empty")
     if _VERTEX_MARKERS.search(source) or _ES1_ATTRIBUTE.search(source):
         raise ShaderValidationError(_VERTEX_SHADER_MESSAGE)
+
+
+def _validate_uniforms(uniforms: list[ShaderUniform]) -> list[dict[str, object]]:
+    seen: set[str] = set()
+    normalized: list[dict[str, object]] = []
+    for uniform in uniforms:
+        key = uniform.key
+        if not key.strip():
+            raise ShaderValidationError("uniform key must not be empty")
+        if key in RESERVED_UNIFORM_KEYS:
+            raise ShaderValidationError(
+                f"uniform key {key!r} is reserved and cannot be a user uniform"
+            )
+        if key in seen:
+            raise ShaderValidationError(f"duplicate uniform key: {key}")
+        seen.add(key)
+        if not is_uniform_kind(uniform.kind):
+            raise ShaderValidationError(f"uniform {key}: kind {uniform.kind!r} is not supported")
+        try:
+            default = normalize_parameter_default(uniform.kind, uniform.default, key)
+        except ParameterValidationError as exc:
+            raise ShaderValidationError(str(exc)) from exc
+        normalized.append({"key": key, "kind": uniform.kind, "default": default})
+    return normalized
 
 
 def _require_non_empty(value: str, message: str) -> None:

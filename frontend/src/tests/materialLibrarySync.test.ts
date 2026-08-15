@@ -14,6 +14,7 @@ const RED_SLIME: MaterialDefinition = {
   tags: [],
   created_at: '2026-08-15T12:00:00',
   updated_at: '2026-08-15T12:00:00',
+  shader_id: null,
   parameters: [
     { key: 'tint', kind: 'color', default: '#ffffff' },
     { key: 'opacityMultiplier', kind: 'number', default: 1 },
@@ -73,6 +74,15 @@ describe('material library sync', () => {
     setLibrary([{ ...RED_SLIME, name: 'Red Slime Updated' }])
 
     expect(engine.getMaterialDefinition('mat-1').name).toBe('Red Slime Updated')
+  })
+
+  it('registers the shader reference of a material into the engine', () => {
+    const engine = createEngine()
+    registerMaterialLibrarySync(new MaterialLibrarySync(engine))
+    setLibrary([{ ...RED_SLIME, shader_id: 'shader-1' }])
+
+    expect(engine.getMaterialDefinition('mat-1').shaderId).toBe('shader-1')
+    expect(engine.getMaterialDefinition('mat-1').parameters).toEqual(RED_SLIME.parameters)
   })
 
   it('never removes definitions the store no longer lists, so project definitions stay intact', () => {

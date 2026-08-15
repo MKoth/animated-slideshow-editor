@@ -35,11 +35,20 @@ export function collectReferencedMaterialIds(project: Project): Set<string> {
   return ids
 }
 
-export function collectReferencedShaderIds(project: Project): Set<string> {
+export function collectReferencedShaderIds(
+  project: Project,
+  shaderIdOfMaterial: (materialDefinitionId: string) => string | null = () => null,
+): Set<string> {
   const ids = new Set<string>()
   for (const slide of project.slides) {
     if (slide.fullscreenShader) {
       ids.add(slide.fullscreenShader.shaderDefinitionId)
+    }
+    for (const node of walkPreOrder(slide.scene.root)) {
+      const shaderId = shaderIdOfMaterial(node.material.materialDefinitionId)
+      if (shaderId !== null) {
+        ids.add(shaderId)
+      }
     }
   }
   return ids

@@ -3,6 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
+from app.materials.library import MaterialLibrary, MaterialValidationError
 from app.shaders.library import (
     ShaderLibrary,
     ShaderNotFoundError,
@@ -14,6 +15,7 @@ from app.shaders.schemas import (
     ShaderDefinitionOut,
     ShaderDuplicateIn,
     ShaderRenameIn,
+    ShaderUniformsUpdateIn,
     definition_to_schema,
 )
 
@@ -117,6 +119,28 @@ def reupload_shader_source(
     except ShaderNotFoundError as exc:
         raise _shader_not_found(shader_id) from exc
     except ShaderValidationError as exc:
+        raise _invalid_payload(str(exc)) from exc
+    return definition_to_schema(definition)
+
+
+@router.put("/shaders/{shader_id}/uniforms", response_model=ShaderDefinitionOut)
+def update_shader_uniforms(
+    request: Request, shader_id: str, payload: ShaderUniformsUpdateIn
+) -> ShaderDefinitionOut:
+    """Replace a shader's uniform defaults and flow them into referencing materials."""
+    shader_library: ShaderLibrary = request.app.state.shader_library
+    try:
+        definition = shader_library.update_default_uniforms(
+            shader_id, payload.default_uniforms, now=now_utc()
+        )
+    except ShaderNotFoundError as exc:
+        raise _shader_not_found(shader_id) from exc
+    except ShaderValidationError as exc:
+        raise _invalid_payload(str(exc)) from exc
+    material_library: MaterialLibrary = request.app.state.material_library
+    try:
+        material_library.reseed_for_shader(shader_id, definition.default_uniforms, now=now_utc())
+    except MaterialValidationError as exc:
         raise _invalid_payload(str(exc)) from exc
     return definition_to_schema(definition)
 

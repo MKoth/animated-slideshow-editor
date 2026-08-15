@@ -199,6 +199,7 @@ describe('importLessonFile', () => {
       createdAt: '2026-08-15T00:00:00',
       updatedAt: '2026-08-15T00:00:00',
       parameters: [{ key: 'tint', kind: 'color', default: '#ff8800' }],
+      shaderId: null,
     })
     engine.embedShader({
       id: 'shader-1',

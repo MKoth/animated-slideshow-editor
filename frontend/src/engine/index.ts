@@ -45,8 +45,13 @@ export {
   TINT_PARAMETER_KEY,
   effectiveMaterialScratch,
   resolveMaterial,
+  resolveParameterValue,
 } from './materialResolution'
-export type { EffectiveMaterialScratch, MaterialParameterDefault } from './materialResolution'
+export type {
+  EffectiveMaterialScratch,
+  MaterialParameterDefault,
+  MaterialParameterDefaultValue,
+} from './materialResolution'
 export type {
   LessonJSON,
   LessonProjectJSON,

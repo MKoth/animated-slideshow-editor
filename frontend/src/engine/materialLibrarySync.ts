@@ -5,6 +5,7 @@ export interface MaterialDefinitionRef {
   readonly id: string
   readonly name: string
   readonly parameters?: readonly MaterialParameterDefault[]
+  readonly shader_id?: string | null
 }
 
 export class MaterialLibrarySync {
@@ -20,6 +21,7 @@ export class MaterialLibrarySync {
         definition.id,
         definition.name,
         definition.parameters ?? [],
+        definition.shader_id ?? null,
       )
     }
   }

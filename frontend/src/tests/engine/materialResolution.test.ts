@@ -4,12 +4,19 @@ import {
   DEFAULT_OPACITY_MULTIPLIER,
   DEFAULT_TINT,
   resolveMaterial,
+  resolveParameterValue,
   type MaterialParameterDefault,
 } from '../../engine/materialResolution'
 
 const PARAMETERS: readonly MaterialParameterDefault[] = [
   { key: 'tint', kind: 'color', default: '#ff8800' },
   { key: 'opacityMultiplier', kind: 'number', default: 0.5 },
+]
+
+const UNIFORM_PARAMETERS: readonly MaterialParameterDefault[] = [
+  { key: 'uIntensity', kind: 'float', default: 0.5 },
+  { key: 'uEnabled', kind: 'bool', default: false },
+  { key: 'uColor', kind: 'vec3', default: [1, 0, 0] },
 ]
 
 describe('material resolution', () => {
@@ -70,5 +77,29 @@ describe('material resolution', () => {
     expect(result).toBe(target)
     expect(target.tint).toBe('#00ff00')
     expect(target.opacityMultiplier).toBe(0.5)
+  })
+})
+
+describe('resolveParameterValue', () => {
+  it('resolves an instance override over the definition default for shader uniforms', () => {
+    const overrides: MaterialOverrides = { uIntensity: 0.9 }
+
+    expect(resolveParameterValue(UNIFORM_PARAMETERS, overrides, 'uIntensity')).toBe(0.9)
+  })
+
+  it('falls back to the definition default when the uniform is not overridden', () => {
+    expect(resolveParameterValue(UNIFORM_PARAMETERS, {}, 'uIntensity')).toBe(0.5)
+    expect(resolveParameterValue(UNIFORM_PARAMETERS, {}, 'uEnabled')).toBe(false)
+    expect(resolveParameterValue(UNIFORM_PARAMETERS, {}, 'uColor')).toEqual([1, 0, 0])
+  })
+
+  it('returns undefined for a parameter neither overridden nor defined', () => {
+    expect(resolveParameterValue(UNIFORM_PARAMETERS, {}, 'uMissing')).toBeUndefined()
+  })
+
+  it('treats a falsey override as present', () => {
+    const overrides = { uEnabled: false }
+
+    expect(resolveParameterValue(UNIFORM_PARAMETERS, overrides, 'uEnabled')).toBe(false)
   })
 })

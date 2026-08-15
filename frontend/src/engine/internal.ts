@@ -291,8 +291,9 @@ export class Engine {
     definitionId: string,
     name: string,
     parameters: readonly MaterialParameterDefault[] = [],
+    shaderId: string | null = null,
   ): MaterialDefinition {
-    return this.#materials.register(definitionId, name, parameters)
+    return this.#materials.register(definitionId, name, parameters, shaderId)
   }
 
   registerShaderDefinition(definitionId: string, name: string): ShaderDefinition {
@@ -417,7 +418,12 @@ export class Engine {
   #resolveMaterialDefinition(definitionId: string): MaterialDefinition {
     const embedded = this.#embeddedMaterials.get(definitionId)
     if (embedded) {
-      return new MaterialDefinition(embedded.id, embedded.name, embedded.parameters)
+      return new MaterialDefinition(
+        embedded.id,
+        embedded.name,
+        embedded.parameters,
+        embedded.shaderId,
+      )
     }
     return this.#materials.getDefinition(definitionId)
   }

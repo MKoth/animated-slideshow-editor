@@ -20,9 +20,15 @@ export type {
   MaterialCreateInput,
   MaterialDefinition,
   MaterialParameter,
+  MaterialParameterDefault,
   MaterialParameterKind,
   MaterialUpdateInput,
 } from './materialsApi'
 export type { PingResponse } from './pingApi'
 export type { ProjectSummary, StoredProject } from './projectsApi'
-export type { ShaderDefinition, ShaderImportInput } from './shadersApi'
+export type {
+  ShaderDefinition,
+  ShaderImportInput,
+  ShaderUniformDefault,
+  ShaderUniformInput,
+} from './shadersApi'

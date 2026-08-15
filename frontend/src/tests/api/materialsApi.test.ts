@@ -110,4 +110,33 @@ describe('MaterialsApi', () => {
       expect.objectContaining({ method: 'DELETE' }),
     )
   })
+
+  it('assigns a shader with a PUT carrying the shader id', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ id: 'm1', name: 'Red Slime', shader_id: 'shader-1' }), {
+        status: 200,
+      }),
+    )
+
+    const result = await api.assignShader('m1', 'shader-1')
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(url).toBe('/api/materials/m1/shader')
+    expect(init?.method).toBe('PUT')
+    expect(JSON.parse(String(init?.body))).toEqual({ shader_id: 'shader-1' })
+    expect(result.shader_id).toBe('shader-1')
+  })
+
+  it('removes a shader by assigning null', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ id: 'm1', name: 'Red Slime', shader_id: null }), {
+        status: 200,
+      }),
+    )
+
+    await api.assignShader('m1', null)
+
+    const init = vi.mocked(fetch).mock.calls[0][1]
+    expect(JSON.parse(String(init?.body))).toEqual({ shader_id: null })
+  })
 })

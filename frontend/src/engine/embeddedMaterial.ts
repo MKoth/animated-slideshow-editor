@@ -1,7 +1,7 @@
 export interface EmbeddedMaterialParameter {
   readonly key: string
   readonly kind: string
-  readonly default: string | number
+  readonly default: string | number | boolean | readonly number[]
 }
 
 export interface EmbeddedMaterialDefinition {
@@ -12,4 +12,5 @@ export interface EmbeddedMaterialDefinition {
   readonly createdAt: string
   readonly updatedAt: string
   readonly parameters: readonly EmbeddedMaterialParameter[]
+  readonly shaderId: string | null
 }

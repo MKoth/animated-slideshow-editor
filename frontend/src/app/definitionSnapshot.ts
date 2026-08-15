@@ -26,6 +26,7 @@ export function captureMaterialSnapshot(engine: EnginePublic, definitionId: stri
       kind: parameter.kind,
       default: parameter.default,
     })),
+    shaderId: definition.shader_id,
   })
   return true
 }
@@ -63,8 +64,18 @@ export function ensureReferencedMaterialAndShaderSnapshots(engine: EnginePublic)
     }
     captureMaterialSnapshot(engine, definitionId)
   }
-  for (const definitionId of collectReferencedShaderIds(project)) {
+  for (const definitionId of collectReferencedShaderIds(project, (materialDefinitionId) =>
+    shaderIdOfMaterial(engine, materialDefinitionId),
+  )) {
     captureShaderSnapshot(engine, definitionId)
+  }
+}
+
+function shaderIdOfMaterial(engine: EnginePublic, materialDefinitionId: string): string | null {
+  try {
+    return engine.getMaterialDefinition(materialDefinitionId).shaderId
+  } catch {
+    return null
   }
 }
 

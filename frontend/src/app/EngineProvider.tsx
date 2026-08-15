@@ -12,6 +12,7 @@ import { registerActiveSlideSync } from './activeSlideSync'
 import {
   registerLibrarySync,
   registerMaterialLibrarySync,
+  registerMaterialUniformPropagation,
   registerShaderLibrarySync,
 } from './librarySync'
 
@@ -42,9 +43,11 @@ export function EngineProvider({ children }: { children: ReactNode }) {
     const disposeLibrarySync = registerLibrarySync(system.assetLibrarySync)
     const disposeMaterialLibrarySync = registerMaterialLibrarySync(system.materialLibrarySync)
     const disposeShaderLibrarySync = registerShaderLibrarySync(system.shaderLibrarySync)
+    const disposeMaterialUniformPropagation = registerMaterialUniformPropagation()
     const disposeActiveSlideSync = registerActiveSlideSync(system.engine)
     return () => {
       disposeActiveSlideSync()
+      disposeMaterialUniformPropagation()
       disposeShaderLibrarySync()
       disposeMaterialLibrarySync()
       disposeLibrarySync()

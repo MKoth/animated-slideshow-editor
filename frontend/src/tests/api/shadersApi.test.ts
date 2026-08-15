@@ -92,4 +92,25 @@ describe('ShadersApi', () => {
       expect.objectContaining({ method: 'DELETE' }),
     )
   })
+
+  it('updates uniform defaults with a PUT carrying the uniforms', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ id: 's1', name: 'Ink Wash' }), { status: 200 }),
+    )
+
+    await api.updateUniformDefaults('s1', [
+      { key: 'uIntensity', kind: 'float', default: 0.5 },
+      { key: 'uColor', kind: 'vec3', default: [1, 0, 0] },
+    ])
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(url).toBe('/api/shaders/s1/uniforms')
+    expect(init?.method).toBe('PUT')
+    expect(JSON.parse(String(init?.body))).toEqual({
+      default_uniforms: [
+        { key: 'uIntensity', kind: 'float', default: 0.5 },
+        { key: 'uColor', kind: 'vec3', default: [1, 0, 0] },
+      ],
+    })
+  })
 })
