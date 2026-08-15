@@ -7,6 +7,8 @@ import {
   MIN_SLIDE_DURATION,
   MAX_SLIDE_DURATION,
 } from './slide'
+import { requireFullscreenOverridePresent } from './fullscreenShader'
+import type { MaterialOverrideValue } from './materialInstance'
 import type { ProjectManager } from './projectManager'
 import type { SceneManager } from './sceneManager'
 import { SlideAnimation } from './animation'
@@ -131,6 +133,43 @@ export class SlideManager {
     slide.duration = duration
     this.#bus.emit({ type: 'SlideDurationChanged', slideId })
     return { oldDuration, clampedKeyframes }
+  }
+
+  /** Assign a fullscreen shader to a slide, or clear it; assigning resets overrides. */
+  setFullscreenShader(slideId: string, shaderDefinitionId: string | null): void {
+    const slide = this.get(slideId)
+    slide.fullscreenShader =
+      shaderDefinitionId === null ? null : { shaderDefinitionId, overrides: {} }
+    this.#bus.emit({ type: 'SlideShaderChanged', slideId })
+  }
+
+  overrideFullscreenUniform(slideId: string, uniform: string, value: MaterialOverrideValue): void {
+    const slide = this.get(slideId)
+    const reference = slide.fullscreenShader
+    if (!reference) {
+      throw new Error(`Slide "${slideId}" has no fullscreen shader assigned`)
+    }
+    slide.fullscreenShader = {
+      shaderDefinitionId: reference.shaderDefinitionId,
+      overrides: { ...reference.overrides, [uniform]: value },
+    }
+    this.#bus.emit({ type: 'SlideShaderUniformChanged', slideId })
+  }
+
+  clearFullscreenUniform(slideId: string, uniform: string): void {
+    const slide = this.get(slideId)
+    const reference = slide.fullscreenShader
+    if (!reference) {
+      throw new Error(`Slide "${slideId}" has no fullscreen shader assigned`)
+    }
+    requireFullscreenOverridePresent(reference, uniform, slideId)
+    const overrides = { ...reference.overrides }
+    delete overrides[uniform]
+    slide.fullscreenShader = {
+      shaderDefinitionId: reference.shaderDefinitionId,
+      overrides,
+    }
+    this.#bus.emit({ type: 'SlideShaderUniformChanged', slideId })
   }
 
   get(slideId: string): Slide {

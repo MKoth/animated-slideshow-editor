@@ -23,6 +23,16 @@ export { DuplicateSlideCommand } from './duplicateSlideCommand'
 export type { DuplicateSlideInverse, DuplicateSlideParameters } from './duplicateSlideCommand'
 export { SetSlideDurationCommand } from './setSlideDurationCommand'
 export type { SetSlideDurationInverse, SetSlideDurationParameters } from './setSlideDurationCommand'
+export { SetFullscreenShaderCommand } from './setFullscreenShaderCommand'
+export type {
+  SetFullscreenShaderInverse,
+  SetFullscreenShaderParameters,
+} from './setFullscreenShaderCommand'
+export { OverrideFullscreenUniformCommand } from './overrideFullscreenUniformCommand'
+export type {
+  OverrideFullscreenUniformInverse,
+  OverrideFullscreenUniformParameters,
+} from './overrideFullscreenUniformCommand'
 export { CreateNodeCommand } from './createNodeCommand'
 export type { CreateNodeInverse, CreateNodeParameters } from './createNodeCommand'
 export { DeleteNodeCommand } from './deleteNodeCommand'

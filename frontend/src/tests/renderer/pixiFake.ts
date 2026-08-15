@@ -159,6 +159,43 @@ export class FakeTexture {
   }
 }
 
+export interface FakeRenderTextureOptions {
+  width: number
+  height: number
+  dynamic?: boolean
+}
+
+export class FakeRenderTexture {
+  destroyed = false
+  width: number
+  height: number
+  readonly dynamic: boolean
+
+  constructor(options: FakeRenderTextureOptions) {
+    this.width = options.width
+    this.height = options.height
+    this.dynamic = options.dynamic ?? false
+  }
+
+  resize(width: number, height: number): this {
+    this.width = width
+    this.height = height
+    return this
+  }
+
+  destroy(): void {
+    this.destroyed = true
+  }
+}
+
+export const fakeRenderTextures = {
+  calls: [] as FakeRenderTextureOptions[],
+  create(options: FakeRenderTextureOptions): FakeRenderTexture {
+    this.calls.push(options)
+    return new FakeRenderTexture(options)
+  },
+}
+
 export class FakeSprite extends FakeContainer {
   readonly kind = 'sprite'
   texture: FakeTexture
@@ -233,6 +270,7 @@ export class FakeFilter {
 export function resetShaderRegistries(): void {
   fakeGlPrograms.calls.length = 0
   fakeGlPrograms.cache.clear()
+  fakeRenderTextures.calls.length = 0
 }
 
 export const fakeTexture = {
@@ -343,6 +381,10 @@ export class FakeApplication {
   readonly renderer = {
     resize: (): void => undefined,
     background: { color: 0xffffff },
+    renderCalls: [] as { container: unknown; target: unknown }[],
+    render(options: { container: unknown; target: unknown }): void {
+      this.renderCalls.push(options)
+    },
   }
   readonly ticker = new FakeTicker()
   readonly screen = { width: 800, height: 600 }
@@ -386,5 +428,6 @@ export function createPixiFake() {
     Assets: fakeAssets,
     Filter: FakeFilter,
     GlProgram: fakeGlPrograms,
+    RenderTexture: fakeRenderTextures,
   }
 }

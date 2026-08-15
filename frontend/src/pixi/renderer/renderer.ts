@@ -5,6 +5,8 @@ import { walkPreOrder } from '../../engine/sceneNode'
 import type { CommandResult, DispatchCommand } from '../../engine/commands'
 import type { EvaluatedNodeScratch } from '../../engine/animationEvaluator'
 import { evaluatedNodeScratch } from '../../engine/animationEvaluator'
+import type { EffectiveShaderScratch } from '../../engine/materialResolution'
+import { effectiveShaderScratch } from '../../engine/materialResolution'
 import { EvaluatedWorldTransformSource } from '../../engine/worldTransform'
 import type { ViewportTransform } from './worldGeometry'
 import { useSelectionStore } from '../../stores/selectionStore'
@@ -32,6 +34,7 @@ import { ThumbnailRecorder } from './thumbnailRecorder'
 import { extractCanvasCapture } from './thumbnailRecorder'
 import type { CanvasCapture } from './thumbnailRecorder'
 import { ShaderProgramCache } from './programCache'
+import { FullscreenPass, resolveFullscreenShaderState } from './fullscreenPass'
 
 const DEFAULT_CANVAS_BACKGROUND = 0xffffff
 
@@ -50,6 +53,8 @@ export class Renderer {
   #sceneRenderer: SceneRenderer | null = null
   #textureCache: TextureCache | null = null
   #programCache: ShaderProgramCache | null = null
+  #fullscreenPass: FullscreenPass | null = null
+  readonly #fullscreenScratch: EffectiveShaderScratch = effectiveShaderScratch()
   #camera: Camera | null = null
   #grid: GridRenderer | null = null
   #gridColors: GridColors = {
@@ -142,6 +147,15 @@ export class Renderer {
 
       this.#textureCache = new TextureCache(this.#pixi)
       this.#programCache = new ShaderProgramCache(this.#pixi)
+      this.#fullscreenPass = new FullscreenPass(
+        this.#pixi,
+        this.#programCache,
+        app.stage,
+        world,
+        (options) => {
+          app.renderer.render(options)
+        },
+      )
       this.#sceneRenderer = new SceneRenderer(
         this.#engine,
         world,
@@ -259,6 +273,7 @@ export class Renderer {
 
   refreshNodeRendering(): void {
     this.#sceneRenderer?.refreshNodeRendering()
+    this.#syncFullscreenShader()
   }
 
   dispose(): void {
@@ -293,6 +308,8 @@ export class Renderer {
       app.canvas.remove()
       app.destroy()
     }
+    this.#fullscreenPass?.destroy()
+    this.#fullscreenPass = null
     this.#textureCache?.dispose()
     this.#textureCache = null
     this.#programCache?.dispose()
@@ -335,6 +352,11 @@ export class Renderer {
       pixelRatio: window.devicePixelRatio || 1,
     })
     app.renderer.background.color = this.#gridColors.canvasBackground
+    const fullscreenPass = this.#fullscreenPass
+    if (fullscreenPass) {
+      fullscreenPass.resize(app.screen.width, app.screen.height)
+      fullscreenPass.renderFrame()
+    }
     const devOverlay = this.#devOverlay
     if (devOverlay) {
       devOverlay.update({
@@ -480,6 +502,11 @@ export class Renderer {
       case 'MaterialParameterChanged':
         sceneRenderer.handleMaterialChanged(event.nodeId)
         break
+      case 'SlideShaderChanged':
+      case 'SlideShaderUniformChanged':
+        this.#syncFullscreenShader()
+        this.#thumbnails.handleEvent(event)
+        break
       case 'KeyframeAdded':
       case 'KeyframeRemoved':
       case 'KeyframeMoved':
@@ -496,11 +523,28 @@ export class Renderer {
       this.#controls?.reset()
       this.#cameraPreview = null
       sceneRenderer.bind(scene, slide ? slide.id : null)
+      this.#syncFullscreenShader()
       this.#thumbnails.setBoundSlideId(slide ? slide.id : null)
       this.#selectionOverlay?.bringToFront()
       this.#guideOverlay?.bringToFront()
       useSelectionStore.getState().clear()
     }
+  }
+
+  /**
+   * Resolve the active slide's fullscreen shader (definition defaults resolved
+   * with slide overrides; a source that fails to resolve — unknown definition
+   * or an uncompiled shader — renders without the effect while the reference
+   * stays intact) and apply it to the fullscreen pass.
+   */
+  #syncFullscreenShader(): void {
+    const pass = this.#fullscreenPass
+    if (!pass) {
+      return
+    }
+    const scratch = this.#fullscreenScratch
+    resolveFullscreenShaderState(this.#engine, this.#resolveShaderSource, scratch)
+    pass.update(scratch.source, scratch)
   }
 
   #pruneSelectionToBoundScene(): void {

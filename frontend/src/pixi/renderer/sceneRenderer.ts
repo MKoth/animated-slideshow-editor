@@ -29,7 +29,7 @@ import {
   placeholderOf,
 } from './nodeRenderer'
 import { applyAssetTexture, applyMissingPlaceholder, placeholderSize } from './placeholder'
-import { createNodeShaderFilter, nodeFilterUniforms } from './nodeShader'
+import { createNodeShaderFilter, applyFilterUniforms } from './nodeShader'
 import type { ShaderProgramCache } from './programCache'
 import type { ResolveAssetUrl, TextureCache } from './textureCache'
 
@@ -375,10 +375,7 @@ export class SceneRenderer {
       if (!sameSource) {
         previousFilter?.destroy()
       }
-      const uniforms = nodeFilterUniforms(filter)
-      for (let index = 0; index < scratch.keys.length; index++) {
-        uniforms[scratch.keys[index]] = scratch.values[index]
-      }
+      applyFilterUniforms(filter, scratch)
       placeholder.filters = [filter]
       state.filter = filter
     }

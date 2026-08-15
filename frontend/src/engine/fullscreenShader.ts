@@ -21,3 +21,13 @@ export function fullscreenShaderFromJSON(value: unknown, what: string): Fullscre
   const overrides = requireOverrides(value.overrides, `${what} overrides`)
   return { shaderDefinitionId, overrides }
 }
+
+export function requireFullscreenOverridePresent(
+  reference: FullscreenShaderReference,
+  uniform: string,
+  slideId: string,
+): void {
+  if (!Object.prototype.hasOwnProperty.call(reference.overrides, uniform)) {
+    throw new Error(`Slide "${slideId}" has no override for fullscreen uniform "${uniform}"`)
+  }
+}

@@ -1,8 +1,10 @@
 import type { Engine } from './internal'
+import { embeddedShaderParameters } from './embeddedShader'
 
 export interface ShaderDefinitionRef {
   readonly id: string
   readonly name: string
+  readonly default_uniforms?: readonly Readonly<Record<string, unknown>>[]
 }
 
 export class ShaderLibrarySync {
@@ -14,7 +16,11 @@ export class ShaderLibrarySync {
 
   apply(definitions: readonly ShaderDefinitionRef[]): void {
     for (const definition of definitions) {
-      this.#engine.registerShaderDefinition(definition.id, definition.name)
+      this.#engine.registerShaderDefinition(
+        definition.id,
+        definition.name,
+        embeddedShaderParameters(definition.default_uniforms ?? []),
+      )
     }
   }
 }

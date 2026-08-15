@@ -40,6 +40,16 @@ export interface SlideDurationChanged {
   readonly slideId: string
 }
 
+export interface SlideShaderChanged {
+  readonly type: 'SlideShaderChanged'
+  readonly slideId: string
+}
+
+export interface SlideShaderUniformChanged {
+  readonly type: 'SlideShaderUniformChanged'
+  readonly slideId: string
+}
+
 export interface SlideDuplicated {
   readonly type: 'SlideDuplicated'
   readonly slideId: string
@@ -132,6 +142,8 @@ export type EngineEvent =
   | SlideRenamed
   | SlideMoved
   | SlideDurationChanged
+  | SlideShaderChanged
+  | SlideShaderUniformChanged
   | SlideDuplicated
   | NodeCreated
   | NodeRemoved

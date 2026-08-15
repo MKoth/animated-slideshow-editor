@@ -25,6 +25,7 @@ import {
 import type { MaterialParameterDefault } from './materialResolution'
 import type { EmbeddedAsset } from './embeddedAsset'
 import type { EmbeddedMaterialDefinition } from './embeddedMaterial'
+import { embeddedShaderParameters } from './embeddedShader'
 import type { EmbeddedShaderDefinition } from './embeddedShader'
 import type { CreateProjectInput, Project } from './project'
 import type { Scene } from './scene'
@@ -151,6 +152,21 @@ export class Engine {
 
   setSlideDuration(slideId: string, duration: number): SlideDurationChange {
     return this.#slides.setDuration(slideId, duration)
+  }
+
+  setFullscreenShader(slideId: string, shaderDefinitionId: string | null): void {
+    if (shaderDefinitionId !== null) {
+      this.getShaderDefinition(shaderDefinitionId)
+    }
+    this.#slides.setFullscreenShader(slideId, shaderDefinitionId)
+  }
+
+  overrideFullscreenUniform(slideId: string, uniform: string, value: MaterialOverrideValue): void {
+    this.#slides.overrideFullscreenUniform(slideId, uniform, value)
+  }
+
+  clearFullscreenUniform(slideId: string, uniform: string): void {
+    this.#slides.clearFullscreenUniform(slideId, uniform)
   }
 
   getActiveSlide(): Slide | null {
@@ -296,8 +312,12 @@ export class Engine {
     return this.#materials.register(definitionId, name, parameters, shaderId)
   }
 
-  registerShaderDefinition(definitionId: string, name: string): ShaderDefinition {
-    return this.#shaders.register(definitionId, name)
+  registerShaderDefinition(
+    definitionId: string,
+    name: string,
+    parameters: readonly MaterialParameterDefault[] = [],
+  ): ShaderDefinition {
+    return this.#shaders.register(definitionId, name, parameters)
   }
 
   getMaterialDefinition(definitionId: string): MaterialDefinition {
@@ -307,7 +327,11 @@ export class Engine {
   getShaderDefinition(definitionId: string): ShaderDefinition {
     const embedded = this.#embeddedShaders.get(definitionId)
     if (embedded) {
-      return new ShaderDefinition(embedded.id, embedded.name)
+      return new ShaderDefinition(
+        embedded.id,
+        embedded.name,
+        embeddedShaderParameters(embedded.defaultUniforms),
+      )
     }
     return this.#shaders.getDefinition(definitionId)
   }

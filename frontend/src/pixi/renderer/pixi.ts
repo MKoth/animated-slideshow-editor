@@ -5,6 +5,7 @@ import {
   Filter,
   GlProgram,
   Graphics,
+  RenderTexture,
   Sprite,
   Text,
   Texture,
@@ -14,6 +15,12 @@ export interface PixiGlProgramOptions {
   vertex: string
   fragment: string
   name?: string
+}
+
+export interface PixiRenderTextureOptions {
+  width: number
+  height: number
+  dynamic?: boolean
 }
 
 export interface RendererPixi {
@@ -26,6 +33,9 @@ export interface RendererPixi {
   readonly Filter: typeof Filter
   readonly GlProgram: {
     from: (options: PixiGlProgramOptions) => PixiGlProgram
+  }
+  readonly RenderTexture: {
+    create: (options: PixiRenderTextureOptions) => PixiRenderTexture
   }
   readonly Assets: {
     load: (url: string) => Promise<PixiTexture>
@@ -44,6 +54,9 @@ export const realPixi: RendererPixi = {
   GlProgram: {
     from: (options) => GlProgram.from(options),
   },
+  RenderTexture: {
+    create: (options) => RenderTexture.create(options),
+  },
   Assets: {
     load: (url) => Assets.load(url) as Promise<PixiTexture>,
     unload: (url) => Assets.unload(url),
@@ -58,3 +71,4 @@ export type PixiSprite = Sprite
 export type PixiTexture = Texture
 export type PixiFilter = Filter
 export type PixiGlProgram = GlProgram
+export type PixiRenderTexture = RenderTexture

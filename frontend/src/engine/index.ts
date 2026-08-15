@@ -6,6 +6,8 @@ export type { EnginePublic }
 export type { EngineEvent } from './events'
 export type { SlideActivated } from './events'
 export type { ProjectLoaded } from './events'
+export type { SlideShaderChanged } from './events'
+export type { SlideShaderUniformChanged } from './events'
 export type { EventListener, Unsubscribe } from './events'
 export type { SceneNode } from './sceneNode'
 export type { Scene } from './scene'
@@ -97,6 +99,8 @@ export {
   AssignMaterialCommand,
   OverrideMaterialParameterCommand,
   ClearMaterialOverrideCommand,
+  SetFullscreenShaderCommand,
+  OverrideFullscreenUniformCommand,
   CreateAssetInstanceCommand,
   DuplicateNodeCommand,
   ChangeZOrderCommand,
@@ -138,6 +142,10 @@ export type {
   OverrideMaterialParameterParameters,
   ClearMaterialOverrideInverse,
   ClearMaterialOverrideParameters,
+  SetFullscreenShaderInverse,
+  SetFullscreenShaderParameters,
+  OverrideFullscreenUniformInverse,
+  OverrideFullscreenUniformParameters,
   CreateAssetInstanceInverse,
   CreateAssetInstanceParameters,
   DuplicateNodeInverse,

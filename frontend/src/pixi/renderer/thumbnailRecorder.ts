@@ -40,6 +40,12 @@ export class ThumbnailRecorder {
       case 'SlideCreated':
         this.#scheduleCapture()
         break
+      case 'SlideShaderChanged':
+      case 'SlideShaderUniformChanged':
+        if (event.slideId === this.#boundSlideId) {
+          this.#scheduleCapture()
+        }
+        break
     }
   }
 

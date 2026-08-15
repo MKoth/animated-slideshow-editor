@@ -44,3 +44,11 @@ export function createNodeShaderFilter(
 export function nodeFilterUniforms(filter: PixiFilter): Record<string, unknown> {
   return (filter.resources.uniforms as { uniforms: Record<string, unknown> }).uniforms
 }
+
+/** Write a resolved uniform state into a filter's uniform resources. */
+export function applyFilterUniforms(filter: PixiFilter, scratch: EffectiveShaderScratch): void {
+  const uniforms = nodeFilterUniforms(filter)
+  for (let index = 0; index < scratch.keys.length; index++) {
+    uniforms[scratch.keys[index]] = scratch.values[index]
+  }
+}
