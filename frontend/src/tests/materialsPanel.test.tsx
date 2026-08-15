@@ -423,3 +423,164 @@ describe('MaterialsPanel', () => {
     expect(screen.queryByText('Ink Wash')).not.toBeInTheDocument()
   })
 })
+
+describe('material definition panel', () => {
+  const WITH_SHADER: MaterialDefinition = {
+    ...RED,
+    shader_id: 'sh1',
+    parameters: [
+      { key: 'tint', kind: 'color', default: '#ff0000' },
+      { key: 'opacityMultiplier', kind: 'number', default: 1 },
+      { key: 'uIntensity', kind: 'float', default: 0.5 },
+    ],
+  }
+
+  function stubLibraries(
+    materials: MaterialDefinition[],
+    onPut?: (url: string, body: string) => Response | Promise<Response>,
+  ): void {
+    stubFetch((url, init) => {
+      if (url.includes('/api/materials/m1') && init.method === 'PUT') {
+        if (onPut) {
+          return Promise.resolve(onPut(url, init.body as string))
+        }
+        return Promise.reject(new Error('unexpected material PUT'))
+      }
+      if (url.includes('/api/materials')) {
+        return Promise.resolve(new Response(JSON.stringify(materials), { status: 200 }))
+      }
+      if (url.includes('/api/shaders')) {
+        return Promise.resolve(new Response(JSON.stringify([SHADER]), { status: 200 }))
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`))
+    })
+  }
+
+  it('opens the definition panel with the shader picker and parameter list when a material is selected', async () => {
+    stubLibraries([RED])
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByText('Red Slime')
+
+    await user.click(screen.getByRole('button', { name: 'Select Red Slime' }))
+
+    const panel = screen.getByRole('region', { name: 'Material definition' })
+    expect(panel).toHaveTextContent('Red Slime')
+    const picker = screen.getByRole('combobox', { name: 'Shader' })
+    expect(picker).toHaveValue('')
+    expect(screen.getByRole('option', { name: 'None' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Ink Wash (Compiled)' })).toBeInTheDocument()
+    expect(panel).toHaveTextContent('tint')
+    expect(panel).toHaveTextContent('color')
+    expect(panel).toHaveTextContent('opacityMultiplier')
+    expect(panel).toHaveTextContent('number')
+  })
+
+  it('assigns a shader to the material and shows its uniforms in the parameter list', async () => {
+    stubLibraries([RED], (_url, body) => {
+      expect(JSON.parse(body)).toEqual({ shader_id: 'sh1' })
+      return new Response(JSON.stringify(WITH_SHADER), { status: 200 })
+    })
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByText('Red Slime')
+    await user.click(screen.getByRole('button', { name: 'Select Red Slime' }))
+    const picker = screen.getByRole('combobox', { name: 'Shader' })
+
+    await user.selectOptions(picker, 'sh1')
+
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Shader' })).toHaveValue('sh1'))
+    const panel = screen.getByRole('region', { name: 'Material definition' })
+    expect(panel).toHaveTextContent('uIntensity')
+    expect(panel).toHaveTextContent('float')
+    expect(panel).toHaveTextContent('0.5')
+  })
+
+  it('removes the shader assignment and its uniforms when None is chosen', async () => {
+    stubLibraries([WITH_SHADER], (_url, body) => {
+      expect(JSON.parse(body)).toEqual({ shader_id: null })
+      return new Response(JSON.stringify(RED), { status: 200 })
+    })
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByText('Red Slime')
+    await user.click(screen.getByRole('button', { name: 'Select Red Slime' }))
+    const panel = screen.getByRole('region', { name: 'Material definition' })
+    expect(panel).toHaveTextContent('uIntensity')
+    const picker = screen.getByRole('combobox', { name: 'Shader' })
+    expect(picker).toHaveValue('sh1')
+
+    await user.selectOptions(picker, '')
+
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Shader' })).toHaveValue(''))
+    expect(screen.getByRole('region', { name: 'Material definition' })).not.toHaveTextContent(
+      'uIntensity',
+    )
+  })
+
+  it('warns when the assigned shader failed to compile', async () => {
+    gl.compileSuccess = false
+    gl.infoLog = 'ERROR: 0:3: broken'
+    stubLibraries([WITH_SHADER])
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByText('Red Slime')
+
+    await user.click(screen.getByRole('button', { name: 'Select Red Slime' }))
+
+    expect(screen.getByRole('option', { name: 'Ink Wash (Failed)' })).toBeInTheDocument()
+    expect(
+      screen.getByText('Shader failed to compile — the effect will not render.'),
+    ).toBeInTheDocument()
+  })
+
+  it('keeps the assignment visible when the shader no longer exists in the library', async () => {
+    stubLibraries([{ ...WITH_SHADER, shader_id: 'ghost' }])
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByText('Red Slime')
+
+    await user.click(screen.getByRole('button', { name: 'Select Red Slime' }))
+
+    const picker = screen.getByRole('combobox', { name: 'Shader' })
+    expect(picker).toHaveValue('ghost')
+    expect(screen.getByRole('option', { name: 'ghost' })).toBeInTheDocument()
+    expect(
+      screen.queryByText('Shader failed to compile — the effect will not render.'),
+    ).not.toBeInTheDocument()
+  })
+
+  it('disables the shader picker when the shader library is unavailable', async () => {
+    stubFetch((url) => {
+      if (url.includes('/api/materials')) {
+        return Promise.resolve(new Response(JSON.stringify([RED]), { status: 200 }))
+      }
+      return Promise.reject(new Error('connection refused'))
+    })
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByText('Red Slime')
+
+    await user.click(screen.getByRole('button', { name: 'Select Red Slime' }))
+
+    const picker = screen.getByRole('combobox', { name: 'Shader' })
+    expect(picker).toBeDisabled()
+    expect(
+      screen.getByText('Shader library unavailable — start the backend to assign shaders.'),
+    ).toBeInTheDocument()
+  })
+
+  it('closes the definition panel', async () => {
+    stubLibraries([RED])
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByText('Red Slime')
+    await user.click(screen.getByRole('button', { name: 'Select Red Slime' }))
+    expect(screen.getByRole('region', { name: 'Material definition' })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Close preview' }))
+
+    expect(screen.queryByRole('region', { name: 'Material definition' })).not.toBeInTheDocument()
+    expect(useMaterialLibraryStore.getState().selectedId).toBeNull()
+  })
+})

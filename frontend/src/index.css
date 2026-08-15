@@ -584,6 +584,94 @@ button:disabled {
   flex-direction: column;
 }
 
+.material-definition {
+  flex-shrink: 0;
+  max-height: 45%;
+  overflow: auto;
+  padding: 8px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+}
+
+.material-definition__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.material-definition__title {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.material-definition__field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.material-definition__label {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.material-definition__select {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 4px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.material-definition__notice {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--color-danger);
+}
+
+.material-definition__subtitle {
+  margin: 10px 0 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.material-definition__parameters {
+  margin: 0;
+}
+
+.material-definition__parameter {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 6px;
+  font-size: 11px;
+  padding: 1px 0;
+}
+
+.material-definition__parameter dt {
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.material-definition__parameter dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* ------------------------------------------------------------------ */
 /* Shader library                                                      */
 /* ------------------------------------------------------------------ */

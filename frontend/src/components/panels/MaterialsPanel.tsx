@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
-import type { MaterialDefinition } from '../../api'
+import type { ChangeEvent } from 'react'
+import type { MaterialDefinition, MaterialParameterDefault } from '../../api'
 import { DEFAULT_MATERIAL_DEFINITION_ID } from '../../engine/materialInstance'
 import { uniqueNodeName } from '../../engine/naming'
 import { resolveMaterial } from '../../engine/materialResolution'
+import type { ShaderCompileStatus } from '../../shaders/compiler'
 import { useMaterialLibraryStore } from '../../stores/materialLibraryStore'
+import { useShaderLibraryStore } from '../../stores/shaderLibraryStore'
 import { ShadersPanel } from './ShadersPanel'
 
 type MaterialsSectionId = 'materials' | 'shaders'
@@ -16,11 +19,104 @@ function uniqueMaterialName(base: string, existing: readonly MaterialDefinition[
   return uniqueNodeName(new Set(existing.map((definition) => definition.name)), base)
 }
 
+function shaderPickerLabel(status: ShaderCompileStatus | undefined): string {
+  if (!status) {
+    return 'Not compiled'
+  }
+  return status.status === 'Compiled' ? 'Compiled' : 'Failed'
+}
+
+function formatParameterDefault(value: MaterialParameterDefault): string {
+  if (Array.isArray(value)) {
+    return value.join(', ')
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'true' : 'false'
+  }
+  return String(value)
+}
+
+interface MaterialDefinitionPanelProps {
+  definition: MaterialDefinition
+  onClose: () => void
+}
+
+function MaterialDefinitionPanel({ definition, onClose }: MaterialDefinitionPanelProps) {
+  const shaders = useShaderLibraryStore((state) => state.definitions)
+  const shaderStatuses = useShaderLibraryStore((state) => state.compileStatus)
+  const shaderLibraryUnavailable = useShaderLibraryStore((state) => state.unavailable)
+  const assignShader = useMaterialLibraryStore((state) => state.assignShader)
+  const knownShader =
+    definition.shader_id !== null && shaders.some((shader) => shader.id === definition.shader_id)
+  const assignedStatus =
+    definition.shader_id !== null ? shaderStatuses[definition.shader_id] : undefined
+
+  const handleAssign = (event: ChangeEvent<HTMLSelectElement>) => {
+    void assignShader(definition.id, event.target.value || null)
+  }
+
+  return (
+    <section className="material-definition" aria-label="Material definition">
+      <header className="material-definition__header">
+        <h3 className="material-definition__title">{definition.name}</h3>
+        <button className="material-definition__close" onClick={onClose}>
+          Close preview
+        </button>
+      </header>
+      <div className="material-definition__field">
+        <label className="material-definition__label" htmlFor="material-shader-picker">
+          Shader
+        </label>
+        <select
+          id="material-shader-picker"
+          className="material-definition__select"
+          aria-label="Shader"
+          value={definition.shader_id ?? ''}
+          disabled={shaderLibraryUnavailable}
+          onChange={handleAssign}
+        >
+          <option value="">None</option>
+          {!knownShader && definition.shader_id !== null && (
+            <option value={definition.shader_id}>{definition.shader_id}</option>
+          )}
+          {shaders.map((shader) => (
+            <option key={shader.id} value={shader.id}>
+              {`${shader.name} (${shaderPickerLabel(shaderStatuses[shader.id])})`}
+            </option>
+          ))}
+        </select>
+      </div>
+      {shaderLibraryUnavailable && (
+        <p className="material-definition__notice">
+          Shader library unavailable — start the backend to assign shaders.
+        </p>
+      )}
+      {!shaderLibraryUnavailable && knownShader && assignedStatus?.status === 'Failed' && (
+        <p className="material-definition__notice">
+          Shader failed to compile — the effect will not render.
+        </p>
+      )}
+      <h4 className="material-definition__subtitle">Parameters</h4>
+      <dl className="material-definition__parameters">
+        {definition.parameters.map((parameter) => (
+          <div key={parameter.key} className="material-definition__parameter">
+            <dt>{parameter.key}</dt>
+            <dd>{parameter.kind}</dd>
+            <dd>{formatParameterDefault(parameter.default)}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  )
+}
+
 function MaterialsSection() {
   const definitions = useMaterialLibraryStore((state) => state.definitions)
   const loading = useMaterialLibraryStore((state) => state.loading)
   const unavailable = useMaterialLibraryStore((state) => state.unavailable)
+  const selectedId = useMaterialLibraryStore((state) => state.selectedId)
   const loadLibrary = useMaterialLibraryStore((state) => state.loadLibrary)
+  const loadShaders = useShaderLibraryStore((state) => state.loadLibrary)
   const selectMaterial = useMaterialLibraryStore((state) => state.selectMaterial)
   const createMaterial = useMaterialLibraryStore((state) => state.createMaterial)
   const renameMaterial = useMaterialLibraryStore((state) => state.renameMaterial)
@@ -33,6 +129,10 @@ function MaterialsSection() {
   useEffect(() => {
     void loadLibrary()
   }, [loadLibrary])
+
+  useEffect(() => {
+    void loadShaders()
+  }, [loadShaders])
 
   const handleCreate = () => {
     void createMaterial({ name: uniqueMaterialName('New Material', definitions) })
@@ -50,6 +150,7 @@ function MaterialsSection() {
   const filtered = definitions.filter((definition) =>
     definition.name.toLowerCase().includes(search.trim().toLowerCase()),
   )
+  const selected = definitions.find((definition) => definition.id === selectedId)
 
   return (
     <div className="materials-section">
@@ -171,6 +272,9 @@ function MaterialsSection() {
             )
           })}
         </ul>
+      )}
+      {selected && (
+        <MaterialDefinitionPanel definition={selected} onClose={() => selectMaterial(null)} />
       )}
     </div>
   )
