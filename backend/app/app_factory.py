@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.api import assets, health, materials, ping, projects
+from app.api import assets, health, materials, ping, projects, shaders
 from app.assets.importer import AssetImporter
 from app.assets.library import AssetLibrary
 from app.assets.pipeline import ImagePipeline
@@ -10,8 +10,9 @@ from app.config import Settings, load_settings
 from app.database import Database
 from app.errors import register_error_handlers
 from app.logging import RequestLoggingMiddleware
-from app.materials.library import MaterialLibrary
+from app.materials.library import MaterialLibrary, now_utc
 from app.projects.library import ProjectLibrary
+from app.shaders.library import ShaderLibrary
 
 
 class AppFactory:
@@ -34,6 +35,9 @@ class AppFactory:
         )
         app.state.asset_library = AssetLibrary(database, storage)
         app.state.material_library = MaterialLibrary(database)
+        shader_library = ShaderLibrary(database)
+        shader_library.ensure_seeded(now_utc())
+        app.state.shader_library = shader_library
         app.state.project_library = ProjectLibrary(database)
 
         app.add_middleware(RequestLoggingMiddleware)
@@ -42,6 +46,7 @@ class AppFactory:
         app.include_router(ping.router)
         app.include_router(assets.router, prefix="/api")
         app.include_router(materials.router, prefix="/api")
+        app.include_router(shaders.router, prefix="/api")
         app.include_router(projects.router, prefix="/api")
         app.mount(
             "/api/assets/originals",

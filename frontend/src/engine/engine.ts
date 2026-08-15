@@ -1,6 +1,7 @@
 import { Engine, toReadOnly } from './internal'
 import type { AssetDefinition } from './assetDefinition'
 import type { MaterialDefinition } from './materialDefinition'
+import type { ShaderDefinition } from './shaderDefinition'
 import type { EmbeddedAsset } from './embeddedAsset'
 import type { Project } from './project'
 import type { Scene } from './scene'
@@ -15,6 +16,7 @@ export interface EnginePublic {
   readonly project: Project | null
   readonly assetDefinitions: readonly AssetDefinition[]
   readonly materialDefinitions: readonly MaterialDefinition[]
+  readonly shaderDefinitions: readonly ShaderDefinition[]
   readonly embeddedAssets: readonly EmbeddedAsset[]
   readonly activeSlideId: string | null
   subscribe(listener: (event: EngineEvent) => void): Unsubscribe
@@ -26,6 +28,7 @@ export interface EnginePublic {
   getScene(sceneId: string): Scene
   getAssetDefinition(definitionId: string): AssetDefinition
   getMaterialDefinition(definitionId: string): MaterialDefinition
+  getShaderDefinition(definitionId: string): ShaderDefinition
   getEmbeddedAsset(definitionId: string): EmbeddedAsset | undefined
   embedAsset(asset: EmbeddedAsset): void
   getKeyframes(nodeId: string, property: AnimationProperty): readonly Keyframe[]

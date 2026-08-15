@@ -1,4 +1,4 @@
-import type { AssetDefinition, MaterialDefinition } from '../api'
+import type { AssetDefinition, MaterialDefinition, ShaderDefinition } from '../api'
 
 export interface AssetImported {
   readonly type: 'AssetImported'
@@ -35,6 +35,26 @@ export interface MaterialUpdated {
   readonly material: MaterialDefinition
 }
 
+export interface ShaderCreated {
+  readonly type: 'ShaderCreated'
+  readonly shader: ShaderDefinition
+}
+
+export interface ShaderRemoved {
+  readonly type: 'ShaderRemoved'
+  readonly id: string
+}
+
+export interface ShaderRenamed {
+  readonly type: 'ShaderRenamed'
+  readonly shader: ShaderDefinition
+}
+
+export interface ShaderUpdated {
+  readonly type: 'ShaderUpdated'
+  readonly shader: ShaderDefinition
+}
+
 export type LibraryEvent =
   | AssetImported
   | AssetDeleted
@@ -43,6 +63,10 @@ export type LibraryEvent =
   | MaterialRemoved
   | MaterialRenamed
   | MaterialUpdated
+  | ShaderCreated
+  | ShaderRemoved
+  | ShaderRenamed
+  | ShaderUpdated
 
 export type LibraryEventListener = (event: LibraryEvent) => void
 

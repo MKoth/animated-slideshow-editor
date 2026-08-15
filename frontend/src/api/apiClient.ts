@@ -48,6 +48,15 @@ export class ApiClient {
     return (await response.json()) as T
   }
 
+  async putForm<T>(path: string, formData: FormData): Promise<T> {
+    const response = await this.request(path, {
+      method: 'PUT',
+      body: formData,
+      headers: { Accept: 'application/json' },
+    })
+    return (await response.json()) as T
+  }
+
   async delete(path: string): Promise<void> {
     await this.request(path, { method: 'DELETE' })
   }

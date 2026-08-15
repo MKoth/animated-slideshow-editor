@@ -5,6 +5,7 @@ import { SlideManager } from './slideManager'
 import { NodeManager } from './nodeManager'
 import { AssetManager } from './assetManager'
 import { MaterialManager } from './materialManager'
+import { ShaderManager } from './shaderManager'
 import { AnimationManager } from './animationManager'
 import { AnimationEvaluator } from './animationEvaluator'
 import type { EvaluatedNodeScratch, EvaluatedNodeState } from './animationEvaluator'
@@ -12,6 +13,7 @@ import type { KeyframeMove, KeyframeMoveResult } from './animationManager'
 import type { AnimationProperty, Keyframe } from './animation'
 import { AssetDefinition } from './assetDefinition'
 import { MaterialDefinition } from './materialDefinition'
+import { ShaderDefinition } from './shaderDefinition'
 import type { EmbeddedAsset } from './embeddedAsset'
 import type { CreateProjectInput, Project } from './project'
 import type { Scene } from './scene'
@@ -33,6 +35,7 @@ export class Engine {
   readonly #scenes: SceneManager
   readonly #assets: AssetManager
   readonly #materials: MaterialManager
+  readonly #shaders: ShaderManager
   readonly #slides: SlideManager
   readonly #animations: AnimationManager
   readonly #evaluator: AnimationEvaluator
@@ -45,6 +48,7 @@ export class Engine {
     this.#scenes = new SceneManager(this.#nodes)
     this.#assets = new AssetManager(this.#nodes)
     this.#materials = new MaterialManager()
+    this.#shaders = new ShaderManager()
     this.#slides = new SlideManager(this.#bus, this.#projects, this.#scenes)
     this.#animations = new AnimationManager(
       this.#bus,
@@ -251,8 +255,16 @@ export class Engine {
     return this.#materials.register(definitionId, name)
   }
 
+  registerShaderDefinition(definitionId: string, name: string): ShaderDefinition {
+    return this.#shaders.register(definitionId, name)
+  }
+
   getMaterialDefinition(definitionId: string): MaterialDefinition {
     return this.#materials.getDefinition(definitionId)
+  }
+
+  getShaderDefinition(definitionId: string): ShaderDefinition {
+    return this.#shaders.getDefinition(definitionId)
   }
 
   getAssetDefinition(definitionId: string): AssetDefinition {
@@ -286,6 +298,10 @@ export class Engine {
 
   get materialDefinitions(): readonly MaterialDefinition[] {
     return this.#materials.definitions
+  }
+
+  get shaderDefinitions(): readonly ShaderDefinition[] {
+    return this.#shaders.definitions
   }
 
   createAssetInstance(
@@ -358,6 +374,9 @@ export function toReadOnly(engine: Engine): EnginePublic {
     get materialDefinitions() {
       return engine.materialDefinitions
     },
+    get shaderDefinitions() {
+      return engine.shaderDefinitions
+    },
     get embeddedAssets() {
       return engine.embeddedAssets
     },
@@ -373,6 +392,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getScene: (sceneId) => engine.getScene(sceneId),
     getAssetDefinition: (definitionId) => engine.getAssetDefinition(definitionId),
     getMaterialDefinition: (definitionId) => engine.getMaterialDefinition(definitionId),
+    getShaderDefinition: (definitionId) => engine.getShaderDefinition(definitionId),
     getEmbeddedAsset: (definitionId) => engine.getEmbeddedAsset(definitionId),
     embedAsset: (asset) => engine.embedAsset(asset),
     getKeyframes: (nodeId, property) => engine.getKeyframes(nodeId, property),
