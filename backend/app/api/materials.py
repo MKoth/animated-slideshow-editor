@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Request
 from app.materials.library import (
     MaterialLibrary,
     MaterialNotFoundError,
+    MaterialProtectedError,
     MaterialValidationError,
     now_utc,
 )
@@ -24,6 +25,10 @@ def _material_not_found(material_id: str) -> HTTPException:
 
 def _invalid_payload(message: str) -> HTTPException:
     return HTTPException(status_code=422, detail=message)
+
+
+def _protected(message: str) -> HTTPException:
+    return HTTPException(status_code=409, detail=message)
 
 
 @router.get("/materials", response_model=list[MaterialDefinitionOut])
@@ -97,3 +102,5 @@ def delete_material(request: Request, material_id: str) -> None:
         library.delete(material_id)
     except MaterialNotFoundError as exc:
         raise _material_not_found(material_id) from exc
+    except MaterialProtectedError as exc:
+        raise _protected(str(exc)) from exc

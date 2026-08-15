@@ -45,6 +45,23 @@ export function requireOpacity(value: unknown, what: string): number {
   return value
 }
 
+export function requireMaterialParameterKey(value: unknown, what: string): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`${what} must be a non-empty string`)
+  }
+  return value
+}
+
+export function requireMaterialOverrideValue(value: unknown, what: string): string | number {
+  if (typeof value === 'number') {
+    return requireFiniteNumber(value, what)
+  }
+  if (typeof value === 'string' && value !== '') {
+    return value
+  }
+  throw new Error(`${what} must be a non-empty string or a finite number`)
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

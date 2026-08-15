@@ -85,6 +85,16 @@ export interface VisibilityChanged {
   readonly nodeId: string
 }
 
+export interface MaterialAssigned {
+  readonly type: 'MaterialAssigned'
+  readonly nodeId: string
+}
+
+export interface MaterialParameterChanged {
+  readonly type: 'MaterialParameterChanged'
+  readonly nodeId: string
+}
+
 export interface KeyframeAdded {
   readonly type: 'KeyframeAdded'
   readonly nodeId: string
@@ -131,6 +141,8 @@ export type EngineEvent =
   | NodeOrderChanged
   | TransformChanged
   | VisibilityChanged
+  | MaterialAssigned
+  | MaterialParameterChanged
   | KeyframeAdded
   | KeyframeRemoved
   | KeyframeMoved

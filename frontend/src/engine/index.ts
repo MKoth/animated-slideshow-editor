@@ -24,6 +24,12 @@ export type {
 } from './components'
 export type { AssetDefinition } from './assetDefinition'
 export type { EmbeddedAsset } from './embeddedAsset'
+export {
+  DEFAULT_MATERIAL_DEFINITION_ID,
+  DEFAULT_MATERIAL_NAME,
+  defaultMaterial,
+} from './materialInstance'
+export type { MaterialInstance, MaterialOverrides, MaterialOverrideValue } from './materialInstance'
 export type {
   LessonJSON,
   LessonProjectJSON,
@@ -61,6 +67,9 @@ export {
   SetVisibilityCommand,
   RenameNodeCommand,
   SetOpacityCommand,
+  AssignMaterialCommand,
+  OverrideMaterialParameterCommand,
+  ClearMaterialOverrideCommand,
   CreateAssetInstanceCommand,
   DuplicateNodeCommand,
   ChangeZOrderCommand,
@@ -96,6 +105,12 @@ export type {
   RenameNodeParameters,
   SetOpacityInverse,
   SetOpacityParameters,
+  AssignMaterialInverse,
+  AssignMaterialParameters,
+  OverrideMaterialParameterInverse,
+  OverrideMaterialParameterParameters,
+  ClearMaterialOverrideInverse,
+  ClearMaterialOverrideParameters,
   CreateAssetInstanceInverse,
   CreateAssetInstanceParameters,
   DuplicateNodeInverse,

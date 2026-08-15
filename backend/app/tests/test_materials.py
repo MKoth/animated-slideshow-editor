@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.app_factory import AppFactory
 from app.config import Settings
-from app.materials.model import MaterialDefinition
+from app.materials.model import DEFAULT_MATERIAL_ID, MaterialDefinition
 
 BUILTIN_PARAMETERS = [
     {"key": "tint", "kind": "color", "default": "#ffffff"},
@@ -129,7 +129,8 @@ def test_list_returns_all_definitions_newest_first(client: TestClient) -> None:
 
     body = client.get("/api/materials").json()
 
-    assert [material["id"] for material in body] == [second["id"], first["id"]]
+    listed = [material["id"] for material in body if material["id"] != DEFAULT_MATERIAL_ID]
+    assert listed == [second["id"], first["id"]]
 
 
 def test_detail_returns_full_definition(client: TestClient) -> None:
@@ -288,6 +289,23 @@ def test_built_in_kind_is_enforced_on_create(client: TestClient) -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_list_includes_the_seeded_default_material(client: TestClient) -> None:
+    body = client.get("/api/materials").json()
+
+    default = next(material for material in body if material["id"] == DEFAULT_MATERIAL_ID)
+
+    assert default["name"] == "Default Material"
+    assert default["parameters"] == BUILTIN_PARAMETERS
+
+
+def test_delete_default_material_returns_meaningful_error(client: TestClient) -> None:
+    response = client.delete(f"/api/materials/{DEFAULT_MATERIAL_ID}")
+
+    assert response.status_code == 409
+    assert "default" in response.json()["detail"].lower()
+    assert client.get(f"/api/materials/{DEFAULT_MATERIAL_ID}").status_code == 200
 
 
 def test_delete_removes_the_definition(client: TestClient) -> None:

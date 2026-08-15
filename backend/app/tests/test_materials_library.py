@@ -2,11 +2,13 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from app.app_factory import AppFactory
 from app.config import Settings
 from app.database import Database
-from app.materials.library import MaterialNotFoundError
-from app.materials.model import MaterialDefinition
+from app.materials.library import MaterialNotFoundError, MaterialProtectedError
+from app.materials.model import DEFAULT_MATERIAL_ID, MaterialDefinition
 
 
 def naive_utc(year: int, month: int, day: int) -> datetime:
@@ -63,7 +65,73 @@ def test_delete_removes_only_the_target_material(client: TestClient, settings: S
 
     assert response.status_code == 204
     remaining = client.get("/api/materials").json()
-    assert [material["id"] for material in remaining] == [second]
+    remaining_ids = [
+        material["id"] for material in remaining if material["id"] != DEFAULT_MATERIAL_ID
+    ]
+    assert remaining_ids == [second]
     with database.session() as session:
         assert session.get(MaterialDefinition, first) is None
         assert session.get(MaterialDefinition, second) is not None
+
+
+def test_ensure_seeded_creates_the_default_material(settings: Settings) -> None:
+    app = AppFactory(settings).create()
+    database = app.state.database
+
+    with database.session() as session:
+        stored = session.get(MaterialDefinition, DEFAULT_MATERIAL_ID)
+
+    assert stored is not None
+    assert stored.name == "Default Material"
+    assert stored.tags == ["built-in", "default"]
+    assert stored.parameters == [
+        {"key": "tint", "kind": "color", "default": "#ffffff"},
+        {"key": "opacityMultiplier", "kind": "number", "default": 1.0},
+    ]
+
+
+def test_seeding_is_idempotent(settings: Settings) -> None:
+    AppFactory(settings).create()
+    AppFactory(settings).create()
+    database = Database(settings.database_url)
+
+    with database.session() as session:
+        count = len(
+            list(
+                session.scalars(
+                    select(MaterialDefinition).where(MaterialDefinition.id == DEFAULT_MATERIAL_ID)
+                )
+            )
+        )
+
+    assert count == 1
+
+
+def test_delete_default_material_raises_protected(settings: Settings) -> None:
+    library = AppFactory(settings).create().state.material_library
+
+    try:
+        library.delete(DEFAULT_MATERIAL_ID)
+    except MaterialProtectedError:
+        pass
+    else:
+        raise AssertionError("expected MaterialProtectedError")
+
+    database = Database(settings.database_url)
+    with database.session() as session:
+        assert session.get(MaterialDefinition, DEFAULT_MATERIAL_ID) is not None
+
+
+def test_default_material_can_still_be_renamed(settings: Settings) -> None:
+    library = AppFactory(settings).create().state.material_library
+
+    updated = library.update(
+        DEFAULT_MATERIAL_ID,
+        name="My Default",
+        description=None,
+        tags=None,
+        parameters=None,
+        now=naive_utc(2026, 2, 1),
+    )
+
+    assert updated.name == "My Default"

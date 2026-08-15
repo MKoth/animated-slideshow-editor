@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import NAMESPACE_URL, uuid5
 
 from sqlalchemy import JSON, DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -12,6 +13,15 @@ BUILTIN_OPACITY: dict[str, object] = {
     "default": 1.0,
 }
 BUILTINS = [BUILTIN_TINT, BUILTIN_OPACITY]
+
+DEFAULT_MATERIAL_ID: str = str(
+    uuid5(NAMESPACE_URL, "animated-slideshow-editor/builtin-material/default")
+)
+DEFAULT_MATERIAL_NAME = "Default Material"
+DEFAULT_MATERIAL_DESCRIPTION = (
+    "The default material every node starts with: tint white, opacity multiplier 1, no shader."
+)
+DEFAULT_MATERIAL_TAGS = ["built-in", "default"]
 
 
 def _builtin_defaults() -> list[dict[str, object]]:

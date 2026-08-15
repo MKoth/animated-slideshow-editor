@@ -8,7 +8,15 @@ from uuid import uuid4
 from sqlalchemy import desc, select
 
 from app.database import Database
-from app.materials.model import BUILTINS, MaterialDefinition
+from app.materials.model import (
+    BUILTINS,
+    DEFAULT_MATERIAL_DESCRIPTION,
+    DEFAULT_MATERIAL_ID,
+    DEFAULT_MATERIAL_NAME,
+    DEFAULT_MATERIAL_TAGS,
+    MaterialDefinition,
+    _builtin_defaults,
+)
 from app.materials.schemas import MaterialParameter, parameter_from_stored
 
 _COLOR_PATTERN = re.compile(r"^#[0-9a-f]{6}$", flags=re.IGNORECASE)
@@ -23,11 +31,33 @@ class MaterialValidationError(ValueError):
     """Raised when a material payload is semantically invalid."""
 
 
+class MaterialProtectedError(ValueError):
+    """Raised when the protected default material cannot be deleted."""
+
+
 class MaterialLibrary:
     """I own the persistent library of material definitions."""
 
     def __init__(self, database: Database) -> None:
         self._database = database
+
+    def ensure_seeded(self, now: datetime) -> None:
+        """Create the protected default material, only when it is still missing."""
+        with self._database.session() as session:
+            if session.get(MaterialDefinition, DEFAULT_MATERIAL_ID) is not None:
+                return
+            session.add(
+                MaterialDefinition(
+                    id=DEFAULT_MATERIAL_ID,
+                    name=DEFAULT_MATERIAL_NAME,
+                    description=DEFAULT_MATERIAL_DESCRIPTION,
+                    tags=list(DEFAULT_MATERIAL_TAGS),
+                    created_at=now,
+                    updated_at=now,
+                    parameters=_builtin_defaults(),
+                )
+            )
+            session.commit()
 
     def list_all(self) -> list[MaterialDefinition]:
         statement = select(MaterialDefinition).order_by(
@@ -116,6 +146,10 @@ class MaterialLibrary:
             definition = session.get(MaterialDefinition, material_id)
             if definition is None:
                 raise MaterialNotFoundError(material_id)
+            if material_id == DEFAULT_MATERIAL_ID:
+                raise MaterialProtectedError(
+                    f"material {definition.name!r} is the default material and cannot be deleted"
+                )
             session.delete(definition)
             session.commit()
 

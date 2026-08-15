@@ -17,7 +17,9 @@ describe('material definitions', () => {
 
     engine.registerMaterialDefinition('mat-1', 'Red Slime Updated')
 
-    expect(engine.materialDefinitions).toHaveLength(1)
+    expect(
+      engine.materialDefinitions.filter((definition) => definition.id === 'mat-1'),
+    ).toHaveLength(1)
     expect(engine.getMaterialDefinition('mat-1').name).toBe('Red Slime Updated')
   })
 

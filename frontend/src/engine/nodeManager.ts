@@ -11,7 +11,14 @@ import {
 import type { Transform } from './transform'
 import { identityTransform, normalizeRotation } from './transform'
 import type { NodeComponents } from './components'
-import { requireNonEmpty, requireOpacity } from './guards'
+import {
+  requireMaterialOverrideValue,
+  requireMaterialParameterKey,
+  requireNonEmpty,
+  requireOpacity,
+} from './guards'
+import type { MaterialOverrideValue } from './materialInstance'
+import { requireMaterialOverridePresent } from './materialInstance'
 
 export interface CreateNodeOptions {
   readonly id?: string
@@ -179,6 +186,33 @@ export class NodeManager {
     requireOpacity(opacity, 'Opacity')
     node.opacity = opacity
     this.#bus.emit({ type: 'OpacityChanged', nodeId })
+  }
+
+  assignMaterial(nodeId: string, materialDefinitionId: string): void {
+    const node = this.getById(nodeId)
+    node.material = { materialDefinitionId, overrides: {} }
+    this.#bus.emit({ type: 'MaterialAssigned', nodeId })
+  }
+
+  overrideMaterialParameter(nodeId: string, parameter: string, value: MaterialOverrideValue): void {
+    const node = this.getById(nodeId)
+    requireMaterialParameterKey(parameter, 'Material parameter key')
+    requireMaterialOverrideValue(value, `Material parameter "${parameter}" value`)
+    node.material = {
+      ...node.material,
+      overrides: { ...node.material.overrides, [parameter]: value },
+    }
+    this.#bus.emit({ type: 'MaterialParameterChanged', nodeId })
+  }
+
+  clearMaterialOverride(nodeId: string, parameter: string): void {
+    const node = this.getById(nodeId)
+    requireMaterialParameterKey(parameter, 'Material parameter key')
+    requireMaterialOverridePresent(node.material, parameter, nodeId)
+    const overrides = { ...node.material.overrides }
+    delete overrides[parameter]
+    node.material = { ...node.material, overrides }
+    this.#bus.emit({ type: 'MaterialParameterChanged', nodeId })
   }
 
   reorderNode(nodeId: string, index: number): void {

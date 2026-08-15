@@ -47,6 +47,18 @@ export { RenameNodeCommand } from './renameNodeCommand'
 export type { RenameNodeInverse, RenameNodeParameters } from './renameNodeCommand'
 export { SetOpacityCommand } from './setOpacityCommand'
 export type { SetOpacityInverse, SetOpacityParameters } from './setOpacityCommand'
+export { AssignMaterialCommand } from './assignMaterialCommand'
+export type { AssignMaterialInverse, AssignMaterialParameters } from './assignMaterialCommand'
+export { ClearMaterialOverrideCommand } from './clearMaterialOverrideCommand'
+export type {
+  ClearMaterialOverrideInverse,
+  ClearMaterialOverrideParameters,
+} from './clearMaterialOverrideCommand'
+export { OverrideMaterialParameterCommand } from './overrideMaterialParameterCommand'
+export type {
+  OverrideMaterialParameterInverse,
+  OverrideMaterialParameterParameters,
+} from './overrideMaterialParameterCommand'
 export { CreateAssetInstanceCommand } from './createAssetInstanceCommand'
 export type {
   CreateAssetInstanceInverse,

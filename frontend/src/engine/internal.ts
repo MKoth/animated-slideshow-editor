@@ -14,6 +14,8 @@ import type { AnimationProperty, Keyframe } from './animation'
 import { AssetDefinition } from './assetDefinition'
 import { MaterialDefinition } from './materialDefinition'
 import { ShaderDefinition } from './shaderDefinition'
+import { DEFAULT_MATERIAL_DEFINITION_ID, DEFAULT_MATERIAL_NAME } from './materialInstance'
+import type { MaterialOverrideValue } from './materialInstance'
 import type { EmbeddedAsset } from './embeddedAsset'
 import type { CreateProjectInput, Project } from './project'
 import type { Scene } from './scene'
@@ -48,6 +50,7 @@ export class Engine {
     this.#scenes = new SceneManager(this.#nodes)
     this.#assets = new AssetManager(this.#nodes)
     this.#materials = new MaterialManager()
+    this.#materials.register(DEFAULT_MATERIAL_DEFINITION_ID, DEFAULT_MATERIAL_NAME)
     this.#shaders = new ShaderManager()
     this.#slides = new SlideManager(this.#bus, this.#projects, this.#scenes)
     this.#animations = new AnimationManager(
@@ -237,6 +240,19 @@ export class Engine {
 
   setOpacity(nodeId: string, opacity: number): void {
     this.#nodes.setOpacity(nodeId, opacity)
+  }
+
+  assignMaterial(nodeId: string, materialDefinitionId: string): void {
+    this.#materials.getDefinition(materialDefinitionId)
+    this.#nodes.assignMaterial(nodeId, materialDefinitionId)
+  }
+
+  overrideMaterialParameter(nodeId: string, parameter: string, value: MaterialOverrideValue): void {
+    this.#nodes.overrideMaterialParameter(nodeId, parameter, value)
+  }
+
+  clearMaterialOverride(nodeId: string, parameter: string): void {
+    this.#nodes.clearMaterialOverride(nodeId, parameter)
   }
 
   reorderNode(nodeId: string, index: number): void {

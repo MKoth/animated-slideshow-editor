@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { MaterialDefinition } from '../api'
 import { registerMaterialLibrarySync } from '../app/librarySync'
 import { MaterialLibrarySync } from '../engine/materialLibrarySync'
+import type { MaterialDefinition as EngineMaterialDefinition } from '../engine/materialDefinition'
 import { createEngine } from '../engine/internal'
+import { DEFAULT_MATERIAL_DEFINITION_ID } from '../engine/materialInstance'
 import { useMaterialLibraryStore } from '../stores/materialLibraryStore'
 
 const RED_SLIME: MaterialDefinition = {
@@ -24,6 +26,14 @@ function setLibrary(definitions: MaterialDefinition[]): void {
   useMaterialLibraryStore.setState({ definitions })
 }
 
+function libraryDefinitions(
+  engine: ReturnType<typeof createEngine>,
+): readonly EngineMaterialDefinition[] {
+  return engine.materialDefinitions.filter(
+    (definition) => definition.id !== DEFAULT_MATERIAL_DEFINITION_ID,
+  )
+}
+
 beforeEach(() => {
   useMaterialLibraryStore.setState({ definitions: [] })
 })
@@ -37,7 +47,7 @@ describe('material library sync', () => {
     const dispose = registerMaterialLibrarySync(sync)
     dispose()
 
-    expect(engine.materialDefinitions.map((definition) => definition.name)).toEqual([
+    expect(libraryDefinitions(engine).map((definition) => definition.name)).toEqual([
       'Red Slime',
       'Blue Slime',
     ])
@@ -51,7 +61,7 @@ describe('material library sync', () => {
 
     setLibrary([RED_SLIME])
 
-    expect(engine.materialDefinitions).toHaveLength(1)
+    expect(libraryDefinitions(engine)).toHaveLength(1)
     expect(engine.getMaterialDefinition('mat-1').name).toBe('Red Slime')
   })
 
@@ -72,7 +82,7 @@ describe('material library sync', () => {
 
     setLibrary([BLUE_SLIME])
 
-    expect(engine.materialDefinitions.map((definition) => definition.id)).toEqual([
+    expect(libraryDefinitions(engine).map((definition) => definition.id)).toEqual([
       'mat-1',
       'mat-2',
     ])
@@ -86,6 +96,6 @@ describe('material library sync', () => {
 
     setLibrary([RED_SLIME])
 
-    expect(engine.materialDefinitions).toHaveLength(0)
+    expect(libraryDefinitions(engine)).toHaveLength(0)
   })
 })
