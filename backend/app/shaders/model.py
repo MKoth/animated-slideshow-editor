@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import NAMESPACE_URL, uuid5
 
-from sqlalchemy import JSON, Boolean, DateTime, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.model import Base
@@ -65,11 +65,11 @@ void main() {
 GRADIENT_SOURCE = """#version 300 es
 precision highp float;
 in vec2 vUv;
+uniform vec3 uStartColor;
+uniform vec3 uEndColor;
 out vec4 fragColor;
 void main() {
-  vec3 top = vec3(0.0, 0.25, 0.5);
-  vec3 bottom = vec3(0.9, 0.9, 1.0);
-  fragColor = vec4(mix(bottom, top, vUv.y), 1.0);
+  fragColor = vec4(mix(uEndColor, uStartColor, vUv.y), 1.0);
 }
 """
 
@@ -82,6 +82,7 @@ BUILTIN_SHADERS: list[dict[str, object]] = [
         "description": "Renders the texture in shades of gray.",
         "tags": ["built-in", "color"],
         "source": GRAYSCALE_SOURCE,
+        "seed_version": 1,
     },
     {
         "id": str(uuid5(NAMESPACE_URL, "animated-slideshow-editor/builtin-shader/sepia")),
@@ -89,6 +90,7 @@ BUILTIN_SHADERS: list[dict[str, object]] = [
         "description": "Applies a warm sepia tone to the texture.",
         "tags": ["built-in", "color"],
         "source": SEPIA_SOURCE,
+        "seed_version": 1,
     },
     {
         "id": str(uuid5(NAMESPACE_URL, "animated-slideshow-editor/builtin-shader/glow")),
@@ -96,6 +98,7 @@ BUILTIN_SHADERS: list[dict[str, object]] = [
         "description": "Brightens luminous areas for a soft glow.",
         "tags": ["built-in", "color"],
         "source": GLOW_SOURCE,
+        "seed_version": 1,
     },
     {
         "id": str(uuid5(NAMESPACE_URL, "animated-slideshow-editor/builtin-shader/blur")),
@@ -103,13 +106,19 @@ BUILTIN_SHADERS: list[dict[str, object]] = [
         "description": "Smooths the texture with a nine-tap box blur.",
         "tags": ["built-in", "blur"],
         "source": BLUR_SOURCE,
+        "seed_version": 1,
     },
     {
         "id": str(uuid5(NAMESPACE_URL, "animated-slideshow-editor/builtin-shader/gradient")),
         "name": "Gradient",
-        "description": "Renders a vertical gradient without sampling a texture.",
+        "description": "Renders a vertical gradient with configurable start and end colors.",
         "tags": ["built-in", "color"],
         "source": GRADIENT_SOURCE,
+        "default_uniforms": [
+            {"key": "uStartColor", "kind": "vec3", "default": [0.0, 0.25, 0.5]},
+            {"key": "uEndColor", "kind": "vec3", "default": [0.9, 0.9, 1.0]},
+        ],
+        "seed_version": 2,
     },
 ]
 
@@ -130,3 +139,4 @@ class ShaderDefinition(Base):
         JSON, nullable=False, default=list
     )
     is_builtin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    seed_version: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -38,6 +38,20 @@ class ShaderProtectedError(ValueError):
     """Raised when a protected built-in shader cannot be deleted."""
 
 
+def _builtin_row_fields(builtin: dict[str, object]) -> dict[str, object]:
+    """The canonical field values a built-in definition is seeded with."""
+    return {
+        "name": str(builtin["name"]),
+        "description": str(builtin["description"]),
+        "tags": list(cast(list[str], builtin["tags"])),
+        "source": str(builtin["source"]),
+        "default_uniforms": list(
+            cast(list[dict[str, object]], builtin.get("default_uniforms", []))
+        ),
+        "seed_version": int(cast(int, builtin.get("seed_version", 1))),
+    }
+
+
 class ShaderLibrary:
     """I own the persistent library of shader definitions."""
 
@@ -45,24 +59,38 @@ class ShaderLibrary:
         self._database = database
 
     def ensure_seeded(self, now: datetime) -> None:
-        """Seed the five protected built-ins, creating only the ones still missing."""
+        """Seed the five protected built-ins.
+
+        Creates missing built-ins; a built-in whose recorded seed_version is
+        behind the canonical version is upgraded in place (source and uniform
+        defaults replaced). User re-uploads to a current built-in survive —
+        the version is only bumped when the canonical definition changes.
+        """
         with self._database.session() as session:
             for builtin in BUILTIN_SHADERS:
                 shader_id = str(builtin["id"])
-                if session.get(ShaderDefinition, shader_id) is not None:
-                    continue
-                session.add(
-                    ShaderDefinition(
-                        id=shader_id,
-                        name=str(builtin["name"]),
-                        description=str(builtin["description"]),
-                        tags=list(cast(list[str], builtin["tags"])),
-                        created_at=now,
-                        updated_at=now,
-                        source=str(builtin["source"]),
-                        is_builtin=True,
+                seed_version = int(cast(int, builtin.get("seed_version", 1)))
+                definition = session.get(ShaderDefinition, shader_id)
+                if definition is None:
+                    session.add(
+                        ShaderDefinition(
+                            id=shader_id,
+                            created_at=now,
+                            updated_at=now,
+                            is_builtin=True,
+                            **_builtin_row_fields(builtin),
+                        )
                     )
-                )
+                elif definition.seed_version != seed_version:
+                    definition.name = str(builtin["name"])
+                    definition.description = str(builtin["description"])
+                    definition.tags = list(cast(list[str], builtin["tags"]))
+                    definition.source = str(builtin["source"])
+                    definition.default_uniforms = list(
+                        cast(list[dict[str, object]], builtin.get("default_uniforms", []))
+                    )
+                    definition.seed_version = seed_version
+                    definition.updated_at = now
             session.commit()
 
     def list_all(self) -> list[ShaderDefinition]:

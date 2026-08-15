@@ -10,7 +10,12 @@ from app.shaders.library import (
     ShaderValidationError,
     now_utc,
 )
-from app.shaders.model import BUILTIN_SHADER_NAMES, ShaderDefinition
+from app.shaders.model import (
+    BUILTIN_SHADER_NAMES,
+    BUILTIN_SHADERS,
+    GRADIENT_SOURCE,
+    ShaderDefinition,
+)
 
 FRAGMENT_SOURCE = """#version 300 es
 precision highp float;
@@ -76,11 +81,65 @@ def test_seeded_builtins_are_fragment_shaders_sampling_u_texture(settings: Setti
     for definition in library.list_all():
         assert "out vec4" in definition.source
         assert definition.is_builtin is True
-        assert definition.default_uniforms == []
         if definition.name != "Gradient":
             assert "uniform sampler2D uTexture;" in definition.source
+            assert definition.default_uniforms == []
         else:
             assert "uniform sampler2D uTexture;" not in definition.source
+
+
+def test_gradient_seeds_parameterized_uniforms_with_defaults(settings: Settings) -> None:
+    library = create_library(settings)
+
+    gradient = next(
+        definition for definition in library.list_all() if definition.name == "Gradient"
+    )
+
+    assert "uniform vec3 uStartColor;" in gradient.source
+    assert "uniform vec3 uEndColor;" in gradient.source
+    assert gradient.default_uniforms == [
+        {"key": "uStartColor", "kind": "vec3", "default": [0.0, 0.25, 0.5]},
+        {"key": "uEndColor", "kind": "vec3", "default": [0.9, 0.9, 1.0]},
+    ]
+    assert gradient.seed_version == 2
+
+
+def test_seed_upgrades_a_stale_builtin_in_place(settings: Settings) -> None:
+    gradient_id = next(
+        builtin["id"] for builtin in BUILTIN_SHADERS if builtin["name"] == "Gradient"
+    )
+    database = Database(settings.database_url)
+    create_library(settings)
+    with database.session() as session:
+        definition = session.get(ShaderDefinition, str(gradient_id))
+        assert definition is not None
+        definition.source = "legacy constant-only source"
+        definition.default_uniforms = []
+        definition.seed_version = None
+        session.commit()
+
+    library = create_library(settings)
+
+    gradient = library.get(str(gradient_id))
+    assert gradient.source == GRADIENT_SOURCE
+    assert gradient.default_uniforms == [
+        {"key": "uStartColor", "kind": "vec3", "default": [0.0, 0.25, 0.5]},
+        {"key": "uEndColor", "kind": "vec3", "default": [0.9, 0.9, 1.0]},
+    ]
+    assert gradient.seed_version == 2
+
+
+def test_seed_leaves_a_current_builtin_untouched_even_after_reupload(settings: Settings) -> None:
+    library = create_library(settings)
+    gradient = next(
+        definition for definition in library.list_all() if definition.name == "Gradient"
+    )
+    library.reupload(gradient.id, "user-reuploaded source", now=now_utc())
+
+    library = create_library(settings)
+
+    definition = library.get(gradient.id)
+    assert definition.source == "user-reuploaded source"
 
 
 def test_get_returns_the_seeded_definition(settings: Settings) -> None:

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ShaderDefinition } from '../api'
@@ -288,7 +288,7 @@ describe('ShadersPanel selection and preview panel', () => {
         source: SOURCE_WITH_UNIFORMS,
         default_uniforms: [
           { key: 'uIntensity', kind: 'float', default: 0.5 },
-          { key: 'uTint', kind: 'vec3', default: [1, 0, 0] },
+          { key: 'uColor', kind: 'vec3', default: [1, 0, 0] },
         ],
       }),
     ])
@@ -298,12 +298,9 @@ describe('ShadersPanel selection and preview panel', () => {
     await user.click(screen.getByRole('button', { name: 'Select Ink Wash' }))
 
     const preview = screen.getByRole('region', { name: 'Shader preview' })
-    expect(preview).toHaveTextContent('uIntensity')
-    expect(preview).toHaveTextContent('float')
-    expect(preview).toHaveTextContent('0.5')
-    expect(preview).toHaveTextContent('uTint')
-    expect(preview).toHaveTextContent('vec3')
-    expect(preview).toHaveTextContent('1, 0, 0')
+    expect(preview).toHaveTextContent('Uniform Defaults')
+    expect(screen.getByLabelText('uIntensity')).toHaveValue(0.5)
+    expect(screen.getByLabelText('uColor')).toBeInTheDocument()
   })
 
   it('shows the compile status and error list for a failed shader in the preview panel', async () => {
@@ -475,6 +472,192 @@ describe('ShadersPanel import and re-upload', () => {
     expect(screen.getByRole('region', { name: 'Shader preview' })).not.toHaveTextContent(
       'Line 3: broken',
     )
+  })
+})
+
+describe('ShadersPanel uniform default editing', () => {
+  function stubUniformsUpdate(
+    original: ShaderDefinition,
+    updated: ShaderDefinition,
+    expectBody?: (body: unknown) => void,
+  ): void {
+    stubFetch((url, init) => {
+      if (url.includes('/api/shaders/s1/uniforms') && init.method === 'PUT') {
+        if (expectBody) {
+          expectBody(JSON.parse(init.body as string))
+        }
+        return Promise.resolve(new Response(JSON.stringify(updated), { status: 200 }))
+      }
+      if (url.includes('/api/shaders')) {
+        return Promise.resolve(new Response(JSON.stringify([original]), { status: 200 }))
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`))
+    })
+  }
+
+  const WITH_DEFAULTS = makeShader({
+    id: 's1',
+    source: SOURCE_WITH_UNIFORMS,
+    default_uniforms: [
+      { key: 'uIntensity', kind: 'float', default: 0.5 },
+      { key: 'uTint', kind: 'vec3', default: [1, 0, 0] },
+      { key: 'uEnabled', kind: 'bool', default: false },
+    ],
+  })
+
+  async function renderAndSelect(): Promise<ReturnType<typeof userEvent.setup>> {
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByText('Ink Wash')
+    await user.click(screen.getByRole('button', { name: 'Select Ink Wash' }))
+    return user
+  }
+
+  it('edits a numeric uniform default and persists the full uniform list', async () => {
+    const updated = makeShader({
+      ...WITH_DEFAULTS,
+      default_uniforms: [
+        { key: 'uIntensity', kind: 'float', default: 0.9 },
+        { key: 'uTint', kind: 'vec3', default: [1, 0, 0] },
+        { key: 'uEnabled', kind: 'bool', default: false },
+      ],
+    })
+    stubUniformsUpdate(WITH_DEFAULTS, updated, (body) => {
+      expect((body as { default_uniforms: unknown }).default_uniforms).toEqual([
+        { key: 'uIntensity', kind: 'float', default: 0.9 },
+        { key: 'uTint', kind: 'vec3', default: [1, 0, 0] },
+        { key: 'uEnabled', kind: 'bool', default: false },
+      ])
+    })
+    const user = await renderAndSelect()
+
+    const input = screen.getByLabelText('uIntensity')
+    await user.clear(input)
+    await user.type(input, '0.9{Enter}')
+
+    await waitFor(() => expect(screen.getByLabelText('uIntensity')).toHaveValue(0.9))
+  })
+
+  it('edits a color vector default with the color picker', async () => {
+    const original = makeShader({
+      id: 's1',
+      default_uniforms: [
+        { key: 'uStartColor', kind: 'vec3', default: [0, 0.25, 0.5] },
+        { key: 'uEndColor', kind: 'vec3', default: [0.9, 0.9, 1.0] },
+      ],
+    })
+    const updated = makeShader({
+      ...original,
+      default_uniforms: [
+        { key: 'uStartColor', kind: 'vec3', default: [1, 0, 0] },
+        { key: 'uEndColor', kind: 'vec3', default: [0.9, 0.9, 1.0] },
+      ],
+    })
+    stubUniformsUpdate(original, updated, (body) => {
+      expect((body as { default_uniforms: unknown }).default_uniforms).toEqual([
+        { key: 'uStartColor', kind: 'vec3', default: [1, 0, 0] },
+        { key: 'uEndColor', kind: 'vec3', default: [0.9, 0.9, 1.0] },
+      ])
+    })
+    await renderAndSelect()
+
+    fireEvent.change(screen.getByLabelText('uStartColor'), { target: { value: '#ff0000' } })
+
+    await waitFor(() => expect(screen.getByLabelText('uStartColor')).toHaveValue('#ff0000'))
+  })
+
+  it('toggles a boolean uniform default', async () => {
+    const updated = makeShader({
+      ...WITH_DEFAULTS,
+      default_uniforms: [
+        { key: 'uIntensity', kind: 'float', default: 0.5 },
+        { key: 'uTint', kind: 'vec3', default: [1, 0, 0] },
+        { key: 'uEnabled', kind: 'bool', default: true },
+      ],
+    })
+    stubUniformsUpdate(WITH_DEFAULTS, updated, (body) => {
+      expect((body as { default_uniforms: unknown }).default_uniforms).toEqual([
+        { key: 'uIntensity', kind: 'float', default: 0.5 },
+        { key: 'uTint', kind: 'vec3', default: [1, 0, 0] },
+        { key: 'uEnabled', kind: 'bool', default: true },
+      ])
+    })
+    const user = await renderAndSelect()
+
+    await user.click(screen.getByLabelText('uEnabled'))
+
+    await waitFor(() => expect(screen.getByLabelText('uEnabled')).toBeChecked())
+  })
+
+  it('keeps sampler2D uniforms read-only', async () => {
+    const original = makeShader({
+      id: 's1',
+      default_uniforms: [{ key: 'uMask', kind: 'sampler2D', default: null }],
+    })
+    stubLibrary([original])
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByText('Ink Wash')
+    await user.click(screen.getByRole('button', { name: 'Select Ink Wash' }))
+
+    const preview = screen.getByRole('region', { name: 'Shader preview' })
+    expect(preview).toHaveTextContent('uMask')
+    expect(preview).toHaveTextContent('sampler2D')
+    expect(screen.queryByLabelText('uMask')).not.toBeInTheDocument()
+  })
+
+  it('preserves persisted sampler defaults when editing another uniform', async () => {
+    const original = makeShader({
+      id: 's1',
+      default_uniforms: [
+        { key: 'uIntensity', kind: 'float', default: 0.5 },
+        { key: 'uMask', kind: 'sampler2D', default: '' },
+      ],
+    })
+    const updated = makeShader({
+      ...original,
+      default_uniforms: [
+        { key: 'uIntensity', kind: 'float', default: 0.9 },
+        { key: 'uMask', kind: 'sampler2D', default: '' },
+      ],
+    })
+    stubUniformsUpdate(original, updated, (body) => {
+      expect((body as { default_uniforms: unknown }).default_uniforms).toEqual([
+        { key: 'uIntensity', kind: 'float', default: 0.9 },
+        { key: 'uMask', kind: 'sampler2D', default: '' },
+      ])
+    })
+    const user = await renderAndSelect()
+
+    const input = screen.getByLabelText('uIntensity')
+    await user.clear(input)
+    await user.type(input, '0.9{Enter}')
+
+    await waitFor(() => expect(screen.getByLabelText('uIntensity')).toHaveValue(0.9))
+  })
+
+  it('updates the mini-render with the edited defaults', async () => {
+    const updated = makeShader({
+      ...WITH_DEFAULTS,
+      default_uniforms: [
+        { key: 'uIntensity', kind: 'float', default: 0.9 },
+        { key: 'uTint', kind: 'vec3', default: [1, 0, 0] },
+        { key: 'uEnabled', kind: 'bool', default: false },
+      ],
+    })
+    stubUniformsUpdate(WITH_DEFAULTS, updated)
+    const user = await renderAndSelect()
+
+    const input = screen.getByLabelText('uIntensity')
+    await user.clear(input)
+    await user.type(input, '0.9{Enter}')
+
+    const app = await waitForStageApp()
+    const layer = previewLayer(app)
+    await waitFor(() => {
+      const filter = previewSprite(layer, 's1')?.filters[0]
+      expect((filter?.resources.uniforms.uniforms as Record<string, unknown>).uIntensity).toBe(0.9)
+    })
   })
 })
 

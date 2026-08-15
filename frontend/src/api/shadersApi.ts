@@ -1,6 +1,6 @@
 import { ApiClient } from './apiClient'
 
-export type ShaderUniformDefault = string | number | boolean | number[] | null
+export type ShaderUniformDefault = string | number | boolean | readonly number[] | null
 
 export interface ShaderUniformInput {
   key: string

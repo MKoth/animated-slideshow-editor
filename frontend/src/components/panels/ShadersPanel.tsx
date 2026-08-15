@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
-import type { ShaderDefinition, ShaderUniformDefault } from '../../api'
+import type { ShaderDefinition, ShaderUniformDefault, ShaderUniformInput } from '../../api'
+import type { MaterialParameterDefaultValue } from '../../engine/materialResolution'
 import { uniqueNodeName } from '../../engine/naming'
 import { realPixi } from '../../pixi/renderer/pixi'
 import type {
@@ -11,6 +12,7 @@ import { ShaderPreviewStage } from '../../pixi/renderer/shaderPreviewStage'
 import type { ShaderCompileStatus } from '../../shaders/compiler'
 import type { ReflectedUniformDefault, ShaderReflection } from '../../shaders/reflection'
 import { useShaderLibraryStore } from '../../stores/shaderLibraryStore'
+import { UniformParameterField } from './uniformControls'
 
 function compileBadgeLabel(status: ShaderCompileStatus | undefined): string {
   if (!status) {
@@ -23,28 +25,22 @@ function uniqueShaderName(base: string, existing: readonly ShaderDefinition[]): 
   return uniqueNodeName(new Set(existing.map((definition) => definition.name)), base)
 }
 
-interface DisplayUniform {
-  key: string
-  type: string
-  value: ShaderUniformDefault | ReflectedUniformDefault
-}
-
 function displayUniforms(
   definition: ShaderDefinition,
   reflection: ShaderReflection | undefined,
-): DisplayUniform[] {
+): ShaderUniformInput[] {
   const defaults = definition.default_uniforms.map((uniform) => ({
     key: String(uniform.key),
-    type: String(uniform.kind),
-    value: uniform.default as ShaderUniformDefault,
+    kind: String(uniform.kind),
+    default: uniform.default as ShaderUniformDefault,
   }))
   if (defaults.length > 0) {
     return defaults
   }
   return (reflection?.uniforms ?? []).map((uniform) => ({
     key: uniform.key,
-    type: uniform.type,
-    value: uniform.default,
+    kind: uniform.type,
+    default: uniform.default,
   }))
 }
 
@@ -52,7 +48,13 @@ function previewUniforms(
   definition: ShaderDefinition,
   reflection: ShaderReflection | undefined,
 ): ShaderPreviewUniform[] {
-  return displayUniforms(definition, reflection).filter((uniform) => uniform.type !== 'sampler2D')
+  return displayUniforms(definition, reflection)
+    .filter((uniform) => uniform.kind !== 'sampler2D')
+    .map((uniform) => ({
+      key: uniform.key,
+      type: uniform.kind,
+      value: uniform.default,
+    }))
 }
 
 function previewSourceOf(
@@ -219,7 +221,19 @@ interface ShaderPreviewPanelProps {
 function ShaderPreviewPanel({ definition, status, reflection, onClose }: ShaderPreviewPanelProps) {
   const reuploadRef = useRef<HTMLInputElement>(null)
   const reuploadSource = useShaderLibraryStore((state) => state.reuploadSource)
+  const updateUniformDefaults = useShaderLibraryStore((state) => state.updateUniformDefaults)
   const uniforms = displayUniforms(definition, reflection)
+  const editableUniforms = uniforms.filter((uniform) => uniform.kind !== 'sampler2D')
+  const samplerUniforms = uniforms.filter((uniform) => uniform.kind === 'sampler2D')
+
+  const commitDefault = (key: string, value: MaterialParameterDefaultValue) => {
+    // Persisted sampler defaults ride along; reflection-only samplers (default
+    // null) are unpersisted and would fail backend validation.
+    const next = uniforms
+      .filter((uniform) => uniform.kind !== 'sampler2D' || uniform.default !== null)
+      .map((uniform) => (uniform.key === key ? { ...uniform, default: value } : uniform))
+    void updateUniformDefaults(definition.id, next)
+  }
 
   const handleReupload = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -270,15 +284,34 @@ function ShaderPreviewPanel({ definition, status, reflection, onClose }: ShaderP
           </ul>
         )}
       </div>
-      {uniforms.length > 0 && (
+      {editableUniforms.length > 0 && (
         <>
-          <h4 className="shader-preview__subtitle">Uniforms</h4>
+          <h4 className="shader-preview__subtitle">Uniform Defaults</h4>
+          {editableUniforms.map((uniform) => (
+            <UniformParameterField
+              key={uniform.key}
+              parameter={{
+                key: uniform.key,
+                kind: uniform.kind,
+                default: uniform.default as MaterialParameterDefaultValue,
+              }}
+              effective={uniform.default as MaterialParameterDefaultValue | null}
+              overridden="none"
+              onChange={(value) => commitDefault(uniform.key, value)}
+              onClear={() => undefined}
+            />
+          ))}
+        </>
+      )}
+      {samplerUniforms.length > 0 && (
+        <>
+          <h4 className="shader-preview__subtitle">Sampler Textures</h4>
           <dl className="shader-preview__uniforms">
-            {uniforms.map((uniform) => (
+            {samplerUniforms.map((uniform) => (
               <div key={uniform.key} className="shader-preview__uniform">
                 <dt>{uniform.key}</dt>
-                <dd>{uniform.type}</dd>
-                <dd>{formatUniformDefault(uniform.value)}</dd>
+                <dd>{uniform.kind}</dd>
+                <dd>{formatUniformDefault(uniform.default)}</dd>
               </div>
             ))}
           </dl>
