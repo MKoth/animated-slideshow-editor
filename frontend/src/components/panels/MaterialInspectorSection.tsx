@@ -15,16 +15,9 @@ import {
 import { commonValueOf, parseFiniteNumber } from '../../app/inspectorActions'
 import { useMaterialLibraryStore } from '../../stores/materialLibraryStore'
 import { NumericField } from './inspectorFields'
+import { definitionNameOf, runCommand } from './sectionHelpers'
 import { OverrideAffordance, UniformParameterField } from './uniformControls'
 import { overrideStateOf } from './uniforms'
-
-function definitionNameOf(engine: EnginePublic, definitionId: string): string {
-  try {
-    return engine.getMaterialDefinition(definitionId).name
-  } catch {
-    return definitionId
-  }
-}
 
 function clampPercent(value: number): number {
   return Math.min(100, Math.max(0, value))
@@ -60,23 +53,12 @@ export function MaterialInspectorSection({
     typeof commonTint === 'string' && /^#[0-9a-fA-F]{6}$/.test(commonTint) ? commonTint : '#ffffff'
   const multiplierPercent = typeof commonMultiplier === 'number' ? commonMultiplier * 100 : null
 
-  const runCommand = (action: () => { ok: boolean; error?: Error } | null) => {
-    try {
-      const result = action()
-      if (result && !result.ok) {
-        throw result.error
-      }
-    } catch (error) {
-      notify(error instanceof Error ? error.message : String(error))
-    }
-  }
-
   const handleAssign = (event: ChangeEvent<HTMLSelectElement>) => {
-    runCommand(() => assignMaterialToNodes(engine, dispatch, nodeIds, event.target.value))
+    runCommand(notify, () => assignMaterialToNodes(engine, dispatch, nodeIds, event.target.value))
   }
 
   const handleTint = (event: ChangeEvent<HTMLInputElement>) => {
-    runCommand(() =>
+    runCommand(notify, () =>
       overrideMaterialParameterOnNodes(
         engine,
         dispatch,
@@ -88,11 +70,13 @@ export function MaterialInspectorSection({
   }
 
   const handleClearTint = () => {
-    runCommand(() => clearMaterialOverrideOnNodes(engine, dispatch, nodeIds, TINT_PARAMETER_KEY))
+    runCommand(notify, () =>
+      clearMaterialOverrideOnNodes(engine, dispatch, nodeIds, TINT_PARAMETER_KEY),
+    )
   }
 
   const commitMultiplier = (raw: string) => {
-    runCommand(() => {
+    runCommand(notify, () => {
       const percent = parseFiniteNumber(raw, 'Opacity Multiplier')
       return overrideMaterialParameterOnNodes(
         engine,
@@ -105,7 +89,7 @@ export function MaterialInspectorSection({
   }
 
   const handleClearMultiplier = () => {
-    runCommand(() =>
+    runCommand(notify, () =>
       clearMaterialOverrideOnNodes(engine, dispatch, nodeIds, OPACITY_MULTIPLIER_PARAMETER_KEY),
     )
   }
@@ -139,7 +123,7 @@ export function MaterialInspectorSection({
           )}
           {!knownDefinition && currentDefinitionId !== null && (
             <option value={currentDefinitionId}>
-              {definitionNameOf(engine, currentDefinitionId)}
+              {definitionNameOf(engine, currentDefinitionId, 'material')}
             </option>
           )}
           {definitions.map((definition) => (
@@ -212,17 +196,19 @@ export function MaterialInspectorSection({
             disabled={playing}
             onChange={(value) => {
               if (uniform.kind === 'sampler2D' && value === '') {
-                runCommand(() =>
+                runCommand(notify, () =>
                   clearMaterialOverrideOnNodes(engine, dispatch, nodeIds, uniform.key),
                 )
                 return
               }
-              runCommand(() =>
+              runCommand(notify, () =>
                 overrideMaterialParameterOnNodes(engine, dispatch, nodeIds, uniform.key, value),
               )
             }}
             onClear={() =>
-              runCommand(() => clearMaterialOverrideOnNodes(engine, dispatch, nodeIds, uniform.key))
+              runCommand(notify, () =>
+                clearMaterialOverrideOnNodes(engine, dispatch, nodeIds, uniform.key),
+              )
             }
           />
         )

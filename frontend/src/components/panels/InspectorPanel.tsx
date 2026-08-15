@@ -31,8 +31,9 @@ import { renameSlide, setSlideDuration } from '../../app/slideActions'
 import type { Slide } from '../../engine'
 import { NameField, NumericField } from './inspectorFields'
 import { MaterialInspectorSection } from './MaterialInspectorSection'
+import { FullscreenShaderInspectorSection } from './FullscreenShaderInspectorSection'
 
-const COMING_SOON_SECTIONS = ['Animation', 'Shader', 'Anchors', 'Physics', 'AI Metadata']
+const COMING_SOON_SECTIONS = ['Animation', 'Anchors', 'Physics', 'AI Metadata']
 
 function isRenderableNode(node: SceneNode): boolean {
   return Boolean(node.components.assetInstance || node.components.text)
@@ -203,6 +204,13 @@ export function InspectorPanel({ width }: { width: number }) {
             onCommitDuration={commitSlideDuration}
             onAdjustDuration={adjustSlideDuration}
           />
+          <FullscreenShaderInspectorSection
+            slide={slide}
+            engine={engine}
+            dispatch={dispatch}
+            notify={notify}
+            playing={playing}
+          />
           <div className="panel-empty-state">
             <p>Nothing selected. Select an object to edit its properties.</p>
           </div>
@@ -305,6 +313,16 @@ export function InspectorPanel({ width }: { width: number }) {
             onCommitName={commitSlideName}
             onCommitDuration={commitSlideDuration}
             onAdjustDuration={adjustSlideDuration}
+          />
+        )}
+
+        {slide && (
+          <FullscreenShaderInspectorSection
+            slide={slide}
+            engine={engine}
+            dispatch={dispatch}
+            notify={notify}
+            playing={playing}
           />
         )}
 

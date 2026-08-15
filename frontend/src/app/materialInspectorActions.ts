@@ -1,5 +1,5 @@
 import type { EnginePublic, SceneNode } from '../engine'
-import { resolveMaterial, resolveParameterValue, uniformValuesEqual } from '../engine'
+import { resolveMaterial, uniformValuesEqual } from '../engine'
 import { OPACITY_MULTIPLIER_PARAMETER_KEY, TINT_PARAMETER_KEY } from '../engine'
 import type {
   MaterialOverrideValue,
@@ -15,6 +15,10 @@ import {
 import type { Command } from '../engine/commands'
 import { RESERVED_TEXTURE_UNIFORM } from '../shaders/reflection'
 import { dispatchCommands } from './keyframeActions'
+import { readUniformReadings } from './uniformReadings'
+import type { UniformReading } from './uniformReadings'
+
+export type { UniformReading } from './uniformReadings'
 
 export interface MaterialReading {
   readonly definitionId: string
@@ -23,14 +27,6 @@ export interface MaterialReading {
   readonly tintOverridden: boolean
   readonly opacityMultiplierOverridden: boolean
   readonly uniforms: readonly UniformReading[]
-}
-
-export interface UniformReading {
-  readonly key: string
-  readonly kind: string
-  readonly default: MaterialParameterDefaultValue
-  readonly effective: MaterialParameterDefaultValue
-  readonly overridden: boolean
 }
 
 function definitionParametersOf(
@@ -48,52 +44,21 @@ function definitionParametersOf(
 export function readMaterial(engine: EnginePublic, node: SceneNode): MaterialReading {
   const parameters = definitionParametersOf(engine, node)
   const effective = resolveMaterial(parameters, node.material.overrides)
-  const overrides = node.material.overrides
-  const uniforms: UniformReading[] = []
-  for (const parameter of parameters) {
-    if (
-      parameter.key === TINT_PARAMETER_KEY ||
-      parameter.key === OPACITY_MULTIPLIER_PARAMETER_KEY ||
-      parameter.key === RESERVED_TEXTURE_UNIFORM
-    ) {
-      continue
-    }
-    uniforms.push({
-      key: parameter.key,
-      kind: parameter.kind,
-      default: parameter.default,
-      effective:
-        resolveParameterValue(parameters, overrides, parameter.key) ?? fallbackDefaultOf(parameter),
-      overridden: Object.prototype.hasOwnProperty.call(overrides, parameter.key),
-    })
-  }
+  const uniforms = readUniformReadings(parameters, node.material.overrides, [
+    TINT_PARAMETER_KEY,
+    OPACITY_MULTIPLIER_PARAMETER_KEY,
+    RESERVED_TEXTURE_UNIFORM,
+  ])
   return {
     definitionId: node.material.materialDefinitionId,
     tint: effective.tint,
     opacityMultiplier: effective.opacityMultiplier,
-    tintOverridden: Object.prototype.hasOwnProperty.call(overrides, 'tint'),
+    tintOverridden: Object.prototype.hasOwnProperty.call(node.material.overrides, 'tint'),
     opacityMultiplierOverridden: Object.prototype.hasOwnProperty.call(
-      overrides,
+      node.material.overrides,
       'opacityMultiplier',
     ),
     uniforms,
-  }
-}
-
-function fallbackDefaultOf(parameter: MaterialParameterDefault): MaterialParameterDefaultValue {
-  switch (parameter.kind) {
-    case 'bool':
-      return false
-    case 'vec2':
-      return [0, 0]
-    case 'vec3':
-      return [0, 0, 0]
-    case 'vec4':
-      return [0, 0, 0, 0]
-    case 'sampler2D':
-      return ''
-    default:
-      return 0
   }
 }
 
