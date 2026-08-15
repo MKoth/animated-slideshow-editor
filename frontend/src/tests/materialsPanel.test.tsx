@@ -1,10 +1,19 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { MaterialDefinition } from '../api'
+import type { MaterialDefinition, ShaderDefinition } from '../api'
 import { MaterialsPanel } from '../components/panels/MaterialsPanel'
+import { setWebGL2ContextFactory } from '../shaders/compiler'
 import { useMaterialLibraryStore } from '../stores/materialLibraryStore'
 import { useNotificationStore } from '../stores/notificationStore'
+import { useShaderLibraryStore } from '../stores/shaderLibraryStore'
+import { pixiRegistry, resetShaderRegistries } from './renderer/pixiFake'
+import { createWebGLFake, type FakeWebGL2Context } from './shaders/webglFake'
+
+vi.mock('pixi.js', async () => {
+  const { createPixiFake } = await import('./renderer/pixiFake')
+  return createPixiFake()
+})
 
 const RED: MaterialDefinition = {
   id: 'm1',
@@ -44,6 +53,26 @@ const DEFAULT_MATERIAL: MaterialDefinition = {
   ],
 }
 
+const SHADER: ShaderDefinition = {
+  id: 'sh1',
+  name: 'Ink Wash',
+  description: '',
+  tags: [],
+  created_at: '2026-08-15T12:00:00',
+  updated_at: '2026-08-15T12:00:00',
+  source: `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uTexture;
+out vec4 fragColor;
+void main() {
+  fragColor = texture(uTexture, vUv);
+}
+`,
+  default_uniforms: [],
+  is_builtin: false,
+}
+
 function stubFetch(handler: (url: string, init: RequestInit) => Promise<Response>): void {
   vi.mocked(fetch).mockImplementation((input: RequestInfo | URL, init?: RequestInit) =>
     handler(String(input), init ?? {}),
@@ -67,10 +96,26 @@ function renderPanel() {
   return render(<MaterialsPanel />)
 }
 
+let gl: FakeWebGL2Context
+
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn())
+  pixiRegistry.reset()
+  resetShaderRegistries()
+  gl = createWebGLFake()
+  setWebGL2ContextFactory(() => gl)
   useMaterialLibraryStore.setState({
     definitions: [],
+    loading: false,
+    error: null,
+    unavailable: false,
+    selectedId: null,
+  })
+  useShaderLibraryStore.setState({
+    definitions: [],
+    compileStatus: {},
+    reflections: {},
+    loaded: false,
     loading: false,
     error: null,
     unavailable: false,
@@ -80,6 +125,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  setWebGL2ContextFactory(null)
   vi.unstubAllGlobals()
 })
 
@@ -341,5 +387,39 @@ describe('MaterialsPanel', () => {
     await useMaterialLibraryStore.getState().loadLibrary()
 
     expect(await screen.findByRole('button', { name: 'Select Red Slime' })).toBeInTheDocument()
+  })
+
+  it('switches between the Materials and Shaders sections of the tab', async () => {
+    stubFetch((url) => {
+      if (url.includes('/api/materials')) {
+        return Promise.resolve(new Response(JSON.stringify([RED]), { status: 200 }))
+      }
+      if (url.includes('/api/shaders')) {
+        return Promise.resolve(new Response(JSON.stringify([SHADER]), { status: 200 }))
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`))
+    })
+    const user = userEvent.setup()
+    renderPanel()
+    await screen.findByText('Red Slime')
+    expect(screen.getByRole('button', { name: 'Materials' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Shaders' }))
+
+    expect(await screen.findByText('Ink Wash')).toBeInTheDocument()
+    expect(screen.queryByText('Red Slime')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Shaders' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Materials' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Materials' }))
+
+    expect(await screen.findByText('Red Slime')).toBeInTheDocument()
+    expect(screen.queryByText('Ink Wash')).not.toBeInTheDocument()
   })
 })

@@ -4,6 +4,9 @@ import { DEFAULT_MATERIAL_DEFINITION_ID } from '../../engine/materialInstance'
 import { uniqueNodeName } from '../../engine/naming'
 import { resolveMaterial } from '../../engine/materialResolution'
 import { useMaterialLibraryStore } from '../../stores/materialLibraryStore'
+import { ShadersPanel } from './ShadersPanel'
+
+type MaterialsSectionId = 'materials' | 'shaders'
 
 function effectiveTint(definition: MaterialDefinition): string {
   return resolveMaterial(definition.parameters, {}).tint
@@ -13,7 +16,7 @@ function uniqueMaterialName(base: string, existing: readonly MaterialDefinition[
   return uniqueNodeName(new Set(existing.map((definition) => definition.name)), base)
 }
 
-export function MaterialsPanel() {
+function MaterialsSection() {
   const definitions = useMaterialLibraryStore((state) => state.definitions)
   const loading = useMaterialLibraryStore((state) => state.loading)
   const unavailable = useMaterialLibraryStore((state) => state.unavailable)
@@ -49,7 +52,7 @@ export function MaterialsPanel() {
   )
 
   return (
-    <div className="materials-panel">
+    <div className="materials-section">
       <div className="materials-toolbar">
         <div className="materials-toolbar__row">
           <button
@@ -169,6 +172,36 @@ export function MaterialsPanel() {
           })}
         </ul>
       )}
+    </div>
+  )
+}
+
+export function MaterialsPanel() {
+  const [section, setSection] = useState<MaterialsSectionId>('materials')
+
+  return (
+    <div className="materials-panel">
+      <div className="materials-sections" role="group" aria-label="Materials sections">
+        <button
+          className={`materials-sections__tab${
+            section === 'materials' ? ' materials-sections__tab--active' : ''
+          }`}
+          aria-pressed={section === 'materials'}
+          onClick={() => setSection('materials')}
+        >
+          Materials
+        </button>
+        <button
+          className={`materials-sections__tab${
+            section === 'shaders' ? ' materials-sections__tab--active' : ''
+          }`}
+          aria-pressed={section === 'shaders'}
+          onClick={() => setSection('shaders')}
+        >
+          Shaders
+        </button>
+      </div>
+      {section === 'materials' ? <MaterialsSection /> : <ShadersPanel />}
     </div>
   )
 }

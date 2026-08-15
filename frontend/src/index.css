@@ -557,6 +557,278 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.materials-sections {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.materials-sections__tab {
+  flex: 1;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.materials-sections__tab--active {
+  background: var(--color-bg-elevated);
+  color: var(--color-accent);
+}
+
+.materials-section {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ------------------------------------------------------------------ */
+/* Shader library                                                      */
+/* ------------------------------------------------------------------ */
+
+.shaders-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.shaders-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.shaders-toolbar__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.shaders-toolbar__import {
+  flex: 1;
+}
+
+.shaders-toolbar__search {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.shader-preview-host {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+}
+
+.shader-preview-stage__canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.shader-grid {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.shader-grid__item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+}
+
+.shader-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+  padding: 8px;
+  text-align: center;
+}
+
+.shader-cell__preview {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  flex-shrink: 0;
+  background: var(--color-bg-elevated);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.08);
+  overflow: hidden;
+}
+
+.shader-cell__name {
+  font-size: 12px;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shader-cell__badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
+.shader-cell__badge--compiled {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+}
+
+.shader-cell__badge--failed {
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+}
+
+.shader-cell__rename {
+  font: inherit;
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.shader-cell__actions {
+  display: flex;
+  gap: 2px;
+}
+
+.shader-cell__actions button {
+  flex: 1;
+  font-size: 11px;
+  padding: 2px 4px;
+}
+
+.shader-cell__actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.shader-preview {
+  flex-shrink: 0;
+  max-height: 45%;
+  overflow: auto;
+  padding: 8px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+}
+
+.shader-preview__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shader-preview__title {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shader-preview__actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.shader-preview__status {
+  margin-top: 6px;
+}
+
+.shader-preview__status-badge {
+  font-size: 11px;
+}
+
+.shader-preview__status-badge--compiled {
+  color: var(--color-success);
+}
+
+.shader-preview__status-badge--failed {
+  color: var(--color-danger);
+}
+
+.shader-preview__errors {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  font-size: 11px;
+  color: var(--color-danger);
+}
+
+.shader-preview__subtitle {
+  margin: 10px 0 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.shader-preview__uniforms,
+.shader-preview__metadata {
+  margin: 0;
+}
+
+.shader-preview__uniform,
+.shader-preview__field {
+  display: grid;
+  gap: 6px;
+  font-size: 11px;
+  padding: 1px 0;
+}
+
+.shader-preview__uniform {
+  grid-template-columns: 1fr auto auto;
+}
+
+.shader-preview__field {
+  grid-template-columns: 90px 1fr;
+}
+
+.shader-preview__uniform dt,
+.shader-preview__field dt {
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shader-preview__uniform dd,
+.shader-preview__field dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* ------------------------------------------------------------------ */
 /* Scene hierarchy                                                     */
 /* ------------------------------------------------------------------ */
