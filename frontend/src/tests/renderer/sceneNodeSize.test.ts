@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Engine } from '../../engine/internal'
 import { createEngine } from '../../engine/internal'
 import type { PixiContainer, RendererPixi } from '../../pixi/renderer/pixi'
+import { ShaderProgramCache } from '../../pixi/renderer/programCache'
 import { SceneRenderer } from '../../pixi/renderer/sceneRenderer'
 import { TextureCache } from '../../pixi/renderer/textureCache'
 import {
@@ -46,6 +47,7 @@ function setup(
     pixi,
     new TextureCache(pixi),
     (definitionId) => (definitionId === 'def-1' ? '/api/assets/originals/def-1.png' : null),
+    new ShaderProgramCache(pixi),
     onNodeSizeChanged,
   )
   renderer.bind(slide.scene)
@@ -141,6 +143,7 @@ describe('SceneRenderer nodeSize', () => {
       pixi,
       new TextureCache(pixi),
       () => assetUrl,
+      new ShaderProgramCache(pixi),
       () => undefined,
     )
     renderer.bind(slide.scene)

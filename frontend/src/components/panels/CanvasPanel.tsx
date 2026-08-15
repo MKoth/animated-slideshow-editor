@@ -5,8 +5,10 @@ import { realPixi } from '../../pixi/renderer/pixi'
 import { Renderer } from '../../pixi/renderer/renderer'
 import type { CurrentTimeSource } from '../../pixi/renderer/sceneRenderer'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
+import { useMaterialLibraryStore } from '../../stores/materialLibraryStore'
 import { useMissingAssetsStore } from '../../stores/missingAssetsStore'
 import { usePlaybackController } from '../../stores/playbackStore'
+import { useShaderLibraryStore } from '../../stores/shaderLibraryStore'
 
 export function CanvasPanel() {
   const { engine, dispatch } = useEngine()
@@ -31,6 +33,14 @@ export function CanvasPanel() {
       }
       return url
     }
+    const resolveShaderSource = (shaderId: string): string | null => {
+      const state = useShaderLibraryStore.getState()
+      const compiled = state.compileStatus[shaderId]?.status === 'Compiled'
+      if (!compiled) {
+        return null
+      }
+      return state.definitions.find((definition) => definition.id === shaderId)?.source ?? null
+    }
     const isAssetMissing = (definitionId: string): boolean => {
       const report = useMissingAssetsStore.getState().report
       return report?.missing.some((entry) => entry.assetDefinitionId === definitionId) ?? false
@@ -51,6 +61,7 @@ export function CanvasPanel() {
       (definitionId) => {
         void captureAssetSnapshot(engine, definitionId)
       },
+      resolveShaderSource,
     )
     let knownDefinitions = useAssetLibraryStore.getState().definitions
     const unsubscribeLibrary = useAssetLibraryStore.subscribe((state) => {
@@ -59,9 +70,27 @@ export function CanvasPanel() {
         renderer.refreshAssetTextures()
       }
     })
+    let knownShaders = useShaderLibraryStore.getState().definitions
+    let knownCompileStatus = useShaderLibraryStore.getState().compileStatus
+    const unsubscribeShaders = useShaderLibraryStore.subscribe((state) => {
+      if (state.definitions !== knownShaders || state.compileStatus !== knownCompileStatus) {
+        knownShaders = state.definitions
+        knownCompileStatus = state.compileStatus
+        renderer.refreshNodeRendering()
+      }
+    })
+    let knownMaterials = useMaterialLibraryStore.getState().definitions
+    const unsubscribeMaterials = useMaterialLibraryStore.subscribe((state) => {
+      if (state.definitions !== knownMaterials) {
+        knownMaterials = state.definitions
+        renderer.refreshNodeRendering()
+      }
+    })
     void renderer.start()
     return () => {
       unsubscribeLibrary()
+      unsubscribeShaders()
+      unsubscribeMaterials()
       renderer.dispose()
     }
   }, [engine, dispatch])

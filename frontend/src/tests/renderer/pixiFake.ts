@@ -21,6 +21,7 @@ export class FakeContainer {
   destroyed = false
   parent: FakeContainer | null = null
   children: FakeContainer[] = []
+  filters: FakeFilter[] = []
   position: FakePoint = makePoint()
   scale: FakePoint = makePoint()
   rotation = 0
@@ -167,6 +168,71 @@ export class FakeSprite extends FakeContainer {
     super()
     this.texture = texture
   }
+}
+
+export interface FakeGlProgramOptions {
+  vertex: string
+  fragment: string
+}
+
+export class FakeGlProgram {
+  readonly vertex: string
+  readonly fragment: string
+
+  constructor(options: FakeGlProgramOptions) {
+    this.vertex = options.vertex
+    this.fragment = options.fragment
+  }
+}
+
+export const fakeGlPrograms = {
+  cache: new Map<string, FakeGlProgram>(),
+  calls: [] as FakeGlProgramOptions[],
+  from(options: FakeGlProgramOptions): FakeGlProgram {
+    this.calls.push(options)
+    const key = `${options.vertex}:${options.fragment}`
+    let program = this.cache.get(key)
+    if (!program) {
+      program = new FakeGlProgram(options)
+      this.cache.set(key, program)
+    }
+    return program
+  },
+}
+
+export interface FakeFilterOptions {
+  glProgram: FakeGlProgram
+  resources?: Record<string, unknown>
+}
+
+export class FakeFilter {
+  readonly kind = 'filter'
+  enabled = true
+  destroyed = false
+  readonly glProgram: FakeGlProgram
+  readonly resources: { uniforms: { uniforms: Record<string, unknown> } }
+
+  constructor(options: FakeFilterOptions) {
+    this.glProgram = options.glProgram
+    const structures = (options.resources?.uniforms ?? {}) as Record<
+      string,
+      { value: unknown; type: string }
+    >
+    const uniforms: Record<string, unknown> = {}
+    for (const key of Object.keys(structures)) {
+      uniforms[key] = structures[key].value
+    }
+    this.resources = { uniforms: { uniforms } }
+  }
+
+  destroy(): void {
+    this.destroyed = true
+  }
+}
+
+export function resetShaderRegistries(): void {
+  fakeGlPrograms.calls.length = 0
+  fakeGlPrograms.cache.clear()
 }
 
 export const fakeTexture = {
@@ -318,5 +384,7 @@ export function createPixiFake() {
     Sprite: FakeSprite,
     Texture: fakeTexture,
     Assets: fakeAssets,
+    Filter: FakeFilter,
+    GlProgram: fakeGlPrograms,
   }
 }

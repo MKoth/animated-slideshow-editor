@@ -3,8 +3,11 @@ import type { MaterialOverrides } from '../../engine/materialInstance'
 import {
   DEFAULT_OPACITY_MULTIPLIER,
   DEFAULT_TINT,
+  effectiveShaderScratch,
   resolveMaterial,
   resolveParameterValue,
+  resolveShaderUniforms,
+  shaderUniformsEqual,
   type MaterialParameterDefault,
 } from '../../engine/materialResolution'
 
@@ -101,5 +104,117 @@ describe('resolveParameterValue', () => {
     const overrides = { uEnabled: false }
 
     expect(resolveParameterValue(UNIFORM_PARAMETERS, overrides, 'uEnabled')).toBe(false)
+  })
+})
+
+describe('resolveShaderUniforms', () => {
+  const SHADER_PARAMETERS: readonly MaterialParameterDefault[] = [
+    { key: 'tint', kind: 'color', default: '#ffffff' },
+    { key: 'opacityMultiplier', kind: 'number', default: 1 },
+    { key: 'uIntensity', kind: 'float', default: 0.5 },
+    { key: 'uEnabled', kind: 'bool', default: false },
+    { key: 'uColor', kind: 'vec3', default: [1, 0, 0] },
+    { key: 'uPhoto', kind: 'sampler2D', default: 'def-photo' },
+  ]
+
+  it('collects the shader-uniform parameters with values resolved override over default', () => {
+    const scratch = resolveShaderUniforms(SHADER_PARAMETERS, { uIntensity: 0.9 })
+
+    expect(scratch.keys).toEqual(['uIntensity', 'uEnabled', 'uColor'])
+    expect(scratch.kinds).toEqual(['float', 'bool', 'vec3'])
+    expect(scratch.values).toEqual([0.9, false, [1, 0, 0]])
+  })
+
+  it('excludes the built-in tint and opacity multiplier parameters', () => {
+    const scratch = resolveShaderUniforms(SHADER_PARAMETERS, {})
+
+    expect(scratch.keys).not.toContain('tint')
+    expect(scratch.keys).not.toContain('opacityMultiplier')
+  })
+
+  it('excludes sampler2D parameters — samplers are not scalar uniforms', () => {
+    const scratch = resolveShaderUniforms(SHADER_PARAMETERS, {})
+
+    expect(scratch.keys).not.toContain('uPhoto')
+  })
+
+  it('collects nothing for a shader-less material parameter list', () => {
+    const scratch = resolveShaderUniforms(
+      [
+        { key: 'tint', kind: 'color', default: '#ffffff' },
+        { key: 'opacityMultiplier', kind: 'number', default: 1 },
+      ],
+      {},
+    )
+
+    expect(scratch.keys).toEqual([])
+    expect(scratch.values).toEqual([])
+  })
+
+  it('reuses a provided scratch target without allocating', () => {
+    const target = effectiveShaderScratch()
+
+    const result = resolveShaderUniforms(SHADER_PARAMETERS, {}, target)
+
+    expect(result).toBe(target)
+    expect(result.keys).toEqual(['uIntensity', 'uEnabled', 'uColor'])
+  })
+})
+
+describe('shaderUniformsEqual', () => {
+  const PARAMETERS: readonly MaterialParameterDefault[] = [
+    { key: 'uIntensity', kind: 'float', default: 0.5 },
+    { key: 'uColor', kind: 'vec3', default: [1, 0, 0] },
+  ]
+
+  it('reports equal for identical resolutions', () => {
+    const first = resolveShaderUniforms(PARAMETERS, { uIntensity: 0.7 })
+    const second = resolveShaderUniforms(PARAMETERS, { uIntensity: 0.7 })
+
+    expect(shaderUniformsEqual(first, second)).toBe(true)
+  })
+
+  it('reports a scalar value change', () => {
+    const first = resolveShaderUniforms(PARAMETERS, { uIntensity: 0.7 })
+    const second = resolveShaderUniforms(PARAMETERS, { uIntensity: 0.8 })
+
+    expect(shaderUniformsEqual(first, second)).toBe(false)
+  })
+
+  it('reports a vector component change', () => {
+    const first = resolveShaderUniforms(PARAMETERS, {})
+    const changed: readonly MaterialParameterDefault[] = [
+      { key: 'uIntensity', kind: 'float', default: 0.5 },
+      { key: 'uColor', kind: 'vec3', default: [1, 1, 0] },
+    ]
+    const second = resolveShaderUniforms(changed, {})
+
+    expect(shaderUniformsEqual(first, second)).toBe(false)
+  })
+
+  it('reports a parameter-list change', () => {
+    const first = resolveShaderUniforms(PARAMETERS, {})
+    const second = resolveShaderUniforms([PARAMETERS[0]], {})
+
+    expect(shaderUniformsEqual(first, second)).toBe(false)
+  })
+
+  it('reports a kind change even when the value is equal', () => {
+    const first = resolveShaderUniforms(PARAMETERS, {})
+    const changed: readonly MaterialParameterDefault[] = [
+      { key: 'uIntensity', kind: 'int', default: 0.5 },
+      { key: 'uColor', kind: 'vec3', default: [1, 0, 0] },
+    ]
+    const second = resolveShaderUniforms(changed, {})
+
+    expect(second.keys).toEqual(first.keys)
+    expect(second.values[0]).toBe(first.values[0])
+    expect(shaderUniformsEqual(first, second)).toBe(false)
+  })
+
+  it('reports not equal when there is no previous state', () => {
+    const next = resolveShaderUniforms(PARAMETERS, {})
+
+    expect(shaderUniformsEqual(undefined, next)).toBe(false)
   })
 })

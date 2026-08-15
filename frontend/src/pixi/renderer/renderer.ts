@@ -23,6 +23,7 @@ import { realPixi } from './pixi'
 import type { PixiApplication, RendererPixi } from './pixi'
 import { SceneRenderer } from './sceneRenderer'
 import type { CurrentTimeSource } from './sceneRenderer'
+import type { ResolveShaderSource } from './sceneRenderer'
 import { ALWAYS_ZERO_TIME } from './sceneRenderer'
 import { SelectionOverlay } from './selectionOverlay'
 import type { ResolveAssetUrl } from './textureCache'
@@ -30,6 +31,7 @@ import { TextureCache } from './textureCache'
 import { ThumbnailRecorder } from './thumbnailRecorder'
 import { extractCanvasCapture } from './thumbnailRecorder'
 import type { CanvasCapture } from './thumbnailRecorder'
+import { ShaderProgramCache } from './programCache'
 
 const DEFAULT_CANVAS_BACKGROUND = 0xffffff
 
@@ -47,6 +49,7 @@ export class Renderer {
   #app: PixiApplication | null = null
   #sceneRenderer: SceneRenderer | null = null
   #textureCache: TextureCache | null = null
+  #programCache: ShaderProgramCache | null = null
   #camera: Camera | null = null
   #grid: GridRenderer | null = null
   #gridColors: GridColors = {
@@ -75,6 +78,7 @@ export class Renderer {
   readonly #resolveAssetUrl: ResolveAssetUrl
   readonly #currentTime: CurrentTimeSource
   readonly #isAssetMissing: (definitionId: string) => boolean
+  readonly #resolveShaderSource: ResolveShaderSource
   readonly #onAssetPlaced: (definitionId: string) => void
   readonly #thumbnails: ThumbnailRecorder
 
@@ -88,6 +92,7 @@ export class Renderer {
     isAssetMissing: (definitionId: string) => boolean = () => false,
     captureThumbnail: CanvasCapture = extractCanvasCapture,
     onAssetPlaced: (definitionId: string) => void = () => undefined,
+    resolveShaderSource: ResolveShaderSource = () => null,
   ) {
     this.#host = host
     this.#engine = engine
@@ -96,6 +101,7 @@ export class Renderer {
     this.#resolveAssetUrl = resolveAssetUrl
     this.#currentTime = currentTime
     this.#isAssetMissing = isAssetMissing
+    this.#resolveShaderSource = resolveShaderSource
     this.#onAssetPlaced = onAssetPlaced
     this.#thumbnails = new ThumbnailRecorder(captureThumbnail)
   }
@@ -135,15 +141,18 @@ export class Renderer {
       app.stage.addChild(world)
 
       this.#textureCache = new TextureCache(this.#pixi)
+      this.#programCache = new ShaderProgramCache(this.#pixi)
       this.#sceneRenderer = new SceneRenderer(
         this.#engine,
         world,
         this.#pixi,
         this.#textureCache,
         this.#resolveAssetUrl,
+        this.#programCache,
         () => this.#selectionOverlay?.redraw(),
         this.#currentTime,
         this.#isAssetMissing,
+        this.#resolveShaderSource,
       )
       this.#thumbnails.attach(app)
       this.#unsubscribe = this.#engine.subscribe((event) => this.#handleEvent(event))
@@ -248,6 +257,10 @@ export class Renderer {
     this.#sceneRenderer?.refreshAssetTextures()
   }
 
+  refreshNodeRendering(): void {
+    this.#sceneRenderer?.refreshNodeRendering()
+  }
+
   dispose(): void {
     this.#disposed = true
     this.#unsubscribe?.()
@@ -282,6 +295,8 @@ export class Renderer {
     }
     this.#textureCache?.dispose()
     this.#textureCache = null
+    this.#programCache?.dispose()
+    this.#programCache = null
   }
 
   readonly #tick = (): void => {

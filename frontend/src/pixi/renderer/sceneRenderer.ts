@@ -10,11 +10,16 @@ import {
 } from '../../engine/animationEvaluator'
 import {
   effectiveMaterialScratch,
+  effectiveShaderScratch,
+  copyShaderUniforms,
   resolveMaterial,
+  resolveShaderUniforms,
+  shaderUniformsEqual,
   type EffectiveMaterialScratch,
+  type EffectiveShaderScratch,
   type MaterialParameterDefault,
 } from '../../engine/materialResolution'
-import type { PixiContainer, RendererPixi } from './pixi'
+import type { PixiContainer, PixiFilter, RendererPixi } from './pixi'
 import type { WorldSize } from './worldGeometry'
 import {
   applyEvaluatedState,
@@ -24,6 +29,8 @@ import {
   placeholderOf,
 } from './nodeRenderer'
 import { applyAssetTexture, applyMissingPlaceholder, placeholderSize } from './placeholder'
+import { createNodeShaderFilter, nodeFilterUniforms } from './nodeShader'
+import type { ShaderProgramCache } from './programCache'
 import type { ResolveAssetUrl, TextureCache } from './textureCache'
 
 export interface CurrentTimeSource {
@@ -38,12 +45,21 @@ export const ALWAYS_ZERO_TIME: CurrentTimeSource = {
 
 const UNKNOWN_DEFINITION_PARAMETERS: readonly MaterialParameterDefault[] = []
 
+interface NodeShaderState {
+  filter: PixiFilter | null
+  scratch: EffectiveShaderScratch
+}
+
+export type ResolveShaderSource = (shaderId: string) => string | null
+
 export class SceneRenderer {
   readonly #engine: EnginePublic
   readonly #pixi: RendererPixi
   readonly #textureCache: TextureCache
   readonly #resolveAssetUrl: ResolveAssetUrl
   readonly #isAssetMissing: (definitionId: string) => boolean
+  readonly #resolveShaderSource: ResolveShaderSource
+  readonly #programCache: ShaderProgramCache
   readonly #world: PixiContainer
   readonly #currentTime: CurrentTimeSource
   readonly #containers = new Map<string, PixiContainer>()
@@ -51,9 +67,11 @@ export class SceneRenderer {
   readonly #sizes = new Map<string, WorldSize>()
   readonly #lastEvaluated = new Map<string, EvaluatedNodeScratch>()
   readonly #lastMaterials = new Map<string, EffectiveMaterialScratch>()
+  readonly #nodeShaders = new Map<string, NodeShaderState>()
   readonly #missingNodes = new Set<string>()
   readonly #scratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #materialScratch: EffectiveMaterialScratch = effectiveMaterialScratch()
+  readonly #shaderScratch: EffectiveShaderScratch = effectiveShaderScratch()
   readonly #onNodeSizeChanged: (nodeId: string) => void
   #scene: Scene | null = null
   #slideId: string | null = null
@@ -64,18 +82,22 @@ export class SceneRenderer {
     pixi: RendererPixi,
     textureCache: TextureCache,
     resolveAssetUrl: ResolveAssetUrl,
+    programCache: ShaderProgramCache,
     onNodeSizeChanged: (nodeId: string) => void = () => undefined,
     currentTime: CurrentTimeSource = ALWAYS_ZERO_TIME,
     isAssetMissing: (definitionId: string) => boolean = () => false,
+    resolveShaderSource: ResolveShaderSource = () => null,
   ) {
     this.#engine = engine
     this.#world = world
     this.#pixi = pixi
     this.#textureCache = textureCache
     this.#resolveAssetUrl = resolveAssetUrl
+    this.#programCache = programCache
     this.#onNodeSizeChanged = onNodeSizeChanged
     this.#currentTime = currentTime
     this.#isAssetMissing = isAssetMissing
+    this.#resolveShaderSource = resolveShaderSource
   }
 
   nodeSize(nodeId: string): WorldSize | null {
@@ -116,6 +138,7 @@ export class SceneRenderer {
     this.#sizes.clear()
     this.#lastEvaluated.clear()
     this.#lastMaterials.clear()
+    this.#nodeShaders.clear()
     this.#missingNodes.clear()
     this.#scene = scene
     this.#slideId = slideId
@@ -149,6 +172,7 @@ export class SceneRenderer {
         this.#sizes.delete(descendantId)
         this.#lastEvaluated.delete(descendantId)
         this.#lastMaterials.delete(descendantId)
+        this.#nodeShaders.delete(descendantId)
         this.#missingNodes.delete(descendantId)
       }
       this.#nodeIds.delete(descendant)
@@ -285,6 +309,8 @@ export class SceneRenderer {
       this.#scratch,
     )
     const material = this.#resolveMaterial(nodeId, this.#materialScratch)
+    this.#resolveShader(nodeId, this.#shaderScratch)
+    const shaderChanged = this.#applyNodeShader(nodeId, container, this.#shaderScratch)
     const previous = this.#lastEvaluated.get(nodeId)
     const previousMaterial = this.#lastMaterials.get(nodeId)
     const stateChanged = !previous || !evaluatedStatesEqual(previous, state)
@@ -292,7 +318,7 @@ export class SceneRenderer {
       !previousMaterial ||
       previousMaterial.tint !== material.tint ||
       previousMaterial.opacityMultiplier !== material.opacityMultiplier
-    if (!stateChanged && !materialChanged) {
+    if (!stateChanged && !materialChanged && !shaderChanged) {
       return
     }
     applyEvaluatedState(container, state, material.opacityMultiplier)
@@ -308,6 +334,58 @@ export class SceneRenderer {
     this.#lastMaterials.set(nodeId, storedMaterial)
   }
 
+  refreshNodeRendering(): void {
+    const scene = this.#scene
+    if (!scene) {
+      return
+    }
+    for (const node of walkPreOrder(scene.root)) {
+      this.#evaluateAndApply(node.id)
+    }
+  }
+
+  #applyNodeShader(
+    nodeId: string,
+    container: PixiContainer,
+    scratch: EffectiveShaderScratch,
+  ): boolean {
+    const placeholder = placeholderOf(container)
+    if (!placeholder) {
+      return false
+    }
+    let state = this.#nodeShaders.get(nodeId)
+    if (!state) {
+      state = { filter: null, scratch: effectiveShaderScratch() }
+      this.#nodeShaders.set(nodeId, state)
+    }
+    if (shaderUniformsEqual(state.scratch, scratch)) {
+      return false
+    }
+    if (state.filter && !scratch.source) {
+      placeholder.filters = []
+      state.filter.destroy()
+      state.filter = null
+    }
+    const previousFilter = state.filter
+    if (scratch.source) {
+      const sameSource = previousFilter !== null && state.scratch.source === scratch.source
+      const filter = sameSource
+        ? previousFilter
+        : createNodeShaderFilter(this.#pixi, this.#programCache, scratch.source, scratch)
+      if (!sameSource) {
+        previousFilter?.destroy()
+      }
+      const uniforms = nodeFilterUniforms(filter)
+      for (let index = 0; index < scratch.keys.length; index++) {
+        uniforms[scratch.keys[index]] = scratch.values[index]
+      }
+      placeholder.filters = [filter]
+      state.filter = filter
+    }
+    copyShaderUniforms(state.scratch, scratch)
+    return true
+  }
+
   #resolveMaterial(nodeId: string, target: EffectiveMaterialScratch): EffectiveMaterialScratch {
     const node = this.#scene?.getNode(nodeId)
     if (!node) {
@@ -320,6 +398,26 @@ export class SceneRenderer {
       parameters = UNKNOWN_DEFINITION_PARAMETERS
     }
     return resolveMaterial(parameters, node.material.overrides, target)
+  }
+
+  #resolveShader(nodeId: string, target: EffectiveShaderScratch): void {
+    const node = this.#scene?.getNode(nodeId)
+    if (!node) {
+      target.source = null
+      resolveShaderUniforms(UNKNOWN_DEFINITION_PARAMETERS, {}, target)
+      return
+    }
+    let parameters = UNKNOWN_DEFINITION_PARAMETERS
+    let shaderId: string | null = null
+    try {
+      const definition = this.#engine.getMaterialDefinition(node.material.materialDefinitionId)
+      parameters = definition.parameters
+      shaderId = definition.shaderId
+    } catch {
+      parameters = UNKNOWN_DEFINITION_PARAMETERS
+    }
+    resolveShaderUniforms(parameters, node.material.overrides, target)
+    target.source = shaderId ? this.#resolveShaderSource(shaderId) : null
   }
 
   #recordSize(node: SceneNode, container: PixiContainer): void {
