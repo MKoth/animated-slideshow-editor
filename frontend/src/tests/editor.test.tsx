@@ -70,6 +70,9 @@ function stubLibraryResponse() {
     if (String(input).startsWith('/api/assets')) {
       return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
     }
+    if (String(input).startsWith('/api/materials')) {
+      return Promise.resolve(new Response(JSON.stringify([]), { status: 200 }))
+    }
     return Promise.reject(new Error('connection refused'))
   })
 }
@@ -105,6 +108,7 @@ describe('editor shell', () => {
     expect(sidebar().getByRole('button', { name: 'Assets' })).toBeInTheDocument()
     expect(sidebar().getByRole('button', { name: 'Slides' })).toBeInTheDocument()
     expect(sidebar().getByRole('button', { name: 'Scene' })).toBeInTheDocument()
+    expect(sidebar().getByRole('button', { name: 'Materials' })).toBeInTheDocument()
     expect(
       await screen.findByText('No assets imported. Import images to build your library.'),
     ).toBeInTheDocument()
@@ -166,6 +170,27 @@ describe('editor shell', () => {
 
     expect(sidebar().getByText('No project. Create one to get started.')).toBeInTheDocument()
     expect(useUiStore.getState().activeSidebarTab).toBe('scene')
+  })
+
+  it('switches to the Materials sidebar tab showing the material grid', async () => {
+    stubLibraryResponse()
+    const user = userEvent.setup()
+    renderEditor()
+
+    await user.click(sidebar().getByRole('button', { name: 'Materials' }))
+
+    expect(
+      await sidebar().findByText('No materials created. Create one to get started.'),
+    ).toBeInTheDocument()
+    expect(useUiStore.getState().activeSidebarTab).toBe('materials')
+    expect(sidebar().getByRole('searchbox', { name: 'Search materials' })).toBeInTheDocument()
+
+    await user.click(sidebar().getByRole('button', { name: 'Assets' }))
+    await user.click(sidebar().getByRole('button', { name: 'Materials' }))
+
+    expect(
+      await sidebar().findByText('No materials created. Create one to get started.'),
+    ).toBeInTheDocument()
   })
 
   it('resizes the left sidebar by dragging its splitter and clamps to the minimum size', () => {

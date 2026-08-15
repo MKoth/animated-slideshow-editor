@@ -215,11 +215,11 @@ export function AssetsPanel() {
         onChange={handleImportFiles}
       />
       {unavailable ? (
-        <div className="assets-status assets-status--unavailable">
+        <div className="panel-status panel-status--unavailable">
           <p>Asset library unavailable — start the backend</p>
         </div>
       ) : loading && definitions.length === 0 ? (
-        <div className="assets-status">
+        <div className="panel-status">
           <p>Loading library…</p>
         </div>
       ) : definitions.length === 0 ? (
