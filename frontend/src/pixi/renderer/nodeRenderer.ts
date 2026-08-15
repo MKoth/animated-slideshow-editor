@@ -1,7 +1,7 @@
 import type { SceneNode } from '../../engine'
 import type { EvaluatedNodeState } from '../../engine/animationEvaluator'
 import type { PixiContainer, RendererPixi } from './pixi'
-import { applyPlaceholderName, createPlaceholder } from './placeholder'
+import { applyPlaceholderName, applyTint, createPlaceholder } from './placeholder'
 import type { TextureCache } from './textureCache'
 
 const placeholderByContainer = new WeakMap<PixiContainer, PixiContainer>()
@@ -35,11 +35,22 @@ export function applyTransform(container: PixiContainer, node: SceneNode): void 
   container.scale.set(node.transform.scaleX, node.transform.scaleY)
 }
 
-export function applyEvaluatedState(container: PixiContainer, state: EvaluatedNodeState): void {
+export function applyEvaluatedState(
+  container: PixiContainer,
+  state: EvaluatedNodeState,
+  opacityMultiplier: number,
+): void {
   container.position.set(state.transform.x, state.transform.y)
   container.rotation = state.transform.rotation
   container.scale.set(state.transform.scaleX, state.transform.scaleY)
-  container.alpha = state.opacity
+  container.alpha = state.opacity * opacityMultiplier
+}
+
+export function applyMaterialTint(container: PixiContainer, tint: string): void {
+  const placeholder = placeholderByContainer.get(container)
+  if (placeholder) {
+    applyTint(placeholder, tint)
+  }
 }
 
 export function applyName(container: PixiContainer, node: SceneNode): void {

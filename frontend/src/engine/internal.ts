@@ -16,6 +16,13 @@ import { MaterialDefinition } from './materialDefinition'
 import { ShaderDefinition } from './shaderDefinition'
 import { DEFAULT_MATERIAL_DEFINITION_ID, DEFAULT_MATERIAL_NAME } from './materialInstance'
 import type { MaterialOverrideValue } from './materialInstance'
+import {
+  DEFAULT_OPACITY_MULTIPLIER,
+  DEFAULT_TINT,
+  OPACITY_MULTIPLIER_PARAMETER_KEY,
+  TINT_PARAMETER_KEY,
+} from './materialResolution'
+import type { MaterialParameterDefault } from './materialResolution'
 import type { EmbeddedAsset } from './embeddedAsset'
 import type { EmbeddedMaterialDefinition } from './embeddedMaterial'
 import type { EmbeddedShaderDefinition } from './embeddedShader'
@@ -54,7 +61,14 @@ export class Engine {
     this.#scenes = new SceneManager(this.#nodes)
     this.#assets = new AssetManager(this.#nodes)
     this.#materials = new MaterialManager()
-    this.#materials.register(DEFAULT_MATERIAL_DEFINITION_ID, DEFAULT_MATERIAL_NAME)
+    this.#materials.register(DEFAULT_MATERIAL_DEFINITION_ID, DEFAULT_MATERIAL_NAME, [
+      { key: TINT_PARAMETER_KEY, kind: 'color', default: DEFAULT_TINT },
+      {
+        key: OPACITY_MULTIPLIER_PARAMETER_KEY,
+        kind: 'number',
+        default: DEFAULT_OPACITY_MULTIPLIER,
+      },
+    ])
     this.#shaders = new ShaderManager()
     this.#slides = new SlideManager(this.#bus, this.#projects, this.#scenes)
     this.#animations = new AnimationManager(
@@ -273,8 +287,12 @@ export class Engine {
     return this.#assets.register(definitionId, name)
   }
 
-  registerMaterialDefinition(definitionId: string, name: string): MaterialDefinition {
-    return this.#materials.register(definitionId, name)
+  registerMaterialDefinition(
+    definitionId: string,
+    name: string,
+    parameters: readonly MaterialParameterDefault[] = [],
+  ): MaterialDefinition {
+    return this.#materials.register(definitionId, name, parameters)
   }
 
   registerShaderDefinition(definitionId: string, name: string): ShaderDefinition {
@@ -399,7 +417,7 @@ export class Engine {
   #resolveMaterialDefinition(definitionId: string): MaterialDefinition {
     const embedded = this.#embeddedMaterials.get(definitionId)
     if (embedded) {
-      return new MaterialDefinition(embedded.id, embedded.name)
+      return new MaterialDefinition(embedded.id, embedded.name, embedded.parameters)
     }
     return this.#materials.getDefinition(definitionId)
   }

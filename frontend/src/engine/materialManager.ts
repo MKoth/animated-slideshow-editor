@@ -1,5 +1,6 @@
 import { MaterialDefinition } from './materialDefinition'
 import { requireNonEmpty } from './guards'
+import type { MaterialParameterDefault } from './materialResolution'
 
 export class MaterialManager {
   readonly #definitions = new Map<string, MaterialDefinition>()
@@ -8,9 +9,13 @@ export class MaterialManager {
     return [...this.#definitions.values()]
   }
 
-  register(id: string, name: string): MaterialDefinition {
+  register(
+    id: string,
+    name: string,
+    parameters: readonly MaterialParameterDefault[] = [],
+  ): MaterialDefinition {
     requireNonEmpty(name, 'Material definition name')
-    const definition = new MaterialDefinition(id, name)
+    const definition = new MaterialDefinition(id, name, parameters)
     this.#definitions.set(id, definition)
     return definition
   }

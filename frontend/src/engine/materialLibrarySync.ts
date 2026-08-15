@@ -1,8 +1,10 @@
 import type { Engine } from './internal'
+import type { MaterialParameterDefault } from './materialResolution'
 
 export interface MaterialDefinitionRef {
   readonly id: string
   readonly name: string
+  readonly parameters?: readonly MaterialParameterDefault[]
 }
 
 export class MaterialLibrarySync {
@@ -14,7 +16,11 @@ export class MaterialLibrarySync {
 
   apply(definitions: readonly MaterialDefinitionRef[]): void {
     for (const definition of definitions) {
-      this.#engine.registerMaterialDefinition(definition.id, definition.name)
+      this.#engine.registerMaterialDefinition(
+        definition.id,
+        definition.name,
+        definition.parameters ?? [],
+      )
     }
   }
 }

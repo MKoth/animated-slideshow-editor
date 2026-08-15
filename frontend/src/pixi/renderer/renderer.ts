@@ -461,6 +461,10 @@ export class Renderer {
       case 'OpacityChanged':
         sceneRenderer.handleOpacityChanged(event.nodeId)
         break
+      case 'MaterialAssigned':
+      case 'MaterialParameterChanged':
+        sceneRenderer.handleMaterialChanged(event.nodeId)
+        break
       case 'KeyframeAdded':
       case 'KeyframeRemoved':
       case 'KeyframeMoved':

@@ -8,9 +8,21 @@ import {
   evaluatedNodeScratch,
   evaluatedStatesEqual,
 } from '../../engine/animationEvaluator'
+import {
+  effectiveMaterialScratch,
+  resolveMaterial,
+  type EffectiveMaterialScratch,
+  type MaterialParameterDefault,
+} from '../../engine/materialResolution'
 import type { PixiContainer, RendererPixi } from './pixi'
 import type { WorldSize } from './worldGeometry'
-import { applyEvaluatedState, applyName, createNodeContainer, placeholderOf } from './nodeRenderer'
+import {
+  applyEvaluatedState,
+  applyMaterialTint,
+  applyName,
+  createNodeContainer,
+  placeholderOf,
+} from './nodeRenderer'
 import { applyAssetTexture, applyMissingPlaceholder, placeholderSize } from './placeholder'
 import type { ResolveAssetUrl, TextureCache } from './textureCache'
 
@@ -24,6 +36,8 @@ export const ALWAYS_ZERO_TIME: CurrentTimeSource = {
   subscribe: () => () => undefined,
 }
 
+const UNKNOWN_DEFINITION_PARAMETERS: readonly MaterialParameterDefault[] = []
+
 export class SceneRenderer {
   readonly #engine: EnginePublic
   readonly #pixi: RendererPixi
@@ -36,7 +50,10 @@ export class SceneRenderer {
   readonly #nodeIds = new WeakMap<PixiContainer, string>()
   readonly #sizes = new Map<string, WorldSize>()
   readonly #lastEvaluated = new Map<string, EvaluatedNodeScratch>()
+  readonly #lastMaterials = new Map<string, EffectiveMaterialScratch>()
+  readonly #missingNodes = new Set<string>()
   readonly #scratch: EvaluatedNodeScratch = evaluatedNodeScratch()
+  readonly #materialScratch: EffectiveMaterialScratch = effectiveMaterialScratch()
   readonly #onNodeSizeChanged: (nodeId: string) => void
   #scene: Scene | null = null
   #slideId: string | null = null
@@ -98,6 +115,8 @@ export class SceneRenderer {
     this.#containers.clear()
     this.#sizes.clear()
     this.#lastEvaluated.clear()
+    this.#lastMaterials.clear()
+    this.#missingNodes.clear()
     this.#scene = scene
     this.#slideId = slideId
     if (!scene) {
@@ -129,6 +148,8 @@ export class SceneRenderer {
         this.#containers.delete(descendantId)
         this.#sizes.delete(descendantId)
         this.#lastEvaluated.delete(descendantId)
+        this.#lastMaterials.delete(descendantId)
+        this.#missingNodes.delete(descendantId)
       }
       this.#nodeIds.delete(descendant)
     }
@@ -151,6 +172,10 @@ export class SceneRenderer {
     for (const node of walkPreOrder(scene.root)) {
       this.#evaluateAndApply(node.id)
     }
+  }
+
+  handleMaterialChanged(nodeId: string): void {
+    this.#evaluateAndApply(nodeId)
   }
 
   previewTransform(nodeId: string, x: number, y: number): void {
@@ -259,14 +284,42 @@ export class SceneRenderer {
       this.#currentTime.getTime(slideId),
       this.#scratch,
     )
+    const material = this.#resolveMaterial(nodeId, this.#materialScratch)
     const previous = this.#lastEvaluated.get(nodeId)
-    if (previous && evaluatedStatesEqual(previous, state)) {
+    const previousMaterial = this.#lastMaterials.get(nodeId)
+    const stateChanged = !previous || !evaluatedStatesEqual(previous, state)
+    const materialChanged =
+      !previousMaterial ||
+      previousMaterial.tint !== material.tint ||
+      previousMaterial.opacityMultiplier !== material.opacityMultiplier
+    if (!stateChanged && !materialChanged) {
       return
     }
-    applyEvaluatedState(container, state)
+    applyEvaluatedState(container, state, material.opacityMultiplier)
+    if (materialChanged && !this.#missingNodes.has(nodeId)) {
+      applyMaterialTint(container, material.tint)
+    }
     const stored = previous ?? evaluatedNodeScratch()
     copyEvaluatedState(stored, state)
     this.#lastEvaluated.set(nodeId, stored)
+    const storedMaterial = previousMaterial ?? effectiveMaterialScratch()
+    storedMaterial.tint = material.tint
+    storedMaterial.opacityMultiplier = material.opacityMultiplier
+    this.#lastMaterials.set(nodeId, storedMaterial)
+  }
+
+  #resolveMaterial(nodeId: string, target: EffectiveMaterialScratch): EffectiveMaterialScratch {
+    const node = this.#scene?.getNode(nodeId)
+    if (!node) {
+      return target
+    }
+    let parameters = UNKNOWN_DEFINITION_PARAMETERS
+    try {
+      parameters = this.#engine.getMaterialDefinition(node.material.materialDefinitionId).parameters
+    } catch {
+      parameters = UNKNOWN_DEFINITION_PARAMETERS
+    }
+    return resolveMaterial(parameters, node.material.overrides, target)
   }
 
   #recordSize(node: SceneNode, container: PixiContainer): void {
@@ -283,9 +336,11 @@ export class SceneRenderer {
       return
     }
     if (this.#isAssetMissing(definitionId)) {
+      this.#missingNodes.add(nodeId)
       applyMissingPlaceholder(placeholder)
       return
     }
+    this.#missingNodes.delete(nodeId)
     const url = this.#resolveAssetUrl(definitionId)
     if (!url) {
       return
@@ -296,6 +351,8 @@ export class SceneRenderer {
         return
       }
       applyAssetTexture(placeholder, result.texture)
+      const material = this.#resolveMaterial(nodeId, this.#materialScratch)
+      applyMaterialTint(container, material.tint)
       const size = placeholderSize(placeholder)
       if (size) {
         this.#sizes.set(nodeId, size)

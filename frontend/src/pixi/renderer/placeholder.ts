@@ -63,6 +63,13 @@ export function applyPlaceholderName(group: PixiContainer, name: string): void {
   }
 }
 
+export function applyTint(group: PixiContainer, tint: string): void {
+  const body = bodyByGroup.get(group)
+  if (body) {
+    body.tint = hexColorToTint(tint)
+  }
+}
+
 export function applyMissingPlaceholder(group: PixiContainer): void {
   const body = bodyByGroup.get(group)
   if (body) {
@@ -75,7 +82,6 @@ export function applyAssetTexture(group: PixiContainer, texture: PixiTexture): v
   if (!body) {
     return
   }
-  body.tint = 0xffffff
   body.texture = texture
   body.width = texture.width > 0 ? texture.width : PLACEHOLDER_WIDTH
   body.height = texture.height > 0 ? texture.height : PLACEHOLDER_HEIGHT
@@ -95,4 +101,9 @@ export function placeholderSize(group: PixiContainer): WorldSize | null {
     return null
   }
   return { width: body.width, height: body.height }
+}
+
+function hexColorToTint(color: string): number {
+  const match = /^#([0-9a-f]{6})$/i.exec(color)
+  return match ? parseInt(match[1], 16) : 0xffffff
 }

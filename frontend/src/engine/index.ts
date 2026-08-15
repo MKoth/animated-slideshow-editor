@@ -38,6 +38,15 @@ export {
   defaultMaterial,
 } from './materialInstance'
 export type { MaterialInstance, MaterialOverrides, MaterialOverrideValue } from './materialInstance'
+export {
+  DEFAULT_OPACITY_MULTIPLIER,
+  DEFAULT_TINT,
+  OPACITY_MULTIPLIER_PARAMETER_KEY,
+  TINT_PARAMETER_KEY,
+  effectiveMaterialScratch,
+  resolveMaterial,
+} from './materialResolution'
+export type { EffectiveMaterialScratch, MaterialParameterDefault } from './materialResolution'
 export type {
   LessonJSON,
   LessonProjectJSON,
