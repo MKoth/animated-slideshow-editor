@@ -1,4 +1,5 @@
 import type { AssetDefinition, MaterialDefinition, ShaderDefinition } from '../api'
+import type { ShaderCompileError } from '../shaders/compiler'
 
 export interface AssetImported {
   readonly type: 'AssetImported'
@@ -55,6 +56,17 @@ export interface ShaderUpdated {
   readonly shader: ShaderDefinition
 }
 
+export interface ShaderCompiled {
+  readonly type: 'ShaderCompiled'
+  readonly id: string
+}
+
+export interface ShaderCompilationFailed {
+  readonly type: 'ShaderCompilationFailed'
+  readonly id: string
+  readonly errors: ShaderCompileError[]
+}
+
 export type LibraryEvent =
   | AssetImported
   | AssetDeleted
@@ -67,6 +79,8 @@ export type LibraryEvent =
   | ShaderRemoved
   | ShaderRenamed
   | ShaderUpdated
+  | ShaderCompiled
+  | ShaderCompilationFailed
 
 export type LibraryEventListener = (event: LibraryEvent) => void
 

@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import { shadersApi, type ShaderDefinition, type ShaderImportInput } from '../api'
 import { ApiError } from '../api/apiClient'
+import { compileFragmentShader, type ShaderCompileStatus } from '../shaders/compiler'
+import { reflectUniforms, type ShaderReflection } from '../shaders/reflection'
 import { libraryEventBus } from './libraryEvents'
 import { useNotificationStore } from './notificationStore'
 
@@ -10,16 +12,6 @@ export const UPDATE_FAILED_MESSAGE = 'Shader update failed.'
 export const UPDATE_BACKEND_DOWN_MESSAGE = 'Shader update failed — backend unavailable.'
 export const DELETE_FAILED_MESSAGE = 'Shader delete failed.'
 export const DELETE_BACKEND_DOWN_MESSAGE = 'Shader delete failed — backend unavailable.'
-
-export interface ShaderCompileError {
-  line: number
-  message: string
-}
-
-export interface ShaderCompileStatus {
-  status: 'Compiled' | 'Failed'
-  errors: ShaderCompileError[]
-}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error'
@@ -46,9 +38,50 @@ function replaceDefinition(
   return definitions.map((definition) => (definition.id === updated.id ? updated : definition))
 }
 
+function compileAndReflect(definition: ShaderDefinition): {
+  compileStatus: ShaderCompileStatus
+  reflection: ShaderReflection
+} {
+  try {
+    return {
+      compileStatus: compileFragmentShader(definition.source),
+      reflection: reflectUniforms(definition.source),
+    }
+  } catch (error) {
+    return {
+      compileStatus: { status: 'Failed', errors: [{ line: 0, message: errorMessage(error) }] },
+      reflection: { uniforms: [], warnings: [] },
+    }
+  }
+}
+
+function emitCompileResult(id: string, status: ShaderCompileStatus): void {
+  if (status.status === 'Compiled') {
+    libraryEventBus.emit({ type: 'ShaderCompiled', id })
+  } else {
+    libraryEventBus.emit({ type: 'ShaderCompilationFailed', id, errors: status.errors })
+  }
+}
+
+type ShaderLibrarySetter = (
+  update: (state: ShaderLibraryState) => Partial<ShaderLibraryState>,
+) => void
+
+function registerDefinition(set: ShaderLibrarySetter, definition: ShaderDefinition): void {
+  const compiled = compileAndReflect(definition)
+  set((state) => ({
+    definitions: [definition, ...state.definitions],
+    compileStatus: { ...state.compileStatus, [definition.id]: compiled.compileStatus },
+    reflections: { ...state.reflections, [definition.id]: compiled.reflection },
+  }))
+  libraryEventBus.emit({ type: 'ShaderCreated', shader: definition })
+  emitCompileResult(definition.id, compiled.compileStatus)
+}
+
 interface ShaderLibraryState {
   definitions: ShaderDefinition[]
   compileStatus: Record<string, ShaderCompileStatus | undefined>
+  reflections: Record<string, ShaderReflection | undefined>
   loaded: boolean
   loading: boolean
   error: string | null
@@ -68,6 +101,7 @@ let requestSeq = 0
 export const useShaderLibraryStore = create<ShaderLibraryState>()((set) => ({
   definitions: [],
   compileStatus: {},
+  reflections: {},
   loaded: false,
   loading: false,
   error: null,
@@ -82,7 +116,21 @@ export const useShaderLibraryStore = create<ShaderLibraryState>()((set) => ({
       if (seq !== requestSeq) {
         return
       }
-      set({ definitions, loaded: true, loading: false, unavailable: false })
+      const compileStatus: Record<string, ShaderCompileStatus> = {}
+      const reflections: Record<string, ShaderReflection> = {}
+      for (const definition of definitions) {
+        const compiled = compileAndReflect(definition)
+        compileStatus[definition.id] = compiled.compileStatus
+        reflections[definition.id] = compiled.reflection
+      }
+      set({
+        definitions,
+        compileStatus,
+        reflections,
+        loaded: true,
+        loading: false,
+        unavailable: false,
+      })
     } catch (error) {
       if (seq !== requestSeq) {
         return
@@ -90,6 +138,7 @@ export const useShaderLibraryStore = create<ShaderLibraryState>()((set) => ({
       set({
         definitions: [],
         compileStatus: {},
+        reflections: {},
         selectedId: null,
         loaded: false,
         loading: false,
@@ -104,11 +153,7 @@ export const useShaderLibraryStore = create<ShaderLibraryState>()((set) => ({
   importShader: async (file, input) => {
     try {
       const created = await shadersApi.importShader(file, input)
-      set((state) => ({
-        definitions: [created, ...state.definitions],
-        compileStatus: { ...state.compileStatus, [created.id]: undefined },
-      }))
-      libraryEventBus.emit({ type: 'ShaderCreated', shader: created })
+      registerDefinition(set, created)
       return created
     } catch (error) {
       notifyRequestFailure(IMPORT_FAILED_MESSAGE, IMPORT_BACKEND_DOWN_MESSAGE, error, () =>
@@ -121,11 +166,7 @@ export const useShaderLibraryStore = create<ShaderLibraryState>()((set) => ({
   duplicateShader: async (sourceId, name) => {
     try {
       const created = await shadersApi.duplicateShader(sourceId, name)
-      set((state) => ({
-        definitions: [created, ...state.definitions],
-        compileStatus: { ...state.compileStatus, [created.id]: undefined },
-      }))
-      libraryEventBus.emit({ type: 'ShaderCreated', shader: created })
+      registerDefinition(set, created)
       return created
     } catch (error) {
       notifyRequestFailure(IMPORT_FAILED_MESSAGE, IMPORT_BACKEND_DOWN_MESSAGE, error, () =>
@@ -150,11 +191,14 @@ export const useShaderLibraryStore = create<ShaderLibraryState>()((set) => ({
   reuploadSource: async (shaderId, file) => {
     try {
       const updated = await shadersApi.reuploadSource(shaderId, file)
+      const compiled = compileAndReflect(updated)
       set((state) => ({
         definitions: replaceDefinition(state.definitions, updated),
-        compileStatus: { ...state.compileStatus, [updated.id]: undefined },
+        compileStatus: { ...state.compileStatus, [updated.id]: compiled.compileStatus },
+        reflections: { ...state.reflections, [updated.id]: compiled.reflection },
       }))
       libraryEventBus.emit({ type: 'ShaderUpdated', shader: updated })
+      emitCompileResult(updated.id, compiled.compileStatus)
     } catch (error) {
       notifyRequestFailure(UPDATE_FAILED_MESSAGE, UPDATE_BACKEND_DOWN_MESSAGE, error, () =>
         set({ unavailable: true, error: errorMessage(error) }),
@@ -173,10 +217,13 @@ export const useShaderLibraryStore = create<ShaderLibraryState>()((set) => ({
     }
     set((state) => {
       const compileStatus = { ...state.compileStatus }
+      const reflections = { ...state.reflections }
       delete compileStatus[shaderId]
+      delete reflections[shaderId]
       return {
         definitions: state.definitions.filter((definition) => definition.id !== shaderId),
         compileStatus,
+        reflections,
         selectedId: state.selectedId === shaderId ? null : state.selectedId,
       }
     })
