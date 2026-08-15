@@ -33,6 +33,20 @@ import type { KeyframeEdit } from './keyframeActions'
 
 const DEG_TO_RAD = Math.PI / 180
 
+export function commonValueOf<T, V>(readings: readonly T[], read: (reading: T) => V): V | null {
+  const first = readings[0]
+  if (!first) {
+    return null
+  }
+  const firstValue = read(first)
+  for (const reading of readings.slice(1)) {
+    if (read(reading) !== firstValue) {
+      return null
+    }
+  }
+  return firstValue
+}
+
 export function parseFiniteNumber(raw: string, what: string): number {
   const trimmed = raw.trim()
   if (trimmed === '') {

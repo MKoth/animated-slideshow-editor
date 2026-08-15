@@ -990,6 +990,62 @@ button:disabled {
   opacity: 0.7;
 }
 
+.inspector-field__indicator[data-state='override'] {
+  color: var(--color-accent);
+}
+
+.inspector-field__select {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.inspector-field__select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.inspector-field__color {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 2px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+}
+
+.inspector-field__color[data-mixed='true'] {
+  border-style: dashed;
+  border-color: var(--color-text-muted);
+}
+
+.inspector-field__clear {
+  flex-shrink: 0;
+  padding: 3px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 11px;
+}
+
+.inspector-field__clear:hover {
+  border-color: var(--color-accent);
+}
+
+.inspector-field__clear:disabled {
+  color: var(--color-text-muted);
+  opacity: 0.7;
+}
+
 .inspector-reset {
   width: 100%;
   margin-top: 4px;

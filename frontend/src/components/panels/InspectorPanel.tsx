@@ -7,6 +7,7 @@ import {
   applyNodeName,
   applyNodeOpacity,
   applyNodeOpacityAutoKey,
+  commonValueOf,
   degreesOf,
   FIELD_LABELS,
   FIELD_PROPERTY,
@@ -29,15 +30,13 @@ import { useUiStore } from '../../stores/uiStore'
 import { renameSlide, setSlideDuration } from '../../app/slideActions'
 import type { Slide } from '../../engine'
 import { NameField, NumericField } from './inspectorFields'
+import { MaterialInspectorSection } from './MaterialInspectorSection'
 
-const COMING_SOON_SECTIONS = [
-  'Material',
-  'Animation',
-  'Shader',
-  'Anchors',
-  'Physics',
-  'AI Metadata',
-]
+const COMING_SOON_SECTIONS = ['Animation', 'Shader', 'Anchors', 'Physics', 'AI Metadata']
+
+function isRenderableNode(node: SceneNode): boolean {
+  return Boolean(node.components.assetInstance || node.components.text)
+}
 
 function inspectedTargets(engine: EnginePublic, selectedIds: readonly string[]): SceneNode[] {
   const activeSlide = engine.getActiveSlide()
@@ -57,16 +56,6 @@ function inspectedTargets(engine: EnginePublic, selectedIds: readonly string[]):
     }
   }
   return targets
-}
-
-function commonValueOf<T>(targets: readonly SceneNode[], read: (node: SceneNode) => T): T | null {
-  const first = read(targets[0])
-  for (const node of targets.slice(1)) {
-    if (read(node) !== first) {
-      return null
-    }
-  }
-  return first
 }
 
 function mixedTransformField(
@@ -385,6 +374,16 @@ export function InspectorPanel({ width }: { width: number }) {
             onAdjust={adjustOpacity}
           />
         </InspectorSection>
+
+        {targets.length > 0 && targets.every(isRenderableNode) && (
+          <MaterialInspectorSection
+            targets={targets}
+            engine={engine}
+            dispatch={dispatch}
+            notify={notify}
+            playing={playing}
+          />
+        )}
 
         {COMING_SOON_SECTIONS.map((title) => (
           <ComingSoonSection key={title} title={title} />

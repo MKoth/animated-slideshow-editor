@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import type { ReactNode } from 'react'
 import { formatDecimal, roundToStep } from '../../app/inspectorActions'
 import type { PropertyState } from '../../app/keyframeActions'
 import { DRAG_THRESHOLD_PX, MIXED_MARKER, useEditBuffer } from './useEditBuffer'
@@ -9,6 +10,7 @@ interface NumericFieldProps {
   step: number
   disabled?: boolean
   state?: PropertyState | null
+  after?: ReactNode
   onCommit: (raw: string) => void
   onAdjust: (value: number) => void
 }
@@ -19,6 +21,7 @@ export function NumericField({
   step,
   disabled = false,
   state = null,
+  after,
   onCommit,
   onAdjust,
 }: NumericFieldProps) {
@@ -112,6 +115,7 @@ export function NumericField({
         }}
         onPointerDown={handlePointerDown}
       />
+      {after}
     </div>
   )
 }
