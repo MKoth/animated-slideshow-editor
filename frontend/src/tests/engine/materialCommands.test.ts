@@ -225,6 +225,45 @@ describe('OverrideMaterialParameterCommand', () => {
     })
   })
 
+  it('accepts a boolean value and records it in the inverse', () => {
+    const { engine, dispatcher, undoStack, nodeId } = setupWithNode()
+
+    const result = dispatcher.dispatch(
+      new OverrideMaterialParameterCommand({ nodeId, parameter: 'uEnabled', value: true }),
+    )
+
+    const inverse = expectOk(result)
+    expect(engine.getNode(nodeId).material.overrides).toEqual({ uEnabled: true })
+    expect(inverse).toEqual({ nodeId, parameter: 'uEnabled', previousValue: null })
+    expect(undoStack.entries[0]).toMatchObject({
+      type: 'OverrideMaterialParameter',
+      parameters: { nodeId, parameter: 'uEnabled', value: true },
+      inverse,
+    })
+  })
+
+  it('accepts a component-array value and records the previous array on change', () => {
+    const { engine, dispatcher, nodeId } = setupWithNode()
+
+    expectOk(
+      dispatcher.dispatch(
+        new OverrideMaterialParameterCommand({ nodeId, parameter: 'uColor', value: [1, 0, 0] }),
+      ),
+    )
+    const inverse = expectOk(
+      dispatcher.dispatch(
+        new OverrideMaterialParameterCommand({
+          nodeId,
+          parameter: 'uColor',
+          value: [0.1, 0.2, 0.9],
+        }),
+      ),
+    )
+
+    expect(engine.getNode(nodeId).material.overrides.uColor).toEqual([0.1, 0.2, 0.9])
+    expect(inverse).toEqual({ nodeId, parameter: 'uColor', previousValue: [1, 0, 0] })
+  })
+
   it('rejects an empty parameter key', () => {
     const { engine, dispatcher, undoStack, nodeId } = setupWithNode()
     const events = collectEvents(engine)

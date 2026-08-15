@@ -933,6 +933,16 @@ button:disabled {
   color: var(--color-text-muted);
 }
 
+.inspector-section__subtitle {
+  margin: 10px 0 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  border-top: 1px solid var(--color-border);
+  padding-top: 8px;
+}
+
 .inspector-section--coming-soon .inspector-section__title {
   margin-bottom: 2px;
 }
@@ -1024,6 +1034,30 @@ button:disabled {
 .inspector-field__color[data-mixed='true'] {
   border-style: dashed;
   border-color: var(--color-text-muted);
+}
+
+.inspector-field__slider {
+  flex: 1;
+  min-width: 60px;
+  accent-color: var(--color-accent);
+}
+
+.inspector-field__checkbox {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-accent);
+}
+
+.inspector-field__component {
+  flex: 1;
+  min-width: 40px;
+  max-width: 56px;
+}
+
+.inspector-field__alpha {
+  flex: 0 0 auto;
+  width: 48px;
 }
 
 .inspector-field__clear {

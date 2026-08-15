@@ -1,3 +1,7 @@
+import type { MaterialOverrideValue } from './materialInstance'
+
+export type MaterialOverrideJSON = MaterialOverrideValue
+
 export type TransformJSON = {
   readonly x: number
   readonly y: number
@@ -19,12 +23,12 @@ export type NodeComponentsJSON = {
 
 export type MaterialJSON = {
   readonly definitionId: string
-  readonly overrides: Readonly<Record<string, string | number>>
+  readonly overrides: Readonly<Record<string, MaterialOverrideJSON>>
 }
 
 export type FullscreenShaderJSON = {
   readonly shaderDefinitionId: string
-  readonly overrides: Readonly<Record<string, string | number>>
+  readonly overrides: Readonly<Record<string, MaterialOverrideJSON>>
 }
 
 export type NodeJSON = {

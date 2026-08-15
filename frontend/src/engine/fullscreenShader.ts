@@ -3,7 +3,7 @@ import { isRecord, requireOverrides, requireString } from './guards'
 
 export interface FullscreenShaderReference {
   readonly shaderDefinitionId: string
-  readonly overrides: Readonly<Record<string, string | number>>
+  readonly overrides: Readonly<Record<string, string | number | boolean | readonly number[]>>
 }
 
 export function fullscreenShaderToJSON(reference: FullscreenShaderReference): FullscreenShaderJSON {

@@ -32,7 +32,9 @@ function validateOverrides(errors: string[], overrides: unknown, what: string): 
   }
   for (const [key, value] of Object.entries(overrides)) {
     if (!isOverrideValue(value)) {
-      errors.push(`${what} value for "${key}" must be a non-empty string or a finite number`)
+      errors.push(
+        `${what} value for "${key}" must be a non-empty string, a finite number, a boolean, or a number array`,
+      )
     }
   }
 }

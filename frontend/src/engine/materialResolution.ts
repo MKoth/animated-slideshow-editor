@@ -1,11 +1,11 @@
-import type { MaterialOverrides } from './materialInstance'
+import type { MaterialOverrides, MaterialParameterDefaultValue } from './materialInstance'
+
+export type { MaterialParameterDefaultValue } from './materialInstance'
 
 export const TINT_PARAMETER_KEY = 'tint'
 export const OPACITY_MULTIPLIER_PARAMETER_KEY = 'opacityMultiplier'
 export const DEFAULT_TINT = '#ffffff'
 export const DEFAULT_OPACITY_MULTIPLIER = 1
-
-export type MaterialParameterDefaultValue = string | number | boolean | readonly number[]
 
 export interface MaterialParameterDefault {
   readonly key: string
@@ -134,7 +134,7 @@ function clearShaderUniforms(target: EffectiveShaderScratch): void {
   target.values.length = 0
 }
 
-function uniformValuesEqual(
+export function uniformValuesEqual(
   first: MaterialParameterDefaultValue | undefined,
   second: MaterialParameterDefaultValue | undefined,
 ): boolean {

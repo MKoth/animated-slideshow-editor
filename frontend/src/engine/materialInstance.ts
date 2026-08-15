@@ -1,7 +1,9 @@
 import type { MaterialJSON } from './json'
 import { isRecord, requireOverrides, requireString } from './guards'
 
-export type MaterialOverrideValue = string | number
+export type MaterialOverrideValue = string | number | boolean | readonly number[]
+
+export type MaterialParameterDefaultValue = MaterialOverrideValue
 
 export type MaterialOverrides = Readonly<Record<string, MaterialOverrideValue>>
 

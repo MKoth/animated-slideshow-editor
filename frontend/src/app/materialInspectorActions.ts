@@ -1,7 +1,11 @@
 import type { EnginePublic, SceneNode } from '../engine'
-import { resolveMaterial } from '../engine'
+import { resolveMaterial, resolveParameterValue, uniformValuesEqual } from '../engine'
 import { OPACITY_MULTIPLIER_PARAMETER_KEY, TINT_PARAMETER_KEY } from '../engine'
-import type { MaterialOverrideValue, MaterialParameterDefault } from '../engine'
+import type {
+  MaterialOverrideValue,
+  MaterialParameterDefault,
+  MaterialParameterDefaultValue,
+} from '../engine'
 import type { CommandResult, DispatchCommand } from '../engine/commands'
 import {
   AssignMaterialCommand,
@@ -9,6 +13,7 @@ import {
   OverrideMaterialParameterCommand,
 } from '../engine/commands'
 import type { Command } from '../engine/commands'
+import { RESERVED_TEXTURE_UNIFORM } from '../shaders/reflection'
 import { dispatchCommands } from './keyframeActions'
 
 export interface MaterialReading {
@@ -17,18 +22,51 @@ export interface MaterialReading {
   readonly opacityMultiplier: number
   readonly tintOverridden: boolean
   readonly opacityMultiplierOverridden: boolean
+  readonly uniforms: readonly UniformReading[]
+}
+
+export interface UniformReading {
+  readonly key: string
+  readonly kind: string
+  readonly default: MaterialParameterDefaultValue
+  readonly effective: MaterialParameterDefaultValue
+  readonly overridden: boolean
+}
+
+function definitionParametersOf(
+  engine: EnginePublic,
+  node: SceneNode,
+): readonly MaterialParameterDefault[] {
+  try {
+    return engine.getMaterialDefinition(node.material.materialDefinitionId).parameters
+  } catch {
+    // unknown definition: resolve overrides against the built-in defaults
+    return []
+  }
 }
 
 export function readMaterial(engine: EnginePublic, node: SceneNode): MaterialReading {
-  let parameters: readonly MaterialParameterDefault[] = []
-  try {
-    parameters = engine.getMaterialDefinition(node.material.materialDefinitionId).parameters
-  } catch {
-    // unknown definition: resolve overrides against the built-in defaults
-    parameters = []
-  }
+  const parameters = definitionParametersOf(engine, node)
   const effective = resolveMaterial(parameters, node.material.overrides)
   const overrides = node.material.overrides
+  const uniforms: UniformReading[] = []
+  for (const parameter of parameters) {
+    if (
+      parameter.key === TINT_PARAMETER_KEY ||
+      parameter.key === OPACITY_MULTIPLIER_PARAMETER_KEY ||
+      parameter.key === RESERVED_TEXTURE_UNIFORM
+    ) {
+      continue
+    }
+    uniforms.push({
+      key: parameter.key,
+      kind: parameter.kind,
+      default: parameter.default,
+      effective:
+        resolveParameterValue(parameters, overrides, parameter.key) ?? fallbackDefaultOf(parameter),
+      overridden: Object.prototype.hasOwnProperty.call(overrides, parameter.key),
+    })
+  }
   return {
     definitionId: node.material.materialDefinitionId,
     tint: effective.tint,
@@ -38,6 +76,24 @@ export function readMaterial(engine: EnginePublic, node: SceneNode): MaterialRea
       overrides,
       'opacityMultiplier',
     ),
+    uniforms,
+  }
+}
+
+function fallbackDefaultOf(parameter: MaterialParameterDefault): MaterialParameterDefaultValue {
+  switch (parameter.kind) {
+    case 'bool':
+      return false
+    case 'vec2':
+      return [0, 0]
+    case 'vec3':
+      return [0, 0, 0]
+    case 'vec4':
+      return [0, 0, 0, 0]
+    case 'sampler2D':
+      return ''
+    default:
+      return 0
   }
 }
 
@@ -61,13 +117,18 @@ function effectiveValueOf(
   engine: EnginePublic,
   node: SceneNode,
   parameter: string,
-): MaterialOverrideValue | undefined {
+): MaterialParameterDefaultValue | undefined {
   const reading = readMaterial(engine, node)
   if (parameter === TINT_PARAMETER_KEY) {
     return reading.tint
   }
   if (parameter === OPACITY_MULTIPLIER_PARAMETER_KEY) {
     return reading.opacityMultiplier
+  }
+  for (const uniform of reading.uniforms) {
+    if (uniform.key === parameter) {
+      return uniform.effective
+    }
   }
   return undefined
 }
@@ -84,7 +145,7 @@ export function overrideMaterialParameterOnNodes(
     const node = engine.getNode(nodeId)
     const current = node.material.overrides[parameter]
     const effective = effectiveValueOf(engine, node, parameter)
-    if ((current ?? effective) === value) {
+    if (uniformValuesEqual(current ?? effective, value)) {
       continue
     }
     children.push(new OverrideMaterialParameterCommand({ nodeId, parameter, value }))

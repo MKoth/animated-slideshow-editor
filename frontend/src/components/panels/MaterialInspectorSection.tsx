@@ -1,7 +1,10 @@
 import type { ChangeEvent } from 'react'
-import type { ReactNode } from 'react'
 import type { EnginePublic, SceneNode } from '../../engine'
-import { OPACITY_MULTIPLIER_PARAMETER_KEY, TINT_PARAMETER_KEY } from '../../engine'
+import {
+  OPACITY_MULTIPLIER_PARAMETER_KEY,
+  TINT_PARAMETER_KEY,
+  uniformValuesEqual,
+} from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
 import {
   assignMaterialToNodes,
@@ -10,17 +13,10 @@ import {
   readMaterial,
 } from '../../app/materialInspectorActions'
 import { commonValueOf, parseFiniteNumber } from '../../app/inspectorActions'
+import { useMaterialLibraryStore } from '../../stores/materialLibraryStore'
 import { NumericField } from './inspectorFields'
-
-type OverrideState = 'none' | 'all' | 'mixed'
-
-function overrideStateOf(overridden: readonly boolean[]): OverrideState {
-  const any = overridden.some(Boolean)
-  if (!any) {
-    return 'none'
-  }
-  return overridden.every(Boolean) ? 'all' : 'mixed'
-}
+import { OverrideAffordance, UniformParameterField } from './uniformControls'
+import { overrideStateOf } from './uniforms'
 
 function definitionNameOf(engine: EnginePublic, definitionId: string): string {
   try {
@@ -32,36 +28,6 @@ function definitionNameOf(engine: EnginePublic, definitionId: string): string {
 
 function clampPercent(value: number): number {
   return Math.min(100, Math.max(0, value))
-}
-
-function overrideControls(
-  overridden: OverrideState,
-  clearLabel: string,
-  onClear: () => void,
-  playing: boolean,
-): ReactNode {
-  if (overridden === 'none') {
-    return null
-  }
-  return (
-    <>
-      <span
-        className="inspector-field__indicator"
-        data-state="override"
-        title={overridden === 'all' ? 'Override set' : 'Override set on some'}
-      >
-        ●
-      </span>
-      <button
-        className="inspector-field__clear"
-        aria-label={clearLabel}
-        onClick={onClear}
-        disabled={playing}
-      >
-        Clear
-      </button>
-    </>
-  )
 }
 
 export function MaterialInspectorSection({
@@ -78,6 +44,9 @@ export function MaterialInspectorSection({
   playing: boolean
 }) {
   const nodeIds = targets.map((node) => node.id)
+  // Definition changes from the library refresh the section so unset
+  // uniforms display the current definition defaults.
+  useMaterialLibraryStore((state) => state.definitions)
   const readings = targets.map((node) => readMaterial(engine, node))
   const currentDefinitionId = commonValueOf(readings, (reading) => reading.definitionId)
   const commonTint = commonValueOf(readings, (reading) => reading.tint)
@@ -145,6 +114,9 @@ export function MaterialInspectorSection({
     currentDefinitionId !== null &&
     definitions.some((definition) => definition.id === currentDefinitionId)
 
+  const firstReading = readings[0]
+  const uniformParameters = firstReading?.uniforms ?? []
+
   return (
     <section className="inspector-section">
       <h3 className="inspector-section__title">Material</h3>
@@ -192,7 +164,12 @@ export function MaterialInspectorSection({
           disabled={playing}
           onChange={handleTint}
         />
-        {overrideControls(tintOverridden, 'Clear Tint override', handleClearTint, playing)}
+        <OverrideAffordance
+          state={tintOverridden}
+          label="Clear Tint override"
+          onClear={handleClearTint}
+          disabled={playing}
+        />
       </div>
       <NumericField
         label="Opacity Multiplier"
@@ -201,13 +178,55 @@ export function MaterialInspectorSection({
         disabled={playing}
         onCommit={commitMultiplier}
         onAdjust={(percent) => commitMultiplier(String(percent))}
-        after={overrideControls(
-          multiplierOverridden,
-          'Clear Opacity Multiplier override',
-          handleClearMultiplier,
-          playing,
-        )}
+        after={
+          <OverrideAffordance
+            state={multiplierOverridden}
+            label="Clear Opacity Multiplier override"
+            onClear={handleClearMultiplier}
+            disabled={playing}
+          />
+        }
       />
+      {uniformParameters.length > 0 && (
+        <h4 className="inspector-section__subtitle">Shader Uniforms</h4>
+      )}
+      {uniformParameters.map((uniform) => {
+        const effective =
+          commonValueOf(
+            readings,
+            (reading) => reading.uniforms.find((entry) => entry.key === uniform.key)?.effective,
+            uniformValuesEqual,
+          ) ?? null
+        const overridden = overrideStateOf(
+          readings.map(
+            (reading) =>
+              reading.uniforms.find((entry) => entry.key === uniform.key)?.overridden ?? false,
+          ),
+        )
+        return (
+          <UniformParameterField
+            key={uniform.key}
+            parameter={uniform}
+            effective={effective}
+            overridden={overridden}
+            disabled={playing}
+            onChange={(value) => {
+              if (uniform.kind === 'sampler2D' && value === '') {
+                runCommand(() =>
+                  clearMaterialOverrideOnNodes(engine, dispatch, nodeIds, uniform.key),
+                )
+                return
+              }
+              runCommand(() =>
+                overrideMaterialParameterOnNodes(engine, dispatch, nodeIds, uniform.key, value),
+              )
+            }}
+            onClear={() =>
+              runCommand(() => clearMaterialOverrideOnNodes(engine, dispatch, nodeIds, uniform.key))
+            }
+          />
+        )
+      })}
     </section>
   )
 }

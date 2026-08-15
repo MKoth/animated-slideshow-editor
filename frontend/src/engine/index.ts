@@ -46,6 +46,7 @@ export {
   effectiveMaterialScratch,
   resolveMaterial,
   resolveParameterValue,
+  uniformValuesEqual,
 } from './materialResolution'
 export type {
   EffectiveMaterialScratch,

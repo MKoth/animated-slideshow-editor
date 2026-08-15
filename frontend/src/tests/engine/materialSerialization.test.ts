@@ -161,6 +161,27 @@ describe('node material serialization', () => {
     expect(Object.keys(renderableNode(json).material?.overrides ?? {})).toHaveLength(2)
   })
 
+  it('round-trips boolean and component-array overrides exactly', () => {
+    const { engine, slide, node } = engineWithProject()
+    engine.overrideMaterialParameter(node.id, 'uEnabled', true)
+    engine.overrideMaterialParameter(node.id, 'uColor', [1, 0, 0])
+
+    const json = nodeJson(engine)
+    expect(renderableNode(json).material?.overrides).toEqual({
+      uEnabled: true,
+      uColor: [1, 0, 0],
+    })
+
+    const restored = deserialize(serialize(engine.project as never))
+    const restoredNode = restored.slides
+      .find((entry) => entry.id === slide.id)
+      ?.scene.getNode(node.id)
+    expect(restoredNode?.material.overrides).toEqual({
+      uEnabled: true,
+      uColor: [1, 0, 0],
+    })
+  })
+
   it('restores the default material for nodes without a material field', () => {
     const { engine, slide } = engineWithProject()
     const json = nodeJson(engine)
@@ -299,7 +320,7 @@ describe('validation of material and fullscreenShader fields', () => {
               nodes: [
                 {
                   ...node,
-                  material: { definitionId: 'm1', overrides: { tint: [1, 2] } },
+                  material: { definitionId: 'm1', overrides: { tint: { bad: true } } },
                 },
                 camera,
               ],
@@ -309,7 +330,7 @@ describe('validation of material and fullscreenShader fields', () => {
       }),
     ).toEqual(
       expect.arrayContaining([
-        expect.stringMatching(/overrides value for "tint" must be a non-empty string or a finite/i),
+        expect.stringMatching(/overrides value for "tint" must be a non-empty string/i),
       ]),
     )
 
@@ -351,7 +372,7 @@ describe('validation of material and fullscreenShader fields', () => {
       }),
     ).toEqual(
       expect.arrayContaining([
-        expect.stringMatching(/overrides value for "x" must be a non-empty string or a finite/i),
+        expect.stringMatching(/overrides value for "x" must be a non-empty string/i),
       ]),
     )
   })
@@ -368,7 +389,10 @@ describe('validation of material and fullscreenShader fields', () => {
               nodes: [
                 {
                   ...node,
-                  material: { definitionId: 'm1', overrides: { tint: '#ff0000', gain: 0.5 } },
+                  material: {
+                    definitionId: 'm1',
+                    overrides: { tint: '#ff0000', gain: 0.5, uEnabled: true, uColor: [1, 0, 0] },
+                  },
                 },
                 camera,
               ],

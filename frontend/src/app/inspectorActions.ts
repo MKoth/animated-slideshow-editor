@@ -33,14 +33,18 @@ import type { KeyframeEdit } from './keyframeActions'
 
 const DEG_TO_RAD = Math.PI / 180
 
-export function commonValueOf<T, V>(readings: readonly T[], read: (reading: T) => V): V | null {
+export function commonValueOf<T, V>(
+  readings: readonly T[],
+  read: (reading: T) => V,
+  equal: (first: V, second: V) => boolean = (first, second) => first === second,
+): V | null {
   const first = readings[0]
   if (!first) {
     return null
   }
   const firstValue = read(first)
   for (const reading of readings.slice(1)) {
-    if (read(reading) !== firstValue) {
+    if (!equal(firstValue, read(reading))) {
       return null
     }
   }
