@@ -8,7 +8,7 @@ import { ensureReferencedEmbedded } from './assetSnapshot'
 import { EngineContext } from './engineContext'
 import type { EngineContextValue } from './engineContext'
 import { registerActiveSlideSync } from './activeSlideSync'
-import { registerLibrarySync } from './librarySync'
+import { registerLibrarySync, registerMaterialLibrarySync } from './librarySync'
 
 export function EngineProvider({ children }: { children: ReactNode }) {
   const [system] = useState(() => createCommandSystem())
@@ -32,9 +32,11 @@ export function EngineProvider({ children }: { children: ReactNode }) {
     persistenceRef.current = persistence
     system.dispatcher.setOnCommandSucceeded(() => persistence.onCommandSucceeded())
     const disposeLibrarySync = registerLibrarySync(system.assetLibrarySync)
+    const disposeMaterialLibrarySync = registerMaterialLibrarySync(system.materialLibrarySync)
     const disposeActiveSlideSync = registerActiveSlideSync(system.engine)
     return () => {
       disposeActiveSlideSync()
+      disposeMaterialLibrarySync()
       disposeLibrarySync()
       persistence.dispose()
       if (persistenceRef.current === persistence) {

@@ -4,12 +4,14 @@ import { SceneManager } from './sceneManager'
 import { SlideManager } from './slideManager'
 import { NodeManager } from './nodeManager'
 import { AssetManager } from './assetManager'
+import { MaterialManager } from './materialManager'
 import { AnimationManager } from './animationManager'
 import { AnimationEvaluator } from './animationEvaluator'
 import type { EvaluatedNodeScratch, EvaluatedNodeState } from './animationEvaluator'
 import type { KeyframeMove, KeyframeMoveResult } from './animationManager'
 import type { AnimationProperty, Keyframe } from './animation'
 import { AssetDefinition } from './assetDefinition'
+import { MaterialDefinition } from './materialDefinition'
 import type { EmbeddedAsset } from './embeddedAsset'
 import type { CreateProjectInput, Project } from './project'
 import type { Scene } from './scene'
@@ -30,6 +32,7 @@ export class Engine {
   readonly #nodes: NodeManager
   readonly #scenes: SceneManager
   readonly #assets: AssetManager
+  readonly #materials: MaterialManager
   readonly #slides: SlideManager
   readonly #animations: AnimationManager
   readonly #evaluator: AnimationEvaluator
@@ -41,6 +44,7 @@ export class Engine {
     this.#nodes = new NodeManager(this.#bus, (sceneId) => this.#scenes.getScene(sceneId))
     this.#scenes = new SceneManager(this.#nodes)
     this.#assets = new AssetManager(this.#nodes)
+    this.#materials = new MaterialManager()
     this.#slides = new SlideManager(this.#bus, this.#projects, this.#scenes)
     this.#animations = new AnimationManager(
       this.#bus,
@@ -243,6 +247,14 @@ export class Engine {
     return this.#assets.register(definitionId, name)
   }
 
+  registerMaterialDefinition(definitionId: string, name: string): MaterialDefinition {
+    return this.#materials.register(definitionId, name)
+  }
+
+  getMaterialDefinition(definitionId: string): MaterialDefinition {
+    return this.#materials.getDefinition(definitionId)
+  }
+
   getAssetDefinition(definitionId: string): AssetDefinition {
     const embedded = this.#embeddedAssets.get(definitionId)
     if (embedded) {
@@ -270,6 +282,10 @@ export class Engine {
 
   get assetDefinitions(): readonly AssetDefinition[] {
     return this.#assets.definitions
+  }
+
+  get materialDefinitions(): readonly MaterialDefinition[] {
+    return this.#materials.definitions
   }
 
   createAssetInstance(
@@ -339,6 +355,9 @@ export function toReadOnly(engine: Engine): EnginePublic {
     get assetDefinitions() {
       return engine.assetDefinitions
     },
+    get materialDefinitions() {
+      return engine.materialDefinitions
+    },
     get embeddedAssets() {
       return engine.embeddedAssets
     },
@@ -353,6 +372,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getNode: (nodeId) => engine.getNode(nodeId),
     getScene: (sceneId) => engine.getScene(sceneId),
     getAssetDefinition: (definitionId) => engine.getAssetDefinition(definitionId),
+    getMaterialDefinition: (definitionId) => engine.getMaterialDefinition(definitionId),
     getEmbeddedAsset: (definitionId) => engine.getEmbeddedAsset(definitionId),
     embedAsset: (asset) => engine.embedAsset(asset),
     getKeyframes: (nodeId, property) => engine.getKeyframes(nodeId, property),

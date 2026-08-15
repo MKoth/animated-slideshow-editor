@@ -1,6 +1,7 @@
 import { createEngineInternal, toReadOnly } from '../internal'
 import type { Engine, EnginePublic } from '../internal'
 import { AssetLibrarySync } from '../assetLibrarySync'
+import { MaterialLibrarySync } from '../materialLibrarySync'
 import type { Command, CommandResult } from './command'
 import { UndoStack } from './undoStack'
 import { newId } from '../ids'
@@ -54,6 +55,7 @@ export class CommandDispatcher {
 export interface CommandSystem {
   readonly engine: EnginePublic
   readonly assetLibrarySync: AssetLibrarySync
+  readonly materialLibrarySync: MaterialLibrarySync
   readonly dispatcher: CommandDispatcher
   readonly undoStack: UndoStack
 }
@@ -69,6 +71,7 @@ export function createCommandSystem(logger: CommandLogger = defaultLogger): Comm
   return {
     engine: toReadOnly(engine),
     assetLibrarySync: new AssetLibrarySync(engine),
+    materialLibrarySync: new MaterialLibrarySync(engine),
     dispatcher: new CommandDispatcher(engine, undoStack, logger),
     undoStack,
   }
