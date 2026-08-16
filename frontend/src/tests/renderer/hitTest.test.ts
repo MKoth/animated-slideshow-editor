@@ -282,8 +282,8 @@ describe('evaluated transform sources', () => {
   }
 
   function animate(engine: Engine, nodeId: string): void {
-    engine.addKeyframe(nodeId, 'positionX', 0, 0)
-    engine.addKeyframe(nodeId, 'positionX', 10, 100)
+    engine.addKeyframe({ kind: 'node', nodeId: nodeId, property: 'positionX' }, 0, 0)
+    engine.addKeyframe({ kind: 'node', nodeId: nodeId, property: 'positionX' }, 10, 100)
   }
 
   it('hits the rendered position of an animated node, not its stored position', () => {

@@ -4,16 +4,27 @@ import type { Command, CommandResult } from './commands/command'
 import type { DispatchCommand } from './commands/dispatcher'
 import { AddKeyframeCommand } from './commands/addKeyframeCommand'
 import { SetKeyframeValueCommand } from './commands/setKeyframeValueCommand'
+import { OverrideMaterialParameterCommand } from './commands/overrideMaterialParameterCommand'
 import { TransactionCommand } from './commands/transactionCommand'
+import type { KeyframeTarget } from './keyframeTarget'
+import { isParameterTarget } from './keyframeTarget'
+import { uniformValuesEqual } from './materialResolution'
+import type { KeyframeValue } from './keyframe'
 
 export interface KeyframeEdit {
-  readonly nodeId: string
-  readonly property: AnimationProperty
-  readonly value: number
+  readonly target: KeyframeTarget
+  readonly value: KeyframeValue
 }
 
 export interface TimedKeyframeEdit extends KeyframeEdit {
   readonly time: number
+}
+
+/** A material-parameter edit with a playhead time (Spec 07 R28 auto-key). */
+export interface MaterialParameterEdit {
+  readonly nodeId: string
+  readonly parameter: string
+  readonly value: KeyframeValue
 }
 
 export function keyframeAtTime(keyframes: readonly Keyframe[], time: number): Keyframe | undefined {
@@ -43,19 +54,26 @@ export function evaluatedPropertyValue(
   }
 }
 
+/**
+ * The Spec 04 auto-key pattern generalized to targets: editing a value at a
+ * time creates or updates that target's keyframe at the time. Property edits
+ * skip when the evaluated value already equals the edit value; material
+ * parameter edits always write a keyframe (the evaluated overlay is a later
+ * spec).
+ */
 export function autoKeyCommands(
   engine: EnginePublic,
   edits: readonly TimedKeyframeEdit[],
 ): Command<unknown>[] {
   const commands: Command<unknown>[] = []
   for (const edit of edits) {
-    const existing = keyframeAtTime(engine.getKeyframes(edit.nodeId, edit.property), edit.time)
+    const keyframes = targetKeyframes(engine, edit.target)
+    const existing = keyframeAtTime(keyframes, edit.time)
     if (existing) {
-      if (existing.value !== edit.value) {
+      if (!uniformValuesEqual(existing.value, edit.value)) {
         commands.push(
           new SetKeyframeValueCommand({
-            nodeId: edit.nodeId,
-            property: edit.property,
+            target: edit.target,
             keyframeId: existing.id,
             newValue: edit.value,
           }),
@@ -63,17 +81,49 @@ export function autoKeyCommands(
       }
       continue
     }
-    if (evaluatedPropertyValue(engine, edit.nodeId, edit.property, edit.time) === edit.value) {
+    if (
+      !isParameterTarget(edit.target) &&
+      evaluatedPropertyValue(engine, edit.target.nodeId, edit.target.property, edit.time) ===
+        edit.value
+    ) {
       continue
     }
     commands.push(
       new AddKeyframeCommand({
-        nodeId: edit.nodeId,
-        property: edit.property,
+        target: edit.target,
         time: edit.time,
         value: edit.value,
       }),
     )
+  }
+  return commands
+}
+
+/**
+ * The material-parameter edit path (Spec 07 R28): editing a parameter that
+ * already has a track auto-keys it at the playhead; editing an untracked
+ * parameter issues the static-override command. Coherent with the Spec 04
+ * auto-key pattern generalized to non-numeric values.
+ */
+export function materialParameterEditCommands(
+  engine: EnginePublic,
+  time: number,
+  edits: readonly MaterialParameterEdit[],
+): Command<unknown>[] {
+  const commands: Command<unknown>[] = []
+  for (const edit of edits) {
+    const target: KeyframeTarget = { kind: 'node', nodeId: edit.nodeId, parameter: edit.parameter }
+    if (engine.hasMaterialTrack(edit.nodeId, edit.parameter)) {
+      commands.push(...autoKeyCommands(engine, [{ target, time, value: edit.value }]))
+    } else {
+      commands.push(
+        new OverrideMaterialParameterCommand({
+          nodeId: edit.nodeId,
+          parameter: edit.parameter,
+          value: edit.value,
+        }),
+      )
+    }
   }
   return commands
 }
@@ -89,4 +139,10 @@ export function dispatchKeyframeCommands(
     return dispatch(commands[0])
   }
   return dispatch(new TransactionCommand(commands))
+}
+
+function targetKeyframes(engine: EnginePublic, target: KeyframeTarget): readonly Keyframe[] {
+  return isParameterTarget(target)
+    ? engine.getMaterialKeyframes(target.nodeId, target.parameter)
+    : engine.getKeyframes(target.nodeId, target.property)
 }

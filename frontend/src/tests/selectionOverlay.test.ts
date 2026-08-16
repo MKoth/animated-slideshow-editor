@@ -247,8 +247,8 @@ describe('selection overlay evaluated bounds', () => {
   it('follows the evaluated position when the playhead time changes', () => {
     const harness = mountEvaluated()
     const selected = evaluatedNode(harness, 'Animated', 0, 0)
-    harness.engine.addKeyframe(selected, 'positionX', 0, 0)
-    harness.engine.addKeyframe(selected, 'positionX', 10, 100)
+    harness.engine.addKeyframe({ kind: 'node', nodeId: selected, property: 'positionX' }, 0, 0)
+    harness.engine.addKeyframe({ kind: 'node', nodeId: selected, property: 'positionX' }, 10, 100)
     useSelectionStore.getState().select(selected)
     expect(outlineOf(harness)).toEqual({ minX: -80, minY: -50, maxX: 80, maxY: 50 })
 
@@ -266,28 +266,46 @@ describe('selection overlay evaluated bounds', () => {
     useSelectionStore.getState().select(selected)
     harness.time.set(5)
 
-    const first = harness.engine.addKeyframe(selected, 'positionX', 0, 0)
-    const second = harness.engine.addKeyframe(selected, 'positionX', 10, 100)
+    const first = harness.engine.addKeyframe(
+      { kind: 'node', nodeId: selected, property: 'positionX' },
+      0,
+      0,
+    )
+    const second = harness.engine.addKeyframe(
+      { kind: 'node', nodeId: selected, property: 'positionX' },
+      10,
+      100,
+    )
     expect(outlineOf(harness)?.minX).toBe(-30)
 
-    harness.engine.setKeyframeValue(selected, 'positionX', second.id, 200)
+    harness.engine.setKeyframeValue(
+      { kind: 'node', nodeId: selected, property: 'positionX' },
+      second.id,
+      200,
+    )
     expect(outlineOf(harness)?.minX).toBe(20)
 
-    harness.engine.moveKeyframe(selected, 'positionX', first.id, 2)
+    harness.engine.moveKeyframes({ kind: 'node', nodeId: selected, property: 'positionX' }, [
+      { keyframeId: first.id, newTime: 2 },
+    ])
     expect(outlineOf(harness)?.minX).toBe(-5)
 
-    harness.engine.deleteKeyframe(selected, 'positionX', first.id)
+    harness.engine.deleteKeyframes({ kind: 'node', nodeId: selected, property: 'positionX' }, [
+      first.id,
+    ])
     expect(outlineOf(harness)?.minX).toBe(120)
 
-    harness.engine.deleteKeyframe(selected, 'positionX', second.id)
+    harness.engine.deleteKeyframes({ kind: 'node', nodeId: selected, property: 'positionX' }, [
+      second.id,
+    ])
     expect(outlineOf(harness)?.minX).toBe(-80)
   })
 
   it('previews the dragged position and snaps back to the evaluated position', () => {
     const harness = mountEvaluated()
     const selected = evaluatedNode(harness, 'Animated', 0, 0)
-    harness.engine.addKeyframe(selected, 'positionX', 0, 0)
-    harness.engine.addKeyframe(selected, 'positionX', 10, 100)
+    harness.engine.addKeyframe({ kind: 'node', nodeId: selected, property: 'positionX' }, 0, 0)
+    harness.engine.addKeyframe({ kind: 'node', nodeId: selected, property: 'positionX' }, 10, 100)
     useSelectionStore.getState().select(selected)
     harness.time.set(5)
     expect(outlineOf(harness)?.minX).toBe(-30)
@@ -304,8 +322,8 @@ describe('selection overlay evaluated bounds', () => {
   it('keeps redrawing on time changes after detach stops the subscription', () => {
     const harness = mountEvaluated()
     const selected = evaluatedNode(harness, 'Animated', 0, 0)
-    harness.engine.addKeyframe(selected, 'positionX', 0, 0)
-    harness.engine.addKeyframe(selected, 'positionX', 10, 100)
+    harness.engine.addKeyframe({ kind: 'node', nodeId: selected, property: 'positionX' }, 0, 0)
+    harness.engine.addKeyframe({ kind: 'node', nodeId: selected, property: 'positionX' }, 10, 100)
     useSelectionStore.getState().select(selected)
     expect(harness.time.listeners.size).toBe(1)
 

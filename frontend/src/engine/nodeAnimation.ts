@@ -12,8 +12,9 @@ import {
   requireKeyframeValue,
 } from './animationProperties'
 import { requireMaterialKeyframeValue } from './materialKeyframes'
+import type { MaterialParameterKindOf } from './keyframeTarget'
 
-export type MaterialParameterKindOf = (node: SceneNode, parameterKey: string) => string | undefined
+export type { MaterialParameterKindOf } from './keyframeTarget'
 
 export class NodeAnimation {
   readonly #tracks = new Map<AnimationProperty, Keyframe[]>()

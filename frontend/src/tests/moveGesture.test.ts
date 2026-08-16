@@ -203,7 +203,7 @@ function addKeyframe(
   value: number,
 ): void {
   const result = harness.dispatcher.dispatch(
-    new AddKeyframeCommand({ nodeId, property, time, value }),
+    new AddKeyframeCommand({ target: { kind: 'node', nodeId, property }, time, value }),
   )
   if (!result.ok) {
     throw new Error(`expected add to succeed: ${result.error?.message}`)
@@ -212,15 +212,14 @@ function addKeyframe(
 
 function entryChildren(
   harness: Harness,
-): { type: string; nodeId: string; property: string; time: number; value: number }[] {
+): { type: string; target: { nodeId: string; property: string }; time: number; value: number }[] {
   const entry = harness.undoStack.entries[0]
   if (!entry) {
     throw new Error('expected an undo entry')
   }
   return entry.parameters.commands as {
     type: string
-    nodeId: string
-    property: string
+    target: { nodeId: string; property: string }
     time: number
     value: number
   }[]
@@ -382,7 +381,7 @@ describe('move gesture in animation mode', () => {
     expect(harness.undoStack.entries[0].type).toBe('Transaction')
     const children = entryChildren(harness)
     expect(children.map((child) => child.type)).toEqual(['AddKeyframe', 'AddKeyframe'])
-    expect(children.map((child) => child.property)).toEqual(['positionX', 'positionY'])
+    expect(children.map((child) => child.target.property)).toEqual(['positionX', 'positionY'])
     for (const child of children) {
       expect(child.time).toBe(5)
     }
@@ -404,12 +403,9 @@ describe('move gesture in animation mode', () => {
 
     expect(harness.undoStack.entries).toHaveLength(before + 1)
     expect(harness.undoStack.entries[0].type).toBe('Transaction')
-    const children = entryChildren(harness) as {
+    const children = entryChildren(harness) as unknown as {
       type: string
-      nodeId: string
-      property: string
-      time: number
-      value: number
+      target: { nodeId: string; property: string }
       newValue: number
     }[]
     expect(children.map((child) => child.type)).toEqual(['SetKeyframeValue', 'SetKeyframeValue'])
@@ -442,18 +438,29 @@ describe('move gesture in animation mode', () => {
       'SetKeyframeValue',
       'SetKeyframeValue',
     ])
-    expect(children.map((child) => child.nodeId)).toEqual([a, a, b, b])
+    expect(children.map((child) => child.target.nodeId)).toEqual([a, a, b, b])
     const inverse = entry.inverse as {
       children: {
         type: string
-        inverse: { nodeId: string; keyframeId?: string; oldValue?: number; time?: number }
+        inverse: {
+          target: { nodeId: string; property?: string; parameter?: string }
+          keyframeId?: string
+          oldValue?: number
+          time?: number
+        }
       }[]
     }
     expect(inverse.children).toHaveLength(4)
-    expect(inverse.children[0].inverse.nodeId).toBe(a)
-    expect(inverse.children[1].inverse.nodeId).toBe(a)
-    expect(inverse.children[2].inverse).toMatchObject({ nodeId: b, keyframeId: expect.any(String) })
-    expect(inverse.children[3].inverse).toMatchObject({ nodeId: b, keyframeId: expect.any(String) })
+    expect(inverse.children[0].inverse.target.nodeId).toBe(a)
+    expect(inverse.children[1].inverse.target.nodeId).toBe(a)
+    expect(inverse.children[2].inverse).toMatchObject({
+      target: { kind: 'node', nodeId: b, property: 'positionX' },
+      keyframeId: expect.any(String),
+    })
+    expect(inverse.children[3].inverse).toMatchObject({
+      target: { kind: 'node', nodeId: b, property: 'positionY' },
+      keyframeId: expect.any(String),
+    })
     expect(harness.engine.evaluateNode(b, 4).transform).toMatchObject({ x: 320, y: 230 })
   })
 

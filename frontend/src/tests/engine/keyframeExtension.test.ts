@@ -58,12 +58,14 @@ describe('Keyframe model extension', () => {
 })
 
 describe('new keyframes inherit the previous keyframe interpolation', () => {
+  const positionX = (nodeId: string) => ({ kind: 'node', nodeId, property: 'positionX' }) as const
+
   it('defaults to linear on an empty track', () => {
     const engine = createEngine()
     engine.createProject({ name: 'P' })
     const slide = engine.createSlide('S1')
     const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'A')
-    engine.addKeyframe(node.id, 'positionX', 1, 10)
+    engine.addKeyframe(positionX(node.id), 1, 10)
     expect(engine.getKeyframes(node.id, 'positionX')[0]?.interpolation).toBe('linear')
   })
 
@@ -72,13 +74,13 @@ describe('new keyframes inherit the previous keyframe interpolation', () => {
     engine.createProject({ name: 'P' })
     const slide = engine.createSlide('S1')
     const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'A')
-    engine.addKeyframe(node.id, 'positionX', 1, 10)
+    engine.addKeyframe(positionX(node.id), 1, 10)
     const first = engine.getKeyframes(node.id, 'positionX')[0]
     if (!first) {
       throw new Error('expected a keyframe')
     }
     first.interpolation = 'bezier'
-    engine.addKeyframe(node.id, 'positionX', 4, 40)
+    engine.addKeyframe(positionX(node.id), 4, 40)
     expect(engine.getKeyframes(node.id, 'positionX')[1]?.interpolation).toBe('bezier')
   })
 
@@ -87,14 +89,14 @@ describe('new keyframes inherit the previous keyframe interpolation', () => {
     engine.createProject({ name: 'P' })
     const slide = engine.createSlide('S1')
     const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'A')
-    engine.addKeyframe(node.id, 'positionX', 0, 0)
-    engine.addKeyframe(node.id, 'positionX', 5, 50)
+    engine.addKeyframe(positionX(node.id), 0, 0)
+    engine.addKeyframe(positionX(node.id), 5, 50)
     const first = engine.getKeyframes(node.id, 'positionX')[0]
     if (!first) {
       throw new Error('expected a keyframe')
     }
     first.interpolation = 'hold'
-    engine.addKeyframe(node.id, 'positionX', 3, 30)
+    engine.addKeyframe(positionX(node.id), 3, 30)
     const inserted = engine
       .getKeyframes(node.id, 'positionX')
       .find((keyframe) => keyframe.time === 3)

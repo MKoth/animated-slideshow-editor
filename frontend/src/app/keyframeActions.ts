@@ -11,10 +11,11 @@ import {
   dispatchKeyframeCommands,
   evaluatedPropertyValue,
   keyframeAtTime,
+  materialParameterEditCommands,
 } from '../engine/keyframeEdit'
-import type { KeyframeEdit, TimedKeyframeEdit } from '../engine/keyframeEdit'
+import type { KeyframeEdit, MaterialParameterEdit, TimedKeyframeEdit } from '../engine/keyframeEdit'
 
-export type { KeyframeEdit } from '../engine/keyframeEdit'
+export type { KeyframeEdit, MaterialParameterEdit } from '../engine/keyframeEdit'
 export {
   dispatchKeyframeCommands as dispatchCommands,
   evaluatedPropertyValue,
@@ -86,7 +87,7 @@ export function autoKeyEdit(
 ): CommandResult<unknown> | null {
   const timed: TimedKeyframeEdit[] = []
   for (const edit of edits) {
-    const time = playheadTimeOf(engine, edit.nodeId)
+    const time = playheadTimeOf(engine, edit.target.nodeId)
     if (time === null) {
       continue
     }
@@ -107,7 +108,9 @@ export function addKeyframeAtPlayhead(
     return null
   }
   const value = evaluatedPropertyValue(engine, nodeId, property, time)
-  return dispatch(new AddKeyframeCommand({ nodeId, property, time, value }))
+  return dispatch(
+    new AddKeyframeCommand({ target: { kind: 'node', nodeId, property }, time, value }),
+  )
 }
 
 export function addPoseKeyframesAtPlayhead(
@@ -125,12 +128,27 @@ export function addPoseKeyframesAtPlayhead(
     }
     commands.push(
       new AddKeyframeCommand({
-        nodeId,
-        property,
+        target: { kind: 'node', nodeId, property },
         time,
         value: evaluatedPropertyValue(engine, nodeId, property, time),
       }),
     )
   }
   return dispatchKeyframeCommands(dispatch, commands)
+}
+
+export function materialEditAtPlayhead(
+  engine: EnginePublic,
+  dispatch: DispatchCommand,
+  edits: readonly MaterialParameterEdit[],
+): CommandResult<unknown> | null {
+  const first = edits[0]
+  if (!first) {
+    return null
+  }
+  const time = playheadTimeOf(engine, first.nodeId)
+  if (time === null) {
+    return null
+  }
+  return dispatchKeyframeCommands(dispatch, materialParameterEditCommands(engine, time, edits))
 }

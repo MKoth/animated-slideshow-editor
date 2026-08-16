@@ -129,8 +129,7 @@ describe('applyNodeFieldAutoKey', () => {
     expect(undoStack.entries).toHaveLength(before + 1)
     expect(undoStack.entries[0].type).toBe('AddKeyframe')
     expect(undoStack.entries[0].parameters).toMatchObject({
-      nodeId,
-      property: 'positionX',
+      target: { kind: 'node', nodeId, property: 'positionX' },
       time: 2,
       value: 100,
     })
@@ -144,7 +143,11 @@ describe('applyNodeFieldAutoKey', () => {
     applyNodeFieldAutoKey(engine, dispatch, [nodeId], 'rotation', 450)
 
     expect(undoStack.entries[0].type).toBe('AddKeyframe')
-    expect(undoStack.entries[0].parameters.property).toBe('rotation')
+    expect(undoStack.entries[0].parameters.target).toEqual({
+      kind: 'node',
+      nodeId,
+      property: 'rotation',
+    })
     expect(undoStack.entries[0].parameters.value).toBeCloseTo(Math.PI / 2, 10)
     expect(engine.evaluateNode(nodeId, 0).transform.rotation).toBeCloseTo(Math.PI / 2, 10)
   })
@@ -403,8 +406,20 @@ describe('resetNodesTransform (base mode)', () => {
 describe('readStoredNodeWorld (base mode)', () => {
   it('reads the stored world, ignoring keyframes and the playhead', () => {
     const { engine, dispatch, nodeId } = mountInspector()
-    dispatch(new AddKeyframeCommand({ nodeId, property: 'positionX', time: 0, value: 200 }))
-    dispatch(new AddKeyframeCommand({ nodeId, property: 'positionX', time: 2, value: 400 }))
+    dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'node', nodeId, property: 'positionX' },
+        time: 0,
+        value: 200,
+      }),
+    )
+    dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'node', nodeId, property: 'positionX' },
+        time: 2,
+        value: 400,
+      }),
+    )
     scrub(engine, 1)
 
     const reading = readStoredNodeWorld(engine, nodeId)
@@ -438,8 +453,7 @@ describe('applyNodeOpacityAutoKey', () => {
     const nodeId = createNamedNode(engine, 'Kid', { opacity: 0.5 })
     dispatch(
       new AddKeyframeCommand({
-        nodeId,
-        property: 'opacity',
+        target: { kind: 'node', nodeId, property: 'opacity' },
         time: 1,
         value: 0.5,
       }),
@@ -470,7 +484,7 @@ describe('resetNodesTransformAutoKey', () => {
     expect(undoStack.entries[0].type).toBe('Transaction')
     const children = undoStack.entries[0].parameters.commands as {
       type: string
-      property: string
+      target: { property: string }
     }[]
     expect(children.map((child) => child.type)).toEqual([
       'AddKeyframe',
@@ -479,7 +493,7 @@ describe('resetNodesTransformAutoKey', () => {
       'AddKeyframe',
       'AddKeyframe',
     ])
-    expect(children.map((child) => child.property)).toEqual([
+    expect(children.map((child) => child.target.property)).toEqual([
       'positionX',
       'positionY',
       'rotation',
@@ -577,8 +591,20 @@ describe('world-unit editing under a transformed parent', () => {
 
   it('reflects parent animation in the world read', () => {
     const { engine, dispatch, childId } = mountParented(0)
-    dispatch(new AddKeyframeCommand({ nodeId: childId, property: 'positionX', time: 0, value: 10 }))
-    dispatch(new AddKeyframeCommand({ nodeId: childId, property: 'positionX', time: 2, value: 30 }))
+    dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'node', nodeId: childId, property: 'positionX' },
+        time: 0,
+        value: 10,
+      }),
+    )
+    dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'node', nodeId: childId, property: 'positionX' },
+        time: 2,
+        value: 30,
+      }),
+    )
     scrub(engine, 1)
 
     const reading = readEvaluatedNodeWorld(engine, childId)

@@ -40,6 +40,8 @@ export interface EnginePublic {
   embedMaterial(definition: EmbeddedMaterialDefinition): void
   embedShader(definition: EmbeddedShaderDefinition): void
   getKeyframes(nodeId: string, property: AnimationProperty): readonly Keyframe[]
+  getMaterialKeyframes(nodeId: string, parameter: string): readonly Keyframe[]
+  hasMaterialTrack(nodeId: string, parameter: string): boolean
   evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState
   toJSON(): LessonJSON
 }

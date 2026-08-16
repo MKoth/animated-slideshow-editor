@@ -1,62 +1,50 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
-import type { AnimationProperty } from '../animation'
-import type { KeyframeValue } from '../keyframe'
-import { requireAnimatableForNode, requireKeyframeTime, requireKeyframeValue } from '../animation'
+import type { KeyframeTarget } from '../keyframeTarget'
+import { requireTrackKeyframeValue } from '../keyframeTarget'
+import { requireKeyframeTime } from '../animationProperties'
+import { snapshotOf } from '../keyframe'
+import type { KeyframeSnapshot } from '../keyframe'
 
 export interface AddKeyframeParameters {
-  readonly nodeId: string
-  readonly property: AnimationProperty
+  readonly target: KeyframeTarget
   readonly time: number
-  readonly value: number
+  readonly value: unknown
 }
 
 export interface AddKeyframeInverse {
-  readonly nodeId: string
-  readonly property: AnimationProperty
-  readonly keyframeId: string
-  readonly time: number
-  readonly value: KeyframeValue
+  readonly target: KeyframeTarget
+  readonly keyframe: KeyframeSnapshot
 }
 
 export class AddKeyframeCommand implements Command<AddKeyframeInverse> {
   readonly type = 'AddKeyframe'
   readonly parameters: Readonly<Record<string, unknown>>
-  readonly #nodeId: string
-  readonly #property: AnimationProperty
+  readonly #target: KeyframeTarget
   readonly #time: number
-  readonly #value: number
+  readonly #value: unknown
 
   constructor(input: AddKeyframeParameters) {
-    this.#nodeId = input.nodeId
-    this.#property = input.property
+    this.#target = input.target
     this.#time = input.time
     this.#value = input.value
     this.parameters = {
-      nodeId: input.nodeId,
-      property: input.property,
+      target: input.target,
       time: this.#time,
       value: this.#value,
     }
   }
 
   validate(engine: Engine): void {
-    const node = engine.getNode(this.#nodeId)
-    requireAnimatableForNode(node, this.#property)
-    const slide = engine.getSlideOfNode(this.#nodeId)
+    const track = engine.resolveAnimationTarget(this.#target)
+    const slide = engine.getSlideOfNode(this.#target.nodeId)
     requireKeyframeTime(this.#time, slide.duration)
-    requireKeyframeValue(this.#property, this.#value)
+    requireTrackKeyframeValue(track, this.#value)
   }
 
   execute(engine: Engine): AddKeyframeInverse {
-    const keyframe = engine.addKeyframe(this.#nodeId, this.#property, this.#time, this.#value)
-    return {
-      nodeId: this.#nodeId,
-      property: this.#property,
-      keyframeId: keyframe.id,
-      time: keyframe.time,
-      value: keyframe.value,
-    }
+    const keyframe = engine.addKeyframe(this.#target, this.#time, this.#value)
+    return { target: this.#target, keyframe: snapshotOf(keyframe) }
   }
 
   toJSON(): Readonly<Record<string, unknown>> {

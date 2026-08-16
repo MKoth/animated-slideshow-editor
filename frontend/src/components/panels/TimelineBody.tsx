@@ -4,7 +4,7 @@ import type { AnimationProperty, Scene } from '../../engine'
 import { addKeyframeAtPlayhead, addPoseKeyframesAtPlayhead } from '../../app/keyframeActions'
 import { deleteSelectedKeyframes, keyframeRefsOfScene } from '../../app/keyframeSelectionActions'
 import { useEngine } from '../../app/useEngine'
-import { DeleteKeyframeCommand } from '../../engine/commands'
+import { DeleteKeyframesCommand } from '../../engine/commands'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { useSelectionStore } from '../../stores/selectionStore'
@@ -255,10 +255,9 @@ export function TimelineBody({
       return
     }
     const result = dispatch(
-      new DeleteKeyframeCommand({
-        nodeId: target.nodeId,
-        property: target.property,
-        keyframeId: target.keyframeId,
+      new DeleteKeyframesCommand({
+        target: { kind: 'node', nodeId: target.nodeId, property: target.property },
+        keyframeIds: [target.keyframeId],
       }),
     )
     if (result && !result.ok) {

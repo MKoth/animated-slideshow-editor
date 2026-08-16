@@ -51,8 +51,7 @@ function addKeyframe(
 ): void {
   const result = dispatch(
     new AddKeyframeCommand({
-      nodeId,
-      property: property as 'positionX',
+      target: { kind: 'node', nodeId, property: property as 'positionX' },
       time,
       value,
     }),
@@ -79,8 +78,7 @@ describe('applyNodeFieldAutoKey', () => {
     const entry = undoStack.entries[0]
     expect(entry.type).toBe('AddKeyframe')
     expect(entry.parameters).toMatchObject({
-      nodeId,
-      property: 'positionX',
+      target: { kind: 'node', nodeId, property: 'positionX' },
       time: 2.5,
       value: 100,
     })
@@ -102,8 +100,7 @@ describe('applyNodeFieldAutoKey', () => {
     const entry = undoStack.entries[0]
     expect(entry.type).toBe('SetKeyframeValue')
     expect(entry.parameters).toMatchObject({
-      nodeId,
-      property: 'positionX',
+      target: { kind: 'node', nodeId, property: 'positionX' },
       keyframeId: expect.any(String),
       newValue: 42,
     })
@@ -208,8 +205,7 @@ describe('applyNodeOpacityAutoKey', () => {
     expect(result?.ok).toBe(true)
     expect(undoStack.entries[0].type).toBe('AddKeyframe')
     expect(undoStack.entries[0].parameters).toMatchObject({
-      nodeId,
-      property: 'opacity',
+      target: { kind: 'node', nodeId, property: 'opacity' },
       time: 1.5,
       value: 1,
     })
@@ -241,7 +237,7 @@ describe('resetNodesTransformAutoKey', () => {
     expect(undoStack.entries[0].type).toBe('Transaction')
     const children = undoStack.entries[0].parameters.commands as {
       type: string
-      property: string
+      target: { property: string }
       time: number
       value: number
     }[]
@@ -252,7 +248,7 @@ describe('resetNodesTransformAutoKey', () => {
       'AddKeyframe',
       'AddKeyframe',
     ])
-    expect(children.map((child) => child.property)).toEqual([
+    expect(children.map((child) => child.target.property)).toEqual([
       'positionX',
       'positionY',
       'rotation',
@@ -400,8 +396,7 @@ describe('addKeyframeAtPlayhead', () => {
     expect(undoStack.entries).toHaveLength(before + 1)
     expect(undoStack.entries[0].type).toBe('AddKeyframe')
     expect(undoStack.entries[0].parameters).toMatchObject({
-      nodeId,
-      property: 'positionX',
+      target: { kind: 'node', nodeId, property: 'positionX' },
       time: 1,
       value: 20,
     })
@@ -437,8 +432,8 @@ describe('addPoseKeyframesAtPlayhead', () => {
     expect(undoStack.entries).toHaveLength(before + 1)
     const entry = undoStack.entries[0]
     expect(entry.type).toBe('Transaction')
-    const children = entry.parameters.commands as { type: string; property: string }[]
-    expect(children.map((child) => child.property)).toEqual([
+    const children = entry.parameters.commands as { type: string; target: { property: string } }[]
+    expect(children.map((child) => child.target.property)).toEqual([
       'positionY',
       'rotation',
       'scaleX',
@@ -464,8 +459,8 @@ describe('addPoseKeyframesAtPlayhead', () => {
     expect(result?.ok).toBe(true)
     const entry = undoStack.entries[0]
     expect(entry.type).toBe('Transaction')
-    const children = entry.parameters.commands as { type: string; property: string }[]
-    expect(children.map((child) => child.property)).not.toContain('rotation')
+    const children = entry.parameters.commands as { type: string; target: { property: string } }[]
+    expect(children.map((child) => child.target.property)).not.toContain('rotation')
     expect(children).toHaveLength(5)
   })
 })

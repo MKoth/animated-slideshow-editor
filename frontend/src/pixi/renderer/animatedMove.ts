@@ -146,8 +146,16 @@ export class AnimatedMoveGesture {
     }
     const edits: TimedKeyframeEdit[] = []
     for (const position of positions) {
-      edits.push({ nodeId: position.nodeId, property: 'positionX', value: position.x, time })
-      edits.push({ nodeId: position.nodeId, property: 'positionY', value: position.y, time })
+      edits.push({
+        target: { kind: 'node', nodeId: position.nodeId, property: 'positionX' },
+        value: position.x,
+        time,
+      })
+      edits.push({
+        target: { kind: 'node', nodeId: position.nodeId, property: 'positionY' },
+        value: position.y,
+        time,
+      })
     }
     dispatchKeyframeCommands(dispatch, autoKeyCommands(engine, edits))
   }

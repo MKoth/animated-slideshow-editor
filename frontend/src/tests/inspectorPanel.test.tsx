@@ -120,7 +120,9 @@ function addKeyframe(
   time: number,
   value: number,
 ): void {
-  const result = dispatcher.dispatch(new AddKeyframeCommand({ nodeId, property, time, value }))
+  const result = dispatcher.dispatch(
+    new AddKeyframeCommand({ target: { kind: 'node', nodeId, property }, time, value }),
+  )
   if (!result.ok) {
     throw new Error(`expected add to succeed: ${result.error?.message}`)
   }
@@ -336,11 +338,15 @@ describe('InspectorPanel transform auto-key editing', () => {
     expect(undoStack.entries).toHaveLength(before + 1)
     expect(undoStack.entries[0].type).toBe('AddKeyframe')
     expect(undoStack.entries[0].inverse).toEqual({
-      nodeId,
-      property: 'positionX',
-      keyframeId: expect.any(String),
-      time: 0,
-      value: 42,
+      target: { kind: 'node', nodeId, property: 'positionX' },
+      keyframe: {
+        keyframeId: expect.any(String),
+        time: 0,
+        value: 42,
+        interpolation: 'linear',
+        tangentIn: { time: 0, value: 0 },
+        tangentOut: { time: 0, value: 0 },
+      },
     })
     expect(fields().X.value).toBe('42')
   })
@@ -606,7 +612,7 @@ describe('InspectorPanel reset transform', () => {
     expect(undoStack.entries).toHaveLength(before + 1)
     expect(undoStack.entries[0].type).toBe('Transaction')
     const children = (
-      undoStack.entries[0].parameters.commands as { type: string; property: string }[]
+      undoStack.entries[0].parameters.commands as { type: string; target: { property: string } }[]
     ).map((command) => command.type)
     expect(children).toEqual([
       'AddKeyframe',
@@ -754,7 +760,10 @@ describe('InspectorPanel opacity auto-key editing', () => {
     expect(engine.evaluateNode(nodeId, 0).opacity).toBe(1)
     expect(undoStack.entries).toHaveLength(before + 1)
     expect(undoStack.entries[0].type).toBe('AddKeyframe')
-    expect(undoStack.entries[0].parameters).toMatchObject({ property: 'opacity', value: 1 })
+    expect(undoStack.entries[0].parameters).toMatchObject({
+      target: { kind: 'node', nodeId, property: 'opacity' },
+      value: 1,
+    })
     expect(opacity.value).toBe('100')
   })
 
@@ -901,10 +910,14 @@ describe('InspectorPanel multi-selection', () => {
     const children = (
       undoStack.entries[0].parameters.commands as {
         type: string
-        nodeId: string
+        target: { nodeId: string }
         value: number
       }[]
-    ).map((command) => ({ type: command.type, nodeId: command.nodeId, value: command.value }))
+    ).map((command) => ({
+      type: command.type,
+      nodeId: command.target.nodeId,
+      value: command.value,
+    }))
     expect(children).toEqual([
       { type: 'AddKeyframe', nodeId, value: 0.5 },
       { type: 'AddKeyframe', nodeId: secondId, value: 0.5 },
@@ -934,9 +947,9 @@ describe('InspectorPanel multi-selection', () => {
     const children = (
       undoStack.entries[0].parameters.commands as {
         type: string
-        nodeId: string
+        target: { nodeId: string }
       }[]
-    ).map((command) => ({ type: command.type, nodeId: command.nodeId }))
+    ).map((command) => ({ type: command.type, nodeId: command.target.nodeId }))
     expect(children).toEqual([
       { type: 'AddKeyframe', nodeId },
       { type: 'AddKeyframe', nodeId: secondId },
@@ -1205,9 +1218,9 @@ describe('InspectorPanel camera animation mode (Camera Animation Mode on)', () =
     const children = (
       undoStack.entries[0].parameters.commands as {
         type: string
-        property: string
+        target: { property: string }
       }[]
-    ).map((child) => ({ type: child.type, property: child.property }))
+    ).map((child) => ({ type: child.type, property: child.target.property }))
     expect(children).toEqual([
       { type: 'AddKeyframe', property: 'positionX' },
       { type: 'AddKeyframe', property: 'positionY' },

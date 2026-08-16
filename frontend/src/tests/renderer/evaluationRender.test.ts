@@ -3,11 +3,11 @@ import type { CommandResult } from '../../engine/commands'
 import type { AnimationProperty } from '../../engine'
 import {
   AddKeyframeCommand,
+  DeleteKeyframesCommand,
   CreateNodeCommand,
   CreateProjectCommand,
   CreateSlideCommand,
-  DeleteKeyframeCommand,
-  MoveKeyframeCommand,
+  MoveKeyframesCommand,
   SetKeyframeValueCommand,
   createCommandSystem,
 } from '../../engine/commands'
@@ -64,10 +64,12 @@ function addKeyframe(
   time: number,
   value: number,
 ): string {
-  const { keyframeId } = expectOk(
-    system.dispatcher.dispatch(new AddKeyframeCommand({ nodeId, property, time, value })),
+  const { keyframe } = expectOk(
+    system.dispatcher.dispatch(
+      new AddKeyframeCommand({ target: { kind: 'node', nodeId, property }, time, value }),
+    ),
   )
-  return keyframeId
+  return keyframe.keyframeId
 }
 
 interface SeedTransform {
@@ -206,8 +208,7 @@ describe('renderer evaluation path', () => {
     expectOk(
       system.dispatcher.dispatch(
         new SetKeyframeValueCommand({
-          nodeId,
-          property: 'positionX',
+          target: { kind: 'node', nodeId, property: 'positionX' },
           keyframeId: firstKeyframe,
           newValue: 60,
         }),
@@ -217,11 +218,9 @@ describe('renderer evaluation path', () => {
 
     expectOk(
       system.dispatcher.dispatch(
-        new MoveKeyframeCommand({
-          nodeId,
-          property: 'positionX',
-          keyframeId: firstKeyframe,
-          newTime: 2,
+        new MoveKeyframesCommand({
+          target: { kind: 'node', nodeId, property: 'positionX' },
+          moves: [{ keyframeId: firstKeyframe, newTime: 2 }],
         }),
       ),
     )
@@ -229,10 +228,9 @@ describe('renderer evaluation path', () => {
 
     expectOk(
       system.dispatcher.dispatch(
-        new DeleteKeyframeCommand({
-          nodeId,
-          property: 'positionX',
-          keyframeId: firstKeyframe,
+        new DeleteKeyframesCommand({
+          target: { kind: 'node', nodeId, property: 'positionX' },
+          keyframeIds: [firstKeyframe],
         }),
       ),
     )
@@ -240,10 +238,9 @@ describe('renderer evaluation path', () => {
 
     expectOk(
       system.dispatcher.dispatch(
-        new DeleteKeyframeCommand({
-          nodeId,
-          property: 'positionX',
-          keyframeId: secondKeyframe,
+        new DeleteKeyframesCommand({
+          target: { kind: 'node', nodeId, property: 'positionX' },
+          keyframeIds: [secondKeyframe],
         }),
       ),
     )
@@ -270,8 +267,7 @@ describe('renderer evaluation path', () => {
     expectOk(
       system.dispatcher.dispatch(
         new SetKeyframeValueCommand({
-          nodeId: animatedId,
-          property: 'positionX',
+          target: { kind: 'node', nodeId: animatedId, property: 'positionX' },
           keyframeId,
           newValue: 80,
         }),
@@ -318,8 +314,7 @@ describe('renderer evaluation path', () => {
     expectOk(
       system.dispatcher.dispatch(
         new SetKeyframeValueCommand({
-          nodeId: animatedId,
-          property: 'positionX',
+          target: { kind: 'node', nodeId: animatedId, property: 'positionX' },
           keyframeId,
           newValue: 20,
         }),

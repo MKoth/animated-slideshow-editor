@@ -1,48 +1,53 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
 import type { KeyframeTarget } from '../keyframeTarget'
-import { requireTrackKeyframeValue } from '../keyframeTarget'
+import { requireKeyframeInterpolation } from '../keyframe'
+import type { InterpolationType } from '../keyframe'
 
-export interface SetKeyframeValueParameters {
+export interface SetKeyframeInterpolationParameters {
   readonly target: KeyframeTarget
   readonly keyframeId: string
-  readonly newValue: unknown
+  readonly interpolation: InterpolationType
 }
 
-export interface SetKeyframeValueInverse {
+export interface SetKeyframeInterpolationInverse {
   readonly target: KeyframeTarget
   readonly keyframeId: string
-  readonly oldValue: unknown
+  readonly oldInterpolation: InterpolationType
 }
 
-export class SetKeyframeValueCommand implements Command<SetKeyframeValueInverse> {
-  readonly type = 'SetKeyframeValue'
+export class SetKeyframeInterpolationCommand implements Command<SetKeyframeInterpolationInverse> {
+  readonly type = 'SetKeyframeInterpolation'
   readonly parameters: Readonly<Record<string, unknown>>
   readonly #target: KeyframeTarget
   readonly #keyframeId: string
-  readonly #newValue: unknown
+  readonly #interpolation: InterpolationType
 
-  constructor(input: SetKeyframeValueParameters) {
+  constructor(input: SetKeyframeInterpolationParameters) {
     this.#target = input.target
     this.#keyframeId = input.keyframeId
-    this.#newValue = input.newValue
+    this.#interpolation = input.interpolation
     this.parameters = {
       target: input.target,
       keyframeId: this.#keyframeId,
-      newValue: this.#newValue,
+      interpolation: this.#interpolation,
     }
   }
 
   validate(engine: Engine): void {
-    const track = engine.resolveAnimationTarget(this.#target)
-    requireTrackKeyframeValue(track, this.#newValue)
+    engine.resolveAnimationTarget(this.#target)
+    requireKeyframeInterpolation(this.#interpolation)
     this.#requireKeyframe(engine)
   }
 
-  execute(engine: Engine): SetKeyframeValueInverse {
+  execute(engine: Engine): SetKeyframeInterpolationInverse {
     this.#requireKeyframe(engine)
-    const oldValue = engine.setKeyframeValue(this.#target, this.#keyframeId, this.#newValue)
-    return { target: this.#target, keyframeId: this.#keyframeId, oldValue }
+    const oldInterpolation = engine.setKeyframeInterpolation(
+      this.#target,
+      this.#keyframeId,
+      this.#interpolation,
+    )
+    return { target: this.#target, keyframeId: this.#keyframeId, oldInterpolation }
   }
 
   #requireKeyframe(engine: Engine): void {

@@ -9,8 +9,16 @@ import { ShaderManager } from './shaderManager'
 import { AnimationManager } from './animationManager'
 import { AnimationEvaluator } from './animationEvaluator'
 import type { EvaluatedNodeScratch, EvaluatedNodeState } from './animationEvaluator'
-import type { KeyframeMove, KeyframeMoveResult } from './animationManager'
+import type {
+  KeyframeMove,
+  KeyframeMoveResult,
+  KeyframeTangents,
+  PastePayload,
+} from './animationManager'
 import type { AnimationProperty, Keyframe } from './animation'
+import type { InterpolationType, KeyframeTangent } from './keyframe'
+import type { KeyframeTarget, KeyframeTrackRef } from './keyframeTarget'
+import type { MaterialParameterKindOf } from './keyframeTarget'
 import { AssetDefinition } from './assetDefinition'
 import { MaterialDefinition } from './materialDefinition'
 import { ShaderDefinition } from './shaderDefinition'
@@ -34,6 +42,10 @@ import type { Transform } from './transform'
 import type { LessonJSON } from './json'
 import { buildProjectFromJSON, toLessonJSON, validate } from './lessonSerializer'
 import type { EnginePublic } from './engine'
+
+const DEFAULT_MATERIAL_KINDS: Readonly<Record<string, string>> = Object.fromEntries(
+  DEFAULT_MATERIAL_PARAMETERS.map((parameter) => [parameter.key, parameter.kind]),
+)
 
 export class Engine {
   readonly #bus = new EventBus()
@@ -68,6 +80,7 @@ export class Engine {
       this.#bus,
       (nodeId) => this.getNode(nodeId),
       (nodeId) => this.getSlideOfNode(nodeId),
+      this.#materialParameterKindOf,
     )
     this.#evaluator = new AnimationEvaluator(
       (nodeId) => this.getNode(nodeId),
@@ -181,6 +194,23 @@ export class Engine {
     return this.#nodes.getSceneOf(nodeId)
   }
 
+  getMaterialParameterKind(node: SceneNode, parameterKey: string): string | undefined {
+    const materialId = node.material.materialDefinitionId
+    const embedded = this.#embeddedMaterials.get(materialId)
+    if (embedded) {
+      return embedded.parameters.find((parameter) => parameter.key === parameterKey)?.kind
+    }
+    if (materialId === DEFAULT_MATERIAL_DEFINITION_ID) {
+      return DEFAULT_MATERIAL_KINDS[parameterKey]
+    }
+    return this.#materials
+      .getDefinition(materialId)
+      .parameters.find((parameter) => parameter.key === parameterKey)?.kind
+  }
+
+  #materialParameterKindOf: MaterialParameterKindOf = (node, parameterKey) =>
+    this.getMaterialParameterKind(node, parameterKey)
+
   createNode(
     sceneId: string,
     parentId: string,
@@ -208,46 +238,78 @@ export class Engine {
     return this.#animations.getKeyframes(nodeId, property)
   }
 
+  getMaterialKeyframes(nodeId: string, parameter: string): readonly Keyframe[] {
+    return this.#animations.getMaterialKeyframes(nodeId, parameter)
+  }
+
+  hasMaterialTrack(nodeId: string, parameter: string): boolean {
+    return this.#animations.hasMaterialTrack(nodeId, parameter)
+  }
+
+  /** Resolve a target's track, rejecting unknown nodes, properties, and parameters. */
+  resolveAnimationTarget(target: KeyframeTarget): KeyframeTrackRef {
+    return this.#animations.resolveTarget(target)
+  }
+
+  getKeyframesOf(target: KeyframeTarget): readonly Keyframe[] {
+    const resolved = this.resolveAnimationTarget(target)
+    return resolved.kind === 'property'
+      ? this.#animations.getKeyframes(target.nodeId, resolved.property)
+      : this.#animations.getMaterialKeyframes(target.nodeId, resolved.parameter)
+  }
+
   evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState {
     return this.#evaluator.evaluateNode(nodeId, time, target)
   }
 
-  getKeyframe(
-    nodeId: string,
-    property: AnimationProperty,
+  addKeyframe(target: KeyframeTarget, time: number, value: unknown): Keyframe {
+    return this.#animations.addKeyframe(target, time, value)
+  }
+
+  deleteKeyframes(target: KeyframeTarget, keyframeIds: readonly string[]): Keyframe[] {
+    return this.#animations.deleteKeyframes(target, keyframeIds)
+  }
+
+  moveKeyframes(target: KeyframeTarget, moves: readonly KeyframeMove[]): KeyframeMoveResult[] {
+    return this.#animations.moveKeyframes(target, moves)
+  }
+
+  scaleKeyframes(
+    target: KeyframeTarget,
+    keyframeIds: readonly string[],
+    pivot: number,
+    factor: number,
+  ): KeyframeMoveResult[] {
+    return this.#animations.scaleKeyframes(target, keyframeIds, pivot, factor)
+  }
+
+  setKeyframeValue(target: KeyframeTarget, keyframeId: string, value: unknown): unknown {
+    return this.#animations.setKeyframeValue(target, keyframeId, value)
+  }
+
+  setKeyframeInterpolation(
+    target: KeyframeTarget,
     keyframeId: string,
-  ): Keyframe | undefined {
-    return this.#animations.getKeyframe(nodeId, property, keyframeId)
+    interpolation: unknown,
+  ): InterpolationType {
+    return this.#animations.setKeyframeInterpolation(target, keyframeId, interpolation)
   }
 
-  addKeyframe(nodeId: string, property: AnimationProperty, time: number, value: number): Keyframe {
-    return this.#animations.addKeyframe(nodeId, property, time, value)
-  }
-
-  deleteKeyframe(nodeId: string, property: AnimationProperty, keyframeId: string): Keyframe {
-    return this.#animations.deleteKeyframe(nodeId, property, keyframeId)
-  }
-
-  moveKeyframe(
-    nodeId: string,
-    property: AnimationProperty,
+  setKeyframeTangents(
+    target: KeyframeTarget,
     keyframeId: string,
-    newTime: number,
-  ): void {
-    this.#animations.moveKeyframe(nodeId, property, keyframeId, newTime)
+    tangentIn: KeyframeTangent,
+    tangentOut: KeyframeTangent,
+  ): KeyframeTangents {
+    return this.#animations.setKeyframeTangents(target, keyframeId, tangentIn, tangentOut)
   }
 
-  moveKeyframes(moves: readonly KeyframeMove[]): KeyframeMoveResult[] {
-    return this.#animations.moveKeyframes(moves)
+  pasteKeyframes(target: KeyframeTarget, payload: PastePayload, atTime: number): Keyframe[] {
+    return this.#animations.pasteKeyframes(target, payload, atTime)
   }
 
-  setKeyframeValue(
-    nodeId: string,
-    property: AnimationProperty,
-    keyframeId: string,
-    value: number,
-  ): void {
-    this.#animations.setKeyframeValue(nodeId, property, keyframeId, value)
+  duplicateKeyframes(target: KeyframeTarget, keyframeIds: readonly string[]): Keyframe[] {
+    return this.#animations.duplicateKeyframes(target, keyframeIds)
   }
 
   reparentNode(nodeId: string, newParentId: string): void {
@@ -522,6 +584,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
     embedMaterial: (definition) => engine.embedMaterial(definition),
     embedShader: (definition) => engine.embedShader(definition),
     getKeyframes: (nodeId, property) => engine.getKeyframes(nodeId, property),
+    getMaterialKeyframes: (nodeId, parameter) => engine.getMaterialKeyframes(nodeId, parameter),
+    hasMaterialTrack: (nodeId, parameter) => engine.hasMaterialTrack(nodeId, parameter),
     evaluateNode: (nodeId, time, target) => engine.evaluateNode(nodeId, time, target),
     toJSON: () => engine.toJSON(),
   }

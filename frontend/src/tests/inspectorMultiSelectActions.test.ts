@@ -21,6 +21,17 @@ function scrub(engine: ReturnType<typeof mountInspector>['engine'], time: number
   usePlaybackController.getState().setCurrentTime(slide.id, time, slide.duration)
 }
 
+function fullKeyframe(time: number, value: number) {
+  return {
+    keyframeId: expect.any(String),
+    time,
+    value,
+    interpolation: 'linear',
+    tangentIn: { time: 0, value: 0 },
+    tangentOut: { time: 0, value: 0 },
+  }
+}
+
 beforeEach(() => {
   usePlaybackController.setState({ currentTimes: {} })
 })
@@ -135,7 +146,10 @@ describe('applyNodeOpacityAutoKey', () => {
     expect(high?.ok).toBe(true)
     expect(engine.evaluateNode(nodeId, 1).opacity).toBe(1)
     expect(undoStack.entries[0].type).toBe('AddKeyframe')
-    expect(undoStack.entries[0].parameters).toMatchObject({ nodeId, property: 'opacity', value: 1 })
+    expect(undoStack.entries[0].parameters).toMatchObject({
+      target: { kind: 'node', nodeId, property: 'opacity' },
+      value: 1,
+    })
 
     const low = applyNodeOpacityAutoKey(engine, dispatch, [nodeId], -2)
     expect(low?.ok).toBe(true)
@@ -171,13 +185,13 @@ describe('applyNodeOpacityAutoKey', () => {
     expect(undoStack.entries[0].type).toBe('Transaction')
     expect(transactionChildTypes(undoStack, 0)).toEqual(['AddKeyframe', 'AddKeyframe'])
     expect(transactionChildInverses(undoStack, 0)).toEqual([
-      { nodeId, property: 'opacity', keyframeId: expect.any(String), time: 0, value: 0.75 },
       {
-        nodeId: secondId,
-        property: 'opacity',
-        keyframeId: expect.any(String),
-        time: 0,
-        value: 0.75,
+        target: { kind: 'node', nodeId, property: 'opacity' },
+        keyframe: fullKeyframe(0, 0.75),
+      },
+      {
+        target: { kind: 'node', nodeId: secondId, property: 'opacity' },
+        keyframe: fullKeyframe(0, 0.75),
       },
     ])
   })
@@ -199,13 +213,13 @@ describe('applyNodeFieldAutoKey', () => {
     expect(undoStack.entries[0].type).toBe('Transaction')
     expect(transactionChildTypes(undoStack, 0)).toEqual(['AddKeyframe', 'AddKeyframe'])
     expect(transactionChildInverses(undoStack, 0)).toEqual([
-      { nodeId, property: 'positionX', keyframeId: expect.any(String), time: 0, value: 55 },
       {
-        nodeId: secondId,
-        property: 'positionX',
-        keyframeId: expect.any(String),
-        time: 0,
-        value: 55,
+        target: { kind: 'node', nodeId, property: 'positionX' },
+        keyframe: fullKeyframe(0, 55),
+      },
+      {
+        target: { kind: 'node', nodeId: secondId, property: 'positionX' },
+        keyframe: fullKeyframe(0, 55),
       },
     ])
   })

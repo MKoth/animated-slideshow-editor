@@ -37,11 +37,13 @@ function addKeyframe(
   property: 'positionX' | 'positionY',
   time: number,
 ): string {
-  const result = dispatcher.dispatch(new AddKeyframeCommand({ nodeId, property, time, value: 10 }))
+  const result = dispatcher.dispatch(
+    new AddKeyframeCommand({ target: { kind: 'node', nodeId, property }, time, value: 10 }),
+  )
   if (!result.ok) {
     throw new Error(`expected add to succeed: ${result.error.message}`)
   }
-  return result.inverse.keyframeId
+  return result.inverse.keyframe.keyframeId
 }
 
 describe('selectedKeyframeRefs', () => {

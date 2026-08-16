@@ -295,16 +295,16 @@ function clampZoom(scale: number): number {
 
 function panEdits(nodeId: string, time: number, camera: ViewportTransform): TimedKeyframeEdit[] {
   return [
-    { nodeId, property: 'positionX', value: camera.x, time },
-    { nodeId, property: 'positionY', value: camera.y, time },
+    { target: { kind: 'node', nodeId, property: 'positionX' }, value: camera.x, time },
+    { target: { kind: 'node', nodeId, property: 'positionY' }, value: camera.y, time },
   ]
 }
 
 function cameraEdits(nodeId: string, time: number, camera: ViewportTransform): TimedKeyframeEdit[] {
   return [
-    { nodeId, property: 'positionX', value: camera.x, time },
-    { nodeId, property: 'positionY', value: camera.y, time },
-    { nodeId, property: 'scaleX', value: camera.scaleX, time },
-    { nodeId, property: 'scaleY', value: camera.scaleY, time },
+    { target: { kind: 'node', nodeId, property: 'positionX' }, value: camera.x, time },
+    { target: { kind: 'node', nodeId, property: 'positionY' }, value: camera.y, time },
+    { target: { kind: 'node', nodeId, property: 'scaleX' }, value: camera.scaleX, time },
+    { target: { kind: 'node', nodeId, property: 'scaleY' }, value: camera.scaleY, time },
   ]
 }

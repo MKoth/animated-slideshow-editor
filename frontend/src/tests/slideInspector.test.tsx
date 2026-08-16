@@ -221,7 +221,7 @@ describe('InspectorPanel slide section', () => {
       throw new Error('Slide was not created')
     }
     const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy')
-    engine.addKeyframe(node.id, 'positionX', 8, 100)
+    engine.addKeyframe({ kind: 'node', nodeId: node.id, property: 'positionX' }, 8, 100)
     const user = userEvent.setup()
     const input = await screen.findByLabelText('Duration')
 

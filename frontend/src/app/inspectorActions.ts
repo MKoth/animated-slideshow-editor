@@ -1,4 +1,4 @@
-import type { EnginePublic, Scene, SceneNode } from '../engine'
+import type { AnimationProperty, EnginePublic, Scene, SceneNode } from '../engine'
 import { normalizeRotation } from '../engine'
 import { requireFiniteNumber, requireNonEmpty } from '../engine/guards'
 import { namesInTree, uniqueNodeName } from '../engine/naming'
@@ -202,7 +202,7 @@ const FIELD_RULES: Record<InspectorFieldKind, FieldRules> = {
   },
 }
 
-export const FIELD_PROPERTY: Record<InspectorFieldKind, KeyframeEdit['property']> = {
+export const FIELD_PROPERTY: Record<InspectorFieldKind, AnimationProperty> = {
   x: 'positionX',
   y: 'positionY',
   rotation: 'rotation',
@@ -368,7 +368,10 @@ export function applyNodeFieldAutoKey(
     if (!local) {
       continue
     }
-    edits.push({ nodeId, property: FIELD_PROPERTY[field], value: local[field] })
+    edits.push({
+      target: { kind: 'node', nodeId, property: FIELD_PROPERTY[field] },
+      value: local[field],
+    })
   }
   return autoKeyEdit(engine, dispatch, edits)
 }
@@ -387,7 +390,10 @@ export function applyNodeOpacityAutoKey(
   return autoKeyEdit(
     engine,
     dispatch,
-    nodeIds.map((nodeId) => ({ nodeId, property: 'opacity', value: clamped })),
+    nodeIds.map((nodeId) => ({
+      target: { kind: 'node', nodeId, property: 'opacity' },
+      value: clamped,
+    })),
   )
 }
 
@@ -416,7 +422,10 @@ export function resetNodesTransformAutoKey(
       if (!isAnimatable(node, property)) {
         continue
       }
-      edits.push({ nodeId, property, value: target[field] })
+      edits.push({
+        target: { kind: 'node', nodeId, property },
+        value: target[field],
+      })
     }
   }
   return autoKeyEdit(engine, dispatch, edits)

@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react'
 import type { AnimationProperty } from '../../engine'
-import type { KeyframeMove } from '../../engine/animation'
-import { BatchMoveKeyframesCommand, MoveKeyframeCommand } from '../../engine/commands'
-import type { CommandResult, DispatchCommand } from '../../engine/commands'
+import { MoveKeyframesCommand } from '../../engine/commands'
+import type { DispatchCommand } from '../../engine/commands'
+import { dispatchKeyframeCommands } from '../../engine/keyframeEdit'
+import { groupRefsByTarget } from '../../app/keyframeSelectionActions'
 import type { KeyframeRef } from '../../app/keyframeSelectionActions'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { rulerTickStep, snapTimeToGrid } from '../../stores/timelineViewStore'
@@ -73,28 +74,27 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
     }
     const preview = dragPreviewRef.current
     applyDragPreview(null)
-    const moves: KeyframeMove[] = []
-    for (const move of session.moves) {
+    const moved = session.moves.flatMap((move) => {
       const newTime = preview?.get(move.keyframeId)
       if (newTime === undefined || newTime === move.originalTime) {
-        continue
+        return []
       }
-      moves.push({
-        nodeId: move.nodeId,
-        property: move.property,
-        keyframeId: move.keyframeId,
-        newTime,
-      })
-    }
-    if (moves.length === 0) {
+      return [{ ...move, newTime }]
+    })
+    if (moved.length === 0) {
       return
     }
-    let result: CommandResult<unknown> | null = null
-    if (moves.length === 1) {
-      result = dispatch(new MoveKeyframeCommand(moves[0]))
-    } else {
-      result = dispatch(new BatchMoveKeyframesCommand({ moves }))
-    }
+    const commands = groupRefsByTarget(moved, (move) => ({
+      keyframeId: move.keyframeId,
+      newTime: move.newTime,
+    })).map(
+      (group) =>
+        new MoveKeyframesCommand({
+          target: { kind: 'node', nodeId: group.nodeId, property: group.property },
+          moves: group.items,
+        }),
+    )
+    const result = dispatchKeyframeCommands(dispatch, commands)
     if (result && !result.ok) {
       notify(result.error.message)
     }

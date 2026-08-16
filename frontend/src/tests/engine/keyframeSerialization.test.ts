@@ -3,24 +3,26 @@ import { createEngine } from '../../engine/internal'
 import type { LessonJSON } from '../../engine/json'
 
 describe('keyframe serialization', () => {
+  const positionX = (nodeId: string) => ({ kind: 'node', nodeId, property: 'positionX' }) as const
+
   it('round-trips keyframes (ids, times, values) across slides and nodes', () => {
     const engine = createEngine()
     engine.createProject({ name: 'Lesson' })
     const slide = engine.createSlide('Intro')
     const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'A')
     const camera = slide.scene.camera
-    engine.addKeyframe(node.id, 'positionX', 1, 10)
-    engine.addKeyframe(node.id, 'positionX', 3, 30)
-    engine.addKeyframe(node.id, 'opacity', 2, 0.5)
-    engine.addKeyframe(camera.id, 'scaleX', 0, 1.5)
+    engine.addKeyframe(positionX(node.id), 1, 10)
+    engine.addKeyframe(positionX(node.id), 3, 30)
+    engine.addKeyframe({ kind: 'node', nodeId: node.id, property: 'opacity' }, 2, 0.5)
+    engine.addKeyframe({ kind: 'node', nodeId: camera.id, property: 'scaleX' }, 0, 1.5)
     const keyframeId = engine.getKeyframes(node.id, 'positionX')[0]?.id
     if (!keyframeId) {
       throw new Error('expected a keyframe')
     }
-    engine.moveKeyframe(node.id, 'positionX', keyframeId, 4)
+    engine.moveKeyframes(positionX(node.id), [{ keyframeId, newTime: 4 }])
     const second = engine.createSlide('Outro')
     const outroNode = engine.createNode(second.scene.id, second.scene.root.id, 'B')
-    engine.addKeyframe(outroNode.id, 'rotation', 1.5, 0.25)
+    engine.addKeyframe({ kind: 'node', nodeId: outroNode.id, property: 'rotation' }, 1.5, 0.25)
 
     const json = engine.toJSON()
     const restored = createEngine()

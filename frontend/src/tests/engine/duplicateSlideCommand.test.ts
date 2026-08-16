@@ -9,7 +9,7 @@ import {
   CreateProjectCommand,
   CreateSlideCommand,
   DuplicateSlideCommand,
-  MoveKeyframeCommand,
+  MoveKeyframesCommand,
   OverrideMaterialParameterCommand,
   RenameNodeCommand,
   SetSlideDurationCommand,
@@ -44,7 +44,11 @@ function addKeyframe(
   time: number,
   value: number,
 ) {
-  expectOk(dispatcher.dispatch(new AddKeyframeCommand({ nodeId, property, time, value })))
+  expectOk(
+    dispatcher.dispatch(
+      new AddKeyframeCommand({ target: { kind: 'node', nodeId, property }, time, value }),
+    ),
+  )
 }
 
 function keyframeIds(engine: ReturnType<typeof createEngine>, scene: Scene): Set<string> {
@@ -339,11 +343,9 @@ describe('DuplicateSlideCommand', () => {
     expectOk(dispatcher.dispatch(new RenameNodeCommand({ nodeId: copiedBoy.id, name: 'Boy copy' })))
     expectOk(
       dispatcher.dispatch(
-        new MoveKeyframeCommand({
-          nodeId: copiedBoy.id,
-          property: 'positionX',
-          keyframeId: copiedKeyframe.id,
-          newTime: 4.5,
+        new MoveKeyframesCommand({
+          target: { kind: 'node', nodeId: copiedBoy.id, property: 'positionX' },
+          moves: [{ keyframeId: copiedKeyframe.id, newTime: 4.5 }],
         }),
       ),
     )

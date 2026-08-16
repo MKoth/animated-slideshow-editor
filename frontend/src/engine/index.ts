@@ -106,10 +106,14 @@ export {
   ChangeZOrderCommand,
   ReorderNodeCommand,
   AddKeyframeCommand,
-  DeleteKeyframeCommand,
-  MoveKeyframeCommand,
+  DeleteKeyframesCommand,
+  MoveKeyframesCommand,
   SetKeyframeValueCommand,
-  BatchMoveKeyframesCommand,
+  ScaleKeyframesCommand,
+  PasteKeyframesCommand,
+  DuplicateKeyframesCommand,
+  SetKeyframeInterpolationCommand,
+  SetKeyframeTangentsCommand,
 } from './commands'
 export type {
   CreateProjectInverse,
@@ -157,15 +161,22 @@ export type {
   ReorderNodeParameters,
   AddKeyframeInverse,
   AddKeyframeParameters,
-  DeleteKeyframeInverse,
-  DeleteKeyframeParameters,
-  MoveKeyframeInverse,
-  MoveKeyframeParameters,
+  DeleteKeyframesInverse,
+  DeleteKeyframesParameters,
+  MoveKeyframesInverse,
+  MoveKeyframesParameters,
   SetKeyframeValueInverse,
   SetKeyframeValueParameters,
-  BatchMoveKeyframesInverse,
-  BatchMoveKeyframesInverseMove,
-  BatchMoveKeyframesParameters,
+  ScaleKeyframesInverse,
+  ScaleKeyframesParameters,
+  PasteKeyframesInverse,
+  PasteKeyframesParameters,
+  DuplicateKeyframesInverse,
+  DuplicateKeyframesParameters,
+  SetKeyframeInterpolationInverse,
+  SetKeyframeInterpolationParameters,
+  SetKeyframeTangentsInverse,
+  SetKeyframeTangentsParameters,
 } from './commands'
 export {
   ANIMATABLE_PROPERTIES,
@@ -174,6 +185,14 @@ export {
   requireKeyframeValue,
 } from './animation'
 export type { AnimationProperty, Keyframe } from './animation'
-export type { KeyframeMove, KeyframeMoveResult } from './animation'
+export type {
+  KeyframeMove,
+  KeyframeMoveResult,
+  KeyframeTangents,
+  PastePayload,
+  PastePayloadKeyframe,
+} from './animation'
+export type { KeyframeTarget, KeyframeTrackRef } from './animation'
+export { isParameterTarget, isPropertyTarget } from './animation'
 export type { EvaluatedNodeState, EvaluatedNodeScratch } from './animation'
 export { evaluatedNodeScratch } from './animation'

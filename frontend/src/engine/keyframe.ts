@@ -69,3 +69,24 @@ export class Keyframe {
 export function newKeyframeId(): string {
   return newId('keyframe')
 }
+
+/** A full keyframe record for inverse payloads (Spec 02 R37). */
+export interface KeyframeSnapshot {
+  readonly keyframeId: string
+  readonly time: number
+  readonly value: KeyframeValue
+  readonly interpolation: InterpolationType
+  readonly tangentIn: KeyframeTangent
+  readonly tangentOut: KeyframeTangent
+}
+
+export function snapshotOf(keyframe: Keyframe): KeyframeSnapshot {
+  return {
+    keyframeId: keyframe.id,
+    time: keyframe.time,
+    value: keyframe.value,
+    interpolation: keyframe.interpolation,
+    tangentIn: { time: keyframe.tangentIn.time, value: keyframe.tangentIn.value },
+    tangentOut: { time: keyframe.tangentOut.time, value: keyframe.tangentOut.value },
+  }
+}

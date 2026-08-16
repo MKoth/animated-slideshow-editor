@@ -1,6 +1,6 @@
 import type { EnginePublic, Scene, SceneNode } from '../engine'
 import type { AnimationProperty } from '../engine'
-import { DeleteKeyframeCommand } from '../engine/commands'
+import { DeleteKeyframesCommand } from '../engine/commands'
 import type { DispatchCommand } from '../engine/commands'
 import { dispatchKeyframeCommands } from '../engine/keyframeEdit'
 import { useSelectionStore } from '../stores/selectionStore'
@@ -11,6 +11,24 @@ export interface KeyframeRef {
   readonly property: AnimationProperty
   readonly keyframeId: string
   readonly time: number
+}
+
+/** Group refs by their node property target, preserving first-seen order. */
+export function groupRefsByTarget<Ref extends { nodeId: string; property: AnimationProperty }, T>(
+  refs: readonly Ref[],
+  itemOf: (ref: Ref) => T,
+): { readonly nodeId: string; readonly property: AnimationProperty; readonly items: T[] }[] {
+  const groups = new Map<string, { nodeId: string; property: AnimationProperty; items: T[] }>()
+  for (const ref of refs) {
+    const key = `${ref.nodeId}\u0000${ref.property}`
+    const entry = groups.get(key)
+    if (entry) {
+      entry.items.push(itemOf(ref))
+    } else {
+      groups.set(key, { nodeId: ref.nodeId, property: ref.property, items: [itemOf(ref)] })
+    }
+  }
+  return [...groups.values()]
 }
 
 export function keyframeRefsOfScene(engine: EnginePublic, scene: Scene): KeyframeRef[] {
@@ -59,10 +77,14 @@ export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: Dispatch
   if (refs.length === 0) {
     return false
   }
-  dispatchKeyframeCommands(
-    dispatch,
-    refs.map((ref) => new DeleteKeyframeCommand(ref)),
+  const commands = groupRefsByTarget(refs, (ref) => ref.keyframeId).map(
+    (group) =>
+      new DeleteKeyframesCommand({
+        target: { kind: 'node', nodeId: group.nodeId, property: group.property },
+        keyframeIds: group.items,
+      }),
   )
+  dispatchKeyframeCommands(dispatch, commands)
   useSelectionStore.getState().clearKeyframes()
   return true
 }

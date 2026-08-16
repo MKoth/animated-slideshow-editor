@@ -2,53 +2,80 @@ import type { EventBus } from './events'
 import type { SceneNode } from './sceneNode'
 import type { Slide } from './slide'
 import type { Keyframe } from './keyframe'
-import { newKeyframeId } from './keyframe'
-import { Keyframe as KeyframeModel } from './keyframe'
-import type { InterpolationType } from './keyframe'
+import { Keyframe as KeyframeModel, newKeyframeId } from './keyframe'
+import type { InterpolationType, KeyframeTangent } from './keyframe'
+import { requireKeyframeInterpolation, requireKeyframeTangent } from './keyframe'
 import type { AnimationProperty } from './animationProperties'
-import {
-  requireAnimatableForNode,
-  requireKeyframeTime,
-  requireKeyframeValue,
-} from './animationProperties'
+import { requireKeyframeTime } from './animationProperties'
+import { requireFiniteNumber } from './guards'
 import type { NodeAnimation } from './nodeAnimation'
+import type { KeyframeTarget, KeyframeTrackRef, MaterialParameterKindOf } from './keyframeTarget'
+import {
+  requireScaleFactor,
+  requireTrackKeyframeValue,
+  resolveKeyframeTrack,
+} from './keyframeTarget'
+
+/** The 1/60 s frame step (Spec 07 R7) used by duplicate placement. */
+export const KEYFRAME_FRAME_STEP = 1 / 60
 
 export interface KeyframeMove {
-  readonly nodeId: string
-  readonly property: AnimationProperty
   readonly keyframeId: string
   readonly newTime: number
 }
 
 export interface KeyframeMoveResult {
-  readonly nodeId: string
-  readonly property: AnimationProperty
   readonly keyframeId: string
   readonly oldTime: number
 }
 
+export interface KeyframeTangents {
+  readonly tangentIn: KeyframeTangent
+  readonly tangentOut: KeyframeTangent
+}
+
+/** A clipboard payload: keyframes relative to their earliest keyframe (Spec 07 R10). */
+export interface PastePayloadKeyframe {
+  readonly time: number
+  readonly value: unknown
+  readonly interpolation: InterpolationType
+  readonly tangentIn: KeyframeTangent
+  readonly tangentOut: KeyframeTangent
+}
+
+export interface PastePayload {
+  readonly keyframes: readonly PastePayloadKeyframe[]
+}
+
 interface ValidatedMove {
-  readonly nodeId: string
-  readonly property: AnimationProperty
   readonly keyframeId: string
   readonly newTime: number
   readonly oldTime: number
+}
+
+interface ResolvedTarget {
   readonly node: SceneNode
+  readonly slide: Slide
+  readonly animation: NodeAnimation
+  readonly track: KeyframeTrackRef
 }
 
 export class AnimationManager {
   readonly #bus: EventBus
   readonly #nodeLookup: (nodeId: string) => SceneNode
   readonly #slideLookup: (nodeId: string) => Slide
+  readonly #parameterKindOf: MaterialParameterKindOf
 
   constructor(
     bus: EventBus,
     nodeLookup: (nodeId: string) => SceneNode,
     slideLookup: (nodeId: string) => Slide,
+    parameterKindOf: MaterialParameterKindOf,
   ) {
     this.#bus = bus
     this.#nodeLookup = nodeLookup
     this.#slideLookup = slideLookup
+    this.#parameterKindOf = parameterKindOf
   }
 
   getKeyframes(nodeId: string, property: AnimationProperty): readonly Keyframe[] {
@@ -56,190 +83,354 @@ export class AnimationManager {
     return slide.animation.node(nodeId)?.keyframes(property) ?? []
   }
 
-  getKeyframe(
-    nodeId: string,
-    property: AnimationProperty,
-    keyframeId: string,
-  ): Keyframe | undefined {
-    return this.#nodeAnimation(nodeId).get(property, keyframeId)
+  getMaterialKeyframes(nodeId: string, parameter: string): readonly Keyframe[] {
+    const slide = this.#slideLookup(nodeId)
+    return slide.animation.node(nodeId)?.materialKeyframes(parameter) ?? []
   }
 
-  addKeyframe(nodeId: string, property: AnimationProperty, time: number, value: number): Keyframe {
-    const node = this.#nodeLookup(nodeId)
+  hasMaterialTrack(nodeId: string, parameter: string): boolean {
     const slide = this.#slideLookup(nodeId)
-    requireAnimatableForNode(node, property)
-    const boundedTime = requireKeyframeTime(time, slide.duration)
-    const boundedValue = requireKeyframeValue(property, value)
-    const animation = this.#nodeAnimation(nodeId)
-    this.#assertTimeFree(animation, property, node, boundedTime, [])
+    return slide.animation.node(nodeId)?.hasMaterialTrack(parameter) ?? false
+  }
+
+  addKeyframe(target: KeyframeTarget, time: number, value: unknown): Keyframe {
+    const resolved = this.#resolve(target)
+    const boundedTime = requireKeyframeTime(time, resolved.slide.duration)
+    const boundedValue = requireTrackKeyframeValue(resolved.track, value)
+    this.#assertTimeFree(resolved, boundedTime, [], [])
     const keyframe = new KeyframeModel(
       newKeyframeId(),
       boundedTime,
       boundedValue,
-      previousInterpolation(animation.keyframes(property), boundedTime),
+      previousInterpolation(this.#keyframesOf(resolved), boundedTime),
     )
-    animation.add(property, keyframe)
-    this.#bus.emit({ type: 'KeyframeAdded', nodeId, property, keyframeId: keyframe.id })
+    this.#addToTrack(resolved, keyframe)
+    this.#bus.emit({ type: 'KeyframeAdded', target, keyframeId: keyframe.id })
     return keyframe
   }
 
-  deleteKeyframe(nodeId: string, property: AnimationProperty, keyframeId: string): Keyframe {
-    const node = this.#nodeLookup(nodeId)
-    this.#slideLookup(nodeId)
-    requireAnimatableForNode(node, property)
-    const animation = this.#nodeAnimation(nodeId)
-    const removed = animation.remove(property, keyframeId)
-    if (!removed) {
-      throw new Error(`Keyframe not found: ${keyframeId} on property ${property}`)
+  deleteKeyframes(target: KeyframeTarget, keyframeIds: readonly string[]): Keyframe[] {
+    if (keyframeIds.length === 0) {
+      throw new Error('At least one keyframe id is required')
     }
-    this.#bus.emit({ type: 'KeyframeRemoved', nodeId, property, keyframeId })
+    const resolved = this.#resolve(target)
+    const seen = new Set<string>()
+    const removed: Keyframe[] = []
+    for (const keyframeId of keyframeIds) {
+      if (seen.has(keyframeId)) {
+        throw new Error(`Duplicate keyframe id in batch: ${keyframeId}`)
+      }
+      seen.add(keyframeId)
+      const keyframe = this.#requireKeyframe(resolved, keyframeId)
+      removed.push(keyframe)
+    }
+    for (const keyframe of removed) {
+      this.#removeFromTrack(resolved, keyframe.id)
+    }
+    for (const keyframe of removed) {
+      this.#bus.emit({ type: 'KeyframeRemoved', target, keyframeId: keyframe.id })
+    }
     return removed
   }
 
-  moveKeyframe(
-    nodeId: string,
-    property: AnimationProperty,
-    keyframeId: string,
-    newTime: number,
-  ): void {
-    const moves = this.#validateMoves([{ nodeId, property, keyframeId, newTime }])
-    this.#applyMoves(moves)
+  moveKeyframes(target: KeyframeTarget, moves: readonly KeyframeMove[]): KeyframeMoveResult[] {
+    const validated = this.#validateMoves(target, moves)
+    const resolved = this.#resolve(target)
+    for (const move of validated) {
+      const keyframe = this.#requireKeyframe(resolved, move.keyframeId)
+      this.#removeFromTrack(resolved, keyframe.id)
+      keyframe.time = move.newTime
+      this.#addToTrack(resolved, keyframe)
+    }
+    for (const move of validated) {
+      this.#bus.emit({ type: 'KeyframeMoved', target, keyframeId: move.keyframeId })
+    }
+    return validated.map((move) => ({ keyframeId: move.keyframeId, oldTime: move.oldTime }))
   }
 
-  moveKeyframes(moves: readonly KeyframeMove[]): KeyframeMoveResult[] {
-    const validated = this.#validateMoves(moves)
-    this.#applyMoves(validated)
-    return validated.map((move) => ({
-      nodeId: move.nodeId,
-      property: move.property,
-      keyframeId: move.keyframeId,
-      oldTime: move.oldTime,
-    }))
+  scaleKeyframes(
+    target: KeyframeTarget,
+    keyframeIds: readonly string[],
+    pivot: number,
+    factor: number,
+  ): KeyframeMoveResult[] {
+    if (keyframeIds.length === 0) {
+      throw new Error('At least one keyframe id is required')
+    }
+    const resolved = this.#resolve(target)
+    requireKeyframeTime(pivot, resolved.slide.duration, 'Scale pivot')
+    requireScaleFactor(factor)
+    const moves: KeyframeMove[] = []
+    const seen = new Set<string>()
+    for (const keyframeId of keyframeIds) {
+      if (seen.has(keyframeId)) {
+        throw new Error(`Duplicate keyframe id in batch: ${keyframeId}`)
+      }
+      seen.add(keyframeId)
+      const keyframe = this.#requireKeyframe(resolved, keyframeId)
+      moves.push({ keyframeId, newTime: pivot + (keyframe.time - pivot) * factor })
+    }
+    const validated = this.#validateMoves(target, moves)
+    for (const move of validated) {
+      const keyframe = this.#requireKeyframe(resolved, move.keyframeId)
+      this.#removeFromTrack(resolved, keyframe.id)
+      keyframe.time = move.newTime
+      this.#addToTrack(resolved, keyframe)
+    }
+    for (const move of validated) {
+      this.#bus.emit({ type: 'KeyframeMoved', target, keyframeId: move.keyframeId })
+    }
+    return validated.map((move) => ({ keyframeId: move.keyframeId, oldTime: move.oldTime }))
   }
 
-  setKeyframeValue(
-    nodeId: string,
-    property: AnimationProperty,
-    keyframeId: string,
-    value: number,
-  ): void {
-    const node = this.#nodeLookup(nodeId)
-    this.#slideLookup(nodeId)
-    requireAnimatableForNode(node, property)
-    const boundedValue = requireKeyframeValue(property, value)
-    const animation = this.#nodeAnimation(nodeId)
-    const keyframe = this.#requireKeyframe(animation, property, keyframeId)
+  setKeyframeValue(target: KeyframeTarget, keyframeId: string, value: unknown): unknown {
+    const resolved = this.#resolve(target)
+    const boundedValue = requireTrackKeyframeValue(resolved.track, value)
+    const keyframe = this.#requireKeyframe(resolved, keyframeId)
+    const oldValue = keyframe.value
     keyframe.value = boundedValue
-    this.#bus.emit({ type: 'KeyframeValueChanged', nodeId, property, keyframeId })
+    this.#bus.emit({ type: 'KeyframeValueChanged', target, keyframeId })
+    return oldValue
   }
 
-  #validateMoves(moves: readonly KeyframeMove[]): ValidatedMove[] {
+  setKeyframeInterpolation(
+    target: KeyframeTarget,
+    keyframeId: string,
+    interpolation: unknown,
+  ): InterpolationType {
+    const resolved = this.#resolve(target)
+    const bounded = requireKeyframeInterpolation(interpolation)
+    const keyframe = this.#requireKeyframe(resolved, keyframeId)
+    const oldInterpolation = keyframe.interpolation
+    keyframe.interpolation = bounded
+    this.#bus.emit({ type: 'KeyframeInterpolationChanged', target, keyframeId })
+    return oldInterpolation
+  }
+
+  setKeyframeTangents(
+    target: KeyframeTarget,
+    keyframeId: string,
+    tangentIn: unknown,
+    tangentOut: unknown,
+  ): KeyframeTangents {
+    const resolved = this.#resolve(target)
+    const boundedIn = requireKeyframeTangent(tangentIn, 'Keyframe tangent in')
+    const boundedOut = requireKeyframeTangent(tangentOut, 'Keyframe tangent out')
+    const keyframe = this.#requireKeyframe(resolved, keyframeId)
+    const old = {
+      tangentIn: keyframe.tangentIn,
+      tangentOut: keyframe.tangentOut,
+    }
+    keyframe.tangentIn = boundedIn
+    keyframe.tangentOut = boundedOut
+    this.#bus.emit({ type: 'KeyframeTangentsChanged', target, keyframeId })
+    return old
+  }
+
+  pasteKeyframes(target: KeyframeTarget, payload: PastePayload, atTime: number): Keyframe[] {
+    if (payload.keyframes.length === 0) {
+      throw new Error('At least one keyframe is required to paste')
+    }
+    const resolved = this.#resolve(target)
+    const boundedAtTime = requireKeyframeTime(atTime, resolved.slide.duration, 'Paste time')
+    const pending: { time: number; payload: PastePayloadKeyframe }[] = []
+    for (const entry of payload.keyframes) {
+      const relative = requireFiniteNumber(
+        entry.time,
+        'Paste payload time',
+        (value) => value >= 0,
+        'a non-negative finite number',
+      )
+      const time = Math.min(Math.max(boundedAtTime + relative, 0), resolved.slide.duration)
+      pending.push({ time, payload: entry })
+    }
+    this.#assertPasteFree(
+      resolved,
+      pending.map((entry) => entry.time),
+    )
+    const created: Keyframe[] = []
+    for (const entry of pending) {
+      const value = requireTrackKeyframeValue(resolved.track, entry.payload.value)
+      const keyframe = new KeyframeModel(
+        newKeyframeId(),
+        entry.time,
+        value,
+        requireKeyframeInterpolation(entry.payload.interpolation),
+        requireKeyframeTangent(entry.payload.tangentIn, 'Keyframe tangent in'),
+        requireKeyframeTangent(entry.payload.tangentOut, 'Keyframe tangent out'),
+      )
+      this.#addToTrack(resolved, keyframe)
+      created.push(keyframe)
+    }
+    for (const keyframe of created) {
+      this.#bus.emit({ type: 'KeyframeAdded', target, keyframeId: keyframe.id })
+    }
+    return created
+  }
+
+  duplicateKeyframes(target: KeyframeTarget, keyframeIds: readonly string[]): Keyframe[] {
+    if (keyframeIds.length === 0) {
+      throw new Error('At least one keyframe id is required')
+    }
+    const resolved = this.#resolve(target)
+    const seen = new Set<string>()
+    const sources: Keyframe[] = []
+    for (const keyframeId of keyframeIds) {
+      if (seen.has(keyframeId)) {
+        throw new Error(`Duplicate keyframe id in batch: ${keyframeId}`)
+      }
+      seen.add(keyframeId)
+      sources.push(this.#requireKeyframe(resolved, keyframeId))
+    }
+    const firstTime = Math.min(...sources.map((keyframe) => keyframe.time))
+    const lastTime = Math.max(...sources.map((keyframe) => keyframe.time))
+    const moves: KeyframeMove[] = sources.map((keyframe) => ({
+      keyframeId: keyframe.id,
+      newTime: lastTime + KEYFRAME_FRAME_STEP + (keyframe.time - firstTime),
+    }))
+    this.#validateMoves(target, moves)
+    const created: Keyframe[] = []
+    for (const move of moves) {
+      const source = this.#requireKeyframe(resolved, move.keyframeId)
+      const keyframe = new KeyframeModel(
+        newKeyframeId(),
+        move.newTime,
+        source.value,
+        source.interpolation,
+        { time: source.tangentIn.time, value: source.tangentIn.value },
+        { time: source.tangentOut.time, value: source.tangentOut.value },
+      )
+      this.#addToTrack(resolved, keyframe)
+      created.push(keyframe)
+    }
+    for (const keyframe of created) {
+      this.#bus.emit({ type: 'KeyframeAdded', target, keyframeId: keyframe.id })
+    }
+    return created
+  }
+
+  /** Resolve a target's track, rejecting unknown nodes, properties, and parameters. */
+  resolveTarget(target: KeyframeTarget): KeyframeTrackRef {
+    return this.#resolve(target).track
+  }
+
+  #resolve(target: KeyframeTarget): ResolvedTarget {
+    const node = this.#nodeLookup(target.nodeId)
+    const slide = this.#slideLookup(target.nodeId)
+    const animation = slide.animation.ensure(node.id)
+    const track = resolveKeyframeTrack(node, target, this.#parameterKindOf, (parameter) =>
+      animation.hasMaterialTrack(parameter),
+    )
+    return { node, slide, animation, track }
+  }
+
+  #keyframesOf(resolved: ResolvedTarget): readonly Keyframe[] {
+    const { animation, track } = resolved
+    return track.kind === 'property'
+      ? animation.keyframes(track.property)
+      : animation.materialKeyframes(track.parameter)
+  }
+
+  #addToTrack(resolved: ResolvedTarget, keyframe: Keyframe): void {
+    const { animation, track } = resolved
+    if (track.kind === 'property') {
+      animation.add(track.property, keyframe)
+    } else {
+      animation.addMaterial(track.parameter, keyframe)
+    }
+  }
+
+  #removeFromTrack(resolved: ResolvedTarget, keyframeId: string): void {
+    const { animation, track } = resolved
+    if (track.kind === 'property') {
+      animation.remove(track.property, keyframeId)
+    } else {
+      animation.removeMaterial(track.parameter, keyframeId)
+    }
+  }
+
+  #requireKeyframe(resolved: ResolvedTarget, keyframeId: string): Keyframe {
+    const { animation, track } = resolved
+    const keyframe =
+      track.kind === 'property'
+        ? animation.get(track.property, keyframeId)
+        : animation.getMaterial(track.parameter, keyframeId)
+    if (!keyframe) {
+      const on =
+        track.kind === 'property' ? `property ${track.property}` : `parameter ${track.parameter}`
+      throw new Error(`Keyframe not found: ${keyframeId} on ${on}`)
+    }
+    return keyframe
+  }
+
+  #validateMoves(target: KeyframeTarget, moves: readonly KeyframeMove[]): ValidatedMove[] {
     if (moves.length === 0) {
       throw new Error('At least one keyframe move is required')
     }
+    const resolved = this.#resolve(target)
     const seen = new Set<string>()
     const validated: ValidatedMove[] = []
     for (const move of moves) {
-      const node = this.#nodeLookup(move.nodeId)
-      const slide = this.#slideLookup(move.nodeId)
-      requireAnimatableForNode(node, move.property)
-      const boundedTime = requireKeyframeTime(move.newTime, slide.duration)
-      const identity = `${move.nodeId}\u0000${move.property}\u0000${move.keyframeId}`
-      if (seen.has(identity)) {
-        throw new Error(`Duplicate keyframe move: ${move.keyframeId} on property ${move.property}`)
+      const boundedTime = requireKeyframeTime(move.newTime, resolved.slide.duration)
+      if (seen.has(move.keyframeId)) {
+        throw new Error(`Duplicate keyframe move: ${move.keyframeId}`)
       }
-      seen.add(identity)
-      const animation = this.#nodeAnimation(move.nodeId)
-      const keyframe = this.#requireKeyframe(animation, move.property, move.keyframeId)
-      const vacating = new Set<string>()
+      seen.add(move.keyframeId)
+      const keyframe = this.#requireKeyframe(resolved, move.keyframeId)
+      this.#assertTimeFree(
+        resolved,
+        boundedTime,
+        moves.map((entry) => entry.keyframeId),
+        [move.keyframeId],
+      )
       for (const other of moves) {
-        if (
-          other.nodeId === move.nodeId &&
-          other.property === move.property &&
-          other.keyframeId !== move.keyframeId
-        ) {
-          vacating.add(other.keyframeId)
+        if (other !== move && other.newTime === boundedTime) {
+          throw new Error(`Two keyframes cannot move to the same time ${boundedTime}`)
         }
       }
-      this.#assertTimeFree(animation, move.property, node, boundedTime, [
-        move.keyframeId,
-        ...vacating,
-      ])
-      for (const other of moves) {
-        if (
-          other !== move &&
-          other.nodeId === move.nodeId &&
-          other.property === move.property &&
-          other.newTime === boundedTime
-        ) {
-          throw new Error(
-            `Two keyframes cannot move to the same time ${boundedTime} on property ${move.property}`,
-          )
-        }
-      }
-      validated.push({
-        nodeId: move.nodeId,
-        property: move.property,
-        keyframeId: move.keyframeId,
-        newTime: boundedTime,
-        oldTime: keyframe.time,
-        node,
-      })
+      validated.push({ keyframeId: move.keyframeId, newTime: boundedTime, oldTime: keyframe.time })
     }
     return validated
   }
 
-  #applyMoves(moves: readonly ValidatedMove[]): void {
-    for (const move of moves) {
-      const animation = this.#nodeAnimation(move.nodeId)
-      const keyframe = animation.get(move.property, move.keyframeId)
-      if (!keyframe) {
-        throw new Error(`Keyframe not found: ${move.keyframeId} on property ${move.property}`)
+  #assertPasteFree(resolved: ResolvedTarget, times: readonly number[]): void {
+    const occupied = this.#keyframesOf(resolved).map((keyframe) => keyframe.time)
+    for (const time of times) {
+      if (occupied.includes(time)) {
+        throw new Error(`Node ${resolved.node.name} already has a keyframe at time ${time}`)
       }
-      animation.remove(move.property, move.keyframeId)
-      keyframe.time = move.newTime
-      animation.add(move.property, keyframe)
     }
-    for (const move of moves) {
-      this.#bus.emit({
-        type: 'KeyframeMoved',
-        nodeId: move.nodeId,
-        property: move.property,
-        keyframeId: move.keyframeId,
-      })
+    for (let first = 0; first < times.length; first++) {
+      for (let second = first + 1; second < times.length; second++) {
+        if (times[first] === times[second]) {
+          throw new Error(`Two pasted keyframes cannot land at the same time ${times[first]}`)
+        }
+      }
     }
-  }
-
-  #nodeAnimation(nodeId: string): NodeAnimation {
-    const slide = this.#slideLookup(nodeId)
-    return slide.animation.ensure(nodeId)
-  }
-
-  #requireKeyframe(
-    animation: NodeAnimation,
-    property: AnimationProperty,
-    keyframeId: string,
-  ): Keyframe {
-    const keyframe = animation.get(property, keyframeId)
-    if (!keyframe) {
-      throw new Error(`Keyframe not found: ${keyframeId} on property ${property}`)
-    }
-    return keyframe
   }
 
   #assertTimeFree(
-    animation: NodeAnimation,
-    property: AnimationProperty,
-    node: SceneNode,
+    resolved: ResolvedTarget,
     time: number,
+    batchKeyframeIds: readonly string[],
     excludedKeyframeIds: readonly string[],
   ): void {
-    const occupied = animation
-      .keyframes(property)
-      .some((keyframe) => keyframe.time === time && !excludedKeyframeIds.includes(keyframe.id))
+    const vacating = new Set(batchKeyframeIds)
+    const excluded = new Set(excludedKeyframeIds)
+    const occupied = this.#keyframesOf(resolved).some(
+      (keyframe) =>
+        keyframe.time === time && !vacating.has(keyframe.id) && !excluded.has(keyframe.id),
+    )
     if (occupied) {
-      throw new Error(`Node ${node.name} already has a keyframe on ${property} at time ${time}`)
+      throw new Error(
+        `Node ${resolved.node.name} already has a keyframe at time ${time} on ${this.#trackLabel(resolved)}`,
+      )
     }
+  }
+
+  #trackLabel(resolved: ResolvedTarget): string {
+    const { track } = resolved
+    return track.kind === 'property' ? `property ${track.property}` : `parameter ${track.parameter}`
   }
 }
 

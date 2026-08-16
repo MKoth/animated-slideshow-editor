@@ -1,4 +1,4 @@
-import type { AnimationProperty } from './animation'
+import type { KeyframeTarget } from './keyframeTarget'
 
 export interface ProjectCreated {
   readonly type: 'ProjectCreated'
@@ -107,29 +107,37 @@ export interface MaterialParameterChanged {
 
 export interface KeyframeAdded {
   readonly type: 'KeyframeAdded'
-  readonly nodeId: string
-  readonly property: AnimationProperty
+  readonly target: KeyframeTarget
   readonly keyframeId: string
 }
 
 export interface KeyframeRemoved {
   readonly type: 'KeyframeRemoved'
-  readonly nodeId: string
-  readonly property: AnimationProperty
+  readonly target: KeyframeTarget
   readonly keyframeId: string
 }
 
 export interface KeyframeMoved {
   readonly type: 'KeyframeMoved'
-  readonly nodeId: string
-  readonly property: AnimationProperty
+  readonly target: KeyframeTarget
   readonly keyframeId: string
 }
 
 export interface KeyframeValueChanged {
   readonly type: 'KeyframeValueChanged'
-  readonly nodeId: string
-  readonly property: AnimationProperty
+  readonly target: KeyframeTarget
+  readonly keyframeId: string
+}
+
+export interface KeyframeInterpolationChanged {
+  readonly type: 'KeyframeInterpolationChanged'
+  readonly target: KeyframeTarget
+  readonly keyframeId: string
+}
+
+export interface KeyframeTangentsChanged {
+  readonly type: 'KeyframeTangentsChanged'
+  readonly target: KeyframeTarget
   readonly keyframeId: string
 }
 
@@ -159,6 +167,8 @@ export type EngineEvent =
   | KeyframeRemoved
   | KeyframeMoved
   | KeyframeValueChanged
+  | KeyframeInterpolationChanged
+  | KeyframeTangentsChanged
 
 export type EventListener = (event: EngineEvent) => void
 

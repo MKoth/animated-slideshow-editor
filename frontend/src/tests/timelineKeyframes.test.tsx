@@ -91,7 +91,9 @@ function addKeyframe(
   time: number,
   value: number,
 ): void {
-  const result = dispatcher.dispatch(new AddKeyframeCommand({ nodeId, property, time, value }))
+  const result = dispatcher.dispatch(
+    new AddKeyframeCommand({ target: { kind: 'node', nodeId, property }, time, value }),
+  )
   if (!result.ok) {
     throw new Error(`expected add to succeed: ${result.error?.message}`)
   }

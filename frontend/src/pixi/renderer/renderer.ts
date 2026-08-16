@@ -513,7 +513,11 @@ export class Renderer {
       case 'KeyframeRemoved':
       case 'KeyframeMoved':
       case 'KeyframeValueChanged':
-        sceneRenderer.handleKeyframeChanged(event.nodeId)
+      case 'KeyframeInterpolationChanged':
+      case 'KeyframeTangentsChanged':
+        if (event.target.kind === 'node') {
+          sceneRenderer.handleKeyframeChanged(event.target.nodeId)
+        }
         break
     }
   }

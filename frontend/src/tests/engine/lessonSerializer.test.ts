@@ -23,9 +23,9 @@ function buildPopulatedEngine() {
   engine.createAssetInstance(scene.id, tree.id, fox.id, 'Fox A', {
     transform: { x: 40, y: 50, rotation: 0.2, scaleX: 1, scaleY: 1 },
   })
-  engine.addKeyframe(tree.id, 'positionX', 1, 10)
-  engine.addKeyframe(tree.id, 'positionX', 3, 30)
-  engine.addKeyframe(scene.camera.id, 'opacity', 0, 0.5)
+  engine.addKeyframe({ kind: 'node', nodeId: tree.id, property: 'positionX' }, 1, 10)
+  engine.addKeyframe({ kind: 'node', nodeId: tree.id, property: 'positionX' }, 3, 30)
+  engine.addKeyframe({ kind: 'node', nodeId: scene.camera.id, property: 'opacity' }, 0, 0.5)
   engine.createSlide('Outro')
   return engine
 }
@@ -93,7 +93,7 @@ describe('lesson serializer', () => {
     if (!slide || !tree || !camera) {
       throw new Error('expected nodes')
     }
-    engine.addKeyframe(tree.id, 'scaleY', 0, 1)
+    engine.addKeyframe({ kind: 'node', nodeId: tree.id, property: 'scaleY' }, 0, 1)
 
     const json = projectJson(engine)
     const slideJson = json.slides[0]

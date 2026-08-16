@@ -112,8 +112,7 @@ function addKeyframes(
     expectOk(
       dispatcher.dispatch(
         new AddKeyframeCommand({
-          nodeId,
-          property,
+          target: { kind: 'node', nodeId, property },
           time: keyframe.time,
           value: keyframe.value,
         }),

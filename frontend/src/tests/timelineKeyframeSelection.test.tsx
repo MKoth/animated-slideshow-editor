@@ -4,7 +4,7 @@ import { EngineContext } from '../app/engineContext'
 import type { EngineContextValue } from '../app/engineContext'
 import { TimelinePanel } from '../components/panels/TimelinePanel'
 import { CommandDispatcher, UndoStack } from '../engine/commands'
-import { AddKeyframeCommand, DeleteKeyframeCommand } from '../engine/commands'
+import { AddKeyframeCommand, DeleteKeyframesCommand } from '../engine/commands'
 import type { Command } from '../engine/commands'
 import type { Engine } from '../engine/internal'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
@@ -66,11 +66,13 @@ function addKeyframe(
   time: number,
   value = 10,
 ): string {
-  const result = dispatcher.dispatch(new AddKeyframeCommand({ nodeId, property, time, value }))
+  const result = dispatcher.dispatch(
+    new AddKeyframeCommand({ target: { kind: 'node', nodeId, property }, time, value }),
+  )
   if (!result.ok) {
     throw new Error(`expected add to succeed: ${result.error.message}`)
   }
-  return result.inverse.keyframeId
+  return result.inverse.keyframe.keyframeId
 }
 
 function markerOf(keyframeId: string): HTMLElement {
@@ -213,11 +215,17 @@ describe('TimelinePanel moving keyframes', () => {
     expect(keyframes[0].value).toBe(42)
     expect(undoStack.entries).toHaveLength(before + 1)
     expect(undoStack.entries[0]).toMatchObject({
-      type: 'MoveKeyframe',
-      parameters: { nodeId, property: 'positionX', keyframeId, newTime: 2.5 },
-      inverse: { nodeId, property: 'positionX', keyframeId, oldTime: 1 },
+      type: 'MoveKeyframes',
+      parameters: {
+        target: { kind: 'node', nodeId, property: 'positionX' },
+        moves: [{ keyframeId, newTime: 2.5 }],
+      },
+      inverse: {
+        target: { kind: 'node', nodeId, property: 'positionX' },
+        moves: [{ keyframeId, oldTime: 1 }],
+      },
     })
-    expect(logger).toHaveBeenCalledWith(expect.stringContaining('MoveKeyframe'))
+    expect(logger).toHaveBeenCalledWith(expect.stringContaining('MoveKeyframes'))
   })
 
   it('moves the selected keyframes together, snapping to the ruler grid', async () => {
@@ -238,11 +246,12 @@ describe('TimelinePanel moving keyframes', () => {
     const times = engine.getKeyframes(nodeId, 'positionX').map((keyframe) => keyframe.time)
     expect(times).toEqual([2.5, 4.5])
     expect(undoStack.entries).toHaveLength(before + 1)
-    expect(undoStack.entries[0].type).toBe('BatchMoveKeyframes')
+    expect(undoStack.entries[0].type).toBe('MoveKeyframes')
     expect(undoStack.entries[0].inverse).toEqual({
+      target: { kind: 'node', nodeId, property: 'positionX' },
       moves: [
-        { nodeId, property: 'positionX', keyframeId: first, oldTime: 1 },
-        { nodeId, property: 'positionX', keyframeId: second, oldTime: 3 },
+        { keyframeId: first, oldTime: 1 },
+        { keyframeId: second, oldTime: 3 },
       ],
     })
   })
@@ -341,7 +350,7 @@ describe('TimelinePanel deleting keyframes', () => {
 
     expect(engine.getKeyframes(nodeId, 'positionX')).toHaveLength(0)
     expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([])
-    expect(undoStack.entries[0].type).toBe('DeleteKeyframe')
+    expect(undoStack.entries[0].type).toBe('DeleteKeyframes')
     dispose()
   })
 
@@ -379,8 +388,11 @@ describe('TimelinePanel deleting keyframes', () => {
     expect(engine.getKeyframes(nodeId, 'positionX')).toHaveLength(0)
     expect(undoStack.entries).toHaveLength(before + 1)
     expect(undoStack.entries[0]).toMatchObject({
-      type: 'DeleteKeyframe',
-      parameters: { nodeId, property: 'positionX', keyframeId },
+      type: 'DeleteKeyframes',
+      parameters: {
+        target: { kind: 'node', nodeId, property: 'positionX' },
+        keyframeIds: [keyframeId],
+      },
     })
   })
 
@@ -405,7 +417,7 @@ describe('TimelinePanel deleting keyframes', () => {
     expect(engine.getKeyframes(nodeId, 'positionX')).toHaveLength(0)
     expect(engine.getKeyframes(nodeId, 'positionY')).toHaveLength(1)
     expect(undoStack.entries).toHaveLength(before + 1)
-    expect(undoStack.entries[0].type).toBe('Transaction')
+    expect(undoStack.entries[0].type).toBe('DeleteKeyframes')
     expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([])
   })
 
@@ -463,7 +475,10 @@ describe('TimelinePanel deleting keyframes', () => {
     expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([keyframeId])
 
     const result = dispatcher.dispatch(
-      new DeleteKeyframeCommand({ nodeId, property: 'positionX', keyframeId }),
+      new DeleteKeyframesCommand({
+        target: { kind: 'node', nodeId, property: 'positionX' },
+        keyframeIds: [keyframeId],
+      }),
     )
     if (!result.ok) {
       throw new Error(`expected delete to succeed: ${result.error.message}`)

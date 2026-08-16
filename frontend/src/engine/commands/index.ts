@@ -82,15 +82,28 @@ export { ReorderNodeCommand } from './reorderNodeCommand'
 export type { ReorderNodeInverse, ReorderNodeParameters } from './reorderNodeCommand'
 export { AddKeyframeCommand } from './addKeyframeCommand'
 export type { AddKeyframeInverse, AddKeyframeParameters } from './addKeyframeCommand'
-export { DeleteKeyframeCommand } from './deleteKeyframeCommand'
-export type { DeleteKeyframeInverse, DeleteKeyframeParameters } from './deleteKeyframeCommand'
-export { MoveKeyframeCommand } from './moveKeyframeCommand'
-export type { MoveKeyframeInverse, MoveKeyframeParameters } from './moveKeyframeCommand'
+export { DeleteKeyframesCommand } from './deleteKeyframesCommand'
+export type { DeleteKeyframesInverse, DeleteKeyframesParameters } from './deleteKeyframesCommand'
+export { MoveKeyframesCommand } from './moveKeyframesCommand'
+export type { MoveKeyframesInverse, MoveKeyframesParameters } from './moveKeyframesCommand'
 export { SetKeyframeValueCommand } from './setKeyframeValueCommand'
 export type { SetKeyframeValueInverse, SetKeyframeValueParameters } from './setKeyframeValueCommand'
-export { BatchMoveKeyframesCommand } from './batchMoveKeyframesCommand'
+export { ScaleKeyframesCommand } from './scaleKeyframesCommand'
+export type { ScaleKeyframesInverse, ScaleKeyframesParameters } from './scaleKeyframesCommand'
+export { PasteKeyframesCommand } from './pasteKeyframesCommand'
+export type { PasteKeyframesInverse, PasteKeyframesParameters } from './pasteKeyframesCommand'
+export { DuplicateKeyframesCommand } from './duplicateKeyframesCommand'
 export type {
-  BatchMoveKeyframesInverse,
-  BatchMoveKeyframesInverseMove,
-  BatchMoveKeyframesParameters,
-} from './batchMoveKeyframesCommand'
+  DuplicateKeyframesInverse,
+  DuplicateKeyframesParameters,
+} from './duplicateKeyframesCommand'
+export { SetKeyframeInterpolationCommand } from './setKeyframeInterpolationCommand'
+export type {
+  SetKeyframeInterpolationInverse,
+  SetKeyframeInterpolationParameters,
+} from './setKeyframeInterpolationCommand'
+export { SetKeyframeTangentsCommand } from './setKeyframeTangentsCommand'
+export type {
+  SetKeyframeTangentsInverse,
+  SetKeyframeTangentsParameters,
+} from './setKeyframeTangentsCommand'

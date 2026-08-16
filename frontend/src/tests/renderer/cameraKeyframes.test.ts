@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AddKeyframeCommand,
-  BatchMoveKeyframesCommand,
+  MoveKeyframesCommand,
   CreateNodeCommand,
   CreateProjectCommand,
   CreateSlideCommand,
@@ -101,7 +101,9 @@ function dispatchKeyframe(
   time: number,
   value: number,
 ): void {
-  system.dispatcher.dispatch(new AddKeyframeCommand({ nodeId, property, time, value }))
+  system.dispatcher.dispatch(
+    new AddKeyframeCommand({ target: { kind: 'node', nodeId, property }, time, value }),
+  )
 }
 
 function keyframesOf(system: Harness['system'], nodeId: string, property: AnimationProperty) {
@@ -212,10 +214,9 @@ describe('evaluated viewport', () => {
 
     const keyframes = keyframesOf(system, cameraId, 'positionX')
     system.dispatcher.dispatch(
-      new BatchMoveKeyframesCommand({
-        moves: [
-          { nodeId: cameraId, property: 'positionX', keyframeId: keyframes[1].id, newTime: 5 },
-        ],
+      new MoveKeyframesCommand({
+        target: { kind: 'node', nodeId: cameraId, property: 'positionX' },
+        moves: [{ keyframeId: keyframes[1].id, newTime: 5 }],
       }),
     )
     app.ticker.tick()
@@ -235,10 +236,9 @@ describe('evaluated viewport', () => {
 
     const keyframes = keyframesOf(system, cameraId, 'positionX')
     system.dispatcher.dispatch(
-      new BatchMoveKeyframesCommand({
-        moves: [
-          { nodeId: cameraId, property: 'positionX', keyframeId: keyframes[1].id, newTime: 5 },
-        ],
+      new MoveKeyframesCommand({
+        target: { kind: 'node', nodeId: cameraId, property: 'positionX' },
+        moves: [{ keyframeId: keyframes[1].id, newTime: 5 }],
       }),
     )
     app.ticker.tick()
@@ -351,17 +351,20 @@ describe('animation-mode pan', () => {
     const entry = system.undoStack.entries[0]
     expect(entry.type).toBe('Transaction')
     const children = entry.inverse as {
-      children: { type: string; inverse: { property: string; keyframeId: string } }[]
+      children: {
+        type: string
+        inverse: { target: { property: string }; keyframe: { keyframeId: string } }
+      }[]
     }
     expect(children.children).toHaveLength(2)
     expect(children.children.map((child) => child.type)).toEqual(['AddKeyframe', 'AddKeyframe'])
-    expect(children.children.map((child) => child.inverse.property)).toEqual([
+    expect(children.children.map((child) => child.inverse.target.property)).toEqual([
       'positionX',
       'positionY',
     ])
-    expect(children.children.every((child) => typeof child.inverse.keyframeId === 'string')).toBe(
-      true,
-    )
+    expect(
+      children.children.every((child) => typeof child.inverse.keyframe.keyframeId === 'string'),
+    ).toBe(true)
   })
 })
 
@@ -476,7 +479,7 @@ describe('animation-mode zoom', () => {
       const entry = system.undoStack.entries[0]
       expect(entry.type).toBe('Transaction')
       const children = entry.inverse as {
-        children: { type: string; inverse: { property: string } }[]
+        children: { type: string; inverse: { target: { property: string } } }[]
       }
       expect(children.children).toHaveLength(4)
       expect(children.children.map((child) => child.type)).toEqual([
@@ -485,7 +488,7 @@ describe('animation-mode zoom', () => {
         'AddKeyframe',
         'AddKeyframe',
       ])
-      expect(children.children.map((child) => child.inverse.property)).toEqual([
+      expect(children.children.map((child) => child.inverse.target.property)).toEqual([
         'positionX',
         'positionY',
         'scaleX',

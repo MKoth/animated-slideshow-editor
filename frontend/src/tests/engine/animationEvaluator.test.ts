@@ -27,7 +27,11 @@ function addKeyframe(
   time: number,
   value: number,
 ): void {
-  expectOk(system.dispatcher.dispatch(new AddKeyframeCommand({ nodeId, property, time, value })))
+  expectOk(
+    system.dispatcher.dispatch(
+      new AddKeyframeCommand({ target: { kind: 'node', nodeId, property }, time, value }),
+    ),
+  )
 }
 
 function setup() {

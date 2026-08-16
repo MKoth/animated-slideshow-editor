@@ -189,8 +189,8 @@ describe('EvaluatedWorldTransformSource', () => {
     const created = engine.createNode(slide.scene.id, slide.scene.root.id, 'Animated', {
       transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
     })
-    engine.addKeyframe(created.id, 'positionX', 0, 0)
-    engine.addKeyframe(created.id, 'positionX', 10, 100)
+    engine.addKeyframe({ kind: 'node', nodeId: created.id, property: 'positionX' }, 0, 0)
+    engine.addKeyframe({ kind: 'node', nodeId: created.id, property: 'positionX' }, 10, 100)
     return created.id
   }
 
@@ -229,8 +229,8 @@ describe('EvaluatedWorldTransformSource', () => {
     const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent', {
       transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
     })
-    engine.addKeyframe(parent.id, 'positionX', 0, 0)
-    engine.addKeyframe(parent.id, 'positionX', 10, 200)
+    engine.addKeyframe({ kind: 'node', nodeId: parent.id, property: 'positionX' }, 0, 0)
+    engine.addKeyframe({ kind: 'node', nodeId: parent.id, property: 'positionX' }, 10, 200)
     const child = engine.createNode(slide.scene.id, parent.id, 'Child', {
       transform: { x: 20, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
     })
@@ -257,13 +257,13 @@ describe('EvaluatedWorldTransformSource', () => {
     const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent', {
       transform: { x: 0, y: 0, rotation: Math.PI / 2, scaleX: 1, scaleY: 1 },
     })
-    engine.addKeyframe(parent.id, 'positionX', 0, 0)
-    engine.addKeyframe(parent.id, 'positionX', 10, 100)
+    engine.addKeyframe({ kind: 'node', nodeId: parent.id, property: 'positionX' }, 0, 0)
+    engine.addKeyframe({ kind: 'node', nodeId: parent.id, property: 'positionX' }, 10, 100)
     const child = engine.createNode(slide.scene.id, parent.id, 'Child', {
       transform: { x: 10, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
     })
-    engine.addKeyframe(child.id, 'positionX', 0, 10)
-    engine.addKeyframe(child.id, 'positionX', 10, 110)
+    engine.addKeyframe({ kind: 'node', nodeId: child.id, property: 'positionX' }, 0, 10)
+    engine.addKeyframe({ kind: 'node', nodeId: child.id, property: 'positionX' }, 10, 110)
 
     const previews = new Map([[child.id, { x: 30, y: 0 }]])
     const transforms = source(engine, 5, previews)
