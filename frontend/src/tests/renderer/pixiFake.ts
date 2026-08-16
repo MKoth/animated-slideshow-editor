@@ -147,11 +147,13 @@ export class FakeTexture {
   readonly url?: string
   readonly width: number
   readonly height: number
+  readonly source: FakeTexture
 
   constructor(url?: string, options: { width?: number; height?: number } = {}) {
     this.url = url
     this.width = options.width ?? 1
     this.height = options.height ?? 1
+    this.source = this
   }
 
   destroy(): void {
@@ -247,7 +249,8 @@ export class FakeFilter {
   enabled = true
   destroyed = false
   readonly glProgram: FakeGlProgram
-  readonly resources: { uniforms: { uniforms: Record<string, unknown> } }
+  readonly resources: Record<string, unknown>
+  readonly #bindings: Record<string, unknown> = {}
 
   constructor(options: FakeFilterOptions) {
     this.glProgram = options.glProgram
@@ -259,7 +262,19 @@ export class FakeFilter {
     for (const key of Object.keys(structures)) {
       uniforms[key] = structures[key].value
     }
-    this.resources = { uniforms: { uniforms } }
+    this.#bindings.uniforms = { uniforms }
+    const resources: Record<string, unknown> = {}
+    for (const key of Object.keys(options.resources ?? {})) {
+      Object.defineProperty(resources, key, {
+        enumerable: true,
+        configurable: true,
+        get: () => this.#bindings[key],
+        set: (value: unknown) => {
+          this.#bindings[key] = value
+        },
+      })
+    }
+    this.resources = resources
   }
 
   destroy(): void {

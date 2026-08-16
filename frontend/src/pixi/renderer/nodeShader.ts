@@ -4,6 +4,7 @@ import type {
 } from '../../engine/materialResolution'
 import type { PixiFilter, RendererPixi } from './pixi'
 import type { ShaderProgramCache } from './programCache'
+import type { TextureCache } from './textureCache'
 
 const UNIFORM_GLSL_TYPES: Record<string, string> = {
   float: 'f32',
@@ -29,16 +30,26 @@ export function uniformStructures(
   return structures
 }
 
+/**
+ * Every sampler uniform key is registered as a bind-group texture resource so
+ * pixi uploads it through its sampler path. The value is a placeholder source
+ * swapped by `bindFilterSamplers`; the keys must exist here because pixi's
+ * resource accessor is fixed at construction.
+ */
 export function createNodeShaderFilter(
   pixi: RendererPixi,
   cache: ShaderProgramCache,
   source: string,
   scratch: EffectiveShaderScratch,
+  textures?: TextureCache,
 ): PixiFilter {
-  return new pixi.Filter({
-    glProgram: cache.get(source),
-    resources: { uniforms: uniformStructures(scratch) },
-  })
+  const resources: Record<string, unknown> = { uniforms: uniformStructures(scratch) }
+  if (textures) {
+    for (const sampler of scratch.samplers) {
+      resources[sampler.key] = textures.get(sampler.key).source
+    }
+  }
+  return new pixi.Filter({ glProgram: cache.get(source), resources })
 }
 
 export function nodeFilterUniforms(filter: PixiFilter): Record<string, unknown> {

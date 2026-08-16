@@ -717,7 +717,12 @@ describe('ShadersPanel uniform default editing', () => {
     const layer = previewLayer(app)
     await waitFor(() => {
       const filter = previewSprite(layer, 's1')?.filters[0]
-      expect((filter?.resources.uniforms.uniforms as Record<string, unknown>).uIntensity).toBe(0.9)
+      const uniforms = (
+        filter?.resources.uniforms as {
+          uniforms: Record<string, unknown>
+        }
+      ).uniforms
+      expect(uniforms.uIntensity).toBe(0.9)
     })
   })
 })

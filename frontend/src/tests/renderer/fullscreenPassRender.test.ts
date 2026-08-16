@@ -117,6 +117,13 @@ function filterUniforms(filter: FakeFilter | undefined): Record<string, unknown>
   return nodeFilterUniforms(filter as unknown as PixiFilter)
 }
 
+function filterResources(filter: FakeFilter | undefined): Record<string, unknown> {
+  if (!filter) {
+    throw new Error('expected a filter')
+  }
+  return filter.resources
+}
+
 beforeEach(() => {
   pixiRegistry.reset()
   resetShaderRegistries()
@@ -384,7 +391,7 @@ void main() {
 
     const filter = quadFilter(fullscreenQuad(app))
     await vi.waitFor(() =>
-      expect((filterUniforms(filter).uMask as FakeTexture).url).toBe('/assets/def-photo.png'),
+      expect((filterResources(filter).uMask as FakeTexture).url).toBe('/assets/def-photo.png'),
     )
   })
 
@@ -404,6 +411,9 @@ void main() {
 
     const filter = quadFilter(fullscreenQuad(app))
     expect(filter).toBeDefined()
+    const placeholder = filterResources(filter).uMask as FakeTexture
+    expect(placeholder).toBeDefined()
+    expect(placeholder.url).toBeUndefined()
     expect(filterUniforms(filter).uMask).toBeUndefined()
   })
 })

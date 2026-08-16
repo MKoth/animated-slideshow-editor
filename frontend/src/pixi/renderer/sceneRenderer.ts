@@ -372,7 +372,13 @@ export class SceneRenderer {
       const sameSource = previousFilter !== null && state.scratch.source === scratch.source
       const filter = sameSource
         ? previousFilter
-        : createNodeShaderFilter(this.#pixi, this.#programCache, scratch.source, scratch)
+        : createNodeShaderFilter(
+            this.#pixi,
+            this.#programCache,
+            scratch.source,
+            scratch,
+            this.#textureCache,
+          )
       if (!sameSource) {
         previousFilter?.destroy()
       }

@@ -89,7 +89,13 @@ export class FullscreenPass {
     }
     if (sourceChanged) {
       this.#filter?.destroy()
-      this.#filter = createNodeShaderFilter(this.#pixi, this.#programCache, source, this.#scratch)
+      this.#filter = createNodeShaderFilter(
+        this.#pixi,
+        this.#programCache,
+        source,
+        this.#scratch,
+        this.#textures,
+      )
       if (this.#quad) {
         this.#quad.filters = [this.#filter]
       }

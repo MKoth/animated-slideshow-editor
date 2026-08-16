@@ -149,6 +149,13 @@ function filterUniforms(filter: FakeFilter | undefined): Record<string, unknown>
   return nodeFilterUniforms(filter as unknown as PixiFilter)
 }
 
+function filterResources(filter: FakeFilter | undefined): Record<string, unknown> {
+  if (!filter) {
+    throw new Error('expected a filter')
+  }
+  return filter.resources
+}
+
 beforeEach(() => {
   pixiRegistry.reset()
   resetShaderRegistries()
@@ -494,14 +501,30 @@ void main() {
     )
 
     const filter = nodeFilter(app, 'A')
-    const placeholder = filterUniforms(filter).uMask as FakeTexture
+    const placeholder = filterResources(filter).uMask as FakeTexture
     expect(placeholder).toBeDefined()
     expect(placeholder.url).toBeUndefined()
 
     await vi.waitFor(() =>
-      expect((filterUniforms(filter).uMask as FakeTexture).url).toBe('/assets/def-photo.png'),
+      expect((filterResources(filter).uMask as FakeTexture).url).toBe('/assets/def-photo.png'),
     )
-    expect(filterUniforms(filter).uMask).toBe(realTexture)
+    expect(filterResources(filter).uMask).toBe(realTexture)
+  })
+
+  it('keeps sampler uniforms out of the uniform group', async () => {
+    textureLoads.set('/assets/def-photo.png', new FakeTexture('/assets/def-photo.png'))
+    const { engine, dispatcher, app } = await mountWithSampler()
+    const nodeId = createNode(engine, dispatcher, 'A', {
+      assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-a' },
+    })
+
+    expectOk(
+      dispatcher.dispatch(new AssignMaterialCommand({ nodeId, materialDefinitionId: 'mat-mask' })),
+    )
+
+    const filter = nodeFilter(app, 'A')
+    expect(filterUniforms(filter).uMask).toBeUndefined()
+    expect(filterResources(filter).uMask).toBeDefined()
   })
 
   it('rebinds the sampler when the node overrides the asset', async () => {
@@ -516,7 +539,7 @@ void main() {
     )
     const filter = nodeFilter(app, 'A')
     await vi.waitFor(() =>
-      expect((filterUniforms(filter).uMask as FakeTexture).url).toBe('/assets/def-photo.png'),
+      expect((filterResources(filter).uMask as FakeTexture).url).toBe('/assets/def-photo.png'),
     )
 
     expectOk(
@@ -526,11 +549,11 @@ void main() {
     )
 
     await vi.waitFor(() =>
-      expect((filterUniforms(filter).uMask as FakeTexture).url).toBe('/assets/def-override.png'),
+      expect((filterResources(filter).uMask as FakeTexture).url).toBe('/assets/def-override.png'),
     )
   })
 
-  it('leaves the sampler unbound for an asset without a resolvable url', async () => {
+  it('keeps the sampler bound to a placeholder for an asset without a resolvable url', async () => {
     const { engine, dispatcher, app } = await mountWithSampler()
     const nodeId = createNode(engine, dispatcher, 'A', {
       assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-a' },
@@ -546,6 +569,9 @@ void main() {
 
     const filter = nodeFilter(app, 'A')
     expect(filter).toBeDefined()
+    const placeholder = filterResources(filter).uMask as FakeTexture
+    expect(placeholder).toBeDefined()
+    expect(placeholder.url).toBeUndefined()
     expect(filterUniforms(filter).uMask).toBeUndefined()
   })
 
@@ -568,12 +594,12 @@ void main() {
     )
     const filter = nodeFilter(app, 'A')
     await vi.waitFor(() =>
-      expect((filterUniforms(filter).uMask as FakeTexture).url).toBe('/assets/def-override.png'),
+      expect((filterResources(filter).uMask as FakeTexture).url).toBe('/assets/def-override.png'),
     )
 
     stale.resolve(new FakeTexture('/assets/def-photo.png'))
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect((filterUniforms(filter).uMask as FakeTexture).url).toBe('/assets/def-override.png')
+    expect((filterResources(filter).uMask as FakeTexture).url).toBe('/assets/def-override.png')
   })
 })

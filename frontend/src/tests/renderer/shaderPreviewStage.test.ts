@@ -141,7 +141,7 @@ describe('ShaderPreviewStage', () => {
     expect(sprite).toBeDefined()
     const filter = spriteFilter(sprite)
     expect(filter?.glProgram.fragment).toBe(GRAYSCALE_SOURCE)
-    const uniforms = filter?.resources.uniforms.uniforms as Record<string, unknown>
+    const uniforms = (filter?.resources.uniforms as { uniforms: Record<string, unknown> }).uniforms
     expect(uniforms.uIntensity).toBe(0.5)
     expect(uniforms.uTint).toEqual([1, 0, 0])
   })
@@ -200,7 +200,9 @@ describe('ShaderPreviewStage', () => {
 
     expect(fakeGlPrograms.calls.length).toBe(programsBefore)
     const filter = spriteFilter(previewSprite(layer, 's1'))
-    expect(filter?.resources.uniforms.uniforms.uIntensity).toBe(0.9)
+    expect(
+      (filter?.resources.uniforms as { uniforms: Record<string, unknown> }).uniforms.uIntensity,
+    ).toBe(0.9)
   })
 
   it('replaces the filter when the source changes', async () => {
