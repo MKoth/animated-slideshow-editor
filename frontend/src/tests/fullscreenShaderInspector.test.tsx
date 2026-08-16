@@ -1,6 +1,6 @@
 import { act } from 'react'
 import { fireEvent, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAssetLibraryStore } from '../stores/assetLibraryStore'
 import { useNotificationStore } from '../stores/notificationStore'
 import { usePlaybackController } from '../stores/playbackStore'
@@ -30,6 +30,7 @@ function seedCompiledLibrary(): void {
 
 function seedAssetLibrary(): void {
   useAssetLibraryStore.setState({
+    loaded: true,
     definitions: [
       {
         id: 'asset-noise',
@@ -59,7 +60,7 @@ beforeEach(() => {
   useSelectionStore.setState({ selectedIds: [] })
   useNotificationStore.setState({ notifications: [] })
   usePlaybackController.setState({ currentTimes: {} })
-  useAssetLibraryStore.setState({ definitions: [], unavailable: false })
+  useAssetLibraryStore.setState({ definitions: [], loaded: false, unavailable: false })
   useShaderLibraryStore.setState({ definitions: [], compileStatus: {}, unavailable: false })
 })
 
@@ -105,6 +106,22 @@ describe('Fullscreen Shader section states', () => {
     await screen.findByRole('combobox', { name: 'Fullscreen Shader' })
     expect(screen.queryByRole('heading', { name: 'Shader Uniforms' })).not.toBeInTheDocument()
     expect(screen.queryByRole('spinbutton', { name: 'uIntensity' })).not.toBeInTheDocument()
+  })
+
+  it('requests the asset library load when a sampler uniform appears in the section', async () => {
+    const loadSpy = vi
+      .spyOn(useAssetLibraryStore.getState(), 'loadLibrary')
+      .mockResolvedValue(undefined)
+    const { engine } = renderFullscreenShaderInspector()
+    seedCompiledLibrary()
+    registerFullscreenShaders(engine)
+    createSlide(engine)
+
+    await screen.findByRole('combobox', { name: 'Fullscreen Shader' })
+    fireEvent.change(fullscreenShaderPicker(), { target: { value: 'shader-wash' } })
+
+    expect(loadSpy).toHaveBeenCalled()
+    loadSpy.mockRestore()
   })
 })
 

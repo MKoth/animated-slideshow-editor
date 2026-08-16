@@ -49,13 +49,11 @@ function previewUniforms(
   definition: ShaderDefinition,
   reflection: ShaderReflection | undefined,
 ): ShaderPreviewUniform[] {
-  return displayUniforms(definition, reflection)
-    .filter((uniform) => uniform.kind !== 'sampler2D')
-    .map((uniform) => ({
-      key: uniform.key,
-      type: uniform.kind,
-      value: uniform.default,
-    }))
+  return displayUniforms(definition, reflection).map((uniform) => ({
+    key: uniform.key,
+    type: uniform.kind,
+    value: uniform.default,
+  }))
 }
 
 function previewSourceOf(
@@ -348,7 +346,10 @@ export function ShadersPanel() {
     if (!host) {
       return
     }
-    const instance = new ShaderPreviewStage(realPixi)
+    const resolveAssetUrl = (definitionId: string): string | null =>
+      useAssetLibraryStore.getState().definitions.find((entry) => entry.id === definitionId)
+        ?.original_url ?? null
+    const instance = new ShaderPreviewStage(realPixi, undefined, resolveAssetUrl)
     let disposed = false
     void instance.start(host).then(() => {
       if (!disposed) {
@@ -360,6 +361,13 @@ export function ShadersPanel() {
       instance.destroy()
     }
   }, [])
+
+  // Assets may arrive after the previews bind (library load, import); rebind
+  // sampler uniforms so mini-renders pick up the resolved textures.
+  const assets = useAssetLibraryStore((state) => state.definitions)
+  useEffect(() => {
+    stage?.rebindSamplers()
+  }, [stage, assets])
 
   const handleImport = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]

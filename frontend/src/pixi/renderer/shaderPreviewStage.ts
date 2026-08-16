@@ -11,6 +11,9 @@ import type {
 } from './pixi'
 import { applyFilterUniforms, createNodeShaderFilter } from './nodeShader'
 import { ShaderProgramCache } from './programCache'
+import { bindFilterSamplers } from './samplerBinding'
+import type { ResolveAssetUrl } from './textureCache'
+import { TextureCache } from './textureCache'
 
 export const SHADER_PREVIEW_TEXTURE_SIZE = 64
 export const SHADER_PREVIEW_LAYER_LABEL = 'shader-preview-layer'
@@ -29,6 +32,7 @@ export interface ShaderPreviewSource {
 
 interface PreviewCell {
   readonly source: string
+  readonly uniforms: readonly ShaderPreviewUniform[]
   readonly sprite: PixiSprite
   readonly filter: PixiFilter
 }
@@ -38,12 +42,16 @@ interface PreviewCell {
  * transparent canvas overlays the shader grid, with one quad per definition —
  * each sampling the built-in sample texture through its compiled shader program
  * (cached by source) — positioned over its grid slot. The app's ticker drives
- * continuous re-rendering, so previews stay live. Failed or absent sources
- * remove the quad; an app that fails to initialize degrades to no previews.
+ * continuous re-rendering, so previews stay live. Resolved sampler uniforms
+ * bind through the shared texture cache (placeholder → loaded asset); failed
+ * or absent sources remove the quad; an app that fails to initialize degrades
+ * to no previews.
  */
 export class ShaderPreviewStage {
   readonly #pixi: RendererPixi
   readonly #programCache: ShaderProgramCache
+  readonly #resolveAssetUrl: ResolveAssetUrl
+  readonly #textures: TextureCache
   readonly #scratch: EffectiveShaderScratch = effectiveShaderScratch()
   readonly #cells = new Map<string, PreviewCell>()
   readonly #slots = new Map<string, HTMLElement>()
@@ -55,9 +63,15 @@ export class ShaderPreviewStage {
   #started = false
   #disposed = false
 
-  constructor(pixi: RendererPixi, programCache: ShaderProgramCache = new ShaderProgramCache(pixi)) {
+  constructor(
+    pixi: RendererPixi,
+    programCache: ShaderProgramCache = new ShaderProgramCache(pixi),
+    resolveAssetUrl: ResolveAssetUrl = () => null,
+  ) {
     this.#pixi = pixi
     this.#programCache = programCache
+    this.#resolveAssetUrl = resolveAssetUrl
+    this.#textures = new TextureCache(pixi)
   }
 
   get ready(): boolean {
@@ -131,6 +145,7 @@ export class ShaderPreviewStage {
     }
     if (existing && existing.source === preview.source) {
       this.#applyUniforms(existing.filter, preview.uniforms)
+      this.#bindSamplers(existing.filter, preview.uniforms)
       this.#syncCell(id)
       return
     }
@@ -150,14 +165,27 @@ export class ShaderPreviewStage {
       this.#programCache,
       preview.source,
       this.#scratch,
+      this.#textures,
     )
+    this.#bindSamplers(filter, preview.uniforms)
     applyFilterUniforms(filter, this.#scratch)
     const sprite = new this.#pixi.Sprite(sampleTexture)
     sprite.label = `shader-preview:${id}`
     sprite.filters = [filter]
     layer.addChild(sprite)
-    this.#cells.set(id, { source: preview.source, sprite, filter })
+    this.#cells.set(id, { source: preview.source, uniforms: preview.uniforms, sprite, filter })
     this.#syncCell(id)
+  }
+
+  /**
+   * Re-bind every cell's sampler uniforms against the current asset-url
+   * resolution (a library load or import may have made assets resolvable that
+   * were not at bind time). Cheap: existing textures are reused.
+   */
+  rebindSamplers(): void {
+    for (const cell of this.#cells.values()) {
+      this.#bindSamplers(cell.filter, cell.uniforms)
+    }
   }
 
   /** Reposition every quad over its grid slot; call after layout changes. */
@@ -185,6 +213,7 @@ export class ShaderPreviewStage {
     this.#slots.clear()
     this.#sampleTexture?.destroy()
     this.#sampleTexture = null
+    this.#textures.dispose()
     this.#layer = null
     const app = this.#app
     this.#app = null
@@ -217,11 +246,25 @@ export class ShaderPreviewStage {
     this.#scratch.keys.length = 0
     this.#scratch.kinds.length = 0
     this.#scratch.values.length = 0
+    this.#scratch.samplers.length = 0
     for (const uniform of uniforms) {
+      if (uniform.type === 'sampler2D') {
+        this.#scratch.samplers.push({
+          key: uniform.key,
+          assetDefinitionId:
+            typeof uniform.value === 'string' && uniform.value !== '' ? uniform.value : null,
+        })
+        continue
+      }
       this.#scratch.keys.push(uniform.key)
       this.#scratch.kinds.push(uniform.type)
       this.#scratch.values.push(uniform.value as MaterialParameterDefaultValue)
     }
+  }
+
+  #bindSamplers(filter: PixiFilter, uniforms: readonly ShaderPreviewUniform[]): void {
+    this.#fillScratch(uniforms)
+    bindFilterSamplers(filter, this.#scratch.samplers, this.#resolveAssetUrl, this.#textures)
   }
 
   #applyUniforms(filter: PixiFilter, uniforms: readonly ShaderPreviewUniform[]): void {

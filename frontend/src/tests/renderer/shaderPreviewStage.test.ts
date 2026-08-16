@@ -7,7 +7,14 @@ import {
   createSampleTextureData,
 } from '../../pixi/renderer/shaderPreviewStage'
 import type { FakeApplication, FakeContainer, FakeFilter, FakeSprite } from './pixiFake'
-import { fakeGlPrograms, pixiRegistry, resetShaderRegistries } from './pixiFake'
+import {
+  fakeGlPrograms,
+  pixiRegistry,
+  resetShaderRegistries,
+  resetTextureRegistries,
+  textureLoads,
+} from './pixiFake'
+import { FakeTexture } from './pixiFake'
 
 vi.mock('pixi.js', async () => {
   const { createPixiFake } = await import('./pixiFake')
@@ -37,6 +44,18 @@ void main() {
 }
 `
 
+const MASK_SOURCE = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uTexture;
+uniform sampler2D uMask;
+out vec4 fragColor;
+void main() {
+  vec4 color = texture(uTexture, vUv);
+  fragColor = color * texture(uMask, vUv);
+}
+`
+
 const STAGE_LAYER_LABEL = 'shader-preview-layer'
 
 interface Mounted {
@@ -48,6 +67,24 @@ interface Mounted {
 
 async function mount(): Promise<Mounted> {
   const stage = new ShaderPreviewStage(realPixi)
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  await stage.start(host)
+  const app = pixiRegistry.applications.at(-1)
+  if (!app) {
+    throw new Error('expected the preview stage to create a pixi application')
+  }
+  const layer = app.stage.children.find((child) => child.label === STAGE_LAYER_LABEL)
+  if (!layer) {
+    throw new Error('expected the preview stage to create a preview layer')
+  }
+  return { stage, host, app, layer }
+}
+
+async function mountWithResolver(
+  resolveAssetUrl: (definitionId: string) => string | null,
+): Promise<Mounted> {
+  const stage = new ShaderPreviewStage(realPixi, undefined, resolveAssetUrl)
   const host = document.createElement('div')
   document.body.appendChild(host)
   await stage.start(host)
@@ -78,6 +115,7 @@ function stubRect(element: HTMLElement, rect: Partial<DOMRect>): void {
 beforeEach(() => {
   pixiRegistry.reset()
   resetShaderRegistries()
+  resetTextureRegistries()
 })
 
 afterEach(() => {
@@ -277,5 +315,75 @@ describe('ShaderPreviewStage', () => {
     expect(sprite?.destroyed).toBe(true)
     expect(sprite?.texture.destroyed).toBe(true)
     expect(stage.ready).toBe(false)
+  })
+})
+
+describe('ShaderPreviewStage sampler uniforms', () => {
+  function maskResource(filter: FakeFilter | undefined): unknown {
+    return (filter?.resources as Record<string, unknown>).uMask
+  }
+
+  it('binds a sampler uniform as a texture resource, placeholder while unresolvable', async () => {
+    const { stage, layer } = await mount()
+
+    stage.setCell('s1', {
+      source: MASK_SOURCE,
+      uniforms: [{ key: 'uMask', type: 'sampler2D', value: '' }],
+    })
+
+    const resource = maskResource(spriteFilter(previewSprite(layer, 's1')))
+    expect(resource).toBeDefined()
+    expect(resource).toHaveProperty('url', undefined)
+    expect(spriteFilter(previewSprite(layer, 's1'))?.resources.uMask).toBeDefined()
+  })
+
+  it('binds a sampler default pointing at an asset to its resolved texture once loaded', async () => {
+    const realTexture = new FakeTexture('/assets/mask.png')
+    textureLoads.set('/assets/mask.png', realTexture)
+    const { stage, layer } = await mountWithResolver((definitionId) =>
+      definitionId === 'asset-mask' ? '/assets/mask.png' : null,
+    )
+
+    stage.setCell('s1', {
+      source: MASK_SOURCE,
+      uniforms: [{ key: 'uMask', type: 'sampler2D', value: 'asset-mask' }],
+    })
+
+    const filter = spriteFilter(previewSprite(layer, 's1'))
+    await vi.waitFor(() => expect(maskResource(filter)).toBe(realTexture))
+  })
+
+  it('keeps the per-key placeholder for a sampler with no resolvable asset', async () => {
+    const { stage, layer } = await mountWithResolver(() => null)
+
+    stage.setCell('s1', {
+      source: MASK_SOURCE,
+      uniforms: [{ key: 'uMask', type: 'sampler2D', value: 'asset-mask' }],
+    })
+
+    const filter = spriteFilter(previewSprite(layer, 's1'))
+    const resource = maskResource(filter) as FakeTexture
+    expect(resource).toBeDefined()
+    expect(resource.url).toBeUndefined()
+  })
+
+  it('rebinds samplers on rebindSamplers when the asset url resolution changes', async () => {
+    const realTexture = new FakeTexture('/assets/mask.png')
+    textureLoads.set('/assets/mask.png', realTexture)
+    let urlFor: (definitionId: string) => string | null = () => null
+    const { stage, layer } = await mountWithResolver((definitionId) => urlFor(definitionId))
+
+    stage.setCell('s1', {
+      source: MASK_SOURCE,
+      uniforms: [{ key: 'uMask', type: 'sampler2D', value: 'asset-mask' }],
+    })
+
+    const filter = spriteFilter(previewSprite(layer, 's1'))
+    expect((maskResource(filter) as FakeTexture).url).toBeUndefined()
+
+    urlFor = (definitionId) => (definitionId === 'asset-mask' ? '/assets/mask.png' : null)
+    stage.rebindSamplers()
+
+    await vi.waitFor(() => expect(maskResource(filter)).toBe(realTexture))
   })
 })

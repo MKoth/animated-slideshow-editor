@@ -1,6 +1,6 @@
 import { act } from 'react'
 import { fireEvent, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAssetLibraryStore } from '../stores/assetLibraryStore'
 import { useMaterialLibraryStore } from '../stores/materialLibraryStore'
 import { useNotificationStore } from '../stores/notificationStore'
@@ -37,6 +37,7 @@ function assignUniformMaterial(engine: ReturnType<typeof renderMaterialInspector
 
 function seedAssetLibrary(): void {
   useAssetLibraryStore.setState({
+    loaded: true,
     definitions: [
       {
         id: 'asset-noise',
@@ -68,6 +69,7 @@ beforeEach(() => {
   usePlaybackController.setState({ currentTimes: {} })
   useAssetLibraryStore.setState({
     definitions: [],
+    loaded: false,
     unavailable: false,
   })
   useMaterialLibraryStore.setState({ definitions: [] })
@@ -134,6 +136,22 @@ describe('Material section uniform controls', () => {
     select(nodeId)
 
     expect(screen.queryByRole('heading', { name: 'Shader Uniforms' })).not.toBeInTheDocument()
+  })
+
+  it('requests the asset library load when the section opens with a sampler uniform', () => {
+    const loadSpy = vi
+      .spyOn(useAssetLibraryStore.getState(), 'loadLibrary')
+      .mockResolvedValue(undefined)
+    const { engine } = renderMaterialInspector()
+    const { nodeId } = createSceneWithNode(engine)
+    registerMaterials(engine)
+    assignUniformMaterial(engine)
+    select(nodeId)
+
+    fireEvent.change(materialPicker(), { target: { value: 'mat-uniform' } })
+
+    expect(loadSpy).toHaveBeenCalled()
+    loadSpy.mockRestore()
   })
 })
 

@@ -8,7 +8,7 @@ import { useAssetLibraryStore } from '../stores/assetLibraryStore'
 import { useNotificationStore } from '../stores/notificationStore'
 import { useShaderLibraryStore } from '../stores/shaderLibraryStore'
 import type { FakeApplication, FakeContainer, FakeSprite } from './renderer/pixiFake'
-import { pixiRegistry, resetShaderRegistries } from './renderer/pixiFake'
+import { FakeTexture, pixiRegistry, resetShaderRegistries, textureLoads } from './renderer/pixiFake'
 import { createWebGLFake, type FakeWebGL2Context } from './shaders/webglFake'
 
 vi.mock('pixi.js', async () => {
@@ -37,6 +37,18 @@ out vec4 fragColor;
 void main() {
   vec4 color = texture(uTexture, vUv);
   fragColor = color * uIntensity * vec4(uTint, 1.0);
+}
+`
+
+const SOURCE_WITH_SAMPLER = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uTexture;
+uniform sampler2D uMask;
+out vec4 fragColor;
+void main() {
+  vec4 color = texture(uTexture, vUv);
+  fragColor = color * texture(uMask, vUv);
 }
 `
 
@@ -723,6 +735,34 @@ describe('ShadersPanel uniform default editing', () => {
         }
       ).uniforms
       expect(uniforms.uIntensity).toBe(0.9)
+    })
+  })
+
+  it('binds a sampler default to its resolved asset texture in the mini-render', async () => {
+    const shader = makeShader({
+      id: 's1',
+      source: SOURCE_WITH_SAMPLER,
+      default_uniforms: [{ key: 'uMask', kind: 'sampler2D', default: 'asset-1' }],
+    })
+    stubFetch((url) => {
+      if (url.includes('/api/shaders')) {
+        return Promise.resolve(new Response(JSON.stringify([shader]), { status: 200 }))
+      }
+      if (url.includes('/api/assets')) {
+        return Promise.resolve(new Response(JSON.stringify([ASSET]), { status: 200 }))
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`))
+    })
+    textureLoads.set('/media/portrait.png', new FakeTexture('/media/portrait.png'))
+    renderPanel()
+    await screen.findByText('Ink Wash')
+    const app = await waitForStageApp()
+    const layer = previewLayer(app)
+    await vi.waitFor(() => {
+      const resource = (
+        previewSprite(layer, 's1')?.filters[0]?.resources as Record<string, unknown>
+      ).uMask
+      expect((resource as FakeTexture | undefined)?.url).toBe('/media/portrait.png')
     })
   })
 })

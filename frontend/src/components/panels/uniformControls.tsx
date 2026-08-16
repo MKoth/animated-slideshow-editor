@@ -1,4 +1,5 @@
 import type { ChangeEvent, ReactNode } from 'react'
+import { useEffect } from 'react'
 import type {
   MaterialParameterDefault,
   MaterialParameterDefaultValue,
@@ -304,7 +305,18 @@ function SamplerField({
   after: ReactNode
 }) {
   const assets = useAssetLibraryStore((state) => state.definitions)
+  const loaded = useAssetLibraryStore((state) => state.loaded)
+  const loading = useAssetLibraryStore((state) => state.loading)
   const unavailable = useAssetLibraryStore((state) => state.unavailable)
+  const loadAssets = useAssetLibraryStore((state) => state.loadLibrary)
+  // The Inspector sections render sampler pickers without the Assets tab
+  // having loaded the library; request the load so the list is populated as
+  // soon as the section opens, degrading to the unavailable state on failure.
+  useEffect(() => {
+    if (!loaded && !loading && !unavailable) {
+      void loadAssets()
+    }
+  }, [loaded, loading, unavailable, loadAssets])
   const current = typeof effective === 'string' && effective !== '' ? effective : null
   const known = current !== null && assets.some((asset) => asset.id === current)
   const mixed = effective === null
@@ -329,6 +341,16 @@ function SamplerField({
           </option>
         ))}
       </select>
+      {unavailable && (
+        <p className="inspector-section__notice">
+          Asset library unavailable — start the backend to pick assets.
+        </p>
+      )}
+      {!unavailable && loaded && assets.length === 0 && (
+        <p className="inspector-section__notice">
+          No assets in the library — import assets to pick one.
+        </p>
+      )}
       {after}
     </div>
   )

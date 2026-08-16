@@ -1,11 +1,12 @@
-import { beforeEach, describe, expect, it } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import type { MaterialParameterDefault } from '../engine/materialResolution'
 import { UniformParameterField } from '../components/panels/uniformControls'
 import { useAssetLibraryStore } from '../stores/assetLibraryStore'
 
 function seedAssets(ids: string[]): void {
   useAssetLibraryStore.setState({
+    loaded: true,
     definitions: ids.map((id) => ({
       id,
       name: id.replace('asset-', ''),
@@ -57,6 +58,133 @@ beforeEach(() => {
     sort: 'import_date',
     order: 'desc',
     selectedId: null,
+  })
+})
+
+describe('sampler picker library loading', () => {
+  it('requests the asset library load when a sampler picker mounts without a prior load', () => {
+    const loadSpy = vi
+      .spyOn(useAssetLibraryStore.getState(), 'loadLibrary')
+      .mockResolvedValue(undefined)
+
+    render(
+      <UniformParameterField
+        parameter={{ key: 'uMask', kind: 'sampler2D', default: '' }}
+        effective={''}
+        overridden="none"
+        onChange={() => undefined}
+        onClear={() => undefined}
+      />,
+    )
+
+    expect(loadSpy).toHaveBeenCalledTimes(1)
+    loadSpy.mockRestore()
+  })
+
+  it('does not request a reload when the library is already loaded', () => {
+    seedAssets([])
+    const loadSpy = vi
+      .spyOn(useAssetLibraryStore.getState(), 'loadLibrary')
+      .mockResolvedValue(undefined)
+
+    render(
+      <UniformParameterField
+        parameter={{ key: 'uMask', kind: 'sampler2D', default: '' }}
+        effective={''}
+        overridden="none"
+        onChange={() => undefined}
+        onClear={() => undefined}
+      />,
+    )
+
+    expect(loadSpy).not.toHaveBeenCalled()
+    loadSpy.mockRestore()
+  })
+
+  it('does not request a load while the library is unavailable', () => {
+    act(() => {
+      useAssetLibraryStore.setState({ unavailable: true })
+    })
+    const loadSpy = vi
+      .spyOn(useAssetLibraryStore.getState(), 'loadLibrary')
+      .mockResolvedValue(undefined)
+
+    render(
+      <UniformParameterField
+        parameter={{ key: 'uMask', kind: 'sampler2D', default: '' }}
+        effective={''}
+        overridden="none"
+        onChange={() => undefined}
+        onClear={() => undefined}
+      />,
+    )
+
+    expect(loadSpy).not.toHaveBeenCalled()
+    loadSpy.mockRestore()
+  })
+
+  it('does not duplicate an in-flight library load', () => {
+    act(() => {
+      useAssetLibraryStore.setState({ loading: true })
+    })
+    const loadSpy = vi
+      .spyOn(useAssetLibraryStore.getState(), 'loadLibrary')
+      .mockResolvedValue(undefined)
+
+    render(
+      <UniformParameterField
+        parameter={{ key: 'uMask', kind: 'sampler2D', default: '' }}
+        effective={''}
+        overridden="none"
+        onChange={() => undefined}
+        onClear={() => undefined}
+      />,
+    )
+
+    expect(loadSpy).not.toHaveBeenCalled()
+    loadSpy.mockRestore()
+  })
+
+  it('disables the picker and shows the unavailable notice when the library is unavailable', () => {
+    act(() => {
+      useAssetLibraryStore.setState({ unavailable: true })
+    })
+
+    render(
+      <UniformParameterField
+        parameter={{ key: 'uMask', kind: 'sampler2D', default: '' }}
+        effective={''}
+        overridden="none"
+        onChange={() => undefined}
+        onClear={() => undefined}
+      />,
+    )
+
+    const picker = screen.getByRole('combobox', { name: 'uMask' }) as HTMLSelectElement
+    expect(picker).toBeDisabled()
+    expect(
+      screen.getByText('Asset library unavailable — start the backend to pick assets.'),
+    ).toBeInTheDocument()
+  })
+
+  it('shows the empty notice when the library is loaded but has no assets', () => {
+    act(() => {
+      useAssetLibraryStore.setState({ loaded: true, definitions: [] })
+    })
+
+    render(
+      <UniformParameterField
+        parameter={{ key: 'uMask', kind: 'sampler2D', default: '' }}
+        effective={''}
+        overridden="none"
+        onChange={() => undefined}
+        onClear={() => undefined}
+      />,
+    )
+
+    expect(
+      screen.getByText('No assets in the library — import assets to pick one.'),
+    ).toBeInTheDocument()
   })
 })
 
