@@ -87,8 +87,12 @@ The shader a slide renders its entire scene through; the slide references one, w
 ### Animation
 
 **Keyframe**:
-A point on an animated track: an id, a property or channel, a time, a value, an interpolation type (hold, linear, or bezier) governing the segment to the next keyframe, and in/out tangents (control-point offsets in time/value units) used when bezier. Node keyframes use seconds; clip keyframes are normalized (time and value in [0, 1]).
+A point on an animated track: an id, a property or channel, a time, a value, an interpolation type (hold, linear, or bezier) governing the segment to the next keyframe, and in/out tangents (control-point offsets in time/value units) used when bezier. Node keyframes use seconds; clip keyframes are normalized (time and value in [0, 1]). The value is a number for the uniform-six properties and clip channels; for material-parameter tracks it carries the parameter's kind shape (number, color hex string, boolean, int, number[] vector, or asset-id string), interpolating linearly for continuous kinds and holding for discrete ones.
 _Avoid_: Frame, animation point
+
+**Time Uniform (`uTime`)**:
+The reserved shader uniform every shader may declare to receive the slide playhead time in float seconds — deterministic, scrubbable, and identical across render/preview/export; a still playhead freezes it at the playhead. Modeled on the reserved `uTexture`; authors cannot define a conflicting default.
+_Avoid_: Clock uniform, uTimeMS
 
 **Interpolation**:
 The engine rule for values between keyframes. Three types in v1 — hold (constant until the next keyframe), linear, and bezier (cubic through tangents). Easing presets (Ease In, Ease Out, Ease In-Out, Quadratic, Cubic, Quartic, Quintic, Back) are named Bezier configurations, not interpolator types; parametric types (Bounce/Elastic/Spring) are future.
