@@ -3,6 +3,7 @@ import type { MaterialOverrides } from '../../engine/materialInstance'
 import {
   DEFAULT_OPACITY_MULTIPLIER,
   DEFAULT_TINT,
+  copyShaderUniforms,
   effectiveShaderScratch,
   resolveMaterial,
   resolveParameterValue,
@@ -138,6 +139,33 @@ describe('resolveShaderUniforms', () => {
     expect(scratch.keys).not.toContain('uPhoto')
   })
 
+  it('collects sampler2D parameters as key/asset-id bindings resolved override over default', () => {
+    const scratch = resolveShaderUniforms(SHADER_PARAMETERS, { uPhoto: 'override-photo' })
+
+    expect(scratch.samplers).toEqual([{ key: 'uPhoto', assetDefinitionId: 'override-photo' }])
+  })
+
+  it('falls back to the definition default for an unoverridden sampler', () => {
+    const scratch = resolveShaderUniforms(SHADER_PARAMETERS, {})
+
+    expect(scratch.samplers).toEqual([{ key: 'uPhoto', assetDefinitionId: 'def-photo' }])
+  })
+
+  it('resolves an empty or missing sampler value to no binding', () => {
+    const empty = resolveShaderUniforms(SHADER_PARAMETERS, { uPhoto: '' })
+
+    expect(empty.samplers[0].assetDefinitionId).toBeNull()
+    expect(
+      resolveShaderUniforms(
+        [
+          ...SHADER_PARAMETERS,
+          { key: 'uOther', kind: 'sampler2D', default: undefined as unknown as string },
+        ],
+        {},
+      ).samplers,
+    ).toContainEqual({ key: 'uOther', assetDefinitionId: null })
+  })
+
   it('collects nothing for a shader-less material parameter list', () => {
     const scratch = resolveShaderUniforms(
       [
@@ -212,9 +240,74 @@ describe('shaderUniformsEqual', () => {
     expect(shaderUniformsEqual(first, second)).toBe(false)
   })
 
+  it('reports a sampler asset change', () => {
+    const parameters: readonly MaterialParameterDefault[] = [
+      { key: 'uPhoto', kind: 'sampler2D', default: 'photo-a' },
+    ]
+    const first = resolveShaderUniforms(parameters, {})
+    const second = resolveShaderUniforms(parameters, { uPhoto: 'photo-b' })
+
+    expect(shaderUniformsEqual(first, second)).toBe(false)
+  })
+
+  it('reports a sampler appearing or disappearing', () => {
+    const withSampler: readonly MaterialParameterDefault[] = [
+      { key: 'uPhoto', kind: 'sampler2D', default: 'photo-a' },
+    ]
+
+    expect(
+      shaderUniformsEqual(resolveShaderUniforms(withSampler, {}), resolveShaderUniforms([], {})),
+    ).toBe(false)
+    expect(
+      shaderUniformsEqual(
+        resolveShaderUniforms(withSampler, {}),
+        resolveShaderUniforms(withSampler, { uPhoto: 'photo-a' }),
+      ),
+    ).toBe(true)
+  })
+
   it('reports not equal when there is no previous state', () => {
     const next = resolveShaderUniforms(PARAMETERS, {})
 
     expect(shaderUniformsEqual(undefined, next)).toBe(false)
+  })
+})
+
+describe('copyShaderUniforms', () => {
+  it('copies the scalar uniforms and sampler bindings into a reusable target', () => {
+    const source = resolveShaderUniforms(
+      [
+        { key: 'uIntensity', kind: 'float', default: 0.5 },
+        { key: 'uPhoto', kind: 'sampler2D', default: 'photo-a' },
+      ],
+      { uIntensity: 0.9 },
+    )
+    const target = effectiveShaderScratch()
+
+    copyShaderUniforms(target, source)
+
+    expect(target).not.toBe(source)
+    expect(target.source).toBe(source.source)
+    expect(target.keys).toEqual(['uIntensity'])
+    expect(target.values).toEqual([0.9])
+    expect(target.samplers).toEqual([{ key: 'uPhoto', assetDefinitionId: 'photo-a' }])
+    expect(shaderUniformsEqual(target, source)).toBe(true)
+  })
+
+  it('replaces the previous sampler bindings when copying over a used target', () => {
+    const first = resolveShaderUniforms(
+      [{ key: 'uPhoto', kind: 'sampler2D', default: 'photo-a' }],
+      {},
+    )
+    const second = resolveShaderUniforms(
+      [{ key: 'uPhoto', kind: 'sampler2D', default: 'photo-b' }],
+      {},
+    )
+    const target = effectiveShaderScratch()
+
+    copyShaderUniforms(target, first)
+    copyShaderUniforms(target, second)
+
+    expect(target.samplers).toEqual([{ key: 'uPhoto', assetDefinitionId: 'photo-b' }])
   })
 })

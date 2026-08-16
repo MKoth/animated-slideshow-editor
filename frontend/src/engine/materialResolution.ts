@@ -23,6 +23,13 @@ export interface EffectiveShaderScratch {
   keys: string[]
   kinds: string[]
   values: (MaterialParameterDefaultValue | undefined)[]
+  samplers: ShaderSamplerBinding[]
+}
+
+/** One sampler2D uniform resolved to the asset definition it samples. */
+export interface ShaderSamplerBinding {
+  readonly key: string
+  readonly assetDefinitionId: string | null
 }
 
 export function effectiveMaterialScratch(): EffectiveMaterialScratch {
@@ -30,7 +37,7 @@ export function effectiveMaterialScratch(): EffectiveMaterialScratch {
 }
 
 export function effectiveShaderScratch(): EffectiveShaderScratch {
-  return { source: null, keys: [], kinds: [], values: [] }
+  return { source: null, keys: [], kinds: [], values: [], samplers: [] }
 }
 
 export function resolveMaterial(
@@ -80,9 +87,16 @@ export function resolveShaderUniforms(
   for (const parameter of parameters) {
     if (
       parameter.key === TINT_PARAMETER_KEY ||
-      parameter.key === OPACITY_MULTIPLIER_PARAMETER_KEY ||
-      parameter.kind === 'sampler2D'
+      parameter.key === OPACITY_MULTIPLIER_PARAMETER_KEY
     ) {
+      continue
+    }
+    if (parameter.kind === 'sampler2D') {
+      const value = resolveParameterValue(parameters, overrides, parameter.key)
+      target.samplers.push({
+        key: parameter.key,
+        assetDefinitionId: typeof value === 'string' && value !== '' ? value : null,
+      })
       continue
     }
     target.keys.push(parameter.key)
@@ -92,12 +106,17 @@ export function resolveShaderUniforms(
   return target
 }
 
-/** Whether two resolved uniform states carry the same keys, kinds and values. */
+/** Whether two resolved uniform states carry the same keys, kinds, values and samplers. */
 export function shaderUniformsEqual(
   previous: EffectiveShaderScratch | undefined,
   next: EffectiveShaderScratch,
 ): boolean {
-  if (!previous || previous.source !== next.source || previous.keys.length !== next.keys.length) {
+  if (
+    !previous ||
+    previous.source !== next.source ||
+    previous.keys.length !== next.keys.length ||
+    previous.samplers.length !== next.samplers.length
+  ) {
     return false
   }
   for (let index = 0; index < next.keys.length; index++) {
@@ -108,6 +127,14 @@ export function shaderUniformsEqual(
       return false
     }
     if (!uniformValuesEqual(previous.values[index], next.values[index])) {
+      return false
+    }
+  }
+  for (let index = 0; index < next.samplers.length; index++) {
+    if (
+      previous.samplers[index].key !== next.samplers[index].key ||
+      previous.samplers[index].assetDefinitionId !== next.samplers[index].assetDefinitionId
+    ) {
       return false
     }
   }
@@ -126,12 +153,16 @@ export function copyShaderUniforms(
     target.kinds.push(source.kinds[index])
     target.values.push(source.values[index])
   }
+  for (const sampler of source.samplers) {
+    target.samplers.push({ key: sampler.key, assetDefinitionId: sampler.assetDefinitionId })
+  }
 }
 
 function clearShaderUniforms(target: EffectiveShaderScratch): void {
   target.keys.length = 0
   target.kinds.length = 0
   target.values.length = 0
+  target.samplers.length = 0
 }
 
 export function uniformValuesEqual(

@@ -12,6 +12,8 @@ import {
 import type { PixiContainer, PixiFilter, PixiRenderTexture, PixiSprite, RendererPixi } from './pixi'
 import type { ShaderProgramCache } from './programCache'
 import { applyFilterUniforms, createNodeShaderFilter } from './nodeShader'
+import { bindFilterSamplers } from './samplerBinding'
+import type { ResolveAssetUrl, TextureCache } from './textureCache'
 
 export type ResolveFullscreenShaderSource = (shaderId: string) => string | null
 
@@ -35,6 +37,8 @@ export class FullscreenPass {
   readonly #stage: PixiContainer
   readonly #scene: PixiContainer
   readonly #renderScene: RenderSceneToTexture
+  readonly #resolveAssetUrl: ResolveAssetUrl
+  readonly #textures: TextureCache
   readonly #scratch: EffectiveShaderScratch = effectiveShaderScratch()
   #renderOptions: { container: PixiContainer; target: PixiRenderTexture } | null = null
   #texture: PixiRenderTexture | null = null
@@ -49,12 +53,16 @@ export class FullscreenPass {
     stage: PixiContainer,
     scene: PixiContainer,
     renderScene: RenderSceneToTexture,
+    resolveAssetUrl: ResolveAssetUrl,
+    textures: TextureCache,
   ) {
     this.#pixi = pixi
     this.#programCache = programCache
     this.#stage = stage
     this.#scene = scene
     this.#renderScene = renderScene
+    this.#resolveAssetUrl = resolveAssetUrl
+    this.#textures = textures
   }
 
   get active(): boolean {
@@ -88,6 +96,12 @@ export class FullscreenPass {
     }
     if (this.#filter) {
       applyFilterUniforms(this.#filter, this.#scratch)
+      bindFilterSamplers(
+        this.#filter,
+        this.#scratch.samplers,
+        this.#resolveAssetUrl,
+        this.#textures,
+      )
     }
   }
 

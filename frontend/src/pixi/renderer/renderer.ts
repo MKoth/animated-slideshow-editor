@@ -155,6 +155,8 @@ export class Renderer {
         (options) => {
           app.renderer.render(options)
         },
+        this.#resolveAssetUrl,
+        this.#textureCache,
       )
       this.#sceneRenderer = new SceneRenderer(
         this.#engine,

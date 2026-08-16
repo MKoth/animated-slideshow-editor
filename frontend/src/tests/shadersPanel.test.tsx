@@ -1,9 +1,10 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ShaderDefinition } from '../api'
+import type { AssetDefinition, ShaderDefinition } from '../api'
 import { ShadersPanel } from '../components/panels/ShadersPanel'
 import { setWebGL2ContextFactory } from '../shaders/compiler'
+import { useAssetLibraryStore } from '../stores/assetLibraryStore'
 import { useNotificationStore } from '../stores/notificationStore'
 import { useShaderLibraryStore } from '../stores/shaderLibraryStore'
 import type { FakeApplication, FakeContainer, FakeSprite } from './renderer/pixiFake'
@@ -38,6 +39,27 @@ void main() {
   fragColor = color * uIntensity * vec4(uTint, 1.0);
 }
 `
+
+const ASSET: AssetDefinition = {
+  id: 'asset-1',
+  name: 'Portrait',
+  description: '',
+  category: 'Character',
+  tags: [],
+  ai_description: '',
+  original_filename: 'portrait.png',
+  import_date: '2026-08-15',
+  width: 100,
+  height: 100,
+  file_size: 1000,
+  aspect_ratio: 1,
+  default_scale: 1,
+  default_rotation: 0,
+  pivot: { x: 0.5, y: 0.5 },
+  anchors: [],
+  original_url: '/media/portrait.png',
+  thumbnail_url: '/media/portrait-thumb.png',
+}
 
 function makeShader(overrides: Partial<ShaderDefinition> = {}): ShaderDefinition {
   return {
@@ -117,6 +139,17 @@ beforeEach(() => {
     error: null,
     unavailable: false,
     selectedId: null,
+  })
+  useAssetLibraryStore.setState({
+    definitions: [],
+    loaded: false,
+    loading: false,
+    error: null,
+    unavailable: false,
+    selectedId: null,
+    search: '',
+    sort: 'name',
+    order: 'asc',
   })
   useNotificationStore.setState({ notifications: [] })
 })
@@ -589,21 +622,49 @@ describe('ShadersPanel uniform default editing', () => {
     await waitFor(() => expect(screen.getByLabelText('uEnabled')).toBeChecked())
   })
 
-  it('keeps sampler2D uniforms read-only', async () => {
+  it('edits a sampler2D default with the asset picker', async () => {
     const original = makeShader({
       id: 's1',
-      default_uniforms: [{ key: 'uMask', kind: 'sampler2D', default: null }],
+      default_uniforms: [{ key: 'uMask', kind: 'sampler2D', default: '' }],
+    })
+    const updated = makeShader({
+      ...original,
+      default_uniforms: [{ key: 'uMask', kind: 'sampler2D', default: 'asset-1' }],
+    })
+    stubFetch((url, init) => {
+      if (url.includes('/api/shaders/s1/uniforms') && init.method === 'PUT') {
+        expect(
+          (JSON.parse(init.body as string) as { default_uniforms: unknown }).default_uniforms,
+        ).toEqual([{ key: 'uMask', kind: 'sampler2D', default: 'asset-1' }])
+        return Promise.resolve(new Response(JSON.stringify(updated), { status: 200 }))
+      }
+      if (url.includes('/api/shaders')) {
+        return Promise.resolve(new Response(JSON.stringify([original]), { status: 200 }))
+      }
+      if (url.includes('/api/assets')) {
+        return Promise.resolve(new Response(JSON.stringify([ASSET]), { status: 200 }))
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`))
+    })
+    const user = await renderAndSelect()
+
+    const picker = screen.getByLabelText('uMask')
+    expect(picker).toBeEnabled()
+    expect(screen.getByRole('option', { name: 'Portrait' })).toBeInTheDocument()
+    await user.selectOptions(picker, 'asset-1')
+
+    await waitFor(() => expect(screen.getByLabelText('uMask')).toHaveValue('asset-1'))
+  })
+
+  it('disables the sampler picker while the asset library is unavailable', async () => {
+    const original = makeShader({
+      id: 's1',
+      default_uniforms: [{ key: 'uMask', kind: 'sampler2D', default: '' }],
     })
     stubLibrary([original])
-    const user = userEvent.setup()
-    renderPanel()
-    await screen.findByText('Ink Wash')
-    await user.click(screen.getByRole('button', { name: 'Select Ink Wash' }))
+    await renderAndSelect()
 
-    const preview = screen.getByRole('region', { name: 'Shader preview' })
-    expect(preview).toHaveTextContent('uMask')
-    expect(preview).toHaveTextContent('sampler2D')
-    expect(screen.queryByLabelText('uMask')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('uMask')).toBeDisabled()
   })
 
   it('preserves persisted sampler defaults when editing another uniform', async () => {

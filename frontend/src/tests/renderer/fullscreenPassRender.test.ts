@@ -14,7 +14,8 @@ import type { PixiFilter } from '../../pixi/renderer/pixi'
 import { nodeFilterUniforms } from '../../pixi/renderer/nodeShader'
 import { Renderer } from '../../pixi/renderer/renderer'
 import { FakeTimeSource } from '../fakeTimeSource'
-import { fakeGlPrograms, pixiRegistry, resetShaderRegistries } from './pixiFake'
+import { fakeGlPrograms, pixiRegistry, resetShaderRegistries, textureLoads } from './pixiFake'
+import { FakeTexture } from './pixiFake'
 import type { FakeApplication, FakeContainer, FakeFilter, FakeSprite } from './pixiFake'
 
 vi.mock('pixi.js', async () => {
@@ -318,5 +319,91 @@ describe('fullscreen shader pass', () => {
 
     expect(fakeGlPrograms.calls.length).toBe(programsBefore)
     expect(filterUniforms(quadFilter(fullscreenQuad(app))).uIntensity).toBe(0.5)
+  })
+})
+
+describe('fullscreen shader sampler uniforms', () => {
+  const MASK_SOURCE = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uTexture;
+uniform sampler2D uMask;
+out vec4 fragColor;
+void main() {
+  vec4 color = texture(uTexture, vUv);
+  fragColor = color * texture(uMask, vUv);
+}
+`
+
+  async function mountWithSampler(): Promise<Mounted> {
+    const engine = createEngine()
+    engine.registerShaderDefinition('shader-mask', 'Masked', [
+      { key: 'uMask', kind: 'sampler2D', default: 'def-photo' },
+    ])
+    const sources = new Map<string, string | null>([['shader-mask', MASK_SOURCE]])
+    const dispatcher = new CommandDispatcher(engine, new UndoStack())
+    expectOk(dispatcher.dispatch(new CreateProjectCommand({ name: 'P' })))
+    expectOk(dispatcher.dispatch(new CreateSlideCommand({ name: 'S1' })))
+    const host = document.createElement('div')
+    const renderer = new Renderer(
+      host,
+      engine,
+      (command) => dispatcher.dispatch(command),
+      undefined,
+      (definitionId) => (definitionId === 'def-ghost' ? null : `/assets/${definitionId}.png`),
+      new FakeTimeSource(),
+      undefined,
+      undefined,
+      undefined,
+      (shaderId) => sources.get(shaderId) ?? null,
+    )
+    await renderer.start()
+    const app = pixiRegistry.applications.at(-1)
+    if (!app) {
+      throw new Error('No pixi application was created')
+    }
+    const world = app.stage.children[0] as FakeContainer
+    return { engine, dispatcher, renderer, app, sources, world }
+  }
+
+  beforeEach(() => {
+    textureLoads.clear()
+  })
+
+  it('binds the sampler to the resolved asset texture', async () => {
+    const realTexture = new FakeTexture('/assets/def-photo.png')
+    textureLoads.set('/assets/def-photo.png', realTexture)
+    const { engine, dispatcher, app } = await mountWithSampler()
+    const slideId = activeSlideId(engine)
+
+    expectOk(
+      dispatcher.dispatch(
+        new SetFullscreenShaderCommand({ slideId, shaderDefinitionId: 'shader-mask' }),
+      ),
+    )
+
+    const filter = quadFilter(fullscreenQuad(app))
+    await vi.waitFor(() =>
+      expect((filterUniforms(filter).uMask as FakeTexture).url).toBe('/assets/def-photo.png'),
+    )
+  })
+
+  it('unbinds the sampler for an asset without a resolvable url, rendering without the effect', async () => {
+    const { engine, dispatcher, app } = await mountWithSampler()
+    const slideId = activeSlideId(engine)
+    expectOk(
+      dispatcher.dispatch(
+        new SetFullscreenShaderCommand({ slideId, shaderDefinitionId: 'shader-mask' }),
+      ),
+    )
+    expectOk(
+      dispatcher.dispatch(
+        new OverrideFullscreenUniformCommand({ slideId, uniform: 'uMask', value: 'def-ghost' }),
+      ),
+    )
+
+    const filter = quadFilter(fullscreenQuad(app))
+    expect(filter).toBeDefined()
+    expect(filterUniforms(filter).uMask).toBeUndefined()
   })
 })

@@ -10,7 +10,8 @@ import type {
 } from '../../pixi/renderer/shaderPreviewStage'
 import { ShaderPreviewStage } from '../../pixi/renderer/shaderPreviewStage'
 import type { ShaderCompileStatus } from '../../shaders/compiler'
-import type { ReflectedUniformDefault, ShaderReflection } from '../../shaders/reflection'
+import type { ShaderReflection } from '../../shaders/reflection'
+import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { useShaderLibraryStore } from '../../stores/shaderLibraryStore'
 import { UniformParameterField } from './uniformControls'
 
@@ -40,7 +41,7 @@ function displayUniforms(
   return (reflection?.uniforms ?? []).map((uniform) => ({
     key: uniform.key,
     kind: uniform.type,
-    default: uniform.default,
+    default: uniform.default === null && uniform.type === 'sampler2D' ? '' : uniform.default,
   }))
 }
 
@@ -66,19 +67,6 @@ function previewSourceOf(
     return null
   }
   return { source: definition.source, uniforms: previewUniforms(definition, reflection) }
-}
-
-function formatUniformDefault(value: ShaderUniformDefault | ReflectedUniformDefault): string {
-  if (value === null || value === undefined) {
-    return '—'
-  }
-  if (Array.isArray(value)) {
-    return value.join(', ')
-  }
-  if (typeof value === 'boolean') {
-    return value ? 'true' : 'false'
-  }
-  return String(value)
 }
 
 function formatDate(date: string): string {
@@ -223,15 +211,11 @@ function ShaderPreviewPanel({ definition, status, reflection, onClose }: ShaderP
   const reuploadSource = useShaderLibraryStore((state) => state.reuploadSource)
   const updateUniformDefaults = useShaderLibraryStore((state) => state.updateUniformDefaults)
   const uniforms = displayUniforms(definition, reflection)
-  const editableUniforms = uniforms.filter((uniform) => uniform.kind !== 'sampler2D')
-  const samplerUniforms = uniforms.filter((uniform) => uniform.kind === 'sampler2D')
 
   const commitDefault = (key: string, value: MaterialParameterDefaultValue) => {
-    // Persisted sampler defaults ride along; reflection-only samplers (default
-    // null) are unpersisted and would fail backend validation.
-    const next = uniforms
-      .filter((uniform) => uniform.kind !== 'sampler2D' || uniform.default !== null)
-      .map((uniform) => (uniform.key === key ? { ...uniform, default: value } : uniform))
+    const next = uniforms.map((uniform) =>
+      uniform.key === key ? { ...uniform, default: value } : uniform,
+    )
     void updateUniformDefaults(definition.id, next)
   }
 
@@ -284,10 +268,10 @@ function ShaderPreviewPanel({ definition, status, reflection, onClose }: ShaderP
           </ul>
         )}
       </div>
-      {editableUniforms.length > 0 && (
+      {uniforms.length > 0 && (
         <>
           <h4 className="shader-preview__subtitle">Uniform Defaults</h4>
-          {editableUniforms.map((uniform) => (
+          {uniforms.map((uniform) => (
             <UniformParameterField
               key={uniform.key}
               parameter={{
@@ -301,20 +285,6 @@ function ShaderPreviewPanel({ definition, status, reflection, onClose }: ShaderP
               onClear={() => undefined}
             />
           ))}
-        </>
-      )}
-      {samplerUniforms.length > 0 && (
-        <>
-          <h4 className="shader-preview__subtitle">Sampler Textures</h4>
-          <dl className="shader-preview__uniforms">
-            {samplerUniforms.map((uniform) => (
-              <div key={uniform.key} className="shader-preview__uniform">
-                <dt>{uniform.key}</dt>
-                <dd>{uniform.kind}</dd>
-                <dd>{formatUniformDefault(uniform.default)}</dd>
-              </div>
-            ))}
-          </dl>
         </>
       )}
       <h4 className="shader-preview__subtitle">Metadata</h4>
@@ -363,10 +333,15 @@ export function ShadersPanel() {
   const renameShader = useShaderLibraryStore((state) => state.renameShader)
   const duplicateShader = useShaderLibraryStore((state) => state.duplicateShader)
   const deleteShader = useShaderLibraryStore((state) => state.deleteShader)
+  const loadAssets = useAssetLibraryStore((state) => state.loadLibrary)
 
   useEffect(() => {
     void loadLibrary()
   }, [loadLibrary])
+
+  useEffect(() => {
+    void loadAssets()
+  }, [loadAssets])
 
   useEffect(() => {
     const host = stageHostRef.current

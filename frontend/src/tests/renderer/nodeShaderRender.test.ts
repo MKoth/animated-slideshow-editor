@@ -15,7 +15,14 @@ import type { PixiFilter } from '../../pixi/renderer/pixi'
 import { nodeFilterUniforms } from '../../pixi/renderer/nodeShader'
 import { Renderer } from '../../pixi/renderer/renderer'
 import { FakeTimeSource } from '../fakeTimeSource'
-import { fakeGlPrograms, pixiRegistry, resetShaderRegistries } from './pixiFake'
+import {
+  fakeGlPrograms,
+  pixiRegistry,
+  resetShaderRegistries,
+  textureDeferreds,
+  textureLoads,
+} from './pixiFake'
+import { FakeTexture, deferredTexture } from './pixiFake'
 import type { FakeApplication, FakeContainer, FakeFilter } from './pixiFake'
 
 vi.mock('pixi.js', async () => {
@@ -414,5 +421,159 @@ void main() {
     expect(replacement).not.toBe(firstFilter)
     expect(replacement?.glProgram.fragment).toBe(sepiaSource)
     expect(firstFilter?.destroyed).toBe(true)
+  })
+})
+
+describe('per-node sampler2D uniform binding', () => {
+  const MASK_SOURCE = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uTexture;
+uniform sampler2D uMask;
+out vec4 fragColor;
+void main() {
+  vec4 color = texture(uTexture, vUv);
+  vec4 mask = texture(uMask, vUv);
+  fragColor = color * mask;
+}
+`
+
+  async function mountWithSampler(): Promise<Mounted> {
+    const engine = createEngine()
+    engine.registerShaderDefinition('shader-mask', 'Masked')
+    engine.registerMaterialDefinition(
+      'mat-mask',
+      'Masked Mat',
+      [
+        { key: 'tint', kind: 'color', default: '#ffffff' },
+        { key: 'opacityMultiplier', kind: 'number', default: 1 },
+        { key: 'uMask', kind: 'sampler2D', default: 'def-photo' },
+      ],
+      'shader-mask',
+    )
+    const sources = new Map<string, string | null>([['shader-mask', MASK_SOURCE]])
+    const dispatcher = new CommandDispatcher(engine, new UndoStack())
+    expectOk(dispatcher.dispatch(new CreateProjectCommand({ name: 'P' })))
+    expectOk(dispatcher.dispatch(new CreateSlideCommand({ name: 'S1' })))
+    const host = document.createElement('div')
+    const renderer = new Renderer(
+      host,
+      engine,
+      (command) => dispatcher.dispatch(command),
+      undefined,
+      (definitionId) => (definitionId === 'def-ghost' ? null : `/assets/${definitionId}.png`),
+      new FakeTimeSource(),
+      undefined,
+      undefined,
+      undefined,
+      (shaderId) => sources.get(shaderId) ?? null,
+    )
+    await renderer.start()
+    const app = pixiRegistry.applications.at(-1)
+    if (!app) {
+      throw new Error('No pixi application was created')
+    }
+    return { engine, dispatcher, renderer, app, sources }
+  }
+
+  beforeEach(() => {
+    textureLoads.clear()
+    textureDeferreds.clear()
+  })
+
+  it('binds the placeholder texture first and the loaded asset texture once it resolves', async () => {
+    const realTexture = new FakeTexture('/assets/def-photo.png')
+    textureLoads.set('/assets/def-photo.png', realTexture)
+    const { engine, dispatcher, app } = await mountWithSampler()
+    const nodeId = createNode(engine, dispatcher, 'A', {
+      assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-a' },
+    })
+
+    expectOk(
+      dispatcher.dispatch(new AssignMaterialCommand({ nodeId, materialDefinitionId: 'mat-mask' })),
+    )
+
+    const filter = nodeFilter(app, 'A')
+    const placeholder = filterUniforms(filter).uMask as FakeTexture
+    expect(placeholder).toBeDefined()
+    expect(placeholder.url).toBeUndefined()
+
+    await vi.waitFor(() =>
+      expect((filterUniforms(filter).uMask as FakeTexture).url).toBe('/assets/def-photo.png'),
+    )
+    expect(filterUniforms(filter).uMask).toBe(realTexture)
+  })
+
+  it('rebinds the sampler when the node overrides the asset', async () => {
+    textureLoads.set('/assets/def-photo.png', new FakeTexture('/assets/def-photo.png'))
+    textureLoads.set('/assets/def-override.png', new FakeTexture('/assets/def-override.png'))
+    const { engine, dispatcher, app } = await mountWithSampler()
+    const nodeId = createNode(engine, dispatcher, 'A', {
+      assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-a' },
+    })
+    expectOk(
+      dispatcher.dispatch(new AssignMaterialCommand({ nodeId, materialDefinitionId: 'mat-mask' })),
+    )
+    const filter = nodeFilter(app, 'A')
+    await vi.waitFor(() =>
+      expect((filterUniforms(filter).uMask as FakeTexture).url).toBe('/assets/def-photo.png'),
+    )
+
+    expectOk(
+      dispatcher.dispatch(
+        new OverrideMaterialParameterCommand({ nodeId, parameter: 'uMask', value: 'def-override' }),
+      ),
+    )
+
+    await vi.waitFor(() =>
+      expect((filterUniforms(filter).uMask as FakeTexture).url).toBe('/assets/def-override.png'),
+    )
+  })
+
+  it('leaves the sampler unbound for an asset without a resolvable url', async () => {
+    const { engine, dispatcher, app } = await mountWithSampler()
+    const nodeId = createNode(engine, dispatcher, 'A', {
+      assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-a' },
+    })
+    expectOk(
+      dispatcher.dispatch(new AssignMaterialCommand({ nodeId, materialDefinitionId: 'mat-mask' })),
+    )
+    expectOk(
+      dispatcher.dispatch(
+        new OverrideMaterialParameterCommand({ nodeId, parameter: 'uMask', value: 'def-ghost' }),
+      ),
+    )
+
+    const filter = nodeFilter(app, 'A')
+    expect(filter).toBeDefined()
+    expect(filterUniforms(filter).uMask).toBeUndefined()
+  })
+
+  it('ignores a stale texture load when the sampler is rebound before it resolves', async () => {
+    const stale = deferredTexture()
+    textureDeferreds.set('/assets/def-photo.png', stale)
+    const replacement = new FakeTexture('/assets/def-override.png')
+    textureLoads.set('/assets/def-override.png', replacement)
+    const { engine, dispatcher, app } = await mountWithSampler()
+    const nodeId = createNode(engine, dispatcher, 'A', {
+      assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-a' },
+    })
+    expectOk(
+      dispatcher.dispatch(new AssignMaterialCommand({ nodeId, materialDefinitionId: 'mat-mask' })),
+    )
+    expectOk(
+      dispatcher.dispatch(
+        new OverrideMaterialParameterCommand({ nodeId, parameter: 'uMask', value: 'def-override' }),
+      ),
+    )
+    const filter = nodeFilter(app, 'A')
+    await vi.waitFor(() =>
+      expect((filterUniforms(filter).uMask as FakeTexture).url).toBe('/assets/def-override.png'),
+    )
+
+    stale.resolve(new FakeTexture('/assets/def-photo.png'))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect((filterUniforms(filter).uMask as FakeTexture).url).toBe('/assets/def-override.png')
   })
 })

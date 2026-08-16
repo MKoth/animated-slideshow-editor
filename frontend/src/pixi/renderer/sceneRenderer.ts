@@ -30,6 +30,7 @@ import {
 } from './nodeRenderer'
 import { applyAssetTexture, applyMissingPlaceholder, placeholderSize } from './placeholder'
 import { createNodeShaderFilter, applyFilterUniforms } from './nodeShader'
+import { bindFilterSamplers } from './samplerBinding'
 import type { ShaderProgramCache } from './programCache'
 import type { ResolveAssetUrl, TextureCache } from './textureCache'
 
@@ -376,6 +377,7 @@ export class SceneRenderer {
         previousFilter?.destroy()
       }
       applyFilterUniforms(filter, scratch)
+      bindFilterSamplers(filter, scratch.samplers, this.#resolveAssetUrl, this.#textureCache)
       placeholder.filters = [filter]
       state.filter = filter
     }
