@@ -6,9 +6,9 @@ import {
   type AssetSortOrder,
   type AssetUploadResult,
 } from '../api'
-import { ApiError } from '../api/apiClient'
 import { libraryEventBus } from './libraryEvents'
 import { useNotificationStore } from './notificationStore'
+import { notifyRequestFailure } from './requestNotifications'
 
 export const SEARCH_DEBOUNCE_MS = 300
 
@@ -19,20 +19,6 @@ export const DELETE_BACKEND_DOWN_MESSAGE = 'Asset delete failed — backend unav
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error'
-}
-
-function notifyRequestFailure(
-  failedMessage: string,
-  backendDownMessage: string,
-  error: unknown,
-  markUnavailable: () => void,
-): void {
-  if (error instanceof ApiError) {
-    useNotificationStore.getState().notify(failedMessage)
-  } else {
-    useNotificationStore.getState().notify(backendDownMessage)
-    markUnavailable()
-  }
 }
 
 interface AssetLibraryState {

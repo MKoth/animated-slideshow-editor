@@ -5,11 +5,10 @@ import {
   type ShaderImportInput,
   type ShaderUniformInput,
 } from '../api'
-import { ApiError } from '../api/apiClient'
 import { compileFragmentShader, type ShaderCompileStatus } from '../shaders/compiler'
 import { reflectUniforms, type ShaderReflection } from '../shaders/reflection'
 import { libraryEventBus } from './libraryEvents'
-import { useNotificationStore } from './notificationStore'
+import { notifyRequestFailure } from './requestNotifications'
 
 export const IMPORT_FAILED_MESSAGE = 'Shader import failed.'
 export const IMPORT_BACKEND_DOWN_MESSAGE = 'Shader import failed — backend unavailable.'
@@ -20,20 +19,6 @@ export const DELETE_BACKEND_DOWN_MESSAGE = 'Shader delete failed — backend una
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error'
-}
-
-function notifyRequestFailure(
-  failedMessage: string,
-  backendDownMessage: string,
-  error: unknown,
-  markUnavailable: () => void,
-): void {
-  if (error instanceof ApiError) {
-    useNotificationStore.getState().notify(failedMessage)
-  } else {
-    useNotificationStore.getState().notify(backendDownMessage)
-    markUnavailable()
-  }
 }
 
 function replaceDefinition(

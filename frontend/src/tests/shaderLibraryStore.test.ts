@@ -613,10 +613,15 @@ void main() {
     expect(materialListCalls).toBe(1)
   })
 
-  it('notifies when the backend rejects a uniform-defaults update', async () => {
+  it('notifies with the backend detail when the backend rejects a uniform-defaults update', async () => {
     stubFetch((_url, init) => {
       if (init.method === 'PUT') {
-        return Promise.resolve(new Response('{}', { status: 422 }))
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ detail: 'parameter uRepeatCount: int default must be an integer' }),
+            { status: 422 },
+          ),
+        )
       }
       return Promise.resolve(new Response(JSON.stringify([makeShader()]), { status: 200 }))
     })
@@ -627,7 +632,7 @@ void main() {
       .updateUniformDefaults('s1', [{ key: 'uIntensity', kind: 'float', default: 0.75 }])
 
     expect(useNotificationStore.getState().notifications.map((n) => n.message)).toEqual([
-      'Shader update failed.',
+      'Shader update failed. parameter uRepeatCount: int default must be an integer',
     ])
     expect(useShaderLibraryStore.getState().unavailable).toBe(false)
   })

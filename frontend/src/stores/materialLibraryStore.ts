@@ -5,9 +5,8 @@ import {
   type MaterialDefinition,
   type MaterialUpdateInput,
 } from '../api'
-import { ApiError } from '../api/apiClient'
 import { libraryEventBus } from './libraryEvents'
-import { useNotificationStore } from './notificationStore'
+import { notifyRequestFailure } from './requestNotifications'
 
 export const CREATE_FAILED_MESSAGE = 'Material create failed.'
 export const CREATE_BACKEND_DOWN_MESSAGE = 'Material create failed — backend unavailable.'
@@ -18,20 +17,6 @@ export const DELETE_BACKEND_DOWN_MESSAGE = 'Material delete failed — backend u
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error'
-}
-
-function notifyRequestFailure(
-  failedMessage: string,
-  backendDownMessage: string,
-  error: unknown,
-  markUnavailable: () => void,
-): void {
-  if (error instanceof ApiError) {
-    useNotificationStore.getState().notify(failedMessage)
-  } else {
-    useNotificationStore.getState().notify(backendDownMessage)
-    markUnavailable()
-  }
 }
 
 function replaceDefinition(
