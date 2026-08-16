@@ -9,6 +9,9 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     server: {
       port: 5173,
+      fs: {
+        allow: ['..'],
+      },
       proxy: {
         '/health': env.VITE_BACKEND_URL || 'http://localhost:8000',
         '/ping': env.VITE_BACKEND_URL || 'http://localhost:8000',
