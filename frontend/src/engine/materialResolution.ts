@@ -7,6 +7,11 @@ export const OPACITY_MULTIPLIER_PARAMETER_KEY = 'opacityMultiplier'
 export const DEFAULT_TINT = '#ffffff'
 export const DEFAULT_OPACITY_MULTIPLIER = 1
 
+export const DEFAULT_MATERIAL_PARAMETERS: readonly MaterialParameterDefault[] = [
+  { key: TINT_PARAMETER_KEY, kind: 'color', default: DEFAULT_TINT },
+  { key: OPACITY_MULTIPLIER_PARAMETER_KEY, kind: 'number', default: DEFAULT_OPACITY_MULTIPLIER },
+]
+
 export interface MaterialParameterDefault {
   readonly key: string
   readonly kind: string

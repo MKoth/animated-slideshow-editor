@@ -87,20 +87,20 @@ export class AnimationEvaluator {
     }
     const first = keyframes[0]
     if (time <= first.time) {
-      return first.value
+      return first.value as number
     }
     const last = keyframes[keyframes.length - 1]
     if (time >= last.time) {
-      return last.value
+      return last.value as number
     }
     for (let i = 0; i < keyframes.length - 1; i += 1) {
       const from = keyframes[i]
       const to = keyframes[i + 1]
       if (to.time > from.time && time >= from.time && time <= to.time) {
         const ratio = (time - from.time) / (to.time - from.time)
-        return from.value + (to.value - from.value) * ratio
+        return (from.value as number) + ((to.value as number) - (from.value as number)) * ratio
       }
     }
-    return last.value
+    return last.value as number
   }
 }

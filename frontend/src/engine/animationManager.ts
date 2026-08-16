@@ -4,6 +4,7 @@ import type { Slide } from './slide'
 import type { Keyframe } from './keyframe'
 import { newKeyframeId } from './keyframe'
 import { Keyframe as KeyframeModel } from './keyframe'
+import type { InterpolationType } from './keyframe'
 import type { AnimationProperty } from './animationProperties'
 import {
   requireAnimatableForNode,
@@ -71,7 +72,12 @@ export class AnimationManager {
     const boundedValue = requireKeyframeValue(property, value)
     const animation = this.#nodeAnimation(nodeId)
     this.#assertTimeFree(animation, property, node, boundedTime, [])
-    const keyframe = new KeyframeModel(newKeyframeId(), boundedTime, boundedValue)
+    const keyframe = new KeyframeModel(
+      newKeyframeId(),
+      boundedTime,
+      boundedValue,
+      previousInterpolation(animation.keyframes(property), boundedTime),
+    )
     animation.add(property, keyframe)
     this.#bus.emit({ type: 'KeyframeAdded', nodeId, property, keyframeId: keyframe.id })
     return keyframe
@@ -235,4 +241,18 @@ export class AnimationManager {
       throw new Error(`Node ${node.name} already has a keyframe on ${property} at time ${time}`)
     }
   }
+}
+
+function previousInterpolation(
+  keyframes: readonly Keyframe[],
+  time: number,
+): InterpolationType | undefined {
+  let previous: Keyframe | undefined
+  for (const keyframe of keyframes) {
+    if (keyframe.time > time) {
+      break
+    }
+    previous = keyframe
+  }
+  return previous?.interpolation
 }

@@ -1,4 +1,5 @@
 import type { MaterialOverrideValue } from './materialInstance'
+import type { InterpolationType, KeyframeTangent, KeyframeValue } from './keyframe'
 
 export type MaterialOverrideJSON = MaterialOverrideValue
 
@@ -50,7 +51,10 @@ export type SceneJSON = {
 export type KeyframeJSON = {
   readonly id: string
   readonly time: number
-  readonly value: number
+  readonly value: KeyframeValue
+  readonly interpolation?: InterpolationType
+  readonly tangentIn?: KeyframeTangent
+  readonly tangentOut?: KeyframeTangent
 }
 
 export type PropertyTrackJSON = {
@@ -58,9 +62,15 @@ export type PropertyTrackJSON = {
   readonly keyframes: readonly KeyframeJSON[]
 }
 
+export type MaterialTrackJSON = {
+  readonly parameter: string
+  readonly keyframes: readonly KeyframeJSON[]
+}
+
 export type NodeAnimationJSON = {
   readonly nodeId: string
   readonly tracks: readonly PropertyTrackJSON[]
+  readonly materialTracks?: readonly MaterialTrackJSON[]
 }
 
 export type SlideAnimationJSON = {

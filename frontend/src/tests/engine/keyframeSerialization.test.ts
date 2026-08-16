@@ -243,6 +243,78 @@ describe('keyframe serialization', () => {
 
     expect(() => restoredFromJSON(corrupt)).toThrow(/duplicate keyframe/i)
   })
+
+  it('rejects an unknown interpolation in the JSON payload', () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'P' })
+    const slide = engine.createSlide('S1')
+    const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'A')
+    const json = engine.toJSON()
+    const slideJson = json.slides[0]
+    if (!slideJson) {
+      throw new Error('expected a slide')
+    }
+    const corrupt = {
+      ...json,
+      slides: [
+        {
+          ...slideJson,
+          animation: {
+            nodes: [
+              {
+                nodeId: node.id,
+                tracks: [
+                  {
+                    property: 'positionX',
+                    keyframes: [{ id: 'k1', time: 1, value: 10, interpolation: 'ease' }],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    } as unknown as LessonJSON
+
+    expect(() => restoredFromJSON(corrupt)).toThrow(/interpolation/i)
+  })
+
+  it('rejects a malformed tangent in the JSON payload', () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'P' })
+    const slide = engine.createSlide('S1')
+    const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'A')
+    const json = engine.toJSON()
+    const slideJson = json.slides[0]
+    if (!slideJson) {
+      throw new Error('expected a slide')
+    }
+    const corrupt = {
+      ...json,
+      slides: [
+        {
+          ...slideJson,
+          animation: {
+            nodes: [
+              {
+                nodeId: node.id,
+                tracks: [
+                  {
+                    property: 'positionX',
+                    keyframes: [
+                      { id: 'k1', time: 1, value: 10, tangentIn: { time: 'x', value: 0 } },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    } as unknown as LessonJSON
+
+    expect(() => restoredFromJSON(corrupt)).toThrow(/tangentIn/i)
+  })
 })
 
 function restoredFromJSON(json: LessonJSON): void {

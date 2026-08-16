@@ -1,6 +1,7 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
 import type { AnimationProperty } from '../animation'
+import type { KeyframeValue } from '../keyframe'
 import { requireAnimatableForNode } from '../animation'
 
 export interface DeleteKeyframeParameters {
@@ -14,7 +15,7 @@ export interface DeleteKeyframeInverse {
   readonly property: AnimationProperty
   readonly keyframeId: string
   readonly time: number
-  readonly value: number
+  readonly value: KeyframeValue
 }
 
 export class DeleteKeyframeCommand implements Command<DeleteKeyframeInverse> {

@@ -15,15 +15,26 @@ import {
 } from './librarySection'
 import { ANIMATABLE_PROPERTIES } from './animationProperties'
 import type { AnimationProperty } from './animationProperties'
-import { isRecord, requireString, requireStringAllowEmpty } from './guards'
+import { isOverrideValue, isRecord, requireString, requireStringAllowEmpty } from './guards'
 import { fullscreenShaderFromJSON } from './fullscreenShader'
-import { validateFullscreenShader, validateMaterial } from './lessonValidation'
+import {
+  validateFullscreenShader,
+  validateKeyframeList,
+  validateMaterial,
+} from './lessonValidation'
+import type { MaterialParameterKindOf } from './nodeAnimation'
+import { DEFAULT_MATERIAL_DEFINITION_ID } from './materialInstance'
+import { DEFAULT_MATERIAL_PARAMETERS } from './materialResolution'
+import type { MaterialDefinition } from './materialDefinition'
 
 export const LESSON_VERSION = 1
 
 const TRANSFORM_KEYS = ['x', 'y', 'rotation', 'scaleX', 'scaleY'] as const
 const TEXT_ALIGNMENTS: readonly string[] = ['left', 'center', 'right']
 const ANIMATABLE_PROPERTY_NAMES: readonly string[] = ANIMATABLE_PROPERTIES
+const DEFAULT_MATERIAL_KINDS: Readonly<Record<string, string>> = Object.fromEntries(
+  DEFAULT_MATERIAL_PARAMETERS.map((parameter) => [parameter.key, parameter.kind]),
+)
 
 export function serialize(project: Project): string {
   return JSON.stringify(toLessonJSON(project))
@@ -372,54 +383,61 @@ function validateAnimation(
       if (isCamera && property === 'rotation') {
         errors.push('Camera rotation is not animatable')
       }
-      if (!Array.isArray(track.keyframes)) {
-        errors.push(`Track "${property}" must have a keyframes array`)
+      validateKeyframeList(
+        errors,
+        track.keyframes,
+        `Track "${property}"`,
+        duration,
+        keyframeIds,
+        (value, id) => {
+          if (property === 'opacity') {
+            if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+              return `Keyframe "${id}" value (opacity) must be a number between 0 and 1`
+            }
+            return null
+          }
+          if (typeof value !== 'number' || !Number.isFinite(value)) {
+            return `Keyframe "${id}" value must be a finite number`
+          }
+          return null
+        },
+      )
+    }
+    const materialTracks = entry.materialTracks
+    if (materialTracks !== undefined) {
+      if (!Array.isArray(materialTracks)) {
+        errors.push('Node animation materialTracks must be an array')
         continue
       }
-      let previousTime = -Infinity
-      for (const keyframeJson of track.keyframes) {
-        if (!isRecord(keyframeJson)) {
-          errors.push(`Track "${property}" keyframe must be an object`)
+      for (const track of materialTracks) {
+        if (!isRecord(track)) {
+          errors.push('Material track must be an object')
           continue
         }
-        const id = requireNonEmptyString(errors, keyframeJson.id, `Track "${property}" keyframe id`)
-        if (id !== undefined) {
-          if (keyframeIds.has(id)) {
-            errors.push(`Duplicate keyframe id: ${id}`)
-          } else {
-            keyframeIds.add(id)
-          }
+        const parameter = requireNonEmptyString(errors, track.parameter, 'Material track parameter')
+        if (parameter === undefined) {
+          continue
         }
-        const time = keyframeJson.time
-        if (typeof time !== 'number' || !Number.isFinite(time) || time < 0 || time > duration) {
-          errors.push(`Keyframe "${String(keyframeJson.id)}" time must be within [0, ${duration}]`)
-        } else if (time < previousTime) {
-          errors.push(
-            `Track "${property}" keyframe times must not decrease (out-of-order time ${time})`,
-          )
-        } else if (time === previousTime && time !== duration) {
-          errors.push(
-            `Track "${property}" keyframe times must be distinct (duplicate time ${time} not at the slide duration)`,
-          )
-        } else {
-          previousTime = time
-        }
-        const value = keyframeJson.value
-        if (property === 'opacity') {
-          if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
-            errors.push(
-              `Keyframe "${String(keyframeJson.id)}" value (opacity) must be a number between 0 and 1`,
-            )
-          }
-        } else if (typeof value !== 'number' || !Number.isFinite(value)) {
-          errors.push(`Keyframe "${String(keyframeJson.id)}" value must be a finite number`)
-        }
+        validateKeyframeList(
+          errors,
+          track.keyframes,
+          `Material track "${parameter}"`,
+          duration,
+          keyframeIds,
+          (value, id) =>
+            isOverrideValue(value)
+              ? null
+              : `Keyframe "${id}" value must be a non-empty string, a finite number, a boolean, or a number array`,
+        )
       }
     }
   }
 }
 
-export function buildProjectFromJSON(json: LessonJSON): Project {
+export function buildProjectFromJSON(
+  json: LessonJSON,
+  registeredDefinitions: readonly MaterialDefinition[] = [],
+): Project {
   const projectJson = json.project
   const metadata: ProjectMetadata = {
     id: requireString(projectJson.id, 'Project id'),
@@ -430,7 +448,8 @@ export function buildProjectFromJSON(json: LessonJSON): Project {
     updatedAt: requireString(projectJson.modifiedAt, 'Project modifiedAt'),
   }
   const settings = isRecord(projectJson.settings) ? projectJson.settings : {}
-  const slides = json.slides.map((slideJson) => buildSlideFromJSON(slideJson))
+  const kindOf = materialKindResolver(json, registeredDefinitions)
+  const slides = json.slides.map((slideJson) => buildSlideFromJSON(slideJson, kindOf))
   return new Project(
     metadata,
     slides,
@@ -441,11 +460,47 @@ export function buildProjectFromJSON(json: LessonJSON): Project {
   )
 }
 
-function buildSlideFromJSON(json: SlideJSON): Slide {
+function materialKindResolver(
+  json: LessonJSON,
+  registeredDefinitions: readonly MaterialDefinition[],
+): MaterialParameterKindOf {
+  const embedded = new Map<string, Readonly<Record<string, string>>>()
+  for (const material of buildEmbeddedMaterialsFromJSON(json.library)) {
+    const kinds: Record<string, string> = {}
+    for (const parameter of material.parameters) {
+      kinds[parameter.key] = parameter.kind
+    }
+    embedded.set(material.id, kinds)
+  }
+  return (node, parameterKey) => {
+    const materialId = node.material?.materialDefinitionId
+    if (!materialId) {
+      return undefined
+    }
+    const embeddedKinds = embedded.get(materialId)
+    if (embeddedKinds && parameterKey in embeddedKinds) {
+      return embeddedKinds[parameterKey]
+    }
+    if (materialId === DEFAULT_MATERIAL_DEFINITION_ID) {
+      return DEFAULT_MATERIAL_KINDS[parameterKey]
+    }
+    for (const definition of registeredDefinitions) {
+      if (definition.id === materialId) {
+        return definition.parameters.find((parameter) => parameter.key === parameterKey)?.kind
+      }
+    }
+    return undefined
+  }
+}
+
+function buildSlideFromJSON(json: SlideJSON, parameterKindOf: MaterialParameterKindOf): Slide {
   const scene = buildSceneFromJSON(json.scene)
   const duration = typeof json.duration === 'number' ? json.duration : 0
-  const animation = SlideAnimation.fromJSON(json.animation, duration, (nodeId) =>
-    scene.getNode(nodeId),
+  const animation = SlideAnimation.fromJSON(
+    json.animation,
+    duration,
+    (nodeId) => scene.getNode(nodeId),
+    parameterKindOf,
   )
   return new Slide(
     requireString(json.id, 'Slide id'),

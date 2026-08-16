@@ -109,17 +109,55 @@ describe('lesson serializer', () => {
             {
               property: 'positionX',
               keyframes: [
-                { id: expect.any(String), time: 1, value: 10 },
-                { id: expect.any(String), time: 3, value: 30 },
+                {
+                  id: expect.any(String),
+                  time: 1,
+                  value: 10,
+                  interpolation: 'linear',
+                  tangentIn: { time: 0, value: 0 },
+                  tangentOut: { time: 0, value: 0 },
+                },
+                {
+                  id: expect.any(String),
+                  time: 3,
+                  value: 30,
+                  interpolation: 'linear',
+                  tangentIn: { time: 0, value: 0 },
+                  tangentOut: { time: 0, value: 0 },
+                },
               ],
             },
-            { property: 'scaleY', keyframes: [{ id: expect.any(String), time: 0, value: 1 }] },
+            {
+              property: 'scaleY',
+              keyframes: [
+                {
+                  id: expect.any(String),
+                  time: 0,
+                  value: 1,
+                  interpolation: 'linear',
+                  tangentIn: { time: 0, value: 0 },
+                  tangentOut: { time: 0, value: 0 },
+                },
+              ],
+            },
           ],
         },
         {
           nodeId: camera.id,
           tracks: [
-            { property: 'opacity', keyframes: [{ id: expect.any(String), time: 0, value: 0.5 }] },
+            {
+              property: 'opacity',
+              keyframes: [
+                {
+                  id: expect.any(String),
+                  time: 0,
+                  value: 0.5,
+                  interpolation: 'linear',
+                  tangentIn: { time: 0, value: 0 },
+                  tangentOut: { time: 0, value: 0 },
+                },
+              ],
+            },
           ],
         },
       ],

@@ -1,6 +1,7 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
 import type { AnimationProperty } from '../animation'
+import type { KeyframeValue } from '../keyframe'
 import { requireAnimatableForNode, requireKeyframeTime, requireKeyframeValue } from '../animation'
 
 export interface AddKeyframeParameters {
@@ -15,7 +16,7 @@ export interface AddKeyframeInverse {
   readonly property: AnimationProperty
   readonly keyframeId: string
   readonly time: number
-  readonly value: number
+  readonly value: KeyframeValue
 }
 
 export class AddKeyframeCommand implements Command<AddKeyframeInverse> {

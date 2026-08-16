@@ -1,6 +1,7 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
 import type { AnimationProperty } from '../animation'
+import type { KeyframeValue } from '../keyframe'
 import { requireAnimatableForNode, requireKeyframeValue } from '../animation'
 
 export interface SetKeyframeValueParameters {
@@ -14,7 +15,7 @@ export interface SetKeyframeValueInverse {
   readonly nodeId: string
   readonly property: AnimationProperty
   readonly keyframeId: string
-  readonly oldValue: number
+  readonly oldValue: KeyframeValue
 }
 
 export class SetKeyframeValueCommand implements Command<SetKeyframeValueInverse> {

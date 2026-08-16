@@ -1,16 +1,24 @@
 import type { SceneNode } from './sceneNode'
 import { requireString } from './guards'
 import { NodeAnimation } from './nodeAnimation'
+import type { MaterialParameterKindOf } from './nodeAnimation'
 import type { NodeAnimationJSON, SlideAnimationJSON } from './json'
 import { ANIMATABLE_PROPERTIES } from './animationProperties'
 import type { AnimationProperty } from './animationProperties'
 
-export interface ClampedKeyframe {
-  readonly nodeId: string
-  readonly property: AnimationProperty
-  readonly keyframeId: string
-  readonly oldTime: number
-}
+export type ClampedKeyframe =
+  | {
+      readonly nodeId: string
+      readonly property: AnimationProperty
+      readonly keyframeId: string
+      readonly oldTime: number
+    }
+  | {
+      readonly nodeId: string
+      readonly parameterKey: string
+      readonly keyframeId: string
+      readonly oldTime: number
+    }
 
 export class SlideAnimation {
   readonly #nodes = new Map<string, NodeAnimation>()
@@ -60,6 +68,19 @@ export class SlideAnimation {
           }
         }
       }
+      for (const parameter of animation.materialTrackParameterKeys()) {
+        for (const keyframe of animation.materialKeyframes(parameter)) {
+          if (keyframe.time > duration) {
+            clamped.push({
+              nodeId,
+              parameterKey: parameter,
+              keyframeId: keyframe.id,
+              oldTime: keyframe.time,
+            })
+            keyframe.time = duration
+          }
+        }
+      }
     }
     return clamped
   }
@@ -68,8 +89,11 @@ export class SlideAnimation {
     const nodes: NodeAnimationJSON[] = []
     for (const [nodeId, animation] of this.#nodes) {
       const tracks = animation.toJSON()
-      if (tracks.length > 0) {
-        nodes.push({ nodeId, tracks })
+      const materialTracks = animation.materialTracksJSON()
+      if (tracks.length > 0 || materialTracks.length > 0) {
+        nodes.push(
+          materialTracks.length > 0 ? { nodeId, tracks, materialTracks } : { nodeId, tracks },
+        )
       }
     }
     return { nodes }
@@ -79,6 +103,7 @@ export class SlideAnimation {
     json: unknown,
     duration: number,
     nodeOf: (nodeId: string) => SceneNode | undefined,
+    parameterKindOf: MaterialParameterKindOf = () => undefined,
   ): SlideAnimation {
     const animation = new SlideAnimation()
     if (json === undefined) {
@@ -101,7 +126,10 @@ export class SlideAnimation {
       if (!node) {
         throw new Error(`Animation references unknown node: ${nodeId}`)
       }
-      animation.#nodes.set(nodeId, NodeAnimation.fromJSON(nodeRecord.tracks, duration, node))
+      animation.#nodes.set(
+        nodeId,
+        NodeAnimation.fromJSON(nodeRecord, duration, node, parameterKindOf),
+      )
     }
     return animation
   }
