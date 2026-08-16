@@ -87,17 +87,17 @@ describe('uniform control generation per type', () => {
     expect(screen.queryByRole('slider')).not.toBeInTheDocument()
   })
 
-  it('renders an integer input for an int uniform, with a slider when the default lies in [0,1]', () => {
+  it('renders an integer input for an int uniform without a slider, even for a default in [0,1]', () => {
     render(
       <UniformParameterField
-        parameter={{ key: 'uSteps', kind: 'int', default: 2 }}
-        effective={2}
+        parameter={{ key: 'uRepeatCount', kind: 'int', default: 0 }}
+        effective={0}
         overridden="none"
         onChange={() => undefined}
         onClear={() => undefined}
       />,
     )
-    expect(screen.getByRole('spinbutton', { name: 'uSteps' })).toBeInTheDocument()
+    expect(screen.getByRole('spinbutton', { name: 'uRepeatCount' })).toBeInTheDocument()
     expect(screen.queryByRole('slider')).not.toBeInTheDocument()
   })
 
