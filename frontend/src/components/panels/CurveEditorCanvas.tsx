@@ -292,8 +292,8 @@ export function CurveEditorCanvas({
       const vp: CurveViewport = { ...viewport, canvasWidth: w, canvasHeight: h }
 
       if (dragState.kind === 'pan') {
-        const dx = (point.x - dragState.startX) / viewport.zoomX
-        const dy = -(point.y - dragState.startY) / viewport.zoomY
+        const dx = -(point.x - dragState.startX) / viewport.zoomX
+        const dy = (point.y - dragState.startY) / viewport.zoomY
         onPan(
           (dragState.startScrollX ?? viewport.scrollX) + dx - viewport.scrollX,
           (dragState.startScrollY ?? viewport.scrollY) + dy - viewport.scrollY,
