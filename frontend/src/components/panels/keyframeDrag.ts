@@ -150,16 +150,10 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
     }
     const startTime = timeFromClientX(clientX)
     dragSessionRef.current = { pointerStartTime: startTime, moves }
-    let listenersAttached = false
     const onMove = (event: PointerEvent) => {
       const session = dragSessionRef.current
       if (!session) {
         return
-      }
-      if (!listenersAttached) {
-        listenersAttached = true
-        window.addEventListener('pointerup', onEnd)
-        window.addEventListener('pointercancel', onEnd)
       }
       const delta = timeFromClientX(event.clientX) - session.pointerStartTime
       const step = rulerTickStep(pps)
@@ -179,6 +173,8 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
       finishKeyframeDrag()
     }
     window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onEnd)
+    window.addEventListener('pointercancel', onEnd)
   }
 
   return { dragPreview, isDraggable, startDrag }
