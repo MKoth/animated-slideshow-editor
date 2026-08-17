@@ -12,6 +12,7 @@ import {
   clearMaterialOverrideOnNodes,
   overrideMaterialParameterOnNodes,
   readMaterial,
+  readMaterialAtTime,
 } from '../../app/materialInspectorActions'
 import { commonValueOf, parseFiniteNumber } from '../../app/inspectorActions'
 import { materialParameterStateOf, materialEditAtPlayhead } from '../../app/keyframeActions'
@@ -53,7 +54,12 @@ export function MaterialInspectorSection({
   // Definition changes from the library refresh the section so unset
   // uniforms display the current definition defaults.
   useMaterialLibraryStore((state) => state.definitions)
-  const readings = targets.map((node) => readMaterial(engine, node))
+  const shouldReadAnimated = playing || animationMode
+  const readings = targets.map((node) =>
+    shouldReadAnimated
+      ? readMaterialAtTime(engine, node, playheadTime)
+      : readMaterial(engine, node),
+  )
   const currentDefinitionId = commonValueOf(readings, (reading) => reading.definitionId)
   const commonTint = commonValueOf(readings, (reading) => reading.tint)
   const commonMultiplier = commonValueOf(readings, (reading) => reading.opacityMultiplier)

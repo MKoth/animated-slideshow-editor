@@ -63,6 +63,33 @@ export function readMaterial(engine: EnginePublic, node: SceneNode): MaterialRea
   }
 }
 
+export function readMaterialAtTime(
+  engine: EnginePublic,
+  node: SceneNode,
+  time: number,
+): MaterialReading {
+  const parameters = definitionParametersOf(engine, node)
+  const evaluatedOverrides = engine.evaluateMaterialOverrides(node.id, time)
+  const effective = resolveMaterial(parameters, evaluatedOverrides)
+  const uniforms = readUniformReadings(parameters, evaluatedOverrides, [
+    TINT_PARAMETER_KEY,
+    OPACITY_MULTIPLIER_PARAMETER_KEY,
+    RESERVED_TEXTURE_UNIFORM,
+    RESERVED_TIME_UNIFORM,
+  ])
+  return {
+    definitionId: node.material.materialDefinitionId,
+    tint: effective.tint,
+    opacityMultiplier: effective.opacityMultiplier,
+    tintOverridden: Object.prototype.hasOwnProperty.call(node.material.overrides, 'tint'),
+    opacityMultiplierOverridden: Object.prototype.hasOwnProperty.call(
+      node.material.overrides,
+      'opacityMultiplier',
+    ),
+    uniforms,
+  }
+}
+
 export function assignMaterialToNodes(
   engine: EnginePublic,
   dispatch: DispatchCommand,
