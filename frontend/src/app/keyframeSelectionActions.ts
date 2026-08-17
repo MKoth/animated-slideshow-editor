@@ -1,9 +1,19 @@
 import type { EnginePublic, Scene, SceneNode } from '../engine'
 import type { AnimationProperty } from '../engine'
-import { DeleteKeyframesCommand } from '../engine/commands'
+import type { KeyframeTarget } from '../engine'
+import {
+  DeleteKeyframesCommand,
+  PasteKeyframesCommand,
+  DuplicateKeyframesCommand,
+} from '../engine/commands'
 import type { DispatchCommand } from '../engine/commands'
+import { snapshotOf } from '../engine/keyframe'
+import type { PastePayloadKeyframe } from '../engine/animationManager'
 import { dispatchKeyframeCommands } from '../engine/keyframeEdit'
 import { useTimelineSelectionStore, selectedKeyframeIdsOf } from '../stores/timelineSelectionStore'
+import { useKeyframeClipboardStore } from '../stores/keyframeClipboardStore'
+import type { KeyframeClipboardTarget } from '../stores/keyframeClipboardStore'
+import { usePlaybackController } from '../stores/playbackStore'
 import { animatablePropertiesOf } from './keyframeActions'
 
 export interface KeyframeRef {
@@ -190,4 +200,198 @@ export function pruneKeyframeSelection(engine: EnginePublic): void {
   const validMaterialKeys = new Set(allMaterialKeyframeRefs(engine).map((ref) => ref.keyframeId))
   const valid = new Set([...validPropertyKeys, ...validMaterialKeys])
   useTimelineSelectionStore.getState().pruneSelection(valid)
+}
+
+// ---------------------------------------------------------------------------
+// Clipboard operations (Spec 07 R10)
+// ---------------------------------------------------------------------------
+
+/**
+ * Copy the selected keyframes to the keyframe clipboard. Captures relative
+ * times, values, interpolation, and tangents against the earliest selected
+ * keyframe as origin. Supports both node property and material parameter
+ * keyframes.
+ */
+export function copyKeyframes(engine: EnginePublic): void {
+  const propertyRefs = selectedKeyframeRefs(engine)
+  const materialRefs = selectedMaterialKeyframeRefs(engine)
+  if (propertyRefs.length === 0 && materialRefs.length === 0) {
+    return
+  }
+
+  const targets: KeyframeClipboardTarget[] = []
+  let globalEarliest = Infinity
+
+  for (const group of groupRefsByTarget(propertyRefs, (ref) => ref.keyframeId)) {
+    const kfRefs = propertyRefs.filter(
+      (ref) => ref.nodeId === group.nodeId && ref.property === group.property,
+    )
+    const sorted = [...kfRefs].sort((a, b) => a.time - b.time)
+    const groupOriginTime = sorted[0].time
+    if (groupOriginTime < globalEarliest) {
+      globalEarliest = groupOriginTime
+    }
+
+    const allKeyframes = engine.getKeyframes(group.nodeId, group.property)
+    const kfById = new Map(allKeyframes.map((kf) => [kf.id, kf]))
+
+    const keyframes: PastePayloadKeyframe[] = sorted.map((ref) => {
+      const kf = kfById.get(ref.keyframeId)
+      if (!kf) {
+        throw new Error(`Keyframe not found: ${ref.keyframeId}`)
+      }
+      return {
+        time: kf.time - groupOriginTime,
+        value: snapshotOf(kf).value,
+        interpolation: kf.interpolation,
+        tangentIn: { time: kf.tangentIn.time, value: kf.tangentIn.value },
+        tangentOut: { time: kf.tangentOut.time, value: kf.tangentOut.value },
+      }
+    })
+
+    targets.push({
+      target: { kind: 'node', nodeId: group.nodeId, property: group.property },
+      payload: { keyframes },
+    })
+  }
+
+  for (const group of groupMaterialRefsByTarget(materialRefs, (ref) => ref.keyframeId)) {
+    const kfRefs = materialRefs.filter(
+      (ref) => ref.nodeId === group.nodeId && ref.parameter === group.parameter,
+    )
+    const sorted = [...kfRefs].sort((a, b) => a.time - b.time)
+    const groupOriginTime = sorted[0].time
+    if (groupOriginTime < globalEarliest) {
+      globalEarliest = groupOriginTime
+    }
+
+    const allKeyframes = engine.getMaterialKeyframes(group.nodeId, group.parameter)
+    const kfById = new Map(allKeyframes.map((kf) => [kf.id, kf]))
+
+    const keyframes: PastePayloadKeyframe[] = sorted.map((ref) => {
+      const kf = kfById.get(ref.keyframeId)
+      if (!kf) {
+        throw new Error(`Keyframe not found: ${ref.keyframeId}`)
+      }
+      return {
+        time: kf.time - groupOriginTime,
+        value: snapshotOf(kf).value,
+        interpolation: kf.interpolation,
+        tangentIn: { time: kf.tangentIn.time, value: kf.tangentIn.value },
+        tangentOut: { time: kf.tangentOut.time, value: kf.tangentOut.value },
+      }
+    })
+
+    targets.push({
+      target: { kind: 'node', nodeId: group.nodeId, parameter: group.parameter },
+      payload: { keyframes },
+    })
+  }
+
+  useKeyframeClipboardStore.getState().copy(targets, globalEarliest)
+}
+
+/**
+ * Paste keyframes from the clipboard at the current playhead. Defaults to
+ * the source target; if exactly one different property/parameter is
+ * currently selected, pastes onto that instead. Issues PasteKeyframesCommand
+ * per target, wrapped in a TransactionCommand when multiple targets exist.
+ */
+export function pasteKeyframes(engine: EnginePublic, dispatch: DispatchCommand): void {
+  const { targets } = useKeyframeClipboardStore.getState()
+  if (targets.length === 0) {
+    return
+  }
+
+  const atTime = resolvePlayheadTime(engine)
+  const overrideTarget = resolvePasteTargetOverride(engine)
+
+  const commands = targets.map((clipTarget) => {
+    const target = overrideTarget ?? clipTarget.target
+    return new PasteKeyframesCommand({ target, payload: clipTarget.payload, atTime })
+  })
+
+  dispatchKeyframeCommands(dispatch, commands)
+  useTimelineSelectionStore.getState().clearSelection()
+}
+
+/**
+ * Duplicate the selected keyframes. Issues DuplicateKeyframesCommand per
+ * target, wrapped in a TransactionCommand when multiple targets exist.
+ * Copied keyframes are placed immediately after the last keyframe.
+ * Supports both node property and material parameter keyframes.
+ */
+export function duplicateKeyframes(engine: EnginePublic, dispatch: DispatchCommand): void {
+  const propertyRefs = selectedKeyframeRefs(engine)
+  const materialRefs = selectedMaterialKeyframeRefs(engine)
+  if (propertyRefs.length === 0 && materialRefs.length === 0) {
+    return
+  }
+
+  const commands: DuplicateKeyframesCommand[] = []
+
+  for (const group of groupRefsByTarget(propertyRefs, (ref) => ref.keyframeId)) {
+    commands.push(
+      new DuplicateKeyframesCommand({
+        target: { kind: 'node', nodeId: group.nodeId, property: group.property },
+        keyframeIds: group.items,
+      }),
+    )
+  }
+
+  for (const group of groupMaterialRefsByTarget(materialRefs, (ref) => ref.keyframeId)) {
+    commands.push(
+      new DuplicateKeyframesCommand({
+        target: { kind: 'node', nodeId: group.nodeId, parameter: group.parameter },
+        keyframeIds: group.items,
+      }),
+    )
+  }
+
+  dispatchKeyframeCommands(dispatch, commands)
+}
+
+/**
+ * Determine the current playhead time from the active slide.
+ */
+function resolvePlayheadTime(engine: EnginePublic): number {
+  const activeSlideId = engine.activeSlideId
+  if (!activeSlideId) {
+    return 0
+  }
+  return usePlaybackController.getState().getTime(activeSlideId)
+}
+
+/**
+ * Determine whether the current selection indicates a single-property or
+ * single-parameter override target for paste. Returns the override target
+ * or null.
+ */
+function resolvePasteTargetOverride(engine: EnginePublic): KeyframeTarget | null {
+  const selectedIds = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+  if (selectedIds.length !== 1) {
+    return null
+  }
+
+  const wanted = new Set(selectedIds)
+
+  const propertyRefs = allKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
+  if (propertyRefs.length === 1) {
+    return {
+      kind: 'node',
+      nodeId: propertyRefs[0].nodeId,
+      property: propertyRefs[0].property,
+    }
+  }
+
+  const materialRefs = allMaterialKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
+  if (materialRefs.length === 1) {
+    return {
+      kind: 'node',
+      nodeId: materialRefs[0].nodeId,
+      parameter: materialRefs[0].parameter,
+    }
+  }
+
+  return null
 }
