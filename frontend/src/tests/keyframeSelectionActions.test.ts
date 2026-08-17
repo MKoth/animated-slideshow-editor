@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Engine } from '../engine/internal'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
 import { CommandDispatcher, UndoStack } from '../engine/commands'
@@ -8,7 +8,16 @@ import {
   pruneKeyframeSelection,
   selectedKeyframeRefs,
 } from '../app/keyframeSelectionActions'
-import { useSelectionStore } from '../stores/selectionStore'
+import { useTimelineSelectionStore, selectedKeyframeIdsOf } from '../stores/timelineSelectionStore'
+
+beforeEach(() => {
+  useTimelineSelectionStore.setState({
+    editingContext: 'slide',
+    selections: { slide: [], 'clip-edit': [] },
+    anchorKeyframeId: { slide: null, 'clip-edit': null },
+    marqueeAnchor: null,
+  })
+})
 
 function setup(): {
   engine: Engine
@@ -46,12 +55,20 @@ function addKeyframe(
   return result.inverse.keyframe.keyframeId
 }
 
+function selectKeyframes(keyframeIds: readonly string[]): void {
+  const store = useTimelineSelectionStore.getState()
+  store.clearSelection()
+  for (const id of keyframeIds) {
+    store.toggleKeyframe(id)
+  }
+}
+
 describe('selectedKeyframeRefs', () => {
   it('resolves selected keyframe ids to their node, property, id, and time', () => {
     const { engine, dispatcher, nodeId } = setup()
     const first = addKeyframe(dispatcher, nodeId, 'positionX', 1)
     const second = addKeyframe(dispatcher, nodeId, 'positionY', 2)
-    useSelectionStore.getState().selectKeyframes([first, second])
+    selectKeyframes([first, second])
 
     const refs = selectedKeyframeRefs(toReadOnly(engine))
 
@@ -64,7 +81,7 @@ describe('selectedKeyframeRefs', () => {
   it('resolves keyframes on the camera node', () => {
     const { engine, dispatcher, cameraId } = setup()
     const keyframeId = addKeyframe(dispatcher, cameraId, 'positionX', 1)
-    useSelectionStore.getState().selectKeyframes([keyframeId])
+    selectKeyframes([keyframeId])
 
     const refs = selectedKeyframeRefs(toReadOnly(engine))
 
@@ -74,7 +91,7 @@ describe('selectedKeyframeRefs', () => {
   it('drops ids that no longer exist in the engine', () => {
     const { engine, dispatcher, nodeId } = setup()
     const first = addKeyframe(dispatcher, nodeId, 'positionX', 1)
-    useSelectionStore.getState().selectKeyframes([first, 'ghost'])
+    selectKeyframes([first, 'ghost'])
 
     const refs = selectedKeyframeRefs(toReadOnly(engine))
 
@@ -93,7 +110,7 @@ describe('deleteSelectedKeyframes', () => {
     const { engine, dispatcher, undoStack, nodeId } = setup()
     const first = addKeyframe(dispatcher, nodeId, 'positionX', 1)
     const second = addKeyframe(dispatcher, nodeId, 'positionY', 2)
-    useSelectionStore.getState().selectKeyframes([first, second])
+    selectKeyframes([first, second])
     const before = undoStack.entries.length
 
     const deleted = deleteSelectedKeyframes(toReadOnly(engine), (command) =>
@@ -103,7 +120,7 @@ describe('deleteSelectedKeyframes', () => {
     expect(deleted).toBe(true)
     expect(engine.getKeyframes(nodeId, 'positionX')).toHaveLength(0)
     expect(engine.getKeyframes(nodeId, 'positionY')).toHaveLength(0)
-    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([])
+    expect(selectedKeyframeIdsOf(useTimelineSelectionStore.getState())).toEqual([])
     expect(undoStack.entries).toHaveLength(before + 1)
     expect(undoStack.entries[0].type).toBe('Transaction')
   })
@@ -111,7 +128,7 @@ describe('deleteSelectedKeyframes', () => {
   it('deleting the final keyframe of a property reverts it to its static value', () => {
     const { engine, dispatcher, nodeId } = setup()
     const keyframeId = addKeyframe(dispatcher, nodeId, 'positionX', 1)
-    useSelectionStore.getState().selectKeyframes([keyframeId])
+    selectKeyframes([keyframeId])
 
     deleteSelectedKeyframes(toReadOnly(engine), (command) => dispatcher.dispatch(command))
 
@@ -137,10 +154,10 @@ describe('pruneKeyframeSelection', () => {
   it('removes keyframe selection entries that no longer exist in the engine', () => {
     const { engine, dispatcher, nodeId } = setup()
     const keyframeId = addKeyframe(dispatcher, nodeId, 'positionX', 1)
-    useSelectionStore.getState().selectKeyframes([keyframeId, 'ghost'])
+    selectKeyframes([keyframeId, 'ghost'])
 
     pruneKeyframeSelection(toReadOnly(engine))
 
-    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([keyframeId])
+    expect(selectedKeyframeIdsOf(useTimelineSelectionStore.getState())).toEqual([keyframeId])
   })
 })

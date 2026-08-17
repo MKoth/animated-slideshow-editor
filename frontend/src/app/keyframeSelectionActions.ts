@@ -3,7 +3,7 @@ import type { AnimationProperty } from '../engine'
 import { DeleteKeyframesCommand } from '../engine/commands'
 import type { DispatchCommand } from '../engine/commands'
 import { dispatchKeyframeCommands } from '../engine/keyframeEdit'
-import { useSelectionStore } from '../stores/selectionStore'
+import { useTimelineSelectionStore, selectedKeyframeIdsOf } from '../stores/timelineSelectionStore'
 import { animatablePropertiesOf } from './keyframeActions'
 
 export interface KeyframeRef {
@@ -124,7 +124,7 @@ function allMaterialKeyframeRefs(engine: EnginePublic): MaterialKeyframeRef[] {
 }
 
 export function selectedKeyframeRefs(engine: EnginePublic): KeyframeRef[] {
-  const selectedIds = useSelectionStore.getState().selectedKeyframeIds
+  const selectedIds = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
   if (selectedIds.length === 0) {
     return []
   }
@@ -133,7 +133,7 @@ export function selectedKeyframeRefs(engine: EnginePublic): KeyframeRef[] {
 }
 
 export function selectedMaterialKeyframeRefs(engine: EnginePublic): MaterialKeyframeRef[] {
-  const selectedIds = useSelectionStore.getState().selectedKeyframeIds
+  const selectedIds = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
   if (selectedIds.length === 0) {
     return []
   }
@@ -181,7 +181,7 @@ export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: Dispatch
     })
   })
   dispatchKeyframeCommands(dispatch, deleteCommands)
-  useSelectionStore.getState().clearKeyframes()
+  useTimelineSelectionStore.getState().clearSelection()
   return true
 }
 
@@ -189,5 +189,5 @@ export function pruneKeyframeSelection(engine: EnginePublic): void {
   const validPropertyKeys = new Set(allKeyframeRefs(engine).map((ref) => ref.keyframeId))
   const validMaterialKeys = new Set(allMaterialKeyframeRefs(engine).map((ref) => ref.keyframeId))
   const valid = new Set([...validPropertyKeys, ...validMaterialKeys])
-  useSelectionStore.getState().pruneKeyframes(valid)
+  useTimelineSelectionStore.getState().pruneSelection(valid)
 }

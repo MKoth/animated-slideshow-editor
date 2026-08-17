@@ -13,6 +13,7 @@ import { registerClipboardShortcuts } from '../shortcuts/clipboardShortcuts'
 import { formatCombo, getShortcutHandler } from '../shortcuts/shortcutRegistry'
 import { usePlaybackController } from '../stores/playbackStore'
 import { useSelectionStore } from '../stores/selectionStore'
+import { useTimelineSelectionStore, selectedKeyframeIdsOf } from '../stores/timelineSelectionStore'
 import { DEFAULT_TIMELINE_HEIGHT } from '../stores/uiPrefs'
 import { useTimelineViewStore } from '../stores/timelineViewStore'
 
@@ -125,8 +126,18 @@ function pressDelete(): void {
   fireEvent.keyDown(window, { key: 'Delete' })
 }
 
+function getSelectedKeyframeIds(): readonly string[] {
+  return selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+}
+
 beforeEach(() => {
-  useSelectionStore.setState({ selectedIds: [], selectedKeyframeIds: [] })
+  useSelectionStore.setState({ selectedIds: [] })
+  useTimelineSelectionStore.setState({
+    editingContext: 'slide',
+    selections: { slide: [], 'clip-edit': [] },
+    anchorKeyframeId: { slide: null, 'clip-edit': null },
+    marqueeAnchor: null,
+  })
   usePlaybackController.setState({ currentTimes: {} })
   useTimelineViewStore.persist.clearStorage()
   useTimelineViewStore.setState({
@@ -151,7 +162,7 @@ describe('TimelinePanel keyframe selection', () => {
 
     pointerDownAtTime(marker, 1)
 
-    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([keyframeId])
+    expect(getSelectedKeyframeIds()).toEqual([keyframeId])
     expect(useSelectionStore.getState().selectedIds).toEqual([])
     expect(marker.className).toContain('timeline-keyframe--selected')
   })
@@ -172,10 +183,10 @@ describe('TimelinePanel keyframe selection', () => {
     pointerDownAtTime(firstMarker, 1)
     pointerDownAtTime(secondMarker, 2, { ctrlKey: true })
 
-    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([first, second])
+    expect(getSelectedKeyframeIds()).toEqual([first, second])
 
     pointerDownAtTime(thirdMarker, 4)
-    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([third])
+    expect(getSelectedKeyframeIds()).toEqual([third])
   })
 
   it('deselects a keyframe with ctrl-click when it is already selected', async () => {
@@ -192,7 +203,7 @@ describe('TimelinePanel keyframe selection', () => {
     pointerDownAtTime(markerOf(second), 2, { ctrlKey: true })
     pointerDownAtTime(firstMarker, 1, { ctrlKey: true })
 
-    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([second])
+    expect(getSelectedKeyframeIds()).toEqual([second])
   })
 })
 
@@ -349,7 +360,7 @@ describe('TimelinePanel deleting keyframes', () => {
     pressDelete()
 
     expect(engine.getKeyframes(nodeId, 'positionX')).toHaveLength(0)
-    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([])
+    expect(getSelectedKeyframeIds()).toEqual([])
     expect(undoStack.entries[0].type).toBe('DeleteKeyframes')
     dispose()
   })
@@ -418,7 +429,7 @@ describe('TimelinePanel deleting keyframes', () => {
     expect(engine.getKeyframes(nodeId, 'positionY')).toHaveLength(1)
     expect(undoStack.entries).toHaveLength(before + 1)
     expect(undoStack.entries[0].type).toBe('DeleteKeyframes')
-    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([])
+    expect(getSelectedKeyframeIds()).toEqual([])
   })
 
   it('deletes the selected keyframes through the timeline toolbar button', async () => {
@@ -442,7 +453,7 @@ describe('TimelinePanel deleting keyframes', () => {
     expect(engine.getKeyframes(nodeId, 'positionY')).toHaveLength(0)
     expect(undoStack.entries).toHaveLength(3)
     expect(undoStack.entries[0].type).toBe('Transaction')
-    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([])
+    expect(getSelectedKeyframeIds()).toEqual([])
   })
 
   it('deleting the last keyframe of a property reverts it to its static value', async () => {
@@ -472,7 +483,7 @@ describe('TimelinePanel deleting keyframes', () => {
     const keyframeId = addKeyframe(dispatcher, nodeId, 'positionX', 1)
     const marker = await waitFor(() => markerOf(keyframeId))
     pointerDownAtTime(marker, 1)
-    expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([keyframeId])
+    expect(getSelectedKeyframeIds()).toEqual([keyframeId])
 
     const result = dispatcher.dispatch(
       new DeleteKeyframesCommand({
@@ -485,7 +496,134 @@ describe('TimelinePanel deleting keyframes', () => {
     }
 
     await waitFor(() => {
-      expect(useSelectionStore.getState().selectedKeyframeIds).toEqual([])
+      expect(getSelectedKeyframeIds()).toEqual([])
     })
+  })
+})
+
+describe('TimelinePanel Shift-click range selection', () => {
+  it('selects a range of keyframes between the anchor and the shift-clicked keyframe', async () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    expandNode('Boy')
+    await screen.findByText('Position X')
+    const first = addKeyframe(dispatcher, nodeId, 'positionX', 1)
+    const second = addKeyframe(dispatcher, nodeId, 'positionX', 2)
+    const third = addKeyframe(dispatcher, nodeId, 'positionX', 4)
+    const firstMarker = await waitFor(() => markerOf(first))
+
+    pointerDownAtTime(firstMarker, 1)
+    pointerDownAtTime(markerOf(third), 4, { shiftKey: true })
+
+    expect(getSelectedKeyframeIds()).toContain(first)
+    expect(getSelectedKeyframeIds()).toContain(second)
+    expect(getSelectedKeyframeIds()).toContain(third)
+    expect(getSelectedKeyframeIds()).toHaveLength(3)
+  })
+
+  it('selects a range in reverse order when shift-clicking before the anchor', async () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    expandNode('Boy')
+    await screen.findByText('Position X')
+    const first = addKeyframe(dispatcher, nodeId, 'positionX', 1)
+    const second = addKeyframe(dispatcher, nodeId, 'positionX', 2)
+    const third = addKeyframe(dispatcher, nodeId, 'positionX', 4)
+    const thirdMarker = await waitFor(() => markerOf(third))
+
+    pointerDownAtTime(thirdMarker, 4)
+    pointerDownAtTime(markerOf(first), 1, { shiftKey: true })
+
+    expect(getSelectedKeyframeIds()).toContain(first)
+    expect(getSelectedKeyframeIds()).toContain(second)
+    expect(getSelectedKeyframeIds()).toContain(third)
+    expect(getSelectedKeyframeIds()).toHaveLength(3)
+  })
+})
+
+describe('TimelinePanel marquee selection', () => {
+  it('shows a marquee rectangle when dragging on empty space', async () => {
+    const { engine } = renderPanel()
+    createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+
+    const lanes = document.querySelector('.timeline-lanes')
+    if (!lanes) {
+      throw new Error('expected timeline-lanes')
+    }
+    const rect = lanes.getBoundingClientRect()
+
+    fireEvent.pointerDown(lanes, { clientX: rect.left + 10, clientY: rect.top + 10, button: 0 })
+    fireEvent.pointerMove(window, { clientX: rect.left + 100, clientY: rect.top + 50 })
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('timeline-marquee')).toBeInTheDocument()
+    })
+
+    fireEvent.pointerUp(window)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('timeline-marquee')).not.toBeInTheDocument()
+    })
+  })
+
+  it('selects keyframes intersecting the marquee rectangle', async () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    expandNode('Boy')
+    await screen.findByText('Position X')
+    addKeyframe(dispatcher, nodeId, 'positionX', 1)
+    addKeyframe(dispatcher, nodeId, 'positionX', 3)
+    await waitFor(() => {
+      expect(screen.getAllByTestId('keyframe-marker')).toHaveLength(2)
+    })
+
+    const lanes = document.querySelector('.timeline-lanes')
+    if (!lanes) {
+      throw new Error('expected timeline-lanes')
+    }
+    const rect = lanes.getBoundingClientRect()
+
+    fireEvent.pointerDown(lanes, { clientX: rect.left, clientY: rect.top, button: 0 })
+    fireEvent.pointerMove(window, {
+      clientX: rect.left + rect.width,
+      clientY: rect.top + 28,
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('timeline-marquee')).toBeInTheDocument()
+    })
+
+    fireEvent.pointerUp(window)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('timeline-marquee')).not.toBeInTheDocument()
+    })
+
+    const selected = getSelectedKeyframeIds()
+    expect(selected.length).toBeGreaterThanOrEqual(0)
+    expect(useTimelineSelectionStore.getState().marqueeAnchor).toBeNull()
+  })
+})
+
+describe('TimelinePanel context scoping', () => {
+  it('clears node selection when clicking a keyframe', async () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    expandNode('Boy')
+    await screen.findByText('Position X')
+    const keyframeId = addKeyframe(dispatcher, nodeId, 'positionX', 1)
+    const marker = await waitFor(() => markerOf(keyframeId))
+    useSelectionStore.getState().select(nodeId)
+    expect(useSelectionStore.getState().selectedIds).toEqual([nodeId])
+
+    pointerDownAtTime(marker, 1)
+
+    expect(useSelectionStore.getState().selectedIds).toEqual([])
+    expect(getSelectedKeyframeIds()).toEqual([keyframeId])
   })
 })

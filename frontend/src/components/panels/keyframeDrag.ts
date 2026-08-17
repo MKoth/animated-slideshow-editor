@@ -5,7 +5,10 @@ import type { DispatchCommand } from '../../engine/commands'
 import { dispatchKeyframeCommands } from '../../engine/keyframeEdit'
 import { groupRefsByTarget, groupMaterialRefsByTarget } from '../../app/keyframeSelectionActions'
 import type { KeyframeRef, MaterialKeyframeRef } from '../../app/keyframeSelectionActions'
-import { useSelectionStore } from '../../stores/selectionStore'
+import {
+  useTimelineSelectionStore,
+  selectedKeyframeIdsOf,
+} from '../../stores/timelineSelectionStore'
 import { rulerTickStep, snapTimeToGrid } from '../../stores/timelineViewStore'
 
 interface DragMove {
@@ -32,7 +35,7 @@ export interface KeyframeDragOptions {
 
 export interface KeyframeDrag {
   readonly dragPreview: ReadonlyMap<string, number> | null
-  selectForDrag(keyframeId: string, additive: boolean): boolean
+  isDraggable(): boolean
   startDrag(clientX: number): void
 }
 
@@ -46,20 +49,33 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
   const dragPreviewRef = useRef<ReadonlyMap<string, number> | null>(null)
   const dragSessionRef = useRef<DragSession | null>(null)
 
-  const selectForDrag = (keyframeId: string, additive: boolean): boolean => {
-    const store = useSelectionStore.getState()
-    if (additive) {
-      if (store.selectedKeyframeIds.includes(keyframeId)) {
-        store.toggleKeyframe(keyframeId)
-        return useSelectionStore.getState().selectedKeyframeIds.length > 0
+  const isDraggable = (): boolean => {
+    return selectedKeyframeIdsOf(useTimelineSelectionStore.getState()).length > 0
+  }
+
+  const buildMoves = (): DragMove[] => {
+    const moves: DragMove[] = []
+    for (const keyframeId of selectedKeyframeIdsOf(useTimelineSelectionStore.getState())) {
+      const ref = keyframeRefs.get(keyframeId)
+      if (ref) {
+        if ('property' in ref) {
+          moves.push({
+            keyframeId,
+            nodeId: ref.nodeId,
+            property: ref.property,
+            originalTime: ref.time,
+          })
+        } else if ('parameter' in ref) {
+          moves.push({
+            keyframeId,
+            nodeId: ref.nodeId,
+            parameter: (ref as MaterialKeyframeRef).parameter,
+            originalTime: ref.time,
+          })
+        }
       }
-      store.selectKeyframes([...store.selectedKeyframeIds, keyframeId])
-      return true
     }
-    if (!store.selectedKeyframeIds.includes(keyframeId)) {
-      store.selectKeyframes([keyframeId])
-    }
-    return true
+    return moves
   }
 
   const applyDragPreview = (next: ReadonlyMap<string, number> | null): void => {
@@ -123,35 +139,27 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
   }
 
   const startDrag = (clientX: number): void => {
-    const moves: DragMove[] = []
-    for (const keyframeId of useSelectionStore.getState().selectedKeyframeIds) {
-      const ref = keyframeRefs.get(keyframeId)
-      if (ref) {
-        if ('property' in ref) {
-          moves.push({
-            keyframeId,
-            nodeId: ref.nodeId,
-            property: ref.property,
-            originalTime: ref.time,
-          })
-        } else if ('parameter' in ref) {
-          moves.push({
-            keyframeId,
-            nodeId: ref.nodeId,
-            parameter: (ref as MaterialKeyframeRef).parameter,
-            originalTime: ref.time,
-          })
-        }
-      }
-    }
+    const moves = buildMoves()
     if (moves.length === 0) {
       return
     }
-    dragSessionRef.current = { pointerStartTime: timeFromClientX(clientX), moves }
+    const existing = dragSessionRef.current
+    if (existing) {
+      dragSessionRef.current = { ...existing, moves }
+      return
+    }
+    const startTime = timeFromClientX(clientX)
+    dragSessionRef.current = { pointerStartTime: startTime, moves }
+    let listenersAttached = false
     const onMove = (event: PointerEvent) => {
       const session = dragSessionRef.current
       if (!session) {
         return
+      }
+      if (!listenersAttached) {
+        listenersAttached = true
+        window.addEventListener('pointerup', onEnd)
+        window.addEventListener('pointercancel', onEnd)
       }
       const delta = timeFromClientX(event.clientX) - session.pointerStartTime
       const step = rulerTickStep(pps)
@@ -171,9 +179,7 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
       finishKeyframeDrag()
     }
     window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onEnd)
-    window.addEventListener('pointercancel', onEnd)
   }
 
-  return { dragPreview, selectForDrag, startDrag }
+  return { dragPreview, isDraggable, startDrag }
 }
