@@ -29,3 +29,5 @@ export type {
 export { isParameterTarget, isPropertyTarget } from './keyframeTarget'
 export type { EvaluatedNodeState, EvaluatedNodeScratch } from './animationEvaluator'
 export { evaluatedNodeScratch } from './animationEvaluator'
+export type { EvaluatedMaterialOverridesScratch } from './animationEvaluator'
+export { evaluatedMaterialOverridesScratch } from './animationEvaluator'

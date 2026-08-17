@@ -9,9 +9,12 @@ import {
   CreateProjectCommand,
   CreateSlideCommand,
   MoveNodeCommand,
+  SetKeyframeInterpolationCommand,
+  SetKeyframeTangentsCommand,
   SetOpacityCommand,
   createCommandSystem,
 } from '../../engine/commands'
+import type { KeyframeTangent } from '../../engine/keyframe'
 
 function expectOk<T>(result: CommandResult<T>): T {
   if (!result.ok) {
@@ -26,10 +29,49 @@ function addKeyframe(
   property: AnimationProperty,
   time: number,
   value: number,
+): string {
+  const inverse = expectOk(
+    system.dispatcher.dispatch(
+      new AddKeyframeCommand({ target: { kind: 'node', nodeId, property }, time, value }),
+    ),
+  )
+  return inverse.keyframe.keyframeId
+}
+
+function setInterpolation(
+  system: ReturnType<typeof createCommandSystem>,
+  nodeId: string,
+  property: AnimationProperty,
+  keyframeId: string,
+  interpolation: 'hold' | 'linear' | 'bezier',
 ): void {
   expectOk(
     system.dispatcher.dispatch(
-      new AddKeyframeCommand({ target: { kind: 'node', nodeId, property }, time, value }),
+      new SetKeyframeInterpolationCommand({
+        target: { kind: 'node', nodeId, property },
+        keyframeId,
+        interpolation,
+      }),
+    ),
+  )
+}
+
+function setTangents(
+  system: ReturnType<typeof createCommandSystem>,
+  nodeId: string,
+  property: AnimationProperty,
+  keyframeId: string,
+  tangentIn: KeyframeTangent,
+  tangentOut: KeyframeTangent,
+): void {
+  expectOk(
+    system.dispatcher.dispatch(
+      new SetKeyframeTangentsCommand({
+        target: { kind: 'node', nodeId, property },
+        keyframeId,
+        tangentIn,
+        tangentOut,
+      }),
     ),
   )
 }
@@ -78,6 +120,65 @@ describe('AnimationEvaluator', () => {
 
     expect(evaluate(system, nodeId, 0).transform.x).toBe(5)
     expect(evaluate(system, nodeId, 1).transform.x).toBe(5)
+  })
+
+  it('holds a hold-interpolated segment constant until its next keyframe', () => {
+    const { system, nodeId } = setup()
+    const first = addKeyframe(system, nodeId, 'positionX', 1, 10)
+    addKeyframe(system, nodeId, 'positionX', 3, 30)
+    addKeyframe(system, nodeId, 'positionX', 5, 50)
+    setInterpolation(system, nodeId, 'positionX', first, 'hold')
+
+    expect(evaluate(system, nodeId, 1).transform.x).toBe(10)
+    expect(evaluate(system, nodeId, 2).transform.x).toBe(10)
+    expect(evaluate(system, nodeId, 2.999).transform.x).toBe(10)
+    expect(evaluate(system, nodeId, 3).transform.x).toBe(30)
+    expect(evaluate(system, nodeId, 4).transform.x).toBe(40)
+    expect(evaluate(system, nodeId, 5).transform.x).toBe(50)
+    expect(evaluate(system, nodeId, 10).transform.x).toBe(50)
+  })
+
+  it('a single hold-interpolated keyframe holds its value everywhere in the slide', () => {
+    const { system, nodeId } = setup()
+    const only = addKeyframe(system, nodeId, 'positionX', 4, 7)
+    setInterpolation(system, nodeId, 'positionX', only, 'hold')
+
+    expect(evaluate(system, nodeId, 0).transform.x).toBe(7)
+    expect(evaluate(system, nodeId, 10).transform.x).toBe(7)
+  })
+
+  it('evaluates a bezier segment through its keyframe tangents', () => {
+    const { system, nodeId } = setup()
+    const first = addKeyframe(system, nodeId, 'positionX', 0, 0)
+    addKeyframe(system, nodeId, 'positionX', 2, 2)
+    setInterpolation(system, nodeId, 'positionX', first, 'bezier')
+    setTangents(system, nodeId, 'positionX', first, { time: 0, value: 0 }, { time: 1, value: 0 })
+    const secondId = system.engine.getKeyframes(nodeId, 'positionX')[1]?.id
+    if (!secondId) {
+      throw new Error('expected a second keyframe')
+    }
+    setTangents(
+      system,
+      nodeId,
+      'positionX',
+      secondId,
+      { time: 0, value: -1 },
+      { time: 0, value: 0 },
+    )
+
+    expect(evaluate(system, nodeId, 0).transform.x).toBe(0)
+    expect(evaluate(system, nodeId, 1.375).transform.x).toBeCloseTo(0.625)
+    expect(evaluate(system, nodeId, 2).transform.x).toBe(2)
+  })
+
+  it('defaults to linear interpolation when no interpolation metadata exists', () => {
+    const { system, nodeId } = setup()
+    addKeyframe(system, nodeId, 'positionX', 1, 10)
+    addKeyframe(system, nodeId, 'positionX', 3, 30)
+
+    const keyframe = system.engine.getKeyframes(nodeId, 'positionX')[0]
+    expect(keyframe?.interpolation).toBe('linear')
+    expect(evaluate(system, nodeId, 2).transform.x).toBe(20)
   })
 
   it('holds the last keyframe value constant after the last keyframe', () => {

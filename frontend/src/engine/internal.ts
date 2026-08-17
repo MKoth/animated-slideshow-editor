@@ -8,7 +8,11 @@ import { MaterialManager } from './materialManager'
 import { ShaderManager } from './shaderManager'
 import { AnimationManager } from './animationManager'
 import { AnimationEvaluator } from './animationEvaluator'
-import type { EvaluatedNodeScratch, EvaluatedNodeState } from './animationEvaluator'
+import type {
+  EvaluatedMaterialOverridesScratch,
+  EvaluatedNodeScratch,
+  EvaluatedNodeState,
+} from './animationEvaluator'
 import type {
   KeyframeMove,
   KeyframeMoveResult,
@@ -23,7 +27,7 @@ import { AssetDefinition } from './assetDefinition'
 import { MaterialDefinition } from './materialDefinition'
 import { ShaderDefinition } from './shaderDefinition'
 import { DEFAULT_MATERIAL_DEFINITION_ID, DEFAULT_MATERIAL_NAME } from './materialInstance'
-import type { MaterialOverrideValue } from './materialInstance'
+import type { MaterialOverrideValue, MaterialOverrides } from './materialInstance'
 import { DEFAULT_MATERIAL_PARAMETERS } from './materialResolution'
 import type { MaterialParameterDefault } from './materialResolution'
 import type { EmbeddedAsset } from './embeddedAsset'
@@ -85,6 +89,7 @@ export class Engine {
     this.#evaluator = new AnimationEvaluator(
       (nodeId) => this.getNode(nodeId),
       (nodeId) => this.getSlideOfNode(nodeId),
+      this.#materialParameterKindOf,
     )
   }
 
@@ -260,6 +265,14 @@ export class Engine {
 
   evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState {
     return this.#evaluator.evaluateNode(nodeId, time, target)
+  }
+
+  evaluateMaterialOverrides(
+    nodeId: string,
+    time: number,
+    target?: EvaluatedMaterialOverridesScratch,
+  ): MaterialOverrides {
+    return this.#evaluator.evaluateMaterialOverrides(nodeId, time, target)
   }
 
   addKeyframe(target: KeyframeTarget, time: number, value: unknown): Keyframe {
@@ -587,6 +600,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getMaterialKeyframes: (nodeId, parameter) => engine.getMaterialKeyframes(nodeId, parameter),
     hasMaterialTrack: (nodeId, parameter) => engine.hasMaterialTrack(nodeId, parameter),
     evaluateNode: (nodeId, time, target) => engine.evaluateNode(nodeId, time, target),
+    evaluateMaterialOverrides: (nodeId, time, target) =>
+      engine.evaluateMaterialOverrides(nodeId, time, target),
     toJSON: () => engine.toJSON(),
   }
 }

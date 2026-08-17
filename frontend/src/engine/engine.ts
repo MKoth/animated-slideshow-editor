@@ -10,9 +10,14 @@ import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
 import type { Slide } from './slide'
 import type { Keyframe, AnimationProperty } from './animation'
-import type { EvaluatedNodeScratch, EvaluatedNodeState } from './animationEvaluator'
+import type {
+  EvaluatedMaterialOverridesScratch,
+  EvaluatedNodeScratch,
+  EvaluatedNodeState,
+} from './animationEvaluator'
 import type { EngineEvent, Unsubscribe } from './events'
 import type { LessonJSON } from './json'
+import type { MaterialOverrides } from './materialInstance'
 
 export interface EnginePublic {
   readonly project: Project | null
@@ -43,6 +48,11 @@ export interface EnginePublic {
   getMaterialKeyframes(nodeId: string, parameter: string): readonly Keyframe[]
   hasMaterialTrack(nodeId: string, parameter: string): boolean
   evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState
+  evaluateMaterialOverrides(
+    nodeId: string,
+    time: number,
+    target?: EvaluatedMaterialOverridesScratch,
+  ): MaterialOverrides
   toJSON(): LessonJSON
 }
 
