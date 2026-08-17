@@ -13,7 +13,9 @@ import {
 import type { Command } from '../../engine/commands'
 import type { CurveData, CurveViewport } from '../../engine/curveGeometry'
 import { computeCurveBounds } from '../../engine/curveGeometry'
+import { snapKeyframeTime } from '../../engine/timelineSnapping'
 import { useCurveEditorViewStore } from '../../stores/curveEditorViewStore'
+import { useTimelineViewStore } from '../../stores/timelineViewStore'
 import {
   useTimelineSelectionStore,
   selectedKeyframeIdsOf,
@@ -119,10 +121,12 @@ export function CurveEditorPanel({
   const [, setTick] = useState(0)
   useEngineEvent(() => setTick((t) => t + 1))
 
-  const zoomLevel = useCurveEditorViewStore((s) => s.zoomLevel)
+  const zoomX = useCurveEditorViewStore((s) => s.zoomX)
+  const zoomY = useCurveEditorViewStore((s) => s.zoomY)
   const scrollX = useCurveEditorViewStore((s) => s.scrollX)
   const scrollY = useCurveEditorViewStore((s) => s.scrollY)
   const filter = useCurveEditorViewStore((s) => s.filter)
+  const viewMode = useCurveEditorViewStore((s) => s.viewMode)
   const fitPending = useCurveEditorViewStore((s) => s.fitPending)
   const clearFitPending = useCurveEditorViewStore((s) => s.clearFitPending)
   const frameSelectedPending = useCurveEditorViewStore((s) => s.frameSelectedPending)
@@ -139,6 +143,10 @@ export function CurveEditorPanel({
 
   const curves = useMemo(() => buildCurves(engine, scene, filter), [engine, scene, filter])
 
+  const [tangentPreview, setTangentPreview] = useState<
+    Map<string, { tangentIn: KeyframeTangent; tangentOut: KeyframeTangent }>
+  >(new Map())
+
   const canvasContainerRef = useRef<HTMLDivElement>(null)
   const [canvasSize, setCanvasSize] = useState({
     width: Math.max(200, viewportWidth - 240),
@@ -149,58 +157,29 @@ export function CurveEditorPanel({
     () => ({
       scrollX,
       scrollY,
-      zoomLevel,
+      zoomX,
+      zoomY,
       canvasWidth: canvasSize.width,
       canvasHeight: canvasSize.height,
-      trackHeaderWidth: 0,
     }),
-    [scrollX, scrollY, zoomLevel, canvasSize],
+    [scrollX, scrollY, zoomX, zoomY, canvasSize],
   )
 
   const currentTime = usePlaybackController((state) => state.currentTimes[slideId] ?? 0)
 
   const hasKeyframes = curves.some((c) => c.keyframes.length > 0)
   const prevHasKeyframesRef = useRef(false)
-  const prevCanvasSizeRef = useRef({ width: 0, height: 0 })
+  const prevCanvasSizeRef = useRef(canvasSize)
   const hasRealSizeRef = useRef(false)
+  const suppressAutoFitRef = useRef(false)
+  const prevViewModeRef = useRef(viewMode)
 
-  const fitIfNeeded = useCallback(
-    (w?: number, h?: number) => {
-      if (!hasKeyframes) return
-      const cw = w ?? canvasSize.width
-      const ch = h ?? canvasSize.height
-      if (cw === 0 || ch === 0) return
-      const bounds = computeCurveBounds(curves)
-      if (!bounds) return
-      const timeRange = bounds.maxTime - bounds.minTime || 1
-      const valueRange = bounds.maxValue - bounds.minValue || 1
-      const padding = 0.15
-      const zoomX = cw / (timeRange * (1 + padding * 2))
-      const zoomY = ch / (valueRange * (1 + padding * 2))
-      const clampedZoom = Math.max(0.25, Math.min(8, Math.min(zoomX, zoomY)))
-      const centerX = (bounds.minTime + bounds.maxTime) / 2
-      const centerY = (bounds.minValue + bounds.maxValue) / 2
-      useCurveEditorViewStore.getState().setZoom(clampedZoom, cw / 2, cw)
-      useCurveEditorViewStore
-        .getState()
-        .setScroll(centerX - cw / 2 / clampedZoom, centerY)
-    },
-    [hasKeyframes, curves, canvasSize],
-  )
-
-  const fitRef = useRef(fitIfNeeded)
   useEffect(() => {
-    fitRef.current = fitIfNeeded
-  })
-
-  const fitFromDOM = useCallback(() => {
-    const el = canvasContainerRef.current
-    if (!el) return
-    const rect = el.getBoundingClientRect()
-    if (rect.width > 0 && rect.height > 0) {
-      fitRef.current(rect.width, rect.height)
+    if (viewMode === 'curveEditor' && prevViewModeRef.current !== 'curveEditor') {
+      suppressAutoFitRef.current = true
     }
-  }, [])
+    prevViewModeRef.current = viewMode
+  }, [viewMode])
 
   useEffect(() => {
     const el = canvasContainerRef.current
@@ -221,6 +200,12 @@ export function CurveEditorPanel({
   }, [])
 
   useEffect(() => {
+    if (suppressAutoFitRef.current) {
+      suppressAutoFitRef.current = false
+      prevHasKeyframesRef.current = hasKeyframes
+      prevCanvasSizeRef.current = canvasSize
+      return
+    }
     if (!hasRealSizeRef.current) return
     const curvesAppeared = hasKeyframes && !prevHasKeyframesRef.current
     const sizeChanged =
@@ -230,9 +215,9 @@ export function CurveEditorPanel({
     prevCanvasSizeRef.current = canvasSize
 
     if (curvesAppeared || (sizeChanged && hasKeyframes)) {
-      requestAnimationFrame(fitFromDOM)
+      useCurveEditorViewStore.getState().fitCurves()
     }
-  }, [hasKeyframes, canvasSize, fitFromDOM])
+  }, [hasKeyframes, canvasSize])
 
   const handleFitCurves = useCallback(() => {
     const el = canvasContainerRef.current
@@ -249,17 +234,13 @@ export function CurveEditorPanel({
     const valueRange = bounds.maxValue - bounds.minValue
     const padding = 0.1
 
-    const newZoom = Math.min(
-      cw / Math.max(timeRange * (1 + padding * 2), 1),
-      ch / Math.max(valueRange * (1 + padding * 2), 1),
-    )
-
-    const clampedZoom = Math.max(0.25, Math.min(8, newZoom))
+    const newZoomX = cw / Math.max(timeRange * (1 + padding * 2), 1)
+    const newZoomY = ch / Math.max(valueRange * (1 + padding * 2), 1)
     const centerX = (bounds.minTime + bounds.maxTime) / 2
     const centerY = (bounds.minValue + bounds.maxValue) / 2
 
-    useCurveEditorViewStore.getState().setZoom(clampedZoom, cw / 2, cw)
-    setScroll(centerX - cw / 2 / clampedZoom, centerY)
+    useCurveEditorViewStore.getState().setZoom(newZoomX, newZoomY)
+    setScroll(centerX - cw / 2 / newZoomX, centerY)
     clearFitPending()
   }, [curves, canvasSize, setScroll, clearFitPending])
 
@@ -300,17 +281,13 @@ export function CurveEditorPanel({
     const valueRange = maxValue - minValue
     const padding = 0.2
 
-    const newZoom = Math.min(
-      cw / Math.max(timeRange * (1 + padding * 2), 0.1),
-      ch / Math.max(valueRange * (1 + padding * 2), 0.1),
-    )
-
-    const clampedZoom = Math.max(0.25, Math.min(8, newZoom))
+    const newZoomX = cw / Math.max(timeRange * (1 + padding * 2), 0.1)
+    const newZoomY = ch / Math.max(valueRange * (1 + padding * 2), 0.1)
     const centerX = (minTime + maxTime) / 2
     const centerY = (minValue + maxValue) / 2
 
-    useCurveEditorViewStore.getState().setZoom(clampedZoom, cw / 2, cw)
-    setScroll(centerX - cw / 2 / clampedZoom, centerY)
+    useCurveEditorViewStore.getState().setZoom(newZoomX, newZoomY)
+    setScroll(centerX - cw / 2 / newZoomX, centerY)
     clearFrameSelectedPending()
   }, [
     curves,
@@ -350,11 +327,31 @@ export function CurveEditorPanel({
 
   const handleKeyframeDrag = useCallback(
     (keyframeId: string, nodeId: string, property: string, newTime: number, newValue: number) => {
+      const candidateTimes: number[] = []
+      for (const curve of curves) {
+        for (const kf of curve.keyframes) {
+          if (kf.id !== keyframeId) {
+            candidateTimes.push(kf.time)
+          }
+        }
+      }
+
+      const viewState = useTimelineViewStore.getState()
+      const pps = zoomX
+      const snappedTime = snapKeyframeTime(newTime, {
+        gridEnabled: viewState.gridSnapEnabled,
+        keyframesEnabled: viewState.snapToKeyframesEnabled,
+        candidateTimes,
+        pps,
+      })
+
+      const clampedTime = Math.max(0, Math.min(duration, snappedTime))
+
       const keyframes = engine.getKeyframes(nodeId, property as AnimationProperty)
       const kf = keyframes.find((k) => k.id === keyframeId)
       if (!kf) return
 
-      const dt = newTime - kf.time
+      const dt = clampedTime - kf.time
       const dv = newValue - (kf.value as number)
 
       if (Math.abs(dt) < 1e-9 && Math.abs(dv) < 1e-9) return
@@ -364,7 +361,7 @@ export function CurveEditorPanel({
         commands.push(
           new MoveKeyframesCommand({
             target: { kind: 'node', nodeId, property: property as AnimationProperty },
-            moves: [{ keyframeId, newTime: Math.max(0, Math.min(duration, newTime)) }],
+            moves: [{ keyframeId, newTime: clampedTime }],
           }),
         )
       }
@@ -384,13 +381,47 @@ export function CurveEditorPanel({
         dispatch(new TransactionCommand(commands))
       }
     },
-    [engine, dispatch, duration],
+    [engine, dispatch, duration, curves, zoomX],
   )
 
   const handleTangentDragStart = useCallback(() => {}, [])
 
-  // Preview handled in canvas; signature matches onTangentDrag prop
-  const handleTangentDrag = useCallback(() => {}, [])
+  const handleTangentDrag = useCallback(
+    (
+      keyframeId: string,
+      nodeId: string,
+      property: string,
+      side: 'in' | 'out',
+      newTangent: KeyframeTangent,
+      broken: boolean,
+    ) => {
+      const keyframes = engine.getKeyframes(nodeId, property as AnimationProperty)
+      const kf = keyframes.find((k) => k.id === keyframeId)
+      if (!kf) return
+
+      let tangentIn = kf.tangentIn
+      let tangentOut = kf.tangentOut
+
+      if (side === 'in') {
+        tangentIn = newTangent
+        if (!broken) {
+          tangentOut = { time: -newTangent.time, value: -newTangent.value }
+        }
+      } else {
+        tangentOut = newTangent
+        if (!broken) {
+          tangentIn = { time: -newTangent.time, value: -newTangent.value }
+        }
+      }
+
+      setTangentPreview((prev) => {
+        const next = new Map(prev)
+        next.set(keyframeId, { tangentIn, tangentOut })
+        return next
+      })
+    },
+    [engine],
+  )
 
   const handleTangentDragEnd = useCallback(
     (
@@ -401,6 +432,8 @@ export function CurveEditorPanel({
       newTangent: KeyframeTangent,
       broken: boolean,
     ) => {
+      setTangentPreview(new Map())
+
       const keyframes = engine.getKeyframes(nodeId, property as AnimationProperty)
       const kf = keyframes.find((k) => k.id === keyframeId)
       if (!kf) return
@@ -476,10 +509,15 @@ export function CurveEditorPanel({
   )
 
   const handleZoom = useCallback(
-    (centerX: number, factor: number) => {
-      setZoom(zoomLevel * factor, centerX, canvasSize.width)
+    (centerX: number, centerY: number, factorX: number, factorY: number) => {
+      const newZoomX = zoomX * factorX
+      const newZoomY = zoomY * factorY
+      const newScrollX = scrollX + (centerX / zoomX) * (1 - 1 / factorX)
+      const newScrollY = scrollY - ((centerY - canvasSize.height / 2) / zoomY) * (1 - 1 / factorY)
+      setZoom(newZoomX, newZoomY)
+      setScroll(newScrollX, newScrollY)
     },
-    [zoomLevel, setZoom, canvasSize.width],
+    [zoomX, zoomY, scrollX, scrollY, canvasSize.height, setZoom, setScroll],
   )
 
   return (
@@ -493,6 +531,7 @@ export function CurveEditorPanel({
           curves={curves}
           viewport={viewport}
           selectedKeyframeIds={selectedKeyframeIds}
+          tangentPreview={tangentPreview}
           currentTime={currentTime}
           duration={duration}
           onKeyframeSelect={handleKeyframeSelect}

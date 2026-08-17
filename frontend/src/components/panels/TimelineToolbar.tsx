@@ -51,6 +51,22 @@ export function TimelineToolbar({
 
   return (
     <div className="timeline-toolbar">
+      <div className="timeline-toolbar__view-toggle">
+        <button
+          className="timeline-toolbar__button"
+          aria-pressed={viewMode === 'dopeSheet'}
+          onClick={() => useCurveEditorViewStore.getState().setViewMode('dopeSheet')}
+        >
+          Dope Sheet
+        </button>
+        <button
+          className="timeline-toolbar__button"
+          aria-pressed={viewMode === 'curveEditor'}
+          onClick={() => useCurveEditorViewStore.getState().setViewMode('curveEditor')}
+        >
+          Curve Editor
+        </button>
+      </div>
       <div className="timeline-toolbar__playback">
         <button
           className="timeline-toolbar__button"

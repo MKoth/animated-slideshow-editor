@@ -9,10 +9,10 @@ export const CURVE_SAMPLE_STEP_PX = 2
 export interface CurveViewport {
   readonly scrollX: number
   readonly scrollY: number
-  readonly zoomLevel: number
+  readonly zoomX: number
+  readonly zoomY: number
   readonly canvasWidth: number
   readonly canvasHeight: number
-  readonly trackHeaderWidth: number
 }
 
 export interface ScreenPoint {
@@ -46,18 +46,16 @@ export interface TangentHandles {
 }
 
 export function worldToScreen(time: number, value: number, viewport: CurveViewport): ScreenPoint {
-  const scale = viewport.zoomLevel
   return {
-    x: viewport.trackHeaderWidth + (time - viewport.scrollX) * scale,
-    y: viewport.canvasHeight / 2 - (value - viewport.scrollY) * scale,
+    x: (time - viewport.scrollX) * viewport.zoomX,
+    y: viewport.canvasHeight / 2 - (value - viewport.scrollY) * viewport.zoomY,
   }
 }
 
 export function screenToWorld(x: number, y: number, viewport: CurveViewport): WorldPoint {
-  const scale = viewport.zoomLevel
   return {
-    time: viewport.scrollX + (x - viewport.trackHeaderWidth) / scale,
-    value: viewport.scrollY + (viewport.canvasHeight / 2 - y) / scale,
+    time: viewport.scrollX + x / viewport.zoomX,
+    value: viewport.scrollY + (viewport.canvasHeight / 2 - y) / viewport.zoomY,
   }
 }
 
@@ -104,12 +102,19 @@ export function computeCurvePoints(
       continue
     }
 
+    if (segEnd - segStart < 1e-9) {
+      const screen = keyframeToScreen(kf, viewport)
+      points.push({ ...screen, value: kf.value as number })
+      prevVisible = true
+      continue
+    }
+
     const segStartScreen = worldToScreen(segStart, prev.value as number, viewport)
     const segEndScreen = worldToScreen(segEnd, kf.value as number, viewport)
 
     const sampleCount = Math.max(
       2,
-      Math.ceil((segEndScreen.x - segStartScreen.x) / CURVE_SAMPLE_STEP_PX),
+      Math.ceil(Math.abs(segEndScreen.x - segStartScreen.x) / CURVE_SAMPLE_STEP_PX),
     )
 
     const startIdx = prevVisible ? 1 : 0
@@ -222,14 +227,9 @@ export function isSegmentVisible(
   timeEnd: number,
   viewport: CurveViewport,
 ): boolean {
-  const scale = viewport.zoomLevel
-  const segStartScreen = viewport.trackHeaderWidth + (timeStart - viewport.scrollX) * scale
-  const segEndScreen = viewport.trackHeaderWidth + (timeEnd - viewport.scrollX) * scale
-  return (
-    segEndScreen >= viewport.trackHeaderWidth &&
-    segStartScreen <= viewport.canvasWidth &&
-    segStartScreen < segEndScreen
-  )
+  const segStartScreen = (timeStart - viewport.scrollX) * viewport.zoomX
+  const segEndScreen = (timeEnd - viewport.scrollX) * viewport.zoomX
+  return segEndScreen >= 0 && segStartScreen <= viewport.canvasWidth
 }
 
 export function computeCurveBounds(curves: readonly CurveData[]): CurveBounds | null {
@@ -253,17 +253,4 @@ export function computeCurveBounds(curves: readonly CurveData[]): CurveBounds | 
   }
 
   return { minTime, maxTime, minValue, maxValue }
-}
-
-export function computeTangentScreenVector(
-  keyframe: Keyframe,
-  side: 'in' | 'out',
-  viewport: CurveViewport,
-): ScreenPoint {
-  const tangent = side === 'in' ? keyframe.tangentIn : keyframe.tangentOut
-  const scale = viewport.zoomLevel
-  return {
-    x: tangent.time * scale,
-    y: -tangent.value * scale,
-  }
 }

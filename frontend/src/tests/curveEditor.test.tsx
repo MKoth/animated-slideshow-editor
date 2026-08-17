@@ -77,7 +77,8 @@ beforeEach(() => {
   useTimelineViewStore.setState({ zoomLevel: 1, scrollTime: 0, height: 200 })
   useCurveEditorViewStore.persist.clearStorage()
   useCurveEditorViewStore.setState({
-    zoomLevel: 1,
+    zoomX: 100,
+    zoomY: 1,
     scrollX: 0,
     scrollY: 0,
     filter: 'all',
@@ -310,11 +311,12 @@ describe('Curve editor selection', () => {
 
 describe('Curve editor view state persistence', () => {
   it('persists zoom and scroll to localStorage', () => {
-    useCurveEditorViewStore.getState().setZoom(3, 0, 800)
+    useCurveEditorViewStore.getState().setZoom(200, 5)
     useCurveEditorViewStore.getState().setScroll(100, 50)
 
     const stored = JSON.parse(localStorage.getItem('curve-editor-view-state') ?? '{}')
-    expect(stored.state.zoomLevel).toBe(3)
+    expect(stored.state.zoomX).toBe(200)
+    expect(stored.state.zoomY).toBe(5)
     expect(stored.state.scrollX).toBe(100)
     expect(stored.state.scrollY).toBe(50)
   })

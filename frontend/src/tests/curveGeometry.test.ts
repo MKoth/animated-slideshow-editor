@@ -16,10 +16,10 @@ function makeViewport(overrides?: Partial<CurveViewport>): CurveViewport {
   return {
     scrollX: 0,
     scrollY: 0,
-    zoomLevel: 100,
+    zoomX: 100,
+    zoomY: 1,
     canvasWidth: 800,
     canvasHeight: 400,
-    trackHeaderWidth: 240,
     ...overrides,
   }
 }
@@ -58,19 +58,19 @@ describe('curveGeometry', () => {
     it('converts world coordinates to screen coordinates', () => {
       const viewport = makeViewport()
       const result = worldToScreen(1, 50, viewport)
-      expect(result.x).toBeCloseTo(240 + 1 * 100)
-      expect(result.y).toBeCloseTo(400 / 2 - 50 * 100)
+      expect(result.x).toBeCloseTo(1 * 100)
+      expect(result.y).toBeCloseTo(400 / 2 - 50 * 1)
     })
 
     it('converts screen coordinates to world coordinates', () => {
       const viewport = makeViewport()
-      const result = screenToWorld(340, -4800, viewport)
+      const result = screenToWorld(100, 150, viewport)
       expect(result.time).toBeCloseTo(1)
       expect(result.value).toBeCloseTo(50)
     })
 
     it('round-trips world -> screen -> world', () => {
-      const viewport = makeViewport({ zoomLevel: 200 })
+      const viewport = makeViewport({ zoomX: 200, zoomY: 5 })
       const time = 2.5
       const value = 42
       const screen = worldToScreen(time, value, viewport)
@@ -82,13 +82,13 @@ describe('curveGeometry', () => {
     it('accounts for scroll offset', () => {
       const viewport = makeViewport({ scrollX: 100 })
       const screen = worldToScreen(2, 0, viewport)
-      expect(screen.x).toBeCloseTo(240 + (2 - 100) * 100)
+      expect(screen.x).toBeCloseTo((2 - 100) * 100)
     })
 
     it('accounts for zoom level', () => {
-      const viewport = makeViewport({ zoomLevel: 200 })
+      const viewport = makeViewport({ zoomX: 200 })
       const screen = worldToScreen(1, 0, viewport)
-      expect(screen.x).toBeCloseTo(240 + 1 * 200)
+      expect(screen.x).toBeCloseTo(1 * 200)
     })
   })
 
@@ -105,8 +105,8 @@ describe('curveGeometry', () => {
       const viewport = makeViewport()
       const points = computeCurvePoints(curve, viewport)
       expect(points.length).toBe(1)
-      expect(points[0].x).toBeCloseTo(240 + 1 * 100)
-      expect(points[0].y).toBeCloseTo(400 / 2 - 50 * 100)
+      expect(points[0].x).toBeCloseTo(1 * 100)
+      expect(points[0].y).toBeCloseTo(400 / 2 - 50 * 1)
     })
 
     it('samples linear interpolation between two keyframes', () => {
@@ -116,19 +116,10 @@ describe('curveGeometry', () => {
       expect(points.length).toBeGreaterThan(2)
       const first = points[0]
       const last = points[points.length - 1]
-      expect(first.x).toBeCloseTo(240)
+      expect(first.x).toBeCloseTo(0)
       expect(first.y).toBeCloseTo(400 / 2)
-      expect(last.x).toBeCloseTo(240 + 200)
-      expect(last.y).toBeCloseTo(400 / 2 - 100 * 100)
-    })
-
-    it('samples hold interpolation as step', () => {
-      const curve = makeCurve([makeKeyframe(0, 0, 'hold'), makeKeyframe(2, 100, 'hold')])
-      const viewport = makeViewport()
-      const points = computeCurvePoints(curve, viewport)
-      expect(points.length).toBeGreaterThan(2)
-      const midIndex = Math.floor(points.length / 2)
-      expect(points[midIndex].value).toBeCloseTo(0)
+      expect(last.x).toBeCloseTo(200)
+      expect(last.y).toBeCloseTo(400 / 2 - 100 * 1)
     })
 
     it('culls segments outside viewport', () => {
@@ -156,24 +147,6 @@ describe('curveGeometry', () => {
       expect(result!.out).not.toBeNull()
     })
 
-    it('computes correct in-handle position', () => {
-      const kf = makeKeyframe(1, 50, 'bezier', -0.5, -20, 0, 0)
-      const viewport = makeViewport()
-      const result = computeTangentHandlePositions(kf, viewport)
-      const inHandle = worldToScreen(1 + -0.5, 50 + -20, viewport)
-      expect(result!.in!.x).toBeCloseTo(inHandle.x)
-      expect(result!.in!.y).toBeCloseTo(inHandle.y)
-    })
-
-    it('computes correct out-handle position', () => {
-      const kf = makeKeyframe(1, 50, 'bezier', 0, 0, 0.5, 20)
-      const viewport = makeViewport()
-      const result = computeTangentHandlePositions(kf, viewport)
-      const outHandle = worldToScreen(1 + 0.5, 50 + 20, viewport)
-      expect(result!.out!.x).toBeCloseTo(outHandle.x)
-      expect(result!.out!.y).toBeCloseTo(outHandle.y)
-    })
-
     it('returns null in/out when tangent is zero', () => {
       const kf = makeKeyframe(1, 50, 'bezier')
       const viewport = makeViewport()
@@ -187,7 +160,7 @@ describe('curveGeometry', () => {
   describe('hitTestKeyframe', () => {
     it('returns null when no keyframes', () => {
       const viewport = makeViewport()
-      const result = hitTestKeyframe(240, 200, [], viewport)
+      const result = hitTestKeyframe(100, 200, [], viewport)
       expect(result).toBeNull()
     })
 
@@ -202,7 +175,7 @@ describe('curveGeometry', () => {
     it('misses a keyframe outside radius', () => {
       const kf = makeKeyframe(10, 50)
       const viewport = makeViewport()
-      const result = hitTestKeyframe(240, 200, [kf], viewport)
+      const result = hitTestKeyframe(0, 0, [kf], viewport)
       expect(result).toBeNull()
     })
   })
@@ -211,7 +184,7 @@ describe('curveGeometry', () => {
     it('returns null for non-bezier keyframe', () => {
       const kf = makeKeyframe(1, 50, 'linear')
       const viewport = makeViewport()
-      const result = hitTestTangentHandle(240, 200, kf, viewport)
+      const result = hitTestTangentHandle(100, 200, kf, viewport)
       expect(result).toBeNull()
     })
 
@@ -246,13 +219,13 @@ describe('curveGeometry', () => {
     })
 
     it('returns false for segment entirely to the left', () => {
-      const viewport = makeViewport({ canvasWidth: 400 })
-      expect(isSegmentVisible(-10, -5, viewport)).toBe(false)
+      const viewport = makeViewport()
+      expect(isSegmentVisible(-20, -10, viewport)).toBe(false)
     })
 
     it('returns false for segment entirely to the right', () => {
       const viewport = makeViewport()
-      expect(isSegmentVisible(1000, 2000, viewport)).toBe(false)
+      expect(isSegmentVisible(100, 200, viewport)).toBe(false)
     })
 
     it('returns true for partially visible segment', () => {

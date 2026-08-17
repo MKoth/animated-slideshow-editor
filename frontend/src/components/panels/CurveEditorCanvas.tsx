@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { Keyframe } from '../../engine'
 import type { KeyframeTangent } from '../../engine/keyframe'
 import type { CurveData, CurveViewport } from '../../engine/curveGeometry'
 import {
@@ -11,11 +12,16 @@ import {
   CURVE_LINE_WIDTH,
   TANGENT_HANDLE_SIZE,
 } from '../../engine/curveGeometry'
+import { rulerTickStep, tickLabel } from '../../stores/timelineViewStore'
 
 export interface CurveEditorCanvasProps {
   readonly curves: readonly CurveData[]
   readonly viewport: CurveViewport
   readonly selectedKeyframeIds: ReadonlySet<string>
+  readonly tangentPreview: ReadonlyMap<
+    string,
+    { tangentIn: KeyframeTangent; tangentOut: KeyframeTangent }
+  >
   readonly currentTime: number
   readonly duration: number
   readonly onKeyframeSelect: (
@@ -53,7 +59,7 @@ export interface CurveEditorCanvasProps {
   readonly onDoubleClickKeyframe: (keyframeId: string, nodeId: string, property: string) => void
   readonly onMarqueeSelect: (keyframeIds: readonly string[]) => void
   readonly onPan: (dx: number, dy: number) => void
-  readonly onZoom: (centerX: number, factor: number) => void
+  readonly onZoom: (centerX: number, centerY: number, factorX: number, factorY: number) => void
 }
 
 const KEYFRAME_RADIUS = 5
@@ -71,6 +77,8 @@ interface DragState {
   readonly tangentSide?: 'in' | 'out'
   readonly startX: number
   readonly startY: number
+  readonly startTime?: number
+  readonly startValue?: number
   readonly startScrollX?: number
   readonly startScrollY?: number
   readonly broken?: boolean
@@ -80,6 +88,7 @@ export function CurveEditorCanvas({
   curves,
   viewport,
   selectedKeyframeIds,
+  tangentPreview,
   currentTime,
   duration,
   onKeyframeSelect,
@@ -114,9 +123,12 @@ export function CurveEditorCanvas({
 
     const dpr = window.devicePixelRatio || 1
     const rect = canvas.getBoundingClientRect()
-    if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
-      canvas.width = rect.width * dpr
-      canvas.height = rect.height * dpr
+    if (
+      canvas.width !== Math.round(rect.width * dpr) ||
+      canvas.height !== Math.round(rect.height * dpr)
+    ) {
+      canvas.width = Math.round(rect.width * dpr)
+      canvas.height = Math.round(rect.height * dpr)
       ctx.scale(dpr, dpr)
     }
 
@@ -131,13 +143,18 @@ export function CurveEditorCanvas({
     drawGrid(ctx, vp, w, h)
     drawCurves(ctx, curves, vp, selectedKeyframeIds)
     drawKeyframes(ctx, curves, vp, selectedKeyframeIds)
-    drawTangentHandles(ctx, curves, vp, selectedKeyframeIds)
+    drawTangentHandles(ctx, curves, vp, selectedKeyframeIds, tangentPreview)
     drawPlayhead(ctx, vp, currentTime, h)
 
     if (marqueeRect) {
       drawMarquee(ctx, marqueeRect)
     }
-  }, [curves, viewport, selectedKeyframeIds, currentTime, marqueeRect])
+  }, [curves, viewport, selectedKeyframeIds, tangentPreview, currentTime, marqueeRect])
+
+  const drawRef = useRef(draw)
+  useEffect(() => {
+    drawRef.current = draw
+  })
 
   useEffect(() => {
     animFrameRef.current = requestAnimationFrame(draw)
@@ -227,6 +244,7 @@ export function CurveEditorCanvas({
           } else if (!selectedKeyframeIds.has(hitId) && !isMeta) {
             onKeyframeSelect(hitId, curve.nodeId, curve.property)
           }
+          const kf = curve.keyframes.find((k) => k.id === hitId)
           onKeyframeDragStart()
           setDragState({
             kind: 'keyframe',
@@ -235,6 +253,8 @@ export function CurveEditorCanvas({
             property: curve.property,
             startX: point.x,
             startY: point.y,
+            startTime: kf?.time ?? 0,
+            startValue: (kf?.value as number) ?? 0,
           })
           return
         }
@@ -272,8 +292,8 @@ export function CurveEditorCanvas({
       const vp: CurveViewport = { ...viewport, canvasWidth: w, canvasHeight: h }
 
       if (dragState.kind === 'pan') {
-        const dx = (point.x - dragState.startX) / viewport.zoomLevel
-        const dy = -(point.y - dragState.startY) / viewport.zoomLevel
+        const dx = (point.x - dragState.startX) / viewport.zoomX
+        const dy = -(point.y - dragState.startY) / viewport.zoomY
         onPan(
           (dragState.startScrollX ?? viewport.scrollX) + dx - viewport.scrollX,
           (dragState.startScrollY ?? viewport.scrollY) + dy - viewport.scrollY,
@@ -296,23 +316,17 @@ export function CurveEditorCanvas({
         dragState.nodeId &&
         dragState.property
       ) {
-        const dx = (point.x - dragState.startX) / viewport.zoomLevel
-        const dy = -(point.y - dragState.startY) / viewport.zoomLevel
-        const curve = curves.find(
-          (c) => c.nodeId === dragState.nodeId && c.property === dragState.property,
+        const dx = (point.x - dragState.startX) / viewport.zoomX
+        const dy = -(point.y - dragState.startY) / viewport.zoomY
+        onKeyframeDrag(
+          dragState.keyframeId,
+          dragState.nodeId,
+          dragState.property,
+          Math.max(0, Math.min(duration, (dragState.startTime ?? 0) + dx)),
+          (dragState.startValue ?? 0) + dy,
         )
-        if (curve) {
-          const kf = curve.keyframes.find((k) => k.id === dragState.keyframeId)
-          if (kf) {
-            onKeyframeDrag(
-              dragState.keyframeId,
-              dragState.nodeId,
-              dragState.property,
-              Math.max(0, Math.min(duration, kf.time + dx)),
-              (kf.value as number) + dy,
-            )
-          }
-        }
+        cancelAnimationFrame(animFrameRef.current)
+        animFrameRef.current = requestAnimationFrame(drawRef.current)
         return
       }
 
@@ -329,8 +343,8 @@ export function CurveEditorCanvas({
           const kf = curve.keyframes.find((k) => k.id === dragState.keyframeId)
           if (kf) {
             const kfScreen = worldToScreen(kf.time, kf.value as number, vp)
-            const dx = (point.x - kfScreen.x) / viewport.zoomLevel
-            const dy = -(point.y - kfScreen.y) / viewport.zoomLevel
+            const dx = (point.x - kfScreen.x) / viewport.zoomX
+            const dy = -(point.y - kfScreen.y) / viewport.zoomY
 
             onTangentDrag(
               dragState.keyframeId,
@@ -342,6 +356,8 @@ export function CurveEditorCanvas({
             )
           }
         }
+        cancelAnimationFrame(animFrameRef.current)
+        animFrameRef.current = requestAnimationFrame(drawRef.current)
         return
       }
     },
@@ -390,8 +406,8 @@ export function CurveEditorCanvas({
             const vp: CurveViewport = { ...viewport, canvasWidth: w, canvasHeight: h }
             const kfScreen = worldToScreen(kf.time, kf.value as number, vp)
             const point = getCanvasPoint(e)
-            const dx = (point.x - kfScreen.x) / viewport.zoomLevel
-            const dy = -(point.y - kfScreen.y) / viewport.zoomLevel
+            const dx = (point.x - kfScreen.x) / viewport.zoomX
+            const dy = -(point.y - kfScreen.y) / viewport.zoomY
 
             onTangentDragEnd(
               dragState.keyframeId,
@@ -428,8 +444,8 @@ export function CurveEditorCanvas({
     (e: React.MouseEvent) => {
       const rect = canvasRef.current?.getBoundingClientRect()
       const point = { x: rect ? e.clientX - rect.left : 0, y: rect ? e.clientY - rect.top : 0 }
-      const w = canvasRef.current?.getBoundingClientRect().width ?? viewport.canvasWidth
-      const h = canvasRef.current?.getBoundingClientRect().height ?? viewport.canvasHeight
+      const w = rect?.width ?? viewport.canvasWidth
+      const h = rect?.height ?? viewport.canvasHeight
       const vp: CurveViewport = { ...viewport, canvasWidth: w, canvasHeight: h }
 
       for (const curve of curves) {
@@ -443,18 +459,27 @@ export function CurveEditorCanvas({
     [curves, viewport, onDoubleClickKeyframe],
   )
 
-  const handleWheel = useCallback(
-    (e: React.WheelEvent) => {
+  const onZoomRef = useRef(onZoom)
+  useEffect(() => {
+    onZoomRef.current = onZoom
+  })
+
+  useEffect(() => {
+    const el = canvasRef.current
+    if (!el) return
+    const handler = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault()
-        const rect = canvasRef.current?.getBoundingClientRect()
-        const centerX = rect ? e.clientX - rect.left : 0
+        const rect = el.getBoundingClientRect()
+        const centerX = e.clientX - rect.left
+        const centerY = e.clientY - rect.top
         const factor = e.deltaY < 0 ? 1.2 : 1 / 1.2
-        onZoom(centerX, factor)
+        onZoomRef.current(centerX, centerY, factor, factor)
       }
-    },
-    [onZoom],
-  )
+    }
+    el.addEventListener('wheel', handler, { passive: false })
+    return () => el.removeEventListener('wheel', handler)
+  }, [])
 
   return (
     <div
@@ -475,7 +500,6 @@ export function CurveEditorCanvas({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onDoubleClick={handleDoubleClick}
-        onWheel={handleWheel}
       />
     </div>
   )
@@ -492,19 +516,13 @@ function drawGrid(
   const majorColor = isDark ? '#3a3e47' : '#d0d0d0'
   const axisColor = isDark ? '#555' : '#999'
 
-  const headerEnd = viewport.trackHeaderWidth
-
-  ctx.fillStyle = isDark ? '#1a1a1a' : '#f8f8f8'
-  ctx.fillRect(0, 0, headerEnd, h)
-
-  const worldTop = screenToWorld(headerEnd, 0, viewport).value
-  const worldBottom = screenToWorld(headerEnd, h, viewport).value
+  const worldTop = screenToWorld(0, 0, viewport).value
+  const worldBottom = screenToWorld(0, h, viewport).value
 
   let gridStep = 1
   const steps = [0.1, 0.25, 0.5, 1, 2, 5, 10, 25, 50, 100, 250, 500, 1000]
   for (const s of steps) {
-    const pixPerUnit = viewport.zoomLevel
-    if (s * pixPerUnit >= 40) {
+    if (s * viewport.zoomY >= 40) {
       gridStep = s
       break
     }
@@ -515,31 +533,27 @@ function drawGrid(
     const screen = worldToScreen(0, v, viewport)
     const y = screen.y
     if (y < 0 || y > h) continue
-    ctx.strokeStyle = v === 0 ? axisColor : minorColor
-    ctx.lineWidth = v === 0 ? 1.5 : 0.5
+    ctx.strokeStyle = Math.abs(v) < 1e-9 ? axisColor : minorColor
+    ctx.lineWidth = Math.abs(v) < 1e-9 ? 1.5 : 0.5
     ctx.beginPath()
-    ctx.moveTo(headerEnd, y)
+    ctx.moveTo(0, y)
     ctx.lineTo(w, y)
     ctx.stroke()
   }
 
-  const timeLeft = screenToWorld(headerEnd, 0, viewport).time
+  const timeLeft = screenToWorld(0, 0, viewport).time
   const timeRight = screenToWorld(w, 0, viewport).time
 
-  let timeStep = 0.1
-  const timeSteps = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60]
-  for (const s of timeSteps) {
-    if (s * viewport.zoomLevel >= 60) {
-      timeStep = s
-      break
-    }
-  }
+  const timeStep = rulerTickStep(viewport.zoomX)
 
   const firstTime = Math.ceil(timeLeft / timeStep) * timeStep
+  ctx.font = '10px monospace'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'top'
   for (let t = firstTime; t <= timeRight; t += timeStep) {
     const screen = worldToScreen(t, 0, viewport)
     const x = screen.x
-    if (x < headerEnd || x > w) continue
+    if (x < 0 || x > w) continue
     const isMajor = Math.abs(t % (timeStep * 5)) < 1e-9 || Math.abs(t) < 1e-9
     ctx.strokeStyle = isMajor ? majorColor : minorColor
     ctx.lineWidth = 0.5
@@ -547,6 +561,8 @@ function drawGrid(
     ctx.moveTo(x, 0)
     ctx.lineTo(x, h)
     ctx.stroke()
+    ctx.fillStyle = isMajor ? majorColor : minorColor
+    ctx.fillText(tickLabel(t, timeStep), x, 4)
   }
 }
 
@@ -584,6 +600,7 @@ function drawKeyframes(
   viewport: CurveViewport,
   selectedKeyframeIds: ReadonlySet<string>,
 ): void {
+  ctx.font = '10px monospace'
   for (const curve of curves) {
     for (const kf of curve.keyframes) {
       const screen = worldToScreen(kf.time, kf.value as number, viewport)
@@ -596,6 +613,11 @@ function drawKeyframes(
       ctx.strokeStyle = selected ? curve.color : '#000000'
       ctx.lineWidth = selected ? 2 : 1
       ctx.stroke()
+
+      const val = typeof kf.value === 'number' ? kf.value.toFixed(1) : String(kf.value)
+      const label = `${val}`
+      ctx.fillStyle = '#ffffff'
+      ctx.fillText(label, screen.x + 8, screen.y - 8)
     }
   }
 }
@@ -605,13 +627,18 @@ function drawTangentHandles(
   curves: readonly CurveData[],
   viewport: CurveViewport,
   selectedKeyframeIds: ReadonlySet<string>,
+  tangentPreview: ReadonlyMap<string, { tangentIn: KeyframeTangent; tangentOut: KeyframeTangent }>,
 ): void {
   for (const curve of curves) {
     for (const kf of curve.keyframes) {
       if (!selectedKeyframeIds.has(kf.id)) continue
       if (kf.interpolation !== 'bezier') continue
 
-      const handles = computeTangentHandlePositions(kf, viewport)
+      const preview = tangentPreview.get(kf.id)
+      const kfForHandles = (
+        preview ? { ...kf, tangentIn: preview.tangentIn, tangentOut: preview.tangentOut } : kf
+      ) as Keyframe
+      const handles = computeTangentHandlePositions(kfForHandles, viewport)
       if (!handles) continue
 
       const kfScreen = worldToScreen(kf.time, kf.value as number, viewport)

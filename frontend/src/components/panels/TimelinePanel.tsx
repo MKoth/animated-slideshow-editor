@@ -45,7 +45,16 @@ export function TimelinePanel({ height }: { height: number }) {
   const lastPointerTimeRef = useRef<number | null>(null)
 
   const viewMode = useCurveEditorViewStore((state) => state.viewMode)
-  const setViewMode = useCurveEditorViewStore((state) => state.setViewMode)
+  const prevViewModeRef = useRef(viewMode)
+  useEffect(() => {
+    if (viewMode === 'curveEditor' && prevViewModeRef.current !== 'curveEditor') {
+      const timelineState = useTimelineViewStore.getState()
+      useCurveEditorViewStore
+        .getState()
+        .syncFromTimeline(timelineState.zoomLevel, timelineState.scrollTime)
+    }
+    prevViewModeRef.current = viewMode
+  }, [viewMode])
 
   const project = engine.project
   const slide = engine.getActiveSlide()
@@ -103,32 +112,12 @@ export function TimelinePanel({ height }: { height: number }) {
   return (
     <div className="timeline-panel" style={{ height }}>
       {slide && (
-        <>
-          <div className="timeline-toolbar">
-            <div className="timeline-toolbar__view-toggle">
-              <button
-                className="timeline-toolbar__button"
-                aria-pressed={viewMode === 'dopeSheet'}
-                onClick={() => setViewMode('dopeSheet')}
-              >
-                Dope Sheet
-              </button>
-              <button
-                className="timeline-toolbar__button"
-                aria-pressed={viewMode === 'curveEditor'}
-                onClick={() => setViewMode('curveEditor')}
-              >
-                Curve Editor
-              </button>
-            </div>
-          </div>
-          <TimelineToolbar
-            slideId={slide.id}
-            duration={slide.duration}
-            viewportWidth={viewportWidth}
-            zoomAnchor={() => lastPointerTimeRef.current}
-          />
-        </>
+        <TimelineToolbar
+          slideId={slide.id}
+          duration={slide.duration}
+          viewportWidth={viewportWidth}
+          zoomAnchor={() => lastPointerTimeRef.current}
+        />
       )}
       {body}
     </div>
