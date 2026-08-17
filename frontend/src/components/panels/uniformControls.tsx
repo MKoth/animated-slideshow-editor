@@ -5,11 +5,47 @@ import type {
   MaterialParameterDefaultValue,
 } from '../../engine/materialResolution'
 import { formatDecimal } from '../../app/inspectorActions'
+import type { PropertyState } from '../../app/keyframeActions'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { NumericField } from './inspectorFields'
 import { useEditBuffer } from './useEditBuffer'
 import { VEC_COMPONENT_LABELS, isColorVectorKey, uniformHasSlider } from './uniforms'
 import type { OverrideState } from './uniforms'
+
+export function KeyframeAffordance({
+  state,
+  onAddKeyframe,
+  disabled,
+}: {
+  state: PropertyState | null
+  onAddKeyframe: () => void
+  disabled: boolean
+}): ReactNode {
+  if (state === null || state === 'static') {
+    return null
+  }
+  return (
+    <>
+      <span
+        className="inspector-field__indicator"
+        data-state={state}
+        title={state === 'animated' ? 'Animated' : 'Playhead on keyframe'}
+      >
+        {state === 'animated' ? '●' : '◆'}
+      </span>
+      {state === 'onKeyframe' && (
+        <button
+          className="inspector-field__clear"
+          aria-label="Add keyframe at playhead"
+          onClick={onAddKeyframe}
+          disabled={disabled}
+        >
+          Add Keyframe
+        </button>
+      )}
+    </>
+  )
+}
 
 export function OverrideAffordance({
   state,
@@ -361,6 +397,8 @@ export function UniformParameterField({
   effective,
   overridden,
   disabled = false,
+  keyframeState = null,
+  onAddKeyframe,
   onChange,
   onClear,
 }: {
@@ -368,6 +406,8 @@ export function UniformParameterField({
   effective: MaterialParameterDefaultValue | null
   overridden: OverrideState
   disabled?: boolean
+  keyframeState?: PropertyState | null
+  onAddKeyframe?: () => void
   onChange: (value: MaterialParameterDefaultValue) => void
   onClear: () => void
 }) {
@@ -379,6 +419,14 @@ export function UniformParameterField({
       disabled={disabled}
     />
   )
+  const keyframeIndicator =
+    keyframeState !== null && keyframeState !== undefined && onAddKeyframe ? (
+      <KeyframeAffordance
+        state={keyframeState}
+        onAddKeyframe={onAddKeyframe}
+        disabled={disabled}
+      />
+    ) : null
   const kind = parameter.kind
   if (kind === 'bool') {
     return (
@@ -387,7 +435,12 @@ export function UniformParameterField({
         effective={effective}
         disabled={disabled}
         onChange={(value) => onChange(value)}
-        after={affordance}
+        after={
+          <>
+            {keyframeIndicator}
+            {affordance}
+          </>
+        }
       />
     )
   }
@@ -399,7 +452,12 @@ export function UniformParameterField({
           effective={effective}
           disabled={disabled}
           onChange={(value) => onChange(value)}
-          after={affordance}
+          after={
+            <>
+              {keyframeIndicator}
+              {affordance}
+            </>
+          }
         />
       )
     }
@@ -409,7 +467,12 @@ export function UniformParameterField({
         effective={effective}
         disabled={disabled}
         onChange={(value) => onChange(value)}
-        after={affordance}
+        after={
+          <>
+            {keyframeIndicator}
+            {affordance}
+          </>
+        }
       />
     )
   }
@@ -420,7 +483,12 @@ export function UniformParameterField({
         effective={effective}
         disabled={disabled}
         onChange={(value) => onChange(value)}
-        after={affordance}
+        after={
+          <>
+            {keyframeIndicator}
+            {affordance}
+          </>
+        }
       />
     )
   }
@@ -441,10 +509,14 @@ export function UniformParameterField({
               disabled={disabled || numeric === null}
               onChange={(value) => onChange(value)}
             />
+            {keyframeIndicator}
             {affordance}
           </>
         ) : (
-          affordance
+          <>
+            {keyframeIndicator}
+            {affordance}
+          </>
         )
       }
       onCommit={(raw) => {

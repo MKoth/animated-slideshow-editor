@@ -5,6 +5,7 @@ import {
   TINT_PARAMETER_KEY,
   uniformValuesEqual,
 } from '../../engine'
+import type { KeyframeValue } from '../../engine/keyframe'
 import type { DispatchCommand } from '../../engine/commands'
 import {
   assignMaterialToNodes,
@@ -13,11 +14,19 @@ import {
   readMaterial,
 } from '../../app/materialInspectorActions'
 import { commonValueOf, parseFiniteNumber } from '../../app/inspectorActions'
+import { materialParameterStateOf, materialEditAtPlayhead } from '../../app/keyframeActions'
 import { useMaterialLibraryStore } from '../../stores/materialLibraryStore'
 import { NumericField } from './inspectorFields'
 import { definitionNameOf, runCommand } from './sectionHelpers'
 import { OverrideAffordance, UniformParameterField } from './uniformControls'
 import { overrideStateOf } from './uniforms'
+
+function toKeyframeValue(value: unknown): KeyframeValue {
+  if (Array.isArray(value)) {
+    return [...value]
+  }
+  return value as KeyframeValue
+}
 
 function clampPercent(value: number): number {
   return Math.min(100, Math.max(0, value))
@@ -29,12 +38,16 @@ export function MaterialInspectorSection({
   dispatch,
   notify,
   playing,
+  animationMode = false,
+  playheadTime = 0,
 }: {
   targets: readonly SceneNode[]
   engine: EnginePublic
   dispatch: DispatchCommand
   notify: (message: string) => void
   playing: boolean
+  animationMode?: boolean
+  playheadTime?: number
 }) {
   const nodeIds = targets.map((node) => node.id)
   // Definition changes from the library refresh the section so unset
@@ -187,17 +200,55 @@ export function MaterialInspectorSection({
               reading.uniforms.find((entry) => entry.key === uniform.key)?.overridden ?? false,
           ),
         )
+        const keyframeState = materialParameterStateOf(
+          engine,
+          targets[0]?.id ?? '',
+          uniform.key,
+          playheadTime,
+        )
+        const fieldDisabled =
+          playing || (!animationMode && keyframeState !== null && keyframeState !== 'static')
+        const handleAddKeyframe = () => {
+          if (targets.length === 0) {
+            return
+          }
+          const nodeIds = targets.map((node) => node.id)
+          const currentValue =
+            effective !== null ? effective : uniform.default
+          runCommand(notify, () =>
+            materialEditAtPlayhead(engine, dispatch, [
+              {
+                nodeId: nodeIds[0]!,
+                parameter: uniform.key,
+                value: toKeyframeValue(currentValue),
+              },
+            ]),
+          )
+        }
         return (
           <UniformParameterField
             key={uniform.key}
             parameter={uniform}
             effective={effective}
             overridden={overridden}
-            disabled={playing}
+            disabled={fieldDisabled}
+            keyframeState={keyframeState}
+            onAddKeyframe={animationMode ? handleAddKeyframe : undefined}
             onChange={(value) => {
               if (uniform.kind === 'sampler2D' && value === '') {
                 runCommand(notify, () =>
                   clearMaterialOverrideOnNodes(engine, dispatch, nodeIds, uniform.key),
+                )
+                return
+              }
+              if (animationMode && targets.length > 0) {
+                const edits = targets.map((node) => ({
+                  nodeId: node.id,
+                  parameter: uniform.key,
+                  value: toKeyframeValue(value),
+                }))
+                runCommand(notify, () =>
+                  materialEditAtPlayhead(engine, dispatch, edits),
                 )
                 return
               }

@@ -1,6 +1,7 @@
 import { act } from 'react'
 import { fireEvent, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { AddKeyframeCommand } from '../engine/commands'
 import { useAssetLibraryStore } from '../stores/assetLibraryStore'
 import { useMaterialLibraryStore } from '../stores/materialLibraryStore'
 import { useNotificationStore } from '../stores/notificationStore'
@@ -412,5 +413,104 @@ describe('Material section uniforms — definition defaults and multi-selection'
     expect(engine.getNode(firstId).material.overrides.uEnabled).toBe(true)
     expect(engine.getNode(secondId).material.overrides.uEnabled).toBe(true)
     expect(screen.getByTitle('Override set')).toBeInTheDocument()
+  })
+})
+
+describe('Material section keyframe affordance', () => {
+  it('shows static indicator when parameter has no keyframes', () => {
+    const { engine } = renderMaterialInspector()
+    const { nodeId } = createSceneWithNode(engine)
+    registerMaterials(engine)
+    assignUniformMaterial(engine)
+    select(nodeId)
+    fireEvent.change(materialPicker(), { target: { value: 'mat-uniform' } })
+
+    expect(screen.queryByTitle('Animated')).not.toBeInTheDocument()
+    expect(screen.queryByTitle('Playhead on keyframe')).not.toBeInTheDocument()
+  })
+
+  it('shows animated indicator when parameter has keyframes', () => {
+    const { engine, dispatcher } = renderMaterialInspector()
+    const { nodeId } = createSceneWithNode(engine)
+    registerMaterials(engine)
+    assignUniformMaterial(engine)
+    select(nodeId)
+    fireEvent.change(materialPicker(), { target: { value: 'mat-uniform' } })
+
+    act(() => {
+      dispatcher.dispatch(
+        new AddKeyframeCommand({
+          target: { kind: 'node', nodeId, parameter: 'uIntensity' },
+          time: 1,
+          value: 0.8,
+        }),
+      )
+    })
+
+    expect(screen.getByTitle('Animated')).toBeInTheDocument()
+  })
+
+  it('shows on-keyframe indicator when playhead is on a keyframe', () => {
+    const { engine, dispatcher } = renderMaterialInspector()
+    const { nodeId } = createSceneWithNode(engine)
+    registerMaterials(engine)
+    assignUniformMaterial(engine)
+    select(nodeId)
+    fireEvent.change(materialPicker(), { target: { value: 'mat-uniform' } })
+
+    act(() => {
+      dispatcher.dispatch(
+        new AddKeyframeCommand({
+          target: { kind: 'node', nodeId, parameter: 'uIntensity' },
+          time: 1,
+          value: 0.8,
+        }),
+      )
+      usePlaybackController.getState().setCurrentTime(engine.project!.slides[0].id, 1, 5)
+    })
+
+    expect(screen.getByTitle('Playhead on keyframe')).toBeInTheDocument()
+  })
+
+  it('adds a keyframe at playhead when button is clicked', () => {
+    const { engine, dispatcher } = renderMaterialInspector()
+    const { nodeId } = createSceneWithNode(engine)
+    registerMaterials(engine)
+    assignUniformMaterial(engine)
+    select(nodeId)
+    fireEvent.change(materialPicker(), { target: { value: 'mat-uniform' } })
+
+    act(() => {
+      dispatcher.dispatch(
+        new AddKeyframeCommand({
+          target: { kind: 'node', nodeId, parameter: 'uIntensity' },
+          time: 0,
+          value: 0.5,
+        }),
+      )
+      usePlaybackController.getState().setCurrentTime(engine.project!.slides[0].id, 1, 5)
+    })
+
+    const intensity = screen.getByRole('spinbutton', { name: 'uIntensity' })
+    fireEvent.change(intensity, { target: { value: '0.8' } })
+    fireEvent.keyDown(intensity, { key: 'Enter' })
+
+    expect(engine.getMaterialKeyframes(nodeId, 'uIntensity')).toHaveLength(2)
+    expect(engine.getMaterialKeyframes(nodeId, 'uIntensity')[1]?.value).toBe(0.8)
+  })
+
+  it('disables fields while playing', () => {
+    const { engine } = renderMaterialInspector()
+    const { nodeId } = createSceneWithNode(engine)
+    registerMaterials(engine)
+    assignUniformMaterial(engine)
+    select(nodeId)
+    fireEvent.change(materialPicker(), { target: { value: 'mat-uniform' } })
+
+    act(() => {
+      usePlaybackController.setState({ status: 'playing' })
+    })
+
+    expect(screen.getByRole('spinbutton', { name: 'uIntensity' })).toBeDisabled()
   })
 })

@@ -80,6 +80,30 @@ export function propertyStateOf(
   return 'animated'
 }
 
+export function materialParameterStateOf(
+  engine: EnginePublic,
+  nodeId: string,
+  parameter: string,
+  time: number,
+): PropertyState | null {
+  try {
+    engine.getNode(nodeId)
+  } catch {
+    return null
+  }
+  if (!engine.hasMaterialTrack(nodeId, parameter)) {
+    return 'static'
+  }
+  const keyframes = engine.getMaterialKeyframes(nodeId, parameter)
+  if (keyframes.length === 0) {
+    return 'static'
+  }
+  if (keyframes.some((keyframe) => keyframe.time === time)) {
+    return 'onKeyframe'
+  }
+  return 'animated'
+}
+
 export function autoKeyEdit(
   engine: EnginePublic,
   dispatch: DispatchCommand,
