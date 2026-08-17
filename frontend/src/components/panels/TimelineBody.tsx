@@ -530,6 +530,7 @@ export function TimelineBody({
         onScroll={handleTracksScroll}
       >
         <ul className="timeline-tracks__list" onContextMenu={handleTrackListContextMenu}>
+          <li className="timeline-tracks__ruler-spacer" aria-hidden="true" />
           {rows.map((row) =>
             row.kind === 'subtrack' ? (
               <li

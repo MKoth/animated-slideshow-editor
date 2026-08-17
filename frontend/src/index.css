@@ -1617,6 +1617,10 @@ button:disabled {
   padding: 0;
 }
 
+.timeline-tracks__ruler-spacer {
+  height: 26px;
+}
+
 .timeline-track-row {
   display: flex;
   align-items: center;
