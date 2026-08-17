@@ -20,18 +20,24 @@ import {
 import type { InspectorFieldKind } from '../../app/inspectorActions'
 import type { PropertyState } from '../../app/keyframeActions'
 import { playheadTimeOf, propertyStateOf } from '../../app/keyframeActions'
+import {
+  selectedKeyframeRefs,
+  selectedMaterialKeyframeRefs,
+} from '../../app/keyframeSelectionActions'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
 import type { EnginePublic, SceneNode } from '../../engine'
 import type { AnimationProperty } from '../../engine'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { useSelectionStore } from '../../stores/selectionStore'
+import { useTimelineSelectionStore } from '../../stores/timelineSelectionStore'
 import { useUiStore } from '../../stores/uiStore'
 import { renameSlide, setSlideDuration } from '../../app/slideActions'
 import type { Slide } from '../../engine'
 import { NameField, NumericField } from './inspectorFields'
 import { MaterialInspectorSection } from './MaterialInspectorSection'
 import { FullscreenShaderInspectorSection } from './FullscreenShaderInspectorSection'
+import { KeyframeInspector } from './KeyframeInspector'
 
 const COMING_SOON_SECTIONS = ['Animation', 'Anchors', 'Physics', 'AI Metadata']
 
@@ -132,6 +138,10 @@ export function InspectorPanel({ width }: { width: number }) {
   const cameraAnimationMode = useUiStore((state) => state.cameraAnimationMode)
   usePlaybackController((state) => state.currentTimes)
   const playing = usePlaybackController((state) => state.status === 'playing')
+  const timelineSelectionVersion = useTimelineSelectionStore(
+    (state) => state.selections[state.editingContext].length,
+  )
+  void timelineSelectionVersion
   const [, setTick] = useState(0)
   useEngineEvent(() => setTick((tick) => tick + 1))
 
@@ -185,6 +195,62 @@ export function InspectorPanel({ width }: { width: number }) {
   }
 
   if (targets.length === 0 || !readTarget) {
+    const propertyRefs = selectedKeyframeRefs(engine)
+    const materialRefs = selectedMaterialKeyframeRefs(engine)
+    const totalSelected = propertyRefs.length + materialRefs.length
+    if (totalSelected === 1) {
+      return (
+        <div className="inspector-panel" style={{ width }}>
+          <div className="inspector-scroll">
+            {slide && (
+              <SlideSection
+                slide={slide}
+                playing={playing}
+                onCommitName={commitSlideName}
+                onCommitDuration={commitSlideDuration}
+                onAdjustDuration={adjustSlideDuration}
+              />
+            )}
+            {(() => {
+              if (propertyRefs.length === 1) {
+                const ref = propertyRefs[0]
+                const keyframes = engine.getKeyframes(ref.nodeId, ref.property as AnimationProperty)
+                const keyframe = keyframes.find((kf) => kf.id === ref.keyframeId)
+                if (!keyframe) {
+                  return null
+                }
+                return (
+                  <KeyframeInspector
+                    dispatch={dispatch}
+                    nodeId={ref.nodeId}
+                    property={ref.property}
+                    keyframe={keyframe}
+                    playing={playing}
+                    notify={notify}
+                  />
+                )
+              }
+              const ref = materialRefs[0]
+              const keyframes = engine.getMaterialKeyframes(ref.nodeId, ref.parameter)
+              const keyframe = keyframes.find((kf) => kf.id === ref.keyframeId)
+              if (!keyframe) {
+                return null
+              }
+              return (
+                <KeyframeInspector
+                  dispatch={dispatch}
+                  nodeId={ref.nodeId}
+                  parameter={ref.parameter}
+                  keyframe={keyframe}
+                  playing={playing}
+                  notify={notify}
+                />
+              )
+            })()}
+          </div>
+        </div>
+      )
+    }
     if (!slide) {
       return (
         <div className="inspector-panel" style={{ width }}>
@@ -404,6 +470,49 @@ export function InspectorPanel({ width }: { width: number }) {
             playheadTime={indicatorTime}
           />
         )}
+
+        {(() => {
+          const propertyRefs = selectedKeyframeRefs(engine)
+          const materialRefs = selectedMaterialKeyframeRefs(engine)
+          const totalSelected = propertyRefs.length + materialRefs.length
+          if (totalSelected !== 1) {
+            return null
+          }
+          if (propertyRefs.length === 1) {
+            const ref = propertyRefs[0]
+            const keyframes = engine.getKeyframes(ref.nodeId, ref.property as AnimationProperty)
+            const keyframe = keyframes.find((kf) => kf.id === ref.keyframeId)
+            if (!keyframe) {
+              return null
+            }
+            return (
+              <KeyframeInspector
+                dispatch={dispatch}
+                nodeId={ref.nodeId}
+                property={ref.property}
+                keyframe={keyframe}
+                playing={playing}
+                notify={notify}
+              />
+            )
+          }
+          const ref = materialRefs[0]
+          const keyframes = engine.getMaterialKeyframes(ref.nodeId, ref.parameter)
+          const keyframe = keyframes.find((kf) => kf.id === ref.keyframeId)
+          if (!keyframe) {
+            return null
+          }
+          return (
+            <KeyframeInspector
+              dispatch={dispatch}
+              nodeId={ref.nodeId}
+              parameter={ref.parameter}
+              keyframe={keyframe}
+              playing={playing}
+              notify={notify}
+            />
+          )
+        })()}
 
         {COMING_SOON_SECTIONS.map((title) => (
           <ComingSoonSection key={title} title={title} />

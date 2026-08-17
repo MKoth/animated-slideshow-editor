@@ -1457,6 +1457,65 @@ button:disabled {
   background: var(--color-bg-elevated);
 }
 
+.keyframe-presets {
+  margin-top: 4px;
+}
+
+.keyframe-presets__grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.keyframe-presets__button {
+  padding: 2px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg-input);
+  color: var(--color-text);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.keyframe-presets__button:hover {
+  background: var(--color-bg-elevated);
+}
+
+.keyframe-presets__button--active {
+  background: var(--color-accent);
+  color: var(--color-text-inverse);
+  border-color: var(--color-accent);
+}
+
+.keyframe-presets__button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.keyframe-tangents {
+  margin-top: 4px;
+}
+
+.keyframe-tangent-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.keyframe-tangent-row__label {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  min-width: 64px;
+}
+
+.keyframe-tangent-row .inspector-field {
+  flex: 1;
+  margin-top: 0;
+}
+
 .timeline-panel {
   flex-shrink: 0;
   background: var(--color-bg-panel);
