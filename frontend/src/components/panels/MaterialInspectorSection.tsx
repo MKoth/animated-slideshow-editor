@@ -241,7 +241,11 @@ export function MaterialInspectorSection({
                 )
                 return
               }
-              if (animationMode && targets.length > 0) {
+              if (
+                animationMode &&
+                targets.length > 0 &&
+                engine.hasMaterialTrack(targets[0]!.id, uniform.key)
+              ) {
                 const edits = targets.map((node) => ({
                   nodeId: node.id,
                   parameter: uniform.key,

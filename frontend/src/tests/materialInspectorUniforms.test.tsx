@@ -513,4 +513,94 @@ describe('Material section keyframe affordance', () => {
 
     expect(screen.getByRole('spinbutton', { name: 'uIntensity' })).toBeDisabled()
   })
+
+  it('shows animated indicator for a discrete kind (bool) when tracked', () => {
+    const { engine, dispatcher } = renderMaterialInspector()
+    const { nodeId } = createSceneWithNode(engine)
+    registerMaterials(engine)
+    assignUniformMaterial(engine)
+    select(nodeId)
+    fireEvent.change(materialPicker(), { target: { value: 'mat-uniform' } })
+
+    act(() => {
+      dispatcher.dispatch(
+        new AddKeyframeCommand({
+          target: { kind: 'node', nodeId, parameter: 'uEnabled' },
+          time: 1,
+          value: true,
+        }),
+      )
+    })
+
+    expect(screen.getByTitle('Animated')).toBeInTheDocument()
+  })
+
+  it('auto-keys a tracked bool parameter at the playhead in animation mode', () => {
+    const { engine, dispatcher } = renderMaterialInspector()
+    const { nodeId } = createSceneWithNode(engine)
+    registerMaterials(engine)
+    assignUniformMaterial(engine)
+    select(nodeId)
+    fireEvent.change(materialPicker(), { target: { value: 'mat-uniform' } })
+
+    act(() => {
+      dispatcher.dispatch(
+        new AddKeyframeCommand({
+          target: { kind: 'node', nodeId, parameter: 'uEnabled' },
+          time: 0,
+          value: false,
+        }),
+      )
+      usePlaybackController.getState().setCurrentTime(engine.project!.slides[0].id, 1, 5)
+    })
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'uEnabled' }))
+
+    expect(engine.getMaterialKeyframes(nodeId, 'uEnabled')).toHaveLength(2)
+    expect(engine.getMaterialKeyframes(nodeId, 'uEnabled')[1]?.value).toBe(true)
+  })
+
+  it('edits untracked parameter to static override in animation mode', () => {
+    const { engine } = renderMaterialInspector()
+    const { nodeId } = createSceneWithNode(engine)
+    registerMaterials(engine)
+    assignUniformMaterial(engine)
+    select(nodeId)
+    fireEvent.change(materialPicker(), { target: { value: 'mat-uniform' } })
+
+    fireEvent.change(screen.getByRole('slider', { name: 'uIntensity slider' }), {
+      target: { value: '0.75' },
+    })
+
+    expect(engine.getNode(nodeId).material.overrides.uIntensity).toBe(0.75)
+    expect(engine.getMaterialKeyframes(nodeId, 'uIntensity')).toHaveLength(0)
+  })
+
+  it('scrubbing updates the indicator state', () => {
+    const { engine, dispatcher } = renderMaterialInspector()
+    const { nodeId } = createSceneWithNode(engine)
+    registerMaterials(engine)
+    assignUniformMaterial(engine)
+    select(nodeId)
+    fireEvent.change(materialPicker(), { target: { value: 'mat-uniform' } })
+
+    act(() => {
+      dispatcher.dispatch(
+        new AddKeyframeCommand({
+          target: { kind: 'node', nodeId, parameter: 'uIntensity' },
+          time: 1,
+          value: 0.8,
+        }),
+      )
+      usePlaybackController.getState().setCurrentTime(engine.project!.slides[0].id, 0, 5)
+    })
+
+    expect(screen.getByTitle('Animated')).toBeInTheDocument()
+
+    act(() => {
+      usePlaybackController.getState().setCurrentTime(engine.project!.slides[0].id, 1, 5)
+    })
+
+    expect(screen.getByTitle('Playhead on keyframe')).toBeInTheDocument()
+  })
 })
