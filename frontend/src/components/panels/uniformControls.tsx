@@ -421,11 +421,7 @@ export function UniformParameterField({
   )
   const keyframeIndicator =
     keyframeState !== null && keyframeState !== undefined && onAddKeyframe ? (
-      <KeyframeAffordance
-        state={keyframeState}
-        onAddKeyframe={onAddKeyframe}
-        disabled={disabled}
-      />
+      <KeyframeAffordance state={keyframeState} onAddKeyframe={onAddKeyframe} disabled={disabled} />
     ) : null
   const kind = parameter.kind
   if (kind === 'bool') {

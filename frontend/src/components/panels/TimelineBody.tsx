@@ -2,9 +2,13 @@ import { useEffect, useLayoutEffect, useState } from 'react'
 import type { RefObject } from 'react'
 import type { AnimationProperty, Scene } from '../../engine'
 import { addKeyframeAtPlayhead, addPoseKeyframesAtPlayhead } from '../../app/keyframeActions'
-import { deleteSelectedKeyframes, keyframeRefsOfScene } from '../../app/keyframeSelectionActions'
+import {
+  deleteSelectedKeyframes,
+  keyframeRefsOfScene,
+  materialKeyframeRefsOfScene,
+} from '../../app/keyframeSelectionActions'
 import { useEngine } from '../../app/useEngine'
-import { DeleteKeyframesCommand } from '../../engine/commands'
+import { AddKeyframeCommand, DeleteKeyframesCommand } from '../../engine/commands'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { useSelectionStore } from '../../stores/selectionStore'
@@ -19,7 +23,12 @@ import {
   useTimelineViewStore,
 } from '../../stores/timelineViewStore'
 import { useKeyframeDrag } from './keyframeDrag'
-import { ROW_HEIGHT, TRACK_HEADER_WIDTH, PROPERTY_LABELS } from './timelineTracks'
+import {
+  ROW_HEIGHT,
+  TRACK_HEADER_WIDTH,
+  PROPERTY_LABELS,
+  materialParameterLabel,
+} from './timelineTracks'
 import type { TimelineRow } from './timelineTracks'
 import { KeyframeMarker, TimelineContextMenu, TrackRow } from './timelineComponents'
 import type { TimelineMenuState } from './timelineComponents'
@@ -63,9 +72,10 @@ export function TimelineBody({
     return state.scrollTime + (clientX - (rect?.left ?? 0)) / p
   }
 
-  const keyframeRefs = new Map(
-    keyframeRefsOfScene(engine, scene).map((ref) => [ref.keyframeId, ref] as const),
-  )
+  const propertyKeyframeRefs = keyframeRefsOfScene(engine, scene)
+  const materialKeyframeRefs = materialKeyframeRefsOfScene(engine, scene)
+  const allKeyframeRefs = [...propertyKeyframeRefs, ...materialKeyframeRefs]
+  const keyframeRefs = new Map(allKeyframeRefs.map((ref) => [ref.keyframeId, ref] as const))
   const { dragPreview, selectForDrag, startDrag } = useKeyframeDrag({
     keyframeRefs,
     duration,
@@ -189,18 +199,28 @@ export function TimelineBody({
 
   const handleKeyframeContextMenu = (
     event: React.MouseEvent,
-    row: Extract<TimelineRow, { kind: 'subtrack' }>,
+    row: Extract<TimelineRow, { kind: 'subtrack' | 'materialSubtrack' }>,
     keyframe: { id: string },
   ) => {
     event.preventDefault()
     event.stopPropagation()
-    setMenu({
-      x: event.clientX,
-      y: event.clientY,
-      nodeId: row.node.id,
-      property: row.property,
-      keyframeId: keyframe.id,
-    })
+    if (row.kind === 'subtrack') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        property: row.property,
+        keyframeId: keyframe.id,
+      })
+    } else {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        parameter: row.parameter.key,
+        keyframeId: keyframe.id,
+      })
+    }
   }
 
   const handleTrackListContextMenu = (event: React.MouseEvent) => {
@@ -216,6 +236,21 @@ export function TimelineBody({
           y: event.clientY,
           nodeId,
           property: property as AnimationProperty,
+        })
+      }
+      return
+    }
+    const materialSubtrack = target.closest<HTMLElement>('[data-parameter]')
+    if (materialSubtrack) {
+      const nodeId = materialSubtrack.dataset.nodeId
+      const parameter = materialSubtrack.dataset.parameter
+      if (nodeId && parameter) {
+        event.preventDefault()
+        setMenu({
+          x: event.clientX,
+          y: event.clientY,
+          nodeId,
+          parameter,
         })
       }
       return
@@ -236,9 +271,28 @@ export function TimelineBody({
     if (!target) {
       return
     }
-    const result = target.property
-      ? addKeyframeAtPlayhead(engine, dispatch, slideId, target.nodeId, target.property)
-      : addPoseKeyframesAtPlayhead(engine, dispatch, slideId, target.nodeId)
+    let result
+    if (target.property) {
+      result = addKeyframeAtPlayhead(engine, dispatch, slideId, target.nodeId, target.property)
+    } else if (target.parameter) {
+      const time = usePlaybackController.getState().getTime(slideId)
+      const node = engine.getNode(target.nodeId)
+      const parameter = node.material.overrides[target.parameter]
+      const definition = engine.getMaterialDefinition(node.material.materialDefinitionId)
+      const paramDef = definition.parameters.find((p) => p.key === target.parameter)
+      const value = parameter ?? paramDef?.default
+      if (value !== undefined) {
+        result = dispatch(
+          new AddKeyframeCommand({
+            target: { kind: 'node', nodeId: target.nodeId, parameter: target.parameter },
+            time,
+            value,
+          }),
+        )
+      }
+    } else {
+      result = addPoseKeyframesAtPlayhead(engine, dispatch, slideId, target.nodeId)
+    }
     if (result && !result.ok) {
       notify(result.error.message)
     }
@@ -247,16 +301,24 @@ export function TimelineBody({
   const deleteKeyframeFromMenu = () => {
     const target = menu
     setMenu(null)
-    if (!target?.property || !target.keyframeId) {
+    if (!target?.keyframeId) {
       return
     }
     if (useSelectionStore.getState().selectedKeyframeIds.includes(target.keyframeId)) {
       deleteSelectedKeyframes(engine, dispatch)
       return
     }
+    let deleteTarget
+    if (target.property) {
+      deleteTarget = { kind: 'node' as const, nodeId: target.nodeId, property: target.property }
+    } else if (target.parameter) {
+      deleteTarget = { kind: 'node' as const, nodeId: target.nodeId, parameter: target.parameter }
+    } else {
+      return
+    }
     const result = dispatch(
       new DeleteKeyframesCommand({
-        target: { kind: 'node', nodeId: target.nodeId, property: target.property },
+        target: deleteTarget,
         keyframeIds: [target.keyframeId],
       }),
     )
@@ -311,6 +373,46 @@ export function TimelineBody({
                   +
                 </button>
               </li>
+            ) : row.kind === 'materialSubtrack' ? (
+              <li
+                key={`${row.node.id}:material:${row.parameter.key}`}
+                className="timeline-subtrack"
+                data-node-id={row.node.id}
+                data-parameter={row.parameter.key}
+                data-depth={row.depth}
+                style={{ paddingLeft: 12 + row.depth * 16 }}
+              >
+                <span className="timeline-subtrack__label">
+                  {materialParameterLabel(row.parameter)}
+                </span>
+                <button
+                  className="timeline-subtrack__add"
+                  aria-label={`Add Keyframe to ${materialParameterLabel(row.parameter)}`}
+                  title="Add keyframe at the playhead"
+                  onClick={() => {
+                    const time = usePlaybackController.getState().getTime(slideId)
+                    const node = engine.getNode(row.node.id)
+                    const overrideValue = node.material.overrides[row.parameter.key]
+                    const value = overrideValue ?? row.parameter.default
+                    const result = dispatch(
+                      new AddKeyframeCommand({
+                        target: {
+                          kind: 'node',
+                          nodeId: row.node.id,
+                          parameter: row.parameter.key,
+                        },
+                        time,
+                        value,
+                      }),
+                    )
+                    if (result && !result.ok) {
+                      notify(result.error.message)
+                    }
+                  }}
+                >
+                  +
+                </button>
+              </li>
             ) : (
               <TrackRow
                 key={row.node.id}
@@ -354,37 +456,71 @@ export function TimelineBody({
               style={{ height: rows.length * ROW_HEIGHT, width: contentWidth }}
             >
               {rows.map((row, index) => {
-                if (row.kind !== 'subtrack') {
-                  return null
+                if (row.kind === 'subtrack') {
+                  const keyframes = engine.getKeyframes(row.node.id, row.property)
+                  return (
+                    <div
+                      key={`${row.node.id}:${row.property}`}
+                      className="timeline-lane-row"
+                      data-property={row.property}
+                      style={{ top: index * ROW_HEIGHT }}
+                    >
+                      {keyframes.map((keyframe) => {
+                        const previewTime = dragPreview?.get(keyframe.id)
+                        const shownTime = previewTime ?? keyframe.time
+                        const selected = selectedKeyframeIds.includes(keyframe.id)
+                        return (
+                          <KeyframeMarker
+                            key={keyframe.id}
+                            keyframeId={keyframe.id}
+                            shownTime={shownTime}
+                            property={row.property}
+                            selected={selected}
+                            pps={pps}
+                            step={step}
+                            onPointerDown={(event) => handleKeyframePointerDown(event, keyframe)}
+                            onContextMenu={(event) =>
+                              handleKeyframeContextMenu(event, row, keyframe)
+                            }
+                          />
+                        )
+                      })}
+                    </div>
+                  )
                 }
-                const keyframes = engine.getKeyframes(row.node.id, row.property)
-                return (
-                  <div
-                    key={`${row.node.id}:${row.property}`}
-                    className="timeline-lane-row"
-                    data-property={row.property}
-                    style={{ top: index * ROW_HEIGHT }}
-                  >
-                    {keyframes.map((keyframe) => {
-                      const previewTime = dragPreview?.get(keyframe.id)
-                      const shownTime = previewTime ?? keyframe.time
-                      const selected = selectedKeyframeIds.includes(keyframe.id)
-                      return (
-                        <KeyframeMarker
-                          key={keyframe.id}
-                          keyframeId={keyframe.id}
-                          shownTime={shownTime}
-                          property={row.property}
-                          selected={selected}
-                          pps={pps}
-                          step={step}
-                          onPointerDown={(event) => handleKeyframePointerDown(event, keyframe)}
-                          onContextMenu={(event) => handleKeyframeContextMenu(event, row, keyframe)}
-                        />
-                      )
-                    })}
-                  </div>
-                )
+                if (row.kind === 'materialSubtrack') {
+                  const keyframes = engine.getMaterialKeyframes(row.node.id, row.parameter.key)
+                  return (
+                    <div
+                      key={`${row.node.id}:material:${row.parameter.key}`}
+                      className="timeline-lane-row"
+                      data-parameter={row.parameter.key}
+                      style={{ top: index * ROW_HEIGHT }}
+                    >
+                      {keyframes.map((keyframe) => {
+                        const previewTime = dragPreview?.get(keyframe.id)
+                        const shownTime = previewTime ?? keyframe.time
+                        const selected = selectedKeyframeIds.includes(keyframe.id)
+                        return (
+                          <KeyframeMarker
+                            key={keyframe.id}
+                            keyframeId={keyframe.id}
+                            shownTime={shownTime}
+                            selected={selected}
+                            pps={pps}
+                            step={step}
+                            parameterLabel={materialParameterLabel(row.parameter)}
+                            onPointerDown={(event) => handleKeyframePointerDown(event, keyframe)}
+                            onContextMenu={(event) =>
+                              handleKeyframeContextMenu(event, row, keyframe)
+                            }
+                          />
+                        )
+                      })}
+                    </div>
+                  )
+                }
+                return null
               })}
             </div>
             <div

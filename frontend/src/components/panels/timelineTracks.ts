@@ -1,5 +1,6 @@
 import type { Scene, SceneNode } from '../../engine'
 import type { AnimationProperty } from '../../engine'
+import type { MaterialParameterDefault } from '../../engine'
 import { animatablePropertiesOf } from '../../app/keyframeActions'
 
 export const TRACK_HEADER_WIDTH = 240
@@ -20,7 +21,14 @@ export interface SubtrackEntry {
   readonly depth: number
 }
 
-export type TimelineRow = TrackRowEntry | SubtrackEntry
+export interface MaterialSubtrackEntry {
+  readonly kind: 'materialSubtrack'
+  readonly node: SceneNode
+  readonly parameter: MaterialParameterDefault
+  readonly depth: number
+}
+
+export type TimelineRow = TrackRowEntry | SubtrackEntry | MaterialSubtrackEntry
 
 export const PROPERTY_LABELS: Record<AnimationProperty, string> = {
   positionX: 'Position X',
@@ -29,6 +37,22 @@ export const PROPERTY_LABELS: Record<AnimationProperty, string> = {
   scaleX: 'Scale X',
   scaleY: 'Scale Y',
   opacity: 'Opacity',
+}
+
+export function materialParameterLabel(parameter: MaterialParameterDefault): string {
+  return parameter.key
+}
+
+export function materialParametersOf(
+  node: SceneNode,
+  materialDefinitions: readonly { id: string; parameters: readonly MaterialParameterDefault[] }[],
+): MaterialParameterDefault[] {
+  const definitionId = node.material.materialDefinitionId
+  const definition = materialDefinitions.find((d) => d.id === definitionId)
+  if (!definition) {
+    return []
+  }
+  return [...definition.parameters]
 }
 
 export function trackRows(scene: Scene): TrackRowEntry[] {
@@ -56,6 +80,10 @@ export function trackRows(scene: Scene): TrackRowEntry[] {
 export function timelineRows(
   scene: Scene,
   expandedNodeIds: Readonly<Record<string, boolean>>,
+  materialDefinitions: readonly {
+    id: string
+    parameters: readonly MaterialParameterDefault[]
+  }[] = [],
 ): TimelineRow[] {
   const rows: TimelineRow[] = []
   for (const entry of trackRows(scene)) {
@@ -63,6 +91,9 @@ export function timelineRows(
     if (expandedNodeIds[entry.node.id] === true) {
       for (const property of animatablePropertiesOf(entry.node)) {
         rows.push({ kind: 'subtrack', node: entry.node, property, depth: entry.depth + 1 })
+      }
+      for (const parameter of materialParametersOf(entry.node, materialDefinitions)) {
+        rows.push({ kind: 'materialSubtrack', node: entry.node, parameter, depth: entry.depth + 1 })
       }
     }
   }

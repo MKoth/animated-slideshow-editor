@@ -213,8 +213,7 @@ export function MaterialInspectorSection({
             return
           }
           const nodeIds = targets.map((node) => node.id)
-          const currentValue =
-            effective !== null ? effective : uniform.default
+          const currentValue = effective !== null ? effective : uniform.default
           runCommand(notify, () =>
             materialEditAtPlayhead(engine, dispatch, [
               {
@@ -251,9 +250,7 @@ export function MaterialInspectorSection({
                   parameter: uniform.key,
                   value: toKeyframeValue(value),
                 }))
-                runCommand(notify, () =>
-                  materialEditAtPlayhead(engine, dispatch, edits),
-                )
+                runCommand(notify, () => materialEditAtPlayhead(engine, dispatch, edits))
                 return
               }
               runCommand(notify, () =>

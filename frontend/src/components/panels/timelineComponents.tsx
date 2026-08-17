@@ -13,6 +13,7 @@ export interface TimelineMenuState {
   readonly y: number
   readonly nodeId: string
   readonly property?: AnimationProperty
+  readonly parameter?: string
   readonly keyframeId?: string
 }
 
@@ -100,27 +101,31 @@ export function KeyframeMarker({
   selected,
   pps,
   step,
+  parameterLabel,
   onPointerDown,
   onContextMenu,
 }: {
   keyframeId: string
   shownTime: number
-  property: AnimationProperty
+  property?: AnimationProperty
   selected: boolean
   pps: number
   step: number
+  parameterLabel?: string
   onPointerDown: (event: React.PointerEvent) => void
   onContextMenu: (event: React.MouseEvent) => void
 }) {
+  const label = parameterLabel ?? (property ? PROPERTY_LABELS[property] : 'Unknown')
   return (
     <div
       className={`timeline-keyframe${selected ? ' timeline-keyframe--selected' : ''}`}
       data-testid="keyframe-marker"
       data-keyframe-id={keyframeId}
       data-property={property}
+      data-parameter={parameterLabel}
       data-time={String(shownTime)}
       role="button"
-      aria-label={`Keyframe at ${tickLabel(shownTime, step)} on ${PROPERTY_LABELS[property]}`}
+      aria-label={`Keyframe at ${tickLabel(shownTime, step)} on ${label}`}
       style={{ left: shownTime * pps }}
       onPointerDown={onPointerDown}
       onContextMenu={onContextMenu}

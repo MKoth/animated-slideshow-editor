@@ -48,7 +48,8 @@ export function TimelinePanel({ height }: { height: number }) {
   const hasObjects = scene ? sceneHasObjects(scene) : false
   const expandedNodeIds = useTimelineViewStore((state) => state.expandedNodeIds)
   const viewportWidth = useViewportWidth(scrollerRef, [slide?.id ?? null, hasObjects])
-  const rows = scene ? timelineRows(scene, expandedNodeIds) : []
+  const materialDefinitions = engine.materialDefinitions
+  const rows = scene ? timelineRows(scene, expandedNodeIds, materialDefinitions) : []
 
   let body: React.ReactNode
   if (!project) {

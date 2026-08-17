@@ -3,15 +3,16 @@ import type { AnimationProperty } from '../../engine'
 import { MoveKeyframesCommand } from '../../engine/commands'
 import type { DispatchCommand } from '../../engine/commands'
 import { dispatchKeyframeCommands } from '../../engine/keyframeEdit'
-import { groupRefsByTarget } from '../../app/keyframeSelectionActions'
-import type { KeyframeRef } from '../../app/keyframeSelectionActions'
+import { groupRefsByTarget, groupMaterialRefsByTarget } from '../../app/keyframeSelectionActions'
+import type { KeyframeRef, MaterialKeyframeRef } from '../../app/keyframeSelectionActions'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { rulerTickStep, snapTimeToGrid } from '../../stores/timelineViewStore'
 
 interface DragMove {
   readonly keyframeId: string
   readonly nodeId: string
-  readonly property: AnimationProperty
+  readonly property?: AnimationProperty
+  readonly parameter?: string
   readonly originalTime: number
 }
 
@@ -21,7 +22,7 @@ interface DragSession {
 }
 
 export interface KeyframeDragOptions {
-  readonly keyframeRefs: ReadonlyMap<string, KeyframeRef>
+  readonly keyframeRefs: ReadonlyMap<string, KeyframeRef | MaterialKeyframeRef>
   readonly duration: number
   readonly pps: number
   readonly timeFromClientX: (clientX: number) => number
@@ -84,16 +85,37 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
     if (moved.length === 0) {
       return
     }
-    const commands = groupRefsByTarget(moved, (move) => ({
+    type MovedDragMove = DragMove & { readonly newTime: number }
+    const propertyMoves = moved.filter(
+      (move): move is MovedDragMove & { property: AnimationProperty } =>
+        move.property !== undefined,
+    )
+    const materialMoves = moved.filter(
+      (move): move is MovedDragMove & { parameter: string } => move.parameter !== undefined,
+    )
+    const commands: MoveKeyframesCommand[] = []
+    for (const group of groupRefsByTarget(propertyMoves, (move) => ({
       keyframeId: move.keyframeId,
       newTime: move.newTime,
-    })).map(
-      (group) =>
+    }))) {
+      commands.push(
         new MoveKeyframesCommand({
           target: { kind: 'node', nodeId: group.nodeId, property: group.property },
           moves: group.items,
         }),
-    )
+      )
+    }
+    for (const group of groupMaterialRefsByTarget(materialMoves, (move) => ({
+      keyframeId: move.keyframeId,
+      newTime: move.newTime,
+    }))) {
+      commands.push(
+        new MoveKeyframesCommand({
+          target: { kind: 'node', nodeId: group.nodeId, parameter: group.parameter },
+          moves: group.items,
+        }),
+      )
+    }
     const result = dispatchKeyframeCommands(dispatch, commands)
     if (result && !result.ok) {
       notify(result.error.message)
@@ -105,12 +127,21 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
     for (const keyframeId of useSelectionStore.getState().selectedKeyframeIds) {
       const ref = keyframeRefs.get(keyframeId)
       if (ref) {
-        moves.push({
-          keyframeId,
-          nodeId: ref.nodeId,
-          property: ref.property,
-          originalTime: ref.time,
-        })
+        if ('property' in ref) {
+          moves.push({
+            keyframeId,
+            nodeId: ref.nodeId,
+            property: ref.property,
+            originalTime: ref.time,
+          })
+        } else if ('parameter' in ref) {
+          moves.push({
+            keyframeId,
+            nodeId: ref.nodeId,
+            parameter: (ref as MaterialKeyframeRef).parameter,
+            originalTime: ref.time,
+          })
+        }
       }
     }
     if (moves.length === 0) {
