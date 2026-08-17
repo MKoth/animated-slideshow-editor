@@ -904,6 +904,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getClip: (clipId) => engine.getClip(clipId),
     getClipChannelKeyframes: (clipId, channel) => engine.getClipChannelKeyframes(clipId, channel),
     getClipInstances: (nodeId) => engine.getClipInstances(nodeId),
+    isClipReferenced: (clipId) => engine.isClipReferenced(clipId),
+    getClipBlockingNodeNames: (clipId) => engine.getClipBlockingNodeNames(clipId),
     toJSON: () => engine.toJSON(),
   }
 }
