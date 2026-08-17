@@ -13,7 +13,7 @@ import {
   OverrideMaterialParameterCommand,
 } from '../engine/commands'
 import type { Command } from '../engine/commands'
-import { RESERVED_TEXTURE_UNIFORM } from '../shaders/reflection'
+import { RESERVED_TEXTURE_UNIFORM, RESERVED_TIME_UNIFORM } from '../shaders/reflection'
 import { dispatchCommands } from './keyframeActions'
 import { readUniformReadings } from './uniformReadings'
 import type { UniformReading } from './uniformReadings'
@@ -48,6 +48,7 @@ export function readMaterial(engine: EnginePublic, node: SceneNode): MaterialRea
     TINT_PARAMETER_KEY,
     OPACITY_MULTIPLIER_PARAMETER_KEY,
     RESERVED_TEXTURE_UNIFORM,
+    RESERVED_TIME_UNIFORM,
   ])
   return {
     definitionId: node.material.materialDefinitionId,

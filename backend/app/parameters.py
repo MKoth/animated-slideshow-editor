@@ -24,7 +24,9 @@ VEC_COMPONENTS: dict[str, int] = {"vec2": 2, "vec3": 3, "vec4": 4}
 
 # Uniform keys reserved from user uniforms: the implicit source sampler and
 # the material built-in parameter keys, which uniforms must never shadow.
-RESERVED_UNIFORM_KEYS: frozenset[str] = frozenset({"uTexture", "tint", "opacityMultiplier"})
+RESERVED_UNIFORM_KEYS: frozenset[str] = frozenset(
+    {"uTexture", "uTime", "tint", "opacityMultiplier"}
+)
 
 _COLOR_PATTERN = re.compile(r"^#[0-9a-f]{6}$", flags=re.IGNORECASE)
 

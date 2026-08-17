@@ -245,7 +245,7 @@ def test_supported_uniform_kinds_round_trip(client: TestClient) -> None:
 def test_uniform_defaults_update_rejects_reserved_keys(client: TestClient) -> None:
     shader = import_shader(client, "Tint Mix")
 
-    for key in ("uTexture", "tint", "opacityMultiplier"):
+    for key in ("uTexture", "uTime", "tint", "opacityMultiplier"):
         response = client.put(
             f"/api/shaders/{shader['id']}/uniforms",
             json={"default_uniforms": [{"key": key, "kind": "float", "default": 1.0}]},

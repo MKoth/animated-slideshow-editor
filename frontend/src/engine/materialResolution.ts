@@ -1,4 +1,5 @@
 import type { MaterialOverrides, MaterialParameterDefaultValue } from './materialInstance'
+import { RESERVED_TIME_UNIFORM } from '../shaders/reflection'
 
 export type { MaterialParameterDefaultValue } from './materialInstance'
 
@@ -6,6 +7,7 @@ export const TINT_PARAMETER_KEY = 'tint'
 export const OPACITY_MULTIPLIER_PARAMETER_KEY = 'opacityMultiplier'
 export const DEFAULT_TINT = '#ffffff'
 export const DEFAULT_OPACITY_MULTIPLIER = 1
+export { RESERVED_TIME_UNIFORM }
 
 export const DEFAULT_MATERIAL_PARAMETERS: readonly MaterialParameterDefault[] = [
   { key: TINT_PARAMETER_KEY, kind: 'color', default: DEFAULT_TINT },
@@ -29,6 +31,7 @@ export interface EffectiveShaderScratch {
   kinds: string[]
   values: (MaterialParameterDefaultValue | undefined)[]
   samplers: ShaderSamplerBinding[]
+  uTimeValue: number
 }
 
 /** One sampler2D uniform resolved to the asset definition it samples. */
@@ -42,7 +45,7 @@ export function effectiveMaterialScratch(): EffectiveMaterialScratch {
 }
 
 export function effectiveShaderScratch(): EffectiveShaderScratch {
-  return { source: null, keys: [], kinds: [], values: [], samplers: [] }
+  return { source: null, keys: [], kinds: [], values: [], samplers: [], uTimeValue: 0 }
 }
 
 export function resolveMaterial(
@@ -87,12 +90,14 @@ export function resolveShaderUniforms(
   parameters: readonly MaterialParameterDefault[],
   overrides: MaterialOverrides,
   target: EffectiveShaderScratch = effectiveShaderScratch(),
+  uTimeValue?: number,
 ): EffectiveShaderScratch {
   clearShaderUniforms(target)
   for (const parameter of parameters) {
     if (
       parameter.key === TINT_PARAMETER_KEY ||
-      parameter.key === OPACITY_MULTIPLIER_PARAMETER_KEY
+      parameter.key === OPACITY_MULTIPLIER_PARAMETER_KEY ||
+      parameter.key === RESERVED_TIME_UNIFORM
     ) {
       continue
     }
@@ -108,10 +113,11 @@ export function resolveShaderUniforms(
     target.kinds.push(parameter.kind)
     target.values.push(resolveParameterValue(parameters, overrides, parameter.key))
   }
+  target.uTimeValue = uTimeValue ?? 0
   return target
 }
 
-/** Whether two resolved uniform states carry the same keys, kinds, values and samplers. */
+/** Whether two resolved uniform states carry the same keys, kinds, values, samplers and uTime. */
 export function shaderUniformsEqual(
   previous: EffectiveShaderScratch | undefined,
   next: EffectiveShaderScratch,
@@ -120,7 +126,8 @@ export function shaderUniformsEqual(
     !previous ||
     previous.source !== next.source ||
     previous.keys.length !== next.keys.length ||
-    previous.samplers.length !== next.samplers.length
+    previous.samplers.length !== next.samplers.length ||
+    previous.uTimeValue !== next.uTimeValue
   ) {
     return false
   }
@@ -153,6 +160,7 @@ export function copyShaderUniforms(
 ): void {
   clearShaderUniforms(target)
   target.source = source.source
+  target.uTimeValue = source.uTimeValue
   for (let index = 0; index < source.keys.length; index++) {
     target.keys.push(source.keys[index])
     target.kinds.push(source.kinds[index])

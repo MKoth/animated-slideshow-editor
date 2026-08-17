@@ -7,6 +7,8 @@ import {
   copyEvaluatedState,
   evaluatedNodeScratch,
   evaluatedStatesEqual,
+  evaluatedMaterialOverridesScratch,
+  type EvaluatedMaterialOverridesScratch,
 } from '../../engine/animationEvaluator'
 import {
   effectiveMaterialScratch,
@@ -19,6 +21,7 @@ import {
   type EffectiveShaderScratch,
   type MaterialParameterDefault,
 } from '../../engine/materialResolution'
+import type { MaterialOverrides } from '../../engine/materialInstance'
 import type { PixiContainer, PixiFilter, RendererPixi } from './pixi'
 import type { WorldSize } from './worldGeometry'
 import {
@@ -73,6 +76,8 @@ export class SceneRenderer {
   readonly #scratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #materialScratch: EffectiveMaterialScratch = effectiveMaterialScratch()
   readonly #shaderScratch: EffectiveShaderScratch = effectiveShaderScratch()
+  readonly #materialOverridesScratch: EvaluatedMaterialOverridesScratch =
+    evaluatedMaterialOverridesScratch()
   readonly #onNodeSizeChanged: (nodeId: string) => void
   #scene: Scene | null = null
   #slideId: string | null = null
@@ -304,13 +309,15 @@ export class SceneRenderer {
     if (!scene || !slideId || !scene.getNode(nodeId) || !container) {
       return
     }
-    const state = this.#engine.evaluateNode(
+    const time = this.#currentTime.getTime(slideId)
+    const state = this.#engine.evaluateNode(nodeId, time, this.#scratch)
+    const evaluatedOverrides = this.#engine.evaluateMaterialOverrides(
       nodeId,
-      this.#currentTime.getTime(slideId),
-      this.#scratch,
+      time,
+      this.#materialOverridesScratch,
     )
-    const material = this.#resolveMaterial(nodeId, this.#materialScratch)
-    this.#resolveShader(nodeId, this.#shaderScratch)
+    const material = this.#resolveMaterial(nodeId, evaluatedOverrides, this.#materialScratch)
+    this.#resolveShader(nodeId, evaluatedOverrides, time, this.#shaderScratch)
     const shaderChanged = this.#applyNodeShader(nodeId, container, this.#shaderScratch)
     const previous = this.#lastEvaluated.get(nodeId)
     const previousMaterial = this.#lastMaterials.get(nodeId)
@@ -391,7 +398,11 @@ export class SceneRenderer {
     return true
   }
 
-  #resolveMaterial(nodeId: string, target: EffectiveMaterialScratch): EffectiveMaterialScratch {
+  #resolveMaterial(
+    nodeId: string,
+    overrides: MaterialOverrides,
+    target: EffectiveMaterialScratch,
+  ): EffectiveMaterialScratch {
     const node = this.#scene?.getNode(nodeId)
     if (!node) {
       return target
@@ -402,14 +413,19 @@ export class SceneRenderer {
     } catch {
       parameters = UNKNOWN_DEFINITION_PARAMETERS
     }
-    return resolveMaterial(parameters, node.material.overrides, target)
+    return resolveMaterial(parameters, overrides, target)
   }
 
-  #resolveShader(nodeId: string, target: EffectiveShaderScratch): void {
+  #resolveShader(
+    nodeId: string,
+    overrides: MaterialOverrides,
+    time: number,
+    target: EffectiveShaderScratch,
+  ): void {
     const node = this.#scene?.getNode(nodeId)
     if (!node) {
       target.source = null
-      resolveShaderUniforms(UNKNOWN_DEFINITION_PARAMETERS, {}, target)
+      resolveShaderUniforms(UNKNOWN_DEFINITION_PARAMETERS, {}, target, time)
       return
     }
     let parameters = UNKNOWN_DEFINITION_PARAMETERS
@@ -421,7 +437,7 @@ export class SceneRenderer {
     } catch {
       parameters = UNKNOWN_DEFINITION_PARAMETERS
     }
-    resolveShaderUniforms(parameters, node.material.overrides, target)
+    resolveShaderUniforms(parameters, overrides, target, time)
     target.source = shaderId ? this.#resolveShaderSource(shaderId) : null
   }
 
@@ -454,7 +470,12 @@ export class SceneRenderer {
         return
       }
       applyAssetTexture(placeholder, result.texture)
-      const material = this.#resolveMaterial(nodeId, this.#materialScratch)
+      const node = this.#scene?.getNode(nodeId)
+      const material = this.#resolveMaterial(
+        nodeId,
+        node?.material.overrides ?? {},
+        this.#materialScratch,
+      )
       applyMaterialTint(container, material.tint)
       const size = placeholderSize(placeholder)
       if (size) {

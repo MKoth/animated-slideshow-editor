@@ -44,6 +44,11 @@ export function createNodeShaderFilter(
   textures?: TextureCache,
 ): PixiFilter {
   const resources: Record<string, unknown> = { uniforms: uniformStructures(scratch) }
+  if (source.includes('uniform float uTime')) {
+    ;(resources.uniforms as Record<string, { value: MaterialParameterDefaultValue; type: string }>)[
+      'uTime'
+    ] = { value: scratch.uTimeValue ?? 0, type: 'f32' }
+  }
   if (textures) {
     for (const sampler of scratch.samplers) {
       resources[sampler.key] = textures.get(sampler.key).source
@@ -61,5 +66,8 @@ export function applyFilterUniforms(filter: PixiFilter, scratch: EffectiveShader
   const uniforms = nodeFilterUniforms(filter)
   for (let index = 0; index < scratch.keys.length; index++) {
     uniforms[scratch.keys[index]] = scratch.values[index]
+  }
+  if ('uTime' in uniforms) {
+    uniforms['uTime'] = scratch.uTimeValue ?? 0
   }
 }

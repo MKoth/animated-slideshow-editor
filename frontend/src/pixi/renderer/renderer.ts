@@ -445,6 +445,7 @@ export class Renderer {
     }
     try {
       this.#sceneRenderer?.handleTimeChanged()
+      this.#syncFullscreenShader()
     } catch (error) {
       this.#reportFailure(error)
     }
@@ -549,7 +550,9 @@ export class Renderer {
       return
     }
     const scratch = this.#fullscreenScratch
-    resolveFullscreenShaderState(this.#engine, this.#resolveShaderSource, scratch)
+    const slideId = this.#sceneRenderer?.boundSlideId ?? null
+    const uTimeValue = slideId ? this.#currentTime.getTime(slideId) : 0
+    resolveFullscreenShaderState(this.#engine, this.#resolveShaderSource, scratch, uTimeValue)
     pass.update(scratch.source, scratch)
   }
 

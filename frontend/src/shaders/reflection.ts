@@ -1,4 +1,5 @@
 export const RESERVED_TEXTURE_UNIFORM = 'uTexture'
+export const RESERVED_TIME_UNIFORM = 'uTime'
 
 export type ReflectedUniformType = 'float' | 'int' | 'bool' | 'vec2' | 'vec3' | 'vec4' | 'sampler2D'
 
@@ -72,7 +73,7 @@ export function reflectUniforms(source: string): ShaderReflection {
       })
       continue
     }
-    if (name === RESERVED_TEXTURE_UNIFORM) {
+    if (name === RESERVED_TEXTURE_UNIFORM || name === RESERVED_TIME_UNIFORM) {
       continue
     }
     if (seen.has(name)) {

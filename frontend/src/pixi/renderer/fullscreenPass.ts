@@ -189,8 +189,9 @@ export function resolveFullscreenShaderState(
   engine: EnginePublic,
   resolveShaderSource: ResolveFullscreenShaderSource,
   target: EffectiveShaderScratch,
+  uTimeValue?: number,
 ): EffectiveShaderScratch {
-  resolveShaderUniforms(UNKNOWN_SHADER_PARAMETERS, {}, target)
+  resolveShaderUniforms(UNKNOWN_SHADER_PARAMETERS, {}, target, uTimeValue)
   target.source = null
   const slide = engine.getActiveSlide()
   const reference = slide?.fullscreenShader ?? null
@@ -203,7 +204,7 @@ export function resolveFullscreenShaderState(
   } catch {
     parameters = UNKNOWN_SHADER_PARAMETERS
   }
-  resolveShaderUniforms(parameters, reference.overrides, target)
+  resolveShaderUniforms(parameters, reference.overrides, target, uTimeValue)
   target.source = resolveShaderSource(reference.shaderDefinitionId)
   return target
 }
