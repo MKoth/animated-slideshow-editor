@@ -8,8 +8,8 @@ import {
 } from '../../engine/timelineSnapping'
 
 describe('FRAME_STEP', () => {
-  it('is 1/60 s', () => {
-    expect(FRAME_STEP).toBe(1 / 60)
+  it('is 0.5 s', () => {
+    expect(FRAME_STEP).toBe(0.5)
   })
 })
 
@@ -18,21 +18,21 @@ describe('snapToFrameGrid', () => {
     expect(snapToFrameGrid(0.123, false)).toBe(0.123)
   })
 
-  it('snaps to the nearest 1/60 s boundary', () => {
+  it('snaps to the nearest 0.5 s boundary', () => {
     expect(snapToFrameGrid(0, true)).toBe(0)
-    expect(snapToFrameGrid(0.005, true)).toBe(0)
-    expect(snapToFrameGrid(0.012, true)).toBeCloseTo(1 / 60)
-    expect(snapToFrameGrid(0.02, true)).toBeCloseTo(1 / 60)
+    expect(snapToFrameGrid(0.1, true)).toBe(0)
+    expect(snapToFrameGrid(0.2, true)).toBe(0)
+    expect(snapToFrameGrid(0.3, true)).toBe(0.5)
     expect(snapToFrameGrid(0.5, true)).toBe(0.5)
+    expect(snapToFrameGrid(0.7, true)).toBe(0.5)
+    expect(snapToFrameGrid(0.8, true)).toBe(1)
     expect(snapToFrameGrid(1, true)).toBe(1)
   })
 
-  it('handles fractional frame boundaries correctly', () => {
-    const frame3 = 3 / 60
-    const frame4 = 4 / 60
-    expect(snapToFrameGrid(frame3, true)).toBeCloseTo(frame3)
-    expect(snapToFrameGrid(frame3 + 0.001, true)).toBeCloseTo(frame3)
-    expect(snapToFrameGrid(frame3 + FRAME_STEP / 2, true)).toBeCloseTo(frame4)
+  it('handles fractional boundaries correctly', () => {
+    expect(snapToFrameGrid(0.24, true)).toBe(0)
+    expect(snapToFrameGrid(0.26, true)).toBe(0.5)
+    expect(snapToFrameGrid(0.75, true)).toBe(1)
   })
 })
 

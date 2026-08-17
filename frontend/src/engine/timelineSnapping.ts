@@ -1,5 +1,5 @@
-/** The 1/60 s frame boundary used for timeline grid snapping (Spec 07 R7). */
-export const FRAME_STEP = 1 / 60
+/** The 0.5 s grid step used for timeline grid snapping (Spec 07 R7). */
+export const FRAME_STEP = 0.5
 
 /**
  * Snap a time value to the nearest 1/60 s frame boundary.

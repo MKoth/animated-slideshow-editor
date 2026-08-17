@@ -240,7 +240,7 @@ describe('TimelinePanel moving keyframes', () => {
     expect(logger).toHaveBeenCalledWith(expect.stringContaining('MoveKeyframes'))
   })
 
-  it('moves the selected keyframes together, snapping to the ruler grid', async () => {
+  it('moves the selected keyframes together, snapping to the 0.5 s grid', async () => {
     const { engine, dispatcher, undoStack } = renderPanel()
     const { nodeId } = createSceneWithNode(engine)
     await screen.findByRole('track', { name: 'Boy' })
@@ -696,7 +696,7 @@ describe('TimelinePanel snapping toggles', () => {
 })
 
 describe('TimelinePanel grid snapping behavior', () => {
-  it('snaps dragged keyframes to 1/60 s frame boundaries when grid snap is on', async () => {
+  it('snaps dragged keyframes to 0.5 s grid boundaries when grid snap is on', async () => {
     const { engine, dispatcher } = renderPanel()
     const { nodeId } = createSceneWithNode(engine)
     await screen.findByRole('track', { name: 'Boy' })
