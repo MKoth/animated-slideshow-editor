@@ -1,5 +1,6 @@
 import { useUiStore } from '../../stores/uiStore'
 import type { SidebarTab } from '../../stores/uiPrefs'
+import { AnimationsPanel } from '../panels/AnimationsPanel'
 import { AssetsPanel } from '../panels/AssetsPanel'
 import { MaterialsPanel } from '../panels/MaterialsPanel'
 import { ScenePanel } from '../panels/ScenePanel'
@@ -10,6 +11,7 @@ const TABS = [
   { id: 'slides', label: 'Slides' },
   { id: 'scene', label: 'Scene' },
   { id: 'materials', label: 'Materials' },
+  { id: 'animations', label: 'Animations' },
 ] as const satisfies readonly { id: SidebarTab; label: string }[]
 
 const PANELS: Record<SidebarTab, () => React.JSX.Element> = {
@@ -17,6 +19,7 @@ const PANELS: Record<SidebarTab, () => React.JSX.Element> = {
   slides: SlidesPanel,
   scene: ScenePanel,
   materials: MaterialsPanel,
+  animations: AnimationsPanel,
 }
 
 export function LeftSidebar({ width }: { width: number }) {

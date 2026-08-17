@@ -59,6 +59,8 @@ export interface EnginePublic {
   getClip(clipId: string): ClipDefinition
   getClipChannelKeyframes(clipId: string, channel: AnimationProperty): readonly Keyframe[]
   getClipInstances(nodeId: string): readonly ClipInstance[]
+  isClipReferenced(clipId: string): boolean
+  getClipBlockingNodeNames(clipId: string): string[]
   toJSON(): LessonJSON
 }
 
