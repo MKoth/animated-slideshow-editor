@@ -499,6 +499,28 @@ export function TimelineBody({
   const ticks = rulerTickTimes(scrollTime, visibleEnd, step)
   const contentWidth = Math.max(viewportWidth, duration * pps + TRAILING_SCROLL_PADDING_PX)
 
+  const effectiveSelectionBounds = selectionBounds
+    ? (() => {
+        if (!scalePreview || scalePreview.size === 0) return selectionBounds
+        let minTime = Infinity
+        let maxTime = -Infinity
+        for (const id of selectedKeyframeIds) {
+          const previewTime = scalePreview.get(id)
+          const ref = keyframeRefs.get(id)
+          const time = previewTime ?? ref?.time ?? 0
+          if (time < minTime) minTime = time
+          if (time > maxTime) maxTime = time
+        }
+        return minTime === Infinity
+          ? selectionBounds
+          : {
+              ...selectionBounds,
+              minTime,
+              maxTime,
+            }
+      })()
+    : null
+
   return (
     <div className="timeline-body" onPointerMove={recordPointerTime}>
       <div
@@ -628,6 +650,7 @@ export function TimelineBody({
               {rows.map((row, index) => {
                 if (row.kind === 'subtrack') {
                   const keyframes = engine.getKeyframes(row.node.id, row.property)
+
                   return (
                     <div
                       key={`${row.node.id}:${row.property}`}
@@ -663,6 +686,7 @@ export function TimelineBody({
                 }
                 if (row.kind === 'materialSubtrack') {
                   const keyframes = engine.getMaterialKeyframes(row.node.id, row.parameter.key)
+
                   return (
                     <div
                       key={`${row.node.id}:material:${row.parameter.key}`}
@@ -721,13 +745,13 @@ export function TimelineBody({
                 }}
               />
             )}
-            {selectionBounds && selectedKeyframeIds.length >= 2 && (
+            {effectiveSelectionBounds && selectedKeyframeIds.length >= 2 && (
               <SelectionScaleBox
                 bounds={{
-                  minX: selectionBounds.minTime * pps,
-                  maxX: selectionBounds.maxTime * pps,
-                  minY: selectionBounds.minRowIndex * ROW_HEIGHT,
-                  maxY: (selectionBounds.maxRowIndex + 1) * ROW_HEIGHT,
+                  minX: effectiveSelectionBounds.minTime * pps,
+                  maxX: effectiveSelectionBounds.maxTime * pps,
+                  minY: effectiveSelectionBounds.minRowIndex * ROW_HEIGHT,
+                  maxY: (effectiveSelectionBounds.maxRowIndex + 1) * ROW_HEIGHT,
                 }}
                 onScaleStart={(edge, clientX, isAlt) => {
                   startScale(edge, clientX, isAlt, currentTime)
