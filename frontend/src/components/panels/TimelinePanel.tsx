@@ -6,9 +6,11 @@ import {
   DEFAULT_TIMELINE_VIEWPORT_WIDTH,
   useTimelineViewStore,
 } from '../../stores/timelineViewStore'
+import { useCurveEditorViewStore } from '../../stores/curveEditorViewStore'
 import { sceneHasObjects, timelineRows } from './timelineTracks'
 import { TimelineBody } from './TimelineBody'
 import { TimelineToolbar } from './TimelineToolbar'
+import { CurveEditorPanel } from './CurveEditorPanel'
 
 function useViewportWidth(
   scrollerRef: RefObject<HTMLDivElement | null>,
@@ -42,6 +44,9 @@ export function TimelinePanel({ height }: { height: number }) {
   const timeAreaRef = useRef<HTMLDivElement>(null)
   const lastPointerTimeRef = useRef<number | null>(null)
 
+  const viewMode = useCurveEditorViewStore((state) => state.viewMode)
+  const setViewMode = useCurveEditorViewStore((state) => state.setViewMode)
+
   const project = engine.project
   const slide = engine.getActiveSlide()
   const scene = slide?.scene ?? null
@@ -70,6 +75,15 @@ export function TimelinePanel({ height }: { height: number }) {
         <p>No objects in the scene. Drag assets into the scene to begin animating.</p>
       </div>
     )
+  } else if (viewMode === 'curveEditor') {
+    body = (
+      <CurveEditorPanel
+        slideId={slide.id}
+        duration={slide.duration}
+        scene={scene}
+        viewportWidth={viewportWidth}
+      />
+    )
   } else {
     body = (
       <TimelineBody
@@ -89,12 +103,32 @@ export function TimelinePanel({ height }: { height: number }) {
   return (
     <div className="timeline-panel" style={{ height }}>
       {slide && (
-        <TimelineToolbar
-          slideId={slide.id}
-          duration={slide.duration}
-          viewportWidth={viewportWidth}
-          zoomAnchor={() => lastPointerTimeRef.current}
-        />
+        <>
+          <div className="timeline-toolbar">
+            <div className="timeline-toolbar__view-toggle">
+              <button
+                className="timeline-toolbar__button"
+                aria-pressed={viewMode === 'dopeSheet'}
+                onClick={() => setViewMode('dopeSheet')}
+              >
+                Dope Sheet
+              </button>
+              <button
+                className="timeline-toolbar__button"
+                aria-pressed={viewMode === 'curveEditor'}
+                onClick={() => setViewMode('curveEditor')}
+              >
+                Curve Editor
+              </button>
+            </div>
+          </div>
+          <TimelineToolbar
+            slideId={slide.id}
+            duration={slide.duration}
+            viewportWidth={viewportWidth}
+            zoomAnchor={() => lastPointerTimeRef.current}
+          />
+        </>
       )}
       {body}
     </div>

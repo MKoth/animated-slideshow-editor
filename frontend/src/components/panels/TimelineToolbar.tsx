@@ -6,6 +6,7 @@ import {
   selectedKeyframeIdsOf,
 } from '../../stores/timelineSelectionStore'
 import { pixelsPerSecond, useTimelineViewStore } from '../../stores/timelineViewStore'
+import { useCurveEditorViewStore } from '../../stores/curveEditorViewStore'
 import { useUiStore } from '../../stores/uiStore'
 
 export function TimelineToolbar({
@@ -29,6 +30,9 @@ export function TimelineToolbar({
   const snapToKeyframesEnabled = useTimelineViewStore((state) => state.snapToKeyframesEnabled)
   const keyframeCount = selectedKeyframeIdsOf(useTimelineSelectionStore()).length
   const { engine, dispatch } = useEngine()
+  const viewMode = useCurveEditorViewStore((state) => state.viewMode)
+  const fitCurves = useCurveEditorViewStore((state) => state.fitCurves)
+  const frameSelected = useCurveEditorViewStore((state) => state.frameSelected)
 
   const playing = status === 'playing'
   const paused = status === 'paused'
@@ -184,6 +188,26 @@ export function TimelineToolbar({
         {formatTimeCode(currentTime)}
       </span>
       <div className="timeline-toolbar__zoom">
+        {viewMode === 'curveEditor' && (
+          <>
+            <button
+              className="timeline-toolbar__button"
+              aria-label="Fit Curves"
+              title="Fit all curves in the viewport"
+              onClick={() => fitCurves()}
+            >
+              Fit Curves
+            </button>
+            <button
+              className="timeline-toolbar__button"
+              aria-label="Frame Selected"
+              title="Frame selected keyframes in the viewport"
+              onClick={() => frameSelected()}
+            >
+              Frame Selected
+            </button>
+          </>
+        )}
         <button
           className="timeline-toolbar__button"
           aria-label="Zoom Out"
