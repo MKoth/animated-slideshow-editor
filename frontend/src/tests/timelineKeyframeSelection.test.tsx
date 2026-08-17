@@ -4,7 +4,11 @@ import { EngineContext } from '../app/engineContext'
 import type { EngineContextValue } from '../app/engineContext'
 import { TimelinePanel } from '../components/panels/TimelinePanel'
 import { CommandDispatcher, UndoStack } from '../engine/commands'
-import { AddKeyframeCommand, DeleteKeyframesCommand } from '../engine/commands'
+import {
+  AddKeyframeCommand,
+  DeleteKeyframesCommand,
+  MoveKeyframesCommand,
+} from '../engine/commands'
 import type { Command } from '../engine/commands'
 import type { Engine } from '../engine/internal'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
@@ -771,5 +775,311 @@ describe('TimelinePanel snap-to-keyframes behavior', () => {
       .map((kf) => kf.time)
       .sort((a, b) => a - b)
     expect(times[1] - times[0]).toBeCloseTo(2, 4)
+  })
+})
+
+describe('TimelinePanel selection scaling', () => {
+  function selectAndFinishDrag(
+    firstMarker: HTMLElement,
+    firstTime: number,
+    secondMarker: HTMLElement,
+    secondTime: number,
+  ): void {
+    pointerDownAtTime(firstMarker, firstTime)
+    pointerDownAtTime(secondMarker, secondTime, { ctrlKey: true })
+    fireEvent.pointerUp(window)
+  }
+
+  it('renders a selection box with edge handles when 2+ keyframes are selected', async () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    expandNode('Boy')
+    await screen.findByText('Position X')
+    const first = addKeyframe(dispatcher, nodeId, 'positionX', 1)
+    const second = addKeyframe(dispatcher, nodeId, 'positionX', 3)
+    await waitFor(() => {
+      expect(screen.getAllByTestId('keyframe-marker')).toHaveLength(2)
+    })
+
+    const firstMarker = markerOf(first)
+    const secondMarker = markerOf(second)
+    selectAndFinishDrag(firstMarker, 1, secondMarker, 3)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('timeline-selection-box')).toBeInTheDocument()
+    })
+    expect(screen.getByTestId('selection-scale-handle-left')).toBeInTheDocument()
+    expect(screen.getByTestId('selection-scale-handle-right')).toBeInTheDocument()
+  })
+
+  it('does not render a selection box with only 1 keyframe selected', async () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    expandNode('Boy')
+    await screen.findByText('Position X')
+    const keyframeId = addKeyframe(dispatcher, nodeId, 'positionX', 1)
+    const marker = await waitFor(() => markerOf(keyframeId))
+
+    pointerDownAtTime(marker, 1)
+    fireEvent.pointerUp(window)
+
+    expect(screen.queryByTestId('timeline-selection-box')).not.toBeInTheDocument()
+  })
+
+  it('dragging the left edge scales around the right edge', async () => {
+    const { engine, dispatcher, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    expandNode('Boy')
+    await screen.findByText('Position X')
+    const first = addKeyframe(dispatcher, nodeId, 'positionX', 2, 10)
+    const second = addKeyframe(dispatcher, nodeId, 'positionX', 4, 30)
+    const firstMarker = await waitFor(() => markerOf(first))
+    const secondMarker = markerOf(second)
+    const before = undoStack.entries.length
+
+    selectAndFinishDrag(firstMarker, 2, secondMarker, 4)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('selection-scale-handle-left')).toBeInTheDocument()
+    })
+
+    const leftHandle = screen.getByTestId('selection-scale-handle-left')
+    fireEvent.pointerDown(leftHandle, { clientX: 200, button: 0 })
+    fireEvent.pointerMove(window, { clientX: 300 })
+    fireEvent.pointerUp(window)
+
+    await waitFor(() => {
+      expect(undoStack.entries).toHaveLength(before + 1)
+    })
+
+    const times = engine
+      .getKeyframes(nodeId, 'positionX')
+      .map((kf) => kf.time)
+      .sort((a, b) => a - b)
+
+    // Left edge moved from 2s to 3s, pivot is right edge (4s)
+    // factor = (4 - 3) / (4 - 2) = 0.5
+    // First keyframe: 4 + (2 - 4) * 0.5 = 3
+    // Second keyframe: 4 + (4 - 4) * 0.5 = 4
+    expect(times[0]).toBeCloseTo(3, 1)
+    expect(times[1]).toBeCloseTo(4, 1)
+    expect(undoStack.entries[0]).toMatchObject({
+      type: 'MoveKeyframes',
+    })
+  })
+
+  it('dragging the right edge scales around the left edge', async () => {
+    const { engine, dispatcher, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    expandNode('Boy')
+    await screen.findByText('Position X')
+    const first = addKeyframe(dispatcher, nodeId, 'positionX', 2, 10)
+    const second = addKeyframe(dispatcher, nodeId, 'positionX', 4, 30)
+    const firstMarker = await waitFor(() => markerOf(first))
+    const secondMarker = markerOf(second)
+    const before = undoStack.entries.length
+
+    selectAndFinishDrag(firstMarker, 2, secondMarker, 4)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('selection-scale-handle-right')).toBeInTheDocument()
+    })
+
+    const rightHandle = screen.getByTestId('selection-scale-handle-right')
+    fireEvent.pointerDown(rightHandle, { clientX: 400, button: 0 })
+    fireEvent.pointerMove(window, { clientX: 500 })
+    fireEvent.pointerUp(window)
+
+    await waitFor(() => {
+      expect(undoStack.entries).toHaveLength(before + 1)
+    })
+
+    const times = engine
+      .getKeyframes(nodeId, 'positionX')
+      .map((kf) => kf.time)
+      .sort((a, b) => a - b)
+
+    // Right edge moved from 4s to 5s, pivot is left edge (2s)
+    // factor = (5 - 2) / (4 - 2) = 1.5
+    // First keyframe: 2 + (2 - 2) * 1.5 = 2
+    // Second keyframe: 2 + (4 - 2) * 1.5 = 5
+    expect(times[0]).toBeCloseTo(2, 1)
+    expect(times[1]).toBeCloseTo(5, 1)
+    expect(undoStack.entries[0]).toMatchObject({
+      type: 'MoveKeyframes',
+    })
+  })
+
+  it('alt-dragging scales around the playhead', async () => {
+    const { engine, dispatcher, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    expandNode('Boy')
+    await screen.findByText('Position X')
+    const first = addKeyframe(dispatcher, nodeId, 'positionX', 1, 10)
+    const second = addKeyframe(dispatcher, nodeId, 'positionX', 5, 50)
+    const firstMarker = await waitFor(() => markerOf(first))
+    const secondMarker = markerOf(second)
+
+    // Set playhead to 3s
+    usePlaybackController
+      .getState()
+      .setCurrentTime(engine.project!.slides[0].id, 3, engine.project!.slides[0].duration)
+
+    const before = undoStack.entries.length
+    selectAndFinishDrag(firstMarker, 1, secondMarker, 5)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('selection-scale-handle-right')).toBeInTheDocument()
+    })
+
+    // Alt-drag the right edge: pivot = playhead (3s)
+    // Original right edge at 5s, new right edge at 6s
+    // factor = (6 - 3) / (5 - 3) = 1.5
+    const rightHandle = screen.getByTestId('selection-scale-handle-right')
+    fireEvent.pointerDown(rightHandle, { clientX: 500, button: 0, altKey: true })
+    fireEvent.pointerMove(window, { clientX: 600 })
+    fireEvent.pointerUp(window)
+
+    await waitFor(() => {
+      expect(undoStack.entries).toHaveLength(before + 1)
+    })
+
+    const times = engine
+      .getKeyframes(nodeId, 'positionX')
+      .map((kf) => kf.time)
+      .sort((a, b) => a - b)
+
+    // Pivot = 3 (playhead), factor = 1.5
+    // First keyframe: 3 + (1 - 3) * 1.5 = 0
+    // Second keyframe: 3 + (5 - 3) * 1.5 = 6
+    expect(times[0]).toBeCloseTo(0, 1)
+    expect(times[1]).toBeCloseTo(6, 1)
+  })
+
+  it('grid snapping applies to scaled times', async () => {
+    const { engine, dispatcher, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    expandNode('Boy')
+    await screen.findByText('Position X')
+    useTimelineViewStore.getState().setGridSnapEnabled(true)
+    const first = addKeyframe(dispatcher, nodeId, 'positionX', 2, 10)
+    const second = addKeyframe(dispatcher, nodeId, 'positionX', 4, 30)
+    const firstMarker = await waitFor(() => markerOf(first))
+    const secondMarker = markerOf(second)
+
+    selectAndFinishDrag(firstMarker, 2, secondMarker, 4)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('selection-scale-handle-left')).toBeInTheDocument()
+    })
+
+    const leftHandle = screen.getByTestId('selection-scale-handle-left')
+    fireEvent.pointerDown(leftHandle, { clientX: 200, button: 0 })
+    fireEvent.pointerMove(window, { clientX: 230 })
+    fireEvent.pointerUp(window)
+
+    await waitFor(() => {
+      expect(undoStack.entries.length).toBeGreaterThan(0)
+    })
+
+    const times = engine
+      .getKeyframes(nodeId, 'positionX')
+      .map((kf) => kf.time)
+      .sort((a, b) => a - b)
+
+    for (const time of times) {
+      expect(time % FRAME_STEP).toBeCloseTo(0, 4)
+    }
+  })
+
+  it('undo restores the original times exactly via inverse payload', async () => {
+    const { engine, dispatcher, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    expandNode('Boy')
+    await screen.findByText('Position X')
+    const first = addKeyframe(dispatcher, nodeId, 'positionX', 1, 10)
+    const second = addKeyframe(dispatcher, nodeId, 'positionX', 3, 30)
+    const third = addKeyframe(dispatcher, nodeId, 'positionX', 5, 50)
+    const firstMarker = await waitFor(() => markerOf(first))
+    const secondMarker = markerOf(second)
+    const thirdMarker = markerOf(third)
+    const originalTimes = [1, 3, 5]
+
+    selectAndFinishDrag(firstMarker, 1, secondMarker, 3)
+    // Re-select with third keyframe
+    pointerDownAtTime(thirdMarker, 5, { ctrlKey: true })
+    fireEvent.pointerUp(window)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('selection-scale-handle-right')).toBeInTheDocument()
+    })
+
+    const rightHandle = screen.getByTestId('selection-scale-handle-right')
+    fireEvent.pointerDown(rightHandle, { clientX: 500, button: 0 })
+    fireEvent.pointerMove(window, { clientX: 600 })
+    fireEvent.pointerUp(window)
+
+    await waitFor(() => {
+      const scaledTimes = engine
+        .getKeyframes(nodeId, 'positionX')
+        .map((kf) => kf.time)
+        .sort((a, b) => a - b)
+      expect(scaledTimes).not.toEqual(originalTimes)
+    })
+
+    // Replay the inverse to restore original times
+    const scaleEntry = undoStack.entries[0]
+    expect(scaleEntry.type).toBe('MoveKeyframes')
+    const inverse = scaleEntry.inverse as {
+      readonly target: import('../engine/keyframeTarget').KeyframeTarget
+      readonly moves: readonly { readonly keyframeId: string; readonly oldTime: number }[]
+    }
+    for (const move of inverse.moves) {
+      dispatcher.dispatch(
+        new MoveKeyframesCommand({
+          target: inverse.target,
+          moves: [{ keyframeId: move.keyframeId, newTime: move.oldTime }],
+        }),
+      )
+    }
+
+    const restoredTimes = engine
+      .getKeyframes(nodeId, 'positionX')
+      .map((kf) => kf.time)
+      .sort((a, b) => a - b)
+    expect(restoredTimes).toEqual(originalTimes)
+  })
+
+  it('commits no command when the selection does not actually change', async () => {
+    const { engine, dispatcher, undoStack } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    expandNode('Boy')
+    await screen.findByText('Position X')
+    const first = addKeyframe(dispatcher, nodeId, 'positionX', 2, 10)
+    const second = addKeyframe(dispatcher, nodeId, 'positionX', 4, 30)
+    const firstMarker = await waitFor(() => markerOf(first))
+    const secondMarker = markerOf(second)
+    const before = undoStack.entries.length
+
+    selectAndFinishDrag(firstMarker, 2, secondMarker, 4)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('selection-scale-handle-left')).toBeInTheDocument()
+    })
+
+    const leftHandle = screen.getByTestId('selection-scale-handle-left')
+    fireEvent.pointerDown(leftHandle, { clientX: 200, button: 0 })
+    fireEvent.pointerMove(window, { clientX: 200 })
+    fireEvent.pointerUp(window)
+
+    expect(undoStack.entries).toHaveLength(before)
   })
 })

@@ -133,6 +133,88 @@ export function KeyframeMarker({
   )
 }
 
+export interface SelectionScaleBoxProps {
+  readonly bounds: {
+    readonly minX: number
+    readonly maxX: number
+    readonly minY: number
+    readonly maxY: number
+  }
+  readonly onScaleStart: (edge: 'left' | 'right', clientX: number, isAlt: boolean) => void
+}
+
+const HANDLE_WIDTH = 6
+
+export const SelectionScaleBox = memo(function SelectionScaleBox({
+  bounds,
+  onScaleStart,
+}: SelectionScaleBoxProps) {
+  const { minX, maxX, minY, maxY } = bounds
+  const width = maxX - minX
+  const height = maxY - minY
+
+  const handlePointerDown = (edge: 'left' | 'right') => (event: React.PointerEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    onScaleStart(edge, event.clientX, event.altKey)
+  }
+
+  return (
+    <div
+      className="timeline-selection-box"
+      data-testid="timeline-selection-box"
+      style={{
+        position: 'absolute',
+        left: minX,
+        top: minY,
+        width,
+        height,
+        border: '1px solid var(--color-accent)',
+        background: 'rgba(var(--color-accent-rgb, 59, 130, 246), 0.08)',
+        pointerEvents: 'none',
+        zIndex: 9,
+      }}
+    >
+      <div
+        className="timeline-selection-box__handle timeline-selection-box__handle--left"
+        data-testid="selection-scale-handle-left"
+        data-edge="left"
+        style={{
+          position: 'absolute',
+          left: -HANDLE_WIDTH / 2,
+          top: -2,
+          width: HANDLE_WIDTH,
+          height: height + 4,
+          cursor: 'ew-resize',
+          pointerEvents: 'auto',
+          background: 'var(--color-accent)',
+          borderRadius: 2,
+          opacity: 0.7,
+        }}
+        onPointerDown={handlePointerDown('left')}
+      />
+      <div
+        className="timeline-selection-box__handle timeline-selection-box__handle--right"
+        data-testid="selection-scale-handle-right"
+        data-edge="right"
+        style={{
+          position: 'absolute',
+          right: -HANDLE_WIDTH / 2,
+          top: -2,
+          width: HANDLE_WIDTH,
+          height: height + 4,
+          cursor: 'ew-resize',
+          pointerEvents: 'auto',
+          background: 'var(--color-accent)',
+          borderRadius: 2,
+          opacity: 0.7,
+        }}
+        onPointerDown={handlePointerDown('right')}
+      />
+    </div>
+  )
+})
+
 export function TimelineContextMenu({
   menu,
   onAdd,

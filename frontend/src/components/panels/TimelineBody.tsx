@@ -28,6 +28,7 @@ import {
   useTimelineViewStore,
 } from '../../stores/timelineViewStore'
 import { useKeyframeDrag } from './keyframeDrag'
+import { useKeyframeScale, computeSelectionBounds } from './keyframeScale'
 import {
   ROW_HEIGHT,
   TRACK_HEADER_WIDTH,
@@ -35,7 +36,12 @@ import {
   materialParameterLabel,
 } from './timelineTracks'
 import type { TimelineRow } from './timelineTracks'
-import { KeyframeMarker, TimelineContextMenu, TrackRow } from './timelineComponents'
+import {
+  KeyframeMarker,
+  SelectionScaleBox,
+  TimelineContextMenu,
+  TrackRow,
+} from './timelineComponents'
 import type { TimelineMenuState } from './timelineComponents'
 
 const MARQUEE_START_DISTANCE = 4
@@ -119,6 +125,17 @@ export function TimelineBody({
     dispatch,
     notify,
   })
+
+  const { scalePreview, startScale } = useKeyframeScale({
+    keyframeRefs,
+    duration,
+    pps,
+    timeFromClientX,
+    dispatch,
+    notify,
+  })
+
+  const selectionBounds = computeSelectionBounds(selectedKeyframeIds, keyframeRefs)
 
   useLayoutEffect(() => {
     const el = scrollerRef.current
@@ -619,7 +636,8 @@ export function TimelineBody({
                       style={{ top: index * ROW_HEIGHT }}
                     >
                       {keyframes.map((keyframe) => {
-                        const previewTime = dragPreview?.get(keyframe.id)
+                        const previewTime =
+                          scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
                         const shownTime = previewTime ?? keyframe.time
                         const selected = selectedKeyframeIds.includes(keyframe.id)
                         return (
@@ -653,7 +671,8 @@ export function TimelineBody({
                       style={{ top: index * ROW_HEIGHT }}
                     >
                       {keyframes.map((keyframe) => {
-                        const previewTime = dragPreview?.get(keyframe.id)
+                        const previewTime =
+                          scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
                         const shownTime = previewTime ?? keyframe.time
                         const selected = selectedKeyframeIds.includes(keyframe.id)
                         return (
@@ -699,6 +718,19 @@ export function TimelineBody({
                   background: 'rgba(var(--color-accent-rgb, 59, 130, 246), 0.1)',
                   pointerEvents: 'none',
                   zIndex: 10,
+                }}
+              />
+            )}
+            {selectionBounds && selectedKeyframeIds.length >= 2 && (
+              <SelectionScaleBox
+                bounds={{
+                  minX: selectionBounds.minTime * pps,
+                  maxX: selectionBounds.maxTime * pps,
+                  minY: selectionBounds.minRowIndex * ROW_HEIGHT,
+                  maxY: (selectionBounds.maxRowIndex + 1) * ROW_HEIGHT,
+                }}
+                onScaleStart={(edge, clientX, isAlt) => {
+                  startScale(edge, clientX, isAlt, currentTime)
                 }}
               />
             )}
