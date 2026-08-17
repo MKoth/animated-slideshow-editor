@@ -152,12 +152,12 @@ describe('DeleteClipCommand', () => {
   it('rejects deleting a clip that is referenced by a node', () => {
     const setup = setupBase()
     const clipId = createTestClip(setup)
-    // Create a slide and node to reference the clip
+    // Create a slide and node to reference the clip via clip instance
     expectOk(setup.dispatcher.dispatch(new CreateSlideCommand({ name: 'S1' })))
     const slide = setup.engine.project?.slides[0]
     if (!slide) throw new Error('expected a slide')
     const node = setup.engine.createNode(slide.scene.id, slide.scene.root.id, 'MyNode')
-    ;(node as unknown as { clipReference: string }).clipReference = clipId
+    setup.engine.assignClipInstance(node.id, clipId, 0, 1, true, {})
     const events = collectEvents(setup.engine)
     const undoCount = setup.undoStack.entries.length
 

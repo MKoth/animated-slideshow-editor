@@ -183,6 +183,49 @@ export interface ClipChannelLinkChanged {
   readonly channel: string
 }
 
+export interface ClipInstanceAdded {
+  readonly type: 'ClipInstanceAdded'
+  readonly nodeId: string
+  readonly instanceId: string
+}
+
+export interface ClipInstanceRemoved {
+  readonly type: 'ClipInstanceRemoved'
+  readonly nodeId: string
+  readonly instanceId: string
+}
+
+export interface ClipLayerMoved {
+  readonly type: 'ClipLayerMoved'
+  readonly nodeId: string
+  readonly instanceId: string
+}
+
+export interface ClipInstanceEnabledChanged {
+  readonly type: 'ClipInstanceEnabledChanged'
+  readonly nodeId: string
+  readonly instanceId: string
+}
+
+export interface ClipInstanceTimeChanged {
+  readonly type: 'ClipInstanceTimeChanged'
+  readonly nodeId: string
+  readonly instanceId: string
+}
+
+export interface ClipInstanceSpeedChanged {
+  readonly type: 'ClipInstanceSpeedChanged'
+  readonly nodeId: string
+  readonly instanceId: string
+}
+
+export interface ClipParamOverridden {
+  readonly type: 'ClipParamOverridden'
+  readonly nodeId: string
+  readonly instanceId: string
+  readonly paramKey: string
+}
+
 export type EngineEvent =
   | ProjectCreated
   | ProjectLoaded
@@ -219,6 +262,13 @@ export type EngineEvent =
   | ClipCategoryChanged
   | ClipParamDefaultChanged
   | ClipChannelLinkChanged
+  | ClipInstanceAdded
+  | ClipInstanceRemoved
+  | ClipLayerMoved
+  | ClipInstanceEnabledChanged
+  | ClipInstanceTimeChanged
+  | ClipInstanceSpeedChanged
+  | ClipParamOverridden
 
 export type EventListener = (event: EngineEvent) => void
 

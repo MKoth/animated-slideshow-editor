@@ -41,6 +41,7 @@ export type NodeJSON = {
   readonly opacity?: number
   readonly material?: MaterialJSON
   readonly components: NodeComponentsJSON
+  readonly clipInstances?: readonly ClipInstanceJSON[]
 }
 
 export type SceneJSON = {
@@ -154,6 +155,7 @@ export type ClipChannelJSON = {
 export type ClipChannelDefJSON = {
   readonly property: string
   readonly paramKey?: string
+  readonly linkMode?: string
 }
 
 export type ClipJSON = {
@@ -164,6 +166,15 @@ export type ClipJSON = {
   readonly params: readonly ClipParamJSON[]
   readonly channels: readonly ClipChannelDefJSON[]
   readonly channelAnimations?: Readonly<Record<string, ClipChannelJSON>>
+}
+
+export type ClipInstanceJSON = {
+  readonly id: string
+  readonly clipId: string
+  readonly startTime: number
+  readonly speed: number
+  readonly enabled: boolean
+  readonly paramOverrides?: Readonly<Record<string, number>>
 }
 
 export type LessonJSON = {

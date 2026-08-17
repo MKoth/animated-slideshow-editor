@@ -520,6 +520,15 @@ export class Renderer {
           sceneRenderer.handleKeyframeChanged(event.target.nodeId)
         }
         break
+      case 'ClipInstanceAdded':
+      case 'ClipInstanceRemoved':
+      case 'ClipLayerMoved':
+      case 'ClipInstanceEnabledChanged':
+      case 'ClipInstanceTimeChanged':
+      case 'ClipInstanceSpeedChanged':
+      case 'ClipParamOverridden':
+        sceneRenderer.handleKeyframeChanged(event.nodeId)
+        break
     }
   }
 

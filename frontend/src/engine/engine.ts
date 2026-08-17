@@ -19,6 +19,7 @@ import type { EngineEvent, Unsubscribe } from './events'
 import type { LessonJSON } from './json'
 import type { MaterialOverrides } from './materialInstance'
 import type { ClipDefinition } from './clipDefinition'
+import type { ClipInstance } from './clipInstance'
 
 export interface EnginePublic {
   readonly project: Project | null
@@ -57,6 +58,7 @@ export interface EnginePublic {
   ): MaterialOverrides
   getClip(clipId: string): ClipDefinition
   getClipChannelKeyframes(clipId: string, channel: AnimationProperty): readonly Keyframe[]
+  getClipInstances(nodeId: string): readonly ClipInstance[]
   toJSON(): LessonJSON
 }
 

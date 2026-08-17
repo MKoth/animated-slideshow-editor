@@ -51,6 +51,8 @@ import type { EnginePublic } from './engine'
 import { ClipManager } from './clipManager'
 import type { ClipChannelDef, ClipParam } from './clipDefinition'
 import { ClipDefinition } from './clipDefinition'
+import type { ClipInstance } from './clipInstance'
+import { createClipInstance } from './clipInstance'
 
 const DEFAULT_MATERIAL_KINDS: Readonly<Record<string, string>> = Object.fromEntries(
   DEFAULT_MATERIAL_PARAMETERS.map((parameter) => [parameter.key, parameter.kind]),
@@ -96,6 +98,7 @@ export class Engine {
       (nodeId) => this.getNode(nodeId),
       (nodeId) => this.getSlideOfNode(nodeId),
       this.#materialParameterKindOf,
+      (clipId) => this.getClip(clipId),
     )
     this.#clips = new ClipManager(this.#bus)
   }
@@ -635,7 +638,7 @@ export class Engine {
   isClipReferenced(clipId: string): boolean {
     for (const slide of this.#projects.current?.slides ?? []) {
       for (const node of walkPreOrder(slide.scene.root)) {
-        if ((node as unknown as Record<string, unknown>).clipReference === clipId) {
+        if (node.clipInstances.some((inst) => inst.clipId === clipId)) {
           return true
         }
       }
@@ -647,7 +650,7 @@ export class Engine {
     const names: string[] = []
     for (const slide of this.#projects.current?.slides ?? []) {
       for (const node of walkPreOrder(slide.scene.root)) {
-        if ((node as unknown as Record<string, unknown>).clipReference === clipId) {
+        if (node.clipInstances.some((inst) => inst.clipId === clipId)) {
           names.push(node.name)
         }
       }
@@ -706,6 +709,97 @@ export class Engine {
       this.#projects.clear()
       throw error
     }
+  }
+
+  // --- Clip instance methods ---
+
+  getClipInstances(nodeId: string): readonly ClipInstance[] {
+    return this.getNode(nodeId).clipInstances
+  }
+
+  getClipInstance(nodeId: string, instanceId: string): ClipInstance {
+    const node = this.getNode(nodeId)
+    const instance = node.clipInstances.find((inst) => inst.id === instanceId)
+    if (!instance) {
+      throw new Error(`Clip instance not found: ${instanceId}`)
+    }
+    return instance
+  }
+
+  assignClipInstance(
+    nodeId: string,
+    clipId: string,
+    startTime: number,
+    speed: number,
+    enabled: boolean,
+    paramOverrides: Record<string, number>,
+  ): ClipInstance {
+    this.getClip(clipId)
+    const node = this.getNode(nodeId)
+    const instance = createClipInstance(clipId, startTime, speed, enabled, paramOverrides)
+    node.clipInstances.push(instance)
+    this.#bus.emit({ type: 'ClipInstanceAdded', nodeId, instanceId: instance.id })
+    return instance
+  }
+
+  removeClipInstance(nodeId: string, instanceId: string): ClipInstance {
+    const node = this.getNode(nodeId)
+    const index = node.clipInstances.findIndex((inst) => inst.id === instanceId)
+    if (index === -1) {
+      throw new Error(`Clip instance not found: ${instanceId}`)
+    }
+    const [removed] = node.clipInstances.splice(index, 1)
+    this.#bus.emit({ type: 'ClipInstanceRemoved', nodeId, instanceId })
+    return removed
+  }
+
+  moveClipLayer(nodeId: string, instanceId: string, newIndex: number): void {
+    const node = this.getNode(nodeId)
+    const index = node.clipInstances.findIndex((inst) => inst.id === instanceId)
+    if (index === -1) {
+      throw new Error(`Clip instance not found: ${instanceId}`)
+    }
+    if (newIndex < 0 || newIndex >= node.clipInstances.length) {
+      throw new Error(`Layer index out of bounds: ${newIndex}`)
+    }
+    const [instance] = node.clipInstances.splice(index, 1)
+    node.clipInstances.splice(newIndex, 0, instance)
+    this.#bus.emit({ type: 'ClipLayerMoved', nodeId, instanceId })
+  }
+
+  setClipInstanceStartTime(nodeId: string, instanceId: string, startTime: number): void {
+    const instance = this.getClipInstance(nodeId, instanceId)
+    instance.startTime = startTime
+    this.#bus.emit({ type: 'ClipInstanceTimeChanged', nodeId, instanceId })
+  }
+
+  setClipInstanceSpeed(nodeId: string, instanceId: string, speed: number): void {
+    const instance = this.getClipInstance(nodeId, instanceId)
+    instance.speed = speed
+    this.#bus.emit({ type: 'ClipInstanceSpeedChanged', nodeId, instanceId })
+  }
+
+  setClipInstanceEnabled(nodeId: string, instanceId: string, enabled: boolean): void {
+    const instance = this.getClipInstance(nodeId, instanceId)
+    instance.enabled = enabled
+    this.#bus.emit({ type: 'ClipInstanceEnabledChanged', nodeId, instanceId })
+  }
+
+  setClipInstanceParamOverride(
+    nodeId: string,
+    instanceId: string,
+    paramKey: string,
+    value: number,
+  ): void {
+    const instance = this.getClipInstance(nodeId, instanceId)
+    instance.paramOverrides[paramKey] = value
+    this.#bus.emit({ type: 'ClipParamOverridden', nodeId, instanceId, paramKey })
+  }
+
+  clearClipInstanceParamOverride(nodeId: string, instanceId: string, paramKey: string): void {
+    const instance = this.getClipInstance(nodeId, instanceId)
+    delete instance.paramOverrides[paramKey]
+    this.#bus.emit({ type: 'ClipParamOverridden', nodeId, instanceId, paramKey })
   }
 
   #resolveMaterialDefinition(definitionId: string): MaterialDefinition {
@@ -809,6 +903,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
       engine.evaluateMaterialOverrides(nodeId, time, target),
     getClip: (clipId) => engine.getClip(clipId),
     getClipChannelKeyframes: (clipId, channel) => engine.getClipChannelKeyframes(clipId, channel),
+    getClipInstances: (nodeId) => engine.getClipInstances(nodeId),
     toJSON: () => engine.toJSON(),
   }
 }

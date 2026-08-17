@@ -27,12 +27,17 @@ export interface ClipParam {
   readonly default: number
 }
 
+/** How a linked channel combines with the base value. */
+export type ClipLinkMode = 'gain' | 'offset'
+
 /** A channel in a clip definition. */
 export interface ClipChannelDef {
   /** The uniform-six property this channel animates. */
   readonly property: ClipChannel
-  /** Optional param key: if present, the channel is "gain" linked (multiplies the param). */
+  /** Optional param key: if present, the channel is linked to a param. */
   readonly paramKey?: string
+  /** How the linked channel combines with the base: 'gain' (multiply) or 'offset' (add). Default: 'gain'. */
+  readonly linkMode?: ClipLinkMode
 }
 
 export class ClipChannelAnimation {
@@ -255,14 +260,22 @@ export class ClipDefinition {
     }
   }
 
-  setChannelParamLink(channel: ClipChannel, paramKey: string | null): void {
+  setChannelParamLink(
+    channel: ClipChannel,
+    paramKey: string | null,
+    linkMode?: ClipLinkMode,
+  ): void {
     const index = this.#channels.findIndex((ch) => ch.property === channel)
     if (index >= 0) {
       const existing = this.#channels[index]!
       if (paramKey === null || paramKey === undefined) {
         this.#channels[index] = { property: existing.property }
       } else {
-        this.#channels[index] = { ...existing, paramKey }
+        this.#channels[index] = {
+          ...existing,
+          paramKey,
+          ...(linkMode !== undefined ? { linkMode } : {}),
+        }
       }
     }
   }
@@ -292,6 +305,7 @@ export class ClipDefinition {
       channels: this.#channels.map((ch) => ({
         property: ch.property,
         ...(ch.paramKey !== undefined ? { paramKey: ch.paramKey } : {}),
+        ...(ch.linkMode !== undefined ? { linkMode: ch.linkMode } : {}),
       })),
       channelAnimations: Object.fromEntries(
         [...this.#channelAnimations.entries()].map(([channel, anim]) => [channel, anim.toJSON()]),
@@ -330,7 +344,12 @@ export class ClipDefinition {
       const property = requireAnimationProperty(ch.property)
       const paramKey =
         ch.paramKey !== undefined ? requireString(ch.paramKey, 'Clip channel paramKey') : undefined
-      return { property, ...(paramKey !== undefined ? { paramKey } : {}) }
+      const linkMode = ch.linkMode !== undefined ? requireLinkMode(ch.linkMode) : undefined
+      return {
+        property,
+        ...(paramKey !== undefined ? { paramKey } : {}),
+        ...(linkMode !== undefined ? { linkMode } : {}),
+      }
     })
     const clip = new ClipDefinition(id, name, duration, category, params, channels)
     if (isRecord(json.channelAnimations) && json.channelAnimations !== null) {
@@ -351,4 +370,11 @@ export class ClipDefinition {
 
 export function newClipId(): string {
   return newId('clip')
+}
+
+function requireLinkMode(value: unknown): ClipLinkMode {
+  if (value === 'gain' || value === 'offset') {
+    return value
+  }
+  throw new Error(`Unknown clip link mode: ${String(value)}`)
 }

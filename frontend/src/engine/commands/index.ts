@@ -171,3 +171,32 @@ export type {
   SetClipKeyframeTangentsInverse,
   SetClipKeyframeTangentsParameters,
 } from './setClipKeyframeTangentsCommand'
+export { AssignClipCommand } from './assignClipCommand'
+export type { AssignClipCommandInverse, AssignClipCommandParameters } from './assignClipCommand'
+export { RemoveClipCommand } from './removeClipCommand'
+export type { RemoveClipCommandInverse, RemoveClipCommandParameters } from './removeClipCommand'
+export { MoveClipLayerCommand } from './moveClipLayerCommand'
+export type {
+  MoveClipLayerCommandInverse,
+  MoveClipLayerCommandParameters,
+} from './moveClipLayerCommand'
+export { SetClipInstanceStartTimeCommand } from './setClipInstanceStartTimeCommand'
+export type {
+  SetClipInstanceStartTimeInverse,
+  SetClipInstanceStartTimeParameters,
+} from './setClipInstanceStartTimeCommand'
+export { SetClipInstanceSpeedCommand } from './setClipInstanceSpeedCommand'
+export type {
+  SetClipInstanceSpeedInverse,
+  SetClipInstanceSpeedParameters,
+} from './setClipInstanceSpeedCommand'
+export { SetClipInstanceEnabledCommand } from './setClipInstanceEnabledCommand'
+export type {
+  SetClipInstanceEnabledInverse,
+  SetClipInstanceEnabledParameters,
+} from './setClipInstanceEnabledCommand'
+export { OverrideClipParamCommand } from './overrideClipParamCommand'
+export type {
+  OverrideClipParamInverse,
+  OverrideClipParamParameters,
+} from './overrideClipParamCommand'

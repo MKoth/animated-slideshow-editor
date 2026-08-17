@@ -8,6 +8,8 @@ import {
   materialToJSON,
   type MaterialInstance,
 } from './materialInstance'
+import type { ClipInstance } from './clipInstance'
+import { clipInstanceFromJSON, clipInstanceToJSON } from './clipInstance'
 
 const TEXT_ALIGNMENTS: readonly TextAlignment[] = ['left', 'center', 'right']
 
@@ -21,6 +23,7 @@ export class SceneNode {
   opacity: number
   material: MaterialInstance
   readonly components: NodeComponents
+  readonly clipInstances: ClipInstance[]
 
   constructor(id: string, name: string, transform: Transform, components: NodeComponents = {}) {
     this.id = id
@@ -32,6 +35,7 @@ export class SceneNode {
     this.visible = true
     this.opacity = 1
     this.material = defaultMaterial()
+    this.clipInstances = []
   }
 
   toJSON(): NodeJSON {
@@ -45,6 +49,9 @@ export class SceneNode {
       opacity: this.opacity,
       ...(material !== undefined ? { material } : {}),
       components: { ...this.components },
+      ...(this.clipInstances.length > 0
+        ? { clipInstances: this.clipInstances.map(clipInstanceToJSON) }
+        : {}),
     }
   }
 
@@ -57,6 +64,11 @@ export class SceneNode {
     node.opacity =
       typeof json.opacity === 'number' ? requireOpacity(json.opacity, `Node "${id}" opacity`) : 1
     node.material = materialFromJSON(json.material, id)
+    if (Array.isArray(json.clipInstances)) {
+      for (const clipJson of json.clipInstances) {
+        node.clipInstances.push(clipInstanceFromJSON(clipJson))
+      }
+    }
     return node
   }
 }

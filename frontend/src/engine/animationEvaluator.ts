@@ -8,6 +8,8 @@ import { identityTransform } from './transform'
 import type { Transform } from './transform'
 import { evaluateSegment } from './interpolators'
 import { evaluateMaterialTrackValue } from './materialTrackEvaluation'
+import type { AnimationProperty } from './animationProperties'
+import type { ClipDefinition } from './clipDefinition'
 
 export interface EvaluatedNodeState {
   readonly transform: Transform
@@ -64,19 +66,31 @@ export function copyEvaluatedState(target: EvaluatedNodeScratch, state: Evaluate
   target.opacity = state.opacity
 }
 
+const CHANNEL_TO_TRANSFORM_KEY: Record<AnimationProperty, string> = {
+  positionX: 'x',
+  positionY: 'y',
+  rotation: 'rotation',
+  scaleX: 'scaleX',
+  scaleY: 'scaleY',
+  opacity: 'opacity',
+}
+
 export class AnimationEvaluator {
   readonly #nodeLookup: (nodeId: string) => SceneNode
   readonly #slideLookup: (nodeId: string) => Slide
   readonly #parameterKindOf: MaterialParameterKindOf
+  readonly #clipLookup: (clipId: string) => ClipDefinition
 
   constructor(
     nodeLookup: (nodeId: string) => SceneNode,
     slideLookup: (nodeId: string) => Slide,
     parameterKindOf: MaterialParameterKindOf,
+    clipLookup: (clipId: string) => ClipDefinition,
   ) {
     this.#nodeLookup = nodeLookup
     this.#slideLookup = slideLookup
     this.#parameterKindOf = parameterKindOf
+    this.#clipLookup = clipLookup
   }
 
   evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState {
@@ -98,6 +112,9 @@ export class AnimationEvaluator {
     evaluated.scaleX = this.#evaluate(animation?.keyframes('scaleX'), clampedTime, transform.scaleX)
     evaluated.scaleY = this.#evaluate(animation?.keyframes('scaleY'), clampedTime, transform.scaleY)
     state.opacity = this.#evaluate(animation?.keyframes('opacity'), clampedTime, node.opacity)
+
+    this.#applyClipInstances(node, clampedTime, state)
+
     return state
   }
 
@@ -146,6 +163,114 @@ export class AnimationEvaluator {
       }
     }
     return values
+  }
+
+  #applyClipInstances(node: SceneNode, time: number, state: EvaluatedNodeScratch): void {
+    const instances = node.clipInstances
+    if (instances.length === 0) {
+      return
+    }
+
+    const isCamera = node.components.camera !== undefined
+
+    for (const instance of instances) {
+      if (!instance.enabled) {
+        continue
+      }
+
+      let clip: ClipDefinition
+      try {
+        clip = this.#clipLookup(instance.clipId)
+      } catch {
+        continue
+      }
+
+      if (clip.duration <= 0) {
+        continue
+      }
+
+      const u = Math.min(
+        Math.max(((time - instance.startTime) * instance.speed) / clip.duration, 0),
+        1,
+      )
+
+      for (const channelDef of clip.channels) {
+        const channel = channelDef.property
+
+        // Camera nodes cannot animate rotation via clips (Spec 07 R17)
+        if (isCamera && channel === 'rotation') {
+          continue
+        }
+
+        const channelAnim = clip.channelAnimation(channel)
+        if (!channelAnim || channelAnim.length === 0) {
+          continue
+        }
+
+        const kfValue = this.#evaluateClipChannel(channelAnim.keyframes(), u)
+
+        let output: number
+        if (channelDef.paramKey) {
+          const paramValue =
+            instance.paramOverrides[channelDef.paramKey] ??
+            clip.getParam(channelDef.paramKey)?.default ??
+            1
+          const base = this.#getChannelValue(state.transform, state.opacity, channel)
+          if (channelDef.linkMode === 'offset') {
+            output = base + paramValue * kfValue
+          } else {
+            output = base * (paramValue * kfValue)
+          }
+        } else {
+          output = kfValue
+        }
+
+        this.#setChannelValue(state.transform, channel, output)
+      }
+    }
+  }
+
+  #getChannelValue(
+    transform: MutableTransform,
+    opacity: number,
+    channel: AnimationProperty,
+  ): number {
+    const key = CHANNEL_TO_TRANSFORM_KEY[channel]
+    if (key === 'opacity') {
+      return opacity
+    }
+    return (transform as unknown as Record<string, number>)[key] ?? 0
+  }
+
+  #setChannelValue(transform: MutableTransform, channel: AnimationProperty, value: number): void {
+    const key = CHANNEL_TO_TRANSFORM_KEY[channel]
+    if (key === 'opacity') {
+      ;(transform as unknown as Record<string, number>).opacity = value
+    } else {
+      ;(transform as unknown as Record<string, number>)[key] = value
+    }
+  }
+
+  #evaluateClipChannel(keyframes: readonly Keyframe[], u: number): number {
+    if (keyframes.length === 0) {
+      return 0
+    }
+    const first = keyframes[0]
+    if (u <= first.time) {
+      return first.value as number
+    }
+    const last = keyframes[keyframes.length - 1]
+    if (u >= last.time) {
+      return last.value as number
+    }
+    for (let i = 0; i < keyframes.length - 1; i += 1) {
+      const from = keyframes[i]
+      const to = keyframes[i + 1]
+      if (to.time > from.time && u >= from.time && u < to.time) {
+        return evaluateSegment(from, to, u)
+      }
+    }
+    return last.value as number
   }
 
   #evaluate(keyframes: readonly Keyframe[] | undefined, time: number, fallback: number): number {
