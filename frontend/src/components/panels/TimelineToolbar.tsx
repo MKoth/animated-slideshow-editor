@@ -1,7 +1,10 @@
 import { deleteSelectedKeyframes } from '../../app/keyframeSelectionActions'
 import { useEngine } from '../../app/useEngine'
 import { PLAYBACK_SPEEDS, formatTimeCode, usePlaybackController } from '../../stores/playbackStore'
-import { useSelectionStore } from '../../stores/selectionStore'
+import {
+  useTimelineSelectionStore,
+  selectedKeyframeIdsOf,
+} from '../../stores/timelineSelectionStore'
 import { pixelsPerSecond, useTimelineViewStore } from '../../stores/timelineViewStore'
 import { useUiStore } from '../../stores/uiStore'
 
@@ -22,7 +25,7 @@ export function TimelineToolbar({
   const loopEnabled = usePlaybackController((state) => state.loopEnabled)
   const animationMode = useUiStore((state) => state.animationMode)
   const cameraAnimationMode = useUiStore((state) => state.cameraAnimationMode)
-  const keyframeCount = useSelectionStore((state) => state.selectedKeyframeIds.length)
+  const keyframeCount = selectedKeyframeIdsOf(useTimelineSelectionStore()).length
   const { engine, dispatch } = useEngine()
 
   const playing = status === 'playing'

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import type { AnimationProperty, Scene } from '../../engine'
 import { addKeyframeAtPlayhead, addPoseKeyframesAtPlayhead } from '../../app/keyframeActions'
@@ -12,6 +12,11 @@ import { AddKeyframeCommand, DeleteKeyframesCommand } from '../../engine/command
 import { useNotificationStore } from '../../stores/notificationStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { useSelectionStore } from '../../stores/selectionStore'
+import {
+  useTimelineSelectionStore,
+  selectedKeyframeIdsOf,
+} from '../../stores/timelineSelectionStore'
+import type { KeyframeSelectionItem } from '../../stores/timelineSelectionStore'
 import {
   DEFAULT_TIMELINE_VIEWPORT_WIDTH,
   pixelsPerSecond,
@@ -32,6 +37,8 @@ import {
 import type { TimelineRow } from './timelineTracks'
 import { KeyframeMarker, TimelineContextMenu, TrackRow } from './timelineComponents'
 import type { TimelineMenuState } from './timelineComponents'
+
+const MARQUEE_START_DISTANCE = 4
 
 export function TimelineBody({
   slideId,
@@ -61,8 +68,18 @@ export function TimelineBody({
   const expandedNodeIds = useTimelineViewStore((state) => state.expandedNodeIds)
   const currentTime = usePlaybackController((state) => state.currentTimes[slideId] ?? 0)
   const playbackStatus = usePlaybackController((state) => state.status)
-  const selectedKeyframeIds = useSelectionStore((state) => state.selectedKeyframeIds)
+  const timelineSelection = useTimelineSelectionStore()
+  const selectedKeyframeIds = selectedKeyframeIdsOf(timelineSelection)
   const [menu, setMenu] = useState<TimelineMenuState | null>(null)
+  const [marqueeRect, setMarqueeRect] = useState<{
+    readonly x: number
+    readonly y: number
+    readonly width: number
+    readonly height: number
+  } | null>(null)
+  const marqueeStartRef = useRef<{ x: number; y: number } | null>(null)
+  const marqueeActiveRef = useRef(false)
+  const marqueeRectRef = useRef<{ width: number; height: number } | null>(null)
   const pps = pixelsPerSecond(zoomLevel)
 
   const timeFromClientX = (clientX: number): number => {
@@ -76,7 +93,25 @@ export function TimelineBody({
   const materialKeyframeRefs = materialKeyframeRefsOfScene(engine, scene)
   const allKeyframeRefs = [...propertyKeyframeRefs, ...materialKeyframeRefs]
   const keyframeRefs = new Map(allKeyframeRefs.map((ref) => [ref.keyframeId, ref] as const))
-  const { dragPreview, selectForDrag, startDrag } = useKeyframeDrag({
+
+  const allSelectionItems: KeyframeSelectionItem[] = []
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+    const row = rows[rowIndex]
+    if (row.kind === 'subtrack') {
+      for (const keyframe of engine.getKeyframes(row.node.id, row.property)) {
+        allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
+      }
+    } else if (row.kind === 'materialSubtrack') {
+      for (const keyframe of engine.getMaterialKeyframes(row.node.id, row.parameter.key)) {
+        allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
+      }
+    }
+  }
+  const allSelectionItemsRef = useRef<KeyframeSelectionItem[]>([])
+  useEffect(() => {
+    allSelectionItemsRef.current = allSelectionItems
+  })
+  const { dragPreview, isDraggable, startDrag } = useKeyframeDrag({
     keyframeRefs,
     duration,
     pps,
@@ -185,14 +220,127 @@ export function TimelineBody({
     window.addEventListener('pointerup', up)
   }
 
-  const handleKeyframePointerDown = (event: React.PointerEvent, keyframe: { id: string }) => {
+  const handleTimeAreaPointerDown = useCallback(
+    (event: React.PointerEvent) => {
+      if (event.button !== 0) {
+        return
+      }
+      const target = event.target as HTMLElement
+      if (target.closest('[data-keyframe-id]') || target.closest('.timeline-ruler')) {
+        return
+      }
+      const rect = timeAreaRef.current?.getBoundingClientRect()
+      if (!rect) {
+        return
+      }
+      const x = event.clientX - rect.left
+      const y = event.clientY - rect.top
+      marqueeStartRef.current = { x, y }
+      marqueeActiveRef.current = false
+      marqueeRectRef.current = null
+      useTimelineSelectionStore.getState().marqueeStart(x, y)
+
+      const onMove = (ev: PointerEvent) => {
+        if (!marqueeStartRef.current) {
+          return
+        }
+        const cx = ev.clientX - rect.left
+        const cy = ev.clientY - rect.top
+        const dx = cx - marqueeStartRef.current.x
+        const dy = cy - marqueeStartRef.current.y
+        if (!marqueeActiveRef.current) {
+          if (Math.hypot(dx, dy) < MARQUEE_START_DISTANCE) {
+            return
+          }
+          marqueeActiveRef.current = true
+        }
+        const width = Math.abs(dx)
+        const height = Math.abs(dy)
+        marqueeRectRef.current = { width, height }
+        const left = Math.min(marqueeStartRef.current.x, cx)
+        const top = Math.min(marqueeStartRef.current.y, cy)
+        setMarqueeRect({ x: left, y: top, width, height })
+      }
+
+      const onUp = () => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onUp)
+        if (marqueeActiveRef.current) {
+          const markers = document.querySelectorAll<HTMLElement>('[data-keyframe-id]')
+          const intersecting: string[] = []
+          const anchor = useTimelineSelectionStore.getState().marqueeAnchor
+          const mr = marqueeRectRef.current
+          if (anchor && mr) {
+            const mLeft = Math.min(anchor.x, anchor.x + mr.width)
+            const mTop = Math.min(anchor.y, anchor.y + mr.height)
+            const mRight = mLeft + mr.width
+            const mBottom = mTop + mr.height
+            for (const marker of markers) {
+              const markerRect = marker.getBoundingClientRect()
+              const areaRect = timeAreaRef.current?.getBoundingClientRect()
+              if (!areaRect) {
+                continue
+              }
+              const relLeft = markerRect.left - areaRect.left
+              const relTop = markerRect.top - areaRect.top
+              const relRight = relLeft + markerRect.width
+              const relBottom = relTop + markerRect.height
+              if (relLeft < mRight && relRight > mLeft && relTop < mBottom && relBottom > mTop) {
+                intersecting.push(marker.dataset.keyframeId!)
+              }
+            }
+          }
+          useTimelineSelectionStore
+            .getState()
+            .marqueeEnd(intersecting, allSelectionItemsRef.current)
+        } else {
+          useTimelineSelectionStore.getState().marqueeEnd([], allSelectionItemsRef.current)
+        }
+        marqueeStartRef.current = null
+        marqueeActiveRef.current = false
+        marqueeRectRef.current = null
+        setMarqueeRect(null)
+      }
+
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onUp)
+    },
+    [timeAreaRef],
+  )
+
+  const handleKeyframePointerDown = (
+    event: React.PointerEvent,
+    keyframe: { id: string },
+    rowIndex: number,
+  ) => {
     if (event.button !== 0) {
       return
     }
     event.preventDefault()
     event.stopPropagation()
     const additive = event.ctrlKey || event.metaKey
-    if (selectForDrag(keyframe.id, additive)) {
+    const range = event.shiftKey
+    const store = useTimelineSelectionStore.getState()
+
+    if (range) {
+      const time = timeFromClientX(event.clientX)
+      const meta: KeyframeSelectionItem = { keyframeId: keyframe.id, time, rowIndex }
+      store.selectKeyframeRange(keyframe.id, meta, allSelectionItems)
+    } else if (additive) {
+      const time = timeFromClientX(event.clientX)
+      store.toggleKeyframe(keyframe.id, { time, rowIndex })
+    } else {
+      const selectedIds = selectedKeyframeIdsOf(store)
+      if (!selectedIds.includes(keyframe.id)) {
+        useSelectionStore.getState().clear()
+        const time = timeFromClientX(event.clientX)
+        store.selectKeyframe(keyframe.id, { time, rowIndex })
+      }
+    }
+
+    if (isDraggable()) {
       startDrag(event.clientX)
     }
   }
@@ -304,7 +452,8 @@ export function TimelineBody({
     if (!target?.keyframeId) {
       return
     }
-    if (useSelectionStore.getState().selectedKeyframeIds.includes(target.keyframeId)) {
+    const selectedIds = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+    if (selectedIds.includes(target.keyframeId)) {
       deleteSelectedKeyframes(engine, dispatch)
       return
     }
@@ -325,7 +474,7 @@ export function TimelineBody({
     if (result && !result.ok) {
       notify(result.error.message)
     }
-    useSelectionStore.getState().clearKeyframes()
+    useTimelineSelectionStore.getState().clearSelection()
   }
 
   const step = rulerTickStep(pps)
@@ -430,7 +579,11 @@ export function TimelineBody({
         onScroll={handleScroll}
       >
         <div className="timeline-content" style={{ width: contentWidth }}>
-          <div className="timeline-time-area" ref={timeAreaRef}>
+          <div
+            className="timeline-time-area"
+            ref={timeAreaRef}
+            onPointerDown={handleTimeAreaPointerDown}
+          >
             <div
               className="timeline-ruler"
               role="slider"
@@ -478,7 +631,9 @@ export function TimelineBody({
                             selected={selected}
                             pps={pps}
                             step={step}
-                            onPointerDown={(event) => handleKeyframePointerDown(event, keyframe)}
+                            onPointerDown={(event) =>
+                              handleKeyframePointerDown(event, keyframe, index)
+                            }
                             onContextMenu={(event) =>
                               handleKeyframeContextMenu(event, row, keyframe)
                             }
@@ -510,7 +665,9 @@ export function TimelineBody({
                             pps={pps}
                             step={step}
                             parameterLabel={materialParameterLabel(row.parameter)}
-                            onPointerDown={(event) => handleKeyframePointerDown(event, keyframe)}
+                            onPointerDown={(event) =>
+                              handleKeyframePointerDown(event, keyframe, index)
+                            }
                             onContextMenu={(event) =>
                               handleKeyframeContextMenu(event, row, keyframe)
                             }
@@ -528,6 +685,23 @@ export function TimelineBody({
               data-testid="timeline-playhead"
               style={{ left: currentTime * pps }}
             />
+            {marqueeRect && (
+              <div
+                className="timeline-marquee"
+                data-testid="timeline-marquee"
+                style={{
+                  position: 'absolute',
+                  left: marqueeRect.x,
+                  top: marqueeRect.y,
+                  width: marqueeRect.width,
+                  height: marqueeRect.height,
+                  border: '1px solid var(--color-accent)',
+                  background: 'rgba(var(--color-accent-rgb, 59, 130, 246), 0.1)',
+                  pointerEvents: 'none',
+                  zIndex: 10,
+                }}
+              />
+            )}
           </div>
         </div>
       </div>
