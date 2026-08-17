@@ -107,3 +107,67 @@ export type {
   SetKeyframeTangentsInverse,
   SetKeyframeTangentsParameters,
 } from './setKeyframeTangentsCommand'
+export { CreateClipCommand } from './createClipCommand'
+export type { CreateClipInverse, CreateClipParameters } from './createClipCommand'
+export { DeleteClipCommand } from './deleteClipCommand'
+export type { DeleteClipInverse, DeleteClipParameters } from './deleteClipCommand'
+export { RenameClipCommand } from './renameClipCommand'
+export type { RenameClipInverse, RenameClipParameters } from './renameClipCommand'
+export { DuplicateClipCommand } from './duplicateClipCommand'
+export type { DuplicateClipInverse, DuplicateClipParameters } from './duplicateClipCommand'
+export { SetClipDurationCommand } from './setClipDurationCommand'
+export type { SetClipDurationInverse, SetClipDurationParameters } from './setClipDurationCommand'
+export { SetClipCategoryCommand } from './setClipCategoryCommand'
+export type { SetClipCategoryInverse, SetClipCategoryParameters } from './setClipCategoryCommand'
+export { SetClipParamDefaultCommand } from './setClipParamDefaultCommand'
+export type {
+  SetClipParamDefaultInverse,
+  SetClipParamDefaultParameters,
+} from './setClipParamDefaultCommand'
+export { SetClipChannelParamLinkCommand } from './setClipChannelParamLinkCommand'
+export type {
+  SetClipChannelParamLinkInverse,
+  SetClipChannelParamLinkParameters,
+} from './setClipChannelParamLinkCommand'
+export { AddClipKeyframeCommand } from './addClipKeyframeCommand'
+export type { AddClipKeyframeInverse, AddClipKeyframeParameters } from './addClipKeyframeCommand'
+export { DeleteClipKeyframesCommand } from './deleteClipKeyframesCommand'
+export type {
+  DeleteClipKeyframesInverse,
+  DeleteClipKeyframesParameters,
+} from './deleteClipKeyframesCommand'
+export { MoveClipKeyframesCommand } from './moveClipKeyframesCommand'
+export type {
+  MoveClipKeyframesInverse,
+  MoveClipKeyframesParameters,
+} from './moveClipKeyframesCommand'
+export { SetClipKeyframeValueCommand } from './setClipKeyframeValueCommand'
+export type {
+  SetClipKeyframeValueInverse,
+  SetClipKeyframeValueParameters,
+} from './setClipKeyframeValueCommand'
+export { ScaleClipKeyframesCommand } from './scaleClipKeyframesCommand'
+export type {
+  ScaleClipKeyframesInverse,
+  ScaleClipKeyframesParameters,
+} from './scaleClipKeyframesCommand'
+export { PasteClipKeyframesCommand } from './pasteClipKeyframesCommand'
+export type {
+  PasteClipKeyframesInverse,
+  PasteClipKeyframesParameters,
+} from './pasteClipKeyframesCommand'
+export { DuplicateClipKeyframesCommand } from './duplicateClipKeyframesCommand'
+export type {
+  DuplicateClipKeyframesInverse,
+  DuplicateClipKeyframesParameters,
+} from './duplicateClipKeyframesCommand'
+export { SetClipKeyframeInterpolationCommand } from './setClipKeyframeInterpolationCommand'
+export type {
+  SetClipKeyframeInterpolationInverse,
+  SetClipKeyframeInterpolationParameters,
+} from './setClipKeyframeInterpolationCommand'
+export { SetClipKeyframeTangentsCommand } from './setClipKeyframeTangentsCommand'
+export type {
+  SetClipKeyframeTangentsInverse,
+  SetClipKeyframeTangentsParameters,
+} from './setClipKeyframeTangentsCommand'

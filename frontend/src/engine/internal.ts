@@ -23,6 +23,7 @@ import type { AnimationProperty, Keyframe } from './animation'
 import type { InterpolationType, KeyframeTangent } from './keyframe'
 import type { KeyframeTarget, KeyframeTrackRef } from './keyframeTarget'
 import type { MaterialParameterKindOf } from './keyframeTarget'
+import { requireNodeTarget } from './keyframeTarget'
 import { AssetDefinition } from './assetDefinition'
 import { MaterialDefinition } from './materialDefinition'
 import { ShaderDefinition } from './shaderDefinition'
@@ -45,7 +46,11 @@ import type { CreateNodeOptions } from './nodeManager'
 import type { Transform } from './transform'
 import type { LessonJSON } from './json'
 import { buildProjectFromJSON, toLessonJSON, validate } from './lessonSerializer'
+import { buildClipsFromJSON } from './librarySection'
 import type { EnginePublic } from './engine'
+import { ClipManager } from './clipManager'
+import type { ClipChannelDef, ClipParam } from './clipDefinition'
+import { ClipDefinition } from './clipDefinition'
 
 const DEFAULT_MATERIAL_KINDS: Readonly<Record<string, string>> = Object.fromEntries(
   DEFAULT_MATERIAL_PARAMETERS.map((parameter) => [parameter.key, parameter.kind]),
@@ -62,6 +67,7 @@ export class Engine {
   readonly #slides: SlideManager
   readonly #animations: AnimationManager
   readonly #evaluator: AnimationEvaluator
+  readonly #clips: ClipManager
   readonly #embeddedAssets = new Map<string, EmbeddedAsset>()
   readonly #embeddedMaterials = new Map<string, EmbeddedMaterialDefinition>()
   readonly #embeddedShaders = new Map<string, EmbeddedShaderDefinition>()
@@ -91,6 +97,7 @@ export class Engine {
       (nodeId) => this.getSlideOfNode(nodeId),
       this.#materialParameterKindOf,
     )
+    this.#clips = new ClipManager(this.#bus)
   }
 
   get project(): Project | null {
@@ -257,10 +264,11 @@ export class Engine {
   }
 
   getKeyframesOf(target: KeyframeTarget): readonly Keyframe[] {
+    const nodeTarget = requireNodeTarget(target)
     const resolved = this.resolveAnimationTarget(target)
     return resolved.kind === 'property'
-      ? this.#animations.getKeyframes(target.nodeId, resolved.property)
-      : this.#animations.getMaterialKeyframes(target.nodeId, resolved.parameter)
+      ? this.#animations.getKeyframes(nodeTarget.nodeId, resolved.property)
+      : this.#animations.getMaterialKeyframes(nodeTarget.nodeId, resolved.parameter)
   }
 
   evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState {
@@ -470,6 +478,183 @@ export class Engine {
     return this.#materials.definitions
   }
 
+  // --- Clip methods ---
+
+  get clips(): readonly ClipDefinition[] {
+    return this.#clips.clips
+  }
+
+  getClip(clipId: string): ClipDefinition {
+    return this.#clips.getClip(clipId)
+  }
+
+  createClip(
+    name: string,
+    duration: number,
+    category: string,
+    params: ClipParam[],
+    channels: ClipChannelDef[],
+  ): ClipDefinition {
+    return this.#clips.createClip(name, duration, category, params, channels)
+  }
+
+  deleteClip(clipId: string): ClipDefinition {
+    return this.#clips.deleteClip(clipId)
+  }
+
+  renameClip(clipId: string, name: string): void {
+    this.#clips.renameClip(clipId, name)
+  }
+
+  duplicateClip(clipId: string): ClipDefinition {
+    return this.#clips.duplicateClip(clipId)
+  }
+
+  setClipDuration(clipId: string, duration: number): void {
+    this.#clips.setDuration(clipId, duration)
+  }
+
+  setClipCategory(clipId: string, category: string): void {
+    this.#clips.setCategory(clipId, category)
+  }
+
+  setClipParamDefault(clipId: string, paramKey: string, defaultValue: number): void {
+    this.#clips.setParamDefault(clipId, paramKey, defaultValue)
+  }
+
+  setClipChannelParamLink(
+    clipId: string,
+    channel: AnimationProperty,
+    paramKey: string | null,
+  ): void {
+    this.#clips.setChannelParamLink(clipId, channel, paramKey)
+  }
+
+  importClip(clip: ClipDefinition): void {
+    this.#clips.importClip(clip)
+  }
+
+  getClipChannelKeyframes(clipId: string, channel: AnimationProperty): readonly Keyframe[] {
+    return this.#clips.getChannelKeyframes(clipId, channel)
+  }
+
+  addClipChannelKeyframe(
+    clipId: string,
+    channel: AnimationProperty,
+    time: number,
+    value: number,
+  ): Keyframe {
+    return this.#clips.addChannelKeyframe(clipId, channel, time, value)
+  }
+
+  deleteClipChannelKeyframes(
+    clipId: string,
+    channel: AnimationProperty,
+    keyframeIds: readonly string[],
+  ): Keyframe[] {
+    return this.#clips.deleteChannelKeyframes(clipId, channel, keyframeIds)
+  }
+
+  moveClipChannelKeyframes(
+    clipId: string,
+    channel: AnimationProperty,
+    moves: readonly { keyframeId: string; newTime: number }[],
+  ): { keyframeId: string; oldTime: number }[] {
+    return this.#clips.moveChannelKeyframes(clipId, channel, moves)
+  }
+
+  scaleClipChannelKeyframes(
+    clipId: string,
+    channel: AnimationProperty,
+    keyframeIds: readonly string[],
+    pivot: number,
+    factor: number,
+  ): { keyframeId: string; oldTime: number }[] {
+    return this.#clips.scaleChannelKeyframes(clipId, channel, keyframeIds, pivot, factor)
+  }
+
+  setClipChannelKeyframeValue(
+    clipId: string,
+    channel: AnimationProperty,
+    keyframeId: string,
+    value: number,
+  ): number {
+    return this.#clips.setChannelKeyframeValue(clipId, channel, keyframeId, value)
+  }
+
+  setClipChannelKeyframeInterpolation(
+    clipId: string,
+    channel: AnimationProperty,
+    keyframeId: string,
+    interpolation: unknown,
+  ): InterpolationType {
+    return this.#clips.setChannelKeyframeInterpolation(clipId, channel, keyframeId, interpolation)
+  }
+
+  setClipChannelKeyframeTangents(
+    clipId: string,
+    channel: AnimationProperty,
+    keyframeId: string,
+    tangentIn: KeyframeTangent,
+    tangentOut: KeyframeTangent,
+  ): { tangentIn: KeyframeTangent; tangentOut: KeyframeTangent } {
+    return this.#clips.setChannelKeyframeTangents(
+      clipId,
+      channel,
+      keyframeId,
+      tangentIn,
+      tangentOut,
+    )
+  }
+
+  pasteClipChannelKeyframes(
+    clipId: string,
+    channel: AnimationProperty,
+    payload: {
+      keyframes: readonly {
+        time: number
+        value: unknown
+        interpolation: InterpolationType
+        tangentIn: KeyframeTangent
+        tangentOut: KeyframeTangent
+      }[]
+    },
+    atTime: number,
+  ): Keyframe[] {
+    return this.#clips.pasteChannelKeyframes(clipId, channel, payload, atTime)
+  }
+
+  duplicateClipChannelKeyframes(
+    clipId: string,
+    channel: AnimationProperty,
+    keyframeIds: readonly string[],
+  ): Keyframe[] {
+    return this.#clips.duplicateChannelKeyframes(clipId, channel, keyframeIds)
+  }
+
+  isClipReferenced(clipId: string): boolean {
+    for (const slide of this.#projects.current?.slides ?? []) {
+      for (const node of walkPreOrder(slide.scene.root)) {
+        if ((node as unknown as Record<string, unknown>).clipReference === clipId) {
+          return true
+        }
+      }
+    }
+    return false
+  }
+
+  getClipBlockingNodeNames(clipId: string): string[] {
+    const names: string[] = []
+    for (const slide of this.#projects.current?.slides ?? []) {
+      for (const node of walkPreOrder(slide.scene.root)) {
+        if ((node as unknown as Record<string, unknown>).clipReference === clipId) {
+          names.push(node.name)
+        }
+      }
+    }
+    return names
+  }
+
   get shaderDefinitions(): readonly ShaderDefinition[] {
     return this.#shaders.definitions
   }
@@ -490,7 +675,19 @@ export class Engine {
     if (!project) {
       throw new Error('No project exists in memory')
     }
-    return toLessonJSON(project)
+    const json = toLessonJSON(project)
+    // Add clips to the library section
+    if (this.#clips.clips.length > 0) {
+      const library = json.library ?? {}
+      return {
+        ...json,
+        library: {
+          ...library,
+          clips: this.#clips.clips.map((clip) => clip.toJSON()),
+        },
+      }
+    }
+    return json
   }
 
   restoreFromJSON(json: LessonJSON): void {
@@ -498,6 +695,11 @@ export class Engine {
     const project = buildProjectFromJSON(json, this.#materials.definitions)
     try {
       this.#replaceProject(project)
+      // Restore clips from JSON
+      const clips = buildClipsFromJSON(json.library)
+      for (const clip of clips) {
+        this.#clips.importClip(clip)
+      }
     } catch (error) {
       this.#nodes.clear()
       this.#scenes.clear()
@@ -580,6 +782,9 @@ export function toReadOnly(engine: Engine): EnginePublic {
     get activeSlideId() {
       return engine.activeSlideId
     },
+    get clips() {
+      return engine.clips
+    },
     subscribe: (listener) => engine.subscribe(listener),
     openProject: (project) => engine.openProject(project),
     setActiveSlide: (slideId) => engine.setActiveSlide(slideId),
@@ -602,6 +807,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
     evaluateNode: (nodeId, time, target) => engine.evaluateNode(nodeId, time, target),
     evaluateMaterialOverrides: (nodeId, time, target) =>
       engine.evaluateMaterialOverrides(nodeId, time, target),
+    getClip: (clipId) => engine.getClip(clipId),
+    getClipChannelKeyframes: (clipId, channel) => engine.getClipChannelKeyframes(clipId, channel),
     toJSON: () => engine.toJSON(),
   }
 }

@@ -7,7 +7,7 @@ import { SetKeyframeValueCommand } from './commands/setKeyframeValueCommand'
 import { OverrideMaterialParameterCommand } from './commands/overrideMaterialParameterCommand'
 import { TransactionCommand } from './commands/transactionCommand'
 import type { KeyframeTarget } from './keyframeTarget'
-import { isParameterTarget } from './keyframeTarget'
+import { isParameterTarget, isPropertyTarget } from './keyframeTarget'
 import { uniformValuesEqual } from './materialResolution'
 import type { KeyframeValue } from './keyframe'
 
@@ -82,7 +82,7 @@ export function autoKeyCommands(
       continue
     }
     if (
-      !isParameterTarget(edit.target) &&
+      isPropertyTarget(edit.target) &&
       evaluatedPropertyValue(engine, edit.target.nodeId, edit.target.property, edit.time) ===
         edit.value
     ) {
@@ -142,7 +142,11 @@ export function dispatchKeyframeCommands(
 }
 
 function targetKeyframes(engine: EnginePublic, target: KeyframeTarget): readonly Keyframe[] {
-  return isParameterTarget(target)
-    ? engine.getMaterialKeyframes(target.nodeId, target.parameter)
-    : engine.getKeyframes(target.nodeId, target.property)
+  if (isParameterTarget(target)) {
+    return engine.getMaterialKeyframes(target.nodeId, target.parameter)
+  }
+  if (isPropertyTarget(target)) {
+    return engine.getKeyframes(target.nodeId, target.property)
+  }
+  return []
 }

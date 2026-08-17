@@ -14,6 +14,7 @@ import {
   materialParameterEditCommands,
 } from '../engine/keyframeEdit'
 import type { KeyframeEdit, MaterialParameterEdit, TimedKeyframeEdit } from '../engine/keyframeEdit'
+import { isParameterTarget, isPropertyTarget } from '../engine/keyframeTarget'
 
 export type { KeyframeEdit, MaterialParameterEdit } from '../engine/keyframeEdit'
 export {
@@ -111,6 +112,9 @@ export function autoKeyEdit(
 ): CommandResult<unknown> | null {
   const timed: TimedKeyframeEdit[] = []
   for (const edit of edits) {
+    if (!isPropertyTarget(edit.target) && !isParameterTarget(edit.target)) {
+      continue
+    }
     const time = playheadTimeOf(engine, edit.target.nodeId)
     if (time === null) {
       continue

@@ -141,6 +141,48 @@ export interface KeyframeTangentsChanged {
   readonly keyframeId: string
 }
 
+export interface ClipCreated {
+  readonly type: 'ClipCreated'
+  readonly clipId: string
+}
+
+export interface ClipRemoved {
+  readonly type: 'ClipRemoved'
+  readonly clipId: string
+}
+
+export interface ClipRenamed {
+  readonly type: 'ClipRenamed'
+  readonly clipId: string
+}
+
+export interface ClipDuplicated {
+  readonly type: 'ClipDuplicated'
+  readonly clipId: string
+}
+
+export interface ClipDurationChanged {
+  readonly type: 'ClipDurationChanged'
+  readonly clipId: string
+}
+
+export interface ClipCategoryChanged {
+  readonly type: 'ClipCategoryChanged'
+  readonly clipId: string
+}
+
+export interface ClipParamDefaultChanged {
+  readonly type: 'ClipParamDefaultChanged'
+  readonly clipId: string
+  readonly paramKey: string
+}
+
+export interface ClipChannelLinkChanged {
+  readonly type: 'ClipChannelLinkChanged'
+  readonly clipId: string
+  readonly channel: string
+}
+
 export type EngineEvent =
   | ProjectCreated
   | ProjectLoaded
@@ -169,6 +211,14 @@ export type EngineEvent =
   | KeyframeValueChanged
   | KeyframeInterpolationChanged
   | KeyframeTangentsChanged
+  | ClipCreated
+  | ClipRemoved
+  | ClipRenamed
+  | ClipDuplicated
+  | ClipDurationChanged
+  | ClipCategoryChanged
+  | ClipParamDefaultChanged
+  | ClipChannelLinkChanged
 
 export type EventListener = (event: EngineEvent) => void
 

@@ -50,7 +50,7 @@ describe('keyframe target guards', () => {
 
   it('rejects malformed targets', () => {
     expect(() => requireKeyframeTarget({ kind: 'clip', clipId: 'c1' })).toThrow(
-      /unknown keyframe target/i,
+      /unknown animation property/i,
     )
     expect(() => requireKeyframeTarget(null)).toThrow(/unknown keyframe target/i)
     expect(() =>

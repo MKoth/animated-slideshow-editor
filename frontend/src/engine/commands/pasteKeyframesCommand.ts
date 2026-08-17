@@ -1,7 +1,7 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
 import type { KeyframeTarget } from '../keyframeTarget'
-import { requireTrackKeyframeValue } from '../keyframeTarget'
+import { requireNodeTarget, requireTrackKeyframeValue } from '../keyframeTarget'
 import { requireKeyframeTime } from '../animationProperties'
 import { requireFiniteNumber } from '../guards'
 import { requireKeyframeInterpolation, requireKeyframeTangent } from '../keyframe'
@@ -41,8 +41,9 @@ export class PasteKeyframesCommand implements Command<PasteKeyframesInverse> {
   }
 
   validate(engine: Engine): void {
+    const nodeTarget = requireNodeTarget(this.#target)
     const track = engine.resolveAnimationTarget(this.#target)
-    const slide = engine.getSlideOfNode(this.#target.nodeId)
+    const slide = engine.getSlideOfNode(nodeTarget.nodeId)
     requireKeyframeTime(this.#atTime, slide.duration, 'Paste time')
     if (this.#payload.keyframes.length === 0) {
       throw new Error('At least one keyframe is required to paste')

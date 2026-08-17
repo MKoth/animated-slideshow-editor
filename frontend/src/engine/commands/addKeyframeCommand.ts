@@ -1,7 +1,7 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
 import type { KeyframeTarget } from '../keyframeTarget'
-import { requireTrackKeyframeValue } from '../keyframeTarget'
+import { requireNodeTarget, requireTrackKeyframeValue } from '../keyframeTarget'
 import { requireKeyframeTime } from '../animationProperties'
 import { snapshotOf } from '../keyframe'
 import type { KeyframeSnapshot } from '../keyframe'
@@ -36,8 +36,9 @@ export class AddKeyframeCommand implements Command<AddKeyframeInverse> {
   }
 
   validate(engine: Engine): void {
+    const nodeTarget = requireNodeTarget(this.#target)
     const track = engine.resolveAnimationTarget(this.#target)
-    const slide = engine.getSlideOfNode(this.#target.nodeId)
+    const slide = engine.getSlideOfNode(nodeTarget.nodeId)
     requireKeyframeTime(this.#time, slide.duration)
     requireTrackKeyframeValue(track, this.#value)
   }

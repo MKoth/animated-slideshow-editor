@@ -1,7 +1,7 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
 import type { KeyframeTarget } from '../keyframeTarget'
-import { requireScaleFactor } from '../keyframeTarget'
+import { requireNodeTarget, requireScaleFactor } from '../keyframeTarget'
 import { requireKeyframeTime } from '../animationProperties'
 import type { KeyframeMoveResult } from '../animationManager'
 
@@ -42,8 +42,9 @@ export class ScaleKeyframesCommand implements Command<ScaleKeyframesInverse> {
     if (this.#keyframeIds.length === 0) {
       throw new Error('At least one keyframe id is required')
     }
+    const nodeTarget = requireNodeTarget(this.#target)
     engine.resolveAnimationTarget(this.#target)
-    const slide = engine.getSlideOfNode(this.#target.nodeId)
+    const slide = engine.getSlideOfNode(nodeTarget.nodeId)
     requireScaleFactor(this.#factor)
     requireKeyframeTime(this.#pivot, slide.duration, 'Scale pivot')
     const keyframes = engine.getKeyframesOf(this.#target)

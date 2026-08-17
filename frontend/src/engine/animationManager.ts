@@ -11,6 +11,7 @@ import { requireFiniteNumber } from './guards'
 import type { NodeAnimation } from './nodeAnimation'
 import type { KeyframeTarget, KeyframeTrackRef, MaterialParameterKindOf } from './keyframeTarget'
 import {
+  requireNodeTarget,
   requireScaleFactor,
   requireTrackKeyframeValue,
   resolveKeyframeTrack,
@@ -315,8 +316,9 @@ export class AnimationManager {
   }
 
   #resolve(target: KeyframeTarget): ResolvedTarget {
-    const node = this.#nodeLookup(target.nodeId)
-    const slide = this.#slideLookup(target.nodeId)
+    const nodeTarget = requireNodeTarget(target)
+    const node = this.#nodeLookup(nodeTarget.nodeId)
+    const slide = this.#slideLookup(nodeTarget.nodeId)
     const animation = slide.animation.ensure(node.id)
     const track = resolveKeyframeTrack(node, target, this.#parameterKindOf, (parameter) =>
       animation.hasMaterialTrack(parameter),

@@ -18,6 +18,7 @@ import type {
 import type { EngineEvent, Unsubscribe } from './events'
 import type { LessonJSON } from './json'
 import type { MaterialOverrides } from './materialInstance'
+import type { ClipDefinition } from './clipDefinition'
 
 export interface EnginePublic {
   readonly project: Project | null
@@ -28,6 +29,7 @@ export interface EnginePublic {
   readonly embeddedMaterials: readonly EmbeddedMaterialDefinition[]
   readonly embeddedShaders: readonly EmbeddedShaderDefinition[]
   readonly activeSlideId: string | null
+  readonly clips: readonly ClipDefinition[]
   subscribe(listener: (event: EngineEvent) => void): Unsubscribe
   openProject(project: Project): void
   setActiveSlide(slideId: string): void
@@ -53,6 +55,8 @@ export interface EnginePublic {
     time: number,
     target?: EvaluatedMaterialOverridesScratch,
   ): MaterialOverrides
+  getClip(clipId: string): ClipDefinition
+  getClipChannelKeyframes(clipId: string, channel: AnimationProperty): readonly Keyframe[]
   toJSON(): LessonJSON
 }
 

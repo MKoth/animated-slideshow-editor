@@ -137,6 +137,33 @@ export type LessonLibraryJSON = {
   readonly assets?: readonly EmbeddedAssetJSON[]
   readonly materials?: readonly EmbeddedMaterialJSON[]
   readonly shaders?: readonly EmbeddedShaderJSON[]
+  readonly clips?: readonly ClipJSON[]
+}
+
+export type ClipParamJSON = {
+  readonly key: string
+  readonly label: string
+  readonly kind: string
+  readonly default: number
+}
+
+export type ClipChannelJSON = {
+  readonly keyframes: readonly KeyframeJSON[]
+}
+
+export type ClipChannelDefJSON = {
+  readonly property: string
+  readonly paramKey?: string
+}
+
+export type ClipJSON = {
+  readonly id: string
+  readonly name: string
+  readonly duration: number
+  readonly category?: string
+  readonly params: readonly ClipParamJSON[]
+  readonly channels: readonly ClipChannelDefJSON[]
+  readonly channelAnimations?: Readonly<Record<string, ClipChannelJSON>>
 }
 
 export type LessonJSON = {

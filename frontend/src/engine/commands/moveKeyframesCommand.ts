@@ -1,6 +1,7 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
 import type { KeyframeTarget } from '../keyframeTarget'
+import { requireNodeTarget } from '../keyframeTarget'
 import { requireKeyframeTime } from '../animationProperties'
 import type { KeyframeMove, KeyframeMoveResult } from '../animationManager'
 
@@ -30,11 +31,12 @@ export class MoveKeyframesCommand implements Command<MoveKeyframesInverse> {
   }
 
   validate(engine: Engine): void {
+    const nodeTarget = requireNodeTarget(this.#target)
     engine.resolveAnimationTarget(this.#target)
     if (this.#moves.length === 0) {
       throw new Error('At least one keyframe move is required')
     }
-    const slide = engine.getSlideOfNode(this.#target.nodeId)
+    const slide = engine.getSlideOfNode(nodeTarget.nodeId)
     const existing = new Set(engine.getKeyframesOf(this.#target).map((keyframe) => keyframe.id))
     for (const move of this.#moves) {
       requireKeyframeTime(move.newTime, slide.duration)

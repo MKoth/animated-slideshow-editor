@@ -74,6 +74,10 @@ export type {
   PropertyTrackJSON,
   NodeAnimationJSON,
   SlideAnimationJSON,
+  ClipJSON,
+  ClipParamJSON,
+  ClipChannelJSON,
+  ClipChannelDefJSON,
 } from './json'
 export { LESSON_VERSION, deserialize, serialize, upgrade, validate } from './lessonSerializer'
 export { CommandDispatcher, UndoStack, createCommandSystem } from './commands'
@@ -115,6 +119,23 @@ export {
   DuplicateKeyframesCommand,
   SetKeyframeInterpolationCommand,
   SetKeyframeTangentsCommand,
+  CreateClipCommand,
+  DeleteClipCommand,
+  RenameClipCommand,
+  DuplicateClipCommand,
+  SetClipDurationCommand,
+  SetClipCategoryCommand,
+  SetClipParamDefaultCommand,
+  SetClipChannelParamLinkCommand,
+  AddClipKeyframeCommand,
+  DeleteClipKeyframesCommand,
+  MoveClipKeyframesCommand,
+  SetClipKeyframeValueCommand,
+  ScaleClipKeyframesCommand,
+  PasteClipKeyframesCommand,
+  DuplicateClipKeyframesCommand,
+  SetClipKeyframeInterpolationCommand,
+  SetClipKeyframeTangentsCommand,
 } from './commands'
 export type {
   CreateProjectInverse,
@@ -178,6 +199,40 @@ export type {
   SetKeyframeInterpolationParameters,
   SetKeyframeTangentsInverse,
   SetKeyframeTangentsParameters,
+  CreateClipInverse,
+  CreateClipParameters,
+  DeleteClipInverse,
+  DeleteClipParameters,
+  RenameClipInverse,
+  RenameClipParameters,
+  DuplicateClipInverse,
+  DuplicateClipParameters,
+  SetClipDurationInverse,
+  SetClipDurationParameters,
+  SetClipCategoryInverse,
+  SetClipCategoryParameters,
+  SetClipParamDefaultInverse,
+  SetClipParamDefaultParameters,
+  SetClipChannelParamLinkInverse,
+  SetClipChannelParamLinkParameters,
+  AddClipKeyframeInverse,
+  AddClipKeyframeParameters,
+  DeleteClipKeyframesInverse,
+  DeleteClipKeyframesParameters,
+  MoveClipKeyframesInverse,
+  MoveClipKeyframesParameters,
+  SetClipKeyframeValueInverse,
+  SetClipKeyframeValueParameters,
+  ScaleClipKeyframesInverse,
+  ScaleClipKeyframesParameters,
+  PasteClipKeyframesInverse,
+  PasteClipKeyframesParameters,
+  DuplicateClipKeyframesInverse,
+  DuplicateClipKeyframesParameters,
+  SetClipKeyframeInterpolationInverse,
+  SetClipKeyframeInterpolationParameters,
+  SetClipKeyframeTangentsInverse,
+  SetClipKeyframeTangentsParameters,
 } from './commands'
 export {
   ANIMATABLE_PROPERTIES,
@@ -193,8 +248,10 @@ export type {
   PastePayload,
   PastePayloadKeyframe,
 } from './animation'
-export type { KeyframeTarget, KeyframeTrackRef } from './animation'
-export { isParameterTarget, isPropertyTarget } from './animation'
+export type { KeyframeTarget, KeyframeTrackRef, ClipChannelTarget } from './keyframeTarget'
+export { isParameterTarget, isPropertyTarget, isClipChannelTarget } from './keyframeTarget'
+export type { ClipDefinition, ClipChannel, ClipParam, ClipChannelDef } from './clipDefinition'
+export { newClipId } from './clipDefinition'
 export type { EvaluatedNodeState, EvaluatedNodeScratch } from './animation'
 export { evaluatedNodeScratch } from './animation'
 export type { EvaluatedMaterialOverridesScratch } from './animation'
