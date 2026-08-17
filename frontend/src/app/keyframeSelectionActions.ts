@@ -14,6 +14,8 @@ import { useTimelineSelectionStore, selectedKeyframeIdsOf } from '../stores/time
 import { useKeyframeClipboardStore } from '../stores/keyframeClipboardStore'
 import type { KeyframeClipboardTarget } from '../stores/keyframeClipboardStore'
 import { usePlaybackController } from '../stores/playbackStore'
+import { useTimelineViewStore } from '../stores/timelineViewStore'
+import { snapToFrameGrid } from '../engine/timelineSnapping'
 import { animatablePropertiesOf } from './keyframeActions'
 
 export interface KeyframeRef {
@@ -303,7 +305,9 @@ export function pasteKeyframes(engine: EnginePublic, dispatch: DispatchCommand):
     return
   }
 
-  const atTime = resolvePlayheadTime(engine)
+  const rawAtTime = resolvePlayheadTime(engine)
+  const gridEnabled = useTimelineViewStore.getState().gridSnapEnabled
+  const atTime = snapToFrameGrid(rawAtTime, gridEnabled)
   const overrideTarget = resolvePasteTargetOverride(engine)
 
   const commands = targets.map((clipTarget) => {

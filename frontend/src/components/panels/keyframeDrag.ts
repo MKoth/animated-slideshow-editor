@@ -9,7 +9,8 @@ import {
   useTimelineSelectionStore,
   selectedKeyframeIdsOf,
 } from '../../stores/timelineSelectionStore'
-import { rulerTickStep, snapTimeToGrid } from '../../stores/timelineViewStore'
+import { useTimelineViewStore } from '../../stores/timelineViewStore'
+import { snapKeyframeTime } from '../../engine/timelineSnapping'
 
 interface DragMove {
   readonly keyframeId: string
@@ -156,13 +157,28 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
         return
       }
       const delta = timeFromClientX(event.clientX) - session.pointerStartTime
-      const step = rulerTickStep(pps)
+      const viewState = useTimelineViewStore.getState()
+      const gridEnabled = viewState.gridSnapEnabled
+      const keyframesEnabled = viewState.snapToKeyframesEnabled
+      const draggedIds = new Set(session.moves.map((m) => m.keyframeId))
+      const candidateTimes: number[] = []
+      if (keyframesEnabled) {
+        for (const [id, ref] of keyframeRefs) {
+          if (!draggedIds.has(id)) {
+            candidateTimes.push(ref.time)
+          }
+        }
+      }
       const next = new Map<string, number>()
       for (const move of session.moves) {
-        next.set(
-          move.keyframeId,
-          clamp(snapTimeToGrid(move.originalTime + delta, step), 0, duration),
-        )
+        const raw = move.originalTime + delta
+        const snapped = snapKeyframeTime(raw, {
+          gridEnabled,
+          keyframesEnabled,
+          candidateTimes,
+          pps,
+        })
+        next.set(move.keyframeId, clamp(snapped, 0, duration))
       }
       applyDragPreview(next)
     }

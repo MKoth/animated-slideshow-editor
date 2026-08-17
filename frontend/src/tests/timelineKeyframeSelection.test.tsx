@@ -16,6 +16,7 @@ import { useSelectionStore } from '../stores/selectionStore'
 import { useTimelineSelectionStore, selectedKeyframeIdsOf } from '../stores/timelineSelectionStore'
 import { DEFAULT_TIMELINE_HEIGHT } from '../stores/uiPrefs'
 import { useTimelineViewStore } from '../stores/timelineViewStore'
+import { FRAME_STEP } from '../engine/timelineSnapping'
 
 type Property = 'positionX' | 'positionY' | 'rotation' | 'scaleX' | 'scaleY' | 'opacity'
 
@@ -255,7 +256,9 @@ describe('TimelinePanel moving keyframes', () => {
     dragTo(firstMarker, 2.3)
 
     const times = engine.getKeyframes(nodeId, 'positionX').map((keyframe) => keyframe.time)
-    expect(times).toEqual([2.5, 4.5])
+    const expectedFirst = Math.round(2.3 / FRAME_STEP) * FRAME_STEP
+    const expectedSecond = Math.round(4.3 / FRAME_STEP) * FRAME_STEP
+    expect(times).toEqual([expectedFirst, expectedSecond])
     expect(undoStack.entries).toHaveLength(before + 1)
     expect(undoStack.entries[0].type).toBe('MoveKeyframes')
     expect(undoStack.entries[0].inverse).toEqual({
@@ -625,5 +628,148 @@ describe('TimelinePanel context scoping', () => {
 
     expect(useSelectionStore.getState().selectedIds).toEqual([])
     expect(getSelectedKeyframeIds()).toEqual([keyframeId])
+  })
+})
+
+describe('TimelinePanel snapping toggles', () => {
+  it('renders Grid Snap toggle with default on state', async () => {
+    const { engine } = renderPanel()
+    createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    const gridSnapButton = screen.getByRole('button', { name: 'Grid Snap' })
+    expect(gridSnapButton).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('renders Snap to Keyframes toggle with default off state', async () => {
+    const { engine } = renderPanel()
+    createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    const snapKfButton = screen.getByRole('button', { name: 'Snap to Keyframes' })
+    expect(snapKfButton).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('toggles Grid Snap off and on', async () => {
+    const { engine } = renderPanel()
+    createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    const gridSnapButton = screen.getByRole('button', { name: 'Grid Snap' })
+    expect(gridSnapButton).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(gridSnapButton)
+    expect(gridSnapButton).toHaveAttribute('aria-pressed', 'false')
+    expect(useTimelineViewStore.getState().gridSnapEnabled).toBe(false)
+
+    fireEvent.click(gridSnapButton)
+    expect(gridSnapButton).toHaveAttribute('aria-pressed', 'true')
+    expect(useTimelineViewStore.getState().gridSnapEnabled).toBe(true)
+  })
+
+  it('toggles Snap to Keyframes off and on', async () => {
+    const { engine } = renderPanel()
+    createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    const snapKfButton = screen.getByRole('button', { name: 'Snap to Keyframes' })
+    expect(snapKfButton).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(snapKfButton)
+    expect(snapKfButton).toHaveAttribute('aria-pressed', 'true')
+    expect(useTimelineViewStore.getState().snapToKeyframesEnabled).toBe(true)
+
+    fireEvent.click(snapKfButton)
+    expect(snapKfButton).toHaveAttribute('aria-pressed', 'false')
+    expect(useTimelineViewStore.getState().snapToKeyframesEnabled).toBe(false)
+  })
+
+  it('disables Snap to Keyframes when Grid Snap is off', async () => {
+    const { engine } = renderPanel()
+    createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    const gridSnapButton = screen.getByRole('button', { name: 'Grid Snap' })
+    const snapKfButton = screen.getByRole('button', { name: 'Snap to Keyframes' })
+
+    fireEvent.click(gridSnapButton)
+    expect(snapKfButton).toBeDisabled()
+
+    fireEvent.click(gridSnapButton)
+    expect(snapKfButton).toBeEnabled()
+  })
+})
+
+describe('TimelinePanel grid snapping behavior', () => {
+  it('snaps dragged keyframes to 1/60 s frame boundaries when grid snap is on', async () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    expandNode('Boy')
+    await screen.findByText('Position X')
+    useTimelineViewStore.getState().setGridSnapEnabled(true)
+    const keyframeId = addKeyframe(dispatcher, nodeId, 'positionX', 1, 42)
+    const marker = await waitFor(() => markerOf(keyframeId))
+
+    dragTo(marker, 2.3)
+
+    const time = engine.getKeyframes(nodeId, 'positionX')[0].time
+    const expectedFrame = Math.round(2.3 / FRAME_STEP) * FRAME_STEP
+    expect(time).toBeCloseTo(expectedFrame, 4)
+  })
+
+  it('does not snap when grid snap is off', async () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    expandNode('Boy')
+    await screen.findByText('Position X')
+    useTimelineViewStore.getState().setGridSnapEnabled(false)
+    const keyframeId = addKeyframe(dispatcher, nodeId, 'positionX', 1, 42)
+    const marker = await waitFor(() => markerOf(keyframeId))
+
+    dragTo(marker, 2.3)
+
+    const time = engine.getKeyframes(nodeId, 'positionX')[0].time
+    expect(time).toBe(2.3)
+  })
+})
+
+describe('TimelinePanel snap-to-keyframes behavior', () => {
+  it('snaps to a nearby keyframe on another track when snap-to-keyframes is enabled', async () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    expandNode('Boy')
+    await screen.findByText('Position X')
+    await screen.findByText('Position Y')
+    useTimelineViewStore.getState().setGridSnapEnabled(true)
+    useTimelineViewStore.getState().setSnapToKeyframesEnabled(true)
+    addKeyframe(dispatcher, nodeId, 'positionY', 2, 10)
+    const keyframeId = addKeyframe(dispatcher, nodeId, 'positionX', 1, 42)
+    const marker = await waitFor(() => markerOf(keyframeId))
+
+    dragTo(marker, 2.01)
+
+    const time = engine.getKeyframes(nodeId, 'positionX').find((kf) => kf.id === keyframeId)?.time
+    expect(time).toBeCloseTo(2, 4)
+  })
+
+  it('preserves relative spacing of multi-selection when snapping to keyframes', async () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    await screen.findByRole('track', { name: 'Boy' })
+    expandNode('Boy')
+    await screen.findByText('Position X')
+    useTimelineViewStore.getState().setGridSnapEnabled(true)
+    useTimelineViewStore.getState().setSnapToKeyframesEnabled(true)
+    const first = addKeyframe(dispatcher, nodeId, 'positionX', 1, 10)
+    const second = addKeyframe(dispatcher, nodeId, 'positionX', 3, 30)
+    const firstMarker = await waitFor(() => markerOf(first))
+
+    pointerDownAtTime(firstMarker, 1)
+    pointerDownAtTime(markerOf(second), 3, { ctrlKey: true })
+    dragTo(firstMarker, 1.01)
+
+    const times = engine
+      .getKeyframes(nodeId, 'positionX')
+      .map((kf) => kf.time)
+      .sort((a, b) => a - b)
+    expect(times[1] - times[0]).toBeCloseTo(2, 4)
   })
 })

@@ -25,6 +25,8 @@ export function TimelineToolbar({
   const loopEnabled = usePlaybackController((state) => state.loopEnabled)
   const animationMode = useUiStore((state) => state.animationMode)
   const cameraAnimationMode = useUiStore((state) => state.cameraAnimationMode)
+  const gridSnapEnabled = useTimelineViewStore((state) => state.gridSnapEnabled)
+  const snapToKeyframesEnabled = useTimelineViewStore((state) => state.snapToKeyframesEnabled)
   const keyframeCount = selectedKeyframeIdsOf(useTimelineSelectionStore()).length
   const { engine, dispatch } = useEngine()
 
@@ -147,6 +149,35 @@ export function TimelineToolbar({
           onClick={() => useUiStore.getState().toggleCameraAnimationMode()}
         >
           Camera Animation Mode
+        </button>
+      </div>
+      <div className="timeline-toolbar__snap">
+        <button
+          className="timeline-toolbar__button"
+          aria-label="Grid Snap"
+          aria-pressed={gridSnapEnabled}
+          title={
+            gridSnapEnabled
+              ? 'Grid snap: keyframes snap to 1/60 s frame boundaries'
+              : 'Grid snap off: keyframes move freely'
+          }
+          onClick={() => useTimelineViewStore.getState().toggleGridSnap()}
+        >
+          Grid Snap
+        </button>
+        <button
+          className="timeline-toolbar__button"
+          aria-label="Snap to Keyframes"
+          aria-pressed={snapToKeyframesEnabled}
+          title={
+            snapToKeyframesEnabled
+              ? 'Snap to keyframes: keyframes snap to nearby keyframes on any track'
+              : 'Snap to keyframes off'
+          }
+          disabled={!gridSnapEnabled}
+          onClick={() => useTimelineViewStore.getState().toggleSnapToKeyframes()}
+        >
+          Snap to Keyframes
         </button>
       </div>
       <span className="timeline-time" aria-label="Current time">

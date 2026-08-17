@@ -80,7 +80,13 @@ describe('clampScrollTime', () => {
 describe('TimelineViewStore', () => {
   beforeEach(() => {
     useTimelineViewStore.persist.clearStorage()
-    useTimelineViewStore.setState({ zoomLevel: 1, scrollTime: 0, height: DEFAULT_TIMELINE_HEIGHT })
+    useTimelineViewStore.setState({
+      zoomLevel: 1,
+      scrollTime: 0,
+      height: DEFAULT_TIMELINE_HEIGHT,
+      gridSnapEnabled: true,
+      snapToKeyframesEnabled: false,
+    })
   })
 
   it('starts at default zoom, scroll and panel height', () => {
@@ -155,12 +161,66 @@ describe('TimelineViewStore', () => {
     expect(persisted).toContain('"scrollTime":3')
     expect(persisted).toContain('"height":300')
 
-    useTimelineViewStore.setState({ zoomLevel: 1, scrollTime: 0, height: DEFAULT_TIMELINE_HEIGHT })
+    useTimelineViewStore.setState({
+      zoomLevel: 1,
+      scrollTime: 0,
+      height: DEFAULT_TIMELINE_HEIGHT,
+      gridSnapEnabled: true,
+      snapToKeyframesEnabled: false,
+    })
     localStorage.setItem('timeline-view-state', persisted ?? '')
     await useTimelineViewStore.persist.rehydrate()
     const state = useTimelineViewStore.getState()
     expect(state.zoomLevel).toBe(2)
     expect(state.scrollTime).toBe(3)
     expect(state.height).toBe(300)
+  })
+
+  it('persists gridSnapEnabled and snapToKeyframesEnabled in localStorage', async () => {
+    const store = useTimelineViewStore.getState()
+    store.setGridSnapEnabled(false)
+    store.setSnapToKeyframesEnabled(true)
+
+    const persisted = localStorage.getItem('timeline-view-state')
+    expect(persisted).not.toBeNull()
+    expect(persisted).toContain('"gridSnapEnabled":false')
+    expect(persisted).toContain('"snapToKeyframesEnabled":true')
+
+    useTimelineViewStore.setState({
+      zoomLevel: 1,
+      scrollTime: 0,
+      height: DEFAULT_TIMELINE_HEIGHT,
+      gridSnapEnabled: true,
+      snapToKeyframesEnabled: false,
+    })
+    localStorage.setItem('timeline-view-state', persisted ?? '')
+    await useTimelineViewStore.persist.rehydrate()
+    const state = useTimelineViewStore.getState()
+    expect(state.gridSnapEnabled).toBe(false)
+    expect(state.snapToKeyframesEnabled).toBe(true)
+  })
+
+  it('defaults gridSnapEnabled to true and snapToKeyframesEnabled to false', () => {
+    const state = useTimelineViewStore.getState()
+    expect(state.gridSnapEnabled).toBe(true)
+    expect(state.snapToKeyframesEnabled).toBe(false)
+  })
+
+  it('toggles gridSnapEnabled', () => {
+    const store = useTimelineViewStore.getState()
+    expect(store.gridSnapEnabled).toBe(true)
+    store.toggleGridSnap()
+    expect(useTimelineViewStore.getState().gridSnapEnabled).toBe(false)
+    store.toggleGridSnap()
+    expect(useTimelineViewStore.getState().gridSnapEnabled).toBe(true)
+  })
+
+  it('toggles snapToKeyframesEnabled', () => {
+    const store = useTimelineViewStore.getState()
+    expect(store.snapToKeyframesEnabled).toBe(false)
+    store.toggleSnapToKeyframes()
+    expect(useTimelineViewStore.getState().snapToKeyframesEnabled).toBe(true)
+    store.toggleSnapToKeyframes()
+    expect(useTimelineViewStore.getState().snapToKeyframesEnabled).toBe(false)
   })
 })

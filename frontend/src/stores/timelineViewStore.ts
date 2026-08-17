@@ -76,6 +76,8 @@ export interface TimelineViewState {
   readonly scrollTime: number
   readonly height: number
   readonly expandedNodeIds: Readonly<Record<string, boolean>>
+  readonly gridSnapEnabled: boolean
+  readonly snapToKeyframesEnabled: boolean
   toggleExpanded(nodeId: string): void
   setZoom(zoomLevel: number, anchorTime: number, viewportWidth: number, duration: number): void
   zoomIn(anchorTime: number, viewportWidth: number, duration: number): void
@@ -83,6 +85,10 @@ export interface TimelineViewState {
   fitTimeline(duration: number, viewportWidth: number): void
   setScrollTime(time: number, viewportWidth: number, duration: number): void
   setHeight(height: number): void
+  toggleGridSnap(): void
+  setGridSnapEnabled(enabled: boolean): void
+  toggleSnapToKeyframes(): void
+  setSnapToKeyframesEnabled(enabled: boolean): void
 }
 
 export const useTimelineViewStore = create<TimelineViewState>()(
@@ -92,6 +98,8 @@ export const useTimelineViewStore = create<TimelineViewState>()(
       scrollTime: 0,
       height: DEFAULT_TIMELINE_HEIGHT,
       expandedNodeIds: {},
+      gridSnapEnabled: true,
+      snapToKeyframesEnabled: false,
 
       toggleExpanded: (nodeId) =>
         set((state) => ({
@@ -103,6 +111,15 @@ export const useTimelineViewStore = create<TimelineViewState>()(
 
       setHeight: (height) =>
         set({ height: clamp(height, MIN_TIMELINE_HEIGHT, MAX_TIMELINE_HEIGHT) }),
+
+      toggleGridSnap: () => set((state) => ({ gridSnapEnabled: !state.gridSnapEnabled })),
+
+      setGridSnapEnabled: (enabled) => set({ gridSnapEnabled: enabled }),
+
+      toggleSnapToKeyframes: () =>
+        set((state) => ({ snapToKeyframesEnabled: !state.snapToKeyframesEnabled })),
+
+      setSnapToKeyframesEnabled: (enabled) => set({ snapToKeyframesEnabled: enabled }),
 
       setScrollTime: (time, viewportWidth, duration) =>
         set({
@@ -157,6 +174,8 @@ export const useTimelineViewStore = create<TimelineViewState>()(
         zoomLevel: state.zoomLevel,
         scrollTime: state.scrollTime,
         height: state.height,
+        gridSnapEnabled: state.gridSnapEnabled,
+        snapToKeyframesEnabled: state.snapToKeyframesEnabled,
       }),
     },
   ),

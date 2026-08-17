@@ -1536,6 +1536,7 @@ button:disabled {
 
 .timeline-toolbar__playback,
 .timeline-toolbar__mode,
+.timeline-toolbar__snap,
 .timeline-toolbar__zoom {
   display: flex;
   align-items: center;
@@ -1543,6 +1544,10 @@ button:disabled {
 }
 
 .timeline-toolbar__mode {
+  margin-left: 12px;
+}
+
+.timeline-toolbar__snap {
   margin-left: 12px;
 }
 

@@ -53,7 +53,13 @@ beforeEach(() => {
     loopEnabled: false,
   })
   useTimelineViewStore.persist.clearStorage()
-  useTimelineViewStore.setState({ zoomLevel: 1, scrollTime: 0, height: DEFAULT_TIMELINE_HEIGHT })
+  useTimelineViewStore.setState({
+    zoomLevel: 1,
+    scrollTime: 0,
+    height: DEFAULT_TIMELINE_HEIGHT,
+    gridSnapEnabled: true,
+    snapToKeyframesEnabled: false,
+  })
   localStorage.clear()
 })
 
