@@ -39,6 +39,7 @@ import type { Slide } from '../../engine'
 import { NameField, NumericField } from './inspectorFields'
 import { MaterialInspectorSection } from './MaterialInspectorSection'
 import { FullscreenShaderInspectorSection } from './FullscreenShaderInspectorSection'
+import { AnimationsInspectorSection } from './AnimationsInspectorSection'
 import { KeyframeInspector } from './KeyframeInspector'
 import { PROPERTY_LABELS } from './timelineTracks'
 import {
@@ -47,7 +48,7 @@ import {
   SetClipCategoryCommand,
 } from '../../engine/commands'
 
-const COMING_SOON_SECTIONS = ['Animation', 'Anchors', 'Physics', 'AI Metadata']
+const COMING_SOON_SECTIONS = ['Anchors', 'Physics', 'AI Metadata']
 
 function isRenderableNode(node: SceneNode): boolean {
   return Boolean(node.components.assetInstance || node.components.text)
@@ -514,6 +515,16 @@ export function InspectorPanel({ width }: { width: number }) {
             playing={playing}
             animationMode={animationMode}
             playheadTime={indicatorTime}
+          />
+        )}
+
+        {targets.length === 1 && engine.clips.length > 0 && (
+          <AnimationsInspectorSection
+            target={targets[0]!}
+            engine={engine}
+            dispatch={dispatch}
+            notify={notify}
+            playing={playing}
           />
         )}
 

@@ -1653,6 +1653,86 @@ button:disabled {
   background: var(--color-bg-elevated);
 }
 
+.clip-instance-row {
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  margin-bottom: 6px;
+  padding: 6px;
+  background: var(--color-bg);
+}
+
+.clip-instance-row__header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.clip-instance-row__drag-handle {
+  cursor: grab;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  user-select: none;
+}
+
+.clip-instance-row__name {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clip-instance-row__enabled input {
+  accent-color: var(--color-accent);
+}
+
+.clip-instance-row__remove {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.clip-instance-row__remove:hover {
+  color: var(--color-danger, #e74c3c);
+}
+
+.clip-instance-row__fields {
+  display: flex;
+  gap: 6px;
+}
+
+.clip-instance-row__fields .inspector-field {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.clip-instance-row__params {
+  margin-top: 4px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 4px;
+}
+
+.clip-param-row {
+  margin-bottom: 2px;
+}
+
+.clip-param-row__default {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-style: italic;
+  flex-shrink: 0;
+}
+
+.clip-add-row {
+  margin-top: 4px;
+}
+
 .keyframe-presets {
   margin-top: 4px;
 }

@@ -242,10 +242,10 @@ describe('InspectorPanel sections', () => {
     const { nodeId } = createSceneWithNode(engine)
     select(nodeId)
 
-    for (const section of ['Animation', 'Anchors', 'Physics', 'AI Metadata']) {
+    for (const section of ['Anchors', 'Physics', 'AI Metadata']) {
       expect(screen.getByRole('heading', { name: section })).toBeInTheDocument()
     }
-    expect(screen.getAllByText('Coming in future versions.')).toHaveLength(4)
+    expect(screen.getAllByText('Coming in future versions.')).toHaveLength(3)
   })
 })
 
