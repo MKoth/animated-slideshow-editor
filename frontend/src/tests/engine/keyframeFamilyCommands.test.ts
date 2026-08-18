@@ -685,7 +685,7 @@ describe('SetKeyframeInterpolationCommand and SetKeyframeTangentsCommand', () =>
       new SetKeyframeInterpolationCommand({
         target: propertyTarget(setup.nodeId),
         keyframeId,
-        interpolation: 'bounce' as never,
+        interpolation: 'nonexistent' as never,
       }),
     )
 
@@ -748,6 +748,59 @@ describe('SetKeyframeInterpolationCommand and SetKeyframeTangentsCommand', () =>
       { type: 'KeyframeInterpolationChanged', target, keyframeId },
       { type: 'KeyframeTangentsChanged', target, keyframeId },
     ])
+  })
+
+  it('set parametric interpolation (bounce) on a node property', () => {
+    const setup = setupWithNode()
+    const keyframeId = addKeyframe(setup, propertyTarget(setup.nodeId), 1, 10)
+
+    const result = setup.dispatcher.dispatch(
+      new SetKeyframeInterpolationCommand({
+        target: propertyTarget(setup.nodeId),
+        keyframeId,
+        interpolation: 'bounce',
+      }),
+    )
+
+    const inverse = expectOk(result)
+    expect(setup.engine.getKeyframes(setup.nodeId, 'positionX')[0]?.interpolation).toBe('bounce')
+    expect(inverse).toEqual({
+      target: propertyTarget(setup.nodeId),
+      keyframeId,
+      oldInterpolation: 'linear',
+    })
+  })
+
+  it('set parametric interpolation (elastic) on a continuous material parameter', () => {
+    const setup = setupWithMaterialNode()
+    const target: KeyframeTarget = { kind: 'node', nodeId: setup.nodeId, parameter: 'uGlow' }
+    const keyframeId = addKeyframe(setup, target, 1, 0.5)
+
+    const result = setup.dispatcher.dispatch(
+      new SetKeyframeInterpolationCommand({ target, keyframeId, interpolation: 'elastic' }),
+    )
+
+    const inverse = expectOk(result)
+    expect(inverse).toEqual({
+      target,
+      keyframeId,
+      oldInterpolation: 'linear',
+    })
+  })
+
+  it('rejects parametric interpolation on a discrete material parameter', () => {
+    const setup = setupWithMaterialNode()
+    const target: KeyframeTarget = { kind: 'node', nodeId: setup.nodeId, parameter: 'uSteps' }
+    const keyframeId = addKeyframe(setup, target, 1, 2)
+
+    const result = setup.dispatcher.dispatch(
+      new SetKeyframeInterpolationCommand({ target, keyframeId, interpolation: 'spring' }),
+    )
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toContain('discrete material kind')
+    }
   })
 })
 

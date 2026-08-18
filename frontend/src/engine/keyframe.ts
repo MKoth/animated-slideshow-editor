@@ -2,7 +2,7 @@ import { newId } from './ids'
 import type { KeyframeJSON } from './json'
 import { requireFiniteNumber } from './guards'
 
-export type InterpolationType = 'hold' | 'linear' | 'bezier'
+export type InterpolationType = 'hold' | 'linear' | 'bezier' | 'bounce' | 'elastic' | 'spring'
 
 export type KeyframeValue = string | number | boolean | number[]
 
@@ -13,8 +13,25 @@ export type KeyframeTangent = {
 
 export const ZERO_TANGENT: KeyframeTangent = Object.freeze({ time: 0, value: 0 })
 
+/** Whether the interpolation type is a parametric motion curve. */
+export function isParametricInterpolation(interpolation: InterpolationType): boolean {
+  return interpolation === 'bounce' || interpolation === 'elastic' || interpolation === 'spring'
+}
+
+/** Whether a material parameter kind is discrete (hold-only). */
+export function isDiscreteMaterialKind(kind: string): boolean {
+  return kind === 'int' || kind === 'bool' || kind === 'sampler2D'
+}
+
 export function requireKeyframeInterpolation(value: unknown): InterpolationType {
-  if (value === 'hold' || value === 'linear' || value === 'bezier') {
+  if (
+    value === 'hold' ||
+    value === 'linear' ||
+    value === 'bezier' ||
+    value === 'bounce' ||
+    value === 'elastic' ||
+    value === 'spring'
+  ) {
     return value
   }
   throw new Error(`Unknown keyframe interpolation: ${String(value)}`)

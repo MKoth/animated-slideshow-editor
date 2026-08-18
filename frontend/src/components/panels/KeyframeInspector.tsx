@@ -237,6 +237,11 @@ export function KeyframeInspector({
           <option value="hold">Hold</option>
           <option value="linear">Linear</option>
           <option value="bezier">Bezier</option>
+          <optgroup label="Parametric">
+            <option value="bounce">Bounce</option>
+            <option value="elastic">Elastic</option>
+            <option value="spring">Spring</option>
+          </optgroup>
         </select>
       </div>
       {keyframe.interpolation === 'bezier' && (

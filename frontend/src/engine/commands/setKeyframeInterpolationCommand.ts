@@ -1,7 +1,11 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
 import type { KeyframeTarget } from '../keyframeTarget'
-import { requireKeyframeInterpolation } from '../keyframe'
+import {
+  requireKeyframeInterpolation,
+  isParametricInterpolation,
+  isDiscreteMaterialKind,
+} from '../keyframe'
 import type { InterpolationType } from '../keyframe'
 
 export interface SetKeyframeInterpolationParameters {
@@ -35,8 +39,18 @@ export class SetKeyframeInterpolationCommand implements Command<SetKeyframeInter
   }
 
   validate(engine: Engine): void {
-    engine.resolveAnimationTarget(this.#target)
+    const resolved = engine.resolveAnimationTarget(this.#target)
     requireKeyframeInterpolation(this.#interpolation)
+    if (
+      resolved.kind === 'parameter' &&
+      resolved.kindOf !== undefined &&
+      isDiscreteMaterialKind(resolved.kindOf) &&
+      isParametricInterpolation(this.#interpolation)
+    ) {
+      throw new Error(
+        `Parametric interpolation "${this.#interpolation}" is not supported on discrete material kind "${resolved.kindOf}"`,
+      )
+    }
     this.#requireKeyframe(engine)
   }
 

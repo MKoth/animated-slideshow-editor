@@ -514,7 +514,7 @@ describe('interpolation and tangents through the engine', () => {
     const { engine, node } = setup()
     const keyframe = engine.addKeyframe(positionX(node.id), 1, 10)
     expect(() =>
-      engine.setKeyframeInterpolation(positionX(node.id), keyframe.id, 'bounce' as never),
+      engine.setKeyframeInterpolation(positionX(node.id), keyframe.id, 'nonexistent' as never),
     ).toThrow(/unknown keyframe interpolation/i)
     expect(engine.getKeyframes(node.id, 'positionX')[0]?.interpolation).toBe('linear')
   })

@@ -95,7 +95,7 @@ The reserved shader uniform every shader may declare to receive the slide playhe
 _Avoid_: Clock uniform, uTimeMS
 
 **Interpolation**:
-The engine rule for values between keyframes. Three types in v1 — hold (constant until the next keyframe), linear, and bezier (cubic through tangents). Easing presets (Ease In, Ease Out, Ease In-Out, Quadratic, Cubic, Quartic, Quintic, Back) are named Bezier configurations, not interpolator types; parametric types (Bounce/Elastic/Spring) are future.
+The engine rule for values between keyframes. Six types — hold (constant until the next keyframe), linear, bezier (cubic through tangents), and the parametric family (bounce, elastic, spring). Easing presets (Ease In, Ease Out, Ease In-Out, Quadratic, Cubic, Quartic, Quintic, Back) are named Bezier configurations, not interpolator types; parametric types are grouped separately in the interpolation picker and are rejected on discrete material kinds (int, bool, sampler2D).
 
 **Curve Editor**:
 The timeline's second view mode (besides the Dope Sheet): one curve per animated property of the selected node, value vs time, with draggable keyframes and tangent handles.

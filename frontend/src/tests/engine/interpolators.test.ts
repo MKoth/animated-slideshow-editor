@@ -78,14 +78,107 @@ describe('segment interpolators', () => {
     expect(evaluateSegment(second, secondTo, 1)).toBeCloseTo(9)
     expect(evaluateSegment(first, firstTo, 1.375)).toBeCloseTo(0.625)
   })
+
+  it('bounce: starts at from-value, ends at to-value, bounces in between', () => {
+    const from = keyframe(0, 0, 'bounce')
+    const to = keyframe(2, 10, 'bounce')
+
+    expect(evaluateSegment(from, to, 0)).toBeCloseTo(0)
+    expect(evaluateSegment(from, to, 2)).toBeCloseTo(10)
+
+    const atQuarter = evaluateSegment(from, to, 0.5)
+    expect(atQuarter).toBeGreaterThan(0)
+    expect(atQuarter).toBeLessThan(10)
+
+    const atHalf = evaluateSegment(from, to, 1)
+    expect(atHalf).toBeGreaterThan(5)
+    expect(atHalf).toBeLessThan(10)
+  })
+
+  it('bounce: is deterministic across repeated evaluations', () => {
+    const from = keyframe(0, 0, 'bounce')
+    const to = keyframe(2, 10, 'bounce')
+
+    const first = evaluateSegment(from, to, 0.75)
+    const second = evaluateSegment(from, to, 0.75)
+    expect(first).toBeCloseTo(second)
+  })
+
+  it('bounce: scales correctly with non-zero from-value', () => {
+    const from = keyframe(0, 5, 'bounce')
+    const to = keyframe(2, 15, 'bounce')
+
+    expect(evaluateSegment(from, to, 0)).toBeCloseTo(5)
+    expect(evaluateSegment(from, to, 2)).toBeCloseTo(15)
+  })
+
+  it('elastic: starts at from-value, ends at to-value, oscillates in between', () => {
+    const from = keyframe(0, 0, 'elastic')
+    const to = keyframe(2, 10, 'elastic')
+
+    expect(evaluateSegment(from, to, 0)).toBeCloseTo(0)
+    expect(evaluateSegment(from, to, 2)).toBeCloseTo(10)
+
+    const atMid = evaluateSegment(from, to, 1)
+    expect(atMid).toBeGreaterThan(10)
+
+    const atThreeQuarters = evaluateSegment(from, to, 1.5)
+    expect(atThreeQuarters).toBeGreaterThan(9)
+    expect(atThreeQuarters).toBeLessThan(11)
+  })
+
+  it('elastic: is deterministic across repeated evaluations', () => {
+    const from = keyframe(0, 0, 'elastic')
+    const to = keyframe(2, 10, 'elastic')
+
+    const first = evaluateSegment(from, to, 0.5)
+    const second = evaluateSegment(from, to, 0.5)
+    expect(first).toBeCloseTo(second)
+  })
+
+  it('elastic: scales correctly with non-zero from-value', () => {
+    const from = keyframe(0, 5, 'elastic')
+    const to = keyframe(2, 15, 'elastic')
+
+    expect(evaluateSegment(from, to, 0)).toBeCloseTo(5)
+    expect(evaluateSegment(from, to, 2)).toBeCloseTo(15)
+  })
+
+  it('spring: starts at from-value, ends at to-value, overshoots in between', () => {
+    const from = keyframe(0, 0, 'spring')
+    const to = keyframe(2, 10, 'spring')
+
+    expect(evaluateSegment(from, to, 0)).toBeCloseTo(0)
+    expect(evaluateSegment(from, to, 2)).toBeCloseTo(10)
+
+    const atMid = evaluateSegment(from, to, 0.5)
+    expect(atMid).toBeGreaterThan(10)
+  })
+
+  it('spring: is deterministic across repeated evaluations', () => {
+    const from = keyframe(0, 0, 'spring')
+    const to = keyframe(2, 10, 'spring')
+
+    const first = evaluateSegment(from, to, 0.75)
+    const second = evaluateSegment(from, to, 0.75)
+    expect(first).toBeCloseTo(second)
+  })
+
+  it('spring: scales correctly with non-zero from-value', () => {
+    const from = keyframe(0, 5, 'spring')
+    const to = keyframe(2, 15, 'spring')
+
+    expect(evaluateSegment(from, to, 0)).toBeCloseTo(5)
+    expect(evaluateSegment(from, to, 2)).toBeCloseTo(15)
+  })
 })
 
 describe('interpolator registry', () => {
   it('dispatches segments through the registry — new interpolators register without touching evaluation logic', () => {
-    const unregister = registerSegmentInterpolator('bounce', () => 42)
+    const unregister = registerSegmentInterpolator('customWave', () => 42)
     try {
-      const from = keyframe(0, 0, 'bounce' as InterpolationType)
-      const to = keyframe(1, 10, 'bounce' as InterpolationType)
+      const from = keyframe(0, 0, 'customWave' as InterpolationType)
+      const to = keyframe(1, 10, 'customWave' as InterpolationType)
 
       expect(evaluateSegment(from, to, 0.25)).toBe(42)
       expect(evaluateSegment(from, to, 0.9)).toBe(42)
@@ -109,5 +202,22 @@ describe('interpolator registry', () => {
     const to = keyframe(2, 10)
 
     expect(evaluateSegment(from, to, 0.5)).toBe(2.5)
+  })
+
+  it('built-in parametric interpolators are registered by default', () => {
+    const bounceFrom = keyframe(0, 0, 'bounce')
+    const bounceTo = keyframe(2, 10, 'bounce')
+    expect(evaluateSegment(bounceFrom, bounceTo, 0)).toBeCloseTo(0)
+    expect(evaluateSegment(bounceFrom, bounceTo, 2)).toBeCloseTo(10)
+
+    const elasticFrom = keyframe(0, 0, 'elastic')
+    const elasticTo = keyframe(2, 10, 'elastic')
+    expect(evaluateSegment(elasticFrom, elasticTo, 0)).toBeCloseTo(0)
+    expect(evaluateSegment(elasticFrom, elasticTo, 2)).toBeCloseTo(10)
+
+    const springFrom = keyframe(0, 0, 'spring')
+    const springTo = keyframe(2, 10, 'spring')
+    expect(evaluateSegment(springFrom, springTo, 0)).toBeCloseTo(0)
+    expect(evaluateSegment(springFrom, springTo, 2)).toBeCloseTo(10)
   })
 })

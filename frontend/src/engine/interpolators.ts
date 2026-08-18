@@ -67,6 +67,64 @@ registerSegmentInterpolator('hold', holdSegment)
 registerSegmentInterpolator('linear', linearSegment)
 registerSegmentInterpolator('bezier', bezierSegment)
 
+type EasingFn = (t: number) => number
+
+function parametricSegment(easing: EasingFn): SegmentInterpolator {
+  return (from: Keyframe, to: Keyframe, time: number): number => {
+    const ratio = (time - from.time) / (to.time - from.time)
+    const eased = easing(ratio)
+    return (from.value as number) + ((to.value as number) - (from.value as number)) * eased
+  }
+}
+
+/**
+ * Bounce easing: simulates a bouncing object that decays on each impact.
+ * Deterministic and allocation-free — pure arithmetic on the ratio.
+ */
+function bounceEaseOut(t: number): number {
+  const n1 = 7.5625
+  const d1 = 2.75
+  if (t < 1 / d1) {
+    return n1 * t * t
+  }
+  if (t < 2 / d1) {
+    const t2 = t - 1.5 / d1
+    return n1 * t2 * t2 + 0.75
+  }
+  if (t < 2.5 / d1) {
+    const t2 = t - 2.25 / d1
+    return n1 * t2 * t2 + 0.9375
+  }
+  const t2 = t - 2.625 / d1
+  return n1 * t2 * t2 + 0.984375
+}
+
+/**
+ * Elastic easing: oscillates around the target with exponential decay.
+ * Deterministic and allocation-free — pure arithmetic on the ratio.
+ */
+function elasticEaseOut(t: number): number {
+  if (t === 0 || t === 1) {
+    return t
+  }
+  return Math.pow(2, -10 * t) * Math.sin(((t * 10 - 0.75) * Math.PI) / 1.5) + 1
+}
+
+/**
+ * Spring easing: damped oscillation that settles smoothly to the target.
+ * Deterministic and allocation-free — pure arithmetic on the ratio.
+ */
+function springEase(t: number): number {
+  if (t === 0 || t === 1) {
+    return t
+  }
+  return 1 - Math.cos(t * 4.5 * Math.PI) * Math.exp(-t * 6)
+}
+
+registerSegmentInterpolator('bounce', parametricSegment(bounceEaseOut))
+registerSegmentInterpolator('elastic', parametricSegment(elasticEaseOut))
+registerSegmentInterpolator('spring', parametricSegment(springEase))
+
 /**
  * Solve the normalized cubic x(u) = 3(1-u)^2 u x1 + 3(1-u) u^2 x2 + u^3 for
  * x(u) = ratio, u in [0, 1]; returns undefined when no root lies in range.
