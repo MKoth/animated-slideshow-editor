@@ -1,6 +1,8 @@
 import type { Scene, SceneNode } from '../../engine'
 import type { AnimationProperty } from '../../engine'
 import type { MaterialParameterDefault } from '../../engine'
+import type { ClipDefinition } from '../../engine/clipDefinition'
+import type { ClipParam } from '../../engine/clipDefinition'
 import { animatablePropertiesOf } from '../../app/keyframeActions'
 
 export const TRACK_HEADER_WIDTH = 240
@@ -102,4 +104,41 @@ export function timelineRows(
 
 export function sceneHasObjects(scene: Scene): boolean {
   return scene.root.children.some((child) => !child.components.camera)
+}
+
+// ---------------------------------------------------------------------------
+// Clip-edit track rows
+// ---------------------------------------------------------------------------
+
+export interface ClipChannelRowEntry {
+  readonly kind: 'clipChannel'
+  readonly clipId: string
+  readonly channel: AnimationProperty
+  readonly label: string
+  readonly rowIndex: number
+}
+
+export type ClipTimelineRow = ClipChannelRowEntry
+
+export function clipChannelRows(clip: ClipDefinition): ClipChannelRowEntry[] {
+  const rows: ClipChannelRowEntry[] = []
+  let rowIndex = 0
+  for (const channelDef of clip.channels) {
+    rows.push({
+      kind: 'clipChannel',
+      clipId: clip.id,
+      channel: channelDef.property,
+      label: PROPERTY_LABELS[channelDef.property],
+      rowIndex,
+    })
+    rowIndex++
+  }
+  return rows
+}
+
+export function clipChannelParamLabel(channel: AnimationProperty, param?: ClipParam): string {
+  if (param) {
+    return `${PROPERTY_LABELS[channel]} (${param.label})`
+  }
+  return PROPERTY_LABELS[channel]
 }

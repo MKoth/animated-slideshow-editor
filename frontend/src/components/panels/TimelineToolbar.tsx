@@ -1,4 +1,5 @@
 import { deleteSelectedKeyframes } from '../../app/keyframeSelectionActions'
+import { deleteSelectedClipKeyframes } from '../../app/clipKeyframeActions'
 import { useEngine } from '../../app/useEngine'
 import { PLAYBACK_SPEEDS, formatTimeCode, usePlaybackController } from '../../stores/playbackStore'
 import {
@@ -8,18 +9,24 @@ import {
 import { pixelsPerSecond, useTimelineViewStore } from '../../stores/timelineViewStore'
 import { useCurveEditorViewStore } from '../../stores/curveEditorViewStore'
 import { useUiStore } from '../../stores/uiStore'
+import { useTimelineSelectionStore as useTimelineSelStore } from '../../stores/timelineSelectionStore'
 
 export function TimelineToolbar({
   slideId,
   duration,
   viewportWidth,
   zoomAnchor,
+  clipEdit,
 }: {
   slideId: string
   duration: number
   viewportWidth: number
   zoomAnchor: () => number | null
+  clipEdit?: { clipId: string; clipName: string }
 }) {
+  const editingContext = useTimelineSelStore((state) => state.editingContext)
+  const isClipEdit = editingContext === 'clip-edit' && clipEdit !== undefined
+
   const currentTime = usePlaybackController((state) => state.currentTimes[slideId] ?? 0)
   const status = usePlaybackController((state) => state.status)
   const playbackSpeed = usePlaybackController((state) => state.playbackSpeed)
@@ -38,6 +45,10 @@ export function TimelineToolbar({
   const paused = status === 'paused'
   const controller = usePlaybackController.getState
 
+  const exitClipEdit = () => {
+    useTimelineSelStore.getState().setEditingContext('slide')
+  }
+
   const zoomByStep = (direction: 'in' | 'out') => {
     const state = useTimelineViewStore.getState()
     const pps = pixelsPerSecond(state.zoomLevel)
@@ -49,8 +60,30 @@ export function TimelineToolbar({
     }
   }
 
+  const handleDeleteKeyframe = () => {
+    if (isClipEdit && clipEdit) {
+      deleteSelectedClipKeyframes(engine, dispatch)
+    } else {
+      deleteSelectedKeyframes(engine, dispatch)
+    }
+  }
+
   return (
-    <div className="timeline-toolbar">
+    <div className={`timeline-toolbar${isClipEdit ? ' timeline-toolbar--clip-edit' : ''}`}>
+      {isClipEdit && clipEdit && (
+        <div className="timeline-toolbar__clip-edit-label">
+          <span className="timeline-toolbar__clip-edit-badge">Clip Edit</span>
+          <span className="timeline-toolbar__clip-edit-name">{clipEdit.clipName}</span>
+          <button
+            className="timeline-toolbar__button timeline-toolbar__exit-clip-edit"
+            aria-label="Exit Clip Edit"
+            title="Return to slide timeline"
+            onClick={exitClipEdit}
+          >
+            Exit
+          </button>
+        </div>
+      )}
       <div className="timeline-toolbar__view-toggle">
         <button
           className="timeline-toolbar__button"
@@ -68,109 +101,119 @@ export function TimelineToolbar({
         </button>
       </div>
       <div className="timeline-toolbar__playback">
-        <button
-          className="timeline-toolbar__button"
-          aria-label="Play (timeline)"
-          title="Play from the playhead"
-          disabled={playing}
-          onClick={() => controller().play(slideId, duration)}
-        >
-          Play
-        </button>
-        <button
-          className="timeline-toolbar__button"
-          aria-label="Pause (timeline)"
-          title="Pause playback, keeping the position"
-          disabled={!playing}
-          onClick={() => controller().pause()}
-        >
-          Pause
-        </button>
-        <button
-          className="timeline-toolbar__button"
-          aria-label="Stop (timeline)"
-          title="Stop playback and reset to 0"
-          onClick={() => controller().stop(slideId)}
-        >
-          Stop
-        </button>
-        <button
-          className="timeline-toolbar__button"
-          aria-label="Loop (timeline)"
-          aria-pressed={loopEnabled}
-          title="Loop playback from the end back to 0"
-          onClick={() => controller().setLoopEnabled(!loopEnabled)}
-        >
-          Loop
-        </button>
-        <select
-          className="timeline-toolbar__select"
-          aria-label="Speed (timeline)"
-          title="Playback speed"
-          value={playbackSpeed}
-          onChange={(event) => controller().setPlaybackSpeed(Number(event.target.value))}
-        >
-          {PLAYBACK_SPEEDS.map((speed) => (
-            <option key={speed} value={speed}>
-              {speed}×
-            </option>
-          ))}
-        </select>
-        <button
-          className="timeline-toolbar__button"
-          aria-label="Previous Frame (timeline)"
-          title="Step back 1/60 s while paused"
-          disabled={!paused}
-          onClick={() => controller().stepFrame('backward', slideId, duration)}
-        >
-          ‹
-        </button>
-        <button
-          className="timeline-toolbar__button"
-          aria-label="Next Frame (timeline)"
-          title="Step forward 1/60 s while paused"
-          disabled={!paused}
-          onClick={() => controller().stepFrame('forward', slideId, duration)}
-        >
-          ›
-        </button>
+        {!isClipEdit ? (
+          <>
+            <button
+              className="timeline-toolbar__button"
+              aria-label="Play (timeline)"
+              title="Play from the playhead"
+              disabled={playing}
+              onClick={() => controller().play(slideId, duration)}
+            >
+              Play
+            </button>
+            <button
+              className="timeline-toolbar__button"
+              aria-label="Pause (timeline)"
+              title="Pause playback, keeping the position"
+              disabled={!playing}
+              onClick={() => controller().pause()}
+            >
+              Pause
+            </button>
+            <button
+              className="timeline-toolbar__button"
+              aria-label="Stop (timeline)"
+              title="Stop playback and reset to 0"
+              onClick={() => controller().stop(slideId)}
+            >
+              Stop
+            </button>
+            <button
+              className="timeline-toolbar__button"
+              aria-label="Loop (timeline)"
+              aria-pressed={loopEnabled}
+              title="Loop playback from the end back to 0"
+              onClick={() => controller().setLoopEnabled(!loopEnabled)}
+            >
+              Loop
+            </button>
+            <select
+              className="timeline-toolbar__select"
+              aria-label="Speed (timeline)"
+              title="Playback speed"
+              value={playbackSpeed}
+              onChange={(event) => controller().setPlaybackSpeed(Number(event.target.value))}
+            >
+              {PLAYBACK_SPEEDS.map((speed) => (
+                <option key={speed} value={speed}>
+                  {speed}×
+                </option>
+              ))}
+            </select>
+            <button
+              className="timeline-toolbar__button"
+              aria-label="Previous Frame (timeline)"
+              title="Step back 1/60 s while paused"
+              disabled={!paused}
+              onClick={() => controller().stepFrame('backward', slideId, duration)}
+            >
+              ‹
+            </button>
+            <button
+              className="timeline-toolbar__button"
+              aria-label="Next Frame (timeline)"
+              title="Step forward 1/60 s while paused"
+              disabled={!paused}
+              onClick={() => controller().stepFrame('forward', slideId, duration)}
+            >
+              ›
+            </button>
+          </>
+        ) : (
+          <span className="timeline-toolbar__clip-edit-hint">
+            Scrubbing only — playback disabled
+          </span>
+        )}
         <button
           className="timeline-toolbar__button"
           aria-label="Delete Keyframe"
           disabled={keyframeCount === 0}
-          onClick={() => deleteSelectedKeyframes(engine, dispatch)}
+          onClick={handleDeleteKeyframe}
         >
           Delete Keyframe
         </button>
       </div>
-      <div className="timeline-toolbar__mode">
-        <button
-          className="timeline-toolbar__button"
-          aria-label="Animation Mode"
-          aria-pressed={animationMode}
-          title={
-            animationMode
-              ? 'Animation mode: Inspector edits create keyframes'
-              : 'Base mode: Inspector edits change stored values'
-          }
-          onClick={() => useUiStore.getState().toggleAnimationMode()}
-        >
-          Animation Mode
-        </button>
-        <button
-          className="timeline-toolbar__button"
-          aria-label="Camera Animation Mode"
-          aria-pressed={cameraAnimationMode}
-          title={
-            cameraAnimationMode
-              ? 'Camera animation mode: pan, zoom and reset create camera keyframes'
-              : 'Camera base mode: pan, zoom and reset change stored camera values'
-          }
-          onClick={() => useUiStore.getState().toggleCameraAnimationMode()}
-        >
-          Camera Animation Mode
-        </button>
-      </div>
+      {!isClipEdit && (
+        <div className="timeline-toolbar__mode">
+          <button
+            className="timeline-toolbar__button"
+            aria-label="Animation Mode"
+            aria-pressed={animationMode}
+            title={
+              animationMode
+                ? 'Animation mode: Inspector edits create keyframes'
+                : 'Base mode: Inspector edits change stored values'
+            }
+            onClick={() => useUiStore.getState().toggleAnimationMode()}
+          >
+            Animation Mode
+          </button>
+          <button
+            className="timeline-toolbar__button"
+            aria-label="Camera Animation Mode"
+            aria-pressed={cameraAnimationMode}
+            title={
+              cameraAnimationMode
+                ? 'Camera animation mode: pan, zoom and reset create camera keyframes'
+                : 'Camera base mode: pan, zoom and reset change stored camera values'
+            }
+            onClick={() => useUiStore.getState().toggleCameraAnimationMode()}
+          >
+            Camera Animation Mode
+          </button>
+        </div>
+      )}
       <div className="timeline-toolbar__snap">
         <button
           className="timeline-toolbar__button"
@@ -200,11 +243,13 @@ export function TimelineToolbar({
           Snap to Keyframes
         </button>
       </div>
-      <span className="timeline-time" aria-label="Current time">
-        {formatTimeCode(currentTime)}
-      </span>
+      {!isClipEdit && (
+        <span className="timeline-time" aria-label="Current time">
+          {formatTimeCode(currentTime)}
+        </span>
+      )}
       <div className="timeline-toolbar__zoom">
-        {viewMode === 'curveEditor' && (
+        {!isClipEdit && viewMode === 'curveEditor' && (
           <>
             <button
               className="timeline-toolbar__button"

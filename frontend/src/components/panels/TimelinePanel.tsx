@@ -7,10 +7,13 @@ import {
   useTimelineViewStore,
 } from '../../stores/timelineViewStore'
 import { useCurveEditorViewStore } from '../../stores/curveEditorViewStore'
+import { useTimelineSelectionStore } from '../../stores/timelineSelectionStore'
+import { useClipLibraryStore } from '../../stores/clipLibraryStore'
 import { sceneHasObjects, timelineRows } from './timelineTracks'
 import { TimelineBody } from './TimelineBody'
 import { TimelineToolbar } from './TimelineToolbar'
 import { CurveEditorPanel } from './CurveEditorPanel'
+import { ClipEditBody } from './ClipEditBody'
 
 function useViewportWidth(
   scrollerRef: RefObject<HTMLDivElement | null>,
@@ -56,17 +59,42 @@ export function TimelinePanel({ height }: { height: number }) {
     prevViewModeRef.current = viewMode
   }, [viewMode])
 
+  const editingContext = useTimelineSelectionStore((state) => state.editingContext)
+  const clipEditId = useClipLibraryStore((state) => state.selectedId)
+  const clipEditDefinition =
+    editingContext === 'clip-edit' && clipEditId
+      ? (engine.clips.find((c) => c.id === clipEditId) ?? null)
+      : null
+
   const project = engine.project
   const slide = engine.getActiveSlide()
   const scene = slide?.scene ?? null
   const hasObjects = scene ? sceneHasObjects(scene) : false
   const expandedNodeIds = useTimelineViewStore((state) => state.expandedNodeIds)
-  const viewportWidth = useViewportWidth(scrollerRef, [slide?.id ?? null, hasObjects])
+  const viewportWidth = useViewportWidth(scrollerRef, [
+    slide?.id ?? null,
+    hasObjects,
+    editingContext,
+    clipEditId,
+  ])
   const materialDefinitions = engine.materialDefinitions
   const rows = scene ? timelineRows(scene, expandedNodeIds, materialDefinitions) : []
 
+  const isClipEdit = editingContext === 'clip-edit' && clipEditDefinition !== null
+
   let body: React.ReactNode
-  if (!project) {
+  if (isClipEdit && clipEditDefinition) {
+    body = (
+      <ClipEditBody
+        clip={clipEditDefinition}
+        scrollerRef={scrollerRef}
+        tracksRef={tracksRef}
+        timeAreaRef={timeAreaRef}
+        viewportWidth={viewportWidth}
+        lastPointerTimeRef={lastPointerTimeRef}
+      />
+    )
+  } else if (!project) {
     body = (
       <div className="panel-empty-state">
         <p>No project. Create one to get started.</p>
@@ -109,14 +137,26 @@ export function TimelinePanel({ height }: { height: number }) {
     )
   }
 
+  const toolbarDuration =
+    isClipEdit && clipEditDefinition ? clipEditDefinition.duration : (slide?.duration ?? 0)
+  const toolbarSlideId = slide?.id ?? ''
+
   return (
-    <div className="timeline-panel" style={{ height }}>
-      {slide && (
+    <div
+      className={`timeline-panel${isClipEdit ? ' timeline-panel--clip-edit' : ''}`}
+      style={{ height }}
+    >
+      {(slide || isClipEdit) && (
         <TimelineToolbar
-          slideId={slide.id}
-          duration={slide.duration}
+          slideId={toolbarSlideId}
+          duration={toolbarDuration}
           viewportWidth={viewportWidth}
           zoomAnchor={() => lastPointerTimeRef.current}
+          clipEdit={
+            isClipEdit
+              ? { clipId: clipEditDefinition!.id, clipName: clipEditDefinition!.name }
+              : undefined
+          }
         />
       )}
       {body}

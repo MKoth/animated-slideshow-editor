@@ -1,9 +1,15 @@
 import { useCallback, useMemo } from 'react'
 import type { Keyframe } from '../../engine'
+import type { AnimationProperty } from '../../engine'
 import type { InterpolationType, KeyframeTangent } from '../../engine/keyframe'
 import { EASING_PRESETS, findPresetByTangents } from '../../engine/easingPresets'
 import type { DispatchCommand } from '../../engine/commands'
-import { SetKeyframeInterpolationCommand, SetKeyframeTangentsCommand } from '../../engine/commands'
+import {
+  SetKeyframeInterpolationCommand,
+  SetKeyframeTangentsCommand,
+  SetClipKeyframeInterpolationCommand,
+  SetClipKeyframeTangentsCommand,
+} from '../../engine/commands'
 import { dispatchKeyframeCommands } from '../../engine/keyframeEdit'
 import { NumericField } from './inspectorFields'
 
@@ -47,9 +53,10 @@ function TangentFields({
 
 export interface KeyframeInspectorProps {
   readonly dispatch: DispatchCommand
-  readonly nodeId: string
+  readonly nodeId?: string
   readonly property?: string
   readonly parameter?: string
+  readonly clipTarget?: { clipId: string; channel: AnimationProperty }
   readonly keyframe: Keyframe
   readonly playing: boolean
   readonly notify: (message: string) => void
@@ -60,32 +67,51 @@ export function KeyframeInspector({
   nodeId,
   property,
   parameter,
+  clipTarget,
   keyframe,
   playing,
   notify,
 }: KeyframeInspectorProps) {
-  const target = useMemo(
-    () =>
-      parameter
-        ? { kind: 'node' as const, nodeId, parameter }
-        : { kind: 'node' as const, nodeId, property: property as 'positionX' },
-    [nodeId, property, parameter],
-  )
+  const isClip = clipTarget !== undefined
+  const target = useMemo(() => {
+    if (isClip && clipTarget) {
+      return { kind: 'clip' as const, clipId: clipTarget.clipId, channel: clipTarget.channel }
+    }
+    if (parameter) {
+      return { kind: 'node' as const, nodeId: nodeId!, parameter }
+    }
+    return { kind: 'node' as const, nodeId: nodeId!, property: property as 'positionX' }
+  }, [nodeId, property, parameter, clipTarget, isClip])
 
   const handleInterpolationChange = useCallback(
     (newInterpolation: InterpolationType) => {
-      const result = dispatch(
-        new SetKeyframeInterpolationCommand({
-          target,
-          keyframeId: keyframe.id,
-          interpolation: newInterpolation,
-        }),
-      )
-      if (!result.ok) {
-        notify(result.error.message)
+      if (isClip && clipTarget) {
+        const result = dispatch(
+          new SetClipKeyframeInterpolationCommand({
+            target: { kind: 'clip', clipId: clipTarget.clipId, channel: clipTarget.channel },
+            keyframeId: keyframe.id,
+            interpolation: newInterpolation,
+          }),
+        )
+        if (!result.ok) {
+          notify(result.error.message)
+        }
+      } else {
+        const result = dispatch(
+          new SetKeyframeInterpolationCommand({
+            target: target as
+              | import('../../engine/keyframeTarget').NodePropertyTarget
+              | import('../../engine/keyframeTarget').NodeParameterTarget,
+            keyframeId: keyframe.id,
+            interpolation: newInterpolation,
+          }),
+        )
+        if (!result.ok) {
+          notify(result.error.message)
+        }
       }
     },
-    [dispatch, target, keyframe.id, notify],
+    [dispatch, target, keyframe.id, notify, isClip, clipTarget],
   )
 
   const handlePresetApply = useCallback(
@@ -94,25 +120,49 @@ export function KeyframeInspector({
       if (!preset) {
         return
       }
-      const commands = [
-        new SetKeyframeInterpolationCommand({
-          target,
-          keyframeId: keyframe.id,
-          interpolation: 'bezier',
-        }),
-        new SetKeyframeTangentsCommand({
-          target,
-          keyframeId: keyframe.id,
-          tangentIn: { ...preset.tangentIn },
-          tangentOut: { ...preset.tangentOut },
-        }),
-      ]
-      const result = dispatchKeyframeCommands(dispatch, commands)
-      if (result && !result.ok) {
-        notify(result.error.message)
+      if (isClip && clipTarget) {
+        const commands = [
+          new SetClipKeyframeInterpolationCommand({
+            target: { kind: 'clip', clipId: clipTarget.clipId, channel: clipTarget.channel },
+            keyframeId: keyframe.id,
+            interpolation: 'bezier',
+          }),
+          new SetClipKeyframeTangentsCommand({
+            target: { kind: 'clip', clipId: clipTarget.clipId, channel: clipTarget.channel },
+            keyframeId: keyframe.id,
+            tangentIn: { ...preset.tangentIn },
+            tangentOut: { ...preset.tangentOut },
+          }),
+        ]
+        const result = dispatchKeyframeCommands(dispatch, commands)
+        if (result && !result.ok) {
+          notify(result.error.message)
+        }
+      } else {
+        const commands = [
+          new SetKeyframeInterpolationCommand({
+            target: target as
+              | import('../../engine/keyframeTarget').NodePropertyTarget
+              | import('../../engine/keyframeTarget').NodeParameterTarget,
+            keyframeId: keyframe.id,
+            interpolation: 'bezier',
+          }),
+          new SetKeyframeTangentsCommand({
+            target: target as
+              | import('../../engine/keyframeTarget').NodePropertyTarget
+              | import('../../engine/keyframeTarget').NodeParameterTarget,
+            keyframeId: keyframe.id,
+            tangentIn: { ...preset.tangentIn },
+            tangentOut: { ...preset.tangentOut },
+          }),
+        ]
+        const result = dispatchKeyframeCommands(dispatch, commands)
+        if (result && !result.ok) {
+          notify(result.error.message)
+        }
       }
     },
-    [dispatch, target, keyframe.id, notify],
+    [dispatch, target, keyframe.id, notify, isClip, clipTarget],
   )
 
   const handleTangentCommit = useCallback(
@@ -125,19 +175,44 @@ export function KeyframeInspector({
       const updated = { ...current, [field]: num }
       const tangentIn = kind === 'in' ? updated : keyframe.tangentIn
       const tangentOut = kind === 'out' ? updated : keyframe.tangentOut
-      const result = dispatch(
-        new SetKeyframeTangentsCommand({
-          target,
-          keyframeId: keyframe.id,
-          tangentIn,
-          tangentOut,
-        }),
-      )
-      if (!result.ok) {
-        notify(result.error.message)
+      if (isClip && clipTarget) {
+        const result = dispatch(
+          new SetClipKeyframeTangentsCommand({
+            target: { kind: 'clip', clipId: clipTarget.clipId, channel: clipTarget.channel },
+            keyframeId: keyframe.id,
+            tangentIn,
+            tangentOut,
+          }),
+        )
+        if (!result.ok) {
+          notify(result.error.message)
+        }
+      } else {
+        const result = dispatch(
+          new SetKeyframeTangentsCommand({
+            target: target as
+              | import('../../engine/keyframeTarget').NodePropertyTarget
+              | import('../../engine/keyframeTarget').NodeParameterTarget,
+            keyframeId: keyframe.id,
+            tangentIn,
+            tangentOut,
+          }),
+        )
+        if (!result.ok) {
+          notify(result.error.message)
+        }
       }
     },
-    [dispatch, target, keyframe.id, keyframe.tangentIn, keyframe.tangentOut, notify],
+    [
+      dispatch,
+      target,
+      keyframe.id,
+      keyframe.tangentIn,
+      keyframe.tangentOut,
+      notify,
+      isClip,
+      clipTarget,
+    ],
   )
 
   const currentPreset = findPresetByTangents(keyframe.tangentIn, keyframe.tangentOut)

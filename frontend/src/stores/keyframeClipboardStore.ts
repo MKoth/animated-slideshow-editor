@@ -10,16 +10,20 @@ export interface KeyframeClipboardTarget {
 export interface KeyframeClipboardState {
   readonly targets: readonly KeyframeClipboardTarget[]
   readonly originTime: number
+  readonly clipEditClipId: string | null
   copy(targets: readonly KeyframeClipboardTarget[], originTime: number): void
+  setClipEditContext(clipId: string | null): void
   clear(): void
 }
 
 export const useKeyframeClipboardStore = create<KeyframeClipboardState>()((set) => ({
   targets: [],
   originTime: 0,
+  clipEditClipId: null,
 
   copy: (targets, originTime) => set({ targets: [...targets], originTime }),
-  clear: () => set({ targets: [], originTime: 0 }),
+  setClipEditContext: (clipId) => set({ clipEditClipId: clipId }),
+  clear: () => set({ targets: [], originTime: 0, clipEditClipId: null }),
 }))
 
 export function isKeyframeClipboardEmpty(): boolean {

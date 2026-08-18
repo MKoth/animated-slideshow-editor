@@ -10,8 +10,15 @@ import {
   pasteKeyframes,
   duplicateKeyframes,
 } from '../app/keyframeSelectionActions'
+import {
+  deleteSelectedClipKeyframes,
+  copyClipKeyframes,
+  pasteClipKeyframes,
+  duplicateClipKeyframes,
+} from '../app/clipKeyframeActions'
 import { isKeyframeClipboardEmpty } from '../stores/keyframeClipboardStore'
 import { useTimelineSelectionStore, selectedKeyframeIdsOf } from '../stores/timelineSelectionStore'
+import { useClipLibraryStore } from '../stores/clipLibraryStore'
 import type { EnginePublic } from '../engine'
 import type { DispatchCommand } from '../engine/commands'
 import { registerShortcut } from './shortcutRegistry'
@@ -24,28 +31,55 @@ export interface ClipboardShortcutDeps {
 export function registerClipboardShortcuts(getDeps: () => ClipboardShortcutDeps): () => void {
   const deleteHandler = () => {
     const { engine, dispatch } = getDeps()
-    if (!deleteSelectedKeyframes(engine, dispatch)) {
+    const ctx = useTimelineSelectionStore.getState().editingContext
+    if (ctx === 'clip-edit') {
+      if (!deleteSelectedClipKeyframes(engine, dispatch)) {
+        deleteSelection(engine, dispatch)
+      }
+    } else if (!deleteSelectedKeyframes(engine, dispatch)) {
       deleteSelection(engine, dispatch)
     }
   }
   const disposers = [
     registerShortcut('ctrl+c', () => {
       const { engine } = getDeps()
-      if (!withSelectedKeyframes(engine, (e) => copyKeyframes(e))) {
+      const ctx = useTimelineSelectionStore.getState().editingContext
+      if (ctx === 'clip-edit') {
+        if (!withSelectedKeyframes(engine, (e) => copyClipKeyframes(e))) {
+          copySelection(engine)
+        }
+      } else if (!withSelectedKeyframes(engine, (e) => copyKeyframes(e))) {
         copySelection(engine)
       }
     }),
     registerShortcut('ctrl+v', () => {
       const { engine, dispatch } = getDeps()
       if (!isKeyframeClipboardEmpty()) {
-        pasteKeyframes(engine, dispatch)
+        const ctx = useTimelineSelectionStore.getState().editingContext
+        if (ctx === 'clip-edit') {
+          const clipId = useClipLibraryStore.getState().selectedId
+          if (clipId) {
+            pasteClipKeyframes(engine, dispatch, clipId, 0)
+          }
+        } else {
+          pasteKeyframes(engine, dispatch)
+        }
       } else {
         pasteClipboard(dispatch)
       }
     }),
     registerShortcut('ctrl+d', () => {
       const { engine, dispatch } = getDeps()
-      if (!withSelectedKeyframes(engine, (e) => duplicateKeyframes(e, dispatch))) {
+      const ctx = useTimelineSelectionStore.getState().editingContext
+      if (ctx === 'clip-edit') {
+        const clipId = useClipLibraryStore.getState().selectedId
+        if (
+          clipId &&
+          !withSelectedKeyframes(engine, (e) => duplicateClipKeyframes(e, dispatch, clipId))
+        ) {
+          duplicateSelection(engine, dispatch)
+        }
+      } else if (!withSelectedKeyframes(engine, (e) => duplicateKeyframes(e, dispatch))) {
         duplicateSelection(engine, dispatch)
       }
     }),

@@ -24,6 +24,7 @@ import {
   selectedKeyframeRefs,
   selectedMaterialKeyframeRefs,
 } from '../../app/keyframeSelectionActions'
+import { selectedClipKeyframeRefs } from '../../app/clipKeyframeActions'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
 import type { EnginePublic, SceneNode } from '../../engine'
 import type { AnimationProperty } from '../../engine'
@@ -32,12 +33,19 @@ import { usePlaybackController } from '../../stores/playbackStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { useTimelineSelectionStore } from '../../stores/timelineSelectionStore'
 import { useUiStore } from '../../stores/uiStore'
+import { useClipLibraryStore } from '../../stores/clipLibraryStore'
 import { renameSlide, setSlideDuration } from '../../app/slideActions'
 import type { Slide } from '../../engine'
 import { NameField, NumericField } from './inspectorFields'
 import { MaterialInspectorSection } from './MaterialInspectorSection'
 import { FullscreenShaderInspectorSection } from './FullscreenShaderInspectorSection'
 import { KeyframeInspector } from './KeyframeInspector'
+import { PROPERTY_LABELS } from './timelineTracks'
+import {
+  RenameClipCommand,
+  SetClipDurationCommand,
+  SetClipCategoryCommand,
+} from '../../engine/commands'
 
 const COMING_SOON_SECTIONS = ['Animation', 'Anchors', 'Physics', 'AI Metadata']
 
@@ -138,6 +146,8 @@ export function InspectorPanel({ width }: { width: number }) {
   const cameraAnimationMode = useUiStore((state) => state.cameraAnimationMode)
   usePlaybackController((state) => state.currentTimes)
   const playing = usePlaybackController((state) => state.status === 'playing')
+  const editingContext = useTimelineSelectionStore((state) => state.editingContext)
+  const clipEditId = useClipLibraryStore((state) => state.selectedId)
   const timelineSelectionVersion = useTimelineSelectionStore(
     (state) => state.selections[state.editingContext].length,
   )
@@ -195,6 +205,42 @@ export function InspectorPanel({ width }: { width: number }) {
   }
 
   if (targets.length === 0 || !readTarget) {
+    if (editingContext === 'clip-edit' && clipEditId) {
+      const clip = engine.clips.find((c) => c.id === clipEditId)
+      if (clip) {
+        const clipKeyframeRefs = selectedClipKeyframeRefs(engine)
+        return (
+          <div className="inspector-panel" style={{ width }}>
+            <div className="inspector-scroll">
+              <ClipEditInspectorSection
+                clip={clip}
+                dispatch={dispatch}
+                notify={notify}
+                playing={playing}
+              />
+              {clipKeyframeRefs.length === 1 &&
+                (() => {
+                  const ref = clipKeyframeRefs[0]
+                  const keyframes = engine.getClipChannelKeyframes(ref.clipId, ref.channel)
+                  const keyframe = keyframes.find((kf) => kf.id === ref.keyframeId)
+                  if (!keyframe) {
+                    return null
+                  }
+                  return (
+                    <KeyframeInspector
+                      dispatch={dispatch}
+                      clipTarget={{ clipId: ref.clipId, channel: ref.channel }}
+                      keyframe={keyframe}
+                      playing={playing}
+                      notify={notify}
+                    />
+                  )
+                })()}
+            </div>
+          </div>
+        )
+      }
+    }
     const propertyRefs = selectedKeyframeRefs(engine)
     const materialRefs = selectedMaterialKeyframeRefs(engine)
     const totalSelected = propertyRefs.length + materialRefs.length
@@ -519,5 +565,115 @@ export function InspectorPanel({ width }: { width: number }) {
         ))}
       </div>
     </div>
+  )
+}
+
+function ClipEditInspectorSection({
+  clip,
+  dispatch,
+  notify,
+  playing,
+}: {
+  clip: import('../../engine/clipDefinition').ClipDefinition
+  dispatch: (
+    cmd: import('../../engine/commands').Command<unknown>,
+  ) => import('../../engine/commands').CommandResult<unknown>
+  notify: (msg: string) => void
+  playing: boolean
+}) {
+  const [tick, setTick] = useState(0)
+  useEngineEvent(() => setTick((t) => t + 1))
+  void tick
+
+  const commitName = (raw: string) => {
+    try {
+      const trimmed = raw.trim()
+      if (trimmed.length === 0) return
+      const result = dispatch(new RenameClipCommand({ clipId: clip.id, name: trimmed }))
+      if (!result.ok) {
+        throw result.error
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const commitDuration = (raw: string) => {
+    try {
+      const value = parseFiniteNumber(raw, 'Duration')
+      const result = dispatch(new SetClipDurationCommand({ clipId: clip.id, duration: value }))
+      if (!result.ok) {
+        throw result.error
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const adjustDuration = (value: number) => {
+    try {
+      const result = dispatch(new SetClipDurationCommand({ clipId: clip.id, duration: value }))
+      if (!result.ok) {
+        throw result.error
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const commitCategory = (raw: string) => {
+    try {
+      const result = dispatch(new SetClipCategoryCommand({ clipId: clip.id, category: raw }))
+      if (!result.ok) {
+        throw result.error
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  return (
+    <>
+      <InspectorSection title="Clip">
+        <NameField label="Clip Name" value={clip.name} disabled={playing} onCommit={commitName} />
+        <NumericField
+          label="Duration"
+          value={clip.duration}
+          step={0.1}
+          disabled={playing}
+          onCommit={commitDuration}
+          onAdjust={adjustDuration}
+        />
+        <NameField
+          label="Category"
+          value={clip.category}
+          disabled={playing}
+          onCommit={commitCategory}
+        />
+      </InspectorSection>
+
+      {clip.params.length > 0 && (
+        <InspectorSection title="Parameters">
+          {clip.params.map((param) => (
+            <div key={param.key} className="inspector-field">
+              <label className="inspector-field__label">{param.label}</label>
+              <span className="inspector-field__value">{param.default}</span>
+            </div>
+          ))}
+        </InspectorSection>
+      )}
+
+      <InspectorSection title="Channels">
+        {clip.channels.map((ch) => {
+          const keyframes = clip.getChannelKeyframes(ch.property)
+          return (
+            <div key={ch.property} className="inspector-field">
+              <label className="inspector-field__label">{PROPERTY_LABELS[ch.property]}</label>
+              <span className="inspector-field__value">{keyframes.length} keyframes</span>
+            </div>
+          )
+        })}
+      </InspectorSection>
+    </>
   )
 }
