@@ -4,7 +4,7 @@ import { serialize } from '../../engine/lessonSerializer'
 
 describe('createBlankProject', () => {
   it('creates a project with a fresh id and the given name', () => {
-    const project = createBlankProject('My Lesson')
+    const { project } = createBlankProject('My Lesson')
 
     expect(project.name).toBe('My Lesson')
     expect(project.id).toMatch(/^project-/)
@@ -16,20 +16,21 @@ describe('createBlankProject', () => {
   })
 
   it('gives every fresh project a new id', () => {
-    const first = createBlankProject('A')
-    const second = createBlankProject('B')
+    const { project: first } = createBlankProject('A')
+    const { project: second } = createBlankProject('B')
 
     expect(first.id).not.toBe(second.id)
   })
 
   it('serializes as lesson version 1', () => {
-    const json = JSON.parse(serialize(createBlankProject('A'))) as { version: number }
+    const { project, clips } = createBlankProject('A')
+    const json = JSON.parse(serialize(project, clips)) as { version: number }
 
     expect(json.version).toBe(1)
   })
 
   it('starts with exactly one slide named "Slide 1" at the default duration', () => {
-    const project = createBlankProject('A')
+    const { project } = createBlankProject('A')
 
     expect(project.slides).toHaveLength(1)
     expect(project.slides[0].name).toBe('Slide 1')
@@ -38,7 +39,7 @@ describe('createBlankProject', () => {
   })
 
   it('builds the slide scene with a root and a camera child', () => {
-    const project = createBlankProject('A')
+    const { project } = createBlankProject('A')
     const scene = project.slides[0].scene
 
     expect(scene.root.name).toBe('Root')
@@ -50,7 +51,7 @@ describe('createBlankProject', () => {
   })
 
   it('creates distinct ids for every project entity', () => {
-    const project = createBlankProject('A')
+    const { project } = createBlankProject('A')
     const ids = [
       project.id,
       project.slides[0].id,

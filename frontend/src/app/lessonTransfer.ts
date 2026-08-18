@@ -1,6 +1,6 @@
 import type { EnginePublic } from '../engine'
 import { newId } from '../engine/ids'
-import { deserialize, serialize } from '../engine/lessonSerializer'
+import { deserializeWithClips, serialize } from '../engine/lessonSerializer'
 import { Project } from '../engine/project'
 import { useNotificationStore } from '../stores/notificationStore'
 import { ensureReferencedEmbedded } from './assetSnapshot'
@@ -18,9 +18,12 @@ export async function importLessonFile(engine: EnginePublic, file: File): Promis
     useNotificationStore.getState().notify(IMPORT_FAILED_MESSAGE)
     return false
   }
-  let imported: Project
+  let imported: {
+    project: Project
+    clips: readonly import('../engine/clipDefinition').ClipDefinition[]
+  }
   try {
-    imported = deserialize(text)
+    imported = deserializeWithClips(text)
   } catch (error) {
     useNotificationStore
       .getState()
@@ -28,7 +31,7 @@ export async function importLessonFile(engine: EnginePublic, file: File): Promis
     return false
   }
   try {
-    openProjectInEditor(engine, withFreshProjectId(imported))
+    openProjectInEditor(engine, withFreshProjectId(imported.project), imported.clips)
     return true
   } catch {
     useNotificationStore.getState().notify(IMPORT_FAILED_MESSAGE)
@@ -62,7 +65,7 @@ export async function downloadLessonCopy(engine: EnginePublic): Promise<boolean>
   try {
     await ensureReferencedEmbedded(engine)
     ensureReferencedMaterialAndShaderSnapshots(engine)
-    const blob = new Blob([serialize(project)], { type: 'application/json' })
+    const blob = new Blob([serialize(project, engine.clips)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url

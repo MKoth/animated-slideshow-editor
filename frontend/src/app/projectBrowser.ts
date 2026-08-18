@@ -1,5 +1,5 @@
 import { projectsApi } from '../api'
-import { createBlankProject, deserialize } from '../engine'
+import { createBlankProject, deserializeWithClips } from '../engine'
 import type { EnginePublic } from '../engine'
 import { useNotificationStore } from '../stores/notificationStore'
 import { usePersistenceStore } from '../stores/persistenceStore'
@@ -45,8 +45,8 @@ export async function refreshProjects(): Promise<void> {
 export async function openLibraryProject(engine: EnginePublic, id: string): Promise<boolean> {
   try {
     const blob = await projectsApi.get(id)
-    const project = deserialize(blob)
-    openProjectInEditor(engine, project)
+    const { project, clips } = deserializeWithClips(blob)
+    openProjectInEditor(engine, project, clips)
     return true
   } catch {
     useNotificationStore.getState().notify(OPEN_FAILED_MESSAGE)
@@ -67,7 +67,8 @@ export async function deleteLibraryProject(id: string): Promise<boolean> {
 
 export function createAndOpenFreshProject(engine: EnginePublic, name: string): boolean {
   try {
-    openProjectInEditor(engine, createBlankProject(name))
+    const { project, clips } = createBlankProject(name)
+    openProjectInEditor(engine, project, clips)
     return true
   } catch {
     useNotificationStore.getState().notify(OPEN_FAILED_MESSAGE)

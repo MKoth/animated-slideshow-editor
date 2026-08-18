@@ -1,4 +1,10 @@
-import type { AssetDefinition, EnginePublic, MissingAssetsReport, Project } from '../engine'
+import type {
+  AssetDefinition,
+  ClipDefinition,
+  EnginePublic,
+  MissingAssetsReport,
+  Project,
+} from '../engine'
 import { reconcileMissingAssets } from '../engine'
 import { useAssetLibraryStore } from '../stores/assetLibraryStore'
 import { useKeyframeClipboardStore } from '../stores/keyframeClipboardStore'
@@ -6,8 +12,12 @@ import { useMissingAssetsStore } from '../stores/missingAssetsStore'
 import { usePlaybackController } from '../stores/playbackStore'
 import { useSelectionStore } from '../stores/selectionStore'
 
-export function openProjectInEditor(engine: EnginePublic, project: Project): void {
-  engine.openProject(project)
+export function openProjectInEditor(
+  engine: EnginePublic,
+  project: Project,
+  clips?: readonly ClipDefinition[],
+): void {
+  engine.openProject(project, clips)
   usePlaybackController.getState().reset()
   useSelectionStore.getState().clear()
   useKeyframeClipboardStore.getState().clear()

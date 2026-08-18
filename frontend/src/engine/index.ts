@@ -1,8 +1,8 @@
 import { createBlankProject, createEngine } from './engine'
-import type { EnginePublic } from './engine'
+import type { EnginePublic, BlankProjectResult } from './engine'
 
 export { createEngine, createBlankProject }
-export type { EnginePublic }
+export type { EnginePublic, BlankProjectResult }
 export type { EngineEvent } from './events'
 export type { SlideActivated } from './events'
 export type { ProjectLoaded } from './events'
@@ -79,7 +79,15 @@ export type {
   ClipChannelJSON,
   ClipChannelDefJSON,
 } from './json'
-export { LESSON_VERSION, deserialize, serialize, upgrade, validate } from './lessonSerializer'
+export {
+  LESSON_VERSION,
+  deserialize,
+  deserializeWithClips,
+  serialize,
+  upgrade,
+  validate,
+} from './lessonSerializer'
+export type { DeserializeResult } from './lessonSerializer'
 export { CommandDispatcher, UndoStack, createCommandSystem } from './commands'
 export type {
   Command,

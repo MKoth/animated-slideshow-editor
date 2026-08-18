@@ -87,6 +87,11 @@ export function toLessonJSON(project: Project, clips?: readonly ClipDefinition[]
   }
 }
 
+export interface DeserializeResult {
+  readonly project: Project
+  readonly clips: readonly ClipDefinition[]
+}
+
 export function deserialize(text: string): Project {
   let parsed: unknown
   try {
@@ -99,6 +104,23 @@ export function deserialize(text: string): Project {
     throw new Error(errors.join('; '))
   }
   return buildProjectFromJSON(parsed as LessonJSON)
+}
+
+export function deserializeWithClips(text: string): DeserializeResult {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    throw new Error('Invalid lesson JSON: the file is not valid JSON')
+  }
+  const errors = validate(parsed)
+  if (errors.length > 0) {
+    throw new Error(errors.join('; '))
+  }
+  const lessonJson = parsed as LessonJSON
+  const project = buildProjectFromJSON(lessonJson)
+  const clips = parseClipsFromLessonJSON(lessonJson)
+  return { project, clips }
 }
 
 export function upgrade(text: string): Project {

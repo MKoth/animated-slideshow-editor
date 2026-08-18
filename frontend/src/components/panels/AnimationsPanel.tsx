@@ -7,6 +7,7 @@ import {
   initClipLibraryStore,
 } from '../../stores/clipLibraryStore'
 import type { ClipLibraryClip } from '../../stores/clipLibraryStore'
+import { useKeyframeClipboardStore } from '../../stores/keyframeClipboardStore'
 import { useTimelineSelectionStore } from '../../stores/timelineSelectionStore'
 
 function uniqueClipName(base: string, existing: readonly ClipLibraryClip[]): string {
@@ -23,6 +24,7 @@ export function AnimationsPanel() {
 
   useEngineEvent((event) => {
     if (
+      event.type === 'ProjectLoaded' ||
       event.type === 'ClipCreated' ||
       event.type === 'ClipRemoved' ||
       event.type === 'ClipRenamed' ||
@@ -76,7 +78,9 @@ export function AnimationsPanel() {
 
   const handleEdit = (clipId: string) => {
     selectClip(clipId)
+    useKeyframeClipboardStore.getState().setClipEditContext(clipId)
     useTimelineSelectionStore.getState().setEditingContext('clip-edit')
+    useTimelineSelectionStore.getState().clearSelection()
   }
 
   const filtered = definitions.filter((clip) =>

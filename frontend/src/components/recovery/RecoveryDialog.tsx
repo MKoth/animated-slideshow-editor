@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import { openProjectInEditor } from '../../app/openProjectActions'
 import { clearShadow, loadRecoverableProject } from '../../app/recoveryShadow'
+import type { RecoveredProject } from '../../app/recoveryShadow'
 import { useEngine } from '../../app/useEngine'
-import type { Project } from '../../engine'
 
 export function RecoveryDialog() {
   const { engine } = useEngine()
-  const [recovered, setRecovered] = useState<Project | null>(null)
+  const [recovered, setRecovered] = useState<RecoveredProject | null>(null)
 
   useEffect(() => {
     let settled = false
@@ -32,7 +32,7 @@ export function RecoveryDialog() {
   }
 
   const restore = (): void => {
-    openProjectInEditor(engine, recovered)
+    openProjectInEditor(engine, recovered.project, recovered.clips)
     setRecovered(null)
   }
 

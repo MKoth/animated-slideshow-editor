@@ -39,7 +39,7 @@ export function createPersistenceService(deps: PersistenceDeps): PersistenceServ
     if (!project) {
       return
     }
-    void writeShadow(serialize(project)).catch(() => undefined)
+    void writeShadow(serialize(project, deps.engine.clips)).catch(() => undefined)
   }
 
   const performSave = async (): Promise<void> => {
@@ -55,7 +55,7 @@ export function createPersistenceService(deps: PersistenceDeps): PersistenceServ
     const generation = projectGeneration
     try {
       await deps.ensureEmbedded?.()
-      const blob = serialize(project)
+      const blob = serialize(project, deps.engine.clips)
       await deps.upsert(blob)
       useBackendStore.getState().markAvailable()
       void recordLastSaved(blob).catch(() => undefined)

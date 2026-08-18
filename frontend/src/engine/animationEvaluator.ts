@@ -189,6 +189,12 @@ export class AnimationEvaluator {
         continue
       }
 
+      // Clips that haven't started yet must not contribute — otherwise their
+      // first-keyframe value overrides earlier clips on the same channel.
+      if (time < instance.startTime) {
+        continue
+      }
+
       const u = Math.min(
         Math.max(((time - instance.startTime) * instance.speed) / clip.duration, 0),
         1,
@@ -225,7 +231,7 @@ export class AnimationEvaluator {
           output = kfValue
         }
 
-        this.#setChannelValue(state.transform, channel, output)
+        this.#setChannelValue(state, channel, output)
       }
     }
   }
@@ -242,12 +248,12 @@ export class AnimationEvaluator {
     return (transform as unknown as Record<string, number>)[key] ?? 0
   }
 
-  #setChannelValue(transform: MutableTransform, channel: AnimationProperty, value: number): void {
+  #setChannelValue(state: EvaluatedNodeScratch, channel: AnimationProperty, value: number): void {
     const key = CHANNEL_TO_TRANSFORM_KEY[channel]
     if (key === 'opacity') {
-      ;(transform as unknown as Record<string, number>).opacity = value
+      state.opacity = value
     } else {
-      ;(transform as unknown as Record<string, number>)[key] = value
+      ;(state.transform as unknown as Record<string, number>)[key] = value
     }
   }
 

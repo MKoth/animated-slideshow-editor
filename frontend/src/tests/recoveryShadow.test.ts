@@ -103,10 +103,10 @@ describe('loadRecoverableProject', () => {
     await writeShadow(serialize(makeProject('Recovered', ['R1'])))
     await recordLastSaved(serialize(makeProject('Saved', ['S1'])))
 
-    const project = await loadRecoverableProject()
+    const result = await loadRecoverableProject()
 
-    expect(project?.name).toBe('Recovered')
-    expect(project?.slides.map((slide) => slide.name)).toEqual(['R1'])
+    expect(result?.project.name).toBe('Recovered')
+    expect(result?.project.slides.map((slide) => slide.name)).toEqual(['R1'])
   })
 
   it('clears a corrupt shadow and returns null', async () => {
@@ -134,7 +134,8 @@ describe('legacy localStorage shadow migration', () => {
     localStorage.setItem('recoveryShadow', legacyBlob)
     localStorage.setItem('recoveryLastSaved', '{"version":1}')
 
-    expect((await loadRecoverableProject())?.name).toBe('Legacy')
+    const result = await loadRecoverableProject()
+    expect(result?.project.name).toBe('Legacy')
     expect(await readShadow()).toBe(legacyBlob)
     expect(localStorage.getItem('recoveryShadow')).toBeNull()
     expect(localStorage.getItem('recoveryLastSaved')).toBeNull()

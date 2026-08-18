@@ -7,8 +7,10 @@ import type { DispatchCommand } from '../../engine/commands'
 import {
   SetKeyframeInterpolationCommand,
   SetKeyframeTangentsCommand,
+  SetKeyframeValueCommand,
   SetClipKeyframeInterpolationCommand,
   SetClipKeyframeTangentsCommand,
+  SetClipKeyframeValueCommand,
 } from '../../engine/commands'
 import { dispatchKeyframeCommands } from '../../engine/keyframeEdit'
 import { NumericField } from './inspectorFields'
@@ -217,9 +219,54 @@ export function KeyframeInspector({
 
   const currentPreset = findPresetByTangents(keyframe.tangentIn, keyframe.tangentOut)
 
+  const handleValueCommit = useCallback(
+    (raw: string) => {
+      const num = Number(raw)
+      if (!Number.isFinite(num)) {
+        return
+      }
+      if (isClip && clipTarget) {
+        const result = dispatch(
+          new SetClipKeyframeValueCommand({
+            target: { kind: 'clip', clipId: clipTarget.clipId, channel: clipTarget.channel },
+            keyframeId: keyframe.id,
+            newValue: num,
+          }),
+        )
+        if (!result.ok) {
+          notify(result.error.message)
+        }
+      } else {
+        const result = dispatch(
+          new SetKeyframeValueCommand({
+            target: target as
+              | import('../../engine/keyframeTarget').NodePropertyTarget
+              | import('../../engine/keyframeTarget').NodeParameterTarget,
+            keyframeId: keyframe.id,
+            newValue: num,
+          }),
+        )
+        if (!result.ok) {
+          notify(result.error.message)
+        }
+      }
+    },
+    [dispatch, target, keyframe.id, notify, isClip, clipTarget],
+  )
+
   return (
     <section className="inspector-section">
       <h3 className="inspector-section__title">Keyframe</h3>
+      <div className="inspector-field">
+        <NumericField
+          label="Value"
+          value={typeof keyframe.value === 'number' ? keyframe.value : null}
+          step={0.1}
+          disabled={playing}
+          onCommit={handleValueCommit}
+          onAdjust={() => {}}
+        />
+      </div>
       <div className="inspector-field">
         <label className="inspector-field__label" htmlFor="interpolation-picker">
           Interpolation

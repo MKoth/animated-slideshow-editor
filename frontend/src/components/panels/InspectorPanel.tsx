@@ -150,7 +150,7 @@ export function InspectorPanel({ width }: { width: number }) {
   const editingContext = useTimelineSelectionStore((state) => state.editingContext)
   const clipEditId = useClipLibraryStore((state) => state.selectedId)
   const timelineSelectionVersion = useTimelineSelectionStore(
-    (state) => state.selections[state.editingContext].length,
+    (state) => state.selections[state.editingContext],
   )
   void timelineSelectionVersion
   const [, setTick] = useState(0)

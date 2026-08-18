@@ -136,6 +136,25 @@ describe('renderer clip instance evaluation', () => {
     expect(container.position.x).toBe(50)
   })
 
+  it('applies opacity clip to container alpha during playback', async () => {
+    const { system, timeSource, app } = await mount()
+    const nodeId = createNode(system, 'A')
+    const clipId = createClipWithChannel(system, 'opacity', [
+      { time: 0, value: 1 },
+      { time: 1, value: 0 },
+    ])
+    expectOk(system.dispatcher.dispatch(new AssignClipCommand({ nodeId, clipId })))
+
+    const container = nodeContainer(app, 'A')
+    expect(container.alpha).toBe(1)
+
+    timeSource.set(0.5)
+    expect(container.alpha).toBe(0.5)
+
+    timeSource.set(1)
+    expect(container.alpha).toBe(0)
+  })
+
   it('re-evaluates on clip instance start time change', async () => {
     const { system, timeSource, app } = await mount()
     const nodeId = createNode(system, 'A')

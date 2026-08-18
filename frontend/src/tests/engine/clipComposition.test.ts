@@ -127,6 +127,40 @@ describe('clip composition', () => {
     expect(evaluate(system, nodeId, 5).transform.x).toBe(20)
   })
 
+  it('opacity channel writes to state.opacity, not state.transform.opacity', () => {
+    const { system, nodeId } = setup()
+    const clipId = createClipWithChannel(system, 'opacity', [
+      { time: 0, value: 0 },
+      { time: 1, value: 1 },
+    ])
+    assignClip(system, nodeId, clipId)
+
+    // Fade In clip: opacity interpolates 0→1 over u=[0,1]
+    expect(evaluate(system, nodeId, 0).opacity).toBe(0)
+    expect(evaluate(system, nodeId, 0.5).opacity).toBeCloseTo(0.5)
+    expect(evaluate(system, nodeId, 1).opacity).toBe(1)
+    // After clip ends, holds at last keyframe value
+    expect(evaluate(system, nodeId, 5).opacity).toBe(1)
+  })
+
+  it('opacity clip applies during playback (state.opacity changes over time)', () => {
+    const { system, nodeId } = setup()
+    const clipId = createClipWithChannel(system, 'opacity', [
+      { time: 0, value: 1 },
+      { time: 1, value: 0 },
+    ])
+    assignClip(system, nodeId, clipId)
+
+    // Fade Out clip: opacity interpolates 1→0 over u=[0,1]
+    expect(evaluate(system, nodeId, 0).opacity).toBe(1)
+    expect(evaluate(system, nodeId, 0.25).opacity).toBeCloseTo(0.75)
+    expect(evaluate(system, nodeId, 0.5).opacity).toBeCloseTo(0.5)
+    expect(evaluate(system, nodeId, 0.75).opacity).toBeCloseTo(0.25)
+    expect(evaluate(system, nodeId, 1).opacity).toBe(0)
+    // After clip ends, holds at 0
+    expect(evaluate(system, nodeId, 5).opacity).toBe(0)
+  })
+
   it('single linked channel (gain): base * (gain * kf(u))', () => {
     const { system } = setup()
     const slide = system.engine.project!.slides[0]!
@@ -342,6 +376,55 @@ describe('clip composition', () => {
     const state = evaluate(system, nodeId, 0)
     expect(state.transform.x).toBe(50)
     expect(state.transform.scaleX).toBe(3)
+  })
+
+  it('clips before their startTime do not override earlier clips', () => {
+    const { system, nodeId } = setup()
+    // Fade Out: opacity 1→0 over [0,1], starts at t=0
+    const fadeOut = createClipWithChannel(system, 'opacity', [
+      { time: 0, value: 1 },
+      { time: 1, value: 0 },
+    ])
+    // Fade In: opacity 0→1 over [0,1], starts at t=1
+    const fadeIn = createClipWithChannel(system, 'opacity', [
+      { time: 0, value: 0 },
+      { time: 1, value: 1 },
+    ])
+    assignClip(system, nodeId, fadeOut, { startTime: 0 })
+    assignClip(system, nodeId, fadeIn, { startTime: 1 })
+
+    // t=0: Fade Out active (u=0→1), Fade In not started yet → opacity=1
+    expect(evaluate(system, nodeId, 0).opacity).toBe(1)
+    // t=0.5: Fade Out u=0.5→opacity=0.5, Fade In not started → 0.5
+    expect(evaluate(system, nodeId, 0.5).opacity).toBeCloseTo(0.5)
+    // t=1: Fade Out u=1→opacity=0, Fade In starts (u=0→opacity=0) → 0
+    expect(evaluate(system, nodeId, 1).opacity).toBe(0)
+    // t=1.5: Fade Out holds at 0, Fade In u=0.5→opacity=0.5 → 0.5
+    expect(evaluate(system, nodeId, 1.5).opacity).toBeCloseTo(0.5)
+    // t=2: Fade Out holds at 0, Fade In u=1→opacity=1 → 1
+    expect(evaluate(system, nodeId, 2).opacity).toBe(1)
+  })
+
+  it('overlapping clips: later clip wins per channel', () => {
+    const { system, nodeId } = setup()
+    const clip1 = createClipWithChannel(system, 'positionX', [
+      { time: 0, value: 0 },
+      { time: 1, value: 100 },
+    ])
+    const clip2 = createClipWithChannel(system, 'positionX', [
+      { time: 0, value: 50 },
+      { time: 1, value: 200 },
+    ])
+    assignClip(system, nodeId, clip1, { startTime: 0 })
+    // clip2 starts at t=0.5, overlapping clip1
+    assignClip(system, nodeId, clip2, { startTime: 0.5 })
+
+    // t=0: only clip1 active → 0
+    expect(evaluate(system, nodeId, 0).transform.x).toBe(0)
+    // t=0.5: clip1 u=0.5→50, clip2 just started (u=0→50) → 50 (both agree)
+    expect(evaluate(system, nodeId, 0.5).transform.x).toBe(50)
+    // t=1: clip1 u=1→100, clip2 u=0.5→125 → 125 (clip2 wins)
+    expect(evaluate(system, nodeId, 1).transform.x).toBe(125)
   })
 })
 

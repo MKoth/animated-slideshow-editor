@@ -33,7 +33,7 @@ export interface EnginePublic {
   readonly activeSlideId: string | null
   readonly clips: readonly ClipDefinition[]
   subscribe(listener: (event: EngineEvent) => void): Unsubscribe
-  openProject(project: Project): void
+  openProject(project: Project, clips?: readonly ClipDefinition[]): void
   setActiveSlide(slideId: string): void
   getActiveSlide(): Slide | null
   getSlide(slideId: string): Slide
@@ -69,16 +69,22 @@ export function createEngine(): EnginePublic {
   return toReadOnly(new Engine())
 }
 
-export function createBlankProject(name: string): Project {
+export interface BlankProjectResult {
+  readonly project: Project
+  readonly clips: readonly ClipDefinition[]
+}
+
+export function createBlankProject(name: string): BlankProjectResult {
   const engine = new Engine()
   engine.createProject({ name })
   engine.createSlide()
   // Seed built-in clips for the new-project template
-  for (const clip of createBuiltInClips()) {
+  const clips = createBuiltInClips()
+  for (const clip of clips) {
     engine.importClip(clip)
   }
   if (!engine.project) {
     throw new Error('Fresh project creation failed')
   }
-  return engine.project
+  return { project: engine.project, clips }
 }

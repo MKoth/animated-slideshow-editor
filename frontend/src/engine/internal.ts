@@ -126,10 +126,15 @@ export class Engine {
     this.#bus.emit({ type: 'SlideActivated', slideId })
   }
 
-  openProject(project: Project): void {
-    this.#validateOrThrow(toLessonJSON(project))
+  openProject(project: Project, clips?: readonly ClipDefinition[]): void {
+    this.#validateOrThrow(toLessonJSON(project, clips))
     this.#replaceProject(project)
     this.#clips.clear()
+    if (clips) {
+      for (const clip of clips) {
+        this.#clips.importClip(clip)
+      }
+    }
     const first = project.slides[0]
     this.#activeSlideId = first ? first.id : null
     this.#bus.emit({ type: 'ProjectLoaded', projectId: project.id })
@@ -883,7 +888,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
       return engine.clips
     },
     subscribe: (listener) => engine.subscribe(listener),
-    openProject: (project) => engine.openProject(project),
+    openProject: (project, clips) => engine.openProject(project, clips),
     setActiveSlide: (slideId) => engine.setActiveSlide(slideId),
     getActiveSlide: () => engine.getActiveSlide(),
     getSlide: (slideId) => engine.getSlide(slideId),
