@@ -10,6 +10,7 @@ import type { ClipLibraryClip } from '../../stores/clipLibraryStore'
 import { useKeyframeClipboardStore } from '../../stores/keyframeClipboardStore'
 import { useTimelineSelectionStore } from '../../stores/timelineSelectionStore'
 import { useNotificationStore } from '../../stores/notificationStore'
+import { LibraryBrowser } from './LibraryBrowser'
 
 function uniqueClipName(base: string, existing: readonly ClipLibraryClip[]): string {
   return uniqueNodeName(new Set(existing.map((clip) => clip.name)), base)
@@ -59,6 +60,7 @@ export function AnimationsPanel() {
   const saveToLibrary = useClipLibraryStore((state) => state.saveToLibrary)
   const libraryDefinitions = useClipLibraryStore((state) => state.definitions)
   const notify = useNotificationStore((state) => state.notify)
+  const openLibraryBrowser = useClipLibraryStore((state) => state.openLibraryBrowser)
 
   const [search, setSearch] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -151,6 +153,9 @@ export function AnimationsPanel() {
         <div className="animations-toolbar__row">
           <button className="animations-toolbar__create" onClick={handleCreate}>
             Create Clip
+          </button>
+          <button className="animations-toolbar__create" onClick={openLibraryBrowser}>
+            Browse Library
           </button>
         </div>
         <div className="animations-toolbar__row">
@@ -304,6 +309,7 @@ export function AnimationsPanel() {
           </div>
         </div>
       )}
+      <LibraryBrowser />
     </div>
   )
 }

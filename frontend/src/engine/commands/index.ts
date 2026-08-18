@@ -200,3 +200,5 @@ export type {
   OverrideClipParamInverse,
   OverrideClipParamParameters,
 } from './overrideClipParamCommand'
+export { ImportClipCommand } from './importClipCommand'
+export type { ImportClipInverse, ImportClipParameters } from './importClipCommand'

@@ -7,7 +7,7 @@ import { requireKeyframeInterpolation, requireKeyframeTangent } from './keyframe
 import { requireFiniteNumber } from './guards'
 import type { ClipParam } from './clipDefinition'
 import { ClipDefinition, newClipId } from './clipDefinition'
-import type { ClipChannelDef } from './clipDefinition'
+import type { ClipChannelDef, LibraryClipInput } from './clipDefinition'
 
 export interface ClipChannelKeyframeMove {
   readonly keyframeId: string
@@ -528,6 +528,23 @@ export class ClipManager {
 
   importClip(clip: ClipDefinition): void {
     this.#clips.set(clip.id, clip)
+  }
+
+  importClipFromLibrary(entry: LibraryClipInput): ClipDefinition {
+    const id = newClipId()
+    const json = {
+      id,
+      name: entry.name,
+      duration: entry.duration,
+      category: entry.category ?? '',
+      params: [...entry.params],
+      channels: [...entry.channels],
+      channelAnimations: entry.channelAnimations ?? {},
+    }
+    const clip = ClipDefinition.fromJSON(json)
+    this.#clips.set(id, clip)
+    this.#bus.emit({ type: 'ClipCreated', clipId: id })
+    return clip
   }
 
   clear(): void {

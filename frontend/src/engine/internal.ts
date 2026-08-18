@@ -549,6 +549,10 @@ export class Engine {
     this.#clips.importClip(clip)
   }
 
+  importClipFromLibrary(entry: import('./clipDefinition').LibraryClipInput): ClipDefinition {
+    return this.#clips.importClipFromLibrary(entry)
+  }
+
   getClipChannelKeyframes(clipId: string, channel: AnimationProperty): readonly Keyframe[] {
     return this.#clips.getChannelKeyframes(clipId, channel)
   }

@@ -7,6 +7,7 @@ import { CreateClipCommand } from '../engine/commands/createClipCommand'
 import { RenameClipCommand } from '../engine/commands/renameClipCommand'
 import { DuplicateClipCommand } from '../engine/commands/duplicateClipCommand'
 import { DeleteClipCommand } from '../engine/commands/deleteClipCommand'
+import { ImportClipCommand } from '../engine/commands/importClipCommand'
 import { libraryEventBus } from './libraryEvents'
 import { notifyRequestFailure } from './requestNotifications'
 
@@ -69,6 +70,7 @@ interface ClipLibraryState {
   error: string | null
   unavailable: boolean
   selectedId: string | null
+  libraryBrowserVisible: boolean
   loadLibrary: () => Promise<void>
   saveToLibrary: (
     clip: ClipDefinition,
@@ -78,6 +80,9 @@ interface ClipLibraryState {
   deleteFromLibrary: (clipId: string) => Promise<void>
   selectClip: (clipId: string | null) => void
   clearError: () => void
+  openLibraryBrowser: () => void
+  closeLibraryBrowser: () => void
+  importClipFromLibrary: (entry: ClipLibraryEntry) => void
   createClip: (name: string) => void
   renameClip: (clipId: string, name: string) => void
   duplicateClip: (sourceId: string, newName: string) => void
@@ -100,6 +105,7 @@ export const useClipLibraryStore = create<ClipLibraryState>()((set) => ({
   error: null,
   unavailable: false,
   selectedId: null,
+  libraryBrowserVisible: false,
 
   loadLibrary: async () => {
     const seq = ++requestSeq
@@ -189,6 +195,18 @@ export const useClipLibraryStore = create<ClipLibraryState>()((set) => ({
   selectClip: (clipId) => set({ selectedId: clipId }),
 
   clearError: () => set({ error: null }),
+
+  openLibraryBrowser: () => set({ libraryBrowserVisible: true }),
+
+  closeLibraryBrowser: () => set({ libraryBrowserVisible: false }),
+
+  importClipFromLibrary: (entry) => {
+    if (!dispatchRef) return
+    const result = dispatchRef(new ImportClipCommand({ entry }))
+    if (!result.ok) {
+      set({ error: result.error.message })
+    }
+  },
 
   createClip: (name) => {
     if (!dispatchRef) return

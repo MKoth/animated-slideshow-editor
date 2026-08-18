@@ -40,6 +40,16 @@ export interface ClipChannelDef {
   readonly linkMode?: ClipLinkMode
 }
 
+/** Minimal shape for importing a clip from the shared library. */
+export interface LibraryClipInput {
+  readonly name: string
+  readonly duration: number
+  readonly category: string | null
+  readonly params: readonly ClipParam[]
+  readonly channels: readonly ClipChannelDef[]
+  readonly channelAnimations: Record<string, unknown> | null
+}
+
 export class ClipChannelAnimation {
   readonly #keyframes: Keyframe[] = []
 
