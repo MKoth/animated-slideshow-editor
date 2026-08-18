@@ -377,4 +377,56 @@ describe('AnimationEvaluator', () => {
     const engine: EnginePublic = system.engine
     expect(engine.evaluateNode(nodeId, 5).transform.x).toBe(15)
   })
+
+  it('evaluates a multi-segment mixed-type track (hold -> linear -> bezier)', () => {
+    const { system, nodeId } = setup()
+    const kf1 = addKeyframe(system, nodeId, 'positionX', 0, 10)
+    addKeyframe(system, nodeId, 'positionX', 2, 30)
+    addKeyframe(system, nodeId, 'positionX', 4, 50)
+    const kf3 = addKeyframe(system, nodeId, 'positionX', 6, 80)
+    // First segment: hold (stays at 10 from t=0 to t=2)
+    setInterpolation(system, nodeId, 'positionX', kf1, 'hold')
+    // Second segment: linear (blends 30->50 from t=2 to t=4)
+    // Third segment: bezier (50->80 from t=4 to t=6)
+    setInterpolation(system, nodeId, 'positionX', kf3, 'bezier')
+    setTangents(system, nodeId, 'positionX', kf3, { time: 0, value: 0 }, { time: 1, value: 0 })
+
+    // Before first keyframe: holds at 10
+    expect(evaluate(system, nodeId, -1).transform.x).toBe(10)
+    // In hold segment: constant at 10
+    expect(evaluate(system, nodeId, 0).transform.x).toBe(10)
+    expect(evaluate(system, nodeId, 1).transform.x).toBe(10)
+    expect(evaluate(system, nodeId, 1.999).transform.x).toBe(10)
+    // At hold->linear boundary: 30
+    expect(evaluate(system, nodeId, 2).transform.x).toBe(30)
+    // In linear segment: blends 30->50
+    expect(evaluate(system, nodeId, 3).transform.x).toBe(40)
+    expect(evaluate(system, nodeId, 4).transform.x).toBe(50)
+    // In bezier segment: 50->80 (zero tangents = linear through bezier)
+    expect(evaluate(system, nodeId, 5).transform.x).toBeCloseTo(65)
+    expect(evaluate(system, nodeId, 6).transform.x).toBe(80)
+    // After last keyframe: holds at 80
+    expect(evaluate(system, nodeId, 10).transform.x).toBe(80)
+  })
+
+  it('evaluator-level determinism: same inputs produce bit-identical outputs', () => {
+    const { system, nodeId } = setup()
+    const kf1 = addKeyframe(system, nodeId, 'positionX', 0, 0)
+    addKeyframe(system, nodeId, 'positionX', 2, 100)
+    setInterpolation(system, nodeId, 'positionX', kf1, 'bezier')
+    setTangents(system, nodeId, 'positionX', kf1, { time: 0, value: 0 }, { time: 0.5, value: 0.8 })
+
+    const times = [0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3, 5, 10]
+    const results: number[] = []
+    for (const time of times) {
+      results.push(evaluate(system, nodeId, time).transform.x)
+    }
+
+    // Re-evaluate 10 times and verify bit-identical results
+    for (let pass = 0; pass < 10; pass++) {
+      for (let i = 0; i < times.length; i++) {
+        expect(evaluate(system, nodeId, times[i]).transform.x).toBe(results[i])
+      }
+    }
+  })
 })

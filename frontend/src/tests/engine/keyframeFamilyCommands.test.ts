@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { EngineEvent } from '../../engine/events'
 import type { CommandLogger, CommandResult } from '../../engine/commands'
 import type { KeyframeTarget } from '../../engine/keyframeTarget'
+import type { KeyframeTangent } from '../../engine/keyframe'
 import {
   AddKeyframeCommand,
   CommandDispatcher,
@@ -837,5 +838,195 @@ describe('gesture grouping', () => {
       { type: 'KeyframeAdded', target: propertyTarget(setup.nodeId), keyframeId: keyframeIds[0] },
       { type: 'KeyframeAdded', target: propertyTarget(other), keyframeId: keyframeIds[1] },
     ])
+  })
+})
+
+describe('undo replay for interpolation and tangent commands', () => {
+  it('undoing SetKeyframeInterpolationCommand restores the previous interpolation', () => {
+    const setup = setupWithNode()
+    const keyframeId = addKeyframe(setup, propertyTarget(setup.nodeId), 1, 10)
+
+    expectOk(
+      setup.dispatcher.dispatch(
+        new SetKeyframeInterpolationCommand({
+          target: propertyTarget(setup.nodeId),
+          keyframeId,
+          interpolation: 'bezier',
+        }),
+      ),
+    )
+    expect(setup.engine.getKeyframes(setup.nodeId, 'positionX')[0]?.interpolation).toBe('bezier')
+
+    // Replay the inverse: set interpolation back to the old value
+    const entry = setup.undoStack.entries[0]
+    const inverse = entry.inverse as {
+      target: KeyframeTarget
+      keyframeId: string
+      oldInterpolation: 'hold' | 'linear' | 'bezier'
+    }
+    expectOk(
+      setup.dispatcher.dispatch(
+        new SetKeyframeInterpolationCommand({
+          target: inverse.target,
+          keyframeId: inverse.keyframeId,
+          interpolation: inverse.oldInterpolation,
+        }),
+      ),
+    )
+    expect(setup.engine.getKeyframes(setup.nodeId, 'positionX')[0]?.interpolation).toBe('linear')
+  })
+
+  it('undoing SetKeyframeTangentsCommand restores the previous tangents', () => {
+    const setup = setupWithNode()
+    const keyframeId = addKeyframe(setup, propertyTarget(setup.nodeId), 1, 10)
+
+    expectOk(
+      setup.dispatcher.dispatch(
+        new SetKeyframeTangentsCommand({
+          target: propertyTarget(setup.nodeId),
+          keyframeId,
+          tangentIn: { time: -0.5, value: 2 },
+          tangentOut: { time: 0.5, value: 2 },
+        }),
+      ),
+    )
+    expect(setup.engine.getKeyframes(setup.nodeId, 'positionX')[0]?.tangentIn).toEqual({
+      time: -0.5,
+      value: 2,
+    })
+
+    // Replay the inverse: restore previous tangents
+    const entry = setup.undoStack.entries[0]
+    const inverse = entry.inverse as {
+      target: KeyframeTarget
+      keyframeId: string
+      oldTangentIn: KeyframeTangent
+      oldTangentOut: KeyframeTangent
+    }
+    expectOk(
+      setup.dispatcher.dispatch(
+        new SetKeyframeTangentsCommand({
+          target: inverse.target,
+          keyframeId: inverse.keyframeId,
+          tangentIn: inverse.oldTangentIn,
+          tangentOut: inverse.oldTangentOut,
+        }),
+      ),
+    )
+    const kf = setup.engine.getKeyframes(setup.nodeId, 'positionX')[0]
+    expect(kf?.tangentIn).toEqual({ time: 0, value: 0 })
+    expect(kf?.tangentOut).toEqual({ time: 0, value: 0 })
+  })
+
+  it('double-click tangent reset undo restores previous tangents', () => {
+    const setup = setupWithNode()
+    const keyframeId = addKeyframe(setup, propertyTarget(setup.nodeId), 1, 10)
+
+    // Set tangents to non-zero
+    expectOk(
+      setup.dispatcher.dispatch(
+        new SetKeyframeTangentsCommand({
+          target: propertyTarget(setup.nodeId),
+          keyframeId,
+          tangentIn: { time: -0.3, value: 1.5 },
+          tangentOut: { time: 0.3, value: 1.5 },
+        }),
+      ),
+    )
+    // Simulate double-click reset: set tangents to ZERO_TANGENT
+    expectOk(
+      setup.dispatcher.dispatch(
+        new SetKeyframeTangentsCommand({
+          target: propertyTarget(setup.nodeId),
+          keyframeId,
+          tangentIn: { time: 0, value: 0 },
+          tangentOut: { time: 0, value: 0 },
+        }),
+      ),
+    )
+    expect(setup.engine.getKeyframes(setup.nodeId, 'positionX')[0]?.tangentIn).toEqual({
+      time: 0,
+      value: 0,
+    })
+
+    // Replay the double-click reset's inverse to restore previous tangents
+    const entry = setup.undoStack.entries[0]
+    const inverse = entry.inverse as {
+      target: KeyframeTarget
+      keyframeId: string
+      oldTangentIn: KeyframeTangent
+      oldTangentOut: KeyframeTangent
+    }
+    expectOk(
+      setup.dispatcher.dispatch(
+        new SetKeyframeTangentsCommand({
+          target: inverse.target,
+          keyframeId: inverse.keyframeId,
+          tangentIn: inverse.oldTangentIn,
+          tangentOut: inverse.oldTangentOut,
+        }),
+      ),
+    )
+    const kf = setup.engine.getKeyframes(setup.nodeId, 'positionX')[0]
+    expect(kf?.tangentIn).toEqual({ time: -0.3, value: 1.5 })
+    expect(kf?.tangentOut).toEqual({ time: 0.3, value: 1.5 })
+  })
+
+  it('undo produces bit-identical state for interpolation change', () => {
+    const setup = setupWithNode()
+    const keyframeId = addKeyframe(setup, propertyTarget(setup.nodeId), 1, 10)
+    const before = JSON.stringify(setup.engine.toJSON())
+
+    // Change interpolation
+    const inverse = expectOk(
+      setup.dispatcher.dispatch(
+        new SetKeyframeInterpolationCommand({
+          target: propertyTarget(setup.nodeId),
+          keyframeId,
+          interpolation: 'bezier',
+        }),
+      ),
+    )
+    // Undo
+    expectOk(
+      setup.dispatcher.dispatch(
+        new SetKeyframeInterpolationCommand({
+          target: inverse.target,
+          keyframeId: inverse.keyframeId,
+          interpolation: inverse.oldInterpolation,
+        }),
+      ),
+    )
+    expect(JSON.stringify(setup.engine.toJSON())).toBe(before)
+  })
+
+  it('undo produces bit-identical state for tangent change', () => {
+    const setup = setupWithNode()
+    const keyframeId = addKeyframe(setup, propertyTarget(setup.nodeId), 1, 10)
+    const before = JSON.stringify(setup.engine.toJSON())
+
+    // Change tangents
+    const inverse = expectOk(
+      setup.dispatcher.dispatch(
+        new SetKeyframeTangentsCommand({
+          target: propertyTarget(setup.nodeId),
+          keyframeId,
+          tangentIn: { time: -0.5, value: 2 },
+          tangentOut: { time: 0.5, value: 2 },
+        }),
+      ),
+    )
+    // Undo
+    expectOk(
+      setup.dispatcher.dispatch(
+        new SetKeyframeTangentsCommand({
+          target: inverse.target,
+          keyframeId: inverse.keyframeId,
+          tangentIn: inverse.oldTangentIn,
+          tangentOut: inverse.oldTangentOut,
+        }),
+      ),
+    )
+    expect(JSON.stringify(setup.engine.toJSON())).toBe(before)
   })
 })

@@ -364,6 +364,44 @@ describe('duplicateKeyframes', () => {
   })
 })
 
+describe('copy/paste across slide switches', () => {
+  it('survives slide switches: copy on slide A, switch to B and back, paste on A', () => {
+    const { engine, dispatcher, nodeId, slideId } = setup()
+    const first = addKeyframe(dispatcher, nodeId, 'positionX', 1, 10)
+    const second = addKeyframe(dispatcher, nodeId, 'positionX', 3, 30)
+    selectKeyframes([first, second])
+    copyKeyframes(toReadOnly(engine))
+
+    // Create a second slide
+    const okSlide2 = dispatcher.dispatch(new CreateSlideCommand({ name: 'S2' }))
+    if (!okSlide2.ok) {
+      throw new Error('expected second slide creation to succeed')
+    }
+    const slide2 = engine.project?.slides[1]
+    if (!slide2) {
+      throw new Error('expected a second slide')
+    }
+
+    // Switch to slide 2
+    engine.setActiveSlide(slide2.id)
+    expect(useKeyframeClipboardStore.getState().targets).toHaveLength(1)
+
+    // Switch back to slide 1
+    engine.setActiveSlide(slideId)
+    expect(useKeyframeClipboardStore.getState().targets).toHaveLength(1)
+
+    // Paste on slide 1
+    selectKeyframes([])
+    setPlayheadTime(slideId, 5)
+    pasteKeyframes(toReadOnly(engine), (cmd) => dispatcher.dispatch(cmd))
+
+    const keyframes = engine.getKeyframes(nodeId, 'positionX')
+    expect(keyframes).toHaveLength(4)
+    const times = keyframes.map((kf) => kf.time).sort((a, b) => a - b)
+    expect(times).toEqual([1, 3, 5, 7])
+  })
+})
+
 describe('keyframe clipboard — session lifecycle', () => {
   it('clears on project open', () => {
     const { engine, dispatcher, nodeId } = setup()
