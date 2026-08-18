@@ -1,11 +1,12 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.api import assets, health, materials, ping, projects, shaders
+from app.api import assets, clips, health, materials, ping, projects, shaders
 from app.assets.importer import AssetImporter
 from app.assets.library import AssetLibrary
 from app.assets.pipeline import ImagePipeline
 from app.assets.storage import AssetStorage
+from app.clips.library import ClipLibrary
 from app.config import Settings, load_settings
 from app.database import Database
 from app.errors import register_error_handlers
@@ -41,6 +42,7 @@ class AppFactory:
         shader_library.ensure_seeded(now_utc())
         app.state.shader_library = shader_library
         app.state.project_library = ProjectLibrary(database)
+        app.state.clip_library = ClipLibrary(database)
 
         app.add_middleware(RequestLoggingMiddleware)
         register_error_handlers(app)
@@ -50,6 +52,7 @@ class AppFactory:
         app.include_router(materials.router, prefix="/api")
         app.include_router(shaders.router, prefix="/api")
         app.include_router(projects.router, prefix="/api")
+        app.include_router(clips.router, prefix="/api")
         app.mount(
             "/api/assets/originals",
             StaticFiles(directory=storage.originals_dir),
