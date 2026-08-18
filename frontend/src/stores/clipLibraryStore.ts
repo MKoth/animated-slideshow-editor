@@ -70,7 +70,10 @@ interface ClipLibraryState {
   unavailable: boolean
   selectedId: string | null
   loadLibrary: () => Promise<void>
-  saveToLibrary: (clip: ClipDefinition) => Promise<ClipLibraryEntry | null>
+  saveToLibrary: (
+    clip: ClipDefinition,
+    overwriteEntryId?: string,
+  ) => Promise<ClipLibraryEntry | null>
   updateInLibrary: (clip: ClipDefinition) => Promise<void>
   deleteFromLibrary: (clipId: string) => Promise<void>
   selectClip: (clipId: string | null) => void
@@ -118,12 +121,27 @@ export const useClipLibraryStore = create<ClipLibraryState>()((set) => ({
     }
   },
 
-  saveToLibrary: async (clip) => {
+  saveToLibrary: async (clip, overwriteEntryId) => {
     try {
-      const created = await clipsApi.createClip(clipToCreateInput(clip))
-      set((state) => ({ definitions: [created, ...state.definitions] }))
-      libraryEventBus.emit({ type: 'ClipSaved', clip: created })
-      return created
+      const input = clipToCreateInput(clip)
+      let result: ClipLibraryEntry
+      if (overwriteEntryId) {
+        result = await clipsApi.updateClip(overwriteEntryId, {
+          name: input.name,
+          duration: input.duration,
+          category: input.category,
+          params: input.params,
+          channels: input.channels,
+          channelAnimations: input.channelAnimations,
+        })
+        set((state) => ({ definitions: replaceDefinition(state.definitions, result) }))
+        libraryEventBus.emit({ type: 'ClipUpdated', clip: result })
+      } else {
+        result = await clipsApi.createClip(input)
+        set((state) => ({ definitions: [result, ...state.definitions] }))
+        libraryEventBus.emit({ type: 'ClipSaved', clip: result })
+      }
+      return result
     } catch (error) {
       notifyRequestFailure(SAVE_FAILED_MESSAGE, SAVE_BACKEND_DOWN_MESSAGE, error, () =>
         set({ unavailable: true, error: errorMessage(error) }),

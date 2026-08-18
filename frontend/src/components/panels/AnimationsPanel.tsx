@@ -9,6 +9,7 @@ import {
 import type { ClipLibraryClip } from '../../stores/clipLibraryStore'
 import { useKeyframeClipboardStore } from '../../stores/keyframeClipboardStore'
 import { useTimelineSelectionStore } from '../../stores/timelineSelectionStore'
+import { useNotificationStore } from '../../stores/notificationStore'
 
 function uniqueClipName(base: string, existing: readonly ClipLibraryClip[]): string {
   return uniqueNodeName(new Set(existing.map((clip) => clip.name)), base)
@@ -55,9 +56,17 @@ export function AnimationsPanel() {
   const renameClip = useClipLibraryStore((state) => state.renameClip)
   const duplicateClip = useClipLibraryStore((state) => state.duplicateClip)
   const deleteClip = useClipLibraryStore((state) => state.deleteClip)
+  const saveToLibrary = useClipLibraryStore((state) => state.saveToLibrary)
+  const libraryDefinitions = useClipLibraryStore((state) => state.definitions)
+  const notify = useNotificationStore((state) => state.notify)
 
   const [search, setSearch] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [saveConfirm, setSaveConfirm] = useState<{
+    clipId: string
+    clipName: string
+    existingEntryId: string
+  } | null>(null)
 
   const handleCreate = () => {
     createClip(uniqueClipName('New Clip', definitions))
@@ -74,6 +83,54 @@ export function AnimationsPanel() {
 
   const handleDelete = (clipId: string) => {
     deleteClip(clipId, engine)
+  }
+
+  const commitSave = async (clipId: string, overwriteEntryId?: string) => {
+    const clip = engine.getClip(clipId)
+    const result = await saveToLibrary(clip, overwriteEntryId)
+    if (result) {
+      notify(
+        overwriteEntryId
+          ? `Clip "${clip.name}" updated in library`
+          : `Clip "${clip.name}" saved to library`,
+      )
+    }
+  }
+
+  const handleSaveToLibrary = async (clipId: string) => {
+    const clip = engine.getClip(clipId)
+    const existing = libraryDefinitions.find((entry) => entry.name === clip.name)
+    if (existing) {
+      setSaveConfirm({ clipId, clipName: clip.name, existingEntryId: existing.id })
+      return
+    }
+    await commitSave(clipId)
+  }
+
+  const handleOverwrite = async () => {
+    if (!saveConfirm) return
+    await commitSave(saveConfirm.clipId, saveConfirm.existingEntryId)
+    setSaveConfirm(null)
+  }
+
+  const handleSaveAsNew = async () => {
+    if (!saveConfirm) return
+    const clip = engine.getClip(saveConfirm.clipId)
+    const existingNames = new Set(libraryDefinitions.map((e) => e.name))
+    const newName = uniqueNodeName(existingNames, clip.name)
+    const original = clip.toJSON()
+    const renamed = {
+      ...original,
+      name: newName,
+      toJSON() {
+        return { ...original, name: newName }
+      },
+    }
+    const result = await saveToLibrary(renamed as never)
+    if (result) {
+      notify(`Clip "${newName}" saved to library`)
+    }
+    setSaveConfirm(null)
   }
 
   const handleEdit = (clipId: string) => {
@@ -189,6 +246,13 @@ export function AnimationsPanel() {
                       Delete
                     </button>
                     <button
+                      aria-label={`Save ${clip.name} to Library`}
+                      title={`Save ${clip.name} to Library`}
+                      onClick={() => handleSaveToLibrary(clip.id)}
+                    >
+                      Save to Library
+                    </button>
+                    <button
                       aria-label={`Edit ${clip.name}`}
                       title={`Edit ${clip.name}`}
                       onClick={() => handleEdit(clip.id)}
@@ -225,6 +289,20 @@ export function AnimationsPanel() {
             </div>
           </dl>
         </section>
+      )}
+      {saveConfirm && (
+        <div className="projects-overlay">
+          <div className="projects-dialog" role="dialog" aria-label="Save to Library">
+            <p className="projects-dialog__message">
+              A clip named &ldquo;{saveConfirm.clipName}&rdquo; already exists in the library.
+            </p>
+            <div className="projects-dialog__actions">
+              <button onClick={() => setSaveConfirm(null)}>Cancel</button>
+              <button onClick={handleSaveAsNew}>Save as New</button>
+              <button onClick={handleOverwrite}>Overwrite</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

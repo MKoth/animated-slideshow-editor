@@ -1,12 +1,15 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EngineProvider } from '../app/EngineProvider'
 import { useEngine } from '../app/useEngine'
 import { AnimationsPanel } from '../components/panels/AnimationsPanel'
+import { Notifications } from '../components/notifications/Notifications'
 import { useClipLibraryStore } from '../stores/clipLibraryStore'
+import { useNotificationStore } from '../stores/notificationStore'
 import { CreateProjectCommand } from '../engine/commands/createProjectCommand'
 import { CreateClipCommand } from '../engine/commands/createClipCommand'
+import type { ClipLibraryEntry } from '../api'
 
 vi.mock('pixi.js', async () => {
   const { createPixiFake } = await import('./renderer/pixiFake')
@@ -38,6 +41,7 @@ function renderPanel() {
     <EngineProvider>
       <SetupProject />
       <AnimationsPanel />
+      <Notifications />
     </EngineProvider>,
   )
 }
@@ -47,6 +51,7 @@ function renderPanelWithClips() {
     <EngineProvider>
       <SetupClips />
       <AnimationsPanel />
+      <Notifications />
     </EngineProvider>,
   )
 }
@@ -56,6 +61,12 @@ beforeEach(() => {
     selectedId: null,
     error: null,
   })
+  useNotificationStore.setState({ notifications: [] })
+  vi.stubGlobal('fetch', vi.fn())
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
 })
 
 describe('AnimationsPanel', () => {
@@ -216,5 +227,129 @@ describe('AnimationsPanel', () => {
       expect(screen.queryByText('Bounce In')).not.toBeInTheDocument()
     })
     expect(screen.getByText('Fade Out')).toBeInTheDocument()
+  })
+
+  describe('Save to Library', () => {
+    function makeLibraryEntry(overrides: Partial<ClipLibraryEntry> = {}): ClipLibraryEntry {
+      return {
+        id: 'lib-1',
+        name: 'Bounce In',
+        duration: 2,
+        category: 'motion',
+        params: [],
+        channels: [],
+        channelAnimations: null,
+        created_at: '2026-01-01T00:00:00',
+        updated_at: '2026-01-01T00:00:00',
+        ...overrides,
+      }
+    }
+
+    it('renders a Save to Library button on each clip card', async () => {
+      renderPanelWithClips()
+      await screen.findByText('Bounce In')
+
+      expect(screen.getByRole('button', { name: 'Save Bounce In to Library' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Save Fade Out to Library' })).toBeInTheDocument()
+    })
+
+    it('saves a clip to the library and shows a success toast when no duplicate exists', async () => {
+      const entry = makeLibraryEntry()
+      vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(entry), { status: 200 }))
+      const user = userEvent.setup()
+      renderPanelWithClips()
+      await screen.findByText('Bounce In')
+
+      await user.click(screen.getByRole('button', { name: 'Save Bounce In to Library' }))
+
+      await waitFor(() => {
+        expect(screen.getByText('Clip "Bounce In" saved to library')).toBeInTheDocument()
+      })
+    })
+
+    it('shows a confirmation dialog when a clip with the same name exists in the library', async () => {
+      useClipLibraryStore.setState({ definitions: [makeLibraryEntry()] })
+      const user = userEvent.setup()
+      renderPanelWithClips()
+      await screen.findByText('Bounce In')
+
+      await user.click(screen.getByRole('button', { name: 'Save Bounce In to Library' }))
+
+      expect(
+        screen.getByText(
+          (content) =>
+            content.includes('Bounce In') && content.includes('already exists in the library'),
+        ),
+      ).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /save as new/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /overwrite/i })).toBeInTheDocument()
+    })
+
+    it('closes the confirmation dialog when Cancel is clicked', async () => {
+      useClipLibraryStore.setState({ definitions: [makeLibraryEntry()] })
+      const user = userEvent.setup()
+      renderPanelWithClips()
+      await screen.findByText('Bounce In')
+
+      await user.click(screen.getByRole('button', { name: 'Save Bounce In to Library' }))
+      await user.click(screen.getByRole('button', { name: /cancel/i }))
+
+      expect(
+        screen.queryByText(
+          (content) =>
+            content.includes('Bounce In') && content.includes('already exists in the library'),
+        ),
+      ).not.toBeInTheDocument()
+    })
+
+    it('saves as a new clip with a unique name when Save as New is clicked in the confirmation dialog', async () => {
+      useClipLibraryStore.setState({ definitions: [makeLibraryEntry()] })
+      const newEntry = makeLibraryEntry({ id: 'lib-2', name: 'Bounce In (2)' })
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response(JSON.stringify(newEntry), { status: 200 }),
+      )
+      const user = userEvent.setup()
+      renderPanelWithClips()
+      await screen.findByText('Bounce In')
+
+      await user.click(screen.getByRole('button', { name: 'Save Bounce In to Library' }))
+      await user.click(screen.getByRole('button', { name: /save as new/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText('Clip "Bounce In (2)" saved to library')).toBeInTheDocument()
+      })
+    })
+
+    it('overwrites the existing clip when Overwrite is clicked in the confirmation dialog', async () => {
+      useClipLibraryStore.setState({ definitions: [makeLibraryEntry()] })
+      const updatedEntry = makeLibraryEntry({ name: 'Bounce In Updated' })
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response(JSON.stringify(updatedEntry), { status: 200 }),
+      )
+      const user = userEvent.setup()
+      renderPanelWithClips()
+      await screen.findByText('Bounce In')
+
+      await user.click(screen.getByRole('button', { name: 'Save Bounce In to Library' }))
+      await user.click(screen.getByRole('button', { name: /overwrite/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText('Clip "Bounce In" updated in library')).toBeInTheDocument()
+      })
+    })
+
+    it('shows an error notification when save to library fails', async () => {
+      vi.mocked(fetch).mockResolvedValueOnce(new Response('{}', { status: 500 }))
+      const user = userEvent.setup()
+      renderPanelWithClips()
+      await screen.findByText('Bounce In')
+
+      await user.click(screen.getByRole('button', { name: 'Save Bounce In to Library' }))
+
+      await waitFor(() => {
+        expect(screen.getByText('Failed to save clip to library.')).toBeInTheDocument()
+      })
+    })
   })
 })
