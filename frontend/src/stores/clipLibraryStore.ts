@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { clipsApi, type ClipCreateInput, type ClipLibraryEntry } from '../api'
 import type { ClipDefinition } from '../engine/clipDefinition'
 import type { EnginePublic } from '../engine'
 import type { Command, CommandResult } from '../engine/commands'
@@ -6,6 +7,42 @@ import { CreateClipCommand } from '../engine/commands/createClipCommand'
 import { RenameClipCommand } from '../engine/commands/renameClipCommand'
 import { DuplicateClipCommand } from '../engine/commands/duplicateClipCommand'
 import { DeleteClipCommand } from '../engine/commands/deleteClipCommand'
+import { libraryEventBus } from './libraryEvents'
+import { notifyRequestFailure } from './requestNotifications'
+
+export const LOAD_FAILED_MESSAGE = 'Failed to load clip library.'
+export const LOAD_BACKEND_DOWN_MESSAGE = 'Failed to load clip library — backend unavailable.'
+export const SAVE_FAILED_MESSAGE = 'Failed to save clip to library.'
+export const SAVE_BACKEND_DOWN_MESSAGE = 'Failed to save clip to library — backend unavailable.'
+export const UPDATE_FAILED_MESSAGE = 'Failed to update clip in library.'
+export const UPDATE_BACKEND_DOWN_MESSAGE = 'Failed to update clip in library — backend unavailable.'
+export const DELETE_FAILED_MESSAGE = 'Failed to delete clip from library.'
+export const DELETE_BACKEND_DOWN_MESSAGE =
+  'Failed to delete clip from library — backend unavailable.'
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Unknown error'
+}
+
+function replaceDefinition(
+  definitions: ClipLibraryEntry[],
+  updated: ClipLibraryEntry,
+): ClipLibraryEntry[] {
+  return definitions.map((definition) => (definition.id === updated.id ? updated : definition))
+}
+
+function clipToCreateInput(clip: ClipDefinition): ClipCreateInput {
+  const json = clip.toJSON()
+  return {
+    id: json.id,
+    name: json.name,
+    duration: json.duration,
+    category: json.category || null,
+    params: [...json.params] as ClipCreateInput['params'],
+    channels: [...json.channels] as ClipCreateInput['channels'],
+    channelAnimations: (json.channelAnimations as Record<string, Record<string, unknown>>) ?? null,
+  }
+}
 
 export interface ClipLibraryClip {
   readonly id: string
@@ -26,10 +63,16 @@ export function clipToRecord(clip: ClipDefinition): ClipLibraryClip {
 }
 
 interface ClipLibraryState {
-  definitions: ClipLibraryClip[]
-  selectedId: string | null
+  definitions: ClipLibraryEntry[]
+  loaded: boolean
+  loading: boolean
   error: string | null
-  loadFromEngine: (clipDefinitions: readonly ClipDefinition[]) => void
+  unavailable: boolean
+  selectedId: string | null
+  loadLibrary: () => Promise<void>
+  saveToLibrary: (clip: ClipDefinition) => Promise<ClipLibraryEntry | null>
+  updateInLibrary: (clip: ClipDefinition) => Promise<void>
+  deleteFromLibrary: (clipId: string) => Promise<void>
   selectClip: (clipId: string | null) => void
   clearError: () => void
   createClip: (name: string) => void
@@ -39,6 +82,7 @@ interface ClipLibraryState {
 }
 
 let dispatchRef: ((command: Command<unknown>) => CommandResult<unknown>) | null = null
+let requestSeq = 0
 
 export function initClipLibraryStore(
   dispatchFn: (command: Command<unknown>) => CommandResult<unknown>,
@@ -48,11 +92,80 @@ export function initClipLibraryStore(
 
 export const useClipLibraryStore = create<ClipLibraryState>()((set) => ({
   definitions: [],
-  selectedId: null,
+  loaded: false,
+  loading: false,
   error: null,
+  unavailable: false,
+  selectedId: null,
 
-  loadFromEngine: (clipDefinitions) => {
-    set({ definitions: clipDefinitions.map(clipToRecord) })
+  loadLibrary: async () => {
+    const seq = ++requestSeq
+    set({ loading: true, error: null })
+    try {
+      const definitions = await clipsApi.listClips()
+      if (seq !== requestSeq) return
+      set({ definitions, loaded: true, loading: false, unavailable: false })
+    } catch (error) {
+      if (seq !== requestSeq) return
+      set({
+        definitions: [],
+        selectedId: null,
+        loaded: false,
+        loading: false,
+        unavailable: true,
+        error: errorMessage(error),
+      })
+    }
+  },
+
+  saveToLibrary: async (clip) => {
+    try {
+      const created = await clipsApi.createClip(clipToCreateInput(clip))
+      set((state) => ({ definitions: [created, ...state.definitions] }))
+      libraryEventBus.emit({ type: 'ClipSaved', clip: created })
+      return created
+    } catch (error) {
+      notifyRequestFailure(SAVE_FAILED_MESSAGE, SAVE_BACKEND_DOWN_MESSAGE, error, () =>
+        set({ unavailable: true, error: errorMessage(error) }),
+      )
+      return null
+    }
+  },
+
+  updateInLibrary: async (clip) => {
+    try {
+      const input = clipToCreateInput(clip)
+      const updated = await clipsApi.updateClip(input.id, {
+        name: input.name,
+        duration: input.duration,
+        category: input.category,
+        params: input.params,
+        channels: input.channels,
+        channelAnimations: input.channelAnimations,
+      })
+      set((state) => ({ definitions: replaceDefinition(state.definitions, updated) }))
+      libraryEventBus.emit({ type: 'ClipUpdated', clip: updated })
+    } catch (error) {
+      notifyRequestFailure(UPDATE_FAILED_MESSAGE, UPDATE_BACKEND_DOWN_MESSAGE, error, () =>
+        set({ unavailable: true, error: errorMessage(error) }),
+      )
+    }
+  },
+
+  deleteFromLibrary: async (clipId) => {
+    try {
+      await clipsApi.deleteClip(clipId)
+    } catch (error) {
+      notifyRequestFailure(DELETE_FAILED_MESSAGE, DELETE_BACKEND_DOWN_MESSAGE, error, () =>
+        set({ unavailable: true, error: errorMessage(error) }),
+      )
+      return
+    }
+    set((state) => ({
+      definitions: state.definitions.filter((d) => d.id !== clipId),
+      selectedId: state.selectedId === clipId ? null : state.selectedId,
+    }))
+    libraryEventBus.emit({ type: 'ClipDeleted', id: clipId })
   },
 
   selectClip: (clipId) => set({ selectedId: clipId }),

@@ -1,5 +1,6 @@
 import { ApiClient } from './apiClient'
 import { AssetsApi } from './assetsApi'
+import { ClipsApi } from './clipsApi'
 import { HealthApi } from './healthApi'
 import { MaterialsApi } from './materialsApi'
 import { PingApi } from './pingApi'
@@ -8,6 +9,7 @@ import { ShadersApi } from './shadersApi'
 
 export const apiClient = new ApiClient()
 export const assetsApi = new AssetsApi(apiClient)
+export const clipsApi = new ClipsApi(apiClient)
 export const healthApi = new HealthApi(apiClient)
 export const materialsApi = new MaterialsApi(apiClient)
 export const pingApi = new PingApi(apiClient)
@@ -15,6 +17,13 @@ export const projectsApi = new ProjectsApi(apiClient)
 export const shadersApi = new ShadersApi(apiClient)
 
 export type { AssetDefinition, AssetSortKey, AssetSortOrder, AssetUploadResult } from './assetsApi'
+export type {
+  ClipChannelDefApi,
+  ClipCreateInput,
+  ClipLibraryEntry,
+  ClipParamDef,
+  ClipUpdateInput,
+} from './clipsApi'
 export type { HealthResponse } from './healthApi'
 export type {
   MaterialCreateInput,

@@ -1,4 +1,9 @@
-import type { AssetDefinition, MaterialDefinition, ShaderDefinition } from '../api'
+import type {
+  AssetDefinition,
+  ClipLibraryEntry,
+  MaterialDefinition,
+  ShaderDefinition,
+} from '../api'
 import type { ShaderCompileError } from '../shaders/compiler'
 
 export interface AssetImported {
@@ -67,10 +72,28 @@ export interface ShaderCompilationFailed {
   readonly errors: ShaderCompileError[]
 }
 
+export interface ClipSaved {
+  readonly type: 'ClipSaved'
+  readonly clip: ClipLibraryEntry
+}
+
+export interface ClipUpdated {
+  readonly type: 'ClipUpdated'
+  readonly clip: ClipLibraryEntry
+}
+
+export interface ClipDeleted {
+  readonly type: 'ClipDeleted'
+  readonly id: string
+}
+
 export type LibraryEvent =
   | AssetImported
   | AssetDeleted
   | AssetUpdated
+  | ClipSaved
+  | ClipUpdated
+  | ClipDeleted
   | MaterialCreated
   | MaterialRemoved
   | MaterialRenamed
