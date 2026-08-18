@@ -318,7 +318,7 @@ export function buildEmbeddedShadersFromJSON(library: unknown): EmbeddedShaderDe
   return shaders
 }
 
-function validateLibraryClips(errors: string[], clips: unknown): void {
+export function validateLibraryClips(errors: string[], clips: unknown): void {
   if (clips === undefined) {
     return
   }

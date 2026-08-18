@@ -181,5 +181,6 @@ export type LessonJSON = {
   readonly version: 1
   readonly project: LessonProjectJSON
   readonly slides: readonly SlideJSON[]
+  readonly clips?: readonly ClipJSON[]
   readonly library?: LessonLibraryJSON
 }

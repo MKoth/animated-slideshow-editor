@@ -221,8 +221,9 @@ describe('lesson serializer', () => {
       throw new Error('expected a project')
     }
 
+    const json = engine.toJSON()
     const restored = createEngine()
-    restored.restoreFromJSON(JSON.parse(serialize(engine.project)) as LessonJSON)
+    restored.restoreFromJSON(json)
 
     expect(restored.toJSON()).toEqual(engine.toJSON())
     expect(restored.toJSON().version).toBe(1)

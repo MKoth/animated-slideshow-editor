@@ -45,8 +45,13 @@ import type { EngineEvent, Unsubscribe } from './events'
 import type { CreateNodeOptions } from './nodeManager'
 import type { Transform } from './transform'
 import type { LessonJSON } from './json'
-import { buildProjectFromJSON, toLessonJSON, validate } from './lessonSerializer'
-import { buildClipsFromJSON } from './librarySection'
+import {
+  buildProjectFromJSON,
+  toLessonJSON,
+  validate,
+  parseClipsFromLessonJSON,
+} from './lessonSerializer'
+
 import type { EnginePublic } from './engine'
 import { ClipManager } from './clipManager'
 import type { ClipChannelDef, ClipParam } from './clipDefinition'
@@ -124,6 +129,7 @@ export class Engine {
   openProject(project: Project): void {
     this.#validateOrThrow(toLessonJSON(project))
     this.#replaceProject(project)
+    this.#clips.clear()
     const first = project.slides[0]
     this.#activeSlideId = first ? first.id : null
     this.#bus.emit({ type: 'ProjectLoaded', projectId: project.id })
@@ -136,6 +142,7 @@ export class Engine {
     this.#embeddedAssets.clear()
     this.#embeddedMaterials.clear()
     this.#embeddedShaders.clear()
+    this.#clips.clear()
     return this.#projects.create(input)
   }
 
@@ -679,15 +686,11 @@ export class Engine {
       throw new Error('No project exists in memory')
     }
     const json = toLessonJSON(project)
-    // Add clips to the library section
+    // Add clips to the top-level clips array
     if (this.#clips.clips.length > 0) {
-      const library = json.library ?? {}
       return {
         ...json,
-        library: {
-          ...library,
-          clips: this.#clips.clips.map((clip) => clip.toJSON()),
-        },
+        clips: this.#clips.clips.map((clip) => clip.toJSON()),
       }
     }
     return json
@@ -698,8 +701,8 @@ export class Engine {
     const project = buildProjectFromJSON(json, this.#materials.definitions)
     try {
       this.#replaceProject(project)
-      // Restore clips from JSON
-      const clips = buildClipsFromJSON(json.library)
+      // Restore clips from JSON (top-level clips array, fallback to library.clips)
+      const clips = parseClipsFromLessonJSON(json)
       for (const clip of clips) {
         this.#clips.importClip(clip)
       }

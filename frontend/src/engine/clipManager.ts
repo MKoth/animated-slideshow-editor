@@ -529,6 +529,10 @@ export class ClipManager {
   importClip(clip: ClipDefinition): void {
     this.#clips.set(clip.id, clip)
   }
+
+  clear(): void {
+    this.#clips.clear()
+  }
 }
 
 function requireClipKeyframeTime(time: unknown, what = 'Clip keyframe time'): number {

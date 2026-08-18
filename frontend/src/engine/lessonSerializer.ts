@@ -3,7 +3,7 @@ import type { ProjectMetadata } from './project'
 import { Slide } from './slide'
 import type { Scene } from './scene'
 import { Scene as SceneModel } from './scene'
-import { SceneNode, wouldFormCycle } from './sceneNode'
+import { SceneNode, wouldFormCycle, walkPreOrder } from './sceneNode'
 import { SlideAnimation } from './animation'
 import type { LessonJSON, SceneJSON, SlideJSON } from './json'
 import {
@@ -12,6 +12,7 @@ import {
   buildEmbeddedShadersFromJSON,
   embeddedLibraryJSON,
   validateLibrary,
+  validateLibraryClips,
 } from './librarySection'
 import { ANIMATABLE_PROPERTIES } from './animationProperties'
 import type { AnimationProperty } from './animationProperties'
@@ -26,8 +27,24 @@ import type { MaterialParameterKindOf } from './nodeAnimation'
 import { DEFAULT_MATERIAL_DEFINITION_ID } from './materialInstance'
 import { DEFAULT_MATERIAL_PARAMETERS } from './materialResolution'
 import type { MaterialDefinition } from './materialDefinition'
+import { ClipDefinition } from './clipDefinition'
 
 export const LESSON_VERSION = 1
+
+export function parseClipsFromLessonJSON(json: LessonJSON): ClipDefinition[] {
+  const clipsJson = json.clips ?? json.library?.clips
+  const clips: ClipDefinition[] = []
+  if (Array.isArray(clipsJson)) {
+    for (const clipJson of clipsJson) {
+      try {
+        clips.push(ClipDefinition.fromJSON(clipJson))
+      } catch {
+        // Skip invalid clips (already validated)
+      }
+    }
+  }
+  return clips
+}
 
 const TRANSFORM_KEYS = ['x', 'y', 'rotation', 'scaleX', 'scaleY'] as const
 const TEXT_ALIGNMENTS: readonly string[] = ['left', 'center', 'right']
@@ -36,11 +53,11 @@ const DEFAULT_MATERIAL_KINDS: Readonly<Record<string, string>> = Object.fromEntr
   DEFAULT_MATERIAL_PARAMETERS.map((parameter) => [parameter.key, parameter.kind]),
 )
 
-export function serialize(project: Project): string {
-  return JSON.stringify(toLessonJSON(project))
+export function serialize(project: Project, clips?: readonly ClipDefinition[]): string {
+  return JSON.stringify(toLessonJSON(project, clips))
 }
 
-export function toLessonJSON(project: Project): LessonJSON {
+export function toLessonJSON(project: Project, clips?: readonly ClipDefinition[]): LessonJSON {
   const library =
     project.embeddedAssets.length > 0 ||
     project.embeddedMaterials.length > 0 ||
@@ -63,6 +80,9 @@ export function toLessonJSON(project: Project): LessonJSON {
       settings: { ...project.settings },
     },
     slides: project.slides.map((slide) => slide.toJSON()),
+    ...(clips !== undefined && clips.length > 0
+      ? { clips: clips.map((clip) => clip.toJSON()) }
+      : {}),
     ...(library !== undefined ? { library } : {}),
   }
 }
@@ -118,6 +138,8 @@ export function validate(json: unknown): string[] {
     return errors
   }
   validateLibrary(errors, json.library)
+  validateLibraryClips(errors, (json as { clips?: unknown }).clips)
+  validateClipReferencesInJSON(errors, json as LessonJSON)
   const slideIds = new Set<string>()
   const sceneIds = new Set<string>()
   const nodeIds = new Set<string>()
@@ -450,6 +472,34 @@ export function buildProjectFromJSON(
   const settings = isRecord(projectJson.settings) ? projectJson.settings : {}
   const kindOf = materialKindResolver(json, registeredDefinitions)
   const slides = json.slides.map((slideJson) => buildSlideFromJSON(slideJson, kindOf))
+  // Parse clips from top-level clips array, fallback to library.clips
+  const clips = parseClipsFromLessonJSON(json)
+  // Validate clip references in nodes
+  const clipIds = new Set(clips.map((c) => c.id))
+  const clipParams = new Map<string, Set<string>>()
+  for (const clip of clips) {
+    const paramKeys = new Set(clip.params.map((p) => p.key))
+    clipParams.set(clip.id, paramKeys)
+  }
+  for (const slide of slides) {
+    for (const node of walkPreOrder(slide.scene.root)) {
+      for (const instance of node.clipInstances) {
+        if (!clipIds.has(instance.clipId)) {
+          throw new Error(`Clip instance references unknown clip id: ${instance.clipId}`)
+        }
+        const paramSet = clipParams.get(instance.clipId)
+        if (paramSet) {
+          for (const key of Object.keys(instance.paramOverrides)) {
+            if (!paramSet.has(key)) {
+              throw new Error(
+                `Clip instance param override references unknown param key: ${key} in clip ${instance.clipId}`,
+              )
+            }
+          }
+        }
+      }
+    }
+  }
   return new Project(
     metadata,
     slides,
@@ -561,6 +611,45 @@ function buildSceneFromJSON(json: SceneJSON): Scene {
     throw new Error('The camera node must be a child of the scene root')
   }
   return scene
+}
+
+function validateClipReferencesInJSON(errors: string[], json: LessonJSON): void {
+  // Parse clips to build lookup maps
+  const clips = parseClipsFromLessonJSON(json)
+  const clipIds = new Set(clips.map((c) => c.id))
+  const clipParams = new Map<string, Set<string>>()
+  for (const clip of clips) {
+    const paramKeys = new Set(clip.params.map((p) => p.key))
+    clipParams.set(clip.id, paramKeys)
+  }
+  // Walk all nodes in all slides
+  for (const slideJson of json.slides) {
+    if (!isRecord(slideJson) || !isRecord(slideJson.scene)) continue
+    const nodes = slideJson.scene.nodes
+    if (!Array.isArray(nodes)) continue
+    for (const nodeJson of nodes) {
+      if (!isRecord(nodeJson) || !Array.isArray(nodeJson.clipInstances)) continue
+      for (const instance of nodeJson.clipInstances) {
+        if (!isRecord(instance)) continue
+        const clipId = instance.clipId
+        if (typeof clipId !== 'string') continue
+        if (!clipIds.has(clipId)) {
+          errors.push(`Clip instance references unknown clip id: ${clipId}`)
+          continue
+        }
+        const paramSet = clipParams.get(clipId)
+        if (paramSet && isRecord(instance.paramOverrides)) {
+          for (const key of Object.keys(instance.paramOverrides)) {
+            if (!paramSet.has(key)) {
+              errors.push(
+                `Clip instance param override references unknown param key: ${key} in clip ${clipId}`,
+              )
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
 function requireNonEmptyString(errors: string[], value: unknown, what: string): string | undefined {

@@ -20,6 +20,7 @@ import type { LessonJSON } from './json'
 import type { MaterialOverrides } from './materialInstance'
 import type { ClipDefinition } from './clipDefinition'
 import type { ClipInstance } from './clipInstance'
+import { createBuiltInClips } from './builtInClips'
 
 export interface EnginePublic {
   readonly project: Project | null
@@ -72,6 +73,10 @@ export function createBlankProject(name: string): Project {
   const engine = new Engine()
   engine.createProject({ name })
   engine.createSlide()
+  // Seed built-in clips for the new-project template
+  for (const clip of createBuiltInClips()) {
+    engine.importClip(clip)
+  }
   if (!engine.project) {
     throw new Error('Fresh project creation failed')
   }

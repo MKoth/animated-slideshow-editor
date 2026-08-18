@@ -656,8 +656,8 @@ describe('clip serialization round-trip', () => {
 
     // Serialize
     const json = setup.engine.toJSON()
-    expect(json.library?.clips).toHaveLength(1)
-    const clipJson = json.library!.clips![0]!
+    expect(json.clips).toHaveLength(1)
+    const clipJson = json.clips![0]!
     expect(clipJson.name).toBe('TestClip')
     expect(clipJson.duration).toBe(1)
     expect(clipJson.channels).toHaveLength(2)
