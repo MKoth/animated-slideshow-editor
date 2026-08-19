@@ -131,6 +131,7 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
     camera?: NodeComponents['camera']
     assetInstance?: NodeComponents['assetInstance']
     text?: NodeComponents['text']
+    bone?: NodeComponents['bone']
   } = {}
   if (record.camera !== undefined) {
     if (!isKind(record.camera, 'camera')) {
@@ -174,6 +175,12 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
       alignment: component.alignment as TextAlignment,
     }
   }
+  if (record.bone !== undefined) {
+    if (!isKind(record.bone, 'bone')) {
+      throw new Error(`Node "${nodeId}" has an invalid bone component`)
+    }
+    components.bone = { kind: 'bone' }
+  }
   return components
 }
 
@@ -215,6 +222,7 @@ function freezeComponents(components: NodeComponents): NodeComponents {
       ? Object.freeze({ ...components.assetInstance })
       : undefined,
     text: components.text ? Object.freeze({ ...components.text }) : undefined,
+    bone: components.bone ? Object.freeze({ ...components.bone }) : undefined,
   }
   return Object.freeze(frozen)
 }

@@ -16,10 +16,15 @@ export interface TextComponent {
   readonly alignment: TextAlignment
 }
 
+export interface BoneComponent {
+  readonly kind: 'bone'
+}
+
 export interface NodeComponents {
   readonly camera?: CameraComponent
   readonly assetInstance?: AssetInstanceComponent
   readonly text?: TextComponent
+  readonly bone?: BoneComponent
 }
 
 export function copyComponents(components: NodeComponents): NodeComponents {
@@ -27,5 +32,6 @@ export function copyComponents(components: NodeComponents): NodeComponents {
     camera: components.camera ? { ...components.camera } : undefined,
     assetInstance: components.assetInstance ? { ...components.assetInstance } : undefined,
     text: components.text ? { ...components.text } : undefined,
+    bone: components.bone ? { ...components.bone } : undefined,
   }
 }

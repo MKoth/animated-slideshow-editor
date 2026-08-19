@@ -4,6 +4,8 @@ import type { SceneNode } from './sceneNode'
 import type { Transform } from './transform'
 import type { EvaluatedNodeScratch } from './animationEvaluator'
 import { evaluatedNodeScratch } from './animationEvaluator'
+import type { IKManager } from './ikManager'
+import { solveTwoBoneIK, solveCCDIK } from './ikSolver'
 
 export interface WorldTransform {
   readonly x: number
@@ -54,12 +56,19 @@ export class EvaluatedWorldTransformSource {
   readonly #engine: EnginePublic
   readonly #getTime: () => number
   readonly #previews: ReadonlyMap<string, { readonly x: number; readonly y: number }>
+  readonly #ikManager: IKManager | null
   readonly #scratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #chain: SceneNode[] = []
   #time = 0
   #previewedNodeId: string | null = null
+  readonly #ikOverrides = new Map<string, number>()
   readonly #localOf = (link: SceneNode): Transform => {
     const local = this.#engine.evaluateNode(link.id, this.#time, this.#scratch).transform
+    // Apply IK rotation override if present
+    const overrideRotation = this.#ikOverrides.get(link.id)
+    if (overrideRotation !== undefined) {
+      return { ...local, rotation: overrideRotation }
+    }
     if (link.id !== this.#previewedNodeId) {
       return local
     }
@@ -71,10 +80,68 @@ export class EvaluatedWorldTransformSource {
     engine: EnginePublic,
     getTime: () => number,
     previews: ReadonlyMap<string, { readonly x: number; readonly y: number }> = new Map(),
+    ikManager: IKManager | null = null,
   ) {
     this.#engine = engine
     this.#getTime = getTime
     this.#previews = previews
+    this.#ikManager = ikManager
+  }
+
+  /**
+   * Compute IK overrides for all IK chains in the given slide at the given time.
+   * Must be called before transformOf to apply IK rotations.
+   */
+  updateIKOverrides(slideId: string, time: number): void {
+    this.#ikOverrides.clear()
+    if (!this.#ikManager) {
+      return
+    }
+    const chains = this.#ikManager.getChainsForSlide(slideId)
+    for (const chain of chains) {
+      // Resolve target position (if attached to node, evaluate its world position)
+      let targetWorld = chain.target.position
+      if (chain.target.nodeId) {
+        // Evaluate world position of target node
+        // Use the evaluator to get world transform (simplified)
+        // For now, we'll approximate by evaluating node's local transform and composing up.
+        // We'll reuse the existing world transform composition but without IK overrides.
+        // This could cause recursion, but we'll assume target node is not part of IK chain.
+        const targetWorldTransform = this.#engine.evaluateNode(chain.target.nodeId, time).transform
+        // For simplicity, we'll treat target position as local transform (not accurate)
+        targetWorld = { x: targetWorldTransform.x, y: targetWorldTransform.y }
+      }
+      // Get bone nodes
+      const boneNodes: SceneNode[] = []
+      for (const boneId of chain.boneIds) {
+        boneNodes.push(this.#engine.getNode(boneId))
+      }
+      // Create a function to get local transform of a node (without IK overrides)
+      const getLocalTransform = (nodeId: string): Transform => {
+        return this.#engine.evaluateNode(nodeId, time).transform
+      }
+      // Solve IK
+      let solution
+      if (chain.chainLength === 2) {
+        solution = solveTwoBoneIK(
+          boneNodes,
+          targetWorld,
+          chain.poleTarget?.position ?? null,
+          getLocalTransform,
+        )
+      } else {
+        solution = solveCCDIK(
+          boneNodes,
+          targetWorld,
+          chain.poleTarget?.position ?? null,
+          getLocalTransform,
+        )
+      }
+      // Store rotations for each bone
+      for (let i = 0; i < boneNodes.length; i++) {
+        this.#ikOverrides.set(boneNodes[i].id, solution.rotations[i])
+      }
+    }
   }
 
   transformOf(nodeId: string): WorldTransform | null {

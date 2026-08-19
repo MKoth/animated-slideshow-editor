@@ -182,6 +182,7 @@ export class Renderer {
           return slideId ? this.#currentTime.getTime(slideId) : 0
         },
         this.#previewPositions,
+        this.#engine.getIKManager(),
       )
       const transformOf = (nodeId: string) => this.#transformSource?.transformOf(nodeId) ?? null
 
@@ -444,6 +445,11 @@ export class Renderer {
       return
     }
     try {
+      const slideId = this.#sceneRenderer?.boundSlideId ?? null
+      if (slideId) {
+        const time = this.#currentTime.getTime(slideId)
+        this.#transformSource?.updateIKOverrides(slideId, time)
+      }
       this.#sceneRenderer?.handleTimeChanged()
       this.#syncFullscreenShader()
     } catch (error) {

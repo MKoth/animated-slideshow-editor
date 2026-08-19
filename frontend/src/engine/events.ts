@@ -238,6 +238,28 @@ export interface ClipParamOverridden {
   readonly paramKey: string
 }
 
+export interface IKChainCreated {
+  readonly type: 'IKChainCreated'
+  readonly chainId: string
+  readonly slideId: string
+}
+
+export interface IKChainDeleted {
+  readonly type: 'IKChainDeleted'
+  readonly chainId: string
+  readonly slideId: string
+}
+
+export interface IKTargetChanged {
+  readonly type: 'IKTargetChanged'
+  readonly chainId: string
+}
+
+export interface IKPoleTargetChanged {
+  readonly type: 'IKPoleTargetChanged'
+  readonly chainId: string
+}
+
 export type EngineEvent =
   | ProjectCreated
   | ProjectLoaded
@@ -283,6 +305,10 @@ export type EngineEvent =
   | ClipInstanceTimeChanged
   | ClipInstanceSpeedChanged
   | ClipParamOverridden
+  | IKChainCreated
+  | IKChainDeleted
+  | IKTargetChanged
+  | IKPoleTargetChanged
 
 export type EventListener = (event: EngineEvent) => void
 

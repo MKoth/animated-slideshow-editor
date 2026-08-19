@@ -22,6 +22,7 @@ import type { ClipDefinition } from './clipDefinition'
 import type { ClipInstance } from './clipInstance'
 import type { AnimatableParameter } from './animatableParameters'
 import { createBuiltInClips } from './builtInClips'
+import type { IKManager } from './ikManager'
 
 export interface EnginePublic {
   readonly project: Project | null
@@ -59,6 +60,7 @@ export interface EnginePublic {
     time: number,
     target?: EvaluatedMaterialOverridesScratch,
   ): MaterialOverrides
+  getIKManager(): IKManager
   getClip(clipId: string): ClipDefinition
   getClipChannelKeyframes(clipId: string, channel: AnimationProperty): readonly Keyframe[]
   getClipInstances(nodeId: string): readonly ClipInstance[]

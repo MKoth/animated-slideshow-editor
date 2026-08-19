@@ -54,6 +54,7 @@ import {
 
 import type { EnginePublic } from './engine'
 import { ClipManager } from './clipManager'
+import { IKManager } from './ikManager'
 import type { ClipChannelDef, ClipParam } from './clipDefinition'
 import { ClipDefinition } from './clipDefinition'
 import type { ClipInstance } from './clipInstance'
@@ -76,6 +77,7 @@ export class Engine {
   readonly #animations: AnimationManager
   readonly #evaluator: AnimationEvaluator
   readonly #clips: ClipManager
+  readonly #ik: IKManager
   readonly #embeddedAssets = new Map<string, EmbeddedAsset>()
   readonly #embeddedMaterials = new Map<string, EmbeddedMaterialDefinition>()
   readonly #embeddedShaders = new Map<string, EmbeddedShaderDefinition>()
@@ -107,6 +109,10 @@ export class Engine {
       (clipId) => this.getClip(clipId),
     )
     this.#clips = new ClipManager(this.#bus)
+    this.#ik = new IKManager(
+      this.#bus,
+      (nodeId) => this.getNode(nodeId),
+    )
   }
 
   get project(): Project | null {
@@ -160,6 +166,7 @@ export class Engine {
 
   removeSlide(slideId: string): void {
     const index = this.#slides.remove(slideId)
+    this.#ik.clearSlide(slideId)
     if (this.#activeSlideId === slideId) {
       const slides = this.#projects.current?.slides
       const repoint = slides?.[Math.min(index, slides.length - 1)]
@@ -835,6 +842,46 @@ export class Engine {
     this.#bus.emit({ type: 'ClipParamOverridden', nodeId, instanceId, paramKey })
   }
 
+  // --- IK methods ---
+
+  createIKChain(
+    slideId: string,
+    boneIds: readonly string[],
+    target: import('./ikChain').BoneIKTarget,
+    poleTarget: import('./ikChain').PoleTarget | null = null,
+  ): import('./ikChain').IKChain {
+    return this.#ik.createChain(slideId, boneIds, target, poleTarget)
+  }
+
+  deleteIKChain(chainId: string): import('./ikChain').IKChain {
+    return this.#ik.deleteChain(chainId)
+  }
+
+  getIKChain(chainId: string): import('./ikChain').IKChain {
+    return this.#ik.getChain(chainId)
+  }
+
+  getIKChainsForSlide(slideId: string): readonly import('./ikChain').IKChain[] {
+    return this.#ik.getChainsForSlide(slideId)
+  }
+
+  getIKChainsForBone(boneId: string): readonly import('./ikChain').IKChain[] {
+    return this.#ik.getChainsForBone(boneId)
+  }
+
+  setIKTarget(chainId: string, target: import('./ikChain').BoneIKTarget): void {
+    this.#ik.setTarget(chainId, target)
+  }
+
+  setIKPoleTarget(chainId: string, poleTarget: import('./ikChain').PoleTarget | null): void {
+    this.#ik.setPoleTarget(chainId, poleTarget)
+  }
+
+  /** Internal method to expose IKManager to renderer for IK evaluation. */
+  getIKManager(): import('./ikManager').IKManager {
+    return this.#ik
+  }
+
   #resolveMaterialDefinition(definitionId: string): MaterialDefinition {
     const embedded = this.#embeddedMaterials.get(definitionId)
     if (embedded) {
@@ -867,6 +914,7 @@ export class Engine {
       this.#embeddedMaterials.set(material.id, material)
     }
     this.#embeddedShaders.clear()
+    this.#ik.clear()
     for (const shader of project.embeddedShaders) {
       this.#embeddedShaders.set(shader.id, shader)
     }
@@ -935,6 +983,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     evaluateNode: (nodeId, time, target) => engine.evaluateNode(nodeId, time, target),
     evaluateMaterialOverrides: (nodeId, time, target) =>
       engine.evaluateMaterialOverrides(nodeId, time, target),
+    getIKManager: () => engine.getIKManager(),
     getClip: (clipId) => engine.getClip(clipId),
     getClipChannelKeyframes: (clipId, channel) => engine.getClipChannelKeyframes(clipId, channel),
     getClipInstances: (nodeId) => engine.getClipInstances(nodeId),

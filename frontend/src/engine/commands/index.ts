@@ -211,3 +211,11 @@ export type {
   RemoveClipChannelInverse,
   RemoveClipChannelParameters,
 } from './removeClipChannelCommand'
+export { CreateIKChainCommand } from './createIKChainCommand'
+export type { CreateIKChainInverse, CreateIKChainParameters } from './createIKChainCommand'
+export { DeleteIKChainCommand } from './deleteIKChainCommand'
+export type { DeleteIKChainInverse, DeleteIKChainParameters } from './deleteIKChainCommand'
+export { SetIKTargetCommand } from './setIKTargetCommand'
+export type { SetIKTargetInverse, SetIKTargetParameters } from './setIKTargetCommand'
+export { SetIKPoleTargetCommand } from './setIKPoleTargetCommand'
+export type { SetIKPoleTargetInverse, SetIKPoleTargetParameters } from './setIKPoleTargetCommand'

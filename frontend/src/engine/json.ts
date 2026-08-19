@@ -25,6 +25,7 @@ export type NodeComponentsJSON = {
     readonly fontSize: number
     readonly alignment: string
   }
+  readonly bone?: { readonly kind: 'bone' }
 }
 
 export type MaterialJSON = {
