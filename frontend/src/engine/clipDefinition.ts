@@ -7,6 +7,19 @@ import { requireKeyframeInterpolation, requireKeyframeTangent } from './keyframe
 import { isRecord, requireFiniteNumber, requireString } from './guards'
 import { requireAnimationProperty } from './animationProperties'
 
+/** The recognised kind values for clip parameters. */
+export const CLIP_PARAM_KINDS = ['number', 'color', 'vec2'] as const
+
+/** Extensible union type — any of the recognised kinds, or a custom string. */
+export type ClipParamKind = (typeof CLIP_PARAM_KINDS)[number] | (string & {})
+
+export function requireClipParamKind(value: unknown): ClipParamKind {
+  if (typeof value !== 'string' || value === '') {
+    throw new Error('Clip param kind must be a non-empty string')
+  }
+  return value as ClipParamKind
+}
+
 /** The uniform-six channels a clip can animate. */
 export type ClipChannel = AnimationProperty
 
@@ -23,7 +36,7 @@ export const CLIP_CHANNELS: readonly ClipChannel[] = [
 export interface ClipParam {
   readonly key: string
   readonly label: string
-  readonly kind: string
+  readonly kind: ClipParamKind
   readonly default: number
 }
 
@@ -218,6 +231,30 @@ export class ClipDefinition {
     return this.#params.find((p) => p.key === key)
   }
 
+  addParam(param: ClipParam): void {
+    if (param.key === '') {
+      throw new Error('Clip param key must not be empty')
+    }
+    if (this.#params.some((p) => p.key === param.key)) {
+      throw new Error(`Clip param with key "${param.key}" already exists`)
+    }
+    this.#params.push(param)
+  }
+
+  removeParam(paramKey: string): ClipParam | undefined {
+    const index = this.#params.findIndex((p) => p.key === paramKey)
+    if (index === -1) return undefined
+    const [removed] = this.#params.splice(index, 1)
+    // Unlink any channels that referenced this param
+    for (let i = 0; i < this.#channels.length; i++) {
+      const ch = this.#channels[i]!
+      if (ch.paramKey === paramKey) {
+        this.#channels[i] = { property: ch.property }
+      }
+    }
+    return removed
+  }
+
   getChannel(property: ClipChannel): ClipChannelDef | undefined {
     return this.#channels.find((ch) => ch.property === property)
   }
@@ -260,7 +297,16 @@ export class ClipDefinition {
   }
 
   removeChannel(property: ClipChannel): void {
+    this.#channels = this.#channels.filter((ch) => ch.property !== property)
     this.#channelAnimations.delete(property)
+  }
+
+  addChannel(channelDef: ClipChannelDef): void {
+    if (this.hasChannel(channelDef.property)) {
+      throw new Error(`Clip channel "${channelDef.property}" already exists`)
+    }
+    this.#channels.push(channelDef)
+    this.#channelAnimations.set(channelDef.property, new ClipChannelAnimation())
   }
 
   setParamDefault(paramKey: string, defaultValue: number): void {
@@ -339,13 +385,21 @@ export class ClipDefinition {
     }
     const params: ClipParam[] = json.params.map((p) => {
       if (!isRecord(p)) throw new Error('Clip param must be an object')
+      const key = requireString(p.key, 'Clip param key')
       return {
-        key: requireString(p.key, 'Clip param key'),
+        key,
         label: requireString(p.label, 'Clip param label'),
-        kind: requireString(p.kind, 'Clip param kind'),
+        kind: requireClipParamKind(p.kind),
         default: requireFiniteNumber(p.default, 'Clip param default'),
       }
     })
+    const seenParamKeys = new Set<string>()
+    for (const p of params) {
+      if (seenParamKeys.has(p.key)) {
+        throw new Error(`Duplicate clip param key: "${p.key}"`)
+      }
+      seenParamKeys.add(p.key)
+    }
     if (!Array.isArray(json.channels)) {
       throw new Error('Clip channels must be an array')
     }

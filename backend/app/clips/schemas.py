@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import cast
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from app.clips.model import ClipDefinition
 
@@ -16,6 +16,13 @@ class ClipParam(BaseModel):
     label: str
     kind: str
     default: float
+
+    @field_validator("kind")
+    @classmethod
+    def kind_must_not_be_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("kind must be a non-empty string")
+        return v
 
 
 class ClipChannelDef(BaseModel):
