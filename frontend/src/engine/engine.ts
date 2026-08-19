@@ -20,6 +20,7 @@ import type { LessonJSON } from './json'
 import type { MaterialOverrides } from './materialInstance'
 import type { ClipDefinition } from './clipDefinition'
 import type { ClipInstance } from './clipInstance'
+import type { AnimatableParameter } from './animatableParameters'
 import { createBuiltInClips } from './builtInClips'
 
 export interface EnginePublic {
@@ -51,6 +52,7 @@ export interface EnginePublic {
   getKeyframes(nodeId: string, property: AnimationProperty): readonly Keyframe[]
   getMaterialKeyframes(nodeId: string, parameter: string): readonly Keyframe[]
   hasMaterialTrack(nodeId: string, parameter: string): boolean
+  getAnimatableParameters(nodeId: string): AnimatableParameter[]
   evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState
   evaluateMaterialOverrides(
     nodeId: string,

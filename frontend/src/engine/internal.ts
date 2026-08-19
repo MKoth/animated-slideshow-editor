@@ -58,6 +58,7 @@ import type { ClipChannelDef, ClipParam } from './clipDefinition'
 import { ClipDefinition } from './clipDefinition'
 import type { ClipInstance } from './clipInstance'
 import { createClipInstance } from './clipInstance'
+import { getAnimatableParameters, type AnimatableParameter } from './animatableParameters'
 
 const DEFAULT_MATERIAL_KINDS: Readonly<Record<string, string>> = Object.fromEntries(
   DEFAULT_MATERIAL_PARAMETERS.map((parameter) => [parameter.key, parameter.kind]),
@@ -271,6 +272,18 @@ export class Engine {
 
   hasMaterialTrack(nodeId: string, parameter: string): boolean {
     return this.#animations.hasMaterialTrack(nodeId, parameter)
+  }
+
+  getAnimatableParameters(nodeId: string): AnimatableParameter[] {
+    const node = this.getNode(nodeId)
+    const materialId = node.material.materialDefinitionId
+    const definition = this.#resolveMaterialDefinition(materialId)
+    return getAnimatableParameters(
+      node,
+      definition.parameters,
+      (property) => this.getKeyframes(nodeId, property).length > 0,
+      (parameter) => this.hasMaterialTrack(nodeId, parameter),
+    )
   }
 
   /** Resolve a target's track, rejecting unknown nodes, properties, and parameters. */
@@ -910,6 +923,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getKeyframes: (nodeId, property) => engine.getKeyframes(nodeId, property),
     getMaterialKeyframes: (nodeId, parameter) => engine.getMaterialKeyframes(nodeId, parameter),
     hasMaterialTrack: (nodeId, parameter) => engine.hasMaterialTrack(nodeId, parameter),
+    getAnimatableParameters: (nodeId) => engine.getAnimatableParameters(nodeId),
     evaluateNode: (nodeId, time, target) => engine.evaluateNode(nodeId, time, target),
     evaluateMaterialOverrides: (nodeId, time, target) =>
       engine.evaluateMaterialOverrides(nodeId, time, target),
