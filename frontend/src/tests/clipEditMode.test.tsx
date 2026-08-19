@@ -15,6 +15,7 @@ import { usePlaybackController } from '../stores/playbackStore'
 import { useSelectionStore } from '../stores/selectionStore'
 import { DEFAULT_TIMELINE_HEIGHT } from '../stores/uiPrefs'
 import { useTimelineViewStore } from '../stores/timelineViewStore'
+import { useCurveEditorViewStore } from '../stores/curveEditorViewStore'
 import type { AnimationProperty } from '../engine'
 
 function renderPanels(): {
@@ -360,5 +361,179 @@ describe('Clip-edit inspector', () => {
     expect(screen.getByText('Test Clip')).toBeInTheDocument()
     // Should show duration field
     expect(screen.getByText('Duration')).toBeInTheDocument()
+  })
+})
+
+describe('Clip-edit curve editor toggle', () => {
+  beforeEach(() => {
+    useCurveEditorViewStore.persist.clearStorage()
+    useCurveEditorViewStore.setState({
+      zoomX: 100,
+      zoomY: 1,
+      scrollX: 0,
+      scrollY: 0,
+      filter: 'all',
+      viewMode: 'dopeSheet',
+      fitPending: false,
+      frameSelectedPending: false,
+    })
+  })
+
+  it('shows Dope Sheet / Curve Editor toggle buttons in clip-edit mode', async () => {
+    const { engine } = renderTimeline()
+    createProjectAndSlide(engine)
+    createNode(engine, 'Boy')
+    const clip = createClipWithChannels(engine, 'Test Clip', ['positionX'])
+
+    enterClipEditMode(engine, clip.id)
+
+    await waitFor(() => {
+      expect(screen.getByText('Clip Edit')).toBeInTheDocument()
+    })
+
+    expect(screen.getByText('Dope Sheet')).toBeInTheDocument()
+    expect(screen.getByText('Curve Editor')).toBeInTheDocument()
+  })
+
+  it('switches to Curve Editor when clicking Curve Editor button in clip-edit mode', async () => {
+    const { engine } = renderTimeline()
+    createProjectAndSlide(engine)
+    createNode(engine, 'Boy')
+    const clip = createClipWithChannels(engine, 'Test Clip', ['positionX'])
+
+    enterClipEditMode(engine, clip.id)
+
+    await waitFor(() => {
+      expect(screen.getByText('Clip Edit')).toBeInTheDocument()
+    })
+
+    act(() => {
+      fireEvent.click(screen.getByText('Curve Editor'))
+    })
+
+    expect(useCurveEditorViewStore.getState().viewMode).toBe('curveEditor')
+
+    // Should show curve editor panel instead of dope sheet
+    await waitFor(() => {
+      expect(document.querySelector('.curve-editor-panel')).toBeInTheDocument()
+    })
+  })
+
+  it('renders clip channel curves in curve editor view', async () => {
+    const { engine } = renderTimeline()
+    createProjectAndSlide(engine)
+    createNode(engine, 'Boy')
+    const clip = createClipWithChannels(engine, 'Test Clip', ['positionX', 'positionY'])
+
+    // Add keyframes to clip channels
+    engine.addClipChannelKeyframe(clip.id, 'positionX', 0, 0)
+    engine.addClipChannelKeyframe(clip.id, 'positionX', 1, 100)
+    engine.addClipChannelKeyframe(clip.id, 'positionY', 0, 0)
+    engine.addClipChannelKeyframe(clip.id, 'positionY', 1, 200)
+
+    enterClipEditMode(engine, clip.id)
+
+    await waitFor(() => {
+      expect(screen.getByText('Clip Edit')).toBeInTheDocument()
+    })
+
+    act(() => {
+      fireEvent.click(screen.getByText('Curve Editor'))
+    })
+
+    await waitFor(() => {
+      expect(document.querySelector('.curve-editor-panel')).toBeInTheDocument()
+    })
+
+    // Should show clip channel labels in the track list
+    expect(screen.getByText('Position X')).toBeInTheDocument()
+    expect(screen.getByText('Position Y')).toBeInTheDocument()
+  })
+
+  it('switches back to Dope Sheet from Curve Editor in clip-edit mode', async () => {
+    const { engine } = renderTimeline()
+    createProjectAndSlide(engine)
+    createNode(engine, 'Boy')
+    const clip = createClipWithChannels(engine, 'Test Clip', ['positionX'])
+
+    enterClipEditMode(engine, clip.id)
+
+    await waitFor(() => {
+      expect(screen.getByText('Clip Edit')).toBeInTheDocument()
+    })
+
+    // Switch to curve editor
+    act(() => {
+      fireEvent.click(screen.getByText('Curve Editor'))
+    })
+
+    await waitFor(() => {
+      expect(document.querySelector('.curve-editor-panel')).toBeInTheDocument()
+    })
+
+    // Switch back to dope sheet
+    act(() => {
+      fireEvent.click(screen.getByText('Dope Sheet'))
+    })
+
+    expect(useCurveEditorViewStore.getState().viewMode).toBe('dopeSheet')
+
+    // Should show clip-edit dope sheet body
+    await waitFor(() => {
+      expect(document.querySelector('.clip-edit-body')).toBeInTheDocument()
+    })
+  })
+
+  it('shows Fit Curves and Frame Selected in clip-edit curve editor mode', async () => {
+    const { engine } = renderTimeline()
+    createProjectAndSlide(engine)
+    createNode(engine, 'Boy')
+    const clip = createClipWithChannels(engine, 'Test Clip', ['positionX'])
+
+    engine.addClipChannelKeyframe(clip.id, 'positionX', 0, 0)
+    engine.addClipChannelKeyframe(clip.id, 'positionX', 1, 100)
+
+    enterClipEditMode(engine, clip.id)
+
+    await waitFor(() => {
+      expect(screen.getByText('Clip Edit')).toBeInTheDocument()
+    })
+
+    act(() => {
+      fireEvent.click(screen.getByText('Curve Editor'))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Fit Curves')).toBeInTheDocument()
+      expect(screen.getByText('Frame Selected')).toBeInTheDocument()
+    })
+  })
+
+  it('preserves view mode when exiting clip-edit', async () => {
+    const { engine } = renderTimeline()
+    createProjectAndSlide(engine)
+    createNode(engine, 'Boy')
+    const clip = createClipWithChannels(engine, 'Test Clip', ['positionX'])
+
+    // Set curve editor mode before entering clip-edit
+    act(() => {
+      useCurveEditorViewStore.getState().setViewMode('curveEditor')
+    })
+
+    enterClipEditMode(engine, clip.id)
+
+    await waitFor(() => {
+      expect(screen.getByText('Clip Edit')).toBeInTheDocument()
+    })
+
+    // Exit clip-edit
+    fireEvent.click(screen.getByText('Exit'))
+
+    await waitFor(() => {
+      expect(useTimelineSelectionStore.getState().editingContext).toBe('slide')
+    })
+
+    // View mode should still be curveEditor
+    expect(useCurveEditorViewStore.getState().viewMode).toBe('curveEditor')
   })
 })

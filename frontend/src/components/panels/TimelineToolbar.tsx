@@ -84,24 +84,22 @@ export function TimelineToolbar({
           </button>
         </div>
       )}
-      {!isClipEdit && (
-        <div className="timeline-toolbar__view-toggle">
-          <button
-            className="timeline-toolbar__button"
-            aria-pressed={viewMode === 'dopeSheet'}
-            onClick={() => useCurveEditorViewStore.getState().setViewMode('dopeSheet')}
-          >
-            Dope Sheet
-          </button>
-          <button
-            className="timeline-toolbar__button"
-            aria-pressed={viewMode === 'curveEditor'}
-            onClick={() => useCurveEditorViewStore.getState().setViewMode('curveEditor')}
-          >
-            Curve Editor
-          </button>
-        </div>
-      )}
+      <div className="timeline-toolbar__view-toggle">
+        <button
+          className="timeline-toolbar__button"
+          aria-pressed={viewMode === 'dopeSheet'}
+          onClick={() => useCurveEditorViewStore.getState().setViewMode('dopeSheet')}
+        >
+          Dope Sheet
+        </button>
+        <button
+          className="timeline-toolbar__button"
+          aria-pressed={viewMode === 'curveEditor'}
+          onClick={() => useCurveEditorViewStore.getState().setViewMode('curveEditor')}
+        >
+          Curve Editor
+        </button>
+      </div>
       <div className="timeline-toolbar__playback">
         {!isClipEdit ? (
           <>
@@ -251,7 +249,7 @@ export function TimelineToolbar({
         </span>
       )}
       <div className="timeline-toolbar__zoom">
-        {!isClipEdit && viewMode === 'curveEditor' && (
+        {viewMode === 'curveEditor' && (
           <>
             <button
               className="timeline-toolbar__button"

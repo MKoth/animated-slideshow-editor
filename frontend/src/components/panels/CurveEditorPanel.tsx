@@ -9,8 +9,12 @@ import {
   MoveKeyframesCommand,
   SetKeyframeValueCommand,
   TransactionCommand,
+  MoveClipKeyframesCommand,
+  SetClipKeyframeValueCommand,
+  SetClipKeyframeTangentsCommand,
 } from '../../engine/commands'
 import type { Command } from '../../engine/commands'
+import type { ClipDefinition } from '../../engine/clipDefinition'
 import type { CurveData, CurveViewport } from '../../engine/curveGeometry'
 import { computeCurveBounds } from '../../engine/curveGeometry'
 import { snapKeyframeTime } from '../../engine/timelineSnapping'
@@ -106,16 +110,132 @@ function buildCurves(
   return curves
 }
 
+function buildClipCurves(
+  engine: ReturnType<typeof useEngine>['engine'],
+  clip: ClipDefinition,
+  filter: string,
+): CurveData[] {
+  const curves: CurveData[] = []
+
+  for (const channelDef of clip.channels) {
+    const prop = channelDef.property
+    if (!matchesFilter(prop, filter)) continue
+    const keyframes = engine.getClipChannelKeyframes(clip.id, prop)
+    if (keyframes.length > 0) {
+      curves.push({
+        nodeId: clip.id,
+        property: prop,
+        label: PROPERTY_LABELS[prop] ?? prop,
+        keyframes,
+        color: PROPERTY_COLORS[prop] ?? '#ffffff',
+      })
+    }
+  }
+
+  return curves
+}
+
+const CLIP_TIME_MAX = 1
+
+function resolveKeyframes(
+  engine: ReturnType<typeof useEngine>['engine'],
+  clip: ClipDefinition | undefined,
+  nodeId: string,
+  property: string,
+) {
+  return clip
+    ? engine.getClipChannelKeyframes(clip.id, property as AnimationProperty)
+    : engine.getKeyframes(nodeId, property as AnimationProperty)
+}
+
+function buildTarget(
+  clip: ClipDefinition | undefined,
+  nodeId: string,
+  property: string,
+):
+  | { kind: 'clip'; clipId: string; channel: AnimationProperty }
+  | { kind: 'node'; nodeId: string; property: AnimationProperty } {
+  return clip
+    ? { kind: 'clip' as const, clipId: clip.id, channel: property as AnimationProperty }
+    : { kind: 'node' as const, nodeId, property: property as AnimationProperty }
+}
+
+function dispatchMoveAndValue(
+  dispatch: ReturnType<typeof useEngine>['dispatch'],
+  target: ReturnType<typeof buildTarget>,
+  keyframeId: string,
+  newTime: number,
+  newValue: number,
+  dt: number,
+  dv: number,
+) {
+  const commands: Command<unknown>[] = []
+  if (Math.abs(dt) > 1e-9) {
+    const MoveCmd = target.kind === 'clip' ? MoveClipKeyframesCommand : MoveKeyframesCommand
+    commands.push(
+      new MoveCmd({
+        target,
+        moves: [{ keyframeId, newTime }],
+      } as never),
+    )
+  }
+  if (Math.abs(dv) > 1e-9) {
+    const ValueCmd = target.kind === 'clip' ? SetClipKeyframeValueCommand : SetKeyframeValueCommand
+    commands.push(
+      new ValueCmd({
+        target,
+        keyframeId,
+        newValue,
+      } as never),
+    )
+  }
+  if (commands.length === 1) {
+    dispatch(commands[0])
+  } else if (commands.length > 1) {
+    dispatch(new TransactionCommand(commands))
+  }
+}
+
+function dispatchTangents(
+  dispatch: ReturnType<typeof useEngine>['dispatch'],
+  target: ReturnType<typeof buildTarget>,
+  keyframeId: string,
+  tangentIn: KeyframeTangent,
+  tangentOut: KeyframeTangent,
+) {
+  if (target.kind === 'clip') {
+    dispatch(
+      new SetClipKeyframeTangentsCommand({
+        target,
+        keyframeId,
+        tangentIn,
+        tangentOut,
+      }),
+    )
+  } else {
+    dispatch(
+      new SetKeyframeTangentsCommand({
+        target,
+        keyframeId,
+        tangentIn,
+        tangentOut,
+      }),
+    )
+  }
+}
+
 export function CurveEditorPanel({
   slideId,
   duration,
   scene,
   viewportWidth,
+  clip,
 }: {
   slideId: string
   duration: number
   scene: Scene
   viewportWidth: number
+  clip?: ClipDefinition
 }) {
   const { engine, dispatch } = useEngine()
   const [, setTick] = useState(0)
@@ -141,7 +261,10 @@ export function CurveEditorPanel({
     [timelineSelection],
   )
 
-  const curves = useMemo(() => buildCurves(engine, scene, filter), [engine, scene, filter])
+  const curves = useMemo(
+    () => (clip ? buildClipCurves(engine, clip, filter) : buildCurves(engine, scene, filter)),
+    [engine, scene, clip, filter],
+  )
 
   const [tangentPreview, setTangentPreview] = useState<
     Map<string, { tangentIn: KeyframeTangent; tangentOut: KeyframeTangent }>
@@ -345,9 +468,10 @@ export function CurveEditorPanel({
         pps,
       })
 
-      const clampedTime = Math.max(0, Math.min(duration, snappedTime))
+      const maxTime = clip ? CLIP_TIME_MAX : duration
+      const clampedTime = Math.max(0, Math.min(maxTime, snappedTime))
 
-      const keyframes = engine.getKeyframes(nodeId, property as AnimationProperty)
+      const keyframes = resolveKeyframes(engine, clip, nodeId, property)
       const kf = keyframes.find((k) => k.id === keyframeId)
       if (!kf) return
 
@@ -356,32 +480,17 @@ export function CurveEditorPanel({
 
       if (Math.abs(dt) < 1e-9 && Math.abs(dv) < 1e-9) return
 
-      const commands: Command<unknown>[] = []
-      if (Math.abs(dt) > 1e-9) {
-        commands.push(
-          new MoveKeyframesCommand({
-            target: { kind: 'node', nodeId, property: property as AnimationProperty },
-            moves: [{ keyframeId, newTime: clampedTime }],
-          }),
-        )
-      }
-      if (Math.abs(dv) > 1e-9) {
-        commands.push(
-          new SetKeyframeValueCommand({
-            target: { kind: 'node', nodeId, property: property as AnimationProperty },
-            keyframeId,
-            newValue,
-          }),
-        )
-      }
-
-      if (commands.length === 1) {
-        dispatch(commands[0])
-      } else if (commands.length > 1) {
-        dispatch(new TransactionCommand(commands))
-      }
+      dispatchMoveAndValue(
+        dispatch,
+        buildTarget(clip, nodeId, property),
+        keyframeId,
+        clampedTime,
+        newValue,
+        dt,
+        dv,
+      )
     },
-    [engine, dispatch, duration, curves, zoomX],
+    [engine, dispatch, duration, curves, zoomX, clip],
   )
 
   const handleTangentDragStart = useCallback(() => {}, [])
@@ -395,7 +504,7 @@ export function CurveEditorPanel({
       newTangent: KeyframeTangent,
       broken: boolean,
     ) => {
-      const keyframes = engine.getKeyframes(nodeId, property as AnimationProperty)
+      const keyframes = resolveKeyframes(engine, clip, nodeId, property)
       const kf = keyframes.find((k) => k.id === keyframeId)
       if (!kf) return
 
@@ -420,7 +529,7 @@ export function CurveEditorPanel({
         return next
       })
     },
-    [engine],
+    [engine, clip],
   )
 
   const handleTangentDragEnd = useCallback(
@@ -434,7 +543,7 @@ export function CurveEditorPanel({
     ) => {
       setTangentPreview(new Map())
 
-      const keyframes = engine.getKeyframes(nodeId, property as AnimationProperty)
+      const keyframes = resolveKeyframes(engine, clip, nodeId, property)
       const kf = keyframes.find((k) => k.id === keyframeId)
       if (!kf) return
 
@@ -462,34 +571,28 @@ export function CurveEditorPanel({
 
       if (sameIn && sameOut) return
 
-      dispatch(
-        new SetKeyframeTangentsCommand({
-          target: { kind: 'node', nodeId, property: property as AnimationProperty },
-          keyframeId,
-          tangentIn,
-          tangentOut,
-        }),
+      dispatchTangents(
+        dispatch,
+        buildTarget(clip, nodeId, property),
+        keyframeId,
+        tangentIn,
+        tangentOut,
       )
     },
-    [engine, dispatch],
+    [engine, dispatch, clip],
   )
 
   const handleDoubleClickKeyframe = useCallback(
     (keyframeId: string, nodeId: string, property: string) => {
-      const keyframes = engine.getKeyframes(nodeId, property as AnimationProperty)
-      const kf = keyframes.find((k) => k.id === keyframeId)
-      if (!kf) return
-
-      dispatch(
-        new SetKeyframeTangentsCommand({
-          target: { kind: 'node', nodeId, property: property as AnimationProperty },
-          keyframeId,
-          tangentIn: ZERO_TANGENT,
-          tangentOut: ZERO_TANGENT,
-        }),
+      dispatchTangents(
+        dispatch,
+        buildTarget(clip, nodeId, property),
+        keyframeId,
+        ZERO_TANGENT,
+        ZERO_TANGENT,
       )
     },
-    [engine, dispatch],
+    [dispatch, clip],
   )
 
   const handleMarqueeSelect = useCallback((keyframeIds: readonly string[]) => {

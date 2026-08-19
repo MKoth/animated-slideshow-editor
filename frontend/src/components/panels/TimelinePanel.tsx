@@ -84,16 +84,28 @@ export function TimelinePanel({ height }: { height: number }) {
 
   let body: React.ReactNode
   if (isClipEdit && clipEditDefinition) {
-    body = (
-      <ClipEditBody
-        clip={clipEditDefinition}
-        scrollerRef={scrollerRef}
-        tracksRef={tracksRef}
-        timeAreaRef={timeAreaRef}
-        viewportWidth={viewportWidth}
-        lastPointerTimeRef={lastPointerTimeRef}
-      />
-    )
+    if (viewMode === 'curveEditor' && scene) {
+      body = (
+        <CurveEditorPanel
+          slideId={slide?.id ?? ''}
+          duration={clipEditDefinition.duration}
+          scene={scene}
+          viewportWidth={viewportWidth}
+          clip={clipEditDefinition}
+        />
+      )
+    } else {
+      body = (
+        <ClipEditBody
+          clip={clipEditDefinition}
+          scrollerRef={scrollerRef}
+          tracksRef={tracksRef}
+          timeAreaRef={timeAreaRef}
+          viewportWidth={viewportWidth}
+          lastPointerTimeRef={lastPointerTimeRef}
+        />
+      )
+    }
   } else if (!project) {
     body = (
       <div className="panel-empty-state">
