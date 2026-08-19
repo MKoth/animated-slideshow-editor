@@ -162,6 +162,11 @@ export class AnimationEvaluator {
         )
       }
     }
+
+    // Apply clip-driven material parameter overrides (after standard channels,
+    // per Spec 07 R29 material parameter channels)
+    this.#applyClipMaterialOverrides(node, clampedTime, target)
+
     return values
   }
 
@@ -254,6 +259,91 @@ export class AnimationEvaluator {
       state.opacity = value
     } else {
       ;(state.transform as unknown as Record<string, number>)[key] = value
+    }
+  }
+
+  /**
+   * Apply clip-driven material parameter overrides to the scratch target.
+   * Called after standard material tracks are evaluated so clips layer on top.
+   * Uses the same gain/offset composition model as standard channels.
+   */
+  #applyClipMaterialOverrides(
+    node: SceneNode,
+    time: number,
+    target: EvaluatedMaterialOverridesScratch,
+  ): void {
+    const instances = node.clipInstances
+    if (instances.length === 0) {
+      return
+    }
+
+    for (const instance of instances) {
+      if (!instance.enabled) {
+        continue
+      }
+
+      let clip: ClipDefinition
+      try {
+        clip = this.#clipLookup(instance.clipId)
+      } catch {
+        continue
+      }
+
+      if (clip.duration <= 0) {
+        continue
+      }
+
+      if (time < instance.startTime) {
+        continue
+      }
+
+      const u = Math.min(
+        Math.max(((time - instance.startTime) * instance.speed) / clip.duration, 0),
+        1,
+      )
+
+      for (const channelDef of clip.channels) {
+        if (!channelDef.materialParameter) {
+          continue
+        }
+
+        const materialParamKey = channelDef.materialParameter
+        const channelAnim = clip.materialChannelAnimation(materialParamKey)
+        if (!channelAnim || channelAnim.length === 0) {
+          continue
+        }
+
+        const kind = this.#parameterKindOf(node, materialParamKey)
+        if (kind === undefined) {
+          continue
+        }
+
+        const kfValue = this.#evaluateClipChannel(channelAnim.keyframes(), u)
+
+        let output: number
+        if (channelDef.paramKey) {
+          const paramValue =
+            instance.paramOverrides[channelDef.paramKey] ??
+            clip.getParam(channelDef.paramKey)?.default ??
+            1
+          const base =
+            typeof target.values[materialParamKey] === 'number'
+              ? (target.values[materialParamKey] as number)
+              : 0
+          if (channelDef.linkMode === 'offset') {
+            output = base + paramValue * kfValue
+          } else {
+            output = base * (paramValue * kfValue)
+          }
+        } else {
+          output = kfValue
+        }
+
+        if (!Object.prototype.hasOwnProperty.call(target.values, materialParamKey)) {
+          target.keys.push(materialParamKey)
+        }
+        target.values[materialParamKey] = output
+      }
     }
   }
 

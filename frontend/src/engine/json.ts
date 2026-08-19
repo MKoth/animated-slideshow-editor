@@ -156,6 +156,7 @@ export type ClipChannelDefJSON = {
   readonly property: string
   readonly paramKey?: string
   readonly linkMode?: string
+  readonly materialParameter?: string
 }
 
 export type ClipJSON = {
@@ -166,6 +167,7 @@ export type ClipJSON = {
   readonly params: readonly ClipParamJSON[]
   readonly channels: readonly ClipChannelDefJSON[]
   readonly channelAnimations?: Readonly<Record<string, ClipChannelJSON>>
+  readonly materialChannelAnimations?: Readonly<Record<string, ClipChannelJSON>>
 }
 
 export type ClipInstanceJSON = {

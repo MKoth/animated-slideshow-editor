@@ -51,6 +51,8 @@ export interface ClipChannelDef {
   readonly paramKey?: string
   /** How the linked channel combines with the base: 'gain' (multiply) or 'offset' (add). Default: 'gain'. */
   readonly linkMode?: ClipLinkMode
+  /** Optional material parameter key: if present, this channel targets a material parameter. */
+  readonly materialParameter?: string
 }
 
 /** Minimal shape for importing a clip from the shared library. */
@@ -175,6 +177,7 @@ export class ClipDefinition {
   #params: ClipParam[]
   #channels: ClipChannelDef[]
   readonly #channelAnimations = new Map<ClipChannel, ClipChannelAnimation>()
+  readonly #materialChannelAnimations = new Map<string, ClipChannelAnimation>()
 
   constructor(
     id: string,
@@ -191,7 +194,11 @@ export class ClipDefinition {
     this.#params = [...params]
     this.#channels = [...channels]
     for (const channel of channels) {
-      this.#channelAnimations.set(channel.property, new ClipChannelAnimation())
+      if (channel.materialParameter) {
+        this.#materialChannelAnimations.set(channel.materialParameter, new ClipChannelAnimation())
+      } else {
+        this.#channelAnimations.set(channel.property, new ClipChannelAnimation())
+      }
     }
   }
 
@@ -263,16 +270,36 @@ export class ClipDefinition {
     return this.#channels.some((ch) => ch.property === property)
   }
 
+  hasMaterialChannel(parameterKey: string): boolean {
+    return this.#channels.some((ch) => ch.materialParameter === parameterKey)
+  }
+
   channelAnimation(property: ClipChannel): ClipChannelAnimation | undefined {
     return this.#channelAnimations.get(property)
+  }
+
+  materialChannelAnimation(parameterKey: string): ClipChannelAnimation | undefined {
+    return this.#materialChannelAnimations.get(parameterKey)
+  }
+
+  get materialChannelParameterKeys(): string[] {
+    return [...this.#materialChannelAnimations.keys()]
   }
 
   getChannelKeyframes(property: ClipChannel): readonly Keyframe[] {
     return this.#channelAnimations.get(property)?.keyframes() ?? []
   }
 
+  getMaterialChannelKeyframes(parameterKey: string): readonly Keyframe[] {
+    return this.#materialChannelAnimations.get(parameterKey)?.keyframes() ?? []
+  }
+
   getChannelKeyframe(property: ClipChannel, keyframeId: string): Keyframe | undefined {
     return this.#channelAnimations.get(property)?.getKeyframe(keyframeId)
+  }
+
+  getMaterialChannelKeyframe(parameterKey: string, keyframeId: string): Keyframe | undefined {
+    return this.#materialChannelAnimations.get(parameterKey)?.getKeyframe(keyframeId)
   }
 
   addChannelKeyframe(property: ClipChannel, keyframe: Keyframe): void {
@@ -280,6 +307,15 @@ export class ClipDefinition {
     if (!anim) {
       anim = new ClipChannelAnimation()
       this.#channelAnimations.set(property, anim)
+    }
+    anim.add(keyframe)
+  }
+
+  addMaterialChannelKeyframe(parameterKey: string, keyframe: Keyframe): void {
+    let anim = this.#materialChannelAnimations.get(parameterKey)
+    if (!anim) {
+      anim = new ClipChannelAnimation()
+      this.#materialChannelAnimations.set(parameterKey, anim)
     }
     anim.add(keyframe)
   }
@@ -296,17 +332,41 @@ export class ClipDefinition {
     return removed
   }
 
+  removeMaterialChannelKeyframe(parameterKey: string, keyframeId: string): Keyframe | undefined {
+    const anim = this.#materialChannelAnimations.get(parameterKey)
+    if (!anim) return undefined
+    const removed = anim.remove(keyframeId)
+    if (anim.length === 0) {
+      this.#materialChannelAnimations.delete(parameterKey)
+      this.#channels = this.#channels.filter((ch) => ch.materialParameter !== parameterKey)
+    }
+    return removed
+  }
+
   removeChannel(property: ClipChannel): void {
     this.#channels = this.#channels.filter((ch) => ch.property !== property)
     this.#channelAnimations.delete(property)
   }
 
+  removeMaterialChannel(parameterKey: string): void {
+    this.#channels = this.#channels.filter((ch) => ch.materialParameter !== parameterKey)
+    this.#materialChannelAnimations.delete(parameterKey)
+  }
+
   addChannel(channelDef: ClipChannelDef): void {
-    if (this.hasChannel(channelDef.property)) {
-      throw new Error(`Clip channel "${channelDef.property}" already exists`)
+    if (channelDef.materialParameter) {
+      if (this.#materialChannelAnimations.has(channelDef.materialParameter)) {
+        throw new Error(`Clip material channel "${channelDef.materialParameter}" already exists`)
+      }
+      this.#channels.push(channelDef)
+      this.#materialChannelAnimations.set(channelDef.materialParameter, new ClipChannelAnimation())
+    } else {
+      if (this.hasChannel(channelDef.property)) {
+        throw new Error(`Clip channel "${channelDef.property}" already exists`)
+      }
+      this.#channels.push(channelDef)
+      this.#channelAnimations.set(channelDef.property, new ClipChannelAnimation())
     }
-    this.#channels.push(channelDef)
-    this.#channelAnimations.set(channelDef.property, new ClipChannelAnimation())
   }
 
   setParamDefault(paramKey: string, defaultValue: number): void {
@@ -348,6 +408,9 @@ export class ClipDefinition {
     for (const [channel, anim] of this.#channelAnimations) {
       copy.#channelAnimations.set(channel, anim.copy())
     }
+    for (const [param, anim] of this.#materialChannelAnimations) {
+      copy.#materialChannelAnimations.set(param, anim.copy())
+    }
     return copy
   }
 
@@ -362,9 +425,16 @@ export class ClipDefinition {
         property: ch.property,
         ...(ch.paramKey !== undefined ? { paramKey: ch.paramKey } : {}),
         ...(ch.linkMode !== undefined ? { linkMode: ch.linkMode } : {}),
+        ...(ch.materialParameter !== undefined ? { materialParameter: ch.materialParameter } : {}),
       })),
       channelAnimations: Object.fromEntries(
         [...this.#channelAnimations.entries()].map(([channel, anim]) => [channel, anim.toJSON()]),
+      ),
+      materialChannelAnimations: Object.fromEntries(
+        [...this.#materialChannelAnimations.entries()].map(([param, anim]) => [
+          param,
+          anim.toJSON(),
+        ]),
       ),
     }
   }
@@ -409,10 +479,15 @@ export class ClipDefinition {
       const paramKey =
         ch.paramKey !== undefined ? requireString(ch.paramKey, 'Clip channel paramKey') : undefined
       const linkMode = ch.linkMode !== undefined ? requireLinkMode(ch.linkMode) : undefined
+      const materialParameter =
+        ch.materialParameter !== undefined
+          ? requireString(ch.materialParameter, 'Clip channel materialParameter')
+          : undefined
       return {
         property,
         ...(paramKey !== undefined ? { paramKey } : {}),
         ...(linkMode !== undefined ? { linkMode } : {}),
+        ...(materialParameter !== undefined ? { materialParameter } : {}),
       }
     })
     const clip = new ClipDefinition(id, name, duration, category, params, channels)
@@ -426,6 +501,13 @@ export class ClipDefinition {
             ClipChannelAnimation.fromJSON(animJson),
           )
         }
+      }
+    }
+    if (isRecord(json.materialChannelAnimations) && json.materialChannelAnimations !== null) {
+      for (const [param, animJson] of Object.entries(
+        json.materialChannelAnimations as Record<string, unknown>,
+      )) {
+        clip.#materialChannelAnimations.set(param, ClipChannelAnimation.fromJSON(animJson))
       }
     }
     return clip

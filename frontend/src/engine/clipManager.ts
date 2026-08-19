@@ -107,6 +107,15 @@ export class ClipManager {
         }
       }
     }
+    if (jsonCopy.materialChannelAnimations) {
+      for (const channelAnim of Object.values(jsonCopy.materialChannelAnimations)) {
+        if (channelAnim && Array.isArray(channelAnim.keyframes)) {
+          for (const kf of channelAnim.keyframes) {
+            ;(kf as { id: string }).id = newKeyframeId()
+          }
+        }
+      }
+    }
     const clipCopy = ClipDefinition.fromJSON(jsonCopy)
     this.#clips.set(id, clipCopy)
     this.#bus.emit({ type: 'ClipDuplicated', clipId: id })
