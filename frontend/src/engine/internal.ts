@@ -558,6 +558,14 @@ export class Engine {
     this.#clips.setChannelParamLink(clipId, channel, paramKey)
   }
 
+  addClipChannel(clipId: string, channelDef: ClipChannelDef): void {
+    this.#clips.addChannel(clipId, channelDef)
+  }
+
+  removeClipChannel(clipId: string, channel: AnimationProperty): void {
+    this.#clips.removeChannel(clipId, channel)
+  }
+
   importClip(clip: ClipDefinition): void {
     this.#clips.importClip(clip)
   }

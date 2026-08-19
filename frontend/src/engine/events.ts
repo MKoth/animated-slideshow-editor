@@ -183,6 +183,18 @@ export interface ClipChannelLinkChanged {
   readonly channel: string
 }
 
+export interface ClipChannelAdded {
+  readonly type: 'ClipChannelAdded'
+  readonly clipId: string
+  readonly channel: string
+}
+
+export interface ClipChannelRemoved {
+  readonly type: 'ClipChannelRemoved'
+  readonly clipId: string
+  readonly channel: string
+}
+
 export interface ClipInstanceAdded {
   readonly type: 'ClipInstanceAdded'
   readonly nodeId: string
@@ -262,6 +274,8 @@ export type EngineEvent =
   | ClipCategoryChanged
   | ClipParamDefaultChanged
   | ClipChannelLinkChanged
+  | ClipChannelAdded
+  | ClipChannelRemoved
   | ClipInstanceAdded
   | ClipInstanceRemoved
   | ClipLayerMoved

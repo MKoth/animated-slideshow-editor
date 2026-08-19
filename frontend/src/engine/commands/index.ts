@@ -202,3 +202,10 @@ export type {
 } from './overrideClipParamCommand'
 export { ImportClipCommand } from './importClipCommand'
 export type { ImportClipInverse, ImportClipParameters } from './importClipCommand'
+export { AddClipChannelCommand } from './addClipChannelCommand'
+export type { AddClipChannelInverse, AddClipChannelParameters } from './addClipChannelCommand'
+export { RemoveClipChannelCommand } from './removeClipChannelCommand'
+export type {
+  RemoveClipChannelInverse,
+  RemoveClipChannelParameters,
+} from './removeClipChannelCommand'

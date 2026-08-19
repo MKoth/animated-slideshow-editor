@@ -12,6 +12,7 @@ import {
   MoveClipKeyframesCommand,
   SetClipKeyframeValueCommand,
   SetClipKeyframeTangentsCommand,
+  AddClipChannelCommand,
 } from '../../engine/commands'
 import type { Command } from '../../engine/commands'
 import type { ClipDefinition } from '../../engine/clipDefinition'
@@ -25,7 +26,10 @@ import {
   selectedKeyframeIdsOf,
 } from '../../stores/timelineSelectionStore'
 import { usePlaybackController } from '../../stores/playbackStore'
+import { useNotificationStore } from '../../stores/notificationStore'
+import { useSelectionStore } from '../../stores/selectionStore'
 import { CurveEditorCanvas } from './CurveEditorCanvas'
+import { ParameterPicker } from './ParameterPicker'
 
 const PROPERTY_COLORS: Record<string, string> = {
   positionX: '#4fc3f7',
@@ -629,7 +633,12 @@ export function CurveEditorPanel({
 
   return (
     <div className="curve-editor-panel" style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-      <CurveEditorTrackList curves={curves} selectedKeyframeIds={selectedKeyframeIds} />
+      <CurveEditorTrackList
+        curves={curves}
+        selectedKeyframeIds={selectedKeyframeIds}
+        clip={clip}
+        dispatch={dispatch}
+      />
       <div
         ref={canvasContainerRef}
         style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}
@@ -661,10 +670,45 @@ export function CurveEditorPanel({
 function CurveEditorTrackList({
   curves,
   selectedKeyframeIds,
+  clip,
+  dispatch,
 }: {
   curves: readonly CurveData[]
   selectedKeyframeIds: ReadonlySet<string>
+  clip?: ClipDefinition
+  dispatch: ReturnType<typeof useEngine>['dispatch']
 }) {
+  const notify = useNotificationStore((state) => state.notify)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const selectedNodeId = useSelectionStore((state) => state.selectedIds[0])
+  const engine = useEngine().engine
+
+  const animatableParams = useMemo(() => {
+    if (!selectedNodeId) return []
+    try {
+      return engine.getAnimatableParameters(selectedNodeId)
+    } catch {
+      return []
+    }
+  }, [engine, selectedNodeId])
+
+  const handleAddChannel = useCallback(
+    (property: AnimationProperty) => {
+      if (!clip) return
+      setPickerOpen(false)
+      const result = dispatch(
+        new AddClipChannelCommand({
+          clipId: clip.id,
+          channel: { property },
+        }),
+      )
+      if (!result.ok) {
+        notify(result.error.message)
+      }
+    },
+    [clip, dispatch, notify],
+  )
+
   return (
     <div
       className="curve-editor-track-list"
@@ -714,6 +758,38 @@ function CurveEditorTrackList({
           </div>
         )
       })}
+      {clip && (
+        <div style={{ position: 'relative', borderBottom: '1px solid var(--color-border)' }}>
+          <button
+            className="curve-editor-track-item"
+            data-testid="curve-editor-add-channel"
+            onClick={() => setPickerOpen(!pickerOpen)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              padding: '4px 8px',
+              gap: 6,
+              width: '100%',
+              border: 'none',
+              background: 'transparent',
+              cursor: 'pointer',
+              fontSize: 12,
+              color: 'var(--color-text-muted)',
+              textAlign: 'left',
+            }}
+          >
+            + Add Channel
+          </button>
+          {pickerOpen && (
+            <ParameterPicker
+              clip={clip}
+              parameters={animatableParams}
+              onSelect={handleAddChannel}
+              onClose={() => setPickerOpen(false)}
+            />
+          )}
+        </div>
+      )}
     </div>
   )
 }

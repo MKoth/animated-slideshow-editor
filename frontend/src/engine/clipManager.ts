@@ -156,6 +156,18 @@ export class ClipManager {
     this.#bus.emit({ type: 'ClipChannelLinkChanged', clipId, channel })
   }
 
+  addChannel(clipId: string, channelDef: ClipChannelDef): void {
+    const clip = this.getClip(clipId)
+    clip.addChannel(channelDef)
+    this.#bus.emit({ type: 'ClipChannelAdded', clipId, channel: channelDef.property })
+  }
+
+  removeChannel(clipId: string, channel: AnimationProperty): void {
+    const clip = this.getClip(clipId)
+    clip.removeChannel(channel)
+    this.#bus.emit({ type: 'ClipChannelRemoved', clipId, channel })
+  }
+
   /** Check if a clip is referenced by any slide node. */
   findBlockingReferences(
     clipId: string,

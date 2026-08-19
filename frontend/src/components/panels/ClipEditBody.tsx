@@ -3,7 +3,12 @@ import type { RefObject } from 'react'
 import type { AnimationProperty } from '../../engine'
 import type { ClipDefinition } from '../../engine/clipDefinition'
 import { useEngine } from '../../app/useEngine'
-import { AddClipKeyframeCommand, DeleteClipKeyframesCommand } from '../../engine/commands'
+import {
+  AddClipKeyframeCommand,
+  DeleteClipKeyframesCommand,
+  AddClipChannelCommand,
+  RemoveClipChannelCommand,
+} from '../../engine/commands'
 import { useNotificationStore } from '../../stores/notificationStore'
 import {
   useTimelineSelectionStore,
@@ -26,6 +31,8 @@ import { useClipKeyframeScale, computeClipSelectionBounds } from './clipKeyframe
 import { ROW_HEIGHT, TRACK_HEADER_WIDTH, clipChannelRows } from './timelineTracks'
 import type { ClipChannelRowEntry } from './timelineTracks'
 import { KeyframeMarker, SelectionScaleBox } from './timelineComponents'
+import { ParameterPicker } from './ParameterPicker'
+import { useSelectionStore } from '../../stores/selectionStore'
 
 const MARQUEE_START_DISTANCE = 4
 
@@ -58,6 +65,12 @@ export function ClipEditBody({
   const timelineSelection = useTimelineSelectionStore()
   const selectedKeyframeIds = selectedKeyframeIdsOf(timelineSelection)
   const [menu, setMenu] = useState<ClipContextMenuState | null>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [channelMenu, setChannelMenu] = useState<{
+    readonly x: number
+    readonly y: number
+    readonly channel: AnimationProperty
+  } | null>(null)
   const [marqueeRect, setMarqueeRect] = useState<{
     readonly x: number
     readonly y: number
@@ -73,6 +86,43 @@ export function ClipEditBody({
   const clipId = clip.id
 
   const rows = clipChannelRows(clip)
+
+  const selectedNodeId = useSelectionStore((state) => state.selectedIds[0])
+  const animatableParams = useMemo(() => {
+    if (!selectedNodeId) return []
+    try {
+      return engine.getAnimatableParameters(selectedNodeId)
+    } catch {
+      return []
+    }
+  }, [engine, selectedNodeId])
+
+  const handleAddChannel = useCallback(
+    (property: AnimationProperty) => {
+      setPickerOpen(false)
+      const result = dispatch(
+        new AddClipChannelCommand({
+          clipId,
+          channel: { property },
+        }),
+      )
+      if (!result.ok) {
+        notify(result.error.message)
+      }
+    },
+    [dispatch, clipId, notify],
+  )
+
+  const handleRemoveChannel = useCallback(
+    (channel: AnimationProperty) => {
+      setChannelMenu(null)
+      const result = dispatch(new RemoveClipChannelCommand({ clipId, channel }))
+      if (!result.ok) {
+        notify(result.error.message)
+      }
+    },
+    [dispatch, clipId, notify, setChannelMenu],
+  )
 
   const timeFromClientX = (clientX: number): number => {
     const rect = timeAreaRef.current?.getBoundingClientRect()
@@ -448,6 +498,10 @@ export function ClipEditBody({
               data-channel={row.channel}
               data-depth={0}
               style={{ paddingLeft: 12 }}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setChannelMenu({ x: e.clientX, y: e.clientY, channel: row.channel })
+              }}
             >
               <span className="timeline-subtrack__label">{row.label}</span>
               <button
@@ -479,6 +533,31 @@ export function ClipEditBody({
               </button>
             </li>
           ))}
+          <li className="timeline-subtrack" style={{ paddingLeft: 12, position: 'relative' }}>
+            <button
+              className="timeline-subtrack__add"
+              aria-label="Add Channel"
+              title="Add a new channel to this clip"
+              onClick={() => setPickerOpen(!pickerOpen)}
+              style={{
+                width: '100%',
+                justifyContent: 'flex-start',
+                gap: 6,
+                color: 'var(--color-text-muted)',
+                fontSize: 12,
+              }}
+            >
+              + Add Channel
+            </button>
+            {pickerOpen && (
+              <ParameterPicker
+                clip={clip}
+                parameters={animatableParams}
+                onSelect={handleAddChannel}
+                onClose={() => setPickerOpen(false)}
+              />
+            )}
+          </li>
         </ul>
       </div>
       <div
@@ -595,6 +674,15 @@ export function ClipEditBody({
           onClose={() => setMenu(null)}
         />
       )}
+      {channelMenu && (
+        <ChannelContextMenu
+          x={channelMenu.x}
+          y={channelMenu.y}
+          channel={channelMenu.channel}
+          onRemove={handleRemoveChannel}
+          onClose={() => setChannelMenu(null)}
+        />
+      )}
     </div>
   )
 }
@@ -629,6 +717,41 @@ function ClipEditContextMenu({
     >
       <button onClick={onAdd}>Add Keyframe</button>
       {menu.keyframeId && <button onClick={onDelete}>Delete Keyframe</button>}
+    </div>
+  )
+}
+
+function ChannelContextMenu({
+  x,
+  y,
+  channel,
+  onRemove,
+  onClose,
+}: {
+  x: number
+  y: number
+  channel: AnimationProperty
+  onRemove: (channel: AnimationProperty) => void
+  onClose: () => void
+}) {
+  useEffect(() => {
+    const handle = () => onClose()
+    window.addEventListener('click', handle)
+    window.addEventListener('contextmenu', handle)
+    return () => {
+      window.removeEventListener('click', handle)
+      window.removeEventListener('contextmenu', handle)
+    }
+  }, [onClose])
+
+  return (
+    <div
+      className="timeline-context-menu"
+      data-testid="channel-context-menu"
+      style={{ position: 'fixed', left: x, top: y, zIndex: 100 }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button onClick={() => onRemove(channel)}>Remove Channel</button>
     </div>
   )
 }
