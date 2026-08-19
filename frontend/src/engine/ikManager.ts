@@ -9,10 +9,7 @@ export class IKManager {
   readonly #chains = new Map<string, IKChain>()
   readonly #slideChains = new Map<string, Set<string>>()
 
-  constructor(
-    bus: EventBus,
-    nodeLookup: (nodeId: string) => SceneNode,
-  ) {
+  constructor(bus: EventBus, nodeLookup: (nodeId: string) => SceneNode) {
     this.#bus = bus
     this.#nodeLookup = nodeLookup
   }

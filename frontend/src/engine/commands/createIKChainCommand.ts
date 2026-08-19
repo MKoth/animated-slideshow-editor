@@ -50,12 +50,7 @@ export class CreateIKChainCommand implements Command<CreateIKChainInverse> {
   }
 
   execute(engine: Engine): CreateIKChainInverse {
-    const chain = engine.createIKChain(
-      this.#slideId,
-      this.#boneIds,
-      this.#target,
-      this.#poleTarget,
-    )
+    const chain = engine.createIKChain(this.#slideId, this.#boneIds, this.#target, this.#poleTarget)
     return { chainId: chain.id }
   }
 

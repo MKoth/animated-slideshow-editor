@@ -109,10 +109,7 @@ export class Engine {
       (clipId) => this.getClip(clipId),
     )
     this.#clips = new ClipManager(this.#bus)
-    this.#ik = new IKManager(
-      this.#bus,
-      (nodeId) => this.getNode(nodeId),
-    )
+    this.#ik = new IKManager(this.#bus, (nodeId) => this.getNode(nodeId))
   }
 
   get project(): Project | null {
