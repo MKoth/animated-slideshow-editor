@@ -45,9 +45,12 @@ class Database:
 
 
 def _is_addable(column: Column[object]) -> bool:
-    return bool(
-        column.nullable
-        and column.default is None
-        and column.server_default is None
-        and not column.unique
-    )
+    if column.unique:
+        return False
+    if column.server_default is not None:
+        return False
+    if column.nullable:
+        return True
+    # Non-nullable column: safe to add only if it has a Python-side default
+    # that SQLite will apply to existing rows via ALTER TABLE ADD COLUMN … DEFAULT.
+    return column.default is not None
