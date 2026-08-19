@@ -1,5 +1,6 @@
 import type { NodeComponents, TextAlignment } from './components'
 import type { Transform } from './transform'
+import { IDENTITY_PIVOT } from './transform'
 import type { NodeJSON } from './json'
 import { requireOpacity, requireString } from './guards'
 import {
@@ -13,6 +14,14 @@ import { clipInstanceFromJSON, clipInstanceToJSON } from './clipInstance'
 
 const TEXT_ALIGNMENTS: readonly TextAlignment[] = ['left', 'center', 'right']
 
+export interface CachedWorldTransform {
+  readonly x: number
+  readonly y: number
+  readonly rotation: number
+  readonly scaleX: number
+  readonly scaleY: number
+}
+
 export class SceneNode {
   readonly id: string
   name: string
@@ -24,6 +33,8 @@ export class SceneNode {
   material: MaterialInstance
   readonly components: NodeComponents
   readonly clipInstances: ClipInstance[]
+  _worldTransformDirty = true
+  _cachedWorldTransform: CachedWorldTransform | null = null
 
   constructor(id: string, name: string, transform: Transform, components: NodeComponents = {}) {
     this.id = id
@@ -38,13 +49,32 @@ export class SceneNode {
     this.clipInstances = []
   }
 
+  markDirty(): void {
+    if (!this._worldTransformDirty) {
+      this._worldTransformDirty = true
+      this._cachedWorldTransform = null
+      for (const child of this.children) {
+        child.markDirty()
+      }
+    }
+  }
+
   toJSON(): NodeJSON {
     const material = materialToJSON(this.material)
+    const pivot = this.transform.localPivot ?? IDENTITY_PIVOT
+    const hasPivot = pivot.x !== IDENTITY_PIVOT.x || pivot.y !== IDENTITY_PIVOT.y
     return {
       id: this.id,
       name: this.name,
       parentId: this.parent ? this.parent.id : null,
-      transform: { ...this.transform },
+      transform: {
+        x: this.transform.x,
+        y: this.transform.y,
+        rotation: this.transform.rotation,
+        scaleX: this.transform.scaleX,
+        scaleY: this.transform.scaleY,
+      },
+      localPivot: hasPivot ? { ...pivot } : undefined,
       visible: this.visible,
       opacity: this.opacity,
       ...(material !== undefined ? { material } : {}),
@@ -59,7 +89,13 @@ export class SceneNode {
     const id = requireString(json.id, 'Node id')
     const name = requireString(json.name, 'Node name')
     const transform = requireTransform(json.transform, id)
-    const node = new SceneNode(id, name, transform, componentsFromJSON(json.components, id))
+    const localPivot = json.localPivot ? { x: json.localPivot.x, y: json.localPivot.y } : undefined
+    const node = new SceneNode(
+      id,
+      name,
+      localPivot ? { ...transform, localPivot } : transform,
+      componentsFromJSON(json.components, id),
+    )
     node.visible = typeof json.visible === 'boolean' ? json.visible : true
     node.opacity =
       typeof json.opacity === 'number' ? requireOpacity(json.opacity, `Node "${id}" opacity`) : 1

@@ -164,10 +164,24 @@ describe('transformsEqual', () => {
   it('compares every field', () => {
     expect(transformsEqual(identityTransform(), identityTransform())).toBe(true)
     expect(
-      transformsEqual(identityTransform(), { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }),
+      transformsEqual(identityTransform(), {
+        x: 0,
+        y: 0,
+        rotation: 0,
+        scaleX: 1,
+        scaleY: 1,
+        localPivot: { x: 0, y: 0 },
+      }),
     ).toBe(true)
     expect(
-      transformsEqual(identityTransform(), { x: 1, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }),
+      transformsEqual(identityTransform(), {
+        x: 1,
+        y: 0,
+        rotation: 0,
+        scaleX: 1,
+        scaleY: 1,
+        localPivot: { x: 0, y: 0 },
+      }),
     ).toBe(false)
   })
 })

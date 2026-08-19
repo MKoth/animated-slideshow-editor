@@ -4,8 +4,8 @@ import type { MaterialOverrideValue, MaterialOverrides } from './materialInstanc
 import type { MaterialParameterKindOf } from './keyframeTarget'
 import type { SceneNode } from './sceneNode'
 import type { Slide } from './slide'
-import { identityTransform } from './transform'
-import type { Transform } from './transform'
+import { identityTransform, pivotsEqual } from './transform'
+import type { Transform, Pivot } from './transform'
 import { evaluateSegment } from './interpolators'
 import { evaluateMaterialTrackValue } from './materialTrackEvaluation'
 import type { AnimationProperty } from './animationProperties'
@@ -22,6 +22,7 @@ type MutableTransform = {
   rotation: number
   scaleX: number
   scaleY: number
+  localPivot?: Pivot
 }
 
 export interface EvaluatedNodeScratch {
@@ -47,12 +48,18 @@ export function evaluatedStatesEqual(
   previous: EvaluatedNodeScratch,
   state: EvaluatedNodeState,
 ): boolean {
+  const prevPivot = previous.transform.localPivot
+  const statePivot = state.transform.localPivot
+  const pivotEqual =
+    (!prevPivot && !statePivot) ||
+    (prevPivot !== undefined && statePivot !== undefined && pivotsEqual(prevPivot, statePivot))
   return (
     previous.transform.x === state.transform.x &&
     previous.transform.y === state.transform.y &&
     previous.transform.rotation === state.transform.rotation &&
     previous.transform.scaleX === state.transform.scaleX &&
     previous.transform.scaleY === state.transform.scaleY &&
+    pivotEqual &&
     previous.opacity === state.opacity
   )
 }
@@ -63,6 +70,9 @@ export function copyEvaluatedState(target: EvaluatedNodeScratch, state: Evaluate
   target.transform.rotation = state.transform.rotation
   target.transform.scaleX = state.transform.scaleX
   target.transform.scaleY = state.transform.scaleY
+  if (state.transform.localPivot) {
+    target.transform.localPivot = { ...state.transform.localPivot }
+  }
   target.opacity = state.opacity
 }
 
@@ -111,6 +121,9 @@ export class AnimationEvaluator {
     )
     evaluated.scaleX = this.#evaluate(animation?.keyframes('scaleX'), clampedTime, transform.scaleX)
     evaluated.scaleY = this.#evaluate(animation?.keyframes('scaleY'), clampedTime, transform.scaleY)
+    if (transform.localPivot) {
+      evaluated.localPivot = transform.localPivot
+    }
     state.opacity = this.#evaluate(animation?.keyframes('opacity'), clampedTime, node.opacity)
 
     this.#applyClipInstances(node, clampedTime, state)

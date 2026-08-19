@@ -156,6 +156,7 @@ export class NodeManager {
     detachFromParent(node)
     newParent.children.push(node)
     node.parent = newParent
+    node.markDirty()
     this.#bus.emit({ type: 'NodeReparented', nodeId })
   }
 
@@ -164,7 +165,17 @@ export class NodeManager {
     if (node.components.camera && transform.rotation !== node.transform.rotation) {
       throw new Error('Camera rotation is locked')
     }
-    node.transform = { ...transform, rotation: normalizeRotation(transform.rotation) }
+    const normalizedRotation = normalizeRotation(transform.rotation)
+    const changed =
+      node.transform.x !== transform.x ||
+      node.transform.y !== transform.y ||
+      node.transform.rotation !== normalizedRotation ||
+      node.transform.scaleX !== transform.scaleX ||
+      node.transform.scaleY !== transform.scaleY
+    node.transform = { ...transform, rotation: normalizedRotation }
+    if (changed) {
+      node.markDirty()
+    }
     this.#bus.emit({ type: 'TransformChanged', nodeId })
   }
 

@@ -18,7 +18,13 @@ export function worldTransformOf(scene: Scene, nodeId: string): WorldTransform |
   if (!node) {
     return null
   }
-  return composeChain(chainOf(node), (link) => link.transform)
+  if (!node._worldTransformDirty && node._cachedWorldTransform) {
+    return node._cachedWorldTransform
+  }
+  const result = composeChain(chainOf(node), (link) => link.transform)
+  node._worldTransformDirty = false
+  node._cachedWorldTransform = result
+  return result
 }
 
 export function evaluatedWorldTransformOf(

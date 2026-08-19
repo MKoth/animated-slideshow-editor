@@ -11,6 +11,11 @@ export type TransformJSON = {
   readonly scaleY: number
 }
 
+export type PivotJSON = {
+  readonly x: number
+  readonly y: number
+}
+
 export type NodeComponentsJSON = {
   readonly camera?: { readonly kind: 'camera' }
   readonly assetInstance?: { readonly kind: 'assetInstance'; readonly assetDefinitionId: string }
@@ -37,6 +42,7 @@ export type NodeJSON = {
   readonly name: string
   readonly parentId: string | null
   readonly transform: TransformJSON
+  readonly localPivot?: PivotJSON
   readonly visible: boolean
   readonly opacity?: number
   readonly material?: MaterialJSON

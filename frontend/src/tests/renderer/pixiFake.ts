@@ -24,6 +24,7 @@ export class FakeContainer {
   filters: FakeFilter[] = []
   position: FakePoint = makePoint()
   scale: FakePoint = makePoint()
+  pivot: FakePoint = makePoint()
   rotation = 0
   visible = true
   alpha = 1

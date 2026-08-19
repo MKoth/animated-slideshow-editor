@@ -30,6 +30,7 @@ export function createNodeContainer(
 }
 
 export function applyTransform(container: PixiContainer, node: SceneNode): void {
+  applyPivot(container, node.transform.localPivot)
   container.position.set(node.transform.x, node.transform.y)
   container.rotation = node.transform.rotation
   container.scale.set(node.transform.scaleX, node.transform.scaleY)
@@ -40,10 +41,22 @@ export function applyEvaluatedState(
   state: EvaluatedNodeState,
   opacityMultiplier: number,
 ): void {
+  applyPivot(container, state.transform.localPivot)
   container.position.set(state.transform.x, state.transform.y)
   container.rotation = state.transform.rotation
   container.scale.set(state.transform.scaleX, state.transform.scaleY)
   container.alpha = state.opacity * opacityMultiplier
+}
+
+function applyPivot(
+  container: PixiContainer,
+  pivot?: { readonly x: number; readonly y: number },
+): void {
+  if (pivot) {
+    container.pivot.set(pivot.x, pivot.y)
+  } else {
+    container.pivot.set(0, 0)
+  }
 }
 
 export function applyMaterialTint(container: PixiContainer, tint: string): void {

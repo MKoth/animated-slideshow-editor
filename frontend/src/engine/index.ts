@@ -103,6 +103,7 @@ export {
   CreateNodeCommand,
   DeleteNodeCommand,
   ReparentNodeCommand,
+  SetParentCommand,
   MoveNodeCommand,
   RotateNodeCommand,
   ScaleNodeCommand,
