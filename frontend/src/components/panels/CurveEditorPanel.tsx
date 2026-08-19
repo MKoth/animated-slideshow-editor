@@ -137,6 +137,10 @@ function buildClipCurves(
 
 const CLIP_TIME_MAX = 1
 
+function effectiveDuration(clip: ClipDefinition | undefined, duration: number): number {
+  return clip ? CLIP_TIME_MAX : duration
+}
+
 function resolveKeyframes(
   engine: ReturnType<typeof useEngine>['engine'],
   clip: ClipDefinition | undefined,
@@ -468,7 +472,7 @@ export function CurveEditorPanel({
         pps,
       })
 
-      const maxTime = clip ? CLIP_TIME_MAX : duration
+      const maxTime = effectiveDuration(clip, duration)
       const clampedTime = Math.max(0, Math.min(maxTime, snappedTime))
 
       const keyframes = resolveKeyframes(engine, clip, nodeId, property)
@@ -636,7 +640,7 @@ export function CurveEditorPanel({
           selectedKeyframeIds={selectedKeyframeIds}
           tangentPreview={tangentPreview}
           currentTime={currentTime}
-          duration={duration}
+          duration={effectiveDuration(clip, duration)}
           onKeyframeSelect={handleKeyframeSelect}
           onKeyframeDrag={handleKeyframeDrag}
           onKeyframeDragStart={handleKeyframeDragStart}
