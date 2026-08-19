@@ -42,7 +42,9 @@ class AppFactory:
         shader_library.ensure_seeded(now_utc())
         app.state.shader_library = shader_library
         app.state.project_library = ProjectLibrary(database)
-        app.state.clip_library = ClipLibrary(database)
+        clip_library = ClipLibrary(database)
+        clip_library.ensure_seeded(now_utc())
+        app.state.clip_library = clip_library
 
         app.add_middleware(RequestLoggingMiddleware)
         register_error_handlers(app)

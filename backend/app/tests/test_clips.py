@@ -3,7 +3,7 @@ from typing import cast
 from fastapi.testclient import TestClient
 
 from app.app_factory import AppFactory
-from app.clips.model import ClipDefinition
+from app.clips.model import BUILTIN_CLIP_NAMES, ClipDefinition
 from app.config import Settings
 
 
@@ -105,12 +105,14 @@ def test_list_returns_all_library_clips_newest_first(client: TestClient) -> None
     body = client.get("/api/clips/library").json()
     listed_ids = [clip["id"] for clip in body]
 
-    assert listed_ids == [second["id"], first["id"]]
+    assert listed_ids[0] == second["id"]
+    assert listed_ids[1] == first["id"]
+    assert len(listed_ids) == 2 + len(BUILTIN_CLIP_NAMES)
 
 
 def test_list_empty_library(client: TestClient) -> None:
     body = client.get("/api/clips/library").json()
-    assert body == []
+    assert len(body) == len(BUILTIN_CLIP_NAMES)
 
 
 def test_detail_returns_full_definition(client: TestClient) -> None:

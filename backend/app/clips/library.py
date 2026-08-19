@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any, cast
 
 from sqlalchemy import desc, select
 
-from app.clips.model import ClipDefinition
+from app.clips.model import BUILTIN_CLIPS, ClipDefinition
 from app.clips.schemas import ClipChannelDef, ClipParam
 from app.database import Database
 
@@ -21,11 +22,49 @@ class ClipDuplicateIDError(ValueError):
     """Raised when a clip with the given id already exists."""
 
 
+class ClipProtectedError(ValueError):
+    """Raised when a protected built-in clip cannot be deleted."""
+
+
 class ClipLibrary:
     """I own the persistent library of clip definitions."""
 
     def __init__(self, database: Database) -> None:
         self._database = database
+
+    def ensure_seeded(self, now: datetime) -> None:
+        """Seed the protected built-in clips.
+
+        Creates missing built-ins; a built-in whose recorded seed_version is
+        behind the canonical version is upgraded in place.
+        """
+        with self._database.session() as session:
+            for builtin in BUILTIN_CLIPS:
+                clip_id = builtin["id"]
+                seed_version = int(cast(int, builtin.get("seed_version", 1)))
+                definition = session.get(ClipDefinition, clip_id)
+                if definition is None:
+                    session.add(
+                        ClipDefinition(
+                            id=clip_id,
+                            created_at=now,
+                            updated_at=now,
+                            is_builtin=True,
+                            seed_version=seed_version,
+                            **_builtin_clip_fields(builtin),
+                        )
+                    )
+                elif definition.seed_version != seed_version:
+                    fields = _builtin_clip_fields(builtin)
+                    definition.name = fields["name"]
+                    definition.duration = fields["duration"]
+                    definition.category = fields["category"]
+                    definition.params = fields["params"]
+                    definition.channels = fields["channels"]
+                    definition.channel_animations = fields["channel_animations"]
+                    definition.seed_version = seed_version
+                    definition.updated_at = now
+            session.commit()
 
     def list_all(self) -> list[ClipDefinition]:
         statement = select(ClipDefinition).order_by(
@@ -120,6 +159,10 @@ class ClipLibrary:
             definition = session.get(ClipDefinition, clip_id)
             if definition is None:
                 raise ClipNotFoundError(clip_id)
+            if definition.is_builtin:
+                raise ClipProtectedError(
+                    f"clip {definition.name!r} is a built-in and cannot be deleted"
+                )
             session.delete(definition)
             session.commit()
 
@@ -140,6 +183,18 @@ def _channel_to_dict(channel: ClipChannelDef) -> dict[str, object]:
     if channel.link_mode is not None:
         result["linkMode"] = channel.link_mode
     return result
+
+
+def _builtin_clip_fields(builtin: dict[str, Any]) -> dict[str, Any]:
+    """The canonical field values a built-in clip definition is seeded with."""
+    return {
+        "name": str(builtin["name"]),
+        "duration": float(cast(Any, builtin["duration"])),
+        "category": str(builtin["category"]),
+        "params": list(cast(Any, builtin["params"])),
+        "channels": list(cast(Any, builtin["channels"])),
+        "channel_animations": dict(cast(Any, builtin["channel_animations"])),
+    }
 
 
 def now_utc() -> datetime:

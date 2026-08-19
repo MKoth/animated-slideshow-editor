@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.app_factory import AppFactory
 from app.clips.library import ClipDuplicateIDError, ClipNotFoundError
+from app.clips.model import BUILTIN_CLIP_NAMES
 from app.config import Settings
 
 
@@ -82,7 +83,9 @@ def test_delete_removes_only_the_target_clip(client: TestClient) -> None:
     assert response.status_code == 204
     remaining = client.get("/api/clips/library").json()
     remaining_ids = [clip["id"] for clip in remaining]
-    assert remaining_ids == ["del-b"]
+    assert "del-a" not in remaining_ids
+    assert "del-b" in remaining_ids
+    assert len(remaining_ids) == 1 + len(BUILTIN_CLIP_NAMES)
 
 
 def test_create_with_invalid_duration_at_library_level(settings: Settings) -> None:

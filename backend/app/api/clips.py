@@ -4,6 +4,7 @@ from app.clips.library import (
     ClipDuplicateIDError,
     ClipLibrary,
     ClipNotFoundError,
+    ClipProtectedError,
     ClipValidationError,
     now_utc,
 )
@@ -94,3 +95,5 @@ def delete_library_clip(request: Request, clip_id: str) -> None:
         library.delete(clip_id)
     except ClipNotFoundError as exc:
         raise _clip_not_found(clip_id) from exc
+    except ClipProtectedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
