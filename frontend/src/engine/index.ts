@@ -245,6 +245,7 @@ export type {
 } from './commands'
 export {
   ANIMATABLE_PROPERTIES,
+  BONE_ANIMATABLE_PROPERTIES,
   requireAnimatableForNode,
   requireKeyframeTime,
   requireKeyframeValue,

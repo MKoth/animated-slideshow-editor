@@ -1,6 +1,6 @@
 import type { EnginePublic, SceneNode } from '../engine'
 import type { AnimationProperty } from '../engine'
-import { ANIMATABLE_PROPERTIES } from '../engine'
+import { ANIMATABLE_PROPERTIES, BONE_ANIMATABLE_PROPERTIES } from '../engine'
 import type { Scene } from '../engine'
 import type { CommandResult, DispatchCommand } from '../engine/commands'
 import { AddKeyframeCommand } from '../engine/commands'
@@ -27,6 +27,9 @@ export type PropertyState = 'static' | 'animated' | 'onKeyframe'
 export function animatablePropertiesOf(node: SceneNode): AnimationProperty[] {
   if (node.components.camera) {
     return ANIMATABLE_PROPERTIES.filter((property) => property !== 'rotation')
+  }
+  if (node.components.bone) {
+    return [...BONE_ANIMATABLE_PROPERTIES]
   }
   return [...ANIMATABLE_PROPERTIES]
 }

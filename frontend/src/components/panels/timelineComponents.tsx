@@ -6,7 +6,7 @@ import { tickLabel } from '../../stores/timelineViewStore'
 import { iconOf } from './nodeIconKinds'
 import { LockIcon, NodeIcon, VisibilityIcon } from './nodeIcons'
 import { PROPERTY_LABELS } from './timelineTracks'
-import type { TrackRowEntry } from './timelineTracks'
+import type { TrackRowEntry, BoneTrackEntry } from './timelineTracks'
 
 export interface TimelineMenuState {
   readonly x: number
@@ -38,7 +38,7 @@ export const TrackRow = memo(
     name,
     visible,
     expanded,
-  }: TrackRowEntry & { expanded: boolean }) {
+  }: (TrackRowEntry | BoneTrackEntry) & { expanded: boolean }) {
     const selected = useSelectionStore((state) => state.selectedIds.includes(node.id))
     return (
       <li data-node-id={node.id}>
@@ -91,7 +91,8 @@ export const TrackRow = memo(
     prev.depth === next.depth &&
     prev.name === next.name &&
     prev.visible === next.visible &&
-    prev.expanded === next.expanded,
+    prev.expanded === next.expanded &&
+    prev.kind === next.kind,
 )
 
 export function KeyframeMarker({

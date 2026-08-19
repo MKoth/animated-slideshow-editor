@@ -1,9 +1,6 @@
 import { ANIMATABLE_PROPERTIES, type AnimationProperty } from './animationProperties'
 import type { MaterialParameterDefault } from './materialResolution'
-import {
-  TINT_PARAMETER_KEY,
-  OPACITY_MULTIPLIER_PARAMETER_KEY,
-} from './materialResolution'
+import { TINT_PARAMETER_KEY, OPACITY_MULTIPLIER_PARAMETER_KEY } from './materialResolution'
 import { RESERVED_TIME_UNIFORM } from '../shaders/reflection'
 
 /** Describes one animatable value on a scene node. */
@@ -53,7 +50,9 @@ const BUILT_IN_MATERIAL_KEYS = new Set<string>([
  *                                keyframes on the given material parameter.
  */
 export function getAnimatableParameters(
-  node: { readonly components: { readonly camera?: unknown } },
+  node: {
+    readonly components: { readonly camera?: unknown; readonly bone?: unknown }
+  },
   materialParameters: readonly MaterialParameterDefault[],
   hasPropertyTrack: (property: AnimationProperty) => boolean,
   hasMaterialTrack: (parameter: string) => boolean,
@@ -62,6 +61,9 @@ export function getAnimatableParameters(
 
   for (const property of ANIMATABLE_PROPERTIES) {
     if (node.components.camera && property === 'rotation') {
+      continue
+    }
+    if (node.components.bone && property === 'opacity') {
       continue
     }
     result.push({

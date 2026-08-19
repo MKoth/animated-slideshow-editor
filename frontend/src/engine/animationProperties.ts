@@ -10,7 +10,19 @@ export const ANIMATABLE_PROPERTIES = [
   'opacity',
 ] as const
 
+/** Bone nodes animate the five transform properties only — no opacity. */
+export const BONE_ANIMATABLE_PROPERTIES = [
+  'positionX',
+  'positionY',
+  'rotation',
+  'scaleX',
+  'scaleY',
+] as const
+
 export type AnimationProperty = (typeof ANIMATABLE_PROPERTIES)[number]
+
+/** The subset of AnimationProperty that bones support. */
+export type BoneAnimationProperty = (typeof BONE_ANIMATABLE_PROPERTIES)[number]
 
 const ANIMATABLE_PROPERTY_VALUES: readonly string[] = ANIMATABLE_PROPERTIES
 
@@ -28,6 +40,9 @@ export function requireAnimatableForNode(node: SceneNode, property: unknown): An
   const bounded = requireAnimationProperty(property)
   if (node.components.camera && bounded === 'rotation') {
     throw new Error('Camera rotation is not animatable')
+  }
+  if (node.components.bone && bounded === 'opacity') {
+    throw new Error('Bone opacity is not animatable')
   }
   return bounded
 }

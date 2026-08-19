@@ -1,4 +1,4 @@
-export { ANIMATABLE_PROPERTIES } from './animationProperties'
+export { ANIMATABLE_PROPERTIES, BONE_ANIMATABLE_PROPERTIES } from './animationProperties'
 export type { AnimationProperty } from './animationProperties'
 export {
   requireAnimationProperty,

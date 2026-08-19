@@ -30,7 +30,16 @@ export interface MaterialSubtrackEntry {
   readonly depth: number
 }
 
-export type TimelineRow = TrackRowEntry | SubtrackEntry | MaterialSubtrackEntry
+/** A bone node row — distinguished from regular node rows for UI styling. */
+export interface BoneTrackEntry {
+  readonly kind: 'bone'
+  readonly node: SceneNode
+  readonly depth: number
+  readonly name: string
+  readonly visible: boolean
+}
+
+export type TimelineRow = TrackRowEntry | SubtrackEntry | MaterialSubtrackEntry | BoneTrackEntry
 
 export const PROPERTY_LABELS: Record<AnimationProperty, string> = {
   positionX: 'Position X',
@@ -79,6 +88,10 @@ export function trackRows(scene: Scene): TrackRowEntry[] {
   return rows
 }
 
+/**
+ * Build the full list of timeline rows, including bone track entries
+ * for nodes that have a bone component.
+ */
 export function timelineRows(
   scene: Scene,
   expandedNodeIds: Readonly<Record<string, boolean>>,
@@ -89,7 +102,17 @@ export function timelineRows(
 ): TimelineRow[] {
   const rows: TimelineRow[] = []
   for (const entry of trackRows(scene)) {
-    rows.push(entry)
+    if (entry.node.components.bone) {
+      rows.push({
+        kind: 'bone',
+        node: entry.node,
+        depth: entry.depth,
+        name: entry.name,
+        visible: entry.visible,
+      })
+    } else {
+      rows.push(entry)
+    }
     if (expandedNodeIds[entry.node.id] === true) {
       for (const property of animatablePropertiesOf(entry.node)) {
         rows.push({ kind: 'subtrack', node: entry.node, property, depth: entry.depth + 1 })
