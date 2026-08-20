@@ -15,10 +15,7 @@ export interface MeshData {
   readonly uvs: readonly { readonly u: number; readonly v: number }[]
 }
 
-export function createDefaultRectangleMesh(
-  width: number,
-  height: number,
-): MeshData {
+export function createDefaultRectangleMesh(width: number, height: number): MeshData {
   const vertices: MeshVertex[] = [
     { x: 0, y: 0 },
     { x: width, y: 0 },
@@ -54,26 +51,81 @@ export function meshDataFromJSON(json: unknown): MeshData {
   }
   const vertices: MeshVertex[] = []
   for (const v of record.vertices) {
-    if (typeof v !== 'object' || v === null || typeof (v as Record<string, unknown>).x !== 'number' || typeof (v as Record<string, unknown>).y !== 'number') {
+    if (
+      typeof v !== 'object' ||
+      v === null ||
+      typeof (v as Record<string, unknown>).x !== 'number' ||
+      typeof (v as Record<string, unknown>).y !== 'number'
+    ) {
       throw new Error('Each vertex must have x and y numbers')
     }
-    vertices.push({ x: (v as Record<string, unknown>).x as number, y: (v as Record<string, unknown>).y as number })
+    vertices.push({
+      x: (v as Record<string, unknown>).x as number,
+      y: (v as Record<string, unknown>).y as number,
+    })
   }
   const faces: MeshFace[] = []
   for (const f of record.faces) {
-    if (typeof f !== 'object' || f === null || typeof (f as Record<string, unknown>).v0 !== 'number' || typeof (f as Record<string, unknown>).v1 !== 'number' || typeof (f as Record<string, unknown>).v2 !== 'number') {
+    if (
+      typeof f !== 'object' ||
+      f === null ||
+      typeof (f as Record<string, unknown>).v0 !== 'number' ||
+      typeof (f as Record<string, unknown>).v1 !== 'number' ||
+      typeof (f as Record<string, unknown>).v2 !== 'number'
+    ) {
       throw new Error('Each face must have v0, v1, v2 numbers')
     }
-    faces.push({ v0: (f as Record<string, unknown>).v0 as number, v1: (f as Record<string, unknown>).v1 as number, v2: (f as Record<string, unknown>).v2 as number })
+    faces.push({
+      v0: (f as Record<string, unknown>).v0 as number,
+      v1: (f as Record<string, unknown>).v1 as number,
+      v2: (f as Record<string, unknown>).v2 as number,
+    })
   }
   const uvs: { u: number; v: number }[] = []
   for (const uv of record.uvs) {
-    if (typeof uv !== 'object' || uv === null || typeof (uv as Record<string, unknown>).u !== 'number' || typeof (uv as Record<string, unknown>).v !== 'number') {
+    if (
+      typeof uv !== 'object' ||
+      uv === null ||
+      typeof (uv as Record<string, unknown>).u !== 'number' ||
+      typeof (uv as Record<string, unknown>).v !== 'number'
+    ) {
       throw new Error('Each UV must have u and v numbers')
     }
-    uvs.push({ u: (uv as Record<string, unknown>).u as number, v: (uv as Record<string, unknown>).v as number })
+    uvs.push({
+      u: (uv as Record<string, unknown>).u as number,
+      v: (uv as Record<string, unknown>).v as number,
+    })
   }
   return { vertices, faces, uvs }
+}
+
+export interface MeshEdge {
+  readonly v0: number
+  readonly v1: number
+}
+
+export function edgeKey(a: number, b: number): string {
+  return a < b ? `${a}:${b}` : `${b}:${a}`
+}
+
+export function extractEdges(mesh: MeshData): MeshEdge[] {
+  const seen = new Set<string>()
+  const edges: MeshEdge[] = []
+  for (const face of mesh.faces) {
+    const pairs: [number, number][] = [
+      [face.v0, face.v1],
+      [face.v1, face.v2],
+      [face.v2, face.v0],
+    ]
+    for (const [a, b] of pairs) {
+      const key = edgeKey(a, b)
+      if (!seen.has(key)) {
+        seen.add(key)
+        edges.push({ v0: Math.min(a, b), v1: Math.max(a, b) })
+      }
+    }
+  }
+  return edges
 }
 
 export function cloneMeshData(mesh: MeshData): MeshData {
