@@ -6,6 +6,8 @@ import {
   CreateSlideCommand,
   MoveVertexCommand,
   DeleteVerticesCommand,
+  ExtrudeFacesCommand,
+  ExtrudeEdgesCommand,
   createCommandSystem,
 } from '../../engine/commands'
 import { createDefaultRectangleMesh } from '../../engine/mesh'
@@ -80,7 +82,11 @@ describe('MoveVertexCommand', () => {
     if (!slide) throw new Error('expected a slide')
     const { nodeId } = expectOk(
       system.dispatcher.dispatch(
-        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'NoMesh' }),
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'NoMesh',
+        }),
       ),
     )
     const result = system.dispatcher.dispatch(
@@ -160,7 +166,11 @@ describe('DeleteVerticesCommand', () => {
     if (!slide) throw new Error('expected a slide')
     const { nodeId } = expectOk(
       system.dispatcher.dispatch(
-        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'NoMesh' }),
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'NoMesh',
+        }),
       ),
     )
     const result = system.dispatcher.dispatch(
@@ -192,5 +202,214 @@ describe('mesh data', () => {
     expect(mesh.vertices[1]).toEqual({ x: 160, y: 0 })
     expect(mesh.vertices[2]).toEqual({ x: 160, y: 100 })
     expect(mesh.vertices[3]).toEqual({ x: 0, y: 100 })
+  })
+})
+
+describe('ExtrudeFacesCommand', () => {
+  it('extrudes a face and creates new geometry', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(
+      new ExtrudeFacesCommand({ nodeId, faceIndices: [0], distance: 10 }),
+    )
+    const inverse = expectOk(result)
+    const node = system.engine.getNode(nodeId)
+    const mesh = node.components.mesh!.mesh
+    expect(mesh.vertices.length).toBeGreaterThan(4)
+    expect(mesh.faces.length).toBeGreaterThan(2)
+    expect(inverse.mesh.vertices).toHaveLength(4)
+    expect(inverse.mesh.faces).toHaveLength(2)
+  })
+
+  it('extrudes multiple faces', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(
+      new ExtrudeFacesCommand({ nodeId, faceIndices: [0, 1], distance: 10 }),
+    )
+    expectOk(result)
+    const node = system.engine.getNode(nodeId)
+    const mesh = node.components.mesh!.mesh
+    expect(mesh.vertices.length).toBeGreaterThan(4)
+  })
+
+  it('rejects empty face indices', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(
+      new ExtrudeFacesCommand({ nodeId, faceIndices: [], distance: 10 }),
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/at least one/i)
+    }
+  })
+
+  it('rejects out of bounds face index', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(
+      new ExtrudeFacesCommand({ nodeId, faceIndices: [100], distance: 10 }),
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/out of bounds/i)
+    }
+  })
+
+  it('rejects a node without mesh component', () => {
+    const system = createCommandSystem()
+    expectOk(system.dispatcher.dispatch(new CreateProjectCommand({ name: 'P' })))
+    expectOk(system.dispatcher.dispatch(new CreateSlideCommand({ name: 'S1' })))
+    const slide = system.engine.project?.slides[0]
+    if (!slide) throw new Error('expected a slide')
+    const { nodeId } = expectOk(
+      system.dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'NoMesh',
+        }),
+      ),
+    )
+    const result = system.dispatcher.dispatch(
+      new ExtrudeFacesCommand({ nodeId, faceIndices: [0], distance: 10 }),
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/mesh component/i)
+    }
+  })
+
+  it('rejects non-finite distance', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(
+      new ExtrudeFacesCommand({ nodeId, faceIndices: [0], distance: Number.NaN }),
+    )
+    expect(result.ok).toBe(false)
+  })
+
+  it('serializes to JSON', () => {
+    const cmd = new ExtrudeFacesCommand({ nodeId: 'n1', faceIndices: [0, 2], distance: 15 })
+    expect(cmd.toJSON()).toEqual({
+      type: 'ExtrudeFaces',
+      nodeId: 'n1',
+      faceIndices: [0, 2],
+      distance: 15,
+    })
+  })
+})
+
+describe('ExtrudeEdgesCommand', () => {
+  it('extrudes an edge and creates new geometry', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(
+      new ExtrudeEdgesCommand({
+        nodeId,
+        edgeIndices: [{ v0: 0, v1: 1 }],
+        distance: 10,
+      }),
+    )
+    const inverse = expectOk(result)
+    const node = system.engine.getNode(nodeId)
+    const mesh = node.components.mesh!.mesh
+    expect(mesh.vertices.length).toBeGreaterThan(4)
+    expect(mesh.faces.length).toBeGreaterThan(2)
+    expect(inverse.mesh.vertices).toHaveLength(4)
+    expect(inverse.mesh.faces).toHaveLength(2)
+  })
+
+  it('extrudes multiple edges', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(
+      new ExtrudeEdgesCommand({
+        nodeId,
+        edgeIndices: [
+          { v0: 0, v1: 1 },
+          { v0: 1, v1: 2 },
+        ],
+        distance: 10,
+      }),
+    )
+    expectOk(result)
+    const node = system.engine.getNode(nodeId)
+    const mesh = node.components.mesh!.mesh
+    expect(mesh.vertices.length).toBeGreaterThan(4)
+  })
+
+  it('rejects empty edge indices', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(
+      new ExtrudeEdgesCommand({ nodeId, edgeIndices: [], distance: 10 }),
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/at least one/i)
+    }
+  })
+
+  it('rejects out of bounds edge vertex index', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(
+      new ExtrudeEdgesCommand({
+        nodeId,
+        edgeIndices: [{ v0: 0, v1: 99 }],
+        distance: 10,
+      }),
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/out of bounds/i)
+    }
+  })
+
+  it('rejects a node without mesh component', () => {
+    const system = createCommandSystem()
+    expectOk(system.dispatcher.dispatch(new CreateProjectCommand({ name: 'P' })))
+    expectOk(system.dispatcher.dispatch(new CreateSlideCommand({ name: 'S1' })))
+    const slide = system.engine.project?.slides[0]
+    if (!slide) throw new Error('expected a slide')
+    const { nodeId } = expectOk(
+      system.dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'NoMesh',
+        }),
+      ),
+    )
+    const result = system.dispatcher.dispatch(
+      new ExtrudeEdgesCommand({
+        nodeId,
+        edgeIndices: [{ v0: 0, v1: 1 }],
+        distance: 10,
+      }),
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/mesh component/i)
+    }
+  })
+
+  it('rejects non-finite distance', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(
+      new ExtrudeEdgesCommand({
+        nodeId,
+        edgeIndices: [{ v0: 0, v1: 1 }],
+        distance: Number.POSITIVE_INFINITY,
+      }),
+    )
+    expect(result.ok).toBe(false)
+  })
+
+  it('serializes to JSON', () => {
+    const cmd = new ExtrudeEdgesCommand({
+      nodeId: 'n1',
+      edgeIndices: [{ v0: 0, v1: 1 }],
+      distance: 20,
+    })
+    expect(cmd.toJSON()).toEqual({
+      type: 'ExtrudeEdges',
+      nodeId: 'n1',
+      edgeIndices: [{ v0: 0, v1: 1 }],
+      distance: 20,
+    })
   })
 })

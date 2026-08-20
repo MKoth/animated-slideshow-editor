@@ -1,7 +1,14 @@
 import type { Scene } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
-import { MoveVertexCommand, DeleteVerticesCommand, TransactionCommand } from '../../engine/commands'
+import {
+  MoveVertexCommand,
+  DeleteVerticesCommand,
+  TransactionCommand,
+  ExtrudeFacesCommand,
+  ExtrudeEdgesCommand,
+} from '../../engine/commands'
 import { useMeshEditStore } from '../../stores/meshEditStore'
+import type { MeshSelectMode } from '../../stores/meshEditStore'
 import { cursorToWorld } from './screenToWorld'
 import type { ViewportTransform } from './worldGeometry'
 import type { MeshOverlay } from './meshOverlay'
@@ -82,6 +89,11 @@ export class MeshEditInteraction {
 
     if (meshEditTool === 'delete') {
       this.#handleDeleteClick(point.x, point.y, scene, meshEditNodeId, selectMode)
+      return
+    }
+
+    if (meshEditTool === 'extrude') {
+      this.#handleExtrudeClick(meshEditNodeId, selectMode)
       return
     }
 
@@ -196,6 +208,44 @@ export class MeshEditInteraction {
         this.#deleteSelectedFaces()
       }
     }
+  }
+
+  #handleExtrudeClick(meshEditNodeId: string, selectMode: MeshSelectMode): void {
+    if (selectMode === 'face') {
+      this.#extrudeSelectedFaces(meshEditNodeId)
+    } else if (selectMode === 'edge') {
+      this.#extrudeSelectedEdges(meshEditNodeId)
+    }
+  }
+
+  #extrudeSelectedFaces(meshEditNodeId: string): void {
+    const { selectedFaceIndices } = useMeshEditStore.getState()
+    if (selectedFaceIndices.length === 0) {
+      return
+    }
+    this.#dispatch(
+      new ExtrudeFacesCommand({
+        nodeId: meshEditNodeId,
+        faceIndices: selectedFaceIndices,
+        distance: 20,
+      }),
+    )
+    useMeshEditStore.getState().clearFaceSelection()
+  }
+
+  #extrudeSelectedEdges(meshEditNodeId: string): void {
+    const { selectedEdgeIndices } = useMeshEditStore.getState()
+    if (selectedEdgeIndices.length === 0) {
+      return
+    }
+    this.#dispatch(
+      new ExtrudeEdgesCommand({
+        nodeId: meshEditNodeId,
+        edgeIndices: selectedEdgeIndices,
+        distance: 20,
+      }),
+    )
+    useMeshEditStore.getState().clearEdgeSelection()
   }
 
   readonly #onMouseMove = (event: MouseEvent): void => {

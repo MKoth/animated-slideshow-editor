@@ -30,10 +30,18 @@ export function registerMeshEditShortcuts(): () => void {
     }
   })
 
+  const disposeE = registerShortcut('e', () => {
+    const { meshEditNodeId } = useMeshEditStore.getState()
+    if (meshEditNodeId) {
+      useMeshEditStore.getState().setMeshEditTool('extrude')
+    }
+  })
+
   return () => {
     disposeEscape()
     dispose1()
     dispose2()
     dispose3()
+    disposeE()
   }
 }

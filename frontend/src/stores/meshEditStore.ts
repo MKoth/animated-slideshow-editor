@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { MeshEdge } from '../engine/mesh'
 import { edgeKey } from '../engine/mesh'
 
-export type MeshEditTool = 'select' | 'delete'
+export type MeshEditTool = 'select' | 'delete' | 'extrude'
 export type MeshSelectMode = 'vertex' | 'edge' | 'face'
 
 export interface MeshEditState {
