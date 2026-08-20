@@ -101,6 +101,6 @@ function createBonePlaceholder(pixi: RendererPixi, node: SceneNode, length: numb
   label.position.set(length / 2, -20)
   group.addChild(label)
 
-  setBoneSize(group, length, 10)
+  setBoneSize(group, length, 10, length / 2, 0)
   return group
 }

@@ -108,8 +108,14 @@ export function placeholderSize(group: PixiContainer): WorldSize | null {
   return { width: body.width, height: body.height }
 }
 
-export function setBoneSize(group: PixiContainer, width: number, height: number): void {
-  boneSizeByGroup.set(group, { width, height })
+export function setBoneSize(
+  group: PixiContainer,
+  width: number,
+  height: number,
+  offsetX = 0,
+  offsetY = 0,
+): void {
+  boneSizeByGroup.set(group, { width, height, offsetX, offsetY })
 }
 
 function hexColorToTint(color: string): number {

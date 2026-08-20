@@ -81,7 +81,13 @@ export function aabbOf(size: WorldSize, transform: WorldTransform | null): World
   }
   const halfWidth = (size.width * transform.scaleX) / 2
   const halfHeight = (size.height * transform.scaleY) / 2
-  const corners = rotatedCorners(transform, halfWidth, halfHeight)
+  const corners = rotatedCorners(
+    transform,
+    halfWidth,
+    halfHeight,
+    size.offsetX ?? 0,
+    size.offsetY ?? 0,
+  )
   return {
     minX: Math.min(...corners.map((p) => p.x)),
     minY: Math.min(...corners.map((p) => p.y)),
@@ -102,14 +108,24 @@ function containsPoint(
   const dy = point.y - transform.y
   const localX = rotateX(dx, dy, -transform.rotation) / transform.scaleX
   const localY = rotateY(dx, dy, -transform.rotation) / transform.scaleY
-  return Math.abs(localX) <= size.width / 2 && Math.abs(localY) <= size.height / 2
+  const cx = localX - (size.offsetX ?? 0)
+  const cy = localY - (size.offsetY ?? 0)
+  return Math.abs(cx) <= size.width / 2 && Math.abs(cy) <= size.height / 2
 }
 
 function rotatedCorners(
   transform: WorldTransform,
   halfWidth: number,
   halfHeight: number,
+  offsetX: number,
+  offsetY: number,
 ): WorldPoint[] {
+  const centerX =
+    transform.x +
+    rotateX(offsetX * transform.scaleX, offsetY * transform.scaleY, transform.rotation)
+  const centerY =
+    transform.y +
+    rotateY(offsetX * transform.scaleX, offsetY * transform.scaleY, transform.rotation)
   const corners = [
     { x: -halfWidth, y: -halfHeight },
     { x: halfWidth, y: -halfHeight },
@@ -117,8 +133,8 @@ function rotatedCorners(
     { x: -halfWidth, y: halfHeight },
   ]
   return corners.map((corner) => ({
-    x: transform.x + rotateX(corner.x, corner.y, transform.rotation),
-    y: transform.y + rotateY(corner.x, corner.y, transform.rotation),
+    x: centerX + rotateX(corner.x, corner.y, transform.rotation),
+    y: centerY + rotateY(corner.x, corner.y, transform.rotation),
   }))
 }
 
