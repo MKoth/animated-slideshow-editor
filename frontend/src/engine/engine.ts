@@ -24,6 +24,8 @@ import type { AnimatableParameter } from './animatableParameters'
 import { createBuiltInClips } from './builtInClips'
 import type { IKManager } from './ikManager'
 import type { ConstraintManager } from './constraintManager'
+import type { DeformedMeshResult } from './meshDeformationEvaluator'
+import type { WorldTransform } from './worldTransform'
 
 export interface EnginePublic {
   readonly project: Project | null
@@ -61,6 +63,11 @@ export interface EnginePublic {
     time: number,
     target?: EvaluatedMaterialOverridesScratch,
   ): MaterialOverrides
+  evaluateMeshDeformation(
+    nodeId: string,
+    time: number,
+    boneWorldTransforms: ReadonlyMap<string, WorldTransform>,
+  ): DeformedMeshResult | null
   getIKManager(): IKManager
   getConstraintManager(): ConstraintManager
   getClip(clipId: string): ClipDefinition

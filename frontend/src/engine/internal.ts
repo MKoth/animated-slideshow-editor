@@ -63,6 +63,9 @@ import type { ClipInstance } from './clipInstance'
 import { createClipInstance } from './clipInstance'
 import { getAnimatableParameters, type AnimatableParameter } from './animatableParameters'
 import type { MeshData } from './mesh'
+import { evaluateMeshDeformation } from './meshDeformationEvaluator'
+import type { DeformedMeshResult } from './meshDeformationEvaluator'
+import type { WorldTransform } from './worldTransform'
 
 const DEFAULT_MATERIAL_KINDS: Readonly<Record<string, string>> = Object.fromEntries(
   DEFAULT_MATERIAL_PARAMETERS.map((parameter) => [parameter.key, parameter.kind]),
@@ -329,6 +332,18 @@ export class Engine {
     target?: EvaluatedMaterialOverridesScratch,
   ): MaterialOverrides {
     return this.#evaluator.evaluateMaterialOverrides(nodeId, time, target)
+  }
+
+  evaluateMeshDeformation(
+    nodeId: string,
+    _time: number,
+    boneWorldTransforms: ReadonlyMap<string, WorldTransform>,
+  ): DeformedMeshResult | null {
+    const node = this.getNode(nodeId)
+    if (!node.components.mesh) {
+      return null
+    }
+    return evaluateMeshDeformation(node.components.mesh.mesh, boneWorldTransforms)
   }
 
   addKeyframe(target: KeyframeTarget, time: number, value: unknown): Keyframe {
@@ -1056,6 +1071,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
     evaluateNode: (nodeId, time, target) => engine.evaluateNode(nodeId, time, target),
     evaluateMaterialOverrides: (nodeId, time, target) =>
       engine.evaluateMaterialOverrides(nodeId, time, target),
+    evaluateMeshDeformation: (nodeId, time, boneWorldTransforms) =>
+      engine.evaluateMeshDeformation(nodeId, time, boneWorldTransforms),
     getIKManager: () => engine.getIKManager(),
     getConstraintManager: () => engine.getConstraintManager(),
     getClip: (clipId) => engine.getClip(clipId),

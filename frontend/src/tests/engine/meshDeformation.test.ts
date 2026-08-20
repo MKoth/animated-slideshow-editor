@@ -982,3 +982,83 @@ describe('FillWeightsCommand', () => {
     }
   })
 })
+
+describe('Engine.evaluateMeshDeformation', () => {
+  it('returns null for node without mesh component', () => {
+    const system = createCommandSystem()
+    expectOk(system.dispatcher.dispatch(new CreateProjectCommand({ name: 'P' })))
+    expectOk(system.dispatcher.dispatch(new CreateSlideCommand({ name: 'S1' })))
+    const slide = system.engine.project?.slides[0]
+    if (!slide) throw new Error('expected a slide')
+    const { nodeId } = expectOk(
+      system.dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'BoneNode',
+          components: { bone: { kind: 'bone', length: 100 } },
+        }),
+      ),
+    )
+    const result = system.engine.evaluateMeshDeformation(nodeId, 0, new Map())
+    expect(result).toBeNull()
+  })
+
+  it('evaluates mesh deformation through engine', () => {
+    const { system, boneId, meshId } = setupWithMeshAndBoneNodes()
+    // Assign weights
+    system.dispatcher.dispatch(
+      new SetVertexWeightsCommand({
+        nodeId: meshId,
+        vertexIndex: 0,
+        weights: [{ boneId, weight: 1.0 }],
+      }),
+    )
+    system.dispatcher.dispatch(
+      new SetVertexWeightsCommand({
+        nodeId: meshId,
+        vertexIndex: 1,
+        weights: [{ boneId, weight: 1.0 }],
+      }),
+    )
+    system.dispatcher.dispatch(
+      new SetVertexWeightsCommand({
+        nodeId: meshId,
+        vertexIndex: 2,
+        weights: [{ boneId, weight: 1.0 }],
+      }),
+    )
+    system.dispatcher.dispatch(
+      new SetVertexWeightsCommand({
+        nodeId: meshId,
+        vertexIndex: 3,
+        weights: [{ boneId, weight: 1.0 }],
+      }),
+    )
+
+    // Create bone world transforms
+    const boneWorldTransforms = new Map([
+      [boneId, { x: 50, y: 30, rotation: 0, scaleX: 1, scaleY: 1 }],
+    ])
+
+    const result = system.engine.evaluateMeshDeformation(meshId, 0, boneWorldTransforms)
+    expect(result).not.toBeNull()
+    expect(result!.deformedVertices).toHaveLength(4)
+    // Each vertex should be offset by the bone transform
+    expect(result!.deformedVertices[0].x).toBeCloseTo(0 + 50)
+    expect(result!.deformedVertices[0].y).toBeCloseTo(0 + 30)
+    expect(result!.deformedVertices[1].x).toBeCloseTo(160 + 50)
+    expect(result!.deformedVertices[1].y).toBeCloseTo(0 + 30)
+  })
+
+  it('returns original vertices when no bone weights are set', () => {
+    const { system, meshId } = setupWithMeshAndBoneNodes()
+    const boneWorldTransforms = new Map()
+    const result = system.engine.evaluateMeshDeformation(meshId, 0, boneWorldTransforms)
+    expect(result).not.toBeNull()
+    // Without bone weights, returns original vertices
+    const node = system.engine.getNode(meshId)
+    const mesh = node.components.mesh!.mesh
+    expect(result!.deformedVertices).toEqual(mesh.vertices)
+  })
+})
