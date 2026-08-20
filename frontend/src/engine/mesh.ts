@@ -9,10 +9,16 @@ export interface MeshFace {
   readonly v2: number
 }
 
+export interface VertexBoneWeight {
+  readonly boneId: string
+  readonly weight: number
+}
+
 export interface MeshData {
   readonly vertices: readonly MeshVertex[]
   readonly faces: readonly MeshFace[]
   readonly uvs: readonly { readonly u: number; readonly v: number }[]
+  readonly boneWeights?: readonly (readonly VertexBoneWeight[])[]
 }
 
 export function createDefaultRectangleMesh(width: number, height: number): MeshData {
@@ -96,7 +102,69 @@ export function meshDataFromJSON(json: unknown): MeshData {
       v: (uv as Record<string, unknown>).v as number,
     })
   }
-  return { vertices, faces, uvs }
+  let boneWeights: (readonly VertexBoneWeight[])[] | undefined
+  if (Array.isArray(record.boneWeights)) {
+    boneWeights = []
+    for (const bw of record.boneWeights) {
+      if (!Array.isArray(bw)) {
+        throw new Error('Each boneWeights entry must be an array')
+      }
+      const weights: VertexBoneWeight[] = []
+      for (const entry of bw) {
+        if (
+          typeof entry !== 'object' ||
+          entry === null ||
+          typeof (entry as Record<string, unknown>).boneId !== 'string' ||
+          typeof (entry as Record<string, unknown>).weight !== 'number'
+        ) {
+          throw new Error('Each bone weight entry must have boneId (string) and weight (number)')
+        }
+        weights.push({
+          boneId: (entry as Record<string, unknown>).boneId as string,
+          weight: (entry as Record<string, unknown>).weight as number,
+        })
+      }
+      boneWeights.push(weights)
+    }
+  }
+  const result: MeshData = { vertices, faces, uvs }
+  if (boneWeights !== undefined) {
+    if (boneWeights.length !== vertices.length) {
+      throw new Error('boneWeights length must match vertices length')
+    }
+    return { ...result, boneWeights }
+  }
+  return result
+}
+
+export function meshDataToJSON(mesh: MeshData): {
+  vertices: readonly { readonly x: number; readonly y: number }[]
+  faces: readonly { readonly v0: number; readonly v1: number; readonly v2: number }[]
+  uvs: readonly { readonly u: number; readonly v: number }[]
+  boneWeights?: readonly (readonly { readonly boneId: string; readonly weight: number }[])[]
+} {
+  const result = {
+    vertices: mesh.vertices,
+    faces: mesh.faces,
+    uvs: mesh.uvs,
+  }
+  if (mesh.boneWeights) {
+    return { ...result, boneWeights: mesh.boneWeights }
+  }
+  return result
+}
+
+export function cloneBoneWeights(
+  boneWeights: readonly (readonly VertexBoneWeight[])[],
+): VertexBoneWeight[][] {
+  return boneWeights.map((vw) => vw.map((w) => ({ boneId: w.boneId, weight: w.weight })))
+}
+
+export function ensureBoneWeightsArray(mesh: MeshData): VertexBoneWeight[][] {
+  if (mesh.boneWeights) {
+    return cloneBoneWeights(mesh.boneWeights)
+  }
+  return []
 }
 
 export interface MeshEdge {
@@ -129,9 +197,18 @@ export function extractEdges(mesh: MeshData): MeshEdge[] {
 }
 
 export function cloneMeshData(mesh: MeshData): MeshData {
-  return {
+  const result: MeshData = {
     vertices: mesh.vertices.map((v) => ({ x: v.x, y: v.y })),
     faces: mesh.faces.map((f) => ({ v0: f.v0, v1: f.v1, v2: f.v2 })),
     uvs: mesh.uvs.map((uv) => ({ u: uv.u, v: uv.v })),
   }
+  if (mesh.boneWeights) {
+    return {
+      ...result,
+      boneWeights: mesh.boneWeights.map((vw) =>
+        vw.map((w) => ({ boneId: w.boneId, weight: w.weight })),
+      ),
+    }
+  }
+  return result
 }
