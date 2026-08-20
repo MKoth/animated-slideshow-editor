@@ -186,10 +186,27 @@ export type ClipInstanceJSON = {
   readonly paramOverrides?: Readonly<Record<string, number>>
 }
 
+export type IKChainJSON = {
+  readonly id: string
+  readonly boneIds: readonly string[]
+  readonly target: {
+    readonly position: { readonly x: number; readonly y: number }
+    readonly nodeId?: string
+  }
+  readonly poleTarget: { readonly position: { readonly x: number; readonly y: number } } | null
+}
+
+export type IKManagerJSON = {
+  /** Map of slideId to IK chain IDs belonging to that slide. */
+  readonly slides: Record<string, readonly string[]>
+  readonly chains: readonly IKChainJSON[]
+}
+
 export type LessonJSON = {
   readonly version: 1
   readonly project: LessonProjectJSON
   readonly slides: readonly SlideJSON[]
   readonly clips?: readonly ClipJSON[]
   readonly library?: LessonLibraryJSON
+  readonly ikChains?: IKManagerJSON
 }

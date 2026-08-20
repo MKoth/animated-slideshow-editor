@@ -256,6 +256,13 @@ export class Engine {
     const node = this.getNode(nodeId)
     const descendantIds = [...walkPreOrder(node)].map((entry) => entry.id)
     const slide = this.getSlideOfNode(nodeId)
+    // Remove IK chains that reference any of the deleted nodes
+    for (const id of descendantIds) {
+      const chains = this.#ik.getChainsForBone(id)
+      for (const chain of chains) {
+        this.#ik.deleteChain(chain.id)
+      }
+    }
     this.#nodes.remove(nodeId)
     for (const id of descendantIds) {
       slide.animation.removeNode(id)
@@ -720,11 +727,16 @@ export class Engine {
       throw new Error('No project exists in memory')
     }
     const json = toLessonJSON(project)
+    const ikJson = this.#ik.toJSON()
+    const hasIK = ikJson.chains.length > 0
     // Add clips to the top-level clips array
-    if (this.#clips.clips.length > 0) {
+    if (this.#clips.clips.length > 0 || hasIK) {
       return {
         ...json,
-        clips: this.#clips.clips.map((clip) => clip.toJSON()),
+        ...(this.#clips.clips.length > 0
+          ? { clips: this.#clips.clips.map((clip) => clip.toJSON()) }
+          : {}),
+        ...(hasIK ? { ikChains: ikJson } : {}),
       }
     }
     return json
@@ -739,6 +751,10 @@ export class Engine {
       const clips = parseClipsFromLessonJSON(json)
       for (const clip of clips) {
         this.#clips.importClip(clip)
+      }
+      // Restore IK chains from JSON
+      if (json.ikChains) {
+        this.#ik.restoreFromJSON(json.ikChains)
       }
     } catch (error) {
       this.#nodes.clear()

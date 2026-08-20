@@ -257,6 +257,40 @@ describe('IKManager', () => {
     expect(engine.getIKChain(chain.id).poleTarget?.position).toEqual({ x: 150, y: -50 })
   })
 
+  it('removes IK chain when a bone in the chain is deleted', () => {
+    const engine = setup()
+    const slide = engine.project?.slides[0]
+    if (!slide) throw new Error('No slide')
+
+    const root = createBoneNode(engine, 'Root', slide.scene.root.id, 0, 0)
+    const child = createBoneNode(engine, 'Child', root.id, 100, 0)
+
+    engine.createIKChain(slide.id, [root.id, child.id], { position: { x: 200, y: 0 } })
+
+    expect(engine.getIKChainsForBone(root.id)).toHaveLength(1)
+
+    engine.removeNode(child.id)
+
+    expect(engine.getIKChainsForBone(root.id)).toHaveLength(0)
+  })
+
+  it('removes IK chain when root bone in the chain is deleted', () => {
+    const engine = setup()
+    const slide = engine.project?.slides[0]
+    if (!slide) throw new Error('No slide')
+
+    const root = createBoneNode(engine, 'Root', slide.scene.root.id, 0, 0)
+    const child = createBoneNode(engine, 'Child', root.id, 100, 0)
+
+    engine.createIKChain(slide.id, [root.id, child.id], { position: { x: 200, y: 0 } })
+
+    engine.removeNode(root.id)
+
+    // Both root and child are removed (child is descendant of root)
+    // IK chain should be gone
+    expect(engine.getIKChainsForSlide(slide.id)).toHaveLength(0)
+  })
+
   it('clears chains when slide is deleted', () => {
     const engine = setup()
     const slide = engine.project?.slides[0]

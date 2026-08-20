@@ -284,6 +284,67 @@ describe('serialization', () => {
     expect(() => restoredFromJSON(corrupt)).toThrow(/alignment/i)
   })
 
+  it('round-trips IK chains through serialization', () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'IK Test' })
+    const slide = engine.createSlide('Slide 1')
+    const { scene } = slide
+
+    const bone1 = engine.createNode(scene.id, scene.root.id, 'Bone1', {
+      components: { bone: { kind: 'bone' } },
+      transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+    })
+    const bone2 = engine.createNode(scene.id, bone1.id, 'Bone2', {
+      components: { bone: { kind: 'bone' } },
+      transform: { x: 100, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+    })
+
+    const chain = engine.createIKChain(slide.id, [bone1.id, bone2.id], {
+      position: { x: 200, y: 0 },
+    })
+
+    const json = engine.toJSON()
+    const restored = createEngine()
+    restored.restoreFromJSON(json)
+
+    const restoredChains = restored.getIKChainsForSlide(slide.id)
+    expect(restoredChains).toHaveLength(1)
+    expect(restoredChains[0].id).toBe(chain.id)
+    expect(restoredChains[0].boneIds).toEqual([bone1.id, bone2.id])
+    expect(restoredChains[0].target).toEqual({ position: { x: 200, y: 0 } })
+  })
+
+  it('round-trips IK chains with pole targets', () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'IK Pole Test' })
+    const slide = engine.createSlide('Slide 1')
+    const { scene } = slide
+
+    const bone1 = engine.createNode(scene.id, scene.root.id, 'Bone1', {
+      components: { bone: { kind: 'bone' } },
+      transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+    })
+    const bone2 = engine.createNode(scene.id, bone1.id, 'Bone2', {
+      components: { bone: { kind: 'bone' } },
+      transform: { x: 100, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+    })
+
+    engine.createIKChain(
+      slide.id,
+      [bone1.id, bone2.id],
+      { position: { x: 200, y: 50 } },
+      { position: { x: 100, y: -100 } },
+    )
+
+    const json = engine.toJSON()
+    const restored = createEngine()
+    restored.restoreFromJSON(json)
+
+    const restoredChains = restored.getIKChainsForSlide(slide.id)
+    expect(restoredChains).toHaveLength(1)
+    expect(restoredChains[0].poleTarget).toEqual({ position: { x: 100, y: -100 } })
+  })
+
   it('leaves the engine clean after a failed restore', () => {
     const engine = createEngine()
     engine.createProject({ name: 'P' })
