@@ -96,7 +96,7 @@ export class RiggingInteraction {
         sceneId: scene.id,
         parentId: scene.root.id,
         name,
-        components: { bone: { kind: 'bone' } },
+        components: { bone: { kind: 'bone', length: 100 } },
         transform: { x, y, rotation: 0, scaleX: 1, scaleY: 1 },
       }),
     )

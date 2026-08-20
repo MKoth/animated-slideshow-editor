@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
 export type EditingMode =
-  'default' | 'boneCreation' | 'ikTarget' | 'poleVector' | 'meshEdit' | 'weightPaint'
+  'default' | 'boneCreation' | 'ikTarget' | 'poleVector' | 'meshEdit' | 'weightPaint' | 'rigging'
 
 export interface EditingModeState {
   readonly mode: EditingMode

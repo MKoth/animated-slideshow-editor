@@ -8,7 +8,7 @@ import { useSelectionStore } from '../../stores/selectionStore'
 import { useEditingModeStore } from '../../stores/editingModeStore'
 import { findAlignment } from './alignment'
 import { DEFAULT_GRID_STEP, snapDelta } from './gridSnap'
-import type { NodeSizeSource, WorldTransformSource } from './hitTest'
+import type { NodeFilter, NodeSizeSource, WorldTransformSource } from './hitTest'
 import { aabbOf, nodesIntersectingRect, topmostNodeAt, worldAabbOf } from './hitTest'
 import { cursorToWorld } from './screenToWorld'
 import { expandRect, mergeRect, rectIntersects, rectOf } from './worldGeometry'
@@ -45,6 +45,7 @@ export interface CanvasSelectionContext {
   readonly getMoveOptions?: () => MoveOptions
   readonly getAnimationMode?: () => boolean
   readonly getWorldTransform?: WorldTransformSource
+  readonly getNodeFilter?: () => NodeFilter | null
 }
 
 const MARQUEE_START_DISTANCE = 4
@@ -64,6 +65,7 @@ export class CanvasSelection {
   readonly #onMove?: () => void
   readonly #getMoveOptions?: () => MoveOptions
   readonly #getWorldTransform?: WorldTransformSource
+  readonly #getNodeFilter?: () => NodeFilter | null
   #attached = false
   #pressed = false
   #pressedOnNode = false
@@ -93,6 +95,7 @@ export class CanvasSelection {
     this.#onMove = context.onMove
     this.#getMoveOptions = context.getMoveOptions
     this.#getWorldTransform = context.getWorldTransform
+    this.#getNodeFilter = context.getNodeFilter
     this.#animatedMove = new AnimatedMoveGesture(context)
   }
 
@@ -160,7 +163,8 @@ export class CanvasSelection {
     this.#startClientX = event.clientX
     this.#startClientY = event.clientY
     this.#startWorld = point
-    const hit = topmostNodeAt(scene, point, this.#getNodeSize, this.#transformOf)
+    const filter = this.#getNodeFilter?.() ?? null
+    const hit = topmostNodeAt(scene, point, this.#getNodeSize, this.#transformOf, filter)
     this.#pressedOnNode = hit !== null
     if (hit) {
       if (event.ctrlKey || event.metaKey) {
@@ -208,12 +212,14 @@ export class CanvasSelection {
       return
     }
     this.#marqueeActive = true
+    const filter = this.#getNodeFilter?.() ?? null
     this.#store.selectMany(
       nodesIntersectingRect(
         scene,
         rectOf(this.#startWorld, current),
         this.#getNodeSize,
         this.#transformOf,
+        filter,
       ),
     )
   }

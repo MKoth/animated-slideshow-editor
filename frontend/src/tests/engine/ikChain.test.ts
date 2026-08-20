@@ -15,7 +15,7 @@ function createBoneNode(engine: Engine, name: string, parentId: string, x = 0, y
   const slide = engine.project?.slides[0]
   if (!slide) throw new Error('No slide')
   return engine.createNode(slide.scene.id, parentId, name, {
-    components: { bone: { kind: 'bone' } },
+    components: { bone: { kind: 'bone', length: 100 } },
     transform: { x, y, rotation: 0, scaleX: 1, scaleY: 1 },
   })
 }

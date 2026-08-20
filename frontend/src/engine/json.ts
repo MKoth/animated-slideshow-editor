@@ -25,7 +25,7 @@ export type NodeComponentsJSON = {
     readonly fontSize: number
     readonly alignment: string
   }
-  readonly bone?: { readonly kind: 'bone' }
+  readonly bone?: { readonly kind: 'bone'; readonly length?: number }
   readonly mesh?: {
     readonly kind: 'mesh'
     readonly mesh: {

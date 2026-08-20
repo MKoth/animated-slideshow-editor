@@ -1,7 +1,7 @@
 import type { SceneNode } from '../../engine'
 import type { EvaluatedNodeState } from '../../engine/animationEvaluator'
 import type { PixiContainer, RendererPixi } from './pixi'
-import { applyPlaceholderName, applyTint, createPlaceholder } from './placeholder'
+import { applyPlaceholderName, applyTint, createPlaceholder, setBoneSize } from './placeholder'
 import type { TextureCache } from './textureCache'
 
 const placeholderByContainer = new WeakMap<PixiContainer, PixiContainer>()
@@ -25,6 +25,10 @@ export function createNodeContainer(
     const placeholder = createPlaceholder(pixi, node, cache, textureKey)
     placeholderByContainer.set(container, placeholder)
     container.addChild(placeholder)
+  } else if (node.components.bone) {
+    const bonePlaceholder = createBonePlaceholder(pixi, node, node.components.bone.length)
+    placeholderByContainer.set(container, bonePlaceholder)
+    container.addChild(bonePlaceholder)
   }
   return container
 }
@@ -72,4 +76,31 @@ export function applyName(container: PixiContainer, node: SceneNode): void {
   if (placeholder && placeholder.label.startsWith('placeholder:')) {
     applyPlaceholderName(placeholder, node.name)
   }
+}
+
+function createBonePlaceholder(pixi: RendererPixi, node: SceneNode, length: number): PixiContainer {
+  const group = new pixi.Container()
+  group.label = `placeholder:${node.name}`
+
+  const graphics = new pixi.Graphics()
+  graphics.moveTo(0, 0).lineTo(length, 0).stroke({ width: 4, color: 0xff0000 })
+  graphics.circle(0, 0, 5).fill({ color: 0xff0000 })
+  graphics.circle(length, 0, 5).fill({ color: 0xff0000 })
+  group.addChild(graphics)
+
+  const label = new pixi.Text({
+    text: node.name,
+    style: {
+      fontSize: 13,
+      fill: 0xffffff,
+      fontWeight: '600',
+      fontFamily: 'system-ui, sans-serif',
+    },
+  })
+  label.anchor.set(0.5, 0.5)
+  label.position.set(length / 2, -20)
+  group.addChild(label)
+
+  setBoneSize(group, length, 10)
+  return group
 }

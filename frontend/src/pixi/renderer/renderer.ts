@@ -11,6 +11,8 @@ import { EvaluatedWorldTransformSource } from '../../engine/worldTransform'
 import type { ViewportTransform } from './worldGeometry'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { useUiStore } from '../../stores/uiStore'
+import { useEditingModeStore } from '../../stores/editingModeStore'
+import type { NodeFilter } from './hitTest'
 import { CameraControls } from './cameraControls'
 import { Camera } from './camera'
 import { CanvasSelection } from './canvasSelection'
@@ -249,6 +251,13 @@ export class Renderer {
         }),
         getAnimationMode: () => useUiStore.getState().animationMode,
         getWorldTransform: transformOf,
+        getNodeFilter: (): NodeFilter | null => {
+          const { mode } = useEditingModeStore.getState()
+          if (mode === 'rigging') {
+            return (node) => !!node.components.bone
+          }
+          return null
+        },
       })
       this.#selection.attach()
 

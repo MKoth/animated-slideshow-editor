@@ -16,6 +16,7 @@ const MISSING_TINT = 0x808080
 const labelByGroup = new WeakMap<PixiContainer, PixiText>()
 const outlineByGroup = new WeakMap<PixiContainer, PixiGraphics>()
 const bodyByGroup = new WeakMap<PixiContainer, PixiSprite>()
+const boneSizeByGroup = new WeakMap<PixiContainer, WorldSize>()
 
 export function createPlaceholder(
   pixi: RendererPixi,
@@ -96,11 +97,19 @@ export function applyAssetTexture(group: PixiContainer, texture: PixiTexture): v
 }
 
 export function placeholderSize(group: PixiContainer): WorldSize | null {
+  const boneSize = boneSizeByGroup.get(group)
+  if (boneSize) {
+    return boneSize
+  }
   const body = bodyByGroup.get(group)
   if (!body) {
     return null
   }
   return { width: body.width, height: body.height }
+}
+
+export function setBoneSize(group: PixiContainer, width: number, height: number): void {
+  boneSizeByGroup.set(group, { width, height })
 }
 
 function hexColorToTint(color: string): number {

@@ -3,6 +3,7 @@ import { useMeshEditStore } from '../../stores/meshEditStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 
 const RIGGING_BUTTONS: readonly { mode: EditingMode; label: string }[] = [
+  { mode: 'rigging', label: 'Rigging Mode' },
   { mode: 'boneCreation', label: 'Create Bone' },
   { mode: 'ikTarget', label: 'Create IK Target' },
   { mode: 'poleVector', label: 'Create Pole Vector' },
@@ -17,6 +18,7 @@ const MODE_LABELS: Record<EditingMode, string> = {
   poleVector: 'Pole Vector Placement',
   meshEdit: 'Mesh Edit',
   weightPaint: 'Weight Paint',
+  rigging: 'Rigging',
 }
 
 export function CanvasToolbar() {

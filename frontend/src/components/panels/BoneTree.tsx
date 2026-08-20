@@ -60,7 +60,7 @@ export function BoneTree({ dispatch, slide }: BoneTreeProps) {
         sceneId: slide.scene.id,
         parentId: slide.scene.root.id,
         name,
-        components: { bone: { kind: 'bone' } },
+        components: { bone: { kind: 'bone', length: 100 } },
         transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
       }),
     )

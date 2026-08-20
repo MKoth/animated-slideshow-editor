@@ -291,11 +291,11 @@ describe('serialization', () => {
     const { scene } = slide
 
     const bone1 = engine.createNode(scene.id, scene.root.id, 'Bone1', {
-      components: { bone: { kind: 'bone' } },
+      components: { bone: { kind: 'bone', length: 100 } },
       transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
     })
     const bone2 = engine.createNode(scene.id, bone1.id, 'Bone2', {
-      components: { bone: { kind: 'bone' } },
+      components: { bone: { kind: 'bone', length: 100 } },
       transform: { x: 100, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
     })
 
@@ -321,11 +321,11 @@ describe('serialization', () => {
     const { scene } = slide
 
     const bone1 = engine.createNode(scene.id, scene.root.id, 'Bone1', {
-      components: { bone: { kind: 'bone' } },
+      components: { bone: { kind: 'bone', length: 100 } },
       transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
     })
     const bone2 = engine.createNode(scene.id, bone1.id, 'Bone2', {
-      components: { bone: { kind: 'bone' } },
+      components: { bone: { kind: 'bone', length: 100 } },
       transform: { x: 100, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
     })
 

@@ -31,7 +31,7 @@ function createBoneNode(
         sceneId,
         parentId,
         name,
-        components: { bone: { kind: 'bone' } },
+        components: { bone: { kind: 'bone', length: 100 } },
       }),
     ),
   )
@@ -76,7 +76,7 @@ describe('Bone Animation', () => {
         parent: null,
         children: [],
         material: { materialDefinitionId: 'default', overrides: {} },
-        components: { bone: { kind: 'bone' } },
+        components: { bone: { kind: 'bone', length: 100 } },
         clipInstances: [],
         _worldTransformDirty: true,
         _cachedWorldTransform: null,

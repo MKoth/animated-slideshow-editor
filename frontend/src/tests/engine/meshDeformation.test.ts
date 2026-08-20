@@ -40,7 +40,7 @@ function setupWithMeshAndBoneNodes() {
         sceneId: slide.scene.id,
         parentId: slide.scene.root.id,
         name: 'Bone',
-        components: { bone: { kind: 'bone' } },
+        components: { bone: { kind: 'bone', length: 100 } },
       }),
     ),
   )
@@ -672,7 +672,7 @@ describe('SmoothWeights normalization', () => {
           sceneId: slide.scene.id,
           parentId: slide.scene.root.id,
           name: 'Bone2',
-          components: { bone: { kind: 'bone' } },
+          components: { bone: { kind: 'bone', length: 100 } },
         }),
       ),
     )

@@ -21,6 +21,7 @@ export interface TextComponent {
 
 export interface BoneComponent {
   readonly kind: 'bone'
+  readonly length: number
 }
 
 export interface MeshComponent {
@@ -42,8 +43,6 @@ export function copyComponents(components: NodeComponents): NodeComponents {
     assetInstance: components.assetInstance ? { ...components.assetInstance } : undefined,
     text: components.text ? { ...components.text } : undefined,
     bone: components.bone ? { ...components.bone } : undefined,
-    mesh: components.mesh
-      ? { kind: 'mesh', mesh: cloneMeshData(components.mesh.mesh) }
-      : undefined,
+    mesh: components.mesh ? { kind: 'mesh', mesh: cloneMeshData(components.mesh.mesh) } : undefined,
   }
 }

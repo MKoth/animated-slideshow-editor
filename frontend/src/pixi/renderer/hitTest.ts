@@ -8,6 +8,8 @@ export type NodeSizeSource = (nodeId: string) => WorldSize | null
 
 export type WorldTransformSource = (nodeId: string) => WorldTransform | null
 
+export type NodeFilter = (node: SceneNode) => boolean
+
 function storedTransformOf(scene: Scene): WorldTransformSource {
   return (nodeId) => storedWorldTransformOf(scene, nodeId)
 }
@@ -17,10 +19,14 @@ export function topmostNodeAt(
   point: WorldPoint,
   sizes: NodeSizeSource,
   transformOf: WorldTransformSource = storedTransformOf(scene),
+  filter?: NodeFilter | null,
 ): string | null {
   let topmost: string | null = null
   for (const node of walkPreOrder(scene.root)) {
     if (!selectable(node) || !containsPoint(point, sizes(node.id), transformOf(node.id))) {
+      continue
+    }
+    if (filter && !filter(node)) {
       continue
     }
     topmost = node.id
@@ -33,10 +39,14 @@ export function nodesIntersectingRect(
   rect: WorldRect,
   sizes: NodeSizeSource,
   transformOf: WorldTransformSource = storedTransformOf(scene),
+  filter?: NodeFilter | null,
 ): readonly string[] {
   const hit: string[] = []
   for (const node of walkPreOrder(scene.root)) {
     if (!selectable(node)) {
+      continue
+    }
+    if (filter && !filter(node)) {
       continue
     }
     const aabb = worldAabbOf(scene, node.id, sizes, transformOf)

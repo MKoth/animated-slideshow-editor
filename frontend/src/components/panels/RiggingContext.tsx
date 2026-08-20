@@ -22,8 +22,9 @@ export function RiggingContext({ engine }: RiggingContextProps) {
 
   const isBone = !!node.components.bone
   const isMesh = !!node.components.mesh
+  const isImage = !!node.components.assetInstance
 
-  if (!isBone && !isMesh) {
+  if (!isBone && !isMesh && !isImage) {
     return null
   }
 
@@ -31,10 +32,13 @@ export function RiggingContext({ engine }: RiggingContextProps) {
     <section className="rigging-context" aria-label="Selection context">
       <header className="rigging-context__header">
         <h3 className="rigging-context__title">{node.name}</h3>
-        <span className="rigging-context__badge">{isBone ? 'Bone' : 'Mesh'}</span>
+        <span className="rigging-context__badge">
+          {isBone ? 'Bone' : isMesh ? 'Mesh' : 'Image'}
+        </span>
       </header>
       {isBone && <BoneContext engine={engine} nodeId={node.id} />}
       {isMesh && <MeshContext engine={engine} nodeId={node.id} />}
+      {isImage && <ImageContext engine={engine} nodeId={node.id} />}
     </section>
   )
 }
@@ -119,6 +123,37 @@ function MeshContext({ engine, nodeId }: { engine: EnginePublic; nodeId: string 
       ) : (
         <p className="rigging-context__empty">No bone weights assigned to this mesh.</p>
       )}
+    </div>
+  )
+}
+
+function ImageContext({ engine, nodeId }: { engine: EnginePublic; nodeId: string }) {
+  const node = engine.getNode(nodeId)
+  const parent = node.parent
+
+  if (!parent || !parent.components.bone) {
+    return (
+      <div className="rigging-context__body">
+        <p className="rigging-context__empty">Not attached to a bone.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rigging-context__body">
+      <h4 className="rigging-context__subtitle">Attachment</h4>
+      <dl className="rigging-context__fields">
+        <div className="rigging-context__field">
+          <dt>Parent Bone</dt>
+          <dd>{parent.name}</dd>
+        </div>
+        <div className="rigging-context__field">
+          <dt>Local Position</dt>
+          <dd>
+            ({node.transform.x.toFixed(1)}, {node.transform.y.toFixed(1)})
+          </dd>
+        </div>
+      </dl>
     </div>
   )
 }

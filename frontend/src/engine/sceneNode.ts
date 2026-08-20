@@ -181,13 +181,18 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
     if (!isKind(record.bone, 'bone')) {
       throw new Error(`Node "${nodeId}" has an invalid bone component`)
     }
-    components.bone = { kind: 'bone' }
+    const boneRecord = record.bone as Record<string, unknown>
+    const length = typeof boneRecord.length === 'number' ? boneRecord.length : 100
+    components.bone = { kind: 'bone', length }
   }
   if (record.mesh !== undefined) {
     if (!isKind(record.mesh, 'mesh')) {
       throw new Error(`Node "${nodeId}" has an invalid mesh component`)
     }
-    components.mesh = { kind: 'mesh', mesh: meshDataFromJSON((record.mesh as Record<string, unknown>).mesh) }
+    components.mesh = {
+      kind: 'mesh',
+      mesh: meshDataFromJSON((record.mesh as Record<string, unknown>).mesh),
+    }
   }
   return components
 }
