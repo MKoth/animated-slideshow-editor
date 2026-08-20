@@ -260,6 +260,27 @@ export interface IKPoleTargetChanged {
   readonly chainId: string
 }
 
+export interface ConstraintAdded {
+  readonly type: 'ConstraintAdded'
+  readonly nodeId: string
+  readonly constraintId: string
+  readonly constraintType: string
+}
+
+export interface ConstraintRemoved {
+  readonly type: 'ConstraintRemoved'
+  readonly nodeId: string
+  readonly constraintId: string
+  readonly constraintType: string
+}
+
+export interface ConstraintChanged {
+  readonly type: 'ConstraintChanged'
+  readonly nodeId: string
+  readonly constraintId: string
+  readonly constraintType: string
+}
+
 export type EngineEvent =
   | ProjectCreated
   | ProjectLoaded
@@ -309,6 +330,9 @@ export type EngineEvent =
   | IKChainDeleted
   | IKTargetChanged
   | IKPoleTargetChanged
+  | ConstraintAdded
+  | ConstraintRemoved
+  | ConstraintChanged
 
 export type EventListener = (event: EngineEvent) => void
 

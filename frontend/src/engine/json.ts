@@ -202,6 +202,34 @@ export type IKManagerJSON = {
   readonly chains: readonly IKChainJSON[]
 }
 
+export type ConstraintParamsJSON = {
+  readonly minRotation?: number
+  readonly maxRotation?: number
+  readonly minX?: number
+  readonly maxX?: number
+  readonly minY?: number
+  readonly maxY?: number
+  readonly targetX?: number
+  readonly targetY?: number
+  readonly targetNodeId?: string
+  readonly minDistance?: number
+  readonly maxDistance?: number
+  readonly positionInfluence?: number
+  readonly rotationInfluence?: number
+  readonly scaleInfluence?: number
+}
+
+export type ConstraintJSON = {
+  readonly id: string
+  readonly type: string
+  readonly priority: number
+  readonly params: ConstraintParamsJSON
+}
+
+export type ConstraintManagerJSON = {
+  readonly nodeConstraints: Record<string, readonly ConstraintJSON[]>
+}
+
 export type LessonJSON = {
   readonly version: 1
   readonly project: LessonProjectJSON
@@ -209,4 +237,5 @@ export type LessonJSON = {
   readonly clips?: readonly ClipJSON[]
   readonly library?: LessonLibraryJSON
   readonly ikChains?: IKManagerJSON
+  readonly constraints?: ConstraintManagerJSON
 }

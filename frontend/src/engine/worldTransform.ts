@@ -6,6 +6,8 @@ import type { EvaluatedNodeScratch } from './animationEvaluator'
 import { evaluatedNodeScratch } from './animationEvaluator'
 import type { IKManager } from './ikManager'
 import { solveTwoBoneIK, solveCCDIK } from './ikSolver'
+import type { ConstraintManager } from './constraintManager'
+import { applyConstraints } from './constraintEvaluator'
 
 export interface WorldTransform {
   readonly x: number
@@ -57,6 +59,7 @@ export class EvaluatedWorldTransformSource {
   readonly #getTime: () => number
   readonly #previews: ReadonlyMap<string, { readonly x: number; readonly y: number }>
   readonly #ikManager: IKManager | null
+  readonly #constraintManager: ConstraintManager | null
   readonly #scratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #chain: SceneNode[] = []
   #time = 0
@@ -81,11 +84,13 @@ export class EvaluatedWorldTransformSource {
     getTime: () => number,
     previews: ReadonlyMap<string, { readonly x: number; readonly y: number }> = new Map(),
     ikManager: IKManager | null = null,
+    constraintManager: ConstraintManager | null = null,
   ) {
     this.#engine = engine
     this.#getTime = getTime
     this.#previews = previews
     this.#ikManager = ikManager
+    this.#constraintManager = constraintManager
   }
 
   /**
@@ -162,7 +167,18 @@ export class EvaluatedWorldTransformSource {
       this.#chain.push(cursor)
     }
     this.#chain.reverse()
-    return composeChain(this.#chain, this.#localOf)
+    let worldTransform = composeChain(this.#chain, this.#localOf)
+    // Apply constraints if any
+    if (this.#constraintManager) {
+      const constraints = this.#constraintManager.getConstraintsForNode(nodeId)
+      if (constraints.length > 0) {
+        worldTransform = applyConstraints(worldTransform, constraints, {
+          nodeLookup: (id) => this.#engine.getNode(id),
+          worldTransformLookup: (id) => this.transformOf(id),
+        })
+      }
+    }
+    return worldTransform
   }
 }
 

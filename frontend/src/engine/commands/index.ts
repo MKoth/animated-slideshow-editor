@@ -219,3 +219,12 @@ export { SetIKTargetCommand } from './setIKTargetCommand'
 export type { SetIKTargetInverse, SetIKTargetParameters } from './setIKTargetCommand'
 export { SetIKPoleTargetCommand } from './setIKPoleTargetCommand'
 export type { SetIKPoleTargetInverse, SetIKPoleTargetParameters } from './setIKPoleTargetCommand'
+export { AddConstraintCommand } from './addConstraintCommand'
+export type { AddConstraintInverse, AddConstraintParameters } from './addConstraintCommand'
+export { RemoveConstraintCommand } from './removeConstraintCommand'
+export type { RemoveConstraintInverse, RemoveConstraintParameters } from './removeConstraintCommand'
+export { SetConstraintParamsCommand } from './setConstraintParamsCommand'
+export type {
+  SetConstraintParamsInverse,
+  SetConstraintParamsParameters,
+} from './setConstraintParamsCommand'

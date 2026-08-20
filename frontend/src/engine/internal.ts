@@ -55,6 +55,8 @@ import {
 import type { EnginePublic } from './engine'
 import { ClipManager } from './clipManager'
 import { IKManager } from './ikManager'
+import { ConstraintManager } from './constraintManager'
+import type { Constraint, ConstraintType, ConstraintParams } from './constraint'
 import type { ClipChannelDef, ClipParam } from './clipDefinition'
 import { ClipDefinition } from './clipDefinition'
 import type { ClipInstance } from './clipInstance'
@@ -78,6 +80,7 @@ export class Engine {
   readonly #evaluator: AnimationEvaluator
   readonly #clips: ClipManager
   readonly #ik: IKManager
+  readonly #constraints: ConstraintManager
   readonly #embeddedAssets = new Map<string, EmbeddedAsset>()
   readonly #embeddedMaterials = new Map<string, EmbeddedMaterialDefinition>()
   readonly #embeddedShaders = new Map<string, EmbeddedShaderDefinition>()
@@ -110,6 +113,7 @@ export class Engine {
     )
     this.#clips = new ClipManager(this.#bus)
     this.#ik = new IKManager(this.#bus, (nodeId) => this.getNode(nodeId))
+    this.#constraints = new ConstraintManager(this.#bus, (nodeId) => this.getNode(nodeId))
   }
 
   get project(): Project | null {
@@ -262,6 +266,10 @@ export class Engine {
       for (const chain of chains) {
         this.#ik.deleteChain(chain.id)
       }
+    }
+    // Remove constraints for all deleted nodes
+    for (const id of descendantIds) {
+      this.#constraints.removeConstraintsForNode(id)
     }
     this.#nodes.remove(nodeId)
     for (const id of descendantIds) {
@@ -729,14 +737,17 @@ export class Engine {
     const json = toLessonJSON(project)
     const ikJson = this.#ik.toJSON()
     const hasIK = ikJson.chains.length > 0
+    const constraintsJson = this.#constraints.toJSON()
+    const hasConstraints = Object.keys(constraintsJson.nodeConstraints).length > 0
     // Add clips to the top-level clips array
-    if (this.#clips.clips.length > 0 || hasIK) {
+    if (this.#clips.clips.length > 0 || hasIK || hasConstraints) {
       return {
         ...json,
         ...(this.#clips.clips.length > 0
           ? { clips: this.#clips.clips.map((clip) => clip.toJSON()) }
           : {}),
         ...(hasIK ? { ikChains: ikJson } : {}),
+        ...(hasConstraints ? { constraints: constraintsJson } : {}),
       }
     }
     return json
@@ -755,6 +766,10 @@ export class Engine {
       // Restore IK chains from JSON
       if (json.ikChains) {
         this.#ik.restoreFromJSON(json.ikChains)
+      }
+      // Restore constraints from JSON
+      if (json.constraints) {
+        this.#constraints.restoreFromJSON(json.constraints)
       }
     } catch (error) {
       this.#nodes.clear()
@@ -895,6 +910,37 @@ export class Engine {
     return this.#ik
   }
 
+  // --- Constraint methods ---
+
+  addConstraint(
+    nodeId: string,
+    type: ConstraintType,
+    priority: number,
+    params: ConstraintParams,
+  ): Constraint {
+    return this.#constraints.addConstraint(nodeId, type, priority, params)
+  }
+
+  removeConstraint(nodeId: string, constraintId: string): Constraint {
+    return this.#constraints.removeConstraint(nodeId, constraintId)
+  }
+
+  setConstraintParams(nodeId: string, constraintId: string, params: ConstraintParams): void {
+    this.#constraints.setConstraintParams(nodeId, constraintId, params)
+  }
+
+  getConstraint(constraintId: string): Constraint {
+    return this.#constraints.getConstraint(constraintId)
+  }
+
+  getConstraintsForNode(nodeId: string): readonly Constraint[] {
+    return this.#constraints.getConstraintsForNode(nodeId)
+  }
+
+  getConstraintManager(): ConstraintManager {
+    return this.#constraints
+  }
+
   #resolveMaterialDefinition(definitionId: string): MaterialDefinition {
     const embedded = this.#embeddedMaterials.get(definitionId)
     if (embedded) {
@@ -928,6 +974,7 @@ export class Engine {
     }
     this.#embeddedShaders.clear()
     this.#ik.clear()
+    this.#constraints.clear()
     for (const shader of project.embeddedShaders) {
       this.#embeddedShaders.set(shader.id, shader)
     }
@@ -997,6 +1044,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     evaluateMaterialOverrides: (nodeId, time, target) =>
       engine.evaluateMaterialOverrides(nodeId, time, target),
     getIKManager: () => engine.getIKManager(),
+    getConstraintManager: () => engine.getConstraintManager(),
     getClip: (clipId) => engine.getClip(clipId),
     getClipChannelKeyframes: (clipId, channel) => engine.getClipChannelKeyframes(clipId, channel),
     getClipInstances: (nodeId) => engine.getClipInstances(nodeId),

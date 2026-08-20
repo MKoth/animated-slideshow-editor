@@ -183,6 +183,7 @@ export class Renderer {
         },
         this.#previewPositions,
         this.#engine.getIKManager(),
+        this.#engine.getConstraintManager(),
       )
       const transformOf = (nodeId: string) => this.#transformSource?.transformOf(nodeId) ?? null
 

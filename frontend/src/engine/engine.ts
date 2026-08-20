@@ -23,6 +23,7 @@ import type { ClipInstance } from './clipInstance'
 import type { AnimatableParameter } from './animatableParameters'
 import { createBuiltInClips } from './builtInClips'
 import type { IKManager } from './ikManager'
+import type { ConstraintManager } from './constraintManager'
 
 export interface EnginePublic {
   readonly project: Project | null
@@ -61,6 +62,7 @@ export interface EnginePublic {
     target?: EvaluatedMaterialOverridesScratch,
   ): MaterialOverrides
   getIKManager(): IKManager
+  getConstraintManager(): ConstraintManager
   getClip(clipId: string): ClipDefinition
   getClipChannelKeyframes(clipId: string, channel: AnimationProperty): readonly Keyframe[]
   getClipInstances(nodeId: string): readonly ClipInstance[]
