@@ -37,11 +37,19 @@ export function registerMeshEditShortcuts(): () => void {
     }
   })
 
+  const disposeS = registerShortcut('s', () => {
+    const { meshEditNodeId } = useMeshEditStore.getState()
+    if (meshEditNodeId) {
+      useMeshEditStore.getState().setMeshEditTool('subdivide')
+    }
+  })
+
   return () => {
     disposeEscape()
     dispose1()
     dispose2()
     dispose3()
     disposeE()
+    disposeS()
   }
 }

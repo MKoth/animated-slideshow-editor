@@ -6,6 +6,7 @@ import {
   TransactionCommand,
   ExtrudeFacesCommand,
   ExtrudeEdgesCommand,
+  SubdivideFacesCommand,
 } from '../../engine/commands'
 import { useMeshEditStore } from '../../stores/meshEditStore'
 import type { MeshSelectMode } from '../../stores/meshEditStore'
@@ -94,6 +95,11 @@ export class MeshEditInteraction {
 
     if (meshEditTool === 'extrude') {
       this.#handleExtrudeClick(meshEditNodeId, selectMode)
+      return
+    }
+
+    if (meshEditTool === 'subdivide') {
+      this.#handleSubdivideClick(meshEditNodeId, selectMode)
       return
     }
 
@@ -218,6 +224,12 @@ export class MeshEditInteraction {
     }
   }
 
+  #handleSubdivideClick(meshEditNodeId: string, selectMode: MeshSelectMode): void {
+    if (selectMode === 'face') {
+      this.#subdivideSelectedFaces(meshEditNodeId)
+    }
+  }
+
   #extrudeSelectedFaces(meshEditNodeId: string): void {
     const { selectedFaceIndices } = useMeshEditStore.getState()
     if (selectedFaceIndices.length === 0) {
@@ -246,6 +258,20 @@ export class MeshEditInteraction {
       }),
     )
     useMeshEditStore.getState().clearEdgeSelection()
+  }
+
+  #subdivideSelectedFaces(meshEditNodeId: string): void {
+    const { selectedFaceIndices } = useMeshEditStore.getState()
+    if (selectedFaceIndices.length === 0) {
+      return
+    }
+    this.#dispatch(
+      new SubdivideFacesCommand({
+        nodeId: meshEditNodeId,
+        faceIndices: selectedFaceIndices,
+      }),
+    )
+    useMeshEditStore.getState().clearFaceSelection()
   }
 
   readonly #onMouseMove = (event: MouseEvent): void => {

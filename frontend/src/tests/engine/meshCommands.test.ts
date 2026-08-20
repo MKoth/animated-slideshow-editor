@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CommandResult } from '../../engine/commands'
+import type { Engine } from '../../engine/internal'
 import {
   CreateNodeCommand,
   CreateProjectCommand,
@@ -8,6 +9,7 @@ import {
   DeleteVerticesCommand,
   ExtrudeFacesCommand,
   ExtrudeEdgesCommand,
+  SubdivideFacesCommand,
   createCommandSystem,
 } from '../../engine/commands'
 import { createDefaultRectangleMesh } from '../../engine/mesh'
@@ -410,6 +412,158 @@ describe('ExtrudeEdgesCommand', () => {
       nodeId: 'n1',
       edgeIndices: [{ v0: 0, v1: 1 }],
       distance: 20,
+    })
+  })
+})
+
+describe('SubdivideFacesCommand', () => {
+  it('subdivides a single face into 4 smaller triangles', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(
+      new SubdivideFacesCommand({ nodeId, faceIndices: [0] }),
+    )
+    const inverse = expectOk(result)
+    const node = system.engine.getNode(nodeId)
+    const mesh = node.components.mesh!.mesh
+    expect(mesh.faces.length).toBe(5)
+    expect(mesh.vertices.length).toBe(7)
+    expect(mesh.uvs.length).toBe(7)
+    expect(inverse.mesh.faces).toHaveLength(2)
+    expect(inverse.mesh.vertices).toHaveLength(4)
+  })
+
+  it('subdivides both faces of the default rectangle mesh', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(
+      new SubdivideFacesCommand({ nodeId, faceIndices: [0, 1] }),
+    )
+    expectOk(result)
+    const node = system.engine.getNode(nodeId)
+    const mesh = node.components.mesh!.mesh
+    expect(mesh.faces.length).toBe(8)
+    expect(mesh.vertices.length).toBe(9)
+    expect(mesh.uvs.length).toBe(9)
+  })
+
+  it('shares midpoint vertices between adjacent subdivided faces', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(
+      new SubdivideFacesCommand({ nodeId, faceIndices: [0, 1] }),
+    )
+    expectOk(result)
+    const node = system.engine.getNode(nodeId)
+    const mesh = node.components.mesh!.mesh
+    const midpointVerts = mesh.vertices.filter((_, i) => i >= 4)
+    expect(midpointVerts.length).toBe(5)
+  })
+
+  it('interpolates UVs for new midpoint vertices', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(
+      new SubdivideFacesCommand({ nodeId, faceIndices: [0] }),
+    )
+    expectOk(result)
+    const node = system.engine.getNode(nodeId)
+    const mesh = node.components.mesh!.mesh
+    const uv0 = mesh.uvs[0]
+    const uv1 = mesh.uvs[1]
+    const midUv = mesh.uvs[4]
+    expect(midUv.u).toBeCloseTo((uv0.u + uv1.u) / 2)
+    expect(midUv.v).toBeCloseTo((uv0.v + uv1.v) / 2)
+  })
+
+  it('preserves unselected faces unchanged', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(
+      new SubdivideFacesCommand({ nodeId, faceIndices: [0] }),
+    )
+    expectOk(result)
+    const node = system.engine.getNode(nodeId)
+    const mesh = node.components.mesh!.mesh
+    const face1 = mesh.faces[4]
+    expect(face1).toEqual({ v0: 0, v1: 2, v2: 3 })
+  })
+
+  it('produces inverse that restores original mesh', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const inverse = expectOk(
+      system.dispatcher.dispatch(new SubdivideFacesCommand({ nodeId, faceIndices: [0] })),
+    )
+    const nodeAfter = system.engine.getNode(nodeId)
+    const meshAfter = nodeAfter.components.mesh!.mesh
+    expect(meshAfter.faces.length).toBe(5)
+    system.dispatcher.dispatch(
+      new (class {
+        readonly type = 'UndoSubdivide'
+        readonly parameters = {}
+        validate() {}
+        execute(eng: Engine) {
+          eng.setMeshData(nodeId, inverse.mesh)
+          return inverse.mesh
+        }
+        toJSON() {
+          return {}
+        }
+      })() as never,
+    )
+    const nodeRestored = system.engine.getNode(nodeId)
+    const meshRestored = nodeRestored.components.mesh!.mesh
+    expect(meshRestored.faces.length).toBe(2)
+    expect(meshRestored.vertices.length).toBe(4)
+  })
+
+  it('rejects empty face indices', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(
+      new SubdivideFacesCommand({ nodeId, faceIndices: [] }),
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/at least one/i)
+    }
+  })
+
+  it('rejects out of bounds face index', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(
+      new SubdivideFacesCommand({ nodeId, faceIndices: [100] }),
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/out of bounds/i)
+    }
+  })
+
+  it('rejects a node without mesh component', () => {
+    const system = createCommandSystem()
+    expectOk(system.dispatcher.dispatch(new CreateProjectCommand({ name: 'P' })))
+    expectOk(system.dispatcher.dispatch(new CreateSlideCommand({ name: 'S1' })))
+    const slide = system.engine.project?.slides[0]
+    if (!slide) throw new Error('expected a slide')
+    const { nodeId } = expectOk(
+      system.dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'NoMesh',
+        }),
+      ),
+    )
+    const result = system.dispatcher.dispatch(
+      new SubdivideFacesCommand({ nodeId, faceIndices: [0] }),
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/mesh component/i)
+    }
+  })
+
+  it('serializes to JSON', () => {
+    const cmd = new SubdivideFacesCommand({ nodeId: 'n1', faceIndices: [0, 2] })
+    expect(cmd.toJSON()).toEqual({
+      type: 'SubdivideFaces',
+      nodeId: 'n1',
+      faceIndices: [0, 2],
     })
   })
 })
