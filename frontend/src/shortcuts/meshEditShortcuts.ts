@@ -1,11 +1,16 @@
 import { registerShortcut } from './shortcutRegistry'
 import { useMeshEditStore } from '../stores/meshEditStore'
+import { useEditingModeStore } from '../stores/editingModeStore'
 
 export function registerMeshEditShortcuts(): () => void {
   const disposeEscape = registerShortcut('escape', () => {
     const { meshEditNodeId } = useMeshEditStore.getState()
     if (meshEditNodeId) {
       useMeshEditStore.getState().exitMeshEdit()
+    }
+    const { mode } = useEditingModeStore.getState()
+    if (mode !== 'default') {
+      useEditingModeStore.getState().exitMode()
     }
   })
 

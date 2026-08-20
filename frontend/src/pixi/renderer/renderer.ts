@@ -25,6 +25,7 @@ import { MeshOverlay } from './meshOverlay'
 import { MeshEditInteraction } from './meshEditInteraction'
 import { WeightPaintOverlay } from './weightPaintOverlay'
 import { WeightPaintInteraction } from './weightPaintInteraction'
+import { RiggingInteraction } from './riggingInteraction'
 import { realPixi } from './pixi'
 import type { PixiApplication, RendererPixi } from './pixi'
 import { SceneRenderer } from './sceneRenderer'
@@ -78,6 +79,7 @@ export class Renderer {
   #meshEditInteraction: MeshEditInteraction | null = null
   #weightPaintOverlay: WeightPaintOverlay | null = null
   #weightPaintInteraction: WeightPaintInteraction | null = null
+  #riggingInteraction: RiggingInteraction | null = null
   #transformSource: EvaluatedWorldTransformSource | null = null
   #previewPositions = new Map<string, { x: number; y: number }>()
   readonly #cameraScratch: EvaluatedNodeScratch = evaluatedNodeScratch()
@@ -304,6 +306,15 @@ export class Renderer {
       })
       this.#weightPaintInteraction.attach()
 
+      this.#riggingInteraction = new RiggingInteraction({
+        canvas: app.canvas,
+        engine: this.#engine,
+        getScene: () => this.#sceneRenderer?.boundScene ?? null,
+        getCameraTransform: () => this.#cameraTransform(),
+        dispatch: this.#dispatch,
+      })
+      this.#riggingInteraction.attach()
+
       app.ticker.add(this.#tick)
       if (import.meta.env.DEV) {
         this.#devOverlay = new DevOverlay(this.#host)
@@ -352,6 +363,8 @@ export class Renderer {
     this.#weightPaintOverlay = null
     this.#weightPaintInteraction?.detach()
     this.#weightPaintInteraction = null
+    this.#riggingInteraction?.detach()
+    this.#riggingInteraction = null
     const app = this.#app
     app?.ticker.remove(this.#tick)
     this.#app = null

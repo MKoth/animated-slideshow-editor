@@ -9,6 +9,7 @@ import { useMaterialLibraryStore } from '../../stores/materialLibraryStore'
 import { useMissingAssetsStore } from '../../stores/missingAssetsStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { useShaderLibraryStore } from '../../stores/shaderLibraryStore'
+import { CanvasToolbar } from '../editor/CanvasToolbar'
 
 export function CanvasPanel() {
   const { engine, dispatch } = useEngine()
@@ -98,6 +99,7 @@ export function CanvasPanel() {
   return (
     <div className="canvas-panel">
       <div className="canvas-host" ref={hostRef} />
+      <CanvasToolbar />
     </div>
   )
 }

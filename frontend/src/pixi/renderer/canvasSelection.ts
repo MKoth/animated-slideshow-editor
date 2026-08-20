@@ -5,6 +5,7 @@ import type { DispatchCommand } from '../../engine/commands'
 import { MoveNodeCommand, TransactionCommand } from '../../engine/commands'
 import type { SelectionActions } from '../../stores/selectionStore'
 import { useSelectionStore } from '../../stores/selectionStore'
+import { useEditingModeStore } from '../../stores/editingModeStore'
 import { findAlignment } from './alignment'
 import { DEFAULT_GRID_STEP, snapDelta } from './gridSnap'
 import type { NodeSizeSource, WorldTransformSource } from './hitTest'
@@ -135,6 +136,10 @@ export class CanvasSelection {
 
   readonly #onMouseDown = (event: MouseEvent): void => {
     if (event.button !== 0 || event.altKey) {
+      return
+    }
+    const { mode } = useEditingModeStore.getState()
+    if (mode === 'boneCreation' || mode === 'ikTarget' || mode === 'poleVector') {
       return
     }
     const scene = this.#getScene()
