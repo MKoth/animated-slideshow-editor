@@ -3,6 +3,7 @@ import type { SidebarTab } from '../../stores/uiPrefs'
 import { AnimationsPanel } from '../panels/AnimationsPanel'
 import { AssetsPanel } from '../panels/AssetsPanel'
 import { MaterialsPanel } from '../panels/MaterialsPanel'
+import { RiggingPanel } from '../panels/RiggingPanel'
 import { ScenePanel } from '../panels/ScenePanel'
 import { SlidesPanel } from '../panels/SlidesPanel'
 
@@ -12,6 +13,7 @@ const TABS = [
   { id: 'scene', label: 'Scene' },
   { id: 'materials', label: 'Materials' },
   { id: 'animations', label: 'Animations' },
+  { id: 'rigging', label: 'Rigging' },
 ] as const satisfies readonly { id: SidebarTab; label: string }[]
 
 const PANELS: Record<SidebarTab, () => React.JSX.Element> = {
@@ -20,6 +22,7 @@ const PANELS: Record<SidebarTab, () => React.JSX.Element> = {
   scene: ScenePanel,
   materials: MaterialsPanel,
   animations: AnimationsPanel,
+  rigging: RiggingPanel,
 }
 
 export function LeftSidebar({ width }: { width: number }) {
