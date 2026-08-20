@@ -228,3 +228,7 @@ export type {
   SetConstraintParamsInverse,
   SetConstraintParamsParameters,
 } from './setConstraintParamsCommand'
+export { MoveVertexCommand } from './moveVertexCommand'
+export type { MoveVertexInverse, MoveVertexParameters } from './moveVertexCommand'
+export { DeleteVerticesCommand } from './deleteVerticesCommand'
+export type { DeleteVerticesInverse, DeleteVerticesParameters } from './deleteVerticesCommand'

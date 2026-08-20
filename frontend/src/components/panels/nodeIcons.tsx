@@ -34,6 +34,16 @@ export function CameraIcon() {
   )
 }
 
+export function MeshIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <path d="M12 2L2 7l10 5 10-5-10-5z" />
+      <path d="M2 17l10 5 10-5" />
+      <path d="M2 12l10 5 10-5" />
+    </svg>
+  )
+}
+
 export function VisibilityIcon({ visible }: { visible: boolean }) {
   if (!visible) {
     return (
@@ -73,6 +83,8 @@ export function NodeIcon({ node }: { node: SceneNode }) {
       return <TextIcon />
     case 'camera':
       return <CameraIcon />
+    case 'mesh':
+      return <MeshIcon />
     default:
       return <FolderIcon />
   }

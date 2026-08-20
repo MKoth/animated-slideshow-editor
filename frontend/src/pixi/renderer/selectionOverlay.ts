@@ -69,6 +69,7 @@ export class SelectionOverlay {
     }
     this.#attached = true
     const graphics = new this.#pixi.Graphics()
+    graphics.label = 'selection-overlay'
     this.#graphics = graphics
     this.#world.addChild(graphics)
     this.#unsubscribeStore = this.#store.subscribe(() => this.redraw())

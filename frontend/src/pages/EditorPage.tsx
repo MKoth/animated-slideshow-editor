@@ -6,6 +6,7 @@ import { MissingAssetsDialog } from '../components/missingAssets/MissingAssetsDi
 import { ProjectsDialog } from '../components/projects/ProjectsDialog'
 import { RecoveryDialog } from '../components/recovery/RecoveryDialog'
 import { registerClipboardShortcuts } from '../shortcuts/clipboardShortcuts'
+import { registerMeshEditShortcuts } from '../shortcuts/meshEditShortcuts'
 import { registerProvisionalShortcuts } from '../shortcuts/provisionalShortcuts'
 import { registerSaveShortcut } from '../shortcuts/saveShortcuts'
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts'
@@ -18,10 +19,12 @@ export function EditorPage() {
     const disposeClipboard = registerClipboardShortcuts(() => ({ engine, dispatch }))
     const disposeProvisional = registerProvisionalShortcuts()
     const disposeSave = registerSaveShortcut(() => ({ save: () => persistence.save() }))
+    const disposeMeshEdit = registerMeshEditShortcuts()
     return () => {
       disposeClipboard()
       disposeProvisional()
       disposeSave()
+      disposeMeshEdit()
     }
   }, [engine, dispatch, persistence])
 

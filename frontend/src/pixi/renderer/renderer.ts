@@ -21,6 +21,8 @@ import { ErrorOverlay } from './errorOverlay'
 import { DEFAULT_GRID_STEP } from './gridSnap'
 import { DEFAULT_MAJOR_COLOR, DEFAULT_MINOR_COLOR, GridRenderer } from './gridRenderer'
 import { GuideOverlay } from './guideOverlay'
+import { MeshOverlay } from './meshOverlay'
+import { MeshEditInteraction } from './meshEditInteraction'
 import { realPixi } from './pixi'
 import type { PixiApplication, RendererPixi } from './pixi'
 import { SceneRenderer } from './sceneRenderer'
@@ -70,6 +72,8 @@ export class Renderer {
   #selection: CanvasSelection | null = null
   #selectionOverlay: SelectionOverlay | null = null
   #guideOverlay: GuideOverlay | null = null
+  #meshOverlay: MeshOverlay | null = null
+  #meshEditInteraction: MeshEditInteraction | null = null
   #transformSource: EvaluatedWorldTransformSource | null = null
   #previewPositions = new Map<string, { x: number; y: number }>()
   readonly #cameraScratch: EvaluatedNodeScratch = evaluatedNodeScratch()
@@ -203,6 +207,15 @@ export class Renderer {
       this.#guideOverlay.attach()
       this.#guideOverlay.bringToFront()
 
+      this.#meshOverlay = new MeshOverlay({
+        pixi: this.#pixi,
+        world,
+        engine: this.#engine,
+        getScene: () => this.#sceneRenderer?.boundScene ?? null,
+      })
+      this.#meshOverlay.attach()
+      this.#meshOverlay.bringToFront()
+
       this.#selection = new CanvasSelection({
         canvas: app.canvas,
         engine: this.#engine,
@@ -261,6 +274,15 @@ export class Renderer {
       })
       this.#dropPlacement.attach()
 
+      this.#meshEditInteraction = new MeshEditInteraction({
+        canvas: app.canvas,
+        getScene: () => this.#sceneRenderer?.boundScene ?? null,
+        getCameraTransform: () => this.#cameraTransform(),
+        dispatch: this.#dispatch,
+        meshOverlay: this.#meshOverlay,
+      })
+      this.#meshEditInteraction.attach()
+
       app.ticker.add(this.#tick)
       if (import.meta.env.DEV) {
         this.#devOverlay = new DevOverlay(this.#host)
@@ -301,6 +323,10 @@ export class Renderer {
     this.#selectionOverlay = null
     this.#guideOverlay?.detach()
     this.#guideOverlay = null
+    this.#meshOverlay?.detach()
+    this.#meshOverlay = null
+    this.#meshEditInteraction?.detach()
+    this.#meshEditInteraction = null
     const app = this.#app
     app?.ticker.remove(this.#tick)
     this.#app = null
@@ -536,6 +562,9 @@ export class Renderer {
       case 'ClipParamOverridden':
         sceneRenderer.handleKeyframeChanged(event.nodeId)
         break
+      case 'MeshChanged':
+        this.#meshOverlay?.redraw()
+        break
     }
   }
 
@@ -550,6 +579,7 @@ export class Renderer {
       this.#thumbnails.setBoundSlideId(slide ? slide.id : null)
       this.#selectionOverlay?.bringToFront()
       this.#guideOverlay?.bringToFront()
+      this.#meshOverlay?.bringToFront()
       useSelectionStore.getState().clear()
     }
   }

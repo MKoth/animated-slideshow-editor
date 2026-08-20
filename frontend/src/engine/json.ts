@@ -26,6 +26,14 @@ export type NodeComponentsJSON = {
     readonly alignment: string
   }
   readonly bone?: { readonly kind: 'bone' }
+  readonly mesh?: {
+    readonly kind: 'mesh'
+    readonly mesh: {
+      readonly vertices: readonly { readonly x: number; readonly y: number }[]
+      readonly faces: readonly { readonly v0: number; readonly v1: number; readonly v2: number }[]
+      readonly uvs: readonly { readonly u: number; readonly v: number }[]
+    }
+  }
 }
 
 export type MaterialJSON = {

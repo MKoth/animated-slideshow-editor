@@ -1,4 +1,5 @@
 import type { NodeComponents, TextAlignment } from './components'
+import { meshDataFromJSON, cloneMeshData } from './mesh'
 import type { Transform } from './transform'
 import { IDENTITY_PIVOT } from './transform'
 import type { NodeJSON } from './json'
@@ -132,6 +133,7 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
     assetInstance?: NodeComponents['assetInstance']
     text?: NodeComponents['text']
     bone?: NodeComponents['bone']
+    mesh?: NodeComponents['mesh']
   } = {}
   if (record.camera !== undefined) {
     if (!isKind(record.camera, 'camera')) {
@@ -181,6 +183,12 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
     }
     components.bone = { kind: 'bone' }
   }
+  if (record.mesh !== undefined) {
+    if (!isKind(record.mesh, 'mesh')) {
+      throw new Error(`Node "${nodeId}" has an invalid mesh component`)
+    }
+    components.mesh = { kind: 'mesh', mesh: meshDataFromJSON((record.mesh as Record<string, unknown>).mesh) }
+  }
   return components
 }
 
@@ -223,6 +231,9 @@ function freezeComponents(components: NodeComponents): NodeComponents {
       : undefined,
     text: components.text ? Object.freeze({ ...components.text }) : undefined,
     bone: components.bone ? Object.freeze({ ...components.bone }) : undefined,
+    mesh: components.mesh
+      ? Object.freeze({ kind: 'mesh' as const, mesh: cloneMeshData(components.mesh.mesh) })
+      : undefined,
   }
   return Object.freeze(frozen)
 }

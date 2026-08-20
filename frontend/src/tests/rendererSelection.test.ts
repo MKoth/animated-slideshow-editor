@@ -71,7 +71,7 @@ function overlayGraphics(app: Harness['app']): FakeChild | undefined {
   return [...world.children]
     .reverse()
     .find(
-      (child) => child.kind === 'graphics' && child.label !== 'grid' && child.label !== 'guides',
+      (child) => child.kind === 'graphics' && child.label === 'selection-overlay',
     )
 }
 
