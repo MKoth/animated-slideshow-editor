@@ -2,13 +2,14 @@ import { create } from 'zustand'
 import type { MeshEdge } from '../engine/mesh'
 import { edgeKey } from '../engine/mesh'
 
-export type MeshEditTool = 'select' | 'delete' | 'extrude' | 'subdivide'
+export type MeshEditTool = 'select' | 'delete' | 'extrude' | 'subdivide' | 'mirror'
 export type MeshSelectMode = 'vertex' | 'edge' | 'face'
 
 export interface MeshEditState {
   readonly meshEditNodeId: string | null
   readonly meshEditTool: MeshEditTool
   readonly selectMode: MeshSelectMode
+  readonly mirrorAxis: 'x' | 'y'
   readonly selectedVertexIndices: readonly number[]
   readonly selectedEdgeIndices: readonly MeshEdge[]
   readonly selectedFaceIndices: readonly number[]
@@ -16,6 +17,7 @@ export interface MeshEditState {
   exitMeshEdit(): void
   setMeshEditTool(tool: MeshEditTool): void
   setSelectMode(mode: MeshSelectMode): void
+  setMirrorAxis(axis: 'x' | 'y'): void
   selectVertex(index: number): void
   selectVertices(indices: readonly number[]): void
   toggleVertex(index: number): void
@@ -46,6 +48,7 @@ export const useMeshEditStore = create<MeshEditState>()((set) => ({
   meshEditNodeId: null,
   meshEditTool: 'select',
   selectMode: 'vertex',
+  mirrorAxis: 'x',
   selectedVertexIndices: [],
   selectedEdgeIndices: [],
   selectedFaceIndices: [],
@@ -55,6 +58,7 @@ export const useMeshEditStore = create<MeshEditState>()((set) => ({
       meshEditNodeId: nodeId,
       meshEditTool: 'select',
       selectMode: 'vertex',
+      mirrorAxis: 'x',
       selectedVertexIndices: [],
       selectedEdgeIndices: [],
       selectedFaceIndices: [],
@@ -65,6 +69,7 @@ export const useMeshEditStore = create<MeshEditState>()((set) => ({
       meshEditNodeId: null,
       meshEditTool: 'select',
       selectMode: 'vertex',
+      mirrorAxis: 'x',
       selectedVertexIndices: [],
       selectedEdgeIndices: [],
       selectedFaceIndices: [],
@@ -73,6 +78,8 @@ export const useMeshEditStore = create<MeshEditState>()((set) => ({
   setMeshEditTool: (tool) => set({ meshEditTool: tool }),
 
   setSelectMode: (mode) => set({ selectMode: mode }),
+
+  setMirrorAxis: (axis) => set({ mirrorAxis: axis }),
 
   selectVertex: (index) => set({ selectedVertexIndices: [index] }),
 

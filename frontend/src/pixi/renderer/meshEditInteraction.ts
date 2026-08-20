@@ -7,6 +7,7 @@ import {
   ExtrudeFacesCommand,
   ExtrudeEdgesCommand,
   SubdivideFacesCommand,
+  MirrorMeshCommand,
 } from '../../engine/commands'
 import { useMeshEditStore } from '../../stores/meshEditStore'
 import type { MeshSelectMode } from '../../stores/meshEditStore'
@@ -100,6 +101,11 @@ export class MeshEditInteraction {
 
     if (meshEditTool === 'subdivide') {
       this.#handleSubdivideClick(meshEditNodeId, selectMode)
+      return
+    }
+
+    if (meshEditTool === 'mirror') {
+      this.#handleMirrorClick(meshEditNodeId)
       return
     }
 
@@ -228,6 +234,11 @@ export class MeshEditInteraction {
     if (selectMode === 'face') {
       this.#subdivideSelectedFaces(meshEditNodeId)
     }
+  }
+
+  #handleMirrorClick(meshEditNodeId: string): void {
+    const { mirrorAxis } = useMeshEditStore.getState()
+    this.#dispatch(new MirrorMeshCommand({ nodeId: meshEditNodeId, axis: mirrorAxis }))
   }
 
   #extrudeSelectedFaces(meshEditNodeId: string): void {

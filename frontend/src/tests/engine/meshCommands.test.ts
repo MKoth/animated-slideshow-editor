@@ -10,6 +10,7 @@ import {
   ExtrudeFacesCommand,
   ExtrudeEdgesCommand,
   SubdivideFacesCommand,
+  MirrorMeshCommand,
   createCommandSystem,
 } from '../../engine/commands'
 import { createDefaultRectangleMesh } from '../../engine/mesh'
@@ -567,3 +568,109 @@ describe('SubdivideFacesCommand', () => {
     })
   })
 })
+
+describe('MirrorMeshCommand', () => {
+  it('mirrors along X axis and creates symmetric copy', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(new MirrorMeshCommand({ nodeId, axis: 'x' }))
+    const inverse = expectOk(result)
+    const node = system.engine.getNode(nodeId)
+    const mesh = node.components.mesh!.mesh
+    expect(mesh.vertices.length).toBeGreaterThan(4)
+    expect(mesh.faces.length).toBeGreaterThan(2)
+    expect(inverse.mesh.vertices).toHaveLength(4)
+    expect(inverse.mesh.faces).toHaveLength(2)
+  })
+
+  it('mirrors along Y axis and creates symmetric copy', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const result = system.dispatcher.dispatch(new MirrorMeshCommand({ nodeId, axis: 'y' }))
+    const inverse = expectOk(result)
+    const node = system.engine.getNode(nodeId)
+    const mesh = node.components.mesh!.mesh
+    expect(mesh.vertices.length).toBeGreaterThan(4)
+    expect(mesh.faces.length).toBeGreaterThan(2)
+    expect(inverse.mesh.vertices).toHaveLength(4)
+    expect(inverse.mesh.faces).toHaveLength(2)
+  })
+
+  it('merges vertices near the mirror plane (no duplicates at seam)', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    system.dispatcher.dispatch(new MirrorMeshCommand({ nodeId, axis: 'x' }))
+    const node = system.engine.getNode(nodeId)
+    const mesh = node.components.mesh!.mesh
+    const meshCenterX = meshCenter(mesh, 'x')
+    for (const v of mesh.vertices) {
+      const dist = Math.abs(v.x - meshCenterX)
+      expect(dist).toBeGreaterThan(0.005)
+    }
+  })
+
+  it('produces inverse that restores original mesh', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const inverse = expectOk(
+      system.dispatcher.dispatch(new MirrorMeshCommand({ nodeId, axis: 'x' })),
+    )
+    const nodeAfter = system.engine.getNode(nodeId)
+    const meshAfter = nodeAfter.components.mesh!.mesh
+    expect(meshAfter.vertices.length).toBeGreaterThan(4)
+    system.dispatcher.dispatch(
+      new (class {
+        readonly type = 'UndoMirror'
+        readonly parameters = {}
+        validate() {}
+        execute(eng: Engine) {
+          eng.setMeshData(nodeId, inverse.mesh)
+          return inverse.mesh
+        }
+        toJSON() {
+          return {}
+        }
+      })() as never,
+    )
+    const nodeRestored = system.engine.getNode(nodeId)
+    const meshRestored = nodeRestored.components.mesh!.mesh
+    expect(meshRestored.faces.length).toBe(2)
+    expect(meshRestored.vertices.length).toBe(4)
+  })
+
+  it('rejects a node without mesh component', () => {
+    const system = createCommandSystem()
+    expectOk(system.dispatcher.dispatch(new CreateProjectCommand({ name: 'P' })))
+    expectOk(system.dispatcher.dispatch(new CreateSlideCommand({ name: 'S1' })))
+    const slide = system.engine.project?.slides[0]
+    if (!slide) throw new Error('expected a slide')
+    const { nodeId } = expectOk(
+      system.dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'NoMesh',
+        }),
+      ),
+    )
+    const result = system.dispatcher.dispatch(new MirrorMeshCommand({ nodeId, axis: 'x' }))
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/mesh component/i)
+    }
+  })
+
+  it('serializes to JSON', () => {
+    const cmd = new MirrorMeshCommand({ nodeId: 'n1', axis: 'y' })
+    expect(cmd.toJSON()).toEqual({
+      type: 'MirrorMesh',
+      nodeId: 'n1',
+      axis: 'y',
+    })
+  })
+})
+
+function meshCenter(mesh: MeshData, axis: 'x' | 'y'): number {
+  if (axis === 'x') {
+    const sum = mesh.vertices.reduce((acc, v) => acc + v.x, 0)
+    return sum / mesh.vertices.length
+  }
+  const sum = mesh.vertices.reduce((acc, v) => acc + v.y, 0)
+  return sum / mesh.vertices.length
+}

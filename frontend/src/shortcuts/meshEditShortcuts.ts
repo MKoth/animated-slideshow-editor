@@ -44,6 +44,27 @@ export function registerMeshEditShortcuts(): () => void {
     }
   })
 
+  const disposeM = registerShortcut('m', () => {
+    const { meshEditNodeId } = useMeshEditStore.getState()
+    if (meshEditNodeId) {
+      useMeshEditStore.getState().setMeshEditTool('mirror')
+    }
+  })
+
+  const disposeX = registerShortcut('x', () => {
+    const { meshEditNodeId, meshEditTool } = useMeshEditStore.getState()
+    if (meshEditNodeId && meshEditTool === 'mirror') {
+      useMeshEditStore.getState().setMirrorAxis('x')
+    }
+  })
+
+  const disposeY = registerShortcut('y', () => {
+    const { meshEditNodeId, meshEditTool } = useMeshEditStore.getState()
+    if (meshEditNodeId && meshEditTool === 'mirror') {
+      useMeshEditStore.getState().setMirrorAxis('y')
+    }
+  })
+
   return () => {
     disposeEscape()
     dispose1()
@@ -51,5 +72,8 @@ export function registerMeshEditShortcuts(): () => void {
     dispose3()
     disposeE()
     disposeS()
+    disposeM()
+    disposeX()
+    disposeY()
   }
 }
