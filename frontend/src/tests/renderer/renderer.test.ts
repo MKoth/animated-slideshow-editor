@@ -63,7 +63,7 @@ describe('Renderer', () => {
     const { app } = await mountRenderer(createEngine())
     const world = worldOf(app)
 
-    expect(world.children).toHaveLength(5)
+    expect(world.children).toHaveLength(6)
     expect(world.children[0].label).toBe('grid')
     const axisLines = world.children[1]
     expect(axisLines.position.x).toBe(0)
@@ -73,6 +73,7 @@ describe('Renderer', () => {
     expect(world.children[2].kind).toBe('graphics')
     expect(world.children[3].label).toBe('guides')
     expect(world.children[4].kind).toBe('graphics')
+    expect(world.children[5].label).toBe('weight-paint-overlay')
   })
 
   it('renders a placeholder for asset instances and text nodes, and none for the camera', async () => {

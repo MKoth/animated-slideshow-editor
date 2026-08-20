@@ -65,6 +65,48 @@ export function registerMeshEditShortcuts(): () => void {
     }
   })
 
+  const disposeW = registerShortcut('w', () => {
+    const { meshEditNodeId } = useMeshEditStore.getState()
+    if (meshEditNodeId) {
+      useMeshEditStore.getState().setMeshEditTool('weightPaint')
+    }
+  })
+
+  const dispose1Num = registerShortcut('1', () => {
+    const { meshEditNodeId, meshEditTool } = useMeshEditStore.getState()
+    if (meshEditNodeId && meshEditTool === 'weightPaint') {
+      useMeshEditStore.getState().setWeightPaintTool('paint')
+    }
+  })
+
+  const dispose2Num = registerShortcut('2', () => {
+    const { meshEditNodeId, meshEditTool } = useMeshEditStore.getState()
+    if (meshEditNodeId && meshEditTool === 'weightPaint') {
+      useMeshEditStore.getState().setWeightPaintTool('smooth')
+    }
+  })
+
+  const dispose3Num = registerShortcut('3', () => {
+    const { meshEditNodeId, meshEditTool } = useMeshEditStore.getState()
+    if (meshEditNodeId && meshEditTool === 'weightPaint') {
+      useMeshEditStore.getState().setWeightPaintTool('fill')
+    }
+  })
+
+  const dispose4Num = registerShortcut('4', () => {
+    const { meshEditNodeId, meshEditTool } = useMeshEditStore.getState()
+    if (meshEditNodeId && meshEditTool === 'weightPaint') {
+      useMeshEditStore.getState().setWeightPaintTool('blur')
+    }
+  })
+
+  const dispose5Num = registerShortcut('5', () => {
+    const { meshEditNodeId, meshEditTool } = useMeshEditStore.getState()
+    if (meshEditNodeId && meshEditTool === 'weightPaint') {
+      useMeshEditStore.getState().setWeightPaintTool('autoWeights')
+    }
+  })
+
   return () => {
     disposeEscape()
     dispose1()
@@ -75,5 +117,11 @@ export function registerMeshEditShortcuts(): () => void {
     disposeM()
     disposeX()
     disposeY()
+    disposeW()
+    dispose1Num()
+    dispose2Num()
+    dispose3Num()
+    dispose4Num()
+    dispose5Num()
   }
 }

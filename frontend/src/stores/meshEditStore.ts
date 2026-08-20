@@ -2,8 +2,9 @@ import { create } from 'zustand'
 import type { MeshEdge } from '../engine/mesh'
 import { edgeKey } from '../engine/mesh'
 
-export type MeshEditTool = 'select' | 'delete' | 'extrude' | 'subdivide' | 'mirror'
+export type MeshEditTool = 'select' | 'delete' | 'extrude' | 'subdivide' | 'mirror' | 'weightPaint'
 export type MeshSelectMode = 'vertex' | 'edge' | 'face'
+export type WeightPaintTool = 'paint' | 'smooth' | 'fill' | 'blur' | 'autoWeights'
 
 export interface MeshEditState {
   readonly meshEditNodeId: string | null
@@ -13,6 +14,11 @@ export interface MeshEditState {
   readonly selectedVertexIndices: readonly number[]
   readonly selectedEdgeIndices: readonly MeshEdge[]
   readonly selectedFaceIndices: readonly number[]
+  readonly weightPaintTool: WeightPaintTool
+  readonly selectedBoneId: string | null
+  readonly brushRadius: number
+  readonly brushStrength: number
+  readonly heatmapVisible: boolean
   enterMeshEdit(nodeId: string): void
   exitMeshEdit(): void
   setMeshEditTool(tool: MeshEditTool): void
@@ -34,6 +40,12 @@ export interface MeshEditState {
   extendFace(index: number): void
   clearFaceSelection(): void
   clearAllSelection(): void
+  setWeightPaintTool(tool: WeightPaintTool): void
+  setSelectedBoneId(boneId: string | null): void
+  setBrushRadius(radius: number): void
+  setBrushStrength(strength: number): void
+  toggleHeatmap(): void
+  setHeatmapVisible(visible: boolean): void
 }
 
 function edgesEqual(a: MeshEdge, b: MeshEdge): boolean {
@@ -52,6 +64,11 @@ export const useMeshEditStore = create<MeshEditState>()((set) => ({
   selectedVertexIndices: [],
   selectedEdgeIndices: [],
   selectedFaceIndices: [],
+  weightPaintTool: 'paint',
+  selectedBoneId: null,
+  brushRadius: 0.5,
+  brushStrength: 1.0,
+  heatmapVisible: true,
 
   enterMeshEdit: (nodeId) =>
     set({
@@ -62,6 +79,11 @@ export const useMeshEditStore = create<MeshEditState>()((set) => ({
       selectedVertexIndices: [],
       selectedEdgeIndices: [],
       selectedFaceIndices: [],
+      weightPaintTool: 'paint',
+      selectedBoneId: null,
+      brushRadius: 0.5,
+      brushStrength: 1.0,
+      heatmapVisible: true,
     }),
 
   exitMeshEdit: () =>
@@ -73,6 +95,11 @@ export const useMeshEditStore = create<MeshEditState>()((set) => ({
       selectedVertexIndices: [],
       selectedEdgeIndices: [],
       selectedFaceIndices: [],
+      weightPaintTool: 'paint',
+      selectedBoneId: null,
+      brushRadius: 0.5,
+      brushStrength: 1.0,
+      heatmapVisible: true,
     }),
 
   setMeshEditTool: (tool) => set({ meshEditTool: tool }),
@@ -147,4 +174,11 @@ export const useMeshEditStore = create<MeshEditState>()((set) => ({
       selectedEdgeIndices: [],
       selectedFaceIndices: [],
     }),
+
+  setWeightPaintTool: (tool) => set({ weightPaintTool: tool }),
+  setSelectedBoneId: (boneId) => set({ selectedBoneId: boneId }),
+  setBrushRadius: (radius) => set({ brushRadius: radius }),
+  setBrushStrength: (strength) => set({ brushStrength: strength }),
+  toggleHeatmap: () => set((state) => ({ heatmapVisible: !state.heatmapVisible })),
+  setHeatmapVisible: (visible) => set({ heatmapVisible: visible }),
 }))

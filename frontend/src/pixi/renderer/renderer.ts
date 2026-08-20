@@ -23,6 +23,8 @@ import { DEFAULT_MAJOR_COLOR, DEFAULT_MINOR_COLOR, GridRenderer } from './gridRe
 import { GuideOverlay } from './guideOverlay'
 import { MeshOverlay } from './meshOverlay'
 import { MeshEditInteraction } from './meshEditInteraction'
+import { WeightPaintOverlay } from './weightPaintOverlay'
+import { WeightPaintInteraction } from './weightPaintInteraction'
 import { realPixi } from './pixi'
 import type { PixiApplication, RendererPixi } from './pixi'
 import { SceneRenderer } from './sceneRenderer'
@@ -74,6 +76,8 @@ export class Renderer {
   #guideOverlay: GuideOverlay | null = null
   #meshOverlay: MeshOverlay | null = null
   #meshEditInteraction: MeshEditInteraction | null = null
+  #weightPaintOverlay: WeightPaintOverlay | null = null
+  #weightPaintInteraction: WeightPaintInteraction | null = null
   #transformSource: EvaluatedWorldTransformSource | null = null
   #previewPositions = new Map<string, { x: number; y: number }>()
   readonly #cameraScratch: EvaluatedNodeScratch = evaluatedNodeScratch()
@@ -283,6 +287,23 @@ export class Renderer {
       })
       this.#meshEditInteraction.attach()
 
+      this.#weightPaintOverlay = new WeightPaintOverlay({
+        pixi: this.#pixi,
+        world,
+        engine: this.#engine,
+        getScene: () => this.#sceneRenderer?.boundScene ?? null,
+      })
+      this.#weightPaintOverlay.attach()
+      this.#weightPaintOverlay.bringToFront()
+
+      this.#weightPaintInteraction = new WeightPaintInteraction({
+        canvas: app.canvas,
+        getScene: () => this.#sceneRenderer?.boundScene ?? null,
+        getCameraTransform: () => this.#cameraTransform(),
+        dispatch: this.#dispatch,
+      })
+      this.#weightPaintInteraction.attach()
+
       app.ticker.add(this.#tick)
       if (import.meta.env.DEV) {
         this.#devOverlay = new DevOverlay(this.#host)
@@ -327,6 +348,10 @@ export class Renderer {
     this.#meshOverlay = null
     this.#meshEditInteraction?.detach()
     this.#meshEditInteraction = null
+    this.#weightPaintOverlay?.detach()
+    this.#weightPaintOverlay = null
+    this.#weightPaintInteraction?.detach()
+    this.#weightPaintInteraction = null
     const app = this.#app
     app?.ticker.remove(this.#tick)
     this.#app = null
@@ -564,6 +589,7 @@ export class Renderer {
         break
       case 'MeshChanged':
         this.#meshOverlay?.redraw()
+        this.#weightPaintOverlay?.redraw()
         break
     }
   }
@@ -580,6 +606,7 @@ export class Renderer {
       this.#selectionOverlay?.bringToFront()
       this.#guideOverlay?.bringToFront()
       this.#meshOverlay?.bringToFront()
+      this.#weightPaintOverlay?.bringToFront()
       useSelectionStore.getState().clear()
     }
   }

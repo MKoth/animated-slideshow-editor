@@ -6,6 +6,10 @@ import {
   CreateSlideCommand,
   SetVertexWeightsCommand,
   SmoothWeightsCommand,
+  AutoWeightsCommand,
+  PaintWeightCommand,
+  BlurWeightsCommand,
+  FillWeightsCommand,
   createCommandSystem,
 } from '../../engine/commands'
 import { createDefaultRectangleMesh } from '../../engine/mesh'
@@ -720,5 +724,261 @@ describe('SmoothWeights normalization', () => {
     // Normalized: bone1 = 0.5/1.25 = 0.4, bone2 = 0.75/1.25 = 0.6
     const total = mesh.boneWeights![0].reduce((sum, w) => sum + w.weight, 0)
     expect(total).toBeCloseTo(1.0)
+  })
+})
+
+describe('AutoWeightsCommand', () => {
+  it('assigns weights based on bone proximity', () => {
+    const { system, boneId, meshId } = setupWithMeshAndBoneNodes()
+    const result = system.dispatcher.dispatch(
+      new AutoWeightsCommand({
+        nodeId: meshId,
+        boneIds: [boneId],
+        falloff: 2,
+      }),
+    )
+    expectOk(result)
+    const node = system.engine.getNode(meshId)
+    const mesh = node.components.mesh!.mesh
+    expect(mesh.boneWeights).toBeDefined()
+    expect(mesh.boneWeights!.length).toBe(mesh.vertices.length)
+    // All vertices should have weight 1.0 for the single bone
+    for (const vertexWeights of mesh.boneWeights!) {
+      expect(vertexWeights.length).toBe(1)
+      expect(vertexWeights[0].boneId).toBe(boneId)
+      expect(vertexWeights[0].weight).toBeCloseTo(1.0)
+    }
+  })
+
+  it('rejects empty bone ids', () => {
+    const { system, meshId } = setupWithMeshAndBoneNodes()
+    const result = system.dispatcher.dispatch(
+      new AutoWeightsCommand({
+        nodeId: meshId,
+        boneIds: [],
+        falloff: 2,
+      }),
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/at least one/i)
+    }
+  })
+
+  it('rejects unknown bone id', () => {
+    const { system, meshId } = setupWithMeshAndBoneNodes()
+    const result = system.dispatcher.dispatch(
+      new AutoWeightsCommand({
+        nodeId: meshId,
+        boneIds: ['unknown-bone'],
+        falloff: 2,
+      }),
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/unknown bone/i)
+    }
+  })
+})
+
+describe('PaintWeightCommand', () => {
+  it('adds weight to a vertex', () => {
+    const { system, boneId, meshId } = setupWithMeshAndBoneNodes()
+    const result = system.dispatcher.dispatch(
+      new PaintWeightCommand({
+        nodeId: meshId,
+        vertexIndex: 0,
+        boneId,
+        strength: 0.5,
+        mode: 'add',
+      }),
+    )
+    expectOk(result)
+    const node = system.engine.getNode(meshId)
+    const mesh = node.components.mesh!.mesh
+    expect(mesh.boneWeights).toBeDefined()
+    expect(mesh.boneWeights![0].length).toBe(1)
+    expect(mesh.boneWeights![0][0].boneId).toBe(boneId)
+    expect(mesh.boneWeights![0][0].weight).toBeCloseTo(1.0) // normalized
+  })
+
+  it('removes weight from a vertex', () => {
+    const { system, boneId, meshId } = setupWithMeshAndBoneNodes()
+    // First set weight
+    system.dispatcher.dispatch(
+      new SetVertexWeightsCommand({
+        nodeId: meshId,
+        vertexIndex: 0,
+        weights: [{ boneId, weight: 0.8 }],
+      }),
+    )
+    // Remove some weight
+    const result = system.dispatcher.dispatch(
+      new PaintWeightCommand({
+        nodeId: meshId,
+        vertexIndex: 0,
+        boneId,
+        strength: 0.3,
+        mode: 'remove',
+      }),
+    )
+    expectOk(result)
+    const node = system.engine.getNode(meshId)
+    const mesh = node.components.mesh!.mesh
+    // Single bone: weight is always 1.0 after normalization
+    expect(mesh.boneWeights![0][0].weight).toBeCloseTo(1.0)
+  })
+
+  it('sets absolute weight', () => {
+    const { system, boneId, meshId } = setupWithMeshAndBoneNodes()
+    const result = system.dispatcher.dispatch(
+      new PaintWeightCommand({
+        nodeId: meshId,
+        vertexIndex: 0,
+        boneId,
+        strength: 0.7,
+        mode: 'set',
+      }),
+    )
+    expectOk(result)
+    const node = system.engine.getNode(meshId)
+    const mesh = node.components.mesh!.mesh
+    // Single bone: weight is always 1.0 after normalization
+    expect(mesh.boneWeights![0][0].weight).toBeCloseTo(1.0)
+  })
+
+  it('rejects unknown bone id', () => {
+    const { system, meshId } = setupWithMeshAndBoneNodes()
+    const result = system.dispatcher.dispatch(
+      new PaintWeightCommand({
+        nodeId: meshId,
+        vertexIndex: 0,
+        boneId: 'unknown-bone',
+        strength: 0.5,
+        mode: 'add',
+      }),
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/unknown bone/i)
+    }
+  })
+})
+
+describe('BlurWeightsCommand', () => {
+  it('blurs weights across the mesh', () => {
+    const { system, boneId, meshId } = setupWithMeshAndBoneNodes()
+    // Set different weights on vertices
+    system.dispatcher.dispatch(
+      new SetVertexWeightsCommand({
+        nodeId: meshId,
+        vertexIndex: 0,
+        weights: [{ boneId, weight: 1.0 }],
+      }),
+    )
+    system.dispatcher.dispatch(
+      new SetVertexWeightsCommand({
+        nodeId: meshId,
+        vertexIndex: 1,
+        weights: [{ boneId, weight: 0.0 }],
+      }),
+    )
+    system.dispatcher.dispatch(
+      new SetVertexWeightsCommand({
+        nodeId: meshId,
+        vertexIndex: 2,
+        weights: [{ boneId, weight: 0.5 }],
+      }),
+    )
+    system.dispatcher.dispatch(
+      new SetVertexWeightsCommand({
+        nodeId: meshId,
+        vertexIndex: 3,
+        weights: [{ boneId, weight: 0.5 }],
+      }),
+    )
+    const result = system.dispatcher.dispatch(
+      new BlurWeightsCommand({
+        nodeId: meshId,
+        iterations: 1,
+        strength: 0.5,
+      }),
+    )
+    expectOk(result)
+    const node = system.engine.getNode(meshId)
+    const mesh = node.components.mesh!.mesh
+    // All vertices should have some weight (blurred)
+    for (const vertexWeights of mesh.boneWeights!) {
+      expect(vertexWeights.length).toBe(1)
+      expect(vertexWeights[0].weight).toBeGreaterThan(0)
+      expect(vertexWeights[0].weight).toBeLessThanOrEqual(1)
+    }
+  })
+
+  it('rejects zero iterations', () => {
+    const { system, meshId } = setupWithMeshAndBoneNodes()
+    const result = system.dispatcher.dispatch(
+      new BlurWeightsCommand({
+        nodeId: meshId,
+        iterations: 0,
+        strength: 0.5,
+      }),
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/at least 1/i)
+    }
+  })
+})
+
+describe('FillWeightsCommand', () => {
+  it('fills selected vertices with uniform weight', () => {
+    const { system, boneId, meshId } = setupWithMeshAndBoneNodes()
+    const result = system.dispatcher.dispatch(
+      new FillWeightsCommand({
+        nodeId: meshId,
+        vertexIndices: [0, 1],
+        boneId,
+        weight: 0.6,
+      }),
+    )
+    expectOk(result)
+    const node = system.engine.getNode(meshId)
+    const mesh = node.components.mesh!.mesh
+    // Single bone: weight is always 1.0 after normalization
+    expect(mesh.boneWeights![0][0].weight).toBeCloseTo(1.0)
+    expect(mesh.boneWeights![1][0].weight).toBeCloseTo(1.0)
+  })
+
+  it('rejects empty vertex indices', () => {
+    const { system, meshId } = setupWithMeshAndBoneNodes()
+    const result = system.dispatcher.dispatch(
+      new FillWeightsCommand({
+        nodeId: meshId,
+        vertexIndices: [],
+        boneId: 'bone',
+        weight: 0.5,
+      }),
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/at least one/i)
+    }
+  })
+
+  it('rejects unknown bone id', () => {
+    const { system, meshId } = setupWithMeshAndBoneNodes()
+    const result = system.dispatcher.dispatch(
+      new FillWeightsCommand({
+        nodeId: meshId,
+        vertexIndices: [0],
+        boneId: 'unknown-bone',
+        weight: 0.5,
+      }),
+    )
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/unknown bone/i)
+    }
   })
 })

@@ -189,4 +189,59 @@ describe('meshEditStore', () => {
     useMeshEditStore.getState().toggleEdge({ v0: 5, v1: 2 })
     expect(useMeshEditStore.getState().selectedEdgeIndices).toEqual([])
   })
+
+  it('starts with default weight paint state', () => {
+    useMeshEditStore.getState().enterMeshEdit('node1')
+    expect(useMeshEditStore.getState().weightPaintTool).toBe('paint')
+    expect(useMeshEditStore.getState().selectedBoneId).toBeNull()
+    expect(useMeshEditStore.getState().brushRadius).toBe(0.5)
+    expect(useMeshEditStore.getState().brushStrength).toBe(1.0)
+    expect(useMeshEditStore.getState().heatmapVisible).toBe(true)
+  })
+
+  it('switches weight paint tool', () => {
+    useMeshEditStore.getState().enterMeshEdit('node1')
+    useMeshEditStore.getState().setWeightPaintTool('smooth')
+    expect(useMeshEditStore.getState().weightPaintTool).toBe('smooth')
+    useMeshEditStore.getState().setWeightPaintTool('fill')
+    expect(useMeshEditStore.getState().weightPaintTool).toBe('fill')
+  })
+
+  it('sets selected bone id', () => {
+    useMeshEditStore.getState().enterMeshEdit('node1')
+    useMeshEditStore.getState().setSelectedBoneId('bone1')
+    expect(useMeshEditStore.getState().selectedBoneId).toBe('bone1')
+  })
+
+  it('sets brush radius', () => {
+    useMeshEditStore.getState().enterMeshEdit('node1')
+    useMeshEditStore.getState().setBrushRadius(1.0)
+    expect(useMeshEditStore.getState().brushRadius).toBe(1.0)
+  })
+
+  it('sets brush strength', () => {
+    useMeshEditStore.getState().enterMeshEdit('node1')
+    useMeshEditStore.getState().setBrushStrength(0.8)
+    expect(useMeshEditStore.getState().brushStrength).toBe(0.8)
+  })
+
+  it('toggles heatmap visibility', () => {
+    useMeshEditStore.getState().enterMeshEdit('node1')
+    expect(useMeshEditStore.getState().heatmapVisible).toBe(true)
+    useMeshEditStore.getState().toggleHeatmap()
+    expect(useMeshEditStore.getState().heatmapVisible).toBe(false)
+    useMeshEditStore.getState().toggleHeatmap()
+    expect(useMeshEditStore.getState().heatmapVisible).toBe(true)
+  })
+
+  it('resets weight paint state when entering mesh edit', () => {
+    useMeshEditStore.getState().enterMeshEdit('node1')
+    useMeshEditStore.getState().setWeightPaintTool('smooth')
+    useMeshEditStore.getState().setSelectedBoneId('bone1')
+    useMeshEditStore.getState().setBrushRadius(1.0)
+    useMeshEditStore.getState().enterMeshEdit('node2')
+    expect(useMeshEditStore.getState().weightPaintTool).toBe('paint')
+    expect(useMeshEditStore.getState().selectedBoneId).toBeNull()
+    expect(useMeshEditStore.getState().brushRadius).toBe(0.5)
+  })
 })
