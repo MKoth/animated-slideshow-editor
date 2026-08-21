@@ -5,16 +5,16 @@ import { walkPreOrder } from '../../engine/sceneNode'
 import { useMeshEditStore } from '../../stores/meshEditStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
-import type { WorldTransform } from './worldGeometry'
+import type { WorldTransform, WorldRect } from './worldGeometry'
 import { worldTransformOf } from '../../engine/worldTransform'
 import type { WorldTransformSource } from './hitTest'
 
 const WIREFRAME_COLOR = 0x1a73e8
 const WIREFRAME_WIDTH = 1.5
 const VERTEX_RADIUS = 4
-const VERTEX_FILL = 0xffffff
-const VERTEX_SELECTED_FILL = 0x1a73e8
-const VERTEX_STROKE_COLOR = 0x1a73e8
+const VERTEX_FILL = 0xff4444
+const VERTEX_SELECTED_FILL = 0xff0000
+const VERTEX_STROKE_COLOR = 0xcc0000
 const VERTEX_STROKE_WIDTH = 1.5
 
 const EDGE_SELECTED_COLOR = 0x34a853
@@ -374,5 +374,81 @@ export class MeshOverlay {
       }
     }
     return null
+  }
+
+  verticesInRect(rect: WorldRect, scene: Scene, meshEditNodeId: string): number[] {
+    const node = scene.getNode(meshEditNodeId)
+    if (!node || !node.components.mesh) {
+      return []
+    }
+    const mesh = node.components.mesh.mesh
+    const transform = this.#resolveTransform(scene, meshEditNodeId)
+    if (!transform) {
+      return []
+    }
+    const hits: number[] = []
+    for (let i = 0; i < mesh.vertices.length; i++) {
+      const v = mesh.vertices[i]
+      const { x: wx, y: wy } = localToWorld(v.x, v.y, transform)
+      if (wx >= rect.minX && wx <= rect.maxX && wy >= rect.minY && wy <= rect.maxY) {
+        hits.push(i)
+      }
+    }
+    return hits
+  }
+
+  edgesInRect(rect: WorldRect, scene: Scene, meshEditNodeId: string): MeshEdge[] {
+    const node = scene.getNode(meshEditNodeId)
+    if (!node || !node.components.mesh) {
+      return []
+    }
+    const mesh = node.components.mesh.mesh
+    const transform = this.#resolveTransform(scene, meshEditNodeId)
+    if (!transform) {
+      return []
+    }
+    const worldVertices = mesh.vertices.map((v) => localToWorld(v.x, v.y, transform))
+    const edges = extractEdges(mesh)
+    const hits: MeshEdge[] = []
+    for (const edge of edges) {
+      const a = worldVertices[edge.v0]
+      const b = worldVertices[edge.v1]
+      if (!a || !b) continue
+      const aInside =
+        a.x >= rect.minX && a.x <= rect.maxX && a.y >= rect.minY && a.y <= rect.maxY
+      const bInside =
+        b.x >= rect.minX && b.x <= rect.maxX && b.y >= rect.minY && b.y <= rect.maxY
+      if (aInside || bInside) {
+        hits.push({ v0: edge.v0, v1: edge.v1 })
+      }
+    }
+    return hits
+  }
+
+  facesInRect(rect: WorldRect, scene: Scene, meshEditNodeId: string): number[] {
+    const node = scene.getNode(meshEditNodeId)
+    if (!node || !node.components.mesh) {
+      return []
+    }
+    const mesh = node.components.mesh.mesh
+    const transform = this.#resolveTransform(scene, meshEditNodeId)
+    if (!transform) {
+      return []
+    }
+    const worldVertices = mesh.vertices.map((v) => localToWorld(v.x, v.y, transform))
+    const hits: number[] = []
+    for (let i = 0; i < mesh.faces.length; i++) {
+      const face = mesh.faces[i]
+      const v0 = worldVertices[face.v0]
+      const v1 = worldVertices[face.v1]
+      const v2 = worldVertices[face.v2]
+      if (!v0 || !v1 || !v2) continue
+      const inside = (p: { x: number; y: number }) =>
+        p.x >= rect.minX && p.x <= rect.maxX && p.y >= rect.minY && p.y <= rect.maxY
+      if (inside(v0) && inside(v1) && inside(v2)) {
+        hits.push(i)
+      }
+    }
+    return hits
   }
 }

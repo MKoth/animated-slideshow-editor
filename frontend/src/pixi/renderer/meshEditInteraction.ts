@@ -12,7 +12,8 @@ import {
 import { useMeshEditStore } from '../../stores/meshEditStore'
 import type { MeshSelectMode } from '../../stores/meshEditStore'
 import { cursorToWorld } from './screenToWorld'
-import type { ViewportTransform } from './worldGeometry'
+import type { ViewportTransform, WorldPoint } from './worldGeometry'
+import { rectOf } from './worldGeometry'
 import type { MeshOverlay } from './meshOverlay'
 
 export interface MeshEditContext {
@@ -24,6 +25,7 @@ export interface MeshEditContext {
 }
 
 const MOVE_START_DISTANCE = 2
+const MARQUEE_START_DISTANCE = 4
 
 export class MeshEditInteraction {
   readonly #canvas: HTMLCanvasElement
@@ -33,10 +35,14 @@ export class MeshEditInteraction {
   readonly #meshOverlay: MeshOverlay
   #attached = false
   #pressed = false
-  #dragVertexIndex: number | null = null
+  #pressedOnMeshElement = false
+  #dragVertexIndices: number[] = []
   #startWorldX = 0
   #startWorldY = 0
+  #startClientX = 0
+  #startClientY = 0
   #moveActive = false
+  #marqueeActive = false
   #previewPositions = new Map<number, { x: number; y: number }>()
 
   constructor(context: MeshEditContext) {
@@ -55,6 +61,7 @@ export class MeshEditInteraction {
     this.#canvas.addEventListener('mousedown', this.#onMouseDown)
     window.addEventListener('mousemove', this.#onMouseMove)
     window.addEventListener('mouseup', this.#onMouseUp)
+    window.addEventListener('keydown', this.#onKeyDown)
   }
 
   detach(): void {
@@ -66,6 +73,36 @@ export class MeshEditInteraction {
     this.#canvas.removeEventListener('mousedown', this.#onMouseDown)
     window.removeEventListener('mousemove', this.#onMouseMove)
     window.removeEventListener('mouseup', this.#onMouseUp)
+    window.removeEventListener('keydown', this.#onKeyDown)
+  }
+
+  deleteSelected(): void {
+    const { selectMode } = useMeshEditStore.getState()
+    if (selectMode === 'vertex') {
+      this.#deleteSelectedVertices()
+    } else if (selectMode === 'edge') {
+      this.#deleteSelectedEdges()
+    } else if (selectMode === 'face') {
+      this.#deleteSelectedFaces()
+    }
+  }
+
+  readonly #onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      const { meshEditNodeId } = useMeshEditStore.getState()
+      if (!meshEditNodeId) {
+        return
+      }
+      if (
+        event.target instanceof HTMLElement &&
+        (event.target.isContentEditable ||
+          event.target.tagName === 'INPUT' ||
+          event.target.tagName === 'TEXTAREA')
+      ) {
+        return
+      }
+      this.deleteSelected()
+    }
   }
 
   readonly #onMouseDown = (event: MouseEvent): void => {
@@ -131,9 +168,11 @@ export class MeshEditInteraction {
   ): void {
     const vertexIndex = this.#meshOverlay.hitTestVertex(worldX, worldY, scene, meshEditNodeId)
     if (vertexIndex === null) {
+      this.#startMarquee(worldX, worldY, event)
       return
     }
     this.#pressed = true
+    this.#pressedOnMeshElement = true
     this.#startWorldX = worldX
     this.#startWorldY = worldY
 
@@ -147,7 +186,7 @@ export class MeshEditInteraction {
         useMeshEditStore.getState().selectVertex(vertexIndex)
       }
     }
-    this.#dragVertexIndex = vertexIndex
+    this.#dragVertexIndices = [vertexIndex]
   }
 
   #handleEdgeClick(
@@ -159,9 +198,11 @@ export class MeshEditInteraction {
   ): void {
     const edge = this.#meshOverlay.hitTestEdge(worldX, worldY, scene, meshEditNodeId)
     if (!edge) {
+      this.#startMarquee(worldX, worldY, event)
       return
     }
     this.#pressed = true
+    this.#pressedOnMeshElement = true
     this.#startWorldX = worldX
     this.#startWorldY = worldY
 
@@ -172,6 +213,7 @@ export class MeshEditInteraction {
     } else {
       useMeshEditStore.getState().selectEdge(edge)
     }
+    this.#dragVertexIndices = [edge.v0, edge.v1]
   }
 
   #handleFaceClick(
@@ -183,9 +225,11 @@ export class MeshEditInteraction {
   ): void {
     const faceIndex = this.#meshOverlay.hitTestFace(worldX, worldY, scene, meshEditNodeId)
     if (faceIndex === null) {
+      this.#startMarquee(worldX, worldY, event)
       return
     }
     this.#pressed = true
+    this.#pressedOnMeshElement = true
     this.#startWorldX = worldX
     this.#startWorldY = worldY
 
@@ -196,6 +240,22 @@ export class MeshEditInteraction {
     } else {
       useMeshEditStore.getState().selectFace(faceIndex)
     }
+
+    const node = scene.getNode(meshEditNodeId)
+    const face = node?.components.mesh?.mesh.faces[faceIndex]
+    if (face) {
+      this.#dragVertexIndices = [face.v0, face.v1, face.v2]
+    }
+  }
+
+  #startMarquee(worldX: number, worldY: number, event: MouseEvent): void {
+    this.#pressed = true
+    this.#pressedOnMeshElement = false
+    this.#startWorldX = worldX
+    this.#startWorldY = worldY
+    this.#startClientX = event.clientX
+    this.#startClientY = event.clientY
+    this.#marqueeActive = false
   }
 
   #handleDeleteClick(
@@ -290,10 +350,11 @@ export class MeshEditInteraction {
   }
 
   readonly #onMouseMove = (event: MouseEvent): void => {
-    if (!this.#pressed || this.#dragVertexIndex === null) {
+    if (!this.#pressed) {
       return
     }
-    const { meshEditNodeId } = useMeshEditStore.getState()
+
+    const { meshEditNodeId, selectMode } = useMeshEditStore.getState()
     if (!meshEditNodeId) {
       return
     }
@@ -306,8 +367,22 @@ export class MeshEditInteraction {
     if (!point) {
       return
     }
-    const dx = point.x - this.#startWorldX
-    const dy = point.y - this.#startWorldY
+
+    if (this.#pressedOnMeshElement && this.#dragVertexIndices.length > 0) {
+      this.#handleDrag(point.x, point.y, scene, meshEditNodeId)
+    } else if (!this.#pressedOnMeshElement) {
+      this.#handleMarquee(event, point, scene, meshEditNodeId, selectMode)
+    }
+  }
+
+  #handleDrag(
+    worldX: number,
+    worldY: number,
+    scene: Scene,
+    meshEditNodeId: string,
+  ): void {
+    const dx = worldX - this.#startWorldX
+    const dy = worldY - this.#startWorldY
     if (!this.#moveActive && Math.hypot(dx, dy) < MOVE_START_DISTANCE) {
       return
     }
@@ -318,9 +393,10 @@ export class MeshEditInteraction {
     }
     const mesh = node.components.mesh.mesh
     const { selectedVertexIndices } = useMeshEditStore.getState()
-    const indices = selectedVertexIndices.includes(this.#dragVertexIndex)
-      ? selectedVertexIndices
-      : [this.#dragVertexIndex]
+    const indices = new Set(this.#dragVertexIndices)
+    for (const idx of selectedVertexIndices) {
+      indices.add(idx)
+    }
     for (const idx of indices) {
       const original = mesh.vertices[idx]
       if (original) {
@@ -331,11 +407,41 @@ export class MeshEditInteraction {
     this.#meshOverlay.redraw()
   }
 
+  #handleMarquee(
+    event: MouseEvent,
+    point: WorldPoint,
+    scene: Scene,
+    meshEditNodeId: string,
+    selectMode: MeshSelectMode,
+  ): void {
+    const dx = event.clientX - this.#startClientX
+    const dy = event.clientY - this.#startClientY
+    if (!this.#marqueeActive && Math.hypot(dx, dy) < MARQUEE_START_DISTANCE) {
+      return
+    }
+    this.#marqueeActive = true
+    const startWorld: WorldPoint = { x: this.#startWorldX, y: this.#startWorldY }
+    const rect = rectOf(startWorld, point)
+
+    if (selectMode === 'vertex') {
+      const hits = this.#meshOverlay.verticesInRect(rect, scene, meshEditNodeId)
+      useMeshEditStore.getState().selectVertices(hits)
+    } else if (selectMode === 'edge') {
+      const hits = this.#meshOverlay.edgesInRect(rect, scene, meshEditNodeId)
+      useMeshEditStore.getState().selectEdges(hits)
+    } else if (selectMode === 'face') {
+      const hits = this.#meshOverlay.facesInRect(rect, scene, meshEditNodeId)
+      useMeshEditStore.getState().selectFaces(hits)
+    }
+
+    this.#meshOverlay.redraw()
+  }
+
   readonly #onMouseUp = (): void => {
     if (!this.#pressed) {
       return
     }
-    if (this.#moveActive && this.#dragVertexIndex !== null) {
+    if (this.#moveActive && this.#dragVertexIndices.length > 0) {
       this.#commitMove()
     }
     this.#reset()
@@ -391,8 +497,6 @@ export class MeshEditInteraction {
     if (!meshEditNodeId || selectedFaceIndices.length === 0) {
       return
     }
-    // Deleting faces means removing the face entries, not the vertices.
-    // We need to get the current mesh and rebuild faces without the selected ones.
     const scene = this.#getScene()
     if (!scene) return
     const node = scene.getNode(meshEditNodeId)
@@ -403,11 +507,6 @@ export class MeshEditInteraction {
     if (remainingFaces.length === mesh.faces.length) {
       return
     }
-    // Use the engine to update mesh data - we need to import this
-    // For now, we'll dispatch a delete vertices command on the vertices of deleted faces
-    // Actually, let's just clear selection and let the mesh update happen through setMeshData
-    // We need a proper command for this, but for now let's collect vertices from deleted faces
-    // and only delete them if they're not used by any remaining face
     const usedVertices = new Set<number>()
     for (const face of remainingFaces) {
       usedVertices.add(face.v0)
@@ -421,7 +520,6 @@ export class MeshEditInteraction {
       if (face && !usedVertices.has(face.v1)) vertexIndices.push(face.v1)
       if (face && !usedVertices.has(face.v2)) vertexIndices.push(face.v2)
     }
-    // Remove duplicates
     const uniqueIndices = [...new Set(vertexIndices)]
     if (uniqueIndices.length > 0) {
       this.#dispatch(
@@ -433,8 +531,10 @@ export class MeshEditInteraction {
 
   #reset(): void {
     this.#pressed = false
-    this.#dragVertexIndex = null
+    this.#pressedOnMeshElement = false
+    this.#dragVertexIndices = []
     this.#moveActive = false
+    this.#marqueeActive = false
     this.#previewPositions.clear()
     this.#meshOverlay.clearPreviewVertices()
   }
