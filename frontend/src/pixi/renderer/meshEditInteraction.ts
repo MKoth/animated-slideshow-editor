@@ -88,7 +88,7 @@ export class MeshEditInteraction {
   }
 
   readonly #onKeyDown = (event: KeyboardEvent): void => {
-    if (event.key === 'Delete' || event.key === 'Backspace') {
+    if (event.key === 'Delete' || event.key === 'Backspace' || event.key === 'd') {
       const { meshEditNodeId } = useMeshEditStore.getState()
       if (!meshEditNodeId) {
         return
@@ -213,7 +213,13 @@ export class MeshEditInteraction {
     } else {
       useMeshEditStore.getState().selectEdge(edge)
     }
-    this.#dragVertexIndices = [edge.v0, edge.v1]
+    const { selectedEdgeIndices } = useMeshEditStore.getState()
+    const vertexSet = new Set<number>()
+    for (const e of selectedEdgeIndices) {
+      vertexSet.add(e.v0)
+      vertexSet.add(e.v1)
+    }
+    this.#dragVertexIndices = [...vertexSet]
   }
 
   #handleFaceClick(
@@ -242,9 +248,19 @@ export class MeshEditInteraction {
     }
 
     const node = scene.getNode(meshEditNodeId)
-    const face = node?.components.mesh?.mesh.faces[faceIndex]
-    if (face) {
-      this.#dragVertexIndices = [face.v0, face.v1, face.v2]
+    const mesh = node?.components.mesh?.mesh
+    if (mesh) {
+      const { selectedFaceIndices } = useMeshEditStore.getState()
+      const vertexSet = new Set<number>()
+      for (const fi of selectedFaceIndices) {
+        const face = mesh.faces[fi]
+        if (face) {
+          vertexSet.add(face.v0)
+          vertexSet.add(face.v1)
+          vertexSet.add(face.v2)
+        }
+      }
+      this.#dragVertexIndices = [...vertexSet]
     }
   }
 

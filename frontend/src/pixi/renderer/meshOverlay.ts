@@ -12,9 +12,9 @@ import type { WorldTransformSource } from './hitTest'
 const WIREFRAME_COLOR = 0x1a73e8
 const WIREFRAME_WIDTH = 1.5
 const VERTEX_RADIUS = 4
-const VERTEX_FILL = 0xff4444
+const VERTEX_FILL = 0x1a73e8
 const VERTEX_SELECTED_FILL = 0xff0000
-const VERTEX_STROKE_COLOR = 0xcc0000
+const VERTEX_STROKE_COLOR = 0x1a73e8
 const VERTEX_STROKE_WIDTH = 1.5
 
 const EDGE_SELECTED_COLOR = 0x34a853
