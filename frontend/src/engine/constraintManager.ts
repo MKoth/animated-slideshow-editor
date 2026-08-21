@@ -23,7 +23,7 @@ export class ConstraintManager {
   ): Constraint {
     const node = this.#nodeLookup(nodeId)
     if (
-      (type === 'rotationLimit' || type === 'positionLimit' || type === 'lookAt') &&
+      (type === 'rotationLimit' || type === 'lookAt') &&
       !node.components.bone
     ) {
       throw new Error(`Constraint type "${type}" requires a bone node`)
@@ -173,10 +173,6 @@ function paramsToJSON(type: ConstraintType, params: ConstraintParams): Constrain
       const p = params as import('./constraint').RotationLimitParams
       return { minRotation: p.minRotation, maxRotation: p.maxRotation }
     }
-    case 'positionLimit': {
-      const p = params as import('./constraint').PositionLimitParams
-      return { minX: p.minX, maxX: p.maxX, minY: p.minY, maxY: p.maxY }
-    }
     case 'lookAt': {
       const p = params as import('./constraint').LookAtParams
       return { targetX: p.targetX, targetY: p.targetY, targetNodeId: p.targetNodeId }
@@ -205,13 +201,6 @@ function paramsFromJSON(type: ConstraintType, json: ConstraintParamsJSON): Const
   switch (type) {
     case 'rotationLimit':
       return { minRotation: json.minRotation!, maxRotation: json.maxRotation! }
-    case 'positionLimit':
-      return {
-        minX: json.minX!,
-        maxX: json.maxX!,
-        minY: json.minY!,
-        maxY: json.maxY!,
-      }
     case 'lookAt':
       return {
         targetX: json.targetX!,

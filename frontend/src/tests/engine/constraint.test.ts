@@ -45,20 +45,18 @@ describe('ConstraintManager', () => {
     expect(constraint.params).toEqual({ minRotation: -45, maxRotation: 45 })
   })
 
-  it('adds a position limit constraint to a bone node', () => {
+  it('adds a second rotation limit constraint to a bone node', () => {
     const engine = setup()
     const slide = engine.project?.slides[0]
     if (!slide) throw new Error('No slide')
 
     const bone = createBoneNode(engine, 'Bone', slide.scene.root.id)
-    const constraint = engine.addConstraint(bone.id, 'positionLimit', 1, {
-      minX: 0,
-      maxX: 100,
-      minY: 0,
-      maxY: 100,
+    const constraint = engine.addConstraint(bone.id, 'rotationLimit', 1, {
+      minRotation: -45,
+      maxRotation: 45,
     })
 
-    expect(constraint.type).toBe('positionLimit')
+    expect(constraint.type).toBe('rotationLimit')
     expect(constraint.priority).toBe(1)
   })
 
@@ -126,7 +124,7 @@ describe('ConstraintManager', () => {
     }).toThrow('requires a bone node')
   })
 
-  it('rejects position limit on non-bone node', () => {
+  it('rejects rotation limit on non-bone node (second constraint)', () => {
     const engine = setup()
     const slide = engine.project?.slides[0]
     if (!slide) throw new Error('No slide')
@@ -134,11 +132,9 @@ describe('ConstraintManager', () => {
     const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'Node')
 
     expect(() => {
-      engine.addConstraint(node.id, 'positionLimit', 0, {
-        minX: 0,
-        maxX: 100,
-        minY: 0,
-        maxY: 100,
+      engine.addConstraint(node.id, 'rotationLimit', 0, {
+        minRotation: -30,
+        maxRotation: 30,
       })
     }).toThrow('requires a bone node')
   })
@@ -219,11 +215,9 @@ describe('ConstraintManager', () => {
       minRotation: -45,
       maxRotation: 45,
     })
-    engine.addConstraint(bone.id, 'positionLimit', 5, {
-      minX: 0,
-      maxX: 100,
-      minY: 0,
-      maxY: 100,
+    engine.addConstraint(bone.id, 'rotationLimit', 5, {
+      minRotation: -30,
+      maxRotation: 30,
     })
     engine.addConstraint(bone.id, 'lookAt', 0, {
       targetX: 0,
@@ -233,7 +227,7 @@ describe('ConstraintManager', () => {
     const constraints = engine.getConstraintsForNode(bone.id)
     expect(constraints.length).toBe(3)
     expect(constraints[0].type).toBe('lookAt')
-    expect(constraints[1].type).toBe('positionLimit')
+    expect(constraints[1].type).toBe('rotationLimit')
     expect(constraints[2].type).toBe('rotationLimit')
   })
 
@@ -328,7 +322,7 @@ describe('Constraint Commands', () => {
 })
 
 describe('Constraint Evaluation', () => {
-  it('clamps rotation within limits', () => {
+  it('rotation limit is a no-op in evaluator (clamped in renderer)', () => {
     const world: WorldTransform = { x: 0, y: 0, rotation: 90, scaleX: 1, scaleY: 1 }
     const constraint: Constraint = {
       id: 'test',
@@ -342,7 +336,7 @@ describe('Constraint Evaluation', () => {
       worldTransformLookup: () => null,
     })
 
-    expect(result.rotation).toBe(45)
+    expect(result.rotation).toBe(90)
   })
 
   it('does not clamp rotation within limits', () => {
@@ -362,7 +356,7 @@ describe('Constraint Evaluation', () => {
     expect(result.rotation).toBe(30)
   })
 
-  it('clamps rotation below min', () => {
+  it('rotation limit passes through in evaluator', () => {
     const world: WorldTransform = { x: 0, y: 0, rotation: -90, scaleX: 1, scaleY: 1 }
     const constraint: Constraint = {
       id: 'test',
@@ -376,16 +370,16 @@ describe('Constraint Evaluation', () => {
       worldTransformLookup: () => null,
     })
 
-    expect(result.rotation).toBe(-45)
+    expect(result.rotation).toBe(-90)
   })
 
-  it('clamps position within limits', () => {
-    const world: WorldTransform = { x: 150, y: -10, rotation: 0, scaleX: 1, scaleY: 1 }
+  it('rotation limit passes through in evaluation', () => {
+    const world: WorldTransform = { x: 0, y: 0, rotation: 90, scaleX: 1, scaleY: 1 }
     const constraint: Constraint = {
       id: 'test',
-      type: 'positionLimit',
+      type: 'rotationLimit',
       priority: 0,
-      params: { minX: 0, maxX: 100, minY: 0, maxY: 100 },
+      params: { minRotation: -45, maxRotation: 45 },
     }
 
     const result = applyConstraints(world, [constraint], {
@@ -393,8 +387,7 @@ describe('Constraint Evaluation', () => {
       worldTransformLookup: () => null,
     })
 
-    expect(result.x).toBe(100)
-    expect(result.y).toBe(0)
+    expect(result.rotation).toBe(90)
   })
 
   it('applies look-at constraint', () => {
@@ -521,17 +514,17 @@ describe('Constraint Evaluation', () => {
     expect(result.scaleY).toBe(1.5)
   })
 
-  it('multiple constraints compose in priority order', () => {
-    const world: WorldTransform = { x: 150, y: 0, rotation: 90, scaleX: 1, scaleY: 1 }
+  it('multiple rotation limits pass through in evaluator', () => {
+    const world: WorldTransform = { x: 0, y: 0, rotation: 90, scaleX: 1, scaleY: 1 }
     const constraints: Constraint[] = [
       {
-        id: 'pos',
-        type: 'positionLimit',
+        id: 'rot1',
+        type: 'rotationLimit',
         priority: 0,
-        params: { minX: 0, maxX: 100, minY: 0, maxY: 100 },
+        params: { minRotation: -30, maxRotation: 30 },
       },
       {
-        id: 'rot',
+        id: 'rot2',
         type: 'rotationLimit',
         priority: 1,
         params: { minRotation: -45, maxRotation: 45 },
@@ -543,8 +536,7 @@ describe('Constraint Evaluation', () => {
       worldTransformLookup: () => null,
     })
 
-    expect(result.x).toBe(100)
-    expect(result.rotation).toBe(45)
+    expect(result.rotation).toBe(90)
   })
 })
 

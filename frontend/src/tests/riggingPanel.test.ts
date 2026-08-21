@@ -157,17 +157,15 @@ describe('rigging panel — constraint queries', () => {
       minRotation: -45,
       maxRotation: 45,
     })
-    engine.addConstraint(bone.id, 'positionLimit', 1, {
-      minX: 0,
-      maxX: 100,
-      minY: 0,
-      maxY: 100,
+    engine.addConstraint(bone.id, 'rotationLimit', 1, {
+      minRotation: -30,
+      maxRotation: 30,
     })
 
     const constraints = engine.getConstraintManager().getConstraintsForNode(bone.id)
     expect(constraints).toHaveLength(2)
     expect(constraints[0].type).toBe('rotationLimit')
-    expect(constraints[1].type).toBe('positionLimit')
+    expect(constraints[1].type).toBe('rotationLimit')
   })
 
   it('returns empty when no constraints exist', () => {
@@ -210,11 +208,9 @@ describe('rigging panel — constraint queries', () => {
       minRotation: -45,
       maxRotation: 45,
     })
-    engine.addConstraint(bone2.id, 'positionLimit', 0, {
-      minX: 0,
-      maxX: 100,
-      minY: 0,
-      maxY: 100,
+    engine.addConstraint(bone2.id, 'rotationLimit', 0, {
+      minRotation: -30,
+      maxRotation: 30,
     })
 
     const all = collectAllConstraints(engine)

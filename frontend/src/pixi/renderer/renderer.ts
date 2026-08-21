@@ -566,6 +566,7 @@ export class Renderer {
         const rotations = this.#transformSource.getIKOverrides()
         this.#sceneRenderer?.applyIKOverrides(rotations)
       }
+      this.#sceneRenderer?.applyConstraintOverrides()
       this.#selectionOverlay?.redraw()
       this.#syncFullscreenShader()
     } catch (error) {
@@ -656,6 +657,11 @@ export class Renderer {
         break
       case 'IKTargetChanged':
       case 'IKPoleTargetChanged':
+        this.#handleTimeChanged()
+        break
+      case 'ConstraintAdded':
+      case 'ConstraintRemoved':
+      case 'ConstraintChanged':
         this.#handleTimeChanged()
         break
     }

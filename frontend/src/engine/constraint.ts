@@ -1,15 +1,8 @@
-export type ConstraintType = 'rotationLimit' | 'positionLimit' | 'lookAt' | 'distance' | 'parent'
+export type ConstraintType = 'rotationLimit' | 'lookAt' | 'distance' | 'parent'
 
 export interface RotationLimitParams {
   readonly minRotation: number
   readonly maxRotation: number
-}
-
-export interface PositionLimitParams {
-  readonly minX: number
-  readonly maxX: number
-  readonly minY: number
-  readonly maxY: number
 }
 
 export interface LookAtParams {
@@ -32,7 +25,7 @@ export interface ParentConstraintParams {
 }
 
 export type ConstraintParams =
-  RotationLimitParams | PositionLimitParams | LookAtParams | DistanceParams | ParentConstraintParams
+  RotationLimitParams | LookAtParams | DistanceParams | ParentConstraintParams
 
 export interface Constraint {
   readonly id: string

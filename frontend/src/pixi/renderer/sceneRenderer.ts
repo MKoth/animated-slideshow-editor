@@ -22,6 +22,9 @@ import {
   type MaterialParameterDefault,
 } from '../../engine/materialResolution'
 import type { MaterialOverrides } from '../../engine/materialInstance'
+import type { WorldTransform } from '../../engine/worldTransform'
+import { relativeTransform } from '../../engine/worldTransform'
+import { applyConstraints, type ConstraintEvaluationContext } from '../../engine/constraintEvaluator'
 import type { PixiContainer, PixiFilter, RendererPixi } from './pixi'
 import type { WorldSize } from './worldGeometry'
 import {
@@ -216,6 +219,25 @@ export class SceneRenderer {
     }
   }
 
+  applyConstraintOverrides(): void {
+    const scene = this.#scene
+    if (!scene) {
+      return
+    }
+    const constraintManager = this.#engine.getConstraintManager()
+    for (const node of walkPreOrder(scene.root)) {
+      const constraints = constraintManager.getConstraintsForNode(node.id)
+      if (constraints.length === 0) {
+        continue
+      }
+      const container = this.#containers.get(node.id)
+      if (!container) {
+        continue
+      }
+      this.#applyConstraints(node.id, container)
+    }
+  }
+
   handleMaterialChanged(nodeId: string): void {
     this.#evaluateAndApply(nodeId)
   }
@@ -356,6 +378,94 @@ export class SceneRenderer {
     storedMaterial.tint = material.tint
     storedMaterial.opacityMultiplier = material.opacityMultiplier
     this.#lastMaterials.set(nodeId, storedMaterial)
+  }
+
+  #applyConstraints(nodeId: string, container: PixiContainer): void {
+    const constraintManager = this.#engine.getConstraintManager()
+    const constraints = constraintManager.getConstraintsForNode(nodeId)
+    if (constraints.length === 0) {
+      return
+    }
+
+    const time = this.#currentTime.getTime(this.#slideId!)
+    const world = this.#engineWorldTransform(nodeId, time)
+    if (!world) {
+      return
+    }
+
+    const context: ConstraintEvaluationContext = {
+      nodeLookup: (id) => this.#engine.getNode(id),
+      worldTransformLookup: (id) => this.#engineWorldTransform(id, time),
+    }
+    const constrained = applyConstraints(world, constraints, context)
+
+    const node = this.#engine.getNode(nodeId)
+    const parentWorld = node.parent
+      ? this.#engineWorldTransform(node.parent.id, time)
+      : null
+    if (parentWorld) {
+      const local = relativeTransform(constrained, parentWorld)
+      if (local) {
+        this.#applyLocalRotationLimit(nodeId, local)
+        container.position.set(local.x, local.y)
+        container.rotation = local.rotation
+        container.scale.set(local.scaleX, local.scaleY)
+        return
+      }
+    }
+    this.#applyLocalRotationLimit(nodeId, constrained)
+    container.position.set(constrained.x, constrained.y)
+    container.rotation = constrained.rotation
+    container.scale.set(constrained.scaleX, constrained.scaleY)
+  }
+
+  #engineWorldTransform(nodeId: string, time: number): WorldTransform | null {
+    let node: SceneNode
+    try {
+      node = this.#engine.getNode(nodeId)
+    } catch {
+      return null
+    }
+    const chain: SceneNode[] = []
+    for (let cursor: SceneNode | null = node; cursor !== null; cursor = cursor.parent) {
+      chain.push(cursor)
+    }
+    chain.reverse()
+
+    let x = 0
+    let y = 0
+    let rotation = 0
+    let scaleX = 1
+    let scaleY = 1
+    for (const link of chain) {
+      const local = this.#engine.evaluateNode(link.id, time, this.#scratch).transform
+      const ikRot = this.#ikOverrides.get(link.id)
+      const r = ikRot !== undefined ? ikRot : local.rotation
+      const cosR = Math.cos(rotation)
+      const sinR = Math.sin(rotation)
+      x += local.x * cosR - local.y * sinR
+      y += local.x * sinR + local.y * cosR
+      rotation += r
+      scaleX *= local.scaleX
+      scaleY *= local.scaleY
+    }
+    return { x, y, rotation, scaleX, scaleY }
+  }
+
+  #applyLocalRotationLimit(nodeId: string, transform: { rotation: number }): void {
+    const constraintManager = this.#engine.getConstraintManager()
+    const constraints = constraintManager.getConstraintsForNode(nodeId)
+    for (const c of constraints) {
+      if (c.type === 'rotationLimit') {
+        const { minRotation, maxRotation } = c.params as {
+          minRotation: number
+          maxRotation: number
+        }
+        const minRad = (minRotation * Math.PI) / 180
+        const maxRad = (maxRotation * Math.PI) / 180
+        transform.rotation = Math.max(minRad, Math.min(maxRad, transform.rotation))
+      }
+    }
   }
 
   refreshNodeRendering(): void {

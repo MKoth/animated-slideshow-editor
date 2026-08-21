@@ -213,10 +213,6 @@ export type IKManagerJSON = {
 export type ConstraintParamsJSON = {
   readonly minRotation?: number
   readonly maxRotation?: number
-  readonly minX?: number
-  readonly maxX?: number
-  readonly minY?: number
-  readonly maxY?: number
   readonly targetX?: number
   readonly targetY?: number
   readonly targetNodeId?: string

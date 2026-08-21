@@ -26,11 +26,9 @@ function applySingleConstraint(
 ): WorldTransform {
   switch (constraint.type) {
     case 'rotationLimit':
-      return applyRotationLimit(world, constraint)
-    case 'positionLimit':
-      return applyPositionLimit(world, constraint)
+      return applyRotationLimit(world)
     case 'lookAt':
-      return applyLookAt(world, constraint)
+      return applyLookAt(world, constraint, context)
     case 'distance':
       return applyDistance(world, constraint, context)
     case 'parent':
@@ -40,34 +38,31 @@ function applySingleConstraint(
   }
 }
 
-function applyRotationLimit(world: WorldTransform, constraint: Constraint): WorldTransform {
-  const { minRotation, maxRotation } = constraint.params as {
-    minRotation: number
-    maxRotation: number
-  }
-  const clamped = Math.max(minRotation, Math.min(maxRotation, world.rotation))
-  return { ...world, rotation: clamped }
+function applyRotationLimit(world: WorldTransform): WorldTransform {
+  return world
 }
 
-function applyPositionLimit(world: WorldTransform, constraint: Constraint): WorldTransform {
-  const { minX, maxX, minY, maxY } = constraint.params as {
-    minX: number
-    maxX: number
-    minY: number
-    maxY: number
-  }
-  const x = Math.max(minX, Math.min(maxX, world.x))
-  const y = Math.max(minY, Math.min(maxY, world.y))
-  return { ...world, x, y }
-}
-
-function applyLookAt(world: WorldTransform, constraint: Constraint): WorldTransform {
-  const { targetX, targetY } = constraint.params as {
+function applyLookAt(
+  world: WorldTransform,
+  constraint: Constraint,
+  context: ConstraintEvaluationContext,
+): WorldTransform {
+  const { targetX, targetY, targetNodeId } = constraint.params as {
     targetX: number
     targetY: number
+    targetNodeId?: string
   }
-  const dx = targetX - world.x
-  const dy = targetY - world.y
+  let tx = targetX
+  let ty = targetY
+  if (targetNodeId) {
+    const targetWorld = context.worldTransformLookup(targetNodeId)
+    if (targetWorld) {
+      tx = targetWorld.x
+      ty = targetWorld.y
+    }
+  }
+  const dx = tx - world.x
+  const dy = ty - world.y
   const rotation = Math.atan2(dy, dx)
   return { ...world, rotation }
 }
