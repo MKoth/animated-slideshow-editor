@@ -150,7 +150,7 @@ export class CanvasSelection {
       return
     }
     const { mode } = useEditingModeStore.getState()
-    if (mode === 'boneCreation' || mode === 'ikTarget' || mode === 'poleVector') {
+    if (mode === 'boneCreation' || mode === 'ikTarget' || mode === 'poleVector' || mode === 'meshEdit' || mode === 'weightPaint') {
       return
     }
     const scene = this.#getScene()

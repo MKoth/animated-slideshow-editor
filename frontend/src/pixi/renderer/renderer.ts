@@ -226,6 +226,7 @@ export class Renderer {
         world,
         engine: this.#engine,
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
+        getWorldTransform: transformOf,
       })
       this.#meshOverlay.attach()
       this.#meshOverlay.bringToFront()
@@ -254,7 +255,10 @@ export class Renderer {
             this.#guideOverlay?.show(vertical, horizontal, span),
           clear: () => this.#guideOverlay?.clear(),
         },
-        onMove: () => this.#selectionOverlay?.redraw(),
+        onMove: () => {
+          this.#selectionOverlay?.redraw()
+          this.#meshOverlay?.redraw()
+        },
         getMoveOptions: () => ({
           gridSnap: useUiStore.getState().gridSnap,
           gridStep: DEFAULT_GRID_STEP,
@@ -653,6 +657,7 @@ export class Renderer {
         sceneRenderer.handleKeyframeChanged(event.nodeId)
         break
       case 'MeshChanged':
+        sceneRenderer.handleMeshChanged(event.nodeId)
         this.#meshOverlay?.redraw()
         break
       case 'IKTargetChanged':

@@ -1,11 +1,13 @@
 import type { EnginePublic, Scene } from '../../engine'
 import type { MeshData, MeshEdge } from '../../engine/mesh'
 import { extractEdges, edgeKey } from '../../engine/mesh'
+import { walkPreOrder } from '../../engine/sceneNode'
 import { useMeshEditStore } from '../../stores/meshEditStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
 import type { WorldTransform } from './worldGeometry'
 import { worldTransformOf } from '../../engine/worldTransform'
+import type { WorldTransformSource } from './hitTest'
 
 const WIREFRAME_COLOR = 0x1a73e8
 const WIREFRAME_WIDTH = 1.5
@@ -28,6 +30,7 @@ export interface MeshOverlayContext {
   readonly world: PixiContainer
   readonly engine: EnginePublic
   readonly getScene: () => Scene | null
+  readonly getWorldTransform?: WorldTransformSource
 }
 
 function localToWorld(
@@ -89,17 +92,20 @@ export class MeshOverlay {
   readonly #world: PixiContainer
   readonly #engine: EnginePublic
   readonly #getScene: () => Scene | null
+  readonly #getWorldTransform?: WorldTransformSource
   #graphics: PixiGraphics | null = null
   #attached = false
   #unsubscribeMeshEdit: (() => void) | null = null
   #unsubscribeSelection: (() => void) | null = null
   #unsubscribeEngine: (() => void) | null = null
+  #previewVertices: Map<number, { x: number; y: number }> | null = null
 
   constructor(context: MeshOverlayContext) {
     this.#pixi = context.pixi
     this.#world = context.world
     this.#engine = context.engine
     this.#getScene = context.getScene
+    this.#getWorldTransform = context.getWorldTransform
   }
 
   attach(): void {
@@ -143,30 +149,73 @@ export class MeshOverlay {
     }
   }
 
+  #resolveTransform(scene: Scene, nodeId: string): WorldTransform | null {
+    if (this.#getWorldTransform) {
+      return this.#getWorldTransform(nodeId)
+    }
+    return worldTransformOf(scene, nodeId)
+  }
+
+  setPreviewVertices(positions: Map<number, { x: number; y: number }>): void {
+    this.#previewVertices = positions
+  }
+
+  clearPreviewVertices(): void {
+    this.#previewVertices = null
+  }
+
   redraw(): void {
     const graphics = this.#graphics
     if (!graphics) {
       return
     }
     graphics.clear()
-    const { meshEditNodeId } = useMeshEditStore.getState()
-    if (!meshEditNodeId) {
-      return
-    }
     const scene = this.#getScene()
     if (!scene) {
       return
     }
-    const node = scene.getNode(meshEditNodeId)
-    if (!node || !node.components.mesh) {
-      return
+    const { meshEditNodeId } = useMeshEditStore.getState()
+    if (meshEditNodeId) {
+      const node = scene.getNode(meshEditNodeId)
+      if (!node || !node.components.mesh) {
+        return
+      }
+      const mesh = node.components.mesh.mesh
+      const transform = this.#resolveTransform(scene, meshEditNodeId)
+      if (!transform) {
+        return
+      }
+      this.#drawMesh(graphics, mesh, transform)
+    } else {
+      for (const node of walkPreOrder(scene.root)) {
+        if (!node.components.mesh || !node.visible) {
+          continue
+        }
+        const transform = this.#resolveTransform(scene, node.id)
+        if (!transform) {
+          continue
+        }
+        this.#drawWireframe(graphics, node.components.mesh.mesh, transform)
+      }
     }
-    const mesh = node.components.mesh.mesh
-    const transform = worldTransformOf(scene, meshEditNodeId)
-    if (!transform) {
-      return
+  }
+
+  #drawWireframe(graphics: PixiGraphics, mesh: MeshData, transform: WorldTransform): void {
+    const worldVertices = mesh.vertices.map((v) => localToWorld(v.x, v.y, transform))
+    for (const face of mesh.faces) {
+      const v0 = worldVertices[face.v0]
+      const v1 = worldVertices[face.v1]
+      const v2 = worldVertices[face.v2]
+      if (v0 && v1) {
+        graphics.moveTo(v0.x, v0.y).lineTo(v1.x, v1.y).stroke({ width: WIREFRAME_WIDTH, color: WIREFRAME_COLOR })
+      }
+      if (v1 && v2) {
+        graphics.moveTo(v1.x, v1.y).lineTo(v2.x, v2.y).stroke({ width: WIREFRAME_WIDTH, color: WIREFRAME_COLOR })
+      }
+      if (v2 && v0) {
+        graphics.moveTo(v2.x, v2.y).lineTo(v0.x, v0.y).stroke({ width: WIREFRAME_WIDTH, color: WIREFRAME_COLOR })
+      }
     }
-    this.#drawMesh(graphics, mesh, transform)
   }
 
   #drawMesh(graphics: PixiGraphics, mesh: MeshData, transform: WorldTransform): void {
@@ -175,7 +224,11 @@ export class MeshOverlay {
     const selectedVertexSet = new Set(selectedVertexIndices)
     const selectedEdgeSet = new Set(selectedEdgeIndices.map((e) => edgeKey(e.v0, e.v1)))
     const selectedFaceSet = new Set(selectedFaceIndices)
-    const worldVertices = mesh.vertices.map((v) => localToWorld(v.x, v.y, transform))
+    const preview = this.#previewVertices
+    const worldVertices = mesh.vertices.map((v, i) => {
+      const p = preview?.get(i)
+      return localToWorld(p ? p.x : v.x, p ? p.y : v.y, transform)
+    })
 
     // Draw selected faces (filled triangles)
     if (selectMode === 'face') {
@@ -243,7 +296,7 @@ export class MeshOverlay {
       return null
     }
     const mesh = node.components.mesh.mesh
-    const transform = worldTransformOf(scene, meshEditNodeId)
+    const transform = this.#resolveTransform(scene, meshEditNodeId)
     if (!transform) {
       return null
     }
@@ -271,7 +324,7 @@ export class MeshOverlay {
       return null
     }
     const mesh = node.components.mesh.mesh
-    const transform = worldTransformOf(scene, meshEditNodeId)
+    const transform = this.#resolveTransform(scene, meshEditNodeId)
     if (!transform) {
       return null
     }
@@ -303,7 +356,7 @@ export class MeshOverlay {
       return null
     }
     const mesh = node.components.mesh.mesh
-    const transform = worldTransformOf(scene, meshEditNodeId)
+    const transform = this.#resolveTransform(scene, meshEditNodeId)
     if (!transform) {
       return null
     }

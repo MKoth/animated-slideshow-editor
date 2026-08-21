@@ -242,6 +242,37 @@ export class SceneRenderer {
     this.#evaluateAndApply(nodeId)
   }
 
+  handleMeshChanged(nodeId: string): void {
+    const scene = this.#scene
+    if (!scene) {
+      return
+    }
+    const node = scene.getNode(nodeId)
+    if (!node || !node.components.mesh) {
+      return
+    }
+    const mesh = node.components.mesh.mesh
+    if (mesh.vertices.length === 0) {
+      return
+    }
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const v of mesh.vertices) {
+      if (v.x < minX) minX = v.x
+      if (v.y < minY) minY = v.y
+      if (v.x > maxX) maxX = v.x
+      if (v.y > maxY) maxY = v.y
+    }
+    const w = maxX - minX
+    const h = maxY - minY
+    const cx = (minX + maxX) / 2
+    const cy = (minY + maxY) / 2
+    this.#sizes.set(nodeId, { width: w, height: h, offsetX: cx, offsetY: cy })
+    this.#onNodeSizeChanged(nodeId)
+  }
+
   previewTransform(nodeId: string, x: number, y: number): void {
     const container = this.#containers.get(nodeId)
     if (!container) {

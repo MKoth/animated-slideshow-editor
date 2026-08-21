@@ -17,6 +17,7 @@ const labelByGroup = new WeakMap<PixiContainer, PixiText>()
 const outlineByGroup = new WeakMap<PixiContainer, PixiGraphics>()
 const bodyByGroup = new WeakMap<PixiContainer, PixiSprite>()
 const boneSizeByGroup = new WeakMap<PixiContainer, WorldSize>()
+const meshSizeByGroup = new WeakMap<PixiContainer, WorldSize>()
 
 export function createPlaceholder(
   pixi: RendererPixi,
@@ -101,6 +102,10 @@ export function placeholderSize(group: PixiContainer): WorldSize | null {
   if (boneSize) {
     return boneSize
   }
+  const meshSize = meshSizeByGroup.get(group)
+  if (meshSize) {
+    return meshSize
+  }
   const body = bodyByGroup.get(group)
   if (!body) {
     return null
@@ -116,6 +121,16 @@ export function setBoneSize(
   offsetY = 0,
 ): void {
   boneSizeByGroup.set(group, { width, height, offsetX, offsetY })
+}
+
+export function setMeshPlaceholderSize(
+  group: PixiContainer,
+  width: number,
+  height: number,
+  offsetX = 0,
+  offsetY = 0,
+): void {
+  meshSizeByGroup.set(group, { width, height, offsetX, offsetY })
 }
 
 function hexColorToTint(color: string): number {

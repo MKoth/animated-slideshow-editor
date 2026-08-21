@@ -91,21 +91,25 @@ export class MeshEditInteraction {
 
     if (meshEditTool === 'delete') {
       this.#handleDeleteClick(point.x, point.y, scene, meshEditNodeId, selectMode)
+      useMeshEditStore.getState().setMeshEditTool('select')
       return
     }
 
     if (meshEditTool === 'extrude') {
       this.#handleExtrudeClick(meshEditNodeId, selectMode)
+      useMeshEditStore.getState().setMeshEditTool('select')
       return
     }
 
     if (meshEditTool === 'subdivide') {
       this.#handleSubdivideClick(meshEditNodeId, selectMode)
+      useMeshEditStore.getState().setMeshEditTool('select')
       return
     }
 
     if (meshEditTool === 'mirror') {
       this.#handleMirrorClick(meshEditNodeId)
+      useMeshEditStore.getState().setMeshEditTool('select')
       return
     }
 
@@ -323,6 +327,7 @@ export class MeshEditInteraction {
         this.#previewPositions.set(idx, { x: original.x + dx, y: original.y + dy })
       }
     }
+    this.#meshOverlay.setPreviewVertices(this.#previewPositions)
     this.#meshOverlay.redraw()
   }
 
@@ -431,5 +436,6 @@ export class MeshEditInteraction {
     this.#dragVertexIndex = null
     this.#moveActive = false
     this.#previewPositions.clear()
+    this.#meshOverlay.clearPreviewVertices()
   }
 }

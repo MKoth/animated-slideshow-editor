@@ -1,18 +1,39 @@
 export type ShortcutHandler = (event: KeyboardEvent) => void
 
-const bindings = new Map<string, ShortcutHandler>()
+const bindings = new Map<string, ShortcutHandler[]>()
 
 export function registerShortcut(combo: string, handler: ShortcutHandler): () => void {
-  bindings.set(combo, handler)
+  const existing = bindings.get(combo) ?? []
+  existing.push(handler)
+  bindings.set(combo, existing)
   return () => {
-    if (bindings.get(combo) === handler) {
+    const list = bindings.get(combo)
+    if (!list) {
+      return
+    }
+    const idx = list.indexOf(handler)
+    if (idx >= 0) {
+      list.splice(idx, 1)
+    }
+    if (list.length === 0) {
       bindings.delete(combo)
     }
   }
 }
 
 export function getShortcutHandler(combo: string): ShortcutHandler | undefined {
-  return bindings.get(combo)
+  const list = bindings.get(combo)
+  if (!list || list.length === 0) {
+    return undefined
+  }
+  if (list.length === 1) {
+    return list[0]
+  }
+  return (event: KeyboardEvent) => {
+    for (const h of list) {
+      h(event)
+    }
+  }
 }
 
 export function formatCombo(event: KeyboardEvent): string | null {

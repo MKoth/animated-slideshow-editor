@@ -1,7 +1,13 @@
 import type { SceneNode } from '../../engine'
 import type { EvaluatedNodeState } from '../../engine/animationEvaluator'
 import type { PixiContainer, RendererPixi } from './pixi'
-import { applyPlaceholderName, applyTint, createPlaceholder, setBoneSize } from './placeholder'
+import {
+  applyPlaceholderName,
+  applyTint,
+  createPlaceholder,
+  setBoneSize,
+  setMeshPlaceholderSize,
+} from './placeholder'
 import type { TextureCache } from './textureCache'
 
 const placeholderByContainer = new WeakMap<PixiContainer, PixiContainer>()
@@ -29,6 +35,10 @@ export function createNodeContainer(
     const bonePlaceholder = createBonePlaceholder(pixi, node, node.components.bone.length)
     placeholderByContainer.set(container, bonePlaceholder)
     container.addChild(bonePlaceholder)
+  } else if (node.components.mesh) {
+    const meshPlaceholder = createMeshPlaceholder(pixi, node)
+    placeholderByContainer.set(container, meshPlaceholder)
+    container.addChild(meshPlaceholder)
   }
   return container
 }
@@ -102,5 +112,36 @@ function createBonePlaceholder(pixi: RendererPixi, node: SceneNode, length: numb
   group.addChild(label)
 
   setBoneSize(group, length, 10, length / 2, 0)
+  return group
+}
+
+export function createMeshPlaceholder(
+  pixi: RendererPixi,
+  node: SceneNode,
+): PixiContainer {
+  const mesh = node.components.mesh?.mesh
+  const group = new pixi.Container()
+  group.label = `placeholder:${node.name}`
+
+  if (mesh && mesh.vertices.length > 0) {
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const v of mesh.vertices) {
+      if (v.x < minX) minX = v.x
+      if (v.y < minY) minY = v.y
+      if (v.x > maxX) maxX = v.x
+      if (v.y > maxY) maxY = v.y
+    }
+    const w = maxX - minX
+    const h = maxY - minY
+    const cx = (minX + maxX) / 2
+    const cy = (minY + maxY) / 2
+    setMeshPlaceholderSize(group, w, h, cx, cy)
+  } else {
+    setMeshPlaceholderSize(group, 100, 100, 0, 0)
+  }
+
   return group
 }
