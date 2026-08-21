@@ -154,37 +154,41 @@ describe('ConstraintManager', () => {
     }).toThrow('requires a bone node')
   })
 
-  it('rejects distance constraint without targetNodeId', () => {
+  it('adds a distance constraint without targetNodeId (target set later)', () => {
     const engine = setup()
     const slide = engine.project?.slides[0]
     if (!slide) throw new Error('No slide')
 
     const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'Node')
 
-    expect(() => {
-      engine.addConstraint(node.id, 'distance', 0, {
-        targetNodeId: '',
-        minDistance: 50,
-        maxDistance: 200,
-      })
-    }).toThrow('requires a targetNodeId')
+    const constraint = engine.addConstraint(node.id, 'distance', 0, {
+      minDistance: 50,
+      maxDistance: 200,
+    })
+
+    expect(constraint.type).toBe('distance')
+    expect(constraint.params).toEqual({ minDistance: 50, maxDistance: 200 })
   })
 
-  it('rejects parent constraint without targetNodeId', () => {
+  it('adds a parent constraint without targetNodeId (target set later)', () => {
     const engine = setup()
     const slide = engine.project?.slides[0]
     if (!slide) throw new Error('No slide')
 
     const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'Node')
 
-    expect(() => {
-      engine.addConstraint(node.id, 'parent', 0, {
-        targetNodeId: '',
-        positionInfluence: 0.5,
-        rotationInfluence: 1.0,
-        scaleInfluence: 0.0,
-      })
-    }).toThrow('requires a targetNodeId')
+    const constraint = engine.addConstraint(node.id, 'parent', 0, {
+      positionInfluence: 0.5,
+      rotationInfluence: 1.0,
+      scaleInfluence: 0.0,
+    })
+
+    expect(constraint.type).toBe('parent')
+    expect(constraint.params).toEqual({
+      positionInfluence: 0.5,
+      rotationInfluence: 1.0,
+      scaleInfluence: 0.0,
+    })
   })
 
   it('removes a constraint', () => {

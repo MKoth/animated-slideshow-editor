@@ -12,13 +12,13 @@ export interface LookAtParams {
 }
 
 export interface DistanceParams {
-  readonly targetNodeId: string
+  readonly targetNodeId?: string
   readonly minDistance: number
   readonly maxDistance: number
 }
 
 export interface ParentConstraintParams {
-  readonly targetNodeId: string
+  readonly targetNodeId?: string
   readonly positionInfluence: number
   readonly rotationInfluence: number
   readonly scaleInfluence: number

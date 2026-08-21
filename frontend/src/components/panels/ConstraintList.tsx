@@ -137,7 +137,9 @@ function NodePicker({
         className={`rigging-constraint-editor__pick${isActive ? ' rigging-constraint-editor__pick--active' : ''}`}
         type="button"
         onClick={() =>
-          isActive ? onCancelPick() : onPick({ nodeId: '', constraintId, field, currentParams: {} as ConstraintParams })
+          isActive
+            ? onCancelPick()
+            : onPick({ nodeId: '', constraintId, field, currentParams: {} as ConstraintParams })
         }
       >
         {isActive ? 'Cancel' : nodeName ? 'Change' : 'Pick Node'}
@@ -252,7 +254,7 @@ function ConstraintEditor({
         <div className="rigging-constraint-editor__fields">
           <NodePicker
             engine={engine}
-            value={p.targetNodeId}
+            value={p.targetNodeId ?? ''}
             label="Target Node"
             constraintId={constraint.id}
             field="targetNodeId"
@@ -288,7 +290,7 @@ function ConstraintEditor({
         <div className="rigging-constraint-editor__fields">
           <NodePicker
             engine={engine}
-            value={p.targetNodeId}
+            value={p.targetNodeId ?? ''}
             label="Target Node"
             constraintId={constraint.id}
             field="targetNodeId"

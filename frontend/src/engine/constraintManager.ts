@@ -22,17 +22,8 @@ export class ConstraintManager {
     params: ConstraintParams,
   ): Constraint {
     const node = this.#nodeLookup(nodeId)
-    if (
-      (type === 'rotationLimit' || type === 'lookAt') &&
-      !node.components.bone
-    ) {
+    if ((type === 'rotationLimit' || type === 'lookAt') && !node.components.bone) {
       throw new Error(`Constraint type "${type}" requires a bone node`)
-    }
-    if (type === 'distance' || type === 'parent') {
-      const p = params as { targetNodeId?: string }
-      if (!p.targetNodeId) {
-        throw new Error(`Constraint type "${type}" requires a targetNodeId`)
-      }
     }
     const id = newId('constraint')
     const constraint: Constraint = { id, type, priority, params: { ...params } }
