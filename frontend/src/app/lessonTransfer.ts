@@ -1,11 +1,10 @@
-import type { EnginePublic } from '../engine'
+import type { EnginePublic, LessonJSON } from '../engine'
 import { newId } from '../engine/ids'
-import { deserializeWithClips, serialize } from '../engine/lessonSerializer'
-import { Project } from '../engine/project'
+import { validate } from '../engine/lessonSerializer'
 import { useNotificationStore } from '../stores/notificationStore'
 import { ensureReferencedEmbedded } from './assetSnapshot'
 import { ensureReferencedMaterialAndShaderSnapshots } from './definitionSnapshot'
-import { openProjectInEditor } from './openProjectActions'
+import { restoreProjectInEditor } from './openProjectActions'
 
 export const IMPORT_FAILED_MESSAGE = 'Could not import the lesson.'
 export const DOWNLOAD_FAILED_MESSAGE = 'Could not download the lesson copy.'
@@ -18,20 +17,23 @@ export async function importLessonFile(engine: EnginePublic, file: File): Promis
     useNotificationStore.getState().notify(IMPORT_FAILED_MESSAGE)
     return false
   }
-  let imported: {
-    project: Project
-    clips: readonly import('../engine/clipDefinition').ClipDefinition[]
-  }
+  let parsed: unknown
   try {
-    imported = deserializeWithClips(text)
-  } catch (error) {
-    useNotificationStore
-      .getState()
-      .notify(error instanceof Error ? error.message : IMPORT_FAILED_MESSAGE)
+    parsed = JSON.parse(text)
+  } catch {
+    useNotificationStore.getState().notify('Invalid lesson JSON: the file is not valid JSON')
     return false
   }
+  const errors = validate(parsed)
+  if (errors.length > 0) {
+    useNotificationStore.getState().notify(errors.join('; '))
+    return false
+  }
+  const json = parsed as LessonJSON
   try {
-    openProjectInEditor(engine, withFreshProjectId(imported.project), imported.clips)
+    const freshProjectJson = withFreshProjectId(json)
+    engine.restoreFromJSON(freshProjectJson)
+    restoreProjectInEditor(engine)
     return true
   } catch {
     useNotificationStore.getState().notify(IMPORT_FAILED_MESSAGE)
@@ -39,22 +41,14 @@ export async function importLessonFile(engine: EnginePublic, file: File): Promis
   }
 }
 
-function withFreshProjectId(project: Project): Project {
-  return new Project(
-    {
+function withFreshProjectId(json: LessonJSON): LessonJSON {
+  return {
+    ...json,
+    project: {
+      ...json.project,
       id: newId('project'),
-      name: project.name,
-      description: project.description,
-      author: project.author,
-      createdAt: project.createdAt,
-      updatedAt: project.updatedAt,
     },
-    project.slides,
-    project.settings,
-    project.embeddedAssets,
-    project.embeddedMaterials,
-    project.embeddedShaders,
-  )
+  }
 }
 
 export async function downloadLessonCopy(engine: EnginePublic): Promise<boolean> {
@@ -65,7 +59,7 @@ export async function downloadLessonCopy(engine: EnginePublic): Promise<boolean>
   try {
     await ensureReferencedEmbedded(engine)
     ensureReferencedMaterialAndShaderSnapshots(engine)
-    const blob = new Blob([serialize(project, engine.clips)], { type: 'application/json' })
+    const blob = new Blob([JSON.stringify(engine.toJSON())], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url

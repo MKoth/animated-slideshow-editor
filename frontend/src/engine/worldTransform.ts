@@ -63,20 +63,21 @@ export class EvaluatedWorldTransformSource {
   readonly #scratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #chain: SceneNode[] = []
   #time = 0
-  #previewedNodeId: string | null = null
   readonly #ikOverrides = new Map<string, number>()
   readonly #localOf = (link: SceneNode): Transform => {
     const local = this.#engine.evaluateNode(link.id, this.#time, this.#scratch).transform
-    // Apply IK rotation override if present
     const overrideRotation = this.#ikOverrides.get(link.id)
+    const preview = this.#previews.get(link.id)
+    if (overrideRotation !== undefined && preview) {
+      return { ...local, rotation: overrideRotation, x: preview.x, y: preview.y }
+    }
     if (overrideRotation !== undefined) {
       return { ...local, rotation: overrideRotation }
     }
-    if (link.id !== this.#previewedNodeId) {
-      return local
+    if (preview) {
+      return { ...local, x: preview.x, y: preview.y }
     }
-    const preview = this.#previews.get(link.id)
-    return preview ? { ...local, x: preview.x, y: preview.y } : local
+    return local
   }
 
   constructor(
@@ -116,10 +117,13 @@ export class EvaluatedWorldTransformSource {
         // For simplicity, we'll treat target position as local transform (not accurate)
         targetWorld = { x: targetWorldTransform.x, y: targetWorldTransform.y }
       }
-      // Get bone nodes
+      // Get bone nodes and their lengths
       const boneNodes: SceneNode[] = []
+      const boneLengths: number[] = []
       for (const boneId of chain.boneIds) {
-        boneNodes.push(this.#engine.getNode(boneId))
+        const node = this.#engine.getNode(boneId)
+        boneNodes.push(node)
+        boneLengths.push(node.components.bone?.length ?? 100)
       }
       // Create a function to get local transform of a node (without IK overrides)
       const getLocalTransform = (nodeId: string): Transform => {
@@ -133,6 +137,7 @@ export class EvaluatedWorldTransformSource {
           targetWorld,
           chain.poleTarget?.position ?? null,
           getLocalTransform,
+          boneLengths,
         )
       } else {
         solution = solveCCDIK(
@@ -140,6 +145,7 @@ export class EvaluatedWorldTransformSource {
           targetWorld,
           chain.poleTarget?.position ?? null,
           getLocalTransform,
+          boneLengths,
         )
       }
       // Store rotations for each bone
@@ -147,6 +153,16 @@ export class EvaluatedWorldTransformSource {
         this.#ikOverrides.set(boneNodes[i].id, solution.rotations[i])
       }
     }
+  }
+
+  /** Returns the IK rotation override for a bone node, or undefined if none. */
+  getIKRotationOverride(nodeId: string): number | undefined {
+    return this.#ikOverrides.get(nodeId)
+  }
+
+  /** Returns all current IK rotation overrides. */
+  getIKOverrides(): ReadonlyMap<string, number> {
+    return this.#ikOverrides
   }
 
   transformOf(nodeId: string): WorldTransform | null {
@@ -161,7 +177,6 @@ export class EvaluatedWorldTransformSource {
       return null
     }
     this.#time = time
-    this.#previewedNodeId = this.#previews.has(nodeId) ? nodeId : null
     this.#chain.length = 0
     for (let cursor: SceneNode | null = node; cursor !== null; cursor = cursor.parent) {
       this.#chain.push(cursor)

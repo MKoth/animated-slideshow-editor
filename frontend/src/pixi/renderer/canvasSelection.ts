@@ -31,6 +31,11 @@ export interface GuideController {
   clear(): void
 }
 
+export interface MarqueeController {
+  show(rect: WorldRect): void
+  clear(): void
+}
+
 export interface CanvasSelectionContext {
   readonly canvas: HTMLCanvasElement
   readonly engine?: EnginePublic
@@ -46,6 +51,7 @@ export interface CanvasSelectionContext {
   readonly getAnimationMode?: () => boolean
   readonly getWorldTransform?: WorldTransformSource
   readonly getNodeFilter?: () => NodeFilter | null
+  readonly marquee?: MarqueeController
 }
 
 const MARQUEE_START_DISTANCE = 4
@@ -66,6 +72,7 @@ export class CanvasSelection {
   readonly #getMoveOptions?: () => MoveOptions
   readonly #getWorldTransform?: WorldTransformSource
   readonly #getNodeFilter?: () => NodeFilter | null
+  readonly #marquee?: MarqueeController
   #attached = false
   #pressed = false
   #pressedOnNode = false
@@ -96,6 +103,7 @@ export class CanvasSelection {
     this.#getMoveOptions = context.getMoveOptions
     this.#getWorldTransform = context.getWorldTransform
     this.#getNodeFilter = context.getNodeFilter
+    this.#marquee = context.marquee
     this.#animatedMove = new AnimatedMoveGesture(context)
   }
 
@@ -222,6 +230,7 @@ export class CanvasSelection {
         filter,
       ),
     )
+    this.#marquee?.show(rectOf(this.#startWorld, current))
   }
 
   readonly #onMouseUp = (): void => {
@@ -237,6 +246,7 @@ export class CanvasSelection {
     ) {
       this.#store.clear()
     }
+    this.#marquee?.clear()
     this.#resetGesture()
   }
 
@@ -439,6 +449,7 @@ export class CanvasSelection {
     this.#marqueeActive = false
     this.#startWorld = null
     this.#sceneAtDown = null
+    this.#marquee?.clear()
     this.#resetMove()
   }
 

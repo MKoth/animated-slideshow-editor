@@ -24,6 +24,17 @@ export function openProjectInEditor(
   reconcileWhenLibraryReady(engine, project)
 }
 
+export function restoreProjectInEditor(engine: EnginePublic): void {
+  const project = engine.project
+  if (!project) {
+    return
+  }
+  usePlaybackController.getState().reset()
+  useSelectionStore.getState().clear()
+  useKeyframeClipboardStore.getState().clear()
+  reconcileWhenLibraryReady(engine, project)
+}
+
 function reconcileWhenLibraryReady(engine: EnginePublic, project: Project): void {
   const library = useAssetLibraryStore.getState()
   if (library.unavailable) {

@@ -130,7 +130,13 @@ describe('IK Solvers', () => {
       return { x: 80, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }
     }
 
-    const solution = solveTwoBoneIK([bone1, bone2], { x: 150, y: 0 }, null, getLocalTransform)
+    const solution = solveTwoBoneIK(
+      [bone1, bone2],
+      { x: 150, y: 0 },
+      null,
+      getLocalTransform,
+      [100, 80],
+    )
 
     expect(solution.rotations).toHaveLength(2)
     expect(typeof solution.rotations[0]).toBe('number')
@@ -160,7 +166,13 @@ describe('IK Solvers', () => {
       return { x: 60, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }
     }
 
-    const solution = solveCCDIK([bone1, bone2, bone3], { x: 200, y: 0 }, null, getLocalTransform)
+    const solution = solveCCDIK(
+      [bone1, bone2, bone3],
+      { x: 200, y: 0 },
+      null,
+      getLocalTransform,
+      [100, 80, 60],
+    )
 
     expect(solution.rotations).toHaveLength(3)
     solution.rotations.forEach((rot) => {

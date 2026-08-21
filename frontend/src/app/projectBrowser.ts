@@ -1,10 +1,10 @@
 import { projectsApi } from '../api'
-import { createBlankProject, deserializeWithClips } from '../engine'
-import type { EnginePublic } from '../engine'
+import { createBlankProject } from '../engine'
+import type { EnginePublic, LessonJSON } from '../engine'
 import { useNotificationStore } from '../stores/notificationStore'
 import { usePersistenceStore } from '../stores/persistenceStore'
 import { useProjectBrowserStore } from '../stores/projectBrowserStore'
-import { openProjectInEditor } from './openProjectActions'
+import { openProjectInEditor, restoreProjectInEditor } from './openProjectActions'
 
 export const OPEN_FAILED_MESSAGE = 'Could not open the project.'
 export const DELETE_FAILED_MESSAGE = 'Could not delete the project.'
@@ -45,8 +45,9 @@ export async function refreshProjects(): Promise<void> {
 export async function openLibraryProject(engine: EnginePublic, id: string): Promise<boolean> {
   try {
     const blob = await projectsApi.get(id)
-    const { project, clips } = deserializeWithClips(blob)
-    openProjectInEditor(engine, project, clips)
+    const json = JSON.parse(blob) as LessonJSON
+    engine.restoreFromJSON(json)
+    restoreProjectInEditor(engine)
     return true
   } catch {
     useNotificationStore.getState().notify(OPEN_FAILED_MESSAGE)

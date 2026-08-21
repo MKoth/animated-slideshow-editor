@@ -74,7 +74,20 @@ export class ReparentNodeCommand implements Command<ReparentNodeInverse> {
         engine.reorderNode(this.#nodeId, this.#index)
       }
     }
-    if (oldWorld && newParentWorld) {
+    const reparentedNode = engine.getNode(this.#nodeId)
+    const newParent = reparentedNode.parent
+    const isBoneToBone = reparentedNode.components.bone && newParent?.components.bone
+    if (isBoneToBone) {
+      const parentLength = newParent!.components.bone!.length
+      const boneTransform: Transform = {
+        x: parentLength,
+        y: 0,
+        rotation: 0,
+        scaleX: 1,
+        scaleY: 1,
+      }
+      engine.setTransform(this.#nodeId, boneTransform)
+    } else if (oldWorld && newParentWorld) {
       const adjusted = relativeTransform(oldWorld, newParentWorld)
       const current = engine.getNode(this.#nodeId).transform
       if (adjusted && !transformsEqual(adjusted, current)) {

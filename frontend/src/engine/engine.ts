@@ -76,6 +76,7 @@ export interface EnginePublic {
   isClipReferenced(clipId: string): boolean
   getClipBlockingNodeNames(clipId: string): string[]
   toJSON(): LessonJSON
+  restoreFromJSON(json: LessonJSON): void
 }
 
 export function createEngine(): EnginePublic {

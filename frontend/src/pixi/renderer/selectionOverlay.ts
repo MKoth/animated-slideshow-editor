@@ -24,6 +24,8 @@ const REDRAW_EVENTS = new Set([
   'KeyframeRemoved',
   'KeyframeMoved',
   'KeyframeValueChanged',
+  'IKTargetChanged',
+  'IKPoleTargetChanged',
 ])
 
 export interface SelectionOverlayContext {

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { Command, CommandResult } from '../../engine/commands'
 import type { SceneNode } from '../../engine/sceneNode'
 import { collectBones } from '../../engine/riggingQueries'
@@ -15,9 +15,11 @@ interface BoneTreeProps {
 interface BoneRowProps {
   node: SceneNode
   depth: number
+  boneIds: readonly string[]
+  onBoneClick: (boneId: string, shift: boolean, ctrl: boolean) => void
 }
 
-function BoneRow({ node, depth }: BoneRowProps) {
+function BoneRow({ node, depth, boneIds, onBoneClick }: BoneRowProps) {
   const selected = useSelectionStore((state) => state.selectedIds.includes(node.id))
   const indent = depth * 16
 
@@ -26,7 +28,7 @@ function BoneRow({ node, depth }: BoneRowProps) {
       <button
         className={`rigging-tree__row${selected ? ' rigging-tree__row--selected' : ''}`}
         style={{ paddingLeft: indent + 8 }}
-        onClick={() => useSelectionStore.getState().select(node.id)}
+        onClick={(event) => onBoneClick(node.id, event.shiftKey, event.ctrlKey || event.metaKey)}
       >
         <span className="rigging-tree__icon" aria-hidden="true">
           &#x1f33f;
@@ -36,7 +38,13 @@ function BoneRow({ node, depth }: BoneRowProps) {
       {node.children.length > 0 && (
         <ul role="group">
           {node.children.map((child) => (
-            <BoneRow key={child.id} node={child} depth={depth + 1} />
+            <BoneRow
+              key={child.id}
+              node={child}
+              depth={depth + 1}
+              boneIds={boneIds}
+              onBoneClick={onBoneClick}
+            />
           ))}
         </ul>
       )}
@@ -47,10 +55,32 @@ function BoneRow({ node, depth }: BoneRowProps) {
 export function BoneTree({ dispatch, slide }: BoneTreeProps) {
   const bones = collectBones(slide.scene.root)
   const [search, setSearch] = useState('')
+  const lastClickedRef = useRef<string | null>(null)
 
   const filtered = bones.filter((bone) =>
     bone.name.toLowerCase().includes(search.trim().toLowerCase()),
   )
+
+  const filteredIds = filtered.map((b) => b.id)
+
+  const handleBoneClick = (boneId: string, shift: boolean, ctrl: boolean) => {
+    const store = useSelectionStore.getState()
+    if (shift && lastClickedRef.current) {
+      const startIdx = filteredIds.indexOf(lastClickedRef.current)
+      const endIdx = filteredIds.indexOf(boneId)
+      if (startIdx !== -1 && endIdx !== -1) {
+        const from = Math.min(startIdx, endIdx)
+        const to = Math.max(startIdx, endIdx)
+        const rangeIds = filteredIds.slice(from, to + 1)
+        store.selectMany(rangeIds)
+      }
+    } else if (ctrl) {
+      store.toggle(boneId)
+    } else {
+      store.select(boneId)
+    }
+    lastClickedRef.current = boneId
+  }
 
   const handleCreateBone = () => {
     const taken = namesInTree(slide.scene.root)
@@ -96,7 +126,13 @@ export function BoneTree({ dispatch, slide }: BoneTreeProps) {
       ) : (
         <ul className="rigging-tree" role="tree" aria-label="Bone hierarchy">
           {filtered.map((bone) => (
-            <BoneRow key={bone.id} node={bone} depth={0} />
+            <BoneRow
+              key={bone.id}
+              node={bone}
+              depth={0}
+              boneIds={filteredIds}
+              onBoneClick={handleBoneClick}
+            />
           ))}
         </ul>
       )}

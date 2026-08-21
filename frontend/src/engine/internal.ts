@@ -799,6 +799,12 @@ export class Engine {
       if (json.constraints) {
         this.#constraints.restoreFromJSON(json.constraints)
       }
+      const first = project.slides[0]
+      this.#activeSlideId = first ? first.id : null
+      this.#bus.emit({ type: 'ProjectLoaded', projectId: project.id })
+      if (first) {
+        this.#bus.emit({ type: 'SlideActivated', slideId: first.id })
+      }
     } catch (error) {
       this.#nodes.clear()
       this.#scenes.clear()
@@ -1081,6 +1087,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     isClipReferenced: (clipId) => engine.isClipReferenced(clipId),
     getClipBlockingNodeNames: (clipId) => engine.getClipBlockingNodeNames(clipId),
     toJSON: () => engine.toJSON(),
+    restoreFromJSON: (json) => engine.restoreFromJSON(json),
   }
 }
 

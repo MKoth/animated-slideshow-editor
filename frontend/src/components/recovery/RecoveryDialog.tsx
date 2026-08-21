@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { openProjectInEditor } from '../../app/openProjectActions'
+import { restoreProjectInEditor } from '../../app/openProjectActions'
 import { clearShadow, loadRecoverableProject } from '../../app/recoveryShadow'
 import type { RecoveredProject } from '../../app/recoveryShadow'
 import { useEngine } from '../../app/useEngine'
+import type { LessonJSON } from '../../engine'
 
 export function RecoveryDialog() {
   const { engine } = useEngine()
@@ -32,7 +33,9 @@ export function RecoveryDialog() {
   }
 
   const restore = (): void => {
-    openProjectInEditor(engine, recovered.project, recovered.clips)
+    const json = JSON.parse(recovered.json) as LessonJSON
+    engine.restoreFromJSON(json)
+    restoreProjectInEditor(engine)
     setRecovered(null)
   }
 

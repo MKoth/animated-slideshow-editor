@@ -28,6 +28,9 @@ import { MeshEditInteraction } from './meshEditInteraction'
 import { WeightPaintOverlay } from './weightPaintOverlay'
 import { WeightPaintInteraction } from './weightPaintInteraction'
 import { RiggingInteraction } from './riggingInteraction'
+import { IkOverlay } from './ikOverlay'
+import { IkInteraction } from './ikInteraction'
+import { MarqueeOverlay } from './marqueeOverlay'
 import { realPixi } from './pixi'
 import type { PixiApplication, RendererPixi } from './pixi'
 import { SceneRenderer } from './sceneRenderer'
@@ -82,6 +85,9 @@ export class Renderer {
   #weightPaintOverlay: WeightPaintOverlay | null = null
   #weightPaintInteraction: WeightPaintInteraction | null = null
   #riggingInteraction: RiggingInteraction | null = null
+  #ikOverlay: IkOverlay | null = null
+  #ikInteraction: IkInteraction | null = null
+  #marqueeOverlay: MarqueeOverlay | null = null
   #transformSource: EvaluatedWorldTransformSource | null = null
   #previewPositions = new Map<string, { x: number; y: number }>()
   readonly #cameraScratch: EvaluatedNodeScratch = evaluatedNodeScratch()
@@ -224,6 +230,10 @@ export class Renderer {
       this.#meshOverlay.attach()
       this.#meshOverlay.bringToFront()
 
+      this.#marqueeOverlay = new MarqueeOverlay(this.#pixi, world)
+      this.#marqueeOverlay.attach()
+      this.#marqueeOverlay.bringToFront()
+
       this.#selection = new CanvasSelection({
         canvas: app.canvas,
         engine: this.#engine,
@@ -257,6 +267,10 @@ export class Renderer {
             return (node) => !!node.components.bone
           }
           return null
+        },
+        marquee: {
+          show: (rect) => this.#marqueeOverlay?.show(rect),
+          clear: () => this.#marqueeOverlay?.clear(),
         },
       })
       this.#selection.attach()
@@ -324,6 +338,25 @@ export class Renderer {
       })
       this.#riggingInteraction.attach()
 
+      this.#ikOverlay = new IkOverlay({
+        pixi: this.#pixi,
+        world,
+        engine: this.#engine,
+        getScene: () => this.#sceneRenderer?.boundScene ?? null,
+      })
+      this.#ikOverlay.attach()
+      this.#ikOverlay.bringToFront()
+
+      this.#ikInteraction = new IkInteraction({
+        canvas: app.canvas,
+        engine: this.#engine,
+        getCameraTransform: () => this.#cameraTransform(),
+        dispatch: this.#dispatch,
+        ikOverlay: this.#ikOverlay,
+        onIKChanged: () => this.#handleTimeChanged(),
+      })
+      this.#ikInteraction.attach()
+
       app.ticker.add(this.#tick)
       if (import.meta.env.DEV) {
         this.#devOverlay = new DevOverlay(this.#host)
@@ -374,6 +407,10 @@ export class Renderer {
     this.#weightPaintInteraction = null
     this.#riggingInteraction?.detach()
     this.#riggingInteraction = null
+    this.#ikOverlay?.detach()
+    this.#ikOverlay = null
+    this.#ikInteraction?.detach()
+    this.#ikInteraction = null
     const app = this.#app
     app?.ticker.remove(this.#tick)
     this.#app = null
@@ -525,6 +562,11 @@ export class Renderer {
         this.#transformSource?.updateIKOverrides(slideId, time)
       }
       this.#sceneRenderer?.handleTimeChanged()
+      if (this.#transformSource) {
+        const rotations = this.#transformSource.getIKOverrides()
+        this.#sceneRenderer?.applyIKOverrides(rotations)
+      }
+      this.#selectionOverlay?.redraw()
       this.#syncFullscreenShader()
     } catch (error) {
       this.#reportFailure(error)
@@ -611,7 +653,10 @@ export class Renderer {
         break
       case 'MeshChanged':
         this.#meshOverlay?.redraw()
-        this.#weightPaintOverlay?.redraw()
+        break
+      case 'IKTargetChanged':
+      case 'IKPoleTargetChanged':
+        this.#handleTimeChanged()
         break
     }
   }
@@ -629,6 +674,7 @@ export class Renderer {
       this.#guideOverlay?.bringToFront()
       this.#meshOverlay?.bringToFront()
       this.#weightPaintOverlay?.bringToFront()
+      this.#ikOverlay?.bringToFront()
       useSelectionStore.getState().clear()
     }
   }

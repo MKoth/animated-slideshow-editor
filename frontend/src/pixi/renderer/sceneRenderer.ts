@@ -73,6 +73,7 @@ export class SceneRenderer {
   readonly #lastMaterials = new Map<string, EffectiveMaterialScratch>()
   readonly #nodeShaders = new Map<string, NodeShaderState>()
   readonly #missingNodes = new Set<string>()
+  readonly #ikOverrides = new Map<string, number>()
   readonly #scratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #materialScratch: EffectiveMaterialScratch = effectiveMaterialScratch()
   readonly #shaderScratch: EffectiveShaderScratch = effectiveShaderScratch()
@@ -204,6 +205,17 @@ export class SceneRenderer {
     }
   }
 
+  applyIKOverrides(rotations: ReadonlyMap<string, number>): void {
+    this.#ikOverrides.clear()
+    for (const [nodeId, rotation] of rotations) {
+      this.#ikOverrides.set(nodeId, rotation)
+      const container = this.#containers.get(nodeId)
+      if (container) {
+        container.rotation = rotation
+      }
+    }
+  }
+
   handleMaterialChanged(nodeId: string): void {
     this.#evaluateAndApply(nodeId)
   }
@@ -330,6 +342,10 @@ export class SceneRenderer {
       return
     }
     applyEvaluatedState(container, state, material.opacityMultiplier)
+    const ikRotation = this.#ikOverrides.get(nodeId)
+    if (ikRotation !== undefined) {
+      container.rotation = ikRotation
+    }
     if (materialChanged && !this.#missingNodes.has(nodeId)) {
       applyMaterialTint(container, material.tint)
     }

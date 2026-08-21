@@ -1,6 +1,3 @@
-import { deserializeWithClips } from '../engine/lessonSerializer'
-import type { ClipDefinition, Project } from '../engine'
-
 const DB_NAME = 'animated-slideshow-editor'
 const DB_VERSION = 1
 const STORE_NAME = 'recovery'
@@ -107,8 +104,7 @@ export async function hasRecoverableShadow(): Promise<boolean> {
 }
 
 export interface RecoveredProject {
-  readonly project: Project
-  readonly clips: readonly ClipDefinition[]
+  readonly json: string
 }
 
 export async function loadRecoverableProject(): Promise<RecoveredProject | null> {
@@ -120,8 +116,8 @@ export async function loadRecoverableProject(): Promise<RecoveredProject | null>
     return null
   }
   try {
-    const { project, clips } = deserializeWithClips(blob)
-    return { project, clips }
+    JSON.parse(blob)
+    return { json: blob }
   } catch {
     await clearShadow()
     return null

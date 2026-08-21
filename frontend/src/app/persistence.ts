@@ -1,6 +1,5 @@
 import { ApiError } from '../api/apiClient'
 import type { EnginePublic } from '../engine'
-import { serialize } from '../engine/lessonSerializer'
 import { useBackendStore } from '../stores/backendStore'
 import { usePersistenceStore } from '../stores/persistenceStore'
 import { useNotificationStore } from '../stores/notificationStore'
@@ -39,7 +38,7 @@ export function createPersistenceService(deps: PersistenceDeps): PersistenceServ
     if (!project) {
       return
     }
-    void writeShadow(serialize(project, deps.engine.clips)).catch(() => undefined)
+    void writeShadow(JSON.stringify(deps.engine.toJSON())).catch(() => undefined)
   }
 
   const performSave = async (): Promise<void> => {
@@ -55,7 +54,7 @@ export function createPersistenceService(deps: PersistenceDeps): PersistenceServ
     const generation = projectGeneration
     try {
       await deps.ensureEmbedded?.()
-      const blob = serialize(project, deps.engine.clips)
+      const blob = JSON.stringify(deps.engine.toJSON())
       await deps.upsert(blob)
       useBackendStore.getState().markAvailable()
       void recordLastSaved(blob).catch(() => undefined)
