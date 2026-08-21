@@ -8,6 +8,7 @@ import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
 import type { WorldTransform, WorldRect } from './worldGeometry'
 import { worldTransformOf } from '../../engine/worldTransform'
 import type { WorldTransformSource } from './hitTest'
+import { evaluateMeshDeformation } from '../../engine/meshDeformationEvaluator'
 
 const WIREFRAME_COLOR = 0x1a73e8
 const WIREFRAME_WIDTH = 1.5
@@ -24,6 +25,37 @@ const FACE_SELECTED_COLOR = 0x34a853
 const FACE_SELECTED_ALPHA = 0.2
 
 const EDGE_HIT_THRESHOLD = 8
+
+function computeBoneWorldTransforms(
+  scene: Scene,
+  getWorldTransform?: WorldTransformSource,
+): Map<string, WorldTransform> {
+  const transforms = new Map<string, WorldTransform>()
+  for (const node of walkPreOrder(scene.root)) {
+    if (!node.components.bone) continue
+    const wt = getWorldTransform ? getWorldTransform(node.id) : worldTransformOf(scene, node.id)
+    if (wt) {
+      transforms.set(node.id, wt)
+    }
+  }
+  return transforms
+}
+
+function getDeformedVertices(
+  mesh: MeshData,
+  scene: Scene,
+  getWorldTransform?: WorldTransformSource,
+): { x: number; y: number }[] {
+  if (!mesh.boneWeights || mesh.boneWeights.length === 0) {
+    return mesh.vertices.map((v) => ({ x: v.x, y: v.y }))
+  }
+  const boneTransforms = computeBoneWorldTransforms(scene, getWorldTransform)
+  if (boneTransforms.size === 0) {
+    return mesh.vertices.map((v) => ({ x: v.x, y: v.y }))
+  }
+  const result = evaluateMeshDeformation(mesh, boneTransforms)
+  return result.deformedVertices.map((v) => ({ x: v.x, y: v.y }))
+}
 
 export interface MeshOverlayContext {
   readonly pixi: RendererPixi
@@ -185,7 +217,7 @@ export class MeshOverlay {
       if (!transform) {
         return
       }
-      this.#drawMesh(graphics, mesh, transform)
+      this.#drawMesh(graphics, mesh, transform, scene)
     } else {
       for (const node of walkPreOrder(scene.root)) {
         if (!node.components.mesh || !node.visible) {
@@ -195,56 +227,80 @@ export class MeshOverlay {
         if (!transform) {
           continue
         }
-        this.#drawWireframe(graphics, node.components.mesh.mesh, transform)
+        this.#drawWireframe(graphics, node.components.mesh.mesh, transform, scene)
       }
     }
   }
 
-  #drawWireframe(graphics: PixiGraphics, mesh: MeshData, transform: WorldTransform): void {
-    const worldVertices = mesh.vertices.map((v) => localToWorld(v.x, v.y, transform))
+  #drawWireframe(
+    graphics: PixiGraphics,
+    mesh: MeshData,
+    transform: WorldTransform,
+    scene: Scene,
+  ): void {
+    const deformed = getDeformedVertices(mesh, scene, this.#getWorldTransform)
+    const worldVertices = deformed.map((v) => localToWorld(v.x, v.y, transform))
     for (const face of mesh.faces) {
       const v0 = worldVertices[face.v0]
       const v1 = worldVertices[face.v1]
       const v2 = worldVertices[face.v2]
       if (v0 && v1) {
-        graphics.moveTo(v0.x, v0.y).lineTo(v1.x, v1.y).stroke({ width: WIREFRAME_WIDTH, color: WIREFRAME_COLOR })
+        graphics
+          .moveTo(v0.x, v0.y)
+          .lineTo(v1.x, v1.y)
+          .stroke({ width: WIREFRAME_WIDTH, color: WIREFRAME_COLOR })
       }
       if (v1 && v2) {
-        graphics.moveTo(v1.x, v1.y).lineTo(v2.x, v2.y).stroke({ width: WIREFRAME_WIDTH, color: WIREFRAME_COLOR })
+        graphics
+          .moveTo(v1.x, v1.y)
+          .lineTo(v2.x, v2.y)
+          .stroke({ width: WIREFRAME_WIDTH, color: WIREFRAME_COLOR })
       }
       if (v2 && v0) {
-        graphics.moveTo(v2.x, v2.y).lineTo(v0.x, v0.y).stroke({ width: WIREFRAME_WIDTH, color: WIREFRAME_COLOR })
+        graphics
+          .moveTo(v2.x, v2.y)
+          .lineTo(v0.x, v0.y)
+          .stroke({ width: WIREFRAME_WIDTH, color: WIREFRAME_COLOR })
       }
     }
   }
 
-  #drawMesh(graphics: PixiGraphics, mesh: MeshData, transform: WorldTransform): void {
-    const { selectedVertexIndices, selectedEdgeIndices, selectedFaceIndices, selectMode } =
-      useMeshEditStore.getState()
+  #drawMesh(graphics: PixiGraphics, mesh: MeshData, transform: WorldTransform, scene: Scene): void {
+    const {
+      selectedVertexIndices,
+      selectedEdgeIndices,
+      selectedFaceIndices,
+      selectMode,
+      meshEditTool,
+    } = useMeshEditStore.getState()
+    const isWeightPaint = meshEditTool === 'weightPaint'
     const selectedVertexSet = new Set(selectedVertexIndices)
     const selectedEdgeSet = new Set(selectedEdgeIndices.map((e) => edgeKey(e.v0, e.v1)))
     const selectedFaceSet = new Set(selectedFaceIndices)
     const preview = this.#previewVertices
-    const worldVertices = mesh.vertices.map((v, i) => {
+    const deformed = getDeformedVertices(mesh, scene, this.#getWorldTransform)
+    const worldVertices = deformed.map((v, i) => {
       const p = preview?.get(i)
       return localToWorld(p ? p.x : v.x, p ? p.y : v.y, transform)
     })
 
-    // Draw selected faces (filled triangles)
-    if (selectMode === 'face') {
-      for (let fi = 0; fi < mesh.faces.length; fi++) {
-        if (!selectedFaceSet.has(fi)) continue
-        const face = mesh.faces[fi]
-        const v0 = worldVertices[face.v0]
-        const v1 = worldVertices[face.v1]
-        const v2 = worldVertices[face.v2]
-        if (v0 && v1 && v2) {
-          graphics
-            .moveTo(v0.x, v0.y)
-            .lineTo(v1.x, v1.y)
-            .lineTo(v2.x, v2.y)
-            .closePath()
-            .fill({ color: FACE_SELECTED_COLOR, alpha: FACE_SELECTED_ALPHA })
+    if (!isWeightPaint) {
+      // Draw selected faces (filled triangles)
+      if (selectMode === 'face') {
+        for (let fi = 0; fi < mesh.faces.length; fi++) {
+          if (!selectedFaceSet.has(fi)) continue
+          const face = mesh.faces[fi]
+          const v0 = worldVertices[face.v0]
+          const v1 = worldVertices[face.v1]
+          const v2 = worldVertices[face.v2]
+          if (v0 && v1 && v2) {
+            graphics
+              .moveTo(v0.x, v0.y)
+              .lineTo(v1.x, v1.y)
+              .lineTo(v2.x, v2.y)
+              .closePath()
+              .fill({ color: FACE_SELECTED_COLOR, alpha: FACE_SELECTED_ALPHA })
+          }
         }
       }
     }
@@ -261,7 +317,7 @@ export class MeshOverlay {
 
       for (const edge of edges) {
         const key = edgeKey(edge.va, edge.vb)
-        const isEdgeSelected = selectMode === 'edge' && selectedEdgeSet.has(key)
+        const isEdgeSelected = !isWeightPaint && selectMode === 'edge' && selectedEdgeSet.has(key)
         graphics
           .moveTo(edge.ax, edge.ay)
           .lineTo(edge.bx, edge.by)
@@ -272,15 +328,17 @@ export class MeshOverlay {
       }
     }
 
-    // Draw vertices (only in vertex mode)
-    if (selectMode === 'vertex') {
-      for (let i = 0; i < worldVertices.length; i++) {
-        const v = worldVertices[i]
-        const isSelected = selectedVertexSet.has(i)
-        graphics
-          .circle(v.x, v.y, VERTEX_RADIUS)
-          .fill({ color: isSelected ? VERTEX_SELECTED_FILL : VERTEX_FILL })
-          .stroke({ width: VERTEX_STROKE_WIDTH, color: VERTEX_STROKE_COLOR })
+    if (!isWeightPaint) {
+      // Draw vertices (only in vertex mode)
+      if (selectMode === 'vertex') {
+        for (let i = 0; i < worldVertices.length; i++) {
+          const v = worldVertices[i]
+          const isSelected = selectedVertexSet.has(i)
+          graphics
+            .circle(v.x, v.y, VERTEX_RADIUS)
+            .fill({ color: isSelected ? VERTEX_SELECTED_FILL : VERTEX_FILL })
+            .stroke({ width: VERTEX_STROKE_WIDTH, color: VERTEX_STROKE_COLOR })
+        }
       }
     }
   }
@@ -414,10 +472,8 @@ export class MeshOverlay {
       const a = worldVertices[edge.v0]
       const b = worldVertices[edge.v1]
       if (!a || !b) continue
-      const aInside =
-        a.x >= rect.minX && a.x <= rect.maxX && a.y >= rect.minY && a.y <= rect.maxY
-      const bInside =
-        b.x >= rect.minX && b.x <= rect.maxX && b.y >= rect.minY && b.y <= rect.maxY
+      const aInside = a.x >= rect.minX && a.x <= rect.maxX && a.y >= rect.minY && a.y <= rect.maxY
+      const bInside = b.x >= rect.minX && b.x <= rect.maxX && b.y >= rect.minY && b.y <= rect.maxY
       if (aInside || bInside) {
         hits.push({ v0: edge.v0, v1: edge.v1 })
       }

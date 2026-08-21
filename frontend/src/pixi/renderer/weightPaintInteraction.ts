@@ -2,6 +2,7 @@ import type { Scene } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
 import {
   PaintWeightCommand,
+  SmoothWeightsCommand,
   BlurWeightsCommand,
   FillWeightsCommand,
   AutoWeightsCommand,
@@ -82,8 +83,10 @@ export class WeightPaintInteraction {
     this.#lastWorldX = point.x
     this.#lastWorldY = point.y
 
+    const mode = event.altKey ? 'remove' : 'add'
+
     if (weightPaintTool === 'paint') {
-      this.#handlePaintBrush(point.x, point.y, scene, meshEditNodeId, selectedBoneId)
+      this.#handlePaintBrush(point.x, point.y, scene, meshEditNodeId, selectedBoneId, mode)
     } else if (weightPaintTool === 'smooth') {
       this.#handleSmoothBrush(point.x, point.y, scene, meshEditNodeId)
     } else if (weightPaintTool === 'fill') {
@@ -128,8 +131,10 @@ export class WeightPaintInteraction {
     this.#lastWorldX = point.x
     this.#lastWorldY = point.y
 
+    const mode = event.altKey ? 'remove' : 'add'
+
     if (weightPaintTool === 'paint') {
-      this.#handlePaintBrush(point.x, point.y, scene, meshEditNodeId, selectedBoneId)
+      this.#handlePaintBrush(point.x, point.y, scene, meshEditNodeId, selectedBoneId, mode)
     } else if (weightPaintTool === 'smooth') {
       this.#handleSmoothBrush(point.x, point.y, scene, meshEditNodeId)
     }
@@ -145,6 +150,7 @@ export class WeightPaintInteraction {
     scene: Scene,
     meshEditNodeId: string,
     boneId: string,
+    mode: 'add' | 'remove' = 'add',
   ): void {
     const { brushRadius, brushStrength } = useMeshEditStore.getState()
     const node = scene.getNode(meshEditNodeId)
@@ -187,7 +193,7 @@ export class WeightPaintInteraction {
           vertexIndex,
           boneId,
           strength: brushStrength,
-          mode: 'add',
+          mode,
         }),
     )
 
@@ -232,10 +238,10 @@ export class WeightPaintInteraction {
     }
 
     this.#dispatch(
-      new BlurWeightsCommand({
+      new SmoothWeightsCommand({
         nodeId: meshEditNodeId,
+        vertexIndices: affectedVertices,
         iterations: 1,
-        strength: 0.5,
       }),
     )
   }

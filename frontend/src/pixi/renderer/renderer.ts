@@ -321,6 +321,7 @@ export class Renderer {
         world,
         engine: this.#engine,
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
+        getWorldTransform: transformOf,
       })
       this.#weightPaintOverlay.attach()
       this.#weightPaintOverlay.bringToFront()

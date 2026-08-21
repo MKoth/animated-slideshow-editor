@@ -429,18 +429,18 @@ describe('Mesh Deformation Evaluation', () => {
         [{ boneId: 'bone1', weight: 1.0 }],
       ],
     }
-    // Bone world transform: translated by (50, 30)
+    // Bone world transform: translated by (50, 30) — position is NOT applied
     const boneTransforms = new Map([['bone1', { x: 50, y: 30, rotation: 0, scaleX: 1, scaleY: 1 }]])
     const result = evaluateMeshDeformation(meshWithWeights, boneTransforms)
-    // Each vertex should be offset by the bone transform
-    expect(result.deformedVertices[0].x).toBeCloseTo(0 + 50)
-    expect(result.deformedVertices[0].y).toBeCloseTo(0 + 30)
-    expect(result.deformedVertices[1].x).toBeCloseTo(160 + 50)
-    expect(result.deformedVertices[1].y).toBeCloseTo(0 + 30)
-    expect(result.deformedVertices[2].x).toBeCloseTo(160 + 50)
-    expect(result.deformedVertices[2].y).toBeCloseTo(100 + 30)
-    expect(result.deformedVertices[3].x).toBeCloseTo(0 + 50)
-    expect(result.deformedVertices[3].y).toBeCloseTo(100 + 30)
+    // Only rotation and scale are applied, not bone position
+    expect(result.deformedVertices[0].x).toBeCloseTo(0)
+    expect(result.deformedVertices[0].y).toBeCloseTo(0)
+    expect(result.deformedVertices[1].x).toBeCloseTo(160)
+    expect(result.deformedVertices[1].y).toBeCloseTo(0)
+    expect(result.deformedVertices[2].x).toBeCloseTo(160)
+    expect(result.deformedVertices[2].y).toBeCloseTo(100)
+    expect(result.deformedVertices[3].x).toBeCloseTo(0)
+    expect(result.deformedVertices[3].y).toBeCloseTo(100)
   })
 
   it('applies weighted blend of multiple bone transforms', () => {
@@ -461,21 +461,21 @@ describe('Mesh Deformation Evaluation', () => {
         ],
       ],
     }
-    // bone1: translate (100, 0), bone2: translate (0, 100)
+    // bone1: scale 2x on X, bone2: scale 2x on Y — position NOT applied
     const boneTransforms = new Map([
-      ['bone1', { x: 100, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }],
-      ['bone2', { x: 0, y: 100, rotation: 0, scaleX: 1, scaleY: 1 }],
+      ['bone1', { x: 100, y: 0, rotation: 0, scaleX: 2, scaleY: 1 }],
+      ['bone2', { x: 0, y: 100, rotation: 0, scaleX: 1, scaleY: 2 }],
     ])
     const result = evaluateMeshDeformation(meshWithWeights, boneTransforms)
-    // Vertex 0: 50% * (0 + 100) + 50% * (0 + 0) = 50, 50% * (0 + 0) + 50% * (0 + 100) = 50
-    expect(result.deformedVertices[0].x).toBeCloseTo(50)
-    expect(result.deformedVertices[0].y).toBeCloseTo(50)
-    // Vertex 1: fully bone1
-    expect(result.deformedVertices[1].x).toBeCloseTo(100 + 100)
+    // Vertex 0: 50% * (0*2, 0*1) + 50% * (0*1, 0*2) = (0, 0)
+    expect(result.deformedVertices[0].x).toBeCloseTo(0)
+    expect(result.deformedVertices[0].y).toBeCloseTo(0)
+    // Vertex 1: fully bone1 → (100*2, 0*1) = (200, 0)
+    expect(result.deformedVertices[1].x).toBeCloseTo(200)
     expect(result.deformedVertices[1].y).toBeCloseTo(0)
-    // Vertex 2: fully bone2
+    // Vertex 2: fully bone2 → (100*1, 100*2) = (100, 200)
     expect(result.deformedVertices[2].x).toBeCloseTo(100)
-    expect(result.deformedVertices[2].y).toBeCloseTo(100 + 100)
+    expect(result.deformedVertices[2].y).toBeCloseTo(200)
   })
 
   it('applies bone rotation to deformed vertices', () => {
@@ -1044,11 +1044,12 @@ describe('Engine.evaluateMeshDeformation', () => {
     const result = system.engine.evaluateMeshDeformation(meshId, 0, boneWorldTransforms)
     expect(result).not.toBeNull()
     expect(result!.deformedVertices).toHaveLength(4)
-    // Each vertex should be offset by the bone transform
-    expect(result!.deformedVertices[0].x).toBeCloseTo(0 + 50)
-    expect(result!.deformedVertices[0].y).toBeCloseTo(0 + 30)
-    expect(result!.deformedVertices[1].x).toBeCloseTo(160 + 50)
-    expect(result!.deformedVertices[1].y).toBeCloseTo(0 + 30)
+    // With rotation 0 and scale 1, vertices stay at original positions
+    // (bone position is not applied — only rotation and scale are)
+    expect(result!.deformedVertices[0].x).toBeCloseTo(0)
+    expect(result!.deformedVertices[0].y).toBeCloseTo(0)
+    expect(result!.deformedVertices[1].x).toBeCloseTo(160)
+    expect(result!.deformedVertices[1].y).toBeCloseTo(0)
   })
 
   it('returns original vertices when no bone weights are set', () => {

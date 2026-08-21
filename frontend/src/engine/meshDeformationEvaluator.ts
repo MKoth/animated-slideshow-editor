@@ -21,6 +21,8 @@ export function evaluateMeshDeformation(
     return { deformedVertices: mesh.vertices }
   }
 
+  const bindPose = mesh.bindPose
+
   const deformedVertices: MeshVertex[] = []
   for (let i = 0; i < mesh.vertices.length; i++) {
     const vertex = mesh.vertices[i]
@@ -37,18 +39,36 @@ export function evaluateMeshDeformation(
       if (!boneTransform) {
         continue
       }
-      // Apply bone world transform to vertex local position:
-      // rotated = rotate(vertex, bone.rotation)
-      // scaled = (rotated.x * bone.scaleX, rotated.y * bone.scaleY)
-      // final = scaled + bone.position
-      const rotatedX = rotateX(vertex.x, vertex.y, boneTransform.rotation)
-      const rotatedY = rotateY(vertex.x, vertex.y, boneTransform.rotation)
-      const scaledX = rotatedX * boneTransform.scaleX
-      const scaledY = rotatedY * boneTransform.scaleY
-      const finalX = scaledX + boneTransform.x
-      const finalY = scaledY + boneTransform.y
-      deformedX += entry.weight * finalX
-      deformedY += entry.weight * finalY
+
+      const bp = bindPose?.[entry.boneId]
+
+      if (bp) {
+        // With bind pose: compute relative transform
+        // deltaRotation = currentRotation - bindRotation
+        // deltaScaleX = currentScaleX / bindScaleX
+        // deltaScaleY = currentScaleY / bindScaleY
+        // Apply delta to vertex position relative to bind pose
+        const deltaRotation = boneTransform.rotation - bp.rotation
+        const deltaScaleX =
+          bp.scaleX !== 0 ? boneTransform.scaleX / bp.scaleX : boneTransform.scaleX
+        const deltaScaleY =
+          bp.scaleY !== 0 ? boneTransform.scaleY / bp.scaleY : boneTransform.scaleY
+
+        const rotatedX = rotateX(vertex.x, vertex.y, deltaRotation)
+        const rotatedY = rotateY(vertex.x, vertex.y, deltaRotation)
+        const finalX = rotatedX * deltaScaleX
+        const finalY = rotatedY * deltaScaleY
+        deformedX += entry.weight * finalX
+        deformedY += entry.weight * finalY
+      } else {
+        // No bind pose: apply rotation and scale only (no position offset)
+        const rotatedX = rotateX(vertex.x, vertex.y, boneTransform.rotation)
+        const rotatedY = rotateY(vertex.x, vertex.y, boneTransform.rotation)
+        const finalX = rotatedX * boneTransform.scaleX
+        const finalY = rotatedY * boneTransform.scaleY
+        deformedX += entry.weight * finalX
+        deformedY += entry.weight * finalY
+      }
     }
     deformedVertices.push({ x: deformedX, y: deformedY })
   }

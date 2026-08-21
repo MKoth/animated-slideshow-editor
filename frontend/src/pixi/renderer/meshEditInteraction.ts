@@ -110,7 +110,7 @@ export class MeshEditInteraction {
       return
     }
     const { meshEditNodeId, meshEditTool, selectMode } = useMeshEditStore.getState()
-    if (!meshEditNodeId) {
+    if (!meshEditNodeId || meshEditTool === 'weightPaint') {
       return
     }
     const scene = this.#getScene()
@@ -370,8 +370,8 @@ export class MeshEditInteraction {
       return
     }
 
-    const { meshEditNodeId, selectMode } = useMeshEditStore.getState()
-    if (!meshEditNodeId) {
+    const { meshEditNodeId, meshEditTool, selectMode } = useMeshEditStore.getState()
+    if (!meshEditNodeId || meshEditTool === 'weightPaint') {
       return
     }
     const scene = this.#getScene()
@@ -391,12 +391,7 @@ export class MeshEditInteraction {
     }
   }
 
-  #handleDrag(
-    worldX: number,
-    worldY: number,
-    scene: Scene,
-    meshEditNodeId: string,
-  ): void {
+  #handleDrag(worldX: number, worldY: number, scene: Scene, meshEditNodeId: string): void {
     const dx = worldX - this.#startWorldX
     const dy = worldY - this.#startWorldY
     if (!this.#moveActive && Math.hypot(dx, dy) < MOVE_START_DISTANCE) {

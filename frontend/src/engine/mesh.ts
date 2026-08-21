@@ -14,11 +14,20 @@ export interface VertexBoneWeight {
   readonly weight: number
 }
 
+export interface BoneBindPose {
+  readonly x: number
+  readonly y: number
+  readonly rotation: number
+  readonly scaleX: number
+  readonly scaleY: number
+}
+
 export interface MeshData {
   readonly vertices: readonly MeshVertex[]
   readonly faces: readonly MeshFace[]
   readonly uvs: readonly { readonly u: number; readonly v: number }[]
   readonly boneWeights?: readonly (readonly VertexBoneWeight[])[]
+  readonly bindPose?: Readonly<Record<string, BoneBindPose>>
 }
 
 export function createDefaultRectangleMesh(width: number, height: number): MeshData {
@@ -132,7 +141,14 @@ export function meshDataFromJSON(json: unknown): MeshData {
     if (boneWeights.length !== vertices.length) {
       throw new Error('boneWeights length must match vertices length')
     }
-    return { ...result, boneWeights }
+    const withWeights = { ...result, boneWeights }
+    if (record.bindPose && typeof record.bindPose === 'object') {
+      return { ...withWeights, bindPose: record.bindPose as Record<string, BoneBindPose> }
+    }
+    return withWeights
+  }
+  if (record.bindPose && typeof record.bindPose === 'object') {
+    return { ...result, bindPose: record.bindPose as Record<string, BoneBindPose> }
   }
   return result
 }
@@ -142,6 +158,18 @@ export function meshDataToJSON(mesh: MeshData): {
   faces: readonly { readonly v0: number; readonly v1: number; readonly v2: number }[]
   uvs: readonly { readonly u: number; readonly v: number }[]
   boneWeights?: readonly (readonly { readonly boneId: string; readonly weight: number }[])[]
+  bindPose?: Readonly<
+    Record<
+      string,
+      {
+        readonly x: number
+        readonly y: number
+        readonly rotation: number
+        readonly scaleX: number
+        readonly scaleY: number
+      }
+    >
+  >
 } {
   const result = {
     vertices: mesh.vertices,
@@ -149,7 +177,14 @@ export function meshDataToJSON(mesh: MeshData): {
     uvs: mesh.uvs,
   }
   if (mesh.boneWeights) {
-    return { ...result, boneWeights: mesh.boneWeights }
+    const withWeights = { ...result, boneWeights: mesh.boneWeights }
+    if (mesh.bindPose) {
+      return { ...withWeights, bindPose: mesh.bindPose }
+    }
+    return withWeights
+  }
+  if (mesh.bindPose) {
+    return { ...result, bindPose: mesh.bindPose }
   }
   return result
 }
@@ -203,12 +238,19 @@ export function cloneMeshData(mesh: MeshData): MeshData {
     uvs: mesh.uvs.map((uv) => ({ u: uv.u, v: uv.v })),
   }
   if (mesh.boneWeights) {
-    return {
+    const withWeights = {
       ...result,
       boneWeights: mesh.boneWeights.map((vw) =>
         vw.map((w) => ({ boneId: w.boneId, weight: w.weight })),
       ),
     }
+    if (mesh.bindPose) {
+      return { ...withWeights, bindPose: { ...mesh.bindPose } }
+    }
+    return withWeights
+  }
+  if (mesh.bindPose) {
+    return { ...result, bindPose: { ...mesh.bindPose } }
   }
   return result
 }

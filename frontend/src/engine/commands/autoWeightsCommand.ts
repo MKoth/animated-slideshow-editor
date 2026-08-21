@@ -1,7 +1,7 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
 import { requireFiniteNumber } from '../guards'
-import type { VertexBoneWeight } from '../mesh'
+import type { VertexBoneWeight, BoneBindPose } from '../mesh'
 import { ensureBoneWeightsArray } from '../mesh'
 import { worldTransformOf } from '../worldTransform'
 
@@ -14,6 +14,7 @@ export interface AutoWeightsParameters {
 export interface AutoWeightsInverse {
   readonly nodeId: string
   readonly oldWeights: readonly (readonly VertexBoneWeight[])[]
+  readonly oldBindPose: Readonly<Record<string, BoneBindPose>> | undefined
 }
 
 export class AutoWeightsCommand implements Command<AutoWeightsInverse> {
@@ -60,14 +61,30 @@ export class AutoWeightsCommand implements Command<AutoWeightsInverse> {
     const mesh = node.components.mesh!.mesh
     const scene = engine.getNodeScene(this.#nodeId)
 
-    // Save old weights for inverse
+    // Save old weights and bind pose for inverse
     const oldWeights: (readonly VertexBoneWeight[])[] = []
     for (let i = 0; i < mesh.vertices.length; i++) {
       const vw = mesh.boneWeights?.[i]
       oldWeights.push(vw ? vw.map((w) => ({ boneId: w.boneId, weight: w.weight })) : [])
     }
+    const oldBindPose = mesh.bindPose ? { ...mesh.bindPose } : undefined
 
-    // Get world positions of bones
+    // Get world transforms of bones and record as bind poses
+    const bindPose: Record<string, BoneBindPose> = mesh.bindPose ? { ...mesh.bindPose } : {}
+    for (const boneId of this.#boneIds) {
+      const worldTransform = worldTransformOf(scene, boneId)
+      if (worldTransform) {
+        bindPose[boneId] = {
+          x: worldTransform.x,
+          y: worldTransform.y,
+          rotation: worldTransform.rotation,
+          scaleX: worldTransform.scaleX,
+          scaleY: worldTransform.scaleY,
+        }
+      }
+    }
+
+    // Get world positions of bones for weight calculation
     const bonePositions = new Map<string, { x: number; y: number }>()
     for (const boneId of this.#boneIds) {
       const worldTransform = worldTransformOf(scene, boneId)
@@ -114,11 +131,12 @@ export class AutoWeightsCommand implements Command<AutoWeightsInverse> {
       }
     }
 
-    const newMesh = { ...mesh, boneWeights }
+    const newMesh = { ...mesh, boneWeights, bindPose }
     engine.setMeshData(this.#nodeId, newMesh)
     return {
       nodeId: this.#nodeId,
       oldWeights,
+      oldBindPose,
     }
   }
 

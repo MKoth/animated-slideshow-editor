@@ -1899,6 +1899,111 @@ button:disabled {
   color: var(--color-accent);
 }
 
+.weight-paint-toolbar {
+  position: absolute;
+  bottom: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  pointer-events: auto;
+  font-size: 12px;
+}
+
+.weight-paint-toolbar__section {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.weight-paint-toolbar__label {
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.weight-paint-toolbar__select {
+  padding: 4px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-size: 12px;
+  max-width: 140px;
+}
+
+.weight-paint-toolbar__tools {
+  display: flex;
+  gap: 2px;
+}
+
+.weight-paint-toolbar__tool {
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.weight-paint-toolbar__tool:hover {
+  background: var(--color-bg-hover);
+}
+
+.weight-paint-toolbar__tool--active {
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  border-color: var(--color-accent);
+}
+
+.weight-paint-toolbar__slider {
+  width: 80px;
+  height: 4px;
+  cursor: pointer;
+}
+
+.weight-paint-toolbar__separator {
+  width: 1px;
+  height: 20px;
+  background: var(--color-border);
+}
+
+.weight-paint-toolbar__toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.weight-paint-toolbar__toggle input {
+  cursor: pointer;
+}
+
+.weight-paint-toolbar__warning {
+  color: var(--color-warning, #e8a33d);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.weight-paint-toolbar__hint {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  font-style: italic;
+}
+
 .canvas-error-overlay {
   position: absolute;
   inset: 12px;

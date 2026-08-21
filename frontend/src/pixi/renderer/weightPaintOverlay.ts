@@ -4,6 +4,9 @@ import { useMeshEditStore } from '../../stores/meshEditStore'
 import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
 import type { WorldTransform } from './worldGeometry'
 import { worldTransformOf } from '../../engine/worldTransform'
+import { walkPreOrder } from '../../engine/sceneNode'
+import { evaluateMeshDeformation } from '../../engine/meshDeformationEvaluator'
+import type { WorldTransformSource } from './hitTest'
 
 // Heatmap color gradient: blue (0) -> cyan -> green -> yellow -> red (1)
 function weightToColor(weight: number): number {
@@ -55,11 +58,43 @@ function localToWorld(
   }
 }
 
+function computeBoneWorldTransforms(
+  scene: Scene,
+  getWorldTransform?: WorldTransformSource,
+): Map<string, WorldTransform> {
+  const transforms = new Map<string, WorldTransform>()
+  for (const node of walkPreOrder(scene.root)) {
+    if (!node.components.bone) continue
+    const wt = getWorldTransform ? getWorldTransform(node.id) : worldTransformOf(scene, node.id)
+    if (wt) {
+      transforms.set(node.id, wt)
+    }
+  }
+  return transforms
+}
+
+function getDeformedVertices(
+  mesh: MeshData,
+  scene: Scene,
+  getWorldTransform?: WorldTransformSource,
+): { x: number; y: number }[] {
+  if (!mesh.boneWeights || mesh.boneWeights.length === 0) {
+    return mesh.vertices.map((v) => ({ x: v.x, y: v.y }))
+  }
+  const boneTransforms = computeBoneWorldTransforms(scene, getWorldTransform)
+  if (boneTransforms.size === 0) {
+    return mesh.vertices.map((v) => ({ x: v.x, y: v.y }))
+  }
+  const result = evaluateMeshDeformation(mesh, boneTransforms)
+  return result.deformedVertices.map((v) => ({ x: v.x, y: v.y }))
+}
+
 export interface WeightPaintOverlayContext {
   readonly pixi: RendererPixi
   readonly world: PixiContainer
   readonly engine: EnginePublic
   readonly getScene: () => Scene | null
+  readonly getWorldTransform?: WorldTransformSource
 }
 
 export class WeightPaintOverlay {
@@ -67,6 +102,7 @@ export class WeightPaintOverlay {
   readonly #world: PixiContainer
   readonly #engine: EnginePublic
   readonly #getScene: () => Scene | null
+  readonly #getWorldTransform?: WorldTransformSource
   #graphics: PixiGraphics | null = null
   #attached = false
   #unsubscribeMeshEdit: (() => void) | null = null
@@ -77,6 +113,7 @@ export class WeightPaintOverlay {
     this.#world = context.world
     this.#engine = context.engine
     this.#getScene = context.getScene
+    this.#getWorldTransform = context.getWorldTransform
   }
 
   attach(): void {
@@ -141,7 +178,7 @@ export class WeightPaintOverlay {
     if (!transform) {
       return
     }
-    this.#drawHeatmap(graphics, mesh, transform, selectedBoneId)
+    this.#drawHeatmap(graphics, mesh, transform, selectedBoneId, scene)
   }
 
   #drawHeatmap(
@@ -149,8 +186,10 @@ export class WeightPaintOverlay {
     mesh: MeshData,
     transform: WorldTransform,
     boneId: string,
+    scene: Scene,
   ): void {
-    const worldVertices = mesh.vertices.map((v) => localToWorld(v.x, v.y, transform))
+    const deformed = getDeformedVertices(mesh, scene, this.#getWorldTransform)
+    const worldVertices = deformed.map((v) => localToWorld(v.x, v.y, transform))
 
     // Draw filled triangles with heatmap colors
     for (const face of mesh.faces) {
