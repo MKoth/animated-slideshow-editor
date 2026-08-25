@@ -5,6 +5,7 @@ import { GenerateMeshCommand } from '../../engine/commands'
 import type { MeshData } from '../../engine/mesh'
 import { generateMesh } from '../../engine/meshGenerator'
 import { loadImageDataFromAsset, hasTransparentPixels } from '../../engine/imageDataLoader'
+import { useMeshPreviewStore } from '../../stores/meshPreviewStore'
 
 const DEFAULT_DENSITY = 50
 
@@ -25,6 +26,7 @@ export function MeshGenerationSection({
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const imageDataRef = useRef<ImageData | null>(null)
 
   const assetDefinitionId = target.components.assetInstance?.assetDefinitionId
   const embeddedAsset = assetDefinitionId ? engine.getEmbeddedAsset(assetDefinitionId) : undefined
@@ -35,8 +37,23 @@ export function MeshGenerationSection({
   useEffect(() => {
     return () => {
       abortRef.current?.abort()
+      useMeshPreviewStore.getState().clearPreviewMesh()
     }
   }, [])
+
+  useEffect(() => {
+    imageDataRef.current = null
+    if (!embeddedAsset) return
+    let cancelled = false
+    void loadImageDataFromAsset(embeddedAsset).then((data) => {
+      if (!cancelled) {
+        imageDataRef.current = data
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [embeddedAsset])
 
   const fail = useCallback(
     (message: string) => {
@@ -45,6 +62,42 @@ export function MeshGenerationSection({
     },
     [notify],
   )
+
+  const updatePreview = useCallback(
+    (newDensity: number) => {
+      if (!hasMesh || !imageDataRef.current) return
+      try {
+        const result = generateMesh({ imageData: imageDataRef.current, density: newDensity })
+        const meshData: MeshData = {
+          vertices: result.vertices,
+          faces: result.faces,
+          uvs: result.uvs,
+        }
+        useMeshPreviewStore.getState().setPreviewMesh(target.id, meshData)
+      } catch (err) {
+        useMeshPreviewStore.getState().clearPreviewMesh()
+        fail(err instanceof Error ? err.message : String(err))
+      }
+    },
+    [hasMesh, target.id, fail],
+  )
+
+  const handleDensityChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const newDensity = Number(e.target.value)
+      setDensity(newDensity)
+      updatePreview(newDensity)
+    },
+    [updatePreview],
+  )
+
+  const handlePointerUp = useCallback(() => {
+    useMeshPreviewStore.getState().clearPreviewMesh()
+  }, [])
+
+  const handleLostPointerCapture = useCallback(() => {
+    useMeshPreviewStore.getState().clearPreviewMesh()
+  }, [])
 
   const handleGenerate = useCallback(async () => {
     if (!embeddedAsset) {
@@ -78,6 +131,7 @@ export function MeshGenerationSection({
         uvs: result.uvs,
       }
 
+      useMeshPreviewStore.getState().clearPreviewMesh()
       const commandResult = dispatch(new GenerateMeshCommand({ nodeId: target.id, mesh: meshData }))
       if (!commandResult.ok) {
         fail(commandResult.error.message)
@@ -112,7 +166,9 @@ export function MeshGenerationSection({
           step={1}
           value={density}
           disabled={playing || generating}
-          onChange={(e) => setDensity(Number(e.target.value))}
+          onChange={handleDensityChange}
+          onPointerUp={handlePointerUp}
+          onLostPointerCapture={handleLostPointerCapture}
         />
         <span className="inspector-field__value">{density}%</span>
       </div>
@@ -121,11 +177,7 @@ export function MeshGenerationSection({
           {error}
         </div>
       )}
-      <button
-        className="inspector-reset"
-        disabled={playing || generating}
-        onClick={handleGenerate}
-      >
+      <button className="inspector-reset" disabled={playing || generating} onClick={handleGenerate}>
         {generating ? 'Generating...' : hasMesh ? 'Regenerate' : 'Generate Mesh'}
       </button>
     </section>

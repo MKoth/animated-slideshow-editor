@@ -3,6 +3,7 @@ import type { MeshData, MeshEdge } from '../../engine/mesh'
 import { extractEdges, edgeKey } from '../../engine/mesh'
 import { walkPreOrder } from '../../engine/sceneNode'
 import { useMeshEditStore } from '../../stores/meshEditStore'
+import { useMeshPreviewStore } from '../../stores/meshPreviewStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
 import type { WorldTransform, WorldRect } from './worldGeometry'
@@ -23,6 +24,12 @@ const EDGE_SELECTED_WIDTH = 3
 
 const FACE_SELECTED_COLOR = 0x34a853
 const FACE_SELECTED_ALPHA = 0.2
+
+const PREVIEW_FILL_COLOR = 0x8ab4f8
+const PREVIEW_FILL_ALPHA = 0.3
+const PREVIEW_WIREFRAME_COLOR = 0x1a73e8
+const PREVIEW_WIREFRAME_ALPHA = 0.5
+const PREVIEW_WIREFRAME_WIDTH = 1
 
 const EDGE_HIT_THRESHOLD = 8
 
@@ -132,6 +139,7 @@ export class MeshOverlay {
   #unsubscribeSelection: (() => void) | null = null
   #unsubscribeEngine: (() => void) | null = null
   #previewVertices: Map<number, { x: number; y: number }> | null = null
+  #unsubscribePreview: (() => void) | null = null
 
   constructor(context: MeshOverlayContext) {
     this.#pixi = context.pixi
@@ -157,6 +165,7 @@ export class MeshOverlay {
         this.redraw()
       }
     })
+    this.#unsubscribePreview = useMeshPreviewStore.subscribe(() => this.redraw())
     this.redraw()
   }
 
@@ -171,6 +180,8 @@ export class MeshOverlay {
     this.#unsubscribeSelection = null
     this.#unsubscribeEngine?.()
     this.#unsubscribeEngine = null
+    this.#unsubscribePreview?.()
+    this.#unsubscribePreview = null
     this.#graphics?.destroy()
     this.#graphics = null
   }
@@ -229,6 +240,16 @@ export class MeshOverlay {
           continue
         }
         this.#drawWireframe(graphics, node.components.mesh.mesh, transform, scene)
+      }
+    }
+    const { previewMesh, nodeId: previewNodeId } = useMeshPreviewStore.getState()
+    if (previewMesh && previewNodeId) {
+      const node = scene.getNode(previewNodeId)
+      if (node) {
+        const transform = this.#resolveTransform(scene, previewNodeId)
+        if (transform) {
+          this.#drawPreview(graphics, previewMesh, transform)
+        }
       }
     }
   }
@@ -340,6 +361,58 @@ export class MeshOverlay {
             .fill({ color: isSelected ? VERTEX_SELECTED_FILL : VERTEX_FILL })
             .stroke({ width: VERTEX_STROKE_WIDTH, color: VERTEX_STROKE_COLOR })
         }
+      }
+    }
+  }
+
+  #drawPreview(graphics: PixiGraphics, mesh: MeshData, transform: WorldTransform): void {
+    const worldVertices = mesh.vertices.map((v) => localToWorld(v.x, v.y, transform))
+    for (const face of mesh.faces) {
+      const v0 = worldVertices[face.v0]
+      const v1 = worldVertices[face.v1]
+      const v2 = worldVertices[face.v2]
+      if (v0 && v1 && v2) {
+        graphics
+          .moveTo(v0.x, v0.y)
+          .lineTo(v1.x, v1.y)
+          .lineTo(v2.x, v2.y)
+          .closePath()
+          .fill({ color: PREVIEW_FILL_COLOR, alpha: PREVIEW_FILL_ALPHA })
+      }
+    }
+    for (const face of mesh.faces) {
+      const v0 = worldVertices[face.v0]
+      const v1 = worldVertices[face.v1]
+      const v2 = worldVertices[face.v2]
+      if (v0 && v1) {
+        graphics
+          .moveTo(v0.x, v0.y)
+          .lineTo(v1.x, v1.y)
+          .stroke({
+            width: PREVIEW_WIREFRAME_WIDTH,
+            color: PREVIEW_WIREFRAME_COLOR,
+            alpha: PREVIEW_WIREFRAME_ALPHA,
+          })
+      }
+      if (v1 && v2) {
+        graphics
+          .moveTo(v1.x, v1.y)
+          .lineTo(v2.x, v2.y)
+          .stroke({
+            width: PREVIEW_WIREFRAME_WIDTH,
+            color: PREVIEW_WIREFRAME_COLOR,
+            alpha: PREVIEW_WIREFRAME_ALPHA,
+          })
+      }
+      if (v2 && v0) {
+        graphics
+          .moveTo(v2.x, v2.y)
+          .lineTo(v0.x, v0.y)
+          .stroke({
+            width: PREVIEW_WIREFRAME_WIDTH,
+            color: PREVIEW_WIREFRAME_COLOR,
+            alpha: PREVIEW_WIREFRAME_ALPHA,
+          })
       }
     }
   }
