@@ -74,21 +74,6 @@ export class IkInteraction {
       return
     }
 
-    if (mode === 'ikTarget' || mode === 'poleVector') {
-      const hit = this.#ikOverlay.hitTestTarget(point.x, point.y)
-      if (hit) {
-        event.stopPropagation()
-        this.#pressed = true
-        this.#dragging = hit
-        this.#startWorldX = point.x
-        this.#startWorldY = point.y
-        this.#moveActive = false
-        return
-      }
-      this.#placeTarget(point.x, point.y, mode)
-      return
-    }
-
     const hit = this.#ikOverlay.hitTestTarget(point.x, point.y)
     if (hit) {
       event.stopPropagation()
@@ -97,6 +82,11 @@ export class IkInteraction {
       this.#startWorldX = point.x
       this.#startWorldY = point.y
       this.#moveActive = false
+      return
+    }
+
+    if (mode === 'ikTarget' || mode === 'poleVector') {
+      this.#placeTarget(point.x, point.y, mode)
     }
   }
 
