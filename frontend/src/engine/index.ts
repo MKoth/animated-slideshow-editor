@@ -273,5 +273,16 @@ export { SetVertexWeightsCommand } from './commands'
 export type { SetVertexWeightsInverse, SetVertexWeightsParameters } from './commands'
 export { SmoothWeightsCommand } from './commands'
 export type { SmoothWeightsInverse, SmoothWeightsParameters } from './commands'
+export { GenerateMeshCommand } from './commands'
+export type { GenerateMeshInverse, GenerateMeshParameters } from './commands'
 export { evaluateMeshDeformation } from './meshDeformationEvaluator'
 export type { DeformedMeshResult } from './meshDeformationEvaluator'
+export type { MeshGeneratorInput, MeshGeneratorResult, ContourPoint } from './meshGenerator'
+export {
+  extractAlphaChannel,
+  traceContour,
+  triangulateContour,
+  generateInteriorPoints,
+  computeUVs,
+  generateMesh,
+} from './meshGenerator'
