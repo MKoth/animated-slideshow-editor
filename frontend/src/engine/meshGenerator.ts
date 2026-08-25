@@ -25,6 +25,7 @@ interface Contours {
 }
 
 const MIN_VISIBLE_ALPHA = 0
+const MAX_INTERIOR_POINTS = 400
 
 export function extractAlphaChannel(imageData: ImageData): Uint8Array {
   validateImageData(imageData)
@@ -56,7 +57,7 @@ export function triangulateContour(
     throw new Error('Contour must contain at least three points')
   }
   const rings = [contour, ...holes]
-  const points = rings.flatMap((ring) => ring).concat(interiorPoints)
+  const ringPoints = rings.flatMap((ring) => ring)
   const holeIndices: number[] = []
   let offset = contour.length
   for (const hole of holes) {
@@ -66,7 +67,7 @@ export function triangulateContour(
     holeIndices.push(offset)
     offset += hole.length
   }
-  const flat = points.flatMap((point) => [point.x, point.y])
+  const flat = ringPoints.flatMap((point) => [point.x, point.y])
   const indices = earcut(flat, holeIndices, 2)
   if (indices.length === 0 || indices.length % 3 !== 0) {
     throw new Error('Contour could not be triangulated')
@@ -74,6 +75,24 @@ export function triangulateContour(
   const faces: MeshFace[] = []
   for (let i = 0; i < indices.length; i += 3) {
     faces.push({ v0: indices[i], v1: indices[i + 1], v2: indices[i + 2] })
+  }
+  for (let pointIndex = 0; pointIndex < interiorPoints.length; pointIndex++) {
+    const vertexIndex = ringPoints.length + pointIndex
+    const point = interiorPoints[pointIndex]
+    const containingFace = faces.findIndex((face) =>
+      pointInTriangle(point, ringPoints.concat(interiorPoints), face),
+    )
+    if (containingFace < 0) {
+      throw new Error('Interior point could not be inserted into the triangulation')
+    }
+    const face = faces[containingFace]
+    faces.splice(
+      containingFace,
+      1,
+      { v0: face.v0, v1: face.v1, v2: vertexIndex },
+      { v0: face.v1, v1: face.v2, v2: vertexIndex },
+      { v0: face.v2, v1: face.v0, v2: vertexIndex },
+    )
   }
   return faces
 }
@@ -107,7 +126,9 @@ export function generateInteriorPoints(
       }
     }
   }
-  return points
+  if (points.length <= MAX_INTERIOR_POINTS) return points
+  const stride = Math.ceil(points.length / MAX_INTERIOR_POINTS)
+  return points.filter((_, index) => index % stride === 0)
 }
 
 export function computeUVs(
@@ -290,6 +311,22 @@ function pointInPolygon(point: ContourPoint, polygon: readonly ContourPoint[]): 
     }
   }
   return inside
+}
+
+function pointInTriangle(
+  point: ContourPoint,
+  vertices: readonly ContourPoint[],
+  face: MeshFace,
+): boolean {
+  const a = vertices[face.v0]
+  const b = vertices[face.v1]
+  const c = vertices[face.v2]
+  const sign = (p1: ContourPoint, p2: ContourPoint, p3: ContourPoint) =>
+    (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y)
+  const d1 = sign(point, a, b)
+  const d2 = sign(point, b, c)
+  const d3 = sign(point, c, a)
+  return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0))
 }
 
 function validateDensity(density: number): void {
