@@ -120,6 +120,11 @@ export class FakeGraphics extends FakeContainer {
     return this
   }
 
+  closePath(): this {
+    this.#record('closePath', [])
+    return this
+  }
+
   fill(options?: unknown): this {
     this.#record('fill', [options])
     return this

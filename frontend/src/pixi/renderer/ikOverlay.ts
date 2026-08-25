@@ -4,11 +4,11 @@ import type { Unsubscribe } from '../../engine'
 import { useIKSelectionStore } from '../../stores/ikSelectionStore'
 import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
 
-const TARGET_COLOR = 0x1a73e8
-const TARGET_SELECTED_COLOR = 0xff6d00
+export const TARGET_COLOR = 0x1a73e8
+export const TARGET_SELECTED_COLOR = 0xff6d00
 const TARGET_SIZE = 10
-const POLE_COLOR = 0x9c27b0
-const POLE_SELECTED_COLOR = 0xff6d00
+export const POLE_COLOR = 0x9c27b0
+export const POLE_SELECTED_COLOR = 0xff6d00
 const POLE_SIZE = 8
 
 export interface IkOverlayContext {
@@ -101,12 +101,15 @@ export class IkOverlay {
     const selectedChainId = useIKSelectionStore.getState().selectedChainId
 
     for (const chain of chains) {
-      if (chain.id !== selectedChainId) {
-        continue
-      }
-      this.#drawTarget(graphics, chain.target.position.x, chain.target.position.y, true)
+      const isSelected = chain.id === selectedChainId
+      this.#drawTarget(graphics, chain.target.position.x, chain.target.position.y, isSelected)
       if (chain.poleTarget) {
-        this.#drawPole(graphics, chain.poleTarget.position.x, chain.poleTarget.position.y, true)
+        this.#drawPole(
+          graphics,
+          chain.poleTarget.position.x,
+          chain.poleTarget.position.y,
+          isSelected,
+        )
       }
     }
   }
@@ -144,29 +147,22 @@ export class IkOverlay {
     if (!slide) {
       return null
     }
-    const selectedChainId = useIKSelectionStore.getState().selectedChainId
-    if (!selectedChainId) {
-      return null
-    }
     const ikManager = this.#engine.getIKManager()
-    let chain
-    try {
-      chain = ikManager.getChain(selectedChainId)
-    } catch {
-      return null
-    }
+    const chains = ikManager.getChainsForSlide(slide.id)
     const threshold = TARGET_SIZE + 4
 
-    const tx = chain.target.position.x
-    const ty = chain.target.position.y
-    if (Math.hypot(worldX - tx, worldY - ty) <= threshold) {
-      return { chainId: chain.id, kind: 'target' }
-    }
-    if (chain.poleTarget) {
-      const px = chain.poleTarget.position.x
-      const py = chain.poleTarget.position.y
-      if (Math.hypot(worldX - px, worldY - py) <= threshold) {
-        return { chainId: chain.id, kind: 'pole' }
+    for (const chain of chains) {
+      const tx = chain.target.position.x
+      const ty = chain.target.position.y
+      if (Math.hypot(worldX - tx, worldY - ty) <= threshold) {
+        return { chainId: chain.id, kind: 'target' }
+      }
+      if (chain.poleTarget) {
+        const px = chain.poleTarget.position.x
+        const py = chain.poleTarget.position.y
+        if (Math.hypot(worldX - px, worldY - py) <= threshold) {
+          return { chainId: chain.id, kind: 'pole' }
+        }
       }
     }
     return null
