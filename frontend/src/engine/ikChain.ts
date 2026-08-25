@@ -11,20 +11,26 @@ export interface PoleTarget {
 
 export class IKChain {
   readonly id: string
+  readonly slideId: string
   readonly boneIds: readonly string[]
   target: BoneIKTarget
   poleTarget: PoleTarget | null
+  ghostNodeId: string | null
 
   constructor(
     id: string,
+    slideId: string,
     boneIds: readonly string[],
     target: BoneIKTarget,
     poleTarget: PoleTarget | null = null,
+    ghostNodeId: string | null = null,
   ) {
     this.id = id
+    this.slideId = slideId
     this.boneIds = boneIds
     this.target = target
     this.poleTarget = poleTarget
+    this.ghostNodeId = ghostNodeId
   }
 
   get rootBoneId(): string {
@@ -76,25 +82,31 @@ export class IKChain {
   toJSON(): IKChainJSON {
     return {
       id: this.id,
+      slideId: this.slideId,
       boneIds: [...this.boneIds],
       target: { ...this.target },
       poleTarget: this.poleTarget ? { ...this.poleTarget } : null,
+      ghostNodeId: this.ghostNodeId,
     }
   }
 
   static fromJSON(json: IKChainJSON): IKChain {
     return new IKChain(
       json.id,
+      json.slideId,
       json.boneIds,
       { ...json.target },
       json.poleTarget ? { ...json.poleTarget } : null,
+      json.ghostNodeId ?? null,
     )
   }
 }
 
 export interface IKChainJSON {
   readonly id: string
+  readonly slideId: string
   readonly boneIds: readonly string[]
   readonly target: BoneIKTarget
   readonly poleTarget: PoleTarget | null
+  readonly ghostNodeId?: string | null
 }

@@ -134,6 +134,7 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
     text?: NodeComponents['text']
     bone?: NodeComponents['bone']
     mesh?: NodeComponents['mesh']
+    ghost?: NodeComponents['ghost']
   } = {}
   if (record.camera !== undefined) {
     if (!isKind(record.camera, 'camera')) {
@@ -194,6 +195,12 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
       mesh: meshDataFromJSON((record.mesh as Record<string, unknown>).mesh),
     }
   }
+  if (record.ghost !== undefined) {
+    if (!isKind(record.ghost, 'ghost')) {
+      throw new Error(`Node "${nodeId}" has an invalid ghost component`)
+    }
+    components.ghost = { kind: 'ghost' }
+  }
   return components
 }
 
@@ -239,6 +246,7 @@ function freezeComponents(components: NodeComponents): NodeComponents {
     mesh: components.mesh
       ? Object.freeze({ kind: 'mesh' as const, mesh: cloneMeshData(components.mesh.mesh) })
       : undefined,
+    ghost: components.ghost ? Object.freeze({ ...components.ghost }) : undefined,
   }
   return Object.freeze(frozen)
 }

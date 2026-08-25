@@ -29,7 +29,9 @@ describe('IKChain', () => {
     const root = createBoneNode(engine, 'Root', slide.scene.root.id, 0, 0)
     const child = createBoneNode(engine, 'Child', root.id, 100, 0)
 
-    const chain = new IKChain('chain1', [root.id, child.id], { position: { x: 200, y: 0 } })
+    const chain = new IKChain('chain1', slide.id, [root.id, child.id], {
+      position: { x: 200, y: 0 },
+    })
 
     expect(chain.chainLength).toBe(2)
     expect(chain.rootBoneId).toBe(root.id)
@@ -43,7 +45,7 @@ describe('IKChain', () => {
 
     const root = createBoneNode(engine, 'Root', slide.scene.root.id, 0, 0)
 
-    const chain = new IKChain('chain1', [root.id], { position: { x: 200, y: 0 } })
+    const chain = new IKChain('chain1', slide.id, [root.id], { position: { x: 200, y: 0 } })
 
     const error = chain.validate((id) => engine.getNode(id))
     expect(error).toBe('IK chain must have at least 2 bones')
@@ -56,7 +58,9 @@ describe('IKChain', () => {
 
     const root = createBoneNode(engine, 'Root', slide.scene.root.id, 0, 0)
 
-    const chain = new IKChain('chain1', [root.id, 'nonexistent'], { position: { x: 200, y: 0 } })
+    const chain = new IKChain('chain1', slide.id, [root.id, 'nonexistent'], {
+      position: { x: 200, y: 0 },
+    })
 
     const error = chain.validate((id) => engine.getNode(id))
     expect(error).toContain('not found')
@@ -72,7 +76,9 @@ describe('IKChain', () => {
       transform: { x: 100, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
     })
 
-    const chain = new IKChain('chain1', [root.id, child.id], { position: { x: 200, y: 0 } })
+    const chain = new IKChain('chain1', slide.id, [root.id, child.id], {
+      position: { x: 200, y: 0 },
+    })
 
     const error = chain.validate((id) => engine.getNode(id))
     expect(error).toContain('is not a bone')
@@ -87,7 +93,9 @@ describe('IKChain', () => {
     const root2 = createBoneNode(engine, 'Root2', slide.scene.root.id, 0, 0)
     const child = createBoneNode(engine, 'Child', root1.id, 100, 0)
 
-    const chain = new IKChain('chain1', [root2.id, child.id], { position: { x: 200, y: 0 } })
+    const chain = new IKChain('chain1', slide.id, [root2.id, child.id], {
+      position: { x: 200, y: 0 },
+    })
 
     const error = chain.validate((id) => engine.getNode(id))
     expect(error).toContain('not a child of bone')
@@ -96,6 +104,7 @@ describe('IKChain', () => {
   it('serializes and deserializes correctly', () => {
     const chain = new IKChain(
       'chain1',
+      'slide1',
       ['bone1', 'bone2'],
       { position: { x: 100, y: 200 } },
       { position: { x: 50, y: 100 } },
@@ -105,6 +114,7 @@ describe('IKChain', () => {
     const restored = IKChain.fromJSON(json)
 
     expect(restored.id).toBe(chain.id)
+    expect(restored.slideId).toBe(chain.slideId)
     expect(restored.boneIds).toEqual(chain.boneIds)
     expect(restored.target).toEqual(chain.target)
     expect(restored.poleTarget).toEqual(chain.poleTarget)

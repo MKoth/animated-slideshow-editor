@@ -2,6 +2,7 @@ import type { EventBus } from './events'
 import type { SceneNode } from './sceneNode'
 import { IKChain, type BoneIKTarget, type PoleTarget } from './ikChain'
 import { newId } from './ids'
+import type { IKManagerJSON, IKChainJSON } from './json'
 
 export class IKManager {
   readonly #bus: EventBus
@@ -21,7 +22,7 @@ export class IKManager {
     poleTarget: PoleTarget | null = null,
   ): IKChain {
     const id = newId('ikChain')
-    const chain = new IKChain(id, boneIds, target, poleTarget)
+    const chain = new IKChain(id, slideId, boneIds, target, poleTarget)
     const error = chain.validate(this.#nodeLookup)
     if (error) {
       throw new Error(error)
@@ -126,23 +127,35 @@ export class IKManager {
   restoreFromJSON(json: IKManagerJSON): void {
     this.clear()
     for (const chainJson of json.chains) {
-      const chain = IKChain.fromJSON(chainJson)
+      const chain = IKChain.fromJSON({
+        id: chainJson.id,
+        slideId: chainJson.slideId ?? '',
+        boneIds: chainJson.boneIds,
+        target: chainJson.target,
+        poleTarget: chainJson.poleTarget,
+        ghostNodeId: chainJson.ghostNodeId,
+      })
       this.#chains.set(chain.id, chain)
+      // Reconstruct slide mapping from slideId
+      if (chain.slideId) {
+        let slideSet = this.#slideChains.get(chain.slideId)
+        if (!slideSet) {
+          slideSet = new Set()
+          this.#slideChains.set(chain.slideId, slideSet)
+        }
+        slideSet.add(chain.id)
+      }
     }
+    // Also restore from explicit slides mapping (may have entries for chains without slideId)
     for (const [slideId, ids] of Object.entries(json.slides)) {
-      this.#slideChains.set(slideId, new Set(ids))
+      let slideSet = this.#slideChains.get(slideId)
+      if (!slideSet) {
+        slideSet = new Set()
+        this.#slideChains.set(slideId, slideSet)
+      }
+      for (const id of ids) {
+        slideSet.add(id)
+      }
     }
   }
-}
-
-interface IKManagerJSON {
-  readonly slides: Record<string, readonly string[]>
-  readonly chains: readonly IKChainJSON[]
-}
-
-interface IKChainJSON {
-  readonly id: string
-  readonly boneIds: readonly string[]
-  readonly target: BoneIKTarget
-  readonly poleTarget: PoleTarget | null
 }

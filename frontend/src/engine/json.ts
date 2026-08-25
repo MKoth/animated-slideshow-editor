@@ -34,6 +34,7 @@ export type NodeComponentsJSON = {
       readonly uvs: readonly { readonly u: number; readonly v: number }[]
     }
   }
+  readonly ghost?: { readonly kind: 'ghost' }
 }
 
 export type MaterialJSON = {
@@ -196,12 +197,14 @@ export type ClipInstanceJSON = {
 
 export type IKChainJSON = {
   readonly id: string
+  readonly slideId?: string
   readonly boneIds: readonly string[]
   readonly target: {
     readonly position: { readonly x: number; readonly y: number }
     readonly nodeId?: string
   }
   readonly poleTarget: { readonly position: { readonly x: number; readonly y: number } } | null
+  readonly ghostNodeId?: string | null
 }
 
 export type IKManagerJSON = {

@@ -29,12 +29,17 @@ export interface MeshComponent {
   readonly mesh: MeshData
 }
 
+export interface GhostComponent {
+  readonly kind: 'ghost'
+}
+
 export interface NodeComponents {
   readonly camera?: CameraComponent
   readonly assetInstance?: AssetInstanceComponent
   readonly text?: TextComponent
   readonly bone?: BoneComponent
   readonly mesh?: MeshComponent
+  readonly ghost?: GhostComponent
 }
 
 export function copyComponents(components: NodeComponents): NodeComponents {
@@ -44,5 +49,6 @@ export function copyComponents(components: NodeComponents): NodeComponents {
     text: components.text ? { ...components.text } : undefined,
     bone: components.bone ? { ...components.bone } : undefined,
     mesh: components.mesh ? { kind: 'mesh', mesh: cloneMeshData(components.mesh.mesh) } : undefined,
+    ghost: components.ghost ? { ...components.ghost } : undefined,
   }
 }

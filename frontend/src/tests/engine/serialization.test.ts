@@ -311,7 +311,9 @@ describe('serialization', () => {
     expect(restoredChains).toHaveLength(1)
     expect(restoredChains[0].id).toBe(chain.id)
     expect(restoredChains[0].boneIds).toEqual([bone1.id, bone2.id])
-    expect(restoredChains[0].target).toEqual({ position: { x: 200, y: 0 } })
+    expect(restoredChains[0].target).toEqual(
+      expect.objectContaining({ position: { x: 200, y: 0 } }),
+    )
   })
 
   it('round-trips IK chains with pole targets', () => {

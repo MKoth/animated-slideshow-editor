@@ -917,10 +917,32 @@ export class Engine {
     target: import('./ikChain').BoneIKTarget,
     poleTarget: import('./ikChain').PoleTarget | null = null,
   ): import('./ikChain').IKChain {
-    return this.#ik.createChain(slideId, boneIds, target, poleTarget)
+    const slide = this.getSlide(slideId)
+    const ghostNode = this.createGhostNode(
+      slide.scene.id,
+      'IK Target',
+      target.position.x,
+      target.position.y,
+    )
+    const chain = this.#ik.createChain(
+      slideId,
+      boneIds,
+      { ...target, nodeId: ghostNode.id },
+      poleTarget,
+    )
+    chain.ghostNodeId = ghostNode.id
+    return chain
   }
 
   deleteIKChain(chainId: string): import('./ikChain').IKChain {
+    const chain = this.#ik.getChain(chainId)
+    if (chain.ghostNodeId) {
+      try {
+        this.deleteGhostNode(chain.ghostNodeId)
+      } catch {
+        // ghost node may already be gone
+      }
+    }
     return this.#ik.deleteChain(chainId)
   }
 
@@ -947,6 +969,33 @@ export class Engine {
   /** Internal method to expose IKManager to renderer for IK evaluation. */
   getIKManager(): import('./ikManager').IKManager {
     return this.#ik
+  }
+
+  // --- Ghost node helpers (for IK target anchors) ---
+
+  createGhostNode(sceneId: string, name: string, x: number, y: number, id?: string): SceneNode {
+    const scene = this.getScene(sceneId)
+    return this.createNode(sceneId, scene.root.id, name, {
+      id,
+      transform: { x, y, rotation: 0, scaleX: 1, scaleY: 1 },
+      components: { ghost: { kind: 'ghost' } },
+    })
+  }
+
+  deleteGhostNode(nodeId: string): void {
+    this.removeNode(nodeId)
+  }
+
+  getGhostNodeIds(): string[] {
+    const result: string[] = []
+    for (const slide of this.#projects.current?.slides ?? []) {
+      for (const node of walkPreOrder(slide.scene.root)) {
+        if (node.components.ghost) {
+          result.push(node.id)
+        }
+      }
+    }
+    return result
   }
 
   // --- Constraint methods ---

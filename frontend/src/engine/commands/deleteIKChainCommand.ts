@@ -1,6 +1,7 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
 import type { IKChainJSON } from '../ikChain'
+import type { NodeJSON } from '../json'
 
 export interface DeleteIKChainParameters {
   readonly chainId: string
@@ -8,7 +9,7 @@ export interface DeleteIKChainParameters {
 
 export interface DeleteIKChainInverse {
   readonly chain: IKChainJSON
-  readonly slideId: string
+  readonly ghostNode: NodeJSON | null
 }
 
 export class DeleteIKChainCommand implements Command<DeleteIKChainInverse> {
@@ -28,26 +29,17 @@ export class DeleteIKChainCommand implements Command<DeleteIKChainInverse> {
   execute(engine: Engine): DeleteIKChainInverse {
     const chain = engine.getIKChain(this.#chainId)
     const chainJson = chain.toJSON()
-    // Find slide ID that contains this chain (search through slides)
-    const slideId = this.#findSlideId(engine, this.#chainId)
-    engine.deleteIKChain(this.#chainId)
-    return { chain: chainJson, slideId }
-  }
-
-  #findSlideId(engine: Engine, chainId: string): string {
-    // Since we don't have direct access to IKManager, we can search slides
-    // This is a bit inefficient but okay for undo operations
-    const project = engine.project
-    if (!project) {
-      throw new Error('No project loaded')
-    }
-    for (const slide of project.slides) {
-      const chains = engine.getIKChainsForSlide(slide.id)
-      if (chains.some((c) => c.id === chainId)) {
-        return slide.id
+    // Serialize ghost node before chain deletion removes the reference
+    let ghostNodeJson: NodeJSON | null = null
+    if (chain.ghostNodeId) {
+      try {
+        ghostNodeJson = engine.getNode(chain.ghostNodeId).toJSON()
+      } catch {
+        // ghost node may already be gone; treat as null
       }
     }
-    throw new Error(`Slide not found for chain ${chainId}`)
+    engine.deleteIKChain(this.#chainId)
+    return { chain: chainJson, ghostNode: ghostNodeJson }
   }
 
   toJSON(): Readonly<Record<string, unknown>> {
