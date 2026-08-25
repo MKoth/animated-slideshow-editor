@@ -2,6 +2,7 @@ import type { EnginePublic } from '../../engine'
 import type { Scene } from '../../engine'
 import type { Unsubscribe } from '../../engine'
 import { useIKSelectionStore } from '../../stores/ikSelectionStore'
+import { usePlaybackController } from '../../stores/playbackStore'
 import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
 
 export const TARGET_COLOR = 0x1a73e8
@@ -26,6 +27,7 @@ export class IkOverlay {
   #graphics: PixiGraphics | null = null
   #unsubscribeEngine: Unsubscribe | null = null
   #unsubscribeSelection: Unsubscribe | null = null
+  #unsubscribeTime: Unsubscribe | null = null
   #attached = false
 
   constructor(context: IkOverlayContext) {
@@ -59,6 +61,7 @@ export class IkOverlay {
       }
     })
     this.#unsubscribeSelection = useIKSelectionStore.subscribe(() => this.redraw())
+    this.#unsubscribeTime = usePlaybackController.subscribe(() => this.redraw())
     this.redraw()
   }
 
@@ -71,6 +74,8 @@ export class IkOverlay {
     this.#unsubscribeEngine = null
     this.#unsubscribeSelection?.()
     this.#unsubscribeSelection = null
+    this.#unsubscribeTime?.()
+    this.#unsubscribeTime = null
     this.#graphics?.destroy()
     this.#graphics = null
   }
@@ -102,7 +107,8 @@ export class IkOverlay {
 
     for (const chain of chains) {
       const isSelected = chain.id === selectedChainId
-      this.#drawTarget(graphics, chain.target.position.x, chain.target.position.y, isSelected)
+      const target = this.#targetPosition(chain)
+      this.#drawTarget(graphics, target.x, target.y, isSelected)
       if (chain.poleTarget) {
         this.#drawPole(
           graphics,
@@ -152,8 +158,9 @@ export class IkOverlay {
     const threshold = TARGET_SIZE + 4
 
     for (const chain of chains) {
-      const tx = chain.target.position.x
-      const ty = chain.target.position.y
+      const target = this.#targetPosition(chain)
+      const tx = target.x
+      const ty = target.y
       if (Math.hypot(worldX - tx, worldY - ty) <= threshold) {
         return { chainId: chain.id, kind: 'target' }
       }
@@ -166,5 +173,26 @@ export class IkOverlay {
       }
     }
     return null
+  }
+
+  #targetPosition(chain: {
+    readonly target: {
+      readonly position: { readonly x: number; readonly y: number }
+      readonly nodeId?: string
+    }
+  }): { readonly x: number; readonly y: number } {
+    if (chain.target.nodeId) {
+      const slide = this.#engine.getActiveSlide()
+      if (slide) {
+        const time = usePlaybackController.getState().getTime(slide.id)
+        try {
+          const evaluated = this.#engine.evaluateNode(chain.target.nodeId, time)
+          return { x: evaluated.transform.x, y: evaluated.transform.y }
+        } catch {
+          // Fall back to the persisted target position if the attachment is stale.
+        }
+      }
+    }
+    return chain.target.position
   }
 }

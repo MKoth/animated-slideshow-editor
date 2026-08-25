@@ -1,9 +1,14 @@
 import type { EnginePublic } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
-import { SetIKTargetCommand, SetIKPoleTargetCommand } from '../../engine/commands'
+import { SetIKTargetCommand, SetIKPoleTargetCommand, MoveNodeCommand } from '../../engine/commands'
 import { useEditingModeStore } from '../../stores/editingModeStore'
 import { useIKSelectionStore } from '../../stores/ikSelectionStore'
 import { useNotificationStore } from '../../stores/notificationStore'
+import { useUiStore } from '../../stores/uiStore'
+import { usePlaybackController } from '../../stores/playbackStore'
+import { autoKeyCommands, dispatchKeyframeCommands } from '../../engine/keyframeEdit'
+import type { TimedKeyframeEdit } from '../../engine/keyframeEdit'
+import { BLOCKED_ANIMATED_MOVE_MESSAGE } from './animatedMove'
 import { cursorToWorld } from './screenToWorld'
 import type { ViewportTransform } from './worldGeometry'
 import type { IkOverlay } from './ikOverlay'
@@ -30,6 +35,7 @@ export class IkInteraction {
   #startWorldX = 0
   #startWorldY = 0
   #moveActive = false
+  #blockedNotified = false
 
   constructor(context: IkInteractionContext) {
     this.#canvas = context.canvas
@@ -82,6 +88,7 @@ export class IkInteraction {
       this.#startWorldX = point.x
       this.#startWorldY = point.y
       this.#moveActive = false
+      this.#blockedNotified = false
       return
     }
 
@@ -107,6 +114,13 @@ export class IkInteraction {
     if (!this.#moveActive && Math.hypot(dx, dy) < 3) {
       return
     }
+    if (this.#isBlockedAnimatedTargetMove()) {
+      if (!this.#blockedNotified) {
+        this.#blockedNotified = true
+        useNotificationStore.getState().notify(BLOCKED_ANIMATED_MOVE_MESSAGE)
+      }
+      return
+    }
     this.#moveActive = true
     this.#dispatchPosition(this.#dragging.chainId, this.#dragging.kind, point.x, point.y)
   }
@@ -115,6 +129,7 @@ export class IkInteraction {
     this.#pressed = false
     this.#dragging = null
     this.#moveActive = false
+    this.#blockedNotified = false
   }
 
   #placeTarget(x: number, y: number, mode: 'ikTarget' | 'poleVector'): void {
@@ -137,16 +152,34 @@ export class IkInteraction {
       targetChainId = chains[0].id
     }
 
+    if (
+      mode === 'ikTarget' &&
+      !useUiStore.getState().animationMode &&
+      this.#hasAnimatedTarget(targetChainId)
+    ) {
+      useNotificationStore.getState().notify(BLOCKED_ANIMATED_MOVE_MESSAGE)
+      return
+    }
+
     this.#dispatchPosition(targetChainId, mode === 'ikTarget' ? 'target' : 'pole', x, y)
   }
 
   #dispatchPosition(chainId: string, kind: 'target' | 'pole', x: number, y: number): void {
+    const animationMode = useUiStore.getState().animationMode
+    const ikManager = this.#engine.getIKManager()
+    const chain = ikManager.getChain(chainId)
+
+    // Keep the ghost node attached so its evaluated animation drives IK.
+    const targetNodeId = chain.target.nodeId ?? chain.ghostNodeId ?? undefined
     const result =
       kind === 'target'
         ? this.#dispatch(
             new SetIKTargetCommand({
               chainId,
-              target: { position: { x, y } },
+              target: {
+                position: { x, y },
+                ...(targetNodeId ? { nodeId: targetNodeId } : {}),
+              },
             }),
           )
         : this.#dispatch(
@@ -158,6 +191,60 @@ export class IkInteraction {
     if (!result.ok && result.error) {
       useNotificationStore.getState().notify(result.error.message)
     }
+
+    // If we have a ghost node, update its position and optionally create keyframes
+    if (kind === 'target') {
+      if (chain.ghostNodeId) {
+        const slide = this.#engine.getActiveSlide()
+        if (slide) {
+          const time = usePlaybackController.getState().getTime(slide.id)
+
+          if (animationMode) {
+            // In Animation Mode, create keyframes for positionX and positionY
+            const edits: TimedKeyframeEdit[] = [
+              {
+                target: { kind: 'node', nodeId: chain.ghostNodeId, property: 'positionX' },
+                time,
+                value: x,
+              },
+              {
+                target: { kind: 'node', nodeId: chain.ghostNodeId, property: 'positionY' },
+                time,
+                value: y,
+              },
+            ]
+            const commands = autoKeyCommands(this.#engine, edits)
+            if (commands.length > 0) {
+              const keyframeResult = dispatchKeyframeCommands(this.#dispatch, commands)
+              if (keyframeResult && !keyframeResult.ok && keyframeResult.error) {
+                useNotificationStore.getState().notify(keyframeResult.error.message)
+              }
+            }
+          } else {
+            // In non-Animation Mode, just move the ghost node
+            this.#dispatch(new MoveNodeCommand({ nodeId: chain.ghostNodeId, x, y }))
+          }
+        }
+      }
+    }
+
     this.#onIKChanged()
+  }
+
+  #isBlockedAnimatedTargetMove(): boolean {
+    const dragging = this.#dragging
+    if (!dragging || dragging.kind !== 'target' || useUiStore.getState().animationMode) {
+      return false
+    }
+    return this.#hasAnimatedTarget(dragging.chainId)
+  }
+
+  #hasAnimatedTarget(chainId: string): boolean {
+    const ghostNodeId = this.#engine.getIKManager().getChain(chainId).ghostNodeId
+    return (
+      ghostNodeId !== null &&
+      (this.#engine.getKeyframes(ghostNodeId, 'positionX').length > 0 ||
+        this.#engine.getKeyframes(ghostNodeId, 'positionY').length > 0)
+    )
   }
 }
