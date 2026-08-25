@@ -3,7 +3,7 @@ import type { DispatchCommand } from '../../engine/commands'
 import { CreateNodeCommand } from '../../engine/commands'
 import { useEditingModeStore } from '../../stores/editingModeStore'
 import { cursorToWorld } from './screenToWorld'
-import type { ViewportTransform } from './worldGeometry'
+import type { ViewportTransform, WorldPoint } from './worldGeometry'
 import { uniqueNodeName, namesInTree } from '../../engine/naming'
 
 export interface RiggingInteractionContext {
@@ -20,6 +20,8 @@ export class RiggingInteraction {
   readonly #getCameraTransform: () => ViewportTransform | null
   readonly #dispatch: DispatchCommand
   #attached = false
+  #pendingStart: WorldPoint | null = null
+  #unsubscribeMode: (() => void) | null = null
 
   constructor(context: RiggingInteractionContext) {
     this.#canvas = context.canvas
@@ -34,6 +36,12 @@ export class RiggingInteraction {
     }
     this.#attached = true
     this.#canvas.addEventListener('click', this.#onClick)
+    window.addEventListener('keydown', this.#onKeyDown)
+    this.#unsubscribeMode = useEditingModeStore.subscribe(({ mode }) => {
+      if (mode !== 'boneCreation') {
+        this.#pendingStart = null
+      }
+    })
   }
 
   detach(): void {
@@ -41,7 +49,17 @@ export class RiggingInteraction {
       return
     }
     this.#attached = false
+    this.#pendingStart = null
+    this.#unsubscribeMode?.()
+    this.#unsubscribeMode = null
     this.#canvas.removeEventListener('click', this.#onClick)
+    window.removeEventListener('keydown', this.#onKeyDown)
+  }
+
+  readonly #onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') {
+      this.#pendingStart = null
+    }
   }
 
   readonly #onClick = (event: MouseEvent): void => {
@@ -69,6 +87,20 @@ export class RiggingInteraction {
       return
     }
 
+    if (!this.#pendingStart) {
+      this.#pendingStart = point
+      return
+    }
+
+    const start = this.#pendingStart
+    this.#pendingStart = null
+    const dx = point.x - start.x
+    const dy = point.y - start.y
+    const length = Math.hypot(dx, dy)
+    if (length === 0) {
+      return
+    }
+
     const taken = namesInTree(scene.root)
     const name = uniqueNodeName(taken, 'New Bone')
     this.#dispatch(
@@ -76,8 +108,8 @@ export class RiggingInteraction {
         sceneId: scene.id,
         parentId: scene.root.id,
         name,
-        components: { bone: { kind: 'bone', length: 100 } },
-        transform: { x: point.x, y: point.y, rotation: 0, scaleX: 1, scaleY: 1 },
+        components: { bone: { kind: 'bone', length } },
+        transform: { x: start.x, y: start.y, rotation: Math.atan2(dy, dx), scaleX: 1, scaleY: 1 },
       }),
     )
   }
