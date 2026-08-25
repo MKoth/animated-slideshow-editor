@@ -423,9 +423,6 @@ export class Engine {
 
   setMeshData(nodeId: string, mesh: MeshData): void {
     const node = this.getNode(nodeId)
-    if (!node.components.mesh) {
-      throw new Error(`Node "${nodeId}" does not have a mesh component`)
-    }
     const newMesh = { kind: 'mesh' as const, mesh }
     const newComponents = { ...node.components, mesh: newMesh }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
