@@ -322,6 +322,7 @@ export class Renderer {
         engine: this.#engine,
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
         getWorldTransform: transformOf,
+        subscribeTime: (listener) => this.#currentTime.subscribe(listener),
       })
       this.#weightPaintOverlay.attach()
       this.#weightPaintOverlay.bringToFront()
@@ -331,6 +332,7 @@ export class Renderer {
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
         getCameraTransform: () => this.#cameraTransform(),
         dispatch: this.#dispatch,
+        getWorldTransform: transformOf,
       })
       this.#weightPaintInteraction.attach()
 

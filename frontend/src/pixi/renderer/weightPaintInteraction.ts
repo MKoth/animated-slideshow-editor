@@ -11,12 +11,16 @@ import {
 import { useMeshEditStore } from '../../stores/meshEditStore'
 import { cursorToWorld } from './screenToWorld'
 import type { ViewportTransform } from './worldGeometry'
+import type { WorldTransformSource } from './hitTest'
+import { worldTransformOf } from '../../engine/worldTransform'
+import { deformedMeshWorldVertices } from './deformedMeshWorld'
 
 export interface WeightPaintContext {
   readonly canvas: HTMLCanvasElement
   readonly getScene: () => Scene | null
   readonly getCameraTransform: () => ViewportTransform | null
   readonly dispatch: DispatchCommand
+  readonly getWorldTransform?: WorldTransformSource
 }
 
 export class WeightPaintInteraction {
@@ -24,6 +28,7 @@ export class WeightPaintInteraction {
   readonly #getScene: () => Scene | null
   readonly #getCameraTransform: () => ViewportTransform | null
   readonly #dispatch: DispatchCommand
+  readonly #getWorldTransform?: WorldTransformSource
   #attached = false
   #pressed = false
   #lastWorldX = 0
@@ -34,6 +39,7 @@ export class WeightPaintInteraction {
     this.#getScene = context.getScene
     this.#getCameraTransform = context.getCameraTransform
     this.#dispatch = context.dispatch
+    this.#getWorldTransform = context.getWorldTransform
   }
 
   attach(): void {
@@ -158,24 +164,21 @@ export class WeightPaintInteraction {
       return
     }
     const mesh = node.components.mesh.mesh
-    const worldTransform = scene.getNode(meshEditNodeId)?._cachedWorldTransform
+    const worldTransform = this.#resolveMeshTransform(scene, meshEditNodeId)
     if (!worldTransform) {
       return
     }
 
-    // Find vertices within brush radius
+    const worldVertices = deformedMeshWorldVertices(
+      mesh,
+      scene,
+      worldTransform,
+      this.#getWorldTransform,
+    )
     const affectedVertices: number[] = []
-    for (let i = 0; i < mesh.vertices.length; i++) {
-      const v = mesh.vertices[i]
-      // Convert vertex to world space
-      const cos = Math.cos(worldTransform.rotation)
-      const sin = Math.sin(worldTransform.rotation)
-      const scaledX = v.x * worldTransform.scaleX
-      const scaledY = v.y * worldTransform.scaleY
-      const wx = scaledX * cos - scaledY * sin + worldTransform.x
-      const wy = scaledX * sin + scaledY * cos + worldTransform.y
-
-      const dist = Math.hypot(worldX - wx, worldY - wy)
+    for (let i = 0; i < worldVertices.length; i++) {
+      const vertex = worldVertices[i]
+      const dist = Math.hypot(worldX - vertex.x, worldY - vertex.y)
       if (dist <= brushRadius) {
         affectedVertices.push(i)
       }
@@ -211,23 +214,21 @@ export class WeightPaintInteraction {
       return
     }
     const mesh = node.components.mesh.mesh
-    const worldTransform = scene.getNode(meshEditNodeId)?._cachedWorldTransform
+    const worldTransform = this.#resolveMeshTransform(scene, meshEditNodeId)
     if (!worldTransform) {
       return
     }
 
-    // Find vertices within brush radius
+    const worldVertices = deformedMeshWorldVertices(
+      mesh,
+      scene,
+      worldTransform,
+      this.#getWorldTransform,
+    )
     const affectedVertices: number[] = []
-    for (let i = 0; i < mesh.vertices.length; i++) {
-      const v = mesh.vertices[i]
-      const cos = Math.cos(worldTransform.rotation)
-      const sin = Math.sin(worldTransform.rotation)
-      const scaledX = v.x * worldTransform.scaleX
-      const scaledY = v.y * worldTransform.scaleY
-      const wx = scaledX * cos - scaledY * sin + worldTransform.x
-      const wy = scaledX * sin + scaledY * cos + worldTransform.y
-
-      const dist = Math.hypot(worldX - wx, worldY - wy)
+    for (let i = 0; i < worldVertices.length; i++) {
+      const vertex = worldVertices[i]
+      const dist = Math.hypot(worldX - vertex.x, worldY - vertex.y)
       if (dist <= brushRadius) {
         affectedVertices.push(i)
       }
@@ -259,23 +260,21 @@ export class WeightPaintInteraction {
       return
     }
     const mesh = node.components.mesh.mesh
-    const worldTransform = scene.getNode(meshEditNodeId)?._cachedWorldTransform
+    const worldTransform = this.#resolveMeshTransform(scene, meshEditNodeId)
     if (!worldTransform) {
       return
     }
 
-    // Find vertices within brush radius
+    const worldVertices = deformedMeshWorldVertices(
+      mesh,
+      scene,
+      worldTransform,
+      this.#getWorldTransform,
+    )
     const affectedVertices: number[] = []
-    for (let i = 0; i < mesh.vertices.length; i++) {
-      const v = mesh.vertices[i]
-      const cos = Math.cos(worldTransform.rotation)
-      const sin = Math.sin(worldTransform.rotation)
-      const scaledX = v.x * worldTransform.scaleX
-      const scaledY = v.y * worldTransform.scaleY
-      const wx = scaledX * cos - scaledY * sin + worldTransform.x
-      const wy = scaledX * sin + scaledY * cos + worldTransform.y
-
-      const dist = Math.hypot(worldX - wx, worldY - wy)
+    for (let i = 0; i < worldVertices.length; i++) {
+      const vertex = worldVertices[i]
+      const dist = Math.hypot(worldX - vertex.x, worldY - vertex.y)
       if (dist <= brushRadius) {
         affectedVertices.push(i)
       }
@@ -341,6 +340,10 @@ export class WeightPaintInteraction {
         falloff: 2,
       }),
     )
+  }
+
+  #resolveMeshTransform(scene: Scene, nodeId: string) {
+    return this.#getWorldTransform?.(nodeId) ?? worldTransformOf(scene, nodeId)
   }
 
   #reset(): void {

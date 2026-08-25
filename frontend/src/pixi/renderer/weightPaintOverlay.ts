@@ -1,12 +1,12 @@
 import type { EnginePublic, Scene } from '../../engine'
 import type { MeshData } from '../../engine/mesh'
+import type { WorldTransform } from './worldGeometry'
 import { useMeshEditStore } from '../../stores/meshEditStore'
 import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
-import type { WorldTransform } from './worldGeometry'
 import { worldTransformOf } from '../../engine/worldTransform'
-import { walkPreOrder } from '../../engine/sceneNode'
-import { evaluateMeshDeformation } from '../../engine/meshDeformationEvaluator'
 import type { WorldTransformSource } from './hitTest'
+import { deformedMeshWorldVertices } from './deformedMeshWorld'
+import type { Unsubscribe } from '../../engine'
 
 // Heatmap color gradient: blue (0) -> cyan -> green -> yellow -> red (1)
 function weightToColor(weight: number): number {
@@ -43,59 +43,13 @@ function lerpColor(c1: number, c2: number, t: number): number {
   return (r << 16) | (g << 8) | b
 }
 
-function localToWorld(
-  localX: number,
-  localY: number,
-  transform: WorldTransform,
-): { x: number; y: number } {
-  const cos = Math.cos(transform.rotation)
-  const sin = Math.sin(transform.rotation)
-  const scaledX = localX * transform.scaleX
-  const scaledY = localY * transform.scaleY
-  return {
-    x: scaledX * cos - scaledY * sin + transform.x,
-    y: scaledX * sin + scaledY * cos + transform.y,
-  }
-}
-
-function computeBoneWorldTransforms(
-  scene: Scene,
-  getWorldTransform?: WorldTransformSource,
-): Map<string, WorldTransform> {
-  const transforms = new Map<string, WorldTransform>()
-  for (const node of walkPreOrder(scene.root)) {
-    if (!node.components.bone) continue
-    const wt = getWorldTransform ? getWorldTransform(node.id) : worldTransformOf(scene, node.id)
-    if (wt) {
-      transforms.set(node.id, wt)
-    }
-  }
-  return transforms
-}
-
-function getDeformedVertices(
-  mesh: MeshData,
-  scene: Scene,
-  meshTransform: WorldTransform,
-  getWorldTransform?: WorldTransformSource,
-): { x: number; y: number }[] {
-  if (!mesh.boneWeights || mesh.boneWeights.length === 0) {
-    return mesh.vertices.map((v) => ({ x: v.x, y: v.y }))
-  }
-  const boneTransforms = computeBoneWorldTransforms(scene, getWorldTransform)
-  if (boneTransforms.size === 0) {
-    return mesh.vertices.map((v) => ({ x: v.x, y: v.y }))
-  }
-  const result = evaluateMeshDeformation(mesh, boneTransforms, meshTransform)
-  return result.deformedVertices.map((v) => ({ x: v.x, y: v.y }))
-}
-
 export interface WeightPaintOverlayContext {
   readonly pixi: RendererPixi
   readonly world: PixiContainer
   readonly engine: EnginePublic
   readonly getScene: () => Scene | null
   readonly getWorldTransform?: WorldTransformSource
+  readonly subscribeTime?: (listener: () => void) => Unsubscribe
 }
 
 export class WeightPaintOverlay {
@@ -104,10 +58,12 @@ export class WeightPaintOverlay {
   readonly #engine: EnginePublic
   readonly #getScene: () => Scene | null
   readonly #getWorldTransform?: WorldTransformSource
+  readonly #subscribeTime?: (listener: () => void) => Unsubscribe
   #graphics: PixiGraphics | null = null
   #attached = false
   #unsubscribeMeshEdit: (() => void) | null = null
   #unsubscribeEngine: (() => void) | null = null
+  #unsubscribeTime: Unsubscribe | null = null
 
   constructor(context: WeightPaintOverlayContext) {
     this.#pixi = context.pixi
@@ -115,6 +71,7 @@ export class WeightPaintOverlay {
     this.#engine = context.engine
     this.#getScene = context.getScene
     this.#getWorldTransform = context.getWorldTransform
+    this.#subscribeTime = context.subscribeTime
   }
 
   attach(): void {
@@ -128,10 +85,16 @@ export class WeightPaintOverlay {
     this.#world.addChild(graphics)
     this.#unsubscribeMeshEdit = useMeshEditStore.subscribe(() => this.redraw())
     this.#unsubscribeEngine = this.#engine.subscribe((event) => {
-      if (event.type === 'MeshChanged' || event.type === 'TransformChanged') {
+      if (
+        event.type === 'MeshChanged' ||
+        event.type === 'TransformChanged' ||
+        event.type === 'IKTargetChanged' ||
+        event.type === 'IKPoleTargetChanged'
+      ) {
         this.redraw()
       }
     })
+    this.#unsubscribeTime = this.#subscribeTime?.(() => this.redraw()) ?? null
     this.redraw()
   }
 
@@ -144,6 +107,8 @@ export class WeightPaintOverlay {
     this.#unsubscribeMeshEdit = null
     this.#unsubscribeEngine?.()
     this.#unsubscribeEngine = null
+    this.#unsubscribeTime?.()
+    this.#unsubscribeTime = null
     this.#graphics?.destroy()
     this.#graphics = null
   }
@@ -175,7 +140,9 @@ export class WeightPaintOverlay {
       return
     }
     const mesh = node.components.mesh.mesh
-    const transform = worldTransformOf(scene, meshEditNodeId)
+    const transform = this.#getWorldTransform
+      ? this.#getWorldTransform(meshEditNodeId)
+      : worldTransformOf(scene, meshEditNodeId)
     if (!transform) {
       return
     }
@@ -189,8 +156,7 @@ export class WeightPaintOverlay {
     boneId: string,
     scene: Scene,
   ): void {
-    const deformed = getDeformedVertices(mesh, scene, transform, this.#getWorldTransform)
-    const worldVertices = deformed.map((v) => localToWorld(v.x, v.y, transform))
+    const worldVertices = deformedMeshWorldVertices(mesh, scene, transform, this.#getWorldTransform)
 
     // Draw filled triangles with heatmap colors
     for (const face of mesh.faces) {
