@@ -52,6 +52,7 @@ export interface CanvasSelectionContext {
   readonly getWorldTransform?: WorldTransformSource
   readonly getNodeFilter?: () => NodeFilter | null
   readonly marquee?: MarqueeController
+  readonly isIKHandleAt?: (worldX: number, worldY: number) => boolean
 }
 
 const MARQUEE_START_DISTANCE = 4
@@ -73,6 +74,7 @@ export class CanvasSelection {
   readonly #getWorldTransform?: WorldTransformSource
   readonly #getNodeFilter?: () => NodeFilter | null
   readonly #marquee?: MarqueeController
+  readonly #isIKHandleAt?: (worldX: number, worldY: number) => boolean
   #attached = false
   #pressed = false
   #pressedOnNode = false
@@ -104,6 +106,7 @@ export class CanvasSelection {
     this.#getWorldTransform = context.getWorldTransform
     this.#getNodeFilter = context.getNodeFilter
     this.#marquee = context.marquee
+    this.#isIKHandleAt = context.isIKHandleAt
     this.#animatedMove = new AnimatedMoveGesture(context)
   }
 
@@ -150,7 +153,13 @@ export class CanvasSelection {
       return
     }
     const { mode } = useEditingModeStore.getState()
-    if (mode === 'boneCreation' || mode === 'ikTarget' || mode === 'poleVector' || mode === 'meshEdit' || mode === 'weightPaint') {
+    if (
+      mode === 'boneCreation' ||
+      mode === 'ikTarget' ||
+      mode === 'poleVector' ||
+      mode === 'meshEdit' ||
+      mode === 'weightPaint'
+    ) {
       return
     }
     const scene = this.#getScene()
@@ -163,6 +172,9 @@ export class CanvasSelection {
     }
     const point = cursorToWorld(this.#canvas, camera, event.clientX, event.clientY)
     if (!point) {
+      return
+    }
+    if (this.#isIKHandleAt?.(point.x, point.y)) {
       return
     }
     this.#resetMove()

@@ -276,6 +276,8 @@ export class Renderer {
           show: (rect) => this.#marqueeOverlay?.show(rect),
           clear: () => this.#marqueeOverlay?.clear(),
         },
+        isIKHandleAt: (worldX, worldY) =>
+          this.#ikOverlay != null && this.#ikOverlay.hitTestTarget(worldX, worldY) !== null,
       })
       this.#selection.attach()
 

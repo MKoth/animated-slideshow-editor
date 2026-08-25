@@ -32,7 +32,7 @@ interface Harness {
   nodeSizes: { add(nodeId: string): void }
 }
 
-function mount(): Harness {
+function mount(options?: { isIKHandleAt?: (x: number, y: number) => boolean }): Harness {
   const log = vi.fn()
   const events: unknown[] = []
   const engine = createEngine()
@@ -54,6 +54,7 @@ function mount(): Harness {
     getCameraTransform: () => viewportOf(slide.scene.camera),
     getNodeSize: (nodeId) => sizes(nodeId),
     store: { ...useSelectionStore.getState() },
+    isIKHandleAt: options?.isIKHandleAt,
   })
   selection.attach()
   return {
@@ -359,5 +360,55 @@ describe('canvas selection', () => {
     click(harness.canvas, { x: 300, y: 200 })
 
     expect(useSelectionStore.getState().selectedIds).toEqual([])
+  })
+
+  describe('IK handle priority', () => {
+    it('does not select a node when clicking an IK handle', () => {
+      const harness = mount({ isIKHandleAt: () => true })
+      nodeAt(harness, 'Hero', { x: 300, y: 200 })
+
+      click(harness.canvas, { x: 300, y: 200 })
+
+      expect(useSelectionStore.getState().selectedIds).toEqual([])
+    })
+
+    it('selects a node normally when not clicking an IK handle', () => {
+      const harness = mount({ isIKHandleAt: () => false })
+      const id = nodeAt(harness, 'Hero', { x: 300, y: 200 })
+
+      click(harness.canvas, { x: 300, y: 200 })
+
+      expect(useSelectionStore.getState().selectedIds).toEqual([id])
+    })
+
+    it('does not begin a node drag when clicking an IK handle', () => {
+      const harness = mount({ isIKHandleAt: () => true })
+      nodeAt(harness, 'Hero', { x: 300, y: 200 })
+
+      mouseDown(harness.canvas, { x: 300, y: 200 })
+      mouseMove({ x: 350, y: 250 })
+      mouseUp({ x: 350, y: 250 })
+
+      expect(useSelectionStore.getState().selectedIds).toEqual([])
+    })
+
+    it('clears selection on empty canvas even when isIKHandleAt is provided', () => {
+      const harness = mount({ isIKHandleAt: () => false })
+      const id = nodeAt(harness, 'Hero', { x: 300, y: 200 })
+      useSelectionStore.getState().select(id)
+
+      click(harness.canvas, { x: 50, y: 50 })
+
+      expect(useSelectionStore.getState().selectedIds).toEqual([])
+    })
+
+    it('does not select when IK handle is hit even with ctrl+click', () => {
+      const harness = mount({ isIKHandleAt: () => true })
+      nodeAt(harness, 'Hero', { x: 300, y: 200 })
+
+      click(harness.canvas, { x: 300, y: 200 }, { ctrlKey: true })
+
+      expect(useSelectionStore.getState().selectedIds).toEqual([])
+    })
   })
 })
