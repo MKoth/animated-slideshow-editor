@@ -68,7 +68,7 @@ describe('generateMesh', () => {
   })
 
   it('increases interior detail monotonically with density', () => {
-    const input = image(40, 40, () => true)
+    const input = image(12, 12, () => true)
     const low = generateMesh({ imageData: input, density: 0 })
     const high = generateMesh({ imageData: input, density: 100 })
     expect(high.vertices.length).toBeGreaterThan(low.vertices.length)

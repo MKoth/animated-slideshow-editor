@@ -25,6 +25,7 @@ interface Contours {
 }
 
 const MIN_VISIBLE_ALPHA = 0
+// Keep synchronous insertion bounded for interactive editor gestures.
 const MAX_INTERIOR_POINTS = 400
 
 export function extractAlphaChannel(imageData: ImageData): Uint8Array {
@@ -93,6 +94,10 @@ export function triangulateContour(
       { v0: face.v1, v1: face.v2, v2: vertexIndex },
       { v0: face.v2, v1: face.v0, v2: vertexIndex },
     )
+    const allVertices = ringPoints.concat(interiorPoints)
+    for (let index = faces.length - 1; index >= 0; index--) {
+      if (triangleArea(faces[index], allVertices) === 0) faces.splice(index, 1)
+    }
   }
   return faces
 }
@@ -107,15 +112,7 @@ export function generateInteriorPoints(
     throw new Error('A valid contour diagonal is required')
   }
   const spacing = diagonal * (0.15 - (0.14 * density) / 100)
-  const bounds = contour.reduce(
-    (result, point) => ({
-      minX: Math.min(result.minX, point.x),
-      minY: Math.min(result.minY, point.y),
-      maxX: Math.max(result.maxX, point.x),
-      maxY: Math.max(result.maxY, point.y),
-    }),
-    { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity },
-  )
+  const bounds = computeBounds(contour)
   const points: ContourPoint[] = []
   const startX = Math.floor(bounds.minX / spacing) * spacing + spacing / 2
   const startY = Math.floor(bounds.minY / spacing) * spacing + spacing / 2
@@ -181,8 +178,17 @@ export function generateMesh(input: MeshGeneratorInput): MeshGeneratorResult {
       })),
     )
   }
-  if (faces.length === 0 || faces.some((face) => face.v0 === face.v1 || face.v1 === face.v2)) {
-    throw new Error('Generated mesh contains no valid triangles')
+  const referenced = new Set(faces.flatMap((face) => [face.v0, face.v1, face.v2]))
+  if (
+    faces.length === 0 ||
+    referenced.size !== vertices.length ||
+    faces.some(
+      (face) => face.v0 === face.v1 || face.v1 === face.v2 || triangleArea(face, vertices) === 0,
+    )
+  ) {
+    throw new Error(
+      `Generated mesh contains no valid triangles (${referenced.size}/${vertices.length})`,
+    )
   }
   return { vertices, faces, uvs: computeUVs(vertices, width, height), width, height }
 }
@@ -277,7 +283,17 @@ function simplifyContour(points: readonly ContourPoint[], tolerance: number): Co
 
 function silhouetteDiagonal(contours: readonly (readonly ContourPoint[])[]): number {
   const points = contours.flat()
-  const bounds = points.reduce(
+  const bounds = computeBounds(points)
+  return Math.hypot(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY)
+}
+
+function computeBounds(points: readonly ContourPoint[]): {
+  readonly minX: number
+  readonly minY: number
+  readonly maxX: number
+  readonly maxY: number
+} {
+  return points.reduce(
     (result, point) => ({
       minX: Math.min(result.minX, point.x),
       minY: Math.min(result.minY, point.y),
@@ -286,7 +302,13 @@ function silhouetteDiagonal(contours: readonly (readonly ContourPoint[])[]): num
     }),
     { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity },
   )
-  return Math.hypot(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY)
+}
+
+function triangleArea(face: MeshFace, vertices: readonly MeshVertex[]): number {
+  const a = vertices[face.v0]
+  const b = vertices[face.v1]
+  const c = vertices[face.v2]
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
 }
 
 function area(points: readonly ContourPoint[]): number {
