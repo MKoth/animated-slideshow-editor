@@ -32,6 +32,11 @@ export type NodeComponentsJSON = {
       readonly vertices: readonly { readonly x: number; readonly y: number }[]
       readonly faces: readonly { readonly v0: number; readonly v1: number; readonly v2: number }[]
       readonly uvs: readonly { readonly u: number; readonly v: number }[]
+      readonly boneWeights?: readonly (readonly {
+        readonly boneId: string
+        readonly weight: number
+      }[])[]
+      readonly bindPose?: Readonly<Record<string, TransformJSON>>
     }
   }
   readonly ghost?: { readonly kind: 'ghost' }
