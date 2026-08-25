@@ -41,6 +41,7 @@ import { MaterialInspectorSection } from './MaterialInspectorSection'
 import { FullscreenShaderInspectorSection } from './FullscreenShaderInspectorSection'
 import { AnimationsInspectorSection } from './AnimationsInspectorSection'
 import { KeyframeInspector } from './KeyframeInspector'
+import { MeshGenerationSection } from './MeshGenerationSection'
 import { PROPERTY_LABELS } from './timelineTracks'
 import {
   RenameClipCommand,
@@ -515,6 +516,16 @@ export function InspectorPanel({ width }: { width: number }) {
             playing={playing}
             animationMode={animationMode}
             playheadTime={indicatorTime}
+          />
+        )}
+
+        {targets.length === 1 && targets[0]!.components.assetInstance && (
+          <MeshGenerationSection
+            target={targets[0]!}
+            engine={engine}
+            dispatch={dispatch}
+            notify={notify}
+            playing={playing}
           />
         )}
 
