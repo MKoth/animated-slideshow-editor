@@ -108,14 +108,14 @@ export class EvaluatedWorldTransformSource {
       // Resolve target position (if attached to node, evaluate its world position)
       let targetWorld = chain.target.position
       if (chain.target.nodeId) {
-        // Evaluate world position of target node
-        // Use the evaluator to get world transform (simplified)
-        // For now, we'll approximate by evaluating node's local transform and composing up.
-        // We'll reuse the existing world transform composition but without IK overrides.
-        // This could cause recursion, but we'll assume target node is not part of IK chain.
-        const targetWorldTransform = this.#engine.evaluateNode(chain.target.nodeId, time).transform
-        // For simplicity, we'll treat target position as local transform (not accurate)
-        targetWorld = { x: targetWorldTransform.x, y: targetWorldTransform.y }
+        const targetWorldTransform = evaluatedWorldTransformOf(
+          this.#engine,
+          chain.target.nodeId,
+          time,
+        )
+        if (targetWorldTransform) {
+          targetWorld = { x: targetWorldTransform.x, y: targetWorldTransform.y }
+        }
       }
       // Get bone nodes and their lengths
       const boneNodes: SceneNode[] = []

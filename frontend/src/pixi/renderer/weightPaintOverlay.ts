@@ -76,6 +76,7 @@ function computeBoneWorldTransforms(
 function getDeformedVertices(
   mesh: MeshData,
   scene: Scene,
+  meshTransform: WorldTransform,
   getWorldTransform?: WorldTransformSource,
 ): { x: number; y: number }[] {
   if (!mesh.boneWeights || mesh.boneWeights.length === 0) {
@@ -85,7 +86,7 @@ function getDeformedVertices(
   if (boneTransforms.size === 0) {
     return mesh.vertices.map((v) => ({ x: v.x, y: v.y }))
   }
-  const result = evaluateMeshDeformation(mesh, boneTransforms)
+  const result = evaluateMeshDeformation(mesh, boneTransforms, meshTransform)
   return result.deformedVertices.map((v) => ({ x: v.x, y: v.y }))
 }
 
@@ -188,7 +189,7 @@ export class WeightPaintOverlay {
     boneId: string,
     scene: Scene,
   ): void {
-    const deformed = getDeformedVertices(mesh, scene, this.#getWorldTransform)
+    const deformed = getDeformedVertices(mesh, scene, transform, this.#getWorldTransform)
     const worldVertices = deformed.map((v) => localToWorld(v.x, v.y, transform))
 
     // Draw filled triangles with heatmap colors

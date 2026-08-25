@@ -60,6 +60,7 @@ export class AutoWeightsCommand implements Command<AutoWeightsInverse> {
     const node = engine.getNode(this.#nodeId)
     const mesh = node.components.mesh!.mesh
     const scene = engine.getNodeScene(this.#nodeId)
+    const meshWorldTransform = worldTransformOf(scene, this.#nodeId)
 
     // Save old weights and bind pose for inverse
     const oldWeights: (readonly VertexBoneWeight[])[] = []
@@ -102,6 +103,18 @@ export class AutoWeightsCommand implements Command<AutoWeightsInverse> {
     // Calculate weights based on inverse distance
     for (let vi = 0; vi < mesh.vertices.length; vi++) {
       const vertex = mesh.vertices[vi]
+      const vertexWorld = meshWorldTransform
+        ? {
+            x:
+              vertex.x * meshWorldTransform.scaleX * Math.cos(meshWorldTransform.rotation) -
+              vertex.y * meshWorldTransform.scaleY * Math.sin(meshWorldTransform.rotation) +
+              meshWorldTransform.x,
+            y:
+              vertex.x * meshWorldTransform.scaleX * Math.sin(meshWorldTransform.rotation) +
+              vertex.y * meshWorldTransform.scaleY * Math.cos(meshWorldTransform.rotation) +
+              meshWorldTransform.y,
+          }
+        : vertex
       const weights: VertexBoneWeight[] = []
       let totalWeight = 0
 
@@ -109,8 +122,8 @@ export class AutoWeightsCommand implements Command<AutoWeightsInverse> {
         const bonePos = bonePositions.get(boneId)
         if (!bonePos) continue
 
-        const dx = vertex.x - bonePos.x
-        const dy = vertex.y - bonePos.y
+        const dx = vertexWorld.x - bonePos.x
+        const dy = vertexWorld.y - bonePos.y
         const distance = Math.sqrt(dx * dx + dy * dy)
 
         // Inverse distance with falloff

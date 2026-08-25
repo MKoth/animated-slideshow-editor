@@ -24,12 +24,16 @@ import {
 import type { MaterialOverrides } from '../../engine/materialInstance'
 import type { WorldTransform } from '../../engine/worldTransform'
 import { relativeTransform } from '../../engine/worldTransform'
-import { applyConstraints, type ConstraintEvaluationContext } from '../../engine/constraintEvaluator'
+import {
+  applyConstraints,
+  type ConstraintEvaluationContext,
+} from '../../engine/constraintEvaluator'
 import type { PixiContainer, PixiFilter, RendererPixi } from './pixi'
 import type { WorldSize } from './worldGeometry'
 import {
   applyEvaluatedState,
   applyMaterialTint,
+  applyMeshVertices,
   applyName,
   createNodeContainer,
   placeholderOf,
@@ -39,6 +43,7 @@ import { createNodeShaderFilter, applyFilterUniforms } from './nodeShader'
 import { bindFilterSamplers } from './samplerBinding'
 import type { ShaderProgramCache } from './programCache'
 import type { ResolveAssetUrl, TextureCache } from './textureCache'
+import { evaluateMeshDeformation } from '../../engine/meshDeformationEvaluator'
 
 export interface CurrentTimeSource {
   getTime(slideId: string): number
@@ -158,6 +163,7 @@ export class SceneRenderer {
     for (const node of walkPreOrder(scene.root)) {
       this.#addNode(node)
     }
+    this.refreshDeformedMeshSizes()
   }
 
   handleNodeCreated(nodeId: string): void {
@@ -192,10 +198,12 @@ export class SceneRenderer {
 
   handleTransformChanged(nodeId: string): void {
     this.#evaluateAndApply(nodeId)
+    this.refreshDeformedMeshSizes()
   }
 
   handleKeyframeChanged(nodeId: string): void {
     this.#evaluateAndApply(nodeId)
+    this.refreshDeformedMeshSizes()
   }
 
   handleTimeChanged(): void {
@@ -205,6 +213,45 @@ export class SceneRenderer {
     }
     for (const node of walkPreOrder(scene.root)) {
       this.#evaluateAndApply(node.id)
+    }
+    this.refreshDeformedMeshSizes()
+  }
+
+  refreshDeformedMeshSizes(): void {
+    const scene = this.#scene
+    const slideId = this.#slideId
+    if (!scene || !slideId) {
+      return
+    }
+    const time = this.#currentTime.getTime(slideId)
+    const bones = new Map<string, WorldTransform>()
+    for (const node of walkPreOrder(scene.root)) {
+      if (node.components.bone) {
+        const transform = this.#engineWorldTransform(node.id, time)
+        if (transform) bones.set(node.id, transform)
+      }
+    }
+    for (const node of walkPreOrder(scene.root)) {
+      const mesh = node.components.mesh?.mesh
+      if (!mesh) continue
+      const meshTransform = this.#engineWorldTransform(node.id, time)
+      if (!meshTransform) continue
+      const vertices = evaluateMeshDeformation(mesh, bones, meshTransform).deformedVertices
+      const container = this.#containers.get(node.id)
+      if (container) applyMeshVertices(container, vertices, mesh.faces)
+      if (vertices.length === 0) continue
+      const xs = vertices.map((vertex) => vertex.x)
+      const ys = vertices.map((vertex) => vertex.y)
+      const minX = Math.min(...xs)
+      const maxX = Math.max(...xs)
+      const minY = Math.min(...ys)
+      const maxY = Math.max(...ys)
+      this.#sizes.set(node.id, {
+        width: maxX - minX,
+        height: maxY - minY,
+        offsetX: (minX + maxX) / 2,
+        offsetY: (minY + maxY) / 2,
+      })
     }
   }
 
@@ -270,6 +317,7 @@ export class SceneRenderer {
     const cx = (minX + maxX) / 2
     const cy = (minY + maxY) / 2
     this.#sizes.set(nodeId, { width: w, height: h, offsetX: cx, offsetY: cy })
+    this.refreshDeformedMeshSizes()
     this.#onNodeSizeChanged(nodeId)
   }
 
@@ -431,9 +479,7 @@ export class SceneRenderer {
     const constrained = applyConstraints(world, constraints, context)
 
     const node = this.#engine.getNode(nodeId)
-    const parentWorld = node.parent
-      ? this.#engineWorldTransform(node.parent.id, time)
-      : null
+    const parentWorld = node.parent ? this.#engineWorldTransform(node.parent.id, time) : null
     if (parentWorld) {
       const local = relativeTransform(constrained, parentWorld)
       if (local) {

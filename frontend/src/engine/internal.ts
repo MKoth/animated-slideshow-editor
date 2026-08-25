@@ -338,12 +338,17 @@ export class Engine {
     nodeId: string,
     _time: number,
     boneWorldTransforms: ReadonlyMap<string, WorldTransform>,
+    meshWorldTransform?: WorldTransform,
   ): DeformedMeshResult | null {
     const node = this.getNode(nodeId)
     if (!node.components.mesh) {
       return null
     }
-    return evaluateMeshDeformation(node.components.mesh.mesh, boneWorldTransforms)
+    return evaluateMeshDeformation(
+      node.components.mesh.mesh,
+      boneWorldTransforms,
+      meshWorldTransform,
+    )
   }
 
   addKeyframe(target: KeyframeTarget, time: number, value: unknown): Keyframe {

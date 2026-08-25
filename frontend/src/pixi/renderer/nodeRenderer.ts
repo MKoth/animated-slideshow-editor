@@ -1,6 +1,7 @@
 import type { SceneNode } from '../../engine'
+import type { MeshFace, MeshVertex } from '../../engine/mesh'
 import type { EvaluatedNodeState } from '../../engine/animationEvaluator'
-import type { PixiContainer, RendererPixi } from './pixi'
+import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
 import {
   applyPlaceholderName,
   applyTint,
@@ -11,6 +12,7 @@ import {
 import type { TextureCache } from './textureCache'
 
 const placeholderByContainer = new WeakMap<PixiContainer, PixiContainer>()
+const meshGraphicsByGroup = new WeakMap<PixiContainer, PixiGraphics>()
 
 export function placeholderOf(container: PixiContainer): PixiContainer | undefined {
   return placeholderByContainer.get(container)
@@ -115,15 +117,15 @@ function createBonePlaceholder(pixi: RendererPixi, node: SceneNode, length: numb
   return group
 }
 
-export function createMeshPlaceholder(
-  pixi: RendererPixi,
-  node: SceneNode,
-): PixiContainer {
+export function createMeshPlaceholder(pixi: RendererPixi, node: SceneNode): PixiContainer {
   const mesh = node.components.mesh?.mesh
   const group = new pixi.Container()
   group.label = `placeholder:${node.name}`
 
   if (mesh && mesh.vertices.length > 0) {
+    const graphics = new pixi.Graphics()
+    meshGraphicsByGroup.set(group, graphics)
+    group.addChild(graphics)
     let minX = Infinity
     let minY = Infinity
     let maxX = -Infinity
@@ -144,4 +146,28 @@ export function createMeshPlaceholder(
   }
 
   return group
+}
+
+export function applyMeshVertices(
+  container: PixiContainer,
+  vertices: readonly MeshVertex[],
+  faces: readonly MeshFace[],
+): void {
+  const group = placeholderByContainer.get(container)
+  const graphics = group ? meshGraphicsByGroup.get(group) : undefined
+  if (!graphics) return
+  graphics.clear()
+  for (const face of faces) {
+    const v0 = vertices[face.v0]
+    const v1 = vertices[face.v1]
+    const v2 = vertices[face.v2]
+    if (!v0 || !v1 || !v2) continue
+    graphics
+      .moveTo(v0.x, v0.y)
+      .lineTo(v1.x, v1.y)
+      .lineTo(v2.x, v2.y)
+      .closePath()
+      .fill({ color: 0x8ab4f8, alpha: 0.55 })
+      .stroke({ width: 1, color: 0x1a73e8, alpha: 0.9 })
+  }
 }

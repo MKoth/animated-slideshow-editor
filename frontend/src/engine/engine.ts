@@ -67,6 +67,7 @@ export interface EnginePublic {
     nodeId: string,
     time: number,
     boneWorldTransforms: ReadonlyMap<string, WorldTransform>,
+    meshWorldTransform?: WorldTransform,
   ): DeformedMeshResult | null
   getIKManager(): IKManager
   getConstraintManager(): ConstraintManager

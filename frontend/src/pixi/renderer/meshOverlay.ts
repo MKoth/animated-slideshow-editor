@@ -44,6 +44,7 @@ function computeBoneWorldTransforms(
 function getDeformedVertices(
   mesh: MeshData,
   scene: Scene,
+  meshTransform: WorldTransform,
   getWorldTransform?: WorldTransformSource,
 ): { x: number; y: number }[] {
   if (!mesh.boneWeights || mesh.boneWeights.length === 0) {
@@ -53,7 +54,7 @@ function getDeformedVertices(
   if (boneTransforms.size === 0) {
     return mesh.vertices.map((v) => ({ x: v.x, y: v.y }))
   }
-  const result = evaluateMeshDeformation(mesh, boneTransforms)
+  const result = evaluateMeshDeformation(mesh, boneTransforms, meshTransform)
   return result.deformedVertices.map((v) => ({ x: v.x, y: v.y }))
 }
 
@@ -238,7 +239,7 @@ export class MeshOverlay {
     transform: WorldTransform,
     scene: Scene,
   ): void {
-    const deformed = getDeformedVertices(mesh, scene, this.#getWorldTransform)
+    const deformed = getDeformedVertices(mesh, scene, transform, this.#getWorldTransform)
     const worldVertices = deformed.map((v) => localToWorld(v.x, v.y, transform))
     for (const face of mesh.faces) {
       const v0 = worldVertices[face.v0]
@@ -278,7 +279,7 @@ export class MeshOverlay {
     const selectedEdgeSet = new Set(selectedEdgeIndices.map((e) => edgeKey(e.v0, e.v1)))
     const selectedFaceSet = new Set(selectedFaceIndices)
     const preview = this.#previewVertices
-    const deformed = getDeformedVertices(mesh, scene, this.#getWorldTransform)
+    const deformed = getDeformedVertices(mesh, scene, transform, this.#getWorldTransform)
     const worldVertices = deformed.map((v, i) => {
       const p = preview?.get(i)
       return localToWorld(p ? p.x : v.x, p ? p.y : v.y, transform)

@@ -571,6 +571,7 @@ export class Renderer {
         const rotations = this.#transformSource.getIKOverrides()
         this.#sceneRenderer?.applyIKOverrides(rotations)
       }
+      this.#sceneRenderer?.refreshDeformedMeshSizes()
       this.#sceneRenderer?.applyConstraintOverrides()
       this.#selectionOverlay?.redraw()
       this.#syncFullscreenShader()
@@ -619,6 +620,7 @@ export class Renderer {
         break
       case 'TransformChanged':
         sceneRenderer.handleTransformChanged(event.nodeId)
+        this.#handleTimeChanged()
         break
       case 'VisibilityChanged':
         sceneRenderer.handleVisibilityChanged(event.nodeId)

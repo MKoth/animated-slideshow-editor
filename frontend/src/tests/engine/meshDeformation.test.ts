@@ -504,6 +504,51 @@ describe('Mesh Deformation Evaluation', () => {
     expect(result.deformedVertices[1].y).toBeCloseTo(100)
   })
 
+  it('uses bind-pose translation when a bone moves', () => {
+    const mesh: MeshData = {
+      vertices: [{ x: 10, y: 0 }],
+      faces: [],
+      uvs: [{ u: 0, v: 0 }],
+      boneWeights: [[{ boneId: 'bone1', weight: 1 }]],
+      bindPose: {
+        bone1: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+      },
+    }
+    const result = evaluateMeshDeformation(
+      mesh,
+      new Map([['bone1', { x: 20, y: 5, rotation: 0, scaleX: 1, scaleY: 1 }]]),
+    )
+
+    expect(result.deformedVertices[0]).toEqual({ x: 30, y: 5 })
+  })
+
+  it('blends translated bone poses smoothly', () => {
+    const mesh: MeshData = {
+      vertices: [{ x: 0, y: 0 }],
+      faces: [],
+      uvs: [{ u: 0, v: 0 }],
+      boneWeights: [
+        [
+          { boneId: 'bone1', weight: 0.5 },
+          { boneId: 'bone2', weight: 0.5 },
+        ],
+      ],
+      bindPose: {
+        bone1: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+        bone2: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+      },
+    }
+    const result = evaluateMeshDeformation(
+      mesh,
+      new Map([
+        ['bone1', { x: 10, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }],
+        ['bone2', { x: 0, y: 20, rotation: 0, scaleX: 1, scaleY: 1 }],
+      ]),
+    )
+
+    expect(result.deformedVertices[0]).toEqual({ x: 5, y: 10 })
+  })
+
   it('applies bone scale to deformed vertices', () => {
     const simpleMesh: MeshData = {
       vertices: [
