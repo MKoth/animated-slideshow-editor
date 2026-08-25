@@ -24,7 +24,7 @@ interface Contours {
   readonly holes: ContourPoint[][]
 }
 
-const ALPHA_VISIBLE = 0
+const MIN_VISIBLE_ALPHA = 0
 
 export function extractAlphaChannel(imageData: ImageData): Uint8Array {
   validateImageData(imageData)
@@ -131,11 +131,22 @@ export function generateMesh(input: MeshGeneratorInput): MeshGeneratorResult {
     throw new Error('Cannot generate a mesh from a fully transparent image')
   }
 
-  const diagonal = Math.hypot(width, height)
+  const diagonal = silhouetteDiagonal(contours.outer)
   const vertices: MeshVertex[] = []
   const faces: MeshFace[] = []
-  for (const outer of contours.outer) {
-    const holes = contours.holes.filter((hole) => pointInPolygon(hole[0], outer))
+  for (const rawOuter of contours.outer) {
+    const tolerance =
+      diagonal * (0.15 - (0.14 * input.density) / 100) * 0.25 * (1 - input.density / 100)
+    const outer = simplifyContour(rawOuter, tolerance)
+    const holes = contours.holes
+      .filter((hole) => pointInPolygon(hole[0], outer))
+      .filter((hole) => {
+        const containingOuters = contours.outer
+          .filter((candidate) => pointInPolygon(hole[0], candidate))
+          .sort((a, b) => Math.abs(area(a)) - Math.abs(area(b)))
+        return containingOuters[0] === rawOuter
+      })
+      .map((hole) => simplifyContour(hole, tolerance))
     const interior = generateInteriorPoints(outer, diagonal, input.density).filter(
       (point) => !holes.some((hole) => pointInPolygon(point, hole)),
     )
@@ -166,7 +177,7 @@ function extractContours(alpha: Uint8Array, width: number, height: number): Cont
     edgeCount++
   }
   const visible = (x: number, y: number) =>
-    x >= 0 && y >= 0 && x < width && y < height && alpha[y * width + x] > ALPHA_VISIBLE
+    x >= 0 && y >= 0 && x < width && y < height && alpha[y * width + x] > MIN_VISIBLE_ALPHA
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       if (!visible(x, y)) continue
@@ -224,6 +235,37 @@ function removeCollinear(points: ContourPoint[]): ContourPoint[] {
       (point.x - previous.x) * (next.y - point.y) !== (point.y - previous.y) * (next.x - point.x)
     )
   })
+}
+
+function simplifyContour(points: readonly ContourPoint[], tolerance: number): ContourPoint[] {
+  if (tolerance <= 0 || points.length < 4) return [...points]
+  const result: ContourPoint[] = []
+  for (let index = 0; index < points.length; index++) {
+    const previous = points[(index + points.length - 1) % points.length]
+    const current = points[index]
+    const next = points[(index + 1) % points.length]
+    const distance =
+      Math.abs(
+        (next.x - previous.x) * (previous.y - current.y) -
+          (previous.x - current.x) * (next.y - previous.y),
+      ) / Math.hypot(next.x - previous.x, next.y - previous.y)
+    if (distance > tolerance || index === 0) result.push(current)
+  }
+  return result.length >= 3 ? result : [...points]
+}
+
+function silhouetteDiagonal(contours: readonly (readonly ContourPoint[])[]): number {
+  const points = contours.flat()
+  const bounds = points.reduce(
+    (result, point) => ({
+      minX: Math.min(result.minX, point.x),
+      minY: Math.min(result.minY, point.y),
+      maxX: Math.max(result.maxX, point.x),
+      maxY: Math.max(result.maxY, point.y),
+    }),
+    { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity },
+  )
+  return Math.hypot(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY)
 }
 
 function area(points: readonly ContourPoint[]): number {
