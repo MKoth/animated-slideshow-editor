@@ -113,7 +113,7 @@ This register **records problems, resolves nothing**. Every spec ticket resolves
 | P9-5 | `step26.md` AI Metadata Assistant (l.339–354 suggests Name/Category/Tags/AI description/Compatible animations/Shader slots) | Duplicates Step 22's feature set with no reuse statement — violates the same "no duplicate implementation" principle Step 26 states elsewhere | `needs decision` | The assistant populates Step 22's editor fields/commands; no parallel metadata model |
 | P9-6 | `step22.md` Geometry quick actions (l.219 — navigate to Asset Playground) | None — ordering correct (Step 21 precedes 22). Registered as verified non-issue | — | — |
 
-## Phase 10 — Export (Steps 23–24) → Spec 10
+## Phase 11 — Export (Steps 23–24) → Spec 11
 
 | ID | Where | Contradiction | Severity | Direction |
 |---|---|---|---|---|
@@ -122,7 +122,7 @@ This register **records problems, resolves nothing**. Every spec ticket resolves
 | P10-3 | `step13.md` `.lesson` (l.71, l.76) vs `step24.md` `.lessonproj` (l.105, l.479, l.573/634 "canonical portable representation") | Two file formats, relationship undefined | `needs decision` | **Already decided** (Web runtime architecture): `.lesson` download/import is the portability path — document the format relationship (package wraps the `.lesson` file, or consolidate on one) |
 | P10-4 | `step23.md` Persistence (l.450–454 — last export settings, output dir, history) vs `step30.md` Export Settings (l.292–300, same keys) | Step 30 re-implements export-settings persistence | `needs decision` | Step 30's Settings dialog reads/writes the Step 23 store (see P12-4) |
 
-## Phase 11 — AI Asset Pipeline (Steps 25–26) → Spec 11
+## Phase 13 — AI Asset Pipeline (Steps 25–26) → Spec 13
 
 | ID | Where | Contradiction | Severity | Direction |
 |---|---|---|---|---|
@@ -130,7 +130,7 @@ This register **records problems, resolves nothing**. Every spec ticket resolves
 | P11-2 | `step26.md` Asset Preparation (l.326–335 "**Reuse Step 21 functionality**… No duplicate implementation") + Import Workflow (l.306–322) + wizard steps (l.148–182) vs `step06.md`/`step21.md`/`step22.md` | Names the **right** step (21 — seeded suspicion of a wrong name is refuted), but its own workflow/wizard/import sections re-specify pivot/anchor/metadata; Step 6/22 also claim the same | **blocks spec** | Wizard = thin orchestrator invoking the Assets/Asset Authoring UI and commands; delete re-specified content (aligns with P3-2) |
 | P11-3 | `step26.md` (l.7, l.34, l.52 — no direct image generation; future placeholder l.500) vs `general-project-description.md` (l.161–169, l.490) | None — consistent with the deferred direct-generation decision. Registered as verified non-issue | — | — |
 
-## Phase 12 — Polish (Steps 27–30) → Spec 12
+## Phase 14 — Polish (Steps 27–30) → Spec 14
 
 | ID | Where | Contradiction | Severity | Direction |
 |---|---|---|---|---|

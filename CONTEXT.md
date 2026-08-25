@@ -58,6 +58,18 @@ _Avoid_: Asset copy, sprite
 A scene node that renders text content with a font size and alignment; color and opacity come from its material instance. Text content is edited, not animated, in v1.
 _Avoid_: Text label, label
 
+**Table Component**:
+A scene node component carrying grid configuration for data-driven tables. Auto-creates TextComponent child nodes as cells, positioned by engine-side layout. References a DataSourceDefinition for data; manual column mapping controls which fields appear. Supports cell-level column/row spanning (layout-only), configurable text wrapping, PixiJS Graphics outer border, and rich background stacking at table/row/column/cell levels.
+_Avoid_: Table node, grid component
+
+**Grid Layout**:
+The engine-side computation that resolves cell positions, column widths, and row heights from the TableComponent's configuration. Fixed columns are sized explicitly; auto columns share remaining space proportionally. Layout is recomputed on data or config change (dirty-flagged), not per-frame.
+_Avoid_: Table layout, cell positioning
+
+**Cell Spanning**:
+A TableComponent feature where individual cells can span multiple columns and/or rows. Specified per cell via colSpan/rowSpan. Spanning is layout-only — columns are sized independently; spanned cells sit across resolved columns. No circular width dependencies.
+_Avoid_: Merged cells, cell merge
+
 **Anchor**:
 A named attachment point defined on an asset definition (e.g. Head, Speech Bubble). Metadata in v1 — nodes attach by parenting, not by anchor.
 
