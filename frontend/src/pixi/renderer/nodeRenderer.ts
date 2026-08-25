@@ -28,7 +28,11 @@ export function createNodeContainer(
   applyTransform(container, node)
   container.visible = node.visible
   container.alpha = node.opacity
-  if (node.components.assetInstance || node.components.text) {
+  if (node.components.mesh) {
+    const meshPlaceholder = createMeshPlaceholder(pixi, node)
+    placeholderByContainer.set(container, meshPlaceholder)
+    container.addChild(meshPlaceholder)
+  } else if (node.components.assetInstance || node.components.text) {
     const textureKey = node.components.assetInstance?.assetDefinitionId ?? node.id
     const placeholder = createPlaceholder(pixi, node, cache, textureKey)
     placeholderByContainer.set(container, placeholder)
@@ -37,10 +41,6 @@ export function createNodeContainer(
     const bonePlaceholder = createBonePlaceholder(pixi, node, node.components.bone.length)
     placeholderByContainer.set(container, bonePlaceholder)
     container.addChild(bonePlaceholder)
-  } else if (node.components.mesh) {
-    const meshPlaceholder = createMeshPlaceholder(pixi, node)
-    placeholderByContainer.set(container, meshPlaceholder)
-    container.addChild(meshPlaceholder)
   }
   return container
 }

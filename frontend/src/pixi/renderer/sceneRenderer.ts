@@ -410,7 +410,7 @@ export class SceneRenderer {
     this.#recordSize(node, container)
     this.#evaluateAndApply(node.id)
     const instance = node.components.assetInstance
-    if (instance) {
+    if (instance && !node.components.mesh) {
       this.#loadAssetTexture(instance.assetDefinitionId, node.id, container)
     }
   }

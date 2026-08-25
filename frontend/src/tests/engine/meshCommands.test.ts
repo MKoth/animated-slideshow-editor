@@ -11,6 +11,7 @@ import {
   ExtrudeEdgesCommand,
   SubdivideFacesCommand,
   MirrorMeshCommand,
+  GenerateMeshCommand,
   createCommandSystem,
 } from '../../engine/commands'
 import { createDefaultRectangleMesh } from '../../engine/mesh'
@@ -674,3 +675,273 @@ function meshCenter(mesh: MeshData, axis: 'x' | 'y'): number {
   const sum = mesh.vertices.reduce((acc, v) => acc + v.y, 0)
   return sum / mesh.vertices.length
 }
+
+function setupWithAssetInstanceNode() {
+  const system = createCommandSystem()
+  expectOk(system.dispatcher.dispatch(new CreateProjectCommand({ name: 'P' })))
+  expectOk(system.dispatcher.dispatch(new CreateSlideCommand({ name: 'S1' })))
+  const slide = system.engine.project?.slides[0]
+  if (!slide) {
+    throw new Error('expected a slide')
+  }
+  const { nodeId } = expectOk(
+    system.dispatcher.dispatch(
+      new CreateNodeCommand({
+        sceneId: slide.scene.id,
+        parentId: slide.scene.root.id,
+        name: 'AssetNode',
+        components: {
+          assetInstance: { kind: 'assetInstance', assetDefinitionId: 'test-def' },
+        },
+      }),
+    ),
+  )
+  return { system, nodeId }
+}
+
+describe('GenerateMeshCommand', () => {
+  it('installs a mesh on an asset instance node without an existing mesh', () => {
+    const { system, nodeId } = setupWithAssetInstanceNode()
+    const mesh: MeshData = createDefaultRectangleMesh(100, 80)
+    const inverse = expectOk(system.dispatcher.dispatch(new GenerateMeshCommand({ nodeId, mesh })))
+    const node = system.engine.getNode(nodeId)
+    expect(node.components.mesh).toBeDefined()
+    expect(node.components.mesh!.mesh.vertices).toHaveLength(4)
+    expect(node.components.mesh!.mesh.faces).toHaveLength(2)
+    expect(inverse.oldMesh).toBeNull()
+  })
+
+  it('replaces an existing mesh on an asset instance node', () => {
+    const { system, nodeId } = setupWithAssetInstanceNode()
+    const mesh1: MeshData = createDefaultRectangleMesh(100, 80)
+    expectOk(system.dispatcher.dispatch(new GenerateMeshCommand({ nodeId, mesh: mesh1 })))
+    const mesh2: MeshData = createDefaultRectangleMesh(200, 160)
+    const inverse = expectOk(
+      system.dispatcher.dispatch(new GenerateMeshCommand({ nodeId, mesh: mesh2 })),
+    )
+    const node = system.engine.getNode(nodeId)
+    expect(node.components.mesh!.mesh.vertices[1]).toEqual({ x: 200, y: 0 })
+    expect(inverse.oldMesh).not.toBeNull()
+    expect(inverse.oldMesh!.vertices[1]).toEqual({ x: 100, y: 0 })
+  })
+
+  it('rejects a node without an asset instance component', () => {
+    const { system, nodeId } = setupWithMeshNode()
+    const mesh: MeshData = createDefaultRectangleMesh(100, 80)
+    const result = system.dispatcher.dispatch(new GenerateMeshCommand({ nodeId, mesh }))
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/asset instance/i)
+    }
+  })
+
+  it('rejects a node without any relevant component', () => {
+    const system = createCommandSystem()
+    expectOk(system.dispatcher.dispatch(new CreateProjectCommand({ name: 'P' })))
+    expectOk(system.dispatcher.dispatch(new CreateSlideCommand({ name: 'S1' })))
+    const slide = system.engine.project?.slides[0]
+    if (!slide) throw new Error('expected a slide')
+    const { nodeId } = expectOk(
+      system.dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'BareNode',
+        }),
+      ),
+    )
+    const mesh: MeshData = createDefaultRectangleMesh(100, 80)
+    const result = system.dispatcher.dispatch(new GenerateMeshCommand({ nodeId, mesh }))
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/asset instance/i)
+    }
+  })
+
+  it('rejects a nonexistent node', () => {
+    const system = createCommandSystem()
+    expectOk(system.dispatcher.dispatch(new CreateProjectCommand({ name: 'P' })))
+    expectOk(system.dispatcher.dispatch(new CreateSlideCommand({ name: 'S1' })))
+    const mesh: MeshData = createDefaultRectangleMesh(100, 80)
+    const result = system.dispatcher.dispatch(
+      new GenerateMeshCommand({ nodeId: 'nonexistent', mesh }),
+    )
+    expect(result.ok).toBe(false)
+  })
+
+  it('rejects a mesh with no faces', () => {
+    const { system, nodeId } = setupWithAssetInstanceNode()
+    const mesh: MeshData = {
+      vertices: [{ x: 0, y: 0 }],
+      faces: [],
+      uvs: [{ u: 0, v: 0 }],
+    }
+    expect(() => system.dispatcher.dispatch(new GenerateMeshCommand({ nodeId, mesh }))).toThrow(
+      /vertices and faces/i,
+    )
+  })
+
+  it('rejects a mesh with no vertices', () => {
+    const { system, nodeId } = setupWithAssetInstanceNode()
+    const mesh: MeshData = {
+      vertices: [],
+      faces: [],
+      uvs: [],
+    }
+    expect(() => system.dispatcher.dispatch(new GenerateMeshCommand({ nodeId, mesh }))).toThrow(
+      /vertices and faces/i,
+    )
+  })
+
+  it('rejects a mesh with invalid face indices', () => {
+    const { system, nodeId } = setupWithAssetInstanceNode()
+    const mesh: MeshData = {
+      vertices: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 5, y: 10 },
+      ],
+      faces: [{ v0: 0, v1: 1, v2: 5 }],
+      uvs: [
+        { u: 0, v: 0 },
+        { u: 1, v: 0 },
+        { u: 0.5, v: 1 },
+      ],
+    }
+    const result = system.dispatcher.dispatch(new GenerateMeshCommand({ nodeId, mesh }))
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/invalid face index/i)
+    }
+  })
+
+  it('rejects a mesh with UV count mismatch', () => {
+    const { system, nodeId } = setupWithAssetInstanceNode()
+    const mesh: MeshData = {
+      vertices: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 5, y: 10 },
+      ],
+      faces: [{ v0: 0, v1: 1, v2: 2 }],
+      uvs: [{ u: 0, v: 0 }],
+    }
+    const result = system.dispatcher.dispatch(new GenerateMeshCommand({ nodeId, mesh }))
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/UV count/i)
+    }
+  })
+
+  it('produces inverse that restores the previous mesh on undo', () => {
+    const { system, nodeId } = setupWithAssetInstanceNode()
+    const mesh1: MeshData = createDefaultRectangleMesh(100, 80)
+    const inverse1 = expectOk(
+      system.dispatcher.dispatch(new GenerateMeshCommand({ nodeId, mesh: mesh1 })),
+    )
+    const mesh2: MeshData = createDefaultRectangleMesh(200, 160)
+    const inverse2 = expectOk(
+      system.dispatcher.dispatch(new GenerateMeshCommand({ nodeId, mesh: mesh2 })),
+    )
+
+    // Simulate undo of mesh2: restore inverse2.oldMesh (mesh1)
+    system.dispatcher.dispatch(
+      new (class {
+        readonly type = 'UndoGenerateMesh'
+        readonly parameters = {}
+        validate() {}
+        execute(eng: Engine) {
+          eng.setMeshData(nodeId, inverse2.oldMesh!)
+          return inverse2.oldMesh
+        }
+        toJSON() {
+          return {}
+        }
+      })() as never,
+    )
+    const node = system.engine.getNode(nodeId)
+    expect(node.components.mesh!.mesh.vertices[1]).toEqual({ x: 100, y: 0 })
+
+    // Simulate undo of mesh1: restore inverse1.oldMesh (null = no mesh)
+    system.dispatcher.dispatch(
+      new (class {
+        readonly type = 'UndoGenerateMesh'
+        readonly parameters = {}
+        validate() {}
+        execute(eng: Engine) {
+          // Remove mesh component by setting components without mesh
+          const n = eng.getNode(nodeId)
+          const newComponents = { ...n.components }
+          delete (newComponents as Record<string, unknown>).mesh
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          ;(n as any).components = Object.freeze(newComponents)
+          return inverse1.oldMesh
+        }
+        toJSON() {
+          return {}
+        }
+      })() as never,
+    )
+    const nodeAfterUndo = system.engine.getNode(nodeId)
+    expect(nodeAfterUndo.components.mesh).toBeUndefined()
+  })
+
+  it('preserves bone weights and bind pose through the inverse', () => {
+    const { system, nodeId } = setupWithAssetInstanceNode()
+    const meshWithWeights: MeshData = {
+      vertices: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 5, y: 10 },
+      ],
+      faces: [{ v0: 0, v1: 1, v2: 2 }],
+      uvs: [
+        { u: 0, v: 0 },
+        { u: 1, v: 0 },
+        { u: 0.5, v: 1 },
+      ],
+      boneWeights: [
+        [
+          { boneId: 'bone1', weight: 0.8 },
+          { boneId: 'bone2', weight: 0.2 },
+        ],
+        [
+          { boneId: 'bone1', weight: 0.6 },
+          { boneId: 'bone2', weight: 0.4 },
+        ],
+        [{ boneId: 'bone1', weight: 1.0 }],
+      ],
+      bindPose: {
+        bone1: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+        bone2: { x: 10, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+      },
+    }
+    const inverse = expectOk(
+      system.dispatcher.dispatch(new GenerateMeshCommand({ nodeId, mesh: meshWithWeights })),
+    )
+    expect(inverse.oldMesh).toBeNull()
+
+    const mesh2: MeshData = createDefaultRectangleMesh(50, 50)
+    const inverse2 = expectOk(
+      system.dispatcher.dispatch(new GenerateMeshCommand({ nodeId, mesh: mesh2 })),
+    )
+
+    // The inverse should contain the full mesh with weights and bind pose
+    expect(inverse2.oldMesh).not.toBeNull()
+    expect(inverse2.oldMesh!.boneWeights).toHaveLength(3)
+    expect(inverse2.oldMesh!.bindPose).toBeDefined()
+    expect(inverse2.oldMesh!.bindPose!.bone1.x).toBe(0)
+    expect(inverse2.oldMesh!.boneWeights![0][0].boneId).toBe('bone1')
+  })
+
+  it('serializes to JSON', () => {
+    const cmd = new GenerateMeshCommand({
+      nodeId: 'n1',
+      mesh: createDefaultRectangleMesh(100, 80),
+    })
+    expect(cmd.toJSON()).toEqual({
+      type: 'GenerateMesh',
+      nodeId: 'n1',
+    })
+  })
+})
