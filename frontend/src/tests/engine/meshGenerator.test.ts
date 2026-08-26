@@ -42,6 +42,22 @@ function expectValidMesh(result: ReturnType<typeof generateMesh>): void {
   }
 }
 
+function pointInPolygon(
+  x: number,
+  y: number,
+  polygon: readonly { x: number; y: number }[],
+): boolean {
+  let inside = false
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i]
+    const b = polygon[j]
+    if (a.y > y !== b.y > y && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) {
+      inside = !inside
+    }
+  }
+  return inside
+}
+
 describe('generateMesh', () => {
   it('generates deterministic UV-mapped triangles for a rectangle', () => {
     const input = defaults({ imageData: image(8, 6, () => true) })
@@ -81,6 +97,38 @@ describe('generateMesh', () => {
         }),
       ),
     ).toBe(false)
+  })
+
+  it('keeps every concave triangle connected inside the silhouette', () => {
+    const result = generateMesh(
+      defaults({
+        imageData: image(10, 10, (x, y) => (x < 7 && y < 7) || (x >= 3 && y >= 3)),
+      }),
+    )
+    const silhouette = [
+      { x: 0, y: 0 },
+      { x: 7, y: 0 },
+      { x: 7, y: 3 },
+      { x: 10, y: 3 },
+      { x: 10, y: 10 },
+      { x: 3, y: 10 },
+      { x: 3, y: 7 },
+      { x: 0, y: 7 },
+    ]
+
+    for (const face of result.faces) {
+      const points = [result.vertices[face.v0], result.vertices[face.v1], result.vertices[face.v2]]
+      const centroid = points.reduce((sum, point) => ({ x: sum.x + point.x, y: sum.y + point.y }), {
+        x: 0,
+        y: 0,
+      })
+      expect(pointInPolygon(centroid.x / 3 + 5, centroid.y / 3 + 5, silhouette)).toBe(true)
+      for (let i = 0; i < points.length; i++) {
+        const a = points[i]
+        const b = points[(i + 1) % points.length]
+        expect(pointInPolygon((a.x + b.x) / 2 + 5, (a.y + b.y) / 2 + 5, silhouette)).toBe(true)
+      }
+    }
   })
 
   it('increases interior detail with higher mesh density', () => {

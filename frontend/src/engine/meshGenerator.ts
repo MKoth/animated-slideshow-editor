@@ -52,7 +52,9 @@ export function extractAlphaChannel(imageData: ImageData): Uint8Array {
 export function traceContour(alpha: Uint8Array, width: number, height: number): ContourPoint[] {
   validateRaster(alpha, width, height)
   const contours = extractContours(alpha, width, height)
-  const outer = contours.outer.slice().sort((a, b) => Math.abs(area(b)) - Math.abs(area(a)))[0]
+  const outer = contours.outer
+    .slice()
+    .sort((a, b) => Math.abs(polygonArea(b)) - Math.abs(polygonArea(a)))[0]
   if (!outer) {
     throw new Error('Image contains no visible pixels')
   }
@@ -69,10 +71,16 @@ export function triangulateContour(
   }
 
   const cleanBoundary = ensureClockwise(contour)
+  const allPoints = [...contour, ...holes.flat(), ...interiorPoints]
+  const sourceIndices = new Map<ContourPoint, number>()
+  allPoints.forEach((point, index) => sourceIndices.set(point, index))
+  const pointIndices = new Map<poly2tri.IPointLike, number>()
 
-  const p2tContour = cleanBoundary.map(
-    (p, i) => new poly2tri.Point(p.x + perturbation(i), p.y + perturbation(i) * 0.7),
-  )
+  const p2tContour = cleanBoundary.map((p, i) => {
+    const point = new poly2tri.Point(p.x + perturbation(i), p.y + perturbation(i) * 0.7)
+    pointIndices.set(point, sourceIndices.get(p)!)
+    return point
+  })
 
   const swctx = new poly2tri.SweepContext(p2tContour)
 
@@ -80,20 +88,23 @@ export function triangulateContour(
     if (hole.length < 3) {
       throw new Error('Hole must contain at least three points')
     }
-    const holePoints = ensureCounterClockwise(hole).map(
-      (p, i) => new poly2tri.Point(p.x + perturbation(i), p.y + perturbation(i) * 0.7),
-    )
+    const holePoints = ensureCounterClockwise(hole).map((p, i) => {
+      const point = new poly2tri.Point(p.x + perturbation(i), p.y + perturbation(i) * 0.7)
+      pointIndices.set(point, sourceIndices.get(p)!)
+      return point
+    })
     swctx.addHole(holePoints)
   }
 
   if (interiorPoints.length > 0) {
-    const steinerPoints = interiorPoints.map(
-      (p, i) =>
-        new poly2tri.Point(
-          p.x + perturbation(i + cleanBoundary.length),
-          p.y + perturbation(i + cleanBoundary.length) * 1.3,
-        ),
-    )
+    const steinerPoints = interiorPoints.map((p, i) => {
+      const point = new poly2tri.Point(
+        p.x + perturbation(i + cleanBoundary.length),
+        p.y + perturbation(i + cleanBoundary.length) * 1.3,
+      )
+      pointIndices.set(point, sourceIndices.get(p)!)
+      return point
+    })
     swctx.addPoints(steinerPoints)
   }
 
@@ -104,29 +115,20 @@ export function triangulateContour(
     throw new Error('Contour could not be triangulated')
   }
 
-  const allPoints = [...cleanBoundary, ...holes.flat(), ...interiorPoints]
-  const vertMap = new Map<string, number>()
   const faces: MeshFace[] = []
 
   for (const tri of triangles) {
     const pts = [tri.getPoint(0), tri.getPoint(1), tri.getPoint(2)]
-    const faceIdx: number[] = []
-
-    for (const pt of pts) {
-      const key = `${pt.x.toFixed(2)},${pt.y.toFixed(2)}`
-      if (!vertMap.has(key)) {
-        vertMap.set(key, vertMap.size)
-      }
-      faceIdx.push(vertMap.get(key)!)
+    const faceIdx = pts.map((point) => pointIndices.get(point))
+    if (faceIdx.some((index) => index === undefined)) {
+      throw new Error('Poly2tri returned an unknown point')
     }
 
-    const a = allPoints[faceIdx[0]]
-    const b = allPoints[faceIdx[1]]
-    const c = allPoints[faceIdx[2]]
+    const [a, b, c] = faceIdx.map((index) => allPoints[index!])
     if (a && b && c) {
       const cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
       if (Math.abs(cross) > 1e-10) {
-        faces.push({ v0: faceIdx[0], v1: faceIdx[1], v2: faceIdx[2] })
+        faces.push({ v0: faceIdx[0]!, v1: faceIdx[1]!, v2: faceIdx[2]! })
       }
     }
   }
@@ -188,16 +190,20 @@ export function generateMesh(input: MeshGeneratorInput): MeshGeneratorResult {
   const faces: MeshFace[] = []
 
   for (const rawOuter of contours.outer) {
-    const boundary = subsampleContour(rawOuter, input.boundarySpacing)
-    const cleanBoundary = removeCollinear(boundary)
-    if (cleanBoundary.length < 3) continue
+    // Subsample boundary by spacing
+    const rawBoundary = subsampleContour(rawOuter, input.boundarySpacing)
+    if (rawBoundary.length < 3) continue
+
+    // Remove collinear points (poly2tri requirement) — single pass only
+    const boundary = removeCollinear(rawBoundary)
+    if (boundary.length < 3) continue
 
     const holes = contours.holes
       .filter((hole) => pointInPolygon(hole[0], rawOuter))
       .filter((hole) => {
         const containingOuters = contours.outer
           .filter((candidate) => pointInPolygon(hole[0], candidate))
-          .sort((a, b) => Math.abs(area(a)) - Math.abs(area(b)))
+          .sort((a, b) => Math.abs(polygonArea(a)) - Math.abs(polygonArea(b)))
         return containingOuters[0] === rawOuter
       })
       .map((hole) => {
@@ -207,7 +213,7 @@ export function generateMesh(input: MeshGeneratorInput): MeshGeneratorResult {
       .filter((hole) => hole.length >= 3)
 
     const interior = generateAdaptiveInteriorPoints(
-      cleanBoundary,
+      boundary,
       joints,
       alpha,
       width,
@@ -217,17 +223,14 @@ export function generateMesh(input: MeshGeneratorInput): MeshGeneratorResult {
       input.jointRadius,
     ).filter((point) => !holes.some((hole) => pointInPolygon(point, hole)))
 
-    const allowedInterior = Math.max(
-      0,
-      input.maxVertices - cleanBoundary.length - holes.flat().length,
-    )
+    const allowedInterior = Math.max(0, input.maxVertices - boundary.length - holes.flat().length)
     const limitedInterior = interior.slice(0, allowedInterior)
 
     const base = vertices.length
-    vertices.push(...cleanBoundary, ...holes.flat(), ...limitedInterior)
+    vertices.push(...boundary, ...holes.flat(), ...limitedInterior)
 
     faces.push(
-      ...triangulateContour(cleanBoundary, holes, limitedInterior).map((face) => ({
+      ...triangulateContour(boundary, holes, limitedInterior).map((face) => ({
         v0: face.v0 + base,
         v1: face.v1 + base,
         v2: face.v2 + base,
@@ -235,38 +238,221 @@ export function generateMesh(input: MeshGeneratorInput): MeshGeneratorResult {
     )
   }
 
-  const referenced = new Set(faces.flatMap((face) => [face.v0, face.v1, face.v2]))
-  if (
-    faces.length === 0 ||
-    faces.some(
-      (face) => face.v0 === face.v1 || face.v1 === face.v2 || triangleArea(face, vertices) === 0,
-    )
-  ) {
-    throw new Error(
-      `Generated mesh contains no valid triangles (${referenced.size}/${vertices.length})`,
-    )
+  if (faces.length === 0 || vertices.length === 0) {
+    throw new Error('Generated mesh contains no valid triangles')
   }
 
-  const usedIndices = Array.from(referenced).sort((a, b) => a - b)
-  const indexMap = new Map<number, number>()
-  const remappedVertices: MeshVertex[] = []
-  for (let i = 0; i < usedIndices.length; i++) {
-    indexMap.set(usedIndices[i], i)
-    remappedVertices.push(vertices[usedIndices[i]])
-  }
-
-  const remappedFaces: MeshFace[] = faces.map((face) => ({
-    v0: indexMap.get(face.v0)!,
-    v1: indexMap.get(face.v1)!,
-    v2: indexMap.get(face.v2)!,
-  }))
-
-  const uvs = computeUVs(remappedVertices, width, height)
+  const uvs = computeUVs(vertices, width, height)
   const halfW = width / 2
   const halfH = height / 2
-  const centered = remappedVertices.map((v) => ({ x: v.x - halfW, y: v.y - halfH }))
-  return { vertices: centered, faces: remappedFaces, uvs, width, height }
+  const centered = vertices.map((v) => ({ x: v.x - halfW, y: v.y - halfH }))
+  return { vertices: centered, faces, uvs, width, height }
 }
+
+// ---- Edge-walking contour extraction (Moore neighborhood) ----
+
+function extractContours(alpha: Uint8Array, width: number, height: number): Contours {
+  const edges = new Map<string, [ContourPoint, ContourPoint][]>()
+  let edgeCount = 0
+  const addEdge = (a: ContourPoint, b: ContourPoint) => {
+    const key = `${a.x},${a.y}`
+    const outgoing = edges.get(key) ?? []
+    outgoing.push([a, b])
+    edges.set(key, outgoing)
+    edgeCount++
+  }
+  const visible = (x: number, y: number) =>
+    x >= 0 && y >= 0 && x < width && y < height && alpha[y * width + x] > MIN_VISIBLE_ALPHA
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (!visible(x, y)) continue
+      if (!visible(x, y - 1)) addEdge({ x, y }, { x: x + 1, y })
+      if (!visible(x + 1, y)) addEdge({ x: x + 1, y }, { x: x + 1, y: y + 1 })
+      if (!visible(x, y + 1)) addEdge({ x: x + 1, y: y + 1 }, { x, y: y + 1 })
+      if (!visible(x - 1, y)) addEdge({ x, y: y + 1 }, { x, y })
+    }
+  }
+  const loops: ContourPoint[][] = []
+  while (edgeCount > 0) {
+    const first = edges.entries().next().value as [string, [ContourPoint, ContourPoint][]]
+    const firstEdge = first[1].pop() as [ContourPoint, ContourPoint]
+    edgeCount--
+    if (first[1].length === 0) edges.delete(first[0])
+    const loop = [firstEdge[0], firstEdge[1]]
+    while (loop[loop.length - 1].x !== loop[0].x || loop[loop.length - 1].y !== loop[0].y) {
+      const current = loop[loop.length - 1]
+      const key = `${current.x},${current.y}`
+      const outgoing = edges.get(key)
+      if (!outgoing || outgoing.length === 0) break
+      const edge = outgoing.pop() as [ContourPoint, ContourPoint]
+      edgeCount--
+      if (outgoing.length === 0) edges.delete(key)
+      loop.push(edge[1])
+    }
+    if (
+      loop.length > 3 &&
+      loop[0].x === loop[loop.length - 1].x &&
+      loop[0].y === loop[loop.length - 1].y
+    ) {
+      loop.pop()
+      // Remove consecutive duplicates before classifying
+      const deduped = removeConsecutiveDuplicates(loop)
+      if (deduped.length >= 3) {
+        loops.push(deduped)
+      }
+    }
+  }
+  const outer: ContourPoint[][] = []
+  const holes: ContourPoint[][] = []
+  for (const loop of loops) {
+    const depth = loops.reduce(
+      (count, candidate) =>
+        count + (candidate !== loop && pointInPolygon(loop[0], candidate) ? 1 : 0),
+      0,
+    )
+    if (depth % 2 === 0) outer.push(loop)
+    else holes.push(loop)
+  }
+  return { outer, holes }
+}
+
+function removeConsecutiveDuplicates(points: ContourPoint[]): ContourPoint[] {
+  if (points.length === 0) return points
+  const result: ContourPoint[] = [points[0]]
+  for (let i = 1; i < points.length; i++) {
+    const prev = result[result.length - 1]
+    if (points[i].x !== prev.x || points[i].y !== prev.y) {
+      result.push(points[i])
+    }
+  }
+  return result
+}
+
+function removeCollinear(points: ContourPoint[]): ContourPoint[] {
+  if (points.length < 3) return points
+
+  const result: ContourPoint[] = []
+  const tolerance = 0.5
+
+  for (let i = 0; i < points.length; i++) {
+    const prev = points[(i - 1 + points.length) % points.length]
+    const curr = points[i]
+    const next = points[(i + 1) % points.length]
+
+    const dx = next.x - prev.x
+    const dy = next.y - prev.y
+    const len = Math.hypot(dx, dy)
+
+    if (len < 0.001) continue
+
+    const dist = Math.abs(dy * curr.x - dx * curr.y + next.x * prev.y - next.y * prev.x) / len
+
+    if (dist > tolerance) {
+      result.push(curr)
+    }
+  }
+
+  return result.length >= 3 ? result : points
+}
+
+// ---- Joint detection ----
+
+function getJoints(
+  bones: ReadonlyArray<BoneSegment>,
+  alpha: Uint8Array,
+  width: number,
+  height: number,
+  jointMinDist: number,
+): ContourPoint[] {
+  const map = new Map<string, number>()
+
+  for (const b of bones) {
+    const sk = `${b.sx.toFixed(1)},${b.sy.toFixed(1)}`
+    const ek = `${b.ex.toFixed(1)},${b.ey.toFixed(1)}`
+    map.set(sk, (map.get(sk) || 0) + 1)
+    map.set(ek, (map.get(ek) || 0) + 1)
+  }
+
+  const joints: ContourPoint[] = []
+
+  for (const [k, v] of map) {
+    if (v >= 2) {
+      const parts = k.split(',').map(Number)
+      joints.push({ x: parts[0], y: parts[1] })
+    }
+  }
+
+  for (const b of bones) {
+    for (const pt of [
+      { x: b.sx, y: b.sy },
+      { x: b.ex, y: b.ey },
+    ]) {
+      const key = `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`
+      if ((map.get(key) ?? 0) >= 2) continue
+
+      if (joints.some((j) => Math.hypot(j.x - pt.x, j.y - pt.y) < 1)) continue
+
+      const dist = distanceToEdge(pt.x, pt.y, alpha, width, height)
+      if (dist >= jointMinDist) {
+        joints.push(pt)
+      }
+    }
+  }
+
+  return joints
+}
+
+function distanceToEdge(
+  x: number,
+  y: number,
+  alpha: Uint8Array,
+  width: number,
+  height: number,
+): number {
+  const px = Math.round(x)
+  const py = Math.round(y)
+
+  if (px < 0 || px >= width || py < 0 || py >= height) return 0
+  if (alpha[py * width + px] === 0) return 0
+
+  const maxSearch = 100
+  for (let r = 1; r <= maxSearch; r++) {
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dy = -r; dy <= r; dy++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue
+
+        const nx = px + dx
+        const ny = py + dy
+
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue
+
+        if (alpha[ny * width + nx] === 0) {
+          let isEdge = false
+          for (const [ox, oy] of [
+            [0, 1],
+            [0, -1],
+            [1, 0],
+            [-1, 0],
+          ]) {
+            const ex = nx + ox
+            const ey = ny + oy
+            if (ex >= 0 && ex < width && ey >= 0 && ey < height && alpha[ey * width + ex] > 0) {
+              isEdge = true
+              break
+            }
+          }
+          if (isEdge) {
+            return Math.hypot(dx, dy) - 1
+          }
+        }
+      }
+    }
+  }
+
+  return maxSearch
+}
+
+// ---- Adaptive interior point generation ----
 
 function generateAdaptiveInteriorPoints(
   contour: readonly ContourPoint[],
@@ -366,204 +552,20 @@ function generateAdaptiveInteriorPoints(
   return points
 }
 
-function getJoints(
-  bones: ReadonlyArray<BoneSegment>,
-  alpha: Uint8Array,
-  width: number,
-  height: number,
-  jointMinDist: number,
-): ContourPoint[] {
-  const map = new Map<string, number>()
-
-  for (const b of bones) {
-    const sk = `${b.sx.toFixed(1)},${b.sy.toFixed(1)}`
-    const ek = `${b.ex.toFixed(1)},${b.ey.toFixed(1)}`
-    map.set(sk, (map.get(sk) || 0) + 1)
-    map.set(ek, (map.get(ek) || 0) + 1)
-  }
-
-  const joints: ContourPoint[] = []
-
-  for (const [k, v] of map) {
-    if (v >= 2) {
-      const parts = k.split(',').map(Number)
-      joints.push({ x: parts[0], y: parts[1] })
-    }
-  }
-
-  for (const b of bones) {
-    for (const pt of [
-      { x: b.sx, y: b.sy },
-      { x: b.ex, y: b.ey },
-    ]) {
-      const key = `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`
-      if ((map.get(key) ?? 0) >= 2) continue
-
-      if (joints.some((j) => Math.hypot(j.x - pt.x, j.y - pt.y) < 1)) continue
-
-      const dist = distanceToEdge(pt.x, pt.y, alpha, width, height)
-      if (dist >= jointMinDist) {
-        joints.push(pt)
-      }
-    }
-  }
-
-  return joints
-}
-
-function distanceToEdge(
-  x: number,
-  y: number,
-  alpha: Uint8Array,
-  width: number,
-  height: number,
-): number {
-  const px = Math.round(x)
-  const py = Math.round(y)
-
-  if (px < 0 || px >= width || py < 0 || py >= height) return 0
-  if (alpha[py * width + px] === 0) return 0
-
-  const maxSearch = 100
-  for (let r = 1; r <= maxSearch; r++) {
-    for (let dx = -r; dx <= r; dx++) {
-      for (let dy = -r; dy <= r; dy++) {
-        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue
-
-        const nx = px + dx
-        const ny = py + dy
-
-        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue
-
-        if (alpha[ny * width + nx] === 0) {
-          let isEdge = false
-          for (const [ox, oy] of [
-            [0, 1],
-            [0, -1],
-            [1, 0],
-            [-1, 0],
-          ]) {
-            const ex = nx + ox
-            const ey = ny + oy
-            if (ex >= 0 && ex < width && ey >= 0 && ey < height && alpha[ey * width + ex] > 0) {
-              isEdge = true
-              break
-            }
-          }
-          if (isEdge) {
-            return Math.hypot(dx, dy) - 1
-          }
-        }
-      }
-    }
-  }
-
-  return maxSearch
-}
-
-function subsampleContour(contour: readonly ContourPoint[], spacing: number): ContourPoint[] {
-  if (contour.length === 0) return []
-
-  const result: ContourPoint[] = [contour[0]]
-  let dist = 0
-
-  for (let i = 1; i < contour.length; i++) {
-    const dx = contour[i].x - contour[i - 1].x
-    const dy = contour[i].y - contour[i - 1].y
-    dist += Math.hypot(dx, dy)
-
-    if (dist >= spacing) {
-      result.push(contour[i])
-      dist = 0
-    }
-  }
-
-  return result
-}
+// ---- Utilities ----
 
 function perturbation(index: number): number {
   return 0.001 * ((index % 3) - 1)
 }
 
 function ensureClockwise(contour: readonly ContourPoint[]): ContourPoint[] {
-  const a = area(contour)
+  const a = polygonArea(contour)
   return a > 0 ? [...contour] : [...contour].reverse()
 }
 
 function ensureCounterClockwise(contour: readonly ContourPoint[]): ContourPoint[] {
-  const a = area(contour)
+  const a = polygonArea(contour)
   return a < 0 ? [...contour] : [...contour].reverse()
-}
-
-function extractContours(alpha: Uint8Array, width: number, height: number): Contours {
-  const edges = new Map<string, [ContourPoint, ContourPoint][]>()
-  let edgeCount = 0
-  const addEdge = (a: ContourPoint, b: ContourPoint) => {
-    const key = `${a.x},${a.y}`
-    const outgoing = edges.get(key) ?? []
-    outgoing.push([a, b])
-    edges.set(key, outgoing)
-    edgeCount++
-  }
-  const visible = (x: number, y: number) =>
-    x >= 0 && y >= 0 && x < width && y < height && alpha[y * width + x] > MIN_VISIBLE_ALPHA
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      if (!visible(x, y)) continue
-      if (!visible(x, y - 1)) addEdge({ x, y }, { x: x + 1, y })
-      if (!visible(x + 1, y)) addEdge({ x: x + 1, y }, { x: x + 1, y: y + 1 })
-      if (!visible(x, y + 1)) addEdge({ x: x + 1, y: y + 1 }, { x, y: y + 1 })
-      if (!visible(x - 1, y)) addEdge({ x, y: y + 1 }, { x, y })
-    }
-  }
-  const loops: ContourPoint[][] = []
-  while (edgeCount > 0) {
-    const first = edges.entries().next().value as [string, [ContourPoint, ContourPoint][]]
-    const firstEdge = first[1].pop() as [ContourPoint, ContourPoint]
-    edgeCount--
-    if (first[1].length === 0) edges.delete(first[0])
-    const loop = [firstEdge[0], firstEdge[1]]
-    while (loop[loop.length - 1].x !== loop[0].x || loop[loop.length - 1].y !== loop[0].y) {
-      const current = loop[loop.length - 1]
-      const key = `${current.x},${current.y}`
-      const outgoing = edges.get(key)
-      if (!outgoing || outgoing.length === 0) break
-      const edge = outgoing.pop() as [ContourPoint, ContourPoint]
-      edgeCount--
-      if (outgoing.length === 0) edges.delete(key)
-      loop.push(edge[1])
-    }
-    if (
-      loop.length > 3 &&
-      loop[0].x === loop[loop.length - 1].x &&
-      loop[0].y === loop[loop.length - 1].y
-    ) {
-      loop.pop()
-      loops.push(removeCollinear(loop))
-    }
-  }
-  const outer: ContourPoint[][] = []
-  const holes: ContourPoint[][] = []
-  for (const loop of loops) {
-    const depth = loops.reduce(
-      (count, candidate) =>
-        count + (candidate !== loop && pointInPolygon(loop[0], candidate) ? 1 : 0),
-      0,
-    )
-    if (depth % 2 === 0) outer.push(loop)
-    else holes.push(loop)
-  }
-  return { outer, holes }
-}
-
-function removeCollinear(points: ContourPoint[]): ContourPoint[] {
-  return points.filter((point, index) => {
-    const previous = points[(index + points.length - 1) % points.length]
-    const next = points[(index + 1) % points.length]
-    return (
-      (point.x - previous.x) * (next.y - point.y) !== (point.y - previous.y) * (next.x - point.x)
-    )
-  })
 }
 
 function computeBounds(points: readonly ContourPoint[]): {
@@ -583,14 +585,7 @@ function computeBounds(points: readonly ContourPoint[]): {
   )
 }
 
-function triangleArea(face: MeshFace, vertices: readonly MeshVertex[]): number {
-  const a = vertices[face.v0]
-  const b = vertices[face.v1]
-  const c = vertices[face.v2]
-  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
-}
-
-function area(points: readonly ContourPoint[]): number {
+function polygonArea(points: readonly ContourPoint[]): number {
   return (
     points.reduce((sum, point, index) => {
       const next = points[(index + 1) % points.length]
@@ -613,6 +608,30 @@ function pointInPolygon(point: ContourPoint, polygon: readonly ContourPoint[]): 
   }
   return inside
 }
+
+// ---- Subsample contour by spacing ----
+
+function subsampleContour(contour: readonly ContourPoint[], spacing: number): ContourPoint[] {
+  if (contour.length === 0) return []
+
+  const result: ContourPoint[] = [contour[0]]
+  let dist = 0
+
+  for (let i = 1; i < contour.length; i++) {
+    const dx = contour[i].x - contour[i - 1].x
+    const dy = contour[i].y - contour[i - 1].y
+    dist += Math.hypot(dx, dy)
+
+    if (dist >= spacing) {
+      result.push(contour[i])
+      dist = 0
+    }
+  }
+
+  return result
+}
+
+// ---- Validation ----
 
 function validateMeshInput(input: MeshGeneratorInput): void {
   validateImageData(input.imageData)
