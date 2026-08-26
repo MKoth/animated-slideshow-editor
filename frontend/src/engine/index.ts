@@ -28,6 +28,9 @@ export type {
   AssetInstanceComponent,
   TextComponent,
   TextAlignment,
+  TableComponent,
+  TableDimension,
+  TableCellSpan,
 } from './components'
 export type { AssetDefinition } from './assetDefinition'
 export type { EmbeddedAsset } from './embeddedAsset'
@@ -291,3 +294,8 @@ export {
   computeUVs,
   generateMesh,
 } from './meshGenerator'
+export {
+  computeTableLayout,
+  TableLayoutCache,
+} from './tableGridLayout'
+export type { TableLayout, CellRect } from './tableGridLayout'

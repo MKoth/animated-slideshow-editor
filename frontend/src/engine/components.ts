@@ -33,6 +33,29 @@ export interface GhostComponent {
   readonly kind: 'ghost'
 }
 
+export interface TableDimension {
+  readonly width: number | 'auto'
+  readonly minWidth?: number
+}
+
+export interface TableCellSpan {
+  readonly colSpan: number
+  readonly rowSpan: number
+}
+
+export interface TableComponent {
+  readonly kind: 'table'
+  readonly columns: readonly TableDimension[]
+  readonly rows: readonly TableDimension[]
+  readonly gap: number
+  readonly cellPadding: number
+  readonly borderWidth: number
+  readonly borderColor: string
+  readonly textWrap: 'wrap' | 'truncate'
+  readonly columnMapping: Readonly<Record<number, string>>
+  readonly cellSpans: Readonly<Record<string, TableCellSpan>>
+}
+
 export interface NodeComponents {
   readonly camera?: CameraComponent
   readonly assetInstance?: AssetInstanceComponent
@@ -40,6 +63,7 @@ export interface NodeComponents {
   readonly bone?: BoneComponent
   readonly mesh?: MeshComponent
   readonly ghost?: GhostComponent
+  readonly table?: TableComponent
 }
 
 export function copyComponents(components: NodeComponents): NodeComponents {
@@ -50,5 +74,6 @@ export function copyComponents(components: NodeComponents): NodeComponents {
     bone: components.bone ? { ...components.bone } : undefined,
     mesh: components.mesh ? { kind: 'mesh', mesh: cloneMeshData(components.mesh.mesh) } : undefined,
     ghost: components.ghost ? { ...components.ghost } : undefined,
+    table: components.table ? { ...components.table } : undefined,
   }
 }

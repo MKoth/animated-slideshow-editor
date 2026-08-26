@@ -1,4 +1,4 @@
-import type { NodeComponents, TextAlignment } from './components'
+import type { NodeComponents, TextAlignment, TableComponent, TableDimension, TableCellSpan } from './components'
 import { meshDataFromJSON, cloneMeshData } from './mesh'
 import type { Transform } from './transform'
 import { IDENTITY_PIVOT } from './transform'
@@ -135,6 +135,7 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
     bone?: NodeComponents['bone']
     mesh?: NodeComponents['mesh']
     ghost?: NodeComponents['ghost']
+    table?: NodeComponents['table']
   } = {}
   if (record.camera !== undefined) {
     if (!isKind(record.camera, 'camera')) {
@@ -201,6 +202,12 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
     }
     components.ghost = { kind: 'ghost' }
   }
+  if (record.table !== undefined) {
+    if (!isKind(record.table, 'table')) {
+      throw new Error(`Node "${nodeId}" has an invalid table component`)
+    }
+    components.table = parseTableComponent(record.table as Record<string, unknown>, nodeId)
+  }
   return components
 }
 
@@ -235,6 +242,86 @@ function isKind(value: unknown, kind: string): boolean {
   return typeof value === 'object' && value !== null && (value as { kind?: unknown }).kind === kind
 }
 
+function parseDimension(value: unknown, context: string): TableDimension {
+  if (typeof value !== 'object' || value === null) {
+    throw new Error(`${context} must be an object`)
+  }
+  const dim = value as Record<string, unknown>
+  const width = dim.width
+  if (width !== 'auto' && (typeof width !== 'number' || !Number.isFinite(width))) {
+    throw new Error(`${context} width must be "auto" or a finite number`)
+  }
+  const minWidth =
+    dim.minWidth !== undefined
+      ? typeof dim.minWidth === 'number' && Number.isFinite(dim.minWidth)
+        ? dim.minWidth
+        : undefined
+      : undefined
+  return minWidth !== undefined ? { width, minWidth } : { width }
+}
+
+function parseTableComponent(
+  component: Record<string, unknown>,
+  nodeId: string,
+): TableComponent {
+  const ctx = `Node "${nodeId}" table`
+  if (!Array.isArray(component.columns) || component.columns.length === 0) {
+    throw new Error(`${ctx} must have a non-empty columns array`)
+  }
+  const columns = component.columns.map((c, i) => parseDimension(c, `${ctx}.columns[${i}]`))
+  if (!Array.isArray(component.rows) || component.rows.length === 0) {
+    throw new Error(`${ctx} must have a non-empty rows array`)
+  }
+  const rows = component.rows.map((r, i) => parseDimension(r, `${ctx}.rows[${i}]`))
+  const gap = typeof component.gap === 'number' && Number.isFinite(component.gap) ? component.gap : 0
+  const cellPadding =
+    typeof component.cellPadding === 'number' && Number.isFinite(component.cellPadding)
+      ? component.cellPadding
+      : 0
+  const borderWidth =
+    typeof component.borderWidth === 'number' && Number.isFinite(component.borderWidth)
+      ? component.borderWidth
+      : 1
+  const borderColor =
+    typeof component.borderColor === 'string' ? component.borderColor : '#000000'
+  const textWrap =
+    component.textWrap === 'truncate' ? 'truncate' as const : 'wrap' as const
+  const columnMapping: Record<number, string> = {}
+  if (typeof component.columnMapping === 'object' && component.columnMapping !== null) {
+    const mappingRecord = component.columnMapping as Record<string, unknown>
+    for (const [key, val] of Object.entries(mappingRecord)) {
+      const idx = Number(key)
+      if (Number.isInteger(idx) && typeof val === 'string') {
+        columnMapping[idx] = val
+      }
+    }
+  }
+  const cellSpans: Record<string, TableCellSpan> = {}
+  if (typeof component.cellSpans === 'object' && component.cellSpans !== null) {
+    const spansRecord = component.cellSpans as Record<string, unknown>
+    for (const [key, val] of Object.entries(spansRecord)) {
+      if (typeof val === 'object' && val !== null) {
+        const span = val as Record<string, unknown>
+        if (typeof span.colSpan === 'number' && typeof span.rowSpan === 'number') {
+          cellSpans[key] = { colSpan: span.colSpan, rowSpan: span.rowSpan }
+        }
+      }
+    }
+  }
+  return {
+    kind: 'table',
+    columns,
+    rows,
+    gap,
+    cellPadding,
+    borderWidth,
+    borderColor,
+    textWrap,
+    columnMapping,
+    cellSpans,
+  }
+}
+
 function freezeComponents(components: NodeComponents): NodeComponents {
   const frozen: NodeComponents = {
     camera: components.camera ? Object.freeze({ ...components.camera }) : undefined,
@@ -247,6 +334,20 @@ function freezeComponents(components: NodeComponents): NodeComponents {
       ? Object.freeze({ kind: 'mesh' as const, mesh: cloneMeshData(components.mesh.mesh) })
       : undefined,
     ghost: components.ghost ? Object.freeze({ ...components.ghost }) : undefined,
+    table: components.table
+      ? Object.freeze({
+          kind: 'table' as const,
+          columns: components.table.columns.map((c) => Object.freeze({ ...c })),
+          rows: components.table.rows.map((r) => Object.freeze({ ...r })),
+          gap: components.table.gap,
+          cellPadding: components.table.cellPadding,
+          borderWidth: components.table.borderWidth,
+          borderColor: components.table.borderColor,
+          textWrap: components.table.textWrap,
+          columnMapping: Object.freeze({ ...components.table.columnMapping }),
+          cellSpans: Object.freeze({ ...components.table.cellSpans }),
+        })
+      : undefined,
   }
   return Object.freeze(frozen)
 }

@@ -40,6 +40,24 @@ export type NodeComponentsJSON = {
     }
   }
   readonly ghost?: { readonly kind: 'ghost' }
+  readonly table?: {
+    readonly kind: 'table'
+    readonly columns: readonly {
+      readonly width: number | 'auto'
+      readonly minWidth?: number
+    }[]
+    readonly rows: readonly {
+      readonly width: number | 'auto'
+      readonly minWidth?: number
+    }[]
+    readonly gap?: number
+    readonly cellPadding?: number
+    readonly borderWidth?: number
+    readonly borderColor?: string
+    readonly textWrap?: 'wrap' | 'truncate'
+    readonly columnMapping?: Readonly<Record<number, string>>
+    readonly cellSpans?: Readonly<Record<string, { readonly colSpan: number; readonly rowSpan: number }>>
+  }
 }
 
 export type MaterialJSON = {
