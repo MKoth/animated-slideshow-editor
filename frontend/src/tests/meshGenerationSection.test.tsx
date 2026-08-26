@@ -29,11 +29,14 @@ const mockHasTransparentPixels = vi.mocked(
 
 function createTransparentImageData(width: number, height: number): ImageData {
   const data = new Uint8ClampedArray(width * height * 4)
-  for (let i = 0; i < width * height; i++) {
-    data[i * 4] = 255
-    data[i * 4 + 1] = 0
-    data[i * 4 + 2] = 0
-    data[i * 4 + 3] = 128
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4
+      data[i] = 255
+      data[i + 1] = 0
+      data[i + 2] = 0
+      data[i + 3] = x < width - 1 && y < height - 1 ? 128 : 0
+    }
   }
   return { data, width, height, colorSpace: 'srgb' }
 }
@@ -127,13 +130,30 @@ describe('MeshGenerationSection visibility', () => {
 })
 
 describe('MeshGenerationSection controls', () => {
-  it('shows density slider with default value 50%', () => {
+  it('shows all six parameter sliders', () => {
     const { engine } = renderPanel()
     const { nodeId } = createAssetInstance(engine)
     select(nodeId)
 
-    const slider = screen.getByRole('slider', { name: 'Density' })
-    expect(slider).toHaveValue('50')
+    expect(screen.getByRole('slider', { name: 'Mesh Density' })).toBeInTheDocument()
+    expect(screen.getByRole('slider', { name: 'Boundary Spacing' })).toBeInTheDocument()
+    expect(screen.getByRole('slider', { name: 'Joint Density' })).toBeInTheDocument()
+    expect(screen.getByRole('slider', { name: 'Joint Radius' })).toBeInTheDocument()
+    expect(screen.getByRole('slider', { name: 'Joint Min Dist from Edge' })).toBeInTheDocument()
+    expect(screen.getByRole('slider', { name: 'Max Vertices' })).toBeInTheDocument()
+  })
+
+  it('shows default values for all sliders', () => {
+    const { engine } = renderPanel()
+    const { nodeId } = createAssetInstance(engine)
+    select(nodeId)
+
+    expect(screen.getByRole('slider', { name: 'Mesh Density' })).toHaveValue('30')
+    expect(screen.getByRole('slider', { name: 'Boundary Spacing' })).toHaveValue('8')
+    expect(screen.getByRole('slider', { name: 'Joint Density' })).toHaveValue('2')
+    expect(screen.getByRole('slider', { name: 'Joint Radius' })).toHaveValue('60')
+    expect(screen.getByRole('slider', { name: 'Joint Min Dist from Edge' })).toHaveValue('20')
+    expect(screen.getByRole('slider', { name: 'Max Vertices' })).toHaveValue('300')
   })
 
   it('shows Generate Mesh button when no mesh exists', () => {
@@ -163,7 +183,7 @@ describe('MeshGenerationSection controls', () => {
 
 describe('MeshGenerationSection density preview', () => {
   it('sets preview mesh when density changes and mesh exists', async () => {
-    const imageData = createTransparentImageData(4, 4)
+    const imageData = createTransparentImageData(20, 20)
     mockLoadImageData.mockResolvedValue(imageData)
     mockHasTransparentPixels.mockReturnValue(true)
 
@@ -183,9 +203,9 @@ describe('MeshGenerationSection density preview', () => {
       await new Promise((r) => setTimeout(r, 0))
     })
 
-    const slider = screen.getByRole('slider', { name: 'Density' })
+    const slider = screen.getByRole('slider', { name: 'Mesh Density' })
     act(() => {
-      fireEvent.change(slider, { target: { value: '75' } })
+      fireEvent.change(slider, { target: { value: '50' } })
     })
 
     const state = useMeshPreviewStore.getState()
@@ -194,7 +214,7 @@ describe('MeshGenerationSection density preview', () => {
   })
 
   it('does not set preview mesh when no mesh exists', async () => {
-    const imageData = createTransparentImageData(4, 4)
+    const imageData = createTransparentImageData(20, 20)
     mockLoadImageData.mockResolvedValue(imageData)
     mockHasTransparentPixels.mockReturnValue(true)
 
@@ -206,9 +226,9 @@ describe('MeshGenerationSection density preview', () => {
       await new Promise((r) => setTimeout(r, 0))
     })
 
-    const slider = screen.getByRole('slider', { name: 'Density' })
+    const slider = screen.getByRole('slider', { name: 'Mesh Density' })
     act(() => {
-      fireEvent.change(slider, { target: { value: '75' } })
+      fireEvent.change(slider, { target: { value: '50' } })
     })
 
     const state = useMeshPreviewStore.getState()
@@ -217,7 +237,7 @@ describe('MeshGenerationSection density preview', () => {
   })
 
   it('clears preview mesh on pointer up', async () => {
-    const imageData = createTransparentImageData(4, 4)
+    const imageData = createTransparentImageData(20, 20)
     mockLoadImageData.mockResolvedValue(imageData)
     mockHasTransparentPixels.mockReturnValue(true)
 
@@ -237,20 +257,23 @@ describe('MeshGenerationSection density preview', () => {
       await new Promise((r) => setTimeout(r, 0))
     })
 
-    const slider = screen.getByRole('slider', { name: 'Density' })
+    const slider = screen.getByRole('slider', { name: 'Mesh Density' })
     act(() => {
-      fireEvent.change(slider, { target: { value: '75' } })
+      fireEvent.change(slider, { target: { value: '50' } })
     })
     expect(useMeshPreviewStore.getState().previewMesh).not.toBeNull()
 
     act(() => {
       fireEvent.pointerUp(slider)
     })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
     expect(useMeshPreviewStore.getState().previewMesh).toBeNull()
   })
 
   it('clears preview mesh on component unmount', async () => {
-    const imageData = createTransparentImageData(4, 4)
+    const imageData = createTransparentImageData(20, 20)
     mockLoadImageData.mockResolvedValue(imageData)
     mockHasTransparentPixels.mockReturnValue(true)
 
@@ -270,9 +293,9 @@ describe('MeshGenerationSection density preview', () => {
       await new Promise((r) => setTimeout(r, 0))
     })
 
-    const slider = screen.getByRole('slider', { name: 'Density' })
+    const slider = screen.getByRole('slider', { name: 'Mesh Density' })
     act(() => {
-      fireEvent.change(slider, { target: { value: '75' } })
+      fireEvent.change(slider, { target: { value: '50' } })
     })
     expect(useMeshPreviewStore.getState().previewMesh).not.toBeNull()
 
@@ -284,7 +307,7 @@ describe('MeshGenerationSection density preview', () => {
   })
 
   it('does not mutate committed mesh during preview', async () => {
-    const imageData = createTransparentImageData(4, 4)
+    const imageData = createTransparentImageData(20, 20)
     mockLoadImageData.mockResolvedValue(imageData)
     mockHasTransparentPixels.mockReturnValue(true)
 
@@ -308,9 +331,9 @@ describe('MeshGenerationSection density preview', () => {
       await new Promise((r) => setTimeout(r, 0))
     })
 
-    const slider = screen.getByRole('slider', { name: 'Density' })
+    const slider = screen.getByRole('slider', { name: 'Mesh Density' })
     act(() => {
-      fireEvent.change(slider, { target: { value: '75' } })
+      fireEvent.change(slider, { target: { value: '50' } })
     })
 
     const nodeAfter = engine.getNode(nodeId)
@@ -319,7 +342,7 @@ describe('MeshGenerationSection density preview', () => {
   })
 
   it('preview mesh is not added to undo history', async () => {
-    const imageData = createTransparentImageData(4, 4)
+    const imageData = createTransparentImageData(20, 20)
     mockLoadImageData.mockResolvedValue(imageData)
     mockHasTransparentPixels.mockReturnValue(true)
 
@@ -341,9 +364,9 @@ describe('MeshGenerationSection density preview', () => {
       await new Promise((r) => setTimeout(r, 0))
     })
 
-    const slider = screen.getByRole('slider', { name: 'Density' })
+    const slider = screen.getByRole('slider', { name: 'Mesh Density' })
     act(() => {
-      fireEvent.change(slider, { target: { value: '75' } })
+      fireEvent.change(slider, { target: { value: '50' } })
     })
 
     expect(undoStack.entries.length).toBe(undoCountBefore)
@@ -377,9 +400,9 @@ describe('MeshGenerationSection density preview', () => {
     mockHasTransparentPixels.mockReturnValue(true)
     mockLoadImageData.mockRejectedValue(new Error('Generation failed'))
 
-    const slider = screen.getByRole('slider', { name: 'Density' })
+    const slider = screen.getByRole('slider', { name: 'Mesh Density' })
     act(() => {
-      fireEvent.change(slider, { target: { value: '75' } })
+      fireEvent.change(slider, { target: { value: '50' } })
     })
 
     expect(useMeshPreviewStore.getState().previewMesh).toBeNull()

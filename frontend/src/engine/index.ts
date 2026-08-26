@@ -277,7 +277,12 @@ export { GenerateMeshCommand } from './commands'
 export type { GenerateMeshInverse, GenerateMeshParameters } from './commands'
 export { evaluateMeshDeformation } from './meshDeformationEvaluator'
 export type { DeformedMeshResult } from './meshDeformationEvaluator'
-export type { MeshGeneratorInput, MeshGeneratorResult, ContourPoint } from './meshGenerator'
+export type {
+  MeshGeneratorInput,
+  MeshGeneratorResult,
+  ContourPoint,
+  BoneSegment,
+} from './meshGenerator'
 export {
   extractAlphaChannel,
   traceContour,

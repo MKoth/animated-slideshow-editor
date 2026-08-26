@@ -1,14 +1,27 @@
-import earcut from 'earcut'
+import poly2tri from 'poly2tri'
 import type { MeshVertex, MeshFace } from './mesh'
 
 export interface MeshGeneratorInput {
   readonly imageData: ImageData
-  readonly density: number
+  readonly meshDensity: number
+  readonly boundarySpacing: number
+  readonly jointDensity: number
+  readonly jointRadius: number
+  readonly jointMinDist: number
+  readonly maxVertices: number
+  readonly bones?: ReadonlyArray<BoneSegment>
 }
 
 export interface ContourPoint {
   readonly x: number
   readonly y: number
+}
+
+export interface BoneSegment {
+  readonly sx: number
+  readonly sy: number
+  readonly ex: number
+  readonly ey: number
 }
 
 export interface MeshGeneratorResult {
@@ -25,8 +38,6 @@ interface Contours {
 }
 
 const MIN_VISIBLE_ALPHA = 0
-// Keep synchronous insertion bounded for interactive editor gestures.
-const MAX_INTERIOR_POINTS = 400
 
 export function extractAlphaChannel(imageData: ImageData): Uint8Array {
   validateImageData(imageData)
@@ -38,7 +49,6 @@ export function extractAlphaChannel(imageData: ImageData): Uint8Array {
   return alpha
 }
 
-/** Returns the largest visible boundary. The full generator preserves every boundary and hole. */
 export function traceContour(alpha: Uint8Array, width: number, height: number): ContourPoint[] {
   validateRaster(alpha, width, height)
   const contours = extractContours(alpha, width, height)
@@ -57,48 +67,74 @@ export function triangulateContour(
   if (contour.length < 3) {
     throw new Error('Contour must contain at least three points')
   }
-  const rings = [contour, ...holes]
-  const ringPoints = rings.flatMap((ring) => ring)
-  const holeIndices: number[] = []
-  let offset = contour.length
+
+  const cleanBoundary = ensureClockwise(contour)
+
+  const p2tContour = cleanBoundary.map(
+    (p, i) => new poly2tri.Point(p.x + perturbation(i), p.y + perturbation(i) * 0.7),
+  )
+
+  const swctx = new poly2tri.SweepContext(p2tContour)
+
   for (const hole of holes) {
     if (hole.length < 3) {
       throw new Error('Hole must contain at least three points')
     }
-    holeIndices.push(offset)
-    offset += hole.length
+    const holePoints = ensureCounterClockwise(hole).map(
+      (p, i) => new poly2tri.Point(p.x + perturbation(i), p.y + perturbation(i) * 0.7),
+    )
+    swctx.addHole(holePoints)
   }
-  const flat = ringPoints.flatMap((point) => [point.x, point.y])
-  const indices = earcut(flat, holeIndices, 2)
-  if (indices.length === 0 || indices.length % 3 !== 0) {
+
+  if (interiorPoints.length > 0) {
+    const steinerPoints = interiorPoints.map(
+      (p, i) =>
+        new poly2tri.Point(
+          p.x + perturbation(i + cleanBoundary.length),
+          p.y + perturbation(i + cleanBoundary.length) * 1.3,
+        ),
+    )
+    swctx.addPoints(steinerPoints)
+  }
+
+  swctx.triangulate()
+
+  const triangles = swctx.getTriangles()
+  if (triangles.length === 0) {
     throw new Error('Contour could not be triangulated')
   }
+
+  const allPoints = [...cleanBoundary, ...holes.flat(), ...interiorPoints]
+  const vertMap = new Map<string, number>()
   const faces: MeshFace[] = []
-  for (let i = 0; i < indices.length; i += 3) {
-    faces.push({ v0: indices[i], v1: indices[i + 1], v2: indices[i + 2] })
-  }
-  for (let pointIndex = 0; pointIndex < interiorPoints.length; pointIndex++) {
-    const vertexIndex = ringPoints.length + pointIndex
-    const point = interiorPoints[pointIndex]
-    const containingFace = faces.findIndex((face) =>
-      pointInTriangle(point, ringPoints.concat(interiorPoints), face),
-    )
-    if (containingFace < 0) {
-      throw new Error('Interior point could not be inserted into the triangulation')
+
+  for (const tri of triangles) {
+    const pts = [tri.getPoint(0), tri.getPoint(1), tri.getPoint(2)]
+    const faceIdx: number[] = []
+
+    for (const pt of pts) {
+      const key = `${pt.x.toFixed(2)},${pt.y.toFixed(2)}`
+      if (!vertMap.has(key)) {
+        vertMap.set(key, vertMap.size)
+      }
+      faceIdx.push(vertMap.get(key)!)
     }
-    const face = faces[containingFace]
-    faces.splice(
-      containingFace,
-      1,
-      { v0: face.v0, v1: face.v1, v2: vertexIndex },
-      { v0: face.v1, v1: face.v2, v2: vertexIndex },
-      { v0: face.v2, v1: face.v0, v2: vertexIndex },
-    )
-    const allVertices = ringPoints.concat(interiorPoints)
-    for (let index = faces.length - 1; index >= 0; index--) {
-      if (triangleArea(faces[index], allVertices) === 0) faces.splice(index, 1)
+
+    const a = allPoints[faceIdx[0]]
+    const b = allPoints[faceIdx[1]]
+    const c = allPoints[faceIdx[2]]
+    if (a && b && c) {
+      const cross = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+      if (Math.abs(cross) > 1e-10) {
+        faces.push({ v0: faceIdx[0], v1: faceIdx[1], v2: faceIdx[2] })
+      }
     }
   }
+
+  if (faces.length === 0) {
+    throw new Error('Contour could not be triangulated')
+  }
+
   return faces
 }
 
@@ -123,9 +159,7 @@ export function generateInteriorPoints(
       }
     }
   }
-  if (points.length <= MAX_INTERIOR_POINTS) return points
-  const stride = Math.ceil(points.length / MAX_INTERIOR_POINTS)
-  return points.filter((_, index) => index % stride === 0)
+  return points
 }
 
 export function computeUVs(
@@ -140,8 +174,7 @@ export function computeUVs(
 }
 
 export function generateMesh(input: MeshGeneratorInput): MeshGeneratorResult {
-  validateDensity(input.density)
-  validateImageData(input.imageData)
+  validateMeshInput(input)
   const { width, height } = input.imageData
   const alpha = extractAlphaChannel(input.imageData)
   const contours = extractContours(alpha, width, height)
@@ -149,39 +182,62 @@ export function generateMesh(input: MeshGeneratorInput): MeshGeneratorResult {
     throw new Error('Cannot generate a mesh from a fully transparent image')
   }
 
-  const diagonal = silhouetteDiagonal(contours.outer)
+  const joints = input.bones ? getJoints(input.bones, alpha, width, height, input.jointMinDist) : []
+
   const vertices: MeshVertex[] = []
   const faces: MeshFace[] = []
+
   for (const rawOuter of contours.outer) {
-    const tolerance =
-      diagonal * (0.15 - (0.14 * input.density) / 100) * 0.25 * (1 - input.density / 100)
-    const outer = simplifyContour(rawOuter, tolerance)
+    const boundary = subsampleContour(rawOuter, input.boundarySpacing)
+    const cleanBoundary = removeCollinear(boundary)
+    if (cleanBoundary.length < 3) continue
+
     const holes = contours.holes
-      .filter((hole) => pointInPolygon(hole[0], outer))
+      .filter((hole) => pointInPolygon(hole[0], rawOuter))
       .filter((hole) => {
         const containingOuters = contours.outer
           .filter((candidate) => pointInPolygon(hole[0], candidate))
           .sort((a, b) => Math.abs(area(a)) - Math.abs(area(b)))
         return containingOuters[0] === rawOuter
       })
-      .map((hole) => simplifyContour(hole, tolerance))
-    const interior = generateInteriorPoints(outer, diagonal, input.density).filter(
-      (point) => !holes.some((hole) => pointInPolygon(point, hole)),
+      .map((hole) => {
+        const subsampled = subsampleContour(hole, input.boundarySpacing)
+        return removeCollinear(subsampled)
+      })
+      .filter((hole) => hole.length >= 3)
+
+    const interior = generateAdaptiveInteriorPoints(
+      cleanBoundary,
+      joints,
+      alpha,
+      width,
+      height,
+      input.meshDensity,
+      input.jointDensity,
+      input.jointRadius,
+    ).filter((point) => !holes.some((hole) => pointInPolygon(point, hole)))
+
+    const allowedInterior = Math.max(
+      0,
+      input.maxVertices - cleanBoundary.length - holes.flat().length,
     )
+    const limitedInterior = interior.slice(0, allowedInterior)
+
     const base = vertices.length
-    vertices.push(...outer, ...holes.flat(), ...interior)
+    vertices.push(...cleanBoundary, ...holes.flat(), ...limitedInterior)
+
     faces.push(
-      ...triangulateContour(outer, holes, interior).map((face) => ({
+      ...triangulateContour(cleanBoundary, holes, limitedInterior).map((face) => ({
         v0: face.v0 + base,
         v1: face.v1 + base,
         v2: face.v2 + base,
       })),
     )
   }
+
   const referenced = new Set(faces.flatMap((face) => [face.v0, face.v1, face.v2]))
   if (
     faces.length === 0 ||
-    referenced.size !== vertices.length ||
     faces.some(
       (face) => face.v0 === face.v1 || face.v1 === face.v2 || triangleArea(face, vertices) === 0,
     )
@@ -190,11 +246,253 @@ export function generateMesh(input: MeshGeneratorInput): MeshGeneratorResult {
       `Generated mesh contains no valid triangles (${referenced.size}/${vertices.length})`,
     )
   }
-  const uvs = computeUVs(vertices, width, height)
+
+  const usedIndices = Array.from(referenced).sort((a, b) => a - b)
+  const indexMap = new Map<number, number>()
+  const remappedVertices: MeshVertex[] = []
+  for (let i = 0; i < usedIndices.length; i++) {
+    indexMap.set(usedIndices[i], i)
+    remappedVertices.push(vertices[usedIndices[i]])
+  }
+
+  const remappedFaces: MeshFace[] = faces.map((face) => ({
+    v0: indexMap.get(face.v0)!,
+    v1: indexMap.get(face.v1)!,
+    v2: indexMap.get(face.v2)!,
+  }))
+
+  const uvs = computeUVs(remappedVertices, width, height)
   const halfW = width / 2
   const halfH = height / 2
-  const centered = vertices.map((v) => ({ x: v.x - halfW, y: v.y - halfH }))
-  return { vertices: centered, faces, uvs, width, height }
+  const centered = remappedVertices.map((v) => ({ x: v.x - halfW, y: v.y - halfH }))
+  return { vertices: centered, faces: remappedFaces, uvs, width, height }
+}
+
+function generateAdaptiveInteriorPoints(
+  contour: readonly ContourPoint[],
+  joints: readonly ContourPoint[],
+  alpha: Uint8Array,
+  width: number,
+  height: number,
+  meshDensity: number,
+  jointDensity: number,
+  jointRadius: number,
+): ContourPoint[] {
+  const points: ContourPoint[] = []
+  const bounds = computeBounds(contour)
+  const hasJoints = joints.length > 0
+
+  const gridSpacing = Math.max(4, 80 - meshDensity + 5)
+
+  for (
+    let y = Math.floor(bounds.minY) + Math.floor(gridSpacing / 2);
+    y < bounds.maxY;
+    y += gridSpacing
+  ) {
+    for (
+      let x = Math.floor(bounds.minX) + Math.floor(gridSpacing / 2);
+      x < bounds.maxX;
+      x += gridSpacing
+    ) {
+      const px = Math.round(x)
+      const py = Math.round(y)
+
+      if (px < 0 || px >= width || py < 0 || py >= height) continue
+      if (alpha[py * width + px] === 0) continue
+
+      points.push({ x, y })
+
+      if (hasJoints) {
+        let minDist = Infinity
+        for (const j of joints) {
+          const d = Math.hypot(x - j.x, y - j.y)
+          if (d < minDist) minDist = d
+        }
+
+        if (minDist < jointRadius) {
+          const extraCount = Math.floor((jointDensity - 1) * 4)
+
+          if (extraCount > 0) {
+            const subSpacing = gridSpacing / (extraCount + 1)
+
+            for (let sy = 0; sy <= extraCount; sy++) {
+              for (let sx = 0; sx <= extraCount; sx++) {
+                const subX = x - gridSpacing / 2 + subSpacing * (sx + 0.5)
+                const subY = y - gridSpacing / 2 + subSpacing * (sy + 0.5)
+
+                if (Math.abs(subX - x) < 0.5 && Math.abs(subY - y) < 0.5) continue
+
+                const spx = Math.round(subX)
+                const spy = Math.round(subY)
+                if (
+                  spx >= 0 &&
+                  spx < width &&
+                  spy >= 0 &&
+                  spy < height &&
+                  alpha[spy * width + spx] > 0
+                ) {
+                  points.push({ x: subX, y: subY })
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (hasJoints) {
+    const ringCount = 12
+    const rings = Math.min(3, Math.ceil(jointDensity))
+
+    for (const j of joints) {
+      for (let ring = 1; ring <= rings; ring++) {
+        const r = gridSpacing * 0.3 * ring
+        for (let i = 0; i < ringCount; i++) {
+          const angle = (i / ringCount) * Math.PI * 2
+          const px = Math.round(j.x + Math.cos(angle) * r)
+          const py = Math.round(j.y + Math.sin(angle) * r)
+          if (px >= 0 && px < width && py >= 0 && py < height && alpha[py * width + px] > 0) {
+            points.push({
+              x: j.x + Math.cos(angle) * r,
+              y: j.y + Math.sin(angle) * r,
+            })
+          }
+        }
+      }
+    }
+  }
+
+  return points
+}
+
+function getJoints(
+  bones: ReadonlyArray<BoneSegment>,
+  alpha: Uint8Array,
+  width: number,
+  height: number,
+  jointMinDist: number,
+): ContourPoint[] {
+  const map = new Map<string, number>()
+
+  for (const b of bones) {
+    const sk = `${b.sx.toFixed(1)},${b.sy.toFixed(1)}`
+    const ek = `${b.ex.toFixed(1)},${b.ey.toFixed(1)}`
+    map.set(sk, (map.get(sk) || 0) + 1)
+    map.set(ek, (map.get(ek) || 0) + 1)
+  }
+
+  const joints: ContourPoint[] = []
+
+  for (const [k, v] of map) {
+    if (v >= 2) {
+      const parts = k.split(',').map(Number)
+      joints.push({ x: parts[0], y: parts[1] })
+    }
+  }
+
+  for (const b of bones) {
+    for (const pt of [
+      { x: b.sx, y: b.sy },
+      { x: b.ex, y: b.ey },
+    ]) {
+      const key = `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`
+      if ((map.get(key) ?? 0) >= 2) continue
+
+      if (joints.some((j) => Math.hypot(j.x - pt.x, j.y - pt.y) < 1)) continue
+
+      const dist = distanceToEdge(pt.x, pt.y, alpha, width, height)
+      if (dist >= jointMinDist) {
+        joints.push(pt)
+      }
+    }
+  }
+
+  return joints
+}
+
+function distanceToEdge(
+  x: number,
+  y: number,
+  alpha: Uint8Array,
+  width: number,
+  height: number,
+): number {
+  const px = Math.round(x)
+  const py = Math.round(y)
+
+  if (px < 0 || px >= width || py < 0 || py >= height) return 0
+  if (alpha[py * width + px] === 0) return 0
+
+  const maxSearch = 100
+  for (let r = 1; r <= maxSearch; r++) {
+    for (let dx = -r; dx <= r; dx++) {
+      for (let dy = -r; dy <= r; dy++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue
+
+        const nx = px + dx
+        const ny = py + dy
+
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue
+
+        if (alpha[ny * width + nx] === 0) {
+          let isEdge = false
+          for (const [ox, oy] of [
+            [0, 1],
+            [0, -1],
+            [1, 0],
+            [-1, 0],
+          ]) {
+            const ex = nx + ox
+            const ey = ny + oy
+            if (ex >= 0 && ex < width && ey >= 0 && ey < height && alpha[ey * width + ex] > 0) {
+              isEdge = true
+              break
+            }
+          }
+          if (isEdge) {
+            return Math.hypot(dx, dy) - 1
+          }
+        }
+      }
+    }
+  }
+
+  return maxSearch
+}
+
+function subsampleContour(contour: readonly ContourPoint[], spacing: number): ContourPoint[] {
+  if (contour.length === 0) return []
+
+  const result: ContourPoint[] = [contour[0]]
+  let dist = 0
+
+  for (let i = 1; i < contour.length; i++) {
+    const dx = contour[i].x - contour[i - 1].x
+    const dy = contour[i].y - contour[i - 1].y
+    dist += Math.hypot(dx, dy)
+
+    if (dist >= spacing) {
+      result.push(contour[i])
+      dist = 0
+    }
+  }
+
+  return result
+}
+
+function perturbation(index: number): number {
+  return 0.001 * ((index % 3) - 1)
+}
+
+function ensureClockwise(contour: readonly ContourPoint[]): ContourPoint[] {
+  const a = area(contour)
+  return a > 0 ? [...contour] : [...contour].reverse()
+}
+
+function ensureCounterClockwise(contour: readonly ContourPoint[]): ContourPoint[] {
+  const a = area(contour)
+  return a < 0 ? [...contour] : [...contour].reverse()
 }
 
 function extractContours(alpha: Uint8Array, width: number, height: number): Contours {
@@ -268,29 +566,6 @@ function removeCollinear(points: ContourPoint[]): ContourPoint[] {
   })
 }
 
-function simplifyContour(points: readonly ContourPoint[], tolerance: number): ContourPoint[] {
-  if (tolerance <= 0 || points.length < 4) return [...points]
-  const result: ContourPoint[] = []
-  for (let index = 0; index < points.length; index++) {
-    const previous = points[(index + points.length - 1) % points.length]
-    const current = points[index]
-    const next = points[(index + 1) % points.length]
-    const distance =
-      Math.abs(
-        (next.x - previous.x) * (previous.y - current.y) -
-          (previous.x - current.x) * (next.y - previous.y),
-      ) / Math.hypot(next.x - previous.x, next.y - previous.y)
-    if (distance > tolerance || index === 0) result.push(current)
-  }
-  return result.length >= 3 ? result : [...points]
-}
-
-function silhouetteDiagonal(contours: readonly (readonly ContourPoint[])[]): number {
-  const points = contours.flat()
-  const bounds = computeBounds(points)
-  return Math.hypot(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY)
-}
-
 function computeBounds(points: readonly ContourPoint[]): {
   readonly minX: number
   readonly minY: number
@@ -339,20 +614,20 @@ function pointInPolygon(point: ContourPoint, polygon: readonly ContourPoint[]): 
   return inside
 }
 
-function pointInTriangle(
-  point: ContourPoint,
-  vertices: readonly ContourPoint[],
-  face: MeshFace,
-): boolean {
-  const a = vertices[face.v0]
-  const b = vertices[face.v1]
-  const c = vertices[face.v2]
-  const sign = (p1: ContourPoint, p2: ContourPoint, p3: ContourPoint) =>
-    (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y)
-  const d1 = sign(point, a, b)
-  const d2 = sign(point, b, c)
-  const d3 = sign(point, c, a)
-  return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0))
+function validateMeshInput(input: MeshGeneratorInput): void {
+  validateImageData(input.imageData)
+  validateRange(input.meshDensity, 10, 80, 'Mesh density')
+  validateRange(input.boundarySpacing, 2, 30, 'Boundary spacing')
+  validateRange(input.jointDensity, 1.0, 5.0, 'Joint density')
+  validateRange(input.jointRadius, 10, 150, 'Joint radius')
+  validateRange(input.jointMinDist, 5, 80, 'Joint min distance')
+  validateRange(input.maxVertices, 50, 1000, 'Max vertices')
+}
+
+function validateRange(value: number, min: number, max: number, label: string): void {
+  if (!Number.isFinite(value))
+    throw new Error(`${label} must be a finite number between ${min} and ${max}`)
+  if (value < min || value > max) throw new Error(`${label} must be between ${min} and ${max}`)
 }
 
 function validateDensity(density: number): void {
