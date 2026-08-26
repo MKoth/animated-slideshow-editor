@@ -10,6 +10,7 @@ import {
   setMeshPlaceholderSize,
   registerMeshDisplay,
 } from './placeholder'
+import { createTableContainer, DEFAULT_TABLE_WIDTH } from './tableRenderer'
 import type { TextureCache } from './textureCache'
 
 const placeholderByContainer = new WeakMap<PixiContainer, PixiContainer>()
@@ -29,7 +30,11 @@ export function createNodeContainer(
   applyTransform(container, node)
   container.visible = node.visible
   container.alpha = node.opacity
-  if (node.components.mesh) {
+  if (node.components.table) {
+    const tablePlaceholder = createTableContainer(pixi, node, DEFAULT_TABLE_WIDTH)
+    placeholderByContainer.set(container, tablePlaceholder)
+    container.addChild(tablePlaceholder)
+  } else if (node.components.mesh) {
     const textureKey = node.components.assetInstance?.assetDefinitionId ?? node.id
     const meshPlaceholder = createMeshPlaceholder(pixi, node, cache.get(textureKey))
     placeholderByContainer.set(container, meshPlaceholder)

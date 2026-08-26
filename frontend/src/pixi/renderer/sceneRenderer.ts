@@ -40,6 +40,7 @@ import {
   placeholderOf,
 } from './nodeRenderer'
 import { applyAssetTexture, applyMissingPlaceholder, placeholderSize } from './placeholder'
+import { rebuildTable, tableLayoutOf, tableSizeOf, DEFAULT_TABLE_WIDTH } from './tableRenderer'
 import { createNodeShaderFilter, applyFilterUniforms } from './nodeShader'
 import { bindFilterSamplers } from './samplerBinding'
 import type { ShaderProgramCache } from './programCache'
@@ -83,6 +84,7 @@ export class SceneRenderer {
   readonly #nodeShaders = new Map<string, NodeShaderState>()
   readonly #missingNodes = new Set<string>()
   readonly #ikOverrides = new Map<string, number>()
+  readonly #tableComponentHashes = new Map<string, string>()
   readonly #scratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #materialScratch: EffectiveMaterialScratch = effectiveMaterialScratch()
   readonly #shaderScratch: EffectiveShaderScratch = effectiveShaderScratch()
@@ -156,6 +158,7 @@ export class SceneRenderer {
     this.#lastMaterials.clear()
     this.#nodeShaders.clear()
     this.#missingNodes.clear()
+    this.#tableComponentHashes.clear()
     this.#scene = scene
     this.#slideId = slideId
     if (!scene) {
@@ -342,6 +345,41 @@ export class SceneRenderer {
     this.#onNodeSizeChanged(nodeId)
   }
 
+  handleTableChanged(nodeId: string): void {
+    const scene = this.#scene
+    if (!scene) {
+      return
+    }
+    const node = scene.getNode(nodeId)
+    if (!node || !node.components.table) {
+      return
+    }
+    const container = this.#containers.get(nodeId)
+    if (!container) {
+      return
+    }
+    const placeholder = placeholderOf(container)
+    if (!placeholder) {
+      return
+    }
+    const previousLayout = tableLayoutOf(placeholder)
+    const availableWidth = this.#sizes.get(nodeId)?.width ?? DEFAULT_TABLE_WIDTH
+    rebuildTable(this.#pixi, placeholder, node, availableWidth)
+    const newLayout = tableLayoutOf(placeholder)
+    if (
+      previousLayout &&
+      newLayout &&
+      (previousLayout.totalWidth !== newLayout.totalWidth ||
+        previousLayout.totalHeight !== newLayout.totalHeight)
+    ) {
+      this.#sizes.set(nodeId, {
+        width: newLayout.totalWidth,
+        height: newLayout.totalHeight,
+      })
+      this.#onNodeSizeChanged(nodeId)
+    }
+  }
+
   previewTransform(nodeId: string, x: number, y: number): void {
     const container = this.#containers.get(nodeId)
     if (!container) {
@@ -442,6 +480,15 @@ export class SceneRenderer {
     const container = this.#containers.get(nodeId)
     if (!scene || !slideId || !scene.getNode(nodeId) || !container) {
       return
+    }
+    const node = scene.getNode(nodeId)
+    if (node && node.components.table) {
+      const tableHash = JSON.stringify(node.components.table)
+      const previousHash = this.#tableComponentHashes.get(nodeId)
+      if (previousHash !== tableHash) {
+        this.#tableComponentHashes.set(nodeId, tableHash)
+        this.handleTableChanged(nodeId)
+      }
     }
     const time = this.#currentTime.getTime(slideId)
     const state = this.#engine.evaluateNode(nodeId, time, this.#scratch)
@@ -666,6 +713,13 @@ export class SceneRenderer {
   }
 
   #recordSize(node: SceneNode, container: PixiContainer): void {
+    if (node.components.table) {
+      const tableSize = tableSizeOf(placeholderOf(container) ?? container)
+      if (tableSize) {
+        this.#sizes.set(node.id, tableSize)
+      }
+      return
+    }
     const placeholder = placeholderOf(container)
     const size = placeholder ? placeholderSize(placeholder) : null
     if (size) {
