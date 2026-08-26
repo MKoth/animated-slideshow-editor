@@ -2,6 +2,13 @@ import type { Slide } from './slide'
 import type { EmbeddedAsset } from './embeddedAsset'
 import type { EmbeddedMaterialDefinition } from './embeddedMaterial'
 import type { EmbeddedShaderDefinition } from './embeddedShader'
+import type {
+  EmbeddedDataSourceDefinition,
+  EmbeddedFlowchartDataSourceDefinition,
+} from './embeddedDataSource'
+
+export type EmbeddedDataSourceUnion =
+  EmbeddedDataSourceDefinition | EmbeddedFlowchartDataSourceDefinition
 
 export interface ProjectMetadata {
   readonly id: string
@@ -30,6 +37,7 @@ export class Project {
   readonly #embeddedAssets: EmbeddedAsset[]
   readonly #embeddedMaterials: EmbeddedMaterialDefinition[]
   readonly #embeddedShaders: EmbeddedShaderDefinition[]
+  readonly #embeddedDataSources: EmbeddedDataSourceUnion[]
 
   constructor(
     metadata: ProjectMetadata,
@@ -38,6 +46,7 @@ export class Project {
     embeddedAssets: readonly EmbeddedAsset[] = [],
     embeddedMaterials: readonly EmbeddedMaterialDefinition[] = [],
     embeddedShaders: readonly EmbeddedShaderDefinition[] = [],
+    embeddedDataSources: readonly EmbeddedDataSourceUnion[] = [],
   ) {
     this.id = metadata.id
     this.name = metadata.name
@@ -50,6 +59,7 @@ export class Project {
     this.#embeddedAssets = [...embeddedAssets]
     this.#embeddedMaterials = [...embeddedMaterials]
     this.#embeddedShaders = [...embeddedShaders]
+    this.#embeddedDataSources = [...embeddedDataSources]
   }
 
   get embeddedAssets(): readonly EmbeddedAsset[] {
@@ -62,6 +72,10 @@ export class Project {
 
   get embeddedShaders(): readonly EmbeddedShaderDefinition[] {
     return this.#embeddedShaders
+  }
+
+  get embeddedDataSources(): readonly EmbeddedDataSourceUnion[] {
+    return this.#embeddedDataSources
   }
 
   embedAsset(asset: EmbeddedAsset): void {
@@ -88,6 +102,15 @@ export class Project {
       this.#embeddedShaders[index] = definition
     } else {
       this.#embeddedShaders.push(definition)
+    }
+  }
+
+  embedDataSource(definition: EmbeddedDataSourceUnion): void {
+    const index = this.#embeddedDataSources.findIndex((entry) => entry.id === definition.id)
+    if (index >= 0) {
+      this.#embeddedDataSources[index] = definition
+    } else {
+      this.#embeddedDataSources.push(definition)
     }
   }
 }

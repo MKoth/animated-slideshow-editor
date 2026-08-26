@@ -35,7 +35,7 @@ import type { EmbeddedAsset } from './embeddedAsset'
 import type { EmbeddedMaterialDefinition } from './embeddedMaterial'
 import { embeddedShaderParameters } from './embeddedShader'
 import type { EmbeddedShaderDefinition } from './embeddedShader'
-import type { CreateProjectInput, Project } from './project'
+import type { CreateProjectInput, EmbeddedDataSourceUnion, Project } from './project'
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
 import { walkPreOrder } from './sceneNode'
@@ -88,6 +88,7 @@ export class Engine {
   readonly #embeddedAssets = new Map<string, EmbeddedAsset>()
   readonly #embeddedMaterials = new Map<string, EmbeddedMaterialDefinition>()
   readonly #embeddedShaders = new Map<string, EmbeddedShaderDefinition>()
+  readonly #embeddedDataSources = new Map<string, EmbeddedDataSourceUnion>()
   #activeSlideId: string | null = null
 
   constructor() {
@@ -159,6 +160,7 @@ export class Engine {
     this.#embeddedAssets.clear()
     this.#embeddedMaterials.clear()
     this.#embeddedShaders.clear()
+    this.#embeddedDataSources.clear()
     this.#clips.clear()
     return this.#projects.create(input)
   }
@@ -545,6 +547,19 @@ export class Engine {
     }
     project.embedShader(definition)
     this.#embeddedShaders.set(definition.id, definition)
+  }
+
+  get embeddedDataSources(): readonly EmbeddedDataSourceUnion[] {
+    return [...this.#embeddedDataSources.values()]
+  }
+
+  embedDataSource(definition: EmbeddedDataSourceUnion): void {
+    const project = this.#projects.current
+    if (!project) {
+      throw new Error('No project exists in memory')
+    }
+    project.embedDataSource(definition)
+    this.#embeddedDataSources.set(definition.id, definition)
   }
 
   get assetDefinitions(): readonly AssetDefinition[] {
@@ -1063,6 +1078,10 @@ export class Engine {
     for (const shader of project.embeddedShaders) {
       this.#embeddedShaders.set(shader.id, shader)
     }
+    this.#embeddedDataSources.clear()
+    for (const ds of project.embeddedDataSources) {
+      this.#embeddedDataSources.set(ds.id, ds)
+    }
     for (const slide of project.slides) {
       this.#scenes.install(slide.scene)
     }
@@ -1099,6 +1118,9 @@ export function toReadOnly(engine: Engine): EnginePublic {
     get embeddedShaders() {
       return engine.embeddedShaders
     },
+    get embeddedDataSources() {
+      return engine.embeddedDataSources
+    },
     get activeSlideId() {
       return engine.activeSlideId
     },
@@ -1121,6 +1143,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     embedAsset: (asset) => engine.embedAsset(asset),
     embedMaterial: (definition) => engine.embedMaterial(definition),
     embedShader: (definition) => engine.embedShader(definition),
+    embedDataSource: (definition) => engine.embedDataSource(definition),
     getKeyframes: (nodeId, property) => engine.getKeyframes(nodeId, property),
     getMaterialKeyframes: (nodeId, parameter) => engine.getMaterialKeyframes(nodeId, parameter),
     hasMaterialTrack: (nodeId, parameter) => engine.hasMaterialTrack(nodeId, parameter),

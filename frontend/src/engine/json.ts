@@ -155,10 +155,44 @@ export type EmbeddedShaderJSON = {
   readonly is_builtin: boolean
 }
 
+export type EmbeddedDataPointJSON = {
+  readonly label: string
+  readonly value: number
+  readonly series?: string
+  readonly tooltip?: string
+  readonly color?: string
+}
+
+export type EmbeddedDataSourceJSON = {
+  readonly id: string
+  readonly name: string
+  readonly data_points: readonly EmbeddedDataPointJSON[]
+}
+
+export type EmbeddedFlowchartNodeJSON = {
+  readonly id: string
+  readonly label: string
+}
+
+export type EmbeddedFlowchartEdgeJSON = {
+  readonly from: string
+  readonly to: string
+}
+
+export type EmbeddedFlowchartDataSourceJSON = {
+  readonly id: string
+  readonly name: string
+  readonly flowchart: {
+    readonly nodes: readonly EmbeddedFlowchartNodeJSON[]
+    readonly edges: readonly EmbeddedFlowchartEdgeJSON[]
+  }
+}
+
 export type LessonLibraryJSON = {
   readonly assets?: readonly EmbeddedAssetJSON[]
   readonly materials?: readonly EmbeddedMaterialJSON[]
   readonly shaders?: readonly EmbeddedShaderJSON[]
+  readonly data_sources?: readonly (EmbeddedDataSourceJSON | EmbeddedFlowchartDataSourceJSON)[]
   readonly clips?: readonly ClipJSON[]
 }
 

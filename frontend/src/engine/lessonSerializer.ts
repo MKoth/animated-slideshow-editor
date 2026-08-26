@@ -10,6 +10,7 @@ import {
   buildEmbeddedAssetsFromJSON,
   buildEmbeddedMaterialsFromJSON,
   buildEmbeddedShadersFromJSON,
+  buildEmbeddedDataSourcesFromJSON,
   embeddedLibraryJSON,
   validateLibrary,
   validateLibraryClips,
@@ -61,11 +62,13 @@ export function toLessonJSON(project: Project, clips?: readonly ClipDefinition[]
   const library =
     project.embeddedAssets.length > 0 ||
     project.embeddedMaterials.length > 0 ||
-    project.embeddedShaders.length > 0
+    project.embeddedShaders.length > 0 ||
+    project.embeddedDataSources.length > 0
       ? embeddedLibraryJSON(
           project.embeddedAssets,
           project.embeddedMaterials,
           project.embeddedShaders,
+          project.embeddedDataSources,
         )
       : undefined
   return {
@@ -529,6 +532,7 @@ export function buildProjectFromJSON(
     buildEmbeddedAssetsFromJSON(json.library),
     buildEmbeddedMaterialsFromJSON(json.library),
     buildEmbeddedShadersFromJSON(json.library),
+    buildEmbeddedDataSourcesFromJSON(json.library),
   )
 }
 

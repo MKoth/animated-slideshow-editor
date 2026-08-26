@@ -5,6 +5,7 @@ import type { ShaderDefinition } from './shaderDefinition'
 import type { EmbeddedAsset } from './embeddedAsset'
 import type { EmbeddedMaterialDefinition } from './embeddedMaterial'
 import type { EmbeddedShaderDefinition } from './embeddedShader'
+import type { EmbeddedDataSourceUnion } from './project'
 import type { Project } from './project'
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
@@ -35,6 +36,7 @@ export interface EnginePublic {
   readonly embeddedAssets: readonly EmbeddedAsset[]
   readonly embeddedMaterials: readonly EmbeddedMaterialDefinition[]
   readonly embeddedShaders: readonly EmbeddedShaderDefinition[]
+  readonly embeddedDataSources: readonly EmbeddedDataSourceUnion[]
   readonly activeSlideId: string | null
   readonly clips: readonly ClipDefinition[]
   subscribe(listener: (event: EngineEvent) => void): Unsubscribe
@@ -53,6 +55,7 @@ export interface EnginePublic {
   embedAsset(asset: EmbeddedAsset): void
   embedMaterial(definition: EmbeddedMaterialDefinition): void
   embedShader(definition: EmbeddedShaderDefinition): void
+  embedDataSource(definition: EmbeddedDataSourceUnion): void
   getKeyframes(nodeId: string, property: AnimationProperty): readonly Keyframe[]
   getMaterialKeyframes(nodeId: string, parameter: string): readonly Keyframe[]
   hasMaterialTrack(nodeId: string, parameter: string): boolean

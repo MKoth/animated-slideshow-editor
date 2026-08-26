@@ -1,6 +1,10 @@
 import type { EmbeddedAsset } from './embeddedAsset'
 import type { EmbeddedMaterialDefinition } from './embeddedMaterial'
 import type { EmbeddedShaderDefinition } from './embeddedShader'
+import type {
+  EmbeddedDataSourceDefinition,
+  EmbeddedFlowchartDataSourceDefinition,
+} from './embeddedDataSource'
 import type { LessonLibraryJSON } from './json'
 import { isRecord } from './guards'
 import { ClipDefinition } from './clipDefinition'
@@ -9,6 +13,9 @@ export function embeddedLibraryJSON(
   assets: readonly EmbeddedAsset[],
   materials: readonly EmbeddedMaterialDefinition[],
   shaders: readonly EmbeddedShaderDefinition[],
+  dataSources: readonly (
+    EmbeddedDataSourceDefinition | EmbeddedFlowchartDataSourceDefinition
+  )[] = [],
   clips: readonly ClipDefinition[] = [],
 ): LessonLibraryJSON {
   const library: LessonLibraryJSON = {
@@ -44,6 +51,33 @@ export function embeddedLibraryJSON(
       default_uniforms: shader.defaultUniforms.map((uniform) => ({ ...uniform })),
       is_builtin: shader.isBuiltin,
     })),
+    ...(dataSources.length > 0
+      ? {
+          data_sources: dataSources.map((ds) => {
+            if ('nodes' in ds) {
+              return {
+                id: ds.id,
+                name: ds.name,
+                flowchart: {
+                  nodes: ds.nodes.map((n) => ({ id: n.id, label: n.label })),
+                  edges: ds.edges.map((e) => ({ from: e.from, to: e.to })),
+                },
+              }
+            }
+            return {
+              id: ds.id,
+              name: ds.name,
+              data_points: ds.dataPoints.map((p) => ({
+                label: p.label,
+                value: p.value,
+                ...(p.series !== undefined ? { series: p.series } : {}),
+                ...(p.tooltip !== undefined ? { tooltip: p.tooltip } : {}),
+                ...(p.color !== undefined ? { color: p.color } : {}),
+              })),
+            }
+          }),
+        }
+      : {}),
     ...(clips.length > 0 ? { clips: clips.map((clip) => clip.toJSON()) } : {}),
   }
   return library
@@ -57,7 +91,7 @@ export function validateLibrary(errors: string[], library: unknown): void {
     errors.push('Invalid lesson JSON: library must be an object')
     return
   }
-  for (const reserved of ['assets', 'materials', 'shaders', 'clips'] as const) {
+  for (const reserved of ['assets', 'materials', 'shaders', 'data_sources', 'clips'] as const) {
     if (library[reserved] !== undefined && !Array.isArray(library[reserved])) {
       errors.push(`Invalid lesson JSON: library.${reserved} must be an array`)
     }
@@ -65,6 +99,7 @@ export function validateLibrary(errors: string[], library: unknown): void {
   validateLibraryAssets(errors, library.assets)
   validateLibraryMaterials(errors, library.materials)
   validateLibraryShaders(errors, library.shaders)
+  validateLibraryDataSources(errors, library.data_sources)
   validateLibraryClips(errors, library.clips)
 }
 
@@ -202,6 +237,181 @@ function validateLibraryShaders(errors: string[], shaders: unknown): void {
   }
 }
 
+function validateLibraryDataSources(errors: string[], dataSources: unknown): void {
+  if (dataSources === undefined) {
+    return
+  }
+  if (!Array.isArray(dataSources)) {
+    return
+  }
+  const dsIds = new Set<string>()
+  for (const ds of dataSources) {
+    if (!isRecord(ds)) {
+      errors.push('Library data source must be an object')
+      continue
+    }
+    requireNonEmptyString(errors, ds.id, 'Library data source id')
+    requireNonEmptyString(errors, ds.name, 'Library data source name')
+    if (typeof ds.id === 'string' && ds.id !== '') {
+      if (dsIds.has(ds.id)) {
+        errors.push(`A library data source with id "${ds.id}" already exists`)
+      } else {
+        dsIds.add(ds.id)
+      }
+    }
+    if (isRecord(ds) && isRecord(ds.flowchart)) {
+      validateFlowchartDataSource(errors, ds)
+    } else if (Array.isArray(ds.data_points)) {
+      validateFlatDataSource(errors, ds)
+    } else {
+      errors.push(
+        `Library data source "${String(ds.id)}" must have either data_points or a flowchart object`,
+      )
+    }
+  }
+}
+
+function validateFlatDataSource(errors: string[], ds: Record<string, unknown>): void {
+  const labels = new Set<string>()
+  for (const point of ds.data_points as unknown[]) {
+    if (!isRecord(point)) {
+      errors.push(`Library data source "${String(ds.id)}" data point must be an object`)
+      continue
+    }
+    requireNonEmptyString(
+      errors,
+      point.label,
+      `Library data source "${String(ds.id)}" data point label`,
+    )
+    if (typeof point.value !== 'number' || !Number.isFinite(point.value)) {
+      errors.push(
+        `Library data source "${String(ds.id)}" data point "${String(point.label)}" value must be a finite number`,
+      )
+    }
+    if (typeof point.series !== 'string' && point.series !== undefined) {
+      errors.push(
+        `Library data source "${String(ds.id)}" data point "${String(point.label)}" series must be a string`,
+      )
+    }
+    if (typeof point.tooltip !== 'string' && point.tooltip !== undefined) {
+      errors.push(
+        `Library data source "${String(ds.id)}" data point "${String(point.label)}" tooltip must be a string`,
+      )
+    }
+    if (typeof point.color !== 'string' && point.color !== undefined) {
+      errors.push(
+        `Library data source "${String(ds.id)}" data point "${String(point.label)}" color must be a string`,
+      )
+    }
+    if (typeof point.label === 'string' && point.label !== '') {
+      if (labels.has(point.label)) {
+        errors.push(
+          `Library data source "${String(ds.id)}" has duplicate data point label: "${point.label}"`,
+        )
+      } else {
+        labels.add(point.label)
+      }
+    }
+  }
+}
+
+function validateFlowchartDataSource(errors: string[], ds: Record<string, unknown>): void {
+  const flowchart = ds.flowchart as Record<string, unknown>
+  if (!Array.isArray(flowchart.nodes)) {
+    errors.push(`Library data source "${String(ds.id)}" flowchart nodes must be an array`)
+    return
+  }
+  if (!Array.isArray(flowchart.edges)) {
+    errors.push(`Library data source "${String(ds.id)}" flowchart edges must be an array`)
+    return
+  }
+  const nodeIds = new Set<string>()
+  for (const node of flowchart.nodes) {
+    if (!isRecord(node)) {
+      errors.push(`Library data source "${String(ds.id)}" flowchart node must be an object`)
+      continue
+    }
+    requireNonEmptyString(
+      errors,
+      node.id,
+      `Library data source "${String(ds.id)}" flowchart node id`,
+    )
+    requireNonEmptyString(
+      errors,
+      node.label,
+      `Library data source "${String(ds.id)}" flowchart node label`,
+    )
+    if (typeof node.id === 'string' && node.id !== '') {
+      if (nodeIds.has(node.id)) {
+        errors.push(
+          `Library data source "${String(ds.id)}" has duplicate flowchart node id: "${node.id}"`,
+        )
+      } else {
+        nodeIds.add(node.id)
+      }
+    }
+  }
+  for (const edge of flowchart.edges) {
+    if (!isRecord(edge)) {
+      errors.push(`Library data source "${String(ds.id)}" flowchart edge must be an object`)
+      continue
+    }
+    requireNonEmptyString(
+      errors,
+      edge.from,
+      `Library data source "${String(ds.id)}" flowchart edge from`,
+    )
+    requireNonEmptyString(
+      errors,
+      edge.to,
+      `Library data source "${String(ds.id)}" flowchart edge to`,
+    )
+    if (typeof edge.from === 'string' && edge.from !== '' && !nodeIds.has(edge.from)) {
+      errors.push(
+        `Library data source "${String(ds.id)}" flowchart edge references unknown node: "${edge.from}"`,
+      )
+    }
+    if (typeof edge.to === 'string' && edge.to !== '' && !nodeIds.has(edge.to)) {
+      errors.push(
+        `Library data source "${String(ds.id)}" flowchart edge references unknown node: "${edge.to}"`,
+      )
+    }
+  }
+  const adjacency = new Map<string, string[]>()
+  for (const id of nodeIds) {
+    adjacency.set(id, [])
+  }
+  for (const edge of flowchart.edges) {
+    if (
+      isRecord(edge) &&
+      typeof edge.from === 'string' &&
+      typeof edge.to === 'string' &&
+      edge.from !== edge.to
+    ) {
+      adjacency.get(edge.from)?.push(edge.to)
+    }
+  }
+  const visited = new Set<string>()
+  const inStack = new Set<string>()
+  function dfs(nodeId: string): boolean {
+    if (inStack.has(nodeId)) return true
+    if (visited.has(nodeId)) return false
+    visited.add(nodeId)
+    inStack.add(nodeId)
+    for (const neighbor of adjacency.get(nodeId) ?? []) {
+      if (dfs(neighbor)) return true
+    }
+    inStack.delete(nodeId)
+    return false
+  }
+  for (const nodeId of nodeIds) {
+    if (dfs(nodeId)) {
+      errors.push(`Library data source "${String(ds.id)}" flowchart contains a cycle`)
+      break
+    }
+  }
+}
+
 export function buildEmbeddedAssetsFromJSON(library: unknown): EmbeddedAsset[] {
   if (!isRecord(library) || !Array.isArray(library.assets)) {
     return []
@@ -316,6 +526,85 @@ export function buildEmbeddedShadersFromJSON(library: unknown): EmbeddedShaderDe
     })
   }
   return shaders
+}
+
+export function buildEmbeddedDataSourcesFromJSON(
+  library: unknown,
+): (EmbeddedDataSourceDefinition | EmbeddedFlowchartDataSourceDefinition)[] {
+  if (!isRecord(library) || !Array.isArray(library.data_sources)) {
+    return []
+  }
+  const dataSources: (EmbeddedDataSourceDefinition | EmbeddedFlowchartDataSourceDefinition)[] = []
+  for (const ds of library.data_sources) {
+    if (
+      !isRecord(ds) ||
+      typeof ds.id !== 'string' ||
+      ds.id === '' ||
+      typeof ds.name !== 'string' ||
+      ds.name === ''
+    ) {
+      continue
+    }
+    if (isRecord(ds.flowchart)) {
+      const flowchart = ds.flowchart
+      if (!Array.isArray(flowchart.nodes) || !Array.isArray(flowchart.edges)) {
+        continue
+      }
+      dataSources.push({
+        id: ds.id,
+        name: ds.name,
+        nodes: flowchart.nodes
+          .filter(
+            (node): node is { id: string; label: string } =>
+              isRecord(node) &&
+              typeof node.id === 'string' &&
+              node.id !== '' &&
+              typeof node.label === 'string',
+          )
+          .map((node) => ({ id: node.id, label: node.label })),
+        edges: flowchart.edges
+          .filter(
+            (edge): edge is { from: string; to: string } =>
+              isRecord(edge) &&
+              typeof edge.from === 'string' &&
+              edge.from !== '' &&
+              typeof edge.to === 'string' &&
+              edge.to !== '',
+          )
+          .map((edge) => ({ from: edge.from, to: edge.to })),
+      })
+    } else if (Array.isArray(ds.data_points)) {
+      dataSources.push({
+        id: ds.id,
+        name: ds.name,
+        dataPoints: ds.data_points
+          .filter(
+            (
+              point,
+            ): point is {
+              label: string
+              value: number
+              series?: string
+              tooltip?: string
+              color?: string
+            } =>
+              isRecord(point) &&
+              typeof point.label === 'string' &&
+              point.label !== '' &&
+              typeof point.value === 'number' &&
+              Number.isFinite(point.value),
+          )
+          .map((point) => ({
+            label: point.label,
+            value: point.value,
+            ...(typeof point.series === 'string' ? { series: point.series } : {}),
+            ...(typeof point.tooltip === 'string' ? { tooltip: point.tooltip } : {}),
+            ...(typeof point.color === 'string' ? { color: point.color } : {}),
+          })),
+      })
+    }
+  }
+  return dataSources
 }
 
 export function validateLibraryClips(errors: string[], clips: unknown): void {
