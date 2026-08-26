@@ -562,6 +562,18 @@ export class Engine {
     this.#embeddedDataSources.set(definition.id, definition)
   }
 
+  removeDataSource(id: string): boolean {
+    const project = this.#projects.current
+    if (!project) {
+      return false
+    }
+    const removed = project.removeDataSource(id)
+    if (removed) {
+      this.#embeddedDataSources.delete(id)
+    }
+    return removed
+  }
+
   get assetDefinitions(): readonly AssetDefinition[] {
     return this.#assets.definitions
   }
@@ -1144,6 +1156,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     embedMaterial: (definition) => engine.embedMaterial(definition),
     embedShader: (definition) => engine.embedShader(definition),
     embedDataSource: (definition) => engine.embedDataSource(definition),
+    removeDataSource: (id) => engine.removeDataSource(id),
     getKeyframes: (nodeId, property) => engine.getKeyframes(nodeId, property),
     getMaterialKeyframes: (nodeId, parameter) => engine.getMaterialKeyframes(nodeId, parameter),
     hasMaterialTrack: (nodeId, parameter) => engine.hasMaterialTrack(nodeId, parameter),

@@ -869,6 +869,220 @@ button:disabled {
 }
 
 /* ------------------------------------------------------------------ */
+/* Data Sources library                                                */
+/* ------------------------------------------------------------------ */
+
+.data-sources-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.data-sources-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.data-sources-toolbar__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.data-sources-toolbar__create {
+  flex: 1;
+}
+
+.data-sources-toolbar__search {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.data-source-grid {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+  overflow: auto;
+}
+
+.data-source-grid__item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+}
+
+.data-source-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+  padding: 8px;
+  text-align: center;
+}
+
+.data-source-cell__icon {
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  flex-shrink: 0;
+  background: var(--color-bg-elevated);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.08);
+}
+
+.data-source-cell__name {
+  font-size: 12px;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.data-source-cell__count {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.data-source-cell__rename {
+  font: inherit;
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.data-source-cell__actions {
+  display: flex;
+  gap: 2px;
+}
+
+.data-source-cell__actions button {
+  flex: 1;
+  font-size: 11px;
+  padding: 2px 4px;
+}
+
+.data-source-detail {
+  flex-shrink: 0;
+  max-height: 45%;
+  overflow: auto;
+  padding: 8px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+}
+
+.data-source-detail__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.data-source-detail__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.data-source-detail__close {
+  font-size: 11px;
+  padding: 2px 8px;
+  flex-shrink: 0;
+}
+
+.data-source-detail__table-wrapper {
+  overflow: auto;
+  max-height: 200px;
+  margin-bottom: 8px;
+}
+
+.data-source-detail__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.data-source-detail__table th {
+  text-align: left;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--color-border);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.data-source-detail__table td {
+  padding: 2px 4px;
+}
+
+.data-source-detail__input {
+  font: inherit;
+  width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  box-sizing: border-box;
+}
+
+.data-source-detail__input--number {
+  width: 70px;
+  text-align: right;
+}
+
+.data-source-detail__input--color {
+  width: 32px;
+  height: 26px;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.data-source-detail__remove {
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 6px;
+  border: none;
+  background: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.data-source-detail__remove:hover {
+  color: var(--color-danger);
+}
+
+.data-source-detail__add {
+  width: 100%;
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+/* ------------------------------------------------------------------ */
 /* Shader library                                                      */
 /* ------------------------------------------------------------------ */
 

@@ -2,6 +2,7 @@ import { useUiStore } from '../../stores/uiStore'
 import type { SidebarTab } from '../../stores/uiPrefs'
 import { AnimationsPanel } from '../panels/AnimationsPanel'
 import { AssetsPanel } from '../panels/AssetsPanel'
+import { DataSourcesPanel } from '../panels/DataSourcesPanel'
 import { MaterialsPanel } from '../panels/MaterialsPanel'
 import { RiggingPanel } from '../panels/RiggingPanel'
 import { ScenePanel } from '../panels/ScenePanel'
@@ -13,6 +14,7 @@ const TABS = [
   { id: 'scene', label: 'Scene' },
   { id: 'materials', label: 'Materials' },
   { id: 'animations', label: 'Animations' },
+  { id: 'dataSources', label: 'Data' },
   { id: 'rigging', label: 'Rigging' },
 ] as const satisfies readonly { id: SidebarTab; label: string }[]
 
@@ -22,6 +24,7 @@ const PANELS: Record<SidebarTab, () => React.JSX.Element> = {
   scene: ScenePanel,
   materials: MaterialsPanel,
   animations: AnimationsPanel,
+  dataSources: DataSourcesPanel,
   rigging: RiggingPanel,
 }
 

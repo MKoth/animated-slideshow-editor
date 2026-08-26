@@ -87,6 +87,29 @@ export interface ClipDeleted {
   readonly id: string
 }
 
+export interface DataSourceCreated {
+  readonly type: 'DataSourceCreated'
+  readonly id: string
+  readonly name: string
+}
+
+export interface DataSourceRenamed {
+  readonly type: 'DataSourceRenamed'
+  readonly id: string
+  readonly name: string
+}
+
+export interface DataSourceRemoved {
+  readonly type: 'DataSourceRemoved'
+  readonly id: string
+}
+
+export interface DataSourceUpdated {
+  readonly type: 'DataSourceUpdated'
+  readonly id: string
+  readonly name: string
+}
+
 export type LibraryEvent =
   | AssetImported
   | AssetDeleted
@@ -94,6 +117,10 @@ export type LibraryEvent =
   | ClipSaved
   | ClipUpdated
   | ClipDeleted
+  | DataSourceCreated
+  | DataSourceRenamed
+  | DataSourceRemoved
+  | DataSourceUpdated
   | MaterialCreated
   | MaterialRemoved
   | MaterialRenamed

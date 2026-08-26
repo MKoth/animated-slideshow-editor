@@ -113,4 +113,13 @@ export class Project {
       this.#embeddedDataSources.push(definition)
     }
   }
+
+  removeDataSource(id: string): boolean {
+    const index = this.#embeddedDataSources.findIndex((entry) => entry.id === id)
+    if (index < 0) {
+      return false
+    }
+    this.#embeddedDataSources.splice(index, 1)
+    return true
+  }
 }

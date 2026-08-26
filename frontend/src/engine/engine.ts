@@ -56,6 +56,7 @@ export interface EnginePublic {
   embedMaterial(definition: EmbeddedMaterialDefinition): void
   embedShader(definition: EmbeddedShaderDefinition): void
   embedDataSource(definition: EmbeddedDataSourceUnion): void
+  removeDataSource(id: string): boolean
   getKeyframes(nodeId: string, property: AnimationProperty): readonly Keyframe[]
   getMaterialKeyframes(nodeId: string, parameter: string): readonly Keyframe[]
   hasMaterialTrack(nodeId: string, parameter: string): boolean
