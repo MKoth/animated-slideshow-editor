@@ -239,7 +239,7 @@ describe('ScenePanel', () => {
       clientY: 80,
     })
 
-    const menu = screen.getByRole('menu', { name: 'Z-order' })
+    const menu = screen.getByRole('menu', { name: 'Context menu' })
     expect(menu).toBeInTheDocument()
     expect(menu.style.left).toBe('120px')
     expect(menu.style.top).toBe('80px')
@@ -271,7 +271,7 @@ describe('ScenePanel', () => {
     expect(
       tree.getAllByRole('treeitem').map((row) => row.textContent?.replace(/\s+/g, ' ').trim()),
     ).toEqual(['Root', 'Cat', 'Dog', 'Boy'])
-    expect(screen.queryByRole('menu', { name: 'Z-order' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menu', { name: 'Context menu' })).not.toBeInTheDocument()
   })
 
   it('keeps a multi-selection when right-clicking an already selected row and reorders all of it', async () => {

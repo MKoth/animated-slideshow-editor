@@ -254,3 +254,8 @@ export { FillWeightsCommand } from './fillWeightsCommand'
 export type { FillWeightsInverse, FillWeightsParameters } from './fillWeightsCommand'
 export { GenerateMeshCommand } from './generateMeshCommand'
 export type { GenerateMeshInverse, GenerateMeshParameters } from './generateMeshCommand'
+export { SetTableComponentCommand } from './setTableComponentCommand'
+export type {
+  SetTableComponentInverse,
+  SetTableComponentParameters,
+} from './setTableComponentCommand'

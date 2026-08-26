@@ -35,6 +35,7 @@ import type { EmbeddedAsset } from './embeddedAsset'
 import type { EmbeddedMaterialDefinition } from './embeddedMaterial'
 import { embeddedShaderParameters } from './embeddedShader'
 import type { EmbeddedShaderDefinition } from './embeddedShader'
+import type { TableComponent } from './components'
 import type { CreateProjectInput, EmbeddedDataSourceUnion, Project } from './project'
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
@@ -430,6 +431,14 @@ export class Engine {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(node as any).components = Object.freeze(newComponents)
     this.#bus.emit({ type: 'MeshChanged', nodeId })
+  }
+
+  setTableComponent(nodeId: string, table: TableComponent): void {
+    const node = this.getNode(nodeId)
+    const newComponents = { ...node.components, table }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(node as any).components = Object.freeze(newComponents)
+    this.#bus.emit({ type: 'TableChanged', nodeId })
   }
 
   assignMaterial(nodeId: string, materialDefinitionId: string): void {
@@ -1157,6 +1166,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     embedShader: (definition) => engine.embedShader(definition),
     embedDataSource: (definition) => engine.embedDataSource(definition),
     removeDataSource: (id) => engine.removeDataSource(id),
+    setTableComponent: (nodeId, table) => engine.setTableComponent(nodeId, table),
     getKeyframes: (nodeId, property) => engine.getKeyframes(nodeId, property),
     getMaterialKeyframes: (nodeId, parameter) => engine.getMaterialKeyframes(nodeId, parameter),
     hasMaterialTrack: (nodeId, parameter) => engine.hasMaterialTrack(nodeId, parameter),

@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
 import type { DataPoint } from '../../engine/dataSourceDefinition'
-import { uniqueNodeName } from '../../engine/naming'
+import { defaultTableComponent } from '../../engine/defaultTable'
+import { namesInTree, uniqueNodeName } from '../../engine/naming'
+import { useSelectionStore } from '../../stores/selectionStore'
+import { CreateNodeCommand } from '../../engine/commands'
 import {
   useDataSourceLibraryStore,
   initDataSourceLibraryStore,
@@ -74,7 +77,7 @@ function DataPointRow({ point, onChange, onRemove }: DataPointRowProps) {
 }
 
 export function DataSourcesPanel() {
-  const { engine } = useEngine()
+  const { engine, dispatch } = useEngine()
   const [, setTick] = useState(0)
 
   useEngineEvent((event) => {
@@ -103,6 +106,24 @@ export function DataSourcesPanel() {
   const handleCreate = () => {
     const taken = new Set(definitions.map((d) => d.name))
     createDataSource(uniqueNodeName(taken, 'New Data Source'))
+  }
+
+  const handleCreateTable = () => {
+    const targetSlide = engine.getActiveSlide()
+    if (!targetSlide) return
+    const taken = namesInTree(targetSlide.scene.root)
+    const name = uniqueNodeName(taken, 'Table')
+    const result = dispatch(
+      new CreateNodeCommand({
+        sceneId: targetSlide.scene.id,
+        parentId: targetSlide.scene.root.id,
+        name,
+        components: { table: defaultTableComponent() },
+      }),
+    )
+    if (result.ok) {
+      useSelectionStore.getState().select(result.inverse.nodeId)
+    }
   }
 
   const commitRename = (id: string, name: string) => {
@@ -157,6 +178,9 @@ export function DataSourcesPanel() {
         <div className="data-sources-toolbar__row">
           <button className="data-sources-toolbar__create" onClick={handleCreate}>
             Create Data Source
+          </button>
+          <button className="data-sources-toolbar__create" onClick={handleCreateTable}>
+            Create Table
           </button>
         </div>
         <div className="data-sources-toolbar__row">

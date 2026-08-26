@@ -286,6 +286,11 @@ export interface MeshChanged {
   readonly nodeId: string
 }
 
+export interface TableChanged {
+  readonly type: 'TableChanged'
+  readonly nodeId: string
+}
+
 export type EngineEvent =
   | ProjectCreated
   | ProjectLoaded
@@ -339,6 +344,7 @@ export type EngineEvent =
   | ConstraintRemoved
   | ConstraintChanged
   | MeshChanged
+  | TableChanged
 
 export type EventListener = (event: EngineEvent) => void
 

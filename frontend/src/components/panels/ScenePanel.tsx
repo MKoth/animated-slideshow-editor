@@ -5,6 +5,9 @@ import { useEngine, useEngineEvent } from '../../app/useEngine'
 import { applyZOrder, canApplyZOrder, Z_ORDER_ITEMS } from '../../app/zOrderActions'
 import type { SceneNode } from '../../engine'
 import type { ZOrderMode } from '../../engine/commands'
+import { CreateNodeCommand } from '../../engine/commands'
+import { defaultTableComponent } from '../../engine/defaultTable'
+import { namesInTree, uniqueNodeName } from '../../engine/naming'
 import { useMissingAssetsStore } from '../../stores/missingAssetsStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { iconOf } from './nodeIconKinds'
@@ -263,6 +266,25 @@ export function ScenePanel() {
     setContextMenu(null)
   }
 
+  const handleCreateTable = () => {
+    const targetSlide = engine.getActiveSlide()
+    if (!targetSlide) return
+    const taken = namesInTree(targetSlide.scene.root)
+    const name = uniqueNodeName(taken, 'Table')
+    const result = dispatch(
+      new CreateNodeCommand({
+        sceneId: targetSlide.scene.id,
+        parentId: targetSlide.scene.root.id,
+        name,
+        components: { table: defaultTableComponent() },
+      }),
+    )
+    if (result.ok) {
+      useSelectionStore.getState().select(result.inverse.nodeId)
+    }
+    setContextMenu(null)
+  }
+
   const project = engine.project
   const slide = engine.getActiveSlide()
 
@@ -304,9 +326,17 @@ export function ScenePanel() {
         <div
           className="context-menu"
           role="menu"
-          aria-label="Z-order"
+          aria-label="Context menu"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
+          <button
+            className="menu__item"
+            role="menuitem"
+            onClick={handleCreateTable}
+          >
+            Create Table
+          </button>
+          <hr className="menu__separator" />
           {Z_ORDER_ITEMS.map((item) => (
             <button
               key={item.label}

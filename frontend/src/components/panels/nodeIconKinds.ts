@@ -1,6 +1,6 @@
 import type { SceneNode } from '../../engine'
 
-export type NodeIconKind = 'folder' | 'image' | 'text' | 'camera' | 'mesh'
+export type NodeIconKind = 'folder' | 'image' | 'text' | 'camera' | 'mesh' | 'table'
 
 export function iconOf(node: SceneNode): NodeIconKind {
   if (node.components.camera) {
@@ -14,6 +14,9 @@ export function iconOf(node: SceneNode): NodeIconKind {
   }
   if (node.components.mesh) {
     return 'mesh'
+  }
+  if (node.components.table) {
+    return 'table'
   }
   return 'folder'
 }

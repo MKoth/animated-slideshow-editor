@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PROTOTYPE — Mesh Generation v0.3</title>
+    <script src="https://cdn.jsdelivr.net/npm/poly2tri@1.5.0/dist/poly2tri.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, sans-serif; background: #1a1a1a; color: #e0e0e0; height: 100vh; overflow: hidden; }
+        .banner { background: #ff6b6b; color: white; text-align: center; padding: 6px; font-size: 12px; }
+        .app { display: flex; height: calc(100vh - 30px); }
+        .sidebar { width: 300px; background: #2a2a2a; border-right: 1px solid #444; padding: 12px; overflow-y: auto; font-size: 12px; }
+        .sidebar h3 { font-size: 10px; text-transform: uppercase; color: #666; margin: 10px 0 5px; letter-spacing: 0.5px; }
+        .canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center; background: #111; position: relative; }
+        #mainCanvas { background: #000; cursor: crosshair; }
+        .controls { display: flex; gap: 5px; margin-bottom: 6px; flex-wrap: wrap; }
+        button { background: #3a3a3a; color: #e0e0e0; border: 1px solid #555; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 11px; }
+        button:hover { background: #4a4a4a; }
+        button.primary { background: #4a90d9; }
+        button:disabled { opacity: 0.4; cursor: not-allowed; }
+        .param { margin-bottom: 8px; }
+        .param label { display: flex; justify-content: space-between; margin-bottom: 2px; font-size: 11px; }
+        .param span { color: #888; font-family: monospace; font-size: 11px; }
+        input[type="range"] { width: 100%; height: 4px; }
+        .hint { font-size: 9px; color: #555; }
+        .bone-list { max-height: 100px; overflow-y: auto; background: #333; border-radius: 3px; padding: 4px; margin-top: 4px; }
+        .bone-item { display: flex; justify-content: space-between; padding: 2px 0; font-size: 10px; border-bottom: 1px solid #444; }
+        .bone-item:last-child { border: none; }
+        .bone-item button { padding: 0 5px; font-size: 9px; }
+        .stats { background: #333; border-radius: 3px; padding: 6px; margin-top: 6px; font-size: 10px; }
+        .stat { display: flex; justify-content: space-between; margin-bottom: 1px; }
+        .stat b { color: #4a90d9; font-family: monospace; }
+        .toggles { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 6px 0; }
+        .toggles label { font-size: 10px; display: flex; align-items: center; gap: 3px; cursor: pointer; }
+        .toggles input { width: 12px; height: 12px; }
+        .status { position: absolute; bottom: 0; left: 0; right: 0; background: #2a2a2a; border-top: 1px solid #444; padding: 5px 10px; font-size: 10px; color: #888; display: flex; justify-content: space-between; }
+        hr { border: none; border-top: 1px solid #444; margin: 8px 0; }
+    </style>
+</head>
+<body>
+    <div class="banner">PROTOTYPE v0.3 — Proper silhouette extraction + poly2tri + deterministic points</div>
+    <div class="app">
+        <div class="sidebar">
+            <div class="controls">
+                <button id="btnImport" class="primary">Import PNG</button>
+                <button id="btnClear">Clear</button>
+            </div>
+            <input type="file" id="fileInput" accept="image/*" style="display:none">
+            
+            <hr>
+            <h3>Parameters</h3>
+            
+            <div class="param">
+                <label>Mesh Density <span id="vDensity">30</span></label>
+                <input type="range" id="density" min="10" max="80" value="30">
+                <div class="hint">Higher = more interior points</div>
+            </div>
+            
+            <div class="param">
+                <label>Boundary Spacing <span id="vBoundary">8</span></label>
+                <input type="range" id="boundary" min="2" max="30" value="8">
+                <div class="hint">Silhouette vertex spacing (px)</div>
+            </div>
+            
+            <div class="param">
+                <label>Joint Density <span id="vJoint">2.0</span></label>
+                <input type="range" id="joint" min="1" max="5" step="0.1" value="2">
+                <div class="hint">Density multiplier near joints</div>
+            </div>
+            
+            <div class="param">
+                <label>Joint Radius <span id="vJointRadius">60</span></label>
+                <input type="range" id="jointRadius" min="10" max="150" value="60">
+                <div class="hint">Radius of joint influence (px)</div>
+            </div>
+            
+            <div class="param">
+                <label>Joint min dist from edge <span id="vJointMinDist">20</span></label>
+                <input type="range" id="jointMinDist" min="5" max="80" value="20">
+                <div class="hint">Bone endpoints this far from edge become joints</div>
+            </div>
+            
+            <div class="param">
+                <label>Max Vertices <span id="vMax">300</span></label>
+                <input type="range" id="maxVerts" min="50" max="1000" step="50" value="300">
+            </div>
+            
+            <hr>
+            <h3>Display Toggles</h3>
+            <div class="toggles">
+                <label><input type="checkbox" id="showTris" checked> Triangles</label>
+                <label><input type="checkbox" id="showVerts" checked> Vertices</label>
+                <label><input type="checkbox" id="showBones" checked> Bones</label>
+                <label><input type="checkbox" id="showJoints" checked> Joints</label>
+                <label><input type="checkbox" id="showIds"> Vertex IDs</label>
+                <label><input type="checkbox" id="showBoundary" checked> Boundary</label>
+            </div>
+            
+            <hr>
+            <h3>Bones <span class="hint">(right-click cancel)</span></h3>
+            <div class="controls">
+                <button id="btnAddBone" class="primary">Add Bone</button>
+                <button id="btnClearBones">Clear Bones</button>
+            </div>
+            <div class="bone-list" id="boneList"><div style="color:#555;text-align:center">No bones</div></div>
+            
+            <hr>
+            <h3>Actions</h3>
+            <div class="controls">
+                <button id="btnGenerate" class="primary" disabled>Generate Mesh</button>
+            </div>
+            
+            <div class="stats">
+                <div class="stat">Image: <b id="sImg">None</b></div>
+                <div class="stat">Bones: <b id="sBones">0</b></div>
+                <div class="stat">Joints: <b id="sJoints">0</b></div>
+                <div class="stat">Boundary pts: <b id="sBound">0</b></div>
+                <div class="stat">Interior pts: <b id="sInter">0</b></div>
+                <div class="stat">Total verts: <b id="sVerts">0</b></div>
+                <div class="stat">Triangles: <b id="sTris">0</b></div>
+            </div>
+        </div>
+        
+        <div class="canvas-wrap">
+            <canvas id="mainCanvas" width="900" height="700"></canvas>
+            <div class="status">
+                <span id="statusL">Import a PNG to begin</span>
+                <span id="statusR">v0.3</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================================
+        // PROTOTYPE v0.3 — Proper mesh generation with poly2tri
+        // ============================================================
+        
+        // Check if poly2tri loaded
+        console.log('poly2tri available:', typeof poly2tri !== 'undefined');
+        
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        const state = {
+            image: null,
+            alpha: null,
+            bones: [],
+            mesh: null,
+            mode: 'idle',
+            pendingBone: null,
+            imgX: 0, imgY: 0, imgScale: 1
+        };
+        
+        const params = {
+            density: 30,
+            boundary: 8,
+            joint: 2.0,
+            jointRadius: 60,
+            jointMinDist: 20,
+            maxVerts: 300
+        };
+        
+        const toggles = {
+            showTris: true,
+            showVerts: true,
+            showBones: true,
+            showJoints: true,
+            showIds: false,
+            showBoundary: true
+        };
+        
+        // ---- Image Loading ----
+        document.getElementById('btnImport').onclick = () => document.getElementById('fileInput').click();
+        document.getElementById('fileInput').onchange = (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const img = new Image();
+            img.onload = () => {
+                state.image = img;
+                const c = document.createElement('canvas');
+                c.width = img.width; c.height = img.height;
+                const cx = c.getContext('2d');
+                cx.drawImage(img, 0, 0);
+                const data = cx.getImageData(0, 0, img.width, img.height);
+                state.alpha = new Uint8Array(img.width * img.height);
+                for (let i = 0; i < state.alpha.length; i++) {
+                    state.alpha[i] = data.data[i * 4 + 3];
+                }
+                state.mesh = null;
+                document.getElementById('btnGenerate').disabled = false;
+                updateStats();
+                redraw();
+            };
+            img.src = URL.createObjectURL(file);
+        };
+        
+        document.getElementById('btnClear').onclick = () => {
+            state.image = null; state.alpha = null;
+            state.bones = []; state.mesh = null; state.mode = 'idle'; state.pendingBone = null;
+            document.getElementById('btnGenerate').disabled = true;
+            updateBoneList(); updateStats(); redraw();
+        };
+        
+        // ---- Coordinate Transforms ----
+        function calcTransform() {
+            if (!state.image) return;
+            const s = Math.min(canvas.width / state.image.width, canvas.height / state.image.height) * 0.85;
+            state.imgScale = s;
+            state.imgX = (canvas.width - state.image.width * s) / 2;
+            state.imgY = (canvas.height - state.image.height * s) / 2;
+        }
+        
+        function imgToCanvas(ix, iy) {
+            return [ix * state.imgScale + state.imgX, iy * state.imgScale + state.imgY];
+        }
+        
+        function canvasToImg(cx, cy) {
+            return [(cx - state.imgX) / state.imgScale, (cy - state.imgY) / state.imgScale];
+        }
+        
+        // ---- Contour Extraction (Marching Squares) ----
+        function extractContour(alpha, width, height) {
+            // Build binary grid: 1 where alpha > 0, 0 otherwise
+            const grid = new Uint8Array(width * height);
+            for (let i = 0; i < alpha.length; i++) {
+                grid[i] = alpha[i] > 0 ? 1 : 0;
+            }
+            
+            // Find all edge segments using marching squares
+            const edges = [];
+            
+            for (let y = 0; y < height - 1; y++) {
+                for (let x = 0; x < width - 1; x++) {
+                    // Get 4 corners
+                    const tl = grid[y * width + x];
+                    const tr = grid[y * width + x + 1];
+                    const br = grid[(y + 1) * width + x + 1];
+                    const bl = grid[(y + 1) * width + x];
+                    
+                    const caseVal = tl * 8 + tr * 4 + br * 2 + bl;
+                    
+                    if (caseVal === 0 || caseVal === 15) continue;
+                    
+                    // Edge midpoints
+                    const top = [x + 0.5, y];
+                    const right = [x + 1, y + 0.5];
+                    const bottom = [x + 0.5, y + 1];
+                    const left = [x, y + 0.5];
+                    
+                    // Add edges based on marching squares case
+                    switch (caseVal) {
+                        case 1: case 14: edges.push([left, bottom]); break;
+                        case 2: case 13: edges.push([bottom, right]); break;
+                        case 3: case 12: edges.push([left, right]); break;
+                        case 4: case 11: edges.push([top, right]); break;
+                        case 5: edges.push([left, top], [bottom, right]); break;
+                        case 6: case 9: edges.push([top, bottom]); break;
+                        case 7: case 8: edges.push([left, top]); break;
+                        case 10: edges.push([top, right], [left, bottom]); break;
+                    }
+                }
+            }
+            
+            if (edges.length === 0) return [];
+            
+            // Connect edges into contours
+            const contours = [];
+            const used = new Uint8Array(edges.length);
+            
+            for (let i = 0; i < edges.length; i++) {
+                if (used[i]) continue;
+                
+                const contour = [edges[i][0], edges[i][1]];
+                used[i] = 1;
+                
+                let changed = true;
+                while (changed) {
+                    changed = false;
+                    for (let j = 0; j < edges.length; j++) {
+                        if (used[j]) continue;
+                        
+                        const e = edges[j];
+                        const first = contour[0];
+                        const last = contour[contour.length - 1];
+                        
+                        // Check if edge connects to start or end of contour
+                        const eps = 0.01;
+                        if (dist2D(e[0], last) < eps) {
+                            contour.push(e[1]);
+                            used[j] = 1;
+                            changed = true;
+                        } else if (dist2D(e[1], last) < eps) {
+                            contour.push(e[0]);
+                            used[j] = 1;
+                            changed = true;
+                        } else if (dist2D(e[1], first) < eps) {
+                            contour.unshift(e[0]);
+                            used[j] = 1;
+                            changed = true;
+                        } else if (dist2D(e[0], first) < eps) {
+                            contour.unshift(e[1]);
+                            used[j] = 1;
+                            changed = true;
+                        }
+                    }
+                }
+                
+                if (contour.length >= 3) {
+                    contours.push(contour);
+                }
+            }
+            
+            // Return largest contour
+            if (contours.length === 0) return [];
+            contours.sort((a, b) => b.length - a.length);
+            
+            // Round to integers
+            return contours[0].map(p => [Math.round(p[0]), Math.round(p[1])]);
+        }
+        
+        function dist2D(a, b) {
+            return Math.hypot(a[0] - b[0], a[1] - b[1]);
+        }
+        
+        // ---- Remove collinear points ----
+        function removeCollinear(points) {
+            if (points.length < 3) return points;
+            
+            const result = [];
+            const tolerance = 0.5; // pixel tolerance
+            
+            for (let i = 0; i < points.length; i++) {
+                const prev = points[(i - 1 + points.length) % points.length];
+                const curr = points[i];
+                const next = points[(i + 1) % points.length];
+                
+                // Distance from curr to line formed by prev->next
+                const dx = next[0] - prev[0];
+                const dy = next[1] - prev[1];
+                const len = Math.hypot(dx, dy);
+                
+                if (len < 0.001) {
+                    // prev and next are same point, skip curr
+                    continue;
+                }
+                
+                // Perpendicular distance
+                const dist = Math.abs(dy * curr[0] - dx * curr[1] + next[0] * prev[1] - next[1] * prev[0]) / len;
+                
+                if (dist > tolerance) {
+                    result.push(curr);
+                }
+            }
+            
+            return result.length >= 3 ? result : points;
+        }
+        
+        // ---- Subsample contour by spacing ----
+        function subsampleContour(contour, spacing) {
+            if (contour.length === 0) return [];
+            
+            const result = [contour[0]];
+            let dist = 0;
+            
+            for (let i = 1; i < contour.length; i++) {
+                const dx = contour[i][0] - contour[i-1][0];
+                const dy = contour[i][1] - contour[i-1][1];
+                dist += Math.hypot(dx, dy);
+                
+                if (dist >= spacing) {
+                    result.push(contour[i]);
+                    dist = 0;
+                }
+            }
+            
+            return result;
+        }
+        
+        // ---- Get joint locations ----
+        function getJoints(alpha, width, height) {
+            const map = new Map();
+            
+            // First: add joints where bones connect (2+ bones share endpoint)
+            for (const b of state.bones) {
+                const sk = `${b.sx.toFixed(1)},${b.sy.toFixed(1)}`;
+                const ek = `${b.ex.toFixed(1)},${b.ey.toFixed(1)}`;
+                map.set(sk, (map.get(sk) || 0) + 1);
+                map.set(ek, (map.get(ek) || 0) + 1);
+            }
+            
+            const joints = [];
+            const minDistFromEdge = params.jointMinDist;
+            
+            // Add connected bone endpoints (always joints)
+            for (const [k, v] of map) {
+                if (v >= 2) {
+                    const [x, y] = k.split(',').map(Number);
+                    joints.push([x, y]);
+                }
+            }
+            
+            // Also add bone endpoints that are far from silhouette edge
+            if (alpha && width && height) {
+                for (const b of state.bones) {
+                    // Check both endpoints
+                    for (const pt of [[b.sx, b.sy], [b.ex, b.ey]]) {
+                        const [x, y] = pt;
+                        
+                        // Skip if already a connected joint
+                        const key = `${x.toFixed(1)},${y.toFixed(1)}`;
+                        if (map.get(key) >= 2) continue;
+                        
+                        // Skip if already added
+                        if (joints.some(j => Math.hypot(j[0] - x, j[1] - y) < 1)) continue;
+                        
+                        // Calculate distance to nearest edge pixel
+                        const dist = distanceToEdge(x, y, alpha, width, height);
+                        
+                        if (dist >= minDistFromEdge) {
+                            joints.push([x, y]);
+                            console.log(`Bone endpoint (${x.toFixed(0)},${y.toFixed(0)}) is ${dist.toFixed(0)}px from edge - adding as joint`);
+                        }
+                    }
+                }
+            }
+            
+            console.log('Total joints:', joints.length);
+            return joints;
+        }
+        
+        // ---- Distance from point to nearest edge pixel ----
+        function distanceToEdge(x, y, alpha, width, height) {
+            // Edge pixel = alpha > 0 AND has at least one neighbor with alpha = 0
+            const px = Math.round(x);
+            const py = Math.round(y);
+            
+            // Quick check: if point itself is not visible, return 0
+            if (px < 0 || px >= width || py < 0 || py >= height) return 0;
+            if (alpha[py * width + px] === 0) return 0;
+            
+            // Search in expanding square
+            const maxSearch = 100;
+            for (let r = 1; r <= maxSearch; r++) {
+                // Check perimeter of square at radius r
+                for (let dx = -r; dx <= r; dx++) {
+                    for (let dy = -r; dy <= r; dy++) {
+                        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue; // Only check perimeter
+                        
+                        const nx = px + dx;
+                        const ny = py + dy;
+                        
+                        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+                        
+                        // Found edge pixel
+                        if (alpha[ny * width + nx] === 0) {
+                            // Check if this empty pixel borders a filled pixel
+                            let isEdge = false;
+                            for (const [ox, oy] of [[0,1],[0,-1],[1,0],[-1,0]]) {
+                                const ex = nx + ox, ey = ny + oy;
+                                if (ex >= 0 && ex < width && ey >= 0 && ey < height && alpha[ey * width + ex] > 0) {
+                                    isEdge = true;
+                                    break;
+                                }
+                            }
+                            if (isEdge) {
+                                return Math.hypot(dx, dy) - 1; // Distance to edge
+                            }
+                        }
+                    }
+                }
+            }
+            
+            return maxSearch; // Far from edge
+        }
+        
+        // ---- Deterministic interior point generation ----
+        function generateInteriorPoints(alpha, width, height, contour, joints, spacing) {
+            const points = [];
+            
+            // Get contour bounds
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (const p of contour) {
+                if (p[0] < minX) minX = p[0];
+                if (p[0] > maxX) maxX = p[0];
+                if (p[1] < minY) minY = p[1];
+                if (p[1] > maxY) maxY = p[1];
+            }
+            
+            const hasJoints = joints.length > 0;
+            const jointRad = params.jointRadius;
+            
+            // Invert density: higher value = smaller spacing = more points
+            const gridSpacing = Math.max(4, 80 - spacing + 5);
+            
+            console.log('Grid spacing:', gridSpacing, 'Joints:', joints.length, 'Joint density:', params.joint);
+            
+            // Deterministic grid
+            for (let y = Math.floor(minY) + Math.floor(gridSpacing / 2); y < maxY; y += gridSpacing) {
+                for (let x = Math.floor(minX) + Math.floor(gridSpacing / 2); x < maxX; x += gridSpacing) {
+                    const px = Math.round(x);
+                    const py = Math.round(y);
+                    
+                    // Check alpha
+                    if (px < 0 || px >= width || py < 0 || py >= height) continue;
+                    if (alpha[py * width + px] === 0) continue;
+                    
+                    // Always add base point
+                    points.push([x, y]);
+                    
+                    // Near joints: add extra sub-grid points based on joint density
+                    if (hasJoints) {
+                        let minDist = Infinity;
+                        for (const j of joints) {
+                            const d = Math.hypot(x - j[0], y - j[1]);
+                            if (d < minDist) minDist = d;
+                        }
+                        
+                        if (minDist < jointRad) {
+                            // Number of extra points scales with joint density
+                            // At 1.0x: 0 extras, at 2.0x: 3 extras, at 5.0x: 12 extras
+                            const extraCount = Math.floor((params.joint - 1) * 4);
+                            
+                            if (extraCount > 0) {
+                                // Sub-grid spacing
+                                const subSpacing = gridSpacing / (extraCount + 1);
+                                
+                                for (let sy = 0; sy <= extraCount; sy++) {
+                                    for (let sx = 0; sx <= extraCount; sx++) {
+                                        const subX = x - gridSpacing/2 + subSpacing * (sx + 0.5);
+                                        const subY = y - gridSpacing/2 + subSpacing * (sy + 0.5);
+                                        
+                                        // Skip if too close to base point
+                                        if (Math.abs(subX - x) < 0.5 && Math.abs(subY - y) < 0.5) continue;
+                                        
+                                        const spx = Math.round(subX);
+                                        const spy = Math.round(subY);
+                                        if (spx >= 0 && spx < width && spy >= 0 && spy < height && alpha[spy * width + spx] > 0) {
+                                            points.push([subX, subY]);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Add ring points around joints (more rings with higher density)
+            if (hasJoints) {
+                for (const j of joints) {
+                    const ringCount = 12;
+                    const rings = Math.min(3, Math.ceil(params.joint));
+                    
+                    for (let ring = 1; ring <= rings; ring++) {
+                        const r = gridSpacing * 0.3 * ring;
+                        for (let i = 0; i < ringCount; i++) {
+                            const angle = (i / ringCount) * Math.PI * 2;
+                            const px = Math.round(j[0] + Math.cos(angle) * r);
+                            const py = Math.round(j[1] + Math.sin(angle) * r);
+                            if (px >= 0 && px < width && py >= 0 && py < height && alpha[py * width + px] > 0) {
+                                points.push([j[0] + Math.cos(angle) * r, j[1] + Math.sin(angle) * r]);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            console.log('Total interior points:', points.length);
+            return points;
+        }
+        
+        // ---- Mesh Generation ----
+        function generateMesh() {
+            if (!state.alpha || !state.image) {
+                console.log('No alpha or image');
+                return null;
+            }
+            
+            const { width, height } = state.image;
+            const alpha = state.alpha;
+            
+            // 1. Extract contour using Moore neighborhood
+            const fullContour = extractContour(alpha, width, height);
+            console.log('Full contour points:', fullContour.length);
+            if (fullContour.length < 3) {
+                console.log('Contour too small');
+                return null;
+            }
+            
+            // 2. Subsample boundary
+            const rawBoundary = subsampleContour(fullContour, params.boundary);
+            console.log('Boundary after subsample:', rawBoundary.length);
+            if (rawBoundary.length < 3) {
+                console.log('Boundary too small after subsample');
+                return null;
+            }
+            
+            // 3. Remove collinear points (poly2tri requirement)
+            const boundary = removeCollinear(rawBoundary);
+            console.log('Boundary after removeCollinear:', boundary.length);
+            if (boundary.length < 3) return null;
+            
+            // 3. Get joints (connected endpoints + endpoints far from edge)
+            const joints = getJoints(alpha, width, height);
+            console.log('Joints:', joints.length);
+            
+            // 4. Generate interior points
+            const allInterior = generateInteriorPoints(alpha, width, height, boundary, joints, params.density);
+            console.log('Interior points generated:', allInterior.length);
+            
+            // 5. Limit total vertices
+            const allowedInterior = Math.max(0, params.maxVerts - boundary.length);
+            const interior = allInterior.slice(0, allowedInterior);
+            console.log('Interior after limit:', interior.length);
+            
+            // 6. Triangulate with poly2tri
+            try {
+                // Ensure contour is clockwise (poly2tri requirement)
+                let area = 0;
+                for (let i = 0; i < boundary.length; i++) {
+                    const j = (i + 1) % boundary.length;
+                    area += boundary[i][0] * boundary[j][1];
+                    area -= boundary[j][0] * boundary[i][1];
+                }
+                const contourPoints = area > 0 ? boundary : [...boundary].reverse();
+                
+                // Remove collinear from boundary
+                const cleanBoundary = removeCollinear(contourPoints);
+                console.log('Boundary after removeCollinear:', cleanBoundary.length);
+                
+                // Add tiny perturbation to avoid collinearity with interior points
+                const contour = cleanBoundary.map((p, i) => {
+                    const eps = 0.001 * ((i % 3) - 1); // -0.001, 0, 0.001
+                    return new poly2tri.Point(p[0] + eps, p[1] + eps * 0.7);
+                });
+                
+                const swctx = new poly2tri.SweepContext(contour);
+                
+                // Add interior points with perturbation to avoid collinearity
+                if (interior.length > 0) {
+                    const steinerPoints = interior.map((p, i) => {
+                        // Deterministic small perturbation based on position
+                        const eps = 0.01 * ((i % 5) - 2); // -0.02 to 0.02
+                        return new poly2tri.Point(p[0] + eps, p[1] + eps * 1.3);
+                    });
+                    swctx.addPoints(steinerPoints);
+                }
+                
+                console.log('Starting triangulation...');
+                swctx.triangulate();
+                console.log('Triangulation complete');
+                
+                // Get triangles
+                const triangles = swctx.getTriangles();
+                console.log('Triangles:', triangles.length);
+                
+                // Build vertex list and face indices
+                const vertMap = new Map();
+                const vertices = [];
+                let idx = 0;
+                const faces = [];
+                
+                for (const tri of triangles) {
+                    const pts = [tri.getPoint(0), tri.getPoint(1), tri.getPoint(2)];
+                    const faceIdx = [];
+                    
+                    for (const pt of pts) {
+                        const key = `${pt.x.toFixed(2)},${pt.y.toFixed(2)}`;
+                        if (!vertMap.has(key)) {
+                            vertMap.set(key, idx);
+                            vertices.push([pt.x, pt.y]);
+                            idx++;
+                        }
+                        faceIdx.push(vertMap.get(key));
+                    }
+                    
+                    faces.push(faceIdx);
+                }
+                
+                // Update stats
+                document.getElementById('sBound').textContent = boundary.length;
+                document.getElementById('sInter').textContent = interior.length;
+                document.getElementById('sJoints').textContent = joints.length;
+                
+                console.log('Final vertices:', vertices.length, 'faces:', faces.length);
+                return { vertices, faces, boundary, joints };
+            } catch (e) {
+                console.error('Poly2tri error:', e);
+                document.getElementById('statusL').textContent = 'Error: ' + e.message;
+                return null;
+            }
+        }
+        
+        // ---- Drawing ----
+        function redraw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            if (!state.image) return;
+            
+            calcTransform();
+            
+            // Draw image
+            ctx.drawImage(state.image, state.imgX, state.imgY, 
+                         state.image.width * state.imgScale, state.image.height * state.imgScale);
+            
+            // Draw mesh
+            if (state.mesh) {
+                const { vertices, faces, boundary, joints } = state.mesh;
+                
+                // Triangles
+                if (toggles.showTris) {
+                    ctx.fillStyle = 'rgba(74, 144, 217, 0.12)';
+                    ctx.strokeStyle = 'rgba(74, 144, 217, 0.5)';
+                    ctx.lineWidth = 0.5;
+                    
+                    for (const f of faces) {
+                        const [x0, y0] = imgToCanvas(vertices[f[0]][0], vertices[f[0]][1]);
+                        const [x1, y1] = imgToCanvas(vertices[f[1]][0], vertices[f[1]][1]);
+                        const [x2, y2] = imgToCanvas(vertices[f[2]][0], vertices[f[2]][1]);
+                        
+                        ctx.beginPath();
+                        ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.lineTo(x2, y2);
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.stroke();
+                    }
+                }
+                
+                // Boundary highlight
+                if (toggles.showBoundary && boundary) {
+                    ctx.strokeStyle = '#4ade80';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    const [bx0, by0] = imgToCanvas(boundary[0][0], boundary[0][1]);
+                    ctx.moveTo(bx0, by0);
+                    for (let i = 1; i < boundary.length; i++) {
+                        const [bx, by] = imgToCanvas(boundary[i][0], boundary[i][1]);
+                        ctx.lineTo(bx, by);
+                    }
+                    ctx.closePath();
+                    ctx.stroke();
+                }
+                
+                // Vertices
+                if (toggles.showVerts) {
+                    ctx.fillStyle = '#4a90d9';
+                    for (const v of vertices) {
+                        const [x, y] = imgToCanvas(v[0], v[1]);
+                        ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2); ctx.fill();
+                    }
+                }
+                
+                // Vertex IDs
+                if (toggles.showIds) {
+                    ctx.fillStyle = '#fff';
+                    ctx.font = '8px monospace';
+                    for (let i = 0; i < vertices.length; i++) {
+                        const [x, y] = imgToCanvas(vertices[i][0], vertices[i][1]);
+                        ctx.fillText(i, x + 3, y - 3);
+                    }
+                }
+                
+                // Joints
+                if (toggles.showJoints && joints) {
+                    ctx.fillStyle = '#fbbf24';
+                    ctx.strokeStyle = '#f59e0b';
+                    ctx.lineWidth = 2;
+                    for (const j of joints) {
+                        const [x, y] = imgToCanvas(j[0], j[1]);
+                        ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+                    }
+                }
+            }
+            
+            // Draw bones
+            if (toggles.showBones) {
+                ctx.strokeStyle = '#ff6b6b';
+                ctx.lineWidth = 3;
+                for (const b of state.bones) {
+                    const [sx, sy] = imgToCanvas(b.sx, b.sy);
+                    const [ex, ey] = imgToCanvas(b.ex, b.ey);
+                    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
+                    ctx.fillStyle = '#ff6b6b';
+                    ctx.beginPath(); ctx.arc(sx, sy, 4, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(ex, ey, 4, 0, Math.PI * 2); ctx.fill();
+                }
+            }
+            
+            // Draw pending bone
+            if (state.pendingBone) {
+                const [sx, sy] = imgToCanvas(state.pendingBone.x, state.pendingBone.y);
+                ctx.strokeStyle = '#4a90d9';
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(state.pendingBone.cx, state.pendingBone.cy); ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        }
+        
+        // ---- Bones ----
+        document.getElementById('btnAddBone').onclick = () => {
+            if (!state.image) { alert('Import PNG first'); return; }
+            state.mode = 'placingBone';
+            state.pendingBone = null;
+            document.getElementById('statusL').textContent = 'Click to place bone START';
+        };
+        
+        document.getElementById('btnClearBones').onclick = () => {
+            state.bones = []; state.mesh = null; state.mode = 'idle'; state.pendingBone = null;
+            updateBoneList(); updateStats(); redraw();
+        };
+        
+        canvas.onclick = (e) => {
+            if (state.mode !== 'placingBone') return;
+            const rect = canvas.getBoundingClientRect();
+            const [ix, iy] = canvasToImg(e.clientX - rect.left, e.clientY - rect.top);
+            
+            if (!state.pendingBone) {
+                state.pendingBone = { x: ix, y: iy, cx: e.clientX - rect.left, cy: e.clientY - rect.top };
+                document.getElementById('statusL').textContent = 'Click to place bone END';
+            } else {
+                state.bones.push({ sx: state.pendingBone.x, sy: state.pendingBone.y, ex: ix, ey: iy });
+                state.pendingBone = null;
+                document.getElementById('statusL').textContent = `Bone ${state.bones.length} created`;
+                updateBoneList(); redraw();
+            }
+        };
+        
+        canvas.onmousemove = (e) => {
+            if (state.mode !== 'placingBone' || !state.pendingBone) return;
+            const rect = canvas.getBoundingClientRect();
+            state.pendingBone.cx = e.clientX - rect.left;
+            state.pendingBone.cy = e.clientY - rect.top;
+            redraw();
+        };
+        
+        canvas.oncontextmenu = (e) => {
+            e.preventDefault();
+            if (state.mode === 'placingBone') {
+                state.mode = 'idle'; state.pendingBone = null;
+                document.getElementById('statusL').textContent = 'Cancelled';
+            }
+        };
+        
+        function removeBone(i) {
+            state.bones.splice(i, 1);
+            state.mesh = null;
+            updateBoneList(); updateStats(); redraw();
+        }
+        window.removeBone = removeBone;
+        
+        function updateBoneList() {
+            const el = document.getElementById('boneList');
+            if (!state.bones.length) {
+                el.innerHTML = '<div style="color:#555;text-align:center">No bones</div>';
+            } else {
+                el.innerHTML = state.bones.map((b, i) => 
+                    `<div class="bone-item"><span>Bone ${i+1}</span><button onclick="removeBone(${i})">X</button></div>`
+                ).join('');
+            }
+            document.getElementById('sBones').textContent = state.bones.length;
+        }
+        
+        // ---- Generate ----
+        document.getElementById('btnGenerate').onclick = () => {
+            document.getElementById('statusL').textContent = 'Generating...';
+            setTimeout(() => {
+                state.mesh = generateMesh();
+                if (state.mesh) {
+                    document.getElementById('statusL').textContent = 
+                        `Done: ${state.mesh.vertices.length} verts, ${state.mesh.faces.length} tris`;
+                } else {
+                    document.getElementById('statusL').textContent = 'No mesh generated';
+                }
+                updateStats();
+                redraw();
+            }, 10);
+        };
+        
+        // ---- Params ----
+        const paramIds = {
+            density: 'vDensity',
+            boundary: 'vBoundary',
+            joint: 'vJoint',
+            jointRadius: 'vJointRadius',
+            jointMinDist: 'vJointMinDist',
+            maxVerts: 'vMax'
+        };
+        
+        function autoRegenerate() {
+            if (state.mesh) {
+                document.getElementById('statusL').textContent = 'Regenerating...';
+                setTimeout(() => {
+                    state.mesh = generateMesh();
+                    updateStats();
+                    redraw();
+                    document.getElementById('statusL').textContent = 
+                        state.mesh ? `Done: ${state.mesh.vertices.length} verts` : 'No mesh';
+                }, 10);
+            }
+        }
+        
+        for (const [key, valId] of Object.entries(paramIds)) {
+            const el = document.getElementById(key);
+            el.oninput = () => {
+                params[key] = parseFloat(el.value);
+                document.getElementById(valId).textContent = el.value;
+                autoRegenerate();
+            };
+        }
+        
+        // ---- Toggles ----
+        for (const key of Object.keys(toggles)) {
+            const el = document.getElementById(key);
+            if (el) {
+                el.checked = toggles[key];
+                el.onchange = () => {
+                    toggles[key] = el.checked;
+                    redraw();
+                };
+            }
+        }
+        
+        function updateStats() {
+            document.getElementById('sImg').textContent = state.image ? `${state.image.width}×${state.image.height}` : 'None';
+            document.getElementById('sVerts').textContent = state.mesh ? state.mesh.vertices.length : 0;
+            document.getElementById('sTris').textContent = state.mesh ? state.mesh.faces.length : 0;
+        }
+        
+        // Init
+        updateBoneList();
+        updateStats();
+    </script>
+</body>
+</html>

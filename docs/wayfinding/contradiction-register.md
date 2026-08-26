@@ -175,3 +175,7 @@ This register **records problems, resolves nothing**. Every spec ticket resolves
 | CC-1 | Resolved — web-only language applied throughout the spec; the editor is a full-window paneled browser layout (R17); "desktop" vocabulary dropped. |
 | CC-2 | Resolved — FFmpeg install note moved under the Backend section of the tech-stack doc; encoder boundary (browser renders frames, backend encodes) stated there. |
 | CC-3 | Resolved — Spec 01's Scope/Out and R8/R9/R29 apply the web-runtime decisions (same-origin production hosting, degraded mode with backend down, localStorage persistence). |
+
+## Resolved by Spec 10 — Charts, Tables and Data Visualization (issue #171)
+
+Spec 10 is a new spec (not in the original planning docs), so no contradiction register rows apply. The spec was produced from 7 research/design sub-issues (#172–#178) and synthesizes their decisions into the implementation contract.
