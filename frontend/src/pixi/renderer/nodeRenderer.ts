@@ -1,18 +1,19 @@
 import type { SceneNode } from '../../engine'
-import type { MeshFace, MeshVertex } from '../../engine/mesh'
+import type { MeshData, MeshVertex } from '../../engine/mesh'
 import type { EvaluatedNodeState } from '../../engine/animationEvaluator'
-import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
+import type { PixiContainer, PixiMeshSimple, PixiMeshSimpleOptions, RendererPixi } from './pixi'
 import {
   applyPlaceholderName,
   applyTint,
   createPlaceholder,
   setBoneSize,
   setMeshPlaceholderSize,
+  registerMeshDisplay,
 } from './placeholder'
 import type { TextureCache } from './textureCache'
 
 const placeholderByContainer = new WeakMap<PixiContainer, PixiContainer>()
-const meshGraphicsByGroup = new WeakMap<PixiContainer, PixiGraphics>()
+const meshByGroup = new WeakMap<PixiContainer, PixiMeshSimple>()
 
 export function placeholderOf(container: PixiContainer): PixiContainer | undefined {
   return placeholderByContainer.get(container)
@@ -29,7 +30,8 @@ export function createNodeContainer(
   container.visible = node.visible
   container.alpha = node.opacity
   if (node.components.mesh) {
-    const meshPlaceholder = createMeshPlaceholder(pixi, node)
+    const textureKey = node.components.assetInstance?.assetDefinitionId ?? node.id
+    const meshPlaceholder = createMeshPlaceholder(pixi, node, cache.get(textureKey))
     placeholderByContainer.set(container, meshPlaceholder)
     container.addChild(meshPlaceholder)
   } else if (node.components.assetInstance || node.components.text) {
@@ -117,15 +119,20 @@ function createBonePlaceholder(pixi: RendererPixi, node: SceneNode, length: numb
   return group
 }
 
-export function createMeshPlaceholder(pixi: RendererPixi, node: SceneNode): PixiContainer {
+export function createMeshPlaceholder(
+  pixi: RendererPixi,
+  node: SceneNode,
+  texture: PixiMeshSimpleOptions['texture'],
+): PixiContainer {
   const mesh = node.components.mesh?.mesh
   const group = new pixi.Container()
   group.label = `placeholder:${node.name}`
 
   if (mesh && mesh.vertices.length > 0) {
-    const graphics = new pixi.Graphics()
-    meshGraphicsByGroup.set(group, graphics)
-    group.addChild(graphics)
+    const displayMesh = createDisplayMesh(pixi, mesh, texture)
+    meshByGroup.set(group, displayMesh)
+    registerMeshDisplay(group, displayMesh)
+    group.addChild(displayMesh)
     let minX = Infinity
     let minY = Infinity
     let maxX = -Infinity
@@ -148,26 +155,45 @@ export function createMeshPlaceholder(pixi: RendererPixi, node: SceneNode): Pixi
   return group
 }
 
-export function applyMeshVertices(
-  container: PixiContainer,
-  vertices: readonly MeshVertex[],
-  faces: readonly MeshFace[],
-): void {
+export function applyMeshVertices(container: PixiContainer, vertices: readonly MeshVertex[]): void {
   const group = placeholderByContainer.get(container)
-  const graphics = group ? meshGraphicsByGroup.get(group) : undefined
-  if (!graphics) return
-  graphics.clear()
-  for (const face of faces) {
-    const v0 = vertices[face.v0]
-    const v1 = vertices[face.v1]
-    const v2 = vertices[face.v2]
-    if (!v0 || !v1 || !v2) continue
-    graphics
-      .moveTo(v0.x, v0.y)
-      .lineTo(v1.x, v1.y)
-      .lineTo(v2.x, v2.y)
-      .closePath()
-      .fill({ color: 0x8ab4f8, alpha: 0.55 })
-      .stroke({ width: 1, color: 0x1a73e8, alpha: 0.9 })
-  }
+  const displayMesh = group ? meshByGroup.get(group) : undefined
+  if (!displayMesh) return
+  displayMesh.vertices = flattenVertices(vertices)
+}
+
+export function applyMeshData(pixi: RendererPixi, container: PixiContainer, mesh: MeshData): void {
+  const group = placeholderByContainer.get(container)
+  const current = group ? meshByGroup.get(group) : undefined
+  if (!group || !current) return
+  const replacement = createDisplayMesh(pixi, mesh, current.texture)
+  const index = group.children.indexOf(current)
+  current.destroy()
+  meshByGroup.set(group, replacement)
+  registerMeshDisplay(group, replacement)
+  group.addChildAt(replacement, index < 0 ? group.children.length : index)
+}
+
+function createDisplayMesh(
+  pixi: RendererPixi,
+  mesh: MeshData,
+  texture: PixiMeshSimpleOptions['texture'],
+): PixiMeshSimple {
+  const displayMesh = new pixi.MeshSimple({
+    texture,
+    vertices: flattenVertices(mesh.vertices),
+    uvs: flattenUvs(mesh.uvs),
+    indices: new Uint32Array(mesh.faces.flatMap((face) => [face.v0, face.v1, face.v2])),
+    topology: 'triangle-list',
+  })
+  displayMesh.label = 'mesh-display'
+  return displayMesh
+}
+
+function flattenVertices(vertices: readonly MeshVertex[]): Float32Array {
+  return new Float32Array(vertices.flatMap((vertex) => [vertex.x, vertex.y]))
+}
+
+function flattenUvs(uvs: readonly { readonly u: number; readonly v: number }[]): Float32Array {
+  return new Float32Array(uvs.flatMap((uv) => [uv.u, uv.v]))
 }

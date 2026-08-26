@@ -2,6 +2,7 @@ import type { SceneNode } from '../../engine'
 import type {
   PixiContainer,
   PixiGraphics,
+  PixiMeshSimple,
   PixiSprite,
   PixiText,
   PixiTexture,
@@ -18,6 +19,7 @@ const outlineByGroup = new WeakMap<PixiContainer, PixiGraphics>()
 const bodyByGroup = new WeakMap<PixiContainer, PixiSprite>()
 const boneSizeByGroup = new WeakMap<PixiContainer, WorldSize>()
 const meshSizeByGroup = new WeakMap<PixiContainer, WorldSize>()
+const meshDisplayByGroup = new WeakMap<PixiContainer, PixiMeshSimple>()
 
 export function createPlaceholder(
   pixi: RendererPixi,
@@ -80,6 +82,11 @@ export function applyMissingPlaceholder(group: PixiContainer): void {
 }
 
 export function applyAssetTexture(group: PixiContainer, texture: PixiTexture): void {
+  const mesh = meshDisplayByGroup.get(group)
+  if (mesh) {
+    mesh.texture = texture
+    return
+  }
   const body = bodyByGroup.get(group)
   if (!body) {
     return
@@ -95,6 +102,10 @@ export function applyAssetTexture(group: PixiContainer, texture: PixiTexture): v
   if (label) {
     label.visible = false
   }
+}
+
+export function registerMeshDisplay(group: PixiContainer, mesh: PixiMeshSimple): void {
+  meshDisplayByGroup.set(group, mesh)
 }
 
 export function placeholderSize(group: PixiContainer): WorldSize | null {

@@ -5,6 +5,7 @@ import {
   Filter,
   GlProgram,
   Graphics,
+  MeshSimple,
   RenderTexture,
   Sprite,
   Text,
@@ -17,6 +18,14 @@ export interface PixiGlProgramOptions {
   name?: string
 }
 
+export interface PixiMeshSimpleOptions {
+  texture: PixiTexture
+  vertices?: Float32Array
+  uvs?: Float32Array
+  indices?: Uint32Array
+  topology?: 'triangle-list'
+}
+
 export interface PixiRenderTextureOptions {
   width: number
   height: number
@@ -27,6 +36,7 @@ export interface RendererPixi {
   readonly Application: typeof Application
   readonly Container: typeof Container
   readonly Graphics: typeof Graphics
+  readonly MeshSimple: new (options: PixiMeshSimpleOptions) => PixiMeshSimple
   readonly Text: typeof Text
   readonly Sprite: typeof Sprite
   readonly Texture: typeof Texture
@@ -47,6 +57,7 @@ export const realPixi: RendererPixi = {
   Application,
   Container,
   Graphics,
+  MeshSimple,
   Text,
   Sprite,
   Texture,
@@ -66,6 +77,7 @@ export const realPixi: RendererPixi = {
 export type PixiApplication = Application
 export type PixiContainer = Container
 export type PixiGraphics = Graphics
+export type PixiMeshSimple = MeshSimple
 export type PixiText = Text
 export type PixiSprite = Sprite
 export type PixiTexture = Texture

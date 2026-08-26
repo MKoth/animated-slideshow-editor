@@ -200,12 +200,46 @@ export class MeshOverlay {
     return worldTransformOf(scene, nodeId)
   }
 
+  #worldVerticesFor(
+    scene: Scene,
+    nodeId: string,
+    preview?: Map<number, { x: number; y: number }> | null,
+  ): { x: number; y: number }[] | null {
+    const node = scene.getNode(nodeId)
+    if (!node || !node.components.mesh) return null
+    const mesh = node.components.mesh.mesh
+    const transform = this.#resolveTransform(scene, nodeId)
+    if (!transform) return null
+    const deformed = getDeformedVertices(mesh, scene, transform, this.#getWorldTransform)
+    return deformed.map((v, i) => {
+      const p = preview?.get(i)
+      return localToWorld(p ? p.x : v.x, p ? p.y : v.y, transform)
+    })
+  }
+
   setPreviewVertices(positions: Map<number, { x: number; y: number }>): void {
     this.#previewVertices = positions
   }
 
   clearPreviewVertices(): void {
     this.#previewVertices = null
+  }
+
+  worldVerticesFor(
+    scene: Scene,
+    nodeId: string,
+    preview?: Map<number, { x: number; y: number }> | null,
+  ): { x: number; y: number }[] | null {
+    return this.#worldVerticesFor(scene, nodeId, preview ?? this.#previewVertices)
+  }
+
+  deformedLocalVertices(scene: Scene, nodeId: string): { x: number; y: number }[] | null {
+    const node = scene.getNode(nodeId)
+    if (!node || !node.components.mesh) return null
+    const mesh = node.components.mesh.mesh
+    const transform = this.#resolveTransform(scene, nodeId)
+    if (!transform) return null
+    return getDeformedVertices(mesh, scene, transform, this.#getWorldTransform)
   }
 
   redraw(): void {
@@ -385,34 +419,25 @@ export class MeshOverlay {
       const v1 = worldVertices[face.v1]
       const v2 = worldVertices[face.v2]
       if (v0 && v1) {
-        graphics
-          .moveTo(v0.x, v0.y)
-          .lineTo(v1.x, v1.y)
-          .stroke({
-            width: PREVIEW_WIREFRAME_WIDTH,
-            color: PREVIEW_WIREFRAME_COLOR,
-            alpha: PREVIEW_WIREFRAME_ALPHA,
-          })
+        graphics.moveTo(v0.x, v0.y).lineTo(v1.x, v1.y).stroke({
+          width: PREVIEW_WIREFRAME_WIDTH,
+          color: PREVIEW_WIREFRAME_COLOR,
+          alpha: PREVIEW_WIREFRAME_ALPHA,
+        })
       }
       if (v1 && v2) {
-        graphics
-          .moveTo(v1.x, v1.y)
-          .lineTo(v2.x, v2.y)
-          .stroke({
-            width: PREVIEW_WIREFRAME_WIDTH,
-            color: PREVIEW_WIREFRAME_COLOR,
-            alpha: PREVIEW_WIREFRAME_ALPHA,
-          })
+        graphics.moveTo(v1.x, v1.y).lineTo(v2.x, v2.y).stroke({
+          width: PREVIEW_WIREFRAME_WIDTH,
+          color: PREVIEW_WIREFRAME_COLOR,
+          alpha: PREVIEW_WIREFRAME_ALPHA,
+        })
       }
       if (v2 && v0) {
-        graphics
-          .moveTo(v2.x, v2.y)
-          .lineTo(v0.x, v0.y)
-          .stroke({
-            width: PREVIEW_WIREFRAME_WIDTH,
-            color: PREVIEW_WIREFRAME_COLOR,
-            alpha: PREVIEW_WIREFRAME_ALPHA,
-          })
+        graphics.moveTo(v2.x, v2.y).lineTo(v0.x, v0.y).stroke({
+          width: PREVIEW_WIREFRAME_WIDTH,
+          color: PREVIEW_WIREFRAME_COLOR,
+          alpha: PREVIEW_WIREFRAME_ALPHA,
+        })
       }
     }
   }
@@ -427,17 +452,17 @@ export class MeshOverlay {
     if (!node || !node.components.mesh) {
       return null
     }
-    const mesh = node.components.mesh.mesh
     const transform = this.#resolveTransform(scene, meshEditNodeId)
     if (!transform) {
       return null
     }
     const hitRadius =
       VERTEX_RADIUS / Math.max(Math.abs(transform.scaleX), Math.abs(transform.scaleY), 0.1) + 2
-    for (let i = 0; i < mesh.vertices.length; i++) {
-      const v = mesh.vertices[i]
-      const { x: wx, y: wy } = localToWorld(v.x, v.y, transform)
-      const dist = Math.hypot(worldX - wx, worldY - wy)
+    const worldVertices = this.#worldVerticesFor(scene, meshEditNodeId, this.#previewVertices)
+    if (!worldVertices) return null
+    for (let i = 0; i < worldVertices.length; i++) {
+      const v = worldVertices[i]
+      const dist = Math.hypot(worldX - v.x, worldY - v.y)
       if (dist <= hitRadius) {
         return i
       }
@@ -460,7 +485,8 @@ export class MeshOverlay {
     if (!transform) {
       return null
     }
-    const worldVertices = mesh.vertices.map((v) => localToWorld(v.x, v.y, transform))
+    const worldVertices = this.#worldVerticesFor(scene, meshEditNodeId, this.#previewVertices)
+    if (!worldVertices) return null
     const threshold =
       EDGE_HIT_THRESHOLD / Math.max(Math.abs(transform.scaleX), Math.abs(transform.scaleY), 0.1)
     const thresholdSq = threshold * threshold
@@ -488,11 +514,8 @@ export class MeshOverlay {
       return null
     }
     const mesh = node.components.mesh.mesh
-    const transform = this.#resolveTransform(scene, meshEditNodeId)
-    if (!transform) {
-      return null
-    }
-    const worldVertices = mesh.vertices.map((v) => localToWorld(v.x, v.y, transform))
+    const worldVertices = this.#worldVerticesFor(scene, meshEditNodeId, this.#previewVertices)
+    if (!worldVertices) return null
 
     // Test faces in reverse order (topmost first)
     for (let i = mesh.faces.length - 1; i >= 0; i--) {
@@ -509,20 +532,12 @@ export class MeshOverlay {
   }
 
   verticesInRect(rect: WorldRect, scene: Scene, meshEditNodeId: string): number[] {
-    const node = scene.getNode(meshEditNodeId)
-    if (!node || !node.components.mesh) {
-      return []
-    }
-    const mesh = node.components.mesh.mesh
-    const transform = this.#resolveTransform(scene, meshEditNodeId)
-    if (!transform) {
-      return []
-    }
+    const worldVertices = this.#worldVerticesFor(scene, meshEditNodeId, null)
+    if (!worldVertices) return []
     const hits: number[] = []
-    for (let i = 0; i < mesh.vertices.length; i++) {
-      const v = mesh.vertices[i]
-      const { x: wx, y: wy } = localToWorld(v.x, v.y, transform)
-      if (wx >= rect.minX && wx <= rect.maxX && wy >= rect.minY && wy <= rect.maxY) {
+    for (let i = 0; i < worldVertices.length; i++) {
+      const v = worldVertices[i]
+      if (v.x >= rect.minX && v.x <= rect.maxX && v.y >= rect.minY && v.y <= rect.maxY) {
         hits.push(i)
       }
     }
@@ -535,11 +550,8 @@ export class MeshOverlay {
       return []
     }
     const mesh = node.components.mesh.mesh
-    const transform = this.#resolveTransform(scene, meshEditNodeId)
-    if (!transform) {
-      return []
-    }
-    const worldVertices = mesh.vertices.map((v) => localToWorld(v.x, v.y, transform))
+    const worldVertices = this.#worldVerticesFor(scene, meshEditNodeId, null)
+    if (!worldVertices) return []
     const edges = extractEdges(mesh)
     const hits: MeshEdge[] = []
     for (const edge of edges) {
@@ -561,11 +573,8 @@ export class MeshOverlay {
       return []
     }
     const mesh = node.components.mesh.mesh
-    const transform = this.#resolveTransform(scene, meshEditNodeId)
-    if (!transform) {
-      return []
-    }
-    const worldVertices = mesh.vertices.map((v) => localToWorld(v.x, v.y, transform))
+    const worldVertices = this.#worldVerticesFor(scene, meshEditNodeId, null)
+    if (!worldVertices) return []
     const hits: number[] = []
     for (let i = 0; i < mesh.faces.length; i++) {
       const face = mesh.faces[i]

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Engine } from '../../engine/internal'
 import { createEngine } from '../../engine/internal'
+import { createDefaultRectangleMesh } from '../../engine/mesh'
 import type { PixiContainer, RendererPixi } from '../../pixi/renderer/pixi'
 import { ShaderProgramCache } from '../../pixi/renderer/programCache'
 import { SceneRenderer } from '../../pixi/renderer/sceneRenderer'
@@ -55,6 +56,45 @@ function setup(
 }
 
 describe('SceneRenderer nodeSize', () => {
+  it('restores the asset texture on a mesh-backed node after binding', async () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'Demo' })
+    engine.createSlide('Slide 1')
+    const deferred = deferredTexture()
+    textureDeferreds.set('/api/assets/originals/def-1.png', deferred)
+    const slide = engine.project!.slides[0]
+    const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'Hero', {
+      components: { assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-1' } },
+    })
+    engine.setMeshData(node.id, createDefaultRectangleMesh(100, 80))
+    const pixi = createPixiFake() as unknown as RendererPixi
+    const world = new FakeContainer() as unknown as PixiContainer
+    const renderer = new SceneRenderer(
+      engine,
+      world,
+      pixi,
+      new TextureCache(pixi),
+      () => '/api/assets/originals/def-1.png',
+      new ShaderProgramCache(pixi),
+    )
+
+    renderer.bind(slide.scene)
+
+    const root = world.children[0]
+    const container = root?.children.find(
+      (child) => child.label === 'Hero',
+    ) as unknown as FakeContainer
+    const placeholder = container.children[0]
+    const mesh = placeholder?.children[0] as FakeContainer & { texture: FakeTexture }
+    expect(mesh.kind).toBe('mesh')
+    expect(mesh.texture).not.toBe(deferred)
+
+    const texture = new FakeTexture('boy.png', { width: 512, height: 300 })
+    deferred.resolve(texture)
+    await deferred.promise
+    await vi.waitFor(() => expect(mesh.texture).toBe(texture))
+  })
+
   it('reports the placeholder size of a bound node', () => {
     const engine = createEngine()
     engine.createProject({ name: 'Demo' })

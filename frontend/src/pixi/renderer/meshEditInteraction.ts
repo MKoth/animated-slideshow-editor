@@ -44,6 +44,7 @@ export class MeshEditInteraction {
   #moveActive = false
   #marqueeActive = false
   #previewPositions = new Map<number, { x: number; y: number }>()
+  #dragBasePositions = new Map<number, { x: number; y: number }>()
 
   constructor(context: MeshEditContext) {
     this.#canvas = context.canvas
@@ -398,20 +399,26 @@ export class MeshEditInteraction {
       return
     }
     this.#moveActive = true
-    const node = scene.getNode(meshEditNodeId)
-    if (!node || !node.components.mesh) {
-      return
-    }
-    const mesh = node.components.mesh.mesh
     const { selectedVertexIndices } = useMeshEditStore.getState()
     const indices = new Set(this.#dragVertexIndices)
     for (const idx of selectedVertexIndices) {
       indices.add(idx)
     }
+    if (this.#dragBasePositions.size === 0) {
+      const deformed = this.#meshOverlay.deformedLocalVertices(scene, meshEditNodeId)
+      if (deformed) {
+        for (const idx of indices) {
+          const pos = deformed[idx]
+          if (pos) {
+            this.#dragBasePositions.set(idx, { x: pos.x, y: pos.y })
+          }
+        }
+      }
+    }
     for (const idx of indices) {
-      const original = mesh.vertices[idx]
-      if (original) {
-        this.#previewPositions.set(idx, { x: original.x + dx, y: original.y + dy })
+      const base = this.#dragBasePositions.get(idx)
+      if (base) {
+        this.#previewPositions.set(idx, { x: base.x + dx, y: base.y + dy })
       }
     }
     this.#meshOverlay.setPreviewVertices(this.#previewPositions)
@@ -547,6 +554,7 @@ export class MeshEditInteraction {
     this.#moveActive = false
     this.#marqueeActive = false
     this.#previewPositions.clear()
+    this.#dragBasePositions.clear()
     this.#meshOverlay.clearPreviewVertices()
   }
 }

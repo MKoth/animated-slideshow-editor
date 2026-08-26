@@ -190,7 +190,11 @@ export function generateMesh(input: MeshGeneratorInput): MeshGeneratorResult {
       `Generated mesh contains no valid triangles (${referenced.size}/${vertices.length})`,
     )
   }
-  return { vertices, faces, uvs: computeUVs(vertices, width, height), width, height }
+  const uvs = computeUVs(vertices, width, height)
+  const halfW = width / 2
+  const halfH = height / 2
+  const centered = vertices.map((v) => ({ x: v.x - halfW, y: v.y - halfH }))
+  return { vertices: centered, faces, uvs, width, height }
 }
 
 function extractContours(alpha: Uint8Array, width: number, height: number): Contours {

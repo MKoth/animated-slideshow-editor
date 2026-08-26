@@ -33,6 +33,7 @@ import type { WorldSize } from './worldGeometry'
 import {
   applyEvaluatedState,
   applyMaterialTint,
+  applyMeshData,
   applyMeshVertices,
   applyName,
   createNodeContainer,
@@ -238,7 +239,7 @@ export class SceneRenderer {
       if (!meshTransform) continue
       const vertices = evaluateMeshDeformation(mesh, bones, meshTransform).deformedVertices
       const container = this.#containers.get(node.id)
-      if (container) applyMeshVertices(container, vertices, mesh.faces)
+      if (container) applyMeshVertices(container, vertices)
       if (vertices.length === 0) continue
       const xs = vertices.map((vertex) => vertex.x)
       const ys = vertices.map((vertex) => vertex.y)
@@ -299,6 +300,26 @@ export class SceneRenderer {
       return
     }
     const mesh = node.components.mesh.mesh
+    const container = this.#containers.get(nodeId)
+    if (container && !placeholderOf(container)?.children[0]?.label?.startsWith('mesh')) {
+      const parent = container.parent
+      const index = parent ? parent.children.indexOf(container) : -1
+      container.destroy({ children: true })
+      const replacement = createNodeContainer(this.#pixi, node, this.#textureCache)
+      this.#containers.set(nodeId, replacement)
+      this.#nodeIds.set(replacement, nodeId)
+      if (parent) {
+        parent.addChildAt(replacement, Math.max(0, index))
+      }
+      this.#recordSize(node, replacement)
+      this.#evaluateAndApply(nodeId)
+      const instance = node.components.assetInstance
+      if (instance) {
+        this.#loadAssetTexture(instance.assetDefinitionId, nodeId, replacement)
+      }
+    } else if (container) {
+      applyMeshData(this.#pixi, container, mesh)
+    }
     if (mesh.vertices.length === 0) {
       return
     }
@@ -410,7 +431,7 @@ export class SceneRenderer {
     this.#recordSize(node, container)
     this.#evaluateAndApply(node.id)
     const instance = node.components.assetInstance
-    if (instance && !node.components.mesh) {
+    if (instance) {
       this.#loadAssetTexture(instance.assetDefinitionId, node.id, container)
     }
   }

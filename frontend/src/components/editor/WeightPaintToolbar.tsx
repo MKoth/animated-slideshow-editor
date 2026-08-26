@@ -137,7 +137,7 @@ export function WeightPaintToolbar() {
       {selectedBoneId && weightPaintTool === 'paint' && (
         <>
           <div className="weight-paint-toolbar__separator" />
-          <span className="weight-paint-toolbar__hint">Alt+drag to erase</span>
+          <span className="weight-paint-toolbar__hint">Shift+drag to erase</span>
         </>
       )}
     </div>

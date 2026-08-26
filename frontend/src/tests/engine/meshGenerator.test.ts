@@ -34,10 +34,10 @@ describe('generateMesh', () => {
     const result = generateMesh({ imageData: input, density: 50 })
     expectValidMesh(result)
     expect(result.vertices.slice(0, 4)).toEqual([
-      { x: 0, y: 0 },
-      { x: 8, y: 0 },
-      { x: 8, y: 6 },
-      { x: 0, y: 6 },
+      { x: -4, y: -3 },
+      { x: 4, y: -3 },
+      { x: 4, y: 3 },
+      { x: -4, y: 3 },
     ])
     expect(result.uvs[0]).toEqual({ u: 0, v: 0 })
     expect(result.uvs[2]).toEqual({ u: 1, v: 1 })
@@ -73,6 +73,21 @@ describe('generateMesh', () => {
     const high = generateMesh({ imageData: input, density: 100 })
     expect(high.vertices.length).toBeGreaterThan(low.vertices.length)
     expect(high.faces.length).toBeGreaterThan(low.faces.length)
+  })
+
+  it('centers vertices while keeping UVs in image-coordinate space', () => {
+    const input = image(8, 6, () => true)
+    const result = generateMesh({ imageData: input, density: 50 })
+    const minX = Math.min(...result.vertices.map((v) => v.x))
+    const maxX = Math.max(...result.vertices.map((v) => v.x))
+    const minY = Math.min(...result.vertices.map((v) => v.y))
+    const maxY = Math.max(...result.vertices.map((v) => v.y))
+    expect(minX).toBe(-4)
+    expect(maxX).toBe(4)
+    expect(minY).toBe(-3)
+    expect(maxY).toBe(3)
+    expect(result.uvs[0]).toEqual({ u: 0, v: 0 })
+    expect(result.uvs[2]).toEqual({ u: 1, v: 1 })
   })
 
   it.each([

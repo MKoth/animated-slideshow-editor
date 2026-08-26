@@ -89,7 +89,7 @@ export class WeightPaintInteraction {
     this.#lastWorldX = point.x
     this.#lastWorldY = point.y
 
-    const mode = event.altKey ? 'remove' : 'add'
+    const mode = event.shiftKey ? 'remove' : 'add'
 
     if (weightPaintTool === 'paint') {
       this.#handlePaintBrush(point.x, point.y, scene, meshEditNodeId, selectedBoneId, mode)
@@ -137,7 +137,7 @@ export class WeightPaintInteraction {
     this.#lastWorldX = point.x
     this.#lastWorldY = point.y
 
-    const mode = event.altKey ? 'remove' : 'add'
+    const mode = event.shiftKey ? 'remove' : 'add'
 
     if (weightPaintTool === 'paint') {
       this.#handlePaintBrush(point.x, point.y, scene, meshEditNodeId, selectedBoneId, mode)

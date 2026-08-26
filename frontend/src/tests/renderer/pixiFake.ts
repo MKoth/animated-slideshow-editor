@@ -215,6 +215,32 @@ export class FakeSprite extends FakeContainer {
   }
 }
 
+export interface FakeMeshSimpleOptions {
+  texture: FakeTexture
+  vertices?: Float32Array
+  uvs?: Float32Array
+  indices?: Uint32Array
+  topology?: string
+}
+
+export class FakeMeshSimple extends FakeContainer {
+  readonly kind = 'mesh'
+  texture: FakeTexture
+  vertices: Float32Array
+  readonly uvs: Float32Array
+  readonly indices: Uint32Array
+  readonly topology: string
+
+  constructor(options: FakeMeshSimpleOptions) {
+    super()
+    this.texture = options.texture
+    this.vertices = options.vertices ?? new Float32Array()
+    this.uvs = options.uvs ?? new Float32Array()
+    this.indices = options.indices ?? new Uint32Array()
+    this.topology = options.topology ?? 'triangle-list'
+  }
+}
+
 export interface FakeGlProgramOptions {
   vertex: string
   fragment: string
@@ -443,6 +469,7 @@ export function createPixiFake() {
     Application: FakeApplication,
     Container: FakeContainer,
     Graphics: FakeGraphics,
+    MeshSimple: FakeMeshSimple,
     Text: FakeText,
     Sprite: FakeSprite,
     Texture: fakeTexture,
