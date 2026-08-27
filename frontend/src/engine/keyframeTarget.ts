@@ -28,6 +28,13 @@ export interface NodeParameterTarget {
   readonly parameter: string
 }
 
+/** A data-label target of a node's chart component. */
+export interface NodeDataLabelTarget {
+  readonly kind: 'dataLabel'
+  readonly nodeId: string
+  readonly label: string
+}
+
 /** A clip channel target (Spec 07 R16/R20). */
 export interface ClipChannelTarget {
   readonly kind: 'clip'
@@ -36,10 +43,11 @@ export interface ClipChannelTarget {
 }
 
 /**
- * A keyframe editing target. The discriminated shape supports node targets
- * and clip channel targets (Spec 07 R20).
+ * A keyframe editing target. The discriminated shape supports node targets,
+ * data-label targets, and clip channel targets (Spec 07 R20).
  */
-export type KeyframeTarget = NodePropertyTarget | NodeParameterTarget | ClipChannelTarget
+export type KeyframeTarget =
+  NodePropertyTarget | NodeParameterTarget | NodeDataLabelTarget | ClipChannelTarget
 
 export function isPropertyTarget(target: KeyframeTarget): target is NodePropertyTarget {
   return 'property' in target && target.kind === 'node'
@@ -47,6 +55,10 @@ export function isPropertyTarget(target: KeyframeTarget): target is NodeProperty
 
 export function isParameterTarget(target: KeyframeTarget): target is NodeParameterTarget {
   return 'parameter' in target && target.kind === 'node'
+}
+
+export function isDataLabelTarget(target: KeyframeTarget): target is NodeDataLabelTarget {
+  return target.kind === 'dataLabel'
 }
 
 export function isClipChannelTarget(target: KeyframeTarget): target is ClipChannelTarget {
@@ -66,6 +78,11 @@ export function requireKeyframeTarget(value: unknown): KeyframeTarget {
         parameter: requireMaterialParameterKey(value.parameter, 'Keyframe target parameter'),
       }
     }
+  }
+  if (isRecord(value) && value.kind === 'dataLabel') {
+    const nodeId = requireString(value.nodeId, 'Data label target node id')
+    const label = requireString(value.label, 'Data label target label')
+    return { kind: 'dataLabel', nodeId, label }
   }
   if (isRecord(value) && value.kind === 'clip') {
     const clipId = requireString(value.clipId, 'Keyframe target clip id')
@@ -90,13 +107,13 @@ export function requireClipChannelTarget(value: unknown): ClipChannelTarget {
 export type MaterialParameterKindOf = (node: SceneNode, parameterKey: string) => string | undefined
 
 /**
- * The resolved track a target names: a uniform-six property track or a
- * material-parameter track (with the parameter's kind when the node's
- * material still defines it; orphan tracks keep their data per Spec 07 R27).
+ * The resolved track a target names: a uniform-six property track, a
+ * material-parameter track, or a data-label track.
  */
 export type KeyframeTrackRef =
   | { readonly kind: 'property'; readonly property: AnimationProperty }
   | { readonly kind: 'parameter'; readonly parameter: string; readonly kindOf: string | undefined }
+  | { readonly kind: 'dataLabel'; readonly label: string }
 
 export function resolveKeyframeTrack(
   node: SceneNode,
@@ -110,6 +127,9 @@ export function resolveKeyframeTrack(
   if (isPropertyTarget(target)) {
     return { kind: 'property', property: requireAnimatableForNode(node, target.property) }
   }
+  if (isDataLabelTarget(target)) {
+    return { kind: 'dataLabel', label: target.label }
+  }
   const parameter = requireMaterialParameterKey(target.parameter, 'Keyframe target parameter')
   const kindOfParameter = kindOf(node, parameter)
   if (kindOfParameter === undefined && !hasTrack(parameter)) {
@@ -118,7 +138,7 @@ export function resolveKeyframeTrack(
   return { kind: 'parameter', parameter, kindOf: kindOfParameter }
 }
 
-/** Validate a keyframe value for a resolved track (property or material kind). */
+/** Validate a keyframe value for a resolved track (property, material kind, or data label). */
 export function requireTrackKeyframeValue(
   track: KeyframeTrackRef,
   value: unknown,
@@ -126,6 +146,12 @@ export function requireTrackKeyframeValue(
 ): KeyframeValue {
   if (track.kind === 'property') {
     return requireKeyframeValue(track.property, value, what)
+  }
+  if (track.kind === 'dataLabel') {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new Error(`${what} must be a finite number for data label "${track.label}"`)
+    }
+    return value
   }
   if (track.kindOf === undefined) {
     return requireMaterialOverrideValue(value, what)
@@ -135,8 +161,8 @@ export function requireTrackKeyframeValue(
 
 export function requireNodeTarget(
   target: KeyframeTarget,
-): NodePropertyTarget | NodeParameterTarget {
-  if (target.kind !== 'node') {
+): NodePropertyTarget | NodeParameterTarget | NodeDataLabelTarget {
+  if (target.kind !== 'node' && target.kind !== 'dataLabel') {
     throw new Error('This operation only supports node targets')
   }
   return target

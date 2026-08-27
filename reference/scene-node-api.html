@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reference: Scene Node API</title>
+<link rel="stylesheet" href="../assets/lesson-style.html">
+</head>
+<body>
+
+<span class="lesson-number">Reference</span>
+<h1>Scene Node API Cheatsheet</h1>
+<p class="subtitle">Quick lookup for scene graph operations and types.</p>
+
+<h2>SceneNode</h2>
+
+<table>
+  <tr><th>Property/Method</th><th>Type</th><th>Notes</th></tr>
+  <tr><td><code>id</code></td><td><code>string</code></td><td>Unique within project. Read-only.</td></tr>
+  <tr><td><code>name</code></td><td><code>string</code></td><td>Human-readable. Mutable.</td></tr>
+  <tr><td><code>parent</code></td><td><code>SceneNode | null</code></td><td><code>null</code> for root.</td></tr>
+  <tr><td><code>children</code></td><td><code>SceneNode[]</code></td><td>Ordered. Index = z-order.</td></tr>
+  <tr><td><code>transform</code></td><td><code>Transform</code></td><td>Local-space. Mutable.</td></tr>
+  <tr><td><code>visible</code></td><td><code>boolean</code></td><td>Render toggle.</td></tr>
+  <tr><td><code>opacity</code></td><td><code>number</code></td><td>0..1.</td></tr>
+  <tr><td><code>material</code></td><td><code>MaterialInstance</code></td><td>Tint, opacity, uniforms.</td></tr>
+  <tr><td><code>components</code></td><td><code>NodeComponents</code></td><td>Frozen. Replace whole object to change.</td></tr>
+  <tr><td><code>clipInstances</code></td><td><code>ClipInstance[]</code></td><td>Assigned animation clips.</td></tr>
+  <tr><td><code>markDirty()</code></td><td><code>void</code></td><td>Cascades dirty flag to descendants.</td></tr>
+  <tr><td><code>toJSON()</code></td><td><code>NodeJSON</code></td><td>Serialize this node.</td></tr>
+  <tr><td><code>SceneNode.fromJSON(json)</code></td><td><code>SceneNode</code></td><td>Static. Deserialize.</td></tr>
+</table>
+
+<h2>Transform</h2>
+
+<pre><code>interface Transform {
+  x: number          // offset from parent (px)
+  y: number          // offset from parent (px)
+  rotation: number   // radians, cumulative
+  scaleX: number     // multiplicative
+  scaleY: number     // multiplicative
+  localPivot?: { x: number, y: number }  // rotation/scale origin
+}
+
+identityTransform()  → { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }
+normalizeRotation(r) → r ∈ (-π, π]
+</code></pre>
+
+<h2>World Transform</h2>
+
+<pre><code>worldTransformOf(scene, nodeId)       → WorldTransform | null  (cached, lazy)
+evaluatedWorldTransformOf(engine, id, t) → WorldTransform | null  (animated)
+relativeTransform(world, parentWorld) → Transform | null  (inverse composition)
+</code></pre>
+
+<p>Composition formula (root → node):</p>
+
+<pre><code>x += rotateX(local.x * scaleX, local.y * scaleY, rotation)
+y += rotateY(local.x * scaleX, local.y * scaleY, rotation)
+rotation += local.rotation
+scaleX *= local.scaleX
+scaleY *= local.scaleY
+</code></pre>
+
+<h2>NodeComponents</h2>
+
+<pre><code>interface NodeComponents {
+  camera?:        { kind: 'camera' }
+  assetInstance?: { kind: 'assetInstance', assetDefinitionId: string }
+  text?:          { kind: 'text', content: string, fontSize: number, alignment: 'left' | 'center' | 'right' }
+  bone?:          { kind: 'bone', length: number }
+  mesh?:          { kind: 'mesh', mesh: MeshData }
+  ghost?:         { kind: 'ghost' }
+  table?:         { kind: 'table', columns, rows, gap, cellPadding, borderWidth, borderColor, textWrap, columnMapping, cellSpans }
+  chart?:         { kind: 'chart', chartType, dataSourceId, visualConfig, dataKeyframes, _dirty }
+}
+</code></pre>
+
+<p>All component interfaces are <code>Object.freeze()</code>'d. Use <code>copyComponents()</code> to clone.</p>
+
+<h2>Scene</h2>
+
+<pre><code>class Scene {
+  id: string
+  root: SceneNode
+  camera: SceneNode
+
+  getNode(id: string): SceneNode | undefined
+  register(node: SceneNode): void     // adds to flat index
+  unregister(nodeId: string): void    // removes from index
+  toJSON(): SceneJSON
+}
+</code></pre>
+
+<h2>Tree Operations</h2>
+
+<table>
+  <tr><th>Function</th><th>File</th><th>Purpose</th></tr>
+  <tr><td><code>walkPreOrder(root)</code></td><td><code>sceneNode.ts</code></td><td>Generator. DFS pre-order traversal.</td></tr>
+  <tr><td><code>detachFromParent(node)</code></td><td><code>sceneNode.ts</code></td><td>Remove from parent's children array.</td></tr>
+  <tr><td><code>wouldFormCycle(node, newParent)</code></td><td><code>sceneNode.ts</code></td><td>Check if reparent creates cycle.</td></tr>
+  <tr><td><code>copyComponents(components)</code></td><td><code>components.ts</code></td><td>Deep clone components (unfreeze).</td></tr>
+</table>
+
+<h2>Dirty Flag Pattern</h2>
+
+<pre><code>node._worldTransformDirty   // boolean
+node._cachedWorldTransform  // WorldTransform | null
+
+// On local transform change:
+node.markDirty()  // sets flag + cascades to children
+
+// On world transform query:
+if (dirty) recompute(); else return cached
+</code></pre>
+
+<h2>Camera → Viewport Mapping</h2>
+
+<table>
+  <tr><th>Camera Transform</th><th>Viewport Effect</th><th>Animatable</th></tr>
+  <tr><td><code>x, y</code></td><td>Pan</td><td>Yes</td></tr>
+  <tr><td><code>scaleX, scaleY</code></td><td>Zoom</td><td>Yes</td></tr>
+  <tr><td><code>rotation</code></td><td>Locked</td><td>No</td></tr>
+</table>
+
+<div class="callout">
+  <strong>Tip:</strong> When working with the scene graph, always check whether you need the <em>local</em> transform (relative to parent) or the <em>world</em> transform (absolute). The renderer uses world transforms; commands typically set local transforms.
+</div>
+
+</body>
+</html>

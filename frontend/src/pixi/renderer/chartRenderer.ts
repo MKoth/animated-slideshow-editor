@@ -163,13 +163,14 @@ function renderBarChart(
 
   const labels = [...new Set(data.map((d) => d.label))]
   const allValues = data.map((d) => d.value)
-  const yMax = d3.max(allValues) ?? 1
+  const yMin = chart.axisMin ?? 0
+  const yMax = chart.axisMax ?? d3.max(allValues) ?? 1
 
   const x0 = d3.scaleBand().domain(labels).range([0, width]).padding(0.2)
 
   if (useGrouping) {
     const x1 = d3.scaleBand().domain(seriesNames).range([0, x0.bandwidth()]).padding(0.1)
-    const y = d3.scaleLinear().domain([0, yMax]).nice().range([height, 0])
+    const y = d3.scaleLinear().domain([yMin, yMax]).nice().range([height, 0])
 
     addAxisX(g, x0, height, config)
     addAxisY(g, y, width, config)
@@ -189,7 +190,7 @@ function renderBarChart(
       }
     }
   } else {
-    const y = d3.scaleLinear().domain([0, yMax]).nice().range([height, 0])
+    const y = d3.scaleLinear().domain([yMin, yMax]).nice().range([height, 0])
 
     addAxisX(g, x0, height, config)
     addAxisY(g, y, width, config)
@@ -220,11 +221,12 @@ function renderLineChart(
   const useGrouping = seriesNames.length > 1 && seriesNames[0] !== ''
 
   const allValues = data.map((d) => d.value)
-  const yMax = d3.max(allValues) ?? 1
+  const yMin = chart.axisMin ?? 0
+  const yMax = chart.axisMax ?? d3.max(allValues) ?? 1
 
   const labels = [...new Set(data.map((d) => d.label))]
   const x = d3.scalePoint().domain(labels).range([0, width]).padding(0.5)
-  const y = d3.scaleLinear().domain([0, yMax]).nice().range([height, 0])
+  const y = d3.scaleLinear().domain([yMin, yMax]).nice().range([height, 0])
 
   addAxisX(g, x as unknown as d3.ScaleBand<string>, height, config)
   addAxisY(g, y, width, config)
@@ -328,11 +330,12 @@ function renderAreaChart(
   const useGrouping = seriesNames.length > 1 && seriesNames[0] !== ''
 
   const allValues = data.map((d) => d.value)
-  const yMax = d3.max(allValues) ?? 1
+  const yMin = chart.axisMin ?? 0
+  const yMax = chart.axisMax ?? d3.max(allValues) ?? 1
 
   const labels = [...new Set(data.map((d) => d.label))]
   const x = d3.scalePoint().domain(labels).range([0, width]).padding(0.5)
-  const y = d3.scaleLinear().domain([0, yMax]).nice().range([height, 0])
+  const y = d3.scaleLinear().domain([yMin, yMax]).nice().range([height, 0])
 
   addAxisX(g, x as unknown as d3.ScaleBand<string>, height, config)
   addAxisY(g, y, width, config)

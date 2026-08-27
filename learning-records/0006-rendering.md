@@ -1,0 +1,3 @@
+# Rendering pipeline understanding established
+
+The user now understands the rendering architecture: the Renderer as a pure consumer of engine events, the SceneRenderer mapping engine nodes to Pixi containers via a placeholder pattern, the Camera applying viewport transforms, the tick loop (camera → grid → fullscreen shader → dev overlay), and event-driven selective updates with change detection. Key insight: the renderer never mutates the engine — clean separation via the event bus. Time changes are the expensive path (all nodes re-evaluated), while single-node events are cheap (selective update).

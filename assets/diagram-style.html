@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Architecture Diagram Styles</title>
+<style>
+  .arch-diagram {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.8rem;
+    line-height: 1.35;
+    background: var(--code-bg, #f5f5f4);
+    border: 1px solid var(--border, #e7e5e4);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1.25rem;
+    overflow-x: auto;
+    white-space: pre;
+  }
+
+  .arch-diagram .layer {
+    display: inline-block;
+    padding: 0.2em 0.6em;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+
+  .arch-diagram .ui { background: #dbeafe; color: #1e40af; }
+  .arch-diagram .engine { background: #dcfce7; color: #166534; }
+  .arch-diagram .cmd { background: #fef3c7; color: #92400e; }
+  .arch-diagram .store { background: #f3e8ff; color: #6b21a8; }
+  .arch-diagram .render { background: #ffe4e6; color: #9f1239; }
+  .arch-diagram .api { background: #e0e7ff; color: #3730a3; }
+  .arch-diagram .data { background: #fed7aa; color: #9a3412; }
+
+  @media (prefers-color-scheme: dark) {
+    .arch-diagram .ui { background: #1e3a5f; color: #93c5fd; }
+    .arch-diagram .engine { background: #14532d; color: #86efac; }
+    .arch-diagram .cmd { background: #451a03; color: #fcd34d; }
+    .arch-diagram .store { background: #3b0764; color: #d8b4fe; }
+    .arch-diagram .render { background: #4c0519; color: #fda4af; }
+    .arch-diagram .api { background: #1e1b4b; color: #a5b4fc; }
+    .arch-diagram .data { background: #431407; color: #fdba74; }
+  }
+
+  .flow-arrow {
+    color: var(--muted, #78716c);
+    font-weight: 700;
+  }
+
+  .layer-label {
+    color: var(--muted, #78716c);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+</style>
+</head>
+</html>

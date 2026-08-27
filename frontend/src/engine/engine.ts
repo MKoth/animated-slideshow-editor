@@ -70,6 +70,7 @@ export interface EnginePublic {
     time: number,
     target?: EvaluatedMaterialOverridesScratch,
   ): MaterialOverrides
+  evaluateDataLabels(nodeId: string, time: number): Map<string, number>
   evaluateMeshDeformation(
     nodeId: string,
     time: number,

@@ -1,0 +1,3 @@
+# Animation system understanding established
+
+The user now understands the animation system architecture: the six animatable properties (positionX/Y, rotation, scaleX/Y, opacity), the Keyframe model with pluggable interpolation (hold, linear, bezier via Cardano, bounce, elastic, spring), NodeAnimation as sparse track storage, the AnimationEvaluator that composes static → keyframes → material tracks → clips, and the Clip system as parameterized animation templates with normalized time [0,1] and gain/offset parameter linking. Key insight: the interpolator registry is open for extension without modifying evaluation logic.

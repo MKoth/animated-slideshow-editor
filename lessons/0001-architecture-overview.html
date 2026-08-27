@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 1: Architecture Overview</title>
+<link rel="stylesheet" href="../assets/lesson-style.html">
+<link rel="stylesheet" href="../assets/diagram-style.html">
+</head>
+<body>
+
+<span class="lesson-number">Lesson 1</span>
+<h1>The Big Picture</h1>
+<p class="subtitle">How the pieces fit together — and why they're split this way.</p>
+
+<h2>The One-Line Summary</h2>
+<p>This is a <strong>2D animated slideshow editor</strong> where the frontend owns all the intelligence (scene graph, animation, rendering) and the backend is a thin persistence layer.</p>
+
+<div class="callout">
+  <strong>Key insight:</strong> The engine is a pure TypeScript class library with zero React or DOM dependencies. It could run in a Web Worker or Node.js. This is the single most important architectural decision in the codebase.
+</div>
+
+<h2>Four Layers</h2>
+
+<p>The frontend has four distinct layers, each depending only on the one below:</p>
+
+<div class="arch-diagram"><span class="layer-label">Layer 4 — UI</span>
+<span class="layer ui">React Components</span>  <span class="layer store">Zustand Stores</span>
+        <span class="flow-arrow">│</span>
+<span class="layer-label">Layer 3 — Glue</span>
+<span class="layer api">App Layer</span>  (EngineProvider, Persistence, LibrarySync)
+        <span class="flow-arrow">│</span>
+<span class="layer-label">Layer 2 — Mutation</span>
+<span class="layer cmd">Command System</span>  (89 command types, undo/redo)
+        <span class="flow-arrow">│</span>
+<span class="layer-label">Layer 1 — Domain</span>
+<span class="layer engine">Engine</span>  (Scene Graph, Animation, Evaluation)
+        <span class="flow-arrow">│</span>
+<span class="layer-label">Backend</span>
+<span class="layer data">FastAPI + SQLite</span>  (stores JSON blobs, serves assets)</div>
+
+<h3>Layer 1: Engine <code>frontend/src/engine/</code></h3>
+<p>The pure domain model. 76 files. Contains the scene graph, animation evaluator, keyframe interpolation, IK solver, constraint system, mesh deformation, and serialization. No React. No DOM. No HTTP.</p>
+
+<p>Key files:</p>
+<ul>
+  <li><code>engine.ts</code> — the root class, owns all managers</li>
+  <li><code>sceneNode.ts</code> — a node in the scene tree (transform, components, children)</li>
+  <li><code>animationEvaluator.ts</code> — evaluates keyframes at a given time</li>
+  <li><code>commands/</code> — 89 command files, one per mutation type</li>
+  <li><code>lessonSerializer.ts</code> — JSON serialization/deserialization (704 lines)</li>
+</ul>
+
+<h3>Layer 2: Command System <code>frontend/src/engine/commands/</code></h3>
+<p>Every mutation goes through a <code>Command</code> object with <code>validate()</code> + <code>execute()</code> that returns an <code>Inverse</code> payload. This enables undo/redo and transaction batching.</p>
+
+<div class="diagram">UI Action
+  → dispatch(command)
+    → command.validate(engine)    // throws on invalid
+    → command.execute(engine)     // mutates state, returns inverse
+    → undoStack.record(inverse)   // enables undo</div>
+
+<p>See <a href="https://refactoring.guru/design-patterns/command">Refactoring.Guru — Command Pattern</a> for the canonical pattern reference.</p>
+
+<h3>Layer 3: App Layer <code>frontend/src/app/</code></h3>
+<p>The glue between React and the engine. Handles:</p>
+<ul>
+  <li><code>EngineProvider.tsx</code> — React context providing the engine to the component tree</li>
+  <li><code>persistence.ts</code> — autosave, dirty tracking, recovery shadows</li>
+  <li><code>librarySync.ts</code> — bridges Zustand stores to engine definitions</li>
+  <li><code>lessonTransfer.ts</code> — import/export of <code>.lesson</code> files</li>
+</ul>
+
+<h3>Layer 4: Stores + UI <code>frontend/src/stores/</code> + <code>frontend/src/components/</code></h3>
+<p>26 Zustand stores for transient UI state (selection, playback, panels, etc.). React components read from stores and dispatch commands.</p>
+
+<h2>The Backend <code>backend/</code></h2>
+
+<p>Intentionally thin. FastAPI + SQLAlchemy + SQLite. Serves five resource types:</p>
+
+<table>
+  <tr><th>Resource</th><th>Endpoint</th><th>Stores</th></tr>
+  <tr><td>Projects</td><td><code>/api/projects</code></td><td>JSON blobs (opaque)</td></tr>
+  <tr><td>Assets</td><td><code>/api/assets</code></td><td>Image files + metadata</td></tr>
+  <tr><td>Materials</td><td><code>/api/materials</code></td><td>Parameter definitions</td></tr>
+  <tr><td>Shaders</td><td><code>/api/shaders</code></td><td>GLSL source + uniforms</td></tr>
+  <tr><td>Clips</td><td><code>/api/clips/library</code></td><td>Reusable animation presets</td></tr>
+</table>
+
+<div class="callout warning">
+  <strong>Why opaque blobs?</strong> The backend stores projects as raw JSON strings, not normalized relational data. This means the backend cannot query project internals — it's a file server with extra steps. This is a deliberate trade-off: simplicity over queryability.
+</div>
+
+<h2>Data Flow</h2>
+
+<div class="diagram">┌─────────────────────────────────────────────────┐
+│  User clicks "Add Keyframe"                     │
+│                                                 │
+│  React UI                                       │
+│    → dispatch(AddKeyframeCommand)               │
+│      → command.validate(engine)                 │
+│      → command.execute(engine)                  │
+│        → engine mutates NodeAnimation           │
+│        → engine fires EventBus event            │
+│          → Renderer re-evaluates affected node  │
+│          → Zustand store updates selection      │
+│          → PersistenceService marks dirty       │
+│      → undoStack records inverse                │
+│                                                 │
+│  Autosave (debounced)                           │
+│    → engine.toJSON()                            │
+│    → POST /api/projects (JSON blob)             │
+└─────────────────────────────────────────────────┘</div>
+
+<h2>Key Architectural Decisions</h2>
+
+<ol>
+  <li><strong>Engine is framework-agnostic.</strong> No React, no DOM, no HTTP. Could run in a Web Worker.</li>
+  <li><strong>Backend is a dumb store.</strong> All business logic lives in the frontend.</li>
+  <li><strong>Scene-per-slide.</strong> Each slide has its own <code>Scene</code> with its own root node tree and camera. Slides are independent.</li>
+  <li><strong>Command pattern with inverse.</strong> Every mutation is reversible. Transactions group commands for atomic undo.</li>
+  <li><strong>Immutable components.</strong> <code>NodeComponents</code> are <code>Object.freeze()</code>'d. Change requires replacing the whole object.</li>
+  <li><strong>Event bus for reactivity.</strong> The engine fires ~50 event types. The renderer subscribes and selectively updates.</li>
+</ol>
+
+<h2>What to Explore Next</h2>
+
+<ul>
+  <li><a href="0002-scene-graph.html">Lesson 2: The Scene Graph</a> — how nodes, transforms, and components work</li>
+  <li><a href="0003-command-system.html">Lesson 3: The Command System</a> — how mutations and undo/redo work</li>
+  <li><a href="../reference/project-structure.html">Reference: Project Structure Map</a> — every directory and its role</li>
+</ul>
+
+<div class="callout">
+  <strong>Questions?</strong> Ask me anything about the architecture. I can dive deeper into any layer, trace a specific feature through the code, or explain a particular design decision.
+</div>
+
+<p class="footer-note">
+  Primary source: <a href="https://refactoring.guru/design-patterns/command">Refactoring.Guru — Command Pattern</a> · <a href="https://martinfowler.com/bliki/PresentationDomainDataLayering.html">Martin Fowler — Presentation Domain Data Layering</a>
+</p>
+
+</body>
+</html>

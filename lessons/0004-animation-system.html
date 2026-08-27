@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 4: The Animation System</title>
+<link rel="stylesheet" href="../assets/lesson-style.html">
+<link rel="stylesheet" href="../assets/diagram-style.html">
+</head>
+<body>
+
+<span class="lesson-number">Lesson 4</span>
+<h1>The Animation System</h1>
+<p class="subtitle">Keyframes, interpolation, evaluation, and the clip composition layer.</p>
+
+<h2>The Six Channels</h2>
+
+<p>Every node can animate exactly six properties:</p>
+
+<table>
+  <tr><th>Property</th><th>Type</th><th>Constraint</th></tr>
+  <tr><td><code>positionX</code></td><td>number (px)</td><td>—</td></tr>
+  <tr><td><code>positionY</code></td><td>number (px)</td><td>—</td></tr>
+  <tr><td><code>rotation</code></td><td>number (radians)</td><td>Camera: locked, not animatable</td></tr>
+  <tr><td><code>scaleX</code></td><td>number (multiplier)</td><td>—</td></tr>
+  <tr><td><code>scaleY</code></td><td>number (multiplier)</td><td>—</td></tr>
+  <tr><td><code>opacity</code></td><td>number (0..1)</td><td>Bone: not animatable</td></tr>
+</table>
+
+<p>Beyond these six, nodes can also animate <strong>material parameters</strong> (tint, shader uniforms) via material tracks. Same keyframe model, different namespace.</p>
+
+<h2>Keyframe <code>engine/keyframe.ts</code></h2>
+
+<p>The atomic unit of animation:</p>
+
+<pre><code>class Keyframe {
+  id: string
+  time: number                    // seconds (0..slide.duration)
+  value: KeyframeValue            // number | string | boolean | number[]
+  interpolation: InterpolationType
+  tangentIn:  { time: number, value: number }  // bezier control point
+  tangentOut: { time: number, value: number }  // bezier control point
+}</code></pre>
+
+<p>Keyframes on a track are <strong>sorted by time</strong> (insertion-sorted). Times must be monotonically increasing; duplicates only at the slide's duration boundary.</p>
+
+<h2>Interpolation Types</h2>
+
+<p>Six types, registered on a pluggable interpolator registry:</p>
+
+<div class="two-col">
+<div>
+<strong>Constant</strong>
+<ul>
+  <li><code>hold</code> — value stays constant until next keyframe</li>
+</ul>
+<strong>Linear</strong>
+<ul>
+  <li><code>linear</code> — straight line between values</li>
+</ul>
+</div>
+<div>
+<strong>Parametric (easing)</strong>
+<ul>
+  <li><code>bounce</code> — decaying bounce effect</li>
+  <li><code>elastic</code> — oscillating decay</li>
+  <li><code>spring</code> — damped oscillation</li>
+</ul>
+</div>
+</div>
+
+<h3>Bezier Interpolation</h3>
+
+<p>The <code>bezier</code> type uses cubic bezier through the keyframe's tangent control points. The curve time is solved <strong>analytically via Cardano's formula</strong> — no iterative sampling, fully deterministic:</p>
+
+<pre><code>// Control points: from + tangentOut, to + tangentIn
+// Solve x(u) = ratio for u, then evaluate y(u)
+u = cubicRootInUnitInterval(x1, x2, ratio)
+value = (1-u)³·v0 + 3(1-u)²u·v1 + 3(1-u)u²·v2 + u³·v3</code></pre>
+
+<div class="callout">
+  <strong>Design decision:</strong> Parametric types (bounce, elastic, spring) are registered as segment interpolators that apply an easing function to the linear ratio. They're rejected on discrete material kinds (int, bool, sampler2D) — those only support hold.
+</div>
+
+<h3>Pluggable Registry</h3>
+
+<pre><code>// Register a new interpolator
+registerSegmentInterpolator('myEasing', (from, to, time) => { ... })
+
+// Evaluation dispatches by name
+evaluateSegment(from, to, time)  // looks up from.interpolation in registry</code></pre>
+
+<p>This is open for extension without modifying evaluation logic.</p>
+
+<h2>NodeAnimation <code>engine/nodeAnimation.ts</code></h2>
+
+<p>Per-node animation data, stored in the <code>SlideAnimation</code>:</p>
+
+<pre><code>class NodeAnimation {
+  #tracks: Map&lt;AnimationProperty, Keyframe[]&gt;        // positionX → [kf, kf, ...]
+  #materialTracks: Map&lt;string, Keyframe[]&gt;            // "tint" → [kf, kf, ...]
+
+  keyframes(property): readonly Keyframe[]
+  materialKeyframes(parameter): readonly Keyframe[]
+  add(property, keyframe)          // insert-sorted
+  remove(property, keyframeId)
+}</code></pre>
+
+<p>Tracks are sparse — only properties with at least one keyframe exist in the map. A node with no animation has no <code>NodeAnimation</code> entry at all.</p>
+
+<h2>The Evaluator <code>engine/animationEvaluator.ts</code></h2>
+
+<p>The heart of the system. Given a node ID and a time, returns the evaluated state:</p>
+
+<pre><code>evaluateNode(nodeId, time): EvaluatedNodeState {
+  // 1. Get the node's static transform as fallback
+  // 2. For each of the 6 properties:
+  //    - Find surrounding keyframes on the track
+  //    - If no keyframes → use static value
+  //    - If before first → use first value
+  //    - If after last → use last value
+  //    - If between → evaluateSegment(from, to, time)
+  // 3. Apply clip instances (layered on top)
+  // 4. Return { transform, opacity }
+}</code></pre>
+
+<div class="diagram">Static transform (fallback)
+  → Keyframe evaluation (per channel)
+    → Clip instance layering (per instance, per channel)
+      → Final evaluated state</div>
+
+<h3>Clip Evaluation</h3>
+
+<p>For each clip instance on a node:</p>
+
+<pre><code>u = (time - instance.startTime) * instance.speed / clip.duration
+u = clamp(u, 0, 1)  // normalized time within the clip
+
+for each channel in clip:
+  kfValue = evaluateClipChannel(channel.keyframes, u)
+
+  if channel is linked to a param:
+    paramValue = instance.paramOverrides[param.key] ?? param.default
+    if linkMode == 'gain':   output = base * (paramValue * kfValue)
+    if linkMode == 'offset': output = base + paramValue * kfValue
+  else:
+    output = kfValue
+
+  setChannelValue(state, channel.property, output)</code></pre>
+
+<div class="callout">
+  <strong>Composition order:</strong> Base keyframes → material tracks → clip instances. Each layer overwrites the previous. Clips that haven't started yet (<code>time &lt; startTime</code>) don't contribute.
+</div>
+
+<h2>The Clip System</h2>
+
+<h3>ClipDefinition <code>engine/clipDefinition.ts</code></h3>
+
+<p>A reusable, parameterized animation template:</p>
+
+<pre><code>class ClipDefinition {
+  id: string
+  name: string
+  duration: number           // in seconds
+  category: string           // for organization
+  params: ClipParam[]        // user-adjustable scalars
+  channels: ClipChannelDef[] // which properties it animates
+  channelAnimations: Map&lt;property, ClipChannelAnimation&gt;
+  materialChannelAnimations: Map&lt;paramKey, ClipChannelAnimation&gt;
+}</code></pre>
+
+<p>Clip keyframes use <strong>normalized time [0, 1]</strong>, not absolute seconds. The clip's <code>duration</code> maps 0→1 to the actual time range.</p>
+
+<h3>ClipParam</h3>
+
+<pre><code>interface ClipParam {
+  key: string       // unique identifier
+  label: string     // display name
+  kind: 'number' | 'color' | 'vec2'
+  default: number   // initial value
+}</code></pre>
+
+<h3>ClipChannelDef</h3>
+
+<pre><code>interface ClipChannelDef {
+  property: AnimationProperty   // which of the 6 channels
+  paramKey?: string             // link to a param (optional)
+  linkMode?: 'gain' | 'offset'  // how param combines with base
+  materialParameter?: string    // target a material param instead
+}</code></pre>
+
+<h3>ClipInstance <code>engine/clipInstance.ts</code></h3>
+
+<p>A node's reference to a clip, with timing and overrides:</p>
+
+<pre><code>interface ClipInstance {
+  id: string
+  clipId: string
+  startTime: number              // when it starts (seconds)
+  speed: number                  // playback speed multiplier
+  enabled: boolean
+  paramOverrides: Record&lt;string, number&gt;  // per-instance param values
+}</code></p>
+
+<p>Multiple clip instances can be layered on one node. They evaluate in order; later instances overwrite earlier ones on the same channel.</p>
+
+<h2>Easing Presets</h2>
+
+<p>The <code>easingPresets.ts</code> file maps named presets (Ease In, Ease Out, etc.) to bezier tangent configurations. These are convenience wrappers — the interpolator sees only <code>bezier</code> with specific tangent values.</p>
+
+<h2>Key Design Decisions</h2>
+
+<ol>
+  <li><strong>Six channels, not arbitrary.</strong> The engine animates transform + opacity. Material parameters are the extension point for everything else.</li>
+  <li><strong>Normalized clip time.</strong> Clips are time-agnostic templates. The instance's <code>startTime</code> and <code>speed</code> map them to absolute time.</li>
+  <li><strong>Analytic bezier.</strong> Cardano's formula for cubic root solving — deterministic, no sampling, no approximation error.</li>
+  <li><strong>Pluggable interpolators.</strong> New curve types register on the registry. Evaluation logic never changes.</li>
+  <li><strong>Composition layers.</strong> Static → keyframes → material tracks → clips. Each layer overwrites. Clear, predictable precedence.</li>
+  <li><strong>Scratch objects.</strong> The evaluator uses pre-allocated scratch targets to avoid allocation in hot loops.</li>
+</ol>
+
+<h2>What to Explore Next</h2>
+
+<ul>
+  <li><a href="0005-persistence.html">Lesson 5: Persistence &amp; Autosave</a> — how commands trigger saves</li>
+  <li><a href="0006-rendering.html">Lesson 6: The Rendering Pipeline</a> — how Pixi.js visualizes the engine</li>
+  <li><a href="../reference/animation-api.html">Reference: Animation API</a> — quick lookup for keyframes, interpolation, clips</li>
+</ul>
+
+<div class="callout">
+  <strong>Questions?</strong> Ask me about material track evaluation, how the curve editor maps to bezier tangents, or how clip parameter composition works in detail.
+</div>
+
+<p class="footer-note">
+  Primary source: <a href="https://pixijs.com/8.x/guides/concepts/scene-graph">PixiJS — Scene Graph</a> · Bezier math: <a href="https://pomax.github.io/bezierinfo/">A Primer on Bézier Curves</a>
+</p>
+
+</body>
+</html>

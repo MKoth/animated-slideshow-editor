@@ -1,14 +1,22 @@
+import { useState } from 'react'
 import type { SceneNode } from '../../engine'
 import type { EnginePublic } from '../../engine'
 import type { ChartComponent, ChartType, VisualConfig } from '../../engine/components'
 import type { DispatchCommand } from '../../engine/commands'
 import { SetChartComponentCommand } from '../../engine/commands'
 import { runCommand } from './sectionHelpers'
-import { DataKeyframesPanel } from './DataKeyframesPanel'
 
 function mergeChart(node: SceneNode, patch: Partial<ChartComponent>): ChartComponent {
   const c = node.components.chart!
   return { ...c, ...patch }
+}
+
+function getDataSourceLabels(engine: EnginePublic, dataSourceId: string): string[] {
+  const ds = engine.embeddedDataSources.find((d) => d.id === dataSourceId)
+  if (ds && 'dataPoints' in ds) {
+    return ds.dataPoints.map((p) => p.label)
+  }
+  return []
 }
 
 export function ChartInspectorSection({
@@ -17,16 +25,16 @@ export function ChartInspectorSection({
   dispatch,
   notify,
   playing,
-  currentTime,
 }: {
   target: SceneNode
   engine: EnginePublic
   dispatch: DispatchCommand
   notify: (message: string) => void
   playing: boolean
-  currentTime: number
 }) {
   const chart = target.components.chart
+  const [selectedLabel, setSelectedLabel] = useState('')
+
   if (!chart) return null
 
   const apply = (patch: Partial<ChartComponent>) => {
@@ -75,7 +83,36 @@ export function ChartInspectorSection({
     applyVisual({ colors })
   }
 
+  const commitAxisMin = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value === '' ? undefined : Number(event.target.value)
+    apply({ axisMin: value, axisMax: chart.axisMax })
+  }
+
+  const commitAxisMax = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value === '' ? undefined : Number(event.target.value)
+    apply({ axisMin: chart.axisMin, axisMax: value })
+  }
+
+  const handleAddDataField = () => {
+    if (!selectedLabel) {
+      notify('Please select a label first')
+      return
+    }
+    if (chart.dataLabels.includes(selectedLabel)) {
+      notify(`Data field "${selectedLabel}" already exists`)
+      return
+    }
+    apply({ dataLabels: [...chart.dataLabels, selectedLabel] })
+    setSelectedLabel('')
+  }
+
+  const handleRemoveDataField = (label: string) => {
+    apply({ dataLabels: chart.dataLabels.filter((l) => l !== label) })
+  }
+
   const dataSources = engine.embeddedDataSources.filter((ds) => !('nodes' in ds && 'edges' in ds))
+  const availableLabels = chart.dataSourceId ? getDataSourceLabels(engine, chart.dataSourceId) : []
+  const unusedLabels = availableLabels.filter((l) => !chart.dataLabels.includes(l))
 
   return (
     <section className="inspector-section">
@@ -152,6 +189,38 @@ export function ChartInspectorSection({
       </div>
 
       <div className="inspector-field">
+        <label className="inspector-field__label" htmlFor="chart-axis-min">
+          Y Axis Min
+        </label>
+        <input
+          id="chart-axis-min"
+          className="inspector-field__input"
+          type="number"
+          aria-label="Y Axis Min"
+          disabled={playing}
+          value={chart.axisMin ?? ''}
+          onChange={commitAxisMin}
+          placeholder="auto"
+        />
+      </div>
+
+      <div className="inspector-field">
+        <label className="inspector-field__label" htmlFor="chart-axis-max">
+          Y Axis Max
+        </label>
+        <input
+          id="chart-axis-max"
+          className="inspector-field__input"
+          type="number"
+          aria-label="Y Axis Max"
+          disabled={playing}
+          value={chart.axisMax ?? ''}
+          onChange={commitAxisMax}
+          placeholder="auto"
+        />
+      </div>
+
+      <div className="inspector-field">
         <label className="inspector-field__label" htmlFor="chart-legend-position">
           Legend Position
         </label>
@@ -198,13 +267,62 @@ export function ChartInspectorSection({
         </button>
       </div>
 
-      <DataKeyframesPanel
-        target={target}
-        dispatch={dispatch}
-        notify={notify}
-        playing={playing}
-        currentTime={currentTime}
-      />
+      <div
+        className="inspector-section"
+        style={{ borderTop: '1px solid #333', paddingTop: '8px', marginTop: '8px' }}
+      >
+        <h4 className="inspector-section__subtitle">Data Fields</h4>
+
+        {chart.dataLabels.length === 0 && (
+          <p className="inspector-section__notice">
+            No data fields. Add fields to animate chart data.
+          </p>
+        )}
+
+        {chart.dataLabels.map((label) => (
+          <div key={label} className="inspector-field">
+            <label className="inspector-field__label">{label}</label>
+            <button
+              className="inspector-field__remove"
+              aria-label={`Remove data field ${label}`}
+              disabled={playing}
+              onClick={() => handleRemoveDataField(label)}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+
+        {unusedLabels.length > 0 && (
+          <div className="inspector-field">
+            <label className="inspector-field__label" htmlFor="add-data-field">
+              Add Field
+            </label>
+            <select
+              id="add-data-field"
+              className="inspector-field__input inspector-field__select"
+              aria-label="Select label to add"
+              disabled={playing}
+              value={selectedLabel}
+              onChange={(e) => setSelectedLabel(e.target.value)}
+            >
+              <option value="">Select label...</option>
+              {unusedLabels.map((label) => (
+                <option key={label} value={label}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <button
+              className="inspector-field__add"
+              disabled={playing || !selectedLabel}
+              onClick={handleAddDataField}
+            >
+              Add
+            </button>
+          </div>
+        )}
+      </div>
     </section>
   )
 }

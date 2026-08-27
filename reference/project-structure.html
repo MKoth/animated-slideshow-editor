@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reference: Project Structure Map</title>
+<link rel="stylesheet" href="../assets/lesson-style.html">
+</head>
+<body>
+
+<span class="lesson-number">Reference</span>
+<h1>Project Structure Map</h1>
+<p class="subtitle">Every directory and its role in the AnimatedSlidesRedactor.</p>
+
+<h2>Root</h2>
+
+<table>
+  <tr><th>Path</th><th>Role</th></tr>
+  <tr><td><code>backend/</code></td><td>FastAPI + SQLite persistence layer</td></tr>
+  <tr><td><code>frontend/</code></td><td>React + TypeScript + Vite editor</td></tr>
+  <tr><td><code>docs/</code></td><td>Specs, standards, agent docs, research</td></tr>
+  <tr><td><code>prototypes/</code></td><td>Throwaway prototypes for design exploration</td></tr>
+  <tr><td><code>samples/</code></td><td>Sample <code>.lesson</code> files</td></tr>
+  <tr><td><code>CONTEXT.md</code></td><td>Domain language glossary (192 lines)</td></tr>
+</table>
+
+<h2>Backend <code>backend/</code></h2>
+
+<table>
+  <tr><th>Path</th><th>Role</th></tr>
+  <tr><td><code>app/main.py</code></td><td>FastAPI app creation, lifespan, middleware</td></tr>
+  <tr><td><code>app/app_factory.py</code></td><td>Factory pattern: builds app, wires dependencies</td></tr>
+  <tr><td><code>app/config.py</code></td><td>Settings from env vars</td></tr>
+  <tr><td><code>app/database.py</code></td><td>SQLAlchemy engine, session, auto-migration</td></tr>
+  <tr><td><code>app/model.py</code></td><td>SQLAlchemy declarative base</td></tr>
+  <tr><td><code>app/errors.py</code></td><td>Error handlers, custom exceptions</td></tr>
+  <tr><td><code>app/api/</code></td><td>Route modules (assets, materials, shaders, projects, clips)</td></tr>
+  <tr><td><code>app/assets/</code></td><td>AssetStorage, AssetImporter, ImagePipeline</td></tr>
+  <tr><td><code>app/materials/</code></td><td>MaterialLibrary — material definition CRUD</td></tr>
+  <tr><td><code>app/shaders/</code></td><td>ShaderLibrary — GLSL shader storage</td></tr>
+  <tr><td><code>app/projects/</code></td><td>ProjectLibrary — JSON blob persistence</td></tr>
+  <tr><td><code>app/clips/</code></td><td>ClipLibrary — reusable animation presets</td></tr>
+</table>
+
+<h3>Backend Pattern: Library</h3>
+<p>Each domain follows: <code>library.py</code> (business logic) + <code>model.py</code> (SQLAlchemy) + <code>schemas.py</code> (Pydantic). Libraries are attached to <code>app.state</code> via the factory.</p>
+
+<h2>Frontend <code>frontend/src/</code></h2>
+
+<h3>Layer 1: Engine <code>engine/</code> — 76 files</h3>
+
+<p>The pure domain model. No React, no DOM, no HTTP.</p>
+
+<table>
+  <tr><th>File/Dir</th><th>Role</th></tr>
+  <tr><td><code>engine.ts</code></td><td>Root class, owns all managers</td></tr>
+  <tr><td><code>project.ts</code></td><td>Project model (metadata + slides)</td></tr>
+  <tr><td><code>slide.ts</code></td><td>Slide model (scene + animation + duration)</td></tr>
+  <tr><td><code>scene.ts</code></td><td>Scene model (root node + camera)</td></tr>
+  <tr><td><code>sceneNode.ts</code></td><td>Scene node (transform, components, children)</td></tr>
+  <tr><td><code>components.ts</code></td><td>NodeComponents — ECS-like discriminated union</td></tr>
+  <tr><td><code>transform.ts</code></td><td>Local transform (position, rotation, scale)</td></tr>
+  <tr><td><code>worldTransform.ts</code></td><td>Cached world-space transform evaluation</td></tr>
+  <tr><td><code>animation.ts</code></td><td>Keyframe model, interpolation types</td></tr>
+  <tr><td><code>animationEvaluator.ts</code></td><td>Evaluates keyframes at a given time</td></tr>
+  <tr><td><code>nodeAnimation.ts</code></td><td>Per-node animation tracks</td></tr>
+  <tr><td><code>interpolators.ts</code></td><td>Pluggable curve evaluators (hold, linear, bezier, bounce, elastic, spring)</td></tr>
+  <tr><td><code>clipDefinition.ts</code></td><td>Reusable animation template</td></tr>
+  <tr><td><code>clipInstance.ts</code></td><td>Node's reference to a clip (timing, params)</td></tr>
+  <tr><td><code>materialDefinition.ts</code></td><td>Reusable material (tint, opacity, uniforms)</td></tr>
+  <tr><td><code>materialInstance.ts</code></td><td>Per-node material overrides</td></tr>
+  <tr><td><code>materialResolution.ts</code></td><td>Merges definition + static + animated overrides</td></tr>
+  <tr><td><code>shaderDefinition.ts</code></td><td>GLSL fragment shader + uniform defaults</td></tr>
+  <tr><td><code>ikChain.ts</code></td><td>IK chain definition (bones, target, pole)</td></tr>
+  <tr><td><code>ikSolver.ts</code></td><td>Two-bone analytical + CCD solvers</td></tr>
+  <tr><td><code>constraint.ts</code></td><td>Rotation, lookAt, distance, parent constraints</td></tr>
+  <tr><td><code>constraintEvaluator.ts</code></td><td>Evaluates constraints post-IK</td></tr>
+  <tr><td><code>mesh.ts</code></td><td>Mesh data (vertices, triangles, UVs, bone weights)</td></tr>
+  <tr><td><code>meshDeformationEvaluator.ts</code></td><td>Skins mesh vertices by bone transforms</td></tr>
+  <tr><td><code>lessonSerializer.ts</code></td><td>JSON serialization/deserialization (704 lines)</td></tr>
+  <tr><td><code>commands/</code></td><td>89 command files (one per mutation type)</td></tr>
+</table>
+
+<h3>Layer 2: Commands <code>engine/commands/</code> — 89 files</h3>
+
+<table>
+  <tr><th>Category</th><th>Example Commands</th></tr>
+  <tr><td>Project</td><td><code>createProjectCommand.ts</code></td></tr>
+  <tr><td>Slides</td><td><code>createSlideCommand.ts</code>, <code>deleteSlideCommand.ts</code>, <code>moveSlideCommand.ts</code>, <code>duplicateSlideCommand.ts</code>, <code>setSlideDurationCommand.ts</code>, <code>renameSlideCommand.ts</code></td></tr>
+  <tr><td>Nodes</td><td><code>createNodeCommand.ts</code>, <code>deleteNodeCommand.ts</code>, <code>moveNodeCommand.ts</code>, <code>rotateNodeCommand.ts</code>, <code>scaleNodeCommand.ts</code>, <code>reparentNodeCommand.ts</code>, <code>duplicateNodeCommand.ts</code>, <code>changeZOrderCommand.ts</code></td></tr>
+  <tr><td>Keyframes</td><td><code>addKeyframeCommand.ts</code>, <code>deleteKeyframesCommand.ts</code>, <code>moveKeyframesCommand.ts</code>, <code>setKeyframeValueCommand.ts</code>, <code>setKeyframeInterpolationCommand.ts</code></td></tr>
+  <tr><td>Materials</td><td><code>assignMaterialCommand.ts</code>, <code>overrideMaterialParameterCommand.ts</code>, <code>clearMaterialOverrideCommand.ts</code></td></tr>
+  <tr><td>Clips</td><td><code>createClipCommand.ts</code>, <code>assignClipCommand.ts</code>, <code>setClipInstanceSpeedCommand.ts</code></td></tr>
+  <tr><td>IK/Constraints</td><td><code>createIKChainCommand.ts</code>, <code>addConstraintCommand.ts</code>, <code>setConstraintParamsCommand.ts</code></td></tr>
+  <tr><td>Mesh</td><td><code>moveVertexCommand.ts</code>, <code>extrudeFacesCommand.ts</code>, <code>paintWeightCommand.ts</code>, <code>generateMeshCommand.ts</code></td></tr>
+  <tr><td>Composition</td><td><code>transactionCommand.ts</code> (batch commands as one undo step)</td></tr>
+</table>
+
+<h3>Layer 3: App <code>app/</code> — 24 files</h3>
+
+<table>
+  <tr><th>File</th><th>Role</th></tr>
+  <tr><td><code>EngineProvider.tsx</code></td><td>React context providing engine to component tree</td></tr>
+  <tr><td><code>engineContext.ts</code></td><td>Engine context type and creation</td></tr>
+  <tr><td><code>useEngine.ts</code></td><td>Hook to access engine from components</td></tr>
+  <tr><td><code>persistence.ts</code></td><td>Autosave, dirty tracking, debounced saves</td></tr>
+  <tr><td><code>recoveryShadow.ts</code></td><td>Crash recovery (writes JSON to shadow file)</td></tr>
+  <tr><td><code>librarySync.ts</code></td><td>Bridges Zustand stores → engine definitions</td></tr>
+  <tr><td><code>lessonTransfer.ts</code></td><td>Import/export <code>.lesson</code> files</td></tr>
+  <tr><td><code>assetSnapshot.ts</code></td><td>Embeds asset definitions into project on save</td></tr>
+  <tr><td><code>definitionSnapshot.ts</code></td><td>Embeds material/shader definitions into project</td></tr>
+  <tr><td><code>activeSlideSync.ts</code></td><td>Keeps active slide in sync across engine/UI</td></tr>
+  <tr><td><code>inspectorActions.ts</code></td><td>Inspector panel action dispatchers</td></tr>
+  <tr><td><code>keyframeActions.ts</code></td><td>Keyframe editing action dispatchers</td></tr>
+  <tr><td><code>slideActions.ts</code></td><td>Slide management action dispatchers</td></tr>
+</table>
+
+<h3>Layer 4: Stores <code>stores/</code> — 26 Zustand stores</h3>
+
+<table>
+  <tr><th>Store</th><th>Purpose</th></tr>
+  <tr><td><code>uiStore.ts</code></td><td>Theme, panel widths, grid snap (persisted to localStorage)</td></tr>
+  <tr><td><code>selectionStore.ts</code></td><td>Selected node/keyframe IDs</td></tr>
+  <tr><td><code>playbackStore.ts</code></td><td>Playback status, current time, speed (rAF loop)</td></tr>
+  <tr><td><code>persistenceStore.ts</code></td><td>Dirty flag for autosave</td></tr>
+  <tr><td><code>backendStore.ts</code></td><td>Backend availability status</td></tr>
+  <tr><td><code>assetLibraryStore.ts</code></td><td>Asset definitions from backend</td></tr>
+  <tr><td><code>materialLibraryStore.ts</code></td><td>Material definitions from backend</td></tr>
+  <tr><td><code>shaderLibraryStore.ts</code></td><td>Shader definitions from backend</td></tr>
+  <tr><td><code>clipLibraryStore.ts</code></td><td>Clip definitions from backend</td></tr>
+  <tr><td><code>notificationStore.ts</code></td><td>Toast notifications</td></tr>
+  <tr><td><code>editingModeStore.ts</code></td><td>Current editing mode (normal, rigging, mesh edit)</td></tr>
+  <tr><td><code>timelineViewStore.ts</code></td><td>Timeline zoom, scroll position</td></tr>
+  <tr><td><code>meshEditStore.ts</code></td><td>Mesh editing mode state</td></tr>
+  <tr><td><code>ikSelectionStore.ts</code></td><td>IK chain selection</td></tr>
+  <tr><td><code>thumbnailStore.ts</code></td><td>Slide thumbnail cache</td></tr>
+</table>
+
+<h3>Rendering <code>pixi/renderer/</code></h3>
+
+<p>Pixi.js-based 2D renderer. Maps engine nodes to Pixi containers.</p>
+
+<table>
+  <tr><th>Component</th><th>Role</th></tr>
+  <tr><td><code>renderer.ts</code></td><td>Top-level orchestrator (Pixi app, camera, overlays)</td></tr>
+  <tr><td>SceneRenderer</td><td>Maps engine nodes → Pixi containers (one per node)</td></tr>
+  <tr><td>Camera</td><td>Viewport transform (pan + zoom from camera node)</td></tr>
+  <tr><td>GridRenderer</td><td>Background grid</td></tr>
+  <tr><td>FullscreenPass</td><td>Post-processing shader over entire scene</td></tr>
+  <tr><td>TextureCache</td><td>Caches loaded asset textures</td></tr>
+  <tr><td>ShaderProgramCache</td><td>Caches compiled shader programs</td></tr>
+</table>
+
+<h3>Other Frontend Directories</h3>
+
+<table>
+  <tr><th>Path</th><th>Role</th></tr>
+  <tr><td><code>api/</code></td><td>HTTP client (fetch wrapper + domain API classes)</td></tr>
+  <tr><td><code>components/</code></td><td>React UI components (panels, inspectors, timeline)</td></tr>
+  <tr><td><code>pages/</code></td><td>Top-level page layouts</td></tr>
+  <tr><td><code>shaders/</code></td><td>GLSL shader source files</td></tr>
+  <tr><td><code>shortcuts/</code></td><td>Keyboard shortcut definitions</td></tr>
+  <tr><td><code>theme/</code></td><td>Light/dark theme definitions</td></tr>
+</table>
+
+<div class="callout">
+  <strong>Tip:</strong> Use this as a map. When you encounter an unfamiliar file, check which layer it belongs to and what its neighbors do. The architecture is consistent — each layer has a clear responsibility.
+</div>
+
+</body>
+</html>

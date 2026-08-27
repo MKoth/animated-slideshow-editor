@@ -4,7 +4,7 @@ import type { AnimationProperty } from './animationProperties'
 import type { Keyframe, KeyframeValue } from './keyframe'
 import { Keyframe as KeyframeModel, newKeyframeId } from './keyframe'
 import { requireKeyframeInterpolation, requireKeyframeTangent, ZERO_TANGENT } from './keyframe'
-import type { PropertyTrackJSON, MaterialTrackJSON } from './json'
+import type { PropertyTrackJSON, MaterialTrackJSON, DataLabelTrackJSON } from './json'
 import {
   requireAnimationProperty,
   requireAnimatableForNode,
@@ -19,6 +19,7 @@ export type { MaterialParameterKindOf } from './keyframeTarget'
 export class NodeAnimation {
   readonly #tracks = new Map<AnimationProperty, Keyframe[]>()
   readonly #materialTracks = new Map<string, Keyframe[]>()
+  readonly #dataLabelTracks = new Map<string, Keyframe[]>()
 
   keyframes(property: AnimationProperty): readonly Keyframe[] {
     return this.#tracks.get(property) ?? []
@@ -40,12 +41,28 @@ export class NodeAnimation {
     return [...this.#materialTracks.keys()]
   }
 
+  dataLabelKeyframes(label: string): readonly Keyframe[] {
+    return this.#dataLabelTracks.get(label) ?? []
+  }
+
+  hasDataLabelTrack(label: string): boolean {
+    return this.#dataLabelTracks.has(label)
+  }
+
+  dataLabelTrackLabels(): string[] {
+    return [...this.#dataLabelTracks.keys()]
+  }
+
   add(property: AnimationProperty, keyframe: Keyframe): void {
     insertSorted(this.#tracks, property, keyframe)
   }
 
   addMaterial(parameter: string, keyframe: Keyframe): void {
     insertSorted(this.#materialTracks, parameter, keyframe)
+  }
+
+  addDataLabel(label: string, keyframe: Keyframe): void {
+    insertSorted(this.#dataLabelTracks, label, keyframe)
   }
 
   remove(property: AnimationProperty, keyframeId: string): Keyframe | undefined {
@@ -56,12 +73,24 @@ export class NodeAnimation {
     return removeById(this.#materialTracks, parameter, keyframeId)
   }
 
+  removeDataLabel(label: string, keyframeId: string): Keyframe | undefined {
+    return removeById(this.#dataLabelTracks, label, keyframeId)
+  }
+
+  removeDataLabelTrack(label: string): void {
+    this.#dataLabelTracks.delete(label)
+  }
+
   get(property: AnimationProperty, keyframeId: string): Keyframe | undefined {
     return this.#tracks.get(property)?.find((entry) => entry.id === keyframeId)
   }
 
   getMaterial(parameter: string, keyframeId: string): Keyframe | undefined {
     return this.#materialTracks.get(parameter)?.find((entry) => entry.id === keyframeId)
+  }
+
+  getDataLabel(label: string, keyframeId: string): Keyframe | undefined {
+    return this.#dataLabelTracks.get(label)?.find((entry) => entry.id === keyframeId)
   }
 
   copy(): NodeAnimation {
@@ -75,6 +104,12 @@ export class NodeAnimation {
     for (const [parameter, keyframes] of this.#materialTracks) {
       copy.#materialTracks.set(
         parameter,
+        keyframes.map((keyframe) => copyKeyframe(keyframe)),
+      )
+    }
+    for (const [label, keyframes] of this.#dataLabelTracks) {
+      copy.#dataLabelTracks.set(
+        label,
         keyframes.map((keyframe) => copyKeyframe(keyframe)),
       )
     }
@@ -95,6 +130,22 @@ export class NodeAnimation {
       tracks.push({ parameter, keyframes: keyframes.map((keyframe) => keyframe.toJSON()) })
     }
     return tracks
+  }
+
+  dataLabelTracksJSON(): DataLabelTrackJSON[] {
+    const tracks: DataLabelTrackJSON[] = []
+    for (const [label, keyframes] of this.#dataLabelTracks) {
+      tracks.push({ label, keyframes: keyframes.map((keyframe) => keyframe.toJSON()) })
+    }
+    return tracks
+  }
+
+  removeOrphanDataLabelTracks(validLabels: ReadonlySet<string>): void {
+    for (const label of this.#dataLabelTracks.keys()) {
+      if (!validLabels.has(label)) {
+        this.#dataLabelTracks.delete(label)
+      }
+    }
   }
 
   static fromJSON(
@@ -133,6 +184,15 @@ export class NodeAnimation {
         readMaterialTrack(animation, track, duration, node, parameterKindOf)
       }
     }
+    const dataLabelTracks = json.dataLabelTracks
+    if (dataLabelTracks !== undefined) {
+      if (!Array.isArray(dataLabelTracks)) {
+        throw new Error('Node animation dataLabelTracks must be an array')
+      }
+      for (const track of dataLabelTracks) {
+        readDataLabelTrack(animation, track, duration)
+      }
+    }
     return animation
   }
 }
@@ -165,6 +225,26 @@ function readMaterialTrack(
 
 function requireMaterialParameterKey(value: unknown): string {
   return requireString(value, 'Material parameter key')
+}
+
+function readDataLabelTrack(animation: NodeAnimation, track: unknown, duration: number): void {
+  if (typeof track !== 'object' || track === null) {
+    throw new Error('Data label track must be an object')
+  }
+  const record = track as Record<string, unknown>
+  const label = requireString(record.label, 'Data label track label')
+  if (!Array.isArray(record.keyframes)) {
+    throw new Error(`Data label track "${label}" must have a keyframes array`)
+  }
+  const parse = trackKeyframeParser(`Data label track "${label}"`, duration, (value, what) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new Error(`${what} must be a finite number`)
+    }
+    return value
+  })
+  for (const keyframeJson of record.keyframes) {
+    animation.addDataLabel(label, parse(keyframeJson))
+  }
 }
 
 function insertSorted(tracks: Map<string, Keyframe[]>, key: string, keyframe: Keyframe): void {

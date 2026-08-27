@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reference: Rendering API</title>
+<link rel="stylesheet" href="../assets/lesson-style.html">
+</head>
+<body>
+
+<span class="lesson-number">Reference</span>
+<h1>Rendering Pipeline API</h1>
+<p class="subtitle">Quick lookup for renderer components and event handling.</p>
+
+<h2>Renderer</h2>
+
+<pre><code>class Renderer {
+  start(): Promise&lt;void&gt;
+  dispose(): void
+  refreshAssetTextures(): void
+  refreshNodeRendering(): void
+}
+</code></pre>
+
+<h2>SceneRenderer</h2>
+
+<pre><code>class SceneRenderer {
+  // State
+  boundSceneId: string | null
+  boundSlideId: string | null
+  boundScene: Scene | null
+  boundCamera: SceneNode | null
+  renderedNodeCount: number
+
+  // Lifecycle
+  bind(scene, slideId): void
+
+  // Event handlers
+  handleNodeCreated(nodeId): void
+  handleNodeRemoved(nodeId): void
+  handleNodeReparented(nodeId): void
+  handleNodeOrderChanged(nodeId): void
+  handleTransformChanged(nodeId): void
+  handleKeyframeChanged(nodeId): void
+  handleVisibilityChanged(nodeId): void
+  handleOpacityChanged(nodeId): void
+  handleNodeRenamed(nodeId): void
+  handleMaterialChanged(nodeId): void
+  handleMeshChanged(nodeId): void
+  handleTableChanged(nodeId): void
+  handleChartChanged(nodeId): void
+
+  // Time-dependent
+  handleTimeChanged(): void        // re-evaluate ALL nodes
+  applyIKOverrides(rotations): void
+  applyConstraintOverrides(): void
+  refreshDeformedMeshSizes(): void
+
+  // Queries
+  nodeSize(nodeId): WorldSize | null
+  previewTransform(nodeId, x, y): void
+}
+</code></pre>
+
+<h2>Camera</h2>
+
+<pre><code>class Camera {
+  constructor(world: PixiContainer)
+  apply(transform: ViewportTransform | null): void
+}
+
+interface ViewportTransform {
+  x: number
+  y: number
+  scaleX: number
+  scaleY: number
+}
+</code></pre>
+
+<h2>Node Container Creation</h2>
+
+<pre><code>createNodeContainer(pixi, node, cache): PixiContainer
+  // Creates container + placeholder child based on component type:
+  // assetInstance → texture sprite
+  // text         → text sprite
+  // bone         → line + circles
+  // mesh         → deformable mesh
+  // table        → table container
+  // chart        → chart container
+  // ghost        → invisible
+
+applyTransform(container, node): void
+applyEvaluatedState(container, state, opacityMultiplier): void
+applyMaterialTint(container, tint): void
+applyName(container, node): void
+</code></pre>
+
+<h2>Event → Handler Map</h2>
+
+<table>
+  <tr><th>Event</th><th>Scope</th><th>Action</th></tr>
+  <tr><td><code>ProjectLoaded</code></td><td>All</td><td>Full scene rebuild</td></tr>
+  <tr><td><code>SlideActivated</code></td><td>All</td><td>Full scene rebuild</td></tr>
+  <tr><td><code>NodeCreated</code></td><td>Single</td><td>Add one container</td></tr>
+  <tr><td><code>NodeRemoved</code></td><td>Subtree</td><td>Destroy container tree</td></tr>
+  <tr><td><code>NodeReparented</code></td><td>Single</td><td>Re-attach to new parent</td></tr>
+  <tr><td><code>NodeOrderChanged</code></td><td>Siblings</td><td>Reorder children</td></tr>
+  <tr><td><code>TransformChanged</code></td><td>Single</td><td>Re-evaluate one node</td></tr>
+  <tr><td><code>VisibilityChanged</code></td><td>Single</td><td>Toggle container.visible</td></tr>
+  <tr><td><code>OpacityChanged</code></td><td>Single</td><td>Re-evaluate one node</td></tr>
+  <tr><td><code>MaterialAssigned</code></td><td>Single</td><td>Re-resolve material</td></tr>
+  <tr><td><code>KeyframeAdded/Removed/Moved</code></td><td>Single</td><td>Re-evaluate one node</td></tr>
+  <tr><td><code>MeshChanged</code></td><td>Single</td><td>Rebuild mesh geometry</td></tr>
+  <tr><td><code>TableChanged</code></td><td>Single</td><td>Rebuild table layout</td></tr>
+  <tr><td><code>ChartChanged</code></td><td>Single</td><td>Rebuild chart texture</td></tr>
+  <tr><td><code>Time changed</code></td><td>All</td><td>Re-evaluate ALL nodes</td></tr>
+</table>
+
+<h2>Evaluation Pipeline</h2>
+
+<div class="diagram">#evaluateAndApply(nodeId):
+  1. engine.evaluateNode(nodeId, time)     → transform + opacity
+  2. engine.evaluateMaterialOverrides()    → tint + uniforms
+  3. resolveMaterial()                      → effective tint
+  4. resolveShader()                        → shader source + uniforms
+  5. Compare with lastEvaluated/lastMaterials
+  6. If changed: applyEvaluatedState(container, state)
+  7. If material changed: applyMaterialTint(container, tint)
+  8. Store for next comparison</div>
+
+<h2>Key Files</h2>
+
+<table>
+  <tr><th>File</th><th>Role</th></tr>
+  <tr><td><code>renderer.ts</code></td><td>Top-level orchestrator (766 lines)</td></tr>
+  <tr><td><code>sceneRenderer.ts</code></td><td>Node → container mapping (859 lines)</td></tr>
+  <tr><td><code>camera.ts</code></td><td>Viewport transform (22 lines)</td></tr>
+  <tr><td><code>nodeRenderer.ts</code></td><td>Container creation + state application</td></tr>
+  <tr><td><code>textureCache.ts</code></td><td>Asset texture caching</td></tr>
+  <tr><td><code>programCache.ts</code></td><td>Shader program caching</td></tr>
+  <tr><td><code>fullscreenPass.ts</code></td><td>Post-processing shader</td></tr>
+  <tr><td><code>gridRenderer.ts</code></td><td>Background grid</td></tr>
+  <tr><td><code>selectionOverlay.ts</code></td><td>Selection outlines</td></tr>
+  <tr><td><code>meshOverlay.ts</code></td><td>Mesh wireframe display</td></tr>
+  <tr><td><code>ikOverlay.ts</code></td><td>IK chain visualization</td></tr>
+  <tr><td><code>thumbnailRecorder.ts</code></td><td>Slide thumbnail capture</td></tr>
+</table>
+
+<div class="callout">
+  <strong>Tip:</strong> The renderer has ~40 files. Each overlay and interaction handler is isolated. When adding a new editing mode, create a new overlay/interaction file and wire it in the Renderer constructor.
+</div>
+
+</body>
+</html>

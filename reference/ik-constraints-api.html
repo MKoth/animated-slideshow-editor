@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reference: IK & Constraints API</title>
+<link rel="stylesheet" href="../assets/lesson-style.html">
+</head>
+<body>
+
+<span class="lesson-number">Reference</span>
+<h1>IK &amp; Constraints API</h1>
+<p class="subtitle">Quick lookup for IK chains, solvers, and constraint types.</p>
+
+<h2>IKChain</h2>
+
+<pre><code>class IKChain {
+  id: string
+  slideId: string
+  boneIds: readonly string[]    // ancestor → descendant
+  target: BoneIKTarget
+  poleTarget: PoleTarget | null
+  ghostNodeId: string | null
+
+  rootBoneId: string             // boneIds[0]
+  endBoneId: string              // boneIds[last]
+  chainLength: number
+
+  validate(nodeLookup): string | null
+}
+
+interface BoneIKTarget {
+  position: { x: number, y: number }
+  nodeId?: string               // attach to node's world position
+}
+
+interface PoleTarget {
+  position: { x: number, y: number }
+}
+</code></pre>
+
+<h2>IK Solvers</h2>
+
+<pre><code>// Analytical (2 bones only)
+solveTwoBoneIK(boneNodes, target, poleTarget, getLocalTransform, boneLengths)
+  → { rotations: [bone1Local, bone2Local] }
+
+// Iterative (N bones, CCD)
+solveCCDIK(boneNodes, target, poleTarget, getLocalTransform, boneLengths, iterations?, tolerance?)
+  → { rotations: [bone1Local, ..., boneNLocal] }
+
+// Defaults: iterations=10, tolerance=0.001
+// Max rotation per iteration: 0.5 rad (clamped)
+</code></pre>
+
+<h2>IKManager</h2>
+
+<pre><code>class IKManager {
+  createChain(slideId, boneIds, target, poleTarget?): IKChain
+  deleteChain(chainId): IKChain
+  getChain(chainId): IKChain
+  getChainsForSlide(slideId): IKChain[]
+  getChainsForBone(boneId): IKChain[]
+  setTarget(chainId, target): void
+  setPoleTarget(chainId, poleTarget): void
+  clearSlide(slideId): void
+  clear(): void
+  toJSON(): IKManagerJSON
+  restoreFromJSON(json): void
+}
+</code></pre>
+
+<h2>Constraint Types</h2>
+
+<pre><code>type ConstraintType = 'rotationLimit' | 'lookAt' | 'distance' | 'parent'
+
+interface Constraint {
+  id: string
+  type: ConstraintType
+  priority: number              // lower = applied first
+  params: ConstraintParams
+}
+</code></pre>
+
+<h3>Rotation Limit</h3>
+
+<pre><code>// Requires bone node
+RotationLimitParams {
+  minRotation: number   // degrees
+  maxRotation: number   // degrees
+}
+
+// Effect: clamp world rotation to [min, max] (converted to radians)
+</code></pre>
+
+<h3>Look At</h3>
+
+<pre><code>// Requires bone node
+LookAtParams {
+  targetX: number
+  targetY: number
+  targetNodeId?: string   // use node's world position if provided
+}
+
+// Effect: rotation = atan2(targetY - world.y, targetX - world.x)
+</code></pre>
+
+<h3>Distance</h3>
+
+<pre><code>// Works on any node
+DistanceParams {
+  targetNodeId: string
+  minDistance: number
+  maxDistance: number
+}
+
+// Effect: clamp distance from target to [min, max]
+//   if too close: move outward along angle
+//   if too far: move inward along angle
+</code></pre>
+
+<h3>Parent</h3>
+
+<pre><code>// Works on any node
+ParentConstraintParams {
+  targetNodeId: string
+  positionInfluence: number   // 0..1
+  rotationInfluence: number   // 0..1
+  scaleInfluence: number      // 0..1
+}
+
+// Effect: blend toward target
+//   x = world.x + (target.x - world.x) * influence
+//   0 = no effect, 1 = fully follows
+</code></pre>
+
+<h2>ConstraintManager</h2>
+
+<pre><code>class ConstraintManager {
+  addConstraint(nodeId, type, priority, params): Constraint
+  removeConstraint(nodeId, constraintId): Constraint
+  setConstraintParams(nodeId, constraintId, params): void
+  getConstraint(constraintId): Constraint
+  getConstraintsForNode(nodeId): Constraint[]  // sorted by priority
+  removeConstraintsForNode(nodeId): Constraint[]
+  clear(): void
+  toJSON(): ConstraintManagerJSON
+  restoreFromJSON(json): void
+}
+</code></pre>
+
+<h2>Evaluation Pipeline</h2>
+
+<div class="diagram">1. Keyframe evaluation (per node)
+2. Clip instance layering
+3. IK solving (per chain)
+   → bone rotation overrides stored
+4. Constraint evaluation (per node, sorted by priority)
+   → world transform modifications
+5. Final transform applied to Pixi container</div>
+
+<h2>Renderer Integration</h2>
+
+<pre><code>// In Renderer.#handleTimeChanged():
+transformSource.updateIKOverrides(slideId, time)   // solve all chains
+sceneRenderer.handleTimeChanged()                    // re-evaluate all nodes
+sceneRenderer.applyIKOverrides(rotations)            // apply to containers
+sceneRenderer.applyConstraintOverrides()             // apply constraints
+
+// In EvaluatedWorldTransformSource.transformOf(nodeId):
+1. composeChain() with IK rotation overrides
+2. applyConstraints() if any exist
+</code></pre>
+
+<h2>Key Files</h2>
+
+<table>
+  <tr><th>File</th><th>Role</th></tr>
+  <tr><td><code>ikChain.ts</code></td><td>IK chain model, validation, serialization</td></tr>
+  <tr><td><code>ikSolver.ts</code></td><td>Two-bone analytical + CCD solvers</td></tr>
+  <tr><td><code>ikManager.ts</code></td><td>Chain CRUD, slide mapping, events</td></tr>
+  <tr><td><code>constraint.ts</code></td><td>Constraint types and param interfaces</td></tr>
+  <tr><td><code>constraintEvaluator.ts</code></td><td>Applies constraints to world transforms</td></tr>
+  <tr><td><code>constraintManager.ts</code></td><td>Constraint CRUD, per-node storage, events</td></tr>
+  <tr><td><code>ikOverlay.ts</code></td><td>IK chain visualization in renderer</td></tr>
+  <tr><td><code>ikInteraction.ts</code></td><td>IK target drag interaction</td></tr>
+  <tr><td><code>riggingInteraction.ts</code></td><td>IK chain creation in rigging mode</td></tr>
+</table>
+
+<div class="callout">
+  <strong>Tip:</strong> When debugging IK, check: (1) are bones in a valid ancestor-descendant path? (2) are bone lengths set via the <code>bone</code> component? (3) is the ghost node visible? For constraints, check priority order and whether the target node exists.
+</div>
+
+</body>
+</html>

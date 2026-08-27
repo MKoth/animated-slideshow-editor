@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 2: The Scene Graph</title>
+<link rel="stylesheet" href="../assets/lesson-style.html">
+<link rel="stylesheet" href="../assets/diagram-style.html">
+</head>
+<body>
+
+<span class="lesson-number">Lesson 2</span>
+<h1>The Scene Graph</h1>
+<p class="subtitle">How nodes, transforms, and components compose into a scene.</p>
+
+<h2>What Is a Scene Graph?</h2>
+
+<p>A scene graph is a <strong>tree of nodes</strong>. Each node has a position in space (transform) and an identity (components). Parenting composes transforms: a child's position is relative to its parent.</p>
+
+<p>In this project, every slide has exactly one scene, and every scene has exactly one root node and one camera node.</p>
+
+<div class="arch-diagram"><span class="layer engine">Scene</span>
+  ├── <span class="layer engine">root</span> (SceneNode)
+  │     ├── <span class="layer engine">Character</span>  (assetInstance component)
+  │     │     ├── <span class="layer engine">Head</span>     (assetInstance component)
+  │     │     └── <span class="layer engine">Left Arm</span> (bone component)
+  │     ├── <span class="layer engine">Speech</span>    (text component)
+  │     └── <span class="layer engine">Table</span>     (table component)
+  └── <span class="layer api">camera</span> (SceneNode, camera component)
+        └── drives the viewport (pan = position, zoom = scale)</div>
+
+<h2>SceneNode <code>engine/sceneNode.ts</code></h2>
+
+<p>The fundamental unit. Every visible (and invisible) thing in a slide is a <code>SceneNode</code>.</p>
+
+<pre><code>class SceneNode {
+  id: string                        // unique within the project
+  name: string                      // human-readable label
+  parent: SceneNode | null          // null for root
+  children: SceneNode[]             // ordered (z-order = index)
+  transform: Transform              // local-space placement
+  visible: boolean                  // render toggle
+  opacity: number                   // 0..1
+  material: MaterialInstance        // tint, opacity, uniforms
+  components: NodeComponents        // identity (frozen)
+  clipInstances: ClipInstance[]     // assigned animation clips
+}</code></pre>
+
+<h3>The Key Insight: Identity Is Components, Not Type</h3>
+
+<p>A node is not "a text node" or "an asset node." A node is a <code>SceneNode</code> whose <strong>components</strong> define what it is. The same node could theoretically carry different components. This is the ECS (Entity-Component-System) pattern, adapted for a scene graph.</p>
+
+<div class="callout">
+  <strong>Design decision:</strong> Components use a <code>kind</code> discriminator tag (<code>'camera'</code>, <code>'assetInstance'</code>, <code>'text'</code>, etc.) rather than a class hierarchy. This makes them serializable as plain JSON and avoids inheritance complexity.
+</div>
+
+<h2>Components <code>engine/components.ts</code></h2>
+
+<p>The <code>NodeComponents</code> interface is a discriminated union — a bag of optional component slots:</p>
+
+<table>
+  <tr><th>Component</th><th><code>kind</code></th><th>What it carries</th></tr>
+  <tr><td><code>camera</code></td><td><code>'camera'</code></td><td>Nothing. Its transform drives the viewport.</td></tr>
+  <tr><td><code>assetInstance</code></td><td><code>'assetInstance'</code></td><td><code>assetDefinitionId</code> — references an asset definition</td></tr>
+  <tr><td><code>text</code></td><td><code>'text'</code></td><td><code>content</code>, <code>fontSize</code>, <code>alignment</code></td></tr>
+  <tr><td><code>bone</code></td><td><code>'bone'</code></td><td><code>length</code> — for IK chains</td></tr>
+  <tr><td><code>mesh</code></td><td><code>'mesh'</code></td><td>Vertex data, triangles, UVs, bone weights</td></tr>
+  <tr><td><code>ghost</code></td><td><code>'ghost'</code></td><td>Invisible helper (IK target anchor)</td></tr>
+  <tr><td><code>table</code></td><td><code>'table'</code></td><td>Grid config: columns, rows, cell spans, column mapping</td></tr>
+  <tr><td><code>chart</code></td><td><code>'chart'</code></td><td>Chart type, data source, visual config, data keyframes</td></tr>
+</table>
+
+<h3>Why Frozen?</h3>
+
+<p>Components are <code>Object.freeze()</code>'d after creation (<code>sceneNode.ts:443</code>). To change a component, you must <strong>replace the entire object</strong>. This enforces immutable-update semantics — you can't accidentally mutate a component and break invariants elsewhere.</p>
+
+<pre><code>// WRONG — frozen, will throw in strict mode
+node.components.text.content = 'new text'
+
+// RIGHT — replace the whole component
+node.components = {
+  ...node.components,
+  text: { kind: 'text', content: 'new text', fontSize: 24, alignment: 'left' }
+}</code></pre>
+
+<h2>Transforms</h2>
+
+<h3>Local Transform <code>engine/transform.ts</code></h3>
+
+<pre><code>interface Transform {
+  x: number        // horizontal offset from parent
+  y: number        // vertical offset from parent
+  rotation: number // radians, cumulative from parent
+  scaleX: number   // multiplicative from parent
+  scaleY: number   // multiplicative from parent
+  localPivot?: { x: number, y: number }  // rotation/scale origin
+}</code></pre>
+
+<p>The identity transform is <code>{ x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }</code>.</p>
+
+<h3>World Transform <code>engine/worldTransform.ts</code></h3>
+
+<p>The world transform is computed by walking up the parent chain and composing each local transform:</p>
+
+<div class="diagram">world.x += rotateX(local.x * scaleX, local.y * scaleY, parentRotation)
+world.y += rotateY(local.x * scaleX, local.y * scaleY, parentRotation)
+world.rotation += local.rotation
+world.scaleX *= local.scaleX
+world.scaleY *= local.scaleY</div>
+
+<p>Key function: <code>composeChain(chain, localOf)</code> — walks root-to-node, accumulating the world transform.</p>
+
+<h3>Dirty Flagging</h3>
+
+<p>Every node has <code>_worldTransformDirty</code> and <code>_cachedWorldTransform</code>. When a node's local transform changes, <code>markDirty()</code> cascades down to all descendants:</p>
+
+<pre><code>markDirty(): void {
+  if (!this._worldTransformDirty) {
+    this._worldTransformDirty = true
+    this._cachedWorldTransform = null
+    for (const child of this.children) {
+      child.markDirty()  // cascade
+    }
+  }
+}</code></pre>
+
+<p>The world transform is only recomputed when needed (lazy evaluation). This avoids recomputing the entire tree on every frame.</p>
+
+<h3>Inverse: <code>relativeTransform()</code></h3>
+
+<p>Given a world transform and the parent's world transform, compute the local transform. Used when you know where a node should end up and need to figure out what local values produce that result.</p>
+
+<h2>Scene <code>engine/scene.ts</code></h2>
+
+<p>A thin wrapper that owns the root node, camera node, and a flat <code>Map&lt;id, SceneNode&gt;</code> for O(1) lookup:</p>
+
+<pre><code>class Scene {
+  id: string
+  root: SceneNode      // the tree root
+  camera: SceneNode    // exactly one per scene
+  #nodes: Map&lt;string, SceneNode&gt;  // flat index
+
+  getNode(id): SceneNode | undefined
+  register(node): void    // adds to index
+  unregister(nodeId): void // removes from index
+}</code></pre>
+
+<div class="callout">
+  <strong>Why a flat map?</strong> The tree is for hierarchy and transform composition. The map is for O(1) lookup by ID — critical when the animation evaluator or renderer needs to find a node quickly.
+</div>
+
+<h2>Traversal: <code>walkPreOrder()</code></h2>
+
+<p>A generator that yields nodes in depth-first pre-order (parent before children):</p>
+
+<pre><code>function* walkPreOrder(root: SceneNode): IterableIterator&lt;SceneNode&gt; {
+  const stack = [root]
+  while (stack.length > 0) {
+    const current = stack.pop()
+    stack.push(...[...current.children].reverse())
+    yield current
+  }
+}</code></pre>
+
+<p>Used everywhere: serialization, renderer rebuild, world transform computation, selection cycling.</p>
+
+<h2>Cycle Detection: <code>wouldFormCycle()</code></h2>
+
+<p>Before reparenting, check if the new parent is a descendant of the node. If so, it would create a cycle:</p>
+
+<pre><code>function wouldFormCycle(node: SceneNode, newParent: SceneNode): boolean {
+  for (let cursor = newParent; cursor !== null; cursor = cursor.parent) {
+    if (cursor === node) return true
+  }
+  return false
+}</code></pre>
+
+<p>This walks <em>up</em> from the proposed new parent. If it hits the node being moved, the reparent would create a cycle.</p>
+
+<h2>The Camera Node</h2>
+
+<p>Every scene has exactly one camera node. It is not special in the tree — it's just a <code>SceneNode</code> with a <code>camera</code> component. But its transform drives the viewport:</p>
+
+<table>
+  <tr><th>Camera Property</th><th>Viewport Effect</th></tr>
+  <tr><td><code>x, y</code></td><td>Pan (scroll the view)</td></tr>
+  <tr><td><code>scaleX, scaleY</code></td><td>Zoom (scale the view)</td></tr>
+  <tr><td><code>rotation</code></td><td>Locked (not animatable)</td></tr>
+</table>
+
+<p>The camera is animated in the timeline like any other node — it's not a special case in the engine, just a node the renderer knows to interpret as the viewport.</p>
+
+<h2>How the Renderer Uses the Scene Graph</h2>
+
+<p>The Pixi.js renderer (<code>pixi/renderer/</code>) maintains a <code>Map&lt;nodeId, PixiContainer&gt;</code> — one Pixi container per scene node. On engine events:</p>
+
+<table>
+  <tr><th>Event</th><th>Renderer Action</th></tr>
+  <tr><td><code>SlideActivated</code></td><td>Destroy all containers, rebuild from <code>walkPreOrder</code></td></tr>
+  <tr><td><code>NodeCreated</code></td><td>Add one container</td></tr>
+  <tr><td><code>NodeRemoved</code></td><td>Destroy container + descendants</td></tr>
+  <tr><td><code>TransformChanged</code></td><td>Re-evaluate and apply one node</td></tr>
+  <tr><td>Time change</td><td>Re-evaluate ALL nodes at new time</td></tr>
+</table>
+
+<div class="callout">
+  <strong>The pattern:</strong> Engine fires events → Renderer subscribes → Renderer selectively updates Pixi containers. The engine never knows about Pixi. The renderer never mutates the engine. Clean separation via the event bus.
+</div>
+
+<h2>Recap</h2>
+
+<ul>
+  <li><strong>Tree:</strong> Nodes parent-child. Transform composition is automatic.</li>
+  <li><strong>Components:</strong> Identity via frozen discriminated union slots, not class hierarchy.</li>
+  <li><strong>Transforms:</strong> Local is relative to parent. World is composed up the chain. Dirty flagging avoids recomputation.</li>
+  <li><strong>Camera:</strong> One per scene. Its transform = the viewport.</li>
+  <li><strong>Scene:</strong> Thin wrapper with flat O(1) node lookup.</li>
+  <li><strong>Renderer:</strong> Maps nodes → Pixi containers. Subscribes to engine events. Never mutates engine.</li>
+</ul>
+
+<h2>What to Explore Next</h2>
+
+<ul>
+  <li><a href="0003-command-system.html">Lesson 3: The Command System</a> — how mutations and undo/redo work</li>
+  <li><a href="0004-animation-system.html">Lesson 4: The Animation System</a> — keyframes, evaluation, clips</li>
+  <li><a href="../reference/scene-node-api.html">Reference: Scene Node API</a> — quick lookup for node operations</li>
+</ul>
+
+<div class="callout">
+  <strong>Questions?</strong> Ask me anything — how reparenting works, how the renderer maps components to Pixi objects, why the camera is locked to rotation, or anything else you noticed in the code.
+</div>
+
+<p class="footer-note">
+  Primary source: <a href="https://pixijs.com/8.x/guides/concepts/scene-graph">PixiJS — Scene Graph</a> · <a href="https://github.com/SanderMertens/ecs-faq">Sander Mertens — ECS FAQ</a>
+</p>
+
+</body>
+</html>

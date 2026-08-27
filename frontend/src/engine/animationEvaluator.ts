@@ -183,6 +183,28 @@ export class AnimationEvaluator {
     return values
   }
 
+  /**
+   * Evaluate data label values for a node at the given time.
+   * Returns a map from label to evaluated numeric value.
+   */
+  evaluateDataLabels(nodeId: string, time: number): Map<string, number> {
+    const result = new Map<string, number>()
+    const slide = this.#slideLookup(nodeId)
+    const boundedTime = requireFiniteNumber(time, 'Evaluation time')
+    const clampedTime = Math.min(Math.max(boundedTime, 0), slide.duration)
+    const animation = slide.animation.node(nodeId)
+
+    if (animation) {
+      for (const label of animation.dataLabelTrackLabels()) {
+        const keyframes = animation.dataLabelKeyframes(label)
+        const value = this.#evaluate(keyframes, clampedTime, 0)
+        result.set(label, value)
+      }
+    }
+
+    return result
+  }
+
   #applyClipInstances(node: SceneNode, time: number, state: EvaluatedNodeScratch): void {
     const instances = node.clipInstances
     if (instances.length === 0) {

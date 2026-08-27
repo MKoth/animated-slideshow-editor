@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reference: Animation API</title>
+<link rel="stylesheet" href="../assets/lesson-style.html">
+</head>
+<body>
+
+<span class="lesson-number">Reference</span>
+<h1>Animation API Cheatsheet</h1>
+<p class="subtitle">Quick lookup for keyframes, interpolation, clips, and evaluation.</p>
+
+<h2>Animatable Properties</h2>
+
+<pre><code>type AnimationProperty =
+  | 'positionX' | 'positionY'
+  | 'rotation'
+  | 'scaleX' | 'scaleY'
+  | 'opacity'
+
+ANIMATABLE_PROPERTIES       // all 6
+BONE_ANIMATABLE_PROPERTIES // 5 (no opacity)
+</code></pre>
+
+<p>Camera: rotation not animatable. Bone: opacity not animatable.</p>
+
+<h2>Keyframe</h2>
+
+<pre><code>class Keyframe {
+  id: string
+  time: number                    // seconds (0..slide.duration)
+  value: KeyframeValue            // number | string | boolean | number[]
+  interpolation: InterpolationType
+  tangentIn:  { time: number, value: number }
+  tangentOut: { time: number, value: number }
+}
+
+type InterpolationType = 'hold' | 'linear' | 'bezier' | 'bounce' | 'elastic' | 'spring'
+
+snapshotOf(keyframe) → KeyframeSnapshot   // for inverse payloads
+</code></pre>
+
+<h2>Interpolation</h2>
+
+<table>
+  <tr><th>Type</th><th>Behavior</th><th>Tangents</th></tr>
+  <tr><td><code>hold</code></td><td>Constant until next keyframe</td><td>Ignored</td></tr>
+  <tr><td><code>linear</code></td><td>Straight line</td><td>Ignored</td></tr>
+  <tr><td><code>bezier</code></td><td>Cubic bezier (Cardano solve)</td><td>Used</td></tr>
+  <tr><td><code>bounce</code></td><td>Decaying bounce easing</td><td>Ignored</td></tr>
+  <tr><td><code>elastic</code></td><td>Oscillating exponential decay</td><td>Ignored</td></tr>
+  <tr><td><code>spring</code></td><td>Damped oscillation</td><td>Ignored</td></tr>
+</table>
+
+<pre><code>// Pluggable registry
+registerSegmentInterpolator(name, fn) → unregister
+evaluateSegment(from, to, time) → number
+
+// Parametric types are easing wrappers
+isParametricInterpolation(type) → boolean  // bounce, elastic, spring
+</code></pre>
+
+<h2>NodeAnimation</h2>
+
+<pre><code>class NodeAnimation {
+  keyframes(property): readonly Keyframe[]
+  materialKeyframes(parameter): readonly Keyframe[]
+  hasTrack(property): boolean
+  hasMaterialTrack(parameter): boolean
+  materialTrackParameterKeys(): string[]
+  add(property, keyframe)            // insert-sorted
+  addMaterial(parameter, keyframe)
+  remove(property, keyframeId): Keyframe | undefined
+  removeMaterial(parameter, keyframeId): Keyframe | undefined
+  copy(): NodeAnimation
+}
+</code></pre>
+
+<h2>Evaluator</h2>
+
+<pre><code>class AnimationEvaluator {
+  evaluateNode(nodeId, time, scratch?): EvaluatedNodeState
+  evaluateMaterialOverrides(nodeId, time, scratch?): MaterialOverrides
+}
+
+interface EvaluatedNodeState {
+  transform: Transform   // evaluated local transform
+  opacity: number        // evaluated opacity
+}
+
+// Composition order:
+// 1. Static transform (fallback)
+// 2. Keyframe evaluation (per channel)
+// 3. Material track evaluation
+// 4. Clip instance layering (per instance, per channel)
+</code></pre>
+
+<h2>ClipDefinition</h2>
+
+<pre><code>class ClipDefinition {
+  id: string
+  name: string
+  duration: number           // seconds
+  category: string
+  params: ClipParam[]        // user-adjustable scalars
+  channels: ClipChannelDef[] // which properties it animates
+
+  // Keyframe storage
+  channelAnimations: Map&lt;AnimationProperty, ClipChannelAnimation&gt;
+  materialChannelAnimations: Map&lt;string, ClipChannelAnimation&gt;
+
+  // Access
+  getChannelKeyframes(property): readonly Keyframe[]
+  getMaterialChannelKeyframes(paramKey): readonly Keyframe[]
+  getParam(key): ClipParam | undefined
+}
+
+interface ClipParam {
+  key: string
+  label: string
+  kind: 'number' | 'color' | 'vec2'
+  default: number
+}
+
+interface ClipChannelDef {
+  property: AnimationProperty
+  paramKey?: string              // link to a param
+  linkMode?: 'gain' | 'offset'  // gain = multiply, offset = add
+  materialParameter?: string     // target material param instead
+}
+</code></pre>
+
+<h2>ClipInstance</h2>
+
+<pre><code>interface ClipInstance {
+  id: string
+  clipId: string
+  startTime: number              // when it starts (seconds)
+  speed: number                  // playback speed multiplier
+  enabled: boolean
+  paramOverrides: Record&lt;string, number&gt;
+}
+
+// Normalized time:
+u = (time - startTime) * speed / clip.duration
+u = clamp(u, 0, 1)
+</code></pre>
+
+<h2>Composition Model</h2>
+
+<div class="diagram">Layer 1: Static transform     (node.transform)
+Layer 2: Keyframe evaluation  (per channel, per property)
+Layer 3: Material tracks      (per parameter, per node)
+Layer 4: Clip instances       (per instance, per channel)
+  → Final EvaluatedNodeState</div>
+
+<p>Each layer overwrites the previous on the same channel. Clips that haven't started don't contribute.</p>
+
+<h2>Clip Channel Evaluation</h2>
+
+<pre><code>kfValue = evaluateClipChannel(channel.keyframes, u)
+
+if channel.paramKey:
+  paramValue = instance.paramOverrides[param.key] ?? param.default
+  if linkMode == 'gain':   output = base * (paramValue * kfValue)
+  if linkMode == 'offset': output = base + paramValue * kfValue
+else:
+  output = kfValue
+</code></pre>
+
+<h2>Key Files</h2>
+
+<table>
+  <tr><th>File</th><th>Role</th></tr>
+  <tr><td><code>keyframe.ts</code></td><td>Keyframe model, interpolation types, tangents</td></tr>
+  <tr><td><code>interpolators.ts</code></td><td>Pluggable interpolator registry, bezier Cardano solver</td></tr>
+  <tr><td><code>nodeAnimation.ts</code></td><td>Per-node track storage (property + material tracks)</td></tr>
+  <tr><td><code>slideAnimation.ts</code></td><td>Per-slide animation map (nodeId → NodeAnimation)</td></tr>
+  <tr><td><code>animationEvaluator.ts</code></td><td>Evaluates node state at a given time</td></tr>
+  <tr><td><code>animationProperties.ts</code></td><td>Animatable property definitions and validation</td></tr>
+  <tr><td><code>clipDefinition.ts</code></td><td>Reusable clip template (params, channels, keyframes)</td></tr>
+  <tr><td><code>clipInstance.ts</code></td><td>Node's reference to a clip (timing, speed, param overrides)</td></tr>
+  <tr><td><code>easingPresets.ts</code></td><td>Named easing presets → bezier tangent configs</td></tr>
+  <tr><td><code>materialTrackEvaluation.ts</code></td><td>Evaluates material parameter keyframes at a time</td></tr>
+</table>
+
+<div class="callout">
+  <strong>Tip:</strong> When debugging animation issues, start with the evaluator. Check which layer is producing the unexpected value — static, keyframe, material track, or clip instance.
+</div>
+
+</body>
+</html>

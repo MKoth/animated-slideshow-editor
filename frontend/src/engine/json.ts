@@ -56,7 +56,9 @@ export type NodeComponentsJSON = {
     readonly borderColor?: string
     readonly textWrap?: 'wrap' | 'truncate'
     readonly columnMapping?: Readonly<Record<number, string>>
-    readonly cellSpans?: Readonly<Record<string, { readonly colSpan: number; readonly rowSpan: number }>>
+    readonly cellSpans?: Readonly<
+      Record<string, { readonly colSpan: number; readonly rowSpan: number }>
+    >
   }
 }
 
@@ -107,10 +109,16 @@ export type MaterialTrackJSON = {
   readonly keyframes: readonly KeyframeJSON[]
 }
 
+export type DataLabelTrackJSON = {
+  readonly label: string
+  readonly keyframes: readonly KeyframeJSON[]
+}
+
 export type NodeAnimationJSON = {
   readonly nodeId: string
   readonly tracks: readonly PropertyTrackJSON[]
   readonly materialTracks?: readonly MaterialTrackJSON[]
+  readonly dataLabelTracks?: readonly DataLabelTrackJSON[]
 }
 
 export type SlideAnimationJSON = {

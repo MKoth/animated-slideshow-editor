@@ -328,15 +328,21 @@ export class AnimationManager {
 
   #keyframesOf(resolved: ResolvedTarget): readonly Keyframe[] {
     const { animation, track } = resolved
-    return track.kind === 'property'
-      ? animation.keyframes(track.property)
-      : animation.materialKeyframes(track.parameter)
+    if (track.kind === 'property') {
+      return animation.keyframes(track.property)
+    }
+    if (track.kind === 'dataLabel') {
+      return animation.dataLabelKeyframes(track.label)
+    }
+    return animation.materialKeyframes(track.parameter)
   }
 
   #addToTrack(resolved: ResolvedTarget, keyframe: Keyframe): void {
     const { animation, track } = resolved
     if (track.kind === 'property') {
       animation.add(track.property, keyframe)
+    } else if (track.kind === 'dataLabel') {
+      animation.addDataLabel(track.label, keyframe)
     } else {
       animation.addMaterial(track.parameter, keyframe)
     }
@@ -346,6 +352,8 @@ export class AnimationManager {
     const { animation, track } = resolved
     if (track.kind === 'property') {
       animation.remove(track.property, keyframeId)
+    } else if (track.kind === 'dataLabel') {
+      animation.removeDataLabel(track.label, keyframeId)
     } else {
       animation.removeMaterial(track.parameter, keyframeId)
     }
@@ -353,13 +361,21 @@ export class AnimationManager {
 
   #requireKeyframe(resolved: ResolvedTarget, keyframeId: string): Keyframe {
     const { animation, track } = resolved
-    const keyframe =
-      track.kind === 'property'
-        ? animation.get(track.property, keyframeId)
-        : animation.getMaterial(track.parameter, keyframeId)
+    let keyframe: Keyframe | undefined
+    if (track.kind === 'property') {
+      keyframe = animation.get(track.property, keyframeId)
+    } else if (track.kind === 'dataLabel') {
+      keyframe = animation.getDataLabel(track.label, keyframeId)
+    } else {
+      keyframe = animation.getMaterial(track.parameter, keyframeId)
+    }
     if (!keyframe) {
       const on =
-        track.kind === 'property' ? `property ${track.property}` : `parameter ${track.parameter}`
+        track.kind === 'property'
+          ? `property ${track.property}`
+          : track.kind === 'dataLabel'
+            ? `data label ${track.label}`
+            : `parameter ${track.parameter}`
       throw new Error(`Keyframe not found: ${keyframeId} on ${on}`)
     }
     return keyframe
@@ -432,7 +448,13 @@ export class AnimationManager {
 
   #trackLabel(resolved: ResolvedTarget): string {
     const { track } = resolved
-    return track.kind === 'property' ? `property ${track.property}` : `parameter ${track.parameter}`
+    if (track.kind === 'property') {
+      return `property ${track.property}`
+    }
+    if (track.kind === 'dataLabel') {
+      return `data label ${track.label}`
+    }
+    return `parameter ${track.parameter}`
   }
 }
 

@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reference: Persistence API</title>
+<link rel="stylesheet" href="../assets/lesson-style.html">
+</head>
+<body>
+
+<span class="lesson-number">Reference</span>
+<h1>Persistence API Cheatsheet</h1>
+<p class="subtitle">Quick lookup for autosave, recovery, and .lesson format.</p>
+
+<h2>PersistenceService</h2>
+
+<pre><code>interface PersistenceService {
+  save(): void                    // trigger immediate save
+  onCommandSucceeded(): void      // called after every command
+  dispose(): void                 // cleanup timers + listeners
+}
+
+createPersistenceService(deps): PersistenceService
+
+interface PersistenceDeps {
+  engine: EnginePublic
+  upsert: (blob: string) => Promise&lt;unknown&gt;  // backend POST
+  notify?: (message: string) => void
+  ensureEmbedded?: () => Promise&lt;void&gt;         // embed assets before save
+}
+</code></pre>
+
+<h2>Constants</h2>
+
+<pre><code>AUTOSAVE_INTERVAL_MS = 30000   // 30-second periodic save
+SAVE_FAILED_MESSAGE = 'Save failed.'
+SAVE_BACKEND_DOWN_MESSAGE = 'Save failed — backend unavailable.'
+</code></pre>
+
+<h2>Dirty Store</h2>
+
+<pre><code>usePersistenceStore
+  .dirty: boolean
+  .markDirty(): void     // called on command success
+  .markSaved(): void     // called after successful save
+</code></pre>
+
+<h2>Recovery Shadow (IndexedDB)</h2>
+
+<pre><code>// Keys
+RECOVERY_SHADOW_KEY = 'recoveryShadow'
+LAST_SAVED_KEY = 'recoveryLastSaved'
+
+// Operations
+writeShadow(blob: string): Promise&lt;void&gt;
+readShadow(): Promise&lt;string | null&gt;
+clearShadow(): Promise&lt;void&gt;
+
+recordLastSaved(blob: string): Promise&lt;void&gt;
+readLastSaved(): Promise&lt;string | null&gt;
+clearRecoveryStorage(): Promise&lt;void&gt;
+
+// Recovery check
+hasRecoverableShadow(): Promise&lt;boolean&gt;
+  // true if shadow !== lastSaved
+
+loadRecoverableProject(): Promise&lt;RecoveredProject | null&gt;
+  // returns { json } if recoverable, null otherwise
+</code></pre>
+
+<h2>Asset Embedding</h2>
+
+<pre><code>// assetSnapshot.ts
+captureAssetSnapshot(engine, definitionId): Promise&lt;boolean&gt;
+ensureReferencedEmbedded(engine): Promise&lt;void&gt;
+embeddedDataUrl(asset): string   // → "data:{mime};base64,{data}"
+
+// definitionSnapshot.ts
+captureMaterialSnapshot(engine, definitionId): boolean
+captureShaderSnapshot(engine, definitionId): boolean
+ensureReferencedMaterialAndShaderSnapshots(engine): void
+</code></pre>
+
+<h2>Import / Export</h2>
+
+<pre><code>// lessonTransfer.ts
+importLessonFile(engine, file): Promise&lt;boolean&gt;
+  // parse → validate → freshProjectId → restoreFromJSON
+
+downloadLessonCopy(engine): Promise&lt;boolean&gt;
+  // ensureEmbedded → ensureMaterialShapshots → toJSON → download .lesson
+</code></pre>
+
+<h2>Backend API</h2>
+
+<pre><code>// projectsApi.ts
+ProjectsApi {
+  upsert(blob: string): Promise&lt;StoredProject&gt;    // POST /api/projects
+  list(): Promise&lt;ProjectSummary[]&gt;                // GET /api/projects
+  get(id: string): Promise&lt;string&gt;                  // GET /api/projects/{id}
+  delete(id: string): Promise&lt;void&gt;                 // DELETE /api/projects/{id}
+}
+
+interface StoredProject {
+  id, name, description, author, created, lastModified, version
+}
+
+interface ProjectSummary {
+  id, name, lastModified
+}
+</code></pre>
+
+<h2>.lesson File Format</h2>
+
+<pre><code>{
+  "version": 1,
+  "project": {
+    "id": string,
+    "name": string,
+    "description": string,
+    "author": string,
+    "created": string,
+    "lastModified": string,
+    "version": number,
+    "slides": SlideJSON[]
+  },
+  "clips"?: ClipJSON[],
+  "ikChains"?: { chains: IKChainJSON[] },
+  "constraints"?: { nodeConstraints: Record&lt;string, Constraint[]&gt; },
+  "library"?: {
+    "assets"?: EmbeddedAssetJSON[],
+    "materials"?: EmbeddedMaterialJSON[],
+    "shaders"?: EmbeddedShaderJSON[]
+  }
+}
+</code></pre>
+
+<h2>Serialization Pipeline</h2>
+
+<pre><code>// Engine → JSON
+engine.toJSON() → LessonJSON
+  → JSON.stringify() → blob string
+
+// JSON → Engine
+validate(json) → string[]  (errors)
+buildProjectFromJSON(json) → Project
+parseClipsFromLessonJSON(json) → ClipDefinition[]
+restore IK + constraints from json
+</code></pre>
+
+<h2>Save Flow</h2>
+
+<div class="diagram">Command succeeds
+  → markDirty()
+  → writeRecoveryShadow()       (IndexedDB)
+  → requestAutosave()           (setTimeout debounce)
+    → performSave()
+      → ensureEmbedded()        (fetch + base64 assets)
+      → engine.toJSON()
+      → JSON.stringify()
+      → POST /api/projects
+      → recordLastSaved()       (IndexedDB)
+      → markSaved()
+</div>
+
+<h2>Failure Modes</h2>
+
+<table>
+  <tr><th>Failure</th><th>Behavior</th></tr>
+  <tr><td>Backend down</td><td>Save skipped, notification shown, editor keeps working</td></tr>
+  <tr><td>Network error</td><td><code>markUnavailable()</code>, next save skipped</td></tr>
+  <tr><td>Save in flight</td><td>New save queued (<code>saveAgain</code>), retried after</td></tr>
+  <tr><td>Tab close</td><td><code>beforeunload</code> writes recovery shadow</td></tr>
+  <tr><td>Crash</td><td>Last recovery shadow survives in IndexedDB</td></tr>
+</table>
+
+<div class="callout">
+  <strong>Tip:</strong> When debugging save issues, check: (1) is <code>dirty</code> true? (2) is backend <code>available</code>? (3) is <code>saveInFlight</code> blocking? (4) did <code>ensureEmbedded</code> fail?
+</div>
+
+</body>
+</html>

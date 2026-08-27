@@ -1,4 +1,4 @@
-import type { ChartComponent, ChartType, DataKeyframe, VisualConfig } from './components'
+import type { ChartComponent, ChartType, VisualConfig } from './components'
 
 const VALID_CHART_TYPES: readonly ChartType[] = ['bar', 'line', 'pie', 'area', 'flowchart']
 
@@ -19,7 +19,9 @@ export function createChartComponent(
   chartType: ChartType,
   dataSourceId: string,
   visualConfig?: Partial<VisualConfig>,
-  dataKeyframes?: DataKeyframe[],
+  dataLabels?: string[],
+  axisMin?: number,
+  axisMax?: number,
 ): ChartComponent {
   if (!validateChartType(chartType)) {
     throw new Error(`Invalid chart type: "${String(chartType)}"`)
@@ -33,29 +35,19 @@ export function createChartComponent(
       : {}),
   }
 
-  const sortedKeyframes = dataKeyframes ? sortDataKeyframesArray(dataKeyframes) : []
-
   return {
     kind: 'chart',
     chartType,
     dataSourceId,
     visualConfig: mergedVisualConfig,
-    dataKeyframes: sortedKeyframes,
+    dataLabels: dataLabels ? [...dataLabels] : [],
+    axisMin,
+    axisMax,
     _dirty: false,
   }
 }
 
 export function setChartDirty(component: ChartComponent): void {
-  component._dirty = true
-}
-
-function sortDataKeyframesArray(keyframes: readonly DataKeyframe[]): DataKeyframe[] {
-  return [...keyframes].sort((a, b) => a.time - b.time)
-}
-
-export function sortDataKeyframes(component: ChartComponent): void {
-  const sorted = sortDataKeyframesArray(component.dataKeyframes)
-  component.dataKeyframes = sorted
   component._dirty = true
 }
 
@@ -80,8 +72,24 @@ export function setChartVisualConfig(
   component._dirty = true
 }
 
-export function addDataKeyframe(component: ChartComponent, keyframe: DataKeyframe): void {
-  component.dataKeyframes = [...component.dataKeyframes, keyframe]
-  sortDataKeyframes(component)
+export function addDataLabel(component: ChartComponent, label: string): void {
+  if (!component.dataLabels.includes(label)) {
+    component.dataLabels = [...component.dataLabels, label]
+    component._dirty = true
+  }
+}
+
+export function removeDataLabel(component: ChartComponent, label: string): void {
+  component.dataLabels = component.dataLabels.filter((l) => l !== label)
+  component._dirty = true
+}
+
+export function setChartAxisBounds(
+  component: ChartComponent,
+  axisMin?: number,
+  axisMax?: number,
+): void {
+  component.axisMin = axisMin
+  component.axisMax = axisMax
   component._dirty = true
 }

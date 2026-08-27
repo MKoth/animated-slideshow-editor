@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 3: The Command System</title>
+<link rel="stylesheet" href="../assets/lesson-style.html">
+<link rel="stylesheet" href="../assets/diagram-style.html">
+</head>
+<body>
+
+<span class="lesson-number">Lesson 3</span>
+<h1>The Command System</h1>
+<p class="subtitle">How every mutation flows through validate → execute → record, and how undo works.</p>
+
+<h2>The Core Idea</h2>
+
+<p>Every mutation in the editor — creating a node, moving a keyframe, renaming a slide — goes through the same pipeline. No exceptions. This gives you undo/redo, transaction batching, validation, logging, and AI proposal execution for free.</p>
+
+<div class="arch-diagram"><span class="layer-label">Dispatch Flow</span>
+UI Action
+  → <span class="layer cmd">dispatch(command)</span>
+    → command.<span class="layer engine">validate</span>(engine)    <span class="layer-label">// throws on invalid</span>
+    → command.<span class="layer engine">execute</span>(engine)     <span class="layer-label">// mutates state, returns inverse</span>
+    → undoStack.<span class="layer store">record</span>(inverse)   <span class="layer-label">// enables undo</span>
+    → <span class="layer api">onCommandSucceeded()</span>     <span class="layer-label">// triggers autosave</span></div>
+
+<h2>The Command Interface <code>commands/command.ts</code></h2>
+
+<p>12 lines. This is the contract every command implements:</p>
+
+<pre><code>interface Command&lt;Inverse&gt; {
+  readonly type: string
+  readonly parameters: Readonly&lt;Record&lt;string, unknown&gt;&gt;
+  validate(engine: Engine): void       // throw to reject
+  execute(engine: Engine): Inverse     // mutate + return undo data
+  toJSON(): Record&lt;string, unknown&gt;    // for serialization
+}</code></pre>
+
+<div class="callout">
+  <strong>The inverse pattern:</strong> <code>execute()</code> returns an <code>Inverse</code> — a payload containing exactly the information needed to undo the command. The dispatcher stores this on the undo stack. To undo, you dispatch a new command that applies the inverse.
+</div>
+
+<h2>The Dispatcher <code>commands/dispatcher.ts</code></h2>
+
+<p>Wires everything together. 85 lines total:</p>
+
+<pre><code>dispatch&lt;Inverse&gt;(command: Command&lt;Inverse&gt;): CommandResult&lt;Inverse&gt; {
+  try {
+    command.validate(this.#engine)       // 1. validate
+    const inverse = command.execute(this.#engine)  // 2. execute
+    this.#undoStack.record({             // 3. record
+      id: newId('command'),
+      type: command.type,
+      parameters: command.parameters,
+      inverse,
+    })
+    this.#onCommandSucceeded?.()         // 4. trigger autosave
+    return { ok: true, inverse }
+  } catch (error) {
+    return { ok: false, error }          // validation failed
+  }
+}</code></pre>
+
+<p>If <code>validate()</code> throws, the command is rejected — no state change, no undo entry. If <code>execute()</code> throws (shouldn't happen after validation), same result.</p>
+
+<h2>The Undo Stack <code>commands/undoStack.ts</code></h2>
+
+<p>A simple list of entries, newest first:</p>
+
+<pre><code>interface UndoStackEntry&lt;Inverse&gt; {
+  id: string
+  type: string           // e.g. 'MoveNode', 'CreateNode'
+  parameters: Record     // what the command did
+  inverse: Inverse       // how to undo it
+}</code></pre>
+
+<p>The stack is in-memory and session-scoped. It clears on project load and is never serialized into the <code>.lesson</code> file.</p>
+
+<h3>How Undo Actually Works</h3>
+
+<p>There is no <code>undo()</code> method. Undo is performed by <strong>dispatching a new command that applies the inverse</strong>. For example, to undo a <code>MoveNode</code>:</p>
+
+<pre><code>// MoveNode was: { nodeId: 'abc', x: 100, y: 200 }
+// Inverse was:  { nodeId: 'abc', oldX: 50, oldY: 75 }
+
+// Undo = dispatch a new MoveNode to the old position
+dispatcher.dispatch(new MoveNodeCommand({
+  nodeId: 'abc',
+  x: inverse.oldX,    // 50
+  y: inverse.oldY,    // 75
+}))</code></pre>
+
+<p>This means every undo is itself a forward command that pushes a new entry onto the stack. The history grows in both directions.</p>
+
+<h2>Example Commands</h2>
+
+<h3>Simple: MoveNode <code>commands/moveNodeCommand.ts</code></h3>
+
+<pre><code>class MoveNodeCommand implements Command&lt;MoveNodeInverse&gt; {
+  type = 'MoveNode'
+
+  validate(engine) {
+    engine.getNode(this.#nodeId)  // throws if not found
+    requireFiniteNumber(this.#x, 'X')
+    requireFiniteNumber(this.#y, 'Y')
+  }
+
+  execute(engine) {
+    const { transform } = engine.getNode(this.#nodeId)
+    engine.setTransform(this.#nodeId, { ...transform, x: this.#x, y: this.#y })
+    return { nodeId: this.#nodeId, oldX: transform.x, oldY: transform.y }
+  }
+}</code></pre>
+
+<p>The inverse captures the <strong>previous state</strong> (<code>oldX</code>, <code>oldY</code>), not the delta. This is simpler and more reliable.</p>
+
+<h3>Medium: CreateNode <code>commands/createNodeCommand.ts</code></h3>
+
+<pre><code>class CreateNodeCommand implements Command&lt;CreateNodeInverse&gt; {
+  type = 'CreateNode'
+
+  validate(engine) {
+    if (this.#name.trim() === '') throw new Error('Name must not be empty')
+    if (this.#id &amp;&amp; nodeExists(engine, this.#id)) throw new Error('ID already exists')
+    const scene = engine.getScene(this.#sceneId)
+    if (!scene.getNode(this.#parentId)) throw new Error('Parent not found')
+    if (this.#components?.camera &amp;&amp; scene.camera) throw new Error('Camera already exists')
+  }
+
+  execute(engine) {
+    const node = engine.createNode(this.#sceneId, this.#parentId, this.#name, { ... })
+    return { nodeId: node.id }  // inverse: just the ID (for delete-on-undo)
+  }
+}</code></pre>
+
+<p>The inverse is minimal — just the node ID. To undo, you'd dispatch a <code>DeleteNodeCommand</code> with that ID.</p>
+
+<h3>Composition: TransactionCommand <code>commands/transactionCommand.ts</code></h3>
+
+<p>Batches multiple commands as one undo entry:</p>
+
+<pre><code>class TransactionCommand implements Command&lt;TransactionInverse&gt; {
+  type = 'Transaction'
+  #children: Command[]
+
+  validate(engine) {
+    for (const cmd of this.#children) cmd.validate(engine)  // all must be valid
+  }
+
+  execute(engine) {
+    const children = []
+    try {
+      for (const cmd of this.#children) {
+        children.push({ type: cmd.type, inverse: cmd.execute(engine) })
+      }
+    } catch (error) {
+      // rollback: undo everything that succeeded
+      for (const child of children) restoreMove(engine, child.inverse)
+      throw error
+    }
+    return { children }
+  }
+}</code></pre>
+
+<div class="callout warning">
+  <strong>Atomic rollback:</strong> If any child command fails during execution, the transaction rolls back all completed children. The undo stack never gets a partial entry. This is critical for multi-command gestures like numeric drags in the Inspector.
+</div>
+
+<h2>Engine vs EnginePublic <code>engine/internal.ts</code></h2>
+
+<p>The engine has a dual-face design:</p>
+
+<table>
+  <tr><th>Interface</th><th>Audience</th><th>Has mutation methods?</th></tr>
+  <tr><td><code>Engine</code></td><td>Commands only</td><td>Yes (<code>createNode</code>, <code>setTransform</code>, etc.)</td></tr>
+  <tr><td><code>EnginePublic</code></td><td>UI, Renderer, Stores</td><td>No. Read-only queries + <code>evaluateNode</code></td></tr>
+</table>
+
+<p><code>toReadOnly(engine)</code> wraps the internal engine in a read-only proxy. The UI never calls mutation methods directly — it always goes through <code>dispatcher.dispatch(command)</code>.</p>
+
+<pre><code>// UI code — cannot mutate directly
+const { engine, dispatch } = useEngine()
+const node = engine.getNode('abc')           // ✓ read
+dispatch(new MoveNodeCommand({ ... }))        // ✓ mutate via command
+
+engine.setTransform('abc', { ... })           // ✗ doesn't exist on EnginePublic</code></pre>
+
+<div class="callout">
+  <strong>Why?</strong> This enforces a single mutation path. Every change flows through the dispatcher, which validates, executes, records the inverse, and triggers autosave. No way to accidentally bypass the system.
+</div>
+
+<h2>The Command System's Role in AI</h2>
+
+<p>AI proposals are just batches of commands. The AI generates an <code>AIEditProposal</code> containing command objects. The user approves → the commands execute as a transaction. The same validate → execute → record pipeline runs.</p>
+
+<p>This is why the command system exists: it makes every mutation (human or AI) reversible, testable, and observable.</p>
+
+<h2>Complete Data Flow</h2>
+
+<div class="diagram">┌─────────────────────────────────────────────────┐
+│  User drags a node on the canvas                │
+│                                                 │
+│  Canvas mouseup                                 │
+│    → inspectorActions.moveNode(nodeId, x, y)    │
+│      → dispatch(MoveNodeCommand)                │
+│        → validate: node exists, x/y finite      │
+│        → execute: engine.setTransform(...)      │
+│          → node.markDirty() cascades            │
+│          → EventBus fires TransformChanged      │
+│            → Renderer re-evaluates node         │
+│        → undoStack.record({ oldX, oldY })       │
+│      → onCommandSucceeded()                     │
+│        → persistenceService marks dirty         │
+│        → autosave debounce starts               │
+└─────────────────────────────────────────────────┘</div>
+
+<h2>Key Design Decisions</h2>
+
+<ol>
+  <li><strong>Single mutation path.</strong> No way to bypass validation. No accidental state changes.</li>
+  <li><strong>Inverse, not delta.</strong> Store the previous state, not the change. Simpler, more reliable undo.</li>
+  <li><strong>Undo = forward command.</strong> Undo dispatches a new command. History grows linearly.</li>
+  <li><strong>Transactions are atomic.</strong> Partial failure → full rollback. No partial undo entries.</li>
+  <li><strong>89 commands, not 89 methods.</strong> Each mutation is a separate class. Testable in isolation.</li>
+  <li><strong>AI uses the same path.</strong> AI proposals are command batches. No special case.</li>
+</ol>
+
+<h2>What to Explore Next</h2>
+
+<ul>
+  <li><a href="0004-animation-system.html">Lesson 4: The Animation System</a> — keyframes, evaluation, clips</li>
+  <li><a href="0005-persistence.html">Lesson 5: Persistence &amp; Autosave</a> — how commands trigger saves</li>
+  <li><a href="../reference/command-system-api.html">Reference: Command System API</a> — quick lookup for all command types</li>
+</ul>
+
+<div class="callout">
+  <strong>Questions?</strong> Ask me about transaction rollback, how a specific command's inverse works, or how the AI proposal pipeline connects to commands.
+</div>
+
+<p class="footer-note">
+  Primary source: <a href="https://refactoring.guru/design-patterns/command">Refactoring.Guru — Command Pattern</a> · <a href="https://martinfowler.com/eaaDev/uiArchs.html">Martin Fowler — GUI Architectures</a>
+</p>
+
+</body>
+</html>

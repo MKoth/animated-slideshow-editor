@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 6: The Rendering Pipeline</title>
+<link rel="stylesheet" href="../assets/lesson-style.html">
+<link rel="stylesheet" href="../assets/diagram-style.html">
+</head>
+<body>
+
+<span class="lesson-number">Lesson 6</span>
+<h1>The Rendering Pipeline</h1>
+<p class="subtitle">How the Pixi.js renderer maps engine nodes to containers and visualizes the scene.</p>
+
+<h2>The Architecture</h2>
+
+<p>The renderer is a <strong>pure consumer</strong> of engine events. It never mutates the engine. It subscribes, reacts, and updates Pixi containers accordingly.</p>
+
+<div class="arch-diagram"><span class="layer engine">Engine</span>  fires events via EventBus
+        <span class="flow-arrow">│</span>
+<span class="layer api">Renderer</span>  subscribes, selectively updates Pixi containers
+        <span class="flow-arrow">│</span>
+<span class="layer render">SceneRenderer</span>  maps node IDs → Pixi Containers
+        <span class="flow-arrow">│</span>
+<span class="layer render">Pixi.js</span>  renders to canvas (WebGL/WebGPU)</div>
+
+<h2>The Renderer <code>pixi/renderer/renderer.ts</code></h2>
+
+<p>The top-level orchestrator. 766 lines. Owns:</p>
+
+<table>
+  <tr><th>Component</th><th>Role</th></tr>
+  <tr><td><code>PixiApplication</code></td><td>Canvas, renderer, ticker</td></tr>
+  <tr><td><code>Camera</code></td><td>Applies viewport transform to world container</td></tr>
+  <tr><td><code>SceneRenderer</code></td><td>Maps engine nodes → Pixi containers</td></tr>
+  <tr><td><code>GridRenderer</code></td><td>Background grid (zoom-aware)</td></tr>
+  <tr><td><code>FullscreenPass</code></td><td>Post-processing shader over entire scene</td></tr>
+  <tr><td><code>TextureCache</code></td><td>Caches loaded asset textures</td></tr>
+  <tr><td><code>ShaderProgramCache</code></td><td>Caches compiled shader programs</td></tr>
+  <tr><td><code>SelectionOverlay</code></td><td>Selection outlines + handles</td></tr>
+  <tr><td><code>GuideOverlay</code></td><td>Snap guides during drag</td></tr>
+  <tr><td><code>MeshOverlay</code></td><td>Mesh wireframe + vertex display</td></tr>
+  <tr><td><code>IkOverlay</code></td><td>IK chain visualization</td></tr>
+  <tr><td><code>CameraControls</code></td><td>Pan/zoom interaction</td></tr>
+  <tr><td><code>CanvasSelection</code></td><td>Click/drag selection on canvas</td></tr>
+  <tr><td><code>DropPlacement</code></td><td>Drag-and-drop asset placement</td></tr>
+  <tr><td><code>ThumbnailRecorder</code></td><td>Captures slide thumbnails</td></tr>
+</table>
+
+<h2>The Tick Loop</h2>
+
+<p>Every frame, Pixi's ticker calls <code>#applyTick()</code>:</p>
+
+<pre><code>#applyTick() {
+  // 1. Compute camera transform (from camera node or animation)
+  const transform = this.#cameraTransform()
+
+  // 2. Apply camera to world container (pan + zoom)
+  camera.apply(transform)
+
+  // 3. Update grid (colors, zoom, position)
+  grid.update({ cameraX, cameraY, zoomX, zoomY, ... })
+
+  // 4. Render fullscreen shader pass
+  fullscreenPass.renderFrame()
+
+  // 5. Update dev overlay (FPS, node count)
+  devOverlay.update({ fps, cameraX, cameraY, zoom, nodeCount })
+}</code></pre>
+
+<h2>The Camera <code>pixi/renderer/camera.ts</code></h2>
+
+<p>22 lines. Applies the viewport transform to the world container:</p>
+
+<pre><code>apply(transform) {
+  world.position.set(-x * scaleX, -y * scaleY)
+  world.scale.set(scaleX, scaleY)
+}</code></pre>
+
+<p>The camera reads from the engine's camera node. If animation mode is on, it evaluates the camera's animated transform at the current time.</p>
+
+<h2>SceneRenderer <code>pixi/renderer/sceneRenderer.ts</code></h2>
+
+<p>The core mapping layer. 859 lines. Maintains:</p>
+
+<pre><code>#containers: Map&lt;string, PixiContainer&gt;   // node ID → Pixi container
+#nodeIds: WeakMap&lt;PixiContainer, string&gt;  // reverse lookup
+#sizes: Map&lt;string, WorldSize&gt;            // node ID → bounding box
+#lastEvaluated: Map&lt;string, EvaluatedNodeScratch&gt;  // previous state (change detection)
+#lastMaterials: Map&lt;string, EffectiveMaterialScratch&gt;</code></pre>
+
+<h3>Binding a Scene</h3>
+
+<p>When the active slide changes, <code>bind()</code> destroys all containers and rebuilds:</p>
+
+<pre><code>bind(scene, slideId) {
+  // Destroy all existing containers
+  for (container of #containers.values()) container.destroy({ children: true })
+  #containers.clear()
+
+  // Walk the engine tree, create a Pixi container per node
+  for (node of walkPreOrder(scene.root)) {
+    this.#addNode(node)
+  }
+}</code></pre>
+
+<h3>Creating Node Containers</h3>
+
+<p><code>createNodeContainer()</code> in <code>nodeRenderer.ts</code> creates a Pixi container with a <strong>placeholder child</strong> based on the node's component type:</p>
+
+<table>
+  <tr><th>Component</th><th>Placeholder</th></tr>
+  <tr><td><code>assetInstance</code></td><td>Texture sprite (loaded async)</td></tr>
+  <tr><td><code>text</code></td><td>Text sprite</td></tr>
+  <tr><td><code>bone</code></td><td>Line + circles (red)</td></tr>
+  <tr><td><code>mesh</code></td><td>Deformable mesh display</td></tr>
+  <tr><td><code>table</code></td><td>Table container with cells</td></tr>
+  <tr><td><code>chart</code></td><td>Chart container</td></tr>
+  <tr><td><code>ghost</code></td><td>Invisible (no placeholder)</td></tr>
+</table>
+
+<div class="callout">
+  <strong>Placeholder pattern:</strong> The container itself holds transform + opacity. The placeholder child holds the visual content. This separation lets the renderer update transform independently of content.
+</div>
+
+<h3>Evaluation Pipeline</h3>
+
+<p>On every relevant event, <code>#evaluateAndApply(nodeId)</code> runs:</p>
+
+<div class="diagram">1. engine.evaluateNode(nodeId, time)     → EvaluatedNodeState
+2. engine.evaluateMaterialOverrides()     → MaterialOverrides
+3. resolveMaterial(overrides)              → { tint, opacityMultiplier }
+4. resolveShader(overrides, time)          → { source, uniforms }
+5. Compare with lastEvaluated/lastMaterials (change detection)
+6. If changed: applyEvaluatedState(container, state, opacity)
+7. If material changed: applyMaterialTint(container, tint)
+8. Store current state for next comparison</div>
+
+<p>This is <strong>selective</strong> — only changed nodes are re-evaluated and re-rendered.</p>
+
+<h2>Event-Driven Updates</h2>
+
+<p>The renderer subscribes to ~50 engine event types. Each maps to a specific handler:</p>
+
+<table>
+  <tr><th>Event</th><th>Handler</th><th>Action</th></tr>
+  <tr><td><code>SlideActivated</code></td><td><code>#syncScene</code></td><td>Destroy all, rebuild from walkPreOrder</td></tr>
+  <tr><td><code>NodeCreated</code></td><td><code>handleNodeCreated</code></td><td>Add one container</td></tr>
+  <tr><td><code>NodeRemoved</code></td><td><code>handleNodeRemoved</code></td><td>Destroy container + descendants</td></tr>
+  <tr><td><code>TransformChanged</code></td><td><code>handleTransformChanged</code></td><td>Re-evaluate one node</td></tr>
+  <tr><td><code>KeyframeAdded</code></td><td><code>handleKeyframeChanged</code></td><td>Re-evaluate one node</td></tr>
+  <tr><td><code>MaterialAssigned</code></td><td><code>handleMaterialChanged</code></td><td>Re-resolve material + tint</td></tr>
+  <tr><td><code>MeshChanged</code></td><td><code>handleMeshChanged</code></td><td>Rebuild mesh geometry</td></tr>
+  <tr><td><code>TableChanged</code></td><td><code>handleTableChanged</code></td><td>Rebuild table layout</td></tr>
+  <tr><td><code>Time changed</code></td><td><code>handleTimeChanged</code></td><td>Re-evaluate ALL nodes</td></tr>
+</table>
+
+<h3>Time Changes Are Special</h3>
+
+<p>When the playhead moves, <strong>every node</strong> must be re-evaluated (animation). This is the expensive path. The renderer also updates IK overrides, constraint overrides, deformed mesh sizes, and the fullscreen shader.</p>
+
+<h2>Change Detection</h2>
+
+<p>The renderer avoids unnecessary Pixi updates by comparing with the previous state:</p>
+
+<pre><code>const stateChanged = !previous || !evaluatedStatesEqual(previous, state)
+const materialChanged = !previousMaterial || tint/opacity changed
+
+if (!stateChanged &amp;&amp; !materialChanged &amp;&amp; !shaderChanged) {
+  return  // skip — nothing to update
+}</code></pre>
+
+<p>This is critical for performance — Pixi container property sets trigger re-rendering, so avoiding no-op updates saves GPU work.</p>
+
+<h2>The Full Stack</h2>
+
+<div class="diagram">User drags node on canvas
+  → CanvasSelection detects mouseup
+  → dispatch(MoveNodeCommand)
+  → command.execute: engine.setTransform(...)
+  → engine fires TransformChanged event
+  → Renderer.#handleEvent(event)
+    → sceneRenderer.handleTransformChanged(nodeId)
+      → #evaluateAndApply(nodeId)
+        → engine.evaluateNode(nodeId, time)
+        → compare with lastEvaluated
+        → if changed: applyEvaluatedState(container, state)
+          → container.position.set(x, y)
+          → container.rotation = rotation
+          → container.scale.set(scaleX, scaleY)
+        → selectionOverlay.redraw()
+  → Pixi ticker fires
+    → #applyTick()
+      → camera.apply(transform)  // viewport pan/zoom
+      → grid.update(...)
+      → app.renderer.render(...)
+  → Canvas shows updated position</div>
+
+<h2>Key Design Decisions</h2>
+
+<ol>
+  <li><strong>Renderer is a pure consumer.</strong> Subscribes to events, never mutates engine. Clean separation.</li>
+  <li><strong>Placeholder pattern.</strong> Container = transform. Placeholder child = visual content. Independent updates.</li>
+  <li><strong>Selective updates.</strong> Only changed nodes are re-evaluated. Time changes are the exception (all nodes).</li>
+  <li><strong>Change detection.</strong> Compare with previous state before updating Pixi properties. Avoids no-op GPU work.</li>
+  <li><strong>40 renderer files.</strong> Each overlay/interaction is isolated. Easy to add new editing modes without touching the core.</li>
+  <li><strong>Texture + shader caches.</strong> Avoid re-loading and re-compiling. Cache invalidation is explicit.</li>
+</ol>
+
+<h2>What to Explore Next</h2>
+
+<ul>
+  <li><a href="../reference/rendering-api.html">Reference: Rendering API</a> — quick lookup for renderer components</li>
+  <li>Deep-dive into any overlay (selection, mesh, IK) — ask me about specific interaction handlers</li>
+</ul>
+
+<div class="callout">
+  <strong>Questions?</strong> Ask me about how the mesh overlay renders vertices, how the fullscreen shader pass works, or how thumbnail recording captures slide previews.
+</div>
+
+<p class="footer-note">
+  Primary source: <a href="https://pixijs.com/8.x/guides/concepts/architecture">PixiJS — Architecture</a> · <a href="https://pixijs.com/8.x/guides/concepts/scene-graph">PixiJS — Scene Graph</a>
+</p>
+
+</body>
+</html>

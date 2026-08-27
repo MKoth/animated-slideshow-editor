@@ -44,8 +44,6 @@ import { applyAssetTexture, applyMissingPlaceholder, placeholderSize } from './p
 import { rebuildTable, tableLayoutOf, tableSizeOf, DEFAULT_TABLE_WIDTH } from './tableRenderer'
 import { chartSpriteOf, rebuildChartTexture, type ResolveDataSource } from './chartRenderer'
 import { CHART_DEFAULT_WIDTH, CHART_DEFAULT_HEIGHT } from './chartRenderer'
-import { evaluateData, interpolateDataPoints, evaluatedDataEqual } from '../../engine/dataEvaluator'
-import type { EvaluatedData } from '../../engine/dataEvaluator'
 import { createNodeShaderFilter, applyFilterUniforms } from './nodeShader'
 import { bindFilterSamplers } from './samplerBinding'
 import type { ShaderProgramCache } from './programCache'
@@ -91,7 +89,6 @@ export class SceneRenderer {
   readonly #ikOverrides = new Map<string, number>()
   readonly #tableComponentHashes = new Map<string, string>()
   readonly #chartComponentHashes = new Map<string, string>()
-  readonly #lastEvaluatedData = new Map<string, EvaluatedData>()
   readonly #resolveDataSource: ResolveDataSource
   readonly #scratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #materialScratch: EffectiveMaterialScratch = effectiveMaterialScratch()
@@ -170,7 +167,6 @@ export class SceneRenderer {
     this.#missingNodes.clear()
     this.#tableComponentHashes.clear()
     this.#chartComponentHashes.clear()
-    this.#lastEvaluatedData.clear()
     this.#scene = scene
     this.#slideId = slideId
     if (!scene) {
@@ -206,7 +202,6 @@ export class SceneRenderer {
         this.#lastMaterials.delete(descendantId)
         this.#nodeShaders.delete(descendantId)
         this.#missingNodes.delete(descendantId)
-        this.#lastEvaluatedData.delete(descendantId)
       }
       this.#nodeIds.delete(descendant)
     }
@@ -419,32 +414,25 @@ export class SceneRenderer {
       return
     }
     const time = this.#currentTime.getTime(slideId)
-    const dataSource = this.#resolveDataSource(chart.dataSourceId)
-    const evaluatedData = evaluateData(
-      chart.dataKeyframes,
-      dataSource ? ({ dataPoints: dataSource } as never) : undefined,
-      time,
-    )
-
-    const previousData = this.#lastEvaluatedData.get(nodeId)
-    const dataChanged = !previousData || !evaluatedDataEqual(previousData, evaluatedData)
-
-    if (!dataChanged) {
+    const node = this.#scene?.getNode(nodeId)
+    if (!node) {
       return
     }
 
-    this.#lastEvaluatedData.set(nodeId, evaluatedData)
+    const evaluatedDataLabels = this.#engine.evaluateDataLabels(nodeId, time)
 
-    const interpolatedData = interpolateDataPoints(evaluatedData)
+    const dataSourceData = this.#resolveDataSource(chart.dataSourceId) ?? []
+    const data = dataSourceData.map((dp) => ({
+      ...dp,
+      value: evaluatedDataLabels.get(dp.label) ?? dp.value,
+    }))
 
     const width = CHART_DEFAULT_WIDTH
     const height = CHART_DEFAULT_HEIGHT
-    void rebuildChartTexture(this.#pixi, sprite, chart, interpolatedData, width, height).then(
-      () => {
-        this.#sizes.set(nodeId, { width, height })
-        this.#onNodeSizeChanged(nodeId)
-      },
-    )
+    void rebuildChartTexture(this.#pixi, sprite, chart, data, width, height).then(() => {
+      this.#sizes.set(nodeId, { width, height })
+      this.#onNodeSizeChanged(nodeId)
+    })
   }
 
   #getChartAndSprite(nodeId: string): { chart: ChartComponent; sprite: PixiSprite } | undefined {

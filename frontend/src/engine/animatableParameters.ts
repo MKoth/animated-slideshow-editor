@@ -11,8 +11,8 @@ export interface AnimatableParameter {
   readonly label: string
   /** The value kind (e.g. 'number', 'color', 'vec2'). */
   readonly kind: string
-  /** Whether the parameter comes from the standard six or from the node's material. */
-  readonly source: 'standard' | 'material'
+  /** Whether the parameter comes from the standard six, material, or data label. */
+  readonly source: 'standard' | 'material' | 'dataLabel'
   /** True when the node already has keyframes on this parameter's track. */
   readonly linked: boolean
 }
@@ -35,10 +35,10 @@ const BUILT_IN_MATERIAL_KEYS = new Set<string>([
 /**
  * Discover all animatable parameters available on a scene node.
  *
- * Returns the six standard transform/opacity properties plus any material
+ * Returns the six standard transform/opacity properties, any material
  * parameters (tint, opacityMultiplier, custom shader uniforms) defined on the
- * node's assigned material. Sampler2D parameters are excluded because they
- * cannot be animated.
+ * node's assigned material, and any data labels on the node's chart component.
+ * Sampler2D parameters are excluded because they cannot be animated.
  *
  * @param node                    The scene node to inspect.
  * @param materialParameters      The resolved parameters of the node's
@@ -48,14 +48,22 @@ const BUILT_IN_MATERIAL_KEYS = new Set<string>([
  *                                keyframes on the given standard property.
  * @param hasMaterialTrack        Returns true when the node already has
  *                                keyframes on the given material parameter.
+ * @param dataLabels              The data labels from the node's chart component (empty when no chart).
+ * @param hasDataLabelTrack       Returns true when the node already has
+ *                                keyframes on the given data label.
  */
 export function getAnimatableParameters(
   node: {
-    readonly components: { readonly camera?: unknown; readonly bone?: unknown }
+    readonly components: {
+      readonly camera?: unknown
+      readonly bone?: unknown
+      readonly chart?: { readonly dataLabels?: readonly string[] }
+    }
   },
   materialParameters: readonly MaterialParameterDefault[],
   hasPropertyTrack: (property: AnimationProperty) => boolean,
   hasMaterialTrack: (parameter: string) => boolean,
+  hasDataLabelTrack?: (label: string) => boolean,
 ): AnimatableParameter[] {
   const result: AnimatableParameter[] = []
 
@@ -89,6 +97,19 @@ export function getAnimatableParameters(
       source: 'material',
       linked: hasMaterialTrack(param.key),
     })
+  }
+
+  const chart = node.components.chart
+  if (chart?.dataLabels && hasDataLabelTrack) {
+    for (const label of chart.dataLabels) {
+      result.push({
+        key: `data:${label}`,
+        label,
+        kind: 'number',
+        source: 'dataLabel',
+        linked: hasDataLabelTrack(label),
+      })
+    }
   }
 
   return result

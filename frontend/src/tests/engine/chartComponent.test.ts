@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import type { DataKeyframe, DataPoint, VisualConfig } from '../../engine/components'
+import type { VisualConfig } from '../../engine/components'
 import {
   createChartComponent,
   validateChartType,
   setChartDirty,
-  sortDataKeyframes,
-  addDataKeyframe,
+  addDataLabel,
+  removeDataLabel,
   setChartDataSourceId,
   setChartVisualConfig,
+  setChartAxisBounds,
 } from '../../engine/chartComponent'
 
 const defaultVisualConfig: VisualConfig = {
@@ -18,11 +19,6 @@ const defaultVisualConfig: VisualConfig = {
   fontFamily: 'sans-serif',
   fontSize: 12,
 }
-
-const samplePoints: DataPoint[] = [
-  { label: 'A', value: 10 },
-  { label: 'B', value: 20 },
-]
 
 describe('ChartComponent', () => {
   describe('config validation', () => {
@@ -66,9 +62,9 @@ describe('ChartComponent', () => {
       expect(component.visualConfig.legendPosition).toBe('right')
     })
 
-    it('defaults dataKeyframes to empty array', () => {
+    it('defaults dataLabels to empty array', () => {
       const component = createChartComponent('area', 'ds-1')
-      expect(component.dataKeyframes).toEqual([])
+      expect(component.dataLabels).toEqual([])
     })
 
     it('initializes _dirty to false', () => {
@@ -85,10 +81,10 @@ describe('ChartComponent', () => {
       expect(component._dirty).toBe(true)
     })
 
-    it('sets dirty when data keyframes are added', () => {
+    it('sets dirty when data label is added', () => {
       const component = createChartComponent('bar', 'ds-1')
       expect(component._dirty).toBe(false)
-      addDataKeyframe(component, { time: 1, dataPoints: samplePoints })
+      addDataLabel(component, 'Q1')
       expect(component._dirty).toBe(true)
     })
 
@@ -108,13 +104,13 @@ describe('ChartComponent', () => {
       expect(component.visualConfig.fontSize).toBe(20)
     })
 
-    it('sets dirty when sortDataKeyframes is called', () => {
-      const component = createChartComponent('line', 'ds-1')
-      addDataKeyframe(component, { time: 2, dataPoints: samplePoints })
-      addDataKeyframe(component, { time: 1, dataPoints: samplePoints })
-      component._dirty = false
-      sortDataKeyframes(component)
+    it('sets dirty when axis bounds change', () => {
+      const component = createChartComponent('bar', 'ds-1')
+      expect(component._dirty).toBe(false)
+      setChartAxisBounds(component, 0, 100)
       expect(component._dirty).toBe(true)
+      expect(component.axisMin).toBe(0)
+      expect(component.axisMax).toBe(100)
     })
 
     it('does not set dirty when nothing changes', () => {
@@ -125,60 +121,47 @@ describe('ChartComponent', () => {
     })
   })
 
-  describe('data keyframe sorting', () => {
-    it('sorts data keyframes by time after insertion', () => {
-      const component = createChartComponent('line', 'ds-1')
-      addDataKeyframe(component, { time: 3, dataPoints: samplePoints })
-      addDataKeyframe(component, { time: 1, dataPoints: samplePoints })
-      addDataKeyframe(component, { time: 2, dataPoints: samplePoints })
-
-      const times = component.dataKeyframes.map((kf) => kf.time)
-      expect(times).toEqual([1, 2, 3])
-    })
-
-    it('maintains sort order when keyframes are inserted out of order', () => {
+  describe('data labels', () => {
+    it('adds a data label', () => {
       const component = createChartComponent('bar', 'ds-1')
-      addDataKeyframe(component, { time: 10, dataPoints: samplePoints })
-      addDataKeyframe(component, { time: 5, dataPoints: samplePoints })
-      addDataKeyframe(component, { time: 15, dataPoints: samplePoints })
-      addDataKeyframe(component, { time: 1, dataPoints: samplePoints })
-
-      const times = component.dataKeyframes.map((kf) => kf.time)
-      expect(times).toEqual([1, 5, 10, 15])
+      addDataLabel(component, 'Q1')
+      expect(component.dataLabels).toEqual(['Q1'])
     })
 
-    it('preserves data points in sorted keyframes', () => {
-      const component = createChartComponent('line', 'ds-1')
-      const kf1: DataKeyframe = { time: 2, dataPoints: [{ label: 'X', value: 5 }] }
-      const kf2: DataKeyframe = { time: 1, dataPoints: [{ label: 'Y', value: 10 }] }
-      addDataKeyframe(component, kf1)
-      addDataKeyframe(component, kf2)
-
-      expect(component.dataKeyframes[0].time).toBe(1)
-      expect(component.dataKeyframes[0].dataPoints[0].label).toBe('Y')
-      expect(component.dataKeyframes[1].time).toBe(2)
-      expect(component.dataKeyframes[1].dataPoints[0].label).toBe('X')
-    })
-
-    it('handles duplicate times by preserving insertion order', () => {
+    it('does not add duplicate labels', () => {
       const component = createChartComponent('bar', 'ds-1')
-      addDataKeyframe(component, { time: 1, dataPoints: [{ label: 'A', value: 1 }] })
-      addDataKeyframe(component, { time: 1, dataPoints: [{ label: 'B', value: 2 }] })
-
-      expect(component.dataKeyframes).toHaveLength(2)
-      expect(component.dataKeyframes[0].dataPoints[0].label).toBe('A')
-      expect(component.dataKeyframes[1].dataPoints[0].label).toBe('B')
+      addDataLabel(component, 'Q1')
+      addDataLabel(component, 'Q1')
+      expect(component.dataLabels).toEqual(['Q1'])
     })
 
-    it('sorts initial keyframes provided at creation', () => {
-      const unsorted: DataKeyframe[] = [
-        { time: 5, dataPoints: samplePoints },
-        { time: 1, dataPoints: samplePoints },
-        { time: 3, dataPoints: samplePoints },
-      ]
-      const component = createChartComponent('line', 'ds-1', undefined, unsorted)
-      const times = component.dataKeyframes.map((kf) => kf.time)
-      expect(times).toEqual([1, 3, 5])
+    it('removes a data label', () => {
+      const component = createChartComponent('bar', 'ds-1')
+      addDataLabel(component, 'Q1')
+      addDataLabel(component, 'Q2')
+      removeDataLabel(component, 'Q1')
+      expect(component.dataLabels).toEqual(['Q2'])
+    })
+
+    it('handles removing non-existent label gracefully', () => {
+      const component = createChartComponent('bar', 'ds-1')
+      removeDataLabel(component, 'Q1')
+      expect(component.dataLabels).toEqual([])
+    })
+  })
+
+  describe('axis bounds', () => {
+    it('creates component without axis bounds by default', () => {
+      const component = createChartComponent('bar', 'ds-1')
+      expect(component.axisMin).toBeUndefined()
+      expect(component.axisMax).toBeUndefined()
+    })
+
+    it('sets axis bounds', () => {
+      const component = createChartComponent('bar', 'ds-1')
+      setChartAxisBounds(component, 0, 100)
+      expect(component.axisMin).toBe(0)
+      expect(component.axisMax).toBe(100)
     })
   })
 })

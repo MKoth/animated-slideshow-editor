@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 5: Persistence & Autosave</title>
+<link rel="stylesheet" href="../assets/lesson-style.html">
+<link rel="stylesheet" href="../assets/diagram-style.html">
+</head>
+<body>
+
+<span class="lesson-number">Lesson 5</span>
+<h1>Persistence &amp; Autosave</h1>
+<p class="subtitle">How your work survives crashes, tab closes, and network failures.</p>
+
+<h2>Three Layers of Protection</h2>
+
+<p>The persistence system has three independent safety nets:</p>
+
+<div class="arch-diagram"><span class="layer-label">Layer 3 — Backend Save</span>
+<span class="layer api">POST /api/projects</span>  (debounced, retried on failure)
+        <span class="flow-arrow">↑</span>
+<span class="layer-label">Layer 2 — Recovery Shadow</span>
+<span class="layer engine">IndexedDB</span>  (written on every command + every 30s)
+        <span class="flow-arrow">↑</span>
+<span class="layer-label">Layer 1 — Dirty Flag</span>
+<span class="layer store">Zustand Store</span>  (marks work as needing save)</div>
+
+<h2>The Dirty Flag <code>stores/persistenceStore.ts</code></h2>
+
+<p>The simplest piece — 13 lines total:</p>
+
+<pre><code>const usePersistenceStore = create()((set) => ({
+  dirty: false,
+  markDirty: () => set({ dirty: true }),
+  markSaved: () => set({ dirty: false }),
+}))</code></pre>
+
+<p>Every successful command marks dirty. A successful save marks saved. The autosave loop checks <code>dirty</code> before saving — no dirty flag, no save.</p>
+
+<h2>The PersistenceService <code>app/persistence.ts</code></h2>
+
+<p>The orchestrator. 156 lines that wire commands to saves:</p>
+
+<h3>On Every Successful Command</h3>
+
+<pre><code>onCommandSucceeded: () => {
+  ensureTimer()              // start 30s periodic timer if not running
+  markDirty()                // flag for autosave
+  writeRecoveryShadow()      // crash protection (Layer 2)
+  requestAutosave()          // schedule debounced save (Layer 3)
+}</code></pre>
+
+<h3>Debounced Save</h3>
+
+<p><code>requestAutosave()</code> uses <code>setTimeout(0)</code> — it coalesces rapid command sequences into one save. If you move a node 10 times in 100ms, only one save fires after the last move.</p>
+
+<pre><code>requestAutosave() {
+  if (scheduledId !== null) return  // already scheduled
+  scheduledId = setTimeout(() => {
+    scheduledId = null
+    autosave()
+  }, 0)
+}</code></pre>
+
+<h3>Periodic Save</h3>
+
+<p>A 30-second interval (<code>AUTOSAVE_INTERVAL_MS</code>) catches any commands that slipped through the debounce:</p>
+
+<pre><code>setInterval(() => {
+  writeRecoveryShadow()
+  autosave()
+}, 30000)</code></pre>
+
+<h3>In-Flight Protection</h3>
+
+<p>If a save is already in progress (<code>saveInFlight</code>), new saves are queued (<code>saveAgain = true</code>). When the in-flight save completes, it checks the flag and saves again if needed. This prevents overlapping network requests.</p>
+
+<div class="diagram">Command fires
+  → markDirty + writeShadow + requestAutosave
+    → setTimeout(0) coalesces
+      → performSave()
+        → if saveInFlight: set saveAgain, return
+        → else: upsert to backend
+          → on success: markSaved
+          → on failure: notify + markUnavailable
+          → finally: if saveAgain: performSave()</div>
+
+<h3>Project Generation</h3>
+
+<p>When a new project loads, <code>projectGeneration</code> increments. This prevents stale saves from marking a fresh project as saved. If the generation changed during an in-flight save, the save result is discarded.</p>
+
+<h2>Recovery Shadow <code>app/recoveryShadow.ts</code></h2>
+
+<p>Crash protection via IndexedDB. Two keys:</p>
+
+<table>
+  <tr><th>Key</th><th>Purpose</th></tr>
+  <tr><td><code>recoveryShadow</code></td><td>Latest project JSON (written on every command + 30s timer + beforeunload)</td></tr>
+  <tr><td><code>recoveryLastSaved</code></td><td>Last successfully saved JSON (written after backend upsert)</td></tr>
+</table>
+
+<h3>How Recovery Works</h3>
+
+<pre><code>hasRecoverableShadow(): Promise&lt;boolean&gt; {
+  shadow = await readShadow()
+  lastSaved = await readLastSaved()
+  return shadow !== null &amp;&amp; shadow !== lastSaved
+}</code></pre>
+
+<p>If the shadow differs from the last save, there's unrecoverable work. On next load, the app offers to restore from the shadow.</p>
+
+<div class="callout">
+  <strong>Why IndexedDB, not localStorage?</strong> The project JSON can be large (embedded assets are base64). IndexedDB has no 5MB limit, supports async writes, and doesn't block the main thread.
+</div>
+
+<h3>Beforeunload Handler</h3>
+
+<pre><code>window.addEventListener('beforeunload', () => {
+  writeRecoveryShadow()
+})</code></pre>
+
+<p>When the user closes the tab, the shadow is written synchronously (IndexedDB's <code>put()</code> is fast enough). This catches the "close before autosave fires" scenario.</p>
+
+<h2>The .lesson File Format</h2>
+
+<p>A single JSON file with versioned structure:</p>
+
+<pre><code>{
+  "version": 1,
+  "project": {
+    "id": "...",
+    "name": "...",
+    "slides": [...]
+  },
+  "clips": [...],           // reusable animation presets
+  "ikChains": {...},        // IK chain data
+  "constraints": {...},     // node constraints
+  "library": {              // optional: embedded definitions
+    "assets": [...],        //   asset definitions with base64 image data
+    "materials": [...],     //   material definitions
+    "shaders": [...]        //   shader definitions with GLSL source
+  }
+}</code></pre>
+
+<h3>Self-Contained by Default</h3>
+
+<p>The <code>library</code> section carries snapshots of every definition the project references. This means a <code>.lesson</code> file restores fully on another machine — even if the original assets were deleted from the library.</p>
+
+<h3>Slim (Reference-Only) Files</h3>
+
+<p>Older v1 files may reference definitions without embedding them. These are "slim" — they work only if the definitions exist in the backend library. The editor handles both formats.</p>
+
+<h3>Validation Pipeline</h3>
+
+<pre><code>validate(json) → string[]    // returns error messages
+// then: buildProjectFromJSON(json) → Project
+// then: parseClipsFromLessonJSON(json) → ClipDefinition[]
+// then: restore IK + constraints from JSON</code></pre>
+
+<h2>Asset Embedding <code>app/assetSnapshot.ts</code></h2>
+
+<p>Before saving, referenced assets are fetched and embedded as base64:</p>
+
+<pre><code>ensureReferencedEmbedded(engine) {
+  referenced = collectReferencedDefinitionIds(project)
+  await Promise.all(referenced.map(id => captureAssetSnapshot(engine, id)))
+}
+
+captureAssetSnapshot(engine, definitionId) {
+  if (engine.getEmbeddedAsset(definitionId)) return true  // already embedded
+  definition = libraryDefinition(definitionId)
+  bytes = await fetchImageBytes(definition.original_url)   // fetch + base64
+  engine.embedAsset({ id, name, data: bytes.data, mimeType, metadata })
+}</code></pre>
+
+<p>Material and shader definitions are embedded synchronously (<code>definitionSnapshot.ts</code>) — no image data to fetch.</p>
+
+<h2>Import / Export <code>app/lessonTransfer.ts</code></h2>
+
+<h3>Import</h3>
+
+<pre><code>importLessonFile(engine, file) {
+  text = await file.text()
+  json = JSON.parse(text)
+  errors = validate(json)           // schema validation
+  freshJson = withFreshProjectId(json)  // new ID to avoid collisions
+  engine.restoreFromJSON(freshJson)
+  restoreProjectInEditor(engine)
+}</code></pre>
+
+<h3>Download</h3>
+
+<pre><code>downloadLessonCopy(engine) {
+  await ensureReferencedEmbedded(engine)      // embed assets
+  ensureReferencedMaterialAndShaderSnapshots(engine)  // embed defs
+  blob = new Blob([JSON.stringify(engine.toJSON())])
+  // trigger browser download as {name}.lesson
+}</code></pre>
+
+<h2>Backend Communication</h2>
+
+<p>The backend stores projects as <strong>opaque JSON blobs</strong>:</p>
+
+<pre><code>ProjectsApi.upsert(blob: string) → POST /api/projects
+ProjectsApi.get(id) → GET /api/projects/{id} → string (JSON)
+ProjectsApi.list() → GET /api/projects → ProjectSummary[]</code></pre>
+
+<p>The backend cannot query project internals — it's a file server with extra steps. This is a deliberate trade-off: simplicity over queryability.</p>
+
+<div class="callout">
+  <strong>Offline support:</strong> When the backend is unavailable, the editor keeps working. The status bar shows "Backend unavailable" and saves are skipped. The recovery shadow still protects against crashes. When the backend returns, the next autosave succeeds.
+</div>
+
+<h2>Complete Save Flow</h2>
+
+<div class="diagram">User moves a node
+  → dispatch(MoveNodeCommand)
+    → validate → execute → undoStack.record
+    → onCommandSucceeded()
+      → markDirty()
+      → writeRecoveryShadow()     ← IndexedDB (crash protection)
+      → requestAutosave()
+        → setTimeout(0)           ← debounce
+          → performSave()
+            → ensureEmbedded()    ← fetch + base64 assets if needed
+            → engine.toJSON()     ← serialize to LessonJSON
+            → JSON.stringify()    ← to blob string
+            → POST /api/projects  ← backend save
+            → recordLastSaved()   ← IndexedDB (for recovery comparison)
+            → markSaved()         ← clear dirty flag</div>
+
+<h2>Key Design Decisions</h2>
+
+<ol>
+  <li><strong>Three independent safety nets.</strong> Dirty flag, recovery shadow, backend save. Each catches different failure modes.</li>
+  <li><strong>Debounce + periodic.</strong> Coalesces rapid commands; periodic timer catches stragglers.</li>
+  <li><strong>IndexedDB for shadows.</strong> No size limit, async, non-blocking. localStorage is too small for embedded assets.</li>
+  <li><strong>Self-contained .lesson files.</strong> Embedded definitions restore on any machine. No dependency on the backend library.</li>
+  <li><strong>Opaque backend blobs.</strong> The backend doesn't parse project JSON. Simpler backend, dumber persistence.</li>
+  <li><strong>Offline-first.</strong> The editor works without the backend. Saves queue until connectivity returns.</li>
+</ol>
+
+<h2>What to Explore Next</h2>
+
+<ul>
+  <li><a href="0006-rendering.html">Lesson 6: The Rendering Pipeline</a> — how Pixi.js visualizes the engine</li>
+  <li><a href="../reference/persistence-api.html">Reference: Persistence API</a> — quick lookup for all persistence functions</li>
+</ul>
+
+<div class="callout">
+  <strong>Questions?</strong> Ask me about the recovery flow on app startup, how asset embedding handles large files, or how the backend handles concurrent saves.
+</div>
+
+<p class="footer-note">
+  Primary source: <a href="https://martinfowler.com/bliki/PresentationDomainDataLayering.html">Martin Fowler — Presentation Domain Data Layering</a>
+</p>
+
+</body>
+</html>

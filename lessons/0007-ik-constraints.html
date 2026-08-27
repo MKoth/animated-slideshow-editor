@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 7: IK & Constraints</title>
+<link rel="stylesheet" href="../assets/lesson-style.html">
+<link rel="stylesheet" href="../assets/diagram-style.html">
+</head>
+<body>
+
+<span class="lesson-number">Lesson 7</span>
+<h1>IK &amp; Constraints</h1>
+<p class="subtitle">How bone chains reach targets and nodes obey behavioral rules.</p>
+
+<h2>Two Systems, One Pipeline</h2>
+
+<p>IK and constraints are separate systems that compose in the rendering pipeline:</p>
+
+<div class="arch-diagram">Keyframe evaluation (per node)
+  → <span class="layer engine">IK solving</span> (per chain, per slide)
+    → <span class="layer api">Constraint evaluation</span> (per node, per constraint)
+      → Final world transform</div>
+
+<p>Both are evaluated <strong>after</strong> standard keyframe animation and <strong>before</strong> the renderer applies the transform to Pixi containers.</p>
+
+<h2>Inverse Kinematics</h2>
+
+<h3>The Problem</h3>
+
+<p>Forward kinematics: rotate the shoulder, then the elbow, then the wrist. The hand goes where the chain takes it. <strong>Inverse kinematics</strong>: specify where the hand should be, and the system figures out the shoulder and elbow rotations.</p>
+
+<h3>IKChain <code>engine/ikChain.ts</code></h3>
+
+<p>An IK chain is a path of bone nodes from root to end effector:</p>
+
+<pre><code>class IKChain {
+  id: string
+  slideId: string          // IK is per-slide
+  boneIds: string[]        // ancestor → descendant path
+  target: BoneIKTarget     // where the end effector should reach
+  poleTarget: PoleTarget | null  // optional elbow/knee direction
+  ghostNodeId: string | null     // invisible helper node for target
+}
+
+interface BoneIKTarget {
+  position: { x, y }      // world-space target
+  nodeId?: string          // optional node to attach to
+}</code></pre>
+
+<p>Validation: chain must have ≥2 bones, all must have <code>bone</code> component, and each must be a child of the previous (ancestor-descendant path).</p>
+
+<h3>Ghost Nodes</h3>
+
+<p>The IK target is anchored to a <strong>ghost node</strong> — an invisible scene node with the <code>ghost</code> component. This lets the user drag the target in the editor. The ghost node is created automatically when an IK chain is created.</p>
+
+<h3>Two Solvers <code>engine/ikSolver.ts</code></h3>
+
+<table>
+  <tr><th>Solver</th><th>Chain Length</th><th>Algorithm</th></tr>
+  <tr><td><code>solveTwoBoneIK</code></td><td>Exactly 2</td><td>Analytical (law of cosines)</td></tr>
+  <tr><td><code>solveCCDIK</code></td><td>N bones</td><td>Cyclic Coordinate Descent (iterative)</td></tr>
+</table>
+
+<h3>Two-Bone Analytical Solver</h3>
+
+<p>Closed-form solution using the law of cosines:</p>
+
+<pre><code>// Given: bone1 position, target position, lengths L1, L2
+dist = distance(bone1, target)
+clamp dist to [minReach, maxReach]  // |L1 - L2| to L1 + L2
+
+cosAngle1 = (L1² + dist² - L2²) / (2 * L1 * dist)
+angle1 = acos(cosAngle1)
+
+targetAngle = atan2(dy, dx)
+bone1WorldRotation = targetAngle ± angle1  // sign from pole target
+bone2WorldRotation = targetAngle - bone1WorldRotation</code></pre>
+
+<p>The pole target determines the <strong>sign</strong> (which side the elbow bends). If no pole target, defaults to positive.</p>
+
+<h3>CCD Solver (N-Bone)</h3>
+
+<p>Iterative algorithm, 10 iterations default, tolerance 0.001:</p>
+
+<pre><code>for each iteration:
+  compute end effector position
+  if dist &lt; tolerance: break
+
+  for i = last bone downto first bone:
+    pivot = world position of bone i
+    endVector = endEffector - pivot
+    targetVector = target - pivot
+    angle = atan2(cross(end, target), dot(end, target))
+    clamp angle to ±0.5 rad per iteration
+    rotations[i] += angle</code></pre>
+
+<div class="callout">
+  <strong>Why clamp rotation per iteration?</strong> Without clamping, CCD can produce wild oscillations. The 0.5 rad limit ensures smooth convergence.
+</div>
+
+<h3>How IK Integrates with the Pipeline</h3>
+
+<p>The renderer's <code>#handleTimeChanged()</code> calls:</p>
+
+<pre><code>// 1. Compute IK overrides for all chains
+transformSource.updateIKOverrides(slideId, time)
+
+// 2. Apply IK rotations to containers
+sceneRenderer.applyIKOverrides(rotations)</code></pre>
+
+<p>The <code>EvaluatedWorldTransformSource</code> in <code>worldTransform.ts</code> applies IK overrides when computing world transforms — overriding the rotation of bone nodes.</p>
+
+<h2>Constraints</h2>
+
+<h3>Constraint <code>engine/constraint.ts</code></h3>
+
+<p>Four constraint types, each with its own params:</p>
+
+<table>
+  <tr><th>Type</th><th>Params</th><th>Effect</th></tr>
+  <tr><td><code>rotationLimit</code></td><td>minRotation, maxRotation (degrees)</td><td>Clamps rotation to range</td></tr>
+  <tr><td><code>lookAt</code></td><td>targetX, targetY, targetNodeId?</td><td>Points rotation toward target</td></tr>
+  <tr><td><code>distance</code></td><td>targetNodeId, minDistance, maxDistance</td><td>Clamps distance from target</td></tr>
+  <tr><td><code>parent</code></td><td>targetNodeId, position/rotation/scaleInfluence</td><td>Follows target with influence weights</td></tr>
+</table>
+
+<p>Constraints have a <strong>priority</strong> (lower = applied first). Multiple constraints on one node are applied in priority order.</p>
+
+<div class="callout">
+  <strong>Which types require bone nodes?</strong> <code>rotationLimit</code> and <code>lookAt</code> require a bone component. <code>distance</code> and <code>parent</code> work on any node.
+</div>
+
+<h3>ConstraintEvaluator <code>engine/constraintEvaluator.ts</code></h3>
+
+<p>Applied <strong>after</strong> IK, per node:</p>
+
+<pre><code>applyConstraints(worldTransform, constraints, context):
+  result = { ...worldTransform }
+  for each constraint (sorted by priority):
+    result = applySingleConstraint(result, constraint, context)
+  return result</code></pre>
+
+<h3>Individual Constraint Logic</h3>
+
+<h4>Rotation Limit</h4>
+
+<pre><code>// Clamp world rotation to [min, max] (converted to radians)
+rotation = clamp(world.rotation, minRad, maxRad)
+return { ...world, rotation }</code></pre>
+
+<h4>Look At</h4>
+
+<pre><code>// Point rotation toward target position
+dx = targetX - world.x
+dy = targetY - world.y
+rotation = atan2(dy, dx)
+return { ...world, rotation }</code></pre>
+
+<p>If <code>targetNodeId</code> is provided, the target position comes from that node's world transform.</p>
+
+<h4>Distance</h4>
+
+<pre><code>// Clamp distance from target to [min, max]
+dist = distance(world, target)
+if dist &lt; minDistance: move to minDistance along angle
+if dist &gt; maxDistance: move to maxDistance along angle
+return { ...world, x, y }</code></pre>
+
+<h4>Parent Constraint</h4>
+
+<pre><code>// Blend toward target with influence weights
+x = world.x + (target.x - world.x) * positionInfluence
+rotation = world.rotation + (target.rotation - world.rotation) * rotationInfluence
+scaleX = world.scaleX + (target.scaleX - world.scaleX) * scaleInfluence
+return { x, y, rotation, scaleX, scaleY }</code></pre>
+
+<p>Influence 0 = no effect. Influence 1 = fully follows target. 0.5 = halfway.</p>
+
+<h3>ConstraintManager <code>engine/constraintManager.ts</code></h3>
+
+<p>Stores constraints per node, sorted by priority:</p>
+
+<pre><code>getConstraintsForNode(nodeId): Constraint[] {
+  return ids.map(id => constraints.get(id))
+            .sort((a, b) => a.priority - b.priority)
+}</code></pre>
+
+<p>Constraints are removed when their node is deleted (<code>removeConstraintsForNode</code>).</p>
+
+<h2>How They Compose in the Renderer</h2>
+
+<div class="diagram">Time changes
+  → EvaluatedWorldTransformSource.updateIKOverrides(slideId, time)
+    → For each IK chain: solve → store rotations
+  → SceneRenderer.handleTimeChanged()
+    → For each node: evaluateNode() → world transform
+    → EvaluatedWorldTransformSource.transformOf(nodeId)
+      → composeChain() with IK rotation overrides
+      → applyConstraints() if any exist
+    → Apply final transform to Pixi container</div>
+
+<h2>Key Design Decisions</h2>
+
+<ol>
+  <li><strong>IK is per-slide.</strong> Different slides can have different IK configurations for the same bones.</li>
+  <li><strong>Ghost nodes for targets.</strong> IK targets are scene nodes — draggable in the editor, animatable in the timeline.</li>
+  <li><strong>Two solvers, automatic dispatch.</strong> 2-bone → analytical (exact, fast). N-bone → CCD (iterative, approximate). The system picks automatically.</li>
+  <li><strong>Constraints applied after IK.</strong> IK sets bone rotations, then constraints clamp/modify the result. Clear precedence.</li>
+  <li><strong>Priority-ordered constraints.</strong> Multiple constraints on one node apply in priority order. Lower number = first.</li>
+  <li><strong>Rotation limit is local-space.</strong> Applied in the renderer after IK overrides, before Pixi container update.</li>
+</ol>
+
+<h2>What to Explore Next</h2>
+
+<ul>
+  <li><a href="../reference/ik-constraints-api.html">Reference: IK &amp; Constraints API</a> — quick lookup for all types and functions</li>
+  <li>Ask me about the IK overlay interaction, how weight painting works, or how the rigging mode connects to IK chain creation</li>
+</ul>
+
+<div class="callout">
+  <strong>Questions?</strong> Ask me about how CCD convergence works, how the pole target affects elbow direction, or how constraints interact with clip animation.
+</div>
+
+</body>
+</html>

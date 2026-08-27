@@ -15,17 +15,14 @@ export interface VisualConfig {
   readonly fontSize: number
 }
 
-export interface DataKeyframe {
-  readonly time: number
-  readonly dataPoints: readonly DataPoint[]
-}
-
 export interface ChartComponent {
   readonly kind: 'chart'
   readonly chartType: ChartType
   dataSourceId: string
   visualConfig: VisualConfig
-  dataKeyframes: DataKeyframe[]
+  dataLabels: string[]
+  axisMin?: number
+  axisMax?: number
   _dirty: boolean
 }
 
@@ -110,10 +107,9 @@ export function copyComponents(components: NodeComponents): NodeComponents {
           chartType: components.chart.chartType,
           dataSourceId: components.chart.dataSourceId,
           visualConfig: { ...components.chart.visualConfig },
-          dataKeyframes: components.chart.dataKeyframes.map((kf) => ({
-            time: kf.time,
-            dataPoints: kf.dataPoints.map((dp) => ({ ...dp })),
-          })),
+          dataLabels: [...components.chart.dataLabels],
+          axisMin: components.chart.axisMin,
+          axisMax: components.chart.axisMax,
           _dirty: components.chart._dirty,
         }
       : undefined,

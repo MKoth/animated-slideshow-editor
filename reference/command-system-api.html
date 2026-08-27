@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reference: Command System API</title>
+<link rel="stylesheet" href="../assets/lesson-style.html">
+</head>
+<body>
+
+<span class="lesson-number">Reference</span>
+<h1>Command System API</h1>
+<p class="subtitle">Quick lookup for command types, dispatcher, and undo stack.</p>
+
+<h2>Command Interface</h2>
+
+<pre><code>interface Command&lt;Inverse&gt; {
+  readonly type: string
+  readonly parameters: Readonly&lt;Record&lt;string, unknown&gt;&gt;
+  validate(engine: Engine): void
+  execute(engine: Engine): Inverse
+  toJSON(): Record&lt;string, unknown&gt;
+}
+
+type CommandResult&lt;Inverse&gt; =
+  | { ok: true;  inverse: Inverse }
+  | { ok: false; error: Error }
+</code></pre>
+
+<h2>Dispatcher</h2>
+
+<pre><code>class CommandDispatcher {
+  dispatch&lt;Inverse&gt;(command: Command&lt;Inverse&gt;): CommandResult&lt;Inverse&gt;
+  setOnCommandSucceeded(listener: () => void): void
+}
+
+createCommandSystem(logger?): CommandSystem
+
+interface CommandSystem {
+  engine: EnginePublic
+  dispatcher: CommandDispatcher
+  undoStack: UndoStack
+  assetLibrarySync: AssetLibrarySync
+  materialLibrarySync: MaterialLibrarySync
+  shaderLibrarySync: ShaderLibrarySync
+}
+</code></pre>
+
+<h2>Undo Stack</h2>
+
+<pre><code>interface UndoStackEntry&lt;Inverse&gt; {
+  id: string           // unique per entry
+  type: string         // command type name
+  parameters: Record   // command parameters
+  inverse: Inverse     // undo payload
+}
+
+class UndoStack {
+  entries: readonly UndoStackEntry[]
+  record(entry): void           // push newest-first
+  clear(): void                 // on project load
+  subscribe(listener): () => void  // returns unsubscribe
+}
+</code></pre>
+
+<h2>All 89 Command Types</h2>
+
+<h3>Project</h3>
+<table>
+  <tr><th>Command</th><th>Inverse</th></tr>
+  <tr><td><code>CreateProjectCommand</code></td><td>Project metadata</td></tr>
+</table>
+
+<h3>Slides</h3>
+<table>
+  <tr><th>Command</th><th>Inverse</th></tr>
+  <tr><td><code>CreateSlideCommand</code></td><td>Slide ID</td></tr>
+  <tr><td><code>DeleteSlideCommand</code></td><td>Full slide data (for restore)</td></tr>
+  <tr><td><code>RenameSlideCommand</code></td><td>Old name</td></tr>
+  <tr><td><code>MoveSlideCommand</code></td><td>Old index</td></tr>
+  <tr><td><code>DuplicateSlideCommand</code></td><td>New slide ID</td></tr>
+  <tr><td><code>SetSlideDurationCommand</code></td><td>Old duration</td></tr>
+</table>
+
+<h3>Nodes</h3>
+<table>
+  <tr><th>Command</th><th>Inverse</th></tr>
+  <tr><td><code>CreateNodeCommand</code></td><td>Node ID</td></tr>
+  <tr><td><code>DeleteNodeCommand</code></td><td>Full subtree data</td></tr>
+  <tr><td><code>MoveNodeCommand</code></td><td>Old {x, y}</td></tr>
+  <tr><td><code>RotateNodeCommand</code></td><td>Old rotation</td></tr>
+  <tr><td><code>ScaleNodeCommand</code></td><td>Old {scaleX, scaleY}</td></tr>
+  <tr><td><code>ReparentNodeCommand</code></td><td>Old parent + subtree</td></tr>
+  <tr><td><code>DuplicateNodeCommand</code></td><td>New node ID</td></tr>
+  <tr><td><code>ChangeZOrderCommand</code></td><td>Old index</td></tr>
+  <tr><td><code>ReorderNodeCommand</code></td><td>Old index</td></tr>
+  <tr><td><code>RenameNodeCommand</code></td><td>Old name</td></tr>
+  <tr><td><code>SetVisibilityCommand</code></td><td>Old visible</td></tr>
+  <tr><td><code>SetOpacityCommand</code></td><td>Old opacity</td></tr>
+  <tr><td><code>SetParentCommand</code></td><td>Old parent ID</td></tr>
+</table>
+
+<h3>Keyframes</h3>
+<table>
+  <tr><th>Command</th><th>Inverse</th></tr>
+  <tr><td><code>AddKeyframeCommand</code></td><td>Keyframe snapshot</td></tr>
+  <tr><td><code>DeleteKeyframesCommand</code></td><td>Deleted keyframe snapshots</td></tr>
+  <tr><td><code>MoveKeyframesCommand</code></td><td>Old times</td></tr>
+  <tr><td><code>SetKeyframeValueCommand</code></td><td>Old value</td></tr>
+  <tr><td><code>ScaleKeyframesCommand</code></td><td>Old times</td></tr>
+  <tr><td><code>PasteKeyframesCommand</code></td><td>Pasted keyframe IDs</td></tr>
+  <tr><td><code>DuplicateKeyframesCommand</code></td><td>Duplicate IDs</td></tr>
+  <tr><td><code>SetKeyframeInterpolationCommand</code></td><td>Old interpolation</td></tr>
+  <tr><td><code>SetKeyframeTangentsCommand</code></td><td>Old tangents</td></tr>
+</table>
+
+<h3>Materials</h3>
+<table>
+  <tr><th>Command</th><th>Inverse</th></tr>
+  <tr><td><code>AssignMaterialCommand</code></td><td>Old material ID</td></tr>
+  <tr><td><code>OverrideMaterialParameterCommand</code></td><td>Old value (or null)</td></tr>
+  <tr><td><code>ClearMaterialOverrideCommand</code></td><td>Old value</td></tr>
+</table>
+
+<h3>Shaders</h3>
+<table>
+  <tr><th>Command</th><th>Inverse</th></tr>
+  <tr><td><code>SetFullscreenShaderCommand</code></td><td>Old shader ID + overrides</td></tr>
+  <tr><td><code>OverrideFullscreenUniformCommand</code></td><td>Old value</td></tr>
+</table>
+
+<h3>Clips</h3>
+<table>
+  <tr><th>Command</th><th>Inverse</th></tr>
+  <tr><td><code>CreateClipCommand</code></td><td>Clip ID</td></tr>
+  <tr><td><code>DeleteClipCommand</code></td><td>Full clip data</td></tr>
+  <tr><td><code>RenameClipCommand</code></td><td>Old name</td></tr>
+  <tr><td><code>DuplicateClipCommand</code></td><td>New clip ID</td></tr>
+  <tr><td><code>SetClipDurationCommand</code></td><td>Old duration</td></tr>
+  <tr><td><code>SetClipCategoryCommand</code></td><td>Old category</td></tr>
+  <tr><td><code>SetClipParamDefaultCommand</code></td><td>Old default</td></tr>
+  <tr><td><code>SetClipChannelParamLinkCommand</code></td><td>Old link</td></tr>
+  <tr><td><code>AddClipChannelCommand</code></td><td>Channel info</td></tr>
+  <tr><td><code>RemoveClipChannelCommand</code></td><td>Channel data</td></tr>
+  <tr><td><code>ImportClipCommand</code></td><td>Clip ID</td></tr>
+  <tr><td><code>AssignClipCommand</code></td><td>Instance ID</td></tr>
+  <tr><td><code>RemoveClipCommand</code></td><td>Instance data</td></tr>
+  <tr><td><code>MoveClipLayerCommand</code></td><td>Old index</td></tr>
+  <tr><td><code>SetClipInstanceStartTimeCommand</code></td><td>Old time</td></tr>
+  <tr><td><code>SetClipInstanceSpeedCommand</code></td><td>Old speed</td></tr>
+  <tr><td><code>SetClipInstanceEnabledCommand</code></td><td>Old enabled</td></tr>
+  <tr><td><code>OverrideClipParamCommand</code></td><td>Old value</td></tr>
+  <tr><td><code>AddClipKeyframeCommand</code></td><td>Keyframe snapshot</td></tr>
+  <tr><td><code>DeleteClipKeyframesCommand</code></td><td>Deleted snapshots</td></tr>
+  <tr><td><code>MoveClipKeyframesCommand</code></td><td>Old times</td></tr>
+  <tr><td><code>ScaleClipKeyframesCommand</code></td><td>Old times</td></tr>
+  <tr><td><code>SetClipKeyframeValueCommand</code></td><td>Old value</td></tr>
+  <tr><td><code>SetClipKeyframeInterpolationCommand</code></td><td>Old interpolation</td></tr>
+  <tr><td><code>SetClipKeyframeTangentsCommand</code></td><td>Old tangents</td></tr>
+  <tr><td><code>PasteClipKeyframesCommand</code></td><td>Pasted IDs</td></tr>
+  <tr><td><code>DuplicateClipKeyframesCommand</code></td><td>Duplicate IDs</td></tr>
+</table>
+
+<h3>IK &amp; Constraints</h3>
+<table>
+  <tr><th>Command</th><th>Inverse</th></tr>
+  <tr><td><code>CreateIKChainCommand</code></td><td>Chain ID</td></tr>
+  <tr><td><code>DeleteIKChainCommand</code></td><td>Full chain data</td></tr>
+  <tr><td><code>SetIKTargetCommand</code></td><td>Old target</td></tr>
+  <tr><td><code>SetIKPoleTargetCommand</code></td><td>Old pole target</td></tr>
+  <tr><td><code>AddConstraintCommand</code></td><td>Constraint ID</td></tr>
+  <tr><td><code>RemoveConstraintCommand</code></td><td>Full constraint data</td></tr>
+  <tr><td><code>SetConstraintParamsCommand</code></td><td>Old params</td></tr>
+</table>
+
+<h3>Mesh</h3>
+<table>
+  <tr><th>Command</th><th>Inverse</th></tr>
+  <tr><td><code>MoveVertexCommand</code></td><td>Old position</td></tr>
+  <tr><td><code>DeleteVerticesCommand</code></td><td>Deleted vertices</td></tr>
+  <tr><td><code>ExtrudeFacesCommand</code></td><td>Extruded data</td></tr>
+  <tr><td><code>ExtrudeEdgesCommand</code></td><td>Extruded data</td></tr>
+  <tr><td><code>SubdivideFacesCommand</code></td><td>Original mesh</td></tr>
+  <tr><td><code>MirrorMeshCommand</code></td><td>Original mesh</td></tr>
+  <tr><td><code>SetVertexWeightsCommand</code></td><td>Old weights</td></tr>
+  <tr><td><code>SmoothWeightsCommand</code></td><td>Old weights</td></tr>
+  <tr><td><code>AutoWeightsCommand</code></td><td>Old weights</td></tr>
+  <tr><td><code>PaintWeightCommand</code></td><td>Old weights</td></tr>
+  <tr><td><code>BlurWeightsCommand</code></td><td>Old weights</td></tr>
+  <tr><td><code>FillWeightsCommand</code></td><td>Old weights</td></tr>
+  <tr><td><code>GenerateMeshCommand</code></td><td>Old mesh data</td></tr>
+</table>
+
+<h3>Composition</h3>
+<table>
+  <tr><th>Command</th><th>Inverse</th></tr>
+  <tr><td><code>TransactionCommand</code></td><td>Array of child inverses</td></tr>
+</table>
+
+<h2>Writing a New Command</h2>
+
+<ol>
+  <li>Create <code>myCommand.ts</code> in <code>engine/commands/</code></li>
+  <li>Define <code>MyCommandParameters</code>, <code>MyCommandInverse</code> interfaces</li>
+  <li>Implement <code>Command&lt;MyCommandInverse&gt;</code></li>
+  <li>In <code>validate()</code>: throw if inputs are invalid (node missing, out of bounds, etc.)</li>
+  <li>In <code>execute()</code>: call the engine method, return the previous state as inverse</li>
+  <li>Register in <code>engine/commands/index.ts</code></li>
+</ol>
+
+<div class="callout">
+  <strong>Rule:</strong> The inverse must capture exactly enough state to undo the command. Not more, not less. Store previous values, not deltas.
+</div>
+
+</body>
+</html>

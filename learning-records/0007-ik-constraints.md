@@ -1,0 +1,3 @@
+# IK & constraints understanding established
+
+The user now understands the IK and constraint systems: IK chains are per-slide ancestor-descendant bone paths with ghost node targets, solved analytically (2-bone, law of cosines) or iteratively (N-bone, CCD with 0.5 rad clamping). Constraints are priority-ordered behavioral rules applied after IK: rotationLimit (clamp rotation), lookAt (point toward target), distance (clamp distance), parent (blend with influence weights). Both systems compose in the renderer's time-change pipeline: keyframe evaluation → IK solving → constraint evaluation → Pixi container update.

@@ -320,9 +320,18 @@ export class Engine {
   getKeyframesOf(target: KeyframeTarget): readonly Keyframe[] {
     const nodeTarget = requireNodeTarget(target)
     const resolved = this.resolveAnimationTarget(target)
-    return resolved.kind === 'property'
-      ? this.#animations.getKeyframes(nodeTarget.nodeId, resolved.property)
-      : this.#animations.getMaterialKeyframes(nodeTarget.nodeId, resolved.parameter)
+    const slide = this.getSlideOfNode(nodeTarget.nodeId)
+    const animation = slide.animation.node(nodeTarget.nodeId)
+    if (!animation) {
+      return []
+    }
+    if (resolved.kind === 'property') {
+      return animation.keyframes(resolved.property)
+    }
+    if (resolved.kind === 'dataLabel') {
+      return animation.dataLabelKeyframes(resolved.label)
+    }
+    return animation.materialKeyframes(resolved.parameter)
   }
 
   evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState {
@@ -335,6 +344,10 @@ export class Engine {
     target?: EvaluatedMaterialOverridesScratch,
   ): MaterialOverrides {
     return this.#evaluator.evaluateMaterialOverrides(nodeId, time, target)
+  }
+
+  evaluateDataLabels(nodeId: string, time: number): Map<string, number> {
+    return this.#evaluator.evaluateDataLabels(nodeId, time)
   }
 
   evaluateMeshDeformation(
@@ -1183,6 +1196,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     evaluateNode: (nodeId, time, target) => engine.evaluateNode(nodeId, time, target),
     evaluateMaterialOverrides: (nodeId, time, target) =>
       engine.evaluateMaterialOverrides(nodeId, time, target),
+    evaluateDataLabels: (nodeId, time) => engine.evaluateDataLabels(nodeId, time),
     evaluateMeshDeformation: (nodeId, time, boneWorldTransforms) =>
       engine.evaluateMeshDeformation(nodeId, time, boneWorldTransforms),
     getIKManager: () => engine.getIKManager(),

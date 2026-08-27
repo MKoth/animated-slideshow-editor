@@ -7,7 +7,6 @@ import type {
   ChartComponent,
   ChartType,
   VisualConfig,
-  DataKeyframe,
 } from './components'
 import { validateChartType, DEFAULT_VISUAL_CONFIG } from './chartComponent'
 import { meshDataFromJSON, cloneMeshData } from './mesh'
@@ -347,13 +346,23 @@ function parseChartComponent(component: Record<string, unknown>, nodeId: string)
   const chartType = component.chartType as ChartType
   const dataSourceId = component.dataSourceId as string
   const visualConfig = parseVisualConfig(component.visualConfig)
-  const dataKeyframes = parseDataKeyframes(component.dataKeyframes, ctx)
+  const dataLabels = parseDataLabels(component.dataLabels, ctx)
+  const axisMin =
+    typeof component.axisMin === 'number' && Number.isFinite(component.axisMin)
+      ? component.axisMin
+      : undefined
+  const axisMax =
+    typeof component.axisMax === 'number' && Number.isFinite(component.axisMax)
+      ? component.axisMax
+      : undefined
   return {
     kind: 'chart',
     chartType,
     dataSourceId,
     visualConfig,
-    dataKeyframes,
+    dataLabels,
+    axisMin,
+    axisMax,
     _dirty: typeof component._dirty === 'boolean' ? component._dirty : false,
   }
 }
@@ -397,47 +406,18 @@ function parseVisualConfig(value: unknown): VisualConfig {
   return { colors, axisLabels, legendPosition, padding, fontFamily, fontSize }
 }
 
-function parseDataKeyframes(value: unknown, ctx: string): DataKeyframe[] {
+function parseDataLabels(value: unknown, ctx: string): string[] {
   if (!Array.isArray(value)) {
     return []
   }
-  const keyframes: DataKeyframe[] = []
+  const labels: string[] = []
   for (let i = 0; i < value.length; i++) {
-    const entry = value[i]
-    if (typeof entry !== 'object' || entry === null) {
-      throw new Error(`${ctx}.dataKeyframes[${i}] must be an object`)
+    if (typeof value[i] !== 'string' || value[i] === '') {
+      throw new Error(`${ctx}.dataLabels[${i}] must be a non-empty string`)
     }
-    const record = entry as Record<string, unknown>
-    if (typeof record.time !== 'number' || !Number.isFinite(record.time)) {
-      throw new Error(`${ctx}.dataKeyframes[${i}].time must be a finite number`)
-    }
-    if (!Array.isArray(record.dataPoints)) {
-      throw new Error(`${ctx}.dataKeyframes[${i}].dataPoints must be an array`)
-    }
-    const dataPoints = record.dataPoints.map((dp, j) => {
-      if (typeof dp !== 'object' || dp === null) {
-        throw new Error(`${ctx}.dataKeyframes[${i}].dataPoints[${j}] must be an object`)
-      }
-      const dpRecord = dp as Record<string, unknown>
-      if (typeof dpRecord.label !== 'string' || dpRecord.label === '') {
-        throw new Error(
-          `${ctx}.dataKeyframes[${i}].dataPoints[${j}].label must be a non-empty string`,
-        )
-      }
-      if (typeof dpRecord.value !== 'number' || !Number.isFinite(dpRecord.value)) {
-        throw new Error(`${ctx}.dataKeyframes[${i}].dataPoints[${j}].value must be a finite number`)
-      }
-      return {
-        label: dpRecord.label,
-        value: dpRecord.value,
-        ...(typeof dpRecord.series === 'string' ? { series: dpRecord.series } : {}),
-        ...(typeof dpRecord.tooltip === 'string' ? { tooltip: dpRecord.tooltip } : {}),
-        ...(typeof dpRecord.color === 'string' ? { color: dpRecord.color } : {}),
-      }
-    })
-    keyframes.push({ time: record.time as number, dataPoints })
+    labels.push(value[i] as string)
   }
-  return keyframes.sort((a, b) => a.time - b.time)
+  return labels
 }
 
 function freezeComponents(components: NodeComponents): NodeComponents {
@@ -472,12 +452,9 @@ function freezeComponents(components: NodeComponents): NodeComponents {
           chartType: components.chart.chartType,
           dataSourceId: components.chart.dataSourceId,
           visualConfig: Object.freeze({ ...components.chart.visualConfig }) as VisualConfig,
-          dataKeyframes: components.chart.dataKeyframes.map((kf) =>
-            Object.freeze({
-              time: kf.time,
-              dataPoints: kf.dataPoints.map((dp) => Object.freeze({ ...dp })),
-            }),
-          ),
+          dataLabels: [...components.chart.dataLabels],
+          axisMin: components.chart.axisMin,
+          axisMax: components.chart.axisMax,
           _dirty: components.chart._dirty,
           // NOTE: chart component is NOT frozen — _dirty must remain mutable
         }

@@ -34,7 +34,6 @@ export type {
   ChartComponent,
   ChartType,
   VisualConfig,
-  DataKeyframe,
 } from './components'
 export type { AssetDefinition } from './assetDefinition'
 export type { EmbeddedAsset } from './embeddedAsset'
