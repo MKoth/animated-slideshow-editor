@@ -12,6 +12,7 @@ import {
 } from './placeholder'
 import { createTableContainer, DEFAULT_TABLE_WIDTH } from './tableRenderer'
 import { createChartContainer } from './chartRenderer'
+import { createTextContainer, applyTextTint, textDisplayOf } from './textRenderer'
 import type { TextureCache } from './textureCache'
 
 const placeholderByContainer = new WeakMap<PixiContainer, PixiContainer>()
@@ -44,11 +45,15 @@ export function createNodeContainer(
     const meshPlaceholder = createMeshPlaceholder(pixi, node, cache.get(textureKey))
     placeholderByContainer.set(container, meshPlaceholder)
     container.addChild(meshPlaceholder)
-  } else if (node.components.assetInstance || node.components.text) {
+  } else if (node.components.assetInstance) {
     const textureKey = node.components.assetInstance?.assetDefinitionId ?? node.id
     const placeholder = createPlaceholder(pixi, node, cache, textureKey)
     placeholderByContainer.set(container, placeholder)
     container.addChild(placeholder)
+  } else if (node.components.text) {
+    const textContainer = createTextContainer(pixi, node)
+    placeholderByContainer.set(container, textContainer)
+    container.addChild(textContainer)
   } else if (node.components.bone) {
     const bonePlaceholder = createBonePlaceholder(pixi, node, node.components.bone.length)
     placeholderByContainer.set(container, bonePlaceholder)
@@ -89,9 +94,15 @@ function applyPivot(
 
 export function applyMaterialTint(container: PixiContainer, tint: string): void {
   const placeholder = placeholderByContainer.get(container)
-  if (placeholder) {
-    applyTint(placeholder, tint)
+  if (!placeholder) {
+    return
   }
+  const textDisplay = textDisplayOf(placeholder)
+  if (textDisplay) {
+    applyTextTint(placeholder, tint)
+    return
+  }
+  applyTint(placeholder, tint)
 }
 
 export function applyName(container: PixiContainer, node: SceneNode): void {

@@ -44,6 +44,7 @@ import { applyAssetTexture, applyMissingPlaceholder, placeholderSize } from './p
 import { rebuildTable, tableLayoutOf, tableSizeOf, DEFAULT_TABLE_WIDTH } from './tableRenderer'
 import { chartSpriteOf, rebuildChartTexture, type ResolveDataSource } from './chartRenderer'
 import { CHART_DEFAULT_WIDTH, CHART_DEFAULT_HEIGHT } from './chartRenderer'
+import { rebuildText, textSizeOf } from './textRenderer'
 import { createNodeShaderFilter, applyFilterUniforms } from './nodeShader'
 import { bindFilterSamplers } from './samplerBinding'
 import type { ShaderProgramCache } from './programCache'
@@ -89,6 +90,7 @@ export class SceneRenderer {
   readonly #ikOverrides = new Map<string, number>()
   readonly #tableComponentHashes = new Map<string, string>()
   readonly #chartComponentHashes = new Map<string, string>()
+  readonly #textComponentHashes = new Map<string, string>()
   readonly #resolveDataSource: ResolveDataSource
   readonly #scratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #materialScratch: EffectiveMaterialScratch = effectiveMaterialScratch()
@@ -167,6 +169,7 @@ export class SceneRenderer {
     this.#missingNodes.clear()
     this.#tableComponentHashes.clear()
     this.#chartComponentHashes.clear()
+    this.#textComponentHashes.clear()
     this.#scene = scene
     this.#slideId = slideId
     if (!scene) {
@@ -403,6 +406,31 @@ export class SceneRenderer {
     })
   }
 
+  handleTextChanged(nodeId: string): void {
+    const scene = this.#scene
+    if (!scene) {
+      return
+    }
+    const node = scene.getNode(nodeId)
+    if (!node || !node.components.text) {
+      return
+    }
+    const container = this.#containers.get(nodeId)
+    if (!container) {
+      return
+    }
+    const placeholder = placeholderOf(container)
+    if (!placeholder) {
+      return
+    }
+    rebuildText(this.#pixi, placeholder, node.components.text)
+    const size = textSizeOf(placeholder)
+    if (size) {
+      this.#sizes.set(nodeId, size)
+      this.#onNodeSizeChanged(nodeId)
+    }
+  }
+
   handleDataTransition(nodeId: string): void {
     const chartAndSprite = this.#getChartAndSprite(nodeId)
     if (!chartAndSprite) {
@@ -583,6 +611,14 @@ export class SceneRenderer {
         this.handleChartChanged(nodeId)
       }
       this.handleDataTransition(nodeId)
+    }
+    if (node && node.components.text) {
+      const textHash = JSON.stringify(node.components.text)
+      const previousHash = this.#textComponentHashes.get(nodeId)
+      if (previousHash !== textHash) {
+        this.#textComponentHashes.set(nodeId, textHash)
+        this.handleTextChanged(nodeId)
+      }
     }
     const time = this.#currentTime.getTime(slideId)
     const state = this.#engine.evaluateNode(nodeId, time, this.#scratch)
@@ -819,6 +855,14 @@ export class SceneRenderer {
         width: CHART_DEFAULT_WIDTH,
         height: CHART_DEFAULT_HEIGHT,
       })
+      return
+    }
+    if (node.components.text) {
+      const placeholder = placeholderOf(container)
+      const size = placeholder ? textSizeOf(placeholder) : null
+      if (size) {
+        this.#sizes.set(node.id, size)
+      }
       return
     }
     const placeholder = placeholderOf(container)

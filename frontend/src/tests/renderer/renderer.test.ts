@@ -96,11 +96,12 @@ describe('Renderer', () => {
     ).toBe(true)
 
     const title = findByLabel(root, 'Title')
-    expect(
-      title?.children.some((child) =>
-        child.children.some((entry) => entry.kind === 'text' && entry.text === 'Title'),
-      ),
-    ).toBe(true)
+    const titlePlaceholder = title?.children[0]
+    expect(titlePlaceholder).toBeDefined()
+    expect(titlePlaceholder?.label).toMatch(/^text:/)
+    const titleTextDisplay = titlePlaceholder?.children.find((child) => child.kind === 'text')
+    expect(titleTextDisplay).toBeDefined()
+    expect(titleTextDisplay?.text).toBe('Hello')
 
     const camera = findByLabel(root, 'Camera')
     expect(camera).toBeDefined()

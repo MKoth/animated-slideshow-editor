@@ -144,7 +144,7 @@ export function setMeshPlaceholderSize(
   meshSizeByGroup.set(group, { width, height, offsetX, offsetY })
 }
 
-function hexColorToTint(color: string): number {
+export function hexColorToTint(color: string): number {
   const match = /^#([0-9a-f]{6})$/i.exec(color)
   return match ? parseInt(match[1], 16) : 0xffffff
 }

@@ -164,6 +164,20 @@ function placeholderBody(container: FakeContainer): FakeContainer {
   return body
 }
 
+function textDisplayFill(container: FakeContainer): number {
+  const placeholder = container.children[0] as FakeContainer | undefined
+  if (!placeholder) {
+    throw new Error('Placeholder group not found')
+  }
+  const textDisplay = placeholder.children.find((child) => child.kind === 'text') as
+    FakeContainer | undefined
+  if (!textDisplay) {
+    throw new Error('Text display not found')
+  }
+  const style = (textDisplay as unknown as { style: Record<string, unknown> }).style
+  return style.fill as number
+}
+
 function spriteTint(container: FakeContainer): number {
   return (placeholderBody(container) as unknown as { tint: number }).tint
 }
@@ -221,7 +235,7 @@ describe('renderer material composition', () => {
       ),
     )
 
-    expect(spriteTint(container)).toBe(0x00ff00)
+    expect(textDisplayFill(container)).toBe(0x00ff00)
   })
 
   it('uses the definition default tint when there is no override', async () => {
