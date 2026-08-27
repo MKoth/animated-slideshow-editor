@@ -7,7 +7,7 @@ from httpx2 import Response
 JSON = {"content-type": "application/json"}
 
 
-def lesson_blob(project_id: str = "p-1", name: str = "Spanish Lesson", version: int = 1) -> str:
+def lesson_blob(project_id: str = "p-1", name: str = "Spanish Lesson", version: int = 2) -> str:
     return json.dumps(
         {
             "version": version,
@@ -59,14 +59,14 @@ def test_post_response_returns_full_metadata(client: TestClient) -> None:
     }
     assert created["description"] == "A lesson"
     assert created["author"] == "Ana"
-    assert created["version"] == 1
+    assert created["version"] == 2
     assert created["created"].endswith("Z")
     assert created["lastModified"].endswith("Z")
 
 
 def test_stored_blob_equals_posted_json_exactly(client: TestClient) -> None:
     blob = (
-        '{\n  "version": 1,\n  "project": {\n    "id": "p-1",\n    "name": "X",\n'
+        '{\n  "version": 2,\n  "project": {\n    "id": "p-1",\n    "name": "X",\n'
         '    "description": "",\n    "author": ""\n  },\n  "slides": []\n}'
     )
     post_project(client, blob)
@@ -177,7 +177,7 @@ def test_invalid_utf8_body_is_rejected(client: TestClient) -> None:
 
 
 def test_unsupported_version_is_rejected(client: TestClient) -> None:
-    post_project(client, lesson_blob(version=2), expected_status=400)
+    post_project(client, lesson_blob(version=3), expected_status=400)
 
 
 def test_missing_project_is_rejected(client: TestClient) -> None:
@@ -193,7 +193,7 @@ def test_missing_required_fields_are_rejected(client: TestClient) -> None:
 def test_rejected_body_does_not_create_a_project(client: TestClient) -> None:
     client.post(
         "/api/projects",
-        content=lesson_blob(version=2),
+        content=lesson_blob(version=3),
         headers=JSON,
     )
 

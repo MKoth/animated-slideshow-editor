@@ -20,7 +20,7 @@ def summary(project_id: str = "p-1", name: str = "Spanish Lesson") -> LessonSumm
         name=name,
         description="A lesson",
         author="Ana",
-        version=1,
+        version=2,
     )
 
 

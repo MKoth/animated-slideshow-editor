@@ -7,7 +7,7 @@ from app.projects.validation import ProjectValidationError, validate_lesson
 
 def lesson_blob(
     *,
-    version: int = 1,
+    version: int = 2,
     project: dict[str, object] | None = None,
     slides: list[object] | None = None,
 ) -> str:
@@ -35,7 +35,7 @@ def test_valid_blob_extracts_metadata() -> None:
     assert summary.name == "Spanish Lesson"
     assert summary.description == "A lesson"
     assert summary.author == "Ana"
-    assert summary.version == 1
+    assert summary.version == 2
 
 
 def test_non_json_text_is_rejected() -> None:
@@ -50,11 +50,11 @@ def test_json_that_is_not_an_object_is_rejected() -> None:
 
 def test_unsupported_version_is_rejected() -> None:
     with pytest.raises(ProjectValidationError, match="version"):
-        validate_lesson(lesson_blob(version=2))
+        validate_lesson(lesson_blob(version=3))
 
 
 def test_missing_version_is_rejected() -> None:
-    blob = lesson_blob().replace('"version": 1,', "")
+    blob = lesson_blob().replace('"version": 2,', "")
     with pytest.raises(ProjectValidationError, match="version"):
         validate_lesson(blob)
 

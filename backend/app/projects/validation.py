@@ -17,7 +17,7 @@ class LessonSummary:
     version: int
 
 
-SUPPORTED_VERSION = 1
+SUPPORTED_VERSION = 2
 
 
 def validate_lesson(text: str) -> LessonSummary:
