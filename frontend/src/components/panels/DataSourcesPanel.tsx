@@ -3,6 +3,7 @@ import { useEngine, useEngineEvent } from '../../app/useEngine'
 import type { DataPoint } from '../../engine/dataSourceDefinition'
 import { defaultChartComponent } from '../../engine/defaultChart'
 import { defaultTableComponent } from '../../engine/defaultTable'
+import { defaultTextComponent } from '../../engine/defaultText'
 import { namesInTree, uniqueNodeName } from '../../engine/naming'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { CreateNodeCommand } from '../../engine/commands'
@@ -145,6 +146,24 @@ export function DataSourcesPanel() {
     }
   }
 
+  const handleCreateText = () => {
+    const targetSlide = engine.getActiveSlide()
+    if (!targetSlide) return
+    const taken = namesInTree(targetSlide.scene.root)
+    const name = uniqueNodeName(taken, 'Text')
+    const result = dispatch(
+      new CreateNodeCommand({
+        sceneId: targetSlide.scene.id,
+        parentId: targetSlide.scene.root.id,
+        name,
+        components: { text: defaultTextComponent() },
+      }),
+    )
+    if (result.ok) {
+      useSelectionStore.getState().select(result.inverse.nodeId)
+    }
+  }
+
   const commitRename = (id: string, name: string) => {
     setEditingId(null)
     const trimmed = name.trim()
@@ -203,6 +222,9 @@ export function DataSourcesPanel() {
           </button>
           <button className="data-sources-toolbar__create" onClick={handleCreateChart}>
             Create Chart
+          </button>
+          <button className="data-sources-toolbar__create" onClick={handleCreateText}>
+            Create Text
           </button>
         </div>
         <div className="data-sources-toolbar__row">
