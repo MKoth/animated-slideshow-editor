@@ -44,7 +44,7 @@ export async function svgToPixiTextureAsync(
     const ctx = canvas.getContext('2d')!
     ctx.drawImage(image, 0, 0, canvas.width, canvas.height)
 
-    const texture = pixi.Texture.from(canvas)
+    const texture = pixi.Texture.from({ resource: canvas, resolution })
     texture.source.alphaMode = alphaMode as never
 
     return texture

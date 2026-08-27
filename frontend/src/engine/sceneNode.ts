@@ -341,8 +341,8 @@ function parseChartComponent(component: Record<string, unknown>, nodeId: string)
   if (!validateChartType(component.chartType)) {
     throw new Error(`${ctx} has an invalid chart type: "${String(component.chartType)}"`)
   }
-  if (typeof component.dataSourceId !== 'string' || component.dataSourceId === '') {
-    throw new Error(`${ctx} must have a non-empty dataSourceId string`)
+  if (typeof component.dataSourceId !== 'string') {
+    throw new Error(`${ctx} must have a dataSourceId string`)
   }
   const chartType = component.chartType as ChartType
   const dataSourceId = component.dataSourceId as string

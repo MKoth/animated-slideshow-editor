@@ -33,32 +33,42 @@ describe('svgToPixiTextureAsync', () => {
     drawImageSpy = vi.fn()
     vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
       if (tag === 'canvas') {
-        return {
-          width: 0,
-          height: 0,
+        let w = 0
+        let h = 0
+        const canvas = {
+          get width() {
+            return w
+          },
+          set width(v: number) {
+            w = v
+          },
+          get height() {
+            return h
+          },
+          set height(v: number) {
+            h = v
+          },
           getContext: () => ({ drawImage: drawImageSpy }),
         } as unknown as HTMLCanvasElement
+        return canvas
       }
       return document.createElement.call(document, tag)
     })
 
-    vi.stubGlobal(
-      'Image',
-      function (this: Record<string, unknown>) {
-        this.onload = null
-        this.onerror = null
-        this.naturalWidth = 100
-        this.naturalHeight = 50
-        const self = this as {
-          onload: (() => void) | null
+    vi.stubGlobal('Image', function (this: Record<string, unknown>) {
+      this.onload = null
+      this.onerror = null
+      this.naturalWidth = 100
+      this.naturalHeight = 50
+      const self = this as {
+        onload: (() => void) | null
+      }
+      imageCallbacks.push(() => {
+        if (self.onload) {
+          self.onload()
         }
-        imageCallbacks.push(() => {
-          if (self.onload) {
-            self.onload()
-          }
-        })
-      } as unknown as typeof Image,
-    )
+      })
+    } as unknown as typeof Image)
   })
 
   afterEach(() => {
@@ -66,9 +76,7 @@ describe('svgToPixiTextureAsync', () => {
     vi.unstubAllGlobals()
   })
 
-  function makeSvg(
-    attrs: Record<string, string> = { width: '200', height: '100' },
-  ): SVGElement {
+  function makeSvg(attrs: Record<string, string> = { width: '200', height: '100' }): SVGElement {
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     for (const [key, value] of Object.entries(attrs)) {
       svg.setAttribute(key, value)
@@ -86,10 +94,10 @@ describe('svgToPixiTextureAsync', () => {
 
   it('produces a texture with the correct dimensions at default resolution', async () => {
     vi.spyOn(realPixi.Texture, 'from').mockImplementation(((source: unknown) => {
-      const canvas = source as HTMLCanvasElement
+      const opts = source as { resource: HTMLCanvasElement; resolution: number }
       return new FakeTexture(undefined, {
-        width: canvas.width,
-        height: canvas.height,
+        width: opts.resource.width / opts.resolution,
+        height: opts.resource.height / opts.resolution,
       })
     }) as never)
 
@@ -97,8 +105,8 @@ describe('svgToPixiTextureAsync', () => {
     imageCallbacks[0]?.()
     const texture: PixiTexture = await promise
 
-    expect(texture.width).toBe(200)
-    expect(texture.height).toBe(100)
+    expect(texture.width).toBe(100)
+    expect(texture.height).toBe(50)
   })
 
   it('uses the default resolution of 2', async () => {
@@ -224,10 +232,10 @@ describe('svgToPixiTextureAsync', () => {
 
   it('returns a texture with correct dimensions at resolution 3', async () => {
     vi.spyOn(realPixi.Texture, 'from').mockImplementation(((source: unknown) => {
-      const canvas = source as HTMLCanvasElement
+      const opts = source as { resource: HTMLCanvasElement; resolution: number }
       return new FakeTexture(undefined, {
-        width: canvas.width,
-        height: canvas.height,
+        width: opts.resource.width / opts.resolution,
+        height: opts.resource.height / opts.resolution,
       })
     }) as never)
 
@@ -235,27 +243,24 @@ describe('svgToPixiTextureAsync', () => {
     imageCallbacks[0]?.()
     const texture: PixiTexture = await promise
 
-    expect(texture.width).toBe(300)
-    expect(texture.height).toBe(150)
+    expect(texture.width).toBe(100)
+    expect(texture.height).toBe(50)
   })
 
   it('throws if SVG loading fails', async () => {
     const errorCallbacks: Array<() => void> = []
-    vi.stubGlobal(
-      'Image',
-      function (this: Record<string, unknown>) {
-        this.onload = null
-        this.onerror = null
-        this.naturalWidth = 0
-        this.naturalHeight = 0
-        const self = this as { onerror: (() => void) | null }
-        errorCallbacks.push(() => {
-          if (self.onerror) {
-            self.onerror()
-          }
-        })
-      } as unknown as typeof Image,
-    )
+    vi.stubGlobal('Image', function (this: Record<string, unknown>) {
+      this.onload = null
+      this.onerror = null
+      this.naturalWidth = 0
+      this.naturalHeight = 0
+      const self = this as { onerror: (() => void) | null }
+      errorCallbacks.push(() => {
+        if (self.onerror) {
+          self.onerror()
+        }
+      })
+    } as unknown as typeof Image)
 
     const svg = makeSvg()
     const promise = svgToPixiTextureAsync(realPixi, svg)
