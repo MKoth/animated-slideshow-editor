@@ -6,7 +6,7 @@ import type { EmbeddedAsset } from './embeddedAsset'
 import type { EmbeddedMaterialDefinition } from './embeddedMaterial'
 import type { EmbeddedShaderDefinition } from './embeddedShader'
 import type { EmbeddedDataSourceUnion } from './project'
-import type { ChartComponent, TableComponent } from './components'
+import type { ChartComponent, TableComponent, TextComponent } from './components'
 import type { Project } from './project'
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
@@ -60,6 +60,7 @@ export interface EnginePublic {
   removeDataSource(id: string): boolean
   setTableComponent(nodeId: string, table: TableComponent): void
   setChartComponent(nodeId: string, chart: ChartComponent): void
+  setTextComponent(nodeId: string, text: TextComponent): void
   getKeyframes(nodeId: string, property: AnimationProperty): readonly Keyframe[]
   getMaterialKeyframes(nodeId: string, parameter: string): readonly Keyframe[]
   hasMaterialTrack(nodeId: string, parameter: string): boolean

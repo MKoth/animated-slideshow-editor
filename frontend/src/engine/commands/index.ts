@@ -264,3 +264,9 @@ export type {
   SetChartComponentInverse,
   SetChartComponentParameters,
 } from './setChartComponentCommand'
+export { SetTextContentCommand } from './setTextContentCommand'
+export type { SetTextContentInverse, SetTextContentParameters } from './setTextContentCommand'
+export { SetTextFontSizeCommand } from './setTextFontSizeCommand'
+export type { SetTextFontSizeInverse, SetTextFontSizeParameters } from './setTextFontSizeCommand'
+export { SetTextAlignmentCommand } from './setTextAlignmentCommand'
+export type { SetTextAlignmentInverse, SetTextAlignmentParameters } from './setTextAlignmentCommand'

@@ -35,7 +35,7 @@ import type { EmbeddedAsset } from './embeddedAsset'
 import type { EmbeddedMaterialDefinition } from './embeddedMaterial'
 import { embeddedShaderParameters } from './embeddedShader'
 import type { EmbeddedShaderDefinition } from './embeddedShader'
-import type { ChartComponent, TableComponent } from './components'
+import type { ChartComponent, TableComponent, TextComponent } from './components'
 import type { CreateProjectInput, EmbeddedDataSourceUnion, Project } from './project'
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
@@ -470,6 +470,14 @@ export class Engine {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(node as any).components = Object.freeze(newComponents)
     this.#bus.emit({ type: 'ChartChanged', nodeId })
+  }
+
+  setTextComponent(nodeId: string, text: TextComponent): void {
+    const node = this.getNode(nodeId)
+    const newComponents = { ...node.components, text }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(node as any).components = Object.freeze(newComponents)
+    this.#bus.emit({ type: 'TextChanged', nodeId })
   }
 
   assignMaterial(nodeId: string, materialDefinitionId: string): void {
@@ -1199,6 +1207,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     removeDataSource: (id) => engine.removeDataSource(id),
     setTableComponent: (nodeId, table) => engine.setTableComponent(nodeId, table),
     setChartComponent: (nodeId, chart) => engine.setChartComponent(nodeId, chart),
+    setTextComponent: (nodeId, text) => engine.setTextComponent(nodeId, text),
     getKeyframes: (nodeId, property) => engine.getKeyframes(nodeId, property),
     getMaterialKeyframes: (nodeId, parameter) => engine.getMaterialKeyframes(nodeId, parameter),
     hasMaterialTrack: (nodeId, parameter) => engine.hasMaterialTrack(nodeId, parameter),
