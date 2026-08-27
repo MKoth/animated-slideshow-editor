@@ -1,6 +1,7 @@
 import type { EnginePublic, Unsubscribe } from '../../engine'
 import type { Scene } from '../../engine'
 import type { SceneNode } from '../../engine'
+import type { ChartComponent } from '../../engine/components'
 import { walkPreOrder } from '../../engine/sceneNode'
 import type { EvaluatedNodeScratch } from '../../engine/animationEvaluator'
 import {
@@ -28,7 +29,7 @@ import {
   applyConstraints,
   type ConstraintEvaluationContext,
 } from '../../engine/constraintEvaluator'
-import type { PixiContainer, PixiFilter, RendererPixi } from './pixi'
+import type { PixiContainer, PixiFilter, PixiSprite, RendererPixi } from './pixi'
 import type { WorldSize } from './worldGeometry'
 import {
   applyEvaluatedState,
@@ -43,6 +44,8 @@ import { applyAssetTexture, applyMissingPlaceholder, placeholderSize } from './p
 import { rebuildTable, tableLayoutOf, tableSizeOf, DEFAULT_TABLE_WIDTH } from './tableRenderer'
 import { chartSpriteOf, rebuildChartTexture, type ResolveDataSource } from './chartRenderer'
 import { CHART_DEFAULT_WIDTH, CHART_DEFAULT_HEIGHT } from './chartRenderer'
+import { evaluateData, interpolateDataPoints, evaluatedDataEqual } from '../../engine/dataEvaluator'
+import type { EvaluatedData } from '../../engine/dataEvaluator'
 import { createNodeShaderFilter, applyFilterUniforms } from './nodeShader'
 import { bindFilterSamplers } from './samplerBinding'
 import type { ShaderProgramCache } from './programCache'
@@ -88,6 +91,7 @@ export class SceneRenderer {
   readonly #ikOverrides = new Map<string, number>()
   readonly #tableComponentHashes = new Map<string, string>()
   readonly #chartComponentHashes = new Map<string, string>()
+  readonly #lastEvaluatedData = new Map<string, EvaluatedData>()
   readonly #resolveDataSource: ResolveDataSource
   readonly #scratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #materialScratch: EffectiveMaterialScratch = effectiveMaterialScratch()
@@ -166,6 +170,7 @@ export class SceneRenderer {
     this.#missingNodes.clear()
     this.#tableComponentHashes.clear()
     this.#chartComponentHashes.clear()
+    this.#lastEvaluatedData.clear()
     this.#scene = scene
     this.#slideId = slideId
     if (!scene) {
@@ -201,6 +206,7 @@ export class SceneRenderer {
         this.#lastMaterials.delete(descendantId)
         this.#nodeShaders.delete(descendantId)
         this.#missingNodes.delete(descendantId)
+        this.#lastEvaluatedData.delete(descendantId)
       }
       this.#nodeIds.delete(descendant)
     }
@@ -388,27 +394,11 @@ export class SceneRenderer {
   }
 
   handleChartChanged(nodeId: string): void {
-    const scene = this.#scene
-    if (!scene) {
+    const chartAndSprite = this.#getChartAndSprite(nodeId)
+    if (!chartAndSprite) {
       return
     }
-    const node = scene.getNode(nodeId)
-    if (!node || !node.components.chart) {
-      return
-    }
-    const container = this.#containers.get(nodeId)
-    if (!container) {
-      return
-    }
-    const placeholder = placeholderOf(container)
-    if (!placeholder) {
-      return
-    }
-    const sprite = chartSpriteOf(placeholder)
-    if (!sprite) {
-      return
-    }
-    const chart = node.components.chart
+    const { chart, sprite } = chartAndSprite
     const data = this.#resolveDataSource(chart.dataSourceId) ?? []
     const width = CHART_DEFAULT_WIDTH
     const height = CHART_DEFAULT_HEIGHT
@@ -416,6 +406,69 @@ export class SceneRenderer {
       this.#sizes.set(nodeId, { width, height })
       this.#onNodeSizeChanged(nodeId)
     })
+  }
+
+  handleDataTransition(nodeId: string): void {
+    const chartAndSprite = this.#getChartAndSprite(nodeId)
+    if (!chartAndSprite) {
+      return
+    }
+    const { chart, sprite } = chartAndSprite
+    const slideId = this.#slideId
+    if (!slideId) {
+      return
+    }
+    const time = this.#currentTime.getTime(slideId)
+    const dataSource = this.#resolveDataSource(chart.dataSourceId)
+    const evaluatedData = evaluateData(
+      chart.dataKeyframes,
+      dataSource ? ({ dataPoints: dataSource } as never) : undefined,
+      time,
+    )
+
+    const previousData = this.#lastEvaluatedData.get(nodeId)
+    const dataChanged = !previousData || !evaluatedDataEqual(previousData, evaluatedData)
+
+    if (!dataChanged) {
+      return
+    }
+
+    this.#lastEvaluatedData.set(nodeId, evaluatedData)
+
+    const interpolatedData = interpolateDataPoints(evaluatedData)
+
+    const width = CHART_DEFAULT_WIDTH
+    const height = CHART_DEFAULT_HEIGHT
+    void rebuildChartTexture(this.#pixi, sprite, chart, interpolatedData, width, height).then(
+      () => {
+        this.#sizes.set(nodeId, { width, height })
+        this.#onNodeSizeChanged(nodeId)
+      },
+    )
+  }
+
+  #getChartAndSprite(nodeId: string): { chart: ChartComponent; sprite: PixiSprite } | undefined {
+    const scene = this.#scene
+    if (!scene) {
+      return undefined
+    }
+    const node = scene.getNode(nodeId)
+    if (!node || !node.components.chart) {
+      return undefined
+    }
+    const container = this.#containers.get(nodeId)
+    if (!container) {
+      return undefined
+    }
+    const placeholder = placeholderOf(container)
+    if (!placeholder) {
+      return undefined
+    }
+    const sprite = chartSpriteOf(placeholder)
+    if (!sprite) {
+      return undefined
+    }
+    return { chart: node.components.chart, sprite }
   }
 
   previewTransform(nodeId: string, x: number, y: number): void {
@@ -541,6 +594,7 @@ export class SceneRenderer {
         node.components.chart._dirty = false
         this.handleChartChanged(nodeId)
       }
+      this.handleDataTransition(nodeId)
     }
     const time = this.#currentTime.getTime(slideId)
     const state = this.#engine.evaluateNode(nodeId, time, this.#scratch)

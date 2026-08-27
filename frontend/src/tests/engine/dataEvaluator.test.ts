@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { DataKeyframe, DataPoint } from '../../engine/components'
 import { DataSourceDefinition } from '../../engine/dataSourceDefinition'
-import { evaluateData } from '../../engine/dataEvaluator'
+import { evaluateData, interpolateDataPoints } from '../../engine/dataEvaluator'
 
 function ds(points: readonly DataPoint[], id = 'ds-1', name = 'Test Data'): DataSourceDefinition {
   return new DataSourceDefinition(id, name, points)
@@ -222,5 +222,90 @@ describe('evaluateData', () => {
       expect(r1.from).not.toBe(r2.from)
       expect(r1.to).not.toBe(r2.to)
     })
+  })
+})
+
+describe('interpolateDataPoints', () => {
+  it('returns empty array when both inputs are empty', () => {
+    const result = interpolateDataPoints({ from: [], to: [], t: 0.5 })
+    expect(result).toEqual([])
+  })
+
+  it('returns from data when t is 0', () => {
+    const result = interpolateDataPoints({ from: pointsA, to: pointsB, t: 0 })
+    expect(result).toEqual(pointsA)
+  })
+
+  it('returns to data when t is 1', () => {
+    const result = interpolateDataPoints({ from: pointsA, to: pointsB, t: 1 })
+    expect(result).toEqual(pointsB)
+  })
+
+  it('interpolates values at midpoint', () => {
+    const result = interpolateDataPoints({ from: pointsA, to: pointsB, t: 0.5 })
+    expect(result[0]).toEqual({ label: 'X', value: 20 })
+    expect(result[1]).toEqual({ label: 'Y', value: 30 })
+  })
+
+  it('interpolates values at quarter point', () => {
+    const result = interpolateDataPoints({ from: pointsA, to: pointsB, t: 0.25 })
+    expect(result[0]).toEqual({ label: 'X', value: 15 })
+    expect(result[1]).toEqual({ label: 'Y', value: 25 })
+  })
+
+  it('handles labels only in from data', () => {
+    const from = [
+      { label: 'A', value: 10 },
+      { label: 'B', value: 20 },
+    ]
+    const to = [{ label: 'A', value: 30 }]
+    const result = interpolateDataPoints({ from, to, t: 0.5 })
+    expect(result.length).toBe(2)
+    expect(result.find((p) => p.label === 'A')?.value).toBe(20)
+    expect(result.find((p) => p.label === 'B')?.value).toBe(20)
+  })
+
+  it('handles labels only in to data', () => {
+    const from = [{ label: 'A', value: 10 }]
+    const to = [
+      { label: 'A', value: 30 },
+      { label: 'B', value: 40 },
+    ]
+    const result = interpolateDataPoints({ from, to, t: 0.5 })
+    expect(result.length).toBe(2)
+    expect(result.find((p) => p.label === 'A')?.value).toBe(20)
+    expect(result.find((p) => p.label === 'B')?.value).toBe(40)
+  })
+
+  it('preserves series, tooltip, and color from to data', () => {
+    const from = [{ label: 'A', value: 10 }]
+    const to = [{ label: 'A', value: 30, series: 'S1', tooltip: 'T1', color: '#FF0000' }]
+    const result = interpolateDataPoints({ from, to, t: 0.5 })
+    expect(result[0].series).toBe('S1')
+    expect(result[0].tooltip).toBe('T1')
+    expect(result[0].color).toBe('#FF0000')
+  })
+
+  it('falls back to from data properties when to data lacks them', () => {
+    const from = [{ label: 'A', value: 10, series: 'S1', tooltip: 'T1', color: '#FF0000' }]
+    const to = [{ label: 'A', value: 30 }]
+    const result = interpolateDataPoints({ from, to, t: 0.5 })
+    expect(result[0].series).toBe('S1')
+    expect(result[0].tooltip).toBe('T1')
+    expect(result[0].color).toBe('#FF0000')
+  })
+
+  it('preserves label order from to data', () => {
+    const from = [
+      { label: 'B', value: 20 },
+      { label: 'A', value: 10 },
+    ]
+    const to = [
+      { label: 'A', value: 30 },
+      { label: 'B', value: 40 },
+    ]
+    const result = interpolateDataPoints({ from, to, t: 0.5 })
+    expect(result[0].label).toBe('A')
+    expect(result[1].label).toBe('B')
   })
 })
