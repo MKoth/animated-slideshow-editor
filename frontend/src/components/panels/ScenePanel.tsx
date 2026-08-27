@@ -8,6 +8,7 @@ import type { ZOrderMode } from '../../engine/commands'
 import { CreateNodeCommand } from '../../engine/commands'
 import { defaultChartComponent } from '../../engine/defaultChart'
 import { defaultTableComponent } from '../../engine/defaultTable'
+import { defaultTextComponent } from '../../engine/defaultText'
 import { namesInTree, uniqueNodeName } from '../../engine/naming'
 import { useMissingAssetsStore } from '../../stores/missingAssetsStore'
 import { useSelectionStore } from '../../stores/selectionStore'
@@ -305,6 +306,25 @@ export function ScenePanel() {
     setContextMenu(null)
   }
 
+  const handleCreateText = () => {
+    const targetSlide = engine.getActiveSlide()
+    if (!targetSlide) return
+    const taken = namesInTree(targetSlide.scene.root)
+    const name = uniqueNodeName(taken, 'Text')
+    const result = dispatch(
+      new CreateNodeCommand({
+        sceneId: targetSlide.scene.id,
+        parentId: targetSlide.scene.root.id,
+        name,
+        components: { text: defaultTextComponent() },
+      }),
+    )
+    if (result.ok) {
+      useSelectionStore.getState().select(result.inverse.nodeId)
+    }
+    setContextMenu(null)
+  }
+
   const project = engine.project
   const slide = engine.getActiveSlide()
 
@@ -354,6 +374,9 @@ export function ScenePanel() {
           </button>
           <button className="menu__item" role="menuitem" onClick={handleCreateChart}>
             Create Chart
+          </button>
+          <button className="menu__item" role="menuitem" onClick={handleCreateText}>
+            Create Text
           </button>
           <hr className="menu__separator" />
           {Z_ORDER_ITEMS.map((item) => (
