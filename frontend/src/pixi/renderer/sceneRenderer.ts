@@ -41,6 +41,8 @@ import {
 } from './nodeRenderer'
 import { applyAssetTexture, applyMissingPlaceholder, placeholderSize } from './placeholder'
 import { rebuildTable, tableLayoutOf, tableSizeOf, DEFAULT_TABLE_WIDTH } from './tableRenderer'
+import { chartSpriteOf, rebuildChartTexture, type ResolveDataSource } from './chartRenderer'
+import { CHART_DEFAULT_WIDTH, CHART_DEFAULT_HEIGHT } from './chartRenderer'
 import { createNodeShaderFilter, applyFilterUniforms } from './nodeShader'
 import { bindFilterSamplers } from './samplerBinding'
 import type { ShaderProgramCache } from './programCache'
@@ -85,6 +87,8 @@ export class SceneRenderer {
   readonly #missingNodes = new Set<string>()
   readonly #ikOverrides = new Map<string, number>()
   readonly #tableComponentHashes = new Map<string, string>()
+  readonly #chartComponentHashes = new Map<string, string>()
+  readonly #resolveDataSource: ResolveDataSource
   readonly #scratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #materialScratch: EffectiveMaterialScratch = effectiveMaterialScratch()
   readonly #shaderScratch: EffectiveShaderScratch = effectiveShaderScratch()
@@ -105,6 +109,7 @@ export class SceneRenderer {
     currentTime: CurrentTimeSource = ALWAYS_ZERO_TIME,
     isAssetMissing: (definitionId: string) => boolean = () => false,
     resolveShaderSource: ResolveShaderSource = () => null,
+    resolveDataSource: ResolveDataSource = () => null,
   ) {
     this.#engine = engine
     this.#world = world
@@ -116,6 +121,7 @@ export class SceneRenderer {
     this.#currentTime = currentTime
     this.#isAssetMissing = isAssetMissing
     this.#resolveShaderSource = resolveShaderSource
+    this.#resolveDataSource = resolveDataSource
   }
 
   nodeSize(nodeId: string): WorldSize | null {
@@ -159,6 +165,7 @@ export class SceneRenderer {
     this.#nodeShaders.clear()
     this.#missingNodes.clear()
     this.#tableComponentHashes.clear()
+    this.#chartComponentHashes.clear()
     this.#scene = scene
     this.#slideId = slideId
     if (!scene) {
@@ -380,6 +387,37 @@ export class SceneRenderer {
     }
   }
 
+  handleChartChanged(nodeId: string): void {
+    const scene = this.#scene
+    if (!scene) {
+      return
+    }
+    const node = scene.getNode(nodeId)
+    if (!node || !node.components.chart) {
+      return
+    }
+    const container = this.#containers.get(nodeId)
+    if (!container) {
+      return
+    }
+    const placeholder = placeholderOf(container)
+    if (!placeholder) {
+      return
+    }
+    const sprite = chartSpriteOf(placeholder)
+    if (!sprite) {
+      return
+    }
+    const chart = node.components.chart
+    const data = this.#resolveDataSource(chart.dataSourceId) ?? []
+    const width = CHART_DEFAULT_WIDTH
+    const height = CHART_DEFAULT_HEIGHT
+    void rebuildChartTexture(this.#pixi, sprite, chart, data, width, height).then(() => {
+      this.#sizes.set(nodeId, { width, height })
+      this.#onNodeSizeChanged(nodeId)
+    })
+  }
+
   previewTransform(nodeId: string, x: number, y: number): void {
     const container = this.#containers.get(nodeId)
     if (!container) {
@@ -472,6 +510,9 @@ export class SceneRenderer {
     if (instance) {
       this.#loadAssetTexture(instance.assetDefinitionId, node.id, container)
     }
+    if (node.components.chart) {
+      this.handleChartChanged(node.id)
+    }
   }
 
   #evaluateAndApply(nodeId: string): void {
@@ -488,6 +529,17 @@ export class SceneRenderer {
       if (previousHash !== tableHash) {
         this.#tableComponentHashes.set(nodeId, tableHash)
         this.handleTableChanged(nodeId)
+      }
+    }
+    if (node && node.components.chart) {
+      const chartHash = JSON.stringify(node.components.chart)
+      const previousHash = this.#chartComponentHashes.get(nodeId)
+      if (previousHash !== chartHash) {
+        this.#chartComponentHashes.set(nodeId, chartHash)
+        this.handleChartChanged(nodeId)
+      } else if (node.components.chart._dirty) {
+        node.components.chart._dirty = false
+        this.handleChartChanged(nodeId)
       }
     }
     const time = this.#currentTime.getTime(slideId)
@@ -718,6 +770,13 @@ export class SceneRenderer {
       if (tableSize) {
         this.#sizes.set(node.id, tableSize)
       }
+      return
+    }
+    if (node.components.chart) {
+      this.#sizes.set(node.id, {
+        width: CHART_DEFAULT_WIDTH,
+        height: CHART_DEFAULT_HEIGHT,
+      })
       return
     }
     const placeholder = placeholderOf(container)

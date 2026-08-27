@@ -187,6 +187,13 @@ export class Renderer {
         this.#currentTime,
         this.#isAssetMissing,
         this.#resolveShaderSource,
+        (dataSourceId) => {
+          const ds = this.#engine.embeddedDataSources.find((d) => d.id === dataSourceId)
+          if (ds && 'dataPoints' in ds) {
+            return ds.dataPoints
+          }
+          return null
+        },
       )
       this.#thumbnails.attach(app)
       this.#unsubscribe = this.#engine.subscribe((event) => this.#handleEvent(event))
@@ -669,6 +676,9 @@ export class Renderer {
         break
       case 'TableChanged':
         sceneRenderer.handleTableChanged(event.nodeId)
+        break
+      case 'ChartChanged':
+        sceneRenderer.handleChartChanged(event.nodeId)
         break
       case 'IKTargetChanged':
       case 'IKPoleTargetChanged':

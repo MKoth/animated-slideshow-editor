@@ -11,6 +11,7 @@ import {
   registerMeshDisplay,
 } from './placeholder'
 import { createTableContainer, DEFAULT_TABLE_WIDTH } from './tableRenderer'
+import { createChartContainer } from './chartRenderer'
 import type { TextureCache } from './textureCache'
 
 const placeholderByContainer = new WeakMap<PixiContainer, PixiContainer>()
@@ -34,6 +35,10 @@ export function createNodeContainer(
     const tablePlaceholder = createTableContainer(pixi, node, DEFAULT_TABLE_WIDTH)
     placeholderByContainer.set(container, tablePlaceholder)
     container.addChild(tablePlaceholder)
+  } else if (node.components.chart) {
+    const chartPlaceholder = createChartContainer(pixi, node)
+    placeholderByContainer.set(container, chartPlaceholder)
+    container.addChild(chartPlaceholder)
   } else if (node.components.mesh) {
     const textureKey = node.components.assetInstance?.assetDefinitionId ?? node.id
     const meshPlaceholder = createMeshPlaceholder(pixi, node, cache.get(textureKey))

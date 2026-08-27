@@ -31,6 +31,10 @@ export type {
   TableComponent,
   TableDimension,
   TableCellSpan,
+  ChartComponent,
+  ChartType,
+  VisualConfig,
+  DataKeyframe,
 } from './components'
 export type { AssetDefinition } from './assetDefinition'
 export type { EmbeddedAsset } from './embeddedAsset'
@@ -294,8 +298,5 @@ export {
   computeUVs,
   generateMesh,
 } from './meshGenerator'
-export {
-  computeTableLayout,
-  TableLayoutCache,
-} from './tableGridLayout'
+export { computeTableLayout, TableLayoutCache } from './tableGridLayout'
 export type { TableLayout, CellRect } from './tableGridLayout'
