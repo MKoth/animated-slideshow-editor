@@ -6,6 +6,7 @@ import { applyZOrder, canApplyZOrder, Z_ORDER_ITEMS } from '../../app/zOrderActi
 import type { SceneNode } from '../../engine'
 import type { ZOrderMode } from '../../engine/commands'
 import { CreateNodeCommand } from '../../engine/commands'
+import { defaultChartComponent } from '../../engine/defaultChart'
 import { defaultTableComponent } from '../../engine/defaultTable'
 import { namesInTree, uniqueNodeName } from '../../engine/naming'
 import { useMissingAssetsStore } from '../../stores/missingAssetsStore'
@@ -285,6 +286,25 @@ export function ScenePanel() {
     setContextMenu(null)
   }
 
+  const handleCreateChart = () => {
+    const targetSlide = engine.getActiveSlide()
+    if (!targetSlide) return
+    const taken = namesInTree(targetSlide.scene.root)
+    const name = uniqueNodeName(taken, 'Chart')
+    const result = dispatch(
+      new CreateNodeCommand({
+        sceneId: targetSlide.scene.id,
+        parentId: targetSlide.scene.root.id,
+        name,
+        components: { chart: defaultChartComponent() },
+      }),
+    )
+    if (result.ok) {
+      useSelectionStore.getState().select(result.inverse.nodeId)
+    }
+    setContextMenu(null)
+  }
+
   const project = engine.project
   const slide = engine.getActiveSlide()
 
@@ -329,12 +349,11 @@ export function ScenePanel() {
           aria-label="Context menu"
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
-          <button
-            className="menu__item"
-            role="menuitem"
-            onClick={handleCreateTable}
-          >
+          <button className="menu__item" role="menuitem" onClick={handleCreateTable}>
             Create Table
+          </button>
+          <button className="menu__item" role="menuitem" onClick={handleCreateChart}>
+            Create Chart
           </button>
           <hr className="menu__separator" />
           {Z_ORDER_ITEMS.map((item) => (

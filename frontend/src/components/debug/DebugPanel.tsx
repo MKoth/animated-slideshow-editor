@@ -2,6 +2,7 @@ import { useRef, useState, useSyncExternalStore } from 'react'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
 import type { SceneNode } from '../../engine'
 import type { Slide } from '../../engine'
+import { defaultChartComponent } from '../../engine/defaultChart'
 import { defaultTableComponent } from '../../engine/defaultTable'
 import {
   CreateNodeCommand,
@@ -68,6 +69,21 @@ export function DebugPanel() {
         parentId: targetSlide.scene.root.id,
         name: 'Table',
         components: { table: defaultTableComponent() },
+      }),
+    )
+  }
+
+  const handleAddChart = () => {
+    const targetSlide = engine.getActiveSlide()
+    if (!targetSlide) {
+      return
+    }
+    dispatch(
+      new CreateNodeCommand({
+        sceneId: targetSlide.scene.id,
+        parentId: targetSlide.scene.root.id,
+        name: 'Chart',
+        components: { chart: defaultChartComponent() },
       }),
     )
   }
@@ -185,6 +201,7 @@ export function DebugPanel() {
           />
           <button onClick={handleAddNode}>Add Node</button>
           <button onClick={handleAddTable}>Add Table</button>
+          <button onClick={handleAddChart}>Add Chart</button>
         </div>
       </section>
 

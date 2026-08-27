@@ -259,3 +259,8 @@ export type {
   SetTableComponentInverse,
   SetTableComponentParameters,
 } from './setTableComponentCommand'
+export { SetChartComponentCommand } from './setChartComponentCommand'
+export type {
+  SetChartComponentInverse,
+  SetChartComponentParameters,
+} from './setChartComponentCommand'

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
 import type { DataPoint } from '../../engine/dataSourceDefinition'
+import { defaultChartComponent } from '../../engine/defaultChart'
 import { defaultTableComponent } from '../../engine/defaultTable'
 import { namesInTree, uniqueNodeName } from '../../engine/naming'
 import { useSelectionStore } from '../../stores/selectionStore'
@@ -126,6 +127,24 @@ export function DataSourcesPanel() {
     }
   }
 
+  const handleCreateChart = () => {
+    const targetSlide = engine.getActiveSlide()
+    if (!targetSlide) return
+    const taken = namesInTree(targetSlide.scene.root)
+    const name = uniqueNodeName(taken, 'Chart')
+    const result = dispatch(
+      new CreateNodeCommand({
+        sceneId: targetSlide.scene.id,
+        parentId: targetSlide.scene.root.id,
+        name,
+        components: { chart: defaultChartComponent() },
+      }),
+    )
+    if (result.ok) {
+      useSelectionStore.getState().select(result.inverse.nodeId)
+    }
+  }
+
   const commitRename = (id: string, name: string) => {
     setEditingId(null)
     const trimmed = name.trim()
@@ -181,6 +200,9 @@ export function DataSourcesPanel() {
           </button>
           <button className="data-sources-toolbar__create" onClick={handleCreateTable}>
             Create Table
+          </button>
+          <button className="data-sources-toolbar__create" onClick={handleCreateChart}>
+            Create Chart
           </button>
         </div>
         <div className="data-sources-toolbar__row">
