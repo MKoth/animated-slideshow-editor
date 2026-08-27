@@ -4,6 +4,7 @@ import type { ChartComponent, ChartType, VisualConfig } from '../../engine/compo
 import type { DispatchCommand } from '../../engine/commands'
 import { SetChartComponentCommand } from '../../engine/commands'
 import { runCommand } from './sectionHelpers'
+import { DataKeyframesPanel } from './DataKeyframesPanel'
 
 function mergeChart(node: SceneNode, patch: Partial<ChartComponent>): ChartComponent {
   const c = node.components.chart!
@@ -16,12 +17,14 @@ export function ChartInspectorSection({
   dispatch,
   notify,
   playing,
+  currentTime,
 }: {
   target: SceneNode
   engine: EnginePublic
   dispatch: DispatchCommand
   notify: (message: string) => void
   playing: boolean
+  currentTime: number
 }) {
   const chart = target.components.chart
   if (!chart) return null
@@ -194,6 +197,14 @@ export function ChartInspectorSection({
           Add Color
         </button>
       </div>
+
+      <DataKeyframesPanel
+        target={target}
+        dispatch={dispatch}
+        notify={notify}
+        playing={playing}
+        currentTime={currentTime}
+      />
     </section>
   )
 }
