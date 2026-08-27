@@ -491,6 +491,8 @@ export function TimelineBody({
       deleteTarget = { kind: 'node' as const, nodeId: target.nodeId, property: target.property }
     } else if (target.parameter) {
       deleteTarget = { kind: 'node' as const, nodeId: target.nodeId, parameter: target.parameter }
+    } else if (target.label) {
+      deleteTarget = { kind: 'dataLabel' as const, nodeId: target.nodeId, label: target.label }
     } else {
       return
     }

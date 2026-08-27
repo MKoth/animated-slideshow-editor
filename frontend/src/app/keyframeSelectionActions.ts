@@ -32,6 +32,13 @@ export interface MaterialKeyframeRef {
   readonly time: number
 }
 
+export interface DataLabelKeyframeRef {
+  readonly nodeId: string
+  readonly label: string
+  readonly keyframeId: string
+  readonly time: number
+}
+
 /** Group refs by their node property target, preserving first-seen order. */
 export function groupRefsByTarget<Ref extends { nodeId: string; property: AnimationProperty }, T>(
   refs: readonly Ref[],
@@ -63,6 +70,24 @@ export function groupMaterialRefsByTarget<Ref extends { nodeId: string; paramete
       entry.items.push(itemOf(ref))
     } else {
       groups.set(key, { nodeId: ref.nodeId, parameter: ref.parameter, items: [itemOf(ref)] })
+    }
+  }
+  return [...groups.values()]
+}
+
+/** Group refs by their data label target, preserving first-seen order. */
+export function groupDataLabelRefsByTarget<Ref extends { nodeId: string; label: string }, T>(
+  refs: readonly Ref[],
+  itemOf: (ref: Ref) => T,
+): { readonly nodeId: string; readonly label: string; readonly items: T[] }[] {
+  const groups = new Map<string, { nodeId: string; label: string; items: T[] }>()
+  for (const ref of refs) {
+    const key = `${ref.nodeId}\u0000${ref.label}`
+    const entry = groups.get(key)
+    if (entry) {
+      entry.items.push(itemOf(ref))
+    } else {
+      groups.set(key, { nodeId: ref.nodeId, label: ref.label, items: [itemOf(ref)] })
     }
   }
   return [...groups.values()]
@@ -119,6 +144,30 @@ export function materialKeyframeRefsOfScene(
   return refs
 }
 
+export function dataLabelKeyframeRefsOfScene(
+  engine: EnginePublic,
+  scene: Scene,
+): DataLabelKeyframeRef[] {
+  const refs: DataLabelKeyframeRef[] = []
+  for (const node of collectNodes(scene)) {
+    const chart = node.components.chart
+    if (!chart) continue
+    for (const label of chart.dataLabels) {
+      if (engine.hasDataLabelTrack(node.id, label)) {
+        for (const keyframe of engine.getDataLabelKeyframes(node.id, label)) {
+          refs.push({
+            nodeId: node.id,
+            label,
+            keyframeId: keyframe.id,
+            time: keyframe.time,
+          })
+        }
+      }
+    }
+  }
+  return refs
+}
+
 function allKeyframeRefs(engine: EnginePublic): KeyframeRef[] {
   const refs: KeyframeRef[] = []
   for (const slide of engine.project?.slides ?? []) {
@@ -131,6 +180,14 @@ function allMaterialKeyframeRefs(engine: EnginePublic): MaterialKeyframeRef[] {
   const refs: MaterialKeyframeRef[] = []
   for (const slide of engine.project?.slides ?? []) {
     refs.push(...materialKeyframeRefsOfScene(engine, slide.scene))
+  }
+  return refs
+}
+
+function allDataLabelKeyframeRefs(engine: EnginePublic): DataLabelKeyframeRef[] {
+  const refs: DataLabelKeyframeRef[] = []
+  for (const slide of engine.project?.slides ?? []) {
+    refs.push(...dataLabelKeyframeRefsOfScene(engine, slide.scene))
   }
   return refs
 }
@@ -153,14 +210,25 @@ export function selectedMaterialKeyframeRefs(engine: EnginePublic): MaterialKeyf
   return allMaterialKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
 }
 
+export function selectedDataLabelKeyframeRefs(engine: EnginePublic): DataLabelKeyframeRef[] {
+  const selectedIds = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+  if (selectedIds.length === 0) {
+    return []
+  }
+  const wanted = new Set(selectedIds)
+  return allDataLabelKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
+}
+
 type DeleteTarget =
   | { kind: 'property'; nodeId: string; property: AnimationProperty; items: string[] }
   | { kind: 'parameter'; nodeId: string; parameter: string; items: string[] }
+  | { kind: 'dataLabel'; nodeId: string; label: string; items: string[] }
 
 export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: DispatchCommand): boolean {
   const propertyRefs = selectedKeyframeRefs(engine)
   const materialRefs = selectedMaterialKeyframeRefs(engine)
-  if (propertyRefs.length === 0 && materialRefs.length === 0) {
+  const dataLabelRefs = selectedDataLabelKeyframeRefs(engine)
+  if (propertyRefs.length === 0 && materialRefs.length === 0 && dataLabelRefs.length === 0) {
     return false
   }
   const targets: DeleteTarget[] = []
@@ -180,10 +248,24 @@ export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: Dispatch
       items: group.items,
     })
   }
+  for (const group of groupDataLabelRefsByTarget(dataLabelRefs, (ref) => ref.keyframeId)) {
+    targets.push({
+      kind: 'dataLabel',
+      nodeId: group.nodeId,
+      label: group.label,
+      items: group.items,
+    })
+  }
   const deleteCommands = targets.map((target) => {
     if (target.kind === 'property') {
       return new DeleteKeyframesCommand({
         target: { kind: 'node', nodeId: target.nodeId, property: target.property },
+        keyframeIds: target.items,
+      })
+    }
+    if (target.kind === 'dataLabel') {
+      return new DeleteKeyframesCommand({
+        target: { kind: 'dataLabel', nodeId: target.nodeId, label: target.label },
         keyframeIds: target.items,
       })
     }
@@ -200,7 +282,8 @@ export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: Dispatch
 export function pruneKeyframeSelection(engine: EnginePublic): void {
   const validPropertyKeys = new Set(allKeyframeRefs(engine).map((ref) => ref.keyframeId))
   const validMaterialKeys = new Set(allMaterialKeyframeRefs(engine).map((ref) => ref.keyframeId))
-  const valid = new Set([...validPropertyKeys, ...validMaterialKeys])
+  const validDataLabelKeys = new Set(allDataLabelKeyframeRefs(engine).map((ref) => ref.keyframeId))
+  const valid = new Set([...validPropertyKeys, ...validMaterialKeys, ...validDataLabelKeys])
   useTimelineSelectionStore.getState().pruneSelection(valid)
 }
 

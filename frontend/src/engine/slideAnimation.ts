@@ -90,10 +90,14 @@ export class SlideAnimation {
     for (const [nodeId, animation] of this.#nodes) {
       const tracks = animation.toJSON()
       const materialTracks = animation.materialTracksJSON()
-      if (tracks.length > 0 || materialTracks.length > 0) {
-        nodes.push(
-          materialTracks.length > 0 ? { nodeId, tracks, materialTracks } : { nodeId, tracks },
-        )
+      const dataLabelTracks = animation.dataLabelTracksJSON()
+      if (tracks.length > 0 || materialTracks.length > 0 || dataLabelTracks.length > 0) {
+        nodes.push({
+          nodeId,
+          tracks,
+          ...(materialTracks.length > 0 ? { materialTracks } : {}),
+          ...(dataLabelTracks.length > 0 ? { dataLabelTracks } : {}),
+        })
       }
     }
     return { nodes }

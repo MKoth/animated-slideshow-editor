@@ -3,7 +3,12 @@ import type { SceneNode } from '../../engine'
 import type { EnginePublic } from '../../engine'
 import type { ChartComponent, ChartType, VisualConfig } from '../../engine/components'
 import type { DispatchCommand } from '../../engine/commands'
-import { SetChartComponentCommand, AddKeyframeCommand } from '../../engine/commands'
+import {
+  SetChartComponentCommand,
+  AddKeyframeCommand,
+  SetKeyframeValueCommand,
+  DeleteKeyframesCommand,
+} from '../../engine/commands'
 import { runCommand } from './sectionHelpers'
 import { playheadTimeOf } from '../../app/keyframeActions'
 import { usePlaybackController } from '../../stores/playbackStore'
@@ -144,6 +149,17 @@ export function ChartInspectorSection({
   }
 
   const handleRemoveDataField = (label: string) => {
+    const keyframes = engine.getDataLabelKeyframes(target.id, label)
+    if (keyframes.length > 0) {
+      runCommand(notify, () => {
+        return dispatch(
+          new DeleteKeyframesCommand({
+            target: { kind: 'dataLabel', nodeId: target.id, label },
+            keyframeIds: keyframes.map((kf) => kf.id),
+          }),
+        )
+      })
+    }
     apply({ dataLabels: chart.dataLabels.filter((l) => l !== label) })
   }
 
@@ -156,33 +172,26 @@ export function ChartInspectorSection({
     if (animationMode && slide) {
       const time = playheadTimeOf(engine, target.id) ?? 0
       const existingKeyframes = engine.getDataLabelKeyframes(target.id, label)
-      const hasKeyframeAtTime = existingKeyframes.some((kf) => kf.time === time)
+      const existingKf = existingKeyframes.find((kf) => kf.time === time)
 
-      if (hasKeyframeAtTime) {
-        runCommand(notify, () => {
-          const existingKf = existingKeyframes.find((kf) => kf.time === time)
-          if (existingKf) {
-            return dispatch(
-              new AddKeyframeCommand({
-                target: { kind: 'dataLabel', nodeId: target.id, label },
-                time,
-                value,
-              }),
-            )
-          }
-          return null
-        })
-      } else {
-        runCommand(notify, () => {
+      runCommand(notify, () => {
+        if (existingKf) {
           return dispatch(
-            new AddKeyframeCommand({
+            new SetKeyframeValueCommand({
               target: { kind: 'dataLabel', nodeId: target.id, label },
-              time,
-              value,
+              keyframeId: existingKf.id,
+              newValue: value,
             }),
           )
-        })
-      }
+        }
+        return dispatch(
+          new AddKeyframeCommand({
+            target: { kind: 'dataLabel', nodeId: target.id, label },
+            time,
+            value,
+          }),
+        )
+      })
     }
   }
 
