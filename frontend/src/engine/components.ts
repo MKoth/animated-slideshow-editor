@@ -1,5 +1,33 @@
 import type { MeshData } from './mesh'
 import { cloneMeshData } from './mesh'
+import type { DataPoint } from './dataSourceDefinition'
+
+export type { DataPoint }
+
+export type ChartType = 'bar' | 'line' | 'pie' | 'area' | 'flowchart'
+
+export interface VisualConfig {
+  readonly colors: readonly string[]
+  readonly axisLabels: { readonly x: string; readonly y: string }
+  readonly legendPosition: 'top' | 'bottom' | 'left' | 'right' | 'none'
+  readonly padding: number
+  readonly fontFamily: string
+  readonly fontSize: number
+}
+
+export interface DataKeyframe {
+  readonly time: number
+  readonly dataPoints: readonly DataPoint[]
+}
+
+export interface ChartComponent {
+  readonly kind: 'chart'
+  readonly chartType: ChartType
+  dataSourceId: string
+  visualConfig: VisualConfig
+  dataKeyframes: DataKeyframe[]
+  _dirty: boolean
+}
 
 export interface CameraComponent {
   readonly kind: 'camera'
@@ -64,6 +92,7 @@ export interface NodeComponents {
   readonly mesh?: MeshComponent
   readonly ghost?: GhostComponent
   readonly table?: TableComponent
+  readonly chart?: ChartComponent
 }
 
 export function copyComponents(components: NodeComponents): NodeComponents {
@@ -75,5 +104,18 @@ export function copyComponents(components: NodeComponents): NodeComponents {
     mesh: components.mesh ? { kind: 'mesh', mesh: cloneMeshData(components.mesh.mesh) } : undefined,
     ghost: components.ghost ? { ...components.ghost } : undefined,
     table: components.table ? { ...components.table } : undefined,
+    chart: components.chart
+      ? {
+          kind: 'chart' as const,
+          chartType: components.chart.chartType,
+          dataSourceId: components.chart.dataSourceId,
+          visualConfig: { ...components.chart.visualConfig },
+          dataKeyframes: components.chart.dataKeyframes.map((kf) => ({
+            time: kf.time,
+            dataPoints: kf.dataPoints.map((dp) => ({ ...dp })),
+          })),
+          _dirty: components.chart._dirty,
+        }
+      : undefined,
   }
 }

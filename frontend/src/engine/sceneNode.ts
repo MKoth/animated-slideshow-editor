@@ -1,4 +1,15 @@
-import type { NodeComponents, TextAlignment, TableComponent, TableDimension, TableCellSpan } from './components'
+import type {
+  NodeComponents,
+  TextAlignment,
+  TableComponent,
+  TableDimension,
+  TableCellSpan,
+  ChartComponent,
+  ChartType,
+  VisualConfig,
+  DataKeyframe,
+} from './components'
+import { validateChartType, DEFAULT_VISUAL_CONFIG } from './chartComponent'
 import { meshDataFromJSON, cloneMeshData } from './mesh'
 import type { Transform } from './transform'
 import { IDENTITY_PIVOT } from './transform'
@@ -136,6 +147,7 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
     mesh?: NodeComponents['mesh']
     ghost?: NodeComponents['ghost']
     table?: NodeComponents['table']
+    chart?: NodeComponents['chart']
   } = {}
   if (record.camera !== undefined) {
     if (!isKind(record.camera, 'camera')) {
@@ -208,6 +220,12 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
     }
     components.table = parseTableComponent(record.table as Record<string, unknown>, nodeId)
   }
+  if (record.chart !== undefined) {
+    if (!isKind(record.chart, 'chart')) {
+      throw new Error(`Node "${nodeId}" has an invalid chart component`)
+    }
+    components.chart = parseChartComponent(record.chart as Record<string, unknown>, nodeId)
+  }
   return components
 }
 
@@ -260,10 +278,7 @@ function parseDimension(value: unknown, context: string): TableDimension {
   return minWidth !== undefined ? { width, minWidth } : { width }
 }
 
-function parseTableComponent(
-  component: Record<string, unknown>,
-  nodeId: string,
-): TableComponent {
+function parseTableComponent(component: Record<string, unknown>, nodeId: string): TableComponent {
   const ctx = `Node "${nodeId}" table`
   if (!Array.isArray(component.columns) || component.columns.length === 0) {
     throw new Error(`${ctx} must have a non-empty columns array`)
@@ -273,7 +288,8 @@ function parseTableComponent(
     throw new Error(`${ctx} must have a non-empty rows array`)
   }
   const rows = component.rows.map((r, i) => parseDimension(r, `${ctx}.rows[${i}]`))
-  const gap = typeof component.gap === 'number' && Number.isFinite(component.gap) ? component.gap : 0
+  const gap =
+    typeof component.gap === 'number' && Number.isFinite(component.gap) ? component.gap : 0
   const cellPadding =
     typeof component.cellPadding === 'number' && Number.isFinite(component.cellPadding)
       ? component.cellPadding
@@ -282,10 +298,8 @@ function parseTableComponent(
     typeof component.borderWidth === 'number' && Number.isFinite(component.borderWidth)
       ? component.borderWidth
       : 1
-  const borderColor =
-    typeof component.borderColor === 'string' ? component.borderColor : '#000000'
-  const textWrap =
-    component.textWrap === 'truncate' ? 'truncate' as const : 'wrap' as const
+  const borderColor = typeof component.borderColor === 'string' ? component.borderColor : '#000000'
+  const textWrap = component.textWrap === 'truncate' ? ('truncate' as const) : ('wrap' as const)
   const columnMapping: Record<number, string> = {}
   if (typeof component.columnMapping === 'object' && component.columnMapping !== null) {
     const mappingRecord = component.columnMapping as Record<string, unknown>
@@ -322,6 +336,110 @@ function parseTableComponent(
   }
 }
 
+function parseChartComponent(component: Record<string, unknown>, nodeId: string): ChartComponent {
+  const ctx = `Node "${nodeId}" chart`
+  if (!validateChartType(component.chartType)) {
+    throw new Error(`${ctx} has an invalid chart type: "${String(component.chartType)}"`)
+  }
+  if (typeof component.dataSourceId !== 'string' || component.dataSourceId === '') {
+    throw new Error(`${ctx} must have a non-empty dataSourceId string`)
+  }
+  const chartType = component.chartType as ChartType
+  const dataSourceId = component.dataSourceId as string
+  const visualConfig = parseVisualConfig(component.visualConfig)
+  const dataKeyframes = parseDataKeyframes(component.dataKeyframes, ctx)
+  return {
+    kind: 'chart',
+    chartType,
+    dataSourceId,
+    visualConfig,
+    dataKeyframes,
+    _dirty: typeof component._dirty === 'boolean' ? component._dirty : false,
+  }
+}
+
+function parseVisualConfig(value: unknown): VisualConfig {
+  if (typeof value !== 'object' || value === null) {
+    return { ...DEFAULT_VISUAL_CONFIG, axisLabels: { ...DEFAULT_VISUAL_CONFIG.axisLabels } }
+  }
+  const record = value as Record<string, unknown>
+  const colors = Array.isArray(record.colors)
+    ? record.colors.filter((c): c is string => typeof c === 'string')
+    : DEFAULT_VISUAL_CONFIG.colors
+  const axisLabels =
+    typeof record.axisLabels === 'object' && record.axisLabels !== null
+      ? {
+          x:
+            typeof (record.axisLabels as Record<string, unknown>).x === 'string'
+              ? ((record.axisLabels as Record<string, unknown>).x as string)
+              : DEFAULT_VISUAL_CONFIG.axisLabels.x,
+          y:
+            typeof (record.axisLabels as Record<string, unknown>).y === 'string'
+              ? ((record.axisLabels as Record<string, unknown>).y as string)
+              : DEFAULT_VISUAL_CONFIG.axisLabels.y,
+        }
+      : DEFAULT_VISUAL_CONFIG.axisLabels
+  const legendPosition = ['top', 'bottom', 'left', 'right', 'none'].includes(
+    record.legendPosition as string,
+  )
+    ? (record.legendPosition as VisualConfig['legendPosition'])
+    : DEFAULT_VISUAL_CONFIG.legendPosition
+  const padding =
+    typeof record.padding === 'number' && Number.isFinite(record.padding)
+      ? record.padding
+      : DEFAULT_VISUAL_CONFIG.padding
+  const fontFamily =
+    typeof record.fontFamily === 'string' ? record.fontFamily : DEFAULT_VISUAL_CONFIG.fontFamily
+  const fontSize =
+    typeof record.fontSize === 'number' && Number.isFinite(record.fontSize)
+      ? record.fontSize
+      : DEFAULT_VISUAL_CONFIG.fontSize
+  return { colors, axisLabels, legendPosition, padding, fontFamily, fontSize }
+}
+
+function parseDataKeyframes(value: unknown, ctx: string): DataKeyframe[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  const keyframes: DataKeyframe[] = []
+  for (let i = 0; i < value.length; i++) {
+    const entry = value[i]
+    if (typeof entry !== 'object' || entry === null) {
+      throw new Error(`${ctx}.dataKeyframes[${i}] must be an object`)
+    }
+    const record = entry as Record<string, unknown>
+    if (typeof record.time !== 'number' || !Number.isFinite(record.time)) {
+      throw new Error(`${ctx}.dataKeyframes[${i}].time must be a finite number`)
+    }
+    if (!Array.isArray(record.dataPoints)) {
+      throw new Error(`${ctx}.dataKeyframes[${i}].dataPoints must be an array`)
+    }
+    const dataPoints = record.dataPoints.map((dp, j) => {
+      if (typeof dp !== 'object' || dp === null) {
+        throw new Error(`${ctx}.dataKeyframes[${i}].dataPoints[${j}] must be an object`)
+      }
+      const dpRecord = dp as Record<string, unknown>
+      if (typeof dpRecord.label !== 'string' || dpRecord.label === '') {
+        throw new Error(
+          `${ctx}.dataKeyframes[${i}].dataPoints[${j}].label must be a non-empty string`,
+        )
+      }
+      if (typeof dpRecord.value !== 'number' || !Number.isFinite(dpRecord.value)) {
+        throw new Error(`${ctx}.dataKeyframes[${i}].dataPoints[${j}].value must be a finite number`)
+      }
+      return {
+        label: dpRecord.label,
+        value: dpRecord.value,
+        ...(typeof dpRecord.series === 'string' ? { series: dpRecord.series } : {}),
+        ...(typeof dpRecord.tooltip === 'string' ? { tooltip: dpRecord.tooltip } : {}),
+        ...(typeof dpRecord.color === 'string' ? { color: dpRecord.color } : {}),
+      }
+    })
+    keyframes.push({ time: record.time as number, dataPoints })
+  }
+  return keyframes.sort((a, b) => a.time - b.time)
+}
+
 function freezeComponents(components: NodeComponents): NodeComponents {
   const frozen: NodeComponents = {
     camera: components.camera ? Object.freeze({ ...components.camera }) : undefined,
@@ -347,6 +465,22 @@ function freezeComponents(components: NodeComponents): NodeComponents {
           columnMapping: Object.freeze({ ...components.table.columnMapping }),
           cellSpans: Object.freeze({ ...components.table.cellSpans }),
         })
+      : undefined,
+    chart: components.chart
+      ? {
+          kind: 'chart' as const,
+          chartType: components.chart.chartType,
+          dataSourceId: components.chart.dataSourceId,
+          visualConfig: Object.freeze({ ...components.chart.visualConfig }) as VisualConfig,
+          dataKeyframes: components.chart.dataKeyframes.map((kf) =>
+            Object.freeze({
+              time: kf.time,
+              dataPoints: kf.dataPoints.map((dp) => Object.freeze({ ...dp })),
+            }),
+          ),
+          _dirty: components.chart._dirty,
+          // NOTE: chart component is NOT frozen — _dirty must remain mutable
+        }
       : undefined,
   }
   return Object.freeze(frozen)
