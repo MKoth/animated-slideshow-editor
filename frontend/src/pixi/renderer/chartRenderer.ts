@@ -9,6 +9,7 @@ export type ResolveDataSource = (dataSourceId: string) => readonly DataPoint[] |
 
 export const CHART_DEFAULT_WIDTH = 400
 export const CHART_DEFAULT_HEIGHT = 300
+const LARGE_DATASET_THRESHOLD = 1000
 
 const chartSpriteByContainer = new WeakMap<PixiContainer, PixiSprite>()
 
@@ -110,6 +111,14 @@ function buildChartSvg(
   bg.setAttribute('fill', 'white')
   svg.appendChild(bg)
 
+  if (data.length === 0) {
+    renderEmptyState(svg, width, height, config)
+    return svg
+  }
+
+  const processedData =
+    data.length > LARGE_DATASET_THRESHOLD ? downsampleData(data, LARGE_DATASET_THRESHOLD) : data
+
   const legendGroup = createLegendGroup(
     config.legendPosition,
     width,
@@ -119,7 +128,7 @@ function buildChartSvg(
     legendHeight,
   )
   if (legendGroup) {
-    const seriesNames = [...new Set(data.map((d) => d.series ?? d.label))]
+    const seriesNames = [...new Set(processedData.map((d) => d.series ?? d.label))]
     if (seriesNames.length > 1) {
       populateLegend(legendGroup, seriesNames, colors, config.legendPosition, config)
     }
@@ -132,20 +141,61 @@ function buildChartSvg(
 
   switch (chart.chartType) {
     case 'bar':
-      renderBarChart(g, data, chart, colors, chartWidth, chartHeight)
+      renderBarChart(g, processedData, chart, colors, chartWidth, chartHeight)
       break
     case 'line':
-      renderLineChart(g, data, chart, colors, chartWidth, chartHeight)
+      renderLineChart(g, processedData, chart, colors, chartWidth, chartHeight)
       break
     case 'pie':
-      renderPieChart(g, data, colors, chartWidth, chartHeight)
+      renderPieChart(g, processedData, colors, chartWidth, chartHeight)
       break
     case 'area':
-      renderAreaChart(g, data, chart, colors, chartWidth, chartHeight)
+      renderAreaChart(g, processedData, chart, colors, chartWidth, chartHeight)
       break
   }
 
   return svg
+}
+
+function renderEmptyState(
+  svg: SVGElement,
+  width: number,
+  height: number,
+  config: VisualConfig,
+): void {
+  const text = document.createElementNS('http://www.w3.org/2000/svg', 'text')
+  text.setAttribute('x', String(width / 2))
+  text.setAttribute('y', String(height / 2))
+  text.setAttribute('text-anchor', 'middle')
+  text.setAttribute('dominant-baseline', 'middle')
+  text.setAttribute('fill', '#999999')
+  text.setAttribute('font-family', config.fontFamily)
+  text.setAttribute('font-size', String(config.fontSize))
+  text.textContent = 'No data available'
+  svg.appendChild(text)
+}
+
+function downsampleData(data: readonly DataPoint[], targetSize: number): DataPoint[] {
+  if (data.length <= targetSize) {
+    return [...data]
+  }
+
+  const step = data.length / targetSize
+  const result: DataPoint[] = []
+  for (let i = 0; i < targetSize; i++) {
+    const startIdx = Math.floor(i * step)
+    const endIdx = Math.min(Math.floor((i + 1) * step), data.length)
+    const chunk = data.slice(startIdx, endIdx)
+    if (chunk.length === 0) continue
+
+    const avgValue = chunk.reduce((sum, p) => sum + p.value, 0) / chunk.length
+    const representative = chunk[0]
+    result.push({
+      ...representative,
+      value: avgValue,
+    })
+  }
+  return result
 }
 
 function renderBarChart(

@@ -5,14 +5,8 @@ import type { TableComponent } from '../../engine/components'
 function makeTable(overrides: Partial<TableComponent> = {}): TableComponent {
   return {
     kind: 'table',
-    columns: [
-      { width: 100 },
-      { width: 200 },
-    ],
-    rows: [
-      { width: 30 },
-      { width: 30 },
-    ],
+    columns: [{ width: 100 }, { width: 200 }],
+    rows: [{ width: 30 }, { width: 30 }],
     gap: 0,
     cellPadding: 0,
     borderWidth: 0,
@@ -89,7 +83,10 @@ describe('computeTableLayout', () => {
 
   it('respects minWidth for auto columns', () => {
     const table = makeTable({
-      columns: [{ width: 'auto', minWidth: 120 }, { width: 'auto', minWidth: 80 }],
+      columns: [
+        { width: 'auto', minWidth: 120 },
+        { width: 'auto', minWidth: 80 },
+      ],
     })
     const layout = computeTableLayout(table, 300)
 
@@ -135,6 +132,89 @@ describe('computeTableLayout', () => {
     expect(cell).toBeDefined()
     expect(cell!.width).toBe(100)
     expect(cell!.height).toBe(30)
+  })
+
+  it('does not include covered cells when a cell spans multiple columns', () => {
+    const table = makeTable({
+      columns: [{ width: 100 }, { width: 100 }, { width: 100 }],
+      rows: [{ width: 30 }],
+      cellSpans: { '0,0': { colSpan: 3, rowSpan: 1 } },
+    })
+    const layout = computeTableLayout(table, 300)
+
+    expect(layout.cells.has('0,0')).toBe(true)
+    expect(layout.cells.has('0,1')).toBe(false)
+    expect(layout.cells.has('0,2')).toBe(false)
+    expect(layout.cells.size).toBe(1)
+
+    const cell = layout.cells.get('0,0')
+    expect(cell).toBeDefined()
+    expect(cell!.width).toBe(300)
+  })
+
+  it('does not include covered cells when a cell spans multiple rows', () => {
+    const table = makeTable({
+      columns: [{ width: 100 }, { width: 100 }],
+      rows: [{ width: 30 }, { width: 30 }, { width: 30 }],
+      cellSpans: { '0,0': { colSpan: 1, rowSpan: 3 } },
+    })
+    const layout = computeTableLayout(table, 200)
+
+    expect(layout.cells.has('0,0')).toBe(true)
+    expect(layout.cells.has('1,0')).toBe(false)
+    expect(layout.cells.has('2,0')).toBe(false)
+    expect(layout.cells.has('0,1')).toBe(true)
+    expect(layout.cells.has('1,1')).toBe(true)
+    expect(layout.cells.has('2,1')).toBe(true)
+    expect(layout.cells.size).toBe(4)
+
+    const cell = layout.cells.get('0,0')
+    expect(cell).toBeDefined()
+    expect(cell!.height).toBe(90)
+  })
+
+  it('handles multiple independent spans', () => {
+    const table = makeTable({
+      columns: [{ width: 100 }, { width: 100 }, { width: 100 }],
+      rows: [{ width: 30 }, { width: 30 }],
+      cellSpans: {
+        '0,0': { colSpan: 2, rowSpan: 1 },
+        '1,1': { colSpan: 2, rowSpan: 1 },
+      },
+    })
+    const layout = computeTableLayout(table, 300)
+
+    expect(layout.cells.has('0,0')).toBe(true)
+    expect(layout.cells.has('0,1')).toBe(false)
+    expect(layout.cells.has('0,2')).toBe(true)
+    expect(layout.cells.has('1,0')).toBe(true)
+    expect(layout.cells.has('1,1')).toBe(true)
+    expect(layout.cells.has('1,2')).toBe(false)
+    expect(layout.cells.size).toBe(4)
+
+    const cell00 = layout.cells.get('0,0')
+    expect(cell00!.width).toBe(200)
+
+    const cell11 = layout.cells.get('1,1')
+    expect(cell11!.width).toBe(200)
+  })
+
+  it('does not affect column widths when using spans (layout-only)', () => {
+    const table = makeTable({
+      columns: [{ width: 100 }, { width: 200 }, { width: 150 }],
+      rows: [{ width: 30 }, { width: 30 }],
+      cellSpans: { '0,0': { colSpan: 2, rowSpan: 1 } },
+    })
+    const layout = computeTableLayout(table, 450)
+
+    expect(layout.columns).toEqual([100, 200, 150])
+
+    const cell00 = layout.cells.get('0,0')
+    expect(cell00!.width).toBe(100 + 200)
+
+    const cell02 = layout.cells.get('0,2')
+    expect(cell02).toBeDefined()
+    expect(cell02!.width).toBe(150)
   })
 
   it('handles single column and row', () => {

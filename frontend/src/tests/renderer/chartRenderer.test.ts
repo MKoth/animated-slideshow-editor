@@ -401,4 +401,233 @@ describe('ChartRenderer', () => {
 
     expect(sprite?.texture).toBe(initialTexture)
   })
+
+  it('renders empty data placeholder instead of crashing', async () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'Demo' })
+    engine.createSlide('Slide 1')
+    const slide = engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('Slide was not created')
+    }
+
+    engine.embedDataSource({
+      id: 'ds-empty',
+      name: 'Empty Data',
+      dataPoints: [],
+    })
+
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'EmptyChart', {
+      components: {
+        chart: {
+          kind: 'chart',
+          chartType: 'bar',
+          dataSourceId: 'ds-empty',
+          visualConfig: {
+            colors: [],
+            axisLabels: { x: '', y: '' },
+            legendPosition: 'none',
+            padding: 0,
+            fontFamily: 'sans-serif',
+            fontSize: 12,
+          },
+          dataLabels: [],
+          _dirty: false,
+        },
+      },
+    })
+
+    const { app } = await mountRenderer(engine)
+    const root = findByLabel(worldOf(app), 'Root')
+    const chart = findByLabel(root ?? { children: [] }, 'EmptyChart')
+    expect(chart).toBeDefined()
+
+    const placeholder = findChartPlaceholder(chart)
+    expect(placeholder).toBeDefined()
+  })
+
+  it('renders single data point correctly for bar chart', async () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'Demo' })
+    engine.createSlide('Slide 1')
+    const slide = engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('Slide was not created')
+    }
+
+    engine.embedDataSource({
+      id: 'ds-single',
+      name: 'Single Point',
+      dataPoints: [{ label: 'Only', value: 42 }],
+    })
+
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'SingleChart', {
+      components: {
+        chart: {
+          kind: 'chart',
+          chartType: 'bar',
+          dataSourceId: 'ds-single',
+          visualConfig: {
+            colors: [],
+            axisLabels: { x: '', y: '' },
+            legendPosition: 'none',
+            padding: 0,
+            fontFamily: 'sans-serif',
+            fontSize: 12,
+          },
+          dataLabels: [],
+          _dirty: false,
+        },
+      },
+    })
+
+    const { app } = await mountRenderer(engine)
+    const root = findByLabel(worldOf(app), 'Root')
+    const chart = findByLabel(root ?? { children: [] }, 'SingleChart')
+    expect(chart).toBeDefined()
+
+    const placeholder = findChartPlaceholder(chart)
+    const sprite = placeholder?.children.find((child) => child.kind === 'sprite')
+    expect(sprite).toBeDefined()
+  })
+
+  it('renders single data point correctly for pie chart', async () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'Demo' })
+    engine.createSlide('Slide 1')
+    const slide = engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('Slide was not created')
+    }
+
+    engine.embedDataSource({
+      id: 'ds-single-pie',
+      name: 'Single Pie',
+      dataPoints: [{ label: 'Only', value: 100 }],
+    })
+
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'SinglePieChart', {
+      components: {
+        chart: {
+          kind: 'chart',
+          chartType: 'pie',
+          dataSourceId: 'ds-single-pie',
+          visualConfig: {
+            colors: [],
+            axisLabels: { x: '', y: '' },
+            legendPosition: 'none',
+            padding: 0,
+            fontFamily: 'sans-serif',
+            fontSize: 12,
+          },
+          dataLabels: [],
+          _dirty: false,
+        },
+      },
+    })
+
+    const { app } = await mountRenderer(engine)
+    const root = findByLabel(worldOf(app), 'Root')
+    const chart = findByLabel(root ?? { children: [] }, 'SinglePieChart')
+    expect(chart).toBeDefined()
+
+    const placeholder = findChartPlaceholder(chart)
+    const sprite = placeholder?.children.find((child) => child.kind === 'sprite')
+    expect(sprite).toBeDefined()
+  })
+
+  it('renders single data point correctly for line chart', async () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'Demo' })
+    engine.createSlide('Slide 1')
+    const slide = engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('Slide was not created')
+    }
+
+    engine.embedDataSource({
+      id: 'ds-single-line',
+      name: 'Single Line',
+      dataPoints: [{ label: 'Only', value: 50 }],
+    })
+
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'SingleLineChart', {
+      components: {
+        chart: {
+          kind: 'chart',
+          chartType: 'line',
+          dataSourceId: 'ds-single-line',
+          visualConfig: {
+            colors: [],
+            axisLabels: { x: '', y: '' },
+            legendPosition: 'none',
+            padding: 0,
+            fontFamily: 'sans-serif',
+            fontSize: 12,
+          },
+          dataLabels: [],
+          _dirty: false,
+        },
+      },
+    })
+
+    const { app } = await mountRenderer(engine)
+    const root = findByLabel(worldOf(app), 'Root')
+    const chart = findByLabel(root ?? { children: [] }, 'SingleLineChart')
+    expect(chart).toBeDefined()
+
+    const placeholder = findChartPlaceholder(chart)
+    const sprite = placeholder?.children.find((child) => child.kind === 'sprite')
+    expect(sprite).toBeDefined()
+  })
+
+  it('renders large dataset without crashing', async () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'Demo' })
+    engine.createSlide('Slide 1')
+    const slide = engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('Slide was not created')
+    }
+
+    const largeDataPoints = Array.from({ length: 2000 }, (_, i) => ({
+      label: `Item ${i}`,
+      value: Math.random() * 100,
+    }))
+
+    engine.embedDataSource({
+      id: 'ds-large',
+      name: 'Large Data',
+      dataPoints: largeDataPoints,
+    })
+
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'LargeChart', {
+      components: {
+        chart: {
+          kind: 'chart',
+          chartType: 'bar',
+          dataSourceId: 'ds-large',
+          visualConfig: {
+            colors: [],
+            axisLabels: { x: '', y: '' },
+            legendPosition: 'none',
+            padding: 0,
+            fontFamily: 'sans-serif',
+            fontSize: 12,
+          },
+          dataLabels: [],
+          _dirty: false,
+        },
+      },
+    })
+
+    const { app } = await mountRenderer(engine)
+    const root = findByLabel(worldOf(app), 'Root')
+    const chart = findByLabel(root ?? { children: [] }, 'LargeChart')
+    expect(chart).toBeDefined()
+
+    const placeholder = findChartPlaceholder(chart)
+    const sprite = placeholder?.children.find((child) => child.kind === 'sprite')
+    expect(sprite).toBeDefined()
+  })
 })

@@ -50,10 +50,11 @@ export class TableLayoutCache {
   }
 }
 
-export function computeTableLayout(
-  table: TableComponent,
-  availableWidth: number,
-): TableLayout {
+function cellStride(colWidth: number, bw: number, cp: number): number {
+  return colWidth + bw * 2 + cp * 2
+}
+
+export function computeTableLayout(table: TableComponent, availableWidth: number): TableLayout {
   const { columns, rows, gap, cellPadding, borderWidth } = table
   const bw = borderWidth
   const cp = cellPadding
@@ -69,18 +70,35 @@ export function computeTableLayout(
   const rowHeights = resolveDimensions(rows, 0, 0)
 
   const cells = new Map<string, CellRect>()
+  const spanCovered = new Set<string>()
   let cursorY = bw
 
   for (let r = 0; r < rowsCount; r++) {
     let cursorX = bw
     for (let c = 0; c < colsCount; c++) {
       const spanKey = `${r},${c}`
+
+      if (spanCovered.has(spanKey)) {
+        cursorX += cellStride(colWidths[c], bw, cp)
+        if (c < colsCount - 1) cursorX += gap
+        continue
+      }
+
       const span = table.cellSpans[spanKey]
       let spanWidth = 0
       let spanHeight = 0
 
       const colCount = span ? Math.min(span.colSpan, colsCount - c) : 1
       const rowCount = span ? Math.min(span.rowSpan, rowsCount - r) : 1
+
+      if (colCount > 1 || rowCount > 1) {
+        for (let sr = 0; sr < rowCount; sr++) {
+          for (let sc = 0; sc < colCount; sc++) {
+            if (sr === 0 && sc === 0) continue
+            spanCovered.add(`${r + sr},${c + sc}`)
+          }
+        }
+      }
 
       for (let sc = 0; sc < colCount; sc++) {
         spanWidth += colWidths[c + sc]
@@ -101,10 +119,10 @@ export function computeTableLayout(
         height: spanHeight,
       })
 
-      cursorX += colWidths[c] + bw * 2 + cp * 2
+      cursorX += cellStride(colWidths[c], bw, cp)
       if (c < colsCount - 1) cursorX += gap
     }
-    cursorY += rowHeights[r] + bw * 2 + cp * 2
+    cursorY += cellStride(rowHeights[r], bw, cp)
     if (r < rowsCount - 1) cursorY += gap
   }
 
