@@ -270,3 +270,8 @@ export { SetTextFontSizeCommand } from './setTextFontSizeCommand'
 export type { SetTextFontSizeInverse, SetTextFontSizeParameters } from './setTextFontSizeCommand'
 export { SetTextAlignmentCommand } from './setTextAlignmentCommand'
 export type { SetTextAlignmentInverse, SetTextAlignmentParameters } from './setTextAlignmentCommand'
+export { SplitIntoMorphemesCommand } from './splitIntoMorphemesCommand'
+export type {
+  SplitIntoMorphemesInverse,
+  SplitIntoMorphemesParameters,
+} from './splitIntoMorphemesCommand'
