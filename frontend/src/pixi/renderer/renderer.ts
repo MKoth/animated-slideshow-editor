@@ -667,6 +667,9 @@ export class Renderer {
         sceneRenderer.handleMeshChanged(event.nodeId)
         this.#meshOverlay?.redraw()
         break
+      case 'TableChanged':
+        sceneRenderer.handleTableChanged(event.nodeId)
+        break
       case 'IKTargetChanged':
       case 'IKPoleTargetChanged':
         this.#handleTimeChanged()

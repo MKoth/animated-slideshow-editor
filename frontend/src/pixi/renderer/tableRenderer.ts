@@ -64,6 +64,8 @@ function populateTable(
     height: layout.totalHeight,
   })
 
+  group.pivot.set(layout.totalWidth / 2, layout.totalHeight / 2)
+
   const border = createBorder(pixi, table, layout)
   group.addChild(border)
 
