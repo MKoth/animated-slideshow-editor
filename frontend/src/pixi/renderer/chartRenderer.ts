@@ -37,6 +37,7 @@ export function createChartContainer(pixi: RendererPixi, node: SceneNode): PixiC
 
   const group = new pixi.Container()
   group.label = `chart:${node.name}`
+  group.pivot.set(CHART_DEFAULT_WIDTH / 2, CHART_DEFAULT_HEIGHT / 2)
 
   const texture = pixi.Texture.from('')
   const sprite = new pixi.Sprite(texture)
