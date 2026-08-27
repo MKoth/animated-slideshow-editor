@@ -30,7 +30,7 @@ import { DEFAULT_MATERIAL_PARAMETERS } from './materialResolution'
 import type { MaterialDefinition } from './materialDefinition'
 import { ClipDefinition } from './clipDefinition'
 
-export const LESSON_VERSION = 1
+export const LESSON_VERSION = 2
 
 export function parseClipsFromLessonJSON(json: LessonJSON): ClipDefinition[] {
   const clipsJson = json.clips ?? json.library?.clips
@@ -135,9 +135,9 @@ export function validate(json: unknown): string[] {
   if (!isRecord(json)) {
     return ['Invalid lesson JSON: expected an object with version, project, and slides']
   }
-  if (json.version !== LESSON_VERSION) {
+  if (json.version !== LESSON_VERSION && json.version !== 1) {
     return [
-      `Invalid lesson JSON: unsupported version ${String(json.version)}. Only version ${LESSON_VERSION} is supported.`,
+      `Invalid lesson JSON: unsupported version ${String(json.version)}. Only versions 1 and ${LESSON_VERSION} are supported.`,
     ]
   }
   const project = json.project
@@ -379,6 +379,32 @@ function validateNode(errors: string[], nodeJson: unknown, nodeIds: Set<string>)
       errors.push(`Node "${String(nodeJson.id)}" has an invalid text alignment`)
     }
   }
+  if (components.table !== undefined) {
+    const table = components.table
+    if (!isRecord(table) || table.kind !== 'table') {
+      errors.push(`Node "${String(nodeJson.id)}" has an invalid table component`)
+    } else {
+      if (!Array.isArray(table.columns) || table.columns.length === 0) {
+        errors.push(`Node "${String(nodeJson.id)}" table must have a non-empty columns array`)
+      }
+      if (!Array.isArray(table.rows) || table.rows.length === 0) {
+        errors.push(`Node "${String(nodeJson.id)}" table must have a non-empty rows array`)
+      }
+    }
+  }
+  if (components.chart !== undefined) {
+    const chart = components.chart
+    if (!isRecord(chart) || chart.kind !== 'chart') {
+      errors.push(`Node "${String(nodeJson.id)}" has an invalid chart component`)
+    } else {
+      if (typeof chart.chartType !== 'string' || chart.chartType === '') {
+        errors.push(`Node "${String(nodeJson.id)}" chart must have a non-empty chartType`)
+      }
+      if (typeof chart.dataSourceId !== 'string' || chart.dataSourceId === '') {
+        errors.push(`Node "${String(nodeJson.id)}" chart must have a non-empty dataSourceId`)
+      }
+    }
+  }
 }
 
 function validateAnimation(
@@ -475,6 +501,36 @@ function validateAnimation(
             isOverrideValue(value)
               ? null
               : `Keyframe "${id}" value must be a non-empty string, a finite number, a boolean, or a number array`,
+        )
+      }
+    }
+    const dataLabelTracks = entry.dataLabelTracks
+    if (dataLabelTracks !== undefined) {
+      if (!Array.isArray(dataLabelTracks)) {
+        errors.push('Node animation dataLabelTracks must be an array')
+        continue
+      }
+      for (const track of dataLabelTracks) {
+        if (!isRecord(track)) {
+          errors.push('Data label track must be an object')
+          continue
+        }
+        const label = requireNonEmptyString(errors, track.label, 'Data label track label')
+        if (label === undefined) {
+          continue
+        }
+        validateKeyframeList(
+          errors,
+          track.keyframes,
+          `Data label track "${label}"`,
+          duration,
+          keyframeIds,
+          (value, id) => {
+            if (typeof value !== 'number' || !Number.isFinite(value)) {
+              return `Keyframe "${id}" value must be a finite number`
+            }
+            return null
+          },
         )
       }
     }

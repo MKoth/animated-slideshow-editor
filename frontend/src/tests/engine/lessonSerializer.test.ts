@@ -50,7 +50,7 @@ describe('lesson serializer', () => {
     const json = projectJson(engine)
 
     expect(json).toEqual({
-      version: 1,
+      version: 2,
       project: {
         id: project.id,
         name: 'Lesson',
@@ -226,7 +226,7 @@ describe('lesson serializer', () => {
     restored.restoreFromJSON(json)
 
     expect(restored.toJSON()).toEqual(engine.toJSON())
-    expect(restored.toJSON().version).toBe(1)
+    expect(restored.toJSON().version).toBe(2)
   })
 
   it('validate returns no errors for a serialized project', () => {
@@ -504,7 +504,7 @@ describe('lesson serializer', () => {
   })
 
   it('validate rejects unsupported versions', () => {
-    expect(validate({ version: 2, project: {}, slides: [] })).toEqual([
+    expect(validate({ version: 3, project: {}, slides: [] })).toEqual([
       expect.stringMatching(/version/i),
     ])
     expect(validate({ project: {}, slides: [] })).toEqual([expect.stringMatching(/version/i)])
@@ -563,13 +563,13 @@ describe('lesson serializer', () => {
     expect(upgraded.id).toBe(plain.id)
     expect(upgraded.slides.map((slide) => slide.id)).toEqual(plain.slides.map((slide) => slide.id))
     expect(upgraded.slides[0]?.scene.root.id).toBe(plain.slides[0]?.scene.root.id)
-    expect(() => upgrade(JSON.stringify({ version: 2, project: {}, slides: [] }))).toThrow(
+    expect(() => upgrade(JSON.stringify({ version: 3, project: {}, slides: [] }))).toThrow(
       /version/i,
     )
   })
 
-  it('exposes LESSON_VERSION = 1', () => {
-    expect(LESSON_VERSION).toBe(1)
+  it('exposes LESSON_VERSION = 2', () => {
+    expect(LESSON_VERSION).toBe(2)
   })
 })
 
@@ -628,7 +628,7 @@ describe('lesson serializer embedded library', () => {
       materials: [],
       shaders: [],
     })
-    expect(json.version).toBe(1)
+    expect(json.version).toBe(2)
   })
 
   it('round-trips ids and bytes through deserialize', () => {

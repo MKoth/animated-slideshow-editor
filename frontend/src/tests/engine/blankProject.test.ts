@@ -22,11 +22,11 @@ describe('createBlankProject', () => {
     expect(first.id).not.toBe(second.id)
   })
 
-  it('serializes as lesson version 1', () => {
+  it('serializes as lesson version 2', () => {
     const { project, clips } = createBlankProject('A')
     const json = JSON.parse(serialize(project, clips)) as { version: number }
 
-    expect(json.version).toBe(1)
+    expect(json.version).toBe(2)
   })
 
   it('starts with exactly one slide named "Slide 1" at the default duration', () => {

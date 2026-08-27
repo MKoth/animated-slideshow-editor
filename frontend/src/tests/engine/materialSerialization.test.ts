@@ -625,7 +625,7 @@ describe('migration', () => {
     expect(restoredNode?.material).toEqual(defaultMaterial())
   })
 
-  it('keeps version 1 and never rewrites the file when definitions change', () => {
+  it('keeps version 2 and never rewrites the file when definitions change', () => {
     const { engine } = engineWithProject()
     engine.registerMaterialDefinition(MATERIAL_A.id, MATERIAL_A.name)
     engine.registerShaderDefinition(SHADER_A.id, SHADER_A.name)
@@ -635,7 +635,7 @@ describe('migration', () => {
     engine.getShaderDefinition(SHADER_A.id)
 
     const after = nodeJson(engine)
-    expect(after.version).toBe(1)
+    expect(after.version).toBe(2)
     expect(after).toEqual(before)
     expect(after.library).toBeUndefined()
   })
@@ -649,7 +649,7 @@ describe('migration', () => {
     const text = serialize(migrated)
     const saved = JSON.parse(text) as LessonJSON
 
-    expect(saved.version).toBe(1)
+    expect(saved.version).toBe(2)
     expect(saved.library).toBeUndefined()
     for (const slideJson of saved.slides) {
       for (const nodeJsonEntry of slideJson.scene.nodes) {

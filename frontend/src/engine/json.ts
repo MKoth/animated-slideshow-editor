@@ -60,6 +60,22 @@ export type NodeComponentsJSON = {
       Record<string, { readonly colSpan: number; readonly rowSpan: number }>
     >
   }
+  readonly chart?: {
+    readonly kind: 'chart'
+    readonly chartType: string
+    readonly dataSourceId: string
+    readonly visualConfig?: {
+      readonly colors?: readonly string[]
+      readonly axisLabels?: { readonly x: string; readonly y: string }
+      readonly legendPosition?: string
+      readonly padding?: number
+      readonly fontFamily?: string
+      readonly fontSize?: number
+    }
+    readonly dataLabels?: readonly string[]
+    readonly axisMin?: number
+    readonly axisMax?: number
+  }
 }
 
 export type MaterialJSON = {
@@ -303,7 +319,7 @@ export type ConstraintManagerJSON = {
 }
 
 export type LessonJSON = {
-  readonly version: 1
+  readonly version: 1 | 2
   readonly project: LessonProjectJSON
   readonly slides: readonly SlideJSON[]
   readonly clips?: readonly ClipJSON[]
