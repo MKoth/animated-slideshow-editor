@@ -3,8 +3,10 @@ import type { SceneNode } from '../../engine'
 import type { EnginePublic } from '../../engine'
 import type { ChartComponent, ChartType, VisualConfig } from '../../engine/components'
 import type { DispatchCommand } from '../../engine/commands'
-import { SetChartComponentCommand } from '../../engine/commands'
+import { SetChartComponentCommand, AddKeyframeCommand } from '../../engine/commands'
 import { runCommand } from './sectionHelpers'
+import { playheadTimeOf } from '../../app/keyframeActions'
+import { usePlaybackController } from '../../stores/playbackStore'
 
 function mergeChart(node: SceneNode, patch: Partial<ChartComponent>): ChartComponent {
   const c = node.components.chart!
@@ -19,23 +21,58 @@ function getDataSourceLabels(engine: EnginePublic, dataSourceId: string): string
   return []
 }
 
+function getDataSourceValue(engine: EnginePublic, dataSourceId: string, label: string): number {
+  const ds = engine.embeddedDataSources.find((d) => d.id === dataSourceId)
+  if (ds && 'dataPoints' in ds) {
+    const point = ds.dataPoints.find((p) => p.label === label)
+    return point?.value ?? 0
+  }
+  return 0
+}
+
+type PropertyState = 'static' | 'onKeyframe' | 'animated'
+
+function dataLabelState(
+  engine: EnginePublic,
+  nodeId: string,
+  label: string,
+  time: number,
+): PropertyState {
+  if (!engine.hasDataLabelTrack(nodeId, label)) {
+    return 'static'
+  }
+  const keyframes = engine.getDataLabelKeyframes(nodeId, label)
+  if (keyframes.length === 0) {
+    return 'static'
+  }
+  if (keyframes.some((kf) => kf.time === time)) {
+    return 'onKeyframe'
+  }
+  return 'animated'
+}
+
 export function ChartInspectorSection({
   target,
   engine,
   dispatch,
   notify,
   playing,
+  animationMode,
 }: {
   target: SceneNode
   engine: EnginePublic
   dispatch: DispatchCommand
   notify: (message: string) => void
   playing: boolean
+  animationMode: boolean
 }) {
   const chart = target.components.chart
   const [selectedLabel, setSelectedLabel] = useState('')
 
   if (!chart) return null
+
+  const slide = engine.getActiveSlide()
+  const currentTime = slide ? usePlaybackController.getState().getTime(slide.id) : 0
 
   const apply = (patch: Partial<ChartComponent>) => {
     runCommand(notify, () => {
@@ -108,6 +145,54 @@ export function ChartInspectorSection({
 
   const handleRemoveDataField = (label: string) => {
     apply({ dataLabels: chart.dataLabels.filter((l) => l !== label) })
+  }
+
+  const commitDataLabelValue = (label: string, rawValue: string) => {
+    const value = Number(rawValue)
+    if (!Number.isFinite(value)) {
+      return
+    }
+
+    if (animationMode && slide) {
+      const time = playheadTimeOf(engine, target.id) ?? 0
+      const existingKeyframes = engine.getDataLabelKeyframes(target.id, label)
+      const hasKeyframeAtTime = existingKeyframes.some((kf) => kf.time === time)
+
+      if (hasKeyframeAtTime) {
+        runCommand(notify, () => {
+          const existingKf = existingKeyframes.find((kf) => kf.time === time)
+          if (existingKf) {
+            return dispatch(
+              new AddKeyframeCommand({
+                target: { kind: 'dataLabel', nodeId: target.id, label },
+                time,
+                value,
+              }),
+            )
+          }
+          return null
+        })
+      } else {
+        runCommand(notify, () => {
+          return dispatch(
+            new AddKeyframeCommand({
+              target: { kind: 'dataLabel', nodeId: target.id, label },
+              time,
+              value,
+            }),
+          )
+        })
+      }
+    }
+  }
+
+  const getDataLabelValue = (label: string): number => {
+    if (animationMode && slide) {
+      const time = playheadTimeOf(engine, target.id) ?? 0
+      const evaluated = engine.evaluateDataLabels(target.id, time)
+      return evaluated.get(label) ?? getDataSourceValue(engine, chart.dataSourceId, label)
+    }
+    return getDataSourceValue(engine, chart.dataSourceId, label)
   }
 
   const dataSources = engine.embeddedDataSources.filter((ds) => !('nodes' in ds && 'edges' in ds))
@@ -279,19 +364,43 @@ export function ChartInspectorSection({
           </p>
         )}
 
-        {chart.dataLabels.map((label) => (
-          <div key={label} className="inspector-field">
-            <label className="inspector-field__label">{label}</label>
-            <button
-              className="inspector-field__remove"
-              aria-label={`Remove data field ${label}`}
-              disabled={playing}
-              onClick={() => handleRemoveDataField(label)}
-            >
-              ×
-            </button>
-          </div>
-        ))}
+        {chart.dataLabels.map((label) => {
+          const state = animationMode
+            ? dataLabelState(engine, target.id, label, currentTime)
+            : 'static'
+          const value = getDataLabelValue(label)
+
+          return (
+            <div key={label} className="inspector-field">
+              {state !== 'static' && (
+                <span
+                  className="inspector-field__indicator"
+                  data-state={state}
+                  title={state === 'animated' ? 'Animated' : 'Playhead on keyframe'}
+                >
+                  {state === 'animated' ? '●' : '◆'}
+                </span>
+              )}
+              <label className="inspector-field__label">{label}</label>
+              <input
+                className="inspector-field__input"
+                type="number"
+                aria-label={`Value for ${label}`}
+                disabled={playing}
+                value={value}
+                onChange={(e) => commitDataLabelValue(label, e.target.value)}
+              />
+              <button
+                className="inspector-field__remove"
+                aria-label={`Remove data field ${label}`}
+                disabled={playing}
+                onClick={() => handleRemoveDataField(label)}
+              >
+                ×
+              </button>
+            </div>
+          )
+        })}
 
         {unusedLabels.length > 0 && (
           <div className="inspector-field">

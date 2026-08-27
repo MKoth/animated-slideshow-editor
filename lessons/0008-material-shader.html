@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lesson 8: Material & Shader System</title>
+<link rel="stylesheet" href="../assets/lesson-style.html">
+<link rel="stylesheet" href="../assets/diagram-style.html">
+</head>
+<body>
+
+<span class="lesson-number">Lesson 8</span>
+<h1>Material &amp; Shader System</h1>
+<p class="subtitle">How nodes get their visual appearance — from tint to custom GLSL.</p>
+
+<h2>The Definition/Instance Pattern</h2>
+
+<p>Like assets and clips, materials follow the definition/instance split:</p>
+
+<table>
+  <tr><th>Concept</th><th>Lives in</th><th>Mutable?</th></tr>
+  <tr><td><strong>MaterialDefinition</strong></td><td>Backend library + embedded in project</td><td>No (immutable)</td></tr>
+  <tr><td><strong>MaterialInstance</strong></td><td>Each SceneNode</td><td>Yes (overrides)</td></tr>
+</table>
+
+<p>A node doesn't own a material — it <strong>references</strong> a definition and carries <strong>overrides</strong> for specific parameters.</p>
+
+<h2>MaterialDefinition <code>engine/materialDefinition.ts</code></h2>
+
+<p>21 lines. A frozen, reusable template:</p>
+
+<pre><code>class MaterialDefinition {
+  readonly id: string
+  readonly name: string
+  readonly parameters: readonly MaterialParameterDefault[]  // parameter definitions
+  readonly shaderId: string | null                           // optional GLSL shader
+}
+
+interface MaterialParameterDefault {
+  key: string        // parameter name
+  kind: string       // 'color' | 'number' | 'int' | 'bool' | 'vec2' | 'sampler2D'
+  default: MaterialOverrideValue  // initial value
+}</code></pre>
+
+<p>Every material definition carries two <strong>built-in parameters</strong>:</p>
+
+<table>
+  <tr><th>Key</th><th>Kind</th><th>Default</th><th>Effect</th></tr>
+  <tr><td><code>tint</code></td><td><code>color</code></td><td><code>#ffffff</code></td><td>Color multiply on the node's texture</td></tr>
+  <tr><td><code>opacityMultiplier</code></td><td><code>number</code></td><td><code>1</code></td><td>Multiplies with node opacity (0..1)</td></tr>
+</table>
+
+<p>Additional parameters are custom shader uniforms defined by the material's GLSL shader.</p>
+
+<h2>MaterialInstance <code>engine/materialInstance.ts</code></h2>
+
+<p>What each node carries:</p>
+
+<pre><code>interface MaterialInstance {
+  materialDefinitionId: string    // reference to definition
+  overrides: MaterialOverrides    // per-parameter value overrides
+}
+
+type MaterialOverrides = Readonly&lt;Record&lt;string, MaterialOverrideValue&gt;&gt;
+type MaterialOverrideValue = string | number | boolean | readonly number[]</code></pre>
+
+<p>The default material is <code>DEFAULT_MATERIAL_DEFINITION_ID</code> with empty overrides (white tint, full opacity).</p>
+
+<h2>Resolution <code>engine/materialResolution.ts</code></h2>
+
+<p>Given a definition's parameters and an instance's overrides, resolve the effective values:</p>
+
+<pre><code>resolveMaterial(parameters, overrides):
+  tint = overrides.tint ?? definition.default.tint ?? '#ffffff'
+  opacityMultiplier = clamp(overrides.opacityMultiplier ?? definition.default ?? 1, 0, 1)
+  return { tint, opacityMultiplier }
+
+resolveShaderUniforms(parameters, overrides):
+  for each parameter (except built-ins and samplers):
+    value = overrides[key] ?? parameter.default
+    store as { key, kind, value }
+  for each sampler2D parameter:
+    store as { key, assetDefinitionId }
+  return { source, keys, kinds, values, samplers, uTimeValue }</code></pre>
+
+<div class="callout">
+  <strong>Override wins.</strong> Instance overrides always take precedence over definition defaults. If an override exists, the definition default is ignored for that parameter.
+</div>
+
+<h2>Material Animation</h2>
+
+<p>Material parameters can be animated via <strong>material tracks</strong> on nodes — same keyframe model as transform properties. The evaluator merges:</p>
+
+<pre><code>1. Static overrides (node.material.overrides)
+2. Material track keyframes (animated at current time)
+3. Clip material channel overrides (from clip instances)</code></pre>
+
+<p>Later layers win for the same key. Discrete kinds (<code>int</code>, <code>bool</code>, <code>sampler2D</code>) use hold interpolation; continuous kinds interpolate linearly.</p>
+
+<h2>ShaderDefinition <code>engine/shaderDefinition.ts</code></h2>
+
+<p>14 lines. Holds the GLSL source and its uniform defaults:</p>
+
+<pre><code>class ShaderDefinition {
+  readonly id: string
+  readonly name: string
+  readonly parameters: readonly MaterialParameterDefault[]  // uniform defaults
+}</code></pre>
+
+<p>The GLSL source is stored in the backend library and resolved at render time via <code>resolveShaderSource(shaderId)</code>.</p>
+
+<h2>Two Shader Levels</h2>
+
+<h3>1. Per-Node Shaders</h3>
+
+<p>A material definition can reference a <code>shaderId</code>. When set, the renderer applies a <strong>Pixi filter</strong> to the node's placeholder container:</p>
+
+<pre><code>// In SceneRenderer.#applyNodeShader():
+if (shaderSource) {
+  filter = createNodeShaderFilter(pixi, programCache, source, scratch)
+  applyFilterUniforms(filter, scratch)
+  bindFilterSamplers(filter, samplers, resolveAssetUrl, textureCache)
+  placeholder.filters = [filter]
+}</code></pre>
+
+<p>The shader receives uniforms from the material definition + overrides + animation. The <code>uTime</code> uniform is automatically injected if the shader declares it.</p>
+
+<h3>2. Fullscreen Shaders</h3>
+
+<p>A slide can reference a <strong>fullscreen shader</strong> that processes the entire scene:</p>
+
+<pre><code>// In FullscreenPass:
+1. Render scene to offscreen RenderTexture
+2. Create fullscreen quad sampling that texture as uTexture
+3. Apply shader filter to the quad
+4. Quad composites to canvas</code></pre>
+
+<p>Fullscreen shaders receive:</p>
+<ul>
+  <li><code>uTexture</code> — the rendered scene (reserved, built-in)</li>
+  <li><code>uTime</code> — slide playhead time (reserved, built-in)</li>
+  <li>Custom uniforms from the shader definition + slide overrides</li>
+</ul>
+
+<div class="diagram">Scene renders to offscreen texture
+  → Fullscreen quad samples texture as uTexture
+  → Shader filter applies GLSL effects
+  → Result composites to canvas</div>
+
+<h2>Sampler Binding <code>pixi/renderer/samplerBinding.ts</code></h2>
+
+<p>Shader uniforms of kind <code>sampler2D</code> are bound to <strong>asset textures</strong>:</p>
+
+<pre><code>interface ShaderSamplerBinding {
+  key: string                    // uniform name (e.g. 'uDiffuse')
+  assetDefinitionId: string | null  // asset to sample
+}</code></pre>
+
+<p>The sampler binding resolves the asset definition ID to a texture via the <code>TextureCache</code>, then binds it to the filter's texture resource.</p>
+
+<h2>Resolution in the Renderer</h2>
+
+<p>On every evaluation, the renderer resolves both material and shader:</p>
+
+<pre><code>#evaluateAndApply(nodeId):
+  // Material
+  overrides = engine.evaluateMaterialOverrides(nodeId, time)
+  material = resolveMaterial(definition.parameters, overrides)
+  
+  // Shader
+  resolveShader(definition.parameters, overrides, time, shaderScratch)
+  shaderChanged = applyNodeShader(nodeId, container, shaderScratch)
+  
+  // Apply if changed
+  if (materialChanged) applyMaterialTint(container, material.tint)
+  if (stateChanged) applyEvaluatedState(container, state, material.opacityMultiplier)</code></pre>
+
+<h2>Key Design Decisions</h2>
+
+<ol>
+  <li><strong>Definition/instance separation.</strong> Shared definitions, per-node overrides. Changing a definition affects all referencing nodes.</li>
+  <li><strong>Built-in parameters.</strong> <code>tint</code> and <code>opacityMultiplier</code> are always available, even without a custom shader.</li>
+  <li><strong>Override wins.</strong> Instance overrides always take precedence over definition defaults.</li>
+  <li><strong>Two shader levels.</strong> Per-node (filter on one container) and fullscreen (post-processing over entire scene).</li>
+  <li><strong>Reserved uniforms.</strong> <code>uTexture</code> (scene texture) and <code>uTime</code> (playhead) are built-in. Authors cannot define conflicting defaults.</li>
+  <li><strong>Material animation.</strong> Same keyframe model as transforms — animate any material parameter over time.</li>
+  <li><strong>Sampler2D → asset texture.</strong> Shader uniforms can reference asset definitions, resolved at render time.</li>
+</ol>
+
+<h2>What to Explore Next</h2>
+
+<ul>
+  <li><a href="../reference/material-shader-api.html">Reference: Material &amp; Shader API</a> — quick lookup for all types and resolution</li>
+  <li>Ask me about how the backend stores GLSL source, how the asset pipeline generates thumbnails, or how the fullscreen shader interacts with the export flow</li>
+</ul>
+
+<div class="callout">
+  <strong>Questions?</strong> Ask me about how material parameters animate, how sampler2D uniforms bind to textures, or how the fullscreen shader pass composites the scene.
+</div>
+
+</body>
+</html>

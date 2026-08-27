@@ -547,6 +547,7 @@ export function InspectorPanel({ width }: { width: number }) {
             dispatch={dispatch}
             notify={notify}
             playing={playing}
+            animationMode={animationMode}
           />
         )}
 

@@ -63,6 +63,8 @@ export interface EnginePublic {
   getKeyframes(nodeId: string, property: AnimationProperty): readonly Keyframe[]
   getMaterialKeyframes(nodeId: string, parameter: string): readonly Keyframe[]
   hasMaterialTrack(nodeId: string, parameter: string): boolean
+  hasDataLabelTrack(nodeId: string, label: string): boolean
+  getDataLabelKeyframes(nodeId: string, label: string): readonly Keyframe[]
   getAnimatableParameters(nodeId: string): AnimatableParameter[]
   evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState
   evaluateMaterialOverrides(

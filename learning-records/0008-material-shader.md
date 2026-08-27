@@ -1,0 +1,3 @@
+# Material/shader system understanding established
+
+The user now understands the material/shader architecture: the definition/instance pattern (shared definitions, per-node overrides), built-in parameters (tint, opacityMultiplier), the resolution pipeline (override wins over definition default), two shader levels (per-node Pixi filters and fullscreen post-processing), reserved uniforms (uTexture, uTime), sampler2D binding to asset textures, and material animation via material tracks. Key insight: the same keyframe model used for transforms animates material parameters — the engine treats them uniformly.

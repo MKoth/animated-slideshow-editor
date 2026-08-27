@@ -14,6 +14,7 @@ export interface TimelineMenuState {
   readonly nodeId: string
   readonly property?: AnimationProperty
   readonly parameter?: string
+  readonly label?: string
   readonly keyframeId?: string
 }
 

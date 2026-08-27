@@ -300,6 +300,16 @@ export class Engine {
     return this.#animations.hasMaterialTrack(nodeId, parameter)
   }
 
+  hasDataLabelTrack(nodeId: string, label: string): boolean {
+    const slide = this.getSlideOfNode(nodeId)
+    return slide.animation.node(nodeId)?.hasDataLabelTrack(label) ?? false
+  }
+
+  getDataLabelKeyframes(nodeId: string, label: string): readonly Keyframe[] {
+    const slide = this.getSlideOfNode(nodeId)
+    return slide.animation.node(nodeId)?.dataLabelKeyframes(label) ?? []
+  }
+
   getAnimatableParameters(nodeId: string): AnimatableParameter[] {
     const node = this.getNode(nodeId)
     const materialId = node.material.materialDefinitionId
@@ -1192,6 +1202,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getKeyframes: (nodeId, property) => engine.getKeyframes(nodeId, property),
     getMaterialKeyframes: (nodeId, parameter) => engine.getMaterialKeyframes(nodeId, parameter),
     hasMaterialTrack: (nodeId, parameter) => engine.hasMaterialTrack(nodeId, parameter),
+    hasDataLabelTrack: (nodeId, label) => engine.hasDataLabelTrack(nodeId, label),
+    getDataLabelKeyframes: (nodeId, label) => engine.getDataLabelKeyframes(nodeId, label),
     getAnimatableParameters: (nodeId) => engine.getAnimatableParameters(nodeId),
     evaluateNode: (nodeId, time, target) => engine.evaluateNode(nodeId, time, target),
     evaluateMaterialOverrides: (nodeId, time, target) =>

@@ -30,6 +30,13 @@ export interface MaterialSubtrackEntry {
   readonly depth: number
 }
 
+export interface DataLabelSubtrackEntry {
+  readonly kind: 'dataLabelSubtrack'
+  readonly node: SceneNode
+  readonly label: string
+  readonly depth: number
+}
+
 /** A bone node row — distinguished from regular node rows for UI styling. */
 export interface BoneTrackEntry {
   readonly kind: 'bone'
@@ -39,7 +46,12 @@ export interface BoneTrackEntry {
   readonly visible: boolean
 }
 
-export type TimelineRow = TrackRowEntry | SubtrackEntry | MaterialSubtrackEntry | BoneTrackEntry
+export type TimelineRow =
+  | TrackRowEntry
+  | SubtrackEntry
+  | MaterialSubtrackEntry
+  | DataLabelSubtrackEntry
+  | BoneTrackEntry
 
 export const PROPERTY_LABELS: Record<AnimationProperty, string> = {
   positionX: 'Position X',
@@ -119,6 +131,17 @@ export function timelineRows(
       }
       for (const parameter of materialParametersOf(entry.node, materialDefinitions)) {
         rows.push({ kind: 'materialSubtrack', node: entry.node, parameter, depth: entry.depth + 1 })
+      }
+      const chart = entry.node.components.chart
+      if (chart) {
+        for (const label of chart.dataLabels) {
+          rows.push({
+            kind: 'dataLabelSubtrack',
+            node: entry.node,
+            label,
+            depth: entry.depth + 1,
+          })
+        }
       }
     }
   }

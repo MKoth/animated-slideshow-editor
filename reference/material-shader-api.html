@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reference: Material & Shader API</title>
+<link rel="stylesheet" href="../assets/lesson-style.html">
+</head>
+<body>
+
+<span class="lesson-number">Reference</span>
+<h1>Material &amp; Shader API</h1>
+<p class="subtitle">Quick lookup for materials, shaders, resolution, and rendering.</p>
+
+<h2>MaterialDefinition</h2>
+
+<pre><code>class MaterialDefinition {
+  readonly id: string
+  readonly name: string
+  readonly parameters: readonly MaterialParameterDefault[]
+  readonly shaderId: string | null
+}
+
+interface MaterialParameterDefault {
+  key: string
+  kind: string       // 'color' | 'number' | 'int' | 'bool' | 'vec2' | 'sampler2D'
+  default: MaterialOverrideValue
+}
+</code></pre>
+
+<h2>Built-in Parameters</h2>
+
+<table>
+  <tr><th>Key</th><th>Kind</th><th>Default</th><th>Effect</th></tr>
+  <tr><td><code>tint</code></td><td><code>color</code></td><td><code>#ffffff</code></td><td>Color multiply on texture</td></tr>
+  <tr><td><code>opacityMultiplier</code></td><td><code>number</code></td><td><code>1</code></td><td>Multiplies node opacity</td></tr>
+  <tr><td><code>uTime</code></td><td><code>float</code></td><td>playhead time</td><td>Reserved for shaders</td></tr>
+</table>
+
+<h2>MaterialInstance</h2>
+
+<pre><code>interface MaterialInstance {
+  materialDefinitionId: string
+  overrides: MaterialOverrides
+}
+
+type MaterialOverrides = Readonly&lt;Record&lt;string, MaterialOverrideValue&gt;&gt;
+type MaterialOverrideValue = string | number | boolean | readonly number[]
+
+defaultMaterial() → { materialDefinitionId: DEFAULT_ID, overrides: {} }
+</code></pre>
+
+<h2>Resolution</h2>
+
+<pre><code>// Effective material (tint + opacity)
+resolveMaterial(parameters, overrides) → EffectiveMaterialScratch
+  tint = overrides.tint ?? definition.default
+  opacityMultiplier = clamp(overrides.opacity ?? definition.default, 0, 1)
+
+// Shader uniforms (all non-built-in parameters)
+resolveShaderUniforms(parameters, overrides, target, uTimeValue?) → EffectiveShaderScratch
+  For each parameter (except built-ins + samplers):
+    value = overrides[key] ?? parameter.default
+  For each sampler2D:
+    assetDefinitionId = overrides[key] ?? null
+
+// Single parameter resolution
+resolveParameterValue(parameters, overrides, key) → value | undefined
+  override wins over definition default
+</code></pre>
+
+<h2>ShaderDefinition</h2>
+
+<pre><code>class ShaderDefinition {
+  readonly id: string
+  readonly name: string
+  readonly parameters: readonly MaterialParameterDefault[]
+}
+</code></pre>
+
+<h2>EffectiveShaderScratch</h2>
+
+<pre><code>interface EffectiveShaderScratch {
+  source: string | null          // GLSL source code
+  keys: string[]                 // uniform names
+  kinds: string[]                // uniform types
+  values: MaterialOverrideValue[] // uniform values
+  samplers: ShaderSamplerBinding[] // sampler2D bindings
+  uTimeValue: number             // current playhead time
+}
+
+interface ShaderSamplerBinding {
+  key: string                    // uniform name
+  assetDefinitionId: string | null  // asset to sample
+}
+</code></pre>
+
+<h2>Renderer: Per-Node Shaders</h2>
+
+<pre><code>// SceneRenderer.#applyNodeShader()
+createNodeShaderFilter(pixi, programCache, source, scratch) → PixiFilter
+applyFilterUniforms(filter, scratch)  // write uniform values
+bindFilterSamplers(filter, samplers, resolveAssetUrl, textureCache)
+placeholder.filters = [filter]
+</code></pre>
+
+<h2>Renderer: Fullscreen Shaders</h2>
+
+<pre><code>class FullscreenPass {
+  update(source, scratch): void    // apply or deactivate
+  renderFrame(): void              // render scene to texture
+  resize(width, height): void      // keep texture sized
+  destroy(): void
+}
+
+resolveFullscreenShaderState(engine, resolveShaderSource, target, uTimeValue?)
+  → EffectiveShaderScratch
+  // Resolves: slide.fullscreenShader → definition defaults + overrides
+</code></pre>
+
+<div class="diagram">Fullscreen pass pipeline:
+1. Scene renders to offscreen RenderTexture
+2. Fullscreen quad samples texture as uTexture
+3. Shader filter applies GLSL effects
+4. Quad composites to canvas</div>
+
+<h2>Material Animation</h2>
+
+<pre><code>// Material tracks on NodeAnimation
+animation.materialKeyframes(parameter) → Keyframe[]
+animation.addMaterial(parameter, keyframe)
+animation.removeMaterial(parameter, keyframeId)
+
+// Resolution order (later wins):
+1. Static overrides (node.material.overrides)
+2. Material track keyframes (evaluated at time)
+3. Clip material channel overrides
+</code></pre>
+
+<h2>Key Parameter Kinds</h2>
+
+<table>
+  <tr><th>Kind</th><th>GLSL Type</th><th>Interpolation</th><th>Example</th></tr>
+  <tr><td><code>number</code></td><td><code>f32</code></td><td>Linear</td><td>0.5, 1.0</td></tr>
+  <tr><td><code>color</code></td><td><code>vec3</code></td><td>Linear</td><td>"#ff0000"</td></tr>
+  <tr><td><code>int</code></td><td><code>i32</code></td><td>Hold (discrete)</td><td>0, 1, 2</td></tr>
+  <tr><td><code>bool</code></td><td><code>i32</code></td><td>Hold (discrete)</td><td>true, false</td></tr>
+  <tr><td><code>vec2</code></td><td><code>vec2&lt;f32&gt;</code></td><td>Linear</td><td>[0.5, 0.5]</td></tr>
+  <tr><td><code>sampler2D</code></td><td>texture</td><td>Hold (discrete)</td><td>assetDefinitionId</td></tr>
+</table>
+
+<h2>Key Files</h2>
+
+<table>
+  <tr><th>File</th><th>Role</th></tr>
+  <tr><td><code>materialDefinition.ts</code></td><td>MaterialDefinition model (21 lines)</td></tr>
+  <tr><td><code>materialInstance.ts</code></td><td>MaterialInstance, overrides, default material</td></tr>
+  <tr><td><code>materialResolution.ts</code></td><td>resolveMaterial, resolveShaderUniforms, built-in params</td></tr>
+  <tr><td><code>materialKeyframes.ts</code></td><td>Material parameter keyframe validation</td></tr>
+  <tr><td><code>materialTrackEvaluation.ts</code></td><td>Evaluates material tracks at a time</td></tr>
+  <tr><td><code>shaderDefinition.ts</code></td><td>ShaderDefinition model (14 lines)</td></tr>
+  <tr><td><code>nodeShader.ts</code></td><td>Per-node shader filter creation + uniform binding</td></tr>
+  <tr><td><code>fullscreenPass.ts</code></td><td>Fullscreen shader pass (scene → texture → quad → filter)</td></tr>
+  <tr><td><code>samplerBinding.ts</code></td><td>Binds sampler2D uniforms to asset textures</td></tr>
+  <tr><td><code>programCache.ts</code></td><td>Caches compiled shader programs</td></tr>
+  <tr><td><code>textureCache.ts</code></td><td>Caches loaded textures</td></tr>
+</table>
+
+<div class="callout">
+  <strong>Tip:</strong> To add a new material parameter: add it to the definition's <code>parameters</code> array, reference it in GLSL as <code>uniform float myParam</code>, and animate it via material tracks. The resolution pipeline handles the rest.
+</div>
+
+</body>
+</html>

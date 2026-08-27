@@ -111,6 +111,10 @@ export function TimelineBody({
       for (const keyframe of engine.getMaterialKeyframes(row.node.id, row.parameter.key)) {
         allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
       }
+    } else if (row.kind === 'dataLabelSubtrack') {
+      for (const keyframe of engine.getDataLabelKeyframes(row.node.id, row.label)) {
+        allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
+      }
     }
   }
   const allSelectionItemsRef = useRef<KeyframeSelectionItem[]>([])
@@ -364,7 +368,7 @@ export function TimelineBody({
 
   const handleKeyframeContextMenu = (
     event: React.MouseEvent,
-    row: Extract<TimelineRow, { kind: 'subtrack' | 'materialSubtrack' }>,
+    row: Extract<TimelineRow, { kind: 'subtrack' | 'materialSubtrack' | 'dataLabelSubtrack' }>,
     keyframe: { id: string },
   ) => {
     event.preventDefault()
@@ -375,6 +379,14 @@ export function TimelineBody({
         y: event.clientY,
         nodeId: row.node.id,
         property: row.property,
+        keyframeId: keyframe.id,
+      })
+    } else if (row.kind === 'dataLabelSubtrack') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        label: row.label,
         keyframeId: keyframe.id,
       })
     } else {
@@ -602,6 +614,43 @@ export function TimelineBody({
                   +
                 </button>
               </li>
+            ) : row.kind === 'dataLabelSubtrack' ? (
+              <li
+                key={`${row.node.id}:dataLabel:${row.label}`}
+                className="timeline-subtrack"
+                data-node-id={row.node.id}
+                data-label={row.label}
+                data-depth={row.depth}
+                style={{ paddingLeft: 12 + row.depth * 16 }}
+              >
+                <span className="timeline-subtrack__label">{row.label}</span>
+                <button
+                  className="timeline-subtrack__add"
+                  aria-label={`Add Keyframe to ${row.label}`}
+                  title="Add keyframe at the playhead"
+                  onClick={() => {
+                    const time = usePlaybackController.getState().getTime(slideId)
+                    const evaluated = engine.evaluateDataLabels(row.node.id, time)
+                    const value = evaluated.get(row.label) ?? 0
+                    const result = dispatch(
+                      new AddKeyframeCommand({
+                        target: {
+                          kind: 'dataLabel',
+                          nodeId: row.node.id,
+                          label: row.label,
+                        },
+                        time,
+                        value,
+                      }),
+                    )
+                    if (result && !result.ok) {
+                      notify(result.error.message)
+                    }
+                  }}
+                >
+                  +
+                </button>
+              </li>
             ) : (
               <TrackRow
                 key={row.node.id}
@@ -709,6 +758,42 @@ export function TimelineBody({
                             pps={pps}
                             step={step}
                             parameterLabel={materialParameterLabel(row.parameter)}
+                            onPointerDown={(event) =>
+                              handleKeyframePointerDown(event, keyframe, index)
+                            }
+                            onContextMenu={(event) =>
+                              handleKeyframeContextMenu(event, row, keyframe)
+                            }
+                          />
+                        )
+                      })}
+                    </div>
+                  )
+                }
+                if (row.kind === 'dataLabelSubtrack') {
+                  const keyframes = engine.getDataLabelKeyframes(row.node.id, row.label)
+
+                  return (
+                    <div
+                      key={`${row.node.id}:dataLabel:${row.label}`}
+                      className="timeline-lane-row"
+                      data-label={row.label}
+                      style={{ top: index * ROW_HEIGHT }}
+                    >
+                      {keyframes.map((keyframe) => {
+                        const previewTime =
+                          scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
+                        const shownTime = previewTime ?? keyframe.time
+                        const selected = selectedKeyframeIds.includes(keyframe.id)
+                        return (
+                          <KeyframeMarker
+                            key={keyframe.id}
+                            keyframeId={keyframe.id}
+                            shownTime={shownTime}
+                            selected={selected}
+                            pps={pps}
+                            step={step}
+                            parameterLabel={row.label}
                             onPointerDown={(event) =>
                               handleKeyframePointerDown(event, keyframe, index)
                             }
