@@ -51,7 +51,7 @@ export class CreateTableCommand implements Command<CreateTableInverse> {
           components: { tableCell: defaultTableCellComponent() },
         })
         engine.createNode(this.#sceneId, cellNode.id, `Text`, {
-          components: { text: { kind: 'text', content: '', fontSize: 14, alignment: 'left' } },
+          components: { text: { kind: 'text', content: 'Enter text', fontSize: 14, alignment: 'left' } },
         })
       }
     }
@@ -111,7 +111,7 @@ export class AddTableRowCommand implements Command<AddTableRowInverse> {
         components: { tableCell: defaultTableCellComponent() },
       })
       engine.createNode(sceneId, cellNode.id, `Text`, {
-        components: { text: { kind: 'text', content: '', fontSize: 14, alignment: 'left' } },
+        components: { text: { kind: 'text', content: 'Enter text', fontSize: 14, alignment: 'left' } },
       })
     }
 
@@ -230,7 +230,7 @@ export class AddTableColumnCommand implements Command<AddTableColumnInverse> {
         components: { tableCell: defaultTableCellComponent() },
       })
       engine.createNode(sceneId, cellNode.id, `Text`, {
-        components: { text: { kind: 'text', content: '', fontSize: 14, alignment: 'left' } },
+        components: { text: { kind: 'text', content: 'Enter text', fontSize: 14, alignment: 'left' } },
       })
       if (colIndex < row.children.length) {
         row.children.splice(row.children.length - 1, 1)

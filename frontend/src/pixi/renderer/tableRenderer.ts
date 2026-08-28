@@ -8,6 +8,7 @@ export const DEFAULT_TABLE_WIDTH = 400
 
 const tableLayoutByContainer = new WeakMap<PixiContainer, TableLayout>()
 const tableSizeByContainer = new WeakMap<PixiContainer, WorldSize>()
+const tableChildSizeByContainer = new WeakMap<PixiContainer, WorldSize>()
 
 export function tableLayoutOf(container: PixiContainer): TableLayout | undefined {
   return tableLayoutByContainer.get(container)
@@ -15,6 +16,89 @@ export function tableLayoutOf(container: PixiContainer): TableLayout | undefined
 
 export function tableSizeOf(container: PixiContainer): WorldSize | undefined {
   return tableSizeByContainer.get(container)
+}
+
+export function tableChildSizeOf(container: PixiContainer): WorldSize | undefined {
+  return tableChildSizeByContainer.get(container)
+}
+
+export function rebuildTableChild(
+  pixi: RendererPixi,
+  container: PixiContainer,
+  node: SceneNode,
+): WorldSize | undefined {
+  const child = node.components.tableRow
+    ? createTableRowContainer(pixi, node)
+    : node.components.tableCell
+      ? createTableCellContainer(pixi, node)
+      : undefined
+  if (!child) return undefined
+  for (const visual of [...container.children]) {
+    if (visual.label.startsWith('table-row:') || visual.label.startsWith('table-cell:')) {
+      visual.destroy()
+    }
+  }
+  container.addChildAt(child.container, 0)
+  tableChildSizeByContainer.set(container, child.size)
+  return child.size
+}
+
+export function createTableRowContainer(
+  pixi: RendererPixi,
+  node: SceneNode,
+): { container: PixiContainer; size: WorldSize } | undefined {
+  const tableNode = node.parent
+  const table = tableNode?.components.table
+  if (!tableNode || !table) return undefined
+
+  const layout = computeTableLayout(table, tableNode.children, DEFAULT_TABLE_WIDTH)
+  const rowIndex = tableNode.children.indexOf(node)
+  const height = layout.rows[rowIndex] ?? 0
+  const width = layout.totalWidth
+  const container = new pixi.Container()
+  container.label = `table-row:${node.name}`
+  const background = node.components.tableRow?.background ?? '#ffffff'
+  const graphics = new pixi.Graphics()
+  graphics
+    .rect(0, 0, width, height)
+    .fill({ color: hexColorToNumber(background), alpha: 1 })
+    .stroke({
+      width: table.borderWidth,
+      color: hexColorToNumber(node.components.tableRow?.borderColor ?? table.borderColor),
+    })
+  container.addChild(graphics)
+  tableChildSizeByContainer.set(container, { width, height })
+  return { container, size: { width, height } }
+}
+
+export function createTableCellContainer(
+  pixi: RendererPixi,
+  node: SceneNode,
+): { container: PixiContainer; size: WorldSize } | undefined {
+  const rowNode = node.parent
+  const tableNode = rowNode?.parent
+  const table = tableNode?.components.table
+  if (!rowNode || !tableNode || !table) return undefined
+
+  const layout = computeTableLayout(table, tableNode.children, DEFAULT_TABLE_WIDTH)
+  const rowIndex = tableNode.children.indexOf(rowNode)
+  const cellIndex = rowNode.children.indexOf(node)
+  const rect = cellRectAt(layout, rowNode, rowIndex, cellIndex, table.columns.length)
+  if (!rect) return undefined
+
+  const container = new pixi.Container()
+  container.label = `table-cell:${node.name}`
+  const cell = node.components.tableCell
+  const borderColor = cell?.borderColor ?? table.borderColor
+  const background = cell?.background ?? '#ffffff'
+  const graphics = new pixi.Graphics()
+  graphics.rect(0, 0, rect.width, rect.height)
+  graphics.fill({ color: hexColorToNumber(background), alpha: 1 })
+  graphics.stroke({ width: table.borderWidth, color: hexColorToNumber(borderColor) })
+  container.addChild(graphics)
+  const size = { width: rect.width, height: rect.height }
+  tableChildSizeByContainer.set(container, size)
+  return { container, size }
 }
 
 export function createTableContainer(
@@ -65,8 +149,6 @@ function populateTable(
     height: layout.totalHeight,
   })
 
-  group.pivot.set(layout.totalWidth / 2, layout.totalHeight / 2)
-
   const border = createBorder(pixi, table, layout)
   group.addChild(border)
 }
@@ -87,4 +169,23 @@ function createBorder(
 function hexColorToNumber(color: string): number {
   const match = /^#([0-9a-f]{6})$/i.exec(color)
   return match ? parseInt(match[1], 16) : 0x000000
+}
+
+function cellRectAt(
+  layout: TableLayout,
+  row: SceneNode,
+  rowIndex: number,
+  childIndex: number,
+  columnCount: number,
+): { width: number; height: number } | undefined {
+  let child = 0
+  for (let column = 0; column < columnCount; column++) {
+    const rect = layout.cells.get(`${rowIndex},${column}`)
+    if (!rect) continue
+    if (child === childIndex) return { width: rect.width, height: rect.height }
+    child++
+    const span = row.children[child - 1]?.components.tableCell?.colSpan ?? 1
+    column += Math.max(1, Math.min(span, columnCount - column)) - 1
+  }
+  return undefined
 }

@@ -18,6 +18,7 @@ export interface FakeChild {
   text?: string
   tint?: number
   ops?: string[]
+  calls?: { method: string; args: unknown[] }[]
   texture?: { destroyed: boolean }
 }
 

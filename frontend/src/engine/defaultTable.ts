@@ -4,7 +4,7 @@ export function defaultTableComponent(): TableComponent {
   return {
     kind: 'table',
     columns: [{ width: 100 }, { width: 100 }],
-    gap: 4,
+    gap: 0,
     borderWidth: 1,
     borderColor: '#000000',
   }

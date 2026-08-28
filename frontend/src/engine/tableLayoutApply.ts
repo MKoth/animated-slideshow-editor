@@ -10,14 +10,14 @@ export function applyTableLayout(engine: Engine, tableNodeId: string): void {
   if (!table) return
   const layout = computeTableLayout(table, tableNode.children, DEFAULT_TABLE_WIDTH)
 
-  let cursorY = table.borderWidth
+  let cursorY = 0
   for (let r = 0; r < tableNode.children.length; r++) {
     const rowNode = tableNode.children[r]
     const rowHeight = layout.rows[r] ?? 0
 
     engine.setTransform(rowNode.id, {
       ...rowNode.transform,
-      x: table.borderWidth,
+      x: 0,
       y: cursorY,
     })
 
@@ -40,12 +40,15 @@ export function applyTableLayout(engine: Engine, tableNodeId: string): void {
       })
 
       cursorX += cellWidth
+      if (c < table.columns.length - 1) {
+        cursorX += table.gap
+      }
       childIdx++
 
       c += effectiveColSpan - 1
     }
 
-    cursorY += rowHeight + table.borderWidth * 2
+    cursorY += rowHeight
     if (r < tableNode.children.length - 1) {
       cursorY += table.gap
     }

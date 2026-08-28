@@ -60,8 +60,8 @@ export class TableLayoutCache {
   }
 }
 
-function cellStride(colWidth: number, bw: number): number {
-  return colWidth + bw * 2
+function cellStride(colWidth: number): number {
+  return colWidth
 }
 
 export function computeTableLayout(
@@ -69,14 +69,12 @@ export function computeTableLayout(
   rows: readonly SceneNode[],
   availableWidth: number,
 ): TableLayout {
-  const { columns, gap, borderWidth } = table
-  const bw = borderWidth
+  const { columns, gap } = table
   const colsCount = columns.length
   const rowsCount = rows.length
 
   const totalGapsX = Math.max(0, colsCount - 1) * gap
-  const totalBorderX = (colsCount + 1) * bw
-  const innerWidth = availableWidth - totalGapsX - totalBorderX
+  const innerWidth = availableWidth - totalGapsX
 
   const colWidths = resolveDimensions(columns, innerWidth, 0)
 
@@ -88,18 +86,18 @@ export function computeTableLayout(
 
   const spanCovered = new Set<string>()
   const cells = new Map<string, CellRect>()
-  let cursorY = bw
+  let cursorY = 0
 
   for (let r = 0; r < rowsCount; r++) {
     const rowNode = rows[r]
-    let cursorX = bw
+    let cursorX = 0
     let childIdx = 0
 
     for (let c = 0; c < colsCount; c++) {
       const spanKey = `${r},${c}`
 
       if (spanCovered.has(spanKey)) {
-        cursorX += cellStride(colWidths[c], bw)
+        cursorX += cellStride(colWidths[c])
         if (c < colsCount - 1) cursorX += gap
         continue
       }
@@ -126,14 +124,12 @@ export function computeTableLayout(
         spanWidth += colWidths[c + sc]
       }
       spanWidth += Math.max(0, effectiveColSpan - 1) * gap
-      spanWidth += effectiveColSpan * bw * 2
 
       let spanHeight = 0
       for (let sr = 0; sr < effectiveRowSpan; sr++) {
         spanHeight += rowHeights[r + sr]
       }
       spanHeight += Math.max(0, effectiveRowSpan - 1) * gap
-      spanHeight += effectiveRowSpan * bw * 2
 
       cells.set(spanKey, {
         x: cursorX,
@@ -142,27 +138,25 @@ export function computeTableLayout(
         height: spanHeight,
       })
 
-      cursorX += cellStride(colWidths[c], bw)
+      cursorX += cellStride(colWidths[c])
       if (c < colsCount - 1) cursorX += gap
       childIdx++
     }
-    cursorY += cellStride(rowHeights[r], bw)
+    cursorY += cellStride(rowHeights[r])
     if (r < rowsCount - 1) cursorY += gap
   }
 
-  let totalWidth = bw
+  let totalWidth = 0
   for (let c = 0; c < colsCount; c++) {
-    totalWidth += colWidths[c] + bw * 2
+    totalWidth += colWidths[c]
     if (c < colsCount - 1) totalWidth += gap
   }
-  totalWidth += bw
 
-  let totalHeight = bw
+  let totalHeight = 0
   for (let r = 0; r < rowsCount; r++) {
-    totalHeight += rowHeights[r] + bw * 2
+    totalHeight += rowHeights[r]
     if (r < rowsCount - 1) totalHeight += gap
   }
-  totalHeight += bw
 
   return {
     columns: colWidths,

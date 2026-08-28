@@ -39,9 +39,16 @@ import {
   applyName,
   createNodeContainer,
   placeholderOf,
+  refreshTableChildContainer,
 } from './nodeRenderer'
 import { applyAssetTexture, applyMissingPlaceholder, placeholderSize } from './placeholder'
-import { rebuildTable, tableLayoutOf, tableSizeOf, DEFAULT_TABLE_WIDTH } from './tableRenderer'
+import {
+  rebuildTable,
+  tableChildSizeOf,
+  tableLayoutOf,
+  tableSizeOf,
+  DEFAULT_TABLE_WIDTH,
+} from './tableRenderer'
 import { chartSpriteOf, rebuildChartTexture, type ResolveDataSource } from './chartRenderer'
 import { CHART_DEFAULT_WIDTH, CHART_DEFAULT_HEIGHT } from './chartRenderer'
 import { rebuildText, textSizeOf } from './textRenderer'
@@ -188,7 +195,9 @@ export class SceneRenderer {
     if (this.#containers.has(nodeId)) {
       return
     }
-    this.#addNode(this.#engine.getNode(nodeId))
+    const node = this.#engine.getNode(nodeId)
+    this.#addNode(node)
+    this.#refreshOwningTable(node)
   }
 
   handleNodeRemoved(nodeId: string): void {
@@ -196,6 +205,7 @@ export class SceneRenderer {
     if (!container) {
       return
     }
+    const tableId = this.#tableAncestorId(container)
     for (const descendant of walkContainers(container)) {
       const descendantId = this.#nodeIds.get(descendant)
       if (descendantId) {
@@ -209,6 +219,9 @@ export class SceneRenderer {
       this.#nodeIds.delete(descendant)
     }
     container.destroy({ children: true })
+    if (tableId) {
+      this.handleTableChanged(tableId)
+    }
   }
 
   handleTransformChanged(nodeId: string): void {
@@ -362,10 +375,17 @@ export class SceneRenderer {
       return
     }
     const node = scene.getNode(nodeId)
-    if (!node || !node.components.table) {
+    if (!node) {
       return
     }
-    const container = this.#containers.get(nodeId)
+    const tableNode = node.components.table ? node : this.#owningTable(node)
+    if (!tableNode) return
+    if (!node.components.table) {
+      this.#refreshTableChildren(tableNode)
+      return
+    }
+    const table = tableNode
+    const container = this.#containers.get(table.id)
     if (!container) {
       return
     }
@@ -374,8 +394,8 @@ export class SceneRenderer {
       return
     }
     const previousLayout = tableLayoutOf(placeholder)
-    const availableWidth = this.#sizes.get(nodeId)?.width ?? DEFAULT_TABLE_WIDTH
-    rebuildTable(this.#pixi, placeholder, node, availableWidth)
+    const availableWidth = this.#sizes.get(table.id)?.width ?? DEFAULT_TABLE_WIDTH
+    rebuildTable(this.#pixi, placeholder, table, availableWidth)
     const newLayout = tableLayoutOf(placeholder)
     if (
       previousLayout &&
@@ -383,12 +403,15 @@ export class SceneRenderer {
       (previousLayout.totalWidth !== newLayout.totalWidth ||
         previousLayout.totalHeight !== newLayout.totalHeight)
     ) {
-      this.#sizes.set(nodeId, {
+      this.#sizes.set(table.id, {
         width: newLayout.totalWidth,
         height: newLayout.totalHeight,
+        offsetX: newLayout.totalWidth / 2,
+        offsetY: newLayout.totalHeight / 2,
       })
-      this.#onNodeSizeChanged(nodeId)
+      this.#onNodeSizeChanged(table.id)
     }
+    this.#refreshTableChildren(table)
   }
 
   handleChartChanged(nodeId: string): void {
@@ -426,7 +449,7 @@ export class SceneRenderer {
     rebuildText(this.#pixi, placeholder, node.components.text)
     const size = textSizeOf(placeholder)
     if (size) {
-      this.#sizes.set(nodeId, size)
+      this.#sizes.set(nodeId, this.#tableTextSize(node, size))
       this.#onNodeSizeChanged(nodeId)
     }
   }
@@ -592,6 +615,7 @@ export class SceneRenderer {
       return
     }
     const node = scene.getNode(nodeId)
+    if (!node) return
     if (node && node.components.table) {
       const tableHash = JSON.stringify(node.components.table)
       const previousHash = this.#tableComponentHashes.get(nodeId)
@@ -641,6 +665,7 @@ export class SceneRenderer {
       return
     }
     applyEvaluatedState(container, state, material.opacityMultiplier)
+    this.#positionTableText(node, container)
     const ikRotation = this.#ikOverrides.get(nodeId)
     if (ikRotation !== undefined) {
       container.rotation = ikRotation
@@ -846,8 +871,17 @@ export class SceneRenderer {
     if (node.components.table) {
       const tableSize = tableSizeOf(placeholderOf(container) ?? container)
       if (tableSize) {
-        this.#sizes.set(node.id, tableSize)
+        this.#sizes.set(node.id, {
+          ...tableSize,
+          offsetX: tableSize.width / 2,
+          offsetY: tableSize.height / 2,
+        })
       }
+      return
+    }
+    if (node.components.tableRow || node.components.tableCell) {
+      const size = tableChildSizeOf(container)
+      if (size) this.#sizes.set(node.id, size)
       return
     }
     if (node.components.chart) {
@@ -861,7 +895,7 @@ export class SceneRenderer {
       const placeholder = placeholderOf(container)
       const size = placeholder ? textSizeOf(placeholder) : null
       if (size) {
-        this.#sizes.set(node.id, size)
+        this.#sizes.set(node.id, this.#tableTextSize(node, size))
       }
       return
     }
@@ -929,6 +963,68 @@ export class SceneRenderer {
   #attachToParent(container: PixiContainer, node: SceneNode): void {
     const parentContainer = node.parent ? this.#containers.get(node.parent.id) : undefined
     ;(parentContainer ?? this.#world).addChild(container)
+  }
+
+  #refreshOwningTable(node: SceneNode): void {
+    for (let parent = node.parent; parent; parent = parent.parent) {
+      if (parent.components.table) {
+        this.handleTableChanged(parent.id)
+        return
+      }
+    }
+  }
+
+  #tableAncestorId(container: PixiContainer): string | undefined {
+    for (let parent = container.parent; parent; parent = parent.parent) {
+      const nodeId = this.#nodeIds.get(parent)
+      if (nodeId && this.#scene?.getNode(nodeId)?.components.table) {
+        return nodeId
+      }
+    }
+    return undefined
+  }
+
+  #owningTable(node: SceneNode): SceneNode | undefined {
+    for (let parent = node.parent; parent; parent = parent.parent) {
+      if (parent.components.table) return parent
+    }
+    return undefined
+  }
+
+  #refreshTableChildren(table: SceneNode): void {
+    for (const node of walkPreOrder(table)) {
+      if (node === table || (!node.components.tableRow && !node.components.tableCell)) continue
+      const container = this.#containers.get(node.id)
+      if (!container) continue
+      refreshTableChildContainer(this.#pixi, container, node)
+      const size = tableChildSizeOf(container)
+      if (size) {
+        this.#sizes.set(node.id, {
+          ...size,
+          offsetX: size.width / 2,
+          offsetY: size.height / 2,
+        })
+      }
+    }
+  }
+
+  #positionTableText(node: SceneNode, container: PixiContainer): void {
+    if (!node.components.text || !node.parent?.components.tableCell) return
+    const textGroup = placeholderOf(container)
+    const size = textGroup ? textSizeOf(textGroup) : undefined
+    if (!size) return
+    const padding = node.parent.components.tableCell.padding ?? 8
+    container.position.set(padding + size.width / 2, padding + size.height / 2)
+  }
+
+  #tableTextSize(node: SceneNode, size: WorldSize): WorldSize {
+    if (!node.parent?.components.tableCell) return size
+    const padding = node.parent.components.tableCell.padding ?? 8
+    return {
+      ...size,
+      offsetX: padding + size.width / 2,
+      offsetY: padding + size.height / 2,
+    }
   }
 }
 

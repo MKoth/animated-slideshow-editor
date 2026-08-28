@@ -10,7 +10,11 @@ import {
   setMeshPlaceholderSize,
   registerMeshDisplay,
 } from './placeholder'
-import { createTableContainer, DEFAULT_TABLE_WIDTH } from './tableRenderer'
+import {
+  createTableContainer,
+  rebuildTableChild,
+  DEFAULT_TABLE_WIDTH,
+} from './tableRenderer'
 import { createChartContainer } from './chartRenderer'
 import { createTextContainer, applyTextTint, textDisplayOf } from './textRenderer'
 import type { TextureCache } from './textureCache'
@@ -20,6 +24,14 @@ const meshByGroup = new WeakMap<PixiContainer, PixiMeshSimple>()
 
 export function placeholderOf(container: PixiContainer): PixiContainer | undefined {
   return placeholderByContainer.get(container)
+}
+
+export function refreshTableChildContainer(
+  pixi: RendererPixi,
+  container: PixiContainer,
+  node: SceneNode,
+): void {
+  rebuildTableChild(pixi, container, node)
 }
 
 export function createNodeContainer(
@@ -58,6 +70,10 @@ export function createNodeContainer(
     const bonePlaceholder = createBonePlaceholder(pixi, node, node.components.bone.length)
     placeholderByContainer.set(container, bonePlaceholder)
     container.addChild(bonePlaceholder)
+  } else if (node.components.tableRow) {
+    rebuildTableChild(pixi, container, node)
+  } else if (node.components.tableCell) {
+    rebuildTableChild(pixi, container, node)
   }
   return container
 }

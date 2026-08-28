@@ -82,15 +82,15 @@ describe('computeTableLayout', () => {
     expect(layout.cells.get('0,1')?.x).toBe(110)
   })
 
-  it('applies border width around cells', () => {
+  it('does not inset cells for border width', () => {
     const table = makeTableComponent({ borderWidth: 2 })
     const rows = makeRows(2, 2)
     const layout = computeTableLayout(table, rows, 312)
 
-    expect(layout.cells.get('0,0')?.x).toBe(2)
-    expect(layout.cells.get('0,0')?.y).toBe(2)
-    expect(layout.cells.get('0,1')?.x).toBe(106)
-    expect(layout.totalWidth).toBe(312)
+    expect(layout.cells.get('0,0')?.x).toBe(0)
+    expect(layout.cells.get('0,0')?.y).toBe(0)
+    expect(layout.cells.get('0,1')?.x).toBe(100)
+    expect(layout.totalWidth).toBe(300)
   })
 
   it('handles cell spans across columns', () => {
@@ -300,10 +300,10 @@ describe('computeTableLayout', () => {
     const rows = makeRows(2, 2)
     const layout = computeTableLayout(table, rows, 313)
 
-    expect(layout.cells.get('0,0')?.x).toBe(1)
-    expect(layout.cells.get('0,0')?.y).toBe(1)
-    expect(layout.cells.get('0,1')?.x).toBe(1 + 100 + 2 + 5)
-    expect(layout.cells.get('1,0')?.y).toBe(1 + 30 + 2 + 5)
+    expect(layout.cells.get('0,0')?.x).toBe(0)
+    expect(layout.cells.get('0,0')?.y).toBe(0)
+    expect(layout.cells.get('0,1')?.x).toBe(100 + 5)
+    expect(layout.cells.get('1,0')?.y).toBe(30 + 5)
   })
 
   it('respects minWidth for auto columns', () => {
