@@ -15,3 +15,7 @@ Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agent
 ### Implementation contract
 
 The 12 phase specs on github.com/MKoth/animated-slideshow-editor are the implementation contract, indexed by the Spec index issue (https://github.com/MKoth/animated-slideshow-editor/issues/21).
+
+### Interactive decisions
+
+When presenting design choices or multiple-option decisions to the user, always use the `question` tool instead of listing options as plain text. This gives the user clickable UI to answer and produces structured results.
