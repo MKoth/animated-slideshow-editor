@@ -677,6 +677,9 @@ export class Renderer {
       case 'TableChanged':
         sceneRenderer.handleTableChanged(event.nodeId)
         break
+      case 'TextChanged':
+        sceneRenderer.handleTextChanged(event.nodeId)
+        break
       case 'ChartChanged':
         sceneRenderer.handleChartChanged(event.nodeId)
         break
