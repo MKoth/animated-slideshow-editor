@@ -5,6 +5,7 @@ import {
   SetTextAlignmentCommand,
   SetTextContentCommand,
   SetTextFontSizeCommand,
+  SplitIntoMorphemesCommand,
 } from '../../engine/commands'
 import { NumericField, NameField } from './inspectorFields'
 import { runCommand } from './sectionHelpers'
@@ -51,6 +52,22 @@ export function TextInspectorSection({
     })
   }
 
+  const handleSplitMorphemes = () => {
+    const input = prompt('Enter segments separated by commas:', text.content)
+    if (input === null) return
+    const segments = input
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+    if (segments.length === 0) {
+      notify('No segments provided')
+      return
+    }
+    runCommand(notify, () => {
+      return dispatch(new SplitIntoMorphemesCommand({ nodeId: target.id, segments }))
+    })
+  }
+
   return (
     <section className="inspector-section">
       <h3 className="inspector-section__title">Text</h3>
@@ -83,6 +100,10 @@ export function TextInspectorSection({
           <option value="right">Right</option>
         </select>
       </div>
+
+      <button className="inspector-reset" disabled={playing} onClick={handleSplitMorphemes}>
+        Split into Morphemes
+      </button>
     </section>
   )
 }
