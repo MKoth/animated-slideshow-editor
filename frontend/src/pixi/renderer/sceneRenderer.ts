@@ -37,6 +37,7 @@ import {
   applyMeshData,
   applyMeshVertices,
   applyName,
+  applyTableNodeOrdering,
   createNodeContainer,
   placeholderOf,
   refreshTableChildContainer,
@@ -378,6 +379,10 @@ export class SceneRenderer {
     if (!node) {
       return
     }
+    const nodeContainer = this.#containers.get(node.id)
+    if (nodeContainer) {
+      applyTableNodeOrdering(nodeContainer, node)
+    }
     const tableNode = node.components.table ? node : this.#owningTable(node)
     if (!tableNode) return
     if (!node.components.table) {
@@ -616,6 +621,7 @@ export class SceneRenderer {
     }
     const node = scene.getNode(nodeId)
     if (!node) return
+    applyTableNodeOrdering(container, node)
     if (node && node.components.table) {
       const tableHash = JSON.stringify(node.components.table)
       const previousHash = this.#tableComponentHashes.get(nodeId)
@@ -961,7 +967,8 @@ export class SceneRenderer {
   }
 
   #attachToParent(container: PixiContainer, node: SceneNode): void {
-    const parentContainer = node.parent ? this.#containers.get(node.parent.id) : undefined
+    const renderParent = node.components.tableCell ? this.#owningTable(node) : node.parent
+    const parentContainer = renderParent ? this.#containers.get(renderParent.id) : undefined
     ;(parentContainer ?? this.#world).addChild(container)
   }
 
@@ -993,9 +1000,10 @@ export class SceneRenderer {
 
   #refreshTableChildren(table: SceneNode): void {
     for (const node of walkPreOrder(table)) {
-      if (node === table || (!node.components.tableRow && !node.components.tableCell)) continue
+      if (node === table || !node.components.tableCell) continue
       const container = this.#containers.get(node.id)
       if (!container) continue
+      applyTableNodeOrdering(container, node)
       refreshTableChildContainer(this.#pixi, container, node)
       const size = tableChildSizeOf(container)
       if (size) {

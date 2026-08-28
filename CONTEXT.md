@@ -59,15 +59,23 @@ A scene node that renders text content with a font size and alignment; color and
 _Avoid_: Text label, label
 
 **Table Component**:
-A scene node component carrying grid configuration for data-driven tables. Auto-creates TextComponent child nodes as cells, positioned by engine-side layout. References a DataSourceDefinition for data; manual column mapping controls which fields appear. Supports cell-level column/row spanning (layout-only), configurable text wrapping, PixiJS Graphics outer border, and rich background stacking at table/row/column/cell levels.
+A scene node component carrying grid configuration: an ordered list of column width definitions, plus inherited defaults for gap, borderColor, and borderWidth. The table node owns TableRowComponent children; it does not carry cell data or content directly. Borders are drawn as a single outer PixiJS Graphics stroke; the table renderer is a thin container that delegates child rendering to the scene renderer.
 _Avoid_: Table node, grid component
 
+**Table Row Component**:
+A scene node component for a row within a table. Carries optional borderColor and background overrides (inheriting defaults from the parent table). Row height is set by the grid layout command. The row owns TableCellComponent children. No per-row gap — gap stays on the table to preserve column alignment.
+_Avoid_: Row node
+
+**Table Cell Component**:
+A scene node component for a cell within a row. Carries colSpan and rowSpan (both default 1), optional borderColor and background overrides, and optional padding override. Column position is implicit — the cell's index among its row's children determines the column. Cells may contain zero or more child nodes (text, morpheme containers, etc.) with no truncation or wrapping; text overflows visually beyond cell bounds. Borders are drawn per-cell by the renderer.
+_Avoid_: Cell node
+
 **Grid Layout**:
-The engine-side computation that resolves cell positions, column widths, and row heights from the TableComponent's configuration. Fixed columns are sized explicitly; auto columns share remaining space proportionally. Layout is recomputed on data or config change (dirty-flagged), not per-frame.
+The engine-side computation that resolves cell positions, column widths, and row heights by walking the table's row and cell child nodes. Fixed columns are sized explicitly; auto columns share remaining space proportionally. Layout writes relative transforms (local to parent) on row and cell nodes via a command, making positions undoable. Recomputed on structure or config change (dirty-flagged), not per-frame.
 _Avoid_: Table layout, cell positioning
 
 **Cell Spanning**:
-A TableComponent feature where individual cells can span multiple columns and/or rows. Specified per cell via colSpan/rowSpan. Spanning is layout-only — columns are sized independently; spanned cells sit across resolved columns. No circular width dependencies.
+A TableCellComponent feature where individual cells can span multiple columns and/or rows via colSpan/rowSpan. Spanning is layout-only — columns are sized independently; spanned cells sit across resolved columns. No circular width dependencies.
 _Avoid_: Merged cells, cell merge
 
 **Anchor**:

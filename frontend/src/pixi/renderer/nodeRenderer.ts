@@ -10,11 +10,7 @@ import {
   setMeshPlaceholderSize,
   registerMeshDisplay,
 } from './placeholder'
-import {
-  createTableContainer,
-  rebuildTableChild,
-  DEFAULT_TABLE_WIDTH,
-} from './tableRenderer'
+import { createTableContainer, rebuildTableChild, DEFAULT_TABLE_WIDTH } from './tableRenderer'
 import { createChartContainer } from './chartRenderer'
 import { createTextContainer, applyTextTint, textDisplayOf } from './textRenderer'
 import type { TextureCache } from './textureCache'
@@ -34,6 +30,15 @@ export function refreshTableChildContainer(
   rebuildTableChild(pixi, container, node)
 }
 
+export function applyTableNodeOrdering(container: PixiContainer, node: SceneNode): void {
+  if (node.components.table) {
+    container.sortableChildren = true
+  }
+  if (node.components.tableCell) {
+    container.zIndex = node.components.tableCell.zIndex ?? 0
+  }
+}
+
 export function createNodeContainer(
   pixi: RendererPixi,
   node: SceneNode,
@@ -41,6 +46,7 @@ export function createNodeContainer(
 ): PixiContainer {
   const container = new pixi.Container()
   container.label = node.name
+  applyTableNodeOrdering(container, node)
   applyTransform(container, node)
   container.visible = node.visible
   container.alpha = node.opacity
@@ -70,8 +76,6 @@ export function createNodeContainer(
     const bonePlaceholder = createBonePlaceholder(pixi, node, node.components.bone.length)
     placeholderByContainer.set(container, bonePlaceholder)
     container.addChild(bonePlaceholder)
-  } else if (node.components.tableRow) {
-    rebuildTableChild(pixi, container, node)
   } else if (node.components.tableCell) {
     rebuildTableChild(pixi, container, node)
   }

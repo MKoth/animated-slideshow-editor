@@ -81,9 +81,7 @@ export function createTableCellContainer(
   if (!rowNode || !tableNode || !table) return undefined
 
   const layout = computeTableLayout(table, tableNode.children, DEFAULT_TABLE_WIDTH)
-  const rowIndex = tableNode.children.indexOf(rowNode)
-  const cellIndex = rowNode.children.indexOf(node)
-  const rect = cellRectAt(layout, rowNode, rowIndex, cellIndex, table.columns.length)
+  const rect = layout.cellRects.get(node.id)
   if (!rect) return undefined
 
   const container = new pixi.Container()
@@ -113,6 +111,7 @@ export function createTableContainer(
 
   const group = new pixi.Container()
   group.label = `table:${node.name}`
+  group.sortableChildren = true
   populateTable(pixi, group, node, table, availableWidth)
   return group
 }
@@ -169,23 +168,4 @@ function createBorder(
 function hexColorToNumber(color: string): number {
   const match = /^#([0-9a-f]{6})$/i.exec(color)
   return match ? parseInt(match[1], 16) : 0x000000
-}
-
-function cellRectAt(
-  layout: TableLayout,
-  row: SceneNode,
-  rowIndex: number,
-  childIndex: number,
-  columnCount: number,
-): { width: number; height: number } | undefined {
-  let child = 0
-  for (let column = 0; column < columnCount; column++) {
-    const rect = layout.cells.get(`${rowIndex},${column}`)
-    if (!rect) continue
-    if (child === childIndex) return { width: rect.width, height: rect.height }
-    child++
-    const span = row.children[child - 1]?.components.tableCell?.colSpan ?? 1
-    column += Math.max(1, Math.min(span, columnCount - column)) - 1
-  }
-  return undefined
 }

@@ -7,7 +7,6 @@ import {
   RemoveTableRowCommand,
   AddTableColumnCommand,
   RemoveTableColumnCommand,
-  SetTableRowComponentCommand,
   SetTableCellComponentCommand,
 } from '../../engine/commands'
 import { NumericField } from './inspectorFields'
@@ -44,34 +43,13 @@ export function TableInspectorSection({
 }) {
   if (target.components.table) {
     return (
-      <TableLevelInspector
-        target={target}
-        dispatch={dispatch}
-        notify={notify}
-        playing={playing}
-      />
-    )
-  }
-
-  if (target.components.tableRow) {
-    return (
-      <TableRowInspector
-        target={target}
-        dispatch={dispatch}
-        notify={notify}
-        playing={playing}
-      />
+      <TableLevelInspector target={target} dispatch={dispatch} notify={notify} playing={playing} />
     )
   }
 
   if (target.components.tableCell) {
     return (
-      <TableCellInspector
-        target={target}
-        dispatch={dispatch}
-        notify={notify}
-        playing={playing}
-      />
+      <TableCellInspector target={target} dispatch={dispatch} notify={notify} playing={playing} />
     )
   }
 
@@ -244,79 +222,6 @@ function TableLevelInspector({
   )
 }
 
-function TableRowInspector({
-  target,
-  dispatch,
-  notify,
-  playing,
-}: {
-  target: SceneNode
-  dispatch: DispatchCommand
-  notify: (message: string) => void
-  playing: boolean
-}) {
-  const row = target.components.tableRow
-  if (!row) return null
-
-  const commitBorderColor = (event: React.ChangeEvent<HTMLInputElement>) => {
-    runCommand(notify, () => {
-      return dispatch(
-        new SetTableRowComponentCommand({
-          nodeId: target.id,
-          tableRow: { ...row, borderColor: event.target.value },
-        }),
-      )
-    })
-  }
-
-  const commitBackground = (event: React.ChangeEvent<HTMLInputElement>) => {
-    runCommand(notify, () => {
-      return dispatch(
-        new SetTableRowComponentCommand({
-          nodeId: target.id,
-          tableRow: { ...row, background: event.target.value },
-        }),
-      )
-    })
-  }
-
-  return (
-    <section className="inspector-section">
-      <h3 className="inspector-section__title">Table Row</h3>
-
-      <div className="inspector-field">
-        <label className="inspector-field__label" htmlFor="row-border-color">
-          Border Color
-        </label>
-        <input
-          id="row-border-color"
-          className="inspector-field__color"
-          type="color"
-          aria-label="Border Color"
-          value={row.borderColor ?? '#000000'}
-          disabled={playing}
-          onChange={commitBorderColor}
-        />
-      </div>
-
-      <div className="inspector-field">
-        <label className="inspector-field__label" htmlFor="row-background">
-          Background
-        </label>
-        <input
-          id="row-background"
-          className="inspector-field__color"
-          type="color"
-          aria-label="Background"
-          value={row.background ?? '#ffffff'}
-          disabled={playing}
-          onChange={commitBackground}
-        />
-      </div>
-    </section>
-  )
-}
-
 function TableCellInspector({
   target,
   dispatch,
@@ -390,6 +295,31 @@ function TableCellInspector({
         new SetTableCellComponentCommand({
           nodeId: target.id,
           tableCell: { ...cell, background: event.target.value },
+        }),
+      )
+    })
+  }
+
+  const commitZIndex = (raw: string) => {
+    const value = Number(raw)
+    if (Number.isFinite(value) && Number.isInteger(value)) {
+      runCommand(notify, () => {
+        return dispatch(
+          new SetTableCellComponentCommand({
+            nodeId: target.id,
+            tableCell: { ...cell, zIndex: Math.floor(value) },
+          }),
+        )
+      })
+    }
+  }
+
+  const adjustZIndex = (value: number) => {
+    runCommand(notify, () => {
+      return dispatch(
+        new SetTableCellComponentCommand({
+          nodeId: target.id,
+          tableCell: { ...cell, zIndex: Math.floor(value) },
         }),
       )
     })
@@ -482,6 +412,15 @@ function TableCellInspector({
           onChange={commitBackground}
         />
       </div>
+
+      <NumericField
+        label="Z-Index"
+        value={cell.zIndex ?? 0}
+        step={1}
+        disabled={playing}
+        onCommit={commitZIndex}
+        onAdjust={adjustZIndex}
+      />
     </section>
   )
 }

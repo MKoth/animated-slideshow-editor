@@ -75,6 +75,7 @@ export interface TableRowComponent {
   readonly kind: 'tableRow'
   readonly borderColor?: string
   readonly background?: string
+  readonly zIndex?: number
 }
 
 export interface TableCellComponent {
@@ -84,6 +85,7 @@ export interface TableCellComponent {
   readonly borderColor?: string
   readonly background?: string
   readonly padding?: number
+  readonly zIndex?: number
 }
 
 export interface NodeComponents {

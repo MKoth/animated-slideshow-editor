@@ -18,7 +18,10 @@ function makeTableComponent(overrides: Partial<TableComponent> = {}): TableCompo
 }
 
 function makeRow(
-  cells: TableCellComponent[] = [{ kind: 'tableCell', colSpan: 1, rowSpan: 1 }, { kind: 'tableCell', colSpan: 1, rowSpan: 1 }],
+  cells: TableCellComponent[] = [
+    { kind: 'tableCell', colSpan: 1, rowSpan: 1 },
+    { kind: 'tableCell', colSpan: 1, rowSpan: 1 },
+  ],
   name = 'Row',
 ): SceneNode {
   const row = new SceneNode('row-' + Math.random().toString(36).slice(2, 8), name, IDENTITY, {
@@ -37,7 +40,11 @@ function makeRow(
   return row
 }
 
-function makeRows(count: number, colsPerRow: number, cellOverrides?: Partial<TableCellComponent>): SceneNode[] {
+function makeRows(
+  count: number,
+  colsPerRow: number,
+  cellOverrides?: Partial<TableCellComponent>,
+): SceneNode[] {
   const rows: SceneNode[] = []
   for (let r = 0; r < count; r++) {
     const cells: TableCellComponent[] = []
@@ -50,6 +57,18 @@ function makeRows(count: number, colsPerRow: number, cellOverrides?: Partial<Tab
 }
 
 describe('computeTableLayout', () => {
+  it('lays cells out sequentially across logical rows', () => {
+    const table = makeTableComponent({ columns: [{ width: 100 }, { width: 100 }, { width: 100 }] })
+    const rows = makeRows(2, 2)
+    const layout = computeTableLayout(table, rows, 300)
+    const cells = rows.flatMap((row) => row.children)
+
+    expect(layout.cellRects.get(cells[0].id)).toEqual({ x: 0, y: 0, width: 100, height: 30 })
+    expect(layout.cellRects.get(cells[1].id)).toEqual({ x: 100, y: 0, width: 100, height: 30 })
+    expect(layout.cellRects.get(cells[2].id)).toEqual({ x: 200, y: 0, width: 100, height: 30 })
+    expect(layout.cellRects.get(cells[3].id)).toEqual({ x: 0, y: 30, width: 100, height: 30 })
+  })
+
   it('computes layout for fixed-width columns', () => {
     const table = makeTableComponent()
     const rows = makeRows(2, 2)
@@ -140,9 +159,7 @@ describe('computeTableLayout', () => {
     const table = makeTableComponent({
       columns: [{ width: 100 }],
     })
-    const rows = [
-      makeRow([{ kind: 'tableCell', colSpan: 5, rowSpan: 5 }]),
-    ]
+    const rows = [makeRow([{ kind: 'tableCell', colSpan: 5, rowSpan: 5 }])]
     const layout = computeTableLayout(table, rows, 100)
 
     const cell = layout.cells.get('0,0')
@@ -155,9 +172,7 @@ describe('computeTableLayout', () => {
     const table = makeTableComponent({
       columns: [{ width: 100 }, { width: 100 }, { width: 100 }],
     })
-    const rows = [
-      makeRow([{ kind: 'tableCell', colSpan: 3, rowSpan: 1 }]),
-    ]
+    const rows = [makeRow([{ kind: 'tableCell', colSpan: 3, rowSpan: 1 }])]
     const layout = computeTableLayout(table, rows, 300)
 
     expect(layout.cells.has('0,0')).toBe(true)

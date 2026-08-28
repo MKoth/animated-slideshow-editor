@@ -229,6 +229,10 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
       kind: 'tableRow',
       borderColor: typeof rowRecord.borderColor === 'string' ? rowRecord.borderColor : undefined,
       background: typeof rowRecord.background === 'string' ? rowRecord.background : undefined,
+      zIndex:
+        typeof rowRecord.zIndex === 'number' && Number.isFinite(rowRecord.zIndex)
+          ? rowRecord.zIndex
+          : undefined,
     }
   }
   if (record.tableCell !== undefined) {
@@ -251,6 +255,10 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
       padding:
         typeof cellRecord.padding === 'number' && Number.isFinite(cellRecord.padding)
           ? cellRecord.padding
+          : undefined,
+      zIndex:
+        typeof cellRecord.zIndex === 'number' && Number.isFinite(cellRecord.zIndex)
+          ? cellRecord.zIndex
           : undefined,
     }
   }

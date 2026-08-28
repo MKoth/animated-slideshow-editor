@@ -12,6 +12,7 @@ export interface TableLayout {
   readonly columns: readonly number[]
   readonly rows: readonly number[]
   readonly cells: ReadonlyMap<string, CellRect>
+  readonly cellRects: ReadonlyMap<string, CellRect>
   readonly totalWidth: number
   readonly totalHeight: number
 }
@@ -34,17 +35,16 @@ export class TableLayoutCache {
       columns: table.columns,
       gap: table.gap,
       borderWidth: table.borderWidth,
-      rows: rows.map((r) => ({
-        borderColor: r.components.tableRow?.borderColor,
-        background: r.components.tableRow?.background,
-        cells: r.children.map((c) => ({
+      cells: rows
+        .flatMap((r) => r.children)
+        .map((c) => ({
+          id: c.id,
           colSpan: c.components.tableCell?.colSpan,
           rowSpan: c.components.tableCell?.rowSpan,
           borderColor: c.components.tableCell?.borderColor,
           background: c.components.tableCell?.background,
           padding: c.components.tableCell?.padding,
         })),
-      })),
       availableWidth,
     })
 
@@ -60,10 +60,6 @@ export class TableLayoutCache {
   }
 }
 
-function cellStride(colWidth: number): number {
-  return colWidth
-}
-
 export function computeTableLayout(
   table: TableComponent,
   rows: readonly SceneNode[],
@@ -71,79 +67,46 @@ export function computeTableLayout(
 ): TableLayout {
   const { columns, gap } = table
   const colsCount = columns.length
-  const rowsCount = rows.length
+  const flatCells = rows.flatMap((row) => row.children).filter((node) => node.components.tableCell)
+  const rowsCount = Math.max(1, Math.ceil(flatCells.length / Math.max(1, colsCount)))
 
   const totalGapsX = Math.max(0, colsCount - 1) * gap
   const innerWidth = availableWidth - totalGapsX
 
   const colWidths = resolveDimensions(columns, innerWidth, 0)
 
-  const rowHeights: number[] = []
-  for (const row of rows) {
-    const rowHeight = resolveRowHeight(row)
-    rowHeights.push(rowHeight)
-  }
+  const rowHeights = Array.from({ length: rowsCount }, () => 30)
 
   const spanCovered = new Set<string>()
-  const cells = new Map<string, CellRect>()
-  let cursorY = 0
+  const cellRects = new Map<string, CellRect>()
+  for (const cellNode of flatCells) {
+    const cellComp = cellNode.components.tableCell as TableCellComponent
+    const start = nextFreePosition(spanCovered, colsCount)
+    const row = start.row
+    const column = start.column
+    const effectiveColSpan = Math.min(Math.max(1, cellComp.colSpan), colsCount - column)
+    const effectiveRowSpan = Math.max(1, cellComp.rowSpan)
 
-  for (let r = 0; r < rowsCount; r++) {
-    const rowNode = rows[r]
-    let cursorX = 0
-    let childIdx = 0
-
-    for (let c = 0; c < colsCount; c++) {
-      const spanKey = `${r},${c}`
-
-      if (spanCovered.has(spanKey)) {
-        cursorX += cellStride(colWidths[c])
-        if (c < colsCount - 1) cursorX += gap
-        continue
-      }
-
-      const cellNode = rowNode.children[childIdx]
-      const cellComp = cellNode?.components.tableCell as TableCellComponent | undefined
-      const colSpan = cellComp?.colSpan ?? 1
-      const rowSpan = cellComp?.rowSpan ?? 1
-
-      const effectiveColSpan = Math.min(colSpan, colsCount - c)
-      const effectiveRowSpan = Math.min(rowSpan, rowsCount - r)
-
-      if (effectiveColSpan > 1 || effectiveRowSpan > 1) {
-        for (let sr = 0; sr < effectiveRowSpan; sr++) {
-          for (let sc = 0; sc < effectiveColSpan; sc++) {
-            if (sr === 0 && sc === 0) continue
-            spanCovered.add(`${r + sr},${c + sc}`)
-          }
-        }
-      }
-
-      let spanWidth = 0
+    while (row + effectiveRowSpan > rowHeights.length) rowHeights.push(30)
+    for (let sr = 0; sr < effectiveRowSpan; sr++) {
       for (let sc = 0; sc < effectiveColSpan; sc++) {
-        spanWidth += colWidths[c + sc]
+        spanCovered.add(`${row + sr},${column + sc}`)
       }
-      spanWidth += Math.max(0, effectiveColSpan - 1) * gap
-
-      let spanHeight = 0
-      for (let sr = 0; sr < effectiveRowSpan; sr++) {
-        spanHeight += rowHeights[r + sr]
-      }
-      spanHeight += Math.max(0, effectiveRowSpan - 1) * gap
-
-      cells.set(spanKey, {
-        x: cursorX,
-        y: cursorY,
-        width: spanWidth,
-        height: spanHeight,
-      })
-
-      cursorX += cellStride(colWidths[c])
-      if (c < colsCount - 1) cursorX += gap
-      childIdx++
     }
-    cursorY += cellStride(rowHeights[r])
-    if (r < rowsCount - 1) cursorY += gap
+
+    let x = 0
+    for (let c = 0; c < column; c++) x += colWidths[c] + gap
+    let y = 0
+    for (let r = 0; r < row; r++) y += rowHeights[r] + gap
+    let width = 0
+    for (let c = 0; c < effectiveColSpan; c++) width += colWidths[column + c]
+    width += Math.max(0, effectiveColSpan - 1) * gap
+    let height = 0
+    for (let r = 0; r < effectiveRowSpan; r++) height += rowHeights[row + r]
+    height += Math.max(0, effectiveRowSpan - 1) * gap
+
+    const rect = { x, y, width, height }
+    cellRects.set(cellNode.id, rect)
   }
 
   let totalWidth = 0
@@ -153,17 +116,72 @@ export function computeTableLayout(
   }
 
   let totalHeight = 0
-  for (let r = 0; r < rowsCount; r++) {
+  for (let r = 0; r < rowHeights.length; r++) {
     totalHeight += rowHeights[r]
-    if (r < rowsCount - 1) totalHeight += gap
+    if (r < rowHeights.length - 1) totalHeight += gap
   }
 
   return {
     columns: colWidths,
     rows: rowHeights,
-    cells,
+    cells: computeLegacyCellRects(table, rows, colWidths, gap),
+    cellRects,
     totalWidth,
     totalHeight,
+  }
+}
+
+function computeLegacyCellRects(
+  table: TableComponent,
+  rows: readonly SceneNode[],
+  colWidths: readonly number[],
+  gap: number,
+): ReadonlyMap<string, CellRect> {
+  const result = new Map<string, CellRect>()
+  const rowHeights = rows.map(resolveRowHeight)
+  const covered = new Set<string>()
+  let y = 0
+  for (let r = 0; r < rows.length; r++) {
+    let x = 0
+    let childIndex = 0
+    for (let c = 0; c < table.columns.length; c++) {
+      if (covered.has(`${r},${c}`)) {
+        x += colWidths[c] + (c < table.columns.length - 1 ? gap : 0)
+        continue
+      }
+      const cell = rows[r].children[childIndex]
+      if (!cell) break
+      const component = cell.components.tableCell
+      const colSpan = Math.min(component?.colSpan ?? 1, table.columns.length - c)
+      const rowSpan = Math.min(component?.rowSpan ?? 1, rows.length - r)
+      for (let sr = 0; sr < rowSpan; sr++) {
+        for (let sc = 0; sc < colSpan; sc++) {
+          if (sr || sc) covered.add(`${r + sr},${c + sc}`)
+        }
+      }
+      const width =
+        colWidths.slice(c, c + colSpan).reduce((sum, value) => sum + value, 0) + (colSpan - 1) * gap
+      const height =
+        rowHeights.slice(r, r + rowSpan).reduce((sum, value) => sum + value, 0) +
+        (rowSpan - 1) * gap
+      result.set(`${r},${c}`, { x, y, width, height })
+      x += colWidths[c] + (c < table.columns.length - 1 ? gap : 0)
+      childIndex++
+      c += colSpan - 1
+    }
+    y += rowHeights[r] + (r < rows.length - 1 ? gap : 0)
+  }
+  return result
+}
+
+function nextFreePosition(
+  occupied: ReadonlySet<string>,
+  columnCount: number,
+): { row: number; column: number } {
+  for (let row = 0; ; row++) {
+    for (let column = 0; column < columnCount; column++) {
+      if (!occupied.has(`${row},${column}`)) return { row, column }
+    }
   }
 }
 
