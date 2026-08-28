@@ -1,16 +1,19 @@
-import type { TableComponent } from './components'
+import type { TableComponent, TableRowComponent, TableCellComponent } from './components'
 
 export function defaultTableComponent(): TableComponent {
   return {
     kind: 'table',
     columns: [{ width: 100 }, { width: 100 }],
-    rows: [{ width: 30 }, { width: 30 }],
     gap: 4,
-    cellPadding: 8,
     borderWidth: 1,
     borderColor: '#000000',
-    textWrap: 'wrap',
-    columnMapping: { 0: 'Column A', 1: 'Column B' },
-    cellSpans: {},
   }
+}
+
+export function defaultTableRowComponent(): TableRowComponent {
+  return { kind: 'tableRow' }
+}
+
+export function defaultTableCellComponent(): TableCellComponent {
+  return { kind: 'tableCell', colSpan: 1, rowSpan: 1 }
 }

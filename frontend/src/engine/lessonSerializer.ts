@@ -387,9 +387,6 @@ function validateNode(errors: string[], nodeJson: unknown, nodeIds: Set<string>)
       if (!Array.isArray(table.columns) || table.columns.length === 0) {
         errors.push(`Node "${String(nodeJson.id)}" table must have a non-empty columns array`)
       }
-      if (!Array.isArray(table.rows) || table.rows.length === 0) {
-        errors.push(`Node "${String(nodeJson.id)}" table must have a non-empty rows array`)
-      }
     }
   }
   if (components.chart !== undefined) {

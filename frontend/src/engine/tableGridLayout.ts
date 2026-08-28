@@ -1,4 +1,5 @@
-import type { TableComponent, TableDimension } from './components'
+import type { TableComponent, TableDimension, TableCellComponent } from './components'
+import type { SceneNode } from './sceneNode'
 
 export interface CellRect {
   readonly x: number
@@ -28,13 +29,22 @@ export class TableLayoutCache {
     this._layoutDirty = true
   }
 
-  compute(table: TableComponent, availableWidth: number): TableLayout {
+  compute(table: TableComponent, rows: readonly SceneNode[], availableWidth: number): TableLayout {
     const configKey = JSON.stringify({
       columns: table.columns,
-      rows: table.rows,
       gap: table.gap,
-      cellPadding: table.cellPadding,
       borderWidth: table.borderWidth,
+      rows: rows.map((r) => ({
+        borderColor: r.components.tableRow?.borderColor,
+        background: r.components.tableRow?.background,
+        cells: r.children.map((c) => ({
+          colSpan: c.components.tableCell?.colSpan,
+          rowSpan: c.components.tableCell?.rowSpan,
+          borderColor: c.components.tableCell?.borderColor,
+          background: c.components.tableCell?.background,
+          padding: c.components.tableCell?.padding,
+        })),
+      })),
       availableWidth,
     })
 
@@ -42,7 +52,7 @@ export class TableLayoutCache {
       return this.cached
     }
 
-    const layout = computeTableLayout(table, availableWidth)
+    const layout = computeTableLayout(table, rows, availableWidth)
     this.cached = layout
     this.lastConfig = configKey
     this._layoutDirty = false
@@ -50,67 +60,80 @@ export class TableLayoutCache {
   }
 }
 
-function cellStride(colWidth: number, bw: number, cp: number): number {
-  return colWidth + bw * 2 + cp * 2
+function cellStride(colWidth: number, bw: number): number {
+  return colWidth + bw * 2
 }
 
-export function computeTableLayout(table: TableComponent, availableWidth: number): TableLayout {
-  const { columns, rows, gap, cellPadding, borderWidth } = table
+export function computeTableLayout(
+  table: TableComponent,
+  rows: readonly SceneNode[],
+  availableWidth: number,
+): TableLayout {
+  const { columns, gap, borderWidth } = table
   const bw = borderWidth
-  const cp = cellPadding
   const colsCount = columns.length
   const rowsCount = rows.length
 
   const totalGapsX = Math.max(0, colsCount - 1) * gap
   const totalBorderX = (colsCount + 1) * bw
-  const totalPaddingX = colsCount * cp * 2
-  const innerWidth = availableWidth - totalGapsX - totalBorderX - totalPaddingX
+  const innerWidth = availableWidth - totalGapsX - totalBorderX
 
   const colWidths = resolveDimensions(columns, innerWidth, 0)
-  const rowHeights = resolveDimensions(rows, 0, 0)
 
-  const cells = new Map<string, CellRect>()
+  const rowHeights: number[] = []
+  for (const row of rows) {
+    const rowHeight = resolveRowHeight(row)
+    rowHeights.push(rowHeight)
+  }
+
   const spanCovered = new Set<string>()
+  const cells = new Map<string, CellRect>()
   let cursorY = bw
 
   for (let r = 0; r < rowsCount; r++) {
+    const rowNode = rows[r]
     let cursorX = bw
+    let childIdx = 0
+
     for (let c = 0; c < colsCount; c++) {
       const spanKey = `${r},${c}`
 
       if (spanCovered.has(spanKey)) {
-        cursorX += cellStride(colWidths[c], bw, cp)
+        cursorX += cellStride(colWidths[c], bw)
         if (c < colsCount - 1) cursorX += gap
         continue
       }
 
-      const span = table.cellSpans[spanKey]
-      let spanWidth = 0
-      let spanHeight = 0
+      const cellNode = rowNode.children[childIdx]
+      const cellComp = cellNode?.components.tableCell as TableCellComponent | undefined
+      const colSpan = cellComp?.colSpan ?? 1
+      const rowSpan = cellComp?.rowSpan ?? 1
 
-      const colCount = span ? Math.min(span.colSpan, colsCount - c) : 1
-      const rowCount = span ? Math.min(span.rowSpan, rowsCount - r) : 1
+      const effectiveColSpan = Math.min(colSpan, colsCount - c)
+      const effectiveRowSpan = Math.min(rowSpan, rowsCount - r)
 
-      if (colCount > 1 || rowCount > 1) {
-        for (let sr = 0; sr < rowCount; sr++) {
-          for (let sc = 0; sc < colCount; sc++) {
+      if (effectiveColSpan > 1 || effectiveRowSpan > 1) {
+        for (let sr = 0; sr < effectiveRowSpan; sr++) {
+          for (let sc = 0; sc < effectiveColSpan; sc++) {
             if (sr === 0 && sc === 0) continue
             spanCovered.add(`${r + sr},${c + sc}`)
           }
         }
       }
 
-      for (let sc = 0; sc < colCount; sc++) {
+      let spanWidth = 0
+      for (let sc = 0; sc < effectiveColSpan; sc++) {
         spanWidth += colWidths[c + sc]
       }
-      spanWidth += (colCount - 1) * gap
-      spanWidth += colCount * (bw * 2 + cp * 2)
+      spanWidth += Math.max(0, effectiveColSpan - 1) * gap
+      spanWidth += effectiveColSpan * bw * 2
 
-      for (let sr = 0; sr < rowCount; sr++) {
+      let spanHeight = 0
+      for (let sr = 0; sr < effectiveRowSpan; sr++) {
         spanHeight += rowHeights[r + sr]
       }
-      spanHeight += (rowCount - 1) * gap
-      spanHeight += rowCount * (bw * 2 + cp * 2)
+      spanHeight += Math.max(0, effectiveRowSpan - 1) * gap
+      spanHeight += effectiveRowSpan * bw * 2
 
       cells.set(spanKey, {
         x: cursorX,
@@ -119,23 +142,24 @@ export function computeTableLayout(table: TableComponent, availableWidth: number
         height: spanHeight,
       })
 
-      cursorX += cellStride(colWidths[c], bw, cp)
+      cursorX += cellStride(colWidths[c], bw)
       if (c < colsCount - 1) cursorX += gap
+      childIdx++
     }
-    cursorY += cellStride(rowHeights[r], bw, cp)
+    cursorY += cellStride(rowHeights[r], bw)
     if (r < rowsCount - 1) cursorY += gap
   }
 
   let totalWidth = bw
   for (let c = 0; c < colsCount; c++) {
-    totalWidth += colWidths[c] + bw + cp * 2
+    totalWidth += colWidths[c] + bw * 2
     if (c < colsCount - 1) totalWidth += gap
   }
   totalWidth += bw
 
   let totalHeight = bw
   for (let r = 0; r < rowsCount; r++) {
-    totalHeight += rowHeights[r] + bw + cp * 2
+    totalHeight += rowHeights[r] + bw * 2
     if (r < rowsCount - 1) totalHeight += gap
   }
   totalHeight += bw
@@ -147,6 +171,23 @@ export function computeTableLayout(table: TableComponent, availableWidth: number
     totalWidth,
     totalHeight,
   }
+}
+
+function resolveRowHeight(rowNode: SceneNode): number {
+  const rowComp = rowNode.components.tableRow
+  if (!rowComp) return 0
+
+  let maxHeight = 30
+  for (const cell of rowNode.children) {
+    const cellComp = cell.components.tableCell
+    if (cellComp) {
+      const rowSpan = cellComp.rowSpan ?? 1
+      if (rowSpan === 1) {
+        maxHeight = Math.max(maxHeight, 30)
+      }
+    }
+  }
+  return maxHeight
 }
 
 function resolveDimensions(

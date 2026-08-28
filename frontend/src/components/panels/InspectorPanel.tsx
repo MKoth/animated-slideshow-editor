@@ -541,6 +541,24 @@ export function InspectorPanel({ width }: { width: number }) {
           />
         )}
 
+        {targets.length === 1 && targets[0]!.components.tableRow && (
+          <TableInspectorSection
+            target={targets[0]!}
+            dispatch={dispatch}
+            notify={notify}
+            playing={playing}
+          />
+        )}
+
+        {targets.length === 1 && targets[0]!.components.tableCell && (
+          <TableInspectorSection
+            target={targets[0]!}
+            dispatch={dispatch}
+            notify={notify}
+            playing={playing}
+          />
+        )}
+
         {targets.length === 1 && targets[0]!.components.chart && (
           <ChartInspectorSection
             target={targets[0]!}

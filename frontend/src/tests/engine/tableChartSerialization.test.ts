@@ -21,14 +21,9 @@ describe('TableComponent serialization', () => {
     const table: TableComponent = {
       kind: 'table',
       columns: [{ width: 100 }, { width: 'auto' }],
-      rows: [{ width: 50 }, { width: 'auto' }],
       gap: 5,
-      cellPadding: 10,
       borderWidth: 2,
       borderColor: '#ff0000',
-      textWrap: 'wrap',
-      columnMapping: { 0: 'name', 1: 'value' },
-      cellSpans: { '0,0': { colSpan: 2, rowSpan: 1 } },
     }
     engine.setTableComponent(node.id, table)
 
@@ -37,14 +32,9 @@ describe('TableComponent serialization', () => {
     expect(nodeJson?.components.table).toEqual({
       kind: 'table',
       columns: [{ width: 100 }, { width: 'auto' }],
-      rows: [{ width: 50 }, { width: 'auto' }],
       gap: 5,
-      cellPadding: 10,
       borderWidth: 2,
       borderColor: '#ff0000',
-      textWrap: 'wrap',
-      columnMapping: { 0: 'name', 1: 'value' },
-      cellSpans: { '0,0': { colSpan: 2, rowSpan: 1 } },
     })
 
     const restored = deserialize(JSON.stringify(json))
@@ -55,14 +45,9 @@ describe('TableComponent serialization', () => {
     expect(restoredNode!.components.table!).toEqual({
       kind: 'table',
       columns: [{ width: 100 }, { width: 'auto' }],
-      rows: [{ width: 50 }, { width: 'auto' }],
       gap: 5,
-      cellPadding: 10,
       borderWidth: 2,
       borderColor: '#ff0000',
-      textWrap: 'wrap',
-      columnMapping: { 0: 'name', 1: 'value' },
-      cellSpans: { '0,0': { colSpan: 2, rowSpan: 1 } },
     })
   })
 
@@ -73,14 +58,9 @@ describe('TableComponent serialization', () => {
     const table: TableComponent = {
       kind: 'table',
       columns: [{ width: 100 }],
-      rows: [{ width: 50 }],
       gap: 0,
-      cellPadding: 0,
       borderWidth: 1,
       borderColor: '#000000',
-      textWrap: 'wrap',
-      columnMapping: {},
-      cellSpans: {},
     }
     engine.setTableComponent(node.id, table)
 
@@ -97,14 +77,9 @@ describe('TableComponent serialization', () => {
     const table: TableComponent = {
       kind: 'table',
       columns: [{ width: 'auto', minWidth: 50 }],
-      rows: [{ width: 50, minWidth: 30 }],
       gap: 0,
-      cellPadding: 0,
       borderWidth: 1,
       borderColor: '#000000',
-      textWrap: 'wrap',
-      columnMapping: {},
-      cellSpans: {},
     }
     engine.setTableComponent(node.id, table)
 
@@ -152,7 +127,6 @@ describe('TableComponent serialization', () => {
                   table: {
                     kind: 'table',
                     columns: [{ width: 100 }],
-                    rows: [{ width: 50 }],
                   },
                 },
               },
@@ -425,14 +399,9 @@ describe('full round-trip with table, chart, and data keyframes', () => {
     const table: TableComponent = {
       kind: 'table',
       columns: [{ width: 100 }, { width: 'auto' }, { width: 80 }],
-      rows: [{ width: 30 }, { width: 'auto' }],
       gap: 2,
-      cellPadding: 5,
       borderWidth: 1,
       borderColor: '#333333',
-      textWrap: 'truncate',
-      columnMapping: { 0: 'label', 1: 'value', 2: 'series' },
-      cellSpans: { '0,0': { colSpan: 3, rowSpan: 1 } },
     }
     engine.setTableComponent(tableNode.id, table)
 

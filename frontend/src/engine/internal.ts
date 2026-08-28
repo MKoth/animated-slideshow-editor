@@ -35,7 +35,7 @@ import type { EmbeddedAsset } from './embeddedAsset'
 import type { EmbeddedMaterialDefinition } from './embeddedMaterial'
 import { embeddedShaderParameters } from './embeddedShader'
 import type { EmbeddedShaderDefinition } from './embeddedShader'
-import type { ChartComponent, TableComponent, TextComponent } from './components'
+import type { ChartComponent, TableComponent, TableRowComponent, TableCellComponent, TextComponent } from './components'
 import type { CreateProjectInput, EmbeddedDataSourceUnion, Project } from './project'
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
@@ -459,6 +459,22 @@ export class Engine {
   setTableComponent(nodeId: string, table: TableComponent): void {
     const node = this.getNode(nodeId)
     const newComponents = { ...node.components, table }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(node as any).components = Object.freeze(newComponents)
+    this.#bus.emit({ type: 'TableChanged', nodeId })
+  }
+
+  setTableRowComponent(nodeId: string, tableRow: TableRowComponent): void {
+    const node = this.getNode(nodeId)
+    const newComponents = { ...node.components, tableRow }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(node as any).components = Object.freeze(newComponents)
+    this.#bus.emit({ type: 'TableChanged', nodeId })
+  }
+
+  setTableCellComponent(nodeId: string, tableCell: TableCellComponent): void {
+    const node = this.getNode(nodeId)
+    const newComponents = { ...node.components, tableCell }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(node as any).components = Object.freeze(newComponents)
     this.#bus.emit({ type: 'TableChanged', nodeId })

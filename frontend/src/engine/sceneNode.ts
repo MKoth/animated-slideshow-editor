@@ -3,7 +3,6 @@ import type {
   TextAlignment,
   TableComponent,
   TableDimension,
-  TableCellSpan,
   ChartComponent,
   ChartType,
   VisualConfig,
@@ -146,6 +145,8 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
     mesh?: NodeComponents['mesh']
     ghost?: NodeComponents['ghost']
     table?: NodeComponents['table']
+    tableRow?: NodeComponents['tableRow']
+    tableCell?: NodeComponents['tableCell']
     chart?: NodeComponents['chart']
   } = {}
   if (record.camera !== undefined) {
@@ -219,6 +220,40 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
     }
     components.table = parseTableComponent(record.table as Record<string, unknown>, nodeId)
   }
+  if (record.tableRow !== undefined) {
+    if (!isKind(record.tableRow, 'tableRow')) {
+      throw new Error(`Node "${nodeId}" has an invalid tableRow component`)
+    }
+    const rowRecord = record.tableRow as Record<string, unknown>
+    components.tableRow = {
+      kind: 'tableRow',
+      borderColor: typeof rowRecord.borderColor === 'string' ? rowRecord.borderColor : undefined,
+      background: typeof rowRecord.background === 'string' ? rowRecord.background : undefined,
+    }
+  }
+  if (record.tableCell !== undefined) {
+    if (!isKind(record.tableCell, 'tableCell')) {
+      throw new Error(`Node "${nodeId}" has an invalid tableCell component`)
+    }
+    const cellRecord = record.tableCell as Record<string, unknown>
+    components.tableCell = {
+      kind: 'tableCell',
+      colSpan:
+        typeof cellRecord.colSpan === 'number' && Number.isFinite(cellRecord.colSpan)
+          ? cellRecord.colSpan
+          : 1,
+      rowSpan:
+        typeof cellRecord.rowSpan === 'number' && Number.isFinite(cellRecord.rowSpan)
+          ? cellRecord.rowSpan
+          : 1,
+      borderColor: typeof cellRecord.borderColor === 'string' ? cellRecord.borderColor : undefined,
+      background: typeof cellRecord.background === 'string' ? cellRecord.background : undefined,
+      padding:
+        typeof cellRecord.padding === 'number' && Number.isFinite(cellRecord.padding)
+          ? cellRecord.padding
+          : undefined,
+    }
+  }
   if (record.chart !== undefined) {
     if (!isKind(record.chart, 'chart')) {
       throw new Error(`Node "${nodeId}" has an invalid chart component`)
@@ -283,55 +318,19 @@ function parseTableComponent(component: Record<string, unknown>, nodeId: string)
     throw new Error(`${ctx} must have a non-empty columns array`)
   }
   const columns = component.columns.map((c, i) => parseDimension(c, `${ctx}.columns[${i}]`))
-  if (!Array.isArray(component.rows) || component.rows.length === 0) {
-    throw new Error(`${ctx} must have a non-empty rows array`)
-  }
-  const rows = component.rows.map((r, i) => parseDimension(r, `${ctx}.rows[${i}]`))
   const gap =
     typeof component.gap === 'number' && Number.isFinite(component.gap) ? component.gap : 0
-  const cellPadding =
-    typeof component.cellPadding === 'number' && Number.isFinite(component.cellPadding)
-      ? component.cellPadding
-      : 0
   const borderWidth =
     typeof component.borderWidth === 'number' && Number.isFinite(component.borderWidth)
       ? component.borderWidth
       : 1
   const borderColor = typeof component.borderColor === 'string' ? component.borderColor : '#000000'
-  const textWrap = component.textWrap === 'truncate' ? ('truncate' as const) : ('wrap' as const)
-  const columnMapping: Record<number, string> = {}
-  if (typeof component.columnMapping === 'object' && component.columnMapping !== null) {
-    const mappingRecord = component.columnMapping as Record<string, unknown>
-    for (const [key, val] of Object.entries(mappingRecord)) {
-      const idx = Number(key)
-      if (Number.isInteger(idx) && typeof val === 'string') {
-        columnMapping[idx] = val
-      }
-    }
-  }
-  const cellSpans: Record<string, TableCellSpan> = {}
-  if (typeof component.cellSpans === 'object' && component.cellSpans !== null) {
-    const spansRecord = component.cellSpans as Record<string, unknown>
-    for (const [key, val] of Object.entries(spansRecord)) {
-      if (typeof val === 'object' && val !== null) {
-        const span = val as Record<string, unknown>
-        if (typeof span.colSpan === 'number' && typeof span.rowSpan === 'number') {
-          cellSpans[key] = { colSpan: span.colSpan, rowSpan: span.rowSpan }
-        }
-      }
-    }
-  }
   return {
     kind: 'table',
     columns,
-    rows,
     gap,
-    cellPadding,
     borderWidth,
     borderColor,
-    textWrap,
-    columnMapping,
-    cellSpans,
   }
 }
 
@@ -436,16 +435,13 @@ function freezeComponents(components: NodeComponents): NodeComponents {
       ? Object.freeze({
           kind: 'table' as const,
           columns: components.table.columns.map((c) => Object.freeze({ ...c })),
-          rows: components.table.rows.map((r) => Object.freeze({ ...r })),
           gap: components.table.gap,
-          cellPadding: components.table.cellPadding,
           borderWidth: components.table.borderWidth,
           borderColor: components.table.borderColor,
-          textWrap: components.table.textWrap,
-          columnMapping: Object.freeze({ ...components.table.columnMapping }),
-          cellSpans: Object.freeze({ ...components.table.cellSpans }),
         })
       : undefined,
+    tableRow: components.tableRow ? Object.freeze({ ...components.tableRow }) : undefined,
+    tableCell: components.tableCell ? Object.freeze({ ...components.tableCell }) : undefined,
     chart: components.chart
       ? {
           kind: 'chart' as const,

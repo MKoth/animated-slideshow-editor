@@ -46,19 +46,22 @@ export type NodeComponentsJSON = {
       readonly width: number | 'auto'
       readonly minWidth?: number
     }[]
-    readonly rows: readonly {
-      readonly width: number | 'auto'
-      readonly minWidth?: number
-    }[]
     readonly gap?: number
-    readonly cellPadding?: number
     readonly borderWidth?: number
     readonly borderColor?: string
-    readonly textWrap?: 'wrap' | 'truncate'
-    readonly columnMapping?: Readonly<Record<number, string>>
-    readonly cellSpans?: Readonly<
-      Record<string, { readonly colSpan: number; readonly rowSpan: number }>
-    >
+  }
+  readonly tableRow?: {
+    readonly kind: 'tableRow'
+    readonly borderColor?: string
+    readonly background?: string
+  }
+  readonly tableCell?: {
+    readonly kind: 'tableCell'
+    readonly colSpan?: number
+    readonly rowSpan?: number
+    readonly borderColor?: string
+    readonly background?: string
+    readonly padding?: number
   }
   readonly chart?: {
     readonly kind: 'chart'

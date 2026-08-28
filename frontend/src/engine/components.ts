@@ -63,22 +63,27 @@ export interface TableDimension {
   readonly minWidth?: number
 }
 
-export interface TableCellSpan {
-  readonly colSpan: number
-  readonly rowSpan: number
-}
-
 export interface TableComponent {
   readonly kind: 'table'
   readonly columns: readonly TableDimension[]
-  readonly rows: readonly TableDimension[]
   readonly gap: number
-  readonly cellPadding: number
   readonly borderWidth: number
   readonly borderColor: string
-  readonly textWrap: 'wrap' | 'truncate'
-  readonly columnMapping: Readonly<Record<number, string>>
-  readonly cellSpans: Readonly<Record<string, TableCellSpan>>
+}
+
+export interface TableRowComponent {
+  readonly kind: 'tableRow'
+  readonly borderColor?: string
+  readonly background?: string
+}
+
+export interface TableCellComponent {
+  readonly kind: 'tableCell'
+  readonly colSpan: number
+  readonly rowSpan: number
+  readonly borderColor?: string
+  readonly background?: string
+  readonly padding?: number
 }
 
 export interface NodeComponents {
@@ -89,6 +94,8 @@ export interface NodeComponents {
   readonly mesh?: MeshComponent
   readonly ghost?: GhostComponent
   readonly table?: TableComponent
+  readonly tableRow?: TableRowComponent
+  readonly tableCell?: TableCellComponent
   readonly chart?: ChartComponent
 }
 
@@ -101,6 +108,8 @@ export function copyComponents(components: NodeComponents): NodeComponents {
     mesh: components.mesh ? { kind: 'mesh', mesh: cloneMeshData(components.mesh.mesh) } : undefined,
     ghost: components.ghost ? { ...components.ghost } : undefined,
     table: components.table ? { ...components.table } : undefined,
+    tableRow: components.tableRow ? { ...components.tableRow } : undefined,
+    tableCell: components.tableCell ? { ...components.tableCell } : undefined,
     chart: components.chart
       ? {
           kind: 'chart' as const,

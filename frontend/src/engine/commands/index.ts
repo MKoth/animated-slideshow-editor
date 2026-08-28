@@ -259,6 +259,31 @@ export type {
   SetTableComponentInverse,
   SetTableComponentParameters,
 } from './setTableComponentCommand'
+export {
+  CreateTableCommand,
+  AddTableRowCommand,
+  RemoveTableRowCommand,
+  AddTableColumnCommand,
+  RemoveTableColumnCommand,
+  SetTableRowComponentCommand,
+  SetTableCellComponentCommand,
+} from './tableCommands'
+export type {
+  CreateTableInverse,
+  CreateTableParameters,
+  AddTableRowInverse,
+  AddTableRowParameters,
+  RemoveTableRowInverse,
+  RemoveTableRowParameters,
+  AddTableColumnInverse,
+  AddTableColumnParameters,
+  RemoveTableColumnInverse,
+  RemoveTableColumnParameters,
+  SetTableRowComponentInverse,
+  SetTableRowComponentParameters,
+  SetTableCellComponentInverse,
+  SetTableCellComponentParameters,
+} from './tableCommands'
 export { SetChartComponentCommand } from './setChartComponentCommand'
 export type {
   SetChartComponentInverse,

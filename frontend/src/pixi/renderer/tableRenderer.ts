@@ -1,6 +1,6 @@
 import type { SceneNode } from '../../engine'
 import type { TableComponent } from '../../engine/components'
-import { computeTableLayout, type TableLayout, type CellRect } from '../../engine/tableGridLayout'
+import { computeTableLayout, type TableLayout } from '../../engine/tableGridLayout'
 import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
 import type { WorldSize } from './worldGeometry'
 
@@ -29,7 +29,7 @@ export function createTableContainer(
 
   const group = new pixi.Container()
   group.label = `table:${node.name}`
-  populateTable(pixi, group, table, availableWidth)
+  populateTable(pixi, group, node, table, availableWidth)
   return group
 }
 
@@ -48,16 +48,17 @@ export function rebuildTable(
     child.destroy()
   }
 
-  populateTable(pixi, group, table, availableWidth)
+  populateTable(pixi, group, node, table, availableWidth)
 }
 
 function populateTable(
   pixi: RendererPixi,
   group: PixiContainer,
+  node: SceneNode,
   table: TableComponent,
   availableWidth: number,
 ): void {
-  const layout = computeTableLayout(table, availableWidth)
+  const layout = computeTableLayout(table, node.children, availableWidth)
   tableLayoutByContainer.set(group, layout)
   tableSizeByContainer.set(group, {
     width: layout.totalWidth,
@@ -68,11 +69,6 @@ function populateTable(
 
   const border = createBorder(pixi, table, layout)
   group.addChild(border)
-
-  for (const [key, rect] of layout.cells) {
-    const cellContainer = createCellContainer(pixi, key, rect, table)
-    group.addChild(cellContainer)
-  }
 }
 
 function createBorder(
@@ -86,35 +82,6 @@ function createBorder(
     .rect(0, 0, layout.totalWidth, layout.totalHeight)
     .stroke({ width: table.borderWidth, color })
   return graphics
-}
-
-function createCellContainer(
-  pixi: RendererPixi,
-  key: string,
-  rect: CellRect,
-  table: TableComponent,
-): PixiContainer {
-  const cell = new pixi.Container()
-  cell.label = `cell:${key}`
-  cell.position.set(rect.x, rect.y)
-
-  const [rowStr, colStr] = key.split(',')
-  const col = parseInt(colStr, 10)
-  const label = table.columnMapping[col] ?? `R${rowStr}C${colStr}`
-
-  const text = new pixi.Text({
-    text: label,
-    style: {
-      fontSize: 12,
-      fill: 0xffffff,
-      fontFamily: 'system-ui, sans-serif',
-    },
-  })
-  text.anchor.set(0, 0)
-  text.position.set(table.cellPadding, table.cellPadding)
-  cell.addChild(text)
-
-  return cell
 }
 
 function hexColorToNumber(color: string): number {
