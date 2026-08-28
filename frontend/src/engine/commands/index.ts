@@ -267,6 +267,7 @@ export {
   RemoveTableColumnCommand,
   SetTableRowComponentCommand,
   SetTableCellComponentCommand,
+  ApplyTableLayoutCommand,
 } from './tableCommands'
 export type {
   CreateTableInverse,
@@ -283,6 +284,8 @@ export type {
   SetTableRowComponentParameters,
   SetTableCellComponentInverse,
   SetTableCellComponentParameters,
+  ApplyTableLayoutInverse,
+  ApplyTableLayoutParameters,
 } from './tableCommands'
 export { SetChartComponentCommand } from './setChartComponentCommand'
 export type {

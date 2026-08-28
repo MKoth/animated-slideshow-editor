@@ -3,6 +3,8 @@ import type { Command } from './command'
 import type { TableRowComponent, TableCellComponent } from '../components'
 import { defaultTableComponent, defaultTableRowComponent, defaultTableCellComponent } from '../defaultTable'
 import { walkPreOrder } from '../sceneNode'
+import { applyTableLayout } from '../tableLayoutApply'
+import type { Transform } from '../transform'
 
 // ── CreateTableCommand ──────────────────────────────────────────────
 
@@ -45,11 +47,16 @@ export class CreateTableCommand implements Command<CreateTableInverse> {
         components: { tableRow: defaultTableRowComponent() },
       })
       for (let c = 0; c < 2; c++) {
-        engine.createNode(this.#sceneId, rowNode.id, `Cell ${r + 1},${c + 1}`, {
+        const cellNode = engine.createNode(this.#sceneId, rowNode.id, `Cell ${r + 1},${c + 1}`, {
           components: { tableCell: defaultTableCellComponent() },
+        })
+        engine.createNode(this.#sceneId, cellNode.id, `Text`, {
+          components: { text: { kind: 'text', content: '', fontSize: 14, alignment: 'left' } },
         })
       }
     }
+
+    applyTableLayout(engine, tableNode.id)
 
     return { tableNodeId: tableNode.id }
   }
@@ -100,8 +107,11 @@ export class AddTableRowCommand implements Command<AddTableRowInverse> {
     })
 
     for (let c = 0; c < colCount; c++) {
-      engine.createNode(sceneId, rowNode.id, `Cell ${rowIndex + 1},${c + 1}`, {
+      const cellNode = engine.createNode(sceneId, rowNode.id, `Cell ${rowIndex + 1},${c + 1}`, {
         components: { tableCell: defaultTableCellComponent() },
+      })
+      engine.createNode(sceneId, cellNode.id, `Text`, {
+        components: { text: { kind: 'text', content: '', fontSize: 14, alignment: 'left' } },
       })
     }
 
@@ -110,6 +120,8 @@ export class AddTableRowCommand implements Command<AddTableRowInverse> {
       tableNode.children.splice(tableNode.children.length - 1, 1)
       tableNode.children.splice(rowIndex, 0, movedRow)
     }
+
+    applyTableLayout(engine, this.#tableNodeId)
 
     return { rowNodeId: rowNode.id }
   }
@@ -161,6 +173,8 @@ export class RemoveTableRowCommand implements Command<RemoveTableRowInverse> {
     const nodes = [...walkPreOrder(rowNode)].map((entry) => entry.toJSON())
 
     engine.removeNode(this.#rowNodeId)
+
+    applyTableLayout(engine, tableNodeId)
 
     return { rowNodeId: this.#rowNodeId, tableNodeId, rowIndex, nodes }
   }
@@ -215,11 +229,16 @@ export class AddTableColumnCommand implements Command<AddTableColumnInverse> {
       const cellNode = engine.createNode(sceneId, row.id, `Cell ${row.children.length + 1}`, {
         components: { tableCell: defaultTableCellComponent() },
       })
+      engine.createNode(sceneId, cellNode.id, `Text`, {
+        components: { text: { kind: 'text', content: '', fontSize: 14, alignment: 'left' } },
+      })
       if (colIndex < row.children.length) {
         row.children.splice(row.children.length - 1, 1)
         row.children.splice(colIndex, 0, cellNode)
       }
     }
+
+    applyTableLayout(engine, this.#tableNodeId)
 
     return { tableNodeId: this.#tableNodeId }
   }
@@ -281,6 +300,8 @@ export class RemoveTableColumnCommand implements Command<RemoveTableColumnInvers
         engine.removeNode(row.children[this.#columnIndex].id)
       }
     }
+
+    applyTableLayout(engine, this.#tableNodeId)
 
     return { tableNodeId: this.#tableNodeId }
   }
@@ -369,6 +390,59 @@ export class SetTableCellComponentCommand implements Command<SetTableCellCompone
     const oldTableCell = node.components.tableCell!
     engine.setTableCellComponent(this.#nodeId, this.#tableCell)
     return { nodeId: this.#nodeId, oldTableCell }
+  }
+
+  toJSON(): Readonly<Record<string, unknown>> {
+    return { type: this.type, ...this.parameters }
+  }
+}
+
+// ── ApplyTableLayoutCommand ─────────────────────────────────────────
+
+export interface ApplyTableLayoutParameters {
+  readonly tableNodeId: string
+  readonly availableWidth: number
+}
+
+export interface ApplyTableLayoutInverse {
+  readonly tableNodeId: string
+  readonly previousTransforms: ReadonlyMap<string, Transform>
+}
+
+export class ApplyTableLayoutCommand implements Command<ApplyTableLayoutInverse> {
+  readonly type = 'ApplyTableLayout'
+  readonly parameters: Readonly<Record<string, unknown>>
+  readonly #tableNodeId: string
+
+  constructor(input: ApplyTableLayoutParameters) {
+    this.#tableNodeId = input.tableNodeId
+    this.parameters = {
+      tableNodeId: input.tableNodeId,
+      availableWidth: input.availableWidth,
+    }
+  }
+
+  validate(engine: Engine): void {
+    const node = engine.getNode(this.#tableNodeId)
+    if (!node.components.table) {
+      throw new Error(`Node "${this.#tableNodeId}" does not have a table component`)
+    }
+  }
+
+  execute(engine: Engine): ApplyTableLayoutInverse {
+    const tableNode = engine.getNode(this.#tableNodeId)
+
+    const previousTransforms = new Map<string, Transform>()
+    for (const row of tableNode.children) {
+      previousTransforms.set(row.id, { ...row.transform })
+      for (const cell of row.children) {
+        previousTransforms.set(cell.id, { ...cell.transform })
+      }
+    }
+
+    applyTableLayout(engine, this.#tableNodeId)
+
+    return { tableNodeId: this.#tableNodeId, previousTransforms }
   }
 
   toJSON(): Readonly<Record<string, unknown>> {

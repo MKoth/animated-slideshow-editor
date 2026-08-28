@@ -1,6 +1,7 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
 import type { TableComponent } from '../components'
+import { applyTableLayout } from '../tableLayoutApply'
 
 export interface SetTableComponentParameters {
   readonly nodeId: string
@@ -35,6 +36,7 @@ export class SetTableComponentCommand implements Command<SetTableComponentInvers
     const node = engine.getNode(this.#nodeId)
     const oldTable = node.components.table!
     engine.setTableComponent(this.#nodeId, this.#table)
+    applyTableLayout(engine, this.#nodeId)
     return { nodeId: this.#nodeId, oldTable }
   }
 
