@@ -352,11 +352,14 @@ export function validatePrompterJSON(errors: string[], value: unknown, slideId: 
     ) {
       if (Math.abs(part.duration - (part.endTime - part.startTime)) > PROMPTER_DURATION_TOLERANCE)
         errors.push(`${where} duration must equal endTime - startTime`)
-      if (Math.abs(part.startTime - expectedStart) > PROMPTER_DURATION_TOLERANCE)
+      // Allow gaps (user can leave space between parts or before first), but forbid overlaps and require sorted order
+      if (part.startTime < expectedStart - PROMPTER_DURATION_TOLERANCE) {
         errors.push(
-          `${where} startTime must equal previous endTime (gap-free; expected ${expectedStart})`,
+          `${where} startTime must not overlap previous end (previous end ${expectedStart}, got ${part.startTime})`,
         )
-      expectedStart = part.endTime
+      }
+      // For sorted check, ensure startTime >= previous startTime (already via expectedStart) — gaps allowed
+      expectedStart = Math.max(expectedStart, part.endTime)
     }
     if (
       part.audioClipId !== undefined &&

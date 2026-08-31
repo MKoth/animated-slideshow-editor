@@ -300,9 +300,10 @@ describe('Prompter Authoring 15.02', () => {
     // clip at 0.5 should NOT be shifted
     const clipEarly = engine.getSlide(slideId).audio.clips.find((c) => c.timelineStart === 0.5)
     expect(clipEarly).toBeDefined()
-    // Without shift, gap-free reflow should happen (no clip shift)
+    // Without shift, free placement: downstream keeps old start (gap may appear, not reflowed)
     const secondId = parts[1].id
     const secondDurBefore = parts[1].duration
+    const thirdStartBeforeAfterShift = parts[2].startTime
     dispatchOk(
       dispatcher,
       new UpdatePrompterPartCommand({
@@ -312,12 +313,11 @@ describe('Prompter Authoring 15.02', () => {
         shiftDownstream: false,
       }),
     )
-    // after without shift, downstream parts should be gap-free via reflow, not shifted by delta
+    // after without shift, free placement: downstream keeps old start (gap may appear, not reflowed)
     const afterNoShift = engine.getSlide(slideId).prompter!.parts
-    let cursor = 0
+    expect(afterNoShift[2].startTime).toBeCloseTo(thirdStartBeforeAfterShift, 6)
     for (const p of afterNoShift) {
-      expect(Math.abs(p.startTime - cursor)).toBeLessThan(1e-6)
-      cursor = p.endTime
+      expect(Math.abs(p.duration - (p.endTime - p.startTime))).toBeLessThan(1e-6)
     }
   })
 
@@ -338,19 +338,30 @@ describe('Prompter Authoring 15.02', () => {
     const engine2 = createEngineInternal()
     expect(() => engine2.restoreFromJSON(dupJson)).toThrow(/Duplicate prompter part id/)
 
-    // gap validation
+    // gap allowed (free placement) — startTime far ahead with correct end/duration should not throw
     const gapJson = JSON.parse(JSON.stringify(json)) as unknown as LessonJSON
     if (
       gapJson.slides[0].prompter &&
-      (gapJson.slides[0].prompter as unknown as { parts: { startTime: number }[] }).parts.length >=
-        2
+      (gapJson.slides[0].prompter as unknown as { parts: { startTime: number; endTime: number; duration: number }[] }).parts.length >= 2
     ) {
-      ;(
-        gapJson.slides[0].prompter as unknown as { parts: { startTime: number }[] }
-      ).parts[1].startTime = 999
+      const p1 = (gapJson.slides[0].prompter as unknown as { parts: { startTime: number; endTime: number; duration: number }[] }).parts[1]
+      p1.startTime = 999
+      p1.endTime = 999 + p1.duration
     }
     const engine3 = createEngineInternal()
-    expect(() => engine3.restoreFromJSON(gapJson)).toThrow(/gap-free/)
+    expect(() => engine3.restoreFromJSON(gapJson)).not.toThrow()
+    // overlap should throw
+    const overlapJson = JSON.parse(JSON.stringify(json)) as unknown as LessonJSON
+    if (
+      overlapJson.slides[0].prompter &&
+      (overlapJson.slides[0].prompter as unknown as { parts: { startTime: number; endTime: number; duration: number }[] }).parts.length >= 2
+    ) {
+      const o1 = (overlapJson.slides[0].prompter as unknown as { parts: { startTime: number; endTime: number; duration: number }[] }).parts[1]
+      o1.startTime = 0.1
+      o1.endTime = 0.1 + o1.duration
+    }
+    const engine4 = createEngineInternal()
+    expect(() => engine4.restoreFromJSON(overlapJson)).toThrow(/overlap/)
   })
 
   it('reflow after every mutation maintains invariants duration = end-start', () => {

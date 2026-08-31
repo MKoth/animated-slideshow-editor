@@ -634,32 +634,10 @@ export function AudioTimelineBody({
       const dt = dx / pps
       const raw = prompterMoveRef.current.startTime + dt
       const snapped = computeSnappedTime(Math.max(0, raw))
-      const parts = slide.prompter?.parts ?? []
-      const oldIndex = parts.findIndex((p) => p.id === partId)
-      if (oldIndex !== -1) {
-        const without = parts.filter((p) => p.id !== partId)
-        let newIndex = 0
-        for (let i = 0; i < without.length; i++) {
-          if (snapped >= without[i].endTime - 1e-6) newIndex = i + 1
-          else if (snapped > without[i].startTime) {
-            // inside a part — insert before or after based on middle
-            const mid = (without[i].startTime + without[i].endTime) / 2
-            newIndex = snapped >= mid ? i + 1 : i
-            break
-          } else break
-        }
-        // clamp
-        newIndex = Math.max(0, Math.min(newIndex, without.length))
-        // translate to original array index after removal: if oldIndex < newIndex, newIndex stays as is (since we removed), else same
-        // Our MovePrompterPartCommand expects newIndex in final array (0..n-1), we compute as position in final array
-        const finalNewIndex = newIndex
-        if (finalNewIndex !== oldIndex) {
-          const result = dispatch(new MovePrompterPartCommand({ slideId: slide.id, partId, newIndex: finalNewIndex }))
-          if (!result.ok) useNotificationStore.getState().notify(result.error.message)
-        } else {
-          // No reorder needed, but if user dragged to 0 behind import button, ensure at least we allow placing at 0
-          // If snapped is 0 and oldIndex is 0, nothing to do
-        }
+      const part = slide.prompter?.parts.find((p) => p.id === partId)
+      if (part && Math.abs(snapped - part.startTime) > 1e-6) {
+        const result = dispatch(new MovePrompterPartCommand({ slideId: slide.id, partId, newStartTime: snapped }))
+        if (!result.ok) useNotificationStore.getState().notify(result.error.message)
       }
       setPrompterMovePreview(null)
       prompterMoveRef.current = null
@@ -698,15 +676,26 @@ export function AudioTimelineBody({
       window.removeEventListener('pointerup', onUp)
       const dx = ev.clientX - startX
       const dt = dx / pps
-      let newDuration: number
-      if (side === 'right') newDuration = Math.max(0.2, startDuration + dt)
-      else newDuration = Math.max(0.2, startDuration - dt)
-      if (Math.abs(newDuration - startDuration) > 1e-6) {
-        // Shift downstream if user holds Shift (opt-in)
-        const shift = ev.shiftKey
-        const Cmd = shift ? UpdatePrompterPartWithShiftCommand : UpdatePrompterPartCommand
-        const result = dispatch(new Cmd({ slideId: slide.id, partId, duration: newDuration, ...(shift ? { shiftDownstream: true } : {}) } as never))
-        if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+      if (side === 'right') {
+        const newDuration = Math.max(0.2, startDuration + dt)
+        if (Math.abs(newDuration - startDuration) > 1e-6) {
+          const shift = ev.shiftKey
+          const Cmd = shift ? UpdatePrompterPartWithShiftCommand : UpdatePrompterPartCommand
+          const result = dispatch(new Cmd({ slideId: slide.id, partId, duration: newDuration, ...(shift ? { shiftDownstream: true } : {}) } as never))
+          if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+        }
+      } else {
+        const newDuration = Math.max(0.2, startDuration - dt)
+        const newStart = Math.max(0, partStart + (startDuration - newDuration))
+        // Left handle: move start and change duration, keep end fixed
+        if (Math.abs(newDuration - startDuration) > 1e-6 || Math.abs(newStart - partStart) > 1e-6) {
+          const moveRes = dispatch(new MovePrompterPartCommand({ slideId: slide.id, partId, newStartTime: newStart }))
+          if (!moveRes.ok) useNotificationStore.getState().notify(moveRes.error.message)
+          else {
+            const durRes = dispatch(new UpdatePrompterPartCommand({ slideId: slide.id, partId, duration: newDuration }))
+            if (!durRes.ok) useNotificationStore.getState().notify(durRes.error.message)
+          }
+        }
       }
       setPrompterTrimPreview(null)
     }

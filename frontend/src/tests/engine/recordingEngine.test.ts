@@ -298,8 +298,8 @@ describe('Spec 15.08 record→asset→clip linkage + replace-guard', () => {
       const clipId = (clipRes.inverse as { clipId: string }).clipId
       dispatchOk(dispatcher, new SetPrompterPartAudioCommand({ slideId, partId: 'p1', audioClipId: clipId, audioAssetId: aId }))
       dispatchOk(dispatcher, new UpdatePrompterPartWithShiftCommand({ slideId, partId: 'p1', duration: 1.0, shiftDownstream: false }))
-      // without shift, reflow gap-free but clips not moved
-      expect(engine.getSlide(slideId).prompter!.parts[1].startTime).toBe(1.0)
+      // without shift, free placement: gap preserved (p2 stays at 2), clips not moved
+      expect(engine.getSlide(slideId).prompter!.parts[1].startTime).toBe(2.0)
       const clipAfter = engine.getSlide(slideId).audio.clips.find((c) => c.timelineStart === 3.5)
       expect(clipAfter).toBeDefined()
     }

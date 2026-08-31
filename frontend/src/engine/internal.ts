@@ -481,14 +481,10 @@ export class Engine {
         part.text = patch.text
         const newDuration = estimatePrompterDuration(patch.text, secondsPerCharacter)
         if (newDuration !== part.duration) {
-          const delta = newDuration - part.duration
           part.duration = newDuration
+          part.endTime = part.startTime + newDuration
           part.status = undefined
-          // Reflow downstream gap-free (no shift of clips for text re-estimate)
-          if (slide.prompter) reflowPrompter(slide.prompter)
-          // If text caused duration change and shiftDownstream was requested for text edit? Not applicable per spec; text edit never shifts clips atomically; only duration edit does.
-          // But we still need to emit? We'll ensure reflow done.
-          void delta
+          // Free placement: keep downstream where it is, gap may change; no reflow gap-free
         } else {
           part.status = undefined
         }
@@ -518,7 +514,8 @@ export class Engine {
           }
         }
       } else {
-        if (slide.prompter) reflowPrompter(slide.prompter)
+        // Free placement: do not reflow gap-free — keep downstream where it is, gap may change
+        // Previously reflowPrompter(slide.prompter) would eliminate gaps; now we preserve gaps
       }
     } else if (patch.text !== undefined) {
       // Text-only change already reflowed if no audio case; if hasAudio, we froze duration, so still need to reflow? Duration frozen => no reflow needed, gap-free already holds because duration unchanged. But to be safe, reflow if duration changed via text re-estimate already did.
@@ -549,7 +546,7 @@ export class Engine {
     const index = slide.prompter.parts.findIndex((part) => part.id === partId)
     if (index === -1) throw new Error(`PrompterPart not found: ${partId}`)
     slide.prompter.parts.splice(index, 1)
-    if (slide.prompter) reflowPrompter(slide.prompter)
+    // Free placement: do not reflow gap-free; keep remaining parts where they are
     this.#bus.emit({
       type: 'PrompterChanged',
       slideId,
@@ -599,6 +596,28 @@ export class Engine {
     reflowPrompter(slide.prompter)
     this.#bus.emit({ type: 'PrompterChanged', slideId } as unknown as import('./events').EngineEvent)
     return oldIndex
+  }
+
+  movePrompterPartToTime(
+    slideId: string,
+    partId: string,
+    newStartTime: number,
+  ): { oldStartTime: number; oldEndTime: number } {
+    const slide = this.getSlide(slideId)
+    if (!slide.prompter) throw new Error(`Slide "${slideId}" has no prompter`)
+    const part = slide.prompter.parts.find((p) => p.id === partId)
+    if (!part) throw new Error(`PrompterPart not found: ${partId}`)
+    if (typeof newStartTime !== 'number' || !Number.isFinite(newStartTime) || newStartTime < 0) {
+      throw new Error('newStartTime must be a non-negative finite number')
+    }
+    const oldStartTime = part.startTime
+    const oldEndTime = part.endTime
+    part.startTime = newStartTime
+    part.endTime = newStartTime + part.duration
+    // Keep array sorted by startTime so order == time order (gap allowed)
+    slide.prompter.parts.sort((a, b) => a.startTime - b.startTime)
+    this.#bus.emit({ type: 'PrompterChanged', slideId } as unknown as import('./events').EngineEvent)
+    return { oldStartTime, oldEndTime }
   }
 
   createAudioClip(
