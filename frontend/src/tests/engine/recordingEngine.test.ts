@@ -72,9 +72,9 @@ describe('Spec 15.08 recording helpers', () => {
     expect(getMismatchKind(2.1, 2.0, thr)).toBe('none')
   })
 
-  it('computePlaybackRate planned/recorded non-destructive', () => {
-    expect(computePlaybackRate(2.0, 2.5)).toBeCloseTo(0.8)
-    expect(computePlaybackRate(2.0, 1.5)).toBeCloseTo(1.333, 2)
+  it('computePlaybackRate recorded/planned non-destructive', () => {
+    expect(computePlaybackRate(2.0, 2.5)).toBeCloseTo(1.25)
+    expect(computePlaybackRate(2.0, 1.5)).toBeCloseTo(0.75, 2)
   })
 
   it('getRecordingErrorInfo branches NotAllowedError and NotFoundError', () => {
@@ -206,7 +206,7 @@ describe('Spec 15.08 record→asset→clip linkage + replace-guard', () => {
     const thr = { absolute: 0.3, relative: 0.05 }
     // Longer case: planned 2.0, recorded 3.0 => diff 1.0 >0.3 => longer
     expect(getMismatchKind(3.0, 2.0, thr)).toBe('longer')
-    // Speed: sets playbackRate=planned/recorded, original WAV preserved, no shift
+    // Speed: sets playbackRate=recorded/planned, original WAV preserved, no shift
     const base64 = btoa('rec-long')
     const metadataLong = { duration: 3.0, sampleRate: 44100, channels: 1 }
     // Speed path
@@ -223,7 +223,7 @@ describe('Spec 15.08 record→asset→clip linkage + replace-guard', () => {
       dispatchOk(dispatcher, new SetPrompterPartAudioCommand({ slideId, partId, audioClipId: clipId, audioAssetId: aId }))
       // playbackRate non-destructive, original WAV untouched
       const clip = engine.getSlide(slideId).audio.clips.find((c) => c.id === clipId)!
-      expect(clip.playbackRate).toBeCloseTo(2.0 / 3.0)
+      expect(clip.playbackRate).toBeCloseTo(3.0 / 2.0)
       // duration of asset preserved
       expect((engine.getEmbeddedAsset(aId)!.metadata as Record<string, unknown>).duration).toBe(3.0)
       // No shift: downstream parts unchanged
@@ -287,14 +287,14 @@ describe('Spec 15.08 record→asset→clip linkage + replace-guard', () => {
     if (!assetRes.ok) throw assetRes.error
 
       const aId = (assetRes.inverse as { assetId: string }).assetId
-      const rate = computePlaybackRate(2.0, 1.0) // 2
+      const rate = computePlaybackRate(2.0, 1.0) // 0.5
       const clipRes = dispatchOk(dispatcher, new CreateAudioClipCommand({ slideId, assetId: aId, trackId: 'voice', timelineStart: 0, sourceEnd: 1.0, playbackRate: rate }))
     if (!clipRes.ok) throw clipRes.error
 
       const clipId = (clipRes.inverse as { clipId: string }).clipId
       dispatchOk(dispatcher, new SetPrompterPartAudioCommand({ slideId, partId, audioClipId: clipId, audioAssetId: aId }))
       const clip = engine.getSlide(slideId).audio.clips.find((c) => c.id === clipId)!
-      expect(clip.playbackRate).toBeCloseTo(2.0)
+      expect(clip.playbackRate).toBeCloseTo(0.5)
       dispatchOk(dispatcher, new DeleteAudioClipCommand({ slideId, clipId }))
       dispatchOk(dispatcher, new SetPrompterPartAudioCommand({ slideId, partId, audioClipId: null, audioAssetId: null }))
     }
@@ -375,6 +375,6 @@ describe('Spec 15.08 record→asset→clip linkage + replace-guard', () => {
     // original bytes untouched
     expect(engine2.getEmbeddedAsset(assetId)!.data).toBe(origData)
     const clip = engine2.getSlide(slide.id).audio.clips[0]
-    expect(clip.playbackRate).toBeCloseTo(2.0 / 3.0)
+    expect(clip.playbackRate).toBeCloseTo(3.0 / 2.0)
   })
 })

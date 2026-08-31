@@ -196,7 +196,7 @@ describe('RecordModal seam + mocked getUserMedia/MediaRecorder/AudioContext', ()
     await waitFor(() => expect(onCloseLong).toHaveBeenCalled())
     const partLong = engine.getSlide(slideId).prompter!.parts[0]
     const clipLong = engine.getSlide(slideId).audio.clips.find((c) => c.id === partLong.audioClipId)
-    expect(clipLong!.playbackRate).toBeCloseTo(2.0 / 3.0)
+    expect(clipLong!.playbackRate).toBeCloseTo(3.0 / 2.0)
     unmount()
     // Shorter: recorded 1.0 vs planned 2.0
     const engine2 = createEngineInternal()
@@ -231,7 +231,7 @@ describe('RecordModal seam + mocked getUserMedia/MediaRecorder/AudioContext', ()
     await waitFor(() => expect(onCloseShort).toHaveBeenCalled())
     const partShort = engine2.getSlide(slide2.id).prompter!.parts[0]
     const clipShort = engine2.getSlide(slide2.id).audio.clips.find((c) => c.id === partShort.audioClipId)
-    expect(clipShort!.playbackRate).toBeCloseTo(2.0)
+    expect(clipShort!.playbackRate).toBeCloseTo(0.5)
   })
 
   it('mismatch Extend/Keep with shift checkbox moves downstream', async () => {

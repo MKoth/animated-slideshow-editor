@@ -40,7 +40,10 @@ export function MismatchDialog({ plannedDuration, recordedDuration, kind, onChoi
           Recorded {recordedDuration.toFixed(2)}s vs planned {plannedDuration.toFixed(2)}s (Δ {diff.toFixed(2)}s &gt; {threshold.toFixed(2)}s — max(0.3 s, 5% planned))
         </p>
         <p style={{ fontSize: 11, color: '#aaa', margin: '8px 0' }}>
-          Original WAV will be preserved; Speed/Slow is non-destructive (playbackRate={ (plannedDuration / recordedDuration).toFixed(3) } pitch-preserved via server FFmpeg RubberBand at export).
+          Original WAV preserved — <strong>time stretch</strong> (not playbackRate pitch-shift). Tempo stays the same, pitch &amp; formants preserved via RubberBand: preview by WASM offline, export by FFmpeg. <code>playbackRate={(recordedDuration / plannedDuration).toFixed(3)}</code> → <code>timeRatio={(plannedDuration / recordedDuration).toFixed(3)}</code> (output/input).
+        </p>
+        <p style={{ fontSize: 10, color: '#777', margin: '0 0 4px' }}>
+          <em>Speed ↑ → duration ↓, pitch ≈ unchanged</em> — WSOLA/Phase-vocoder quality, good for 0.5×–2× speech. Extreme values may add light metallic smearing.
         </p>
         {isLonger ? (
           <div style={{ display: 'flex', gap: 8, flexDirection: 'column', marginTop: 12 }}>
@@ -49,7 +52,7 @@ export function MismatchDialog({ plannedDuration, recordedDuration, kind, onChoi
               onClick={() => onChoice('speed', false)}
               style={{ padding: '8px 12px', borderRadius: 4, border: '1px solid #7c5cff', background: '#7c5cff', color: '#fff', cursor: 'pointer', textAlign: 'left' }}
             >
-              <strong>Speed up (stretch)</strong> — playbackRate={(plannedDuration / recordedDuration).toFixed(3)} (non-destructive)
+              <strong>Speed up (time stretch)</strong> — tempo {(recordedDuration / plannedDuration).toFixed(3)}×, timeRatio {(plannedDuration / recordedDuration).toFixed(3)} — pitch preserved
             </button>
             <button
               data-testid="mismatch-extend"
@@ -73,7 +76,7 @@ export function MismatchDialog({ plannedDuration, recordedDuration, kind, onChoi
               onClick={() => onChoice('slow', false)}
               style={{ padding: '8px 12px', borderRadius: 4, border: '1px solid #7c5cff', background: '#7c5cff', color: '#fff', cursor: 'pointer', textAlign: 'left' }}
             >
-              <strong>Slow down</strong> — playbackRate={(plannedDuration / recordedDuration).toFixed(3)} (non-destructive)
+              <strong>Slow down (time stretch)</strong> — tempo {(recordedDuration / plannedDuration).toFixed(3)}×, timeRatio {(plannedDuration / recordedDuration).toFixed(3)} — pitch preserved
             </button>
             <button
               data-testid="mismatch-keep-shorter"

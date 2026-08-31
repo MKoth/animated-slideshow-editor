@@ -19,6 +19,7 @@ import { AudioBufferCache } from '../engine/audioBufferCache'
 import type { EnginePublic } from '../engine'
 import { getAudioClipSourceDuration } from '../engine/audioClip'
 import { useAssetLibraryStore } from '../stores/assetLibraryStore'
+import { stretchAudioBuffer, getTimeRatioForPlaybackRate } from './timeStretch'
 
 type Engine = EnginePublic
 
@@ -128,6 +129,9 @@ export class SyncedAudioController {
   private _cachedCtx: AudioContextLike | null = null
   private _pendingDecodes = new Set<string>()
   private _playGen = 0
+  // Time-stretch cache: key = `${assetId}:rate:${playbackRate}` -> stretched AudioBuffer
+  private stretchedCache = new Map<string, { buffer: AudioBuffer; duration: number; byteSize: number }>()
+  private pendingStretches = new Set<string>()
 
   // for tests: capture scheduled calls
   readonly scheduledHistory: Array<{
@@ -281,6 +285,59 @@ export class SyncedAudioController {
     }
     const uniqueAssetIds = [...new Set(clips.map((c) => c.assetId))]
     await Promise.all(uniqueAssetIds.map((id) => this.ensureBufferForAsset(id)))
+    // Also warm stretched buffers for clips with rate !=1 (pitch-preserving)
+    await Promise.all(
+      clips
+        .filter((c) => Math.abs((c.playbackRate || 1) - 1) > 1e-6)
+        .map((c) => this.ensureStretchedBufferForClip(c).catch(() => false)),
+    )
+  }
+
+  private getStretchedKey(assetId: string, playbackRate: number): string {
+    return `${assetId}:stretch:${playbackRate.toFixed(6)}`
+  }
+
+  private async ensureStretchedBufferForClip(clip: import('../engine/audioClip').AudioClip): Promise<boolean> {
+    const rate = clip.playbackRate || 1
+    if (Math.abs(rate - 1) < 1e-6) return true
+    const key = this.getStretchedKey(clip.assetId, rate)
+    if (this.stretchedCache.has(key)) return true
+    if (this.pendingStretches.has(key)) return false
+    // Need original buffer
+    let originalEntry = this.cache.get(clip.assetId)
+    if (!originalEntry) {
+      const ok = await this.ensureBufferForAsset(clip.assetId)
+      if (!ok) return false
+      originalEntry = this.cache.get(clip.assetId)
+    }
+    if (!originalEntry) return false
+    const originalBuffer = originalEntry.buffer as AudioBuffer
+    if (!originalBuffer || typeof (originalBuffer as AudioBuffer).getChannelData !== 'function') return false
+    const timeRatio = getTimeRatioForPlaybackRate(rate)
+    const stretchedDuration = originalBuffer.duration * timeRatio
+    if (this.cache.shouldUseMediaElement(stretchedDuration)) return false
+    this.pendingStretches.add(key)
+    try {
+      const stretched = await stretchAudioBuffer(originalBuffer, timeRatio)
+      if (!stretched) return false
+      const byteSize = stretched.length * stretched.numberOfChannels * 4
+      this.stretchedCache.set(key, { buffer: stretched, duration: stretched.duration, byteSize })
+      return true
+    } catch {
+      return false
+    } finally {
+      this.pendingStretches.delete(key)
+    }
+  }
+
+  private getStretchedBuffer(assetId: string, playbackRate: number): { buffer: AudioBuffer; duration: number } | null {
+    const key = this.getStretchedKey(assetId, playbackRate)
+    const entry = this.stretchedCache.get(key)
+    if (!entry) return null
+    // LRU touch
+    this.stretchedCache.delete(key)
+    this.stretchedCache.set(key, entry)
+    return entry
   }
 
   attach(): void {
@@ -411,8 +468,14 @@ export class SyncedAudioController {
       const slide = this.engine.getSlide(nextSlideId)
       const keepIds = new Set(slide.audio.clips.map((c) => c.assetId))
       this.cache.evictOnSlideSwitch(keepIds)
+      // Also evict stretched buffers for assets not in keepIds
+      for (const key of [...this.stretchedCache.keys()]) {
+        const assetId = key.split(':stretch:')[0]
+        if (!keepIds.has(assetId)) this.stretchedCache.delete(key)
+      }
     } catch {
       this.cache.clear()
+      this.stretchedCache.clear()
     }
   }
 
@@ -592,6 +655,26 @@ export class SyncedAudioController {
     for (const clip of audibleWindow) {
       if (this.scheduled.has(clip.id)) continue
       if (!isClipAudibleWithSoloMute(clip, mutedTracks, soloTracks)) continue
+      const rate = clip.playbackRate || 1
+      const needsStretch = Math.abs(rate - 1) > 1e-6
+      if (needsStretch) {
+        const stretched = this.getStretchedBuffer(clip.assetId, rate)
+        if (stretched) {
+          this.scheduleStretchedClip(clip, playhead, audioTime, ctx, slideDuration, stretched.buffer)
+          continue
+        }
+        // trigger async stretch (ensures original decoded first)
+        void this.ensureStretchedBufferForClip(clip).then((ok) => {
+          if (ok && this.isPlaying) this.tick()
+        })
+        // Also ensure original is decoded for fallback debugging
+        if (!this.cache.has(clip.assetId)) {
+          void this.ensureBufferForAsset(clip.assetId).then((ok) => {
+            if (ok && this.isPlaying) this.tick()
+          })
+        }
+        continue
+      }
       if (!this.cache.has(clip.assetId)) {
         // Trigger lazy decode and retry next tick when ready
         void this.ensureBufferForAsset(clip.assetId).then((ok) => {
@@ -674,7 +757,12 @@ export class SyncedAudioController {
       source.buffer = cached.buffer as AudioBuffer
       source.connect(gainNode)
       gainNode.connect(ctx.destination)
-      source.start(when, offset, duration)
+      // Web Audio start duration is source seconds, independent of playbackRate
+      // (e.g. duration 2 source seconds at rate 2 plays as 1s wall time).
+      // Our `duration` variable above is wall/playback time (clippedPlaybackDuration etc.),
+      // so convert to source duration for the AudioBufferSourceNode.
+      const sourceDurationParam = duration * playbackRate
+      source.start(when, offset, sourceDurationParam)
       const node: ScheduledNode = {
         clipId: clip.id,
         source,
@@ -692,6 +780,75 @@ export class SyncedAudioController {
       })
     } catch {
       // ignore scheduling errors
+    }
+  }
+
+  // Time-stretched path: playbackRate !=1 is rendered via RubberBand WASM so pitch is preserved.
+  // We schedule the *stretched* AudioBuffer at playbackRate 1.
+  private scheduleStretchedClip(
+    clip: import('../engine/audioClip').AudioClip,
+    playhead: number,
+    audioTime: number,
+    ctx: AudioContextLike,
+    slideDuration: number,
+    stretchedBuffer: AudioBuffer,
+  ): void {
+    const clippedDuration = getClippedPlaybackDuration(clip, slideDuration)
+    if (clippedDuration <= 1e-9) return
+    const clipStart = clip.timelineStart
+    const clipEnd = clipStart + clippedDuration
+    const delay = Math.max(0, clipStart - playhead)
+    const when = ctx.currentTime + delay
+    const playbackRate = clip.playbackRate || 1
+    const timeRatio = getTimeRatioForPlaybackRate(playbackRate)
+    // Stretched buffer's time is already `original * timeRatio`
+    const stretchedSourceStart = clip.sourceStart * timeRatio
+    const stretchedSourceEnd = clip.sourceEnd * timeRatio
+    const stretchedDuration = stretchedSourceEnd - stretchedSourceStart
+
+    let offset = stretchedSourceStart
+    let duration = clippedDuration // wall time = stretched source time at rate 1
+    if (playhead > clipStart) {
+      const elapsedWall = playhead - clipStart
+      offset = stretchedSourceStart + elapsedWall
+      duration = clipEnd - playhead
+      const remainingStretched = stretchedSourceEnd - offset
+      duration = Math.min(duration, remainingStretched)
+    } else {
+      duration = Math.min(duration, stretchedDuration)
+    }
+    if (duration <= 1e-9) return
+    if (offset < stretchedSourceStart || offset >= stretchedSourceEnd) return
+
+    const gainValue = clip.volume * 1 * 1
+    try {
+      const source = ctx.createBufferSource()
+      const gainNode = ctx.createGain()
+      // Pitch-preserving: stretched buffer plays at 1.0, duration == wall
+      source.playbackRate.value = 1
+      gainNode.gain.value = gainValue
+      source.buffer = stretchedBuffer as unknown as AudioBuffer
+      source.connect(gainNode)
+      gainNode.connect(ctx.destination)
+      // For stretched buffer, source duration == wall duration (rate 1)
+      source.start(when, offset, duration)
+      const node: ScheduledNode = {
+        clipId: clip.id,
+        source,
+        gainNode,
+        scheduledAtAudioTime: audioTime,
+      }
+      this.scheduled.set(clip.id, node)
+      this.scheduledHistory.push({
+        clipId: clip.id,
+        when,
+        offset,
+        duration,
+        gain: gainValue,
+        playbackRate: 1, // stretched playback is at 1 (preserved pitch)
+      })
+    } catch {
+      // ignore
     }
   }
 
@@ -776,27 +933,53 @@ export class SyncedAudioController {
     const ctx = this.getCtx()
     if (ctx) {
       try {
-        const cached = this.cache.get(clip.assetId)
-        if (!cached) {
-          // Lazy decode for scrub audition
-          void this.ensureBufferForAsset(clip.assetId)
+        const rate = clip.playbackRate || 1
+        const needsStretch = Math.abs(rate - 1) > 1e-6
+        const stretched = needsStretch ? this.getStretchedBuffer(clip.assetId, rate) : null
+        // Try to ensure stretched for next time
+        if (needsStretch && !stretched) {
+          void this.ensureStretchedBufferForClip(clip)
+        }
+        let buffer: AudioBuffer | null = null
+        let playbackRateForSource = rate
+        let offset: number
+        let blipDuration: number
+        const clippedForClip = getClippedPlaybackDuration(clip, slideDuration) - (time - clip.timelineStart)
+        blipDuration = Math.min(0.12, clippedForClip)
+        if (blipDuration <= 0) {
           useAudioPlaybackStore.getState().setAuditioning(null)
           return
         }
+        let blipSourceDuration: number
+        if (stretched) {
+          buffer = stretched.buffer
+          playbackRateForSource = 1
+          const timeRatio = getTimeRatioForPlaybackRate(rate)
+          offset = clip.sourceStart * timeRatio + (time - clip.timelineStart)
+          // stretched source duration == wall
+          blipSourceDuration = blipDuration
+        } else {
+          const cached = this.cache.get(clip.assetId)
+          if (!cached) {
+            // Lazy decode for scrub audition
+            void this.ensureBufferForAsset(clip.assetId)
+            useAudioPlaybackStore.getState().setAuditioning(null)
+            return
+          }
+          buffer = cached.buffer as AudioBuffer
+          playbackRateForSource = rate
+          offset = clip.sourceStart + (time - clip.timelineStart) * rate
+          blipSourceDuration = blipDuration * rate
+        }
         const source = ctx.createBufferSource()
         const gainNode = ctx.createGain()
-        source.buffer = cached.buffer as AudioBuffer
-        source.playbackRate.value = clip.playbackRate || 1
+        source.buffer = buffer as AudioBuffer
+        source.playbackRate.value = playbackRateForSource
         gainNode.gain.value = clip.volume
         source.connect(gainNode)
         gainNode.connect(ctx.destination)
-        const offset = clip.sourceStart + (time - clip.timelineStart) * (clip.playbackRate || 1)
-        const blipDuration = Math.min(
-          0.12,
-          getClippedPlaybackDuration(clip, slideDuration) - (time - clip.timelineStart),
-        )
         if (blipDuration > 0) {
-          source.start(ctx.currentTime, offset, blipDuration)
+          source.start(ctx.currentTime, offset, blipSourceDuration)
           setTimeout(
             () => {
               try {

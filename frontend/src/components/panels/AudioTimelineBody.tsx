@@ -650,7 +650,11 @@ export function AudioTimelineBody({
 
   // Prompter move (reorder, gap-free) — like audio clip move
   const onPrompterMovePointerDown = (e: React.PointerEvent, partId: string) => {
-    if ((e.target as HTMLElement).closest('[data-prompter-handle]')) return
+    if (e.button !== 0) return
+    const targetEl = e.target as HTMLElement
+    if (targetEl.closest('[data-prompter-handle]')) return
+    if (targetEl.closest('button')) return
+    if (targetEl.closest('[data-testid^="record-btn"]')) return
     e.preventDefault()
     e.stopPropagation()
     const part = slide.prompter?.parts.find((p) => p.id === partId)
@@ -1345,6 +1349,7 @@ export function AudioTimelineBody({
                             onPointerDown={(e) => onPrompterMovePointerDown(e, part.id)}
                             onContextMenu={(e) => {
                               e.preventDefault()
+                              setFocusedId(part.id)
                               setRecordPartId(part.id)
                             }}
                             onKeyDown={(e) => {
@@ -1406,8 +1411,13 @@ export function AudioTimelineBody({
                             <button
                               data-testid={`record-btn-${part.id}`}
                               aria-label={`Record ${part.text}`}
-                              onClick={(e) => {
+                              onPointerDown={(e) => {
                                 e.stopPropagation()
+                              }}
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                setFocusedId(part.id)
                                 setRecordPartId(part.id)
                               }}
                               style={{

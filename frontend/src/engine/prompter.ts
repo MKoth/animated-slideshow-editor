@@ -100,10 +100,15 @@ export function getMismatchKind(
   return recordedDuration > plannedDuration ? 'longer' : 'shorter'
 }
 
-/** playbackRate = planned / recorded — non-destructive stretch, pitch preserved via server FFmpeg RubberBand */
+/** playbackRate = recorded / planned — non-destructive *time stretch* (WSOLA/phase-vocoder, pitch & formant preserved).
+ *  Preview: RubberBand WASM offline (timeRatio = 1/playbackRate) → stretched AudioBuffer at rate 1.
+ *  Export: FFmpeg rubberband/atempo on server produces derived asset, original WAV preserved.
+ *  playbackDuration = sourceDuration / playbackRate, so to fit recorded (source) into planned (timeline)
+ *  we need rate = recorded / planned (>1 speeds up/longer→shorter, <1 slows down/shorter→longer). */
 export function computePlaybackRate(plannedDuration: number, recordedDuration: number): number {
+  if (plannedDuration <= 0) throw new Error('plannedDuration must be positive')
   if (recordedDuration <= 0) throw new Error('recordedDuration must be positive')
-  return plannedDuration / recordedDuration
+  return recordedDuration / plannedDuration
 }
 
 export function getPrompterSplitChars(settings: unknown): string[] {
