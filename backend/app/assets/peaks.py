@@ -1,14 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import io
+import json
+import struct
 import subprocess
 import wave
-import io
-import hashlib
-import struct
-import json
 from pathlib import Path
-
-from sqlalchemy import select
 
 from app.assets.model import AssetDefinition
 from app.assets.storage import AssetStorage
@@ -22,11 +20,13 @@ MAX_BUCKETS = 2000
 def bucket_count_for_duration(duration: float | None) -> int:
     if duration is None or not isinstance(duration, (int, float)) or duration <= 0:
         return MIN_BUCKETS
-    raw = int(round(duration * PIXELS_PER_SECOND))
+    raw = round(duration * PIXELS_PER_SECOND)
     return max(MIN_BUCKETS, min(MAX_BUCKETS, raw))
 
 
-def compute_peaks_from_samples(samples: list[int] | bytes, num_buckets: int, bits: int = 16) -> list[int]:
+def compute_peaks_from_samples(
+    samples: list[int] | bytes, num_buckets: int, bits: int = 16
+) -> list[int]:
     """Max-abs reduction per bucket scaled to 0-255 8-bit."""
     # samples is list of int or bytes? For wave we parse.
     # Simplify: if we have flat bytes, compute per bucket max
@@ -37,7 +37,7 @@ def compute_peaks_from_samples(samples: list[int] | bytes, num_buckets: int, bit
         total = len(samples)
         per_bucket = max(1, total // num_buckets) if num_buckets else total
         peaks: list[int] = []
-        max_amp = (1 << (bits - 1))  # e.g. 32768 for 16-bit
+        max_amp = 1 << (bits - 1)  # e.g. 32768 for 16-bit
         for i in range(num_buckets):
             start = i * per_bucket
             end = min(total, start + per_bucket) if i < num_buckets - 1 else total
@@ -49,7 +49,7 @@ def compute_peaks_from_samples(samples: list[int] | bytes, num_buckets: int, bit
                 peaks.append(0)
                 continue
             m = max(abs(s) for s in chunk)
-            scaled = int(round((m / max_amp) * 255)) if max_amp else 0
+            scaled = round((m / max_amp) * 255) if max_amp else 0
             peaks.append(max(0, min(255, scaled)))
         return peaks
     # fallback
@@ -94,8 +94,9 @@ def _ffprobe_metadata(content: bytes, ext: str) -> dict[str, object] | None:
         subprocess.run(["ffprobe", "-version"], capture_output=True, timeout=1)
     except Exception:
         return None
-    import tempfile
     import os
+    import tempfile
+
     tmp = None
     try:
         suffix = ext if ext.startswith(".") else f".{ext}"
@@ -103,7 +104,16 @@ def _ffprobe_metadata(content: bytes, ext: str) -> dict[str, object] | None:
             f.write(content)
             tmp = f.name
         result = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", tmp],
+            [
+                "ffprobe",
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
+                "-show_format",
+                "-show_streams",
+                tmp,
+            ],
             capture_output=True,
             text=True,
             timeout=5,
@@ -176,7 +186,7 @@ def _wav_samples(content: bytes) -> tuple[list[int], int, int] | None:
                 return None
             # Only handle 16-bit PCM for peak calc; otherwise fallback
             if sampwidth == 2:
-                fmt = f"<{len(raw)//2}h"
+                fmt = f"<{len(raw) // 2}h"
                 samples = list(struct.unpack(fmt, raw))
                 # If stereo, take max per frame across channels? Simplify: use max across all samples
                 # Already flat list includes both channels interleaved
@@ -192,7 +202,9 @@ def _wav_samples(content: bytes) -> tuple[list[int], int, int] | None:
         return None
 
 
-def compute_waveform_peaks(content: bytes, extension: str, duration: float | None = None) -> list[int]:
+def compute_waveform_peaks(
+    content: bytes, extension: str, duration: float | None = None
+) -> list[int]:
     num_buckets = bucket_count_for_duration(duration)
     # Try real samples for WAV
     if extension.lower() == ".wav":
@@ -213,7 +225,10 @@ def _audiowaveform_peaks(content: bytes, ext: str, num_buckets: int) -> list[int
         subprocess.run(["audiowaveform", "--help"], capture_output=True, timeout=1)
     except Exception:
         return None
-    import tempfile, os, json as js
+    import json as js
+    import os
+    import tempfile
+
     tmp_in = None
     tmp_out = None
     try:
@@ -224,7 +239,17 @@ def _audiowaveform_peaks(content: bytes, ext: str, num_buckets: int) -> list[int
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
             tmp_out = f.name
         result = subprocess.run(
-            ["audiowaveform", "-i", tmp_in, "-o", tmp_out, "--pixels-per-second", str(PIXELS_PER_SECOND), "--bits", "8"],
+            [
+                "audiowaveform",
+                "-i",
+                tmp_in,
+                "-o",
+                tmp_out,
+                "--pixels-per-second",
+                str(PIXELS_PER_SECOND),
+                "--bits",
+                "8",
+            ],
             capture_output=True,
             text=True,
             timeout=8,
@@ -274,6 +299,7 @@ def _synthetic_peaks(content: bytes, num_buckets: int) -> list[int]:
         b = h[i % len(h)]
         # vary with sine-like pattern + hash
         import math
+
         s = math.sin(i / num_buckets * math.pi * 4) * 0.5 + 0.5
         val = int((b / 255) * 0.5 * 255 + s * 0.5 * 255)
         # clamp 10..255 to avoid flat zero

@@ -5,8 +5,6 @@ import wave
 
 from fastapi.testclient import TestClient
 
-from app.assets.model import AssetDefinition
-
 
 def wav_bytes(duration: float = 2.0, freq: float = 440.0, sample_rate: int = 44100) -> bytes:
     nframes = int(sample_rate * duration)
@@ -82,6 +80,7 @@ def test_peaks_caching_idempotent(client: TestClient) -> None:
 
 def test_peaks_non_audio_returns_404(client: TestClient) -> None:
     from io import BytesIO
+
     from PIL import Image
 
     buf = BytesIO()

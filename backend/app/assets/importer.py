@@ -76,7 +76,12 @@ class AssetImporter:
         category = upload.category
         if inspected.extension.lower() in audio_extensions:
             category = "audio"
-        mime_map = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".webm": "audio/webm"}
+        mime_map = {
+            ".wav": "audio/wav",
+            ".mp3": "audio/mpeg",
+            ".ogg": "audio/ogg",
+            ".webm": "audio/webm",
+        }
         mime_type = mime_map.get(inspected.extension.lower())
         # Build initial audio metadata cache (duration/sampleRate/channels) if audio
         asset_metadata: dict[str, object] | None = None

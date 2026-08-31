@@ -95,7 +95,11 @@ class ImagePipeline:
 
     @staticmethod
     def _sniff_audio_extension(content: bytes) -> str | None:
-        if len(content) >= 12 and content.startswith(WEBP_RIFF_SIGNATURE) and content[8:12] == WAV_WAVE_MARKER:
+        if (
+            len(content) >= 12
+            and content.startswith(WEBP_RIFF_SIGNATURE)
+            and content[8:12] == WAV_WAVE_MARKER
+        ):
             return ".wav"
         if content.startswith(OGG_SIGNATURE):
             return ".ogg"

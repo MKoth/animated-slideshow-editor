@@ -97,8 +97,7 @@ def get_asset_peaks(request: Request, asset_id: str) -> PeaksOut:
     database = request.app.state.database
     payload = get_or_compute_peaks(definition, storage, database)
     return PeaksOut(
-        peaks=payload["peaks"]  # type: ignore[arg-type]
-        ,
+        peaks=payload["peaks"],  # type: ignore[arg-type]
         duration=payload["duration"] if isinstance(payload["duration"], (int, float)) else None,  # type: ignore[arg-type]
         sampleRate=payload["sampleRate"] if isinstance(payload["sampleRate"], int) else None,  # type: ignore[arg-type]
         channels=payload["channels"] if isinstance(payload["channels"], int) else None,  # type: ignore[arg-type]
