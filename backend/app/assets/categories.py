@@ -13,6 +13,7 @@ ASSET_CATEGORIES: tuple[str, ...] = (
     "Particle",
     "Text",
     "Uncategorized",
+    "audio",
 )
 
 DEFAULT_ASSET_CATEGORY = "Uncategorized"

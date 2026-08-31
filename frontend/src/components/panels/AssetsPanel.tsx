@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import type { AssetDefinition } from '../../api'
 import { ASSET_DEFINITION_MIME, AUDIO_ASSET_MIME } from '../../pixi/renderer/dropPlacement'
@@ -6,8 +6,9 @@ import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { registerImportOpener } from '../assets/importTrigger'
 import { SORT_OPTIONS } from '../assets/sortOptions'
 import type { EmbeddedAsset } from '../../engine/embeddedAsset'
-import { useContext } from 'react'
 import { EngineContext } from '../../app/engineContext'
+import { CreateAudioAssetCommand } from '../../engine/commands'
+import { useNotificationStore } from '../../stores/notificationStore'
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) {
@@ -52,12 +53,64 @@ function getWaveformPeaks(asset: EmbeddedAsset): number[] | null {
   return null
 }
 
+function isAudioFile(file: File): boolean {
+  if (file.type.startsWith('audio/')) return true
+  return /\.(wav|mp3|mpeg|ogg|webm)$/i.test(file.name)
+}
+
 function isAudioDefinition(def: AssetDefinition): boolean {
   if (def.mimeType && def.mimeType.startsWith('audio/')) return true
   if (def.category === 'audio') return true
   const mimeMeta = (def.metadata as Record<string, unknown> | undefined)?.mimeType
   if (typeof mimeMeta === 'string' && mimeMeta.startsWith('audio/')) return true
+  // Fallback to filename extension for backend audio assets stored without mimeType
+  if (/\.(wav|mp3|mpeg|ogg|webm)$/i.test(def.original_filename)) return true
   return false
+}
+
+function inferAudioMimeType(file: File): string {
+  if (file.type.startsWith('audio/')) return file.type
+  const ext = file.name.split('.').pop()?.toLowerCase()
+  switch (ext) {
+    case 'wav': return 'audio/wav'
+    case 'mp3':
+    case 'mpeg': return 'audio/mpeg'
+    case 'ogg': return 'audio/ogg'
+    case 'webm': return 'audio/webm'
+    default: return 'audio/wav'
+  }
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      // result is data URL like data:audio/wav;base64,xxxx  -> extract base64 part
+      const comma = result.indexOf(',')
+      resolve(comma >= 0 ? result.slice(comma + 1) : result)
+    }
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function decodeAudioDuration(file: File): Promise<number | null> {
+  try {
+    const arrayBuffer = await file.arrayBuffer()
+    // Try to use Web Audio API if available
+    const AudioContextCtor = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
+      ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!AudioContextCtor) return null
+    const ctx = new AudioContextCtor()
+    const buffer = await ctx.decodeAudioData(arrayBuffer.slice(0))
+    const duration = buffer.duration
+    await ctx.close().catch(() => {})
+    if (Number.isFinite(duration) && duration > 0) return duration
+    return null
+  } catch {
+    return null
+  }
 }
 
 type AssetFilter = 'all' | 'images' | 'audio'
@@ -235,11 +288,46 @@ export function AssetsPanel() {
 
   useEffect(() => registerImportOpener(() => fileInputRef.current?.click()), [])
 
+  // Engine access for audio embedded import (useContext to avoid throwing outside provider)
+  const engineCtx = useContext(EngineContext)
+  const engineDispatch = engineCtx?.dispatch ?? null
+
   const handleImportFiles = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? [])
     event.target.value = ''
-    if (files.length > 0) {
-      void importFiles(files)
+    if (files.length === 0) return
+    const audioFiles = files.filter(isAudioFile)
+    const imageFiles = files.filter((f) => !isAudioFile(f))
+    if (imageFiles.length > 0) {
+      void importFiles(imageFiles)
+    }
+    if (audioFiles.length > 0) {
+      if (!engineDispatch) {
+        // No engine available: fall back to backend upload for audio as well
+        void importFiles(audioFiles)
+        return
+      }
+      void (async () => {
+        for (const file of audioFiles) {
+          try {
+            const base64 = await fileToBase64(file)
+            const mimeType = inferAudioMimeType(file)
+            const duration = await decodeAudioDuration(file)
+            const name = file.name.replace(/\.[^/.]+$/, '') || file.name
+            const metadata: Record<string, unknown> = {}
+            if (duration !== null) metadata.duration = duration
+            const result = engineDispatch!(new CreateAudioAssetCommand({ name, data: base64, mimeType, metadata }))
+            if (!result.ok) {
+              useNotificationStore.getState().notify(`${file.name}: ${result.error.message}`)
+            } else {
+              useNotificationStore.getState().notify(`${file.name} imported as audio`)
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            useNotificationStore.getState().notify(`${file.name}: ${message}`)
+          }
+        }
+      })()
     }
   }
 

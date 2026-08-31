@@ -71,16 +71,21 @@ class AssetImporter:
         thumbnail_path = self._storage.save_thumbnail(
             definition_id, self._pipeline.create_thumbnail(inspected.content)
         )
+        # Audio files are stored with category 'audio' for filtering, even if no category was supplied
+        audio_extensions = {".wav", ".mp3", ".ogg", ".webm"}
+        category = upload.category
+        if inspected.extension.lower() in audio_extensions:
+            category = "audio"
         return AssetDefinition(
             id=definition_id,
             name=name,
-            category=upload.category,
+            category=category,
             original_filename=upload.filename,
             import_date=imported_at,
             width=inspected.width,
             height=inspected.height,
             file_size=len(inspected.content),
-            aspect_ratio=round(inspected.width / inspected.height, 4),
+            aspect_ratio=round(inspected.width / inspected.height, 4) if inspected.height else 1.0,
             original_path=original_path,
             thumbnail_path=thumbnail_path,
         )
