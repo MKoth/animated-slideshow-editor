@@ -14,8 +14,11 @@ import {
   DuplicateAudioClipCommand,
   ImportPrompterCommand,
   MoveAudioClipCommand,
+  MovePrompterPartCommand,
   SplitAudioClipCommand,
   TrimAudioClipCommand,
+  UpdatePrompterPartCommand,
+  UpdatePrompterPartWithShiftCommand,
 } from '../../engine/commands'
 import { usePlaybackController } from '../../stores/playbackStore'
 import {
@@ -141,6 +144,16 @@ export function AudioTimelineBody({
     clipId: string
     sourceStart: number
     sourceEnd: number
+    left: number
+    width: number
+  } | null>(null)
+
+  // Prompter move/trim state (like audio clips: draggable, resizable)
+  const prompterMoveRef = useRef<{ partId: string; startX: number; startTime: number } | null>(null)
+  const [prompterMovePreview, setPrompterMovePreview] = useState<{ partId: string; startTime: number } | null>(null)
+  const [prompterTrimPreview, setPrompterTrimPreview] = useState<{
+    partId: string
+    duration: number
     left: number
     width: number
   } | null>(null)
@@ -594,6 +607,113 @@ export function AudioTimelineBody({
     window.addEventListener('pointerup', onUp)
   }
 
+  // Prompter move (reorder, gap-free) — like audio clip move
+  const onPrompterMovePointerDown = (e: React.PointerEvent, partId: string) => {
+    if ((e.target as HTMLElement).closest('[data-prompter-handle]')) return
+    e.preventDefault()
+    e.stopPropagation()
+    const part = slide.prompter?.parts.find((p) => p.id === partId)
+    if (!part) return
+    setFocusedId(partId)
+    prompterMoveRef.current = { partId, startX: e.clientX, startTime: part.startTime }
+    const target = e.currentTarget as HTMLElement
+    target.setPointerCapture(e.pointerId)
+    const onMove = (ev: PointerEvent) => {
+      if (!prompterMoveRef.current) return
+      const dx = ev.clientX - prompterMoveRef.current.startX
+      const dt = dx / pps
+      const raw = prompterMoveRef.current.startTime + dt
+      const snapped = computeSnappedTime(Math.max(0, raw))
+      setPrompterMovePreview({ partId, startTime: snapped })
+    }
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      if (!prompterMoveRef.current) return
+      const dx = ev.clientX - prompterMoveRef.current.startX
+      const dt = dx / pps
+      const raw = prompterMoveRef.current.startTime + dt
+      const snapped = computeSnappedTime(Math.max(0, raw))
+      const parts = slide.prompter?.parts ?? []
+      const oldIndex = parts.findIndex((p) => p.id === partId)
+      if (oldIndex !== -1) {
+        const without = parts.filter((p) => p.id !== partId)
+        let newIndex = 0
+        for (let i = 0; i < without.length; i++) {
+          if (snapped >= without[i].endTime - 1e-6) newIndex = i + 1
+          else if (snapped > without[i].startTime) {
+            // inside a part — insert before or after based on middle
+            const mid = (without[i].startTime + without[i].endTime) / 2
+            newIndex = snapped >= mid ? i + 1 : i
+            break
+          } else break
+        }
+        // clamp
+        newIndex = Math.max(0, Math.min(newIndex, without.length))
+        // translate to original array index after removal: if oldIndex < newIndex, newIndex stays as is (since we removed), else same
+        // Our MovePrompterPartCommand expects newIndex in final array (0..n-1), we compute as position in final array
+        const finalNewIndex = newIndex
+        if (finalNewIndex !== oldIndex) {
+          const result = dispatch(new MovePrompterPartCommand({ slideId: slide.id, partId, newIndex: finalNewIndex }))
+          if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+        } else {
+          // No reorder needed, but if user dragged to 0 behind import button, ensure at least we allow placing at 0
+          // If snapped is 0 and oldIndex is 0, nothing to do
+        }
+      }
+      setPrompterMovePreview(null)
+      prompterMoveRef.current = null
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  // Prompter trim (make shorter/longer) — right handle changes duration, left handle also changes duration
+  const onPrompterTrimPointerDown = (e: React.PointerEvent, partId: string, side: 'left' | 'right') => {
+    e.preventDefault()
+    e.stopPropagation()
+    const part = slide.prompter?.parts.find((p) => p.id === partId)
+    if (!part) return
+    const startDuration = part.duration
+    const startX = e.clientX
+    const partStart = part.startTime
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX
+      const dt = dx / pps
+      let newDuration: number
+      let newLeft = partStart * pps
+      if (side === 'right') {
+        newDuration = Math.max(0.2, startDuration + dt)
+        const width = newDuration * pps
+        setPrompterTrimPreview({ partId, duration: newDuration, left: newLeft, width })
+      } else {
+        newDuration = Math.max(0.2, startDuration - dt)
+        newLeft = (partStart + (startDuration - newDuration)) * pps
+        const width = newDuration * pps
+        setPrompterTrimPreview({ partId, duration: newDuration, left: newLeft, width })
+      }
+    }
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      const dx = ev.clientX - startX
+      const dt = dx / pps
+      let newDuration: number
+      if (side === 'right') newDuration = Math.max(0.2, startDuration + dt)
+      else newDuration = Math.max(0.2, startDuration - dt)
+      if (Math.abs(newDuration - startDuration) > 1e-6) {
+        // Shift downstream if user holds Shift (opt-in)
+        const shift = ev.shiftKey
+        const Cmd = shift ? UpdatePrompterPartWithShiftCommand : UpdatePrompterPartCommand
+        const result = dispatch(new Cmd({ slideId: slide.id, partId, duration: newDuration, ...(shift ? { shiftDownstream: true } : {}) } as never))
+        if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+      }
+      setPrompterTrimPreview(null)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
   // Keyboard shortcuts for duplicate/delete/split + nudging + roving
   const nudgeSelected = useCallback(
     (delta: number, opts?: { home?: boolean; end?: boolean; vertical?: number }) => {
@@ -998,18 +1118,32 @@ export function AudioTimelineBody({
           <li className="timeline-tracks__ruler-spacer" aria-hidden="true" style={{ height: 22 }} />
           <li
             className="audio-tracks__prompter-label"
-            aria-hidden="true"
             style={{
               height: PROMPTER_STRIP_HEIGHT,
               display: 'flex',
               alignItems: 'center',
-              paddingLeft: 8,
+              justifyContent: 'space-between',
+              padding: '0 4px',
               fontSize: 10,
               color: 'var(--color-text-muted)',
               borderBottom: '1px solid var(--color-border)',
             }}
           >
-            Prompter
+            <span>Prompter</span>
+            <button
+              data-testid="prompter-import-btn"
+              onClick={() => setShowImport(true)}
+              style={{
+                fontSize: 8,
+                padding: '2px 4px',
+                borderRadius: 3,
+                border: '1px solid var(--color-border)',
+                background: 'var(--color-bg)',
+                cursor: 'pointer',
+              }}
+            >
+              Import
+            </button>
           </li>
           {AUDIO_TRACK_IDS.map((trackId) => {
             const isMuted = mutedTracks.has(trackId)
@@ -1133,137 +1267,184 @@ export function AudioTimelineBody({
                 data-testid="audio-prompter-strip"
                 style={{
                   height: PROMPTER_STRIP_HEIGHT,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  padding: '0 8px',
+                  position: 'relative',
+                  overflow: 'hidden',
                   borderBottom: '1px solid var(--color-border)',
                   background: 'var(--color-bg-panel)',
-                  overflow: 'hidden',
-                  position: 'relative',
                 }}
               >
-                <button
-                  data-testid="prompter-import-btn"
-                  onClick={() => setShowImport(true)}
-                  style={{
-                    padding: '4px 8px',
-                    fontSize: 11,
-                    borderRadius: 4,
-                    border: '1px solid var(--color-border)',
-                    background: 'var(--color-bg)',
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  Import
-                </button>
-                {prompterParts.length === 0 ? (
-                  <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-                    No prompter parts — click Import
-                  </span>
-                ) : (
-                  (() => {
-                    const activeId = getActivePrompterPartId(prompterParts, currentTime)
-                    return prompterParts.map((part, idx) => {
-                      const isFocused = focusedId === part.id
-                      const isActive = activeId === part.id
-                      const isSelected = false
-                      return (
-                        <div
-                          key={part.id}
-                          role="button"
-                          tabIndex={isFocused ? 0 : -1}
-                          data-testid="prompter-chip"
-                          data-prompter-id={part.id}
-                          data-start={part.startTime}
-                          data-end={part.endTime}
-                          aria-selected={isSelected}
-                          onFocus={() => setFocusedId(part.id)}
-                          onClick={(e) => handlePrompterPointerDownSelect(e, part.id)}
-                          onContextMenu={(e) => {
-                            e.preventDefault()
-                            setRecordPartId(part.id)
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                <div style={{ position: 'relative', width: contentWidth, height: '100%' }}>
+                  {prompterParts.length === 0 ? (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        left: 8,
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        fontSize: 11,
+                        color: 'var(--color-text-muted)',
+                      }}
+                    >
+                      No prompter parts — click Import
+                    </span>
+                  ) : (
+                    (() => {
+                      const activeId = getActivePrompterPartId(prompterParts, currentTime)
+                      return prompterParts.map((part, idx) => {
+                        const isFocused = focusedId === part.id
+                        const isActive = activeId === part.id
+                        const isSelected = false
+                        const isMovePreview = prompterMovePreview?.partId === part.id
+                        const isTrimPreview = prompterTrimPreview?.partId === part.id
+                        const displayDuration = isTrimPreview ? prompterTrimPreview!.duration : part.duration
+                        const displayLeft = isTrimPreview ? prompterTrimPreview!.left : isMovePreview ? prompterMovePreview!.startTime * pps : part.startTime * pps
+                        const displayWidth = isTrimPreview ? prompterTrimPreview!.width : displayDuration * pps
+                        return (
+                          <div
+                            key={part.id}
+                            role="button"
+                            tabIndex={isFocused ? 0 : -1}
+                            data-testid="prompter-chip"
+                            data-prompter-id={part.id}
+                            data-start={part.startTime}
+                            data-end={part.endTime}
+                            aria-selected={isSelected}
+                            onFocus={() => setFocusedId(part.id)}
+                            onClick={(e) => handlePrompterPointerDownSelect(e, part.id)}
+                            onPointerDown={(e) => onPrompterMovePointerDown(e, part.id)}
+                            onContextMenu={(e) => {
                               e.preventDefault()
-                              const next = orderedFocusableIds[idx + 1]
-                              if (next) {
-                                setFocusedId(next)
-                                document
-                                  .querySelector<HTMLElement>(
-                                    `[data-clip-id="${next}"], [data-prompter-id="${next}"]`,
-                                  )
-                                  ?.focus()
-                              }
-                            }
-                            if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-                              e.preventDefault()
-                              const prev = orderedFocusableIds[idx - 1]
-                              if (prev) {
-                                setFocusedId(prev)
-                                document
-                                  .querySelector<HTMLElement>(
-                                    `[data-clip-id="${prev}"], [data-prompter-id="${prev}"]`,
-                                  )
-                                  ?.focus()
-                              }
-                            }
-                          }}
-                          className={`audio-prompter-chip${part.status === 'stale' ? ' audio-prompter-chip--stale' : ''}${isFocused ? ' audio-prompter-chip--focused' : ''}${isActive ? ' audio-prompter-chip--active' : ''}`}
-                          data-active={isActive ? 'true' : 'false'}
-                          style={{
-                            padding: '4px 8px',
-                            borderRadius: 12,
-                            background: isActive
-                              ? 'rgba(124,92,255,0.25)'
-                              : isFocused
-                                ? 'var(--color-accent)'
-                                : 'var(--color-bg)',
-                            border: isActive
-                              ? '1px solid #7c5cff'
-                              : '1px solid var(--color-border)',
-                            fontSize: 11,
-                            whiteSpace: 'nowrap',
-                            outline: isFocused ? '2px solid #7c5cff' : undefined,
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 4,
-                          }}
-                        >
-                          {part.text}
-                          <small
-                            style={{ marginLeft: 4, fontSize: 9, color: 'var(--color-text-muted)' }}
-                          >
-                            {part.startTime.toFixed(1)}–{part.endTime.toFixed(1)}
-                          </small>
-                          <button
-                            data-testid={`record-btn-${part.id}`}
-                            aria-label={`Record ${part.text}`}
-                            onClick={(e) => {
-                              e.stopPropagation()
                               setRecordPartId(part.id)
                             }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                                e.preventDefault()
+                                const next = orderedFocusableIds[idx + 1]
+                                if (next) {
+                                  setFocusedId(next)
+                                  document
+                                    .querySelector<HTMLElement>(
+                                      `[data-clip-id="${next}"], [data-prompter-id="${next}"]`,
+                                    )
+                                    ?.focus()
+                                }
+                              }
+                              if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                                e.preventDefault()
+                                const prev = orderedFocusableIds[idx - 1]
+                                if (prev) {
+                                  setFocusedId(prev)
+                                  document
+                                    .querySelector<HTMLElement>(
+                                      `[data-clip-id="${prev}"], [data-prompter-id="${prev}"]`,
+                                    )
+                                    ?.focus()
+                                }
+                              }
+                            }}
+                            className={`audio-prompter-chip${part.status === 'stale' ? ' audio-prompter-chip--stale' : ''}${isFocused ? ' audio-prompter-chip--focused' : ''}${isActive ? ' audio-prompter-chip--active' : ''}`}
+                            data-active={isActive ? 'true' : 'false'}
                             style={{
-                              marginLeft: 4,
-                              padding: '2px 6px',
-                              fontSize: 9,
-                              borderRadius: 8,
-                              border: '1px solid #7c5cff',
-                              background: part.audioClipId ? '#ff4d4d' : '#7c5cff',
-                              color: '#fff',
-                              cursor: 'pointer',
+                              position: 'absolute',
+                              top: 4,
+                              height: 34,
+                              left: displayLeft,
+                              width: Math.max(40, displayWidth),
+                              padding: '4px 8px',
+                              borderRadius: 12,
+                              background: isActive
+                                ? 'rgba(124,92,255,0.25)'
+                                : isFocused
+                                  ? 'var(--color-accent)'
+                                  : 'var(--color-bg)',
+                              border: isActive ? '1px solid #7c5cff' : '1px solid var(--color-border)',
+                              fontSize: 11,
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              outline: isFocused ? '2px solid #7c5cff' : undefined,
+                              cursor: 'grab',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
                             }}
                           >
-                            ● Rec
-                          </button>
-                        </div>
-                      )
-                    })
-                  })()
-                )}
+                            {part.text}
+                            <small style={{ marginLeft: 4, fontSize: 9, color: 'var(--color-text-muted)' }}>
+                              {part.startTime.toFixed(1)}–{part.endTime.toFixed(1)}
+                            </small>
+                            <button
+                              data-testid={`record-btn-${part.id}`}
+                              aria-label={`Record ${part.text}`}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setRecordPartId(part.id)
+                              }}
+                              style={{
+                                marginLeft: 4,
+                                padding: '2px 6px',
+                                fontSize: 9,
+                                borderRadius: 8,
+                                border: '1px solid #7c5cff',
+                                background: part.audioClipId ? '#ff4d4d' : '#7c5cff',
+                                color: '#fff',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              ● Rec
+                            </button>
+                            <div
+                              data-testid="prompter-handle-left"
+                              data-prompter-handle="left"
+                              onPointerDown={(e) => onPrompterTrimPointerDown(e, part.id, 'left')}
+                              style={{
+                                position: 'absolute',
+                                left: 0,
+                                top: 0,
+                                bottom: 0,
+                                width: 8,
+                                cursor: 'ew-resize',
+                                background: 'rgba(255,255,255,0.2)',
+                                borderRadius: '12px 0 0 12px',
+                              }}
+                            />
+                            <div
+                              data-testid="prompter-handle-right"
+                              data-prompter-handle="right"
+                              onPointerDown={(e) => onPrompterTrimPointerDown(e, part.id, 'right')}
+                              style={{
+                                position: 'absolute',
+                                right: 0,
+                                top: 0,
+                                bottom: 0,
+                                width: 8,
+                                cursor: 'ew-resize',
+                                background: 'rgba(255,255,255,0.2)',
+                                borderRadius: '0 12px 12px 0',
+                              }}
+                            />
+                          </div>
+                        )
+                      })
+                    })()
+                  )}
+                  {prompterMovePreview && (
+                    <div
+                      data-testid="prompter-move-preview"
+                      style={{
+                        position: 'absolute',
+                        top: 4,
+                        height: 34,
+                        left: prompterMovePreview.startTime * pps,
+                        width: (slide.prompter?.parts.find((p) => p.id === prompterMovePreview.partId)?.duration ?? 1) * pps,
+                        background: 'rgba(124,92,255,0.35)',
+                        border: '1px dashed #fff',
+                        borderRadius: 12,
+                        pointerEvents: 'none',
+                        zIndex: 5,
+                      }}
+                    />
+                  )}
+                </div>
               </div>
 
               <div

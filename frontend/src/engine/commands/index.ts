@@ -331,6 +331,8 @@ export type {
   UpdatePrompterPartWithShiftInverse,
   UpdatePrompterPartWithShiftParameters,
 } from './updatePrompterPartWithShiftCommand'
+export { MovePrompterPartCommand } from './movePrompterPartCommand'
+export type { MovePrompterPartInverse, MovePrompterPartParameters } from './movePrompterPartCommand'
 export { CreateAudioAssetCommand } from './createAudioAssetCommand'
 export type { CreateAudioAssetInverse, CreateAudioAssetParameters } from './createAudioAssetCommand'
 export { CreateAudioClipCommand } from './createAudioClipCommand'

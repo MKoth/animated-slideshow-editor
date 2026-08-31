@@ -586,6 +586,21 @@ export class Engine {
     return { oldAudioClipId, oldAudioAssetId, oldStatus }
   }
 
+  movePrompterPart(slideId: string, partId: string, newIndex: number): number {
+    const slide = this.getSlide(slideId)
+    if (!slide.prompter) throw new Error(`Slide "${slideId}" has no prompter`)
+    const parts = slide.prompter.parts
+    const oldIndex = parts.findIndex((p) => p.id === partId)
+    if (oldIndex === -1) throw new Error(`PrompterPart not found: ${partId}`)
+    if (newIndex < 0 || newIndex >= parts.length) throw new Error(`newIndex out of bounds: ${newIndex}`)
+    if (oldIndex === newIndex) return oldIndex
+    const [moved] = parts.splice(oldIndex, 1)
+    parts.splice(newIndex, 0, moved)
+    reflowPrompter(slide.prompter)
+    this.#bus.emit({ type: 'PrompterChanged', slideId } as unknown as import('./events').EngineEvent)
+    return oldIndex
+  }
+
   createAudioClip(
     slideId: string,
     input: {
