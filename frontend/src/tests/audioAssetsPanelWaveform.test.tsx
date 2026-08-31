@@ -7,6 +7,7 @@ import { createEngineInternal, toReadOnly } from '../engine/internal'
 import { CommandDispatcher, UndoStack } from '../engine/commands'
 import { CreateAudioAssetCommand } from '../engine/commands'
 import type { EmbeddedAsset } from '../engine/embeddedAsset'
+import { noopPersistence } from './contextHarness'
 
 function stubBackendWithMetadata(meta: Record<string, unknown>) {
   vi.mocked(fetch).mockImplementation((input: RequestInfo | URL) => {
@@ -44,7 +45,7 @@ function makeEmbeddedAudioAsset(overrides: Partial<EmbeddedAsset> & { metadata?:
 function engineWithEmbeddedAssets(assets: EmbeddedAsset[]) {
   const engine = createEngineInternal()
   const undo = new UndoStack()
-  const dispatcher = new CommandDispatcher(engine, undo, { log: () => {} })
+  const dispatcher = new CommandDispatcher(engine, undo, () => {})
   engine.createProject({ name: 'Test' })
   for (const a of assets) {
     dispatcher.dispatch(new CreateAudioAssetCommand({ name: a.name, data: a.data, mimeType: a.mimeType, metadata: a.metadata as Record<string, unknown> }))
@@ -79,7 +80,7 @@ describe('Audio waveform caching', () => {
     stubBackendWithMetadata({ duration: 65 })
 
     render(
-      <EngineContext.Provider value={{ engine, dispatch: vi.fn() }}>
+      <EngineContext.Provider value={{ engine, dispatch: vi.fn() as unknown as never, undoStack: new UndoStack(), persistence: noopPersistence }}>
         <AssetsPanel />
       </EngineContext.Provider>,
     )
@@ -129,7 +130,6 @@ describe('Audio waveform caching', () => {
     })
 
     // Mock AudioContext to produce quick peaks of 50
-    const quickPeaks = Array(800).fill(50)
     const canonicalPeaks = Array(800).fill(200)
     const mockBuffer = {
       duration: 2.5,
@@ -168,7 +168,7 @@ describe('Audio waveform caching', () => {
 
     const { engine } = engineWithEmbeddedAssets([])
     render(
-      <EngineContext.Provider value={{ engine, dispatch: vi.fn() }}>
+      <EngineContext.Provider value={{ engine, dispatch: vi.fn() as unknown as never, undoStack: new UndoStack(), persistence: noopPersistence }}>
         <AssetsPanel />
       </EngineContext.Provider>,
     )
@@ -242,7 +242,7 @@ describe('Audio waveform caching', () => {
 
     const { engine } = engineWithEmbeddedAssets([])
     render(
-      <EngineContext.Provider value={{ engine, dispatch: vi.fn() }}>
+      <EngineContext.Provider value={{ engine, dispatch: vi.fn() as unknown as never, undoStack: new UndoStack(), persistence: noopPersistence }}>
         <AssetsPanel />
       </EngineContext.Provider>,
     )

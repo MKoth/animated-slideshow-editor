@@ -2,7 +2,7 @@ import type { EnginePublic, LessonJSON } from '../engine'
 import { newId } from '../engine/ids'
 import { validate } from '../engine/lessonSerializer'
 import { useNotificationStore } from '../stores/notificationStore'
-import { ensureReferencedEmbedded } from './assetSnapshot'
+import { ensureReferencedEmbedded, ensureReferencedAudioEmbedded } from './assetSnapshot'
 import { ensureReferencedMaterialAndShaderSnapshots } from './definitionSnapshot'
 import { restoreProjectInEditor } from './openProjectActions'
 
@@ -58,6 +58,7 @@ export async function downloadLessonCopy(engine: EnginePublic): Promise<boolean>
   }
   try {
     await ensureReferencedEmbedded(engine)
+    await ensureReferencedAudioEmbedded(engine)
     ensureReferencedMaterialAndShaderSnapshots(engine)
     const blob = new Blob([JSON.stringify(engine.toJSON())], { type: 'application/json' })
     const url = URL.createObjectURL(blob)

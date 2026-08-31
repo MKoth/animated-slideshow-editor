@@ -87,6 +87,13 @@ export class Project {
     }
   }
 
+  deleteEmbeddedAsset(assetId: string): EmbeddedAsset | null {
+    const index = this.#embeddedAssets.findIndex((entry) => entry.id === assetId)
+    if (index < 0) return null
+    const [removed] = this.#embeddedAssets.splice(index, 1)
+    return removed ?? null
+  }
+
   embedMaterial(definition: EmbeddedMaterialDefinition): void {
     const index = this.#embeddedMaterials.findIndex((entry) => entry.id === definition.id)
     if (index >= 0) {

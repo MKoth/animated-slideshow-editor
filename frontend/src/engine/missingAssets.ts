@@ -25,6 +25,16 @@ export function collectReferencedDefinitionIds(project: Project): Set<string> {
   return ids
 }
 
+export function collectReferencedAudioAssetIds(project: Project): Set<string> {
+  const ids = new Set<string>()
+  for (const slide of project.slides) {
+    for (const clip of slide.audio.clips) {
+      ids.add(clip.assetId)
+    }
+  }
+  return ids
+}
+
 export function collectReferencedMaterialIds(project: Project): Set<string> {
   const ids = new Set<string>()
   for (const slide of project.slides) {

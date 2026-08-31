@@ -1,6 +1,6 @@
 import type { AssetDefinition } from '../api'
 import type { EnginePublic } from '../engine'
-import { collectReferencedDefinitionIds } from '../engine/missingAssets'
+import { collectReferencedDefinitionIds, collectReferencedAudioAssetIds } from '../engine/missingAssets'
 import { useAssetLibraryStore } from '../stores/assetLibraryStore'
 
 const inFlight = new Map<string, Promise<boolean>>()
@@ -57,6 +57,62 @@ export async function ensureReferencedEmbedded(engine: EnginePublic): Promise<vo
   }
   const referenced = collectReferencedDefinitionIds(project)
   await Promise.all([...referenced].map((id) => captureAssetSnapshot(engine, id)))
+}
+
+const inFlightAudio = new Map<string, Promise<boolean>>()
+
+export async function captureAudioSnapshot(
+  engine: EnginePublic,
+  assetId: string,
+): Promise<boolean> {
+  if (engine.getEmbeddedAsset(assetId) !== undefined) {
+    return true
+  }
+  const pending = inFlightAudio.get(assetId)
+  if (pending) return pending
+  const attempt = doCaptureAudio(engine, assetId)
+  inFlightAudio.set(assetId, attempt)
+  try {
+    return await attempt
+  } finally {
+    if (inFlightAudio.get(assetId) === attempt) inFlightAudio.delete(assetId)
+  }
+}
+
+async function doCaptureAudio(engine: EnginePublic, assetId: string): Promise<boolean> {
+  const definition = libraryDefinition(assetId)
+  if (!definition) return false
+  // Only for audio definitions
+  const isAudio = definition.category === 'audio' || definition.mimeType?.startsWith('audio/') || /\.(wav|mp3|mpeg|ogg|webm)$/i.test(definition.original_filename)
+  if (!isAudio) return false
+  const url = definition.original_url
+  if (!url) return false
+  const bytes = await fetchImageBytes(url)
+  if (bytes === null) return false
+  // Prefer mimeType from definition if available
+  const mimeType = definition.mimeType ?? bytes.mimeType
+  // Preserve audio metadata (duration, sampleRate, etc) in embedded metadata
+  const metadata: Record<string, unknown> = { ...(definition.metadata as Record<string, unknown> | undefined) }
+  if (definition.mimeType) metadata.mimeType = definition.mimeType
+  // Ensure category preserved for filtering
+  metadata.category = definition.category
+  engine.embedAsset({
+    id: definition.id,
+    name: definition.name,
+    data: bytes.data,
+    mimeType: mimeType.startsWith('audio/') ? mimeType : 'audio/wav',
+    metadata,
+  })
+  return true
+}
+
+export async function ensureReferencedAudioEmbedded(engine: EnginePublic): Promise<void> {
+  const project = engine.project
+  if (!project) return
+  const referenced = collectReferencedAudioAssetIds(project)
+  // Only for those not already embedded and that are global definitions
+  const toCapture = [...referenced].filter((id) => engine.getEmbeddedAsset(id) === undefined)
+  await Promise.all(toCapture.map((id) => captureAudioSnapshot(engine, id)))
 }
 
 export function embeddedDataUrl(asset: {
@@ -121,6 +177,15 @@ function mimeTypeFor(url: string, contentType: string): string {
       return 'image/webp'
     case 'svg':
       return 'image/svg+xml'
+    case 'wav':
+      return 'audio/wav'
+    case 'mp3':
+    case 'mpeg':
+      return 'audio/mpeg'
+    case 'ogg':
+      return 'audio/ogg'
+    case 'webm':
+      return 'audio/webm'
     default:
       return 'application/octet-stream'
   }

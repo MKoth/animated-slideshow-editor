@@ -8,9 +8,11 @@ export function useSyncedAudio(
   const { engine } = useEngine()
 
   const controller = useMemo(() => {
+    let cached: import('./syncedAudioController').AudioContextLike | null | undefined
     const factory: AudioContextFactory =
       getAudioContext ??
       (() => {
+        if (cached !== undefined) return cached
         const ctor =
           (
             window as unknown as {
@@ -19,10 +21,15 @@ export function useSyncedAudio(
             }
           ).AudioContext ??
           (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-        if (!ctor) return null
+        if (!ctor) {
+          cached = null
+          return null
+        }
         try {
-          return new ctor() as unknown as import('./syncedAudioController').AudioContextLike
+          cached = new ctor() as unknown as import('./syncedAudioController').AudioContextLike
+          return cached
         } catch {
+          cached = null
           return null
         }
       })

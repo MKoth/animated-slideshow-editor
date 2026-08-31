@@ -65,12 +65,16 @@ describe('Audio Tab Shell', () => {
     fireEvent.click(screen.getByTestId('timeline-tab-audio'))
     // audio ruler should exist with same ticks (0.2 step at zoom 2 => pps 200, step 0.2)
     expect(screen.getByTestId('audio-ruler')).toBeInTheDocument()
-    await waitFor(() => expect(useTimelineViewStore.getState().zoomLevel).toBe(2))
-    expect(useTimelineViewStore.getState().scrollTime).toBe(1.5)
+    await waitFor(() => {
+      expect(useTimelineViewStore.getState().zoomLevel).toBe(2)
+      expect(useTimelineViewStore.getState().scrollTime).toBe(1.5)
+    })
     // switch back preserves
     fireEvent.click(screen.getByTestId('timeline-tab-animation'))
-    await waitFor(() => expect(useTimelineViewStore.getState().zoomLevel).toBe(2))
-    expect(useTimelineViewStore.getState().scrollTime).toBe(1.5)
+    await waitFor(() => {
+      expect(useTimelineViewStore.getState().zoomLevel).toBe(2)
+      expect(useTimelineViewStore.getState().scrollTime).toBe(1.5)
+    })
   })
 
   it('shows empty state per lane when no audio', async () => {

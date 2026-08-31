@@ -54,6 +54,7 @@ export interface EnginePublic {
   getEmbeddedMaterial(definitionId: string): EmbeddedMaterialDefinition | undefined
   getEmbeddedShader(definitionId: string): EmbeddedShaderDefinition | undefined
   embedAsset(asset: EmbeddedAsset): void
+  deleteEmbeddedAsset(assetId: string): EmbeddedAsset | null
   embedMaterial(definition: EmbeddedMaterialDefinition): void
   embedShader(definition: EmbeddedShaderDefinition): void
   embedDataSource(definition: EmbeddedDataSourceUnion): void

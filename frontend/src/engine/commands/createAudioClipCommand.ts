@@ -69,12 +69,24 @@ export class CreateAudioClipCommand implements Command<CreateAudioClipInverse> {
   validate(engine: Engine): void {
     engine.getSlide(this.#slideId)
     requireString(this.#assetId, 'AudioClip assetId')
-    const asset = engine.getEmbeddedAsset(this.#assetId)
-    if (!asset) {
-      throw new Error(`Audio asset not found: ${this.#assetId}`)
-    }
-    if (!asset.mimeType.startsWith('audio/')) {
-      throw new Error('AudioClip asset must have audio/* mimeType')
+    const embedded = engine.getEmbeddedAsset(this.#assetId)
+    if (embedded) {
+      if (!embedded.mimeType.startsWith('audio/')) {
+        throw new Error('AudioClip asset must have audio/* mimeType')
+      }
+    } else {
+      // Allow global audio assets via asset library sync (imported audio)
+      let foundGlobal = false
+      try {
+        const def = engine.getAssetDefinition(this.#assetId)
+        if (def) foundGlobal = true
+      } catch {
+        foundGlobal = false
+      }
+      if (!foundGlobal) {
+        throw new Error(`Audio asset not found: ${this.#assetId}`)
+      }
+      // global audio assets are assumed valid (category='audio' or audio/* mime handled at import)
     }
     requireAudioTrackId(this.#trackId, 'AudioClip trackId')
     requireFiniteNumber(this.#timelineStart, 'AudioClip timelineStart', (v) => v >= 0)

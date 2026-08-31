@@ -179,7 +179,7 @@ _Avoid_: Auto-metadata, metadata generator
 ### Audio & Prompter
 
 **AudioAsset**:
-An immutable reusable audio resource: an id, name, `data` (base64 WAV/MP3), `mimeType` (`audio/wav`, `audio/mpeg`, …), and `metadata {duration, sampleRate, channels, waveformPeaks?}`. It is the binary unit — never mutated after creation. Stored as an `EmbeddedAsset` in `Project.embeddedAssets` / `LessonJSON.library.assets` (filtered by `audio/*` mimeType) and in backend SQLite `asset_definitions` with `category='audio'` when present. Duration/peaks are cached so thumbnails don't require decoding on every open.
+An immutable reusable audio resource: an id, name, `data` (base64 WAV/MP3), `mimeType` (`audio/wav`, `audio/mpeg`, …), and `metadata {duration, sampleRate, channels, waveformPeaks?}`. It is the binary unit — never mutated after creation. Dual scope: imported audio lives globally in backend SQLite `asset_definitions` (`category='audio'`, `mime_type` `audio/*`, `asset_metadata`) via `assetLibraryStore` and `POST /api/assets` (like images); recorded/take audio lives project-only as `EmbeddedAsset` in `Project.embeddedAssets` / `LessonJSON.library.assets` (filtered by `audio/*` mimeType) via `CreateAudioAssetCommand`. Referenced global audio is snapshotted into `Project.embeddedAssets` on save/download (`captureAudioSnapshot`/`ensureReferencedAudioEmbedded`) so `.lesson` remains self-contained. Playback resolves either scope (`SyncedAudioController` → embedded base64 or fetch `original_url`). Duration/peaks are cached so thumbnails don't require decoding on every open.
 _Avoid_: Audio file, sound asset (ambiguous vs AudioClip)
 
 **AudioClip**:

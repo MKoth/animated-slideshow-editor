@@ -7,7 +7,7 @@ import { registerImportOpener } from '../assets/importTrigger'
 import { SORT_OPTIONS } from '../assets/sortOptions'
 import type { EmbeddedAsset } from '../../engine/embeddedAsset'
 import { EngineContext } from '../../app/engineContext'
-import { CreateAudioAssetCommand } from '../../engine/commands'
+import { DeleteAudioAssetCommand } from '../../engine/commands'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { assetsApi } from '../../api'
 import { WaveformCanvas } from '../audio/WaveformCanvas'
@@ -91,56 +91,7 @@ function isAudioDefinition(def: AssetDefinition): boolean {
   return false
 }
 
-function inferAudioMimeType(file: File): string {
-  if (file.type.startsWith('audio/')) return file.type
-  const ext = file.name.split('.').pop()?.toLowerCase()
-  switch (ext) {
-    case 'wav': return 'audio/wav'
-    case 'mp3':
-    case 'mpeg': return 'audio/mpeg'
-    case 'ogg': return 'audio/ogg'
-    case 'webm': return 'audio/webm'
-    default: return 'audio/wav'
-  }
-}
 
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const result = reader.result as string
-      // result is data URL like data:audio/wav;base64,xxxx  -> extract base64 part
-      const comma = result.indexOf(',')
-      resolve(comma >= 0 ? result.slice(comma + 1) : result)
-    }
-    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'))
-    reader.readAsDataURL(file)
-  })
-}
-
-async function decodeAudioMetadata(file: File): Promise<{ duration: number | null; sampleRate: number | null; channels: number | null; peaks: number[] | null }> {
-  try {
-    const arrayBuffer = await file.arrayBuffer()
-    const Ctor = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
-      ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-    if (!Ctor) return { duration: null, sampleRate: null, channels: null, peaks: null }
-    const ctx = new Ctor()
-    const buffer = await ctx.decodeAudioData(arrayBuffer.slice(0))
-    const duration = buffer.duration
-    const sampleRate = buffer.sampleRate
-    const channels = buffer.numberOfChannels
-    await ctx.close().catch(() => {})
-    if (!Number.isFinite(duration) || duration <= 0) return { duration: null, sampleRate: null, channels: null, peaks: null }
-    let peaks: number[] | null = null
-    if (duration < MAX_FRONTEND_DECODE_SECONDS) {
-      const buckets = bucketCountForDuration(duration)
-      peaks = computePeaksFromAudioBuffer(buffer, buckets)
-    }
-    return { duration, sampleRate, channels, peaks }
-  } catch {
-    return { duration: null, sampleRate: null, channels: null, peaks: null }
-  }
-}
 
 type AssetFilter = 'all' | 'images' | 'audio'
 
@@ -184,6 +135,146 @@ function AssetPreview({ definition, onClose }: PreviewProps) {
         <dt>AI description</dt>
         <dd>{definition.ai_description || '—'}</dd>
       </dl>
+    </section>
+  )
+}
+
+function AudioEmbeddedPreview({ asset, onClose }: { asset: EmbeddedAsset; onClose: () => void }) {
+  const duration = getAssetDuration(asset)
+  const peaks = getWaveformPeaks(asset)
+  const badge = duration !== null ? formatDurationBadge(duration) : '--:--'
+  const engineCtx = useContext(EngineContext)
+  const dispatch = engineCtx?.dispatch ?? null
+  const [isPlaying, setIsPlaying] = useState(false)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const handleDelete = () => {
+    if (!dispatch) return
+    const res = dispatch(new DeleteAudioAssetCommand({ assetId: asset.id }))
+    if (!res.ok) useNotificationStore.getState().notify(res.error.message)
+    else {
+      useNotificationStore.getState().notify(`${asset.name} deleted`)
+      onClose()
+    }
+  }
+  const handleAudition = async () => {
+    if (isPlaying && audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current.currentTime = 0
+      setIsPlaying(false)
+      return
+    }
+    try {
+      const dataUrl = `data:${asset.mimeType};base64,${asset.data}`
+      const audio = new Audio(dataUrl)
+      audioRef.current = audio
+      audio.onended = () => setIsPlaying(false)
+      audio.onerror = () => setIsPlaying(false)
+      await audio.play()
+      setIsPlaying(true)
+    } catch {
+      useNotificationStore.getState().notify('Playback failed')
+    }
+  }
+  const handleSaveGlobal = async () => {
+    try {
+      const bytes = Uint8Array.from(atob(asset.data), (c) => c.charCodeAt(0))
+      const blob = new Blob([bytes], { type: asset.mimeType })
+      const file = new File([blob], `${asset.name}.${asset.mimeType.split('/')[1] ?? 'wav'}`, { type: asset.mimeType })
+      const store = useAssetLibraryStore.getState()
+      const result = await store.importFiles([file])
+      if (result.created.length > 0) useNotificationStore.getState().notify(`${asset.name} saved to library`)
+      else useNotificationStore.getState().notify('Save failed — backend unavailable')
+    } catch (e) {
+      useNotificationStore.getState().notify(e instanceof Error ? e.message : String(e))
+    }
+  }
+  return (
+    <section className="asset-preview asset-preview--audio" aria-label="Audio preview">
+      <header className="asset-preview__header">
+        <h3 className="asset-preview__title">{asset.name}</h3>
+        <div className="asset-preview__actions">
+          <button className="asset-preview__delete" onClick={handleDelete}>Delete</button>
+          <button className="asset-preview__close" onClick={onClose}>Close</button>
+        </div>
+      </header>
+      <div style={{ background: '#1a1a1a', padding: 12, borderRadius: 6 }}>
+        <WaveformCanvas peaks={peaks} width={320} height={48} color="#7c5cff" testId="waveform-preview-embedded" />
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 11, color: '#aaa' }}>
+          <span>{badge}</span>
+          <span>{asset.mimeType} • {formatFileSize(Math.round((asset.data.length * 3) / 4))}</span>
+        </div>
+      </div>
+      <dl className="asset-preview__details">
+        <dt>Duration</dt><dd>{badge}</dd>
+        <dt>Sample rate</dt><dd>{(asset.metadata as Record<string, unknown>)?.sampleRate as number ?? '—'}</dd>
+        <dt>Channels</dt><dd>{(asset.metadata as Record<string, unknown>)?.channels as number ?? '—'}</dd>
+        <dt>Mime</dt><dd>{asset.mimeType}</dd>
+        <dt>Scope</dt><dd>Project only (recorded)</dd>
+      </dl>
+      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <button data-testid="audio-preview-play" onClick={handleAudition} style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--color-border)', background: isPlaying ? '#7c5cff' : 'var(--color-bg)', color: isPlaying ? '#fff' : undefined, cursor: 'pointer' }}>{isPlaying ? 'Stop' : 'Listen'}</button>
+        <button data-testid="audio-preview-save-global" onClick={handleSaveGlobal} style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'var(--color-bg)', cursor: 'pointer' }}>Save between projects</button>
+      </div>
+    </section>
+  )
+}
+
+function AudioGlobalPreview({ definition, onClose }: { definition: AssetDefinition; onClose: () => void }) {
+  const duration = getDefinitionDuration(definition)
+  const peaks = getDefinitionWaveformPeaks(definition)
+  const badge = duration !== null ? formatDurationBadge(duration) : '--:--'
+  const deleteAsset = useAssetLibraryStore((state) => state.deleteAsset)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const handleDelete = async () => {
+    await deleteAsset(definition.id)
+    onClose()
+  }
+  const handleAudition = async () => {
+    if (isPlaying && audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current.currentTime = 0
+      setIsPlaying(false)
+      return
+    }
+    try {
+      const audio = new Audio(definition.original_url)
+      audioRef.current = audio
+      audio.onended = () => setIsPlaying(false)
+      audio.onerror = () => setIsPlaying(false)
+      await audio.play()
+      setIsPlaying(true)
+    } catch {
+      useNotificationStore.getState().notify('Playback failed')
+    }
+  }
+  return (
+    <section className="asset-preview asset-preview--audio" aria-label="Audio preview">
+      <header className="asset-preview__header">
+        <h3 className="asset-preview__title">{definition.name}</h3>
+        <div className="asset-preview__actions">
+          <button className="asset-preview__delete" onClick={handleDelete}>Delete</button>
+          <button className="asset-preview__close" onClick={onClose}>Close preview</button>
+        </div>
+      </header>
+      <div style={{ background: '#1a1a1a', padding: 12, borderRadius: 6 }}>
+        <WaveformCanvas peaks={peaks} width={320} height={48} color="#7c5cff" testId="waveform-preview-global" />
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 11, color: '#aaa' }}>
+          <span>{badge}</span>
+          <span>{definition.mimeType ?? definition.category} • {formatFileSize(definition.file_size)}</span>
+        </div>
+      </div>
+      <dl className="asset-preview__details">
+        <dt>Category</dt><dd>{definition.category}</dd>
+        <dt>Duration</dt><dd>{badge}</dd>
+        <dt>Resolution</dt><dd>{definition.width} × {definition.height}</dd>
+        <dt>File size</dt><dd>{formatFileSize(definition.file_size)}</dd>
+        <dt>Imported</dt><dd>{formatImportDate(definition.import_date)}</dd>
+        <dt>Scope</dt><dd>Global (shared between projects)</dd>
+      </dl>
+      <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <button data-testid="audio-preview-play-global" onClick={handleAudition} style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--color-border)', background: isPlaying ? '#7c5cff' : 'var(--color-bg)', color: isPlaying ? '#fff' : undefined, cursor: 'pointer' }}>{isPlaying ? 'Stop' : 'Listen'}</button>
+      </div>
     </section>
   )
 }
@@ -388,10 +479,6 @@ export function AssetsPanel() {
 
   useEffect(() => registerImportOpener(() => fileInputRef.current?.click()), [])
 
-  // Engine access for audio embedded import (useContext to avoid throwing outside provider)
-  const engineCtx = useContext(EngineContext)
-  const engineDispatch = engineCtx?.dispatch ?? null
-
   const handleImportFiles = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? [])
     event.target.value = ''
@@ -402,35 +489,9 @@ export function AssetsPanel() {
       void importFiles(imageFiles)
     }
     if (audioFiles.length > 0) {
-      if (!engineDispatch) {
-        // No engine available: fall back to backend upload for audio as well
-        void importFiles(audioFiles)
-        return
-      }
-      void (async () => {
-        for (const file of audioFiles) {
-          try {
-            const base64 = await fileToBase64(file)
-            const mimeType = inferAudioMimeType(file)
-            const decoded = await decodeAudioMetadata(file)
-            const name = file.name.replace(/\.[^/.]+$/, '') || file.name
-            const metadata: Record<string, unknown> = {}
-            if (decoded.duration !== null) metadata.duration = decoded.duration
-            if (decoded.sampleRate !== null) metadata.sampleRate = decoded.sampleRate
-            if (decoded.channels !== null) metadata.channels = decoded.channels
-            if (decoded.peaks) metadata.waveformPeaks = decoded.peaks
-            const result = engineDispatch!(new CreateAudioAssetCommand({ name, data: base64, mimeType, metadata }))
-            if (!result.ok) {
-              useNotificationStore.getState().notify(`${file.name}: ${result.error.message}`)
-            } else {
-              useNotificationStore.getState().notify(`${file.name} imported as audio`)
-            }
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error)
-            useNotificationStore.getState().notify(`${file.name}: ${message}`)
-          }
-        }
-      })()
+      // Audio imports go global via backend (like images), not embedded.
+      // Recorded audio stays project-only via CreateAudioAssetCommand in RecordModal.
+      void importFiles(audioFiles)
     }
   }
 
@@ -442,6 +503,7 @@ export function AssetsPanel() {
   }
 
   const selected = definitions.find((definition) => definition.id === selectedId)
+  const selectedEmbedded = embeddedAudioAssets.find((a) => a.id === selectedId) ?? null
   const activeSortLabel = SORT_OPTIONS.find(
     (option) => option.sort === sort && option.order === order,
   )?.label
@@ -595,7 +657,9 @@ export function AssetsPanel() {
               </li>
             ))}
           </ul>
-          {selected && <AssetPreview definition={selected} onClose={() => selectAsset(null)} />}
+          {selected && !isAudioDefinition(selected) && <AssetPreview definition={selected} onClose={() => selectAsset(null)} />}
+          {selected && isAudioDefinition(selected) && <AudioGlobalPreview definition={selected} onClose={() => selectAsset(null)} />}
+          {!selected && selectedEmbedded && <AudioEmbeddedPreview asset={selectedEmbedded} onClose={() => selectAsset(null)} />}
         </>
       )}
     </div>

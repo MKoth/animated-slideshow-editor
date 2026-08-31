@@ -1284,6 +1284,17 @@ export class Engine {
     this.#embeddedAssets.set(asset.id, asset)
   }
 
+  deleteEmbeddedAsset(assetId: string): EmbeddedAsset | null {
+    const project = this.#projects.current
+    if (!project) {
+      throw new Error('No project exists in memory')
+    }
+    const asset = this.#embeddedAssets.get(assetId) ?? project.embeddedAssets.find((a) => a.id === assetId) ?? null
+    this.#embeddedAssets.delete(assetId)
+    project.deleteEmbeddedAsset(assetId)
+    return asset
+  }
+
   embedMaterial(definition: EmbeddedMaterialDefinition): void {
     const project = this.#projects.current
     if (!project) {
@@ -1906,6 +1917,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getEmbeddedMaterial: (definitionId) => engine.getEmbeddedMaterial(definitionId),
     getEmbeddedShader: (definitionId) => engine.getEmbeddedShader(definitionId),
     embedAsset: (asset) => engine.embedAsset(asset),
+    deleteEmbeddedAsset: (assetId) => engine.deleteEmbeddedAsset(assetId),
     embedMaterial: (definition) => engine.embedMaterial(definition),
     embedShader: (definition) => engine.embedShader(definition),
     embedDataSource: (definition) => engine.embedDataSource(definition),

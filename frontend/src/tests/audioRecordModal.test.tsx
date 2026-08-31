@@ -245,6 +245,7 @@ describe('RecordModal seam + mocked getUserMedia/MediaRecorder/AudioContext', ()
     // downstream clip at 3.5
     const base = btoa('x')
     const aRes = dispatcher.dispatch(new CreateAudioAssetCommand({ name: 'x', data: base, mimeType: 'audio/wav', metadata: { duration: 1, sampleRate: 44100, channels: 1 } }))
+    if (!aRes.ok) throw aRes.error
     const assetId = (aRes.inverse as { assetId: string }).assetId
     dispatcher.dispatch(new CreateAudioClipCommand({ slideId: slide.id, assetId, trackId: 'voice', timelineStart: 3.5, sourceEnd: 1 }))
     const readOnly = toReadOnly(engine)

@@ -18,6 +18,7 @@ import {
 import { AudioBufferCache } from '../engine/audioBufferCache'
 import type { EnginePublic } from '../engine'
 import { getAudioClipSourceDuration } from '../engine/audioClip'
+import { useAssetLibraryStore } from '../stores/assetLibraryStore'
 
 type Engine = EnginePublic
 
@@ -32,6 +33,7 @@ export interface AudioContextLike {
   createGain(): GainNodeLike
   createMediaElementSource?(media: HTMLMediaElement): MediaElementAudioSourceNodeLike
   getOutputTimestamp?(): AudioTimestampLike
+  decodeAudioData?(buffer: ArrayBuffer): Promise<AudioBuffer>
   destination: unknown
 }
 
@@ -123,6 +125,9 @@ export class SyncedAudioController {
     this._activeSlideId = v
   }
   private readonly unsubs: Array<() => void> = []
+  private _cachedCtx: AudioContextLike | null = null
+  private _pendingDecodes = new Set<string>()
+  private _playGen = 0
 
   // for tests: capture scheduled calls
   readonly scheduledHistory: Array<{
@@ -145,6 +150,137 @@ export class SyncedAudioController {
     this.getAudioContext = options.getAudioContext ?? (() => null)
     this.getPerformanceNow = options.getPerformanceNow ?? (() => performance.now())
     this.cache = new AudioBufferCache()
+  }
+
+  private getCtx(): AudioContextLike | null {
+    if (this._cachedCtx) return this._cachedCtx
+    const ctx = this.getAudioContext()
+    if (ctx) this._cachedCtx = ctx
+    return ctx
+  }
+
+  private base64ToBytes(base64: string): Uint8Array | null {
+    try {
+      const bin = atob(base64)
+      const bytes = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+      return bytes
+    } catch {
+      return null
+    }
+  }
+
+  private async decodeArrayBufferToBuffer(arrayBuffer: ArrayBuffer): Promise<{ buffer: AudioBuffer; byteSize: number; duration: number } | null> {
+    // Try playback context decode first
+    const ctx = this.getCtx()
+    if (ctx?.decodeAudioData) {
+      try {
+        const buf = await ctx.decodeAudioData(arrayBuffer.slice(0))
+        return { buffer: buf, byteSize: buf.length * buf.numberOfChannels * 4, duration: buf.duration }
+      } catch {
+        // fall through to ephemeral
+      }
+    }
+    const Ctor = (globalThis as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
+      ?? (globalThis as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!Ctor) return null
+    let tmp: AudioContext | null = null
+    try {
+      tmp = new Ctor()
+      const buf = await tmp.decodeAudioData(arrayBuffer.slice(0))
+      const computedByteSize = buf.length * buf.numberOfChannels * 4
+      return { buffer: buf, byteSize: computedByteSize, duration: buf.duration }
+    } catch {
+      return null
+    } finally {
+      if (tmp) {
+        try { await tmp.close() } catch { /* ignore */ }
+      }
+    }
+  }
+
+  private async decodeBase64ToBuffer(base64: string): Promise<{ buffer: AudioBuffer; byteSize: number; duration: number } | null> {
+    const bytes = this.base64ToBytes(base64)
+    if (!bytes) return null
+    const arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+    return this.decodeArrayBufferToBuffer(arrayBuffer)
+  }
+
+  private isGlobalAudioDefinition(def: unknown): boolean {
+    if (!def || typeof def !== 'object') return false
+    const d = def as Record<string, unknown>
+    if (typeof d.mimeType === 'string' && (d.mimeType as string).startsWith('audio/')) return true
+    if (typeof d.category === 'string' && d.category === 'audio') return true
+    const meta = d.metadata as Record<string, unknown> | undefined
+    if (meta && typeof meta.mimeType === 'string' && (meta.mimeType as string).startsWith('audio/')) return true
+    if (typeof d.original_filename === 'string' && /\.(wav|mp3|mpeg|ogg|webm)$/i.test(d.original_filename as string)) return true
+    return false
+  }
+
+  private async ensureBufferForAsset(assetId: string): Promise<boolean> {
+    if (this.cache.has(assetId)) return true
+    if (this._pendingDecodes.has(assetId)) return false
+    // Try embedded first (recorded/project-only)
+    const asset = this.engine.getEmbeddedAsset(assetId)
+    if (asset) {
+      const meta = asset.metadata as Record<string, unknown> | undefined
+      const metaDuration = typeof meta?.duration === 'number' ? (meta.duration as number) : undefined
+      if (metaDuration !== undefined && this.cache.shouldUseMediaElement(metaDuration)) return false
+      this._pendingDecodes.add(assetId)
+      try {
+        const decoded = await this.decodeBase64ToBuffer(asset.data)
+        if (!decoded) return false
+        if (this.cache.shouldUseMediaElement(decoded.duration)) return false
+        this.cache.set(assetId, decoded.buffer, decoded.byteSize, decoded.duration)
+        return true
+      } finally {
+        this._pendingDecodes.delete(assetId)
+      }
+    }
+    // Try global audio definition via assetLibraryStore
+    let globalDef: unknown = null
+    try {
+      globalDef = useAssetLibraryStore.getState().definitions.find((d) => d.id === assetId) ?? null
+    } catch {
+      globalDef = null
+    }
+    if (globalDef && this.isGlobalAudioDefinition(globalDef)) {
+      const def = globalDef as { original_url: string; metadata?: Record<string, unknown> }
+      const metaDuration = typeof def.metadata?.duration === 'number' ? (def.metadata.duration as number) : undefined
+      if (metaDuration !== undefined && this.cache.shouldUseMediaElement(metaDuration)) return false
+      this._pendingDecodes.add(assetId)
+      try {
+        // fetch bytes from original_url
+        let arrayBuffer: ArrayBuffer | null = null
+        try {
+          const resp = await fetch(def.original_url)
+          if (!resp.ok) return false
+          arrayBuffer = await resp.arrayBuffer()
+        } catch {
+          return false
+        }
+        if (!arrayBuffer) return false
+        const decoded = await this.decodeArrayBufferToBuffer(arrayBuffer)
+        if (!decoded) return false
+        if (this.cache.shouldUseMediaElement(decoded.duration)) return false
+        this.cache.set(assetId, decoded.buffer, decoded.byteSize, decoded.duration)
+        return true
+      } finally {
+        this._pendingDecodes.delete(assetId)
+      }
+    }
+    return false
+  }
+
+  private async ensureBuffersForSlide(slideId: string): Promise<void> {
+    let clips: readonly import('../engine/audioClip').AudioClip[] = []
+    try {
+      clips = this.engine.getSlide(slideId).audio.clips
+    } catch {
+      return
+    }
+    const uniqueAssetIds = [...new Set(clips.map((c) => c.assetId))]
+    await Promise.all(uniqueAssetIds.map((id) => this.ensureBufferForAsset(id)))
   }
 
   attach(): void {
@@ -187,6 +323,7 @@ export class SyncedAudioController {
     this.clearScrubTimers()
     for (const unsub of this.unsubs) unsub()
     this.unsubs.length = 0
+    this._cachedCtx = null
   }
 
   // -------------------------------------------------------------------------
@@ -194,7 +331,8 @@ export class SyncedAudioController {
   // -------------------------------------------------------------------------
 
   async handlePlay(slideId: string, playheadTime: number): Promise<void> {
-    const ctx = this.getAudioContext()
+    const gen = ++this._playGen
+    const ctx = this.getCtx()
     if (!ctx) return
     if (ctx.state === 'suspended') {
       try {
@@ -203,6 +341,16 @@ export class SyncedAudioController {
         // ignore
       }
     }
+    if (gen !== this._playGen) return
+    // Preload decoded buffers for this slide's assets before scheduling
+    // Do not block indefinitely — if decode fails, tick will skip silent clips
+    try {
+      await this.ensureBuffersForSlide(slideId)
+    } catch {
+      // ignore preload errors — tick will handle misses
+    }
+    if (gen !== this._playGen) return
+    if (usePlaybackController.getState().status !== 'playing') return
     const perfNow = this.getPerformanceNow()
     const baseAudioTime = ctx.currentTime
     const duration = this.getSlideDuration(slideId)
@@ -225,6 +373,7 @@ export class SyncedAudioController {
   }
 
   handlePauseOrStop(): void {
+    this._playGen++
     this.isPlaying = false
     this.baseTimes = null
     this.teardownScheduling()
@@ -233,7 +382,7 @@ export class SyncedAudioController {
   handleLooped(slideId: string, time: number): void {
     // Loop wraps re-queueing — clear scheduled that are past and re-tick
     // For simplicity, clear all and rebase
-    const ctx = this.getAudioContext()
+    const ctx = this.getCtx()
     if (!ctx) return
     const perfNow = this.getPerformanceNow()
     const duration = this.getSlideDuration(slideId)
@@ -250,6 +399,7 @@ export class SyncedAudioController {
 
   handleSlideSwitch(nextSlideId: string): void {
     // Slide switch tears down nodes
+    this._playGen++
     this.clearScheduled()
     this.isPlaying = false
     this.baseTimes = null
@@ -314,7 +464,7 @@ export class SyncedAudioController {
 
   private updatePlayheadFromAudio(): void {
     if (!this.baseTimes || !this.isPlaying) return
-    const ctx = this.getAudioContext()
+    const ctx = this.getCtx()
     if (!ctx) return
     const perfNow = this.getPerformanceNow()
     // Estimate via AudioContext.currentTime if available, else perf
@@ -359,7 +509,7 @@ export class SyncedAudioController {
 
   private pollDrift(): void {
     if (!this.baseTimes || !this.isPlaying) return
-    const ctx = this.getAudioContext()
+    const ctx = this.getCtx()
     if (!ctx) return
     const perfNow = this.getPerformanceNow()
     const estimatedAudioTime = computeAudioTime(
@@ -406,7 +556,7 @@ export class SyncedAudioController {
 
   private tick(): void {
     if (!this.baseTimes || !this.isPlaying) return
-    const ctx = this.getAudioContext()
+    const ctx = this.getCtx()
     if (!ctx) return
     const perfNow = this.getPerformanceNow()
     const audioTime = ctx.getOutputTimestamp
@@ -442,6 +592,13 @@ export class SyncedAudioController {
     for (const clip of audibleWindow) {
       if (this.scheduled.has(clip.id)) continue
       if (!isClipAudibleWithSoloMute(clip, mutedTracks, soloTracks)) continue
+      if (!this.cache.has(clip.assetId)) {
+        // Trigger lazy decode and retry next tick when ready
+        void this.ensureBufferForAsset(clip.assetId).then((ok) => {
+          if (ok && this.isPlaying) this.tick()
+        })
+        continue
+      }
       this.scheduleClip(clip, playhead, audioTime, ctx, slideDuration)
     }
 
@@ -509,15 +666,12 @@ export class SyncedAudioController {
       const gainNode = ctx.createGain()
       source.playbackRate.value = playbackRate
       gainNode.gain.value = gainValue
-      // buffer assignment — if cached, use buffer; else need to handle fallback media element
-      // For test seam, we allow buffer to be null; still schedule
       const cached = this.cache.get(clip.assetId)
-      if (cached) {
-        source.buffer = cached.buffer as AudioBuffer
-      } else {
-        // fallback: if guard says mediaElement, we would create media element source
-        // For now, leave buffer null; tests can assert fallback path via cache guard
+      if (!cached) {
+        // No decoded buffer yet — skip scheduling (mediaElement guard or decode pending)
+        return
       }
+      source.buffer = cached.buffer as AudioBuffer
       source.connect(gainNode)
       gainNode.connect(ctx.destination)
       source.start(when, offset, duration)
@@ -619,13 +773,19 @@ export class SyncedAudioController {
     // For test seam, record as scheduledHistory or set audition state
     useAudioPlaybackStore.getState().setAuditioning(clip.id)
     // Schedule a short blip via AudioContext if available
-    const ctx = this.getAudioContext()
+    const ctx = this.getCtx()
     if (ctx) {
       try {
+        const cached = this.cache.get(clip.assetId)
+        if (!cached) {
+          // Lazy decode for scrub audition
+          void this.ensureBufferForAsset(clip.assetId)
+          useAudioPlaybackStore.getState().setAuditioning(null)
+          return
+        }
         const source = ctx.createBufferSource()
         const gainNode = ctx.createGain()
-        const cached = this.cache.get(clip.assetId)
-        if (cached) source.buffer = cached.buffer as AudioBuffer
+        source.buffer = cached.buffer as AudioBuffer
         source.playbackRate.value = clip.playbackRate || 1
         gainNode.gain.value = clip.volume
         source.connect(gainNode)

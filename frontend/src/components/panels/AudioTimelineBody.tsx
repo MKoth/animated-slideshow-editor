@@ -42,6 +42,8 @@ import { slicePeaksForClip } from '../../audio/waveform'
 import { assetsApi } from '../../api'
 import { RecordModal } from '../audio/RecordModal'
 import { getPrompterRecordingShortcut } from '../../engine/prompter'
+import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
+import { captureAudioSnapshot } from '../../app/assetSnapshot'
 
 const PROMPTER_STRIP_HEIGHT = 42
 const AUDIO_LANE_HEIGHT = 56
@@ -112,6 +114,16 @@ export function AudioTimelineBody({
         typeof (asset.metadata as Record<string, unknown>).duration === 'number'
       ) {
         return (asset.metadata as Record<string, unknown>).duration as number
+      }
+      // Check global audio definition
+      const def = useAssetLibraryStore.getState().definitions.find((d) => d.id === assetId)
+      if (def) {
+        const meta = def.metadata as Record<string, unknown> | undefined
+        if (meta && typeof meta.duration === 'number' && Number.isFinite(meta.duration)) return meta.duration as number
+        if (def.mimeType?.startsWith('audio/') || def.category === 'audio') {
+          // fallback to duration from metadata or 1
+          if (typeof (def as unknown as { duration?: unknown }).duration === 'number') return (def as unknown as { duration: number }).duration
+        }
       }
       return 1
     },
@@ -227,7 +239,7 @@ export function AudioTimelineBody({
     setDragOverTrack(null)
   }
 
-  const handleAudioDrop = (event: React.DragEvent) => {
+  const handleAudioDrop = async (event: React.DragEvent) => {
     const hasAudio = event.dataTransfer.types.includes(AUDIO_ASSET_MIME)
     const hasImage = event.dataTransfer.types.includes(ASSET_DEFINITION_MIME)
     if (hasImage && !hasAudio) {
@@ -244,15 +256,39 @@ export function AudioTimelineBody({
       setGhost(null)
       return
     }
-    const asset = engine.getEmbeddedAsset(assetId)
-    if (!asset || !asset.mimeType.startsWith('audio/')) {
+    // Resolve duration from either embedded (recorded/project) or global (backend) asset
+    let assetDuration = 1
+    let isValidAudio = false
+    const embedded = engine.getEmbeddedAsset(assetId)
+    if (embedded && embedded.mimeType.startsWith('audio/')) {
+      isValidAudio = true
+      const rawDuration = (embedded.metadata as Record<string, unknown>)?.duration
+      assetDuration = typeof rawDuration === 'number' && Number.isFinite(rawDuration) ? rawDuration : 1
+    } else {
+      const def = useAssetLibraryStore.getState().definitions.find((d) => d.id === assetId)
+      if (def) {
+        const isAudioDef = def.mimeType?.startsWith('audio/') || def.category === 'audio' || /\.(wav|mp3|mpeg|ogg|webm)$/i.test(def.original_filename)
+        if (isAudioDef) {
+          isValidAudio = true
+          const meta = def.metadata as Record<string, unknown> | undefined
+          const dur = meta && typeof meta.duration === 'number' ? (meta.duration as number) : null
+          assetDuration = dur !== null && Number.isFinite(dur) ? dur : 1
+        }
+      }
+    }
+    if (!isValidAudio) {
       useNotificationStore.getState().notify('Invalid audio asset')
       setGhost(null)
       return
     }
-    const rawDuration = (asset.metadata as Record<string, unknown>)?.duration
-    const assetDuration =
-      typeof rawDuration === 'number' && Number.isFinite(rawDuration) ? rawDuration : 1
+    // For global assets, ensure embedded snapshot exists before creating clip (portability)
+    if (!embedded) {
+      try {
+        await captureAudioSnapshot(engine as unknown as import('../../engine').EnginePublic, assetId)
+      } catch {
+        // snapshot is best-effort; clip can still reference global id
+      }
+    }
     const trackId = resolveTrackFromEvent(event) ?? dragOverTrack ?? 'voice'
     const rawTime = timeFromClientX(event.clientX)
     const snapped = computeSnappedTime(rawTime)
@@ -267,6 +303,11 @@ export function AudioTimelineBody({
     )
     if (!result.ok) {
       useNotificationStore.getState().notify(result.error.message)
+    } else {
+      // For global assets, capture snapshot so .lesson remains self-contained
+      if (!embedded) {
+        void captureAudioSnapshot(engine as unknown as import('../../engine').EnginePublic, assetId)
+      }
     }
     setGhost(null)
     setDragOverTrack(null)
@@ -1300,6 +1341,7 @@ export function AudioTimelineBody({
                             aria-selected={isSelected}
                             onFocus={() => setFocusedId(part.id)}
                             onClick={(e) => handlePrompterPointerDownSelect(e, part.id)}
+                            // eslint-disable-next-line react-hooks/refs
                             onPointerDown={(e) => onPrompterMovePointerDown(e, part.id)}
                             onContextMenu={(e) => {
                               e.preventDefault()

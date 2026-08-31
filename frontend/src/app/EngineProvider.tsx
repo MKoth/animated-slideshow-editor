@@ -4,7 +4,7 @@ import { projectsApi } from '../api'
 import { createCommandSystem } from '../engine/commands'
 import type { PersistenceService } from './persistence'
 import { createPersistenceService } from './persistence'
-import { ensureReferencedEmbedded } from './assetSnapshot'
+import { ensureReferencedEmbedded, ensureReferencedAudioEmbedded } from './assetSnapshot'
 import { ensureReferencedMaterialAndShaderSnapshots } from './definitionSnapshot'
 import { EngineContext } from './engineContext'
 import type { EngineContextValue } from './engineContext'
@@ -35,6 +35,7 @@ export function EngineProvider({ children }: { children: ReactNode }) {
       upsert: (blob) => projectsApi.upsert(blob),
       ensureEmbedded: async () => {
         await ensureReferencedEmbedded(system.engine)
+        await ensureReferencedAudioEmbedded(system.engine)
         ensureReferencedMaterialAndShaderSnapshots(system.engine)
       },
     })
