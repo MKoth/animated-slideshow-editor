@@ -35,7 +35,13 @@ import type { EmbeddedAsset } from './embeddedAsset'
 import type { EmbeddedMaterialDefinition } from './embeddedMaterial'
 import { embeddedShaderParameters } from './embeddedShader'
 import type { EmbeddedShaderDefinition } from './embeddedShader'
-import type { ChartComponent, TableComponent, TableRowComponent, TableCellComponent, TextComponent } from './components'
+import type {
+  ChartComponent,
+  TableComponent,
+  TableRowComponent,
+  TableCellComponent,
+  TextComponent,
+} from './components'
 import type { CreateProjectInput, EmbeddedDataSourceUnion, Project } from './project'
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
@@ -69,6 +75,18 @@ import type { DeformedMeshResult } from './meshDeformationEvaluator'
 import type { WorldTransform } from './worldTransform'
 import { createAudioClip } from './audioClip'
 import type { AudioClip, AudioTrackId } from './audioClip'
+import {
+  estimatePrompterDuration,
+  getPrompterSecondsPerCharacter,
+  getPrompterSplitChars,
+  hasPrompterPartAudio,
+  mergePrompterPartTexts,
+  newPrompterPartId,
+  reflowPrompter,
+  redistributeDurations,
+  splitImportText,
+  splitPrompterPartText,
+} from './prompter'
 
 const DEFAULT_MATERIAL_KINDS: Readonly<Record<string, string>> = Object.fromEntries(
   DEFAULT_MATERIAL_PARAMETERS.map((parameter) => [parameter.key, parameter.kind]),
@@ -240,21 +258,197 @@ export class Engine {
       duration: input.duration,
     }
     slide.prompter.parts.splice(insertIndex, 0, newPart)
-    // Reflow downstream parts
-    let cursor = 0
-    for (const part of slide.prompter.parts) {
-      part.startTime = cursor
-      part.endTime = cursor + part.duration
-      cursor = part.endTime
+    if (slide.prompter) reflowPrompter(slide.prompter)
+    this.#bus.emit({
+      type: 'PrompterChanged',
+      slideId,
+    } as unknown as import('./events').EngineEvent)
+  }
+
+  importPrompter(
+    slideId: string,
+    rawText: string,
+  ): {
+    partIds: string[]
+    oldParts: { id: string; text: string; startTime: number; endTime: number; duration: number }[]
+  } {
+    const slide = this.getSlide(slideId)
+    const settings = this.#projects.current?.settings ?? {}
+    const splitChars = getPrompterSplitChars(settings)
+    const secondsPerCharacter = getPrompterSecondsPerCharacter(settings)
+    const oldParts = slide.prompter
+      ? slide.prompter.parts.map((p) => ({
+          id: p.id,
+          text: p.text,
+          startTime: p.startTime,
+          endTime: p.endTime,
+          duration: p.duration,
+        }))
+      : []
+    const texts = splitImportText(rawText, splitChars)
+    const parts = texts.map((text) => {
+      const duration = estimatePrompterDuration(text, secondsPerCharacter)
+      // startTime/endTime will be set by reflow; temporary 0
+      return { id: newPrompterPartId(), text, startTime: 0, endTime: duration, duration }
+    })
+    slide.prompter = { parts }
+    reflowPrompter(slide.prompter)
+    this.#bus.emit({
+      type: 'PrompterChanged',
+      slideId,
+    } as unknown as import('./events').EngineEvent)
+    return { partIds: parts.map((p) => p.id), oldParts }
+  }
+
+  splitPrompterPart(
+    slideId: string,
+    partId: string,
+    wordIndex: number,
+    mode: 'left' | 'right' | 'out',
+  ): { newPartIds: string[]; oldText: string; oldDuration: number } {
+    const slide = this.getSlide(slideId)
+    if (!slide.prompter) throw new Error(`Slide "${slideId}" has no prompter`)
+    const index = slide.prompter.parts.findIndex((p) => p.id === partId)
+    if (index === -1) throw new Error(`PrompterPart not found: ${partId}`)
+    const part = slide.prompter.parts[index]
+    const oldText = part.text
+    const oldDuration = part.duration
+    const newTexts = splitPrompterPartText(part.text, wordIndex, mode)
+    if (newTexts.length <= 1)
+      throw new Error('Split would not create new parts (whitespace-only or invalid word)')
+    const durations = redistributeDurations(part.duration, newTexts)
+    const newParts = newTexts.map((text, i) => ({
+      id: i === 0 ? part.id : newPrompterPartId(),
+      text,
+      startTime: 0,
+      endTime: 0,
+      duration: durations[i],
+      ...(part.audioClipId && i === 0 ? { audioClipId: part.audioClipId } : {}),
+      ...(part.audioAssetId && i === 0 ? { audioAssetId: part.audioAssetId } : {}),
+      ...(part.promptId && i === 0 ? { promptId: part.promptId } : {}),
+      ...(part.status && i === 0 ? { status: part.status } : {}),
+    }))
+    // Update existing first part in place, insert rest after
+    part.text = newParts[0].text
+    part.duration = newParts[0].duration
+    // Preserve audio linkage only on first piece; others clear linkage
+    if (newParts.length > 1) {
+      part.audioClipId = undefined
+      part.audioAssetId = undefined
+      part.status = undefined
+      if (
+        hasPrompterPartAudio({
+          audioClipId: part.audioClipId,
+          audioAssetId: part.audioAssetId,
+        } as unknown as import('./prompter').PrompterPart)
+      ) {
+        // no-op
+      }
     }
-    this.#bus.emit({ type: 'PrompterChanged', slideId } as unknown as import('./events').EngineEvent)
+    // Insert remaining
+    for (let i = 1; i < newParts.length; i++) {
+      slide.prompter.parts.splice(index + i, 0, newParts[i] as import('./prompter').PrompterPart)
+    }
+    if (slide.prompter) reflowPrompter(slide.prompter)
+    this.#bus.emit({
+      type: 'PrompterChanged',
+      slideId,
+    } as unknown as import('./events').EngineEvent)
+    return { newPartIds: newParts.map((p) => p.id), oldText, oldDuration }
+  }
+
+  unitePrompterParts(
+    slideId: string,
+    leftPartId: string,
+    rightPartId?: string,
+  ): {
+    mergedId: string
+    oldParts: { id: string; text: string; duration: number; startTime: number; endTime: number }[]
+  } {
+    const slide = this.getSlide(slideId)
+    if (!slide.prompter) throw new Error(`Slide "${slideId}" has no prompter`)
+    const leftIndex = slide.prompter.parts.findIndex((p) => p.id === leftPartId)
+    if (leftIndex === -1) throw new Error(`PrompterPart not found: ${leftPartId}`)
+    let rightIndex: number
+    if (rightPartId !== undefined) {
+      rightIndex = slide.prompter.parts.findIndex((p) => p.id === rightPartId)
+      if (rightIndex === -1) throw new Error(`PrompterPart not found: ${rightPartId}`)
+      if (rightIndex !== leftIndex + 1) throw new Error('PrompterParts to merge must be adjacent')
+    } else {
+      rightIndex = leftIndex + 1
+      if (rightIndex >= slide.prompter.parts.length) throw new Error('No next part to merge')
+    }
+    const left = slide.prompter.parts[leftIndex]
+    const right = slide.prompter.parts[rightIndex]
+    const oldParts = [
+      {
+        id: left.id,
+        text: left.text,
+        duration: left.duration,
+        startTime: left.startTime,
+        endTime: left.endTime,
+      },
+      {
+        id: right.id,
+        text: right.text,
+        duration: right.duration,
+        startTime: right.startTime,
+        endTime: right.endTime,
+      },
+    ]
+    const newText = mergePrompterPartTexts(left.text, right.text)
+    const newDuration = left.duration + right.duration
+    left.text = newText
+    left.duration = newDuration
+    // Merge status: if either was stale, result is stale? Preserve if either had audio? We clear stale only when no audio; but merging with audio? Keep left's audio linkage if present? If right had audio, we drop it (v1 only 0..1). Clear status on merged unless still linked.
+    // For simplicity, if left had audio, keep it; otherwise if right had audio, transfer? But spec says 0..1 per part, so merging two with audio is edge; we keep left's.
+    // Status: if resulting part has audio, and text changed via merge (which is edit), then it should become stale per update semantics? But merge is intentional; we should maybe clear stale? For now, if left had audio, mark stale because text changed.
+    if (hasPrompterPartAudio(left as import('./prompter').PrompterPart)) {
+      left.status = 'stale'
+    } else if (hasPrompterPartAudio(right as import('./prompter').PrompterPart)) {
+      // transfer audio from right to merged (left) if left had no audio but right did
+      left.audioClipId = right.audioClipId
+      left.audioAssetId = right.audioAssetId
+      left.promptId = right.promptId
+      left.status = 'stale'
+    } else {
+      left.status = undefined
+    }
+    slide.prompter.parts.splice(rightIndex, 1)
+    if (slide.prompter) reflowPrompter(slide.prompter)
+    this.#bus.emit({
+      type: 'PrompterChanged',
+      slideId,
+    } as unknown as import('./events').EngineEvent)
+    return { mergedId: left.id, oldParts }
+  }
+
+  mergePrompterParts(
+    slideId: string,
+    leftPartId: string,
+    rightPartId?: string,
+  ): {
+    mergedId: string
+    oldParts: { id: string; text: string; duration: number; startTime: number; endTime: number }[]
+  } {
+    return this.unitePrompterParts(slideId, leftPartId, rightPartId)
   }
 
   updatePrompterPart(
     slideId: string,
     partId: string,
     patch: { text?: string; duration?: number; shiftDownstream?: boolean },
-  ): { slideId: string; partId: string; oldText: string; oldDuration: number; oldStartTime: number; oldEndTime: number; shiftedParts: { id: string; oldStartTime: number; oldEndTime: number }[]; shiftedClips: { id: string; oldTimelineStart: number }[] } {
+  ): {
+    slideId: string
+    partId: string
+    oldText: string
+    oldDuration: number
+    oldStartTime: number
+    oldEndTime: number
+    oldStatus?: string
+    shiftedParts: { id: string; oldStartTime: number; oldEndTime: number }[]
+    shiftedClips: { id: string; oldTimelineStart: number }[]
+  } {
     const slide = this.getSlide(slideId)
     if (!slide.prompter) throw new Error(`Slide "${slideId}" has no prompter`)
     const index = slide.prompter.parts.findIndex((part) => part.id === partId)
@@ -264,17 +458,48 @@ export class Engine {
     const oldDuration = part.duration
     const oldStartTime = part.startTime
     const oldEndTime = part.endTime
+    const oldStatus = part.status
     const shiftedParts: { id: string; oldStartTime: number; oldEndTime: number }[] = []
     const shiftedClips: { id: string; oldTimelineStart: number }[] = []
-    if (patch.text !== undefined) part.text = patch.text
+    if (patch.text !== undefined && patch.text !== part.text) {
+      const settings = this.#projects.current?.settings ?? {}
+      const secondsPerCharacter = getPrompterSecondsPerCharacter(settings)
+      const hasAudio = hasPrompterPartAudio(part as import('./prompter').PrompterPart)
+      if (hasAudio) {
+        part.text = patch.text
+        part.status = 'stale'
+        // duration frozen
+      } else {
+        part.text = patch.text
+        const newDuration = estimatePrompterDuration(patch.text, secondsPerCharacter)
+        if (newDuration !== part.duration) {
+          const delta = newDuration - part.duration
+          part.duration = newDuration
+          part.status = undefined
+          // Reflow downstream gap-free (no shift of clips for text re-estimate)
+          if (slide.prompter) reflowPrompter(slide.prompter)
+          // If text caused duration change and shiftDownstream was requested for text edit? Not applicable per spec; text edit never shifts clips atomically; only duration edit does.
+          // But we still need to emit? We'll ensure reflow done.
+          void delta
+        } else {
+          part.status = undefined
+        }
+      }
+    }
     if (patch.duration !== undefined && patch.duration !== part.duration) {
       const delta = patch.duration - part.duration
       part.duration = patch.duration
       part.endTime = part.startTime + part.duration
+      // If part has audio and duration changed via explicit duration edit, clear stale? Actually stale remains until resolved, but explicit duration edit may resolve? Keep status as is unless cleared.
+      // For spec, duration edit with shift should not affect stale directly.
       if (patch.shiftDownstream) {
         for (let i = index + 1; i < slide.prompter.parts.length; i++) {
           const downstream = slide.prompter.parts[i]
-          shiftedParts.push({ id: downstream.id, oldStartTime: downstream.startTime, oldEndTime: downstream.endTime })
+          shiftedParts.push({
+            id: downstream.id,
+            oldStartTime: downstream.startTime,
+            oldEndTime: downstream.endTime,
+          })
           downstream.startTime += delta
           downstream.endTime += delta
         }
@@ -285,17 +510,29 @@ export class Engine {
           }
         }
       } else {
-        // Reflow gap-free without shifting extra: recompute downstream startTimes as prefix sum
-        let cursor = 0
-        for (const entry of slide.prompter.parts) {
-          entry.startTime = cursor
-          entry.endTime = cursor + entry.duration
-          cursor = entry.endTime
-        }
+        if (slide.prompter) reflowPrompter(slide.prompter)
+      }
+    } else if (patch.text !== undefined) {
+      // Text-only change already reflowed if no audio case; if hasAudio, we froze duration, so still need to reflow? Duration frozen => no reflow needed, gap-free already holds because duration unchanged. But to be safe, reflow if duration changed via text re-estimate already did.
+      if (hasPrompterPartAudio(part as import('./prompter').PrompterPart)) {
+        // no duration change, no reflow needed
       }
     }
-    this.#bus.emit({ type: 'PrompterChanged', slideId } as unknown as import('./events').EngineEvent)
-    return { slideId, partId, oldText, oldDuration, oldStartTime, oldEndTime, shiftedParts, shiftedClips }
+    this.#bus.emit({
+      type: 'PrompterChanged',
+      slideId,
+    } as unknown as import('./events').EngineEvent)
+    return {
+      slideId,
+      partId,
+      oldText,
+      oldDuration,
+      oldStartTime,
+      oldEndTime,
+      oldStatus,
+      shiftedParts,
+      shiftedClips,
+    }
   }
 
   deletePrompterPart(slideId: string, partId: string): void {
@@ -304,18 +541,26 @@ export class Engine {
     const index = slide.prompter.parts.findIndex((part) => part.id === partId)
     if (index === -1) throw new Error(`PrompterPart not found: ${partId}`)
     slide.prompter.parts.splice(index, 1)
-    let cursor = 0
-    for (const entry of slide.prompter.parts) {
-      entry.startTime = cursor
-      entry.endTime = cursor + entry.duration
-      cursor = entry.endTime
-    }
-    this.#bus.emit({ type: 'PrompterChanged', slideId } as unknown as import('./events').EngineEvent)
+    if (slide.prompter) reflowPrompter(slide.prompter)
+    this.#bus.emit({
+      type: 'PrompterChanged',
+      slideId,
+    } as unknown as import('./events').EngineEvent)
   }
 
   createAudioClip(
     slideId: string,
-    input: { id?: string; assetId: string; trackId: AudioTrackId; timelineStart: number; sourceStart?: number; sourceEnd: number; volume?: number; muted?: boolean; playbackRate?: number },
+    input: {
+      id?: string
+      assetId: string
+      trackId: AudioTrackId
+      timelineStart: number
+      sourceStart?: number
+      sourceEnd: number
+      volume?: number
+      muted?: boolean
+      playbackRate?: number
+    },
   ): AudioClip {
     const slide = this.getSlide(slideId)
     const clip = createAudioClip(input)

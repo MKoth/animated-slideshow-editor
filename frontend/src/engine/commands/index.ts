@@ -313,8 +313,23 @@ export type {
   UpdatePrompterPartInverse,
   UpdatePrompterPartParameters,
 } from './updatePrompterPartCommand'
-export { CreateAudioAssetCommand } from './createAudioAssetCommand'
+export { ImportPrompterCommand } from './importPrompterCommand'
+export type { ImportPrompterInverse, ImportPrompterParameters } from './importPrompterCommand'
+export { SplitPrompterPartCommand } from './splitPrompterPartCommand'
 export type {
-  CreateAudioAssetInverse,
-  CreateAudioAssetParameters,
-} from './createAudioAssetCommand'
+  SplitPrompterPartInverse,
+  SplitPrompterPartParameters,
+  SplitPrompterMode,
+} from './splitPrompterPartCommand'
+export { UnitePrompterPartsCommand, MergePrompterPartsCommand } from './unitePrompterPartsCommand'
+export type {
+  UnitePrompterPartsInverse,
+  UnitePrompterPartsParameters,
+} from './unitePrompterPartsCommand'
+export { UpdatePrompterPartWithShiftCommand } from './updatePrompterPartWithShiftCommand'
+export type {
+  UpdatePrompterPartWithShiftInverse,
+  UpdatePrompterPartWithShiftParameters,
+} from './updatePrompterPartWithShiftCommand'
+export { CreateAudioAssetCommand } from './createAudioAssetCommand'
+export type { CreateAudioAssetInverse, CreateAudioAssetParameters } from './createAudioAssetCommand'

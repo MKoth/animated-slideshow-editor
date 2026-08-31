@@ -14,6 +14,8 @@ import type { SceneManager } from './sceneManager'
 import { SlideAnimation } from './animation'
 import type { ClampedKeyframe } from './slideAnimation'
 import { requireFiniteNumber, requireNonEmpty } from './guards'
+import { newAudioClipId } from './audioClip'
+import { newPrompterPartId } from './prompter'
 
 const SLIDE_ORDINAL_PATTERN = /^Slide (\d+)$/
 
@@ -86,6 +88,27 @@ export class SlideManager {
     }
     const source = this.get(slideId)
     const { scene, nodeIds } = this.#scenes.copyScene(source.scene)
+    const clipIdMap = new Map<string, string>()
+    const newClips = source.audio.clips.map((clip) => {
+      const newId = newAudioClipId()
+      clipIdMap.set(clip.id, newId)
+      return { ...clip, id: newId }
+    })
+    const prompterCopy = source.prompter
+      ? {
+          parts: source.prompter.parts.map((part) => {
+            const newPartId = newPrompterPartId()
+            const mappedClipId = part.audioClipId
+              ? (clipIdMap.get(part.audioClipId) ?? part.audioClipId)
+              : undefined
+            // Preserve other fields but replace id and mapped audioClipId
+            const copy: typeof part = { ...part, id: newPartId }
+            if (mappedClipId !== undefined) copy.audioClipId = mappedClipId
+            else delete (copy as { audioClipId?: string }).audioClipId
+            return copy
+          }),
+        }
+      : null
     const copy = new SlideModel(
       newId('slide'),
       source.name,
@@ -98,10 +121,8 @@ export class SlideManager {
             overrides: { ...source.fullscreenShader.overrides },
           }
         : null,
-      source.prompter
-        ? { parts: source.prompter.parts.map((part) => ({ ...part })) }
-        : null,
-      { clips: source.audio.clips.map((clip) => ({ ...clip })) },
+      prompterCopy,
+      { clips: newClips },
     )
     project.slides.splice(project.slides.indexOf(source) + 1, 0, copy)
     this.#bus.emit({ type: 'SlideDuplicated', slideId: copy.id })
