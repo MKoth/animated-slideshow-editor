@@ -3552,3 +3552,176 @@ button:disabled {
 .clip-edit-channel:hover {
   background: color-mix(in srgb, transparent 90%, var(--color-accent, #3b82f6));
 }
+
+/* ------------------------------------------------------------------ */
+/* Audio Timeline + Prompter (Spec 15.01)                              */
+/* ------------------------------------------------------------------ */
+
+.timeline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  flex-shrink: 0;
+}
+
+.timeline-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--color-bg);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.timeline-tab {
+  padding: 4px 14px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  border: none;
+  background: transparent;
+}
+
+.timeline-tab--active {
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+.audio-timeline-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  position: relative;
+}
+
+.audio-prompter-strip {
+  height: 42px;
+  background: var(--color-bg-panel);
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  overflow-x: auto;
+  position: relative;
+}
+
+.audio-prompter-chip {
+  padding: 4px 8px;
+  border-radius: 12px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.audio-prompter-chip--stale {
+  border-color: #e6a23c;
+}
+
+.audio-lanes {
+  flex: 1;
+  position: relative;
+}
+
+.audio-lane {
+  height: 56px;
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  align-items: stretch;
+  position: relative;
+}
+
+.audio-lane__track {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.audio-clip {
+  position: absolute;
+  top: 8px;
+  height: 40px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  font-size: 11px;
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  color: #fff;
+}
+
+.audio-clip--voice {
+  background: linear-gradient(180deg, #7c5cff, #5a3fd6);
+  border: 1px solid #8b7cff;
+}
+
+.audio-clip--sfx {
+  background: linear-gradient(180deg, #2e9a6a, #1d6b4a);
+  border: 1px solid #3fbf85;
+}
+
+.audio-clip--music {
+  background: linear-gradient(180deg, #e67e22, #b85c14);
+  border: 1px solid #f0a050;
+}
+
+.audio-clip--overflow {
+  border-right: 3px solid #ff4d4d;
+}
+
+.audio-clip__handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  background: rgba(255, 255, 255, 0.15);
+  cursor: ew-resize;
+}
+
+.audio-clip__handle--left {
+  left: 0;
+  border-radius: 6px 0 0 6px;
+}
+.audio-clip__handle--right {
+  right: 0;
+  border-radius: 0 6px 6px;
+}
+
+.audio-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.audio-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #ff4d4d;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.audio-playhead::before {
+  content: '';
+  position: absolute;
+  top: -6px;
+  left: -5px;
+  width: 12px;
+  height: 12px;
+  background: #ff4d4d;
+  transform: rotate(45deg);
+}

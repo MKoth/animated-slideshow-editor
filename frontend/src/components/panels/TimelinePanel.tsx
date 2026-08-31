@@ -14,6 +14,7 @@ import { TimelineBody } from './TimelineBody'
 import { TimelineToolbar } from './TimelineToolbar'
 import { CurveEditorPanel } from './CurveEditorPanel'
 import { ClipEditBody } from './ClipEditBody'
+import { AudioTimelineBody } from './AudioTimelineBody'
 
 function useViewportWidth(
   scrollerRef: RefObject<HTMLDivElement | null>,
@@ -71,11 +72,13 @@ export function TimelinePanel({ height }: { height: number }) {
   const scene = slide?.scene ?? null
   const hasObjects = scene ? sceneHasObjects(scene) : false
   const expandedNodeIds = useTimelineViewStore((state) => state.expandedNodeIds)
+  const [activeTab, setActiveTab] = useState<'animation' | 'audio'>('animation')
   const viewportWidth = useViewportWidth(scrollerRef, [
     slide?.id ?? null,
     hasObjects,
     editingContext,
     clipEditId,
+    activeTab,
   ])
   const materialDefinitions = engine.materialDefinitions
   const rows = scene ? timelineRows(scene, expandedNodeIds, materialDefinitions) : []
@@ -118,6 +121,18 @@ export function TimelinePanel({ height }: { height: number }) {
         <p>No slides created.</p>
       </div>
     )
+  } else if (activeTab === 'audio') {
+    body = (
+      <AudioTimelineBody
+        slide={slide}
+        duration={slide.duration}
+        scrollerRef={scrollerRef}
+        tracksRef={tracksRef}
+        timeAreaRef={timeAreaRef}
+        viewportWidth={viewportWidth}
+        lastPointerTimeRef={lastPointerTimeRef}
+      />
+    )
   } else if (!hasObjects || !scene) {
     body = (
       <div className="panel-empty-state">
@@ -158,6 +173,72 @@ export function TimelinePanel({ height }: { height: number }) {
       className={`timeline-panel${isClipEdit ? ' timeline-panel--clip-edit' : ''}`}
       style={{ height }}
     >
+      {(slide || isClipEdit) && !isClipEdit && (
+        <div
+          className="timeline-header"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '4px 8px',
+            borderBottom: '1px solid var(--color-border)',
+            background: 'var(--color-bg-panel)',
+          }}
+        >
+          <div
+            className="timeline-tabs"
+            role="tablist"
+            style={{
+              display: 'flex',
+              gap: 4,
+              background: 'var(--color-bg)',
+              borderRadius: 6,
+              padding: 2,
+            }}
+          >
+            <button
+              role="tab"
+              aria-selected={activeTab === 'animation'}
+              className={`timeline-tab${activeTab === 'animation' ? ' timeline-tab--active' : ''}`}
+              style={{
+                padding: '4px 14px',
+                borderRadius: 4,
+                fontSize: 11,
+                cursor: 'pointer',
+                border: 'none',
+                background: activeTab === 'animation' ? 'var(--color-accent)' : 'transparent',
+                color:
+                  activeTab === 'animation'
+                    ? 'var(--color-accent-text)'
+                    : 'var(--color-text-muted)',
+              }}
+              onClick={() => setActiveTab('animation')}
+              data-testid="timeline-tab-animation"
+            >
+              Animation
+            </button>
+            <button
+              role="tab"
+              aria-selected={activeTab === 'audio'}
+              className={`timeline-tab${activeTab === 'audio' ? ' timeline-tab--active' : ''}`}
+              style={{
+                padding: '4px 14px',
+                borderRadius: 4,
+                fontSize: 11,
+                cursor: 'pointer',
+                border: 'none',
+                background: activeTab === 'audio' ? 'var(--color-accent)' : 'transparent',
+                color:
+                  activeTab === 'audio' ? 'var(--color-accent-text)' : 'var(--color-text-muted)',
+              }}
+              onClick={() => setActiveTab('audio')}
+              data-testid="timeline-tab-audio"
+            >
+              Audio
+            </button>
+          </div>
+        </div>
+      )}
       {(slide || isClipEdit) && (
         <TimelineToolbar
           slideId={toolbarSlideId}
