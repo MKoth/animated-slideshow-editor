@@ -335,3 +335,33 @@ export { CreateAudioAssetCommand } from './createAudioAssetCommand'
 export type { CreateAudioAssetInverse, CreateAudioAssetParameters } from './createAudioAssetCommand'
 export { CreateAudioClipCommand } from './createAudioClipCommand'
 export type { CreateAudioClipInverse, CreateAudioClipParameters } from './createAudioClipCommand'
+export { MoveAudioClipCommand } from './moveAudioClipCommand'
+export type { MoveAudioClipInverse, MoveAudioClipParameters } from './moveAudioClipCommand'
+export { TrimAudioClipCommand } from './trimAudioClipCommand'
+export type { TrimAudioClipInverse, TrimAudioClipParameters } from './trimAudioClipCommand'
+export { SplitAudioClipCommand } from './splitAudioClipCommand'
+export type { SplitAudioClipInverse, SplitAudioClipParameters } from './splitAudioClipCommand'
+export { DuplicateAudioClipCommand } from './duplicateAudioClipCommand'
+export type {
+  DuplicateAudioClipInverse,
+  DuplicateAudioClipParameters,
+} from './duplicateAudioClipCommand'
+export { DeleteAudioClipCommand } from './deleteAudioClipCommand'
+export type { DeleteAudioClipInverse, DeleteAudioClipParameters } from './deleteAudioClipCommand'
+export { SetAudioClipVolumeCommand } from './setAudioClipVolumeCommand'
+export type {
+  SetAudioClipVolumeInverse,
+  SetAudioClipVolumeParameters,
+} from './setAudioClipVolumeCommand'
+export { SetAudioClipMutedCommand } from './setAudioClipMutedCommand'
+export type {
+  SetAudioClipMutedInverse,
+  SetAudioClipMutedParameters,
+} from './setAudioClipMutedCommand'
+export { SetAudioClipPlaybackRateCommand } from './setAudioClipPlaybackRateCommand'
+export type {
+  SetAudioClipPlaybackRateInverse,
+  SetAudioClipPlaybackRateParameters,
+} from './setAudioClipPlaybackRateCommand'
+export { SetAudioClipFadeCommand } from './setAudioClipFadeCommand'
+export type { SetAudioClipFadeInverse, SetAudioClipFadeParameters } from './setAudioClipFadeCommand'

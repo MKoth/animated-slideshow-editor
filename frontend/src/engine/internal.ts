@@ -73,7 +73,14 @@ import type { MeshData } from './mesh'
 import { evaluateMeshDeformation } from './meshDeformationEvaluator'
 import type { DeformedMeshResult } from './meshDeformationEvaluator'
 import type { WorldTransform } from './worldTransform'
-import { createAudioClip } from './audioClip'
+import {
+  clampAudioFade,
+  createAudioClip,
+  getAudioClipPlaybackDuration,
+  getAudioClipSourceDuration,
+  isAudioTrackId,
+  newAudioClipId,
+} from './audioClip'
 import type { AudioClip, AudioTrackId } from './audioClip'
 import {
   estimatePrompterDuration,
@@ -572,6 +579,229 @@ export class Engine {
     const [removed] = slide.audio.clips.splice(index, 1)
     this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
     return removed
+  }
+
+  moveAudioClip(
+    slideId: string,
+    clipId: string,
+    patch: { timelineStart: number; trackId?: AudioTrackId },
+  ): { oldTimelineStart: number; oldTrackId: AudioTrackId } {
+    const slide = this.getSlide(slideId)
+    const clip = slide.audio.clips.find((c) => c.id === clipId)
+    if (!clip) throw new Error(`AudioClip not found: ${clipId}`)
+    if (
+      typeof patch.timelineStart !== 'number' ||
+      !Number.isFinite(patch.timelineStart) ||
+      patch.timelineStart < 0
+    ) {
+      throw new Error('AudioClip timelineStart must be a non-negative finite number')
+    }
+    if (patch.trackId !== undefined && !isAudioTrackId(patch.trackId)) {
+      throw new Error('AudioClip trackId must be one of voice, sfx, music')
+    }
+    const oldTimelineStart = clip.timelineStart
+    const oldTrackId = clip.trackId
+    clip.timelineStart = patch.timelineStart
+    if (patch.trackId !== undefined) clip.trackId = patch.trackId
+    this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    return { oldTimelineStart, oldTrackId }
+  }
+
+  trimAudioClip(
+    slideId: string,
+    clipId: string,
+    patch: { sourceStart?: number; sourceEnd?: number },
+  ): { oldSourceStart: number; oldSourceEnd: number } {
+    const slide = this.getSlide(slideId)
+    const clip = slide.audio.clips.find((c) => c.id === clipId)
+    if (!clip) throw new Error(`AudioClip not found: ${clipId}`)
+    const newStart = patch.sourceStart ?? clip.sourceStart
+    const newEnd = patch.sourceEnd ?? clip.sourceEnd
+    if (typeof newStart !== 'number' || !Number.isFinite(newStart) || newStart < 0) {
+      throw new Error('AudioClip sourceStart must be a non-negative finite number')
+    }
+    if (typeof newEnd !== 'number' || !Number.isFinite(newEnd) || newEnd <= 0) {
+      throw new Error('AudioClip sourceEnd must be a positive finite number')
+    }
+    if (newEnd <= newStart) throw new Error('AudioClip sourceEnd must be greater than sourceStart')
+    const oldSourceStart = clip.sourceStart
+    const oldSourceEnd = clip.sourceEnd
+    clip.sourceStart = newStart
+    clip.sourceEnd = newEnd
+    // clamp fades to new source duration
+    const sourceDuration = newEnd - newStart
+    if (clip.fadeIn !== undefined) {
+      const clamped = clampAudioFade(clip.fadeIn, sourceDuration)
+      if (clamped !== undefined) clip.fadeIn = clamped
+    }
+    if (clip.fadeOut !== undefined) {
+      const clamped = clampAudioFade(clip.fadeOut, sourceDuration)
+      if (clamped !== undefined) clip.fadeOut = clamped
+    }
+    this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    return { oldSourceStart, oldSourceEnd }
+  }
+
+  splitAudioClip(
+    slideId: string,
+    clipId: string,
+    atTime: number,
+  ): { newClipId: string; originalSourceEnd: number } {
+    const slide = this.getSlide(slideId)
+    const clip = slide.audio.clips.find((c) => c.id === clipId)
+    if (!clip) throw new Error(`AudioClip not found: ${clipId}`)
+    if (typeof atTime !== 'number' || !Number.isFinite(atTime))
+      throw new Error('Split time must be a finite number')
+    const playbackDuration = getAudioClipPlaybackDuration(clip)
+    const start = clip.timelineStart
+    const end = start + playbackDuration
+    if (atTime <= start || atTime >= end) throw new Error('Split time must be inside the clip')
+    const offsetPlayback = atTime - start
+    const sourceOffset = offsetPlayback * (clip.playbackRate || 1)
+    const sourceSplit = clip.sourceStart + sourceOffset
+    const originalSourceEnd = clip.sourceEnd
+    // first clip: truncate end
+    clip.sourceEnd = sourceSplit
+    // clamp fades for first
+    const firstDuration = sourceSplit - clip.sourceStart
+    if (clip.fadeIn !== undefined)
+      clip.fadeIn = clampAudioFade(clip.fadeIn, firstDuration) ?? clip.fadeIn
+    if (clip.fadeOut !== undefined)
+      clip.fadeOut = clampAudioFade(clip.fadeOut, firstDuration) ?? clip.fadeOut
+    // second clip
+    const secondClip: AudioClip = {
+      id: newAudioClipId(),
+      assetId: clip.assetId,
+      trackId: clip.trackId,
+      timelineStart: atTime,
+      sourceStart: sourceSplit,
+      sourceEnd: originalSourceEnd,
+      volume: clip.volume,
+      muted: clip.muted,
+      playbackRate: clip.playbackRate,
+      ...(clip.fadeIn !== undefined
+        ? { fadeIn: clampAudioFade(clip.fadeIn, originalSourceEnd - sourceSplit) }
+        : {}),
+      ...(clip.fadeOut !== undefined
+        ? { fadeOut: clampAudioFade(clip.fadeOut, originalSourceEnd - sourceSplit) }
+        : {}),
+    }
+    // Ensure second fades not exceed its source duration
+    const secondDuration = originalSourceEnd - sourceSplit
+    if (secondClip.fadeIn !== undefined)
+      secondClip.fadeIn = clampAudioFade(secondClip.fadeIn, secondDuration) ?? secondClip.fadeIn
+    if (secondClip.fadeOut !== undefined)
+      secondClip.fadeOut = clampAudioFade(secondClip.fadeOut, secondDuration) ?? secondClip.fadeOut
+    slide.audio.clips.push(secondClip)
+    this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    return { newClipId: secondClip.id, originalSourceEnd }
+  }
+
+  duplicateAudioClip(slideId: string, clipId: string): AudioClip {
+    const slide = this.getSlide(slideId)
+    const clip = slide.audio.clips.find((c) => c.id === clipId)
+    if (!clip) throw new Error(`AudioClip not found: ${clipId}`)
+    const dup: AudioClip = {
+      id: newAudioClipId(),
+      assetId: clip.assetId,
+      trackId: clip.trackId,
+      timelineStart: clip.timelineStart + 0.5,
+      sourceStart: clip.sourceStart,
+      sourceEnd: clip.sourceEnd,
+      volume: clip.volume,
+      muted: clip.muted,
+      playbackRate: clip.playbackRate,
+      ...(clip.fadeIn !== undefined ? { fadeIn: clip.fadeIn } : {}),
+      ...(clip.fadeOut !== undefined ? { fadeOut: clip.fadeOut } : {}),
+    }
+    slide.audio.clips.push(dup)
+    this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    return dup
+  }
+
+  setAudioClipVolume(slideId: string, clipId: string, volume: number): number {
+    const slide = this.getSlide(slideId)
+    const clip = slide.audio.clips.find((c) => c.id === clipId)
+    if (!clip) throw new Error(`AudioClip not found: ${clipId}`)
+    if (typeof volume !== 'number' || !Number.isFinite(volume) || volume < 0 || volume > 1) {
+      throw new Error('AudioClip volume must be between 0 and 1')
+    }
+    const old = clip.volume
+    clip.volume = volume
+    this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    return old
+  }
+
+  setAudioClipMuted(slideId: string, clipId: string, muted: boolean): boolean {
+    const slide = this.getSlide(slideId)
+    const clip = slide.audio.clips.find((c) => c.id === clipId)
+    if (!clip) throw new Error(`AudioClip not found: ${clipId}`)
+    if (typeof muted !== 'boolean') throw new Error('AudioClip muted must be a boolean')
+    const old = clip.muted
+    clip.muted = muted
+    this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    return old
+  }
+
+  setAudioClipPlaybackRate(slideId: string, clipId: string, rate: number): number {
+    const slide = this.getSlide(slideId)
+    const clip = slide.audio.clips.find((c) => c.id === clipId)
+    if (!clip) throw new Error(`AudioClip not found: ${clipId}`)
+    if (typeof rate !== 'number' || !Number.isFinite(rate) || rate <= 0) {
+      throw new Error('AudioClip playbackRate must be a positive finite number')
+    }
+    const old = clip.playbackRate
+    clip.playbackRate = rate
+    this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    return old
+  }
+
+  setAudioClipFade(
+    slideId: string,
+    clipId: string,
+    patch: { fadeIn?: number; fadeOut?: number },
+  ): { oldFadeIn?: number; oldFadeOut?: number } {
+    const slide = this.getSlide(slideId)
+    const clip = slide.audio.clips.find((c) => c.id === clipId)
+    if (!clip) throw new Error(`AudioClip not found: ${clipId}`)
+    const sourceDuration = getAudioClipSourceDuration(clip)
+    const oldFadeIn = clip.fadeIn
+    const oldFadeOut = clip.fadeOut
+    if (patch.fadeIn !== undefined) {
+      if (typeof patch.fadeIn !== 'number' || !Number.isFinite(patch.fadeIn) || patch.fadeIn < 0) {
+        throw new Error('AudioClip fadeIn must be a non-negative finite number')
+      }
+      const clamped = clampAudioFade(patch.fadeIn, sourceDuration)!
+      clip.fadeIn = clamped
+    }
+    if (patch.fadeOut !== undefined) {
+      if (
+        typeof patch.fadeOut !== 'number' ||
+        !Number.isFinite(patch.fadeOut) ||
+        patch.fadeOut < 0
+      ) {
+        throw new Error('AudioClip fadeOut must be a non-negative finite number')
+      }
+      const clamped = clampAudioFade(patch.fadeOut, sourceDuration)!
+      clip.fadeOut = clamped
+    }
+    this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    return { oldFadeIn, oldFadeOut }
+  }
+
+  clearAudioClipFade(
+    slideId: string,
+    clipId: string,
+    which: 'fadeIn' | 'fadeOut',
+  ): number | undefined {
+    const slide = this.getSlide(slideId)
+    const clip = slide.audio.clips.find((c) => c.id === clipId)
+    if (!clip) throw new Error(`AudioClip not found: ${clipId}`)
+    const old = which === 'fadeIn' ? clip.fadeIn : clip.fadeOut
+    if (which === 'fadeIn') delete (clip as { fadeIn?: number }).fadeIn
+    else delete (clip as { fadeOut?: number }).fadeOut
+    this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    return old
   }
 
   getActiveSlide(): Slide | null {

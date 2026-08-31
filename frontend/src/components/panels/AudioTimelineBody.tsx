@@ -1,9 +1,21 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import type { Slide } from '../../engine'
 import { useEngine } from '../../app/useEngine'
-import { AUDIO_TRACK_IDS, type AudioTrackId } from '../../engine/audioClip'
-import { CreateAudioClipCommand } from '../../engine/commands'
+import {
+  AUDIO_TRACK_IDS,
+  type AudioTrackId,
+  getAudioClipPlaybackDuration,
+  getOverlappingClipIds,
+} from '../../engine/audioClip'
+import {
+  CreateAudioClipCommand,
+  DeleteAudioClipCommand,
+  DuplicateAudioClipCommand,
+  MoveAudioClipCommand,
+  SplitAudioClipCommand,
+  TrimAudioClipCommand,
+} from '../../engine/commands'
 import { usePlaybackController } from '../../stores/playbackStore'
 import {
   DEFAULT_TIMELINE_VIEWPORT_WIDTH,
@@ -18,6 +30,7 @@ import {
 import { snapAudioTime } from '../../engine/timelineSnapping'
 import { ASSET_DEFINITION_MIME, AUDIO_ASSET_MIME } from '../../pixi/renderer/dropPlacement'
 import { useNotificationStore } from '../../stores/notificationStore'
+import { useAudioClipSelectionStore } from '../../stores/audioClipSelectionStore'
 
 const PROMPTER_STRIP_HEIGHT = 42
 const AUDIO_LANE_HEIGHT = 56
@@ -44,14 +57,14 @@ export function AudioTimelineBody({
   const currentTime = usePlaybackController((state) => state.currentTimes[slide.id] ?? 0)
   const pps = pixelsPerSecond(zoomLevel)
 
-  // Keep engine reactive for audio/prompter changes
   const { engine, dispatch } = useEngine()
-  // Touch engine to subscribe? We rely on Slide object mutated in place; force re-render via engine events
   const [, setTick] = useState(0)
   useEffect(() => {
     const unsub = engine.subscribe(() => setTick((t) => t + 1))
     return unsub
   }, [engine])
+
+  const selectedClipIds = useAudioClipSelectionStore((s) => s.selectedClipIds)
 
   const timeFromClientX = (clientX: number): number => {
     const rect = timeAreaRef.current?.getBoundingClientRect()
@@ -60,16 +73,58 @@ export function AudioTimelineBody({
     return state.scrollTime + (clientX - (rect?.left ?? 0)) / p
   }
 
-  const getAssetDuration = useCallback((assetId: string): number => {
-    const asset = engine.getEmbeddedAsset(assetId)
-    if (asset?.metadata && typeof (asset.metadata as Record<string, unknown>).duration === 'number') {
-      return (asset.metadata as Record<string, unknown>).duration as number
-    }
-    return 1
-  }, [engine])
+  const trackFromClientY = (clientY: number): AudioTrackId | null => {
+    const lanes = timeAreaRef.current?.querySelector('.audio-lanes')?.getBoundingClientRect()
+    if (!lanes) return null
+    const y = clientY - lanes.top
+    const idx = Math.floor(y / AUDIO_LANE_HEIGHT)
+    if (idx < 0 || idx >= AUDIO_TRACK_IDS.length) return null
+    return AUDIO_TRACK_IDS[idx]
+  }
 
-  const [ghost, setGhost] = useState<{ trackId: AudioTrackId; timelineStart: number; width: number } | null>(null)
+  const getAssetDuration = useCallback(
+    (assetId: string): number => {
+      const asset = engine.getEmbeddedAsset(assetId)
+      if (
+        asset?.metadata &&
+        typeof (asset.metadata as Record<string, unknown>).duration === 'number'
+      ) {
+        return (asset.metadata as Record<string, unknown>).duration as number
+      }
+      return 1
+    },
+    [engine],
+  )
+
+  const [ghost, setGhost] = useState<{
+    trackId: AudioTrackId
+    timelineStart: number
+    width: number
+  } | null>(null)
   const [dragOverTrack, setDragOverTrack] = useState<AudioTrackId | null>(null)
+
+  // Move drag state
+  const moveRef = useRef<{
+    clipId: string
+    startX: number
+    startTime: number
+    startTrack: AudioTrackId
+    currentTrack: AudioTrackId
+  } | null>(null)
+  const [movePreview, setMovePreview] = useState<{
+    clipId: string
+    timelineStart: number
+    trackId: AudioTrackId
+  } | null>(null)
+
+  // Trim state
+  const [trimPreview, setTrimPreview] = useState<{
+    clipId: string
+    sourceStart: number
+    sourceEnd: number
+    left: number
+    width: number
+  } | null>(null)
 
   const resolveTrackFromEvent = (event: React.DragEvent): AudioTrackId | null => {
     const target = event.target as HTMLElement
@@ -79,17 +134,23 @@ export function AudioTimelineBody({
     return null
   }
 
-  const computeSnappedTime = useCallback((rawTime: number): number => {
-    const state = useTimelineViewStore.getState()
-    const gridStep = rulerTickStep(pixelsPerSecond(state.zoomLevel))
-    const prompterBoundaries = (slide.prompter?.parts ?? []).flatMap((p) => [p.startTime, p.endTime])
-    return snapAudioTime(rawTime, {
-      gridEnabled: state.gridSnapEnabled,
-      pps: pixelsPerSecond(state.zoomLevel),
-      gridStep,
-      prompterBoundaries,
-    })
-  }, [slide.prompter])
+  const computeSnappedTime = useCallback(
+    (rawTime: number): number => {
+      const state = useTimelineViewStore.getState()
+      const gridStep = rulerTickStep(pixelsPerSecond(state.zoomLevel))
+      const prompterBoundaries = (slide.prompter?.parts ?? []).flatMap((p) => [
+        p.startTime,
+        p.endTime,
+      ])
+      return snapAudioTime(rawTime, {
+        gridEnabled: state.gridSnapEnabled,
+        pps: pixelsPerSecond(state.zoomLevel),
+        gridStep,
+        prompterBoundaries,
+      })
+    },
+    [slide.prompter],
+  )
 
   const handleAudioDragOver = (event: React.DragEvent) => {
     const hasAudio = event.dataTransfer.types.includes(AUDIO_ASSET_MIME)
@@ -103,17 +164,27 @@ export function AudioTimelineBody({
     event.preventDefault()
     event.dataTransfer.dropEffect = 'copy'
     const assetId = event.dataTransfer.getData(AUDIO_ASSET_MIME) || ''
-    // If getData not available during dragover (security), fallback to stored assetId from previous dragenter
     const laneTrack = resolveTrackFromEvent(event) ?? dragOverTrack ?? 'voice'
     const rawTime = timeFromClientX(event.clientX)
     const snapped = computeSnappedTime(rawTime)
     const assetDuration = assetId ? getAssetDuration(assetId) : 1
-    // For ghost during dragover when getData empty, we try to find any embedded audio asset duration fallback
-    const fallbackDuration = engine.embeddedAssets.find((a) => a.mimeType.startsWith('audio/'))?.metadata
-      ? Number((engine.embeddedAssets.find((a) => a.mimeType.startsWith('audio/'))?.metadata as Record<string, unknown>)?.duration ?? 1)
+    const fallbackDuration = engine.embeddedAssets.find((a) => a.mimeType.startsWith('audio/'))
+      ?.metadata
+      ? Number(
+          (
+            engine.embeddedAssets.find((a) => a.mimeType.startsWith('audio/'))?.metadata as Record<
+              string,
+              unknown
+            >
+          )?.duration ?? 1,
+        )
       : 1
     const durationVal = assetDuration || fallbackDuration
-    setGhost({ trackId: laneTrack as AudioTrackId, timelineStart: snapped, width: durationVal * pps })
+    setGhost({
+      trackId: laneTrack as AudioTrackId,
+      timelineStart: snapped,
+      width: durationVal * pps,
+    })
     setDragOverTrack(laneTrack as AudioTrackId)
   }
 
@@ -148,11 +219,11 @@ export function AudioTimelineBody({
       return
     }
     const rawDuration = (asset.metadata as Record<string, unknown>)?.duration
-    const assetDuration = typeof rawDuration === 'number' && Number.isFinite(rawDuration) ? rawDuration : 1
+    const assetDuration =
+      typeof rawDuration === 'number' && Number.isFinite(rawDuration) ? rawDuration : 1
     const trackId = resolveTrackFromEvent(event) ?? dragOverTrack ?? 'voice'
     const rawTime = timeFromClientX(event.clientX)
     const snapped = computeSnappedTime(rawTime)
-    // Validate timelineStart within slide? Allow at slide duration boundary, clipped visually
     const result = dispatch(
       new CreateAudioClipCommand({
         slideId: slide.id,
@@ -243,6 +314,260 @@ export function AudioTimelineBody({
     window.addEventListener('pointerup', up)
   }
 
+  // Selection
+  const handleClipPointerDownSelect = (e: React.MouseEvent, clipId: string) => {
+    // if handle drag, ignore selection logic for handles (handled separately)
+    if ((e.target as HTMLElement).closest('.audio-clip__handle')) return
+    const isMulti = e.metaKey || e.ctrlKey
+    if (isMulti) useAudioClipSelectionStore.getState().toggle(clipId)
+    else useAudioClipSelectionStore.getState().select(clipId)
+  }
+
+  // Move handling
+  const onClipMovePointerDown = (e: React.PointerEvent, clipId: string) => {
+    if ((e.target as HTMLElement).closest('.audio-clip__handle')) return
+    e.preventDefault()
+    const clip = slide.audio.clips.find((c) => c.id === clipId)
+    if (!clip) return
+    // selection side-effect: ensure clip is selected
+    if (!selectedClipIds.has(clipId) && !(e.ctrlKey || e.metaKey)) {
+      useAudioClipSelectionStore.getState().select(clipId)
+    }
+    moveRef.current = {
+      clipId,
+      startX: e.clientX,
+      startTime: clip.timelineStart,
+      startTrack: clip.trackId,
+      currentTrack: clip.trackId,
+    }
+    const target = e.currentTarget as HTMLElement
+    target.setPointerCapture(e.pointerId)
+    const onMove = (ev: PointerEvent) => {
+      if (!moveRef.current) return
+      const dx = ev.clientX - moveRef.current.startX
+      const dt = dx / pps
+      const raw = moveRef.current.startTime + dt
+      const snapped = computeSnappedTime(Math.max(0, raw))
+      const newTrack = trackFromClientY(ev.clientY) ?? moveRef.current.currentTrack
+      moveRef.current.currentTrack = newTrack
+      setMovePreview({ clipId, timelineStart: snapped, trackId: newTrack })
+    }
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      if (!moveRef.current) return
+      const preview = movePreview ?? null
+      // compute final values from preview or recompute
+      const dx = ev.clientX - moveRef.current.startX
+      const dt = dx / pps
+      const raw = moveRef.current.startTime + dt
+      const snapped = computeSnappedTime(Math.max(0, raw))
+      const finalTrack = trackFromClientY(ev.clientY) ?? moveRef.current.startTrack
+      // only dispatch if changed
+      const original = slide.audio.clips.find((c) => c.id === clipId)
+      if (
+        original &&
+        (Math.abs(original.timelineStart - snapped) > 1e-6 || original.trackId !== finalTrack)
+      ) {
+        const result = dispatch(
+          new MoveAudioClipCommand({
+            slideId: slide.id,
+            clipId,
+            timelineStart: snapped,
+            trackId: finalTrack,
+          }),
+        )
+        if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+      }
+      setMovePreview(null)
+      moveRef.current = null
+      void preview
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  // Trim handling
+  const onTrimPointerDown = (e: React.PointerEvent, clipId: string, side: 'left' | 'right') => {
+    e.preventDefault()
+    e.stopPropagation()
+    const clip = slide.audio.clips.find((c) => c.id === clipId)
+    if (!clip) return
+    const startSourceStart = clip.sourceStart
+    const startSourceEnd = clip.sourceEnd
+    const startX = e.clientX
+    const playbackRate = clip.playbackRate || 1
+    const onMove = (ev: PointerEvent) => {
+      const dx = ev.clientX - startX
+      const dtPlayback = dx / pps
+      // for left: moving left handle left => decrease sourceStart? Actually dx positive (drag right) => sourceStart increases
+      // Map playback delta to source delta via playbackRate
+      if (side === 'left') {
+        const newSourceStart = Math.max(0, startSourceStart + dtPlayback * playbackRate)
+        // ensure < sourceEnd - epsilon
+        const clamped = Math.min(newSourceStart, startSourceEnd - 0.01)
+        const newSourceEnd = startSourceEnd
+        const newWidth = ((newSourceEnd - clamped) / playbackRate) * pps
+        const clipLeft = slide.audio.clips.find((c) => c.id === clipId)?.timelineStart ?? 0
+        // left handle does not move timelineStart, so waveform preview clipped at new bounds: we show preview with adjusted left offset?
+        // For visual: keep left at same timelineStart, width shrinks
+        setTrimPreview({
+          clipId,
+          sourceStart: clamped,
+          sourceEnd: newSourceEnd,
+          left: clipLeft * pps,
+          width: newWidth,
+        })
+      } else {
+        const newSourceEnd = startSourceEnd + dtPlayback * playbackRate
+        const clamped = Math.max(startSourceStart + 0.01, newSourceEnd)
+        const newWidth = ((clamped - startSourceStart) / playbackRate) * pps
+        const clipLeft = slide.audio.clips.find((c) => c.id === clipId)?.timelineStart ?? 0
+        setTrimPreview({
+          clipId,
+          sourceStart: startSourceStart,
+          sourceEnd: clamped,
+          left: clipLeft * pps,
+          width: newWidth,
+        })
+      }
+    }
+    const onUp = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      const dx = ev.clientX - startX
+      const dtPlayback = dx / pps
+      let patch: { sourceStart?: number; sourceEnd?: number } = {}
+      if (side === 'left') {
+        const newSourceStart = Math.max(0, startSourceStart + dtPlayback * playbackRate)
+        const clamped = Math.min(newSourceStart, startSourceEnd - 0.01)
+        if (Math.abs(clamped - startSourceStart) > 1e-6) patch = { sourceStart: clamped }
+      } else {
+        const newSourceEnd = startSourceEnd + dtPlayback * playbackRate
+        const clamped = Math.max(startSourceStart + 0.01, newSourceEnd)
+        if (Math.abs(clamped - startSourceEnd) > 1e-6) patch = { sourceEnd: clamped }
+      }
+      if (patch.sourceStart !== undefined || patch.sourceEnd !== undefined) {
+        const result = dispatch(new TrimAudioClipCommand({ slideId: slide.id, clipId, ...patch }))
+        if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+      }
+      setTrimPreview(null)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  // Keyboard shortcuts for duplicate/delete/split
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const active = document.activeElement?.closest(
+        '[data-testid="audio-timeline-body"], [data-testid="audio-lanes"]',
+      )
+      const inAudioTab = Boolean(document.querySelector('[data-testid="audio-timeline-body"]'))
+      if (!inAudioTab && !active) return
+      // Delete / Backspace
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedClipIds.size > 0) {
+        // avoid when editing input
+        if (
+          (e.target as HTMLElement)?.tagName === 'INPUT' ||
+          (e.target as HTMLElement)?.tagName === 'TEXTAREA'
+        )
+          return
+        e.preventDefault()
+        for (const clipId of Array.from(selectedClipIds)) {
+          const result = dispatch(new DeleteAudioClipCommand({ slideId: slide.id, clipId }))
+          if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+        }
+        useAudioClipSelectionStore.getState().clear()
+      }
+      // Duplicate Ctrl/Cmd+D
+      if (
+        (e.key === 'd' || e.key === 'D') &&
+        (e.metaKey || e.ctrlKey) &&
+        selectedClipIds.size > 0
+      ) {
+        if (
+          (e.target as HTMLElement)?.tagName === 'INPUT' ||
+          (e.target as HTMLElement)?.tagName === 'TEXTAREA'
+        )
+          return
+        e.preventDefault()
+        for (const clipId of Array.from(selectedClipIds)) {
+          const result = dispatch(new DuplicateAudioClipCommand({ slideId: slide.id, clipId }))
+          if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+          else {
+            const newId = (result.inverse as { newClipId: string }).newClipId
+            // select new duplicate
+            useAudioClipSelectionStore.getState().select(newId)
+          }
+        }
+      }
+      // Split at playhead: key 'S' or 's' when single selected clip contains playhead
+      if (
+        (e.key === 's' || e.key === 'S') &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        selectedClipIds.size === 1
+      ) {
+        const clipId = Array.from(selectedClipIds)[0]
+        const clip = slide.audio.clips.find((c) => c.id === clipId)
+        if (!clip) return
+        const playbackDuration = getAudioClipPlaybackDuration(clip)
+        const start = clip.timelineStart
+        const end = start + playbackDuration
+        if (currentTime > start && currentTime < end) {
+          e.preventDefault()
+          const result = dispatch(
+            new SplitAudioClipCommand({ slideId: slide.id, clipId, atTime: currentTime }),
+          )
+          if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+        }
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [slide.id, selectedClipIds, dispatch, currentTime, slide.audio.clips])
+
+  const handleSplitClick = () => {
+    if (selectedClipIds.size !== 1) {
+      useNotificationStore.getState().notify('Select a single clip to split at playhead')
+      return
+    }
+    const clipId = Array.from(selectedClipIds)[0]
+    const clip = slide.audio.clips.find((c) => c.id === clipId)
+    if (!clip) return
+    const playbackDuration = getAudioClipPlaybackDuration(clip)
+    const start = clip.timelineStart
+    const end = start + playbackDuration
+    if (currentTime <= start || currentTime >= end) {
+      useNotificationStore.getState().notify('Playhead must be inside the selected clip')
+      return
+    }
+    const result = dispatch(
+      new SplitAudioClipCommand({ slideId: slide.id, clipId, atTime: currentTime }),
+    )
+    if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+  }
+
+  const handleDeleteSelected = () => {
+    for (const clipId of Array.from(selectedClipIds)) {
+      const result = dispatch(new DeleteAudioClipCommand({ slideId: slide.id, clipId }))
+      if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+    }
+    useAudioClipSelectionStore.getState().clear()
+  }
+
+  const handleDuplicateSelected = () => {
+    for (const clipId of Array.from(selectedClipIds)) {
+      const result = dispatch(new DuplicateAudioClipCommand({ slideId: slide.id, clipId }))
+      if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+      else {
+        const newId = (result.inverse as { newClipId: string }).newClipId
+        useAudioClipSelectionStore.getState().select(newId)
+      }
+    }
+  }
+
   const step = rulerTickStep(pps)
   const visibleEnd = scrollTime + viewportWidth / pps
   const ticks = rulerTickTimes(scrollTime, visibleEnd, step)
@@ -250,12 +575,14 @@ export function AudioTimelineBody({
 
   const clips = slide.audio.clips
   const prompterParts = slide.prompter?.parts ?? []
+  const overlappingIds = getOverlappingClipIds(clips)
 
   return (
     <div
       className="audio-timeline-body"
       onPointerMove={recordPointerTime}
       data-testid="audio-timeline-body"
+      tabIndex={0}
     >
       <div
         className="timeline-tracks"
@@ -327,6 +654,29 @@ export function AudioTimelineBody({
                 style={{ left: currentTime * pps }}
                 data-testid="audio-ruler-playhead"
               />
+              <div style={{ position: 'absolute', right: 8, top: 2, display: 'flex', gap: 4 }}>
+                <button
+                  data-testid="audio-split-btn"
+                  onClick={handleSplitClick}
+                  style={{ fontSize: 10, padding: '2px 6px' }}
+                >
+                  Split at Playhead
+                </button>
+                <button
+                  data-testid="audio-duplicate-btn"
+                  onClick={handleDuplicateSelected}
+                  style={{ fontSize: 10, padding: '2px 6px' }}
+                >
+                  Duplicate (Cmd+D)
+                </button>
+                <button
+                  data-testid="audio-delete-btn"
+                  onClick={handleDeleteSelected}
+                  style={{ fontSize: 10, padding: '2px 6px' }}
+                >
+                  Delete
+                </button>
+              </div>
             </div>
 
             <div style={{ position: 'relative', width: contentWidth }}>
@@ -367,7 +717,9 @@ export function AudioTimelineBody({
                       }}
                     >
                       {part.text}
-                      <small style={{ marginLeft: 4, fontSize: 9, color: 'var(--color-text-muted)' }}>
+                      <small
+                        style={{ marginLeft: 4, fontSize: 9, color: 'var(--color-text-muted)' }}
+                      >
                         {part.startTime.toFixed(1)}–{part.endTime.toFixed(1)}
                       </small>
                     </div>
@@ -409,7 +761,10 @@ export function AudioTimelineBody({
                   </div>
                 )}
                 {AUDIO_TRACK_IDS.map((trackId) => {
-                  const laneClips = clips.filter((c) => c.trackId === trackId)
+                  const laneClips = clips
+                    .filter((c) => c.trackId === trackId)
+                    .slice()
+                    .sort((a, b) => a.timelineStart - b.timelineStart)
                   const isDragOver = dragOverTrack === trackId
                   return (
                     <div
@@ -449,30 +804,55 @@ export function AudioTimelineBody({
                             No audio — drag an audio asset or record
                           </div>
                         ) : (
-                          laneClips.map((clip) => {
+                          laneClips.map((clip, idx) => {
+                            const isMovePreview = movePreview?.clipId === clip.id
+                            const effectiveTrack = isMovePreview
+                              ? movePreview.trackId
+                              : clip.trackId
+                            // if move preview changed track, only show in target lane; skip rendering in original lane when moved
+                            if (isMovePreview && effectiveTrack !== trackId) return null
+                            const displayStart = isMovePreview
+                              ? movePreview.timelineStart
+                              : clip.timelineStart
+                            // trim preview overrides source bounds
+                            const isTrimPreview = trimPreview?.clipId === clip.id
+                            const displaySourceStart = isTrimPreview
+                              ? trimPreview.sourceStart
+                              : clip.sourceStart
+                            const displaySourceEnd = isTrimPreview
+                              ? trimPreview.sourceEnd
+                              : clip.sourceEnd
                             const playbackDuration =
-                              (clip.sourceEnd - clip.sourceStart) / (clip.playbackRate || 1)
-                            const clipEnd = clip.timelineStart + playbackDuration
+                              (displaySourceEnd - displaySourceStart) / (clip.playbackRate || 1)
+                            const clipEnd = displayStart + playbackDuration
                             const isOverflow = clipEnd > duration + 1e-9
                             const visibleDuration = isOverflow
-                              ? Math.max(0, duration - clip.timelineStart)
+                              ? Math.max(0, duration - displayStart)
                               : playbackDuration
-                            const width = visibleDuration * pps
+                            const width = isTrimPreview ? trimPreview.width : visibleDuration * pps
+                            const left = isTrimPreview ? trimPreview.left : displayStart * pps
+                            const isSelected = selectedClipIds.has(clip.id)
+                            const isOverlapping = overlappingIds.has(clip.id)
+                            const zIndex = idx + 1 // later clip on top within lane; no auto crossfade
                             return (
                               <div
                                 key={clip.id}
-                                className={`audio-clip audio-clip--${trackId}${isOverflow ? ' audio-clip--overflow' : ''}`}
+                                className={`audio-clip audio-clip--${trackId}${isOverflow ? ' audio-clip--overflow' : ''}${isSelected ? ' audio-clip--selected' : ''}${isOverlapping ? ' audio-clip--overlap' : ''}`}
                                 data-testid="audio-clip"
                                 data-clip-id={clip.id}
                                 data-track={trackId}
                                 title={
-                                  isOverflow ? 'clipped-with-overflow past slide.duration' : undefined
+                                  isOverflow
+                                    ? 'clipped-with-overflow past slide.duration'
+                                    : undefined
                                 }
+                                onClick={(e) => handleClipPointerDownSelect(e, clip.id)}
+                                onPointerDown={(e) => onClipMovePointerDown(e, clip.id)}
                                 style={{
                                   position: 'absolute',
                                   top: 8,
                                   height: 40,
-                                  left: clip.timelineStart * pps,
+                                  left,
                                   width,
                                   background:
                                     trackId === 'voice'
@@ -480,7 +860,9 @@ export function AudioTimelineBody({
                                       : trackId === 'sfx'
                                         ? '#2e9a6a'
                                         : '#e67e22',
-                                  border: '1px solid var(--color-border)',
+                                  border: isSelected
+                                    ? '2px solid #fff'
+                                    : '1px solid var(--color-border)',
                                   borderRadius: 6,
                                   display: 'flex',
                                   alignItems: 'center',
@@ -489,39 +871,83 @@ export function AudioTimelineBody({
                                   overflow: 'hidden',
                                   whiteSpace: 'nowrap',
                                   borderRight: isOverflow ? '3px solid #ff4d4d' : undefined,
+                                  opacity: clip.muted ? 0.5 : 1,
+                                  zIndex,
+                                  cursor: 'grab',
                                 }}
                               >
                                 <span
                                   className="audio-clip__label"
-                                  style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}
+                                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}
                                 >
                                   {clip.assetId}
                                 </span>
+                                {isOverlapping && (
+                                  <span
+                                    data-testid="audio-overlap-badge"
+                                    className="audio-clip__overlap-badge"
+                                    style={{
+                                      fontSize: 8,
+                                      marginLeft: 4,
+                                      background: '#ff4d4d',
+                                      color: '#fff',
+                                      borderRadius: 4,
+                                      padding: '1px 4px',
+                                    }}
+                                  >
+                                    overlap
+                                  </span>
+                                )}
+                                {clip.fadeIn !== undefined || clip.fadeOut !== undefined ? (
+                                  <span style={{ fontSize: 8, marginLeft: 4, opacity: 0.8 }}>
+                                    fade {clip.fadeIn ?? 0}/{clip.fadeOut ?? 0}
+                                  </span>
+                                ) : null}
                                 {isOverflow && (
                                   <span style={{ fontSize: 9, marginLeft: 4 }}>⤳ overflow</span>
                                 )}
                                 <div
                                   className="audio-clip__handle audio-clip__handle--left"
+                                  data-testid="audio-clip-handle-left"
+                                  onPointerDown={(e) => onTrimPointerDown(e, clip.id, 'left')}
                                   style={{
                                     position: 'absolute',
                                     left: 0,
                                     top: 0,
                                     bottom: 0,
-                                    width: 6,
+                                    width: 8,
                                     cursor: 'ew-resize',
+                                    background: 'rgba(255,255,255,0.2)',
                                   }}
                                 />
                                 <div
                                   className="audio-clip__handle audio-clip__handle--right"
+                                  data-testid="audio-clip-handle-right"
+                                  onPointerDown={(e) => onTrimPointerDown(e, clip.id, 'right')}
                                   style={{
                                     position: 'absolute',
                                     right: 0,
                                     top: 0,
                                     bottom: 0,
-                                    width: 6,
+                                    width: 8,
                                     cursor: 'ew-resize',
+                                    background: 'rgba(255,255,255,0.2)',
                                   }}
                                 />
+                                {/* Waveform clipped preview during trim: faint overlay */}
+                                {isTrimPreview && (
+                                  <div
+                                    data-testid="audio-waveform-preview"
+                                    style={{
+                                      position: 'absolute',
+                                      inset: 0,
+                                      background:
+                                        'repeating-linear-gradient(90deg, rgba(255,255,255,0.15) 0 4px, transparent 4px 8px)',
+                                      pointerEvents: 'none',
+                                      borderRadius: 6,
+                                    }}
+                                  />
+                                )}
                               </div>
                             )
                           })
@@ -530,6 +956,33 @@ export function AudioTimelineBody({
                     </div>
                   )
                 })}
+                {/* Move preview ghost when moving across lanes: render overlay ghost */}
+                {movePreview &&
+                  (() => {
+                    const clip = clips.find((c) => c.id === movePreview.clipId)
+                    if (!clip) return null
+                    const playbackDuration = getAudioClipPlaybackDuration(clip)
+                    const width = playbackDuration * pps
+                    const top =
+                      movePreview.trackId === 'voice' ? 8 : movePreview.trackId === 'sfx' ? 64 : 120
+                    return (
+                      <div
+                        data-testid="audio-move-preview"
+                        style={{
+                          position: 'absolute',
+                          top,
+                          left: movePreview.timelineStart * pps,
+                          width,
+                          height: 40,
+                          background: 'rgba(124,92,255,0.45)',
+                          border: '1px dashed #fff',
+                          borderRadius: 6,
+                          pointerEvents: 'none',
+                          zIndex: 20,
+                        }}
+                      />
+                    )
+                  })()}
               </div>
               <div
                 className="audio-playhead"
