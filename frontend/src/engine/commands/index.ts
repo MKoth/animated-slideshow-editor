@@ -333,3 +333,5 @@ export type {
 } from './updatePrompterPartWithShiftCommand'
 export { CreateAudioAssetCommand } from './createAudioAssetCommand'
 export type { CreateAudioAssetInverse, CreateAudioAssetParameters } from './createAudioAssetCommand'
+export { CreateAudioClipCommand } from './createAudioClipCommand'
+export type { CreateAudioClipInverse, CreateAudioClipParameters } from './createAudioClipCommand'

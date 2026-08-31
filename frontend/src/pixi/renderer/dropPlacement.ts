@@ -5,8 +5,10 @@ import { CreateAssetInstanceCommand } from '../../engine/commands'
 import { DEFAULT_GRID_STEP, snapPoint } from './gridSnap'
 import { cursorToWorld } from './screenToWorld'
 import type { ViewportTransform } from './worldGeometry'
+import { useNotificationStore } from '../../stores/notificationStore'
 
 export const ASSET_DEFINITION_MIME = 'application/x-asset-definition'
+export const AUDIO_ASSET_MIME = 'application/x-audio-asset'
 
 export interface DropPlacementContext {
   readonly canvas: HTMLCanvasElement
@@ -57,6 +59,12 @@ export class DropPlacement {
   }
 
   readonly #onDragOver = (event: DragEvent): void => {
+    if (isAudioDrag(event.dataTransfer)) {
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = 'none'
+      }
+      return
+    }
     if (!isAssetDrag(event.dataTransfer)) {
       return
     }
@@ -67,6 +75,11 @@ export class DropPlacement {
   }
 
   readonly #onDrop = (event: DragEvent): void => {
+    if (isAudioDrag(event.dataTransfer)) {
+      event.preventDefault()
+      useNotificationStore.getState().notify('Audio assets cannot be dropped on animation lanes')
+      return
+    }
     const definitionId = event.dataTransfer?.getData(ASSET_DEFINITION_MIME)
     if (!definitionId) {
       return
@@ -113,4 +126,12 @@ export class DropPlacement {
 
 function isAssetDrag(dataTransfer: DataTransfer | null): boolean {
   return dataTransfer?.types.includes(ASSET_DEFINITION_MIME) ?? false
+}
+
+function isAudioDrag(dataTransfer: DataTransfer | null): boolean {
+  return dataTransfer?.types.includes(AUDIO_ASSET_MIME) ?? false
+}
+
+export function isAudioAssetDrag(dataTransfer: DataTransfer | null): boolean {
+  return isAudioDrag(dataTransfer)
 }

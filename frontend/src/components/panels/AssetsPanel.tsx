@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import type { AssetDefinition } from '../../api'
-import { ASSET_DEFINITION_MIME } from '../../pixi/renderer/dropPlacement'
+import { ASSET_DEFINITION_MIME, AUDIO_ASSET_MIME } from '../../pixi/renderer/dropPlacement'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { registerImportOpener } from '../assets/importTrigger'
 import { SORT_OPTIONS } from '../assets/sortOptions'
+import type { EmbeddedAsset } from '../../engine/embeddedAsset'
+import { useContext } from 'react'
+import { EngineContext } from '../../app/engineContext'
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) {
@@ -19,6 +22,45 @@ function formatFileSize(bytes: number): string {
 function formatImportDate(importDate: string): string {
   return importDate.slice(0, 10)
 }
+
+function formatDurationBadge(seconds: number): string {
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.floor(seconds % 60)
+  const fraction = Math.round((seconds % 1) * 10)
+  // mm:ss or m:ss.d? spec says mm:ss ; for sub-second we still show mm:ss
+  const mm = String(mins).padStart(2, '0')
+  const ss = String(secs).padStart(2, '0')
+  if (fraction > 0 && seconds < 60) {
+    return `${mm}:${ss}.${fraction}`
+  }
+  return `${mm}:${ss}`
+}
+
+function getAssetDuration(asset: EmbeddedAsset): number | null {
+  const meta = asset.metadata as Record<string, unknown> | undefined
+  if (meta && typeof meta.duration === 'number' && Number.isFinite(meta.duration)) return meta.duration
+  return null
+}
+
+function getWaveformPeaks(asset: EmbeddedAsset): number[] | null {
+  const meta = asset.metadata as Record<string, unknown> | undefined
+  if (!meta) return null
+  const peaks = meta.waveformPeaks
+  if (Array.isArray(peaks) && peaks.length > 0 && peaks.every((p) => typeof p === 'number')) {
+    return peaks as number[]
+  }
+  return null
+}
+
+function isAudioDefinition(def: AssetDefinition): boolean {
+  if (def.mimeType && def.mimeType.startsWith('audio/')) return true
+  if (def.category === 'audio') return true
+  const mimeMeta = (def.metadata as Record<string, unknown> | undefined)?.mimeType
+  if (typeof mimeMeta === 'string' && mimeMeta.startsWith('audio/')) return true
+  return false
+}
+
+type AssetFilter = 'all' | 'images' | 'audio'
 
 interface PreviewProps {
   definition: AssetDefinition
@@ -102,6 +144,71 @@ function AssetCell({ definition, view, onSelect }: AssetCellProps) {
   )
 }
 
+interface AudioAssetCellProps {
+  asset: EmbeddedAsset
+  view: AssetView
+  onSelect?: (assetId: string) => void
+}
+
+function AudioAssetCell({ asset, view, onSelect }: AudioAssetCellProps) {
+  const duration = getAssetDuration(asset)
+  const peaks = getWaveformPeaks(asset)
+  const badge = duration !== null ? formatDurationBadge(duration) : '--:--'
+
+  const handleDragStart = (event: React.DragEvent) => {
+    event.dataTransfer.effectAllowed = 'copy'
+    event.dataTransfer.setData(AUDIO_ASSET_MIME, asset.id)
+    event.dataTransfer.setDragImage(event.currentTarget, 0, 0)
+  }
+
+  const handleSelect = () => onSelect?.(asset.id)
+
+  return (
+    <button
+      className={view === 'grid' ? 'asset-cell asset-cell--audio' : 'asset-row asset-row--audio'}
+      aria-label={`Select ${asset.name}`}
+      draggable
+      onClick={handleSelect}
+      onDragStart={handleDragStart}
+      data-asset-id={asset.id}
+      data-mime={asset.mimeType}
+    >
+      <div className={view === 'grid' ? 'asset-cell__thumb' : 'asset-row__thumb'} style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1a1a1a', borderRadius: 4 }}>
+        {peaks ? (
+          <div className="waveform" style={{ display: 'flex', alignItems: 'center', gap: 1, height: 24, width: '90%' }} aria-hidden="true">
+            {peaks.slice(0, 40).map((p, i) => (
+              <i key={i} style={{ display: 'block', flex: 1, background: '#7c5cff', borderRadius: 1, height: `${Math.max(2, Math.min(24, Math.abs(p) * 24))}px` }} />
+            ))}
+          </div>
+        ) : (
+          <span style={{ fontSize: 16 }} aria-hidden="true">♫</span>
+        )}
+        <span className="badge" style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 9, padding: '1px 4px', borderRadius: 3, fontFamily: 'monospace' }}>
+          {badge}
+        </span>
+      </div>
+      <span className={view === 'grid' ? 'asset-cell__name' : 'asset-row__name'}>{asset.name}</span>
+      <span className={view === 'grid' ? 'asset-cell__category' : 'asset-row__category'}>
+        {asset.mimeType} ♫
+      </span>
+    </button>
+  )
+}
+
+function useEmbeddedAudioAssets(): EmbeddedAsset[] {
+  const ctx = useContext(EngineContext)
+  const [tick, setTick] = useState(0)
+  const engine = ctx?.engine ?? null
+  useEffect(() => {
+    if (!engine) return
+    const unsub = engine.subscribe(() => setTick((t) => t + 1))
+    return unsub
+  }, [engine])
+  void tick
+  if (!ctx || !engine) return []
+  return engine.embeddedAssets.filter((a) => a.mimeType.startsWith('audio/'))
+}
+
 export function AssetsPanel() {
   const definitions = useAssetLibraryStore((state) => state.definitions)
   const loading = useAssetLibraryStore((state) => state.loading)
@@ -117,7 +224,10 @@ export function AssetsPanel() {
   const importFiles = useAssetLibraryStore((state) => state.importFiles)
 
   const [view, setView] = useState<AssetView>('grid')
+  const [filter, setFilter] = useState<AssetFilter>('all')
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const embeddedAudioAssets = useEmbeddedAudioAssets()
 
   useEffect(() => {
     void loadLibrary()
@@ -144,6 +254,27 @@ export function AssetsPanel() {
   const activeSortLabel = SORT_OPTIONS.find(
     (option) => option.sort === sort && option.order === order,
   )?.label
+
+  const filteredDefinitions = definitions.filter((d) => {
+    const isAudio = isAudioDefinition(d)
+    if (filter === 'audio') return isAudio
+    if (filter === 'images') return !isAudio
+    return true
+  })
+
+  const filteredEmbeddedAudio = filter === 'images' ? [] : embeddedAudioAssets.filter((a) => {
+    if (!search.trim()) return true
+    return a.name.toLowerCase().includes(search.trim().toLowerCase())
+  })
+
+  // For display counts: All shows both, Images shows only definitions, Audio shows only audio (definitions audio + embedded)
+  const hasAnyForFilter = filter === 'audio'
+    ? filteredDefinitions.length > 0 || filteredEmbeddedAudio.length > 0
+    : filter === 'images'
+      ? filteredDefinitions.length > 0
+      : filteredDefinitions.length > 0 || filteredEmbeddedAudio.length > 0
+
+  const showEmpty = !hasAnyForFilter
 
   return (
     <div className="assets-panel">
@@ -181,6 +312,29 @@ export function AssetsPanel() {
             </button>
           </div>
         </div>
+        <div className="assets-toolbar__row" role="group" aria-label="Filter">
+          <button
+            className={filter === 'all' ? 'filter-chip filter-chip--active' : 'filter-chip'}
+            aria-pressed={filter === 'all'}
+            onClick={() => setFilter('all')}
+          >
+            All
+          </button>
+          <button
+            className={filter === 'images' ? 'filter-chip filter-chip--active' : 'filter-chip'}
+            aria-pressed={filter === 'images'}
+            onClick={() => setFilter('images')}
+          >
+            Images
+          </button>
+          <button
+            className={filter === 'audio' ? 'filter-chip filter-chip--active' : 'filter-chip'}
+            aria-pressed={filter === 'audio'}
+            onClick={() => setFilter('audio')}
+          >
+            Audio
+          </button>
+        </div>
         <div className="assets-toolbar__row">
           <input
             className="assets-toolbar__search"
@@ -209,7 +363,7 @@ export function AssetsPanel() {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/png,image/jpeg,image/webp"
+        accept="image/png,image/jpeg,image/webp,audio/wav,audio/mpeg,audio/mp3,audio/ogg,audio/webm"
         multiple
         hidden
         onChange={handleImportFiles}
@@ -218,20 +372,31 @@ export function AssetsPanel() {
         <div className="panel-status panel-status--unavailable">
           <p>Asset library unavailable — start the backend</p>
         </div>
-      ) : loading && definitions.length === 0 ? (
+      ) : loading && definitions.length === 0 && filteredEmbeddedAudio.length === 0 ? (
         <div className="panel-status">
           <p>Loading library…</p>
         </div>
-      ) : definitions.length === 0 ? (
+      ) : showEmpty ? (
         <div className="panel-empty-state">
-          <p>No assets imported. Import images to build your library.</p>
+          <p>
+            {filter === 'audio'
+              ? 'No audio assets. Import audio to build your library.'
+              : filter === 'images'
+                ? 'No image assets. Import images to build your library.'
+                : 'No assets imported. Import images to build your library.'}
+          </p>
         </div>
       ) : (
         <>
           <ul className={view === 'grid' ? 'asset-grid' : 'asset-list'}>
-            {definitions.map((definition) => (
+            {filteredDefinitions.map((definition) => (
               <li key={definition.id}>
                 <AssetCell definition={definition} view={view} onSelect={selectAsset} />
+              </li>
+            ))}
+            {filteredEmbeddedAudio.map((asset) => (
+              <li key={asset.id}>
+                <AudioAssetCell asset={asset} view={view} onSelect={selectAsset} />
               </li>
             ))}
           </ul>

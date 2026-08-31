@@ -30,6 +30,8 @@ export interface AssetDefinition {
   anchors: AssetAnchor[]
   original_url: string
   thumbnail_url: string
+  mimeType?: string
+  metadata?: Readonly<Record<string, unknown>>
 }
 
 export interface AssetUploadError {

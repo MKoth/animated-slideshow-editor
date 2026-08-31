@@ -553,6 +553,8 @@ export class Engine {
       sourceEnd: number
       volume?: number
       muted?: boolean
+      fadeIn?: number
+      fadeOut?: number
       playbackRate?: number
     },
   ): AudioClip {

@@ -76,3 +76,31 @@ export function snapKeyframeTime(time: number, options: SnapOptions): number {
 
   return time
 }
+
+export interface AudioSnapOptions {
+  readonly gridEnabled: boolean
+  readonly pps: number
+  readonly gridStep: number
+  readonly prompterBoundaries: readonly number[]
+}
+
+const PROMPTER_SNAP_THRESHOLD_PX = 8
+
+export function snapAudioTime(time: number, options: AudioSnapOptions): number {
+  const { gridEnabled, pps, gridStep, prompterBoundaries } = options
+
+  if (prompterBoundaries.length > 0) {
+    const threshold = pixelThresholdToTime(PROMPTER_SNAP_THRESHOLD_PX, pps)
+    const snapped = nearestKeyframeTime(time, [...prompterBoundaries], threshold)
+    if (snapped !== null) {
+      return snapped
+    }
+  }
+
+  if (gridEnabled) {
+    const decimals = gridStep >= 1 ? 0 : gridStep >= 0.1 ? 1 : 2
+    return Number((Math.round(time / gridStep) * gridStep).toFixed(decimals))
+  }
+
+  return time
+}

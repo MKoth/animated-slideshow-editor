@@ -1,8 +1,9 @@
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
 import type { RefObject } from 'react'
 import type { Slide } from '../../engine'
 import { useEngine } from '../../app/useEngine'
-import { AUDIO_TRACK_IDS } from '../../engine/audioClip'
+import { AUDIO_TRACK_IDS, type AudioTrackId } from '../../engine/audioClip'
+import { CreateAudioClipCommand } from '../../engine/commands'
 import { usePlaybackController } from '../../stores/playbackStore'
 import {
   DEFAULT_TIMELINE_VIEWPORT_WIDTH,
@@ -14,6 +15,9 @@ import {
   TRAILING_SCROLL_PADDING_PX,
   useTimelineViewStore,
 } from '../../stores/timelineViewStore'
+import { snapAudioTime } from '../../engine/timelineSnapping'
+import { ASSET_DEFINITION_MIME, AUDIO_ASSET_MIME } from '../../pixi/renderer/dropPlacement'
+import { useNotificationStore } from '../../stores/notificationStore'
 
 const PROMPTER_STRIP_HEIGHT = 42
 const AUDIO_LANE_HEIGHT = 56
@@ -41,7 +45,7 @@ export function AudioTimelineBody({
   const pps = pixelsPerSecond(zoomLevel)
 
   // Keep engine reactive for audio/prompter changes
-  const { engine } = useEngine()
+  const { engine, dispatch } = useEngine()
   // Touch engine to subscribe? We rely on Slide object mutated in place; force re-render via engine events
   const [, setTick] = useState(0)
   useEffect(() => {
@@ -54,6 +58,115 @@ export function AudioTimelineBody({
     const state = useTimelineViewStore.getState()
     const p = pixelsPerSecond(state.zoomLevel)
     return state.scrollTime + (clientX - (rect?.left ?? 0)) / p
+  }
+
+  const getAssetDuration = useCallback((assetId: string): number => {
+    const asset = engine.getEmbeddedAsset(assetId)
+    if (asset?.metadata && typeof (asset.metadata as Record<string, unknown>).duration === 'number') {
+      return (asset.metadata as Record<string, unknown>).duration as number
+    }
+    return 1
+  }, [engine])
+
+  const [ghost, setGhost] = useState<{ trackId: AudioTrackId; timelineStart: number; width: number } | null>(null)
+  const [dragOverTrack, setDragOverTrack] = useState<AudioTrackId | null>(null)
+
+  const resolveTrackFromEvent = (event: React.DragEvent): AudioTrackId | null => {
+    const target = event.target as HTMLElement
+    const lane = target.closest<HTMLElement>('[data-track]')
+    const track = lane?.dataset.track as AudioTrackId | undefined
+    if (track && (AUDIO_TRACK_IDS as readonly string[]).includes(track)) return track
+    return null
+  }
+
+  const computeSnappedTime = useCallback((rawTime: number): number => {
+    const state = useTimelineViewStore.getState()
+    const gridStep = rulerTickStep(pixelsPerSecond(state.zoomLevel))
+    const prompterBoundaries = (slide.prompter?.parts ?? []).flatMap((p) => [p.startTime, p.endTime])
+    return snapAudioTime(rawTime, {
+      gridEnabled: state.gridSnapEnabled,
+      pps: pixelsPerSecond(state.zoomLevel),
+      gridStep,
+      prompterBoundaries,
+    })
+  }, [slide.prompter])
+
+  const handleAudioDragOver = (event: React.DragEvent) => {
+    const hasAudio = event.dataTransfer.types.includes(AUDIO_ASSET_MIME)
+    const hasImage = event.dataTransfer.types.includes(ASSET_DEFINITION_MIME)
+    if (hasImage && !hasAudio) {
+      event.preventDefault()
+      event.dataTransfer.dropEffect = 'none'
+      return
+    }
+    if (!hasAudio) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    const assetId = event.dataTransfer.getData(AUDIO_ASSET_MIME) || ''
+    // If getData not available during dragover (security), fallback to stored assetId from previous dragenter
+    const laneTrack = resolveTrackFromEvent(event) ?? dragOverTrack ?? 'voice'
+    const rawTime = timeFromClientX(event.clientX)
+    const snapped = computeSnappedTime(rawTime)
+    const assetDuration = assetId ? getAssetDuration(assetId) : 1
+    // For ghost during dragover when getData empty, we try to find any embedded audio asset duration fallback
+    const fallbackDuration = engine.embeddedAssets.find((a) => a.mimeType.startsWith('audio/'))?.metadata
+      ? Number((engine.embeddedAssets.find((a) => a.mimeType.startsWith('audio/'))?.metadata as Record<string, unknown>)?.duration ?? 1)
+      : 1
+    const durationVal = assetDuration || fallbackDuration
+    setGhost({ trackId: laneTrack as AudioTrackId, timelineStart: snapped, width: durationVal * pps })
+    setDragOverTrack(laneTrack as AudioTrackId)
+  }
+
+  const handleAudioDragLeave = (event: React.DragEvent) => {
+    const related = event.relatedTarget as HTMLElement | null
+    if (related && event.currentTarget.contains(related)) return
+    setGhost(null)
+    setDragOverTrack(null)
+  }
+
+  const handleAudioDrop = (event: React.DragEvent) => {
+    const hasAudio = event.dataTransfer.types.includes(AUDIO_ASSET_MIME)
+    const hasImage = event.dataTransfer.types.includes(ASSET_DEFINITION_MIME)
+    if (hasImage && !hasAudio) {
+      event.preventDefault()
+      useNotificationStore.getState().notify('Image assets cannot be dropped on audio lanes')
+      setGhost(null)
+      setDragOverTrack(null)
+      return
+    }
+    if (!hasAudio) return
+    event.preventDefault()
+    const assetId = event.dataTransfer.getData(AUDIO_ASSET_MIME)
+    if (!assetId) {
+      setGhost(null)
+      return
+    }
+    const asset = engine.getEmbeddedAsset(assetId)
+    if (!asset || !asset.mimeType.startsWith('audio/')) {
+      useNotificationStore.getState().notify('Invalid audio asset')
+      setGhost(null)
+      return
+    }
+    const rawDuration = (asset.metadata as Record<string, unknown>)?.duration
+    const assetDuration = typeof rawDuration === 'number' && Number.isFinite(rawDuration) ? rawDuration : 1
+    const trackId = resolveTrackFromEvent(event) ?? dragOverTrack ?? 'voice'
+    const rawTime = timeFromClientX(event.clientX)
+    const snapped = computeSnappedTime(rawTime)
+    // Validate timelineStart within slide? Allow at slide duration boundary, clipped visually
+    const result = dispatch(
+      new CreateAudioClipCommand({
+        slideId: slide.id,
+        assetId,
+        trackId: trackId as AudioTrackId,
+        timelineStart: snapped,
+        sourceEnd: assetDuration,
+      }),
+    )
+    if (!result.ok) {
+      useNotificationStore.getState().notify(result.error.message)
+    }
+    setGhost(null)
+    setDragOverTrack(null)
   }
 
   useLayoutEffect(() => {
@@ -265,14 +378,43 @@ export function AudioTimelineBody({
               <div
                 className="audio-lanes"
                 data-testid="audio-lanes"
+                onDragOver={handleAudioDragOver}
+                onDragLeave={handleAudioDragLeave}
+                onDrop={handleAudioDrop}
                 style={{ position: 'relative', height: AUDIO_LANE_HEIGHT * 3, width: contentWidth }}
               >
+                {ghost && (
+                  <div
+                    className="audio-clip audio-clip--ghost"
+                    data-testid="audio-ghost"
+                    data-track={ghost.trackId}
+                    style={{
+                      position: 'absolute',
+                      top: ghost.trackId === 'voice' ? 8 : ghost.trackId === 'sfx' ? 64 : 120,
+                      height: 40,
+                      left: ghost.timelineStart * pps,
+                      width: ghost.width,
+                      background: 'rgba(124,92,255,0.35)',
+                      border: '1px dashed var(--color-accent)',
+                      borderRadius: 6,
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: '0 8px',
+                      fontSize: 11,
+                      pointerEvents: 'none',
+                      zIndex: 5,
+                    }}
+                  >
+                    <span>ghost · drop to create</span>
+                  </div>
+                )}
                 {AUDIO_TRACK_IDS.map((trackId) => {
                   const laneClips = clips.filter((c) => c.trackId === trackId)
+                  const isDragOver = dragOverTrack === trackId
                   return (
                     <div
                       key={trackId}
-                      className="audio-lane"
+                      className={`audio-lane${isDragOver ? ' audio-lane--dragover' : ''}`}
                       data-track={trackId}
                       data-testid={`audio-lane-${trackId}`}
                       style={{
@@ -282,6 +424,8 @@ export function AudioTimelineBody({
                         overflow: 'hidden',
                         display: 'flex',
                         alignItems: 'stretch',
+                        background: isDragOver ? 'rgba(124,92,255,0.08)' : undefined,
+                        outline: isDragOver ? '1px dashed #7c5cff' : undefined,
                       }}
                     >
                       <div
