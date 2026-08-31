@@ -556,6 +556,36 @@ export class Engine {
     } as unknown as import('./events').EngineEvent)
   }
 
+  setPrompterPartAudio(
+    slideId: string,
+    partId: string,
+    audioClipId: string | null,
+    audioAssetId: string | null,
+  ): { oldAudioClipId?: string; oldAudioAssetId?: string; oldStatus?: string } {
+    const slide = this.getSlide(slideId)
+    if (!slide.prompter) throw new Error(`Slide "${slideId}" has no prompter`)
+    const part = slide.prompter.parts.find((p) => p.id === partId)
+    if (!part) throw new Error(`PrompterPart not found: ${partId}`)
+    const oldAudioClipId = part.audioClipId
+    const oldAudioAssetId = part.audioAssetId
+    const oldStatus = part.status
+    if (audioClipId === null) {
+      delete (part as { audioClipId?: string }).audioClipId
+    } else {
+      part.audioClipId = audioClipId
+    }
+    if (audioAssetId === null) {
+      delete (part as { audioAssetId?: string }).audioAssetId
+    } else {
+      part.audioAssetId = audioAssetId
+    }
+    if (audioClipId !== null) {
+      delete (part as { status?: string }).status
+    }
+    this.#bus.emit({ type: 'PrompterChanged', slideId } as unknown as import('./events').EngineEvent)
+    return { oldAudioClipId, oldAudioAssetId, oldStatus }
+  }
+
   createAudioClip(
     slideId: string,
     input: {

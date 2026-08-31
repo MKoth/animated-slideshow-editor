@@ -36,6 +36,8 @@ import { getActivePrompterPartId } from '../../engine/audioSync'
 import { WaveformCanvas } from '../audio/WaveformCanvas'
 import { slicePeaksForClip } from '../../audio/waveform'
 import { assetsApi } from '../../api'
+import { RecordModal } from '../audio/RecordModal'
+import { getPrompterRecordingShortcut } from '../../engine/prompter'
 
 const PROMPTER_STRIP_HEIGHT = 42
 const AUDIO_LANE_HEIGHT = 56
@@ -945,8 +947,29 @@ export function AudioTimelineBody({
   const contentWidth = Math.max(viewportWidth, duration * pps + TRAILING_SCROLL_PADDING_PX)
 
   const clips = slide.audio.clips
-  const prompterParts = slide.prompter?.parts ?? []
+  const prompterParts = useMemo(() => slide.prompter?.parts ?? [], [slide.prompter])
   const overlappingIds = getOverlappingClipIds(clips)
+  const [recordPartId, setRecordPartId] = useState<string | null>(null)
+  const recordPart = useMemo(() => prompterParts.find((p) => p.id === recordPartId) ?? null, [prompterParts, recordPartId])
+
+  // Recording shortcut handler (when prompter part focused and no modal open)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (recordPartId !== null) return
+      const target = e.target as HTMLElement
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      const settings = engine.project?.settings ?? {}
+      const shortcut = getPrompterRecordingShortcut(settings)
+      if (e.key.toLowerCase() !== shortcut) return
+      // Only when focused is a prompter part
+      if (focusedId && prompterPartIds.includes(focusedId)) {
+        e.preventDefault()
+        setRecordPartId(focusedId)
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [engine, focusedId, prompterPartIds, recordPartId])
   const displayMarquee =
     localMarqueeRect ??
     (marqueeRect
@@ -1140,6 +1163,10 @@ export function AudioTimelineBody({
                           aria-selected={isSelected}
                           onFocus={() => setFocusedId(part.id)}
                           onClick={(e) => handlePrompterPointerDownSelect(e, part.id)}
+                          onContextMenu={(e) => {
+                            e.preventDefault()
+                            setRecordPartId(part.id)
+                          }}
                           onKeyDown={(e) => {
                             if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
                               e.preventDefault()
@@ -1183,6 +1210,9 @@ export function AudioTimelineBody({
                             whiteSpace: 'nowrap',
                             outline: isFocused ? '2px solid #7c5cff' : undefined,
                             cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
                           }}
                         >
                           {part.text}
@@ -1191,6 +1221,26 @@ export function AudioTimelineBody({
                           >
                             {part.startTime.toFixed(1)}–{part.endTime.toFixed(1)}
                           </small>
+                          <button
+                            data-testid={`record-btn-${part.id}`}
+                            aria-label={`Record ${part.text}`}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setRecordPartId(part.id)
+                            }}
+                            style={{
+                              marginLeft: 4,
+                              padding: '2px 6px',
+                              fontSize: 9,
+                              borderRadius: 8,
+                              border: '1px solid #7c5cff',
+                              background: part.audioClipId ? '#ff4d4d' : '#7c5cff',
+                              color: '#fff',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            ● Rec
+                          </button>
                         </div>
                       )
                     })
@@ -1535,6 +1585,16 @@ export function AudioTimelineBody({
           </div>
         </div>
       </div>
+      {recordPart && (
+        <RecordModal
+          slideId={slide.id}
+          partId={recordPart.id}
+          partText={recordPart.text}
+          partStartTime={recordPart.startTime}
+          plannedDuration={recordPart.duration}
+          onClose={() => setRecordPartId(null)}
+        />
+      )}
     </div>
   )
 }

@@ -38,6 +38,74 @@ export const DEFAULT_PROMPTER_SPLIT_CHARS: readonly string[] = [
 ]
 export const DEFAULT_PROMPTER_SECONDS_PER_CHARACTER = 0.2
 
+export const DEFAULT_PROMPTER_RECORDING_SHORTCUT = 'r'
+export const DEFAULT_PROMPTER_MISMATCH_THRESHOLD = {
+  absolute: 0.3,
+  relative: 0.05,
+} as const
+
+export type PrompterMismatchThreshold = { absolute: number; relative: number }
+export type PrompterMismatchKind = 'longer' | 'shorter' | 'none'
+
+export function getPrompterRecordingShortcut(settings: unknown): string {
+  if (!isRecord(settings)) return DEFAULT_PROMPTER_RECORDING_SHORTCUT
+  const prompter = settings.prompter
+  if (!isRecord(prompter)) return DEFAULT_PROMPTER_RECORDING_SHORTCUT
+  const { recordingShortcut } = prompter as Record<string, unknown>
+  if (typeof recordingShortcut !== 'string' || recordingShortcut.trim() === '') {
+    return DEFAULT_PROMPTER_RECORDING_SHORTCUT
+  }
+  return recordingShortcut.trim().toLowerCase()
+}
+
+export function getPrompterMismatchThreshold(settings: unknown): PrompterMismatchThreshold {
+  if (!isRecord(settings)) return { ...DEFAULT_PROMPTER_MISMATCH_THRESHOLD }
+  const prompter = settings.prompter
+  if (!isRecord(prompter)) return { ...DEFAULT_PROMPTER_MISMATCH_THRESHOLD }
+  const raw = prompter.mismatchThreshold
+  if (!isRecord(raw)) return { ...DEFAULT_PROMPTER_MISMATCH_THRESHOLD }
+  const absolute =
+    typeof raw.absolute === 'number' && Number.isFinite(raw.absolute) && raw.absolute >= 0
+      ? raw.absolute
+      : DEFAULT_PROMPTER_MISMATCH_THRESHOLD.absolute
+  const relative =
+    typeof raw.relative === 'number' && Number.isFinite(raw.relative) && raw.relative >= 0
+      ? raw.relative
+      : DEFAULT_PROMPTER_MISMATCH_THRESHOLD.relative
+  return { absolute, relative }
+}
+
+export function getMismatchThresholdValue(
+  plannedDuration: number,
+  threshold: PrompterMismatchThreshold,
+): number {
+  return Math.max(threshold.absolute, threshold.relative * plannedDuration)
+}
+
+export function shouldShowMismatchDialog(
+  recordedDuration: number,
+  plannedDuration: number,
+  threshold: PrompterMismatchThreshold,
+): boolean {
+  const limit = getMismatchThresholdValue(plannedDuration, threshold)
+  return Math.abs(recordedDuration - plannedDuration) > limit
+}
+
+export function getMismatchKind(
+  recordedDuration: number,
+  plannedDuration: number,
+  threshold: PrompterMismatchThreshold,
+): PrompterMismatchKind {
+  if (!shouldShowMismatchDialog(recordedDuration, plannedDuration, threshold)) return 'none'
+  return recordedDuration > plannedDuration ? 'longer' : 'shorter'
+}
+
+/** playbackRate = planned / recorded — non-destructive stretch, pitch preserved via server FFmpeg RubberBand */
+export function computePlaybackRate(plannedDuration: number, recordedDuration: number): number {
+  if (recordedDuration <= 0) throw new Error('recordedDuration must be positive')
+  return plannedDuration / recordedDuration
+}
+
 export function getPrompterSplitChars(settings: unknown): string[] {
   if (!isRecord(settings)) return [...DEFAULT_PROMPTER_SPLIT_CHARS]
   const prompter = settings.prompter

@@ -365,3 +365,8 @@ export type {
 } from './setAudioClipPlaybackRateCommand'
 export { SetAudioClipFadeCommand } from './setAudioClipFadeCommand'
 export type { SetAudioClipFadeInverse, SetAudioClipFadeParameters } from './setAudioClipFadeCommand'
+export { SetPrompterPartAudioCommand } from './setPrompterPartAudioCommand'
+export type {
+  SetPrompterPartAudioInverse,
+  SetPrompterPartAudioParameters,
+} from './setPrompterPartAudioCommand'

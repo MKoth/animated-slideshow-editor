@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PROTOTYPE — Audio Timeline + Prompter Wireframe</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#1a1a1a;color:#e0e0e0;height:100vh;overflow:hidden;display:flex;flex-direction:column}
+.banner{background:#7c5cff;color:#fff;text-align:center;padding:6px;font-size:11px;letter-spacing:.3px}
+.banner b{font-weight:700}
+.app{display:flex;flex:1;overflow:hidden}
+.sidebar-left{width:280px;background:#2a2a2a;border-right:1px solid #333;display:flex;flex-direction:column;overflow:hidden}
+.sidebar-right{width:320px;background:#2a2a2a;border-left:1px solid #333;padding:10px;overflow-y:auto;font-size:12px}
+.center{flex:1;display:flex;flex-direction:column;overflow:hidden;background:#1e1e1e}
+.canvas-area{flex:1;background:#111;display:flex;align-items:center;justify-content:center;color:#555;font-size:13px;border-bottom:1px solid #333}
+h3{font-size:10px;text-transform:uppercase;color:#777;letter-spacing:.5px;margin:10px 0 6px}
+h4{font-size:11px;color:#aaa;margin:8px 0 4px}
+/* Asset panel */
+.assets-toolbar{display:flex;flex-direction:column;gap:6px;padding:10px;border-bottom:1px solid #333}
+.assets-toolbar__row{display:flex;gap:6px;align-items:center}
+.filter-chip{padding:4px 10px;border-radius:12px;border:1px solid #444;background:#333;color:#ccc;font-size:11px;cursor:pointer}
+.filter-chip--active{background:#7c5cff;border-color:#7c5cff;color:#fff}
+.assets-toolbar__search{flex:1;background:#1e1e1e;border:1px solid #444;color:#e0e0e0;padding:5px 8px;border-radius:4px;font-size:11px}
+.asset-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:8px;overflow-y:auto}
+.asset-cell{background:#333;border:1px solid #3a3a3a;border-radius:6px;padding:6px;cursor:grab;display:flex;flex-direction:column;gap:4px;position:relative}
+.asset-cell:active{cursor:grabbing}
+.asset-cell--audio{border-color:#7c5cff40}
+.asset-cell__thumb{height:48px;background:#1a1a1a;border-radius:4px;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative}
+.waveform{display:flex;align-items:center;gap:1px;height:24px;width:90%}
+.waveform i{display:block;flex:1;background:#7c5cff;border-radius:1px}
+.asset-cell__name{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.asset-cell__meta{font-size:10px;color:#888;display:flex;justify-content:space-between}
+.badge{position:absolute;top:4px;right:4px;background:#000a;color:#fff;font-size:9px;padding:1px 4px;border-radius:3px;font-family:monospace}
+.drag-hint{padding:6px 10px;font-size:10px;color:#666;border-top:1px solid #333}
+/* TimelinePanel */
+.timeline-panel{display:flex;flex-direction:column;flex:1;overflow:hidden;background:#222}
+.timeline-header{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;border-bottom:1px solid #333;background:#252525}
+.tabs{display:flex;gap:4px;background:#1a1a1a;border-radius:6px;padding:2px}
+.tab{padding:4px 14px;border-radius:4px;font-size:11px;cursor:pointer;color:#888;border:none;background:transparent}
+.tab--active{background:#7c5cff;color:#fff}
+.toolbar-right{display:flex;gap:6px;align-items:center;font-size:11px;color:#888}
+.toolbar-right button{background:#333;border:1px solid #444;color:#ccc;padding:3px 8px;border-radius:4px;cursor:pointer;font-size:11px}
+.toolbar-right button:hover{background:#3a3a3a}
+.ruler{height:22px;background:#2a2a2a;border-bottom:1px solid #333;position:relative;overflow:hidden;user-select:none}
+.ruler-tick{position:absolute;top:0;bottom:0;border-left:1px solid #3a3a3a;font-size:9px;color:#666;padding-left:2px;padding-top:2px;font-family:monospace}
+.ruler-playhead{position:absolute;top:0;bottom:0;width:2px;background:#ff4d4d;pointer-events:none;z-index:5}
+.ruler-playhead::after{content:"";position:absolute;top:0;left:-4px;width:10px;height:10px;background:#ff4d4d;transform:rotate(45deg)}
+.prompter-strip{height:42px;background:#1e1e2a;border-bottom:1px solid #333;display:flex;align-items:center;gap:6px;padding:0 8px;overflow-x:auto;position:relative}
+.prompter-strip__label{font-size:10px;color:#777;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;margin-right:4px}
+.chip{padding:4px 8px;border-radius:12px;background:#333;border:1px solid #444;font-size:11px;white-space:nowrap;cursor:pointer;position:relative}
+.chip--active{background:#7c5cff33;border-color:#7c5cff;color:#e0d8ff}
+.chip--stale{border-color:#e6a23c}
+.chip small{font-size:9px;color:#888;margin-left:4px;font-family:monospace}
+.chip .dot{width:6px;height:6px;border-radius:50%;background:#4caf50;display:inline-block;margin-right:4px;vertical-align:middle}
+.lanes{flex:1;overflow-y:auto;overflow-x:hidden;position:relative}
+.lane{height:56px;border-bottom:1px solid #2a2a2a;display:flex;align-items:stretch;position:relative}
+.lane--dragover{background:#7c5cff14;outline:1px dashed #7c5cff}
+.lane__label{width:64px;background:#252525;border-right:1px solid #333;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:10px;color:#888;flex-shrink:0}
+.lane__label b{font-size:11px;color:#aaa}
+.lane__track{flex:1;position:relative;overflow:hidden}
+.clip{position:absolute;top:8px;height:40px;background:linear-gradient(180deg,#7c5cff,#5a3fd6);border:1px solid #8b7cff;border-radius:6px;display:flex;align-items:center;gap:6px;padding:0 8px;font-size:11px;cursor:pointer;overflow:hidden;white-space:nowrap}
+.clip--sfx{background:linear-gradient(180deg,#2e9a6a,#1d6b4a);border-color:#3fbf85}
+.clip--music{background:linear-gradient(180deg,#e67e22,#b85c14);border-color:#f0a050}
+.clip--selected{outline:2px solid #fff;outline-offset:1px}
+.clip--ghost{opacity:.55;border-style:dashed;pointer-events:none}
+.clip--overflow{border-right:3px solid #ff4d4d}
+.wave-mini{width:40px;height:16px;display:flex;align-items:center;gap:1px;opacity:.7}
+.wave-mini i{flex:1;background:rgba(255,255,255,.6);border-radius:1px}
+.clip__handle{position:absolute;top:0;bottom:0;width:6px;background:rgba(255,255,255,.15);cursor:ew-resize}
+.clip__handle--left{left:0;border-radius:6px 0 0 6px}
+.clip__handle--right{right:0;border-radius:0 6px 6px}
+.clip__label{overflow:hidden;text-overflow:ellipsis}
+.playhead{position:absolute;top:0;bottom:0;width:2px;background:#ff4d4d;pointer-events:none;z-index:10}
+.playhead::before{content:"";position:absolute;top:-6px;left:-5px;width:12px;height:12px;background:#ff4d4d;transform:rotate(45deg)}
+.empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#555;font-size:11px;pointer-events:none}
+.status{padding:6px 10px;font-size:10px;color:#888;border-top:1px solid #333;display:flex;justify-content:space-between;background:#252525}
+/* Modal */
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:100}
+.modal-backdrop--open{display:flex}
+.modal{background:#2a2a2a;border:1px solid #444;border-radius:8px;width:420px;padding:16px;box-shadow:0 8px 32px rgba(0,0,0,.5)}
+.modal h3{margin:0 0 8px;color:#e0e0e0;text-transform:none;font-size:13px;letter-spacing:0}
+.level{height:64px;background:#111;border-radius:6px;display:flex;align-items:center;gap:1px;padding:0 8px;margin:8px 0;overflow:hidden}
+.level i{flex:1;background:#333;border-radius:1px;transition:height .08s}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
+.btn{padding:6px 12px;border-radius:4px;border:1px solid #444;background:#333;color:#e0e0e0;cursor:pointer;font-size:12px}
+.btn--primary{background:#7c5cff;border-color:#7c5cff;color:#fff}
+.btn--danger{background:#c0392b;border-color:#c0392b}
+.hint{font-size:10px;color:#666;margin-top:4px}
+.legend{display:flex;gap:10px;font-size:10px;color:#666;align-items:center}
+.legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="banner"><b>PROTOTYPE</b> — Audio Timeline + Prompter Wireframe · standalone · layout+hover · Per spec: [Animation|Audio] tabs sharing ruler · fixed Voice/SFX/Music lanes · Prompter strip · drag ghost + snap · recording modal</div>
+<div class="app">
+  <!-- LEFT: Assets -->
+  <aside class="sidebar-left">
+    <div class="assets-toolbar">
+      <div class="assets-toolbar__row">
+        <strong style="font-size:12px">Assets</strong>
+        <span style="margin-left:auto;font-size:10px;color:#666">librarySection pattern</span>
+      </div>
+      <div class="assets-toolbar__row" id="filterRow">
+        <button class="filter-chip filter-chip--active" data-filter="all">All</button>
+        <button class="filter-chip" data-filter="images">Images</button>
+        <button class="filter-chip" data-filter="audio">Audio</button>
+      </div>
+      <div class="assets-toolbar__row">
+        <input class="assets-toolbar__search" id="search" placeholder="Search by name" value="">
+      </div>
+    </div>
+    <div class="asset-grid" id="assetGrid">
+      <!-- image assets -->
+      <div class="asset-cell" draggable="true" data-mime="image/png" data-name="Boy.png">
+        <div class="asset-cell__thumb"><span style="font-size:22px">🧒</span></div>
+        <div class="asset-cell__name">Boy.png</div>
+        <div class="asset-cell__meta"><span>Character</span><span>—</span></div>
+      </div>
+      <div class="asset-cell" draggable="true" data-mime="image/png" data-name="Classroom.png">
+        <div class="asset-cell__thumb"><span style="font-size:22px">🏫</span></div>
+        <div class="asset-cell__name">Classroom.png</div>
+        <div class="asset-cell__meta"><span>Background</span><span>—</span></div>
+      </div>
+      <!-- audio assets -->
+      <div class="asset-cell asset-cell--audio" draggable="true" data-mime="audio/wav" data-name="narration_01.wav" data-duration="2.3">
+        <div class="asset-cell__thumb"><div class="waveform" id="wf1"></div><span class="badge">02.3s</span></div>
+        <div class="asset-cell__name">narration_01.wav</div>
+        <div class="asset-cell__meta"><span>audio/wav</span><span>♫</span></div>
+      </div>
+      <div class="asset-cell asset-cell--audio" draggable="true" data-mime="audio/wav" data-name="sfx_pop.wav" data-duration="0.6">
+        <div class="asset-cell__thumb"><div class="waveform" id="wf2"></div><span class="badge">00.6s</span></div>
+        <div class="asset-cell__name">sfx_pop.wav</div>
+        <div class="asset-cell__meta"><span>audio/wav</span><span>♫</span></div>
+      </div>
+      <div class="asset-cell asset-cell--audio" draggable="true" data-mime="audio/mpeg" data-name="bg_music.mp3" data-duration="10.0">
+        <div class="asset-cell__thumb"><div class="waveform" id="wf3"></div><span class="badge">10.0s</span></div>
+        <div class="asset-cell__name">bg_music.mp3</div>
+        <div class="asset-cell__meta"><span>audio/mpeg</span><span>♫</span></div>
+      </div>
+      <div class="asset-cell asset-cell--audio" draggable="true" data-mime="audio/wav" data-name="voice_take2.wav" data-duration="4.1">
+        <div class="asset-cell__thumb"><div class="waveform" id="wf4"></div><span class="badge">04.1s</span></div>
+        <div class="asset-cell__name">voice_take2.wav</div>
+        <div class="asset-cell__meta"><span>audio/wav</span><span>♫</span></div>
+      </div>
+    </div>
+    <div class="drag-hint" id="dragHint">Drag an <b>audio</b> asset onto a lane → creates AudioClip (trackId = lane). Image MIME rejected on audio lanes.</div>
+  </aside>
+
+  <!-- CENTER -->
+  <div class="center">
+    <div class="canvas-area" id="canvasArea">Canvas Preview (PixiJS) — playhead sync: AudioContext.currentTime leader + rAF follower (see grill #225 pending)</div>
+
+    <!-- TimelinePanel -->
+    <div class="timeline-panel" id="timelinePanel">
+      <div class="timeline-header">
+        <div class="tabs" id="tabs">
+          <button class="tab" data-tab="animation">Animation</button>
+          <button class="tab tab--active" data-tab="audio">Audio</button>
+        </div>
+        <div class="toolbar-right">
+          <span id="timeLabel">00:00.000 / 10.000</span>
+          <button id="btnPlay">▶ Play</button>
+          <button id="btnRecord">● Record</button>
+          <span style="font-size:10px;color:#555">pps <span id="ppsLabel">100</span> · grid 0.5s · snap ✓</span>
+        </div>
+      </div>
+
+      <!-- Animation placeholder (hidden when Audio active) -->
+      <div id="animationBody" style="display:none;flex:1;padding:12px;color:#666;font-size:12px">
+        Animation Dope Sheet / Curve Editor (existing) — shares timelineViewStore zoomLevel/scrollTime/pps with Audio tab.
+        <div style="margin-top:8px;display:flex;gap:6px"><span style="background:#333;padding:4px 8px;border-radius:4px">Keyframe</span><span style="background:#333;padding:4px 8px;border-radius:4px">Hold/Linear/Bezier</span></div>
+      </div>
+
+      <!-- Audio body -->
+      <div id="audioBody" style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+        <div class="ruler" id="ruler">
+          <!-- ticks injected by JS -->
+          <div class="ruler-playhead" id="rulerPlayhead" style="left:18%"></div>
+        </div>
+        <div class="prompter-strip" id="prompterStrip">
+          <span class="prompter-strip__label">Prompter</span>
+          <div class="chip chip--active" data-start="0" data-end="1.8"><span class="dot"></span>Hello, welcome to our lesson.<small>0.0–1.8</small></div>
+          <div class="chip" data-start="1.8" data-end="3.6">Today we will learn colors.<small>1.8–3.6</small></div>
+          <div class="chip chip--stale" title="stale: audio duration frozen" data-start="3.6" data-end="5.2">Look at the red apple.<small>3.6–5.2 · stale</small></div>
+          <div class="chip" data-start="5.2" data-end="7.0">And the blue sky.<small>5.2–7.0</small></div>
+          <button style="margin-left:auto;background:#333;border:1px solid #444;color:#ccc;padding:4px 8px;border-radius:4px;font-size:11px;cursor:pointer;white-space:nowrap" id="btnSplitInfo" title="Split Left/Right/Out · Unite · secondsPerCharacter 0.2">Split / Unite</button>
+        </div>
+        <div class="lanes" id="lanes">
+          <div class="playhead" id="playhead" style="left:18%"></div>
+          <div class="lane" data-track="voice">
+            <div class="lane__label"><b>Voice</b><span>voice</span></div>
+            <div class="lane__track">
+              <div class="clip clip--selected" style="left:0%;width:18%" data-id="c1">
+                <div class="wave-mini" data-wave></div><span class="clip__label">narration_01.wav</span>
+                <div class="clip__handle clip__handle--left"></div><div class="clip__handle clip__handle--right"></div>
+              </div>
+              <div class="clip" style="left:36%;width:16%" data-id="c2">
+                <div class="wave-mini" data-wave></div><span class="clip__label">voice_take2.wav</span>
+                <div class="clip__handle clip__handle--left"></div><div class="clip__handle clip__handle--right"></div>
+              </div>
+              <div class="clip clip--overflow" style="left:82%;width:22%" title="clipped-with-overflow past slide.duration"><div class="wave-mini" data-wave></div><span class="clip__label">long_take.wav</span><span style="font-size:9px">⤳ overflow</span></div>
+            </div>
+          </div>
+          <div class="lane" data-track="sfx">
+            <div class="lane__label"><b>SFX</b><span>sfx</span></div>
+            <div class="lane__track">
+              <div class="clip clip--sfx" style="left:18%;width:6%" data-id="c3"><span class="clip__label">sfx_pop</span></div>
+              <div class="empty" id="emptySfx" style="display:none">No audio — drag an audio asset or record</div>
+            </div>
+          </div>
+          <div class="lane" data-track="music">
+            <div class="lane__label"><b>Music</b><span>music</span></div>
+            <div class="lane__track">
+              <div class="clip clip--music" style="left:0%;width:70%" data-id="c4"><div class="wave-mini" data-wave></div><span class="clip__label">bg_music.mp3</span><span style="font-size:10px;opacity:.8">vol 0.6 · fade 0.2</span></div>
+            </div>
+          </div>
+          <div id="ghost" class="clip clip--ghost" style="display:none"><div class="wave-mini" data-wave></div><span>ghost · drop to create</span></div>
+          <div class="empty" id="emptyAll" style="display:none">No audio — drag an audio asset or record</div>
+        </div>
+        <div class="status">
+          <span>0..duration (10s) · overflow clipped · drag MIME-checked · ghost snap to grid (0.5s) + PrompterPart boundaries</span>
+          <span class="legend"><i style="background:#7c5cff"></i> Voice <i style="background:#2e9a6a"></i> SFX <i style="background:#e67e22"></i> Music <i style="background:#ff4d4d"></i> playhead+overflow</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Inspector / notes -->
+  <aside class="sidebar-right">
+    <h3>Prototype notes</h3>
+    <p style="font-size:11px;color:#888;line-height:1.4">This is <b>layout + hover</b> fidelity. No real AudioContext — interactions are faked to validate proportions, shared ruler, and drag affordances before builders wire stores.</p>
+    <h4>What this validates</h4>
+    <ul style="font-size:11px;color:#aaa;padding-left:16px;line-height:1.6">
+      <li><b>[Animation|Audio]</b> tabs inside <code>TimelinePanel.tsx:36</code> share <code>timelineViewStore</code> ruler/zoom/scroll (no fork)</li>
+      <li>Prompter strip 36–44px + 3 fixed lanes (ROW_HEIGHT each) · <code>0..slide.duration</code> per-slide</li>
+      <li>Shared playhead spans Prompter+lanes (<code>timeline-playhead</code> absolute)</li>
+      <li>Asset filter chips <code>[All|Images|Audio]</code> + waveform+duration badge</li>
+      <li>Lane-targeted drag MIME-checked, ghost sized <code>assetDuration * pps</code>, snap grid/part</li>
+      <li>Overflow clipped-with-indicator past <code>slide.duration</code></li>
+      <li><code>audioClipSelectionStore</code> (not timelineSelectionStore) · trim handles, context menu</li>
+    </ul>
+    <h4>Try</h4>
+    <ul style="font-size:11px;color:#aaa;padding-left:16px;line-height:1.6">
+      <li>Switch <b>Animation ↔ Audio</b> tabs</li>
+      <li>Hover/scrub ruler or lanes → playhead follows (fake <code>currentTime</code>)</li>
+      <li>Click a chip/clip → selection highlight</li>
+      <li>Drag audio asset onto a lane → ghost → drop creates clip (try image → rejected toast)</li>
+      <li>Press <b>● Record</b> → modal with live level + waveform</li>
+      <li><b>▶ Play</b> animates playhead 0→duration (fake rAF)</li>
+    </ul>
+    <h4>Recording modal contract (from #224)</h4>
+    <p style="font-size:11px;color:#888">PrompterPart → Record → <code>getUserMedia</code> + AnalyserNode level → MediaRecorder→WAV base64 → Voice AudioClip at <code>part.start</code> · mismatch &gt;max(0.3s,5%) offers [Speed up/Extend/Discard] or [Slow down/Keep shorter/Discard] with opt-in [Move following parts+clips].</p>
+    <h4>Out of scope for this prototype</h4>
+    <p style="font-size:11px;color:#666">Real decodeAudioData, FFmpeg rubberband, TTS, export mix, keyboard a11y — see Not-yet-specified on map #218.</p>
+    <div style="margin-top:10px;padding:8px;background:#1e1e1e;border-radius:6px;border:1px solid #333">
+      <div style="font-size:10px;color:#777">Decisions referenced</div>
+      <div style="font-size:11px;margin-top:4px"><a href="https://github.com/MKoth/animated-slideshow-editor/issues/222" style="color:#7c5cff">#222 Audio Tab Layout</a> · <a href="https://github.com/MKoth/animated-slideshow-editor/issues/223" style="color:#7c5cff">#223 Prompter Splitting</a> · <a href="https://github.com/MKoth/animated-slideshow-editor/issues/224" style="color:#7c5cff">#224 Recording Flow</a> · <a href="https://github.com/MKoth/animated-slideshow-editor/issues/221" style="color:#7c5cff">#221 Data Model</a></div>
+    </div>
+  </aside>
+</div>
+
+<!-- Recording modal -->
+<div class="modal-backdrop" id="modal">
+  <div class="modal">
+    <h3>● Record — "Today we will learn colors."</h3>
+    <p style="font-size:11px;color:#888">Part 1.8–3.6 · Voice track · Shortcut <code>R</code> (configurable <code>settings.prompter.recordingShortcut</code>)</p>
+    <div class="level" id="level"></div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span id="recTime" style="font-family:monospace;font-size:12px">00:01.2</span>
+      <span style="font-size:11px;color:#888">AnalyserNode live level (getUserMedia; denied/no-mic → inline error)</span>
+    </div>
+    <div class="hint">After stop: decodeAudioData → duration check → mismatch dialog [Speed up (playbackRate) / Extend + shift downstream / Discard] — server FFmpeg RubberBand at export.</div>
+    <div class="modal-actions">
+      <button class="btn" id="btnCancelRec">Cancel</button>
+      <button class="btn btn--danger" id="btnStopRec">■ Stop</button>
+      <button class="btn btn--primary" id="btnSaveRec">Save to Voice</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" style="position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#333;border:1px solid #555;color:#e0e0e0;padding:8px 14px;border-radius:6px;font-size:12px;display:none;z-index:200"></div>
+
+<script>
+const pps = 100, duration = 10, ruler = document.getElementById('ruler'), lanes = document.getElementById('lanes');
+function buildRuler(){
+  ruler.querySelectorAll('.ruler-tick').forEach(e=>e.remove());
+  const step = 0.5; // rulerTickStep(100)=0.5
+  for(let t=0;t<=duration+0.001;t+=step){
+    const el=document.createElement('div'); el.className='ruler-tick';
+    el.style.left=(t/duration*100)+'%'; el.textContent=t.toFixed(1);
+    if(t===0) el.style.borderLeft='none';
+    ruler.appendChild(el);
+  }
+}
+buildRuler();
+
+// filter chips
+document.querySelectorAll('[data-filter]').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('[data-filter]').forEach(b=>b.classList.remove('filter-chip--active'));
+    btn.classList.add('filter-chip--active');
+    const f=btn.dataset.filter;
+    document.querySelectorAll('.asset-cell').forEach(cell=>{
+      const isAudio=cell.dataset.mime.startsWith('audio/');
+      const show = f==='all' || (f==='audio'&&isAudio) || (f==='images'&&!isAudio);
+      cell.style.display=show?'':'none';
+    });
+  });
+});
+
+// tabs
+document.querySelectorAll('.tab').forEach(tab=>{
+  tab.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('tab--active'));
+    tab.classList.add('tab--active');
+    const isAudio=tab.dataset.tab==='audio';
+    document.getElementById('audioBody').style.display=isAudio?'flex':'none';
+    document.getElementById('animationBody').style.display=isAudio?'none':'flex';
+  });
+});
+
+// fake waveforms
+function miniWave(el, seed){
+  el.innerHTML='';
+  for(let i=0;i<18;i++){
+    const h=4+Math.abs(Math.sin(seed*1.7+i*0.9))*14+Math.random()*6;
+    const bar=document.createElement('i'); bar.style.height=h+'px'; el.appendChild(bar);
+  }
+}
+document.querySelectorAll('[data-wave]').forEach((el,i)=>miniWave(el, i+1));
+[['wf1',1],['wf2',2],['wf3',3],['wf4',4]].forEach(([id,s])=>{
+  const el=document.getElementById(id); if(el) miniWave(el,s);
+});
+
+// playhead scrub
+let currentTime=1.8;
+function setPlayhead(t){
+  currentTime=Math.max(0,Math.min(duration,t));
+  const pct=currentTime/duration*100+'%';
+  document.getElementById('playhead').style.left=pct;
+  document.getElementById('rulerPlayhead').style.left=pct;
+  document.getElementById('timeLabel').textContent=format(currentTime)+' / '+format(duration);
+  // highlight prompter chip
+  document.querySelectorAll('.chip').forEach(ch=>{
+    const s=parseFloat(ch.dataset.start), e=parseFloat(ch.dataset.end);
+    ch.classList.toggle('chip--active', currentTime>=s && currentTime<e);
+  });
+}
+function format(s){ const m=Math.floor(s/60), sec=(s%60).toFixed(3); return String(m).padStart(2,'0')+':'+String(Math.floor(parseFloat(sec))).padStart(2,'0')+'.'+String(Math.round((parseFloat(sec)%1)*1000)).padStart(3,'0')}
+
+function timeFromEvent(e, el){
+  const rect=el.getBoundingClientRect(); const x=e.clientX-rect.left; return x/rect.width*duration;
+}
+let scrubbing=false;
+['ruler','lanes'].forEach(id=>{
+  const el=document.getElementById(id);
+  el.addEventListener('mousedown',e=>{ scrubbing=true; setPlayhead(timeFromEvent(e, el)); });
+});
+window.addEventListener('mousemove',e=>{
+  if(!scrubbing) return;
+  // pick nearest container under cursor?
+  const el=document.elementFromPoint(e.clientX,e.clientY);
+  const host=el && el.closest('#ruler,#lanes');
+  if(host) setPlayhead(timeFromEvent(e, host));
+});
+window.addEventListener('mouseup',()=>scrubbing=false);
+ruler.addEventListener('click',e=>{ if(!scrubbing) setPlayhead(timeFromEvent(e,ruler)); });
+lanes.addEventListener('click',e=>{
+  if(e.target.closest('.clip')) return;
+  const t=timeFromEvent(e, lanes);
+  // also move ghost-less scrub
+  setPlayhead(t);
+});
+
+// clip selection
+document.querySelectorAll('.clip:not(.clip--ghost)').forEach(c=>{
+  c.addEventListener('click',e=>{
+    e.stopPropagation();
+    document.querySelectorAll('.clip').forEach(x=>x.classList.remove('clip--selected'));
+    c.classList.add('clip--selected');
+    toast('Selected '+ (c.querySelector('.clip__label')?.textContent?.trim()||'clip')+' — trim handles: left sourceStart / right sourceEnd · move → MoveAudioClipCommand');
+  });
+});
+
+// chip selection
+document.querySelectorAll('.chip').forEach(ch=>{
+  ch.addEventListener('click',()=> setPlayhead(parseFloat(ch.dataset.start)+0.01));
+});
+
+// drag ghost
+const ghost=document.getElementById('ghost');
+let dragMime=null, dragDuration=1.0, dragName='';
+document.querySelectorAll('.asset-cell').forEach(cell=>{
+  cell.addEventListener('dragstart',e=>{
+    dragMime=cell.dataset.mime; dragName=cell.dataset.name; dragDuration=parseFloat(cell.dataset.duration||'1');
+    e.dataTransfer.effectAllowed='copy';
+    e.dataTransfer.setData(dragMime, dragName);
+    setTimeout(()=>cell.style.opacity='0.5',0);
+  });
+  cell.addEventListener('dragend',()=>{ cell.style.opacity=''; dragMime=null; ghost.style.display='none'; clearLaneHover(); });
+});
+function clearLaneHover(){ document.querySelectorAll('.lane').forEach(l=>l.classList.remove('lane--dragover')); }
+document.querySelectorAll('.lane').forEach(lane=>{
+  lane.addEventListener('dragover',e=>{
+    e.preventDefault();
+    const track=lane.dataset.track;
+    // MIME check: image rejected on audio lanes
+    if(dragMime && dragMime.startsWith('image/')){
+      e.dataTransfer.dropEffect='none';
+      return;
+    }
+    if(dragMime && dragMime.startsWith('audio/')){
+      e.dataTransfer.dropEffect='copy';
+      lane.classList.add('lane--dragover');
+      ghost.style.display='flex';
+      ghost.className='clip clip--ghost'+(track==='sfx'?' clip--sfx':track==='music'?' clip--music':'');
+      const rect=lane.querySelector('.lane__track').getBoundingClientRect();
+      const t=(e.clientX-rect.left)/rect.width*duration;
+      const ppsLocal= pps; // fixed
+      const widthPct=(dragDuration*ppsLocal)/(duration*ppsLocal)*100;
+      // snap to grid 0.5 + PrompterPart boundaries
+      const step=0.5; const snapped=Math.round(t/step)*step;
+      // snap to nearest chip boundary if within 0.2
+      let finalT=snapped;
+      document.querySelectorAll('.chip').forEach(ch=>{
+        const b=parseFloat(ch.dataset.start), be=parseFloat(ch.dataset.end);
+        if(Math.abs(t-b)<0.2) finalT=b;
+        if(Math.abs(t-be)<0.2) finalT=be;
+      });
+      ghost.style.left=(finalT/duration*100)+'%';
+      ghost.style.width=widthPct+'%';
+      ghost.style.top=(lane.offsetTop - lanes.scrollTop + 8)+'px';
+      ghost.querySelector('span').textContent=dragName+' → '+track+' @ '+finalT.toFixed(1)+'s';
+    }
+  });
+  lane.addEventListener('dragleave',()=> lane.classList.remove('lane--dragover'));
+  lane.addEventListener('drop',e=>{
+    e.preventDefault(); clearLaneHover();
+    if(dragMime && dragMime.startsWith('image/')){
+      toast('✕ MIME rejected: image not allowed on audio lanes (and audio not on Animation)');
+      ghost.style.display='none'; return;
+    }
+    if(dragMime && dragMime.startsWith('audio/')){
+      toast('✓ Created AudioClip on '+lane.dataset.track+' → MoveAudioClipCommand · '+dragName);
+      ghost.style.display='none';
+    }
+  });
+});
+// global toast for image drop on lanes
+function toast(msg){
+  const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block';
+  clearTimeout(t._id); t._id=setTimeout(()=>t.style.display='none',2200);
+}
+
+// play fake
+let playRaf=null, playStart=null, playOrigin=0;
+document.getElementById('btnPlay').addEventListener('click',()=>{
+  const btn=document.getElementById('btnPlay');
+  if(playRaf){ cancelAnimationFrame(playRaf); playRaf=null; btn.textContent='▶ Play'; return; }
+  btn.textContent='⏸ Pause';
+  playOrigin=currentTime; playStart=performance.now();
+  const tick=()=>{
+    const elapsed=(performance.now()-playStart)/1000;
+    const t=playOrigin+elapsed;
+    if(t>=duration){ setPlayhead(duration); cancelAnimationFrame(playRaf); playRaf=null; btn.textContent='▶ Play'; return; }
+    setPlayhead(t);
+    playRaf=requestAnimationFrame(tick);
+  };
+  playRaf=requestAnimationFrame(tick);
+});
+
+// recording modal
+const modal=document.getElementById('modal');
+document.getElementById('btnRecord').addEventListener('click',()=>{ modal.classList.add('modal-backdrop--open'); startLevel(); });
+document.getElementById('btnCancelRec').addEventListener('click',()=>{ modal.classList.remove('modal-backdrop--open'); stopLevel(); });
+document.getElementById('btnSaveRec').addEventListener('click',()=>{ toast('Saved WAV → Voice AudioClip at part.start (immutable asset)'); modal.classList.remove('modal-backdrop--open'); stopLevel(); });
+document.getElementById('btnStopRec').addEventListener('click',()=>{ toast('Stopped — duration check: if >max(0.3s,5%) mismatch, show [Speed up/Extend/Discard]'); });
+modal.addEventListener('click',e=>{ if(e.target===modal){ modal.classList.remove('modal-backdrop--open'); stopLevel(); } });
+document.getElementById('btnSplitInfo').addEventListener('click',()=> toast('Split Left/Right/Out · Unite (single-space, sum durations) · reflowPrompter prefix-sum · gap-free'));
+
+// level animation
+let levelRaf=null;
+function startLevel(){
+  const lvl=document.getElementById('level'); lvl.innerHTML='';
+  for(let i=0;i<36;i++){ const b=document.createElement('i'); lvl.appendChild(b); }
+  let t=0;
+  const tick=()=>{
+    t+=0.14;
+    [...lvl.children].forEach((b,i)=>{
+      const h=6+Math.abs(Math.sin(t+i*0.4))*34+Math.random()*10;
+      b.style.height=h+'px';
+      b.style.background= h>38 ? '#7c5cff' : h>22 ? '#5a3fd6' : '#333';
+    });
+    document.getElementById('recTime').textContent='00:'+('0'+(1+Math.floor(t)%60)).slice(-2)+'.'+String(Math.floor((t%1)*10))+'0';
+    levelRaf=requestAnimationFrame(tick);
+  };
+  tick();
+}
+function stopLevel(){ if(levelRaf) cancelAnimationFrame(levelRaf); levelRaf=null; }
+
+// init
+setPlayhead(1.8);
+toast('Prototype loaded — hover/scrub, drag, tabs, record. See right notes.');
+</script>
+</body>
+</html>
