@@ -12,6 +12,7 @@ import {
   CreateAudioClipCommand,
   DeleteAudioClipCommand,
   DuplicateAudioClipCommand,
+  ImportPrompterCommand,
   MoveAudioClipCommand,
   SplitAudioClipCommand,
   TrimAudioClipCommand,
@@ -951,6 +952,8 @@ export function AudioTimelineBody({
   const overlappingIds = getOverlappingClipIds(clips)
   const [recordPartId, setRecordPartId] = useState<string | null>(null)
   const recordPart = useMemo(() => prompterParts.find((p) => p.id === recordPartId) ?? null, [prompterParts, recordPartId])
+  const [showImport, setShowImport] = useState(false)
+  const [importText, setImportText] = useState('Hello, world')
 
   // Recording shortcut handler (when prompter part focused and no modal open)
   useEffect(() => {
@@ -1140,9 +1143,24 @@ export function AudioTimelineBody({
                   position: 'relative',
                 }}
               >
+                <button
+                  data-testid="prompter-import-btn"
+                  onClick={() => setShowImport(true)}
+                  style={{
+                    padding: '4px 8px',
+                    fontSize: 11,
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg)',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Import
+                </button>
                 {prompterParts.length === 0 ? (
                   <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-                    No prompter parts
+                    No prompter parts — click Import
                   </span>
                 ) : (
                   (() => {
@@ -1594,6 +1612,81 @@ export function AudioTimelineBody({
           plannedDuration={recordPart.duration}
           onClose={() => setRecordPartId(null)}
         />
+      )}
+      {showImport && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Import prompter"
+          data-testid="prompter-import-modal"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 100,
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowImport(false)
+          }}
+        >
+          <div
+            style={{
+              background: '#2a2a2a',
+              border: '1px solid #444',
+              borderRadius: 8,
+              width: 420,
+              padding: 16,
+              color: '#e0e0e0',
+            }}
+          >
+            <h3 style={{ margin: '0 0 8px', fontSize: 13 }}>Import prompter</h3>
+            <p style={{ fontSize: 11, color: '#888', margin: '0 0 8px' }}>
+              Paste narration — auto-splits on <code>[.,;:!?{"\\n"}—]</code> (consecutive collapsed, no empty parts). Duration = chars ×{' '}
+              <code>secondsPerCharacter 0.2</code>
+            </p>
+            <textarea
+              data-testid="prompter-import-textarea"
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              placeholder="Hello, world"
+              autoFocus
+              style={{
+                width: '100%',
+                minHeight: 80,
+                background: '#1e1e1e',
+                color: '#e0e0e0',
+                border: '1px solid #444',
+                borderRadius: 4,
+                padding: 8,
+                fontSize: 12,
+                resize: 'vertical',
+              }}
+            />
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+              <button
+                data-testid="prompter-import-cancel"
+                onClick={() => setShowImport(false)}
+                style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid #444', background: '#333', color: '#e0e0e0', cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                data-testid="prompter-import-confirm"
+                onClick={() => {
+                  const result = dispatch(new ImportPrompterCommand({ slideId: slide.id, rawText: importText }))
+                  if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+                  setShowImport(false)
+                }}
+                style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid #7c5cff', background: '#7c5cff', color: '#fff', cursor: 'pointer' }}
+              >
+                Import
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
