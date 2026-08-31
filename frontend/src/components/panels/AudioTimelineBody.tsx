@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { RefObject } from 'react'
 import type { Slide } from '../../engine'
 import { useEngine } from '../../app/useEngine'
@@ -31,9 +31,16 @@ import { snapAudioTime } from '../../engine/timelineSnapping'
 import { ASSET_DEFINITION_MIME, AUDIO_ASSET_MIME } from '../../pixi/renderer/dropPlacement'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useAudioClipSelectionStore } from '../../stores/audioClipSelectionStore'
+import { useAudioPlaybackStore } from '../../stores/audioPlaybackStore'
 
 const PROMPTER_STRIP_HEIGHT = 42
 const AUDIO_LANE_HEIGHT = 56
+
+/** Exported for tests: compute nudge delta from rulerTickStep */
+// eslint-disable-next-line react-refresh/only-export-components
+export function audioNudgeDelta(step: number, shift: boolean): number {
+  return shift ? step * 10 : step
+}
 
 export function AudioTimelineBody({
   slide,
@@ -55,6 +62,7 @@ export function AudioTimelineBody({
   const zoomLevel = useTimelineViewStore((state) => state.zoomLevel)
   const scrollTime = useTimelineViewStore((state) => state.scrollTime)
   const currentTime = usePlaybackController((state) => state.currentTimes[slide.id] ?? 0)
+  const playbackStatus = usePlaybackController((state) => state.status)
   const pps = pixelsPerSecond(zoomLevel)
 
   const { engine, dispatch } = useEngine()
@@ -65,6 +73,10 @@ export function AudioTimelineBody({
   }, [engine])
 
   const selectedClipIds = useAudioClipSelectionStore((s) => s.selectedClipIds)
+  const activeClipId = useAudioClipSelectionStore((s) => s.activeClipId)
+  const marqueeRect = useAudioClipSelectionStore((s) => s.marquee)
+  const mutedTracks = useAudioPlaybackStore((s) => s.mutedTracks)
+  const soloTracks = useAudioPlaybackStore((s) => s.soloTracks)
 
   const timeFromClientX = (clientX: number): number => {
     const rect = timeAreaRef.current?.getBoundingClientRect()
@@ -314,14 +326,140 @@ export function AudioTimelineBody({
     window.addEventListener('pointerup', up)
   }
 
-  // Selection
+  // Ordered ids for range selection and roving tabindex
+  const orderedClipIds = useMemo(() => {
+    const clips = [...slide.audio.clips].sort((a, b) => a.timelineStart - b.timelineStart)
+    return clips.map((c) => c.id)
+  }, [slide.audio.clips])
+  const prompterPartIds = useMemo(
+    () => (slide.prompter?.parts ?? []).map((p) => p.id),
+    [slide.prompter],
+  )
+  const orderedFocusableIds = useMemo(
+    () => [...prompterPartIds, ...orderedClipIds],
+    [prompterPartIds, orderedClipIds],
+  )
+
+  const [focusedId, setFocusedId] = useState<string | null>(() => orderedFocusableIds[0] ?? null)
+  useEffect(() => {
+    if (focusedId && !orderedFocusableIds.includes(focusedId)) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setFocusedId(orderedFocusableIds[0] ?? null)
+    } else if (!focusedId && orderedFocusableIds.length > 0) {
+      setFocusedId(orderedFocusableIds[0])
+    }
+  }, [focusedId, orderedFocusableIds])
+
+  // Selection gesture handlers
   const handleClipPointerDownSelect = (e: React.MouseEvent, clipId: string) => {
-    // if handle drag, ignore selection logic for handles (handled separately)
     if ((e.target as HTMLElement).closest('.audio-clip__handle')) return
     const isMulti = e.metaKey || e.ctrlKey
-    if (isMulti) useAudioClipSelectionStore.getState().toggle(clipId)
-    else useAudioClipSelectionStore.getState().select(clipId)
+    const isRange = e.shiftKey
+    const store = useAudioClipSelectionStore.getState()
+    if (isRange) {
+      store.selectRange(clipId, orderedClipIds)
+    } else if (isMulti) {
+      store.toggle(clipId)
+    } else {
+      store.select(clipId)
+    }
+    setFocusedId(clipId)
   }
+
+  const handlePrompterPointerDownSelect = (e: React.MouseEvent, partId: string) => {
+    // Prompter parts are focusable but not part of clip selection; focus only
+    e.preventDefault()
+    setFocusedId(partId)
+  }
+
+  // Marquee selection
+  const marqueeStartRef = useRef<{ x: number; y: number } | null>(null)
+  const marqueeActiveRef = useRef(false)
+  const [localMarqueeRect, setLocalMarqueeRect] = useState<{
+    x: number
+    y: number
+    width: number
+    height: number
+  } | null>(null)
+
+  const handleTimeAreaPointerDown = useCallback(
+    (event: React.PointerEvent) => {
+      const target = event.target as HTMLElement
+      if (
+        target.closest('[data-clip-id]') ||
+        target.closest('[data-prompter-id]') ||
+        target.closest('.timeline-ruler') ||
+        target.closest('.audio-clip__handle')
+      ) {
+        return
+      }
+      if (event.button !== 0) return
+      const rect = timeAreaRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const x = event.clientX - rect.left
+      const y = event.clientY - rect.top
+      marqueeStartRef.current = { x, y }
+      marqueeActiveRef.current = false
+      setLocalMarqueeRect({ x, y, width: 0, height: 0 })
+      useAudioClipSelectionStore.getState().marqueeStart(x, y)
+
+      const onMove = (ev: PointerEvent) => {
+        if (!marqueeStartRef.current) return
+        const cx = ev.clientX - rect.left
+        const cy = ev.clientY - rect.top
+        const dx = cx - marqueeStartRef.current.x
+        const dy = cy - marqueeStartRef.current.y
+        if (!marqueeActiveRef.current && Math.hypot(dx, dy) < 4) return
+        marqueeActiveRef.current = true
+        const width = Math.abs(dx)
+        const height = Math.abs(dy)
+        const left = Math.min(marqueeStartRef.current.x, cx)
+        const top = Math.min(marqueeStartRef.current.y, cy)
+        setLocalMarqueeRect({ x: left, y: top, width, height })
+        useAudioClipSelectionStore.getState().marqueeUpdate(width, height)
+      }
+
+      const onUp = (ev: PointerEvent) => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        window.removeEventListener('pointercancel', onUp)
+        if (marqueeActiveRef.current) {
+          const markers = document.querySelectorAll<HTMLElement>('[data-clip-id]')
+          const intersecting: string[] = []
+          const mLeft = Math.min(marqueeStartRef.current!.x, ev.clientX - rect.left)
+          const mTop = Math.min(marqueeStartRef.current!.y, ev.clientY - rect.top)
+          const mRight = mLeft + Math.abs(ev.clientX - rect.left - marqueeStartRef.current!.x)
+          const mBottom = mTop + Math.abs(ev.clientY - rect.top - marqueeStartRef.current!.y)
+          for (const marker of markers) {
+            const markerRect = marker.getBoundingClientRect()
+            const relLeft = markerRect.left - rect.left
+            const relTop = markerRect.top - rect.top
+            const relRight = relLeft + markerRect.width
+            const relBottom = relTop + markerRect.height
+            if (relLeft < mRight && relRight > mLeft && relTop < mBottom && relBottom > mTop) {
+              const id = marker.dataset.clipId
+              if (id) intersecting.push(id)
+            }
+          }
+          useAudioClipSelectionStore.getState().marqueeEnd(intersecting)
+        } else {
+          // Click on empty clears selection
+          if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
+            useAudioClipSelectionStore.getState().clear()
+          }
+          useAudioClipSelectionStore.getState().marqueeEnd([])
+        }
+        marqueeStartRef.current = null
+        marqueeActiveRef.current = false
+        setLocalMarqueeRect(null)
+      }
+
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp)
+      window.addEventListener('pointercancel', onUp)
+    },
+    [timeAreaRef],
+  )
 
   // Move handling
   const onClipMovePointerDown = (e: React.PointerEvent, clipId: string) => {
@@ -329,8 +467,7 @@ export function AudioTimelineBody({
     e.preventDefault()
     const clip = slide.audio.clips.find((c) => c.id === clipId)
     if (!clip) return
-    // selection side-effect: ensure clip is selected
-    if (!selectedClipIds.has(clipId) && !(e.ctrlKey || e.metaKey)) {
+    if (!selectedClipIds.has(clipId) && !(e.ctrlKey || e.metaKey || e.shiftKey)) {
       useAudioClipSelectionStore.getState().select(clipId)
     }
     moveRef.current = {
@@ -357,13 +494,11 @@ export function AudioTimelineBody({
       window.removeEventListener('pointerup', onUp)
       if (!moveRef.current) return
       const preview = movePreview ?? null
-      // compute final values from preview or recompute
       const dx = ev.clientX - moveRef.current.startX
       const dt = dx / pps
       const raw = moveRef.current.startTime + dt
       const snapped = computeSnappedTime(Math.max(0, raw))
       const finalTrack = trackFromClientY(ev.clientY) ?? moveRef.current.startTrack
-      // only dispatch if changed
       const original = slide.audio.clips.find((c) => c.id === clipId)
       if (
         original &&
@@ -400,17 +535,12 @@ export function AudioTimelineBody({
     const onMove = (ev: PointerEvent) => {
       const dx = ev.clientX - startX
       const dtPlayback = dx / pps
-      // for left: moving left handle left => decrease sourceStart? Actually dx positive (drag right) => sourceStart increases
-      // Map playback delta to source delta via playbackRate
       if (side === 'left') {
         const newSourceStart = Math.max(0, startSourceStart + dtPlayback * playbackRate)
-        // ensure < sourceEnd - epsilon
         const clamped = Math.min(newSourceStart, startSourceEnd - 0.01)
         const newSourceEnd = startSourceEnd
         const newWidth = ((newSourceEnd - clamped) / playbackRate) * pps
         const clipLeft = slide.audio.clips.find((c) => c.id === clipId)?.timelineStart ?? 0
-        // left handle does not move timelineStart, so waveform preview clipped at new bounds: we show preview with adjusted left offset?
-        // For visual: keep left at same timelineStart, width shrinks
         setTrimPreview({
           clipId,
           sourceStart: clamped,
@@ -457,51 +587,268 @@ export function AudioTimelineBody({
     window.addEventListener('pointerup', onUp)
   }
 
-  // Keyboard shortcuts for duplicate/delete/split
+  // Keyboard shortcuts for duplicate/delete/split + nudging + roving
+  const nudgeSelected = useCallback(
+    (delta: number, opts?: { home?: boolean; end?: boolean; vertical?: number }) => {
+      if (selectedClipIds.size === 0) return
+      const step = rulerTickStep(pps)
+      void step
+      for (const clipId of Array.from(selectedClipIds)) {
+        const clip = slide.audio.clips.find((c) => c.id === clipId)
+        if (!clip) continue
+        if (opts?.home) {
+          if (clip.timelineStart !== 0) {
+            dispatch(new MoveAudioClipCommand({ slideId: slide.id, clipId, timelineStart: 0 }))
+          }
+          continue
+        }
+        if (opts?.end) {
+          const playbackDuration = getAudioClipPlaybackDuration(clip)
+          const target = Math.max(0, duration - playbackDuration)
+          if (Math.abs(clip.timelineStart - target) > 1e-6) {
+            dispatch(new MoveAudioClipCommand({ slideId: slide.id, clipId, timelineStart: target }))
+          }
+          continue
+        }
+        if (opts?.vertical !== undefined) {
+          // Vertical nudge adjusts duration via trim (sourceEnd) – simple: expand/shrink by delta
+          const newSourceEnd = clip.sourceEnd + opts.vertical * (clip.playbackRate || 1)
+          const minEnd = clip.sourceStart + 0.01
+          const clampedEnd = Math.max(minEnd, newSourceEnd)
+          if (Math.abs(clampedEnd - clip.sourceEnd) > 1e-6) {
+            dispatch(new TrimAudioClipCommand({ slideId: slide.id, clipId, sourceEnd: clampedEnd }))
+          }
+          continue
+        }
+        const nextStart = Math.max(0, clip.timelineStart + delta)
+        const snapped = computeSnappedTime(nextStart)
+        // clamp to duration? allow overflow but Home/End handles; just dispatch move
+        if (Math.abs(snapped - clip.timelineStart) > 1e-9) {
+          dispatch(new MoveAudioClipCommand({ slideId: slide.id, clipId, timelineStart: snapped }))
+        }
+      }
+    },
+    [selectedClipIds, slide.audio.clips, slide.id, duration, pps, dispatch, computeSnappedTime],
+  )
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const active = document.activeElement?.closest(
-        '[data-testid="audio-timeline-body"], [data-testid="audio-lanes"]',
+      const audioBody = document.querySelector('[data-testid="audio-timeline-body"]')
+      const active = document.activeElement
+      const isInsideAudio = Boolean(
+        active?.closest('[data-testid="audio-timeline-body"]') ||
+        audioBody?.contains(active) ||
+        active?.hasAttribute('data-clip-id') ||
+        active?.hasAttribute('data-prompter-id') ||
+        audioBody?.contains(active),
       )
       const inAudioTab = Boolean(document.querySelector('[data-testid="audio-timeline-body"]'))
-      if (!inAudioTab && !active) return
+      // Only handle when audio tab is visible; if not inside, still handle global playback/zoom if audio tab focused
+      if (!inAudioTab && !isInsideAudio) return
+
+      // Avoid when editing input
+      if (
+        (e.target as HTMLElement)?.tagName === 'INPUT' ||
+        (e.target as HTMLElement)?.tagName === 'TEXTAREA' ||
+        (e.target as HTMLElement)?.isContentEditable
+      ) {
+        return
+      }
+
+      // Ctrl/Cmd+D duplicate at +0.5s
+      if (
+        (e.key === 'd' || e.key === 'D') &&
+        (e.metaKey || e.ctrlKey) &&
+        selectedClipIds.size > 0
+      ) {
+        e.preventDefault()
+        const newIds: string[] = []
+        for (const clipId of Array.from(selectedClipIds)) {
+          const result = dispatch(new DuplicateAudioClipCommand({ slideId: slide.id, clipId }))
+          if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+          else {
+            const newId = (result.inverse as { newClipId: string }).newClipId
+            newIds.push(newId)
+          }
+        }
+        if (newIds.length === 1) {
+          useAudioClipSelectionStore.getState().select(newIds[0])
+        } else if (newIds.length > 1) {
+          useAudioClipSelectionStore.setState({
+            selectedClipIds: new Set(newIds),
+            activeClipId: newIds[newIds.length - 1],
+          })
+        }
+        return
+      }
+
       // Delete / Backspace
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedClipIds.size > 0) {
-        // avoid when editing input
-        if (
-          (e.target as HTMLElement)?.tagName === 'INPUT' ||
-          (e.target as HTMLElement)?.tagName === 'TEXTAREA'
-        )
-          return
         e.preventDefault()
         for (const clipId of Array.from(selectedClipIds)) {
           const result = dispatch(new DeleteAudioClipCommand({ slideId: slide.id, clipId }))
           if (!result.ok) useNotificationStore.getState().notify(result.error.message)
         }
         useAudioClipSelectionStore.getState().clear()
+        return
       }
-      // Duplicate Ctrl/Cmd+D
-      if (
-        (e.key === 'd' || e.key === 'D') &&
-        (e.metaKey || e.ctrlKey) &&
-        selectedClipIds.size > 0
-      ) {
-        if (
-          (e.target as HTMLElement)?.tagName === 'INPUT' ||
-          (e.target as HTMLElement)?.tagName === 'TEXTAREA'
-        )
-          return
+
+      // Home / End
+      if (e.key === 'Home' && selectedClipIds.size > 0) {
         e.preventDefault()
-        for (const clipId of Array.from(selectedClipIds)) {
-          const result = dispatch(new DuplicateAudioClipCommand({ slideId: slide.id, clipId }))
-          if (!result.ok) useNotificationStore.getState().notify(result.error.message)
-          else {
-            const newId = (result.inverse as { newClipId: string }).newClipId
-            // select new duplicate
-            useAudioClipSelectionStore.getState().select(newId)
+        nudgeSelected(0, { home: true })
+        return
+      }
+      if (e.key === 'End' && selectedClipIds.size > 0) {
+        e.preventDefault()
+        nudgeSelected(0, { end: true })
+        return
+      }
+
+      // Arrow nudges
+      const step = rulerTickStep(pps)
+      const delta = audioNudgeDelta(step, e.shiftKey)
+      if (e.key === 'ArrowLeft' && selectedClipIds.size > 0) {
+        // Check if roving should move focus instead? Left/Right for nudge, Up/Down for roving
+        // Prioritize nudge when clips selected
+        e.preventDefault()
+        nudgeSelected(-delta)
+        return
+      }
+      if (e.key === 'ArrowRight' && selectedClipIds.size > 0) {
+        e.preventDefault()
+        nudgeSelected(delta)
+        return
+      }
+      if (e.key === 'ArrowUp' && selectedClipIds.size > 0) {
+        // Interpret Up as increase duration, Down decrease
+        e.preventDefault()
+        nudgeSelected(0, { vertical: delta })
+        return
+      }
+      if (e.key === 'ArrowDown' && selectedClipIds.size > 0) {
+        e.preventDefault()
+        nudgeSelected(0, { vertical: -delta })
+        return
+      }
+
+      // Roving tabindex navigation when focus is inside prompter/clip
+      if (
+        (e.key === 'ArrowUp' ||
+          e.key === 'ArrowDown' ||
+          e.key === 'ArrowLeft' ||
+          e.key === 'ArrowRight') &&
+        orderedFocusableIds.length > 0
+      ) {
+        // If no selection, allow roving to move focus via Up/Down
+        if (selectedClipIds.size === 0 && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+          const currentIndex = focusedId ? orderedFocusableIds.indexOf(focusedId) : -1
+          let nextIndex = currentIndex
+          if (e.key === 'ArrowDown') {
+            nextIndex = Math.min(orderedFocusableIds.length - 1, currentIndex + 1)
+          } else {
+            nextIndex = Math.max(0, currentIndex - 1)
           }
+          if (nextIndex !== currentIndex) {
+            e.preventDefault()
+            const nextId = orderedFocusableIds[nextIndex]
+            setFocusedId(nextId)
+            // focus element
+            const el = document.querySelector<HTMLElement>(
+              `[data-clip-id="${nextId}"], [data-prompter-id="${nextId}"]`,
+            )
+            el?.focus()
+          }
+          return
         }
       }
+
+      // Play/pause/frame-step and zoom/scroll shortcuts (shared stores)
+      // Space for play/pause
+      if (e.code === 'Space' && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+        // Only if audio body has focus or contains active element
+        if (isInsideAudio) {
+          e.preventDefault()
+          const ctrl = usePlaybackController.getState()
+          if (ctrl.status === 'playing') ctrl.pause()
+          else ctrl.play(slide.id, duration)
+          return
+        }
+      }
+      // Frame step: '.' and ',' or ArrowLeft/Right when paused and no selection? Use ',' and '.'
+      if ((e.key === ',' || e.key === '<') && playbackStatus !== 'playing' && isInsideAudio) {
+        e.preventDefault()
+        usePlaybackController.getState().stepFrame('backward', slide.id, duration)
+        return
+      }
+      if ((e.key === '.' || e.key === '>') && playbackStatus !== 'playing' && isInsideAudio) {
+        e.preventDefault()
+        usePlaybackController.getState().stepFrame('forward', slide.id, duration)
+        return
+      }
+      // Zoom: '+' '=' and '-' '_'
+      if ((e.key === '+' || e.key === '=') && (e.ctrlKey || e.metaKey) && isInsideAudio) {
+        e.preventDefault()
+        const state = useTimelineViewStore.getState()
+        const p = pixelsPerSecond(state.zoomLevel)
+        const anchor = state.scrollTime + viewportWidth / 2 / p
+        state.zoomIn(anchor, viewportWidth, duration)
+        return
+      }
+      if ((e.key === '-' || e.key === '_') && (e.ctrlKey || e.metaKey) && isInsideAudio) {
+        e.preventDefault()
+        const state = useTimelineViewStore.getState()
+        const p = pixelsPerSecond(state.zoomLevel)
+        const anchor = state.scrollTime + viewportWidth / 2 / p
+        state.zoomOut(anchor, viewportWidth, duration)
+        return
+      }
+      // Alternative zoom without ctrl: '+' and '-'
+      if (
+        e.key === '+' &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        isInsideAudio &&
+        selectedClipIds.size === 0
+      ) {
+        e.preventDefault()
+        const state = useTimelineViewStore.getState()
+        const p = pixelsPerSecond(state.zoomLevel)
+        const anchor = state.scrollTime + viewportWidth / 2 / p
+        state.zoomIn(anchor, viewportWidth, duration)
+        return
+      }
+      if (
+        e.key === '-' &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        isInsideAudio &&
+        selectedClipIds.size === 0
+      ) {
+        e.preventDefault()
+        const state = useTimelineViewStore.getState()
+        const p = pixelsPerSecond(state.zoomLevel)
+        const anchor = state.scrollTime + viewportWidth / 2 / p
+        state.zoomOut(anchor, viewportWidth, duration)
+        return
+      }
+      // Scroll via horizontal arrows when no selection and not nudging? Use Shift+Arrow to scroll?
+      if (e.key === 'ArrowLeft' && selectedClipIds.size === 0 && isInsideAudio) {
+        // scroll left by step
+        e.preventDefault()
+        const state = useTimelineViewStore.getState()
+        const target = Math.max(0, state.scrollTime - step)
+        state.setScrollTime(target, viewportWidth, duration)
+        return
+      }
+      if (e.key === 'ArrowRight' && selectedClipIds.size === 0 && isInsideAudio) {
+        e.preventDefault()
+        const state = useTimelineViewStore.getState()
+        const target = state.scrollTime + step
+        state.setScrollTime(target, viewportWidth, duration)
+        return
+      }
+
       // Split at playhead: key 'S' or 's' when single selected clip contains playhead
       if (
         (e.key === 's' || e.key === 'S') &&
@@ -526,7 +873,20 @@ export function AudioTimelineBody({
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [slide.id, selectedClipIds, dispatch, currentTime, slide.audio.clips])
+  }, [
+    slide.id,
+    selectedClipIds,
+    dispatch,
+    currentTime,
+    slide.audio.clips,
+    pps,
+    nudgeSelected,
+    duration,
+    viewportWidth,
+    playbackStatus,
+    orderedFocusableIds,
+    focusedId,
+  ])
 
   const handleSplitClick = () => {
     if (selectedClipIds.size !== 1) {
@@ -558,14 +918,21 @@ export function AudioTimelineBody({
   }
 
   const handleDuplicateSelected = () => {
+    const newIds: string[] = []
     for (const clipId of Array.from(selectedClipIds)) {
       const result = dispatch(new DuplicateAudioClipCommand({ slideId: slide.id, clipId }))
       if (!result.ok) useNotificationStore.getState().notify(result.error.message)
       else {
         const newId = (result.inverse as { newClipId: string }).newClipId
-        useAudioClipSelectionStore.getState().select(newId)
+        newIds.push(newId)
       }
     }
+    if (newIds.length === 1) useAudioClipSelectionStore.getState().select(newIds[0])
+    else if (newIds.length > 1)
+      useAudioClipSelectionStore.setState({
+        selectedClipIds: new Set(newIds),
+        activeClipId: newIds[newIds.length - 1],
+      })
   }
 
   const step = rulerTickStep(pps)
@@ -576,6 +943,11 @@ export function AudioTimelineBody({
   const clips = slide.audio.clips
   const prompterParts = slide.prompter?.parts ?? []
   const overlappingIds = getOverlappingClipIds(clips)
+  const displayMarquee =
+    localMarqueeRect ??
+    (marqueeRect
+      ? { x: marqueeRect.x, y: marqueeRect.y, width: marqueeRect.width, height: marqueeRect.height }
+      : null)
 
   return (
     <div
@@ -583,6 +955,8 @@ export function AudioTimelineBody({
       onPointerMove={recordPointerTime}
       data-testid="audio-timeline-body"
       tabIndex={0}
+      role="region"
+      aria-label="Audio timeline"
     >
       <div
         className="timeline-tracks"
@@ -607,22 +981,62 @@ export function AudioTimelineBody({
           >
             Prompter
           </li>
-          {AUDIO_TRACK_IDS.map((trackId) => (
-            <li
-              key={trackId}
-              className="audio-tracks__label"
-              style={{
-                height: AUDIO_LANE_HEIGHT,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderBottom: '1px solid var(--color-border)',
-                fontSize: 11,
-              }}
-            >
-              {trackId === 'voice' ? 'Voice' : trackId === 'sfx' ? 'SFX' : 'Music'}
-            </li>
-          ))}
+          {AUDIO_TRACK_IDS.map((trackId) => {
+            const isMuted = mutedTracks.has(trackId)
+            const isSolo = soloTracks.has(trackId)
+            return (
+              <li
+                key={trackId}
+                className="audio-tracks__label"
+                style={{
+                  height: AUDIO_LANE_HEIGHT,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  borderBottom: '1px solid var(--color-border)',
+                  fontSize: 11,
+                  padding: '0 4px',
+                }}
+              >
+                <span>{trackId === 'voice' ? 'Voice' : trackId === 'sfx' ? 'SFX' : 'Music'}</span>
+                <span style={{ display: 'flex', gap: 2 }}>
+                  <button
+                    data-testid={`audio-mute-${trackId}`}
+                    aria-pressed={isMuted}
+                    aria-label={`Mute ${trackId}`}
+                    onClick={() => useAudioPlaybackStore.getState().toggleMute(trackId)}
+                    style={{
+                      fontSize: 9,
+                      padding: '2px 4px',
+                      background: isMuted ? '#ff4d4d' : 'var(--color-bg)',
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 4,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    M
+                  </button>
+                  <button
+                    data-testid={`audio-solo-${trackId}`}
+                    aria-pressed={isSolo}
+                    aria-label={`Solo ${trackId}`}
+                    onClick={() => useAudioPlaybackStore.getState().toggleSolo(trackId)}
+                    style={{
+                      fontSize: 9,
+                      padding: '2px 4px',
+                      background: isSolo ? '#7c5cff' : 'var(--color-bg)',
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 4,
+                      cursor: 'pointer',
+                      color: isSolo ? '#fff' : undefined,
+                    }}
+                  >
+                    S
+                  </button>
+                </span>
+              </li>
+            )
+          })}
         </ul>
       </div>
       <div
@@ -632,7 +1046,11 @@ export function AudioTimelineBody({
         onScroll={handleScroll}
       >
         <div className="timeline-content" style={{ width: contentWidth }}>
-          <div className="timeline-time-area" ref={timeAreaRef}>
+          <div
+            className="timeline-time-area"
+            ref={timeAreaRef}
+            onPointerDown={handleTimeAreaPointerDown}
+          >
             <div
               className="timeline-ruler"
               role="slider"
@@ -700,30 +1118,68 @@ export function AudioTimelineBody({
                     No prompter parts
                   </span>
                 ) : (
-                  prompterParts.map((part) => (
-                    <div
-                      key={part.id}
-                      className={`audio-prompter-chip${part.status === 'stale' ? ' audio-prompter-chip--stale' : ''}`}
-                      data-testid="prompter-chip"
-                      data-start={part.startTime}
-                      data-end={part.endTime}
-                      style={{
-                        padding: '4px 8px',
-                        borderRadius: 12,
-                        background: 'var(--color-bg)',
-                        border: '1px solid var(--color-border)',
-                        fontSize: 11,
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {part.text}
-                      <small
-                        style={{ marginLeft: 4, fontSize: 9, color: 'var(--color-text-muted)' }}
+                  prompterParts.map((part, idx) => {
+                    const isFocused = focusedId === part.id
+                    const isSelected = false
+                    return (
+                      <div
+                        key={part.id}
+                        role="button"
+                        tabIndex={isFocused ? 0 : -1}
+                        data-testid="prompter-chip"
+                        data-prompter-id={part.id}
+                        data-start={part.startTime}
+                        data-end={part.endTime}
+                        aria-selected={isSelected}
+                        onFocus={() => setFocusedId(part.id)}
+                        onClick={(e) => handlePrompterPointerDownSelect(e, part.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                            e.preventDefault()
+                            const next = orderedFocusableIds[idx + 1]
+                            if (next) {
+                              setFocusedId(next)
+                              document
+                                .querySelector<HTMLElement>(
+                                  `[data-clip-id="${next}"], [data-prompter-id="${next}"]`,
+                                )
+                                ?.focus()
+                            }
+                          }
+                          if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                            e.preventDefault()
+                            const prev = orderedFocusableIds[idx - 1]
+                            if (prev) {
+                              setFocusedId(prev)
+                              document
+                                .querySelector<HTMLElement>(
+                                  `[data-clip-id="${prev}"], [data-prompter-id="${prev}"]`,
+                                )
+                                ?.focus()
+                            }
+                          }
+                        }}
+                        className={`audio-prompter-chip${part.status === 'stale' ? ' audio-prompter-chip--stale' : ''}${isFocused ? ' audio-prompter-chip--focused' : ''}`}
+                        style={{
+                          padding: '4px 8px',
+                          borderRadius: 12,
+                          background: isFocused ? 'var(--color-accent)' : 'var(--color-bg)',
+                          border: '1px solid var(--color-border)',
+                          fontSize: 11,
+                          whiteSpace: 'nowrap',
+                          outline: isFocused ? '2px solid #7c5cff' : undefined,
+                          cursor: 'pointer',
+                        }}
                       >
-                        {part.startTime.toFixed(1)}–{part.endTime.toFixed(1)}
-                      </small>
-                    </div>
-                  ))
+                        {part.text}
+                        <small
+                          style={{ marginLeft: 4, fontSize: 9, color: 'var(--color-text-muted)' }}
+                        >
+                          {part.startTime.toFixed(1)}–{part.endTime.toFixed(1)}
+                        </small>
+                      </div>
+                    )
+                  })
                 )}
               </div>
 
@@ -809,12 +1265,10 @@ export function AudioTimelineBody({
                             const effectiveTrack = isMovePreview
                               ? movePreview.trackId
                               : clip.trackId
-                            // if move preview changed track, only show in target lane; skip rendering in original lane when moved
                             if (isMovePreview && effectiveTrack !== trackId) return null
                             const displayStart = isMovePreview
                               ? movePreview.timelineStart
                               : clip.timelineStart
-                            // trim preview overrides source bounds
                             const isTrimPreview = trimPreview?.clipId === clip.id
                             const displaySourceStart = isTrimPreview
                               ? trimPreview.sourceStart
@@ -833,11 +1287,17 @@ export function AudioTimelineBody({
                             const left = isTrimPreview ? trimPreview.left : displayStart * pps
                             const isSelected = selectedClipIds.has(clip.id)
                             const isOverlapping = overlappingIds.has(clip.id)
-                            const zIndex = idx + 1 // later clip on top within lane; no auto crossfade
+                            const isFocused = focusedId === clip.id
+                            const isActive = activeClipId === clip.id
+                            const zIndex = idx + 1
                             return (
                               <div
                                 key={clip.id}
-                                className={`audio-clip audio-clip--${trackId}${isOverflow ? ' audio-clip--overflow' : ''}${isSelected ? ' audio-clip--selected' : ''}${isOverlapping ? ' audio-clip--overlap' : ''}`}
+                                role="button"
+                                tabIndex={isFocused ? 0 : -1}
+                                aria-selected={isSelected}
+                                aria-label={`Audio clip ${clip.assetId} at ${clip.timelineStart}`}
+                                className={`audio-clip audio-clip--${trackId}${isOverflow ? ' audio-clip--overflow' : ''}${isSelected ? ' audio-clip--selected' : ''}${isOverlapping ? ' audio-clip--overlap' : ''}${isActive ? ' audio-clip--active' : ''}${isFocused ? ' audio-clip--focused' : ''}`}
                                 data-testid="audio-clip"
                                 data-clip-id={clip.id}
                                 data-track={trackId}
@@ -846,8 +1306,28 @@ export function AudioTimelineBody({
                                     ? 'clipped-with-overflow past slide.duration'
                                     : undefined
                                 }
+                                onFocus={() => setFocusedId(clip.id)}
                                 onClick={(e) => handleClipPointerDownSelect(e, clip.id)}
                                 onPointerDown={(e) => onClipMovePointerDown(e, clip.id)}
+                                onKeyDown={(e) => {
+                                  // Roving within clip focus: Up/Down moves to adjacent focusable
+                                  const focusIndex = orderedFocusableIds.indexOf(clip.id)
+                                  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+                                    // Let global handler handle nudging when selected; otherwise rove
+                                    if (selectedClipIds.size > 0) return
+                                    e.preventDefault()
+                                    const dir = e.key === 'ArrowDown' ? 1 : -1
+                                    const next = orderedFocusableIds[focusIndex + dir]
+                                    if (next) {
+                                      setFocusedId(next)
+                                      document
+                                        .querySelector<HTMLElement>(
+                                          `[data-clip-id="${next}"], [data-prompter-id="${next}"]`,
+                                        )
+                                        ?.focus()
+                                    }
+                                  }
+                                }}
                                 style={{
                                   position: 'absolute',
                                   top: 8,
@@ -862,7 +1342,9 @@ export function AudioTimelineBody({
                                         : '#e67e22',
                                   border: isSelected
                                     ? '2px solid #fff'
-                                    : '1px solid var(--color-border)',
+                                    : isFocused
+                                      ? '2px solid #7c5cff'
+                                      : '1px solid var(--color-border)',
                                   borderRadius: 6,
                                   display: 'flex',
                                   alignItems: 'center',
@@ -871,9 +1353,15 @@ export function AudioTimelineBody({
                                   overflow: 'hidden',
                                   whiteSpace: 'nowrap',
                                   borderRight: isOverflow ? '3px solid #ff4d4d' : undefined,
-                                  opacity: clip.muted ? 0.5 : 1,
+                                  opacity:
+                                    clip.muted || mutedTracks.has(trackId)
+                                      ? 0.5
+                                      : soloTracks.size > 0 && !soloTracks.has(trackId)
+                                        ? 0.3
+                                        : 1,
                                   zIndex,
                                   cursor: 'grab',
+                                  outline: isFocused ? '2px solid #7c5cff' : undefined,
                                 }}
                               >
                                 <span
@@ -934,7 +1422,6 @@ export function AudioTimelineBody({
                                     background: 'rgba(255,255,255,0.2)',
                                   }}
                                 />
-                                {/* Waveform clipped preview during trim: faint overlay */}
                                 {isTrimPreview && (
                                   <div
                                     data-testid="audio-waveform-preview"
@@ -956,7 +1443,6 @@ export function AudioTimelineBody({
                     </div>
                   )
                 })}
-                {/* Move preview ghost when moving across lanes: render overlay ghost */}
                 {movePreview &&
                   (() => {
                     const clip = clips.find((c) => c.id === movePreview.clipId)
@@ -983,6 +1469,22 @@ export function AudioTimelineBody({
                       />
                     )
                   })()}
+                {displayMarquee && (
+                  <div
+                    data-testid="audio-marquee"
+                    style={{
+                      position: 'absolute',
+                      left: displayMarquee.x,
+                      top: displayMarquee.y,
+                      width: displayMarquee.width,
+                      height: displayMarquee.height,
+                      border: '1px solid var(--color-accent)',
+                      background: 'rgba(124,92,255,0.1)',
+                      pointerEvents: 'none',
+                      zIndex: 30,
+                    }}
+                  />
+                )}
               </div>
               <div
                 className="audio-playhead"
