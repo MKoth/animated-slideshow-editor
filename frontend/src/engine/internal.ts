@@ -331,20 +331,14 @@ export class Engine {
     // Update existing first part in place, insert rest after
     part.text = newParts[0].text
     part.duration = newParts[0].duration
-    // Preserve audio linkage only on first piece; others clear linkage
-    if (newParts.length > 1) {
-      part.audioClipId = undefined
-      part.audioAssetId = undefined
-      part.status = undefined
-      if (
-        hasPrompterPartAudio({
-          audioClipId: part.audioClipId,
-          audioAssetId: part.audioAssetId,
-        } as unknown as import('./prompter').PrompterPart)
-      ) {
-        // no-op
-      }
-    }
+    part.audioClipId = (newParts[0] as { audioClipId?: string }).audioClipId
+    part.audioAssetId = (newParts[0] as { audioAssetId?: string }).audioAssetId
+    part.promptId = (newParts[0] as { promptId?: string }).promptId
+    part.status = (newParts[0] as { status?: import('./prompter').PrompterPartStatus }).status
+    if (part.audioClipId === undefined) delete (part as { audioClipId?: string }).audioClipId
+    if (part.audioAssetId === undefined) delete (part as { audioAssetId?: string }).audioAssetId
+    if (part.promptId === undefined) delete (part as { promptId?: string }).promptId
+    if (part.status === undefined) delete (part as { status?: string }).status
     // Insert remaining
     for (let i = 1; i < newParts.length; i++) {
       slide.prompter.parts.splice(index + i, 0, newParts[i] as import('./prompter').PrompterPart)
