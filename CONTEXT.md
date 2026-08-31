@@ -176,6 +176,38 @@ _Avoid_: Prompt, suggestion
 The AI step that suggests asset metadata — name, category, tags, AI description, compatible materials and clips, shader slots — from the prompt, style, and intent, never from image pixels (no vision). Suggestions pre-fill only empty fields in the Asset Playground Inspector; nothing is saved until the user's save.
 _Avoid_: Auto-metadata, metadata generator
 
+### Audio & Prompter
+
+**AudioAsset**:
+An immutable reusable audio resource: an id, name, `data` (base64 WAV/MP3), `mimeType` (`audio/wav`, `audio/mpeg`, …), and `metadata {duration, sampleRate, channels, waveformPeaks?}`. It is the binary unit — never mutated after creation. Stored as an `EmbeddedAsset` in `Project.embeddedAssets` / `LessonJSON.library.assets` (filtered by `audio/*` mimeType) and in backend SQLite `asset_definitions` with `category='audio'` when present. Duration/peaks are cached so thumbnails don't require decoding on every open.
+_Avoid_: Audio file, sound asset (ambiguous vs AudioClip)
+
+**AudioClip**:
+The placement of an AudioAsset on a Slide's timeline: `{id, assetId, trackId, timelineStart, sourceStart, sourceEnd, volume, muted, fadeIn, fadeOut, playbackRate}`. `trackId` is the fixed `AudioTrack` enum (`voice` | `sfx` | `music`); `timelineStart` is seconds within the Slide; `sourceStart/sourceEnd` trim the asset's bytes; `volume` ∈ [0,1]; `playbackRate` (default 1) is a non-destructive speed flag — time-stretch is derived via server FFmpeg RubberBand at export, never by rewriting the asset. Clips are stored flat as `slide.audio.clips[]` (not nested per-track).
+_Avoid_: Audio region, audio block
+
+**AudioTrack**:
+One of three fixed lanes a Slide owns: Voice, SFX, or Music. Not a dynamic entity — the `AudioTrackId` enum enumerates the only legal values for `AudioClip.trackId`. One lane each; no add/remove track commands. Export mixes the three lanes deterministically.
+_Avoid_: Channel, bus, lane (dynamic)
+
+**Prompter**:
+The per-Slide teleprompter document: `Prompter { parts: PrompterPart[] }` — an ordered list owned by the Slide, stored as `slide.prompter`. Each part maps a text span to time (`startTime`, `endTime`, `duration`) and lies on the same horizontal time axis as audio clips. Empty prompter → `parts: []`.
+_Avoid_: Script, narrator script
+
+**PrompterPart**:
+One contiguous textual unit inside a Prompter: `{id, text, startTime, endTime, duration, audioClipId?, audioAssetId?, promptId?, status?}`. v1 cardinality is 0..1 AudioClip per part (linked via `audioClipId`); the part's text maps to that clip's utterance. Future word-level replacement may split a part into multiple `AudioSegment`s — reserved, not modeled in v1. Editing a part's duration with “shift downstream” atomically shifts later parts and clips in one Slide command.
+_Avoid_: Sentence chip (UI term), cue
+
+**AudioSegment** _(reserved for future)_:
+A future subdivision of a PrompterPart's utterance — e.g. `[recorded][TTS][recorded]` for arbitrary word replacement. v1 does not introduce this entity; the name is reserved so later work can add `PrompterPart 1—* AudioSegment 1—1 AudioClip` without renaming.
+_Avoid_: Using this term for v1 clips
+
+**Voice Prompt** (also **TTS Voice Prompt**):
+A reusable text preset for local TTS generation: `{id, title, instruction, language?, voice?, params JSON}`. Persisted server-side in SQLite `voice_prompts` (CRUD at `/api/voice-prompts` on `localhost:8000`), shared across all Slides — not stored in `.lesson` and not localStorage.
+
+**TTSProvider**:
+The frontend abstraction over local speech synthesis: `interface TTSProvider { generate(req: {text, promptId?, language?, voice?, instruction?}): Promise<AudioAsset> }`. Concrete implementation `TtsApi` calls `POST /api/tts/generate` (→ `audio/wav` bytes) via `ApiClient.postForWav`; backend owns the model singleton (Qwen3-TTS 0.6B CustomVoice via MLX, Apache 2.0) and serializes inference. Swapping providers = swapping backend impl behind the same endpoint.
+
 ### Undo & history
 
 **Undo Stack**:
