@@ -303,3 +303,18 @@ export type {
   SplitIntoMorphemesInverse,
   SplitIntoMorphemesParameters,
 } from './splitIntoMorphemesCommand'
+export { CreatePrompterPartCommand } from './createPrompterPartCommand'
+export type {
+  CreatePrompterPartInverse,
+  CreatePrompterPartParameters,
+} from './createPrompterPartCommand'
+export { UpdatePrompterPartCommand } from './updatePrompterPartCommand'
+export type {
+  UpdatePrompterPartInverse,
+  UpdatePrompterPartParameters,
+} from './updatePrompterPartCommand'
+export { CreateAudioAssetCommand } from './createAudioAssetCommand'
+export type {
+  CreateAudioAssetInverse,
+  CreateAudioAssetParameters,
+} from './createAudioAssetCommand'

@@ -144,6 +144,40 @@ export type SlideAnimationJSON = {
   readonly nodes: readonly NodeAnimationJSON[]
 }
 
+export type PrompterPartJSON = {
+  readonly id: string
+  readonly text: string
+  readonly startTime: number
+  readonly endTime: number
+  readonly duration: number
+  readonly audioClipId?: string
+  readonly audioAssetId?: string
+  readonly promptId?: string
+  readonly status?: string
+}
+
+export type PrompterJSON = {
+  readonly parts: readonly PrompterPartJSON[]
+}
+
+export type AudioClipJSON = {
+  readonly id: string
+  readonly assetId: string
+  readonly trackId: string
+  readonly timelineStart: number
+  readonly sourceStart: number
+  readonly sourceEnd: number
+  readonly volume: number
+  readonly muted: boolean
+  readonly fadeIn?: number
+  readonly fadeOut?: number
+  readonly playbackRate: number
+}
+
+export type SlideAudioJSON = {
+  readonly clips: readonly AudioClipJSON[]
+}
+
 export type SlideJSON = {
   readonly id: string
   readonly name: string
@@ -151,6 +185,8 @@ export type SlideJSON = {
   readonly scene: SceneJSON
   readonly animation?: SlideAnimationJSON
   readonly fullscreenShader?: FullscreenShaderJSON
+  readonly prompter?: PrompterJSON
+  readonly audio?: SlideAudioJSON
 }
 
 export type LessonProjectJSON = {

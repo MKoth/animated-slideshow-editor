@@ -98,6 +98,10 @@ export class SlideManager {
             overrides: { ...source.fullscreenShader.overrides },
           }
         : null,
+      source.prompter
+        ? { parts: source.prompter.parts.map((part) => ({ ...part })) }
+        : null,
+      { clips: source.audio.clips.map((clip) => ({ ...clip })) },
     )
     project.slides.splice(project.slides.indexOf(source) + 1, 0, copy)
     this.#bus.emit({ type: 'SlideDuplicated', slideId: copy.id })

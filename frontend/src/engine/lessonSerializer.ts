@@ -24,6 +24,8 @@ import {
   validateKeyframeList,
   validateMaterial,
 } from './lessonValidation'
+import { validateAudioClipJSON, audioClipFromJSON } from './audioClip'
+import { validatePrompterJSON, prompterFromJSON } from './prompter'
 import type { MaterialParameterKindOf } from './nodeAnimation'
 import { DEFAULT_MATERIAL_DEFINITION_ID } from './materialInstance'
 import { DEFAULT_MATERIAL_PARAMETERS } from './materialResolution'
@@ -295,6 +297,25 @@ function validateSlide(
     nodeById,
     keyframeIds,
   )
+
+  if (slideJson.prompter !== undefined) {
+    validatePrompterJSON(errors, slideJson.prompter, String(slideJson.id))
+  }
+  if (slideJson.audio !== undefined) {
+    if (!isRecord(slideJson.audio) || !Array.isArray(slideJson.audio.clips)) {
+      errors.push(`Slide "${String(slideJson.id)}" audio.clips must be an array`)
+    } else {
+      const clipIds = new Set<string>()
+      for (let i = 0; i < slideJson.audio.clips.length; i++) {
+        const clip = slideJson.audio.clips[i] as unknown
+        validateAudioClipJSON(errors, clip, `Slide "${String(slideJson.id)}" audio.clips[${i}]`)
+        if (isRecord(clip) && typeof clip.id === 'string' && clip.id !== '') {
+          if (clipIds.has(clip.id)) errors.push(`Duplicate audio clip id: ${clip.id}`)
+          else clipIds.add(clip.id)
+        }
+      }
+    }
+  }
 }
 
 function validateNode(errors: string[], nodeJson: unknown, nodeIds: Set<string>): void {
@@ -631,6 +652,9 @@ function buildSlideFromJSON(json: SlideJSON, parameterKindOf: MaterialParameterK
     (nodeId) => scene.getNode(nodeId),
     parameterKindOf,
   )
+  const prompter = json.prompter !== undefined ? prompterFromJSON(json.prompter) : null
+  const audioClips =
+    json.audio?.clips !== undefined ? json.audio.clips.map((clipJson) => audioClipFromJSON(clipJson)) : []
   return new Slide(
     requireString(json.id, 'Slide id'),
     requireString(json.name, 'Slide name'),
@@ -643,6 +667,8 @@ function buildSlideFromJSON(json: SlideJSON, parameterKindOf: MaterialParameterK
           json.fullscreenShader,
           `Slide "${String(json.id)}" fullscreenShader`,
         ),
+    prompter,
+    { clips: audioClips },
   )
 }
 

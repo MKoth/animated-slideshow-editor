@@ -67,6 +67,8 @@ import type { MeshData } from './mesh'
 import { evaluateMeshDeformation } from './meshDeformationEvaluator'
 import type { DeformedMeshResult } from './meshDeformationEvaluator'
 import type { WorldTransform } from './worldTransform'
+import { createAudioClip } from './audioClip'
+import type { AudioClip, AudioTrackId } from './audioClip'
 
 const DEFAULT_MATERIAL_KINDS: Readonly<Record<string, string>> = Object.fromEntries(
   DEFAULT_MATERIAL_PARAMETERS.map((parameter) => [parameter.key, parameter.kind]),
@@ -215,6 +217,120 @@ export class Engine {
 
   clearFullscreenUniform(slideId: string, uniform: string): void {
     this.#slides.clearFullscreenUniform(slideId, uniform)
+  }
+
+  // --- Audio & Prompter ---
+
+  createPrompterPart(
+    slideId: string,
+    input: { id: string; text: string; duration: number; insertIndex?: number },
+  ): void {
+    const slide = this.getSlide(slideId)
+    if (!slide.prompter) {
+      slide.prompter = { parts: [] }
+    }
+    const insertIndex = input.insertIndex ?? slide.prompter.parts.length
+    const previous = slide.prompter.parts
+    const startTime = previous.slice(0, insertIndex).reduce((sum, part) => sum + part.duration, 0)
+    const newPart = {
+      id: input.id,
+      text: input.text,
+      startTime,
+      endTime: startTime + input.duration,
+      duration: input.duration,
+    }
+    slide.prompter.parts.splice(insertIndex, 0, newPart)
+    // Reflow downstream parts
+    let cursor = 0
+    for (const part of slide.prompter.parts) {
+      part.startTime = cursor
+      part.endTime = cursor + part.duration
+      cursor = part.endTime
+    }
+    this.#bus.emit({ type: 'PrompterChanged', slideId } as unknown as import('./events').EngineEvent)
+  }
+
+  updatePrompterPart(
+    slideId: string,
+    partId: string,
+    patch: { text?: string; duration?: number; shiftDownstream?: boolean },
+  ): { slideId: string; partId: string; oldText: string; oldDuration: number; oldStartTime: number; oldEndTime: number; shiftedParts: { id: string; oldStartTime: number; oldEndTime: number }[]; shiftedClips: { id: string; oldTimelineStart: number }[] } {
+    const slide = this.getSlide(slideId)
+    if (!slide.prompter) throw new Error(`Slide "${slideId}" has no prompter`)
+    const index = slide.prompter.parts.findIndex((part) => part.id === partId)
+    if (index === -1) throw new Error(`PrompterPart not found: ${partId}`)
+    const part = slide.prompter.parts[index]
+    const oldText = part.text
+    const oldDuration = part.duration
+    const oldStartTime = part.startTime
+    const oldEndTime = part.endTime
+    const shiftedParts: { id: string; oldStartTime: number; oldEndTime: number }[] = []
+    const shiftedClips: { id: string; oldTimelineStart: number }[] = []
+    if (patch.text !== undefined) part.text = patch.text
+    if (patch.duration !== undefined && patch.duration !== part.duration) {
+      const delta = patch.duration - part.duration
+      part.duration = patch.duration
+      part.endTime = part.startTime + part.duration
+      if (patch.shiftDownstream) {
+        for (let i = index + 1; i < slide.prompter.parts.length; i++) {
+          const downstream = slide.prompter.parts[i]
+          shiftedParts.push({ id: downstream.id, oldStartTime: downstream.startTime, oldEndTime: downstream.endTime })
+          downstream.startTime += delta
+          downstream.endTime += delta
+        }
+        for (const clip of slide.audio.clips) {
+          if (clip.timelineStart > oldEndTime - 1e-6) {
+            shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
+            clip.timelineStart += delta
+          }
+        }
+      } else {
+        // Reflow gap-free without shifting extra: recompute downstream startTimes as prefix sum
+        let cursor = 0
+        for (const entry of slide.prompter.parts) {
+          entry.startTime = cursor
+          entry.endTime = cursor + entry.duration
+          cursor = entry.endTime
+        }
+      }
+    }
+    this.#bus.emit({ type: 'PrompterChanged', slideId } as unknown as import('./events').EngineEvent)
+    return { slideId, partId, oldText, oldDuration, oldStartTime, oldEndTime, shiftedParts, shiftedClips }
+  }
+
+  deletePrompterPart(slideId: string, partId: string): void {
+    const slide = this.getSlide(slideId)
+    if (!slide.prompter) throw new Error(`Slide "${slideId}" has no prompter`)
+    const index = slide.prompter.parts.findIndex((part) => part.id === partId)
+    if (index === -1) throw new Error(`PrompterPart not found: ${partId}`)
+    slide.prompter.parts.splice(index, 1)
+    let cursor = 0
+    for (const entry of slide.prompter.parts) {
+      entry.startTime = cursor
+      entry.endTime = cursor + entry.duration
+      cursor = entry.endTime
+    }
+    this.#bus.emit({ type: 'PrompterChanged', slideId } as unknown as import('./events').EngineEvent)
+  }
+
+  createAudioClip(
+    slideId: string,
+    input: { id?: string; assetId: string; trackId: AudioTrackId; timelineStart: number; sourceStart?: number; sourceEnd: number; volume?: number; muted?: boolean; playbackRate?: number },
+  ): AudioClip {
+    const slide = this.getSlide(slideId)
+    const clip = createAudioClip(input)
+    slide.audio.clips.push(clip)
+    this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    return clip
+  }
+
+  deleteAudioClip(slideId: string, clipId: string): AudioClip {
+    const slide = this.getSlide(slideId)
+    const index = slide.audio.clips.findIndex((clip) => clip.id === clipId)
+    if (index === -1) throw new Error(`AudioClip not found: ${clipId}`)
+    const [removed] = slide.audio.clips.splice(index, 1)
+    this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    return removed
   }
 
   getActiveSlide(): Slide | null {

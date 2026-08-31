@@ -301,6 +301,16 @@ export interface TextChanged {
   readonly nodeId: string
 }
 
+export interface PrompterChanged {
+  readonly type: 'PrompterChanged'
+  readonly slideId: string
+}
+
+export interface AudioChanged {
+  readonly type: 'AudioChanged'
+  readonly slideId: string
+}
+
 export type EngineEvent =
   | ProjectCreated
   | ProjectLoaded
@@ -357,6 +367,8 @@ export type EngineEvent =
   | TableChanged
   | ChartChanged
   | TextChanged
+  | PrompterChanged
+  | AudioChanged
 
 export type EventListener = (event: EngineEvent) => void
 
