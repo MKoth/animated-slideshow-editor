@@ -9,6 +9,13 @@ import type { EmbeddedAsset } from '../../engine/embeddedAsset'
 import { EngineContext } from '../../app/engineContext'
 import { CreateAudioAssetCommand } from '../../engine/commands'
 import { useNotificationStore } from '../../stores/notificationStore'
+import { assetsApi } from '../../api'
+import { WaveformCanvas } from '../audio/WaveformCanvas'
+import {
+  bucketCountForDuration,
+  computePeaksFromAudioBuffer,
+  MAX_FRONTEND_DECODE_SECONDS,
+} from '../../audio/waveform'
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) {
@@ -50,6 +57,22 @@ function getWaveformPeaks(asset: EmbeddedAsset): number[] | null {
   if (Array.isArray(peaks) && peaks.length > 0 && peaks.every((p) => typeof p === 'number')) {
     return peaks as number[]
   }
+  return null
+}
+
+function getDefinitionWaveformPeaks(def: AssetDefinition): number[] | null {
+  const meta = def.metadata as Record<string, unknown> | undefined
+  if (!meta) return null
+  const peaks = meta.waveformPeaks
+  if (Array.isArray(peaks) && peaks.length > 0 && peaks.every((p) => typeof p === 'number')) {
+    return peaks as number[]
+  }
+  return null
+}
+
+function getDefinitionDuration(def: AssetDefinition): number | null {
+  const meta = def.metadata as Record<string, unknown> | undefined
+  if (meta && typeof meta.duration === 'number' && Number.isFinite(meta.duration)) return meta.duration as number
   return null
 }
 
@@ -95,21 +118,27 @@ function fileToBase64(file: File): Promise<string> {
   })
 }
 
-async function decodeAudioDuration(file: File): Promise<number | null> {
+async function decodeAudioMetadata(file: File): Promise<{ duration: number | null; sampleRate: number | null; channels: number | null; peaks: number[] | null }> {
   try {
     const arrayBuffer = await file.arrayBuffer()
-    // Try to use Web Audio API if available
-    const AudioContextCtor = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
+    const Ctor = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
       ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
-    if (!AudioContextCtor) return null
-    const ctx = new AudioContextCtor()
+    if (!Ctor) return { duration: null, sampleRate: null, channels: null, peaks: null }
+    const ctx = new Ctor()
     const buffer = await ctx.decodeAudioData(arrayBuffer.slice(0))
     const duration = buffer.duration
+    const sampleRate = buffer.sampleRate
+    const channels = buffer.numberOfChannels
     await ctx.close().catch(() => {})
-    if (Number.isFinite(duration) && duration > 0) return duration
-    return null
+    if (!Number.isFinite(duration) || duration <= 0) return { duration: null, sampleRate: null, channels: null, peaks: null }
+    let peaks: number[] | null = null
+    if (duration < MAX_FRONTEND_DECODE_SECONDS) {
+      const buckets = bucketCountForDuration(duration)
+      peaks = computePeaksFromAudioBuffer(buffer, buckets)
+    }
+    return { duration, sampleRate, channels, peaks }
   } catch {
-    return null
+    return { duration: null, sampleRate: null, channels: null, peaks: null }
   }
 }
 
@@ -226,16 +255,8 @@ function AudioAssetCell({ asset, view, onSelect }: AudioAssetCellProps) {
       data-asset-id={asset.id}
       data-mime={asset.mimeType}
     >
-      <div className={view === 'grid' ? 'asset-cell__thumb' : 'asset-row__thumb'} style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1a1a1a', borderRadius: 4 }}>
-        {peaks ? (
-          <div className="waveform" style={{ display: 'flex', alignItems: 'center', gap: 1, height: 24, width: '90%' }} aria-hidden="true">
-            {peaks.slice(0, 40).map((p, i) => (
-              <i key={i} style={{ display: 'block', flex: 1, background: '#7c5cff', borderRadius: 1, height: `${Math.max(2, Math.min(24, Math.abs(p) * 24))}px` }} />
-            ))}
-          </div>
-        ) : (
-          <span style={{ fontSize: 16 }} aria-hidden="true">♫</span>
-        )}
+      <div className={view === 'grid' ? 'asset-cell__thumb' : 'asset-row__thumb'} style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1a1a1a', borderRadius: 4, overflow: 'hidden' }}>
+        <WaveformCanvas peaks={peaks} width={view === 'grid' ? 120 : 160} height={24} color="#7c5cff" testId="waveform-canvas-embedded" />
         <span className="badge" style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 9, padding: '1px 4px', borderRadius: 3, fontFamily: 'monospace' }}>
           {badge}
         </span>
@@ -243,6 +264,85 @@ function AudioAssetCell({ asset, view, onSelect }: AudioAssetCellProps) {
       <span className={view === 'grid' ? 'asset-cell__name' : 'asset-row__name'}>{asset.name}</span>
       <span className={view === 'grid' ? 'asset-cell__category' : 'asset-row__category'}>
         {asset.mimeType} ♫
+      </span>
+    </button>
+  )
+}
+
+function BackendAudioCell({ definition, view, onSelect }: { definition: AssetDefinition; view: AssetView; onSelect: (id: string) => void }) {
+  const duration = getDefinitionDuration(definition)
+  const initialPeaks = getDefinitionWaveformPeaks(definition)
+  const [peaks, setPeaks] = useState<number[] | null>(initialPeaks)
+  const [quickPeaks, setQuickPeaks] = useState<number[] | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    // If already have canonical peaks from metadata, nothing to do (still fetch to ensure idempotent but keep cached)
+    if (initialPeaks && initialPeaks.length >= 800) {
+      // already canonical — no quick decode needed, but still ensure backend cache is warm
+      return
+    }
+    const doFetch = async () => {
+      try {
+        // For <30s: quick paint via fetch+decode before backend canonical
+        if (duration !== null && duration < MAX_FRONTEND_DECODE_SECONDS) {
+          try {
+            const resp = await fetch(definition.original_url)
+            if (resp.ok) {
+              const buf = await resp.arrayBuffer()
+              const Ctor = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
+                ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+              if (Ctor) {
+                const ctx = new Ctor()
+                const audioBuf = await ctx.decodeAudioData(buf)
+                const qp = computePeaksFromAudioBuffer(audioBuf, bucketCountForDuration(audioBuf.duration))
+                if (!cancelled) setQuickPeaks(qp)
+                await ctx.close().catch(() => {})
+              }
+            }
+          } catch { /* quick decode best-effort */ }
+        }
+        const data = await assetsApi.getPeaks(definition.id)
+        if (!cancelled && Array.isArray(data.peaks) && data.peaks.length >= 800) {
+          setPeaks(data.peaks)
+        } else if (!cancelled && quickPeaks) {
+          setPeaks(quickPeaks)
+        }
+      } catch { /* backend may be down */ }
+    }
+    void doFetch()
+    return () => { cancelled = true }
+  }, [definition.id, definition.original_url, duration, initialPeaks, quickPeaks])
+
+  const displayPeaks = peaks ?? quickPeaks
+  const badge = duration !== null ? formatDurationBadge(duration) : '--:--'
+
+  const handleDragStart = (event: React.DragEvent) => {
+    event.dataTransfer.effectAllowed = 'copy'
+    // Backend audio definitions also support AUDIO_ASSET_MIME for audio lanes; also set definition mime
+    event.dataTransfer.setData(AUDIO_ASSET_MIME, definition.id)
+    event.dataTransfer.setData(ASSET_DEFINITION_MIME, definition.id)
+    event.dataTransfer.setDragImage(event.currentTarget, 0, 0)
+  }
+
+  return (
+    <button
+      className={view === 'grid' ? 'asset-cell asset-cell--audio' : 'asset-row asset-row--audio'}
+      aria-label={`Select ${definition.name}`}
+      draggable
+      onClick={() => onSelect(definition.id)}
+      onDragStart={handleDragStart}
+      data-asset-id={definition.id}
+    >
+      <div className={view === 'grid' ? 'asset-cell__thumb' : 'asset-row__thumb'} style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1a1a1a', borderRadius: 4, overflow: 'hidden' }}>
+        <WaveformCanvas peaks={displayPeaks} width={view === 'grid' ? 120 : 160} height={24} color="#7c5cff" testId="waveform-canvas-backend" />
+        <span className="badge" style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 9, padding: '1px 4px', borderRadius: 3, fontFamily: 'monospace' }}>
+          {badge}
+        </span>
+      </div>
+      <span className={view === 'grid' ? 'asset-cell__name' : 'asset-row__name'}>{definition.name}</span>
+      <span className={view === 'grid' ? 'asset-cell__category' : 'asset-row__category'}>
+        {definition.category} ♫
       </span>
     </button>
   )
@@ -312,10 +412,13 @@ export function AssetsPanel() {
           try {
             const base64 = await fileToBase64(file)
             const mimeType = inferAudioMimeType(file)
-            const duration = await decodeAudioDuration(file)
+            const decoded = await decodeAudioMetadata(file)
             const name = file.name.replace(/\.[^/.]+$/, '') || file.name
             const metadata: Record<string, unknown> = {}
-            if (duration !== null) metadata.duration = duration
+            if (decoded.duration !== null) metadata.duration = decoded.duration
+            if (decoded.sampleRate !== null) metadata.sampleRate = decoded.sampleRate
+            if (decoded.channels !== null) metadata.channels = decoded.channels
+            if (decoded.peaks) metadata.waveformPeaks = decoded.peaks
             const result = engineDispatch!(new CreateAudioAssetCommand({ name, data: base64, mimeType, metadata }))
             if (!result.ok) {
               useNotificationStore.getState().notify(`${file.name}: ${result.error.message}`)
@@ -479,7 +582,11 @@ export function AssetsPanel() {
           <ul className={view === 'grid' ? 'asset-grid' : 'asset-list'}>
             {filteredDefinitions.map((definition) => (
               <li key={definition.id}>
-                <AssetCell definition={definition} view={view} onSelect={selectAsset} />
+                {isAudioDefinition(definition) ? (
+                  <BackendAudioCell definition={definition} view={view} onSelect={selectAsset} />
+                ) : (
+                  <AssetCell definition={definition} view={view} onSelect={selectAsset} />
+                )}
               </li>
             ))}
             {filteredEmbeddedAudio.map((asset) => (

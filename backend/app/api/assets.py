@@ -9,6 +9,7 @@ from app.assets.library import AssetLibrary, AssetNotFoundError
 from app.assets.pipeline import size_error_message
 from app.assets.schemas import (
     AssetDefinitionOut,
+    PeaksOut,
     UploadErrorOut,
     UploadResult,
     definition_to_schema,
@@ -79,6 +80,29 @@ def get_asset(request: Request, asset_id: str) -> AssetDefinitionOut:
     except AssetNotFoundError as exc:
         raise _asset_not_found(asset_id, exc) from exc
     return definition_to_schema(definition)
+
+
+@router.get("/assets/{asset_id}/peaks", response_model=PeaksOut)
+def get_asset_peaks(request: Request, asset_id: str) -> PeaksOut:
+    library: AssetLibrary = request.app.state.asset_library
+    try:
+        definition = library.get(asset_id)
+    except AssetNotFoundError as exc:
+        raise _asset_not_found(asset_id, exc) from exc
+    if definition.category != "audio":
+        raise HTTPException(status_code=404, detail=f"asset {asset_id} has no peaks (not audio)")
+    from app.assets.peaks import get_or_compute_peaks
+
+    storage = request.app.state.asset_importer._storage  # type: ignore[attr-defined]
+    database = request.app.state.database
+    payload = get_or_compute_peaks(definition, storage, database)
+    return PeaksOut(
+        peaks=payload["peaks"]  # type: ignore[arg-type]
+        ,
+        duration=payload["duration"] if isinstance(payload["duration"], (int, float)) else None,  # type: ignore[arg-type]
+        sampleRate=payload["sampleRate"] if isinstance(payload["sampleRate"], int) else None,  # type: ignore[arg-type]
+        channels=payload["channels"] if isinstance(payload["channels"], int) else None,  # type: ignore[arg-type]
+    )
 
 
 @router.delete("/assets/{asset_id}", status_code=204)

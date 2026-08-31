@@ -76,6 +76,19 @@ class AssetImporter:
         category = upload.category
         if inspected.extension.lower() in audio_extensions:
             category = "audio"
+        mime_map = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".webm": "audio/webm"}
+        mime_type = mime_map.get(inspected.extension.lower())
+        # Build initial audio metadata cache (duration/sampleRate/channels) if audio
+        asset_metadata: dict[str, object] | None = None
+        if inspected.extension.lower() in audio_extensions and mime_type:
+            try:
+                from app.assets.peaks import probe_audio_metadata  # local import to avoid cycle
+
+                meta = probe_audio_metadata(inspected.content, inspected.extension.lower())
+                # meta contains duration, sampleRate, channels
+                asset_metadata = dict(meta)
+            except Exception:
+                asset_metadata = None
         return AssetDefinition(
             id=definition_id,
             name=name,
@@ -88,4 +101,6 @@ class AssetImporter:
             aspect_ratio=round(inspected.width / inspected.height, 4) if inspected.height else 1.0,
             original_path=original_path,
             thumbnail_path=thumbnail_path,
+            mime_type=mime_type,
+            asset_metadata=asset_metadata,
         )

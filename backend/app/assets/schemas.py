@@ -37,6 +37,15 @@ class AssetDefinitionOut(BaseModel):
     anchors: list[Anchor]
     original_url: str
     thumbnail_url: str
+    mimeType: str | None = None
+    metadata: dict[str, object] | None = None
+
+
+class PeaksOut(BaseModel):
+    peaks: list[int]
+    duration: float | None = None
+    sampleRate: int | None = None
+    channels: int | None = None
 
 
 class UploadErrorOut(BaseModel):
@@ -76,4 +85,6 @@ def definition_to_schema(definition: AssetDefinition) -> AssetDefinitionOut:
         ],
         original_url=asset_url(definition.original_path),
         thumbnail_url=asset_url(definition.thumbnail_path),
+        mimeType=definition.mime_type,
+        metadata=definition.asset_metadata,
     )

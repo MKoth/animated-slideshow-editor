@@ -82,4 +82,15 @@ export class AssetsApi {
   async deleteAsset(assetId: string): Promise<void> {
     return this.client.delete(`/api/assets/${assetId}`)
   }
+
+  async getPeaks(assetId: string): Promise<PeaksResponse> {
+    return this.client.get<PeaksResponse>(`/api/assets/${assetId}/peaks`)
+  }
+}
+
+export interface PeaksResponse {
+  peaks: number[]
+  duration: number | null
+  sampleRate: number | null
+  channels: number | null
 }

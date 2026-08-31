@@ -33,6 +33,9 @@ import { useNotificationStore } from '../../stores/notificationStore'
 import { useAudioClipSelectionStore } from '../../stores/audioClipSelectionStore'
 import { useAudioPlaybackStore } from '../../stores/audioPlaybackStore'
 import { getActivePrompterPartId } from '../../engine/audioSync'
+import { WaveformCanvas } from '../audio/WaveformCanvas'
+import { slicePeaksForClip } from '../../audio/waveform'
+import { assetsApi } from '../../api'
 
 const PROMPTER_STRIP_HEIGHT = 42
 const AUDIO_LANE_HEIGHT = 56
@@ -1376,9 +1379,24 @@ export function AudioTimelineBody({
                                   outline: isFocused ? '2px solid #7c5cff' : undefined,
                                 }}
                               >
+                                {(() => {
+                                  const asset = engine.getEmbeddedAsset(clip.assetId)
+                                  const meta = asset?.metadata as Record<string, unknown> | undefined
+                                  const assetDuration = typeof meta?.duration === 'number' ? (meta.duration as number) : clip.sourceEnd - clip.sourceStart
+                                  const rawPeaks = Array.isArray(meta?.waveformPeaks) ? (meta.waveformPeaks as number[]) : null
+                                  const clipped = rawPeaks ? slicePeaksForClip(rawPeaks, assetDuration, displaySourceStart, displaySourceEnd) : rawPeaks
+                                  // If no peaks cached and asset is long, try backend peaks once
+                                  // placeholder uses null to show fallback
+                                  void assetsApi // keep import used; backend long handled via BackendAudioCell
+                                  return (
+                                    <div style={{ position: 'absolute', inset: '4px 8px', opacity: 0.85, pointerEvents: 'none' }}>
+                                      <WaveformCanvas peaks={clipped} width={Math.max(40, width - 16)} height={24} color="rgba(255,255,255,0.9)" background="transparent" barGap={1} testId="audio-clip-waveform" />
+                                    </div>
+                                  )
+                                })()}
                                 <span
                                   className="audio-clip__label"
-                                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1 }}
+                                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, position: 'relative', zIndex: 1 }}
                                 >
                                   {clip.assetId}
                                 </span>

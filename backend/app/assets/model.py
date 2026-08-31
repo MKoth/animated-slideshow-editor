@@ -39,3 +39,7 @@ class AssetDefinition(Base):
     anchors: Mapped[list[dict[str, object]]] = mapped_column(JSON, nullable=False, default=list)
     original_path: Mapped[str] = mapped_column(String(255), nullable=False)
     thumbnail_path: Mapped[str] = mapped_column(String(255), nullable=False)
+    mime_type: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
+    asset_metadata: Mapped[dict[str, object] | None] = mapped_column(
+        "metadata", JSON, nullable=True, default=None
+    )
