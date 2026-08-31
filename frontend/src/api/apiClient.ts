@@ -63,6 +63,16 @@ export class ApiClient {
     await this.request(path, { method: 'DELETE' })
   }
 
+  async postForWav(path: string, body: string): Promise<Uint8Array> {
+    const response = await this.request(path, {
+      method: 'POST',
+      body,
+      headers: { Accept: 'audio/wav', 'Content-Type': 'application/json' },
+    })
+    const buffer = await response.arrayBuffer()
+    return new Uint8Array(buffer)
+  }
+
   private async request(path: string, init: RequestInit): Promise<Response> {
     let response: Response
     try {

@@ -6,6 +6,7 @@ import type { AudioTrackId } from '../audioClip'
 import { newAudioClipId } from '../audioClip'
 
 export interface CreateAudioClipParameters {
+  readonly id?: string
   readonly slideId: string
   readonly assetId: string
   readonly trackId: AudioTrackId
@@ -27,6 +28,7 @@ export interface CreateAudioClipInverse {
 export class CreateAudioClipCommand implements Command<CreateAudioClipInverse> {
   readonly type = 'CreateAudioClip'
   readonly parameters: Readonly<Record<string, unknown>>
+  readonly #id: string | undefined
   readonly #slideId: string
   readonly #assetId: string
   readonly #trackId: AudioTrackId
@@ -40,6 +42,7 @@ export class CreateAudioClipCommand implements Command<CreateAudioClipInverse> {
   readonly #playbackRate: number
 
   constructor(input: CreateAudioClipParameters) {
+    this.#id = input.id
     this.#slideId = input.slideId
     this.#assetId = input.assetId
     this.#trackId = requireAudioTrackId(input.trackId, 'AudioClip trackId')
@@ -52,6 +55,7 @@ export class CreateAudioClipCommand implements Command<CreateAudioClipInverse> {
     this.#fadeOut = input.fadeOut
     this.#playbackRate = input.playbackRate ?? 1
     this.parameters = {
+      ...(input.id ? { id: input.id } : {}),
       slideId: input.slideId,
       assetId: input.assetId,
       trackId: this.#trackId,
@@ -101,7 +105,7 @@ export class CreateAudioClipCommand implements Command<CreateAudioClipInverse> {
 
   execute(engine: Engine): CreateAudioClipInverse {
     const clip = engine.createAudioClip(this.#slideId, {
-      id: newAudioClipId(),
+      id: this.#id ?? newAudioClipId(),
       assetId: this.#assetId,
       trackId: this.#trackId,
       timelineStart: this.#timelineStart,

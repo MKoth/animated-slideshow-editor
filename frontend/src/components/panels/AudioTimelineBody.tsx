@@ -41,6 +41,7 @@ import { WaveformCanvas } from '../audio/WaveformCanvas'
 import { slicePeaksForClip } from '../../audio/waveform'
 import { assetsApi } from '../../api'
 import { RecordModal } from '../audio/RecordModal'
+import { TtsModal } from '../audio/TtsModal'
 import { getPrompterRecordingShortcut } from '../../engine/prompter'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { captureAudioSnapshot } from '../../app/assetSnapshot'
@@ -1106,6 +1107,8 @@ export function AudioTimelineBody({
   const overlappingIds = getOverlappingClipIds(clips)
   const [recordPartId, setRecordPartId] = useState<string | null>(null)
   const recordPart = useMemo(() => prompterParts.find((p) => p.id === recordPartId) ?? null, [prompterParts, recordPartId])
+  const [ttsPartId, setTtsPartId] = useState<string | null>(null)
+  const ttsPart = useMemo(() => prompterParts.find((p) => p.id === ttsPartId) ?? null, [prompterParts, ttsPartId])
   const [showImport, setShowImport] = useState(false)
   const [importText, setImportText] = useState('Hello, world')
 
@@ -1432,6 +1435,31 @@ export function AudioTimelineBody({
                               }}
                             >
                               ● Rec
+                            </button>
+                            <button
+                              data-testid={`tts-btn-${part.id}`}
+                              aria-label={`TTS ${part.text}`}
+                              onPointerDown={(e) => {
+                                e.stopPropagation()
+                              }}
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                setFocusedId(part.id)
+                                setTtsPartId(part.id)
+                              }}
+                              style={{
+                                marginLeft: 2,
+                                padding: '2px 6px',
+                                fontSize: 9,
+                                borderRadius: 8,
+                                border: '1px solid #2e9a6a',
+                                background: '#2e9a6a',
+                                color: '#fff',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              TTS
                             </button>
                             <div
                               data-testid="prompter-handle-left"
@@ -1833,6 +1861,16 @@ export function AudioTimelineBody({
           partStartTime={recordPart.startTime}
           plannedDuration={recordPart.duration}
           onClose={() => setRecordPartId(null)}
+        />
+      )}
+      {ttsPart && (
+        <TtsModal
+          slideId={slide.id}
+          partId={ttsPart.id}
+          partText={ttsPart.text}
+          partStartTime={ttsPart.startTime}
+          plannedDuration={ttsPart.duration}
+          onClose={() => setTtsPartId(null)}
         />
       )}
       {showImport && (

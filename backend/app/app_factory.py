@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.api import assets, audio, clips, health, materials, ping, projects, shaders
+from app.api import assets, audio, clips, health, materials, ping, projects, shaders, tts, voice_prompts
 from app.assets.importer import AssetImporter
 from app.assets.library import AssetLibrary
 from app.assets.pipeline import ImagePipeline
@@ -14,6 +14,7 @@ from app.logging import RequestLoggingMiddleware
 from app.materials.library import MaterialLibrary, now_utc
 from app.projects.library import ProjectLibrary
 from app.shaders.library import ShaderLibrary
+from app.voice_prompts.library import VoicePromptLibrary
 
 
 class AppFactory:
@@ -45,6 +46,7 @@ class AppFactory:
         clip_library = ClipLibrary(database)
         clip_library.ensure_seeded(now_utc())
         app.state.clip_library = clip_library
+        app.state.voice_prompt_library = VoicePromptLibrary(database)
 
         app.add_middleware(RequestLoggingMiddleware)
         register_error_handlers(app)
@@ -56,6 +58,8 @@ class AppFactory:
         app.include_router(shaders.router, prefix="/api")
         app.include_router(projects.router, prefix="/api")
         app.include_router(clips.router, prefix="/api")
+        app.include_router(voice_prompts.router, prefix="/api")
+        app.include_router(tts.router, prefix="/api")
         app.mount(
             "/api/assets/originals",
             StaticFiles(directory=storage.originals_dir),

@@ -5,6 +5,7 @@ import { requireString } from '../guards'
 import { newId } from '../ids'
 
 export interface CreateAudioAssetParameters {
+  readonly id?: string
   readonly name: string
   readonly data: string
   readonly mimeType?: string
@@ -18,17 +19,25 @@ export interface CreateAudioAssetInverse {
 export class CreateAudioAssetCommand implements Command<CreateAudioAssetInverse> {
   readonly type = 'CreateAudioAsset'
   readonly parameters: Readonly<Record<string, unknown>>
+  readonly #id: string | undefined
   readonly #name: string
   readonly #data: string
   readonly #mimeType: string
   readonly #metadata: Readonly<Record<string, unknown>> | undefined
 
   constructor(input: CreateAudioAssetParameters) {
+    this.#id = input.id
     this.#name = input.name
     this.#data = input.data
     this.#mimeType = input.mimeType ?? 'audio/wav'
     this.#metadata = input.metadata
-    this.parameters = { name: input.name, data: input.data, mimeType: this.#mimeType, ...(input.metadata ? { metadata: input.metadata } : {}) }
+    this.parameters = {
+      ...(input.id ? { id: input.id } : {}),
+      name: input.name,
+      data: input.data,
+      mimeType: this.#mimeType,
+      ...(input.metadata ? { metadata: input.metadata } : {}),
+    }
   }
 
   validate(engine: Engine): void {
@@ -41,7 +50,7 @@ export class CreateAudioAssetCommand implements Command<CreateAudioAssetInverse>
 
   execute(engine: Engine): CreateAudioAssetInverse {
     const asset: EmbeddedAsset = {
-      id: newId('audio-asset'),
+      id: this.#id ?? newId('audio-asset'),
       name: this.#name,
       data: this.#data,
       mimeType: this.#mimeType,
