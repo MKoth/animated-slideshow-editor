@@ -191,12 +191,16 @@ One of three fixed lanes a Slide owns: Voice, SFX, or Music. Not a dynamic entit
 _Avoid_: Channel, bus, lane (dynamic)
 
 **Prompter**:
-The per-Slide teleprompter document: `Prompter { parts: PrompterPart[] }` — an ordered list owned by the Slide, stored as `slide.prompter`. Each part maps a text span to time (`startTime`, `endTime`, `duration`) and lies on the same horizontal time axis as audio clips. Empty prompter → `parts: []`.
+The per-Slide teleprompter document: `Prompter { parts: PrompterPart[] }` — an ordered, gap-free list owned by the Slide, stored as `slide.prompter`. Each part maps a text span to time (`startTime`, `endTime`, `duration`) and lies on the same horizontal time axis as audio clips. Array order equals time order (`parts[i].startTime === parts[i-1].endTime` gap-free by default; `reflowPrompter` recomputes `startTime` as prefix sum of `duration`s on any mutation). Import auto-splits on `prompter.splitChars`; empty prompter → `parts: []`.
 _Avoid_: Script, narrator script
 
 **PrompterPart**:
-One contiguous textual unit inside a Prompter: `{id, text, startTime, endTime, duration, audioClipId?, audioAssetId?, promptId?, status?}`. v1 cardinality is 0..1 AudioClip per part (linked via `audioClipId`); the part's text maps to that clip's utterance. Future word-level replacement may split a part into multiple `AudioSegment`s — reserved, not modeled in v1. Editing a part's duration with “shift downstream” atomically shifts later parts and clips in one Slide command.
+One contiguous textual unit inside a Prompter: `{id, text, startTime, endTime, duration, audioClipId?, audioAssetId?, promptId?, status?}` with invariant `duration = endTime - startTime` (validator within 1e-6). v1 cardinality is 0..1 AudioClip per part (linked via `audioClipId`); the part's text maps to that clip's utterance. Text splitting uses `splitChars = [.,;:!?\\n—]` (project setting `prompter.splitChars`, `prompter.secondsPerCharacter` default 0.2); import one-pass splits, consecutive delimiters collapsed, no empty parts. Manual ops: Split Left/Right/Out are whitespace-aware cursor-on-word splits (preserving spacing, discarding whitespace-only pieces) and Unite/Merge concats with single space and `duration = sum`. Duration estimation `charCount * secondsPerCharacter` (including spaces); on Split durations redistribute proportionally to charCount, on Merge sum, on text edit auto-re-estimates only if no audio attached — otherwise `status='stale'` and duration frozen until resolved. Editing a part's duration with “shift downstream” atomically shifts later parts and clips in one Slide command (`UpdatePrompterPartWithShift`). Future word-level replacement may split a part into multiple `AudioSegment`s — reserved, not modeled in v1.
 _Avoid_: Sentence chip (UI term), cue
+
+**secondsPerCharacter**:
+The project-level duration estimator for PrompterParts: `estimatedDuration = charCount * secondsPerCharacter`, default 0.2s. Stored as `settings.prompter.secondsPerCharacter`; overridden per-part by explicit `duration` edits. Drives import and proportional split redistribution.
+_Avoid_: reading speed, chars-per-second
 
 **AudioSegment** _(reserved for future)_:
 A future subdivision of a PrompterPart's utterance — e.g. `[recorded][TTS][recorded]` for arbitrary word replacement. v1 does not introduce this entity; the name is reserved so later work can add `PrompterPart 1—* AudioSegment 1—1 AudioClip` without renaming.
