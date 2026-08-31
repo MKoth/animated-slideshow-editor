@@ -15,6 +15,7 @@ import { TimelineToolbar } from './TimelineToolbar'
 import { CurveEditorPanel } from './CurveEditorPanel'
 import { ClipEditBody } from './ClipEditBody'
 import { AudioTimelineBody } from './AudioTimelineBody'
+import { useSyncedAudio } from '../../audio/useSyncedAudio'
 
 function useViewportWidth(
   scrollerRef: RefObject<HTMLDivElement | null>,
@@ -80,6 +81,9 @@ export function TimelinePanel({ height }: { height: number }) {
     clipEditId,
     activeTab,
   ])
+  // Synced Web Audio playback — single truth playbackStore, AudioContext leader
+  useSyncedAudio()
+
   const materialDefinitions = engine.materialDefinitions
   const rows = scene ? timelineRows(scene, expandedNodeIds, materialDefinitions) : []
 

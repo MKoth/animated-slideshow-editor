@@ -94,6 +94,13 @@ import {
   splitImportText,
   splitPrompterPartText,
 } from './prompter'
+import {
+  getActivePrompterPartId as getActivePrompterPartIdSync,
+  getAudibleClips as getAudibleClipsSync,
+  getClippedPlaybackDuration as getClippedPlaybackDurationSync,
+  getClippedEnd as getClippedEndSync,
+  LOOKAHEAD_SECONDS as AUDIO_LOOKAHEAD_SECONDS,
+} from './audioSync'
 
 const DEFAULT_MATERIAL_KINDS: Readonly<Record<string, string>> = Object.fromEntries(
   DEFAULT_MATERIAL_PARAMETERS.map((parameter) => [parameter.key, parameter.kind]),
@@ -802,6 +809,37 @@ export class Engine {
     else delete (clip as { fadeOut?: number }).fadeOut
     this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
     return old
+  }
+
+  // --- Audio sync seam (Spec 15.06) — pure, testable without real AudioContext ---
+
+  getActivePrompterPartId(slideId: string, time: number): string | null {
+    const slide = this.getSlide(slideId)
+    const parts = slide.prompter?.parts ?? []
+    return getActivePrompterPartIdSync(parts, time)
+  }
+
+  getAudibleClipsAtTime(
+    slideId: string,
+    audioTime: number,
+    lookahead: number = AUDIO_LOOKAHEAD_SECONDS,
+  ): AudioClip[] {
+    const slide = this.getSlide(slideId)
+    return getAudibleClipsSync(slide.audio.clips, slide.duration, audioTime, lookahead)
+  }
+
+  getClippedPlaybackDurationForClip(slideId: string, clipId: string): number {
+    const slide = this.getSlide(slideId)
+    const clip = slide.audio.clips.find((c) => c.id === clipId)
+    if (!clip) throw new Error(`AudioClip not found: ${clipId}`)
+    return getClippedPlaybackDurationSync(clip, slide.duration)
+  }
+
+  getClippedEndForClip(slideId: string, clipId: string): number {
+    const slide = this.getSlide(slideId)
+    const clip = slide.audio.clips.find((c) => c.id === clipId)
+    if (!clip) throw new Error(`AudioClip not found: ${clipId}`)
+    return getClippedEndSync(clip, slide.duration)
   }
 
   getActiveSlide(): Slide | null {

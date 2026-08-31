@@ -32,6 +32,7 @@ import { ASSET_DEFINITION_MIME, AUDIO_ASSET_MIME } from '../../pixi/renderer/dro
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useAudioClipSelectionStore } from '../../stores/audioClipSelectionStore'
 import { useAudioPlaybackStore } from '../../stores/audioPlaybackStore'
+import { getActivePrompterPartId } from '../../engine/audioSync'
 
 const PROMPTER_STRIP_HEIGHT = 42
 const AUDIO_LANE_HEIGHT = 56
@@ -1118,68 +1119,79 @@ export function AudioTimelineBody({
                     No prompter parts
                   </span>
                 ) : (
-                  prompterParts.map((part, idx) => {
-                    const isFocused = focusedId === part.id
-                    const isSelected = false
-                    return (
-                      <div
-                        key={part.id}
-                        role="button"
-                        tabIndex={isFocused ? 0 : -1}
-                        data-testid="prompter-chip"
-                        data-prompter-id={part.id}
-                        data-start={part.startTime}
-                        data-end={part.endTime}
-                        aria-selected={isSelected}
-                        onFocus={() => setFocusedId(part.id)}
-                        onClick={(e) => handlePrompterPointerDownSelect(e, part.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-                            e.preventDefault()
-                            const next = orderedFocusableIds[idx + 1]
-                            if (next) {
-                              setFocusedId(next)
-                              document
-                                .querySelector<HTMLElement>(
-                                  `[data-clip-id="${next}"], [data-prompter-id="${next}"]`,
-                                )
-                                ?.focus()
+                  (() => {
+                    const activeId = getActivePrompterPartId(prompterParts, currentTime)
+                    return prompterParts.map((part, idx) => {
+                      const isFocused = focusedId === part.id
+                      const isActive = activeId === part.id
+                      const isSelected = false
+                      return (
+                        <div
+                          key={part.id}
+                          role="button"
+                          tabIndex={isFocused ? 0 : -1}
+                          data-testid="prompter-chip"
+                          data-prompter-id={part.id}
+                          data-start={part.startTime}
+                          data-end={part.endTime}
+                          aria-selected={isSelected}
+                          onFocus={() => setFocusedId(part.id)}
+                          onClick={(e) => handlePrompterPointerDownSelect(e, part.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                              e.preventDefault()
+                              const next = orderedFocusableIds[idx + 1]
+                              if (next) {
+                                setFocusedId(next)
+                                document
+                                  .querySelector<HTMLElement>(
+                                    `[data-clip-id="${next}"], [data-prompter-id="${next}"]`,
+                                  )
+                                  ?.focus()
+                              }
                             }
-                          }
-                          if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-                            e.preventDefault()
-                            const prev = orderedFocusableIds[idx - 1]
-                            if (prev) {
-                              setFocusedId(prev)
-                              document
-                                .querySelector<HTMLElement>(
-                                  `[data-clip-id="${prev}"], [data-prompter-id="${prev}"]`,
-                                )
-                                ?.focus()
+                            if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                              e.preventDefault()
+                              const prev = orderedFocusableIds[idx - 1]
+                              if (prev) {
+                                setFocusedId(prev)
+                                document
+                                  .querySelector<HTMLElement>(
+                                    `[data-clip-id="${prev}"], [data-prompter-id="${prev}"]`,
+                                  )
+                                  ?.focus()
+                              }
                             }
-                          }
-                        }}
-                        className={`audio-prompter-chip${part.status === 'stale' ? ' audio-prompter-chip--stale' : ''}${isFocused ? ' audio-prompter-chip--focused' : ''}`}
-                        style={{
-                          padding: '4px 8px',
-                          borderRadius: 12,
-                          background: isFocused ? 'var(--color-accent)' : 'var(--color-bg)',
-                          border: '1px solid var(--color-border)',
-                          fontSize: 11,
-                          whiteSpace: 'nowrap',
-                          outline: isFocused ? '2px solid #7c5cff' : undefined,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        {part.text}
-                        <small
-                          style={{ marginLeft: 4, fontSize: 9, color: 'var(--color-text-muted)' }}
+                          }}
+                          className={`audio-prompter-chip${part.status === 'stale' ? ' audio-prompter-chip--stale' : ''}${isFocused ? ' audio-prompter-chip--focused' : ''}${isActive ? ' audio-prompter-chip--active' : ''}`}
+                          data-active={isActive ? 'true' : 'false'}
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: 12,
+                            background: isActive
+                              ? 'rgba(124,92,255,0.25)'
+                              : isFocused
+                                ? 'var(--color-accent)'
+                                : 'var(--color-bg)',
+                            border: isActive
+                              ? '1px solid #7c5cff'
+                              : '1px solid var(--color-border)',
+                            fontSize: 11,
+                            whiteSpace: 'nowrap',
+                            outline: isFocused ? '2px solid #7c5cff' : undefined,
+                            cursor: 'pointer',
+                          }}
                         >
-                          {part.startTime.toFixed(1)}–{part.endTime.toFixed(1)}
-                        </small>
-                      </div>
-                    )
-                  })
+                          {part.text}
+                          <small
+                            style={{ marginLeft: 4, fontSize: 9, color: 'var(--color-text-muted)' }}
+                          >
+                            {part.startTime.toFixed(1)}–{part.endTime.toFixed(1)}
+                          </small>
+                        </div>
+                      )
+                    })
+                  })()
                 )}
               </div>
 
