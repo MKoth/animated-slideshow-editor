@@ -9,6 +9,7 @@ import type { Engine } from '../engine/internal'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
 import { noopPersistence } from './contextHarness'
 import { useMissingAssetsStore } from '../stores/missingAssetsStore'
+import { useParentingModeStore } from '../stores/parentingModeStore'
 import { useSelectionStore } from '../stores/selectionStore'
 
 function renderPanel(): { engine: Engine; undoStack: UndoStack } {
@@ -41,6 +42,7 @@ async function waitForTree(slideName: string) {
 beforeEach(() => {
   useSelectionStore.setState({ selectedIds: [] })
   useMissingAssetsStore.setState({ report: null, dialogVisible: false })
+  useParentingModeStore.getState().reset()
 })
 
 describe('ScenePanel', () => {
@@ -562,6 +564,7 @@ describe('ScenePanel drag & drop', () => {
   })
 
   it('reparents a node by dropping into the center of a row', async () => {
+    const user = userEvent.setup()
     const { engine, undoStack } = renderPanel()
     const slide = createProjectAndSlide(engine)
     engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy')
@@ -575,6 +578,10 @@ describe('ScenePanel drag & drop', () => {
 
     hoverZone(catRow, 'into', dataTransfer)
     dropOn(catRow, 'into', dataTransfer)
+
+    // Parenting mode dialog should appear; confirm with default Keep World
+    const dialog = await screen.findByRole('dialog', { name: 'Parenting mode' })
+    await user.click(within(dialog).getByRole('button', { name: 'Confirm' }))
 
     expect(slide.scene.root.children[1]?.name).toBe('Cat')
     expect(
@@ -606,6 +613,7 @@ describe('ScenePanel drag & drop', () => {
   })
 
   it('sends a node to the top level when dropped on the root row', async () => {
+    const user = userEvent.setup()
     const { engine } = renderPanel()
     const slide = createProjectAndSlide(engine)
     const group = engine.createNode(slide.scene.id, slide.scene.root.id, 'Group')
@@ -621,6 +629,9 @@ describe('ScenePanel drag & drop', () => {
 
     hoverZone(rootRow, 'into', dataTransfer)
     dropOn(rootRow, 'into', dataTransfer)
+
+    const dialog = await screen.findByRole('dialog', { name: 'Parenting mode' })
+    await user.click(within(dialog).getByRole('button', { name: 'Confirm' }))
 
     expect(
       slide.scene.root.children.filter((node) => !node.components.camera).map((node) => node.name),

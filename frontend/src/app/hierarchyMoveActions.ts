@@ -3,6 +3,7 @@ import type { SceneNode } from '../engine'
 import type { Command } from '../engine/commands'
 import { ReorderNodeCommand, ReparentNodeCommand, TransactionCommand } from '../engine/commands'
 import type { DispatchCommand } from '../engine/commands'
+import type { ParentingMode } from '../engine/commands/reparentNodeCommand'
 import { walkPreOrder } from '../engine/sceneNode'
 
 export interface HierarchyMoveInput {
@@ -16,6 +17,7 @@ export function applyHierarchyMove(
   engine: EnginePublic,
   dispatch: DispatchCommand,
   input: HierarchyMoveInput,
+  parentingMode: ParentingMode = 'keepWorld',
 ): void {
   const parent = safeGetNode(engine, input.parentId)
   if (!parent || parent.components.camera) {
@@ -25,7 +27,7 @@ export function applyHierarchyMove(
   if (group.length === 0) {
     return
   }
-  const commands = buildCommands(parent, group, input.index)
+  const commands = buildCommands(parent, group, input.index, parentingMode)
   if (commands.length === 0) {
     return
   }
@@ -94,6 +96,7 @@ function buildCommands(
   parent: SceneNode,
   group: readonly SceneNode[],
   index: number,
+  parentingMode: ParentingMode = 'keepWorld',
 ): Command<unknown>[] {
   const children = [...parent.children]
   const groupIds = new Set(group.map((node) => node.id))
@@ -125,9 +128,20 @@ function buildCommands(
         successor === undefined ? live.length : live.indexOf(successor),
         boundary,
       )
-      commands.push(
-        new ReparentNodeCommand({ nodeId: node.id, parentId: parent.id, index: target }),
-      )
+      const input: {
+        nodeId: string
+        parentId: string
+        index: number
+        parentingMode?: ParentingMode
+      } = {
+        nodeId: node.id,
+        parentId: parent.id,
+        index: target,
+      }
+      if (parentingMode !== 'keepWorld') {
+        input.parentingMode = parentingMode
+      }
+      commands.push(new ReparentNodeCommand(input))
       live.splice(target, 0, node)
     }
   }

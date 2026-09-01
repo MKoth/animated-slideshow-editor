@@ -10,6 +10,7 @@ import { reflowPrompter } from '../prompter'
 import { ClipDefinition } from '../clipDefinition'
 import { defaultTableComponent } from '../defaultTable'
 import { applyTableLayout } from '../tableLayoutApply'
+import { relativeTransform, transformsEqual, worldTransformOf } from '../worldTransform'
 
 export function applyUndo(
   engine: Engine,
@@ -1478,7 +1479,21 @@ export function applyRedo(
       return
     case 'ReparentNode': {
       const nodeId = params.nodeId as string
-      const newParentId = params.newParentId as string
+      const newParentId = (params.parentId as string) ?? (params.newParentId as string)
+      if (!newParentId) return
+      const parentingMode = (params.parentingMode as string) ?? 'keepWorld'
+      // Capture world before reparent for keepWorld calculation (after undo, node is at old location)
+      let oldWorld: import('../worldTransform').WorldTransform | null = null
+      let newParentWorld: import('../worldTransform').WorldTransform | null = null
+      if (parentingMode === 'keepWorld') {
+        try {
+          const scene = engine.getNodeScene(nodeId)
+          oldWorld = worldTransformOf(scene, nodeId)
+          newParentWorld = worldTransformOf(scene, newParentId)
+        } catch {
+          // fallback: will compute after reparent if needed
+        }
+      }
       engine.reparentNode(nodeId, newParentId)
       const idx = params.index as number | undefined
       if (idx !== undefined) {
@@ -1488,16 +1503,69 @@ export function applyRedo(
           // ignore
         }
       }
+      if (parentingMode === 'snapToTail') {
+        try {
+          const node = engine.getNode(nodeId)
+          const parent = node.parent
+          const parentLength = parent?.components.bone?.length
+          const snapTransform: Transform = {
+            x: parentLength ?? 0,
+            y: 0,
+            rotation: 0,
+            scaleX: 1,
+            scaleY: 1,
+            ...(node.transform.localPivot ? { localPivot: node.transform.localPivot } : {}),
+          }
+          if (!transformsEqual(snapTransform, node.transform)) {
+            engine.setTransform(nodeId, snapTransform)
+          }
+        } catch {
+          // ignore
+        }
+      } else if (oldWorld && newParentWorld) {
+        try {
+          const adjusted = relativeTransform(oldWorld, newParentWorld)
+          const current = engine.getNode(nodeId).transform
+          if (adjusted && !transformsEqual(adjusted, current)) {
+            engine.setTransform(nodeId, adjusted)
+          }
+        } catch {
+          // ignore
+        }
+      }
       return
     }
     case 'SetParent': {
       const nodeId = params.nodeId as string
       const parentId = params.parentId as string
+      const maintainWorld = (params.maintainWorldTransform as boolean) ?? true
+      let oldWorld: import('../worldTransform').WorldTransform | null = null
+      let newParentWorld: import('../worldTransform').WorldTransform | null = null
+      if (maintainWorld) {
+        try {
+          const scene = engine.getNodeScene(nodeId)
+          oldWorld = worldTransformOf(scene, nodeId)
+          newParentWorld = worldTransformOf(scene, parentId)
+        } catch {
+          // ignore
+        }
+      }
       engine.reparentNode(nodeId, parentId)
       const idx = params.index as number | undefined
       if (idx !== undefined) {
         try {
           engine.reorderNode(nodeId, idx)
+        } catch {
+          // ignore
+        }
+      }
+      if (maintainWorld && oldWorld && newParentWorld) {
+        try {
+          const adjusted = relativeTransform(oldWorld, newParentWorld)
+          const current = engine.getNode(nodeId).transform
+          if (adjusted && !transformsEqual(adjusted, current)) {
+            engine.setTransform(nodeId, adjusted)
+          }
         } catch {
           // ignore
         }

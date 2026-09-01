@@ -4,10 +4,13 @@ import { relativeTransform, transformsEqual, worldTransformOf } from '../worldTr
 import type { Command } from './command'
 import { wouldFormCycle } from '../sceneNode'
 
+export type ParentingMode = 'keepWorld' | 'snapToTail'
+
 export interface ReparentNodeParameters {
   readonly nodeId: string
   readonly parentId: string
   readonly index?: number
+  readonly parentingMode?: ParentingMode
 }
 
 export interface ReparentNodeInverse {
@@ -22,15 +25,18 @@ export class ReparentNodeCommand implements Command<ReparentNodeInverse> {
   readonly #nodeId: string
   readonly #parentId: string
   readonly #index: number | undefined
+  readonly #parentingMode: ParentingMode
 
   constructor(input: ReparentNodeParameters) {
     this.#nodeId = input.nodeId
     this.#parentId = input.parentId
     this.#index = input.index
+    this.#parentingMode = input.parentingMode ?? 'keepWorld'
     this.parameters = {
       nodeId: input.nodeId,
       parentId: input.parentId,
       ...(input.index !== undefined && { index: input.index }),
+      ...(input.parentingMode !== undefined ? { parentingMode: input.parentingMode } : {}),
     }
   }
 
@@ -74,19 +80,24 @@ export class ReparentNodeCommand implements Command<ReparentNodeInverse> {
         engine.reorderNode(this.#nodeId, this.#index)
       }
     }
-    const reparentedNode = engine.getNode(this.#nodeId)
-    const newParent = reparentedNode.parent
-    const isBoneToBone = reparentedNode.components.bone && newParent?.components.bone
-    if (isBoneToBone) {
-      const parentLength = newParent!.components.bone!.length
-      const boneTransform: Transform = {
-        x: parentLength,
+    if (this.#parentingMode === 'snapToTail') {
+      const reparentedNode = engine.getNode(this.#nodeId)
+      const newParent = reparentedNode.parent
+      const parentBoneLength = newParent?.components.bone?.length
+      const snapTransform: Transform = {
+        x: parentBoneLength ?? 0,
         y: 0,
         rotation: 0,
         scaleX: 1,
         scaleY: 1,
+        ...(reparentedNode.transform.localPivot
+          ? { localPivot: reparentedNode.transform.localPivot }
+          : {}),
       }
-      engine.setTransform(this.#nodeId, boneTransform)
+      const current = reparentedNode.transform
+      if (!transformsEqual(snapTransform, current)) {
+        engine.setTransform(this.#nodeId, snapTransform)
+      }
     } else if (oldWorld && newParentWorld) {
       const adjusted = relativeTransform(oldWorld, newParentWorld)
       const current = engine.getNode(this.#nodeId).transform
