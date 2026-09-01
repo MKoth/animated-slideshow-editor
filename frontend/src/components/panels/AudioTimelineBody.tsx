@@ -175,6 +175,7 @@ export function AudioTimelineBody({
   // Word-level selection for TTS replacement (Spec 15.10)
   const [wordSelection, setWordSelection] = useState<{ partId: string; start: number; end: number } | null>(null)
   const [wordLevelTts, setWordLevelTts] = useState<{ partId: string; start: number; end: number; text: string } | null>(null)
+  const [hoveredWord, setHoveredWord] = useState<{ partId: string; index: number } | null>(null)
 
   const resolveTrackFromEvent = (event: React.DragEvent): AudioTrackId | null => {
     const target = event.target as HTMLElement
@@ -655,10 +656,11 @@ export function AudioTimelineBody({
     window.addEventListener('pointerup', onUp)
   }
 
-  // Prompter move (reorder, gap-free) — like audio clip move
+  // Prompter move (reorder, gap-free) — like audio clip move, but block when hovering/selecting words
   const onPrompterMovePointerDown = (e: React.PointerEvent, partId: string) => {
     if (e.button !== 0) return
     const targetEl = e.target as HTMLElement
+    if (targetEl.closest('[data-testid="prompter-word"]')) return
     if (targetEl.closest('[data-prompter-handle]')) return
     if (targetEl.closest('button')) return
     if (targetEl.closest('[data-testid^="record-btn"]')) return
@@ -1438,12 +1440,20 @@ export function AudioTimelineBody({
                                   const wi = wIdx
                                   const isSelected = wordSelection?.partId === part.id && wi >= Math.min(wordSelection.start, wordSelection.end) && wi <= Math.max(wordSelection.start, wordSelection.end)
                                   const isSegment = part.segments?.some((s) => s.text.trim() === tok.trim())
+                                  const isHovered = hoveredWord?.partId === part.id && hoveredWord?.index === wi
+                                  const hoverBg = isHovered && !isSelected ? 'rgba(124,92,255,0.18)' : undefined
+                                  const hoverBorder = isHovered && !isSelected && !isSegment ? '1px solid rgba(124,92,255,0.45)' : undefined
                                   return (
                                     <span
                                       key={`w-${wi}`}
                                       data-testid="prompter-word"
                                       data-word-index={wi}
                                       data-part-id={part.id}
+                                      onPointerDown={(e) => {
+                                        e.stopPropagation()
+                                      }}
+                                      onMouseEnter={() => setHoveredWord({ partId: part.id, index: wi })}
+                                      onMouseLeave={() => setHoveredWord((prev) => (prev?.partId === part.id && prev?.index === wi ? null : prev))}
                                       onClick={(e) => {
                                         e.stopPropagation()
                                         e.preventDefault()
@@ -1460,12 +1470,13 @@ export function AudioTimelineBody({
                                         padding: '1px 2px',
                                         borderRadius: 4,
                                         cursor: 'text',
-                                        background: isSelected ? '#7c5cff' : isSegment ? 'rgba(46,154,106,0.25)' : 'transparent',
+                                        background: isSelected ? '#7c5cff' : isSegment ? 'rgba(46,154,106,0.25)' : hoverBg ?? 'transparent',
                                         color: isSelected ? '#fff' : undefined,
-                                        border: isSelected ? '1px solid #fff' : isSegment ? '1px solid #2e9a6a' : '1px solid transparent',
+                                        border: isSelected ? '1px solid #fff' : isSegment ? '1px solid #2e9a6a' : hoverBorder ?? '1px solid transparent',
                                         userSelect: 'none',
+                                        transition: 'background 120ms, border-color 120ms',
                                       }}
-                                      title={isSegment ? 'AudioSegment' : 'Click to select word, Shift+click to extend selection'}
+                                      title={isSegment ? 'AudioSegment — click to re-select word' : 'Hover to highlight, click to select word, Shift+click to extend, drag on chip background to move part'}
                                     >
                                       {tok}
                                     </span>
