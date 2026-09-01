@@ -8,10 +8,12 @@ import {
   readFullscreenShader,
 } from '../../app/fullscreenShaderInspectorActions'
 import { useShaderLibraryStore } from '../../stores/shaderLibraryStore'
+import { useUiStore } from '../../stores/uiStore'
 import type { ShaderCompileStatus } from '../../shaders/compiler'
 import { definitionNameOf, runCommand } from './sectionHelpers'
 import { UniformParameterField } from './uniformControls'
 import { overrideStateOf } from './uniforms'
+import { ShaderSourceViewer } from './ShaderSourceViewer'
 
 function compileLabel(status: ShaderCompileStatus | undefined): string {
   if (!status) {
@@ -46,6 +48,9 @@ export function FullscreenShaderInspectorSection({
   const currentStatus =
     currentDefinitionId !== null ? compileStatus[currentDefinitionId] : undefined
   const disabled = playing || unavailable
+  const selectShader = useShaderLibraryStore((state) => state.selectShader)
+  const setActiveSidebarTab = useUiStore((state) => state.setActiveSidebarTab)
+  const setActiveMaterialsSection = useUiStore((state) => state.setActiveMaterialsSection)
 
   const runSectionCommand = (action: () => { ok: boolean; error?: Error } | null) => {
     if (unavailable) {
@@ -58,6 +63,41 @@ export function FullscreenShaderInspectorSection({
     runSectionCommand(() =>
       assignFullscreenShader(engine, dispatch, slide.id, event.target.value || null),
     )
+  }
+
+  const shaderSource = (() => {
+    if (!currentDefinitionId) return null
+    const fromLibrary = definitions.find((s) => s.id === currentDefinitionId)?.source
+    if (typeof fromLibrary === 'string' && fromLibrary.length > 0) {
+      return fromLibrary
+    }
+    try {
+      const embedded = engine.getEmbeddedShader(currentDefinitionId)
+      if (embedded?.source) return embedded.source
+    } catch {
+      // ignore
+    }
+    return null
+  })()
+
+  const shaderName = (() => {
+    if (!currentDefinitionId) return null
+    const fromLibrary = definitions.find((s) => s.id === currentDefinitionId)?.name
+    if (fromLibrary) return fromLibrary
+    try {
+      const embedded = engine.getEmbeddedShader(currentDefinitionId)
+      if (embedded?.name) return embedded.name
+    } catch {
+      // ignore
+    }
+    return definitionNameOf(engine, currentDefinitionId, 'shader')
+  })()
+
+  const handleOpenInLibrary = () => {
+    if (!currentDefinitionId) return
+    selectShader(currentDefinitionId)
+    setActiveMaterialsSection('shaders')
+    setActiveSidebarTab('materials')
   }
 
   return (
@@ -124,6 +164,33 @@ export function FullscreenShaderInspectorSection({
           }
         />
       ))}
+      {currentDefinitionId && (
+        <div className="inspector-section__shader-source">
+          <div className="inspector-section__shader-header">
+            <span className="inspector-section__shader-label">
+              Shader: {shaderName ?? currentDefinitionId}
+            </span>
+            <button
+              className="inspector-section__link"
+              aria-label="Open shader in Library"
+              onClick={handleOpenInLibrary}
+            >
+              Open in Library
+            </button>
+          </div>
+          {shaderSource ? (
+            <ShaderSourceViewer
+              source={shaderSource}
+              ariaLabel="Fullscreen shader source"
+              title="Shader Source"
+            />
+          ) : (
+            <p className="inspector-section__notice">
+              Shader source unavailable — library not loaded or shader deleted.
+            </p>
+          )}
+        </div>
+      )}
     </section>
   )
 }

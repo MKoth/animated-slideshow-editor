@@ -1327,6 +1327,123 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+/* Shader Source Viewer (library + inspector) */
+
+.shader-source-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--color-bg);
+}
+
+.shader-source-viewer__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+}
+
+.shader-source-viewer__title {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.shader-source-viewer__copy {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.shader-source-viewer__feedback {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--color-success);
+}
+
+.shader-source-viewer__feedback--error {
+  color: var(--color-danger);
+}
+
+.shader-source-viewer__code {
+  margin: 0;
+  padding: 8px;
+  max-height: 220px;
+  overflow: auto;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+  word-wrap: normal;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.glsl-code .glsl-token.glsl-keyword {
+  color: #c678dd;
+}
+
+.glsl-code .glsl-token.glsl-type {
+  color: #61afef;
+}
+
+.glsl-code .glsl-token.glsl-builtin {
+  color: #e5c07b;
+}
+
+.glsl-code .glsl-token.glsl-comment {
+  color: #7c8a9a;
+  font-style: italic;
+}
+
+.glsl-code .glsl-token.glsl-preprocessor {
+  color: #e06c75;
+}
+
+.glsl-code .glsl-token.glsl-number {
+  color: #98c379;
+}
+
+.inspector-section__shader-source {
+  margin-top: 10px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 8px;
+}
+
+.inspector-section__shader-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.inspector-section__shader-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-section__link {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
 /* ------------------------------------------------------------------ */
 /* Scene hierarchy                                                     */
 /* ------------------------------------------------------------------ */

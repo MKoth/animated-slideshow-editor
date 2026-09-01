@@ -14,6 +14,7 @@ import type { ShaderReflection } from '../../shaders/reflection'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { useShaderLibraryStore } from '../../stores/shaderLibraryStore'
 import { UniformParameterField } from './uniformControls'
+import { ShaderSourceViewer } from './ShaderSourceViewer'
 
 function compileBadgeLabel(status: ShaderCompileStatus | undefined): string {
   if (!status) {
@@ -308,6 +309,8 @@ function ShaderPreviewPanel({ definition, status, reflection, onClose }: ShaderP
           <dd>{definition.is_builtin ? 'Built-in' : 'Imported'}</dd>
         </div>
       </dl>
+      <h4 className="shader-preview__subtitle">Shader Source</h4>
+      <ShaderSourceViewer source={definition.source} ariaLabel="Shader definition source" />
     </section>
   )
 }

@@ -17,10 +17,13 @@ import {
 import { commonValueOf, parseFiniteNumber } from '../../app/inspectorActions'
 import { materialParameterStateOf, materialEditAtPlayhead } from '../../app/keyframeActions'
 import { useMaterialLibraryStore } from '../../stores/materialLibraryStore'
+import { useShaderLibraryStore } from '../../stores/shaderLibraryStore'
+import { useUiStore } from '../../stores/uiStore'
 import { NumericField } from './inspectorFields'
 import { definitionNameOf, runCommand } from './sectionHelpers'
 import { OverrideAffordance, UniformParameterField } from './uniformControls'
 import { overrideStateOf } from './uniforms'
+import { ShaderSourceViewer } from './ShaderSourceViewer'
 
 function toKeyframeValue(value: unknown): KeyframeValue {
   if (Array.isArray(value)) {
@@ -119,6 +122,62 @@ export function MaterialInspectorSection({
 
   const firstReading = readings[0]
   const uniformParameters = firstReading?.uniforms ?? []
+
+  const shaderLibraryDefinitions = useShaderLibraryStore((state) => state.definitions)
+  const selectShader = useShaderLibraryStore((state) => state.selectShader)
+  const setActiveSidebarTab = useUiStore((state) => state.setActiveSidebarTab)
+  const setActiveMaterialsSection = useUiStore((state) => state.setActiveMaterialsSection)
+
+  let materialShaderId: string | null = null
+  if (currentDefinitionId !== null) {
+    try {
+      const matDef = engine.getMaterialDefinition(currentDefinitionId)
+      materialShaderId = matDef.shaderId
+    } catch {
+      // unknown material definition
+    }
+  }
+  const shaderSource = (() => {
+    if (!materialShaderId) {
+      return null
+    }
+    const fromLibrary = shaderLibraryDefinitions.find((s) => s.id === materialShaderId)?.source
+    if (typeof fromLibrary === 'string' && fromLibrary.length > 0) {
+      return fromLibrary
+    }
+    try {
+      const embedded = engine.getEmbeddedShader(materialShaderId)
+      if (embedded?.source) {
+        return embedded.source
+      }
+    } catch {
+      // ignore
+    }
+    return null
+  })()
+  const shaderName = (() => {
+    if (!materialShaderId) return null
+    const fromLibrary = shaderLibraryDefinitions.find((s) => s.id === materialShaderId)?.name
+    if (fromLibrary) return fromLibrary
+    try {
+      const embedded = engine.getEmbeddedShader(materialShaderId)
+      if (embedded?.name) return embedded.name
+    } catch {
+      // ignore
+    }
+    try {
+      return engine.getShaderDefinition(materialShaderId).name
+    } catch {
+      return materialShaderId
+    }
+  })()
+
+  const handleOpenInLibrary = () => {
+    if (!materialShaderId) return
+    selectShader(materialShaderId)
+    setActiveMaterialsSection('shaders')
+    setActiveSidebarTab('materials')
+  }
 
   return (
     <section className="inspector-section">
@@ -271,6 +330,29 @@ export function MaterialInspectorSection({
           />
         )
       })}
+      {materialShaderId && (
+        <div className="inspector-section__shader-source">
+          <div className="inspector-section__shader-header">
+            <span className="inspector-section__shader-label">
+              Shader: {shaderName ?? materialShaderId}
+            </span>
+            <button
+              className="inspector-section__link"
+              aria-label="Open shader in Library"
+              onClick={handleOpenInLibrary}
+            >
+              Open in Library
+            </button>
+          </div>
+          {shaderSource ? (
+            <ShaderSourceViewer source={shaderSource} ariaLabel="Material shader source" />
+          ) : (
+            <p className="inspector-section__notice">
+              Shader source unavailable — library not loaded or shader deleted.
+            </p>
+          )}
+        </div>
+      )}
     </section>
   )
 }

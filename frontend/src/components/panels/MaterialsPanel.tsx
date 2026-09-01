@@ -7,9 +7,8 @@ import { resolveMaterial } from '../../engine/materialResolution'
 import type { ShaderCompileStatus } from '../../shaders/compiler'
 import { useMaterialLibraryStore } from '../../stores/materialLibraryStore'
 import { useShaderLibraryStore } from '../../stores/shaderLibraryStore'
+import { useUiStore } from '../../stores/uiStore'
 import { ShadersPanel } from './ShadersPanel'
-
-type MaterialsSectionId = 'materials' | 'shaders'
 
 function effectiveTint(definition: MaterialDefinition): string {
   return resolveMaterial(definition.parameters, {}).tint
@@ -281,7 +280,8 @@ function MaterialsSection() {
 }
 
 export function MaterialsPanel() {
-  const [section, setSection] = useState<MaterialsSectionId>('materials')
+  const section = useUiStore((state) => state.activeMaterialsSection) ?? 'materials'
+  const setSection = useUiStore((state) => state.setActiveMaterialsSection)
 
   return (
     <div className="materials-panel">

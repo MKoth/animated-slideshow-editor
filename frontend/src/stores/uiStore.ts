@@ -12,12 +12,15 @@ import {
   type VisiblePanels,
 } from './uiPrefs'
 
+export type MaterialsSectionId = 'materials' | 'shaders'
+
 interface UiState {
   theme: Theme
   leftSidebarWidth: number
   inspectorWidth: number
   visiblePanels: VisiblePanels
   activeSidebarTab: SidebarTab
+  activeMaterialsSection: MaterialsSectionId
   gridSnap: boolean
   animationMode: boolean
   cameraAnimationMode: boolean
@@ -27,6 +30,7 @@ interface UiState {
   setInspectorWidth: (width: number) => void
   setVisiblePanel: (panel: keyof VisiblePanels, visible: boolean) => void
   setActiveSidebarTab: (tab: SidebarTab) => void
+  setActiveMaterialsSection: (section: MaterialsSectionId) => void
   setGridSnap: (enabled: boolean) => void
   toggleGridSnap: () => void
   setAnimationMode: (enabled: boolean) => void
@@ -65,6 +69,7 @@ export const useUiStore = create<UiState>()(
       inspectorWidth: DEFAULT_INSPECTOR_WIDTH,
       visiblePanels: { leftSidebar: true, inspector: true, timeline: true },
       activeSidebarTab: 'assets',
+      activeMaterialsSection: 'materials' as MaterialsSectionId,
       gridSnap: false,
       animationMode: false,
       cameraAnimationMode: false,
@@ -77,6 +82,7 @@ export const useUiStore = create<UiState>()(
       setVisiblePanel: (panel, visible) =>
         set((state) => ({ visiblePanels: { ...state.visiblePanels, [panel]: visible } })),
       setActiveSidebarTab: (tab) => set({ activeSidebarTab: tab }),
+      setActiveMaterialsSection: (section) => set({ activeMaterialsSection: section }),
       setGridSnap: (enabled) => set({ gridSnap: enabled }),
       toggleGridSnap: () => set((state) => ({ gridSnap: !state.gridSnap })),
       setAnimationMode: (enabled) => set((state) => withMode(state, 'animationMode', enabled)),
