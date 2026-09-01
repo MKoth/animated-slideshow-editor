@@ -12,6 +12,7 @@ import { BLOCKED_ANIMATED_MOVE_MESSAGE } from './animatedMove'
 import { cursorToWorld } from './screenToWorld'
 import type { ViewportTransform } from './worldGeometry'
 import type { IkOverlay } from './ikOverlay'
+import { evaluatedWorldTransformOf, worldTransformOf, relativeTransform } from '../../engine/worldTransform'
 
 export interface IkInteractionContext {
   readonly canvas: HTMLCanvasElement
@@ -192,25 +193,29 @@ export class IkInteraction {
       useNotificationStore.getState().notify(result.error.message)
     }
 
-    // If we have a ghost node, update its position and optionally create keyframes
+    // If we have a ghost node, update its position and optionally create keyframes.
+    // Ghosts are siblings of the chain root under the same parent (e.g. Rig Handle),
+    // so their local must be computed relative to parent world; setting local directly to
+    // world x,y would snap far away when parent is offset.
     if (kind === 'target') {
       if (chain.ghostNodeId) {
         const slide = this.#engine.getActiveSlide()
         if (slide) {
           const time = usePlaybackController.getState().getTime(slide.id)
+          const local = this.#worldToLocal(chain.ghostNodeId, x, y, time)
 
           if (animationMode) {
-            // In Animation Mode, create keyframes for positionX and positionY
+            // In Animation Mode, create keyframes for positionX and positionY (local values)
             const edits: TimedKeyframeEdit[] = [
               {
                 target: { kind: 'node', nodeId: chain.ghostNodeId, property: 'positionX' },
                 time,
-                value: x,
+                value: local.x,
               },
               {
                 target: { kind: 'node', nodeId: chain.ghostNodeId, property: 'positionY' },
                 time,
-                value: y,
+                value: local.y,
               },
             ]
             const commands = autoKeyCommands(this.#engine, edits)
@@ -221,8 +226,8 @@ export class IkInteraction {
               }
             }
           } else {
-            // In non-Animation Mode, just move the ghost node
-            this.#dispatch(new MoveNodeCommand({ nodeId: chain.ghostNodeId, x, y }))
+            // In non-Animation Mode, just move the ghost node (local)
+            this.#dispatch(new MoveNodeCommand({ nodeId: chain.ghostNodeId, x: local.x, y: local.y }))
           }
         }
       }
@@ -232,17 +237,18 @@ export class IkInteraction {
         const slide = this.#engine.getActiveSlide()
         if (slide) {
           const time = usePlaybackController.getState().getTime(slide.id)
+          const local = this.#worldToLocal(poleGhostId, x, y, time)
           if (animationMode) {
             const edits: TimedKeyframeEdit[] = [
               {
                 target: { kind: 'node', nodeId: poleGhostId, property: 'positionX' },
                 time,
-                value: x,
+                value: local.x,
               },
               {
                 target: { kind: 'node', nodeId: poleGhostId, property: 'positionY' },
                 time,
-                value: y,
+                value: local.y,
               },
             ]
             const commands = autoKeyCommands(this.#engine, edits)
@@ -253,13 +259,42 @@ export class IkInteraction {
               }
             }
           } else {
-            this.#dispatch(new MoveNodeCommand({ nodeId: poleGhostId, x, y }))
+            this.#dispatch(new MoveNodeCommand({ nodeId: poleGhostId, x: local.x, y: local.y }))
           }
         }
       }
     }
 
     this.#onIKChanged()
+  }
+
+  #worldToLocal(ghostId: string, worldX: number, worldY: number, time: number): { x: number; y: number } {
+    try {
+      const ghost = this.#engine.getNode(ghostId)
+      const parent = ghost.parent
+      if (!parent) {
+        return { x: worldX, y: worldY }
+      }
+      const slide = this.#engine.getActiveSlide()
+      if (!slide) {
+        return { x: worldX, y: worldY }
+      }
+      // Use evaluated world for parent if it has animation, otherwise static world
+      const parentWorld =
+        evaluatedWorldTransformOf(this.#engine, parent.id, time) ??
+        worldTransformOf(slide.scene, parent.id)
+      if (!parentWorld) {
+        return { x: worldX, y: worldY }
+      }
+      const world = { x: worldX, y: worldY, rotation: 0, scaleX: 1, scaleY: 1 } as import('../../engine/worldTransform').WorldTransform
+      const local = relativeTransform(world, parentWorld)
+      if (local) {
+        return { x: local.x, y: local.y }
+      }
+    } catch {
+      // fall through
+    }
+    return { x: worldX, y: worldY }
   }
 
   #isBlockedAnimatedTargetMove(): boolean {
