@@ -146,7 +146,11 @@ export function applyUndo(
                   const overrides = matJson.overrides as Record<string, unknown> | undefined
                   if (overrides) {
                     for (const [k, v] of Object.entries(overrides)) {
-                      engine.overrideMaterialParameter(nodeId, k, v as import('../materialInstance').MaterialOverrideValue)
+                      engine.overrideMaterialParameter(
+                        nodeId,
+                        k,
+                        v as import('../materialInstance').MaterialOverrideValue,
+                      )
                     }
                   }
                 } catch {
@@ -241,7 +245,8 @@ export function applyUndo(
     case 'SetSlideDuration': {
       const slideId = inv.slideId as string
       const oldDuration = inv.oldDuration as number
-      const clamped = inv.clampedKeyframes as readonly import('../slideAnimation').ClampedKeyframe[] | undefined
+      const clamped = inv.clampedKeyframes as
+        readonly import('../slideAnimation').ClampedKeyframe[] | undefined
       engine.setSlideDuration(slideId, oldDuration)
       // Restore clamped keyframes if any
       if (clamped && clamped.length > 0) {
@@ -251,8 +256,10 @@ export function applyUndo(
             // Use engine.addKeyframe with original snapshot? But need to restore exact time/ value
             // The clampedKeyframes are those that were beyond new duration and got excluded?
             // For simplicity, try to restore by adding back keyframe with original time/value
-            const target = (ck as unknown as Record<string, unknown>).target as import('../keyframeTarget').KeyframeTarget
-            const kf = (ck as unknown as Record<string, unknown>).keyframe as import('../keyframe').KeyframeSnapshot
+            const target = (ck as unknown as Record<string, unknown>)
+              .target as import('../keyframeTarget').KeyframeTarget
+            const kf = (ck as unknown as Record<string, unknown>)
+              .keyframe as import('../keyframe').KeyframeSnapshot
             if (target && kf) {
               engine.addKeyframe(target, kf.time, kf.value)
             }
@@ -271,7 +278,11 @@ export function applyUndo(
       } else {
         engine.setFullscreenShader(slideId, prev.shaderDefinitionId)
         for (const [u, v] of Object.entries(prev.overrides ?? {})) {
-          engine.overrideFullscreenUniform(slideId, u, v as import('../materialInstance').MaterialOverrideValue)
+          engine.overrideFullscreenUniform(
+            slideId,
+            u,
+            v as import('../materialInstance').MaterialOverrideValue,
+          )
         }
       }
       return
@@ -296,7 +307,11 @@ export function applyUndo(
       const prevOverrides = inv.previousOverrides as import('../materialInstance').MaterialOverrides
       engine.assignMaterial(nodeId, prevId)
       for (const [k, v] of Object.entries(prevOverrides)) {
-        engine.overrideMaterialParameter(nodeId, k, v as import('../materialInstance').MaterialOverrideValue)
+        engine.overrideMaterialParameter(
+          nodeId,
+          k,
+          v as import('../materialInstance').MaterialOverrideValue,
+        )
       }
       return
     }
@@ -372,7 +387,11 @@ export function applyUndo(
       try {
         const node = engine.getNode(originalNodeId)
         const text = node.components.text!
-        engine.setTextComponent(originalNodeId, { ...text, content: originalText, fontSize: originalFontSize })
+        engine.setTextComponent(originalNodeId, {
+          ...text,
+          content: originalText,
+          fontSize: originalFontSize,
+        })
         // Restore original transform
         const origTransform = inv.originalTransform as Transform
         if (origTransform) engine.setTransform(originalNodeId, origTransform)
@@ -395,7 +414,9 @@ export function applyUndo(
         engine.addKeyframe(target, kf.time, kf.value)
         // Try to restore id/interpolation/tangents via direct manipulation
         try {
-          const added = engine.getKeyframesOf(target).find((k) => k.time === kf.time && k.value === kf.value)
+          const added = engine
+            .getKeyframesOf(target)
+            .find((k) => k.time === kf.time && k.value === kf.value)
           if (added && added.id !== kf.keyframeId) {
             // Attempt to patch id via any
             ;(added as unknown as Record<string, unknown>).id = kf.keyframeId
@@ -411,25 +432,37 @@ export function applyUndo(
     case 'MoveKeyframes': {
       const target = inv.target as import('../keyframeTarget').KeyframeTarget
       const moves = inv.moves as readonly { keyframeId: string; oldTime: number }[]
-      engine.moveKeyframes(target, moves.map((m) => ({ keyframeId: m.keyframeId, newTime: m.oldTime })))
+      engine.moveKeyframes(
+        target,
+        moves.map((m) => ({ keyframeId: m.keyframeId, newTime: m.oldTime })),
+      )
       return
     }
     case 'ScaleKeyframes': {
       const target = inv.target as import('../keyframeTarget').KeyframeTarget
       const moves = inv.moves as readonly { keyframeId: string; oldTime: number }[]
-      engine.moveKeyframes(target, moves.map((m) => ({ keyframeId: m.keyframeId, newTime: m.oldTime })))
+      engine.moveKeyframes(
+        target,
+        moves.map((m) => ({ keyframeId: m.keyframeId, newTime: m.oldTime })),
+      )
       return
     }
     case 'PasteKeyframes': {
       const target = inv.target as import('../keyframeTarget').KeyframeTarget
       const keyframes = inv.keyframes as import('../keyframe').KeyframeSnapshot[]
-      engine.deleteKeyframes(target, keyframes.map((k) => k.keyframeId))
+      engine.deleteKeyframes(
+        target,
+        keyframes.map((k) => k.keyframeId),
+      )
       return
     }
     case 'DuplicateKeyframes': {
       const target = inv.target as import('../keyframeTarget').KeyframeTarget
       const keyframes = inv.keyframes as import('../keyframe').KeyframeSnapshot[]
-      engine.deleteKeyframes(target, keyframes.map((k) => k.keyframeId))
+      engine.deleteKeyframes(
+        target,
+        keyframes.map((k) => k.keyframeId),
+      )
       return
     }
     case 'SetKeyframeValue': {
@@ -520,7 +553,10 @@ export function applyUndo(
       const clipId = inv.clipId as string
       const channelDef = inv.channelDef as import('../clipDefinition').ClipChannelDef
       // Undo add = remove
-      engine.removeClipChannel(clipId, channelDef.property as import('../animation').AnimationProperty)
+      engine.removeClipChannel(
+        clipId,
+        channelDef.property as import('../animation').AnimationProperty,
+      )
       return
     }
     case 'RemoveClipChannel': {
@@ -533,53 +569,88 @@ export function applyUndo(
     case 'AddClipKeyframe': {
       const target = inv.target as import('../keyframeTarget').ClipChannelTarget
       const kf = inv.keyframe as import('../keyframe').KeyframeSnapshot
-      engine.deleteClipChannelKeyframes(target.clipId, target.channel as import('../animation').AnimationProperty, [kf.keyframeId])
+      engine.deleteClipChannelKeyframes(
+        target.clipId,
+        target.channel as import('../animation').AnimationProperty,
+        [kf.keyframeId],
+      )
       return
     }
     case 'DeleteClipKeyframes': {
       const target = inv.target as import('../keyframeTarget').ClipChannelTarget
       const keyframes = inv.keyframes as import('../keyframe').KeyframeSnapshot[]
       for (const kf of keyframes) {
-        engine.addClipChannelKeyframe(target.clipId, target.channel as import('../animation').AnimationProperty, kf.time, kf.value as number)
+        engine.addClipChannelKeyframe(
+          target.clipId,
+          target.channel as import('../animation').AnimationProperty,
+          kf.time,
+          kf.value as number,
+        )
       }
       return
     }
     case 'MoveClipKeyframes': {
       const target = inv.target as import('../keyframeTarget').ClipChannelTarget
       const moves = inv.moves as readonly { keyframeId: string; oldTime: number }[]
-      engine.moveClipChannelKeyframes(target.clipId, target.channel as import('../animation').AnimationProperty, moves.map((m) => ({ keyframeId: m.keyframeId, newTime: m.oldTime })))
+      engine.moveClipChannelKeyframes(
+        target.clipId,
+        target.channel as import('../animation').AnimationProperty,
+        moves.map((m) => ({ keyframeId: m.keyframeId, newTime: m.oldTime })),
+      )
       return
     }
     case 'ScaleClipKeyframes': {
       const target = inv.target as import('../keyframeTarget').ClipChannelTarget
       const moves = inv.moves as readonly { keyframeId: string; oldTime: number }[]
-      engine.moveClipChannelKeyframes(target.clipId, target.channel as import('../animation').AnimationProperty, moves.map((m) => ({ keyframeId: m.keyframeId, newTime: m.oldTime })))
+      engine.moveClipChannelKeyframes(
+        target.clipId,
+        target.channel as import('../animation').AnimationProperty,
+        moves.map((m) => ({ keyframeId: m.keyframeId, newTime: m.oldTime })),
+      )
       return
     }
     case 'PasteClipKeyframes': {
       const target = inv.target as import('../keyframeTarget').ClipChannelTarget
       const keyframes = inv.keyframes as import('../keyframe').KeyframeSnapshot[]
-      engine.deleteClipChannelKeyframes(target.clipId, target.channel as import('../animation').AnimationProperty, keyframes.map((k) => k.keyframeId))
+      engine.deleteClipChannelKeyframes(
+        target.clipId,
+        target.channel as import('../animation').AnimationProperty,
+        keyframes.map((k) => k.keyframeId),
+      )
       return
     }
     case 'DuplicateClipKeyframes': {
       const target = inv.target as import('../keyframeTarget').ClipChannelTarget
       const keyframes = inv.keyframes as import('../keyframe').KeyframeSnapshot[]
-      engine.deleteClipChannelKeyframes(target.clipId, target.channel as import('../animation').AnimationProperty, keyframes.map((k) => k.keyframeId))
+      engine.deleteClipChannelKeyframes(
+        target.clipId,
+        target.channel as import('../animation').AnimationProperty,
+        keyframes.map((k) => k.keyframeId),
+      )
       return
     }
     case 'SetClipKeyframeValue': {
       const target = inv.target as import('../keyframeTarget').ClipChannelTarget
       const keyframeId = inv.keyframeId as string
       const oldValue = inv.oldValue as number
-      engine.setClipChannelKeyframeValue(target.clipId, target.channel as import('../animation').AnimationProperty, keyframeId, oldValue)
+      engine.setClipChannelKeyframeValue(
+        target.clipId,
+        target.channel as import('../animation').AnimationProperty,
+        keyframeId,
+        oldValue,
+      )
       return
     }
     case 'SetClipKeyframeInterpolation': {
       const target = inv.target as import('../keyframeTarget').ClipChannelTarget
       const keyframeId = inv.keyframeId as string
       const oldInterpolation = inv.oldInterpolation as import('../keyframe').InterpolationType
-      engine.setClipChannelKeyframeInterpolation(target.clipId, target.channel as import('../animation').AnimationProperty, keyframeId, oldInterpolation)
+      engine.setClipChannelKeyframeInterpolation(
+        target.clipId,
+        target.channel as import('../animation').AnimationProperty,
+        keyframeId,
+        oldInterpolation,
+      )
       return
     }
     case 'SetClipKeyframeTangents': {
@@ -587,7 +658,13 @@ export function applyUndo(
       const keyframeId = inv.keyframeId as string
       const oldIn = inv.oldTangentIn as import('../keyframe').KeyframeTangent
       const oldOut = inv.oldTangentOut as import('../keyframe').KeyframeTangent
-      engine.setClipChannelKeyframeTangents(target.clipId, target.channel as import('../animation').AnimationProperty, keyframeId, oldIn, oldOut)
+      engine.setClipChannelKeyframeTangents(
+        target.clipId,
+        target.channel as import('../animation').AnimationProperty,
+        keyframeId,
+        oldIn,
+        oldOut,
+      )
       return
     }
     case 'AssignClip': {
@@ -671,7 +748,13 @@ export function applyUndo(
       if (ghostNode) {
         try {
           const scene = engine.getSlide(chain.slideId).scene
-          engine.createGhostNode(scene.id, ghostNode.name, ghostNode.transform.x, ghostNode.transform.y, ghostNode.id)
+          engine.createGhostNode(
+            scene.id,
+            ghostNode.name,
+            ghostNode.transform.x,
+            ghostNode.transform.y,
+            ghostNode.id,
+          )
         } catch {
           // ignore
         }
@@ -745,7 +828,9 @@ export function applyUndo(
       const mesh = node.components.mesh!.mesh
       const newMesh = {
         ...mesh,
-        vertices: mesh.vertices.map((v, i) => (i === vertexIndex ? { x: oldX, y: oldY } : { ...v })),
+        vertices: mesh.vertices.map((v, i) =>
+          i === vertexIndex ? { x: oldX, y: oldY } : { ...v },
+        ),
       }
       engine.setMeshData(nodeId, newMesh)
       return
@@ -790,14 +875,21 @@ export function applyUndo(
     case 'BlurWeights':
     case 'FillWeights':
     case 'SmoothWeights':
+    case 'NormalizeWeights':
     case 'PaintWeight': {
       const nodeId = inv.nodeId as string
-      const oldWeights = inv.oldWeights as readonly (readonly import('../mesh').VertexBoneWeight[])[]
-      const oldBindPose = inv.oldBindPose as Readonly<Record<string, import('../mesh').BoneBindPose>> | undefined
+      const oldWeights =
+        inv.oldWeights as readonly (readonly import('../mesh').VertexBoneWeight[])[]
+      const oldBindPose = inv.oldBindPose as
+        Readonly<Record<string, import('../mesh').BoneBindPose>> | undefined
       const node = engine.getNode(nodeId)
       const mesh = node.components.mesh!.mesh
       const boneWeights = oldWeights.map((arr) => [...arr])
-      engine.setMeshData(nodeId, { ...mesh, boneWeights, ...(oldBindPose ? { bindPose: oldBindPose } : { bindPose: undefined }) })
+      engine.setMeshData(nodeId, {
+        ...mesh,
+        boneWeights,
+        ...(oldBindPose ? { bindPose: oldBindPose } : { bindPose: undefined }),
+      })
       // Clean up bindPose if undefined
       if (!oldBindPose) {
         const n = engine.getNode(nodeId)
@@ -822,7 +914,13 @@ export function applyUndo(
     }
     case 'ImportPrompter': {
       const slideId = inv.slideId as string
-      const oldParts = inv.oldParts as readonly { id: string; text: string; startTime: number; endTime: number; duration: number }[]
+      const oldParts = inv.oldParts as readonly {
+        id: string
+        text: string
+        startTime: number
+        endTime: number
+        duration: number
+      }[]
       const newPartIds = inv.newPartIds as readonly string[]
       // Remove new parts
       for (const pid of newPartIds) {
@@ -856,7 +954,7 @@ export function applyUndo(
       const oldText = inv.oldText as string
       const oldDuration = inv.oldDuration as number
       const created = inv.createdPartIds as readonly string[] | undefined
-      const newIds = (created ?? inv.newPartIds as readonly string[]) ?? []
+      const newIds = created ?? (inv.newPartIds as readonly string[]) ?? []
       for (const nid of newIds) {
         if (nid !== partId) {
           try {
@@ -884,7 +982,13 @@ export function applyUndo(
     case 'MergePrompterParts': {
       const slideId = inv.slideId as string
       const mergedId = inv.mergedId as string
-      const oldParts = inv.oldParts as readonly { id: string; text: string; duration: number; startTime: number; endTime: number }[]
+      const oldParts = inv.oldParts as readonly {
+        id: string
+        text: string
+        duration: number
+        startTime: number
+        endTime: number
+      }[]
       const rightPartId = inv.rightPartId as string | undefined
       // Delete merged (which is left) and recreate both?
       // For simplicity, restore oldParts by deleting merged and recreating right
@@ -916,8 +1020,10 @@ export function applyUndo(
       const oldDuration = inv.oldDuration as number
       const oldStartTime = inv.oldStartTime as number
       const oldEndTime = inv.oldEndTime as number
-      const shiftedParts = inv.shiftedParts as readonly { id: string; oldStartTime: number; oldEndTime: number }[] | undefined
-      const shiftedClips = inv.shiftedClips as readonly { id: string; oldTimelineStart: number }[] | undefined
+      const shiftedParts = inv.shiftedParts as
+        readonly { id: string; oldStartTime: number; oldEndTime: number }[] | undefined
+      const shiftedClips = inv.shiftedClips as
+        readonly { id: string; oldTimelineStart: number }[] | undefined
       try {
         engine.updatePrompterPart(slideId, partId, { text: oldText, duration: oldDuration })
         const slide = engine.getSlide(slideId)
@@ -952,7 +1058,11 @@ export function applyUndo(
       const oldDuration = inv.oldDuration as number
       const oldStartTime = inv.oldStartTime as number
       const oldEndTime = inv.oldEndTime as number
-      const shiftedParts = inv.shiftedParts as readonly { id: string; oldStartTime: number; oldEndTime: number }[]
+      const shiftedParts = inv.shiftedParts as readonly {
+        id: string
+        oldStartTime: number
+        oldEndTime: number
+      }[]
       const shiftedClips = inv.shiftedClips as readonly { id: string; oldTimelineStart: number }[]
       const slide = engine.getSlide(slideId)
       const part = slide.prompter?.parts.find((p) => p.id === partId)
@@ -1229,7 +1339,7 @@ export function applyUndo(
       // Undo add column: remove column? Not easy without inverse storing column index
       // AddTableColumn inverse only has tableNodeId, we need to remove last column?
       // We'll approximate by removing the column at params.index
-      const tableNodeId = params.tableNodeId as string ?? (inv.tableNodeId as string)
+      const tableNodeId = (params.tableNodeId as string) ?? (inv.tableNodeId as string)
       const colIdx = (params.index as number) ?? 0
       try {
         // Use engine to remove column? There's no direct engine method, but we can call RemoveTableColumn via internal?
@@ -1289,10 +1399,17 @@ export function applyRedo(
   const params = parameters as Record<string, unknown>
   switch (type) {
     case 'MoveNode':
-      engine.setTransform(params.nodeId as string, { ...engine.getNode(params.nodeId as string).transform, x: params.x as number, y: params.y as number })
+      engine.setTransform(params.nodeId as string, {
+        ...engine.getNode(params.nodeId as string).transform,
+        x: params.x as number,
+        y: params.y as number,
+      })
       return
     case 'RotateNode':
-      engine.setTransform(params.nodeId as string, { ...engine.getNode(params.nodeId as string).transform, rotation: params.rotation as number })
+      engine.setTransform(params.nodeId as string, {
+        ...engine.getNode(params.nodeId as string).transform,
+        rotation: params.rotation as number,
+      })
       return
     case 'ScaleNode':
       engine.setTransform(params.nodeId as string, {
@@ -1350,7 +1467,11 @@ export function applyRedo(
       const node = engine.getNode(nodeId)
       const parent = node.parent!
       const current = parent.children.indexOf(node)
-      const modeToIndex = (m: string, children: readonly import('../sceneNode').SceneNode[], cur: number): number => {
+      const modeToIndex = (
+        m: string,
+        children: readonly import('../sceneNode').SceneNode[],
+        cur: number,
+      ): number => {
         const backBoundary = children[0]?.components.camera ? 1 : 0
         switch (m) {
           case 'bringToFront':
@@ -1378,7 +1499,13 @@ export function applyRedo(
       const visible = params.visible as boolean | undefined
       const opacity = params.opacity as number | undefined
       const components = params.components as import('../components').NodeComponents | undefined
-      engine.createNode(sceneId, parentId, name, { ...(id ? { id } : {}), ...(transform ? { transform } : {}), ...(visible !== undefined ? { visible } : {}), ...(opacity !== undefined ? { opacity } : {}), ...(components ? { components } : {}) })
+      engine.createNode(sceneId, parentId, name, {
+        ...(id ? { id } : {}),
+        ...(transform ? { transform } : {}),
+        ...(visible !== undefined ? { visible } : {}),
+        ...(opacity !== undefined ? { opacity } : {}),
+        ...(components ? { components } : {}),
+      })
       return
     }
     case 'CreateAssetInstance': {
@@ -1408,9 +1535,15 @@ export function applyRedo(
       const scene = engine.getNodeScene(nodeId)
       const parent = node.parent
       if (!parent || !node.components.assetInstance) throw new Error('Cannot duplicate')
-      engine.createAssetInstance(scene.id, parent.id, node.components.assetInstance.assetDefinitionId, node.name, {
-        transform: { ...node.transform, x: node.transform.x + 20, y: node.transform.y + 20 },
-      })
+      engine.createAssetInstance(
+        scene.id,
+        parent.id,
+        node.components.assetInstance.assetDefinitionId,
+        node.name,
+        {
+          transform: { ...node.transform, x: node.transform.x + 20, y: node.transform.y + 20 },
+        },
+      )
       return
     }
     case 'CreateSlide': {
@@ -1436,47 +1569,77 @@ export function applyRedo(
       engine.setSlideDuration(params.slideId as string, params.duration as number)
       return
     case 'SetFullscreenShader':
-      engine.setFullscreenShader(params.slideId as string, (params.shaderDefinitionId as string | null) ?? null)
+      engine.setFullscreenShader(
+        params.slideId as string,
+        (params.shaderDefinitionId as string | null) ?? null,
+      )
       return
     case 'OverrideFullscreenUniform':
-      engine.overrideFullscreenUniform(params.slideId as string, params.uniform as string, params.value as import('../materialInstance').MaterialOverrideValue)
+      engine.overrideFullscreenUniform(
+        params.slideId as string,
+        params.uniform as string,
+        params.value as import('../materialInstance').MaterialOverrideValue,
+      )
       return
     case 'AssignMaterial':
       engine.assignMaterial(params.nodeId as string, params.materialDefinitionId as string)
       return
     case 'OverrideMaterialParameter':
-      engine.overrideMaterialParameter(params.nodeId as string, params.parameter as string, params.value as import('../materialInstance').MaterialOverrideValue)
+      engine.overrideMaterialParameter(
+        params.nodeId as string,
+        params.parameter as string,
+        params.value as import('../materialInstance').MaterialOverrideValue,
+      )
       return
     case 'ClearMaterialOverride':
       engine.clearMaterialOverride(params.nodeId as string, params.parameter as string)
       return
     case 'CreateProject': {
       // Redo create project: need to create with same name
-      engine.createProject({ name: params.name as string, description: params.description as string | undefined, author: params.author as string | undefined })
+      engine.createProject({
+        name: params.name as string,
+        description: params.description as string | undefined,
+        author: params.author as string | undefined,
+      })
       return
     }
     case 'SetTableComponent':
-      engine.setTableComponent(params.nodeId as string, params.table as import('../components').TableComponent)
+      engine.setTableComponent(
+        params.nodeId as string,
+        params.table as import('../components').TableComponent,
+      )
       return
     case 'SetChartComponent':
-      engine.setChartComponent(params.nodeId as string, params.chart as import('../components').ChartComponent)
+      engine.setChartComponent(
+        params.nodeId as string,
+        params.chart as import('../components').ChartComponent,
+      )
       return
     case 'SetTextContent': {
       const nodeId = params.nodeId as string
       const node = engine.getNode(nodeId)
-      engine.setTextComponent(nodeId, { ...node.components.text!, content: params.content as string })
+      engine.setTextComponent(nodeId, {
+        ...node.components.text!,
+        content: params.content as string,
+      })
       return
     }
     case 'SetTextFontSize': {
       const nodeId = params.nodeId as string
       const node = engine.getNode(nodeId)
-      engine.setTextComponent(nodeId, { ...node.components.text!, fontSize: params.fontSize as number })
+      engine.setTextComponent(nodeId, {
+        ...node.components.text!,
+        fontSize: params.fontSize as number,
+      })
       return
     }
     case 'SetTextAlignment': {
       const nodeId = params.nodeId as string
       const node = engine.getNode(nodeId)
-      engine.setTextComponent(nodeId, { ...node.components.text!, alignment: params.alignment as import('../components').TextAlignment })
+      engine.setTextComponent(nodeId, {
+        ...node.components.text!,
+        alignment: params.alignment as import('../components').TextAlignment,
+      })
       return
     }
     case 'AddKeyframe': {
@@ -1496,12 +1659,21 @@ export function applyRedo(
     }
     case 'ScaleKeyframes': {
       const target4 = params.target as import('../keyframeTarget').KeyframeTarget
-      engine.scaleKeyframes(target4, params.keyframeIds as string[], params.pivot as number, params.factor as number)
+      engine.scaleKeyframes(
+        target4,
+        params.keyframeIds as string[],
+        params.pivot as number,
+        params.factor as number,
+      )
       return
     }
     case 'PasteKeyframes': {
       const target5 = params.target as import('../keyframeTarget').KeyframeTarget
-      engine.pasteKeyframes(target5, params.payload as import('../animationManager').PastePayload, params.atTime as number)
+      engine.pasteKeyframes(
+        target5,
+        params.payload as import('../animationManager').PastePayload,
+        params.atTime as number,
+      )
       return
     }
     case 'DuplicateKeyframes': {
@@ -1521,11 +1693,22 @@ export function applyRedo(
     }
     case 'SetKeyframeTangents': {
       const target9 = params.target as import('../keyframeTarget').KeyframeTarget
-      engine.setKeyframeTangents(target9, params.keyframeId as string, params.tangentIn as import('../keyframe').KeyframeTangent, params.tangentOut as import('../keyframe').KeyframeTangent)
+      engine.setKeyframeTangents(
+        target9,
+        params.keyframeId as string,
+        params.tangentIn as import('../keyframe').KeyframeTangent,
+        params.tangentOut as import('../keyframe').KeyframeTangent,
+      )
       return
     }
     case 'CreateClip': {
-      engine.createClip(params.name as string, params.duration as number, params.category as string, params.params as import('../clipDefinition').ClipParam[], params.channels as import('../clipDefinition').ClipChannelDef[])
+      engine.createClip(
+        params.name as string,
+        params.duration as number,
+        params.category as string,
+        params.params as import('../clipDefinition').ClipParam[],
+        params.channels as import('../clipDefinition').ClipChannelDef[],
+      )
       return
     }
     case 'DeleteClip':
@@ -1544,82 +1727,176 @@ export function applyRedo(
       engine.setClipCategory(params.clipId as string, params.category as string)
       return
     case 'SetClipParamDefault':
-      engine.setClipParamDefault(params.clipId as string, params.paramKey as string, params.defaultValue as number)
+      engine.setClipParamDefault(
+        params.clipId as string,
+        params.paramKey as string,
+        params.defaultValue as number,
+      )
       return
     case 'SetClipChannelParamLink':
-      engine.setClipChannelParamLink(params.clipId as string, params.channel as import('../animation').AnimationProperty, (params.paramKey as string | null) ?? null)
+      engine.setClipChannelParamLink(
+        params.clipId as string,
+        params.channel as import('../animation').AnimationProperty,
+        (params.paramKey as string | null) ?? null,
+      )
       return
     case 'AddClipChannel':
-      engine.addClipChannel(params.clipId as string, params.channel as import('../clipDefinition').ClipChannelDef)
+      engine.addClipChannel(
+        params.clipId as string,
+        params.channel as import('../clipDefinition').ClipChannelDef,
+      )
       return
     case 'RemoveClipChannel':
-      engine.removeClipChannel(params.clipId as string, params.channel as import('../animation').AnimationProperty)
+      engine.removeClipChannel(
+        params.clipId as string,
+        params.channel as import('../animation').AnimationProperty,
+      )
       return
     case 'AddClipKeyframe': {
       const t = params.target as import('../keyframeTarget').ClipChannelTarget
-      engine.addClipChannelKeyframe(t.clipId, t.channel as import('../animation').AnimationProperty, params.time as number, params.value as number)
+      engine.addClipChannelKeyframe(
+        t.clipId,
+        t.channel as import('../animation').AnimationProperty,
+        params.time as number,
+        params.value as number,
+      )
       return
     }
     case 'DeleteClipKeyframes': {
       const tt = params.target as import('../keyframeTarget').ClipChannelTarget
-      engine.deleteClipChannelKeyframes(tt.clipId, tt.channel as import('../animation').AnimationProperty, params.keyframeIds as string[])
+      engine.deleteClipChannelKeyframes(
+        tt.clipId,
+        tt.channel as import('../animation').AnimationProperty,
+        params.keyframeIds as string[],
+      )
       return
     }
     case 'MoveClipKeyframes': {
       const ttt = params.target as import('../keyframeTarget').ClipChannelTarget
-      engine.moveClipChannelKeyframes(ttt.clipId, ttt.channel as import('../animation').AnimationProperty, params.moves as { keyframeId: string; newTime: number }[])
+      engine.moveClipChannelKeyframes(
+        ttt.clipId,
+        ttt.channel as import('../animation').AnimationProperty,
+        params.moves as { keyframeId: string; newTime: number }[],
+      )
       return
     }
     case 'ScaleClipKeyframes': {
       const t4 = params.target as import('../keyframeTarget').ClipChannelTarget
-      engine.scaleClipChannelKeyframes(t4.clipId, t4.channel as import('../animation').AnimationProperty, params.keyframeIds as string[], params.pivot as number, params.factor as number)
+      engine.scaleClipChannelKeyframes(
+        t4.clipId,
+        t4.channel as import('../animation').AnimationProperty,
+        params.keyframeIds as string[],
+        params.pivot as number,
+        params.factor as number,
+      )
       return
     }
     case 'PasteClipKeyframes': {
       const t5 = params.target as import('../keyframeTarget').ClipChannelTarget
-      engine.pasteClipChannelKeyframes(t5.clipId, t5.channel as import('../animation').AnimationProperty, params.payload as { keyframes: readonly { time: number; value: unknown; interpolation: import('../keyframe').InterpolationType; tangentIn: import('../keyframe').KeyframeTangent; tangentOut: import('../keyframe').KeyframeTangent }[] }, params.atTime as number)
+      engine.pasteClipChannelKeyframes(
+        t5.clipId,
+        t5.channel as import('../animation').AnimationProperty,
+        params.payload as {
+          keyframes: readonly {
+            time: number
+            value: unknown
+            interpolation: import('../keyframe').InterpolationType
+            tangentIn: import('../keyframe').KeyframeTangent
+            tangentOut: import('../keyframe').KeyframeTangent
+          }[]
+        },
+        params.atTime as number,
+      )
       return
     }
     case 'DuplicateClipKeyframes': {
       const t6 = params.target as import('../keyframeTarget').ClipChannelTarget
-      engine.duplicateClipChannelKeyframes(t6.clipId, t6.channel as import('../animation').AnimationProperty, params.keyframeIds as string[])
+      engine.duplicateClipChannelKeyframes(
+        t6.clipId,
+        t6.channel as import('../animation').AnimationProperty,
+        params.keyframeIds as string[],
+      )
       return
     }
     case 'SetClipKeyframeValue': {
       const t7 = params.target as import('../keyframeTarget').ClipChannelTarget
-      engine.setClipChannelKeyframeValue(t7.clipId, t7.channel as import('../animation').AnimationProperty, params.keyframeId as string, params.newValue as number)
+      engine.setClipChannelKeyframeValue(
+        t7.clipId,
+        t7.channel as import('../animation').AnimationProperty,
+        params.keyframeId as string,
+        params.newValue as number,
+      )
       return
     }
     case 'SetClipKeyframeInterpolation': {
       const t8 = params.target as import('../keyframeTarget').ClipChannelTarget
-      engine.setClipChannelKeyframeInterpolation(t8.clipId, t8.channel as import('../animation').AnimationProperty, params.keyframeId as string, params.interpolation)
+      engine.setClipChannelKeyframeInterpolation(
+        t8.clipId,
+        t8.channel as import('../animation').AnimationProperty,
+        params.keyframeId as string,
+        params.interpolation,
+      )
       return
     }
     case 'SetClipKeyframeTangents': {
       const t9 = params.target as import('../keyframeTarget').ClipChannelTarget
-      engine.setClipChannelKeyframeTangents(t9.clipId, t9.channel as import('../animation').AnimationProperty, params.keyframeId as string, params.tangentIn as import('../keyframe').KeyframeTangent, params.tangentOut as import('../keyframe').KeyframeTangent)
+      engine.setClipChannelKeyframeTangents(
+        t9.clipId,
+        t9.channel as import('../animation').AnimationProperty,
+        params.keyframeId as string,
+        params.tangentIn as import('../keyframe').KeyframeTangent,
+        params.tangentOut as import('../keyframe').KeyframeTangent,
+      )
       return
     }
     case 'AssignClip':
-      engine.assignClipInstance(params.nodeId as string, params.clipId as string, params.startTime as number, params.speed as number, params.enabled as boolean, params.paramOverrides as Record<string, number>)
+      engine.assignClipInstance(
+        params.nodeId as string,
+        params.clipId as string,
+        params.startTime as number,
+        params.speed as number,
+        params.enabled as boolean,
+        params.paramOverrides as Record<string, number>,
+      )
       return
     case 'RemoveClip':
       engine.removeClipInstance(params.nodeId as string, params.instanceId as string)
       return
     case 'MoveClipLayer':
-      engine.moveClipLayer(params.nodeId as string, params.instanceId as string, params.newIndex as number)
+      engine.moveClipLayer(
+        params.nodeId as string,
+        params.instanceId as string,
+        params.newIndex as number,
+      )
       return
     case 'SetClipInstanceStartTime':
-      engine.setClipInstanceStartTime(params.nodeId as string, params.instanceId as string, params.startTime as number)
+      engine.setClipInstanceStartTime(
+        params.nodeId as string,
+        params.instanceId as string,
+        params.startTime as number,
+      )
       return
     case 'SetClipInstanceSpeed':
-      engine.setClipInstanceSpeed(params.nodeId as string, params.instanceId as string, params.speed as number)
+      engine.setClipInstanceSpeed(
+        params.nodeId as string,
+        params.instanceId as string,
+        params.speed as number,
+      )
       return
     case 'SetClipInstanceEnabled':
-      engine.setClipInstanceEnabled(params.nodeId as string, params.instanceId as string, params.enabled as boolean)
+      engine.setClipInstanceEnabled(
+        params.nodeId as string,
+        params.instanceId as string,
+        params.enabled as boolean,
+      )
       return
     case 'OverrideClipParam':
-      engine.setClipInstanceParamOverride(params.nodeId as string, params.instanceId as string, params.paramKey as string, params.value as number)
+      engine.setClipInstanceParamOverride(
+        params.nodeId as string,
+        params.instanceId as string,
+        params.paramKey as string,
+        params.value as number,
+      )
       return
     case 'ImportClip': {
       // For redo, re-import from params.entry
@@ -1634,25 +1911,45 @@ export function applyRedo(
       return
     }
     case 'CreateIKChain':
-      engine.createIKChain(params.slideId as string, params.boneIds as string[], params.target as import('../ikChain').BoneIKTarget, (params.poleTarget as import('../ikChain').PoleTarget | null) ?? null)
+      engine.createIKChain(
+        params.slideId as string,
+        params.boneIds as string[],
+        params.target as import('../ikChain').BoneIKTarget,
+        (params.poleTarget as import('../ikChain').PoleTarget | null) ?? null,
+      )
       return
     case 'DeleteIKChain':
       engine.deleteIKChain(params.chainId as string)
       return
     case 'SetIKTarget':
-      engine.setIKTarget(params.chainId as string, params.target as import('../ikChain').BoneIKTarget)
+      engine.setIKTarget(
+        params.chainId as string,
+        params.target as import('../ikChain').BoneIKTarget,
+      )
       return
     case 'SetIKPoleTarget':
-      engine.setIKPoleTarget(params.chainId as string, (params.poleTarget as import('../ikChain').PoleTarget | null) ?? null)
+      engine.setIKPoleTarget(
+        params.chainId as string,
+        (params.poleTarget as import('../ikChain').PoleTarget | null) ?? null,
+      )
       return
     case 'AddConstraint':
-      engine.addConstraint(params.nodeId as string, params.type as import('../constraint').ConstraintType, params.priority as number, params.params as import('../constraint').ConstraintParams)
+      engine.addConstraint(
+        params.nodeId as string,
+        params.type as import('../constraint').ConstraintType,
+        params.priority as number,
+        params.params as import('../constraint').ConstraintParams,
+      )
       return
     case 'RemoveConstraint':
       engine.removeConstraint(params.nodeId as string, params.constraintId as string)
       return
     case 'SetConstraintParams':
-      engine.setConstraintParams(params.nodeId as string, params.constraintId as string, params.params as import('../constraint').ConstraintParams)
+      engine.setConstraintParams(
+        params.nodeId as string,
+        params.constraintId as string,
+        params.params as import('../constraint').ConstraintParams,
+      )
       return
     case 'MoveVertex': {
       const nodeId = params.nodeId as string
@@ -1661,7 +1958,25 @@ export function applyRedo(
       const y = params.y as number
       const node = engine.getNode(nodeId)
       const mesh = node.components.mesh!.mesh
-      const newMesh = { ...mesh, vertices: mesh.vertices.map((v, i) => (i === vertexIndex ? { x, y } : { ...v })) }
+      const newMesh = {
+        ...mesh,
+        vertices: mesh.vertices.map((v, i) => (i === vertexIndex ? { x, y } : { ...v })),
+      }
+      engine.setMeshData(nodeId, newMesh)
+      return
+    }
+    case 'NormalizeWeights': {
+      const nodeId = params.nodeId as string
+      const node = engine.getNode(nodeId)
+      const mesh = node.components.mesh!.mesh
+      const currentWeights = mesh.boneWeights ?? []
+      const normalized = currentWeights.map((weights) => {
+        const total = weights.reduce((s, w) => s + w.weight, 0)
+        if (total > 0 && total !== 1)
+          return weights.map((w) => ({ boneId: w.boneId, weight: w.weight / total }))
+        return [...weights]
+      })
+      const newMesh = { ...mesh, boneWeights: normalized as unknown as typeof mesh.boneWeights }
       engine.setMeshData(nodeId, newMesh)
       return
     }
@@ -1682,8 +1997,12 @@ export function applyRedo(
           newIndex++
         }
       }
-      const newVertices = oldMesh.vertices.filter((_, i) => !deletedSet.has(i)).map((v) => ({ x: v.x, y: v.y }))
-      const newUvs = oldMesh.uvs.filter((_, i) => !deletedSet.has(i)).map((uv) => ({ u: uv.u, v: uv.v }))
+      const newVertices = oldMesh.vertices
+        .filter((_, i) => !deletedSet.has(i))
+        .map((v) => ({ x: v.x, y: v.y }))
+      const newUvs = oldMesh.uvs
+        .filter((_, i) => !deletedSet.has(i))
+        .map((uv) => ({ u: uv.u, v: uv.v }))
       const newFaces = oldMesh.faces
         .filter((f) => !deletedSet.has(f.v0) && !deletedSet.has(f.v1) && !deletedSet.has(f.v2))
         .map((f) => ({ v0: indexMap.get(f.v0)!, v1: indexMap.get(f.v1)!, v2: indexMap.get(f.v2)! }))
@@ -1692,7 +2011,12 @@ export function applyRedo(
       return
     }
     case 'CreatePrompterPart': {
-      engine.createPrompterPart(params.slideId as string, { id: params.partId as string | undefined ?? newId('prompter-part'), text: params.text as string, duration: params.duration as number, insertIndex: params.insertIndex as number | undefined })
+      engine.createPrompterPart(params.slideId as string, {
+        id: (params.partId as string | undefined) ?? newId('prompter-part'),
+        text: params.text as string,
+        duration: params.duration as number,
+        insertIndex: params.insertIndex as number | undefined,
+      })
       // But CreatePrompterPartCommand generates new id internally, not from params.partId; we need to handle redo with same id? For redo, we can call engine.createPrompterPart with same text/duration
       return
     }
@@ -1700,26 +2024,61 @@ export function applyRedo(
       engine.importPrompter(params.slideId as string, params.rawText as string)
       return
     case 'SplitPrompterPart':
-      engine.splitPrompterPart(params.slideId as string, params.partId as string, params.wordIndex as number, params.mode as 'left' | 'right' | 'out')
+      engine.splitPrompterPart(
+        params.slideId as string,
+        params.partId as string,
+        params.wordIndex as number,
+        params.mode as 'left' | 'right' | 'out',
+      )
       return
     case 'UnitePrompterParts':
-      engine.unitePrompterParts(params.slideId as string, params.leftPartId as string, params.rightPartId as string | undefined)
+      engine.unitePrompterParts(
+        params.slideId as string,
+        params.leftPartId as string,
+        params.rightPartId as string | undefined,
+      )
       return
     case 'MergePrompterParts':
-      engine.mergePrompterParts(params.slideId as string, params.leftPartId as string, params.rightPartId as string | undefined)
+      engine.mergePrompterParts(
+        params.slideId as string,
+        params.leftPartId as string,
+        params.rightPartId as string | undefined,
+      )
       return
     case 'UpdatePrompterPart':
-      engine.updatePrompterPart(params.slideId as string, params.partId as string, { text: params.text as string | undefined, duration: params.duration as number | undefined, shiftDownstream: params.shiftDownstream as boolean | undefined })
+      engine.updatePrompterPart(params.slideId as string, params.partId as string, {
+        text: params.text as string | undefined,
+        duration: params.duration as number | undefined,
+        shiftDownstream: params.shiftDownstream as boolean | undefined,
+      })
       return
     case 'UpdatePrompterPartWithShift':
-      engine.updatePrompterPart(params.slideId as string, params.partId as string, { duration: params.duration as number, shiftDownstream: params.shiftDownstream as boolean | undefined })
+      engine.updatePrompterPart(params.slideId as string, params.partId as string, {
+        duration: params.duration as number,
+        shiftDownstream: params.shiftDownstream as boolean | undefined,
+      })
       return
     case 'MovePrompterPart':
-      if (params.newIndex !== undefined) engine.movePrompterPart(params.slideId as string, params.partId as string, params.newIndex as number)
-      else if (params.newStartTime !== undefined) engine.movePrompterPartToTime(params.slideId as string, params.partId as string, params.newStartTime as number)
+      if (params.newIndex !== undefined)
+        engine.movePrompterPart(
+          params.slideId as string,
+          params.partId as string,
+          params.newIndex as number,
+        )
+      else if (params.newStartTime !== undefined)
+        engine.movePrompterPartToTime(
+          params.slideId as string,
+          params.partId as string,
+          params.newStartTime as number,
+        )
       return
     case 'SetPrompterPartAudio':
-      engine.setPrompterPartAudio(params.slideId as string, params.partId as string, (params.audioClipId as string | null) ?? null, (params.audioAssetId as string | null) ?? null)
+      engine.setPrompterPartAudio(
+        params.slideId as string,
+        params.partId as string,
+        (params.audioClipId as string | null) ?? null,
+        (params.audioAssetId as string | null) ?? null,
+      )
       return
     case 'CreateAudioAsset': {
       const asset = {
@@ -1755,44 +2114,88 @@ export function applyRedo(
       engine.deleteAudioClip(params.slideId as string, params.clipId as string)
       return
     case 'MoveAudioClip':
-      engine.moveAudioClip(params.slideId as string, params.clipId as string, { timelineStart: params.timelineStart as number, trackId: params.trackId as import('../audioClip').AudioTrackId | undefined })
+      engine.moveAudioClip(params.slideId as string, params.clipId as string, {
+        timelineStart: params.timelineStart as number,
+        trackId: params.trackId as import('../audioClip').AudioTrackId | undefined,
+      })
       return
     case 'TrimAudioClip':
-      engine.trimAudioClip(params.slideId as string, params.clipId as string, { sourceStart: params.sourceStart as number | undefined, sourceEnd: params.sourceEnd as number | undefined })
+      engine.trimAudioClip(params.slideId as string, params.clipId as string, {
+        sourceStart: params.sourceStart as number | undefined,
+        sourceEnd: params.sourceEnd as number | undefined,
+      })
       return
     case 'SplitAudioClip':
-      engine.splitAudioClip(params.slideId as string, params.clipId as string, params.atTime as number)
+      engine.splitAudioClip(
+        params.slideId as string,
+        params.clipId as string,
+        params.atTime as number,
+      )
       return
     case 'DuplicateAudioClip':
       engine.duplicateAudioClip(params.slideId as string, params.clipId as string)
       return
     case 'SetAudioClipVolume':
-      engine.setAudioClipVolume(params.slideId as string, params.clipId as string, params.volume as number)
+      engine.setAudioClipVolume(
+        params.slideId as string,
+        params.clipId as string,
+        params.volume as number,
+      )
       return
     case 'SetAudioClipMuted':
-      engine.setAudioClipMuted(params.slideId as string, params.clipId as string, params.muted as boolean)
+      engine.setAudioClipMuted(
+        params.slideId as string,
+        params.clipId as string,
+        params.muted as boolean,
+      )
       return
     case 'SetAudioClipPlaybackRate':
-      engine.setAudioClipPlaybackRate(params.slideId as string, params.clipId as string, params.playbackRate as number)
+      engine.setAudioClipPlaybackRate(
+        params.slideId as string,
+        params.clipId as string,
+        params.playbackRate as number,
+      )
       return
     case 'SetAudioClipFade':
-      engine.setAudioClipFade(params.slideId as string, params.clipId as string, { fadeIn: params.fadeIn as number | undefined, fadeOut: params.fadeOut as number | undefined })
+      engine.setAudioClipFade(params.slideId as string, params.clipId as string, {
+        fadeIn: params.fadeIn as number | undefined,
+        fadeOut: params.fadeOut as number | undefined,
+      })
       return
     case 'ReplacePrompterWords': {
       const ttsAssetId = params.ttsAssetId as string | undefined
-      const ttsData = params.ttsData as { name?: string; data: string; mimeType?: string; metadata?: Record<string, unknown> } | undefined
+      const ttsData = params.ttsData as
+        | { name?: string; data: string; mimeType?: string; metadata?: Record<string, unknown> }
+        | undefined
       let assetId = ttsAssetId
       if (!assetId && ttsData) {
         const id = newId('audio-asset')
-        engine.embedAsset({ id, name: ttsData.name ?? `TTS ${params.partId}`, data: ttsData.data, mimeType: ttsData.mimeType ?? 'audio/wav', ...(ttsData.metadata ? { metadata: ttsData.metadata } : {}) })
+        engine.embedAsset({
+          id,
+          name: ttsData.name ?? `TTS ${params.partId}`,
+          data: ttsData.data,
+          mimeType: ttsData.mimeType ?? 'audio/wav',
+          ...(ttsData.metadata ? { metadata: ttsData.metadata } : {}),
+        })
         assetId = id
       }
       if (!assetId) throw new Error('Missing TTS asset')
-      engine.replacePrompterPartWordRange(params.slideId as string, params.partId as string, params.startWordIndex as number, params.endWordIndex as number, assetId)
+      engine.replacePrompterPartWordRange(
+        params.slideId as string,
+        params.partId as string,
+        params.startWordIndex as number,
+        params.endWordIndex as number,
+        assetId,
+      )
       return
     }
     case 'SplitPrompterWords':
-      engine.splitPrompterPartByWordRange(params.slideId as string, params.partId as string, params.startWordIndex as number, params.endWordIndex as number)
+      engine.splitPrompterPartByWordRange(
+        params.slideId as string,
+        params.partId as string,
+        params.startWordIndex as number,
+        params.endWordIndex as number,
+      )
       return
     case 'CreateTable': {
       const sceneId = params.sceneId as string
@@ -1810,10 +2213,16 @@ export function applyRedo(
       return
     }
     case 'SetTableRowComponent':
-      engine.setTableRowComponent(params.nodeId as string, params.tableRow as import('../components').TableRowComponent)
+      engine.setTableRowComponent(
+        params.nodeId as string,
+        params.tableRow as import('../components').TableRowComponent,
+      )
       return
     case 'SetTableCellComponent':
-      engine.setTableCellComponent(params.nodeId as string, params.tableCell as import('../components').TableCellComponent)
+      engine.setTableCellComponent(
+        params.nodeId as string,
+        params.tableCell as import('../components').TableCellComponent,
+      )
       return
     case 'ApplyTableLayout': {
       const tableNodeId = params.tableNodeId as string

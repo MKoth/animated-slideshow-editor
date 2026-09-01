@@ -109,7 +109,8 @@ export class PaintWeightCommand implements Command<PaintWeightInverse> {
         currentWeights.push({ boneId: this.#boneId, weight: this.#strength })
       }
     } else if (this.#mode === 'add') {
-      // Add weight (clamped to 1)
+      // Add weight toward 1: delta = strength (already includes falloff), clamped to 1
+      // Symmetric with erase; no auto-normalize so 25% is immediately visible
       const currentWeight = boneIndex >= 0 ? currentWeights[boneIndex].weight : 0
       const newWeight = Math.min(1, currentWeight + this.#strength)
       if (boneIndex >= 0) {
@@ -118,7 +119,7 @@ export class PaintWeightCommand implements Command<PaintWeightInverse> {
         currentWeights.push({ boneId: this.#boneId, weight: newWeight })
       }
     } else if (this.#mode === 'remove') {
-      // Remove weight
+      // Erase toward 0 by same amount (symmetric): delta = strength
       const currentWeight = boneIndex >= 0 ? currentWeights[boneIndex].weight : 0
       const newWeight = Math.max(0, currentWeight - this.#strength)
       if (boneIndex >= 0) {
@@ -130,17 +131,8 @@ export class PaintWeightCommand implements Command<PaintWeightInverse> {
       }
     }
 
-    // Normalize weights to sum to 1
-    const total = currentWeights.reduce((sum, w) => sum + w.weight, 0)
-    if (total > 0) {
-      const normalizedWeights = currentWeights.map((w) => ({
-        boneId: w.boneId,
-        weight: w.weight / total,
-      }))
-      boneWeights[this.#vertexIndex] = normalizedWeights
-    } else {
-      boneWeights[this.#vertexIndex] = currentWeights
-    }
+    // No auto-normalize per dab: normalize is explicit via NormalizeWeightsCommand
+    boneWeights[this.#vertexIndex] = currentWeights
     const newMesh = { ...mesh, boneWeights, bindPose }
     engine.setMeshData(this.#nodeId, newMesh)
     return {

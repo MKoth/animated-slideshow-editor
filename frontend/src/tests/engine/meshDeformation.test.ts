@@ -844,7 +844,8 @@ describe('PaintWeightCommand', () => {
     expect(mesh.boneWeights).toBeDefined()
     expect(mesh.boneWeights![0].length).toBe(1)
     expect(mesh.boneWeights![0][0].boneId).toBe(boneId)
-    expect(mesh.boneWeights![0][0].weight).toBeCloseTo(1.0) // normalized
+    // No auto-normalize: 0 + 0.5 = 0.5 is immediately visible
+    expect(mesh.boneWeights![0][0].weight).toBeCloseTo(0.5)
   })
 
   it('removes weight from a vertex', () => {
@@ -857,7 +858,7 @@ describe('PaintWeightCommand', () => {
         weights: [{ boneId, weight: 0.8 }],
       }),
     )
-    // Remove some weight
+    // Remove some weight: 0.8 - 0.3 = 0.5, no normalize
     const result = system.dispatcher.dispatch(
       new PaintWeightCommand({
         nodeId: meshId,
@@ -870,8 +871,7 @@ describe('PaintWeightCommand', () => {
     expectOk(result)
     const node = system.engine.getNode(meshId)
     const mesh = node.components.mesh!.mesh
-    // Single bone: weight is always 1.0 after normalization
-    expect(mesh.boneWeights![0][0].weight).toBeCloseTo(1.0)
+    expect(mesh.boneWeights![0][0].weight).toBeCloseTo(0.5)
   })
 
   it('sets absolute weight', () => {
@@ -888,8 +888,8 @@ describe('PaintWeightCommand', () => {
     expectOk(result)
     const node = system.engine.getNode(meshId)
     const mesh = node.components.mesh!.mesh
-    // Single bone: weight is always 1.0 after normalization
-    expect(mesh.boneWeights![0][0].weight).toBeCloseTo(1.0)
+    // No auto-normalize: set to 0.7 directly
+    expect(mesh.boneWeights![0][0].weight).toBeCloseTo(0.7)
   })
 
   it('rejects unknown bone id', () => {

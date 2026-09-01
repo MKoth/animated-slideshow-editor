@@ -3,6 +3,7 @@ import { useEngine, useEngineEvent } from '../../app/useEngine'
 import { useMeshEditStore } from '../../stores/meshEditStore'
 import { useEditingModeStore } from '../../stores/editingModeStore'
 import { collectBones } from '../../engine/riggingQueries'
+import { NormalizeWeightsCommand } from '../../engine/commands'
 
 const WEIGHT_PAINT_TOOLS: readonly { id: string; label: string; shortcut: string }[] = [
   { id: 'paint', label: 'Paint', shortcut: '1' },
@@ -13,18 +14,21 @@ const WEIGHT_PAINT_TOOLS: readonly { id: string; label: string; shortcut: string
 ]
 
 export function WeightPaintToolbar() {
-  const { engine } = useEngine()
+  const { engine, dispatch } = useEngine()
   const mode = useEditingModeStore((state) => state.mode)
   const meshEditTool = useMeshEditStore((state) => state.meshEditTool)
   const weightPaintTool = useMeshEditStore((state) => state.weightPaintTool)
   const selectedBoneId = useMeshEditStore((state) => state.selectedBoneId)
+  const meshEditNodeId = useMeshEditStore((state) => state.meshEditNodeId)
   const brushRadius = useMeshEditStore((state) => state.brushRadius)
   const brushStrength = useMeshEditStore((state) => state.brushStrength)
+  const brushFalloff = useMeshEditStore((state) => state.brushFalloff)
   const heatmapVisible = useMeshEditStore((state) => state.heatmapVisible)
   const setWeightPaintTool = useMeshEditStore((state) => state.setWeightPaintTool)
   const setSelectedBoneId = useMeshEditStore((state) => state.setSelectedBoneId)
   const setBrushRadius = useMeshEditStore((state) => state.setBrushRadius)
   const setBrushStrength = useMeshEditStore((state) => state.setBrushStrength)
+  const setBrushFalloff = useMeshEditStore((state) => state.setBrushFalloff)
   const toggleHeatmap = useMeshEditStore((state) => state.toggleHeatmap)
   const [, setTick] = useState(0)
 
@@ -119,6 +123,35 @@ export function WeightPaintToolbar() {
         />
       </div>
 
+      <div className="weight-paint-toolbar__section">
+        <label className="weight-paint-toolbar__label">Falloff: {brushFalloff.toFixed(1)}</label>
+        <input
+          className="weight-paint-toolbar__slider"
+          type="range"
+          min="0.2"
+          max="3"
+          step="0.1"
+          value={brushFalloff}
+          onChange={(e) => setBrushFalloff(parseFloat(e.target.value))}
+        />
+      </div>
+
+      <div className="weight-paint-toolbar__separator" />
+
+      <div className="weight-paint-toolbar__section">
+        <button
+          className="weight-paint-toolbar__tool"
+          title="Normalize all vertex weights to sum to 1"
+          disabled={!meshEditNodeId}
+          onClick={() => {
+            if (!meshEditNodeId) return
+            dispatch(new NormalizeWeightsCommand({ nodeId: meshEditNodeId }))
+          }}
+        >
+          Normalize
+        </button>
+      </div>
+
       <div className="weight-paint-toolbar__separator" />
 
       <div className="weight-paint-toolbar__section">
@@ -137,7 +170,7 @@ export function WeightPaintToolbar() {
       {selectedBoneId && weightPaintTool === 'paint' && (
         <>
           <div className="weight-paint-toolbar__separator" />
-          <span className="weight-paint-toolbar__hint">Shift+drag to erase</span>
+          <span className="weight-paint-toolbar__hint">Shift/Alt+drag to erase</span>
         </>
       )}
     </div>

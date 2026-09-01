@@ -2335,6 +2335,19 @@ button:disabled {
   font-style: italic;
 }
 
+.weight-paint-tooltip {
+  position: fixed;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.75);
+  color: white;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  z-index: 999;
+  white-space: nowrap;
+  display: none;
+}
+
 .canvas-error-overlay {
   position: absolute;
   inset: 12px;

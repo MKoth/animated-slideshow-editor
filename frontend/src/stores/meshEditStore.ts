@@ -18,6 +18,7 @@ export interface MeshEditState {
   readonly selectedBoneId: string | null
   readonly brushRadius: number
   readonly brushStrength: number
+  readonly brushFalloff: number
   readonly heatmapVisible: boolean
   enterMeshEdit(nodeId: string): void
   exitMeshEdit(): void
@@ -44,6 +45,7 @@ export interface MeshEditState {
   setSelectedBoneId(boneId: string | null): void
   setBrushRadius(radius: number): void
   setBrushStrength(strength: number): void
+  setBrushFalloff(falloff: number): void
   toggleHeatmap(): void
   setHeatmapVisible(visible: boolean): void
 }
@@ -68,6 +70,7 @@ export const useMeshEditStore = create<MeshEditState>()((set) => ({
   selectedBoneId: null,
   brushRadius: 0.5,
   brushStrength: 1.0,
+  brushFalloff: 1.0,
   heatmapVisible: true,
 
   enterMeshEdit: (nodeId) =>
@@ -83,6 +86,7 @@ export const useMeshEditStore = create<MeshEditState>()((set) => ({
       selectedBoneId: null,
       brushRadius: 25,
       brushStrength: 1.0,
+      brushFalloff: 1.0,
       heatmapVisible: true,
     }),
 
@@ -99,6 +103,7 @@ export const useMeshEditStore = create<MeshEditState>()((set) => ({
       selectedBoneId: null,
       brushRadius: 25,
       brushStrength: 1.0,
+      brushFalloff: 1.0,
       heatmapVisible: true,
     }),
 
@@ -179,6 +184,7 @@ export const useMeshEditStore = create<MeshEditState>()((set) => ({
   setSelectedBoneId: (boneId) => set({ selectedBoneId: boneId }),
   setBrushRadius: (radius) => set({ brushRadius: radius }),
   setBrushStrength: (strength) => set({ brushStrength: strength }),
+  setBrushFalloff: (falloff) => set({ brushFalloff: falloff }),
   toggleHeatmap: () => set((state) => ({ heatmapVisible: !state.heatmapVisible })),
   setHeatmapVisible: (visible) => set({ heatmapVisible: visible }),
 }))
