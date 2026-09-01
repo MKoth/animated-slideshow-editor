@@ -73,6 +73,7 @@ import type { MeshData } from './mesh'
 import { evaluateMeshDeformation } from './meshDeformationEvaluator'
 import type { DeformedMeshResult } from './meshDeformationEvaluator'
 import type { WorldTransform } from './worldTransform'
+import { relativeTransform, worldTransformOf } from './worldTransform'
 import {
   clampAudioFade,
   createAudioClip,
@@ -1418,6 +1419,41 @@ export class Engine {
 
   reparentNode(nodeId: string, newParentId: string): void {
     this.#nodes.reparent(nodeId, newParentId)
+    // If reparented node is the root of an IK chain, also reparent its handle ghosts with Keep-Word
+    // so that the handles follow the new parent (as bones do via hierarchy).
+    const chains = this.#ik.getChainsForBone(nodeId).filter((c) => c.boneIds[0] === nodeId)
+    for (const chain of chains) {
+      for (const ghostId of [chain.ghostNodeId, chain.poleGhostNodeId].filter(
+        Boolean,
+      ) as string[]) {
+        try {
+          const ghost = this.getNode(ghostId)
+          // Skip if ghost already has desired parent (avoid redundant reparent that would preserve world incorrectly)
+          if (ghost.parent?.id === newParentId) continue
+          const scene = this.getNodeScene(ghostId)
+          const oldWorld = worldTransformOf(scene, ghostId)
+          const newParentWorld = worldTransformOf(scene, newParentId)
+          this.#nodes.reparent(ghostId, newParentId)
+          if (oldWorld && newParentWorld) {
+            const adjusted = relativeTransform(oldWorld, newParentWorld)
+            if (adjusted) {
+              const current = this.getNode(ghostId).transform
+              const needsUpdate =
+                adjusted.x !== current.x ||
+                adjusted.y !== current.y ||
+                adjusted.rotation !== current.rotation ||
+                adjusted.scaleX !== current.scaleX ||
+                adjusted.scaleY !== current.scaleY
+              if (needsUpdate) {
+                this.setTransform(ghostId, adjusted)
+              }
+            }
+          }
+        } catch {
+          // ignore missing ghost or reparent failures
+        }
+      }
+    }
   }
 
   setTransform(nodeId: string, transform: Transform): void {
@@ -1894,6 +1930,47 @@ export class Engine {
       // Restore IK chains from JSON
       if (json.ikChains) {
         this.#ik.restoreFromJSON(json.ikChains)
+        // Migration: ensure ghost handles follow the chain's root parent (one-way parent-follow)
+        for (const slide of project.slides) {
+          for (const chain of this.#ik.getChainsForSlide(slide.id)) {
+            try {
+              const rootBone = this.getNode(chain.boneIds[0])
+              const expectedParentId = rootBone.parent ? rootBone.parent.id : slide.scene.root.id
+              for (const ghostId of [chain.ghostNodeId, chain.poleGhostNodeId].filter(
+                Boolean,
+              ) as string[]) {
+                try {
+                  const ghost = this.getNode(ghostId)
+                  if (ghost.parent?.id !== expectedParentId) {
+                    const scene = this.getNodeScene(ghostId)
+                    const oldWorld = worldTransformOf(scene, ghostId)
+                    const newParentWorld = worldTransformOf(scene, expectedParentId)
+                    this.#nodes.reparent(ghostId, expectedParentId)
+                    if (oldWorld && newParentWorld) {
+                      const adjusted = relativeTransform(oldWorld, newParentWorld)
+                      if (adjusted) {
+                        const cur = this.getNode(ghostId).transform
+                        if (
+                          adjusted.x !== cur.x ||
+                          adjusted.y !== cur.y ||
+                          adjusted.rotation !== cur.rotation ||
+                          adjusted.scaleX !== cur.scaleX ||
+                          adjusted.scaleY !== cur.scaleY
+                        ) {
+                          this.setTransform(ghostId, adjusted)
+                        }
+                      }
+                    }
+                  }
+                } catch {
+                  // ignore
+                }
+              }
+            } catch {
+              // ignore missing root
+            }
+          }
+        }
       }
       // Restore constraints from JSON
       if (json.constraints) {
@@ -2013,24 +2090,67 @@ export class Engine {
     poleTarget: import('./ikChain').PoleTarget | null = null,
   ): import('./ikChain').IKChain {
     const slide = this.getSlide(slideId)
+    // Ghosts should be siblings of the chain's root bone so they follow the same parent (e.g., Rig Handle)
+    const rootBone = this.getNode(boneIds[0])
+    const ghostParentId = rootBone.parent ? rootBone.parent.id : slide.scene.root.id
+    const ghostParentWorld = worldTransformOf(slide.scene, ghostParentId)
+    const targetWorld = {
+      x: target.position.x,
+      y: target.position.y,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+    } as import('./worldTransform').WorldTransform
+    const ghostLocal = ghostParentWorld ? relativeTransform(targetWorld, ghostParentWorld) : null
     const ghostNode = this.createGhostNode(
       slide.scene.id,
       'IK Target',
-      target.position.x,
-      target.position.y,
+      ghostLocal ? ghostLocal.x : target.position.x,
+      ghostLocal ? ghostLocal.y : target.position.y,
+      undefined,
+      ghostParentId,
     )
+    // Ensure ghost local preserves exact target world even if parent has rotation/scale
+    if (ghostLocal) {
+      this.setTransform(ghostNode.id, {
+        x: ghostLocal.x,
+        y: ghostLocal.y,
+        rotation: ghostLocal.rotation,
+        scaleX: ghostLocal.scaleX,
+        scaleY: ghostLocal.scaleY,
+      })
+    }
     let resolvedPole: import('./ikChain').PoleTarget | null = poleTarget
     let poleGhostId: string | null = null
     if (poleTarget) {
       if (!poleTarget.nodeId) {
         // Create a ghost node for the pole vector so it can be parented under a Rig Handle.
         // Keep poleTarget plain (no nodeId) for backward compat; ghost is tracked via poleGhostNodeId.
+        const poleWorld = {
+          x: poleTarget.position.x,
+          y: poleTarget.position.y,
+          rotation: 0,
+          scaleX: 1,
+          scaleY: 1,
+        } as import('./worldTransform').WorldTransform
+        const poleLocal = ghostParentWorld ? relativeTransform(poleWorld, ghostParentWorld) : null
         const poleGhost = this.createGhostNode(
           slide.scene.id,
           'Pole Target',
-          poleTarget.position.x,
-          poleTarget.position.y,
+          poleLocal ? poleLocal.x : poleTarget.position.x,
+          poleLocal ? poleLocal.y : poleTarget.position.y,
+          undefined,
+          ghostParentId,
         )
+        if (poleLocal) {
+          this.setTransform(poleGhost.id, {
+            x: poleLocal.x,
+            y: poleLocal.y,
+            rotation: poleLocal.rotation,
+            scaleX: poleLocal.scaleX,
+            scaleY: poleLocal.scaleY,
+          })
+        }
         resolvedPole = { position: { ...poleTarget.position } }
         poleGhostId = poleGhost.id
       } else {
@@ -2186,9 +2306,17 @@ export class Engine {
 
   // --- Ghost node helpers (for IK target anchors) ---
 
-  createGhostNode(sceneId: string, name: string, x: number, y: number, id?: string): SceneNode {
+  createGhostNode(
+    sceneId: string,
+    name: string,
+    x: number,
+    y: number,
+    id?: string,
+    parentId?: string,
+  ): SceneNode {
     const scene = this.getScene(sceneId)
-    return this.createNode(sceneId, scene.root.id, name, {
+    const parent = parentId ?? scene.root.id
+    return this.createNode(sceneId, parent, name, {
       id,
       transform: { x, y, rotation: 0, scaleX: 1, scaleY: 1 },
       components: { ghost: { kind: 'ghost' } },

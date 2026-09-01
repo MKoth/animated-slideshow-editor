@@ -288,6 +288,40 @@ describe('Rig Handle Group + one-way IK/Pole follow', () => {
     expect(restored.getNode(boneRoot.id).parent?.id).toBe(handleId)
   })
 
+  it('IK handles follow parent of chain as bone chain does', () => {
+    const { engine, slide } = setup()
+    const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'ParentGroup', {
+      transform: { x: 50, y: 50, rotation: 0, scaleX: 1, scaleY: 1 },
+    })
+    const boneRoot = createBone(engine, parent.id, 'Root', 10, 0)
+    const boneChild = createBone(engine, boneRoot.id, 'Child', 100, 0)
+    const chain = engine.createIKChain(
+      slide.id,
+      [boneRoot.id, boneChild.id],
+      { position: { x: 200, y: 0 } },
+      { position: { x: 50, y: 50 } },
+    )
+    const ghostId = chain.ghostNodeId!
+    const poleGhostId = chain.poleGhostNodeId!
+    // Ghosts should be siblings of boneRoot under same parent (one-way parent-follow)
+    expect(engine.getNode(ghostId).parent?.id).toBe(parent.id)
+    expect(engine.getNode(poleGhostId).parent?.id).toBe(parent.id)
+    const ghostWorldBefore = worldTransformOf(slide.scene, ghostId)!
+    const poleWorldBefore = worldTransformOf(slide.scene, poleGhostId)!
+    // Moving parent should move both bones and ghosts rigidly
+    engine.setTransform(parent.id, { x: 100, y: 100, rotation: 0, scaleX: 1, scaleY: 1 })
+    const ghostWorldAfter = worldTransformOf(slide.scene, ghostId)!
+    const poleWorldAfter = worldTransformOf(slide.scene, poleGhostId)!
+    expect(ghostWorldAfter.x).toBeCloseTo(ghostWorldBefore.x + 50, 4)
+    expect(ghostWorldAfter.y).toBeCloseTo(ghostWorldBefore.y + 50, 4)
+    expect(poleWorldAfter.x).toBeCloseTo(poleWorldBefore.x + 50, 4)
+    // FK on chain should not move handles (one-way)
+    const ghostWorldBeforeFK = { ...ghostWorldAfter }
+    engine.setTransform(boneRoot.id, { ...engine.getNode(boneRoot.id).transform, rotation: 0.5 })
+    const ghostWorldAfterFK = worldTransformOf(slide.scene, ghostId)!
+    expect(ghostWorldAfterFK.x).toBeCloseTo(ghostWorldBeforeFK.x, 4)
+  })
+
   it('undo/redo of Rig Handle creation restores world transforms', () => {
     const raw = createEngineInternal()
     const undoStack = new UndoStack()
