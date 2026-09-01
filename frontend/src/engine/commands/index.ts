@@ -379,3 +379,8 @@ export type {
   ReplacePrompterWordsInverse,
   ReplacePrompterWordsParameters,
 } from './replacePrompterWordsCommand'
+export { SplitPrompterWordsCommand } from './splitPrompterWordsCommand'
+export type {
+  SplitPrompterWordsInverse,
+  SplitPrompterWordsParameters,
+} from './splitPrompterWordsCommand'

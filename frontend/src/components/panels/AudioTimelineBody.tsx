@@ -16,6 +16,7 @@ import {
   MoveAudioClipCommand,
   MovePrompterPartCommand,
   SplitAudioClipCommand,
+  SplitPrompterWordsCommand,
   TrimAudioClipCommand,
   UpdatePrompterPartCommand,
   UpdatePrompterPartWithShiftCommand,
@@ -121,10 +122,12 @@ export function AudioTimelineBody({
       const def = useAssetLibraryStore.getState().definitions.find((d) => d.id === assetId)
       if (def) {
         const meta = def.metadata as Record<string, unknown> | undefined
-        if (meta && typeof meta.duration === 'number' && Number.isFinite(meta.duration)) return meta.duration as number
+        if (meta && typeof meta.duration === 'number' && Number.isFinite(meta.duration))
+          return meta.duration as number
         if (def.mimeType?.startsWith('audio/') || def.category === 'audio') {
           // fallback to duration from metadata or 1
-          if (typeof (def as unknown as { duration?: unknown }).duration === 'number') return (def as unknown as { duration: number }).duration
+          if (typeof (def as unknown as { duration?: unknown }).duration === 'number')
+            return (def as unknown as { duration: number }).duration
         }
       }
       return 1
@@ -164,7 +167,10 @@ export function AudioTimelineBody({
 
   // Prompter move/trim state (like audio clips: draggable, resizable)
   const prompterMoveRef = useRef<{ partId: string; startX: number; startTime: number } | null>(null)
-  const [prompterMovePreview, setPrompterMovePreview] = useState<{ partId: string; startTime: number } | null>(null)
+  const [prompterMovePreview, setPrompterMovePreview] = useState<{
+    partId: string
+    startTime: number
+  } | null>(null)
   const [prompterTrimPreview, setPrompterTrimPreview] = useState<{
     partId: string
     duration: number
@@ -173,8 +179,17 @@ export function AudioTimelineBody({
   } | null>(null)
 
   // Word-level selection for TTS replacement (Spec 15.10)
-  const [wordSelection, setWordSelection] = useState<{ partId: string; start: number; end: number } | null>(null)
-  const [wordLevelTts, setWordLevelTts] = useState<{ partId: string; start: number; end: number; text: string } | null>(null)
+  const [wordSelection, setWordSelection] = useState<{
+    partId: string
+    start: number
+    end: number
+  } | null>(null)
+  const [wordLevelTts, setWordLevelTts] = useState<{
+    partId: string
+    start: number
+    end: number
+    text: string
+  } | null>(null)
   const [hoveredWord, setHoveredWord] = useState<{ partId: string; index: number } | null>(null)
 
   const resolveTrackFromEvent = (event: React.DragEvent): AudioTrackId | null => {
@@ -270,11 +285,15 @@ export function AudioTimelineBody({
     if (embedded && embedded.mimeType.startsWith('audio/')) {
       isValidAudio = true
       const rawDuration = (embedded.metadata as Record<string, unknown>)?.duration
-      assetDuration = typeof rawDuration === 'number' && Number.isFinite(rawDuration) ? rawDuration : 1
+      assetDuration =
+        typeof rawDuration === 'number' && Number.isFinite(rawDuration) ? rawDuration : 1
     } else {
       const def = useAssetLibraryStore.getState().definitions.find((d) => d.id === assetId)
       if (def) {
-        const isAudioDef = def.mimeType?.startsWith('audio/') || def.category === 'audio' || /\.(wav|mp3|mpeg|ogg|webm)$/i.test(def.original_filename)
+        const isAudioDef =
+          def.mimeType?.startsWith('audio/') ||
+          def.category === 'audio' ||
+          /\.(wav|mp3|mpeg|ogg|webm)$/i.test(def.original_filename)
         if (isAudioDef) {
           isValidAudio = true
           const meta = def.metadata as Record<string, unknown> | undefined
@@ -291,7 +310,10 @@ export function AudioTimelineBody({
     // For global assets, ensure embedded snapshot exists before creating clip (portability)
     if (!embedded) {
       try {
-        await captureAudioSnapshot(engine as unknown as import('../../engine').EnginePublic, assetId)
+        await captureAudioSnapshot(
+          engine as unknown as import('../../engine').EnginePublic,
+          assetId,
+        )
       } catch {
         // snapshot is best-effort; clip can still reference global id
       }
@@ -690,7 +712,9 @@ export function AudioTimelineBody({
       const snapped = computeSnappedTime(Math.max(0, raw))
       const part = slide.prompter?.parts.find((p) => p.id === partId)
       if (part && Math.abs(snapped - part.startTime) > 1e-6) {
-        const result = dispatch(new MovePrompterPartCommand({ slideId: slide.id, partId, newStartTime: snapped }))
+        const result = dispatch(
+          new MovePrompterPartCommand({ slideId: slide.id, partId, newStartTime: snapped }),
+        )
         if (!result.ok) useNotificationStore.getState().notify(result.error.message)
       }
       setPrompterMovePreview(null)
@@ -701,7 +725,11 @@ export function AudioTimelineBody({
   }
 
   // Prompter trim (make shorter/longer) — right handle changes duration, left handle also changes duration
-  const onPrompterTrimPointerDown = (e: React.PointerEvent, partId: string, side: 'left' | 'right') => {
+  const onPrompterTrimPointerDown = (
+    e: React.PointerEvent,
+    partId: string,
+    side: 'left' | 'right',
+  ) => {
     e.preventDefault()
     e.stopPropagation()
     const part = slide.prompter?.parts.find((p) => p.id === partId)
@@ -735,7 +763,14 @@ export function AudioTimelineBody({
         if (Math.abs(newDuration - startDuration) > 1e-6) {
           const shift = ev.shiftKey
           const Cmd = shift ? UpdatePrompterPartWithShiftCommand : UpdatePrompterPartCommand
-          const result = dispatch(new Cmd({ slideId: slide.id, partId, duration: newDuration, ...(shift ? { shiftDownstream: true } : {}) } as never))
+          const result = dispatch(
+            new Cmd({
+              slideId: slide.id,
+              partId,
+              duration: newDuration,
+              ...(shift ? { shiftDownstream: true } : {}),
+            } as never),
+          )
           if (!result.ok) useNotificationStore.getState().notify(result.error.message)
         }
       } else {
@@ -743,10 +778,14 @@ export function AudioTimelineBody({
         const newStart = Math.max(0, partStart + (startDuration - newDuration))
         // Left handle: move start and change duration, keep end fixed
         if (Math.abs(newDuration - startDuration) > 1e-6 || Math.abs(newStart - partStart) > 1e-6) {
-          const moveRes = dispatch(new MovePrompterPartCommand({ slideId: slide.id, partId, newStartTime: newStart }))
+          const moveRes = dispatch(
+            new MovePrompterPartCommand({ slideId: slide.id, partId, newStartTime: newStart }),
+          )
           if (!moveRes.ok) useNotificationStore.getState().notify(moveRes.error.message)
           else {
-            const durRes = dispatch(new UpdatePrompterPartCommand({ slideId: slide.id, partId, duration: newDuration }))
+            const durRes = dispatch(
+              new UpdatePrompterPartCommand({ slideId: slide.id, partId, duration: newDuration }),
+            )
             if (!durRes.ok) useNotificationStore.getState().notify(durRes.error.message)
           }
         }
@@ -1114,12 +1153,22 @@ export function AudioTimelineBody({
   const prompterParts = useMemo(() => slide.prompter?.parts ?? [], [slide.prompter])
   const overlappingIds = getOverlappingClipIds(clips)
   const [recordPartId, setRecordPartId] = useState<string | null>(null)
-  const recordPart = useMemo(() => prompterParts.find((p) => p.id === recordPartId) ?? null, [prompterParts, recordPartId])
+  const recordPart = useMemo(
+    () => prompterParts.find((p) => p.id === recordPartId) ?? null,
+    [prompterParts, recordPartId],
+  )
   const [ttsPartId, setTtsPartId] = useState<string | null>(null)
-  const ttsPart = useMemo(() => prompterParts.find((p) => p.id === ttsPartId) ?? null, [prompterParts, ttsPartId])
+  const ttsPart = useMemo(
+    () => prompterParts.find((p) => p.id === ttsPartId) ?? null,
+    [prompterParts, ttsPartId],
+  )
   const [showImport, setShowImport] = useState(false)
   const [importText, setImportText] = useState('Hello, world')
-  const selectedWordPart = useMemo(() => (wordSelection ? prompterParts.find((p) => p.id === wordSelection.partId) ?? null : null), [prompterParts, wordSelection])
+  const selectedWordPart = useMemo(
+    () =>
+      wordSelection ? (prompterParts.find((p) => p.id === wordSelection.partId) ?? null) : null,
+    [prompterParts, wordSelection],
+  )
   const selectedWordText = useMemo(() => {
     if (!wordSelection || !selectedWordPart) return ''
     const words = selectedWordPart.text.match(/\S+/g) ?? []
@@ -1133,7 +1182,11 @@ export function AudioTimelineBody({
     const handler = (e: KeyboardEvent) => {
       if (recordPartId !== null) return
       const target = e.target as HTMLElement
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
+      if (
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      )
+        return
       const settings = engine.project?.settings ?? {}
       const shortcut = getPrompterRecordingShortcut(settings)
       if (e.key.toLowerCase() !== shortcut) return
@@ -1324,9 +1377,18 @@ export function AudioTimelineBody({
                   overflow: 'visible',
                   borderBottom: '1px solid var(--color-border)',
                   background: 'var(--color-bg-panel)',
+                  zIndex: 10,
                 }}
               >
-                <div style={{ position: 'relative', width: contentWidth, height: '100%', overflow: 'visible' }}>
+                <div
+                  style={{
+                    position: 'relative',
+                    width: contentWidth,
+                    height: '100%',
+                    overflow: 'visible',
+                    zIndex: 10,
+                  }}
+                >
                   {prompterParts.length === 0 ? (
                     <span
                       style={{
@@ -1349,9 +1411,17 @@ export function AudioTimelineBody({
                         const isSelected = false
                         const isMovePreview = prompterMovePreview?.partId === part.id
                         const isTrimPreview = prompterTrimPreview?.partId === part.id
-                        const displayDuration = isTrimPreview ? prompterTrimPreview!.duration : part.duration
-                        const displayLeft = isTrimPreview ? prompterTrimPreview!.left : isMovePreview ? prompterMovePreview!.startTime * pps : part.startTime * pps
-                        const displayWidth = isTrimPreview ? prompterTrimPreview!.width : displayDuration * pps
+                        const displayDuration = isTrimPreview
+                          ? prompterTrimPreview!.duration
+                          : part.duration
+                        const displayLeft = isTrimPreview
+                          ? prompterTrimPreview!.left
+                          : isMovePreview
+                            ? prompterMovePreview!.startTime * pps
+                            : part.startTime * pps
+                        const displayWidth = isTrimPreview
+                          ? prompterTrimPreview!.width
+                          : displayDuration * pps
                         return (
                           <div
                             key={part.id}
@@ -1412,7 +1482,9 @@ export function AudioTimelineBody({
                                 : isFocused
                                   ? 'var(--color-accent)'
                                   : 'var(--color-bg)',
-                              border: isActive ? '1px solid #7c5cff' : '1px solid var(--color-border)',
+                              border: isActive
+                                ? '1px solid #7c5cff'
+                                : '1px solid var(--color-border)',
                               fontSize: 11,
                               whiteSpace: 'nowrap',
                               overflow: 'visible',
@@ -1421,11 +1493,30 @@ export function AudioTimelineBody({
                               display: 'inline-flex',
                               alignItems: 'center',
                               gap: 6,
-                              zIndex: isFocused || isActive ? 3 : hoveredWord?.partId === part.id ? 2 : 1,
-                              boxShadow: isFocused ? '0 2px 10px rgba(0,0,0,0.35)' : '0 1px 4px rgba(0,0,0,0.25)',
+                              zIndex:
+                                wordSelection?.partId === part.id
+                                  ? 50
+                                  : isFocused || isActive
+                                    ? 4
+                                    : hoveredWord?.partId === part.id
+                                      ? 3
+                                      : 1,
+                              boxShadow: isFocused
+                                ? '0 2px 10px rgba(0,0,0,0.35)'
+                                : '0 1px 4px rgba(0,0,0,0.25)',
                             }}
                           >
-                            <span style={{ display: 'inline-flex', gap: 3, alignItems: 'center', flexWrap: 'nowrap', overflow: 'visible', flex: 1, minWidth: 0 }}>
+                            <span
+                              style={{
+                                display: 'inline-flex',
+                                gap: 3,
+                                alignItems: 'center',
+                                flexWrap: 'nowrap',
+                                overflow: 'visible',
+                                flex: 1,
+                                minWidth: 0,
+                              }}
+                            >
                               {(() => {
                                 const tokens = part.text.split(/(\s+)/)
                                 let wIdx = -1
@@ -1433,16 +1524,29 @@ export function AudioTimelineBody({
                                   if (tok === '') return null
                                   if (/^\s+$/.test(tok)) {
                                     return (
-                                      <span key={`ws-${ti}`} style={{ whiteSpace: 'pre', color: '#666', userSelect: 'none' }}>
+                                      <span
+                                        key={`ws-${ti}`}
+                                        style={{
+                                          whiteSpace: 'pre',
+                                          color: '#666',
+                                          userSelect: 'none',
+                                        }}
+                                      >
                                         {tok === ' ' ? '·' : tok}
                                       </span>
                                     )
                                   }
                                   wIdx += 1
                                   const wi = wIdx
-                                  const isSelected = wordSelection?.partId === part.id && wi >= Math.min(wordSelection.start, wordSelection.end) && wi <= Math.max(wordSelection.start, wordSelection.end)
-                                  const isSegment = part.segments?.some((s) => s.text.trim() === tok.trim())
-                                  const isHovered = hoveredWord?.partId === part.id && hoveredWord?.index === wi
+                                  const isSelected =
+                                    wordSelection?.partId === part.id &&
+                                    wi >= Math.min(wordSelection.start, wordSelection.end) &&
+                                    wi <= Math.max(wordSelection.start, wordSelection.end)
+                                  const isSegment = part.segments?.some(
+                                    (s) => s.text.trim() === tok.trim(),
+                                  )
+                                  const isHovered =
+                                    hoveredWord?.partId === part.id && hoveredWord?.index === wi
                                   return (
                                     <span
                                       key={`w-${wi}`}
@@ -1452,13 +1556,25 @@ export function AudioTimelineBody({
                                       onPointerDown={(e) => {
                                         e.stopPropagation()
                                       }}
-                                      onMouseEnter={() => setHoveredWord({ partId: part.id, index: wi })}
-                                      onMouseLeave={() => setHoveredWord((prev) => (prev?.partId === part.id && prev?.index === wi ? null : prev))}
+                                      onMouseEnter={() =>
+                                        setHoveredWord({ partId: part.id, index: wi })
+                                      }
+                                      onMouseLeave={() =>
+                                        setHoveredWord((prev) =>
+                                          prev?.partId === part.id && prev?.index === wi
+                                            ? null
+                                            : prev,
+                                        )
+                                      }
                                       onClick={(e) => {
                                         e.stopPropagation()
                                         e.preventDefault()
                                         setFocusedId(part.id)
-                                        if (wordSelection && wordSelection.partId === part.id && e.shiftKey) {
+                                        if (
+                                          wordSelection &&
+                                          wordSelection.partId === part.id &&
+                                          e.shiftKey
+                                        ) {
                                           const start = Math.min(wordSelection.start, wi)
                                           const end = Math.max(wordSelection.end, wi)
                                           setWordSelection({ partId: part.id, start, end })
@@ -1480,7 +1596,13 @@ export function AudioTimelineBody({
                                             : isHovered
                                               ? 'rgba(124,92,255,0.32)'
                                               : 'rgba(255,255,255,0.10)',
-                                        color: isSelected ? '#fff' : isSegment ? '#b6f0d0' : isHovered ? '#fff' : '#f0f0f5',
+                                        color: isSelected
+                                          ? '#fff'
+                                          : isSegment
+                                            ? '#b6f0d0'
+                                            : isHovered
+                                              ? '#fff'
+                                              : '#f0f0f5',
                                         border: isSelected
                                           ? '1px solid #fff'
                                           : isSegment
@@ -1495,10 +1617,17 @@ export function AudioTimelineBody({
                                           : isHovered
                                             ? '0 2px 6px rgba(124,92,255,0.35)'
                                             : '0 1px 2px rgba(0,0,0,0.25)',
-                                        transform: isHovered && !isSelected ? 'translateY(-1px)' : 'none',
-                                        textShadow: isSelected ? '0 1px 0 rgba(0,0,0,0.2)' : undefined,
+                                        transform:
+                                          isHovered && !isSelected ? 'translateY(-1px)' : 'none',
+                                        textShadow: isSelected
+                                          ? '0 1px 0 rgba(0,0,0,0.2)'
+                                          : undefined,
                                       }}
-                                      title={isSegment ? 'AudioSegment — click to re-select word for replacement' : 'Click to select word • Shift+click to extend range • Selected words can be replaced with TTS'}
+                                      title={
+                                        isSegment
+                                          ? 'AudioSegment — click to re-select word for replacement'
+                                          : 'Click to select word • Shift+click to extend range • Selected words can be replaced with TTS'
+                                      }
                                     >
                                       {tok}
                                     </span>
@@ -1506,11 +1635,28 @@ export function AudioTimelineBody({
                                 })
                               })()}
                             </span>
-                            <small style={{ marginLeft: 4, fontSize: 9, color: 'var(--color-text-muted)' }}>
+                            <small
+                              style={{
+                                marginLeft: 4,
+                                fontSize: 9,
+                                color: 'var(--color-text-muted)',
+                              }}
+                            >
                               {part.startTime.toFixed(1)}–{part.endTime.toFixed(1)}
                             </small>
                             {part.segments && part.segments.length > 0 && (
-                              <span data-testid="segment-badge" title={`${part.segments.length} AudioSegment(s)`} style={{ fontSize: 8, background: '#2e9a6a', color: '#fff', borderRadius: 4, padding: '1px 4px', marginLeft: 2 }}>
+                              <span
+                                data-testid="segment-badge"
+                                title={`${part.segments.length} AudioSegment(s)`}
+                                style={{
+                                  fontSize: 8,
+                                  background: '#2e9a6a',
+                                  color: '#fff',
+                                  borderRadius: 4,
+                                  padding: '1px 4px',
+                                  marginLeft: 2,
+                                }}
+                              >
                                 {part.segments.length} seg
                               </span>
                             )}
@@ -1588,7 +1734,7 @@ export function AudioTimelineBody({
                                   whiteSpace: 'nowrap',
                                   width: 'fit-content',
                                   maxWidth: 'min(380px, 85vw)',
-                                  zIndex: 20,
+                                  zIndex: 100,
                                   boxShadow: '0 8px 24px rgba(0,0,0,0.55)',
                                   pointerEvents: 'auto',
                                 }}
@@ -1597,25 +1743,35 @@ export function AudioTimelineBody({
                                   &quot;{selectedWordText}&quot;
                                 </span>
                                 <button
-                                  data-testid="word-tts-trigger"
+                                  data-testid="word-split-trigger"
                                   onClick={(e) => {
                                     e.stopPropagation()
                                     const start = Math.min(wordSelection.start, wordSelection.end)
                                     const end = Math.max(wordSelection.start, wordSelection.end)
-                                    setWordLevelTts({ partId: wordSelection.partId, start, end, text: selectedWordText })
+                                    const result = dispatch(
+                                      new SplitPrompterWordsCommand({
+                                        slideId: slide.id,
+                                        partId: wordSelection.partId,
+                                        startWordIndex: start,
+                                        endWordIndex: end,
+                                      }),
+                                    )
+                                    if (!result.ok)
+                                      useNotificationStore.getState().notify(result.error.message)
+                                    else setWordSelection(null)
                                   }}
                                   style={{
                                     padding: '4px 10px',
-                                    background: '#2e9a6a',
+                                    background: '#7c5cff',
                                     color: '#fff',
-                                    border: '1px solid #2e9a6a',
+                                    border: '1px solid #7c5cff',
                                     borderRadius: 999,
                                     cursor: 'pointer',
                                     fontSize: 11,
                                     fontWeight: 700,
                                   }}
                                 >
-                                  Replace with TTS
+                                  Split out
                                 </button>
                                 <button
                                   data-testid="word-selection-clear"
@@ -1623,7 +1779,15 @@ export function AudioTimelineBody({
                                     e.stopPropagation()
                                     setWordSelection(null)
                                   }}
-                                  style={{ padding: '4px 8px', background: '#2a2a3a', color: '#ccc', border: '1px solid #444', borderRadius: 999, cursor: 'pointer', fontSize: 11 }}
+                                  style={{
+                                    padding: '4px 8px',
+                                    background: '#2a2a3a',
+                                    color: '#ccc',
+                                    border: '1px solid #444',
+                                    borderRadius: 999,
+                                    cursor: 'pointer',
+                                    fontSize: 11,
+                                  }}
                                 >
                                   ×
                                 </button>
@@ -1651,7 +1815,7 @@ export function AudioTimelineBody({
                                   whiteSpace: 'nowrap',
                                   width: 'fit-content',
                                   maxWidth: 'min(320px, 80vw)',
-                                  zIndex: 19,
+                                  zIndex: 100,
                                   boxShadow: '0 6px 16px rgba(0,0,0,0.4)',
                                   pointerEvents: 'none',
                                 }}
@@ -1702,7 +1866,9 @@ export function AudioTimelineBody({
                         top: 4,
                         height: 34,
                         left: prompterMovePreview.startTime * pps,
-                        width: (slide.prompter?.parts.find((p) => p.id === prompterMovePreview.partId)?.duration ?? 1) * pps,
+                        width:
+                          (slide.prompter?.parts.find((p) => p.id === prompterMovePreview.partId)
+                            ?.duration ?? 1) * pps,
                         background: 'rgba(124,92,255,0.35)',
                         border: '1px dashed #fff',
                         borderRadius: 12,
@@ -1714,14 +1880,18 @@ export function AudioTimelineBody({
                 </div>
               </div>
 
-
               <div
                 className="audio-lanes"
                 data-testid="audio-lanes"
                 onDragOver={handleAudioDragOver}
                 onDragLeave={handleAudioDragLeave}
                 onDrop={handleAudioDrop}
-                style={{ position: 'relative', height: AUDIO_LANE_HEIGHT * 3, width: contentWidth }}
+                style={{
+                  position: 'relative',
+                  height: AUDIO_LANE_HEIGHT * 3,
+                  width: contentWidth,
+                  zIndex: 1,
+                }}
               >
                 {ghost && (
                   <div
@@ -1898,22 +2068,56 @@ export function AudioTimelineBody({
                               >
                                 {(() => {
                                   const asset = engine.getEmbeddedAsset(clip.assetId)
-                                  const meta = asset?.metadata as Record<string, unknown> | undefined
-                                  const assetDuration = typeof meta?.duration === 'number' ? (meta.duration as number) : clip.sourceEnd - clip.sourceStart
-                                  const rawPeaks = Array.isArray(meta?.waveformPeaks) ? (meta.waveformPeaks as number[]) : null
-                                  const clipped = rawPeaks ? slicePeaksForClip(rawPeaks, assetDuration, displaySourceStart, displaySourceEnd) : rawPeaks
+                                  const meta = asset?.metadata as
+                                    Record<string, unknown> | undefined
+                                  const assetDuration =
+                                    typeof meta?.duration === 'number'
+                                      ? (meta.duration as number)
+                                      : clip.sourceEnd - clip.sourceStart
+                                  const rawPeaks = Array.isArray(meta?.waveformPeaks)
+                                    ? (meta.waveformPeaks as number[])
+                                    : null
+                                  const clipped = rawPeaks
+                                    ? slicePeaksForClip(
+                                        rawPeaks,
+                                        assetDuration,
+                                        displaySourceStart,
+                                        displaySourceEnd,
+                                      )
+                                    : rawPeaks
                                   // If no peaks cached and asset is long, try backend peaks once
                                   // placeholder uses null to show fallback
                                   void assetsApi // keep import used; backend long handled via BackendAudioCell
                                   return (
-                                    <div style={{ position: 'absolute', inset: '4px 8px', opacity: 0.85, pointerEvents: 'none' }}>
-                                      <WaveformCanvas peaks={clipped} width={Math.max(40, width - 16)} height={24} color="rgba(255,255,255,0.9)" background="transparent" barGap={1} testId="audio-clip-waveform" />
+                                    <div
+                                      style={{
+                                        position: 'absolute',
+                                        inset: '4px 8px',
+                                        opacity: 0.85,
+                                        pointerEvents: 'none',
+                                      }}
+                                    >
+                                      <WaveformCanvas
+                                        peaks={clipped}
+                                        width={Math.max(40, width - 16)}
+                                        height={24}
+                                        color="rgba(255,255,255,0.9)"
+                                        background="transparent"
+                                        barGap={1}
+                                        testId="audio-clip-waveform"
+                                      />
                                     </div>
                                   )
                                 })()}
                                 <span
                                   className="audio-clip__label"
-                                  style={{ overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, position: 'relative', zIndex: 1 }}
+                                  style={{
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    flex: 1,
+                                    position: 'relative',
+                                    zIndex: 1,
+                                  }}
                                 >
                                   {clip.assetId}
                                 </span>
@@ -2076,7 +2280,10 @@ export function AudioTimelineBody({
         <WordLevelTtsModal
           slideId={slide.id}
           partId={wordLevelTts.partId}
-          partText={engine.getSlide(slide.id).prompter?.parts.find((p) => p.id === wordLevelTts.partId)?.text ?? wordLevelTts.text}
+          partText={
+            engine.getSlide(slide.id).prompter?.parts.find((p) => p.id === wordLevelTts.partId)
+              ?.text ?? wordLevelTts.text
+          }
           startWordIndex={wordLevelTts.start}
           endWordIndex={wordLevelTts.end}
           selectedText={wordLevelTts.text}
@@ -2117,8 +2324,8 @@ export function AudioTimelineBody({
           >
             <h3 style={{ margin: '0 0 8px', fontSize: 13 }}>Import prompter</h3>
             <p style={{ fontSize: 11, color: '#888', margin: '0 0 8px' }}>
-              Paste narration — auto-splits on <code>[.,;:!?{"\\n"}—]</code> (consecutive collapsed, no empty parts). Duration = chars ×{' '}
-              <code>secondsPerCharacter 0.2</code>
+              Paste narration — auto-splits on <code>[.,;:!?{'\\n'}—]</code> (consecutive collapsed,
+              no empty parts). Duration = chars × <code>secondsPerCharacter 0.2</code>
             </p>
             <textarea
               data-testid="prompter-import-textarea"
@@ -2142,18 +2349,34 @@ export function AudioTimelineBody({
               <button
                 data-testid="prompter-import-cancel"
                 onClick={() => setShowImport(false)}
-                style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid #444', background: '#333', color: '#e0e0e0', cursor: 'pointer' }}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid #444',
+                  background: '#333',
+                  color: '#e0e0e0',
+                  cursor: 'pointer',
+                }}
               >
                 Cancel
               </button>
               <button
                 data-testid="prompter-import-confirm"
                 onClick={() => {
-                  const result = dispatch(new ImportPrompterCommand({ slideId: slide.id, rawText: importText }))
+                  const result = dispatch(
+                    new ImportPrompterCommand({ slideId: slide.id, rawText: importText }),
+                  )
                   if (!result.ok) useNotificationStore.getState().notify(result.error.message)
                   setShowImport(false)
                 }}
-                style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid #7c5cff', background: '#7c5cff', color: '#fff', cursor: 'pointer' }}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid #7c5cff',
+                  background: '#7c5cff',
+                  color: '#fff',
+                  cursor: 'pointer',
+                }}
               >
                 Import
               </button>

@@ -395,17 +395,24 @@ export class Engine {
     if (!ttsAsset) throw new Error(`TTS AudioAsset not found: ${ttsAssetId}`)
     if (!ttsAsset.mimeType.startsWith('audio/')) throw new Error('TTS asset must be audio/*')
     const ttsDurationRaw = (ttsAsset.metadata as Record<string, unknown> | undefined)?.duration
-    const ttsDuration = typeof ttsDurationRaw === 'number' && Number.isFinite(ttsDurationRaw) ? ttsDurationRaw : 1
+    const ttsDuration =
+      typeof ttsDurationRaw === 'number' && Number.isFinite(ttsDurationRaw) ? ttsDurationRaw : 1
     // Save old state for inverse
     const oldPartSnapshot: import('./prompter').PrompterPart = JSON.parse(JSON.stringify(part))
-    const oldClip = part.audioClipId ? slide.audio.clips.find((c) => c.id === part.audioClipId) ?? undefined : undefined
+    const oldClip = part.audioClipId
+      ? (slide.audio.clips.find((c) => c.id === part.audioClipId) ?? undefined)
+      : undefined
     const oldClipCopy = oldClip ? JSON.parse(JSON.stringify(oldClip)) : undefined
     const oldIndex = index
     // Original asset for outer pieces (preserve non-destructively)
     const originalAssetId = part.audioAssetId
     const originalAsset = originalAssetId ? this.getEmbeddedAsset(originalAssetId) : undefined
-    const originalDurationRaw = (originalAsset?.metadata as Record<string, unknown> | undefined)?.duration
-    const originalDuration = typeof originalDurationRaw === 'number' && Number.isFinite(originalDurationRaw) ? originalDurationRaw : part.duration
+    const originalDurationRaw = (originalAsset?.metadata as Record<string, unknown> | undefined)
+      ?.duration
+    const originalDuration =
+      typeof originalDurationRaw === 'number' && Number.isFinite(originalDurationRaw)
+        ? originalDurationRaw
+        : part.duration
 
     // Determine left/right existence for mapping to TTS vs recorded
     const words: { word: string; start: number; end: number }[] = []
@@ -518,7 +525,10 @@ export class Engine {
       }
     }
 
-    this.#bus.emit({ type: 'PrompterChanged', slideId } as unknown as import('./events').EngineEvent)
+    this.#bus.emit({
+      type: 'PrompterChanged',
+      slideId,
+    } as unknown as import('./events').EngineEvent)
     this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
 
     return {
@@ -527,6 +537,77 @@ export class Engine {
       oldIndex,
       newPartIds: newParts.map((p) => p.id),
       newClipIds,
+      deletedClipId,
+    }
+  }
+
+  splitPrompterPartByWordRange(
+    slideId: string,
+    partId: string,
+    startWordIndex: number,
+    endWordIndex: number,
+  ): {
+    oldPart: import('./prompter').PrompterPart
+    oldClip?: AudioClip
+    oldIndex: number
+    newPartIds: string[]
+    deletedClipId?: string
+  } {
+    const slide = this.getSlide(slideId)
+    if (!slide.prompter) throw new Error(`Slide "${slideId}" has no prompter`)
+    const index = slide.prompter.parts.findIndex((p) => p.id === partId)
+    if (index === -1) throw new Error(`PrompterPart not found: ${partId}`)
+    const part = slide.prompter.parts[index]
+    const newTexts = splitPrompterPartTextForWordRange(part.text, startWordIndex, endWordIndex)
+    if (newTexts.length <= 1)
+      throw new Error('Split would not create new parts (whitespace-only or invalid range)')
+    const oldPartSnapshot: import('./prompter').PrompterPart = JSON.parse(JSON.stringify(part))
+    const oldClip = part.audioClipId
+      ? (slide.audio.clips.find((c) => c.id === part.audioClipId) ?? undefined)
+      : undefined
+    const oldClipCopy = oldClip ? JSON.parse(JSON.stringify(oldClip)) : undefined
+    const oldIndex = index
+    const durations = redistributeDurations(part.duration, newTexts)
+    const newParts: import('./prompter').PrompterPart[] = newTexts.map((text, i) => ({
+      id: i === 0 ? part.id : newPrompterPartId(),
+      text,
+      startTime: 0,
+      endTime: 0,
+      duration: durations[i],
+    }))
+    slide.prompter.parts.splice(index, 1)
+    for (let i = 0; i < newParts.length; i++) {
+      slide.prompter.parts.splice(index + i, 0, newParts[i])
+    }
+    reflowPrompter(slide.prompter)
+    let deletedClipId: string | undefined
+    if (oldClip) {
+      const clipIdx = slide.audio.clips.findIndex((c) => c.id === oldClip.id)
+      if (clipIdx !== -1) {
+        slide.audio.clips.splice(clipIdx, 1)
+        deletedClipId = oldClip.id
+      }
+    }
+    for (let i = 0; i < newParts.length; i++) {
+      const p = slide.prompter.parts[oldIndex + i]
+      delete (p as { audioClipId?: string }).audioClipId
+      delete (p as { audioAssetId?: string }).audioAssetId
+      delete (p as { promptId?: string }).promptId
+      delete (p as { status?: string }).status
+      delete (p as { segments?: unknown }).segments
+    }
+    this.#bus.emit({
+      type: 'PrompterChanged',
+      slideId,
+    } as unknown as import('./events').EngineEvent)
+    if (deletedClipId) {
+      this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    }
+    return {
+      oldPart: oldPartSnapshot,
+      oldClip: oldClipCopy,
+      oldIndex,
+      newPartIds: newParts.map((p) => p.id),
       deletedClipId,
     }
   }
@@ -745,7 +826,10 @@ export class Engine {
     if (audioClipId !== null) {
       delete (part as { status?: string }).status
     }
-    this.#bus.emit({ type: 'PrompterChanged', slideId } as unknown as import('./events').EngineEvent)
+    this.#bus.emit({
+      type: 'PrompterChanged',
+      slideId,
+    } as unknown as import('./events').EngineEvent)
     return { oldAudioClipId, oldAudioAssetId, oldStatus }
   }
 
@@ -755,12 +839,16 @@ export class Engine {
     const parts = slide.prompter.parts
     const oldIndex = parts.findIndex((p) => p.id === partId)
     if (oldIndex === -1) throw new Error(`PrompterPart not found: ${partId}`)
-    if (newIndex < 0 || newIndex >= parts.length) throw new Error(`newIndex out of bounds: ${newIndex}`)
+    if (newIndex < 0 || newIndex >= parts.length)
+      throw new Error(`newIndex out of bounds: ${newIndex}`)
     if (oldIndex === newIndex) return oldIndex
     const [moved] = parts.splice(oldIndex, 1)
     parts.splice(newIndex, 0, moved)
     reflowPrompter(slide.prompter)
-    this.#bus.emit({ type: 'PrompterChanged', slideId } as unknown as import('./events').EngineEvent)
+    this.#bus.emit({
+      type: 'PrompterChanged',
+      slideId,
+    } as unknown as import('./events').EngineEvent)
     return oldIndex
   }
 
@@ -782,7 +870,10 @@ export class Engine {
     part.endTime = newStartTime + part.duration
     // Keep array sorted by startTime so order == time order (gap allowed)
     slide.prompter.parts.sort((a, b) => a.startTime - b.startTime)
-    this.#bus.emit({ type: 'PrompterChanged', slideId } as unknown as import('./events').EngineEvent)
+    this.#bus.emit({
+      type: 'PrompterChanged',
+      slideId,
+    } as unknown as import('./events').EngineEvent)
     return { oldStartTime, oldEndTime }
   }
 
@@ -1455,7 +1546,10 @@ export class Engine {
     if (!project) {
       throw new Error('No project exists in memory')
     }
-    const asset = this.#embeddedAssets.get(assetId) ?? project.embeddedAssets.find((a) => a.id === assetId) ?? null
+    const asset =
+      this.#embeddedAssets.get(assetId) ??
+      project.embeddedAssets.find((a) => a.id === assetId) ??
+      null
     this.#embeddedAssets.delete(assetId)
     project.deleteEmbeddedAsset(assetId)
     return asset
