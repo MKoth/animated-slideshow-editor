@@ -101,6 +101,10 @@ _Avoid_: Style preset, material type
 A reusable library resource holding a fragment shader and its uniform defaults. Applied per-node through a material, or per-slide as a fullscreen effect over the rendered scene.
 _Avoid_: Effect, filter
 
+**Shader Source**:
+The fragment GLSL text of a Shader Definition plus its uniform declarations. Immutable in the library; per-node or per-slide overrides only affect uniform values, never the source. Editing forks a new definition.
+_Avoid_: Shader code (ambiguous)
+
 **Fullscreen Shader**:
 The shader a slide renders its entire scene through; the slide references one, with per-slide uniform overrides.
 
@@ -211,6 +215,40 @@ A reusable text preset for local TTS generation: `{id, title, instruction, langu
 
 **TTSProvider**:
 The frontend abstraction over local speech synthesis: `interface TTSProvider { generate(req: {text, promptId?, language?, voice?, instruction?}): Promise<AudioAsset> }`. Concrete implementation `TtsApi` calls `POST /api/tts/generate` (→ `audio/wav` bytes) via `ApiClient.postForWav`; backend owns the model singleton (Qwen3-TTS 0.6B CustomVoice via MLX, Apache 2.0) and serializes inference. Swapping providers = swapping backend impl behind the same endpoint.
+
+### Rig & Skeleton
+
+**Bone**:
+A scene-node–backed joint in a skeleton hierarchy. Owns a transform; parenting composes transforms. Bones form a chain via parent linkage; the tail of a parent is the origin of its child in the default snap.
+_Avoid_: Joint (ambiguous)
+
+**Skeleton**:
+The bone hierarchy owned by a rigged mesh. One root bone per mesh; children form chains. Evaluated by the rig system to deform mesh vertices via weight maps.
+_Avoid_: Armature, rig (overloaded)
+
+**Weight Map**:
+Per-mesh, per-bone scalar weights in [0,1] on vertices that drive deformation. Painted via brush; normalized when the user requests it, not per-dab.
+_Avoid_: Skin weights (synonym), vertex group
+
+**Weight Paint** (also **Weight Brush**):
+The mesh-space brush that adds or erases a bone's influence. Operates by raycasting faces (not vertices) and applying within a screen-space radius with falloff (`weight += strength*(1 - dist/radius)` toward 1, erase lerps toward 0). Strength is symmetric for add/erase; erasure is Shift/Alt modifier.
+_Avoid_: Vertex paint (overloaded)
+
+**IK Handle**:
+A scene node that drives an IK chain: moving the handle solves the chain's bone rotations to reach it. One-way constraint — the handle's transform drives the chain; FK manipulation of the chain does not move the handle.
+_Avoid_: IK effector, controller
+
+**Pole Vector** (also **Pole Target**):
+The auxiliary transform controlling the elbows/knees of an IK chain (the plane of the solution). Like an IK Handle, it is a one-way driver that follows its own parent, not the chain.
+_Avoid_: Vector handle
+
+**Rig Handle** (also **Group Node**, **Locator**):
+An empty scene node (no mesh, only transform) used to group a rig — mesh, skeleton root, IK handles, and pole vectors — under one transform for rigid moves of the whole setup. Reuses Scene Node composition; moving the handle composes with all children in one Transaction.
+_Avoid_: Rig root object, master bone
+
+**Parenting Mode**:
+The policy applied when reparenting a bone or node: `Keep World Transform` (recompute local so world position stays, default) vs `Snap to Parent Tail` (child local reset to 0 at parent's tail, legacy rigging snap). Chosen per reparent via intercept dialog that remembers last choice per session; the operation acts on the dragged root, its descendant chain follows rigidly.
+_Avoid_: Parent type
 
 ### Undo & history
 
