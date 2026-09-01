@@ -422,20 +422,10 @@ export class Engine {
     const rightExists = rightTextRaw.trim().length > 0
     const middleText = part.text.slice(startWord.start, endWord.end)
 
-    // Map newTexts order to which is TTS
-    // newTexts are filtered, order depends on leftExists/rightExists
-    // Determine TTS index
+    // Map newTexts order to which is TTS (leftExists determines index; avoids duplicate-word trim collisions)
     let ttsIndex: number
-    if (leftExists && rightExists) ttsIndex = 1
-    else if (leftExists && !rightExists) ttsIndex = 1 // left + middle, middle is 1
-    else if (!leftExists && rightExists) ttsIndex = 0 // middle + right
-    else ttsIndex = 0 // only middle
-
-    // Also determine for each new piece whether it is middle (TTS) by matching middleText
-    // Safer: find index where text.trim() === middleText.trim()
-    const middleTrim = middleText.trim()
-    const detectedTtsIndex = newTexts.findIndex((t) => t.trim() === middleTrim)
-    if (detectedTtsIndex !== -1) ttsIndex = detectedTtsIndex
+    if (leftExists) ttsIndex = newTexts.length > 1 ? 1 : 0
+    else ttsIndex = 0
 
     // Compute durations proportionally preserving total
     const durations = redistributeDurations(part.duration, newTexts)
