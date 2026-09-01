@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
-import math
 import os
 import subprocess
 import tempfile
@@ -11,7 +10,7 @@ import wave
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 router = APIRouter()
@@ -93,7 +92,9 @@ def _ffmpeg_has_filter(filter_name: str) -> bool:
         return False
 
 
-def _ffmpeg_stretch(input_bytes: bytes, in_ext: str, playback_rate: float) -> tuple[bytes, float, int, int, str] | None:
+def _ffmpeg_stretch(
+    input_bytes: bytes, in_ext: str, playback_rate: float
+) -> tuple[bytes, float, int, int, str] | None:
     """Try ffmpeg time-stretch. Returns (output_bytes, duration, sampleRate, channels, engine) or None if unavailable."""
     # playbackRate = recorded / planned, tempo for atempo/rubberband is same as playbackRate (faster tempo -> shorter)
     # timeRatio = 1/playbackRate = output/input

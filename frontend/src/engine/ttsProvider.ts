@@ -20,23 +20,63 @@ function arrayBufferToBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
-function wavDurationFromBytes(bytes: Uint8Array): number | null {
-  if (bytes.length < 44) return null
+export function parseWavHeader(bytes: Uint8Array): { sampleRate: number; channels: number; byteRate: number; dataSize: number; duration: number } | null {
+  if (bytes.length < 12) return null
   try {
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-    // RIFF/WAVE check could be added but we just parse fmt
-    const sampleRate = view.getUint32(24, true)
-    const channels = view.getUint16(22, true)
-    const byteRate = view.getUint32(28, true)
-    const dataSize = view.getUint32(40, true)
-    if (!sampleRate || !byteRate) return null
-    const duration = dataSize / byteRate
+    // Verify RIFF/WAVE
+    const riff = String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3])
+    const wave = String.fromCharCode(bytes[8], bytes[9], bytes[10], bytes[11])
+    if (riff !== 'RIFF' || wave !== 'WAVE') return null
+
+    let offset = 12
+    let sampleRate: number | null = null
+    let channels: number | null = null
+    let byteRate: number | null = null
+    let dataSize: number | null = null
+    let bitsPerSample: number | null = null
+
+    while (offset + 8 <= bytes.length) {
+      const chunkId = String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3])
+      const chunkSize = view.getUint32(offset + 4, true)
+      // Guard against insane size
+      if (chunkSize > bytes.length) break
+      if (chunkId === 'fmt ') {
+        if (chunkSize >= 16 && offset + 8 + 16 <= bytes.length) {
+          // fmt layout: audioFormat(2), channels(2), sampleRate(4), byteRate(4), blockAlign(2), bitsPerSample(2)
+          channels = view.getUint16(offset + 8 + 2, true)
+          sampleRate = view.getUint32(offset + 8 + 4, true)
+          byteRate = view.getUint32(offset + 8 + 8, true)
+          bitsPerSample = view.getUint16(offset + 8 + 14, true)
+        }
+      } else if (chunkId === 'data') {
+        dataSize = chunkSize
+        // don't break – there may be fmt after data in malformed files, but usually fmt before data
+        // we need both, so continue scanning if fmt not yet found
+        if (sampleRate !== null && byteRate !== null) break
+      }
+      // chunk data is padded to even byte boundary
+      offset += 8 + chunkSize + (chunkSize % 2)
+    }
+
+    if (sampleRate === null || channels === null || dataSize === null) return null
+    // Derive byteRate if missing but we have bitsPerSample
+    let effectiveByteRate = byteRate
+    if ((!effectiveByteRate || effectiveByteRate === 0) && bitsPerSample !== null) {
+      effectiveByteRate = sampleRate * channels * (bitsPerSample / 8)
+    }
+    if (!effectiveByteRate || effectiveByteRate === 0) return null
+    const duration = dataSize / effectiveByteRate
     if (!Number.isFinite(duration) || duration <= 0) return null
-    void channels
-    return duration
+    return { sampleRate, channels, byteRate: effectiveByteRate, dataSize, duration }
   } catch {
     return null
   }
+}
+
+export function wavDurationFromBytes(bytes: Uint8Array): number | null {
+  const parsed = parseWavHeader(bytes)
+  return parsed ? parsed.duration : null
 }
 
 export class TtsApi implements TTSProvider {
@@ -52,21 +92,11 @@ export class TtsApi implements TTSProvider {
     const bytes = await this.client.postForWav('/api/tts/generate', body)
     const base64 = arrayBufferToBase64(bytes)
     // Try to decode duration from WAV header; fallback to 1s per 15 chars heuristic
-    const headerDuration = wavDurationFromBytes(bytes)
-    // Attempt decodeAudioData for sampleRate/channels if available in test/mocked env
-    let sampleRate = 24000
-    let channels = 1
+    const parsedHeader = parseWavHeader(bytes)
+    const headerDuration = parsedHeader?.duration ?? null
+    let sampleRate = parsedHeader?.sampleRate ?? 24000
+    let channels = parsedHeader?.channels ?? 1
     let waveformPeaks: number[] | undefined
-    // Quick parse from header for sampleRate/channels
-    try {
-      if (bytes.length >= 44) {
-        const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-        sampleRate = view.getUint32(24, true) || sampleRate
-        channels = view.getUint16(22, true) || channels
-      }
-    } catch {
-      // ignore
-    }
     const duration = headerDuration ?? Math.max(0.5, request.text.length * 0.06 + 0.35)
     // waveformPeaks could be computed via decode, but keep undefined for now (RecordModal computes)
     const id = newId('audio-asset')

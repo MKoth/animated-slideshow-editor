@@ -3,7 +3,12 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException, Request
 
 from app.voice_prompts.library import VoicePromptLibrary, VoicePromptNotFoundError
-from app.voice_prompts.schemas import VoicePromptCreate, VoicePromptOut, VoicePromptUpdate, row_to_schema
+from app.voice_prompts.schemas import (
+    VoicePromptCreate,
+    VoicePromptOut,
+    VoicePromptUpdate,
+    row_to_schema,
+)
 
 router = APIRouter()
 
@@ -53,7 +58,9 @@ def get_voice_prompt(request: Request, prompt_id: str) -> VoicePromptOut:
 
 
 @router.put("/voice-prompts/{prompt_id}", response_model=VoicePromptOut)
-def update_voice_prompt(request: Request, prompt_id: str, body: VoicePromptUpdate) -> VoicePromptOut:
+def update_voice_prompt(
+    request: Request, prompt_id: str, body: VoicePromptUpdate
+) -> VoicePromptOut:
     library: VoicePromptLibrary = request.app.state.voice_prompt_library
     patch: dict[str, object] = {}
     if body.title is not None:

@@ -1,7 +1,19 @@
+# ruff: noqa: BLE001
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from app.api import assets, audio, clips, health, materials, ping, projects, shaders, tts, voice_prompts
+from app.api import (
+    assets,
+    audio,
+    clips,
+    health,
+    materials,
+    ping,
+    projects,
+    shaders,
+    tts,
+    voice_prompts,
+)
 from app.assets.importer import AssetImporter
 from app.assets.library import AssetLibrary
 from app.assets.pipeline import ImagePipeline
@@ -47,6 +59,30 @@ class AppFactory:
         clip_library.ensure_seeded(now_utc())
         app.state.clip_library = clip_library
         app.state.voice_prompt_library = VoicePromptLibrary(database)
+        # TTS engine singleton (lazy model load on first generate, cached in app.state like asset_library)
+        try:
+            from app.tts.engine import MlxNotAvailableError, SineTtsEngine, get_tts_engine
+
+            app.state.tts_engine = get_tts_engine(
+                provider=self._settings.tts_provider, model_id=self._settings.tts_model_id
+            )
+        except MlxNotAvailableError:
+            # auto fallback is already handled inside get_tts_engine (returns Sine),
+            # but forced mlx should surface 503 at runtime not at startup.
+            # Store placeholder that will raise on generate so we can return 503 per-request.
+            from app.tts.engine import MlxQwenTtsEngine
+
+            if self._settings.tts_provider == "mlx":
+                # Store a lazy mlx engine that will fail with 503 on first use
+                app.state.tts_engine = MlxQwenTtsEngine(self._settings.tts_model_id)
+            else:
+                from app.tts.engine import SineTtsEngine
+
+                app.state.tts_engine = SineTtsEngine()
+        except Exception:
+            from app.tts.engine import SineTtsEngine
+
+            app.state.tts_engine = SineTtsEngine()
 
         app.add_middleware(RequestLoggingMiddleware)
         register_error_handlers(app)

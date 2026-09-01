@@ -7,7 +7,13 @@ def test_voice_prompt_crud_and_shareability(client: TestClient) -> None:
     # Create
     r = client.post(
         "/api/voice-prompts",
-        json={"title": "Warm voice", "instruction": "Speak warmly", "language": "en", "voice": "nova", "params": {"speed": 1.0}},
+        json={
+            "title": "Warm voice",
+            "instruction": "Speak warmly",
+            "language": "en",
+            "voice": "nova",
+            "params": {"speed": 1.0},
+        },
     )
     assert r.status_code == 201
     created = r.json()

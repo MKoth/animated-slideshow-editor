@@ -1,9 +1,7 @@
+# ruff: noqa: BLE001, S110
 from __future__ import annotations
 
 import asyncio
-import io
-import math
-import wave
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -23,83 +21,116 @@ class TTSGenerateRequest(BaseModel):
     instruction: str | None = None
 
 
-def _wav_bytes_for_text(text: str, prompt_id: str | None, language: str | None, voice: str | None) -> bytes:
-    # Deterministic duration: 0.06 * len(text) + 0.4, clamped at least 0.5
-    # Use prompt characteristics to vary pitch slightly for realism
-    length = len(text.strip())
-    if length == 0:
-        length = 1
-    duration = max(0.5, length * 0.06 + 0.35)
-    # Cap at 30s for sanity in tests
-    duration = min(duration, 30.0)
-    sample_rate = 24000
-    channels = 1
-    # Vary frequency per prompt/voice for deterministic distinction
-    base_freq = 220.0
-    if prompt_id:
-        # hash prompt_id to offset freq 180-260
-        h = sum(ord(c) for c in prompt_id) % 40
-        base_freq = 200 + h
-    elif voice:
-        h = sum(ord(c) for c in voice) % 60
-        base_freq = 180 + h
-    elif language:
-        # map language to freq
-        base_freq = 220 if language.startswith("en") else 200
-    return _generate_sine_wav(duration, sample_rate, channels, base_freq)
-
-
-def _generate_sine_wav(duration: float, sample_rate: int, channels: int, freq: float) -> bytes:
-    n_samples = int(duration * sample_rate)
-    amplitude = 0.25 * 32767  # 16-bit PCM amplitude
-    # Generate sine wave
-    buffer = io.BytesIO()
-    with wave.open(buffer, "wb") as wf:
-        wf.setnchannels(channels)
-        wf.setsampwidth(2)
-        wf.setframerate(sample_rate)
-        # Generate frames
-        import struct
-
-        for i in range(n_samples):
-            t = i / sample_rate
-            # Simple sine with slight envelope to avoid clicks
-            # envelope: fade in 5ms fade out 5ms
-            sample = math.sin(2 * math.pi * freq * t) * amplitude
-            # envelope
-            if i < int(0.005 * sample_rate):
-                sample *= i / (0.005 * sample_rate)
-            elif i > n_samples - int(0.005 * sample_rate):
-                sample *= (n_samples - i) / (0.005 * sample_rate)
-            packed = struct.pack("<h", int(sample))
-            for _ in range(channels):
-                wf.writeframes(packed)
-        # wave header written on close
-    return buffer.getvalue()
-
-
 @router.post("/tts/generate")
 async def tts_generate(request: Request, body: TTSGenerateRequest) -> Response:
     text = body.text.strip() if isinstance(body.text, str) else ""
     if not text:
         raise HTTPException(status_code=422, detail="text must be a non-empty string")
-    # Validate promptId if provided
+
+    # Resolve voice prompt if provided and merge overrides
+    effective_language: str | None = body.language
+    effective_voice: str | None = body.voice
+    effective_instruction: str | None = body.instruction
+    effective_params: dict[str, Any] | None = None
+
     if body.promptId is not None:
-        # Need to check existence via library
         library = getattr(request.app.state, "voice_prompt_library", None)
         if library is not None:
             try:
-                library.get(body.promptId)
+                prompt = library.get(body.promptId)
             except Exception as exc:
-                # Differentiate not found vs other
                 from app.voice_prompts.library import VoicePromptNotFoundError
 
                 if isinstance(exc, VoicePromptNotFoundError):
-                    raise HTTPException(status_code=404, detail=f"voice_prompt {body.promptId} not found") from exc
+                    raise HTTPException(
+                        status_code=404, detail=f"voice_prompt {body.promptId} not found"
+                    ) from exc
                 raise
+            # Merge: per-request overrides win over stored prompt
+            if effective_language is None:
+                effective_language = prompt.language
+            if effective_voice is None:
+                effective_voice = prompt.voice
+            if effective_instruction is None:
+                effective_instruction = prompt.instruction
+            effective_params = prompt.params if isinstance(prompt.params, dict) else None
+        else:
+            # No library available – still validate existence via 404? If library missing, we can't validate, so continue with raw overrides
+            pass
+
+    # Determine engine via app state or global singleton (settings-aware)
+    # Prefer app.state.tts_engine if factory pre-created, else singleton factory
+    engine: Any | None = getattr(request.app.state, "tts_engine", None)
+    settings = getattr(request.app.state, "settings", None)
+    provider = getattr(settings, "tts_provider", None) if settings else None
+    model_id = getattr(settings, "tts_model_id", None) if settings else None
+
+    if engine is None:
+        from app.tts.engine import MlxNotAvailableError, get_tts_engine
+
+        try:
+            engine = get_tts_engine(provider=provider, model_id=model_id)
+        except MlxNotAvailableError as exc:
+            # Provider forced to mlx but mlx not installed -> 503 per spec (service unavailable)
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"TTS engine init failed: {exc}") from exc
+        # cache for next request (optional, like asset_library)
+        try:
+            request.app.state.tts_engine = engine
+        except Exception:
+            pass
+
     # Serialized concurrent queue
     async with _tts_lock:
-        # Simulate small ML inference delay to prove serialization in tests (10ms)
+        # Small delay to prove serialization in tests remains (10ms) – real model takes longer
         await asyncio.sleep(0.01)
-        wav_bytes = _wav_bytes_for_text(text, body.promptId, body.language, body.voice)
-    return Response(content=wav_bytes, media_type="audio/wav", headers={"Content-Length": str(len(wav_bytes))})
+        try:
+            # Run blocking inference in thread pool to avoid blocking event loop
+            # Engine.generate is blocking (MLX may be heavy)
+            wav_bytes: bytes = await asyncio.to_thread(
+                engine.generate,
+                text,
+                effective_language,
+                effective_voice,
+                effective_instruction,
+                effective_params,
+            )
+        except Exception as exc:
+            # Unwrap HTTPException already
+            if isinstance(exc, HTTPException):
+                raise
+            from app.tts.engine import MlxNotAvailableError, TtsInferenceError, TtsModelLoadError
+
+            if isinstance(exc, MlxNotAvailableError):
+                # auto: fallback silently to sine if mlx package missing;
+                # mlx provider: surface 503 so caller can retry/install
+                if provider == "mlx":
+                    raise HTTPException(status_code=503, detail=str(exc)) from exc
+                try:
+                    from app.tts.engine import SineTtsEngine
+
+                    fallback = SineTtsEngine()
+                    wav_bytes = fallback.generate(
+                        text,
+                        effective_language,
+                        effective_voice,
+                        effective_instruction,
+                        effective_params,
+                    )
+                except Exception as fallback_exc:
+                    raise HTTPException(status_code=500, detail=str(fallback_exc)) from fallback_exc
+            elif isinstance(exc, TtsModelLoadError):
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            elif isinstance(exc, TtsInferenceError):
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+            else:
+                # Unknown error from sine or other – treat as 500
+                # Preserve original message for debugging
+                raise HTTPException(
+                    status_code=500, detail=f"TTS generation failed: {exc}"
+                ) from exc
+
+    return Response(
+        content=wav_bytes, media_type="audio/wav", headers={"Content-Length": str(len(wav_bytes))}
+    )
