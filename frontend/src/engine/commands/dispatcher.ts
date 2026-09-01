@@ -43,6 +43,8 @@ export class CommandDispatcher {
         type: command.type,
         parameters: command.parameters,
         inverse,
+        timestamp: Date.now(),
+        source: 'user',
       })
       this.#log(`${command.type} ${formatParameters(command.parameters)}`)
       this.#onCommandSucceeded?.()
@@ -50,6 +52,38 @@ export class CommandDispatcher {
     } catch (error) {
       return { ok: false, error: toError(error) }
     }
+  }
+
+  undo(): boolean {
+    try {
+      const entry = this.#undoStack.undo(this.#engine)
+      if (!entry) return false
+      this.#log(`undo ${entry.type}`)
+      return true
+    } catch (error) {
+      console.error('[undo] failed', error)
+      return false
+    }
+  }
+
+  redo(): boolean {
+    try {
+      const entry = this.#undoStack.redo(this.#engine)
+      if (!entry) return false
+      this.#log(`redo ${entry.type}`)
+      return true
+    } catch (error) {
+      console.error('[redo] failed', error)
+      return false
+    }
+  }
+
+  get canUndo(): boolean {
+    return this.#undoStack.canUndo
+  }
+
+  get canRedo(): boolean {
+    return this.#undoStack.canRedo
   }
 }
 

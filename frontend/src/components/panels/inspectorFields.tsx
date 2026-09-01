@@ -28,7 +28,7 @@ export function NumericField({
   const display = value === null ? MIXED_MARKER : formatDecimal(value)
   const buffer = useEditBuffer(display)
   const inputRef = useRef<HTMLInputElement>(null)
-  const dragRef = useRef<{ startX: number; startValue: number; dragging: boolean } | null>(null)
+  const dragRef = useRef<{ startX: number; startValue: number; dragging: boolean; lastValue: number } | null>(null)
 
   const commit = () => {
     onCommit(buffer.commit())
@@ -46,8 +46,8 @@ export function NumericField({
     drag.dragging = true
     event.preventDefault()
     const next = roundToStep(drag.startValue + delta * step, step)
+    drag.lastValue = next
     buffer.setText(formatDecimal(next))
-    onAdjust(next)
   }
 
   const handlePointerUp = () => {
@@ -55,7 +55,13 @@ export function NumericField({
     dragRef.current = null
     window.removeEventListener('pointermove', handlePointerMove)
     window.removeEventListener('pointerup', handlePointerUp)
-    if (!drag || drag.dragging) {
+    if (!drag) {
+      return
+    }
+    if (drag.dragging) {
+      if (drag.lastValue !== drag.startValue) {
+        onAdjust(drag.lastValue)
+      }
       return
     }
     const input = inputRef.current
@@ -69,7 +75,7 @@ export function NumericField({
     if (value === null || disabled) {
       return
     }
-    dragRef.current = { startX: event.clientX, startValue: value, dragging: false }
+    dragRef.current = { startX: event.clientX, startValue: value, dragging: false, lastValue: value }
     event.preventDefault()
     window.addEventListener('pointermove', handlePointerMove)
     window.addEventListener('pointerup', handlePointerUp)

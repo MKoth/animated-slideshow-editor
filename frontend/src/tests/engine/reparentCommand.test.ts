@@ -91,7 +91,7 @@ describe('ReparentNodeCommand', () => {
     expect(system.engine.getNode(bId).children.map((child) => child.id)).toEqual([aId])
     expect(system.engine.getNode(rootId).children.map((child) => child.id)).not.toContain(aId)
     expect(inverse).toEqual({ nodeId: aId, oldParentId: rootId, oldTransform: identityTransform() })
-    expect(system.undoStack.entries[0]).toEqual({
+    expect(system.undoStack.entries[0]).toMatchObject({
       id: expect.any(String),
       type: 'ReparentNode',
       parameters: { nodeId: aId, parentId: bId },
@@ -163,7 +163,7 @@ describe('ReparentNodeCommand', () => {
     expect(system.engine.getNode(bId).children.map((child) => child.id)).toEqual([cId, aId, dId])
     expect(system.engine.getNode(rootId).children.map((child) => child.id)).not.toContain(aId)
     expect(inverse).toEqual({ nodeId: aId, oldParentId: rootId, oldTransform: identityTransform() })
-    expect(system.undoStack.entries[0]).toEqual({
+    expect(system.undoStack.entries[0]).toMatchObject({
       id: expect.any(String),
       type: 'ReparentNode',
       parameters: { nodeId: aId, parentId: bId, index: 1 },

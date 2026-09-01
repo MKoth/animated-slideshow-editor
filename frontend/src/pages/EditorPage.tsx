@@ -9,24 +9,27 @@ import { registerClipboardShortcuts } from '../shortcuts/clipboardShortcuts'
 import { registerMeshEditShortcuts } from '../shortcuts/meshEditShortcuts'
 import { registerProvisionalShortcuts } from '../shortcuts/provisionalShortcuts'
 import { registerSaveShortcut } from '../shortcuts/saveShortcuts'
+import { registerUndoRedoShortcuts } from '../shortcuts/undoRedoShortcuts'
 import { useKeyboardShortcuts } from '../shortcuts/useKeyboardShortcuts'
 
 export function EditorPage() {
   useKeyboardShortcuts()
-  const { engine, dispatch, persistence } = useEngine()
+  const { engine, dispatch, persistence, dispatcher } = useEngine()
 
   useEffect(() => {
     const disposeClipboard = registerClipboardShortcuts(() => ({ engine, dispatch }))
     const disposeProvisional = registerProvisionalShortcuts()
     const disposeSave = registerSaveShortcut(() => ({ save: () => persistence.save() }))
     const disposeMeshEdit = registerMeshEditShortcuts()
+    const disposeUndoRedo = dispatcher ? registerUndoRedoShortcuts(() => ({ dispatcher })) : () => {}
     return () => {
       disposeClipboard()
       disposeProvisional()
       disposeSave()
       disposeMeshEdit()
+      disposeUndoRedo()
     }
-  }, [engine, dispatch, persistence])
+  }, [engine, dispatch, persistence, dispatcher])
 
   return (
     <>

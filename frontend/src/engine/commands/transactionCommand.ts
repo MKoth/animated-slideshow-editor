@@ -1,6 +1,6 @@
 import type { Engine } from '../internal'
-import { isRecord } from '../guards'
 import type { Command } from './command'
+import { applyUndo } from './undoHandlers'
 
 export interface TransactionParameters {
   readonly commands: readonly Readonly<Record<string, unknown>>[]
@@ -21,9 +21,13 @@ export class TransactionCommand implements Command<TransactionInverse> {
   readonly parameters: Readonly<Record<string, unknown>>
   readonly #children: readonly Command<unknown>[]
 
+  get children(): readonly Command<unknown>[] {
+    return this.#children
+  }
+
   constructor(commands: readonly Command<unknown>[]) {
-    this.#children = commands
-    this.parameters = { commands: commands.map((command) => command.toJSON()) }
+    this.#children = flatten(commands)
+    this.parameters = { commands: this.#children.map((command) => command.toJSON()) }
   }
 
   validate(engine: Engine): void {
@@ -40,8 +44,13 @@ export class TransactionCommand implements Command<TransactionInverse> {
         children.push({ type: command.type, parameters: command.parameters, inverse })
       }
     } catch (error) {
-      for (const child of children) {
-        restoreMove(engine, child.inverse)
+      for (let i = children.length - 1; i >= 0; i--) {
+        const child = children[i]
+        try {
+          applyUndo(engine, child.type, child.parameters, child.inverse)
+        } catch {
+          // best-effort rollback: ignore secondary failures
+        }
       }
       throw error
     }
@@ -53,18 +62,14 @@ export class TransactionCommand implements Command<TransactionInverse> {
   }
 }
 
-function restoreMove(engine: Engine, inverse: unknown): void {
-  if (!isRecord(inverse)) {
-    return
+function flatten(commands: readonly Command<unknown>[]): readonly Command<unknown>[] {
+  const result: Command<unknown>[] = []
+  for (const cmd of commands) {
+    if (cmd instanceof TransactionCommand) {
+      result.push(...flatten(cmd.children))
+    } else {
+      result.push(cmd)
+    }
   }
-  const { nodeId, oldX, oldY } = inverse
-  if (typeof nodeId !== 'string' || typeof oldX !== 'number' || typeof oldY !== 'number') {
-    return
-  }
-  try {
-    const node = engine.getNode(nodeId)
-    engine.setTransform(nodeId, { ...node.transform, x: oldX, y: oldY })
-  } catch {
-    // the node no longer exists; there is nothing to restore
-  }
+  return result
 }

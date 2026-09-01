@@ -45,6 +45,12 @@ export function formatCombo(event: KeyboardEvent): string | null {
   if (event.ctrlKey || event.metaKey) {
     parts.push('ctrl')
   }
+  if (event.shiftKey) {
+    parts.push('shift')
+  }
+  if (event.altKey) {
+    parts.push('alt')
+  }
   parts.push(key)
   return parts.join('+')
 }

@@ -526,7 +526,7 @@ describe('InspectorPanel scrubbing shows evaluated values', () => {
 })
 
 describe('InspectorPanel drag-to-adjust', () => {
-  it('adjusts X by dragging the field horizontally, recording add then update commands', () => {
+  it('adjusts X by dragging the field horizontally, recording one history entry', () => {
     const { engine, undoStack } = renderPanel()
     const { nodeId } = createSceneWithNode(engine)
     select(nodeId)
@@ -539,9 +539,8 @@ describe('InspectorPanel drag-to-adjust', () => {
     fireEvent.pointerUp(window)
 
     expect(engine.evaluateNode(nodeId, 0).transform.x).toBe(27)
-    expect(undoStack.entries).toHaveLength(before + 2)
-    expect(undoStack.entries[0].type).toBe('SetKeyframeValue')
-    expect(undoStack.entries[1].type).toBe('AddKeyframe')
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(undoStack.entries[0].type).toBe('AddKeyframe')
     expect(fields().X.value).toBe('27')
   })
 

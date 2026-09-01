@@ -75,7 +75,7 @@ describe('ReorderNodeCommand', () => {
     expect(siblingNames(system)).toEqual(['B', 'C', 'A', 'D'])
     expect(events).toEqual([{ type: 'NodeOrderChanged', nodeId: a }])
     expect(inverse).toEqual({ nodeId: a, parentId: rootId, oldIndex: 1 })
-    expect(system.undoStack.entries[0]).toEqual({
+    expect(system.undoStack.entries[0]).toMatchObject({
       id: expect.any(String),
       type: 'ReorderNode',
       parameters: { nodeId: a, index: 3 },

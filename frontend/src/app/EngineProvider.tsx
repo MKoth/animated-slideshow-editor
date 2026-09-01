@@ -22,6 +22,7 @@ export function EngineProvider({ children }: { children: ReactNode }) {
   const [value] = useState<EngineContextValue>(() => ({
     engine: system.engine,
     undoStack: system.undoStack,
+    dispatcher: system.dispatcher,
     dispatch: (command) => system.dispatcher.dispatch(command),
     persistence: {
       save: () => persistenceRef.current?.save(),

@@ -76,7 +76,7 @@ describe('MoveNodeCommand', () => {
     })
     expect(events).toEqual([{ type: 'TransformChanged', nodeId }])
     expect(inverse).toEqual({ nodeId, oldX: 10, oldY: 20 })
-    expect(system.undoStack.entries[0]).toEqual({
+    expect(system.undoStack.entries[0]).toMatchObject({
       id: expect.any(String),
       type: 'MoveNode',
       parameters: { nodeId, x: 100, y: -40 },

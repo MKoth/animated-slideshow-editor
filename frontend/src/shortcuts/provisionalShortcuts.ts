@@ -1,7 +1,7 @@
 import { useNotificationStore } from '../stores/notificationStore'
 import { registerShortcut } from './shortcutRegistry'
 
-export const PROVISIONAL_SHORTCUTS = ['ctrl+n', 'ctrl+o', 'ctrl+z', 'ctrl+y', 'space'] as const
+export const PROVISIONAL_SHORTCUTS = ['ctrl+n', 'ctrl+o', 'space'] as const
 
 export function registerProvisionalShortcuts(): () => void {
   const disposers = PROVISIONAL_SHORTCUTS.map((combo) =>
