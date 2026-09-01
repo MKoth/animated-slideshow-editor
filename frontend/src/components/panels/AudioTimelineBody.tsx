@@ -176,7 +176,6 @@ export function AudioTimelineBody({
   const [wordSelection, setWordSelection] = useState<{ partId: string; start: number; end: number } | null>(null)
   const [wordLevelTts, setWordLevelTts] = useState<{ partId: string; start: number; end: number; text: string } | null>(null)
   const [hoveredWord, setHoveredWord] = useState<{ partId: string; index: number } | null>(null)
-  const [isPrompterHovered, setIsPrompterHovered] = useState(false)
 
   const resolveTrackFromEvent = (event: React.DragEvent): AudioTrackId | null => {
     const target = event.target as HTMLElement
@@ -1128,7 +1127,6 @@ export function AudioTimelineBody({
     const end = Math.max(wordSelection.start, wordSelection.end)
     return words.slice(start, end + 1).join(' ')
   }, [wordSelection, selectedWordPart])
-  const hoveredWordPart = useMemo(() => (hoveredWord ? prompterParts.find((p) => p.id === hoveredWord.partId) ?? null : null), [prompterParts, hoveredWord])
 
   // Recording shortcut handler (when prompter part focused and no modal open)
   useEffect(() => {
@@ -1316,23 +1314,19 @@ export function AudioTimelineBody({
               </div>
             </div>
 
-            <div
-              style={{ position: 'relative', width: contentWidth, overflow: 'visible' }}
-              onMouseEnter={() => setIsPrompterHovered(true)}
-              onMouseLeave={() => setIsPrompterHovered(false)}
-            >
+            <div style={{ position: 'relative', width: contentWidth, overflow: 'visible' }}>
               <div
                 className="audio-prompter-strip"
                 data-testid="audio-prompter-strip"
                 style={{
                   height: PROMPTER_STRIP_HEIGHT,
                   position: 'relative',
-                  overflow: 'hidden',
+                  overflow: 'visible',
                   borderBottom: '1px solid var(--color-border)',
                   background: 'var(--color-bg-panel)',
                 }}
               >
-                <div style={{ position: 'relative', width: contentWidth, height: '100%' }}>
+                <div style={{ position: 'relative', width: contentWidth, height: '100%', overflow: 'visible' }}>
                   {prompterParts.length === 0 ? (
                     <span
                       style={{
@@ -1566,10 +1560,105 @@ export function AudioTimelineBody({
                                 background: '#2e9a6a',
                                 color: '#fff',
                                 cursor: 'pointer',
+                                flexShrink: 0,
                               }}
                             >
                               TTS
                             </button>
+                            {wordSelection?.partId === part.id && (
+                              <div
+                                data-testid="word-selection-bar"
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                  position: 'absolute',
+                                  top: '100%',
+                                  left: '50%',
+                                  transform: 'translateX(-50%)',
+                                  marginTop: 6,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 8,
+                                  background: '#1e1e2e',
+                                  border: '1px solid #7c5cff',
+                                  borderLeft: '3px solid #7c5cff',
+                                  borderRadius: 8,
+                                  padding: '6px 10px',
+                                  fontSize: 11,
+                                  whiteSpace: 'nowrap',
+                                  width: 'fit-content',
+                                  maxWidth: 'min(380px, 85vw)',
+                                  zIndex: 20,
+                                  boxShadow: '0 8px 24px rgba(0,0,0,0.55)',
+                                  pointerEvents: 'auto',
+                                }}
+                              >
+                                <span style={{ color: '#e0d8ff', fontWeight: 500 }}>
+                                  &quot;{selectedWordText}&quot;
+                                </span>
+                                <button
+                                  data-testid="word-tts-trigger"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    const start = Math.min(wordSelection.start, wordSelection.end)
+                                    const end = Math.max(wordSelection.start, wordSelection.end)
+                                    setWordLevelTts({ partId: wordSelection.partId, start, end, text: selectedWordText })
+                                  }}
+                                  style={{
+                                    padding: '4px 10px',
+                                    background: '#2e9a6a',
+                                    color: '#fff',
+                                    border: '1px solid #2e9a6a',
+                                    borderRadius: 999,
+                                    cursor: 'pointer',
+                                    fontSize: 11,
+                                    fontWeight: 700,
+                                  }}
+                                >
+                                  Replace with TTS
+                                </button>
+                                <button
+                                  data-testid="word-selection-clear"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setWordSelection(null)
+                                  }}
+                                  style={{ padding: '4px 8px', background: '#2a2a3a', color: '#ccc', border: '1px solid #444', borderRadius: 999, cursor: 'pointer', fontSize: 11 }}
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            )}
+                            {hoveredWord?.partId === part.id && !wordSelection && (
+                              <div
+                                data-testid="word-selection-hint"
+                                style={{
+                                  position: 'absolute',
+                                  top: '100%',
+                                  left: '50%',
+                                  transform: 'translateX(-50%)',
+                                  marginTop: 6,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                  background: 'rgba(22,22,32,0.97)',
+                                  border: '1px solid rgba(255,255,255,0.14)',
+                                  borderLeft: '3px solid #7c5cff',
+                                  borderRadius: 8,
+                                  padding: '5px 10px',
+                                  fontSize: 10,
+                                  color: '#a0a0b8',
+                                  whiteSpace: 'nowrap',
+                                  width: 'fit-content',
+                                  maxWidth: 'min(320px, 80vw)',
+                                  zIndex: 19,
+                                  boxShadow: '0 6px 16px rgba(0,0,0,0.4)',
+                                  pointerEvents: 'none',
+                                }}
+                              >
+                                <span>Click to select • Shift+click to extend</span>
+                              </div>
+                            )}
                             <div
                               data-testid="prompter-handle-left"
                               data-prompter-handle="left"
@@ -1624,102 +1713,7 @@ export function AudioTimelineBody({
                   )}
                 </div>
               </div>
-              {wordSelection && selectedWordPart ? (
-                <div
-                  data-testid="word-selection-bar"
-                  style={{
-                    position: 'absolute',
-                    top: 44,
-                    left: selectedWordPart.startTime * pps + (selectedWordPart.duration * pps) / 2,
-                    transform: 'translateX(-50%)',
-                    width: 'fit-content',
-                    maxWidth: 'min(420px, calc(100% - 16px))',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    background: '#1e1e2e',
-                    border: '1px solid #7c5cff',
-                    borderLeft: '3px solid #7c5cff',
-                    borderRadius: 8,
-                    padding: '7px 12px',
-                    fontSize: 11,
-                    zIndex: 12,
-                    boxShadow: '0 8px 24px rgba(0,0,0,0.55), 0 0 0 1px rgba(124,92,255,0.18)',
-                    pointerEvents: 'auto',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  <span style={{ color: '#e0d8ff', fontWeight: 500 }}>
-                    Selected <b style={{ color: '#fff', background: '#7c5cff', padding: '2px 6px', borderRadius: 999 }}>&quot;{selectedWordText}&quot;</b>{' '}
-                    <span style={{ opacity: 0.85 }}>in &quot;{selectedWordPart.text.slice(0, 36)}&quot;</span>{' '}
-                    <span style={{ fontSize: 10, opacity: 0.7 }}>(words {Math.min(wordSelection.start, wordSelection.end)}–{Math.max(wordSelection.start, wordSelection.end)})</span>
-                  </span>
-                  <button
-                    data-testid="word-tts-trigger"
-                    onClick={() => {
-                      const start = Math.min(wordSelection.start, wordSelection.end)
-                      const end = Math.max(wordSelection.start, wordSelection.end)
-                      setWordLevelTts({ partId: wordSelection.partId, start, end, text: selectedWordText })
-                    }}
-                    style={{
-                      marginLeft: 'auto',
-                      padding: '6px 14px',
-                      background: '#2e9a6a',
-                      color: '#fff',
-                      border: '1px solid #2e9a6a',
-                      borderRadius: 999,
-                      cursor: 'pointer',
-                      fontSize: 11,
-                      fontWeight: 700,
-                      letterSpacing: 0.2,
-                      boxShadow: '0 2px 8px rgba(46,154,106,0.35)',
-                    }}
-                  >
-                    Replace with TTS →
-                  </button>
-                  <button
-                    data-testid="word-selection-clear"
-                    onClick={() => setWordSelection(null)}
-                    style={{ padding: '5px 10px', background: '#2a2a3a', color: '#ccc', border: '1px solid #444', borderRadius: 999, cursor: 'pointer', fontSize: 11 }}
-                  >
-                    Clear
-                  </button>
-                </div>
-              ) : isPrompterHovered && prompterParts.length > 0 ? (
-                <div
-                  data-testid="word-selection-hint"
-                  style={{
-                    position: 'absolute',
-                    top: 44,
-                    left: hoveredWordPart ? hoveredWordPart.startTime * pps + (hoveredWordPart.duration * pps) / 2 : '50%',
-                    transform: 'translateX(-50%)',
-                    width: 'fit-content',
-                    maxWidth: 'min(480px, calc(100% - 16px))',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    background: 'rgba(22,22,32,0.96)',
-                    border: '1px solid rgba(255,255,255,0.14)',
-                    borderLeft: '3px solid rgba(124,92,255,0.85)',
-                    borderRadius: 8,
-                    padding: '6px 12px',
-                    fontSize: 11,
-                    color: '#a0a0b8',
-                    zIndex: 11,
-                    boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
-                    pointerEvents: 'none',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  <span style={{ fontSize: 12 }}>💡</span>
-                  <span>
-                    Hover a word to highlight • <b style={{ color: '#e0e0e0' }}>Click</b> to select • <b style={{ color: '#e0e0e0' }}>Shift+click</b> to extend range → then <b style={{ color: '#7c5cff' }}>Replace with TTS</b>
-                  </span>
-                  <span style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.65, background: 'rgba(124,92,255,0.12)', padding: '2px 6px', borderRadius: 999, border: '1px solid rgba(124,92,255,0.25)' }}>
-                    {prompterParts.length} part{prompterParts.length !== 1 ? 's' : ''} • {prompterParts.reduce((n, p) => n + (p.text.match(/\S+/g)?.length ?? 0), 0)} words
-                  </span>
-                </div>
-              ) : null}
+
 
               <div
                 className="audio-lanes"
