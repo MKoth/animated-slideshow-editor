@@ -184,5 +184,7 @@ describe('ShaderEditor', () => {
       />,
     )
     expect(screen.getByText(/already exists/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save shader' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Save shader' }).title).toMatch(/already exists/)
   })
 })

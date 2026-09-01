@@ -41,15 +41,16 @@ export function ShaderEditor({
   const compileStatus = useMemo(() => compileFragmentShader(source), [source])
   const reflection = useMemo(() => reflectUniforms(source), [source])
 
+  const nameExists =
+    existingNames !== undefined &&
+    existingNames.some((existing) => existing.toLowerCase() === name.trim().toLowerCase())
+
   const canSave =
     name.trim().length > 0 &&
     source.trim().length > 0 &&
     compileStatus.status === 'Compiled' &&
+    !nameExists &&
     !saving
-
-  const nameExists =
-    existingNames !== undefined &&
-    existingNames.some((existing) => existing.toLowerCase() === name.trim().toLowerCase())
 
   const hostRef = useRef<HTMLDivElement>(null)
   const slotRef = useRef<HTMLDivElement>(null)
@@ -321,7 +322,9 @@ export function ShaderEditor({
                   ? 'Cannot save — name is empty'
                   : source.trim().length === 0
                     ? 'Cannot save — source is empty'
-                    : 'Cannot save'
+                    : nameExists
+                      ? 'Cannot save — name already exists'
+                      : 'Cannot save'
               : undefined
           }
           onClick={handleSave}
