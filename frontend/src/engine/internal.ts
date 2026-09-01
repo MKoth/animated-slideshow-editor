@@ -415,12 +415,8 @@ export class Engine {
       words.push({ word: m[0], start: m.index, end: m.index + m[0].length })
     }
     const startWord = words[startWordIndex]
-    const endWord = words[endWordIndex]
     const leftTextRaw = part.text.slice(0, startWord.start)
-    const rightTextRaw = part.text.slice(endWord.end)
     const leftExists = leftTextRaw.trim().length > 0
-    const rightExists = rightTextRaw.trim().length > 0
-    const middleText = part.text.slice(startWord.start, endWord.end)
 
     // Map newTexts order to which is TTS (leftExists determines index; avoids duplicate-word trim collisions)
     let ttsIndex: number
