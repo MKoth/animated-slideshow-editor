@@ -15,6 +15,7 @@ import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { useShaderLibraryStore } from '../../stores/shaderLibraryStore'
 import { UniformParameterField } from './uniformControls'
 import { ShaderSourceViewer } from './ShaderSourceViewer'
+import { ShaderEditor } from './ShaderEditor'
 
 function compileBadgeLabel(status: ShaderCompileStatus | undefined): string {
   if (!status) {
@@ -203,9 +204,16 @@ interface ShaderPreviewPanelProps {
   status: ShaderCompileStatus | undefined
   reflection: ShaderReflection | undefined
   onClose: () => void
+  onEditAsNew: (definition: ShaderDefinition) => void
 }
 
-function ShaderPreviewPanel({ definition, status, reflection, onClose }: ShaderPreviewPanelProps) {
+function ShaderPreviewPanel({
+  definition,
+  status,
+  reflection,
+  onClose,
+  onEditAsNew,
+}: ShaderPreviewPanelProps) {
   const reuploadRef = useRef<HTMLInputElement>(null)
   const reuploadSource = useShaderLibraryStore((state) => state.reuploadSource)
   const updateUniformDefaults = useShaderLibraryStore((state) => state.updateUniformDefaults)
@@ -231,6 +239,13 @@ function ShaderPreviewPanel({ definition, status, reflection, onClose }: ShaderP
       <header className="shader-preview__header">
         <h3 className="shader-preview__title">{definition.name}</h3>
         <div className="shader-preview__actions">
+          <button
+            className="shader-preview__edit"
+            aria-label="Edit as new"
+            onClick={() => onEditAsNew(definition)}
+          >
+            Edit as new
+          </button>
           <button className="shader-preview__reupload" onClick={() => reuploadRef.current?.click()}>
             Re-upload
           </button>
@@ -327,6 +342,7 @@ export function ShadersPanel() {
 
   const [search, setSearch] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [forkTarget, setForkTarget] = useState<ShaderDefinition | null>(null)
   const [stage, setStage] = useState<ShaderPreviewStage | null>(null)
   const stageHostRef = useRef<HTMLDivElement>(null)
   const importInputRef = useRef<HTMLInputElement>(null)
@@ -393,6 +409,21 @@ export function ShadersPanel() {
     definition.name.toLowerCase().includes(search.trim().toLowerCase()),
   )
   const selected = definitions.find((definition) => definition.id === selectedId)
+
+  const handleEditAsNew = (definition: ShaderDefinition) => {
+    setForkTarget(definition)
+  }
+
+  const handleForkSave = async (payload: { name: string; source: string }) => {
+    const file = new File([payload.source], `${payload.name}.glsl`, { type: 'text/plain' })
+    const created = await importShader(file, { name: payload.name })
+    if (created) {
+      setForkTarget(null)
+      selectShader(created.id)
+    } else {
+      throw new Error('Shader import failed')
+    }
+  }
 
   return (
     <div className="shaders-panel">
@@ -475,6 +506,16 @@ export function ShadersPanel() {
           status={compileStatus[selected.id]}
           reflection={reflections[selected.id]}
           onClose={() => selectShader(null)}
+          onEditAsNew={handleEditAsNew}
+        />
+      )}
+      {forkTarget && (
+        <ShaderEditor
+          initialSource={forkTarget.source}
+          initialName={uniqueShaderName(forkTarget.name, definitions)}
+          existingNames={definitions.map((definition) => definition.name)}
+          onSave={handleForkSave}
+          onCancel={() => setForkTarget(null)}
         />
       )}
     </div>

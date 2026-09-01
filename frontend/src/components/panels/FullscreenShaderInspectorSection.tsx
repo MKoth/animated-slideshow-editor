@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { ChangeEvent } from 'react'
 import type { EnginePublic, Slide } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
@@ -14,6 +15,8 @@ import { definitionNameOf, runCommand } from './sectionHelpers'
 import { UniformParameterField } from './uniformControls'
 import { overrideStateOf } from './uniforms'
 import { ShaderSourceViewer } from './ShaderSourceViewer'
+import { ShaderEditor } from './ShaderEditor'
+import { uniqueNodeName } from '../../engine/naming'
 
 function compileLabel(status: ShaderCompileStatus | undefined): string {
   if (!status) {
@@ -100,6 +103,20 @@ export function FullscreenShaderInspectorSection({
     setActiveSidebarTab('materials')
   }
 
+  const [forkOpen, setForkOpen] = useState(false)
+
+  const handleForkSave = async (payload: { name: string; source: string }) => {
+    const file = new File([payload.source], `${payload.name}.glsl`, { type: 'text/plain' })
+    const created = await useShaderLibraryStore.getState().importShader(file, {
+      name: payload.name,
+    })
+    if (!created) {
+      throw new Error('Shader fork failed')
+    }
+    runSectionCommand(() => assignFullscreenShader(engine, dispatch, slide.id, created.id))
+    setForkOpen(false)
+  }
+
   return (
     <section className="inspector-section">
       <h3 className="inspector-section__title">Fullscreen Shader</h3>
@@ -177,6 +194,16 @@ export function FullscreenShaderInspectorSection({
             >
               Open in Library
             </button>
+            {shaderSource && (
+              <button
+                className="inspector-section__link"
+                aria-label="Edit as new"
+                onClick={() => setForkOpen(true)}
+                disabled={disabled}
+              >
+                Edit as new
+              </button>
+            )}
           </div>
           {shaderSource ? (
             <ShaderSourceViewer
@@ -190,6 +217,18 @@ export function FullscreenShaderInspectorSection({
             </p>
           )}
         </div>
+      )}
+      {forkOpen && shaderSource && shaderName && (
+        <ShaderEditor
+          initialSource={shaderSource}
+          initialName={uniqueNodeName(
+            new Set(definitions.map((definition) => definition.name)),
+            `${shaderName} Copy`,
+          )}
+          existingNames={definitions.map((definition) => definition.name)}
+          onSave={handleForkSave}
+          onCancel={() => setForkOpen(false)}
+        />
       )}
     </section>
   )

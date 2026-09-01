@@ -6,7 +6,7 @@ export interface ShaderSourceViewerProps {
   title?: string
 }
 
-function escapeHtml(text: string): string {
+export function escapeHtml(text: string): string {
   return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -20,7 +20,7 @@ const GLSL_TYPES = /\b(void|bool|int|float|vec2|vec3|vec4|mat2|mat3|mat4|sampler
 const GLSL_BUILTINS =
   /\b(gl_FragColor|gl_FragCoord|gl_Position|fragColor|texture|texture2D|mix|step|smoothstep|length|normalize|dot|cross|sin|cos|tan|pow|exp|log|sqrt|abs|min|max|clamp|fract|mod)\b/g
 
-function highlightGlsl(source: string): string {
+export function highlightGlsl(source: string): string {
   // Escape first, then apply token spans. Order matters to avoid double-wrapping.
   let escaped = escapeHtml(source)
   // Comments are already escaped: // ... and /* ... */  (no HTML inside)

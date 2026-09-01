@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { ChangeEvent } from 'react'
 import type { EnginePublic, SceneNode } from '../../engine'
 import {
@@ -24,6 +25,8 @@ import { definitionNameOf, runCommand } from './sectionHelpers'
 import { OverrideAffordance, UniformParameterField } from './uniformControls'
 import { overrideStateOf } from './uniforms'
 import { ShaderSourceViewer } from './ShaderSourceViewer'
+import { ShaderEditor } from './ShaderEditor'
+import { uniqueNodeName } from '../../engine/naming'
 
 function toKeyframeValue(value: unknown): KeyframeValue {
   if (Array.isArray(value)) {
@@ -177,6 +180,36 @@ export function MaterialInspectorSection({
     selectShader(materialShaderId)
     setActiveMaterialsSection('shaders')
     setActiveSidebarTab('materials')
+  }
+
+  const [forkOpen, setForkOpen] = useState(false)
+
+  const handleForkSave = async (payload: { name: string; source: string }) => {
+    if (!materialShaderId || !currentDefinitionId) {
+      throw new Error('No shader to fork')
+    }
+    const file = new File([payload.source], `${payload.name}.glsl`, { type: 'text/plain' })
+    const createdShader = await useShaderLibraryStore.getState().importShader(file, {
+      name: payload.name,
+    })
+    if (!createdShader) {
+      throw new Error('Shader fork failed')
+    }
+    const materialStore = useMaterialLibraryStore.getState()
+    const currentMatName =
+      engine.materialDefinitions.find((definition) => definition.id === currentDefinitionId)
+        ?.name ?? 'Material'
+    const newMaterialName = uniqueNodeName(
+      new Set(materialStore.definitions.map((definition) => definition.name)),
+      `${currentMatName} Copy`,
+    )
+    const newMaterial = await materialStore.duplicateMaterial(currentDefinitionId, newMaterialName)
+    if (!newMaterial) {
+      throw new Error('Material fork failed')
+    }
+    await materialStore.assignShader(newMaterial.id, createdShader.id)
+    runCommand(notify, () => assignMaterialToNodes(engine, dispatch, nodeIds, newMaterial.id))
+    setForkOpen(false)
   }
 
   return (
@@ -343,6 +376,16 @@ export function MaterialInspectorSection({
             >
               Open in Library
             </button>
+            {shaderSource && (
+              <button
+                className="inspector-section__link"
+                aria-label="Edit as new"
+                onClick={() => setForkOpen(true)}
+                disabled={playing}
+              >
+                Edit as new
+              </button>
+            )}
           </div>
           {shaderSource ? (
             <ShaderSourceViewer source={shaderSource} ariaLabel="Material shader source" />
@@ -352,6 +395,18 @@ export function MaterialInspectorSection({
             </p>
           )}
         </div>
+      )}
+      {forkOpen && shaderSource && shaderName && (
+        <ShaderEditor
+          initialSource={shaderSource}
+          initialName={uniqueNodeName(
+            new Set(shaderLibraryDefinitions.map((definition) => definition.name)),
+            `${shaderName} Copy`,
+          )}
+          existingNames={shaderLibraryDefinitions.map((definition) => definition.name)}
+          onSave={handleForkSave}
+          onCancel={() => setForkOpen(false)}
+        />
       )}
     </section>
   )
