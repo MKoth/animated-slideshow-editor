@@ -256,6 +256,8 @@ export { NormalizeWeightsCommand } from './normalizeWeightsCommand'
 export type { NormalizeWeightsInverse, NormalizeWeightsParameters } from './normalizeWeightsCommand'
 export { GenerateMeshCommand } from './generateMeshCommand'
 export type { GenerateMeshInverse, GenerateMeshParameters } from './generateMeshCommand'
+export { UpdateBoneCommand } from './updateBoneCommand'
+export type { UpdateBoneInverse, UpdateBoneParameters } from './updateBoneCommand'
 export { SetTableComponentCommand } from './setTableComponentCommand'
 export type {
   SetTableComponentInverse,

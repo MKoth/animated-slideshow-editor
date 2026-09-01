@@ -1,6 +1,8 @@
 import { registerShortcut } from './shortcutRegistry'
 import { useMeshEditStore } from '../stores/meshEditStore'
 import { useEditingModeStore } from '../stores/editingModeStore'
+import { useBoneEditStore } from '../stores/boneEditStore'
+import { useBoneCreationStore } from '../stores/boneCreationStore'
 
 export function registerMeshEditShortcuts(): () => void {
   const disposeEscape = registerShortcut('escape', () => {
@@ -11,6 +13,12 @@ export function registerMeshEditShortcuts(): () => void {
     const { mode } = useEditingModeStore.getState()
     if (mode !== 'default') {
       useEditingModeStore.getState().exitMode()
+    }
+    if (useBoneEditStore.getState().isEditing) {
+      useBoneEditStore.getState().exit()
+    }
+    if (useBoneCreationStore.getState().pendingStart) {
+      useBoneCreationStore.getState().clear()
     }
   })
 

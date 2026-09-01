@@ -16,11 +16,13 @@ function isEditableTarget(target: EventTarget | null): boolean {
 export function useKeyboardShortcuts(): void {
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (isEditableTarget(event.target)) {
-        return
-      }
       const combo = formatCombo(event)
       if (!combo) {
+        return
+      }
+      // Escape should always be handled even when focus is in an input/select
+      const isEscape = combo === 'escape'
+      if (!isEscape && isEditableTarget(event.target)) {
         return
       }
       const shortcutHandler = getShortcutHandler(combo)

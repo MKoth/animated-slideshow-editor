@@ -179,6 +179,21 @@ export class NodeManager {
     this.#bus.emit({ type: 'TransformChanged', nodeId })
   }
 
+  setBoneLength(nodeId: string, length: number): void {
+    const node = this.getById(nodeId)
+    if (!node.components.bone) {
+      throw new Error(`Node "${nodeId}" does not have a bone component`)
+    }
+    // SceneNode.components is frozen; replace whole object via copy
+    const newComponents = {
+      ...node.components,
+      bone: Object.freeze({ kind: 'bone' as const, length }),
+    }
+    ;(node as unknown as { components: typeof newComponents }).components =
+      Object.freeze(newComponents)
+    this.#bus.emit({ type: 'TransformChanged', nodeId })
+  }
+
   setVisibility(nodeId: string, visible: boolean): void {
     const node = this.getById(nodeId)
     node.visible = visible

@@ -5,6 +5,7 @@ import { walkPreOrder } from '../../engine/sceneNode'
 import { useMeshEditStore } from '../../stores/meshEditStore'
 import { useMeshPreviewStore } from '../../stores/meshPreviewStore'
 import { useSelectionStore } from '../../stores/selectionStore'
+import { useOverlayVisibilityStore } from '../../stores/overlayVisibilityStore'
 import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
 import type { WorldTransform, WorldRect } from './worldGeometry'
 import { worldTransformOf } from '../../engine/worldTransform'
@@ -140,6 +141,7 @@ export class MeshOverlay {
   #unsubscribeEngine: (() => void) | null = null
   #previewVertices: Map<number, { x: number; y: number }> | null = null
   #unsubscribePreview: (() => void) | null = null
+  #unsubscribeVisibility: (() => void) | null = null
 
   constructor(context: MeshOverlayContext) {
     this.#pixi = context.pixi
@@ -166,6 +168,7 @@ export class MeshOverlay {
       }
     })
     this.#unsubscribePreview = useMeshPreviewStore.subscribe(() => this.redraw())
+    this.#unsubscribeVisibility = useOverlayVisibilityStore.subscribe(() => this.redraw())
     this.redraw()
   }
 
@@ -182,6 +185,8 @@ export class MeshOverlay {
     this.#unsubscribeEngine = null
     this.#unsubscribePreview?.()
     this.#unsubscribePreview = null
+    this.#unsubscribeVisibility?.()
+    this.#unsubscribeVisibility = null
     this.#graphics?.destroy()
     this.#graphics = null
   }
@@ -248,6 +253,9 @@ export class MeshOverlay {
       return
     }
     graphics.clear()
+    if (!useOverlayVisibilityStore.getState().meshVisible) {
+      return
+    }
     const scene = this.#getScene()
     if (!scene) {
       return

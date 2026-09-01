@@ -28,6 +28,10 @@ import { MeshEditInteraction } from './meshEditInteraction'
 import { WeightPaintOverlay } from './weightPaintOverlay'
 import { WeightPaintInteraction } from './weightPaintInteraction'
 import { RiggingInteraction } from './riggingInteraction'
+import { BoneCreationPreview } from './boneCreationPreview'
+import { BoneEditInteraction } from './boneEditInteraction'
+import { BoneEditOverlay } from './boneEditOverlay'
+import { OverlayVisibilityStore } from '../../stores/overlayVisibilityStore'
 import { IkOverlay } from './ikOverlay'
 import { IkInteraction } from './ikInteraction'
 import { MarqueeOverlay } from './marqueeOverlay'
@@ -85,6 +89,9 @@ export class Renderer {
   #weightPaintOverlay: WeightPaintOverlay | null = null
   #weightPaintInteraction: WeightPaintInteraction | null = null
   #riggingInteraction: RiggingInteraction | null = null
+  #boneCreationPreview: BoneCreationPreview | null = null
+  #boneEditOverlay: BoneEditOverlay | null = null
+  #boneEditInteraction: BoneEditInteraction | null = null
   #ikOverlay: IkOverlay | null = null
   #ikInteraction: IkInteraction | null = null
   #marqueeOverlay: MarqueeOverlay | null = null
@@ -95,6 +102,7 @@ export class Renderer {
   #cameraPreview: ViewportTransform | null = null
   #unsubscribe: Unsubscribe | null = null
   #unsubscribeTime: Unsubscribe | null = null
+  #unsubscribeVisibility: (() => void) | null = null
   #resizeObserver: ResizeObserver | null = null
   #started = false
   #disposed = false
@@ -198,6 +206,13 @@ export class Renderer {
       this.#thumbnails.attach(app)
       this.#unsubscribe = this.#engine.subscribe((event) => this.#handleEvent(event))
       this.#unsubscribeTime = this.#currentTime.subscribe(() => this.#handleTimeChanged())
+      this.#unsubscribeVisibility = OverlayVisibilityStore.subscribe((state) => {
+        this.#sceneRenderer?.setBonesVisible(state.bonesVisible)
+        this.#meshOverlay?.redraw()
+        this.#boneEditOverlay?.redraw()
+      })
+      // Initialize visibility
+      this.#sceneRenderer?.setBonesVisible(OverlayVisibilityStore.getState().bonesVisible)
       this.#syncScene(this.#sceneRenderer)
 
       this.#transformSource = new EvaluatedWorldTransformSource(
@@ -354,6 +369,36 @@ export class Renderer {
       })
       this.#riggingInteraction.attach()
 
+      this.#boneCreationPreview = new BoneCreationPreview({
+        pixi: this.#pixi,
+        world,
+        canvas: app.canvas,
+        getCameraTransform: () => this.#cameraTransform(),
+      })
+      this.#boneCreationPreview.attach()
+      this.#boneCreationPreview.bringToFront()
+
+      this.#boneEditOverlay = new BoneEditOverlay({
+        pixi: this.#pixi,
+        world,
+        getScene: () => this.#sceneRenderer?.boundScene ?? null,
+        getWorldTransform: transformOf,
+      })
+      this.#boneEditOverlay.attach()
+      this.#boneEditOverlay.bringToFront()
+
+      this.#boneEditInteraction = new BoneEditInteraction({
+        canvas: app.canvas,
+        pixi: this.#pixi,
+        world,
+        getScene: () => this.#sceneRenderer?.boundScene ?? null,
+        getCameraTransform: () => this.#cameraTransform(),
+        dispatch: this.#dispatch,
+        getWorldTransform: transformOf,
+        overlay: this.#boneEditOverlay,
+      })
+      this.#boneEditInteraction.attach()
+
       this.#ikOverlay = new IkOverlay({
         pixi: this.#pixi,
         world,
@@ -398,6 +443,8 @@ export class Renderer {
     this.#unsubscribe = null
     this.#unsubscribeTime?.()
     this.#unsubscribeTime = null
+    this.#unsubscribeVisibility?.()
+    this.#unsubscribeVisibility = null
     this.#thumbnails.detach()
     this.#resizeObserver?.disconnect()
     this.#resizeObserver = null
@@ -423,6 +470,12 @@ export class Renderer {
     this.#weightPaintInteraction = null
     this.#riggingInteraction?.detach()
     this.#riggingInteraction = null
+    this.#boneCreationPreview?.detach()
+    this.#boneCreationPreview = null
+    this.#boneEditOverlay?.detach()
+    this.#boneEditOverlay = null
+    this.#boneEditInteraction?.detach()
+    this.#boneEditInteraction = null
     this.#ikOverlay?.detach()
     this.#ikOverlay = null
     this.#ikInteraction?.detach()
@@ -708,6 +761,9 @@ export class Renderer {
       this.#guideOverlay?.bringToFront()
       this.#meshOverlay?.bringToFront()
       this.#weightPaintOverlay?.bringToFront()
+      this.#boneCreationPreview?.bringToFront()
+      this.#boneEditOverlay?.bringToFront()
+      this.#boneEditInteraction?.bringToFront()
       this.#ikOverlay?.bringToFront()
       useSelectionStore.getState().clear()
     }

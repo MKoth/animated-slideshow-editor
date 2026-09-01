@@ -42,7 +42,12 @@ import {
   placeholderOf,
   refreshTableChildContainer,
 } from './nodeRenderer'
-import { applyAssetTexture, applyMissingPlaceholder, placeholderSize } from './placeholder'
+import {
+  applyAssetTexture,
+  applyMissingPlaceholder,
+  placeholderSize,
+  setBoneSize,
+} from './placeholder'
 import {
   rebuildTable,
   tableChildSizeOf,
@@ -228,6 +233,20 @@ export class SceneRenderer {
   handleTransformChanged(nodeId: string): void {
     this.#evaluateAndApply(nodeId)
     this.refreshDeformedMeshSizes()
+    // Update bone placeholder size when bone length changed
+    const node = this.#scene?.getNode(nodeId)
+    if (node?.components.bone) {
+      const container = this.#containers.get(nodeId)
+      if (container) {
+        const placeholder = placeholderOf(container)
+        if (placeholder) {
+          const len = node.components.bone.length
+          setBoneSize(placeholder, len, 10, len / 2, 0)
+          this.#sizes.set(nodeId, { width: len, height: 10, offsetX: len / 2, offsetY: 0 })
+          this.#onNodeSizeChanged(nodeId)
+        }
+      }
+    }
   }
 
   handleKeyframeChanged(nodeId: string): void {
@@ -547,6 +566,15 @@ export class SceneRenderer {
 
   handleOpacityChanged(nodeId: string): void {
     this.#evaluateAndApply(nodeId)
+  }
+
+  setBonesVisible(visible: boolean): void {
+    for (const [nodeId, container] of this.#containers) {
+      const node = this.#scene?.getNode(nodeId)
+      if (!node || !node.components.bone) continue
+      // Respect node.visible when showing; hide when flag false
+      container.visible = visible ? node.visible : false
+    }
   }
 
   handleNodeReparented(nodeId: string): void {

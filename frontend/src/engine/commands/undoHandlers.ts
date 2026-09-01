@@ -45,6 +45,25 @@ export function applyUndo(
       engine.setTransform(nodeId, { ...node.transform, scaleX: oldScaleX, scaleY: oldScaleY })
       return
     }
+    case 'UpdateBone': {
+      const nodeId = inv.nodeId as string
+      const oldLength = inv.oldLength as number
+      const oldX = inv.oldX as number
+      const oldY = inv.oldY as number
+      const oldRotation = inv.oldRotation as number
+      try {
+        engine.setBoneLength(nodeId, oldLength)
+      } catch {
+        // bone may be deleted
+      }
+      try {
+        const node = engine.getNode(nodeId)
+        engine.setTransform(nodeId, { ...node.transform, x: oldX, y: oldY, rotation: oldRotation })
+      } catch {
+        // ignore
+      }
+      return
+    }
     case 'SetVisibility': {
       const nodeId = inv.nodeId as string
       const oldVisible = inv.oldVisible as boolean
@@ -1418,6 +1437,33 @@ export function applyRedo(
         scaleY: params.scaleY as number,
       })
       return
+    case 'UpdateBone': {
+      const nodeId = params.nodeId as string
+      if (params.length !== undefined) {
+        try {
+          engine.setBoneLength(nodeId, params.length as number)
+        } catch (_e) {
+          // bone may be deleted
+        }
+      }
+      const x = params.x as number | undefined
+      const y = params.y as number | undefined
+      const rotation = params.rotation as number | undefined
+      if (x !== undefined || y !== undefined || rotation !== undefined) {
+        try {
+          const node = engine.getNode(nodeId)
+          engine.setTransform(nodeId, {
+            ...node.transform,
+            x: x !== undefined ? x : node.transform.x,
+            y: y !== undefined ? y : node.transform.y,
+            rotation: rotation !== undefined ? rotation : node.transform.rotation,
+          })
+        } catch (_e) {
+          // ignore
+        }
+      }
+      return
+    }
     case 'SetVisibility':
       engine.setVisibility(params.nodeId as string, params.visible as boolean)
       return

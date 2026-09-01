@@ -6,6 +6,7 @@ import { MoveNodeCommand, TransactionCommand } from '../../engine/commands'
 import type { SelectionActions } from '../../stores/selectionStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { useEditingModeStore } from '../../stores/editingModeStore'
+import { useBoneEditStore } from '../../stores/boneEditStore'
 import { findAlignment } from './alignment'
 import { DEFAULT_GRID_STEP, snapDelta } from './gridSnap'
 import type { NodeFilter, NodeSizeSource, WorldTransformSource } from './hitTest'
@@ -153,12 +154,14 @@ export class CanvasSelection {
       return
     }
     const { mode } = useEditingModeStore.getState()
+    const { isEditing: boneEditing } = useBoneEditStore.getState()
     if (
       mode === 'boneCreation' ||
       mode === 'ikTarget' ||
       mode === 'poleVector' ||
       mode === 'meshEdit' ||
-      mode === 'weightPaint'
+      mode === 'weightPaint' ||
+      boneEditing
     ) {
       return
     }

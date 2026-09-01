@@ -2,8 +2,9 @@ import type { EnginePublic, Scene } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
 import { CreateNodeCommand } from '../../engine/commands'
 import { useEditingModeStore } from '../../stores/editingModeStore'
+import { useBoneCreationStore } from '../../stores/boneCreationStore'
 import { cursorToWorld } from './screenToWorld'
-import type { ViewportTransform, WorldPoint } from './worldGeometry'
+import type { ViewportTransform } from './worldGeometry'
 import { uniqueNodeName, namesInTree } from '../../engine/naming'
 
 export interface RiggingInteractionContext {
@@ -20,7 +21,6 @@ export class RiggingInteraction {
   readonly #getCameraTransform: () => ViewportTransform | null
   readonly #dispatch: DispatchCommand
   #attached = false
-  #pendingStart: WorldPoint | null = null
   #unsubscribeMode: (() => void) | null = null
 
   constructor(context: RiggingInteractionContext) {
@@ -39,7 +39,7 @@ export class RiggingInteraction {
     window.addEventListener('keydown', this.#onKeyDown)
     this.#unsubscribeMode = useEditingModeStore.subscribe(({ mode }) => {
       if (mode !== 'boneCreation') {
-        this.#pendingStart = null
+        useBoneCreationStore.getState().clear()
       }
     })
   }
@@ -49,7 +49,7 @@ export class RiggingInteraction {
       return
     }
     this.#attached = false
-    this.#pendingStart = null
+    useBoneCreationStore.getState().clear()
     this.#unsubscribeMode?.()
     this.#unsubscribeMode = null
     this.#canvas.removeEventListener('click', this.#onClick)
@@ -58,7 +58,7 @@ export class RiggingInteraction {
 
   readonly #onKeyDown = (event: KeyboardEvent): void => {
     if (event.key === 'Escape') {
-      this.#pendingStart = null
+      useBoneCreationStore.getState().clear()
     }
   }
 
@@ -87,13 +87,14 @@ export class RiggingInteraction {
       return
     }
 
-    if (!this.#pendingStart) {
-      this.#pendingStart = point
+    const pendingStart = useBoneCreationStore.getState().pendingStart
+    if (!pendingStart) {
+      useBoneCreationStore.getState().setPendingStart(point)
       return
     }
 
-    const start = this.#pendingStart
-    this.#pendingStart = null
+    const start = pendingStart
+    useBoneCreationStore.getState().clear()
     const dx = point.x - start.x
     const dy = point.y - start.y
     const length = Math.hypot(dx, dy)

@@ -2236,15 +2236,22 @@ button:disabled {
   left: 50%;
   transform: translateX(-50%);
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  justify-content: center;
+  align-content: center;
+  gap: 6px 8px;
+  row-gap: 6px;
+  padding: 8px 10px;
   border-radius: 6px;
   background: var(--color-bg-panel);
   border: 1px solid var(--color-border);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   pointer-events: auto;
   font-size: 12px;
+  max-width: min(560px, calc(100% - 24px));
+  width: max-content;
+  z-index: 5;
 }
 
 .weight-paint-toolbar__section {

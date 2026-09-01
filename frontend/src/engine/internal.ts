@@ -1192,7 +1192,10 @@ export class Engine {
     return getDerivedAssetCacheKeyCore(assetId, playbackRate)
   }
 
-  buildPerSlideExportDescriptor(slideId: string, settings: ExportSettings): ExportPerSlideDescriptor {
+  buildPerSlideExportDescriptor(
+    slideId: string,
+    settings: ExportSettings,
+  ): ExportPerSlideDescriptor {
     const slide = this.getSlide(slideId)
     return buildPerSlideExportDescriptorCore(slide, settings)
   }
@@ -1440,6 +1443,10 @@ export class Engine {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(node as any).components = Object.freeze(newComponents)
     this.#bus.emit({ type: 'MeshChanged', nodeId })
+  }
+
+  setBoneLength(nodeId: string, length: number): void {
+    this.#nodes.setBoneLength(nodeId, length)
   }
 
   setTableComponent(nodeId: string, table: TableComponent): void {
@@ -2248,7 +2255,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getExportFrameTimestamps: (duration, fps) => engine.getExportFrameTimestamps(duration, fps),
     getRubberbandTempoForPlaybackRate: (rate) => engine.getRubberbandTempoForPlaybackRate(rate),
     getDerivedAssetCacheKey: (assetId, rate) => engine.getDerivedAssetCacheKey(assetId, rate),
-    buildPerSlideExportDescriptor: (slideId, settings) => engine.buildPerSlideExportDescriptor(slideId, settings),
+    buildPerSlideExportDescriptor: (slideId, settings) =>
+      engine.buildPerSlideExportDescriptor(slideId, settings),
     buildExportJobDescriptor: (settings) => engine.buildExportJobDescriptor(settings),
     toJSON: () => engine.toJSON(),
     restoreFromJSON: (json) => engine.restoreFromJSON(json),
