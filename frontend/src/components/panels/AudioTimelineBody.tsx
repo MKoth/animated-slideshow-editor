@@ -1415,15 +1415,17 @@ export function AudioTimelineBody({
                               border: isActive ? '1px solid #7c5cff' : '1px solid var(--color-border)',
                               fontSize: 11,
                               whiteSpace: 'nowrap',
-                              overflow: 'hidden',
+                              overflow: 'visible',
                               outline: isFocused ? '2px solid #7c5cff' : undefined,
                               cursor: 'grab',
                               display: 'inline-flex',
                               alignItems: 'center',
-                              gap: 4,
+                              gap: 6,
+                              zIndex: isFocused || isActive ? 3 : hoveredWord?.partId === part.id ? 2 : 1,
+                              boxShadow: isFocused ? '0 2px 10px rgba(0,0,0,0.35)' : '0 1px 4px rgba(0,0,0,0.25)',
                             }}
                           >
-                            <span style={{ display: 'inline-flex', gap: 1, alignItems: 'center', flexWrap: 'nowrap', overflow: 'hidden' }}>
+                            <span style={{ display: 'inline-flex', gap: 3, alignItems: 'center', flexWrap: 'nowrap', overflow: 'visible', flex: 1, minWidth: 0 }}>
                               {(() => {
                                 const tokens = part.text.split(/(\s+)/)
                                 let wIdx = -1
@@ -1431,8 +1433,8 @@ export function AudioTimelineBody({
                                   if (tok === '') return null
                                   if (/^\s+$/.test(tok)) {
                                     return (
-                                      <span key={`ws-${ti}`} style={{ whiteSpace: 'pre' }}>
-                                        {tok}
+                                      <span key={`ws-${ti}`} style={{ whiteSpace: 'pre', color: '#666', userSelect: 'none' }}>
+                                        {tok === ' ' ? '·' : tok}
                                       </span>
                                     )
                                   }
@@ -1441,8 +1443,6 @@ export function AudioTimelineBody({
                                   const isSelected = wordSelection?.partId === part.id && wi >= Math.min(wordSelection.start, wordSelection.end) && wi <= Math.max(wordSelection.start, wordSelection.end)
                                   const isSegment = part.segments?.some((s) => s.text.trim() === tok.trim())
                                   const isHovered = hoveredWord?.partId === part.id && hoveredWord?.index === wi
-                                  const hoverBg = isHovered && !isSelected ? 'rgba(124,92,255,0.18)' : undefined
-                                  const hoverBorder = isHovered && !isSelected && !isSegment ? '1px solid rgba(124,92,255,0.45)' : undefined
                                   return (
                                     <span
                                       key={`w-${wi}`}
@@ -1467,16 +1467,38 @@ export function AudioTimelineBody({
                                         }
                                       }}
                                       style={{
-                                        padding: '1px 2px',
-                                        borderRadius: 4,
-                                        cursor: 'text',
-                                        background: isSelected ? '#7c5cff' : isSegment ? 'rgba(46,154,106,0.25)' : hoverBg ?? 'transparent',
-                                        color: isSelected ? '#fff' : undefined,
-                                        border: isSelected ? '1px solid #fff' : isSegment ? '1px solid #2e9a6a' : hoverBorder ?? '1px solid transparent',
+                                        padding: '3px 7px',
+                                        borderRadius: 999,
+                                        cursor: 'pointer',
+                                        fontSize: 11,
+                                        fontWeight: isSelected ? 700 : 500,
+                                        letterSpacing: 0.15,
+                                        background: isSelected
+                                          ? '#7c5cff'
+                                          : isSegment
+                                            ? 'rgba(46,154,106,0.32)'
+                                            : isHovered
+                                              ? 'rgba(124,92,255,0.32)'
+                                              : 'rgba(255,255,255,0.10)',
+                                        color: isSelected ? '#fff' : isSegment ? '#b6f0d0' : isHovered ? '#fff' : '#f0f0f5',
+                                        border: isSelected
+                                          ? '1px solid #fff'
+                                          : isSegment
+                                            ? '1px solid #2e9a6a'
+                                            : isHovered
+                                              ? '1px solid #8b7cff'
+                                              : '1px solid rgba(255,255,255,0.18)',
                                         userSelect: 'none',
-                                        transition: 'background 120ms, border-color 120ms',
+                                        transition: 'all 120ms ease',
+                                        boxShadow: isSelected
+                                          ? '0 2px 8px rgba(124,92,255,0.45), 0 0 0 2px rgba(124,92,255,0.25)'
+                                          : isHovered
+                                            ? '0 2px 6px rgba(124,92,255,0.35)'
+                                            : '0 1px 2px rgba(0,0,0,0.25)',
+                                        transform: isHovered && !isSelected ? 'translateY(-1px)' : 'none',
+                                        textShadow: isSelected ? '0 1px 0 rgba(0,0,0,0.2)' : undefined,
                                       }}
-                                      title={isSegment ? 'AudioSegment — click to re-select word' : 'Hover to highlight, click to select word, Shift+click to extend, drag on chip background to move part'}
+                                      title={isSegment ? 'AudioSegment — click to re-select word for replacement' : 'Click to select word • Shift+click to extend range • Selected words can be replaced with TTS'}
                                     >
                                       {tok}
                                     </span>
@@ -1595,24 +1617,86 @@ export function AudioTimelineBody({
                     />
                   )}
                 </div>
-                {wordSelection && selectedWordPart && (
-                  <div data-testid="word-selection-bar" style={{ position: 'absolute', bottom: 2, left: 8, right: 8, display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(124,92,255,0.12)', border: '1px solid #7c5cff', borderRadius: 6, padding: '4px 8px', fontSize: 10, zIndex: 6 }}>
-                    <span style={{ color: '#e0d8ff' }}>Selected &quot;{selectedWordText}&quot; in &quot;{selectedWordPart.text.slice(0, 30)}&quot; (words {Math.min(wordSelection.start, wordSelection.end)}–{Math.max(wordSelection.start, wordSelection.end)})</span>
-                    <button
-                      data-testid="word-tts-trigger"
-                      onClick={() => {
-                        const start = Math.min(wordSelection.start, wordSelection.end)
-                        const end = Math.max(wordSelection.start, wordSelection.end)
-                        setWordLevelTts({ partId: wordSelection.partId, start, end, text: selectedWordText })
-                      }}
-                      style={{ marginLeft: 'auto', padding: '3px 8px', background: '#2e9a6a', color: '#fff', border: '1px solid #2e9a6a', borderRadius: 4, cursor: 'pointer', fontSize: 10 }}
-                    >
-                      Replace with TTS
-                    </button>
-                    <button data-testid="word-selection-clear" onClick={() => setWordSelection(null)} style={{ padding: '3px 6px', background: '#333', color: '#e0e0e0', border: '1px solid #444', borderRadius: 4, cursor: 'pointer', fontSize: 10 }}>Clear</button>
-                  </div>
-                )}
               </div>
+              {wordSelection && selectedWordPart ? (
+                <div
+                  data-testid="word-selection-bar"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    background: '#1e1e2e',
+                    border: '1px solid #7c5cff',
+                    borderLeft: '3px solid #7c5cff',
+                    borderRadius: 8,
+                    padding: '7px 12px',
+                    margin: '6px 8px',
+                    fontSize: 11,
+                    zIndex: 6,
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.45), 0 0 0 1px rgba(124,92,255,0.15)',
+                  }}
+                >
+                  <span style={{ color: '#e0d8ff', fontWeight: 500 }}>
+                    Selected <b style={{ color: '#fff', background: '#7c5cff', padding: '2px 6px', borderRadius: 999 }}>&quot;{selectedWordText}&quot;</b>{' '}
+                    <span style={{ opacity: 0.85 }}>in &quot;{selectedWordPart.text.slice(0, 36)}&quot;</span>{' '}
+                    <span style={{ fontSize: 10, opacity: 0.7 }}>(words {Math.min(wordSelection.start, wordSelection.end)}–{Math.max(wordSelection.start, wordSelection.end)})</span>
+                  </span>
+                  <button
+                    data-testid="word-tts-trigger"
+                    onClick={() => {
+                      const start = Math.min(wordSelection.start, wordSelection.end)
+                      const end = Math.max(wordSelection.start, wordSelection.end)
+                      setWordLevelTts({ partId: wordSelection.partId, start, end, text: selectedWordText })
+                    }}
+                    style={{
+                      marginLeft: 'auto',
+                      padding: '6px 14px',
+                      background: '#2e9a6a',
+                      color: '#fff',
+                      border: '1px solid #2e9a6a',
+                      borderRadius: 999,
+                      cursor: 'pointer',
+                      fontSize: 11,
+                      fontWeight: 700,
+                      letterSpacing: 0.2,
+                      boxShadow: '0 2px 8px rgba(46,154,106,0.35)',
+                    }}
+                  >
+                    Replace with TTS →
+                  </button>
+                  <button
+                    data-testid="word-selection-clear"
+                    onClick={() => setWordSelection(null)}
+                    style={{ padding: '5px 10px', background: '#2a2a3a', color: '#ccc', border: '1px solid #444', borderRadius: 999, cursor: 'pointer', fontSize: 11 }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              ) : prompterParts.length > 0 ? (
+                <div
+                  data-testid="word-selection-hint"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px dashed rgba(255,255,255,0.14)',
+                    borderRadius: 8,
+                    padding: '6px 12px',
+                    margin: '6px 8px',
+                    fontSize: 11,
+                    color: '#a0a0b8',
+                  }}
+                >
+                  <span style={{ fontSize: 12 }}>💡</span>
+                  <span>
+                    Hover a word to highlight • <b style={{ color: '#e0e0e0' }}>Click</b> to select • <b style={{ color: '#e0e0e0' }}>Shift+click</b> to extend range → then <b style={{ color: '#7c5cff' }}>Replace with TTS</b>
+                  </span>
+                  <span style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.65, background: 'rgba(124,92,255,0.12)', padding: '2px 6px', borderRadius: 999, border: '1px solid rgba(124,92,255,0.25)' }}>
+                    {prompterParts.length} part{prompterParts.length !== 1 ? 's' : ''} • {prompterParts.reduce((n, p) => n + (p.text.match(/\S+/g)?.length ?? 0), 0)} words
+                  </span>
+                </div>
+              ) : null}
 
               <div
                 className="audio-lanes"
