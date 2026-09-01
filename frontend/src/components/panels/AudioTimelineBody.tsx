@@ -42,6 +42,7 @@ import { slicePeaksForClip } from '../../audio/waveform'
 import { assetsApi } from '../../api'
 import { RecordModal } from '../audio/RecordModal'
 import { TtsModal } from '../audio/TtsModal'
+import { WordLevelTtsModal } from '../audio/WordLevelTtsModal'
 import { getPrompterRecordingShortcut } from '../../engine/prompter'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { captureAudioSnapshot } from '../../app/assetSnapshot'
@@ -170,6 +171,10 @@ export function AudioTimelineBody({
     left: number
     width: number
   } | null>(null)
+
+  // Word-level selection for TTS replacement (Spec 15.10)
+  const [wordSelection, setWordSelection] = useState<{ partId: string; start: number; end: number } | null>(null)
+  const [wordLevelTts, setWordLevelTts] = useState<{ partId: string; start: number; end: number; text: string } | null>(null)
 
   const resolveTrackFromEvent = (event: React.DragEvent): AudioTrackId | null => {
     const target = event.target as HTMLElement
@@ -508,6 +513,7 @@ export function AudioTimelineBody({
           // Click on empty clears selection
           if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
             useAudioClipSelectionStore.getState().clear()
+            setWordSelection(null)
           }
           useAudioClipSelectionStore.getState().marqueeEnd([])
         }
@@ -1111,6 +1117,14 @@ export function AudioTimelineBody({
   const ttsPart = useMemo(() => prompterParts.find((p) => p.id === ttsPartId) ?? null, [prompterParts, ttsPartId])
   const [showImport, setShowImport] = useState(false)
   const [importText, setImportText] = useState('Hello, world')
+  const selectedWordPart = useMemo(() => (wordSelection ? prompterParts.find((p) => p.id === wordSelection.partId) ?? null : null), [prompterParts, wordSelection])
+  const selectedWordText = useMemo(() => {
+    if (!wordSelection || !selectedWordPart) return ''
+    const words = selectedWordPart.text.match(/\S+/g) ?? []
+    const start = Math.min(wordSelection.start, wordSelection.end)
+    const end = Math.max(wordSelection.start, wordSelection.end)
+    return words.slice(start, end + 1).join(' ')
+  }, [wordSelection, selectedWordPart])
 
   // Recording shortcut handler (when prompter part focused and no modal open)
   useEffect(() => {
@@ -1381,7 +1395,7 @@ export function AudioTimelineBody({
                                 }
                               }
                             }}
-                            className={`audio-prompter-chip${part.status === 'stale' ? ' audio-prompter-chip--stale' : ''}${isFocused ? ' audio-prompter-chip--focused' : ''}${isActive ? ' audio-prompter-chip--active' : ''}`}
+                            className={`audio-prompter-chip${part.status === 'stale' ? ' audio-prompter-chip--stale' : ''}${isFocused ? ' audio-prompter-chip--focused' : ''}${isActive ? ' audio-prompter-chip--active' : ''}${part.segments ? ' audio-prompter-chip--segments' : ''}`}
                             data-active={isActive ? 'true' : 'false'}
                             style={{
                               position: 'absolute',
@@ -1407,10 +1421,66 @@ export function AudioTimelineBody({
                               gap: 4,
                             }}
                           >
-                            {part.text}
+                            <span style={{ display: 'inline-flex', gap: 1, alignItems: 'center', flexWrap: 'nowrap', overflow: 'hidden' }}>
+                              {(() => {
+                                const tokens = part.text.split(/(\s+)/)
+                                let wIdx = -1
+                                return tokens.map((tok, ti) => {
+                                  if (tok === '') return null
+                                  if (/^\s+$/.test(tok)) {
+                                    return (
+                                      <span key={`ws-${ti}`} style={{ whiteSpace: 'pre' }}>
+                                        {tok}
+                                      </span>
+                                    )
+                                  }
+                                  wIdx += 1
+                                  const wi = wIdx
+                                  const isSelected = wordSelection?.partId === part.id && wi >= Math.min(wordSelection.start, wordSelection.end) && wi <= Math.max(wordSelection.start, wordSelection.end)
+                                  const isSegment = part.segments?.some((s) => s.text.trim() === tok.trim())
+                                  return (
+                                    <span
+                                      key={`w-${wi}`}
+                                      data-testid="prompter-word"
+                                      data-word-index={wi}
+                                      data-part-id={part.id}
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        e.preventDefault()
+                                        setFocusedId(part.id)
+                                        if (wordSelection && wordSelection.partId === part.id && e.shiftKey) {
+                                          const start = Math.min(wordSelection.start, wi)
+                                          const end = Math.max(wordSelection.end, wi)
+                                          setWordSelection({ partId: part.id, start, end })
+                                        } else {
+                                          setWordSelection({ partId: part.id, start: wi, end: wi })
+                                        }
+                                      }}
+                                      style={{
+                                        padding: '1px 2px',
+                                        borderRadius: 4,
+                                        cursor: 'text',
+                                        background: isSelected ? '#7c5cff' : isSegment ? 'rgba(46,154,106,0.25)' : 'transparent',
+                                        color: isSelected ? '#fff' : undefined,
+                                        border: isSelected ? '1px solid #fff' : isSegment ? '1px solid #2e9a6a' : '1px solid transparent',
+                                        userSelect: 'none',
+                                      }}
+                                      title={isSegment ? 'AudioSegment' : 'Click to select word, Shift+click to extend selection'}
+                                    >
+                                      {tok}
+                                    </span>
+                                  )
+                                })
+                              })()}
+                            </span>
                             <small style={{ marginLeft: 4, fontSize: 9, color: 'var(--color-text-muted)' }}>
                               {part.startTime.toFixed(1)}–{part.endTime.toFixed(1)}
                             </small>
+                            {part.segments && part.segments.length > 0 && (
+                              <span data-testid="segment-badge" title={`${part.segments.length} AudioSegment(s)`} style={{ fontSize: 8, background: '#2e9a6a', color: '#fff', borderRadius: 4, padding: '1px 4px', marginLeft: 2 }}>
+                                {part.segments.length} seg
+                              </span>
+                            )}
                             <button
                               data-testid={`record-btn-${part.id}`}
                               aria-label={`Record ${part.text}`}
@@ -1514,6 +1584,23 @@ export function AudioTimelineBody({
                     />
                   )}
                 </div>
+                {wordSelection && selectedWordPart && (
+                  <div data-testid="word-selection-bar" style={{ position: 'absolute', bottom: 2, left: 8, right: 8, display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(124,92,255,0.12)', border: '1px solid #7c5cff', borderRadius: 6, padding: '4px 8px', fontSize: 10, zIndex: 6 }}>
+                    <span style={{ color: '#e0d8ff' }}>Selected &quot;{selectedWordText}&quot; in &quot;{selectedWordPart.text.slice(0, 30)}&quot; (words {Math.min(wordSelection.start, wordSelection.end)}–{Math.max(wordSelection.start, wordSelection.end)})</span>
+                    <button
+                      data-testid="word-tts-trigger"
+                      onClick={() => {
+                        const start = Math.min(wordSelection.start, wordSelection.end)
+                        const end = Math.max(wordSelection.start, wordSelection.end)
+                        setWordLevelTts({ partId: wordSelection.partId, start, end, text: selectedWordText })
+                      }}
+                      style={{ marginLeft: 'auto', padding: '3px 8px', background: '#2e9a6a', color: '#fff', border: '1px solid #2e9a6a', borderRadius: 4, cursor: 'pointer', fontSize: 10 }}
+                    >
+                      Replace with TTS
+                    </button>
+                    <button data-testid="word-selection-clear" onClick={() => setWordSelection(null)} style={{ padding: '3px 6px', background: '#333', color: '#e0e0e0', border: '1px solid #444', borderRadius: 4, cursor: 'pointer', fontSize: 10 }}>Clear</button>
+                  </div>
+                )}
               </div>
 
               <div
@@ -1871,6 +1958,20 @@ export function AudioTimelineBody({
           partStartTime={ttsPart.startTime}
           plannedDuration={ttsPart.duration}
           onClose={() => setTtsPartId(null)}
+        />
+      )}
+      {wordLevelTts && (
+        <WordLevelTtsModal
+          slideId={slide.id}
+          partId={wordLevelTts.partId}
+          partText={engine.getSlide(slide.id).prompter?.parts.find((p) => p.id === wordLevelTts.partId)?.text ?? wordLevelTts.text}
+          startWordIndex={wordLevelTts.start}
+          endWordIndex={wordLevelTts.end}
+          selectedText={wordLevelTts.text}
+          onClose={() => {
+            setWordLevelTts(null)
+            setWordSelection(null)
+          }}
         />
       )}
       {showImport && (

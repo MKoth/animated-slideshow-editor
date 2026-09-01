@@ -144,6 +144,14 @@ export type SlideAnimationJSON = {
   readonly nodes: readonly NodeAnimationJSON[]
 }
 
+export type AudioSegmentJSON = {
+  readonly id: string
+  readonly text: string
+  readonly audioClipId: string
+  readonly audioAssetId?: string
+  readonly order: number
+}
+
 export type PrompterPartJSON = {
   readonly id: string
   readonly text: string
@@ -154,6 +162,7 @@ export type PrompterPartJSON = {
   readonly audioAssetId?: string
   readonly promptId?: string
   readonly status?: string
+  readonly segments?: readonly AudioSegmentJSON[]
 }
 
 export type PrompterJSON = {

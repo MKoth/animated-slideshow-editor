@@ -4,6 +4,14 @@ import type { PrompterJSON } from './json'
 
 export type PrompterPartStatus = 'stale'
 
+export interface AudioSegment {
+  readonly id: string
+  text: string
+  audioClipId: string
+  audioAssetId?: string
+  order: number
+}
+
 export interface PrompterPart {
   readonly id: string
   text: string
@@ -14,6 +22,7 @@ export interface PrompterPart {
   audioAssetId?: string
   promptId?: string
   status?: PrompterPartStatus
+  segments?: AudioSegment[]
 }
 
 export interface Prompter {
@@ -22,6 +31,10 @@ export interface Prompter {
 
 export function newPrompterPartId(): string {
   return newId('prompter-part')
+}
+
+export function newAudioSegmentId(): string {
+  return newId('audio-segment')
 }
 
 export const PROMPTER_DURATION_TOLERANCE = 1e-6
@@ -236,6 +249,50 @@ export function mergePrompterPartTexts(leftText: string, rightText: string): str
   return `${a} ${b}`
 }
 
+export function splitPrompterPartTextForWordRange(
+  text: string,
+  startWordIndex: number,
+  endWordIndex: number,
+): string[] {
+  const words: { word: string; start: number; end: number }[] = []
+  const re = /\S+/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text)) !== null) {
+    words.push({ word: m[0], start: m.index, end: m.index + m[0].length })
+  }
+  if (words.length === 0) return []
+  if (!Number.isInteger(startWordIndex) || startWordIndex < 0 || startWordIndex >= words.length)
+    throw new Error(`startWordIndex out of bounds: ${startWordIndex}`)
+  if (!Number.isInteger(endWordIndex) || endWordIndex < 0 || endWordIndex >= words.length)
+    throw new Error(`endWordIndex out of bounds: ${endWordIndex}`)
+  if (endWordIndex < startWordIndex) throw new Error('endWordIndex must be >= startWordIndex')
+  const start = words[startWordIndex]
+  const end = words[endWordIndex]
+  const left = text.slice(0, start.start)
+  const middle = text.slice(start.start, end.end)
+  const right = text.slice(end.end)
+  const raw = [left, middle, right]
+  return raw.filter((piece) => piece.trim().length > 0)
+}
+
+export function createAudioSegment(input: {
+  id?: string
+  text: string
+  audioClipId: string
+  audioAssetId?: string
+  order: number
+}): AudioSegment {
+  const id = input.id ?? newAudioSegmentId()
+  requireString(id, 'AudioSegment id')
+  if (typeof input.text !== 'string') throw new Error('AudioSegment text must be a string')
+  requireString(input.audioClipId, 'AudioSegment audioClipId')
+  if (input.audioAssetId !== undefined) requireString(input.audioAssetId, 'AudioSegment audioAssetId')
+  if (!Number.isInteger(input.order) || input.order < 0) throw new Error('AudioSegment order must be a non-negative integer')
+  const segment: AudioSegment = { id, text: input.text, audioClipId: input.audioClipId, order: input.order }
+  if (input.audioAssetId !== undefined) segment.audioAssetId = input.audioAssetId
+  return segment
+}
+
 export function createPrompterPart(input: {
   id?: string
   text: string
@@ -246,6 +303,7 @@ export function createPrompterPart(input: {
   audioAssetId?: string
   promptId?: string
   status?: PrompterPartStatus
+  segments?: AudioSegment[]
 }): PrompterPart {
   const id = input.id ?? newPrompterPartId()
   requireString(id, 'PrompterPart id')
@@ -267,6 +325,15 @@ export function createPrompterPart(input: {
     if (input.status !== 'stale') throw new Error('PrompterPart status must be stale')
     part.status = input.status
   }
+  if (input.segments !== undefined) {
+    if (!Array.isArray(input.segments)) throw new Error('PrompterPart segments must be an array')
+    const segs = input.segments.map((s, idx) => {
+      const seg = createAudioSegment({ id: s.id, text: s.text, audioClipId: s.audioClipId, audioAssetId: s.audioAssetId, order: s.order })
+      if (seg.order !== idx) throw new Error('AudioSegment order must equal its index')
+      return seg
+    })
+    part.segments = segs
+  }
   return part
 }
 
@@ -283,6 +350,26 @@ export function reflowPrompter(prompter: Prompter): void {
   }
 }
 
+export function audioSegmentToJSON(segment: AudioSegment): import('./json').AudioSegmentJSON {
+  return {
+    id: segment.id,
+    text: segment.text,
+    audioClipId: segment.audioClipId,
+    ...(segment.audioAssetId !== undefined ? { audioAssetId: segment.audioAssetId } : {}),
+    order: segment.order,
+  }
+}
+
+export function audioSegmentFromJSON(json: import('./json').AudioSegmentJSON): AudioSegment {
+  return createAudioSegment({
+    id: requireString(json.id, 'AudioSegment id'),
+    text: json.text,
+    audioClipId: requireString(json.audioClipId, 'AudioSegment audioClipId'),
+    audioAssetId: json.audioAssetId,
+    order: json.order,
+  })
+}
+
 export function prompterToJSON(prompter: Prompter): PrompterJSON {
   return {
     parts: prompter.parts.map((part) => ({
@@ -295,6 +382,9 @@ export function prompterToJSON(prompter: Prompter): PrompterJSON {
       ...(part.audioAssetId !== undefined ? { audioAssetId: part.audioAssetId } : {}),
       ...(part.promptId !== undefined ? { promptId: part.promptId } : {}),
       ...(part.status !== undefined ? { status: part.status } : {}),
+      ...(part.segments !== undefined && part.segments.length > 0
+        ? { segments: part.segments.map(audioSegmentToJSON) }
+        : {}),
     })),
   }
 }
@@ -311,6 +401,9 @@ export function prompterFromJSON(json: PrompterJSON): Prompter {
       audioAssetId: partJson.audioAssetId,
       promptId: partJson.promptId,
       status: partJson.status as PrompterPartStatus | undefined,
+      segments: (partJson as { segments?: import('./json').AudioSegmentJSON[] }).segments?.map((s) =>
+        audioSegmentFromJSON(s),
+      ),
     }),
   )
   return { parts }
@@ -380,5 +473,49 @@ export function validatePrompterJSON(errors: string[], value: unknown, slideId: 
       errors.push(`${where} promptId must be a non-empty string`)
     if (part.status !== undefined && part.status !== 'stale')
       errors.push(`${where} status must be stale`)
+    if (part.segments !== undefined) {
+      if (!Array.isArray(part.segments)) {
+        errors.push(`${where} segments must be an array`)
+      } else {
+        const segIds = new Set<string>()
+        for (let j = 0; j < part.segments.length; j++) {
+          const seg = part.segments[j] as Record<string, unknown>
+          const segWhere = `${where} segments[${j}]`
+          if (typeof seg !== 'object' || seg === null || Array.isArray(seg)) {
+            errors.push(`${segWhere} must be an object`)
+            continue
+          }
+          if (typeof seg.id !== 'string' || seg.id === '')
+            errors.push(`${segWhere} id must be a non-empty string`)
+          else if (segIds.has(seg.id)) errors.push(`Duplicate audio segment id: ${seg.id}`)
+          else segIds.add(seg.id)
+          // also check globally across slide later, but dedupe within part for now
+          // ids set for prompter will later also include segment ids? Use same ids set for simplicity - segments share global namespace? Keep separate.
+          if (typeof seg.text !== 'string') errors.push(`${segWhere} text must be a string`)
+          if (typeof seg.audioClipId !== 'string' || seg.audioClipId === '')
+            errors.push(`${segWhere} audioClipId must be a non-empty string`)
+          if (seg.audioAssetId !== undefined && (typeof seg.audioAssetId !== 'string' || seg.audioAssetId === ''))
+            errors.push(`${segWhere} audioAssetId must be a non-empty string`)
+          if (typeof seg.order !== 'number' || !Number.isInteger(seg.order) || seg.order < 0)
+            errors.push(`${segWhere} order must be a non-negative integer`)
+          else if (seg.order !== j) errors.push(`${segWhere} order must equal its index (${j})`)
+        }
+        // order invariant: must be 0..n-1 sequential already checked via seg.order !== j
+      }
+    }
+  }
+  // Global duplicate segment ids across parts
+  const allSegIds = new Set<string>()
+  for (let i = 0; i < v.parts.length; i++) {
+    const part = v.parts[i] as Record<string, unknown>
+    if (!Array.isArray((part as { segments?: unknown[] }).segments)) continue
+    const segs = (part as { segments: Record<string, unknown>[] }).segments
+    for (let j = 0; j < segs.length; j++) {
+      const seg = segs[j]
+      if (typeof seg.id === 'string' && seg.id !== '') {
+        if (allSegIds.has(seg.id)) errors.push(`Duplicate audio segment id: ${seg.id}`)
+        else allSegIds.add(seg.id)
+      }
+    }
   }
 }

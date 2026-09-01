@@ -22,17 +22,18 @@ Research #219 fixed playback = raw Web Audio API (AudioContext currentTime leade
 4. **Flat JSON shape (additive, v2 stays).**
    - `SlideJSON.prompter?: { parts: PrompterPartJSON[] }`
    - `SlideJSON.audio?: { clips: AudioClipJSON[] }`
-   - `PrompterPartJSON = {id, text, startTime, endTime, duration, audioClipId?, audioAssetId?, promptId?, status?}`
+   - `PrompterPartJSON = {id, text, startTime, endTime, duration, audioClipId?, audioAssetId?, promptId?, status?, segments?: AudioSegmentJSON[]}`
+   - `AudioSegmentJSON = {id, text, audioClipId, audioAssetId?, order}`
    - `AudioClipJSON = {id, assetId, trackId: AudioTrackId, timelineStart, sourceStart, sourceEnd, volume, muted, fadeIn?, fadeOut?, playbackRate}`
-   Additive + validated; validator tolerates missing `audio`/`prompter`.
+   Additive + validated; validator tolerates missing `audio`/`prompter`/`segments` (backward compat, see Spec 15.10).
 
 5. **Commands vs store.** Every persisted change (create/move/trim/split/duplicate/delete clip, volume/mute/playbackRate, create/update/delete prompter part, `UpdatePrompterPartWithShift`) is an **engine command** grouped as a `Transaction` (one undo entry). Playback (`isPlaying`, `currentTime`, `selectedClipIds`, solo/mute preview) and TTS generation progress are Zustand-only. The "extend duration + optionally shift downstream" operation is a single-Slide transaction that atomically updates one part's duration and shifts `startTime` of later parts and clips.
 
-6. **Non-destructive + v1 cardinality.** `AudioAsset` is immutable; `AudioClip.playbackRate` is the non-destructive stretch flag (server FFmpeg RubberBand produces a derived asset at export, original WAV preserved). v1: `AudioAsset 1—* AudioClip`; `PrompterPart 0..1 AudioClip`. `AudioSegment` is *reserved* for future word-level replacement (`Part 1—* Segment`, `[recorded][TTS][recorded]`) but not modeled now.
+6. **Non-destructive + v1 cardinality.** `AudioAsset` is immutable; `AudioClip.playbackRate` is the non-destructive stretch flag (server FFmpeg RubberBand produces a derived asset at export, original WAV preserved). v1: `AudioAsset 1—* AudioClip`; `PrompterPart 0..1 AudioClip`. `AudioSegment` was reserved for v1 for future word-level replacement (`Part 1—* Segment`, `[recorded][TTS][recorded]`) — **graduated in v1.1 Spec 15.10 (#238)** to concrete `PrompterPart 1—* AudioSegment {id, text, audioClipId, order}` with `PrompterPart.segments?: AudioSegment[]` stored additively in `SlideJSON.prompter.parts[].segments`. Fallback `Part 1—* Segment` split without AudioSegment (pure PrompterPart split) was considered but not chosen; full AudioSegment model is now materialised, additive and backward-compatible (missing `segments` → empty). Chosen shape noted here per #238 contingency.
 
 7. **TTS abstraction.** Frontend `engine/ttsProvider.ts: interface TTSProvider { generate(req): Promise<AudioAsset> }` wrapping `api/ttsApi.ts` → `api/apiClient.ts#postForWav` → `POST /api/tts/generate` (→ `audio/wav`). Voice prompts live in `voice_prompts` SQLite via `/api/voice-prompts` (global, shared). Switching providers = swapping backend impl behind the same endpoint.
 
-8. **Engine files (thin scaffold).** New: `engine/audioClip.ts` (AudioClip + AudioTrackId + validators), `engine/prompter.ts` (Prompter + PrompterPart + reflow), `engine/ttsProvider.ts` (interface). Edit: `engine/slide.ts`, `engine/json.ts`, `engine/lessonSerializer.ts`, `engine/librarySection.ts`. No separate `audioAsset.ts`/`audioTrack.ts` classes in v1 — they are type alias + enum.
+8. **Engine files (thin scaffold).** New: `engine/audioClip.ts` (AudioClip + AudioTrackId + validators), `engine/prompter.ts` (Prompter + PrompterPart + reflow + AudioSegment), `engine/ttsProvider.ts` (interface). Edit: `engine/slide.ts`, `engine/json.ts`, `engine/lessonSerializer.ts`, `engine/librarySection.ts`. `engine/commands/replacePrompterWordsCommand.ts` (Spec 15.10) + `WordLevelTtsModal.tsx` implement word-level replacement. No separate `audioAsset.ts`/`audioTrack.ts` classes — they are type alias + enum.
 
 ## Alternatives Considered
 

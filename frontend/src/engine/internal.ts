@@ -83,16 +83,19 @@ import {
 } from './audioClip'
 import type { AudioClip, AudioTrackId } from './audioClip'
 import {
+  createAudioSegment,
   estimatePrompterDuration,
   getPrompterSecondsPerCharacter,
   getPrompterSplitChars,
   hasPrompterPartAudio,
   mergePrompterPartTexts,
+  newAudioSegmentId,
   newPrompterPartId,
   reflowPrompter,
   redistributeDurations,
   splitImportText,
   splitPrompterPartText,
+  splitPrompterPartTextForWordRange,
 } from './prompter'
 import {
   getActivePrompterPartId as getActivePrompterPartIdSync,
@@ -363,6 +366,183 @@ export class Engine {
       slideId,
     } as unknown as import('./events').EngineEvent)
     return { newPartIds: newParts.map((p) => p.id), oldText, oldDuration }
+  }
+
+  replacePrompterPartWordRange(
+    slideId: string,
+    partId: string,
+    startWordIndex: number,
+    endWordIndex: number,
+    ttsAssetId: string,
+  ): {
+    oldPart: import('./prompter').PrompterPart
+    oldClip?: AudioClip
+    oldIndex: number
+    newPartIds: string[]
+    newClipIds: string[]
+    deletedClipId?: string
+  } {
+    const slide = this.getSlide(slideId)
+    if (!slide.prompter) throw new Error(`Slide "${slideId}" has no prompter`)
+    const index = slide.prompter.parts.findIndex((p) => p.id === partId)
+    if (index === -1) throw new Error(`PrompterPart not found: ${partId}`)
+    const part = slide.prompter.parts[index]
+    // validate word indices via helper (will throw if out of bounds)
+    const newTexts = splitPrompterPartTextForWordRange(part.text, startWordIndex, endWordIndex)
+    if (newTexts.length === 0) throw new Error('Word range split produced no valid pieces')
+    // validate TTS asset exists
+    const ttsAsset = this.getEmbeddedAsset(ttsAssetId)
+    if (!ttsAsset) throw new Error(`TTS AudioAsset not found: ${ttsAssetId}`)
+    if (!ttsAsset.mimeType.startsWith('audio/')) throw new Error('TTS asset must be audio/*')
+    const ttsDurationRaw = (ttsAsset.metadata as Record<string, unknown> | undefined)?.duration
+    const ttsDuration = typeof ttsDurationRaw === 'number' && Number.isFinite(ttsDurationRaw) ? ttsDurationRaw : 1
+    // Save old state for inverse
+    const oldPartSnapshot: import('./prompter').PrompterPart = JSON.parse(JSON.stringify(part))
+    const oldClip = part.audioClipId ? slide.audio.clips.find((c) => c.id === part.audioClipId) ?? undefined : undefined
+    const oldClipCopy = oldClip ? JSON.parse(JSON.stringify(oldClip)) : undefined
+    const oldIndex = index
+    // Original asset for outer pieces (preserve non-destructively)
+    const originalAssetId = part.audioAssetId
+    const originalAsset = originalAssetId ? this.getEmbeddedAsset(originalAssetId) : undefined
+    const originalDurationRaw = (originalAsset?.metadata as Record<string, unknown> | undefined)?.duration
+    const originalDuration = typeof originalDurationRaw === 'number' && Number.isFinite(originalDurationRaw) ? originalDurationRaw : part.duration
+
+    // Determine left/right existence for mapping to TTS vs recorded
+    const words: { word: string; start: number; end: number }[] = []
+    const re = /\S+/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(part.text)) !== null) {
+      words.push({ word: m[0], start: m.index, end: m.index + m[0].length })
+    }
+    const startWord = words[startWordIndex]
+    const endWord = words[endWordIndex]
+    const leftTextRaw = part.text.slice(0, startWord.start)
+    const rightTextRaw = part.text.slice(endWord.end)
+    const leftExists = leftTextRaw.trim().length > 0
+    const rightExists = rightTextRaw.trim().length > 0
+    const middleText = part.text.slice(startWord.start, endWord.end)
+
+    // Map newTexts order to which is TTS
+    // newTexts are filtered, order depends on leftExists/rightExists
+    // Determine TTS index
+    let ttsIndex: number
+    if (leftExists && rightExists) ttsIndex = 1
+    else if (leftExists && !rightExists) ttsIndex = 1 // left + middle, middle is 1
+    else if (!leftExists && rightExists) ttsIndex = 0 // middle + right
+    else ttsIndex = 0 // only middle
+
+    // Also determine for each new piece whether it is middle (TTS) by matching middleText
+    // Safer: find index where text.trim() === middleText.trim()
+    const middleTrim = middleText.trim()
+    const detectedTtsIndex = newTexts.findIndex((t) => t.trim() === middleTrim)
+    if (detectedTtsIndex !== -1) ttsIndex = detectedTtsIndex
+
+    // Compute durations proportionally preserving total
+    const durations = redistributeDurations(part.duration, newTexts)
+    // Build new parts (keep first reuses original id)
+    const newParts: import('./prompter').PrompterPart[] = newTexts.map((text, i) => ({
+      id: i === 0 ? part.id : newPrompterPartId(),
+      text,
+      startTime: 0,
+      endTime: 0,
+      duration: durations[i],
+      // audio linkage will be set after clip creation; clear stale
+    }))
+
+    // Remove old part and insert new parts
+    // First mutate the original part in place for i===0, then splice rest
+    // To simplify, remove old part entirely and insert new ones at old index
+    slide.prompter.parts.splice(index, 1)
+    for (let i = 0; i < newParts.length; i++) {
+      slide.prompter.parts.splice(index + i, 0, newParts[i])
+    }
+    // Reflow gap-free to compute startTimes for clips
+    reflowPrompter(slide.prompter)
+
+    // Delete old clip if it existed (preserve asset)
+    let deletedClipId: string | undefined
+    if (oldClip) {
+      const clipIdx = slide.audio.clips.findIndex((c) => c.id === oldClip.id)
+      if (clipIdx !== -1) {
+        slide.audio.clips.splice(clipIdx, 1)
+        deletedClipId = oldClip.id
+      }
+    }
+
+    // Create new clips and segments for each new piece
+    const newClipIds: string[] = []
+    // Need to map updated parts after reflow (they are at indices oldIndex..oldIndex+n-1)
+    for (let i = 0; i < newParts.length; i++) {
+      const newPart = slide.prompter.parts[oldIndex + i]
+      const isTTS = i === ttsIndex
+      let assetId: string | undefined
+      let sourceEnd: number
+      if (isTTS) {
+        assetId = ttsAssetId
+        sourceEnd = ttsDuration
+      } else {
+        // Outer recorded piece: reuse original asset if available, otherwise skip (silent)
+        if (!originalAssetId || !originalAsset) {
+          // Silent outer piece - no clip, no segment, ensure stale cleared
+          newPart.status = undefined
+          if (newPart.audioClipId) delete (newPart as { audioClipId?: string }).audioClipId
+          if (newPart.audioAssetId) delete (newPart as { audioAssetId?: string }).audioAssetId
+          if (newPart.segments) delete (newPart as { segments?: unknown }).segments
+          delete (newPart as { status?: string }).status
+          continue
+        }
+        assetId = originalAssetId
+        sourceEnd = originalDuration
+      }
+      // Create clip at part's start
+      const clip = createAudioClip({
+        id: newAudioClipId(),
+        assetId: assetId!,
+        trackId: 'voice',
+        timelineStart: newPart.startTime,
+        sourceStart: 0,
+        sourceEnd,
+        volume: 1,
+        muted: false,
+        playbackRate: 1,
+      })
+      slide.audio.clips.push(clip)
+      newClipIds.push(clip.id)
+      // Link part to clip
+      newPart.audioClipId = clip.id
+      newPart.audioAssetId = assetId!
+      // Clear stale (new binding clears)
+      delete (newPart as { status?: string }).status
+      // Create AudioSegment for this part (1 per part)
+      const segment = createAudioSegment({
+        id: newAudioSegmentId(),
+        text: newPart.text,
+        audioClipId: clip.id,
+        audioAssetId: assetId!,
+        order: 0,
+      })
+      newPart.segments = [segment]
+    }
+
+    // Also ensure any outer silent parts have no stale
+    for (let i = 0; i < newParts.length; i++) {
+      const p = slide.prompter.parts[oldIndex + i]
+      if (!p.segments) {
+        delete (p as { status?: string }).status
+      }
+    }
+
+    this.#bus.emit({ type: 'PrompterChanged', slideId } as unknown as import('./events').EngineEvent)
+    this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+
+    return {
+      oldPart: oldPartSnapshot,
+      oldClip: oldClipCopy,
+      oldIndex,
+      newPartIds: newParts.map((p) => p.id),
+      newClipIds,
+      deletedClipId,
+    }
   }
 
   unitePrompterParts(

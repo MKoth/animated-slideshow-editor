@@ -374,3 +374,8 @@ export type {
   SetPrompterPartAudioInverse,
   SetPrompterPartAudioParameters,
 } from './setPrompterPartAudioCommand'
+export { ReplacePrompterWordsCommand } from './replacePrompterWordsCommand'
+export type {
+  ReplacePrompterWordsInverse,
+  ReplacePrompterWordsParameters,
+} from './replacePrompterWordsCommand'

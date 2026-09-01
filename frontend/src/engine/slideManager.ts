@@ -15,7 +15,7 @@ import { SlideAnimation } from './animation'
 import type { ClampedKeyframe } from './slideAnimation'
 import { requireFiniteNumber, requireNonEmpty } from './guards'
 import { newAudioClipId } from './audioClip'
-import { newPrompterPartId } from './prompter'
+import { newPrompterPartId, newAudioSegmentId } from './prompter'
 
 const SLIDE_ORDINAL_PATTERN = /^Slide (\d+)$/
 
@@ -105,6 +105,19 @@ export class SlideManager {
             const copy: typeof part = { ...part, id: newPartId }
             if (mappedClipId !== undefined) copy.audioClipId = mappedClipId
             else delete (copy as { audioClipId?: string }).audioClipId
+            if (part.segments) {
+              const newSegments = part.segments.map((seg, idx) => {
+                const newSegId = newAudioSegmentId()
+                const mappedSegClipId = clipIdMap.get(seg.audioClipId) ?? seg.audioClipId
+                return {
+                  ...seg,
+                  id: newSegId,
+                  audioClipId: mappedSegClipId,
+                  order: idx,
+                }
+              })
+              copy.segments = newSegments
+            }
             return copy
           }),
         }
