@@ -176,6 +176,7 @@ export function AudioTimelineBody({
   const [wordSelection, setWordSelection] = useState<{ partId: string; start: number; end: number } | null>(null)
   const [wordLevelTts, setWordLevelTts] = useState<{ partId: string; start: number; end: number; text: string } | null>(null)
   const [hoveredWord, setHoveredWord] = useState<{ partId: string; index: number } | null>(null)
+  const [isPrompterHovered, setIsPrompterHovered] = useState(false)
 
   const resolveTrackFromEvent = (event: React.DragEvent): AudioTrackId | null => {
     const target = event.target as HTMLElement
@@ -1127,6 +1128,7 @@ export function AudioTimelineBody({
     const end = Math.max(wordSelection.start, wordSelection.end)
     return words.slice(start, end + 1).join(' ')
   }, [wordSelection, selectedWordPart])
+  const hoveredWordPart = useMemo(() => (hoveredWord ? prompterParts.find((p) => p.id === hoveredWord.partId) ?? null : null), [prompterParts, hoveredWord])
 
   // Recording shortcut handler (when prompter part focused and no modal open)
   useEffect(() => {
@@ -1314,7 +1316,11 @@ export function AudioTimelineBody({
               </div>
             </div>
 
-            <div style={{ position: 'relative', width: contentWidth }}>
+            <div
+              style={{ position: 'relative', width: contentWidth, overflow: 'visible' }}
+              onMouseEnter={() => setIsPrompterHovered(true)}
+              onMouseLeave={() => setIsPrompterHovered(false)}
+            >
               <div
                 className="audio-prompter-strip"
                 data-testid="audio-prompter-strip"
@@ -1622,6 +1628,12 @@ export function AudioTimelineBody({
                 <div
                   data-testid="word-selection-bar"
                   style={{
+                    position: 'absolute',
+                    top: 44,
+                    left: selectedWordPart.startTime * pps + (selectedWordPart.duration * pps) / 2,
+                    transform: 'translateX(-50%)',
+                    width: 'fit-content',
+                    maxWidth: 'min(420px, calc(100% - 16px))',
                     display: 'flex',
                     alignItems: 'center',
                     gap: 10,
@@ -1630,10 +1642,11 @@ export function AudioTimelineBody({
                     borderLeft: '3px solid #7c5cff',
                     borderRadius: 8,
                     padding: '7px 12px',
-                    margin: '6px 8px',
                     fontSize: 11,
-                    zIndex: 6,
-                    boxShadow: '0 4px 16px rgba(0,0,0,0.45), 0 0 0 1px rgba(124,92,255,0.15)',
+                    zIndex: 12,
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.55), 0 0 0 1px rgba(124,92,255,0.18)',
+                    pointerEvents: 'auto',
+                    whiteSpace: 'nowrap',
                   }}
                 >
                   <span style={{ color: '#e0d8ff', fontWeight: 500 }}>
@@ -1672,20 +1685,30 @@ export function AudioTimelineBody({
                     Clear
                   </button>
                 </div>
-              ) : prompterParts.length > 0 ? (
+              ) : isPrompterHovered && prompterParts.length > 0 ? (
                 <div
                   data-testid="word-selection-hint"
                   style={{
+                    position: 'absolute',
+                    top: 44,
+                    left: hoveredWordPart ? hoveredWordPart.startTime * pps + (hoveredWordPart.duration * pps) / 2 : '50%',
+                    transform: 'translateX(-50%)',
+                    width: 'fit-content',
+                    maxWidth: 'min(480px, calc(100% - 16px))',
                     display: 'flex',
                     alignItems: 'center',
                     gap: 8,
-                    background: 'rgba(255,255,255,0.04)',
-                    border: '1px dashed rgba(255,255,255,0.14)',
+                    background: 'rgba(22,22,32,0.96)',
+                    border: '1px solid rgba(255,255,255,0.14)',
+                    borderLeft: '3px solid rgba(124,92,255,0.85)',
                     borderRadius: 8,
                     padding: '6px 12px',
-                    margin: '6px 8px',
                     fontSize: 11,
                     color: '#a0a0b8',
+                    zIndex: 11,
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
+                    pointerEvents: 'none',
+                    whiteSpace: 'nowrap',
                   }}
                 >
                   <span style={{ fontSize: 12 }}>💡</span>
