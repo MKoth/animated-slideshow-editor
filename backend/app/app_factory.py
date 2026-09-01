@@ -6,6 +6,7 @@ from app.api import (
     assets,
     audio,
     clips,
+    export,
     health,
     materials,
     ping,
@@ -96,6 +97,7 @@ class AppFactory:
         app.include_router(clips.router, prefix="/api")
         app.include_router(voice_prompts.router, prefix="/api")
         app.include_router(tts.router, prefix="/api")
+        app.include_router(export.router, prefix="/api")
         app.mount(
             "/api/assets/originals",
             StaticFiles(directory=storage.originals_dir),

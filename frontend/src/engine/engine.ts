@@ -28,6 +28,7 @@ import type { IKManager } from './ikManager'
 import type { ConstraintManager } from './constraintManager'
 import type { DeformedMeshResult } from './meshDeformationEvaluator'
 import type { WorldTransform } from './worldTransform'
+import type { ExportJobDescriptor, ExportPerSlideDescriptor, ExportSettings } from './export'
 
 export interface EnginePublic {
   readonly project: Project | null
@@ -88,6 +89,12 @@ export interface EnginePublic {
   getClipInstances(nodeId: string): readonly ClipInstance[]
   isClipReferenced(clipId: string): boolean
   getClipBlockingNodeNames(clipId: string): string[]
+  getExportFrameCount(duration: number, fps: number): number
+  getExportFrameTimestamps(duration: number, fps: number): number[]
+  getRubberbandTempoForPlaybackRate(playbackRate: number): number
+  getDerivedAssetCacheKey(assetId: string, playbackRate: number): string
+  buildPerSlideExportDescriptor(slideId: string, settings: ExportSettings): ExportPerSlideDescriptor
+  buildExportJobDescriptor(settings: ExportSettings): ExportJobDescriptor
   toJSON(): LessonJSON
   restoreFromJSON(json: LessonJSON): void
 }

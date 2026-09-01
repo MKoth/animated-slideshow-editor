@@ -104,6 +104,17 @@ import {
   getClippedEnd as getClippedEndSync,
   LOOKAHEAD_SECONDS as AUDIO_LOOKAHEAD_SECONDS,
 } from './audioSync'
+import {
+  buildExportJobDescriptor as buildExportJobDescriptorCore,
+  buildPerSlideExportDescriptor as buildPerSlideExportDescriptorCore,
+  getDerivedAssetCacheKey as getDerivedAssetCacheKeyCore,
+  getExportFrameCount as getExportFrameCountCore,
+  getExportFrameTimestamps as getExportFrameTimestampsCore,
+  getRubberbandTempoForPlaybackRate as getRubberbandTempoForPlaybackRateCore,
+  type ExportJobDescriptor,
+  type ExportPerSlideDescriptor,
+  type ExportSettings,
+} from './export'
 
 const DEFAULT_MATERIAL_KINDS: Readonly<Record<string, string>> = Object.fromEntries(
   DEFAULT_MATERIAL_PARAMETERS.map((parameter) => [parameter.key, parameter.kind]),
@@ -1163,6 +1174,35 @@ export class Engine {
     return getClippedEndSync(clip, slide.duration)
   }
 
+  // --- Export Mix seam (Spec 15.11) — deterministic job descriptors, no live FFmpeg ---
+
+  getExportFrameCount(duration: number, fps: number): number {
+    return getExportFrameCountCore(duration, fps)
+  }
+
+  getExportFrameTimestamps(duration: number, fps: number): number[] {
+    return getExportFrameTimestampsCore(duration, fps)
+  }
+
+  getRubberbandTempoForPlaybackRate(playbackRate: number): number {
+    return getRubberbandTempoForPlaybackRateCore(playbackRate)
+  }
+
+  getDerivedAssetCacheKey(assetId: string, playbackRate: number): string {
+    return getDerivedAssetCacheKeyCore(assetId, playbackRate)
+  }
+
+  buildPerSlideExportDescriptor(slideId: string, settings: ExportSettings): ExportPerSlideDescriptor {
+    const slide = this.getSlide(slideId)
+    return buildPerSlideExportDescriptorCore(slide, settings)
+  }
+
+  buildExportJobDescriptor(settings: ExportSettings): ExportJobDescriptor {
+    const project = this.project
+    if (!project) throw new Error('No project exists in memory')
+    return buildExportJobDescriptorCore(project, settings)
+  }
+
   getActiveSlide(): Slide | null {
     return this.#activeSlideId ? this.getSlide(this.#activeSlideId) : null
   }
@@ -2204,6 +2244,12 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getClipInstances: (nodeId) => engine.getClipInstances(nodeId),
     isClipReferenced: (clipId) => engine.isClipReferenced(clipId),
     getClipBlockingNodeNames: (clipId) => engine.getClipBlockingNodeNames(clipId),
+    getExportFrameCount: (duration, fps) => engine.getExportFrameCount(duration, fps),
+    getExportFrameTimestamps: (duration, fps) => engine.getExportFrameTimestamps(duration, fps),
+    getRubberbandTempoForPlaybackRate: (rate) => engine.getRubberbandTempoForPlaybackRate(rate),
+    getDerivedAssetCacheKey: (assetId, rate) => engine.getDerivedAssetCacheKey(assetId, rate),
+    buildPerSlideExportDescriptor: (slideId, settings) => engine.buildPerSlideExportDescriptor(slideId, settings),
+    buildExportJobDescriptor: (settings) => engine.buildExportJobDescriptor(settings),
     toJSON: () => engine.toJSON(),
     restoreFromJSON: (json) => engine.restoreFromJSON(json),
   }
