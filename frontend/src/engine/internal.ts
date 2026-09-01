@@ -728,6 +728,7 @@ export class Engine {
     const oldStatus = part.status
     const shiftedParts: { id: string; oldStartTime: number; oldEndTime: number }[] = []
     const shiftedClips: { id: string; oldTimelineStart: number }[] = []
+    let textTriggeredReflow = false
     if (patch.text !== undefined && patch.text !== part.text) {
       const settings = this.#projects.current?.settings ?? {}
       const secondsPerCharacter = getPrompterSecondsPerCharacter(settings)
@@ -735,27 +736,48 @@ export class Engine {
       if (hasAudio) {
         part.text = patch.text
         part.status = 'stale'
-        // duration frozen
+        // duration frozen, gap-free already holds
       } else {
-        part.text = patch.text
         const newDuration = estimatePrompterDuration(patch.text, secondsPerCharacter)
         if (newDuration !== part.duration) {
+          const delta = newDuration - part.duration
+          // Capture downstream parts/clips before mutation for undo and to shift clips after reflow
+          for (let i = index + 1; i < slide.prompter.parts.length; i++) {
+            const downstream = slide.prompter.parts[i]
+            shiftedParts.push({
+              id: downstream.id,
+              oldStartTime: downstream.startTime,
+              oldEndTime: downstream.endTime,
+            })
+          }
+          for (const clip of slide.audio.clips) {
+            if (clip.timelineStart > oldEndTime - 1e-6) {
+              shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
+            }
+          }
+          part.text = patch.text
           part.duration = newDuration
           part.endTime = part.startTime + newDuration
           part.status = undefined
-          // Free placement: keep downstream where it is, gap may change; no reflow gap-free
+          // Gap-free invariant via reflowPrompter as one Transaction (Spec 7)
+          if (slide.prompter) reflowPrompter(slide.prompter)
+          // Shift downstream clips by same delta to stay gap-free (no silent hole)
+          for (const sc of shiftedClips) {
+            const clip = slide.audio.clips.find((c) => c.id === sc.id)
+            if (clip) clip.timelineStart = sc.oldTimelineStart + delta
+          }
+          textTriggeredReflow = true
         } else {
+          part.text = patch.text
           part.status = undefined
         }
       }
     }
     if (patch.duration !== undefined && patch.duration !== part.duration) {
       const delta = patch.duration - part.duration
-      part.duration = patch.duration
-      part.endTime = part.startTime + part.duration
-      // If part has audio and duration changed via explicit duration edit, clear stale? Actually stale remains until resolved, but explicit duration edit may resolve? Keep status as is unless cleared.
-      // For spec, duration edit with shift should not affect stale directly.
-      if (patch.shiftDownstream) {
+      // Capture downstream if not already captured by text reflow
+      const needsCapture = shiftedParts.length === 0 && shiftedClips.length === 0
+      if (needsCapture && patch.shiftDownstream) {
         for (let i = index + 1; i < slide.prompter.parts.length; i++) {
           const downstream = slide.prompter.parts[i]
           shiftedParts.push({
@@ -763,23 +785,40 @@ export class Engine {
             oldStartTime: downstream.startTime,
             oldEndTime: downstream.endTime,
           })
-          downstream.startTime += delta
-          downstream.endTime += delta
         }
         for (const clip of slide.audio.clips) {
           if (clip.timelineStart > oldEndTime - 1e-6) {
             shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
-            clip.timelineStart += delta
+          }
+        }
+      }
+      part.duration = patch.duration
+      part.endTime = part.startTime + part.duration
+      if (patch.shiftDownstream) {
+        if (textTriggeredReflow) {
+          // Text already reflowed and shifted clips by its delta; now add duration delta on top
+          for (let i = index + 1; i < slide.prompter.parts.length; i++) {
+            const downstream = slide.prompter.parts[i]
+            downstream.startTime += delta
+            downstream.endTime += delta
+          }
+          for (const sc of shiftedClips) {
+            const clip = slide.audio.clips.find((c) => c.id === sc.id)
+            if (clip) clip.timelineStart += delta
+          }
+        } else {
+          for (let i = index + 1; i < slide.prompter.parts.length; i++) {
+            const downstream = slide.prompter.parts[i]
+            downstream.startTime += delta
+            downstream.endTime += delta
+          }
+          for (const sc of shiftedClips) {
+            const clip = slide.audio.clips.find((c) => c.id === sc.id)
+            if (clip) clip.timelineStart = sc.oldTimelineStart + delta
           }
         }
       } else {
         // Free placement: do not reflow gap-free — keep downstream where it is, gap may change
-        // Previously reflowPrompter(slide.prompter) would eliminate gaps; now we preserve gaps
-      }
-    } else if (patch.text !== undefined) {
-      // Text-only change already reflowed if no audio case; if hasAudio, we froze duration, so still need to reflow? Duration frozen => no reflow needed, gap-free already holds because duration unchanged. But to be safe, reflow if duration changed via text re-estimate already did.
-      if (hasPrompterPartAudio(part as import('./prompter').PrompterPart)) {
-        // no duration change, no reflow needed
       }
     }
     this.#bus.emit({
@@ -799,17 +838,70 @@ export class Engine {
     }
   }
 
-  deletePrompterPart(slideId: string, partId: string): void {
+  deletePrompterPart(
+    slideId: string,
+    partId: string,
+  ): {
+    deletedPart: import('./prompter').PrompterPart
+    deletedIndex: number
+    deletedClips: readonly { clip: import('./audioClip').AudioClip; index: number }[]
+    shiftedParts: readonly { id: string; oldStartTime: number; oldEndTime: number }[]
+    shiftedClips: readonly { id: string; oldTimelineStart: number }[]
+  } {
     const slide = this.getSlide(slideId)
     if (!slide.prompter) throw new Error(`Slide "${slideId}" has no prompter`)
     const index = slide.prompter.parts.findIndex((part) => part.id === partId)
     if (index === -1) throw new Error(`PrompterPart not found: ${partId}`)
+    const part = slide.prompter.parts[index]
+    const deletedPart: import('./prompter').PrompterPart = JSON.parse(JSON.stringify(part))
+    const deletedIndex = index
+    const deletedEnd = part.endTime
+    const deletedDuration = part.duration
+    // Collect clip IDs to delete: primary clip + segment clips
+    const clipIdsToDelete = new Set<string>()
+    if (part.audioClipId) clipIdsToDelete.add(part.audioClipId)
+    if (part.segments) {
+      for (const seg of part.segments) clipIdsToDelete.add(seg.audioClipId)
+    }
+    // Capture downstream parts before mutation for undo and gap-free tracking
+    const shiftedParts: { id: string; oldStartTime: number; oldEndTime: number }[] = []
+    for (let i = index + 1; i < slide.prompter.parts.length; i++) {
+      const p = slide.prompter.parts[i]
+      shiftedParts.push({ id: p.id, oldStartTime: p.startTime, oldEndTime: p.endTime })
+    }
+    // Capture downstream clips before mutation (excluding those to be deleted)
+    const shiftedClips: { id: string; oldTimelineStart: number }[] = []
+    for (const clip of slide.audio.clips) {
+      if (clipIdsToDelete.has(clip.id)) continue
+      if (clip.timelineStart > deletedEnd - 1e-6) {
+        shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
+      }
+    }
+    // Delete linked clips (asset preserved)
+    const deletedClips: { clip: import('./audioClip').AudioClip; index: number }[] = []
+    for (const cid of clipIdsToDelete) {
+      const cIdx = slide.audio.clips.findIndex((c) => c.id === cid)
+      if (cIdx !== -1) {
+        const [removed] = slide.audio.clips.splice(cIdx, 1)
+        deletedClips.push({ clip: removed, index: cIdx })
+      }
+    }
+    // Delete part and reflow gap-free via reflowPrompter as one Transaction (Spec 7)
     slide.prompter.parts.splice(index, 1)
-    // Free placement: do not reflow gap-free; keep remaining parts where they are
+    if (slide.prompter) reflowPrompter(slide.prompter)
+    // Shift downstream clips left by deleted duration to stay gap-free (no silent hole)
+    for (const sc of shiftedClips) {
+      const clip = slide.audio.clips.find((c) => c.id === sc.id)
+      if (clip) clip.timelineStart = sc.oldTimelineStart - deletedDuration
+    }
     this.#bus.emit({
       type: 'PrompterChanged',
       slideId,
     } as unknown as import('./events').EngineEvent)
+    if (deletedClips.length > 0) {
+      this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    }
+    return { deletedPart, deletedIndex, deletedClips, shiftedParts, shiftedClips }
   }
 
   setPrompterPartAudio(

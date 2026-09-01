@@ -993,6 +993,44 @@ export function applyUndo(
       }
       return
     }
+    case 'DeletePrompterPart': {
+      const slideId = inv.slideId as string
+      const deletedPart = inv.deletedPart as import('../prompter').PrompterPart
+      const deletedIndex = inv.deletedIndex as number
+      const deletedClips = inv.deletedClips as readonly {
+        clip: import('../audioClip').AudioClip
+        index: number
+      }[]
+      const shiftedParts = inv.shiftedParts as readonly {
+        id: string
+        oldStartTime: number
+        oldEndTime: number
+      }[]
+      const shiftedClips = inv.shiftedClips as readonly { id: string; oldTimelineStart: number }[]
+      const slide = engine.getSlide(slideId)
+      // Restore part at original index
+      if (!slide.prompter) slide.prompter = { parts: [] }
+      slide.prompter.parts.splice(deletedIndex, 0, deletedPart)
+      // Restore clips in index order to preserve original ordering
+      const sorted = [...deletedClips].sort((a, b) => a.index - b.index)
+      for (const dc of sorted) {
+        slide.audio.clips.splice(dc.index, 0, dc.clip)
+      }
+      // Restore downstream parts to old gap-free positions
+      for (const sp of shiftedParts) {
+        const p = slide.prompter.parts.find((x) => x.id === sp.id)
+        if (p) {
+          p.startTime = sp.oldStartTime
+          p.endTime = sp.oldEndTime
+        }
+      }
+      // Restore downstream clips
+      for (const sc of shiftedClips) {
+        const clip = slide.audio.clips.find((c) => c.id === sc.id)
+        if (clip) clip.timelineStart = sc.oldTimelineStart
+      }
+      return
+    }
     case 'ImportPrompter': {
       const slideId = inv.slideId as string
       const oldParts = inv.oldParts as readonly {
@@ -1112,6 +1150,10 @@ export function applyUndo(
         if (part) {
           part.startTime = oldStartTime
           part.endTime = oldEndTime
+          const oldStatus = (inv as Record<string, unknown>).oldStatus as
+            import('../prompter').PrompterPartStatus | undefined
+          if (oldStatus) part.status = oldStatus
+          else delete (part as unknown as Record<string, unknown>).status
         }
         if (shiftedParts) {
           for (const sp of shiftedParts) {
@@ -2242,6 +2284,9 @@ export function applyRedo(
       // But CreatePrompterPartCommand generates new id internally, not from params.partId; we need to handle redo with same id? For redo, we can call engine.createPrompterPart with same text/duration
       return
     }
+    case 'DeletePrompterPart':
+      engine.deletePrompterPart(params.slideId as string, params.partId as string)
+      return
     case 'ImportPrompter':
       engine.importPrompter(params.slideId as string, params.rawText as string)
       return

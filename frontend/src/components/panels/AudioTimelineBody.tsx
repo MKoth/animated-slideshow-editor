@@ -11,6 +11,7 @@ import {
 import {
   CreateAudioClipCommand,
   DeleteAudioClipCommand,
+  DeletePrompterPartCommand,
   DuplicateAudioClipCommand,
   ImportPrompterCommand,
   MoveAudioClipCommand,
@@ -191,6 +192,14 @@ export function AudioTimelineBody({
     text: string
   } | null>(null)
   const [hoveredWord, setHoveredWord] = useState<{ partId: string; index: number } | null>(null)
+  // Inline edit for PrompterPart (Spec 7 delete + stale/freeze)
+  const [editingPartId, setEditingPartId] = useState<string | null>(null)
+  const [editingText, setEditingText] = useState('')
+  const [prompterContextMenu, setPrompterContextMenu] = useState<{
+    x: number
+    y: number
+    partId: string
+  } | null>(null)
 
   const resolveTrackFromEvent = (event: React.DragEvent): AudioTrackId | null => {
     const target = event.target as HTMLElement
@@ -891,7 +900,29 @@ export function AudioTimelineBody({
         return
       }
 
-      // Delete / Backspace
+      // Delete / Backspace for PrompterPart (Spec 7) — Del key deletes focused part and its clip/segments as one Transaction
+      if (
+        (e.key === 'Delete' || e.key === 'Backspace') &&
+        focusedId &&
+        prompterPartIds.includes(focusedId)
+      ) {
+        // Don't delete if an input is being edited
+        if (editingPartId) return
+        e.preventDefault()
+        const result = dispatch(
+          new DeletePrompterPartCommand({ slideId: slide.id, partId: focusedId }),
+        )
+        if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+        else {
+          // Move focus to neighbor if available
+          const idx = prompterPartIds.indexOf(focusedId)
+          const nextId = prompterPartIds[idx + 1] ?? prompterPartIds[idx - 1] ?? null
+          setFocusedId(nextId)
+          setPrompterContextMenu(null)
+        }
+        return
+      }
+      // Delete / Backspace for audio clips
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedClipIds.size > 0) {
         e.preventDefault()
         for (const clipId of Array.from(selectedClipIds)) {
@@ -1095,6 +1126,8 @@ export function AudioTimelineBody({
     playbackStatus,
     orderedFocusableIds,
     focusedId,
+    prompterPartIds,
+    editingPartId,
   ])
 
   const handleSplitClick = () => {
@@ -1176,6 +1209,25 @@ export function AudioTimelineBody({
     const end = Math.max(wordSelection.start, wordSelection.end)
     return words.slice(start, end + 1).join(' ')
   }, [wordSelection, selectedWordPart])
+
+  // Close prompter context menu on outside click / Escape
+  useEffect(() => {
+    if (!prompterContextMenu) return
+    const close = () => setPrompterContextMenu(null)
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (!target.closest('[data-testid="prompter-context-menu"]')) close()
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close()
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [prompterContextMenu])
 
   // Recording shortcut handler (when prompter part focused and no modal open)
   useEffect(() => {
@@ -1434,14 +1486,48 @@ export function AudioTimelineBody({
                             aria-selected={isSelected}
                             onFocus={() => setFocusedId(part.id)}
                             onClick={(e) => handlePrompterPointerDownSelect(e, part.id)}
-                            // eslint-disable-next-line react-hooks/refs
-                            onPointerDown={(e) => onPrompterMovePointerDown(e, part.id)}
+                            onDoubleClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              if (editingPartId !== part.id) {
+                                setEditingPartId(part.id)
+                                setEditingText(part.text)
+                              }
+                            }}
+                            onPointerDown={(e) => {
+                              if (editingPartId === part.id) return
+                              // eslint-disable-next-line react-hooks/refs
+                              onPrompterMovePointerDown(e, part.id)
+                            }}
                             onContextMenu={(e) => {
                               e.preventDefault()
                               setFocusedId(part.id)
-                              setRecordPartId(part.id)
+                              setPrompterContextMenu({
+                                x: e.clientX,
+                                y: e.clientY,
+                                partId: part.id,
+                              })
                             }}
                             onKeyDown={(e) => {
+                              if (editingPartId === part.id) return
+                              if ((e.key === 'Delete' || e.key === 'Backspace') && isFocused) {
+                                e.preventDefault()
+                                const result = dispatch(
+                                  new DeletePrompterPartCommand({
+                                    slideId: slide.id,
+                                    partId: part.id,
+                                  }),
+                                )
+                                if (!result.ok)
+                                  useNotificationStore.getState().notify(result.error.message)
+                                return
+                              }
+                              if (e.key === 'Enter' && isFocused) {
+                                e.preventDefault()
+                                setEditingPartId(part.id)
+                                setEditingText(part.text)
+                                return
+                              }
                               if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
                                 e.preventDefault()
                                 const next = orderedFocusableIds[idx + 1]
@@ -1506,135 +1592,199 @@ export function AudioTimelineBody({
                                 : '0 1px 4px rgba(0,0,0,0.25)',
                             }}
                           >
-                            <span
-                              style={{
-                                display: 'inline-flex',
-                                gap: 3,
-                                alignItems: 'center',
-                                flexWrap: 'nowrap',
-                                overflow: 'visible',
-                                flex: 1,
-                                minWidth: 0,
-                              }}
-                            >
-                              {(() => {
-                                const tokens = part.text.split(/(\s+)/)
-                                let wIdx = -1
-                                return tokens.map((tok, ti) => {
-                                  if (tok === '') return null
-                                  if (/^\s+$/.test(tok)) {
+                            {editingPartId === part.id ? (
+                              <input
+                                data-testid="prompter-inline-input"
+                                value={editingText}
+                                autoFocus
+                                onFocus={(e) => e.currentTarget.select()}
+                                onChange={(e) => setEditingText(e.target.value)}
+                                onPointerDown={(e) => e.stopPropagation()}
+                                onClick={(e) => e.stopPropagation()}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault()
+                                    const trimmed = editingText
+                                    if (trimmed !== part.text) {
+                                      const result = dispatch(
+                                        new UpdatePrompterPartCommand({
+                                          slideId: slide.id,
+                                          partId: part.id,
+                                          text: trimmed,
+                                        }),
+                                      )
+                                      if (!result.ok)
+                                        useNotificationStore.getState().notify(result.error.message)
+                                    }
+                                    setEditingPartId(null)
+                                    e.stopPropagation()
+                                  } else if (e.key === 'Escape') {
+                                    setEditingPartId(null)
+                                    e.stopPropagation()
+                                  }
+                                }}
+                                onBlur={() => {
+                                  const trimmed = editingText
+                                  if (trimmed !== part.text) {
+                                    const result = dispatch(
+                                      new UpdatePrompterPartCommand({
+                                        slideId: slide.id,
+                                        partId: part.id,
+                                        text: trimmed,
+                                      }),
+                                    )
+                                    if (!result.ok)
+                                      useNotificationStore.getState().notify(result.error.message)
+                                  }
+                                  setEditingPartId(null)
+                                }}
+                                style={{
+                                  flex: 1,
+                                  minWidth: 80,
+                                  fontSize: 11,
+                                  padding: '2px 6px',
+                                  borderRadius: 6,
+                                  border: '1px solid #7c5cff',
+                                  background: '#fff',
+                                  color: '#000',
+                                  outline: 'none',
+                                }}
+                              />
+                            ) : (
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  gap: 3,
+                                  alignItems: 'center',
+                                  flexWrap: 'nowrap',
+                                  overflow: 'visible',
+                                  flex: 1,
+                                  minWidth: 0,
+                                }}
+                              >
+                                {(() => {
+                                  const tokens = part.text.split(/(\s+)/)
+                                  let wIdx = -1
+                                  return tokens.map((tok, ti) => {
+                                    if (tok === '') return null
+                                    if (/^\s+$/.test(tok)) {
+                                      return (
+                                        <span
+                                          key={`ws-${ti}`}
+                                          style={{
+                                            whiteSpace: 'pre',
+                                            color: '#666',
+                                            userSelect: 'none',
+                                          }}
+                                        >
+                                          {tok === ' ' ? '·' : tok}
+                                        </span>
+                                      )
+                                    }
+                                    wIdx += 1
+                                    const wi = wIdx
+                                    const isSelected =
+                                      wordSelection?.partId === part.id &&
+                                      wi >= Math.min(wordSelection.start, wordSelection.end) &&
+                                      wi <= Math.max(wordSelection.start, wordSelection.end)
+                                    const isSegment = part.segments?.some(
+                                      (s) => s.text.trim() === tok.trim(),
+                                    )
+                                    const isHovered =
+                                      hoveredWord?.partId === part.id && hoveredWord?.index === wi
                                     return (
                                       <span
-                                        key={`ws-${ti}`}
-                                        style={{
-                                          whiteSpace: 'pre',
-                                          color: '#666',
-                                          userSelect: 'none',
+                                        key={`w-${wi}`}
+                                        data-testid="prompter-word"
+                                        data-word-index={wi}
+                                        data-part-id={part.id}
+                                        onPointerDown={(e) => {
+                                          e.stopPropagation()
                                         }}
+                                        onMouseEnter={() =>
+                                          setHoveredWord({ partId: part.id, index: wi })
+                                        }
+                                        onMouseLeave={() =>
+                                          setHoveredWord((prev) =>
+                                            prev?.partId === part.id && prev?.index === wi
+                                              ? null
+                                              : prev,
+                                          )
+                                        }
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          e.preventDefault()
+                                          setFocusedId(part.id)
+                                          if (
+                                            wordSelection &&
+                                            wordSelection.partId === part.id &&
+                                            e.shiftKey
+                                          ) {
+                                            const start = Math.min(wordSelection.start, wi)
+                                            const end = Math.max(wordSelection.end, wi)
+                                            setWordSelection({ partId: part.id, start, end })
+                                          } else {
+                                            setWordSelection({
+                                              partId: part.id,
+                                              start: wi,
+                                              end: wi,
+                                            })
+                                          }
+                                        }}
+                                        style={{
+                                          padding: '3px 7px',
+                                          borderRadius: 999,
+                                          cursor: 'pointer',
+                                          fontSize: 11,
+                                          fontWeight: isSelected ? 700 : 500,
+                                          letterSpacing: 0.15,
+                                          background: isSelected
+                                            ? '#7c5cff'
+                                            : isSegment
+                                              ? 'rgba(46,154,106,0.32)'
+                                              : isHovered
+                                                ? 'rgba(124,92,255,0.32)'
+                                                : 'rgba(255,255,255,0.10)',
+                                          color: isSelected
+                                            ? '#fff'
+                                            : isSegment
+                                              ? '#b6f0d0'
+                                              : isHovered
+                                                ? '#fff'
+                                                : '#f0f0f5',
+                                          border: isSelected
+                                            ? '1px solid #fff'
+                                            : isSegment
+                                              ? '1px solid #2e9a6a'
+                                              : isHovered
+                                                ? '1px solid #8b7cff'
+                                                : '1px solid rgba(255,255,255,0.18)',
+                                          userSelect: 'none',
+                                          transition: 'all 120ms ease',
+                                          boxShadow: isSelected
+                                            ? '0 2px 8px rgba(124,92,255,0.45), 0 0 0 2px rgba(124,92,255,0.25)'
+                                            : isHovered
+                                              ? '0 2px 6px rgba(124,92,255,0.35)'
+                                              : '0 1px 2px rgba(0,0,0,0.25)',
+                                          transform:
+                                            isHovered && !isSelected ? 'translateY(-1px)' : 'none',
+                                          textShadow: isSelected
+                                            ? '0 1px 0 rgba(0,0,0,0.2)'
+                                            : undefined,
+                                        }}
+                                        title={
+                                          isSegment
+                                            ? 'AudioSegment — click to re-select word for replacement'
+                                            : 'Click to select word • Shift+click to extend range • Selected words can be replaced with TTS'
+                                        }
                                       >
-                                        {tok === ' ' ? '·' : tok}
+                                        {tok}
                                       </span>
                                     )
-                                  }
-                                  wIdx += 1
-                                  const wi = wIdx
-                                  const isSelected =
-                                    wordSelection?.partId === part.id &&
-                                    wi >= Math.min(wordSelection.start, wordSelection.end) &&
-                                    wi <= Math.max(wordSelection.start, wordSelection.end)
-                                  const isSegment = part.segments?.some(
-                                    (s) => s.text.trim() === tok.trim(),
-                                  )
-                                  const isHovered =
-                                    hoveredWord?.partId === part.id && hoveredWord?.index === wi
-                                  return (
-                                    <span
-                                      key={`w-${wi}`}
-                                      data-testid="prompter-word"
-                                      data-word-index={wi}
-                                      data-part-id={part.id}
-                                      onPointerDown={(e) => {
-                                        e.stopPropagation()
-                                      }}
-                                      onMouseEnter={() =>
-                                        setHoveredWord({ partId: part.id, index: wi })
-                                      }
-                                      onMouseLeave={() =>
-                                        setHoveredWord((prev) =>
-                                          prev?.partId === part.id && prev?.index === wi
-                                            ? null
-                                            : prev,
-                                        )
-                                      }
-                                      onClick={(e) => {
-                                        e.stopPropagation()
-                                        e.preventDefault()
-                                        setFocusedId(part.id)
-                                        if (
-                                          wordSelection &&
-                                          wordSelection.partId === part.id &&
-                                          e.shiftKey
-                                        ) {
-                                          const start = Math.min(wordSelection.start, wi)
-                                          const end = Math.max(wordSelection.end, wi)
-                                          setWordSelection({ partId: part.id, start, end })
-                                        } else {
-                                          setWordSelection({ partId: part.id, start: wi, end: wi })
-                                        }
-                                      }}
-                                      style={{
-                                        padding: '3px 7px',
-                                        borderRadius: 999,
-                                        cursor: 'pointer',
-                                        fontSize: 11,
-                                        fontWeight: isSelected ? 700 : 500,
-                                        letterSpacing: 0.15,
-                                        background: isSelected
-                                          ? '#7c5cff'
-                                          : isSegment
-                                            ? 'rgba(46,154,106,0.32)'
-                                            : isHovered
-                                              ? 'rgba(124,92,255,0.32)'
-                                              : 'rgba(255,255,255,0.10)',
-                                        color: isSelected
-                                          ? '#fff'
-                                          : isSegment
-                                            ? '#b6f0d0'
-                                            : isHovered
-                                              ? '#fff'
-                                              : '#f0f0f5',
-                                        border: isSelected
-                                          ? '1px solid #fff'
-                                          : isSegment
-                                            ? '1px solid #2e9a6a'
-                                            : isHovered
-                                              ? '1px solid #8b7cff'
-                                              : '1px solid rgba(255,255,255,0.18)',
-                                        userSelect: 'none',
-                                        transition: 'all 120ms ease',
-                                        boxShadow: isSelected
-                                          ? '0 2px 8px rgba(124,92,255,0.45), 0 0 0 2px rgba(124,92,255,0.25)'
-                                          : isHovered
-                                            ? '0 2px 6px rgba(124,92,255,0.35)'
-                                            : '0 1px 2px rgba(0,0,0,0.25)',
-                                        transform:
-                                          isHovered && !isSelected ? 'translateY(-1px)' : 'none',
-                                        textShadow: isSelected
-                                          ? '0 1px 0 rgba(0,0,0,0.2)'
-                                          : undefined,
-                                      }}
-                                      title={
-                                        isSegment
-                                          ? 'AudioSegment — click to re-select word for replacement'
-                                          : 'Click to select word • Shift+click to extend range • Selected words can be replaced with TTS'
-                                      }
-                                    >
-                                      {tok}
-                                    </span>
-                                  )
-                                })
-                              })()}
-                            </span>
+                                  })
+                                })()}
+                              </span>
+                            )}
                             <small
                               style={{
                                 marginLeft: 4,
@@ -1876,6 +2026,90 @@ export function AudioTimelineBody({
                         zIndex: 5,
                       }}
                     />
+                  )}
+                  {prompterContextMenu && (
+                    <div
+                      data-testid="prompter-context-menu"
+                      style={{
+                        position: 'fixed',
+                        left: prompterContextMenu.x,
+                        top: prompterContextMenu.y,
+                        background: '#1e1e2e',
+                        border: '1px solid #7c5cff',
+                        borderRadius: 6,
+                        padding: 4,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 2,
+                        zIndex: 200,
+                        minWidth: 140,
+                        boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        data-testid="prompter-delete-btn"
+                        onClick={() => {
+                          const partId = prompterContextMenu.partId
+                          const result = dispatch(
+                            new DeletePrompterPartCommand({ slideId: slide.id, partId }),
+                          )
+                          if (!result.ok)
+                            useNotificationStore.getState().notify(result.error.message)
+                          setPrompterContextMenu(null)
+                        }}
+                        style={{
+                          padding: '6px 10px',
+                          textAlign: 'left',
+                          background: '#ff4d4d',
+                          color: '#fff',
+                          border: '1px solid #ff4d4d',
+                          borderRadius: 4,
+                          cursor: 'pointer',
+                          fontSize: 11,
+                        }}
+                      >
+                        Delete part
+                      </button>
+                      <button
+                        data-testid="prompter-context-record"
+                        onClick={() => {
+                          setRecordPartId(prompterContextMenu.partId)
+                          setPrompterContextMenu(null)
+                        }}
+                        style={{
+                          padding: '6px 10px',
+                          textAlign: 'left',
+                          background: '#2a2a3a',
+                          color: '#e0d8ff',
+                          border: '1px solid #444',
+                          borderRadius: 4,
+                          cursor: 'pointer',
+                          fontSize: 11,
+                        }}
+                      >
+                        Record ●
+                      </button>
+                      <button
+                        data-testid="prompter-context-tts"
+                        onClick={() => {
+                          setTtsPartId(prompterContextMenu.partId)
+                          setPrompterContextMenu(null)
+                        }}
+                        style={{
+                          padding: '6px 10px',
+                          textAlign: 'left',
+                          background: '#2a2a3a',
+                          color: '#b6f0d0',
+                          border: '1px solid #2e9a6a',
+                          borderRadius: 4,
+                          cursor: 'pointer',
+                          fontSize: 11,
+                        }}
+                      >
+                        TTS
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>

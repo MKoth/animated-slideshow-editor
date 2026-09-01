@@ -312,6 +312,11 @@ export type {
   CreatePrompterPartInverse,
   CreatePrompterPartParameters,
 } from './createPrompterPartCommand'
+export { DeletePrompterPartCommand } from './deletePrompterPartCommand'
+export type {
+  DeletePrompterPartInverse,
+  DeletePrompterPartParameters,
+} from './deletePrompterPartCommand'
 export { UpdatePrompterPartCommand } from './updatePrompterPartCommand'
 export type {
   UpdatePrompterPartInverse,
