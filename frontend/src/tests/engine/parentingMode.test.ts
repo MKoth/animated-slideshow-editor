@@ -34,20 +34,16 @@ beforeEach(() => {
 })
 
 describe('ParentingMode Store', () => {
-  it('defaults to keepWorld without remember', () => {
+  it('defaults to keepWorld', () => {
     const s = useParentingModeStore.getState()
     expect(s.mode).toBe('keepWorld')
-    expect(s.rememberChoice).toBe(false)
   })
   it('persists choice for session and is resettable', () => {
     const store = useParentingModeStore.getState()
     store.setMode('snapToTail')
-    store.setRememberChoice(true)
     expect(useParentingModeStore.getState().mode).toBe('snapToTail')
-    expect(useParentingModeStore.getState().rememberChoice).toBe(true)
     useParentingModeStore.getState().reset()
     expect(useParentingModeStore.getState().mode).toBe('keepWorld')
-    expect(useParentingModeStore.getState().rememberChoice).toBe(false)
   })
 })
 

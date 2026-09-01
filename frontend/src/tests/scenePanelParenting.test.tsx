@@ -167,7 +167,7 @@ describe('ScenePanel parenting mode dialog', () => {
     expect(t.scaleX).toBe(1)
   })
 
-  it('Remember my choice persists for session and is resettable', async () => {
+  it('modal appears centered and blocks view and appears each time', async () => {
     const user = userEvent.setup()
     const { engine } = renderPanel()
     const slide = createProjectAndSlide(engine)
@@ -181,7 +181,7 @@ describe('ScenePanel parenting mode dialog', () => {
       components: { bone: { kind: 'bone', length: 30 } },
     })
     await waitForTree('Slide 1')
-    // First reparent with Snap + Remember
+    // First reparent with Snap
     {
       const parentRow = screen.getByRole('treeitem', { name: 'ParentBone' })
       const childRow = screen.getByRole('treeitem', { name: 'Child1' })
@@ -190,16 +190,18 @@ describe('ScenePanel parenting mode dialog', () => {
       hoverZone(parentRow, 'into', dt)
       dropOn(parentRow, 'into', dt)
       const dialog = await screen.findByRole('dialog', { name: 'Parenting mode' })
+      // overlay should block view and be centered
+      const overlay = document.querySelector('.parenting-mode-dialog__overlay') as HTMLElement
+      expect(overlay).toBeInTheDocument()
+      expect(overlay).toHaveAttribute('aria-modal', 'true')
+      // dialog centered via flex overlay
+      expect(dialog).toBeInTheDocument()
       await user.click(within(dialog).getByRole('radio', { name: /Snap to Parent Tail/ }))
-      await user.click(within(dialog).getByLabelText('Remember my choice'))
       await user.click(within(dialog).getByRole('button', { name: 'Confirm' }))
       await waitFor(() => expect(engine.getNode(child1.id).parent?.id).toBe(parent.id))
-      expect(useParentingModeStore.getState().rememberChoice).toBe(true)
-      expect(useParentingModeStore.getState().mode).toBe('snapToTail')
-      // banner should appear
-      expect(screen.getByText(/Parenting: Snap to Tail/)).toBeInTheDocument()
+      expect(screen.queryByRole('dialog', { name: 'Parenting mode' })).not.toBeInTheDocument()
     }
-    // Second reparent should auto-apply remembered Snap without dialog
+    // Second reparent should still show dialog (no remember)
     {
       const parentRow = screen.getByRole('treeitem', { name: 'ParentBone' })
       const childRow = screen.getByRole('treeitem', { name: 'Child2' })
@@ -207,28 +209,16 @@ describe('ScenePanel parenting mode dialog', () => {
       const dt = startDrag(childRow)
       hoverZone(parentRow, 'into', dt)
       dropOn(parentRow, 'into', dt)
-      // No dialog should appear, directly reparented
-      await waitFor(() => expect(engine.getNode(child2.id).parent?.id).toBe(parent.id))
-      expect(screen.queryByRole('dialog', { name: 'Parenting mode' })).not.toBeInTheDocument()
-      const t = engine.getNode(child2.id).transform
-      expect(t.x).toBeCloseTo(100, 5)
+      const dialog2 = await screen.findByRole('dialog', { name: 'Parenting mode' })
+      expect(dialog2).toBeInTheDocument()
+      // default should be Keep World again
+      const keepRadio = within(dialog2).getByRole('radio', {
+        name: /Keep World Transform/,
+      }) as HTMLInputElement
+      expect(keepRadio.checked).toBe(true)
+      await user.click(within(dialog2).getByRole('button', { name: 'Cancel' }))
+      expect(engine.getNode(child2.id).parent?.id).toBe(slide.scene.root.id)
     }
-    // Reset should clear remembered choice
-    await user.click(screen.getByRole('button', { name: 'Reset' }))
-    expect(useParentingModeStore.getState().rememberChoice).toBe(false)
-    expect(screen.queryByText(/Parenting: Snap to Tail/)).not.toBeInTheDocument()
-    // Next reparent should show dialog again
-    engine.createNode(slide.scene.id, slide.scene.root.id, 'Child3', {
-      components: { bone: { kind: 'bone', length: 30 } },
-    })
-    await waitForTree('Slide 1') // tree updates
-    const parentRow2 = screen.getByRole('treeitem', { name: 'ParentBone' })
-    const child3Row = await screen.findByRole('treeitem', { name: 'Child3' })
-    mockRowRect(parentRow2)
-    const dt2 = startDrag(child3Row)
-    hoverZone(parentRow2, 'into', dt2)
-    dropOn(parentRow2, 'into', dt2)
-    expect(await screen.findByRole('dialog', { name: 'Parenting mode' })).toBeInTheDocument()
   })
 
   it('Undo groups whole reparent as one Transaction', async () => {

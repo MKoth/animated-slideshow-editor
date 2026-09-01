@@ -4,30 +4,25 @@ import type { ParentingMode } from '../../engine/commands/reparentNodeCommand'
 interface ParentingModeDialogProps {
   open: boolean
   initialMode: ParentingMode
-  initialRemember: boolean
-  onConfirm: (mode: ParentingMode, remember: boolean) => void
+  onConfirm: (mode: ParentingMode) => void
   onCancel: () => void
 }
 
 export function ParentingModeDialog({
   open,
   initialMode,
-  initialRemember,
   onConfirm,
   onCancel,
 }: ParentingModeDialogProps) {
   const [mode, setMode] = useState<ParentingMode>(initialMode)
-  const [remember, setRemember] = useState(initialRemember)
 
   // Sync state when dialog opens with new initial values
   useEffect(() => {
     if (open) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional sync of dialog state on open
       setMode(initialMode)
-
-      setRemember(initialRemember)
     }
-  }, [open, initialMode, initialRemember])
+  }, [open, initialMode])
 
   useEffect(() => {
     if (!open) return
@@ -81,21 +76,13 @@ export function ParentingModeDialog({
             </span>
           </label>
         </fieldset>
-        <label className="parenting-mode-dialog__remember">
-          <input
-            type="checkbox"
-            checked={remember}
-            onChange={(e) => setRemember(e.target.checked)}
-          />
-          <span>Remember my choice</span>
-        </label>
         <div className="parenting-mode-dialog__actions">
           <button className="parenting-mode-dialog__button" onClick={onCancel} type="button">
             Cancel
           </button>
           <button
             className="parenting-mode-dialog__button parenting-mode-dialog__button--primary"
-            onClick={() => onConfirm(mode, remember)}
+            onClick={() => onConfirm(mode)}
             type="button"
           >
             Confirm

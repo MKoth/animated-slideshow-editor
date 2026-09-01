@@ -12,7 +12,6 @@ import { defaultTableComponent } from '../../engine/defaultTable'
 import { defaultTextComponent } from '../../engine/defaultText'
 import { namesInTree, uniqueNodeName } from '../../engine/naming'
 import { useMissingAssetsStore } from '../../stores/missingAssetsStore'
-import { useParentingModeStore } from '../../stores/parentingModeStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { iconOf } from './nodeIconKinds'
 import { LockIcon, MissingAssetIcon, NodeIcon, VisibilityIcon } from './nodeIcons'
@@ -138,8 +137,6 @@ export function ScenePanel() {
     index: number
   } | null>(null)
   const missingNodeIds = useMissingAssetsStore((state) => state.report?.affectedNodeIds)
-  const parentingMode = useParentingModeStore((s) => s.mode)
-  const rememberChoice = useParentingModeStore((s) => s.rememberChoice)
   useEngineEvent(() => setTick((tick) => tick + 1))
 
   // Close context menu on click or Escape
@@ -270,12 +267,6 @@ export function ScenePanel() {
       }
     })
     if (isReparent) {
-      const store = useParentingModeStore.getState()
-      if (store.rememberChoice) {
-        applyHierarchyMove(engine, dispatch, { targets, parentId, index }, store.mode)
-        handleDragEnd()
-        return
-      }
       setPendingMove({ targets, parentId, index })
       // keep drag state until dialog resolves; clear visual hover
       setDragIds(null)
@@ -287,13 +278,8 @@ export function ScenePanel() {
   }
 
   const handleParentingConfirm = useCallback(
-    (mode: ParentingMode, remember: boolean) => {
+    (mode: ParentingMode) => {
       if (!pendingMove) return
-      if (remember) {
-        const store = useParentingModeStore.getState()
-        store.setMode(mode)
-        store.setRememberChoice(true)
-      }
       applyHierarchyMove(engine, dispatch, pendingMove, mode)
       setPendingMove(null)
     },
@@ -302,10 +288,6 @@ export function ScenePanel() {
 
   const handleParentingCancel = useCallback(() => {
     setPendingMove(null)
-  }, [])
-
-  const handleResetParentingMode = useCallback(() => {
-    useParentingModeStore.getState().reset()
   }, [])
 
   const handleRowContextMenu = (event: React.MouseEvent, node: SceneNode) => {
@@ -400,20 +382,6 @@ export function ScenePanel() {
 
   return (
     <div className="scene-panel">
-      {rememberChoice && (
-        <div className="scene-panel__parenting-banner" role="status">
-          <span>
-            Parenting: {parentingMode === 'keepWorld' ? 'Keep World' : 'Snap to Tail'} (remembered)
-          </span>
-          <button
-            className="scene-panel__reset-parenting"
-            onClick={handleResetParentingMode}
-            type="button"
-          >
-            Reset
-          </button>
-        </div>
-      )}
       <section className="scene-slide" key={slide.id}>
         <h3 className="scene-slide__title">{slide.name}</h3>
         <ul className="scene-tree" role="tree" aria-label={`Scene tree of ${slide.name}`}>
@@ -462,8 +430,7 @@ export function ScenePanel() {
       )}
       <ParentingModeDialog
         open={pendingMove !== null}
-        initialMode={parentingMode}
-        initialRemember={rememberChoice}
+        initialMode="keepWorld"
         onConfirm={handleParentingConfirm}
         onCancel={handleParentingCancel}
       />

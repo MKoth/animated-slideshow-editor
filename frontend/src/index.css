@@ -3862,3 +3862,93 @@ button:disabled {
   background: #ff4d4d;
   transform: rotate(45deg);
 }
+
+/* ------------------------------------------------------------------ */
+/* Parenting mode dialog                                               */
+/* ------------------------------------------------------------------ */
+
+.parenting-mode-dialog__overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.parenting-mode-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 420px;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+  padding: 20px 24px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.parenting-mode-dialog__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.parenting-mode-dialog__description {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.parenting-mode-dialog__options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.parenting-mode-dialog__option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.parenting-mode-dialog__option:has(input:checked) {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+}
+
+.parenting-mode-dialog__option input {
+  margin-top: 2px;
+}
+
+.parenting-mode-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.parenting-mode-dialog__button {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.parenting-mode-dialog__button--primary {
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  border-color: var(--color-accent);
+}
