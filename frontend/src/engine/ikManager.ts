@@ -134,6 +134,7 @@ export class IKManager {
         target: chainJson.target,
         poleTarget: chainJson.poleTarget,
         ghostNodeId: chainJson.ghostNodeId,
+        poleGhostNodeId: chainJson.poleGhostNodeId,
       })
       this.#chains.set(chain.id, chain)
       // Reconstruct slide mapping from slideId

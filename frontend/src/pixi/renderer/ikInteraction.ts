@@ -226,6 +226,37 @@ export class IkInteraction {
           }
         }
       }
+    } else if (kind === 'pole') {
+      const poleGhostId = chain.poleGhostNodeId ?? chain.poleTarget?.nodeId ?? null
+      if (poleGhostId) {
+        const slide = this.#engine.getActiveSlide()
+        if (slide) {
+          const time = usePlaybackController.getState().getTime(slide.id)
+          if (animationMode) {
+            const edits: TimedKeyframeEdit[] = [
+              {
+                target: { kind: 'node', nodeId: poleGhostId, property: 'positionX' },
+                time,
+                value: x,
+              },
+              {
+                target: { kind: 'node', nodeId: poleGhostId, property: 'positionY' },
+                time,
+                value: y,
+              },
+            ]
+            const commands = autoKeyCommands(this.#engine, edits)
+            if (commands.length > 0) {
+              const keyframeResult = dispatchKeyframeCommands(this.#dispatch, commands)
+              if (keyframeResult && !keyframeResult.ok && keyframeResult.error) {
+                useNotificationStore.getState().notify(keyframeResult.error.message)
+              }
+            }
+          } else {
+            this.#dispatch(new MoveNodeCommand({ nodeId: poleGhostId, x, y }))
+          }
+        }
+      }
     }
 
     this.#onIKChanged()

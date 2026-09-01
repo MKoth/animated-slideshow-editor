@@ -332,8 +332,12 @@ export type IKChainJSON = {
     readonly position: { readonly x: number; readonly y: number }
     readonly nodeId?: string
   }
-  readonly poleTarget: { readonly position: { readonly x: number; readonly y: number } } | null
+  readonly poleTarget: {
+    readonly position: { readonly x: number; readonly y: number }
+    readonly nodeId?: string
+  } | null
   readonly ghostNodeId?: string | null
+  readonly poleGhostNodeId?: string | null
 }
 
 export type IKManagerJSON = {

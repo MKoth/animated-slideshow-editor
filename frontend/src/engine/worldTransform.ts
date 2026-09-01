@@ -117,6 +117,31 @@ export class EvaluatedWorldTransformSource {
           targetWorld = { x: targetWorldTransform.x, y: targetWorldTransform.y }
         }
       }
+      // Resolve pole target position (if attached to node, evaluate its world position)
+      let poleWorld: { readonly x: number; readonly y: number } | null =
+        chain.poleTarget?.position ?? null
+      if (chain.poleTarget?.nodeId) {
+        const poleWorldTransform = evaluatedWorldTransformOf(
+          this.#engine,
+          chain.poleTarget.nodeId,
+          time,
+        )
+        if (poleWorldTransform) {
+          poleWorld = { x: poleWorldTransform.x, y: poleWorldTransform.y }
+        }
+      } else if (chain.poleGhostNodeId) {
+        // Legacy: pole ghost stored separately, resolve similarly
+        const poleWorldTransform = evaluatedWorldTransformOf(
+          this.#engine,
+          chain.poleGhostNodeId,
+          time,
+        )
+        if (poleWorldTransform) {
+          poleWorld = { x: poleWorldTransform.x, y: poleWorldTransform.y }
+        } else if (chain.poleTarget?.position) {
+          poleWorld = chain.poleTarget.position
+        }
+      }
       // Get bone nodes and their lengths
       const boneNodes: SceneNode[] = []
       const boneLengths: number[] = []
@@ -132,21 +157,9 @@ export class EvaluatedWorldTransformSource {
       // Solve IK
       let solution
       if (chain.chainLength === 2) {
-        solution = solveTwoBoneIK(
-          boneNodes,
-          targetWorld,
-          chain.poleTarget?.position ?? null,
-          getLocalTransform,
-          boneLengths,
-        )
+        solution = solveTwoBoneIK(boneNodes, targetWorld, poleWorld, getLocalTransform, boneLengths)
       } else {
-        solution = solveCCDIK(
-          boneNodes,
-          targetWorld,
-          chain.poleTarget?.position ?? null,
-          getLocalTransform,
-          boneLengths,
-        )
+        solution = solveCCDIK(boneNodes, targetWorld, poleWorld, getLocalTransform, boneLengths)
       }
       // Store rotations for each bone
       for (let i = 0; i < boneNodes.length; i++) {

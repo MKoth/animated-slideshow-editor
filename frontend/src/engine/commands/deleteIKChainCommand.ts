@@ -10,6 +10,7 @@ export interface DeleteIKChainParameters {
 export interface DeleteIKChainInverse {
   readonly chain: IKChainJSON
   readonly ghostNode: NodeJSON | null
+  readonly poleGhostNode?: NodeJSON | null
 }
 
 export class DeleteIKChainCommand implements Command<DeleteIKChainInverse> {
@@ -29,8 +30,9 @@ export class DeleteIKChainCommand implements Command<DeleteIKChainInverse> {
   execute(engine: Engine): DeleteIKChainInverse {
     const chain = engine.getIKChain(this.#chainId)
     const chainJson = chain.toJSON()
-    // Serialize ghost node before chain deletion removes the reference
+    // Serialize ghost nodes before chain deletion removes the references
     let ghostNodeJson: NodeJSON | null = null
+    let poleGhostNodeJson: NodeJSON | null = null
     if (chain.ghostNodeId) {
       try {
         ghostNodeJson = engine.getNode(chain.ghostNodeId).toJSON()
@@ -38,8 +40,19 @@ export class DeleteIKChainCommand implements Command<DeleteIKChainInverse> {
         // ghost node may already be gone; treat as null
       }
     }
+    const poleGhostId = chain.poleGhostNodeId ?? chain.poleTarget?.nodeId ?? null
+    if (poleGhostId) {
+      try {
+        const node = engine.getNode(poleGhostId)
+        if (node.components.ghost) {
+          poleGhostNodeJson = node.toJSON()
+        }
+      } catch {
+        // ignore
+      }
+    }
     engine.deleteIKChain(this.#chainId)
-    return { chain: chainJson, ghostNode: ghostNodeJson }
+    return { chain: chainJson, ghostNode: ghostNodeJson, poleGhostNode: poleGhostNodeJson }
   }
 
   toJSON(): Readonly<Record<string, unknown>> {

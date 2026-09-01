@@ -2019,13 +2019,35 @@ export class Engine {
       target.position.x,
       target.position.y,
     )
+    let resolvedPole: import('./ikChain').PoleTarget | null = poleTarget
+    let poleGhostId: string | null = null
+    if (poleTarget) {
+      if (!poleTarget.nodeId) {
+        // Create a ghost node for the pole vector so it can be parented under a Rig Handle.
+        // Keep poleTarget plain (no nodeId) for backward compat; ghost is tracked via poleGhostNodeId.
+        const poleGhost = this.createGhostNode(
+          slide.scene.id,
+          'Pole Target',
+          poleTarget.position.x,
+          poleTarget.position.y,
+        )
+        resolvedPole = { position: { ...poleTarget.position } }
+        poleGhostId = poleGhost.id
+      } else {
+        // Caller supplied explicit nodeId — track it as pole ghost if it's a ghost node
+        poleGhostId = poleTarget.nodeId
+      }
+    }
     const chain = this.#ik.createChain(
       slideId,
       boneIds,
       { ...target, nodeId: ghostNode.id },
-      poleTarget,
+      resolvedPole,
     )
     chain.ghostNodeId = ghostNode.id
+    if (poleGhostId) {
+      chain.poleGhostNodeId = poleGhostId
+    }
     return chain
   }
 
@@ -2036,6 +2058,23 @@ export class Engine {
         this.deleteGhostNode(chain.ghostNodeId)
       } catch {
         // ghost node may already be gone
+      }
+    }
+    if (chain.poleGhostNodeId) {
+      try {
+        this.deleteGhostNode(chain.poleGhostNodeId)
+      } catch {
+        // ghost node may already be gone
+      }
+    } else if (chain.poleTarget?.nodeId) {
+      // Pole was attached via nodeId (could be ghost or external); clean up if it's a ghost
+      try {
+        const node = this.getNode(chain.poleTarget.nodeId)
+        if (node.components.ghost) {
+          this.deleteGhostNode(node.id)
+        }
+      } catch {
+        // ignore
       }
     }
     return this.#ik.deleteChain(chainId)
@@ -2058,6 +2097,85 @@ export class Engine {
   }
 
   setIKPoleTarget(chainId: string, poleTarget: import('./ikChain').PoleTarget | null): void {
+    const chain = this.#ik.getChain(chainId)
+    if (poleTarget && !poleTarget.nodeId) {
+      // No explicit node — reuse or create a ghost so the pole can follow a Rig Handle.
+      // Keep poleTarget plain; ghost identity tracked via poleGhostNodeId.
+      // Ghost position is updated by the caller (e.g., IK interaction) via MoveNode/keyframes, not here,
+      // to keep animationMode semantics (keyframes vs direct move) consistent with target handling.
+      if (chain.poleGhostNodeId) {
+        try {
+          this.getNode(chain.poleGhostNodeId)
+        } catch {
+          const slide = this.getSlide(chain.slideId)
+          const ghost = this.createGhostNode(
+            slide.scene.id,
+            'Pole Target',
+            poleTarget.position.x,
+            poleTarget.position.y,
+          )
+          ;(chain as unknown as { poleGhostNodeId: string | null }).poleGhostNodeId = ghost.id
+        }
+        const resolved: import('./ikChain').PoleTarget = {
+          position: { x: poleTarget.position.x, y: poleTarget.position.y },
+        }
+        this.#ik.setPoleTarget(chainId, resolved)
+        return
+      }
+      if (chain.poleTarget?.nodeId) {
+        try {
+          this.getNode(chain.poleTarget.nodeId)
+          const resolved: import('./ikChain').PoleTarget = {
+            position: { x: poleTarget.position.x, y: poleTarget.position.y },
+          }
+          this.#ik.setPoleTarget(chainId, resolved)
+          ;(chain as unknown as { poleGhostNodeId: string | null }).poleGhostNodeId =
+            chain.poleTarget.nodeId
+          return
+        } catch {
+          // fall through to create new ghost
+        }
+      }
+      // Create new ghost for pole
+      const slide = this.getSlide(chain.slideId)
+      const ghost = this.createGhostNode(
+        slide.scene.id,
+        'Pole Target',
+        poleTarget.position.x,
+        poleTarget.position.y,
+      )
+      const resolved: import('./ikChain').PoleTarget = {
+        position: { x: poleTarget.position.x, y: poleTarget.position.y },
+      }
+      ;(chain as unknown as { poleGhostNodeId: string | null }).poleGhostNodeId = ghost.id
+      this.#ik.setPoleTarget(chainId, resolved)
+      return
+    }
+    if (poleTarget && poleTarget.nodeId) {
+      // Explicit nodeId — sync ghost field and ensure ghost cleanup of old pole ghost if different
+      if (chain.poleGhostNodeId && chain.poleGhostNodeId !== poleTarget.nodeId) {
+        try {
+          const oldGhost = this.getNode(chain.poleGhostNodeId)
+          if (oldGhost.components.ghost) {
+            this.deleteGhostNode(oldGhost.id)
+          }
+        } catch {
+          // ignore
+        }
+      }
+      ;(chain as unknown as { poleGhostNodeId: string | null }).poleGhostNodeId = poleTarget.nodeId
+    } else if (poleTarget === null && chain.poleGhostNodeId) {
+      // Clearing pole — remove its ghost if it's a ghost node
+      try {
+        const ghost = this.getNode(chain.poleGhostNodeId)
+        if (ghost.components.ghost) {
+          this.deleteGhostNode(ghost.id)
+        }
+      } catch {
+        // ignore
+      }
+      ;(chain as unknown as { poleGhostNodeId: string | null }).poleGhostNodeId = null
+    }
     this.#ik.setPoleTarget(chainId, poleTarget)
   }
 

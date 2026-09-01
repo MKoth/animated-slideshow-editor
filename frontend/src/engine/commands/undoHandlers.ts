@@ -128,6 +128,30 @@ export function applyUndo(
       }
       return
     }
+    case 'CreateRigHandle': {
+      const handleId = inv.handleId as string
+      const childReparents = inv.childReparents as readonly {
+        nodeId: string
+        oldParentId: string
+        oldTransform: Transform
+      }[]
+      // Restore children to old parents with old transforms
+      for (let i = childReparents.length - 1; i >= 0; i--) {
+        const c = childReparents[i]
+        try {
+          engine.reparentNode(c.nodeId, c.oldParentId)
+          engine.setTransform(c.nodeId, c.oldTransform)
+        } catch {
+          // ignore
+        }
+      }
+      try {
+        engine.removeNode(handleId)
+      } catch {
+        // already gone
+      }
+      return
+    }
     case 'DeleteNode': {
       const nodes = inv.nodes as NodeJSON[]
       const parentId = inv.parentId as string | null
@@ -765,6 +789,8 @@ export function applyUndo(
     case 'DeleteIKChain': {
       const chain = inv.chain as import('../ikChain').IKChainJSON
       const ghostNode = inv.ghostNode as NodeJSON | null
+      const poleGhostNode = (inv as Record<string, unknown>).poleGhostNode as
+        NodeJSON | null | undefined
       if (ghostNode) {
         try {
           const scene = engine.getSlide(chain.slideId).scene
@@ -779,15 +805,50 @@ export function applyUndo(
           // ignore
         }
       }
+      if (poleGhostNode) {
+        try {
+          const scene = engine.getSlide(chain.slideId).scene
+          engine.createGhostNode(
+            scene.id,
+            poleGhostNode.name,
+            poleGhostNode.transform.x,
+            poleGhostNode.transform.y,
+            poleGhostNode.id,
+          )
+        } catch {
+          // ignore
+        }
+      }
       // Restore chain via internal IKManager
       try {
         // Use direct creation via engine.createIKChain
         engine.createIKChain(chain.slideId, chain.boneIds, chain.target, chain.poleTarget ?? null)
-        // Patch id to original
+        // Patch id to original and ghost ids
         const chains = engine.getIKChainsForSlide(chain.slideId)
         const newest = chains[chains.length - 1]
-        if (newest && newest.id !== chain.id) {
-          ;(newest as unknown as Record<string, unknown>).id = chain.id
+        if (newest) {
+          if (newest.id !== chain.id) {
+            ;(newest as unknown as Record<string, unknown>).id = chain.id
+          }
+          if (chain.ghostNodeId && newest.ghostNodeId !== chain.ghostNodeId) {
+            ;(newest as unknown as Record<string, unknown>).ghostNodeId = chain.ghostNodeId
+          }
+          if ((chain as unknown as Record<string, unknown>).poleGhostNodeId) {
+            ;(newest as unknown as Record<string, unknown>).poleGhostNodeId = (
+              chain as unknown as Record<string, unknown>
+            ).poleGhostNodeId
+          }
+          // Ensure target and pole nodeIds align with restored ghosts
+          if (ghostNode && newest.target.nodeId !== ghostNode.id) {
+            ;(newest as unknown as { target: { nodeId?: string } }).target.nodeId = ghostNode.id
+          }
+          if (
+            poleGhostNode &&
+            newest.poleTarget &&
+            (newest.poleTarget as { nodeId?: string }).nodeId !== poleGhostNode.id
+          ) {
+            ;(newest.poleTarget as unknown as { nodeId?: string }).nodeId = poleGhostNode.id
+          }
         }
       } catch {
         // ignore
@@ -1620,6 +1681,53 @@ export function applyRedo(
         ...(opacity !== undefined ? { opacity } : {}),
         ...(components ? { components } : {}),
       })
+      return
+    }
+    case 'CreateRigHandle': {
+      const sceneId = params.sceneId as string
+      const name = params.name as string
+      const childIds = (params.childIds as string[]) ?? []
+      const parentId = params.parentId as string | undefined
+      const transform = params.transform as Transform | undefined
+      const handleId = (params as Record<string, unknown>).handleId as string | undefined
+      const inv = _inverse as Record<string, unknown> | null
+      const effectiveHandleId = (inv?.handleId as string | undefined) ?? handleId
+      // Recreate handle with same id if redoing after undo
+      const scene = engine.getScene(sceneId)
+      const handleParentId = parentId ?? scene.root.id
+      let handle: import('../sceneNode').SceneNode
+      try {
+        handle = engine.getNode(effectiveHandleId as string)
+        void handle
+      } catch {
+        handle = engine.createNode(sceneId, handleParentId, name, {
+          ...(effectiveHandleId ? { id: effectiveHandleId } : {}),
+          ...(transform ? { transform } : {}),
+        })
+      }
+      const hId = handle.id
+      // Capture world of handle for keepWorld reparent
+      let handleWorld: import('../worldTransform').WorldTransform | null = null
+      try {
+        handleWorld = worldTransformOf(scene, hId)
+      } catch {
+        // ignore
+      }
+      for (const childId of childIds) {
+        try {
+          const oldWorld = worldTransformOf(scene, childId)
+          engine.reparentNode(childId, hId)
+          if (oldWorld && handleWorld) {
+            const adjusted = relativeTransform(oldWorld, handleWorld)
+            const current = engine.getNode(childId).transform
+            if (adjusted && !transformsEqual(adjusted, current)) {
+              engine.setTransform(childId, adjusted)
+            }
+          }
+        } catch {
+          // ignore missing child
+        }
+      }
       return
     }
     case 'CreateAssetInstance': {

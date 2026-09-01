@@ -6,7 +6,7 @@ import { applyZOrder, canApplyZOrder, Z_ORDER_ITEMS } from '../../app/zOrderActi
 import type { SceneNode } from '../../engine'
 import type { ZOrderMode } from '../../engine/commands'
 import type { ParentingMode } from '../../engine/commands/reparentNodeCommand'
-import { CreateNodeCommand } from '../../engine/commands'
+import { CreateNodeCommand, CreateRigHandleCommand } from '../../engine/commands'
 import { defaultChartComponent } from '../../engine/defaultChart'
 import { defaultTableComponent } from '../../engine/defaultTable'
 import { defaultTextComponent } from '../../engine/defaultText'
@@ -361,6 +361,51 @@ export function ScenePanel() {
     setContextMenu(null)
   }
 
+  const handleCreateGroup = () => {
+    const targetSlide = engine.getActiveSlide()
+    if (!targetSlide) return
+    const taken = namesInTree(targetSlide.scene.root)
+    // Rig Handle / Group Node is an empty Scene Node (only Transform)
+    const name = uniqueNodeName(taken, 'Rig Handle')
+    const selectedIds = useSelectionStore.getState().selectedIds
+    // Filter out root, camera, and ids that don't exist in this scene
+    const sceneNodeIds = new Set<string>()
+    const walk = (node: SceneNode) => {
+      sceneNodeIds.add(node.id)
+      for (const child of node.children) walk(child)
+    }
+    walk(targetSlide.scene.root)
+    const childIds = selectedIds.filter(
+      (id) =>
+        sceneNodeIds.has(id) &&
+        id !== targetSlide.scene.root.id &&
+        id !== targetSlide.scene.camera.id,
+    )
+    if (childIds.length > 0) {
+      const result = dispatch(
+        new CreateRigHandleCommand({
+          sceneId: targetSlide.scene.id,
+          name,
+          childIds,
+        }),
+      )
+      if (result.ok) {
+        useSelectionStore.getState().select(result.inverse.handleId)
+      }
+    } else {
+      const result = dispatch(
+        new CreateRigHandleCommand({
+          sceneId: targetSlide.scene.id,
+          name,
+        }),
+      )
+      if (result.ok) {
+        useSelectionStore.getState().select(result.inverse.handleId)
+      }
+    }
+    setContextMenu(null)
+  }
+
   const project = engine.project
   const slide = engine.getActiveSlide()
 
@@ -382,6 +427,16 @@ export function ScenePanel() {
 
   return (
     <div className="scene-panel">
+      <div className="scene-panel__toolbar" style={{ display: 'flex', gap: '8px', padding: '8px' }}>
+        <button
+          className="scene-panel__create-group"
+          onClick={handleCreateGroup}
+          title="Create empty Group/Locator (Rig Handle) — groups selected nodes with Keep World"
+          aria-label="Create Rig Handle Group"
+        >
+          Create Group
+        </button>
+      </div>
       <section className="scene-slide" key={slide.id}>
         <h3 className="scene-slide__title">{slide.name}</h3>
         <ul className="scene-tree" role="tree" aria-label={`Scene tree of ${slide.name}`}>
@@ -413,6 +468,9 @@ export function ScenePanel() {
           </button>
           <button className="menu__item" role="menuitem" onClick={handleCreateText}>
             Create Text
+          </button>
+          <button className="menu__item" role="menuitem" onClick={handleCreateGroup}>
+            Create Group (Rig Handle)
           </button>
           <hr className="menu__separator" />
           {Z_ORDER_ITEMS.map((item) => (

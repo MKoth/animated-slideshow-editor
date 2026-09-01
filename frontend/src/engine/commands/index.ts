@@ -388,3 +388,5 @@ export type {
   SplitPrompterWordsInverse,
   SplitPrompterWordsParameters,
 } from './splitPrompterWordsCommand'
+export { CreateRigHandleCommand } from './createRigHandleCommand'
+export type { CreateRigHandleInverse, CreateRigHandleParameters } from './createRigHandleCommand'

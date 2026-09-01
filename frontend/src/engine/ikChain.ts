@@ -7,6 +7,7 @@ export interface BoneIKTarget {
 
 export interface PoleTarget {
   readonly position: { readonly x: number; readonly y: number }
+  readonly nodeId?: string // optional node to attach to (world-space), enables Rig Handle parent-follow
 }
 
 export class IKChain {
@@ -16,6 +17,7 @@ export class IKChain {
   target: BoneIKTarget
   poleTarget: PoleTarget | null
   ghostNodeId: string | null
+  poleGhostNodeId: string | null
 
   constructor(
     id: string,
@@ -24,6 +26,7 @@ export class IKChain {
     target: BoneIKTarget,
     poleTarget: PoleTarget | null = null,
     ghostNodeId: string | null = null,
+    poleGhostNodeId: string | null = null,
   ) {
     this.id = id
     this.slideId = slideId
@@ -31,6 +34,7 @@ export class IKChain {
     this.target = target
     this.poleTarget = poleTarget
     this.ghostNodeId = ghostNodeId
+    this.poleGhostNodeId = poleGhostNodeId
   }
 
   get rootBoneId(): string {
@@ -87,6 +91,7 @@ export class IKChain {
       target: { ...this.target },
       poleTarget: this.poleTarget ? { ...this.poleTarget } : null,
       ghostNodeId: this.ghostNodeId,
+      poleGhostNodeId: this.poleGhostNodeId ?? undefined,
     }
   }
 
@@ -98,6 +103,7 @@ export class IKChain {
       { ...json.target },
       json.poleTarget ? { ...json.poleTarget } : null,
       json.ghostNodeId ?? null,
+      json.poleGhostNodeId ?? null,
     )
   }
 }
@@ -109,4 +115,5 @@ export interface IKChainJSON {
   readonly target: BoneIKTarget
   readonly poleTarget: PoleTarget | null
   readonly ghostNodeId?: string | null
+  readonly poleGhostNodeId?: string | null
 }

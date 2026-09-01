@@ -4,6 +4,7 @@ import type { Unsubscribe } from '../../engine'
 import { useIKSelectionStore } from '../../stores/ikSelectionStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
+import { evaluatedWorldTransformOf } from '../../engine/worldTransform'
 
 export const TARGET_COLOR = 0x1a73e8
 export const TARGET_SELECTED_COLOR = 0xff6d00
@@ -110,12 +111,8 @@ export class IkOverlay {
       const target = this.#targetPosition(chain)
       this.#drawTarget(graphics, target.x, target.y, isSelected)
       if (chain.poleTarget) {
-        this.#drawPole(
-          graphics,
-          chain.poleTarget.position.x,
-          chain.poleTarget.position.y,
-          isSelected,
-        )
+        const pole = this.#polePosition(chain)
+        this.#drawPole(graphics, pole.x, pole.y, isSelected)
       }
     }
   }
@@ -165,8 +162,9 @@ export class IkOverlay {
         return { chainId: chain.id, kind: 'target' }
       }
       if (chain.poleTarget) {
-        const px = chain.poleTarget.position.x
-        const py = chain.poleTarget.position.y
+        const pole = this.#polePosition(chain)
+        const px = pole.x
+        const py = pole.y
         if (Math.hypot(worldX - px, worldY - py) <= threshold) {
           return { chainId: chain.id, kind: 'pole' }
         }
@@ -185,6 +183,10 @@ export class IkOverlay {
       const slide = this.#engine.getActiveSlide()
       if (slide) {
         const time = usePlaybackController.getState().getTime(slide.id)
+        const world = evaluatedWorldTransformOf(this.#engine, chain.target.nodeId, time)
+        if (world) {
+          return { x: world.x, y: world.y }
+        }
         try {
           const evaluated = this.#engine.evaluateNode(chain.target.nodeId, time)
           return { x: evaluated.transform.x, y: evaluated.transform.y }
@@ -194,5 +196,36 @@ export class IkOverlay {
       }
     }
     return chain.target.position
+  }
+
+  #polePosition(chain: {
+    readonly poleTarget: {
+      readonly position: { readonly x: number; readonly y: number }
+      readonly nodeId?: string
+    } | null
+    readonly poleGhostNodeId?: string | null
+  }): { readonly x: number; readonly y: number } {
+    const pole = chain.poleTarget
+    if (!pole) {
+      return { x: 0, y: 0 }
+    }
+    const nodeId = pole.nodeId ?? chain.poleGhostNodeId ?? undefined
+    if (nodeId) {
+      const slide = this.#engine.getActiveSlide()
+      if (slide) {
+        const time = usePlaybackController.getState().getTime(slide.id)
+        const world = evaluatedWorldTransformOf(this.#engine, nodeId, time)
+        if (world) {
+          return { x: world.x, y: world.y }
+        }
+        try {
+          const evaluated = this.#engine.evaluateNode(nodeId, time)
+          return { x: evaluated.transform.x, y: evaluated.transform.y }
+        } catch {
+          // fall through
+        }
+      }
+    }
+    return pole.position
   }
 }
