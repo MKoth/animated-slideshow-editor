@@ -693,7 +693,7 @@ export function AudioTimelineBody({
     window.addEventListener('pointerup', onUp)
   }
 
-  // Prompter move (reorder, gap-free) — drag to reorder index, clips move atomically, one Transaction
+  // Prompter move — free drag with gaps by default; hold Shift for gap-free reorder (prefix-sum reflow). Clips move atomically, one Transaction.
   const onPrompterMovePointerDown = (e: React.PointerEvent, partId: string) => {
     if (e.button !== 0) return
     const targetEl = e.target as HTMLElement
@@ -707,11 +707,12 @@ export function AudioTimelineBody({
     const part = partsSnapshot.find((p) => p.id === partId)
     if (!part) return
     const oldIndex = partsSnapshot.findIndex((p) => p.id === partId)
+    const oldStartTime = part.startTime
     setFocusedId(partId)
-    prompterMoveRef.current = { partId, startX: e.clientX, startTime: part.startTime, oldIndex }
+    prompterMoveRef.current = { partId, startX: e.clientX, startTime: oldStartTime, oldIndex }
     const target = e.currentTarget as HTMLElement
     target.setPointerCapture(e.pointerId)
-    // Precompute remaining gap times for index calculation
+    // Precompute remaining gap times for Shift+gap-free index calculation
     const remaining = partsSnapshot.filter((p) => p.id !== partId)
     const gapTimes: number[] = []
     let acc = 0
@@ -737,9 +738,14 @@ export function AudioTimelineBody({
       const dt = dx / pps
       const raw = prompterMoveRef.current.startTime + dt
       const snapped = computeSnappedTime(Math.max(0, raw))
-      const newIndex = computeNewIndex(snapped)
-      const gapTime = gapTimes[newIndex] ?? 0
-      setPrompterMovePreview({ partId, startTime: gapTime, newIndex })
+      if (ev.shiftKey) {
+        const newIndex = computeNewIndex(snapped)
+        const gapTime = gapTimes[newIndex] ?? 0
+        setPrompterMovePreview({ partId, startTime: gapTime, newIndex })
+      } else {
+        // Free placement — show ghost at snapped time, no gap highlight
+        setPrompterMovePreview({ partId, startTime: snapped, newIndex: -1 })
+      }
     }
     const onUp = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', onMove)
@@ -749,10 +755,17 @@ export function AudioTimelineBody({
       const dt = dx / pps
       const raw = prompterMoveRef.current.startTime + dt
       const snapped = computeSnappedTime(Math.max(0, raw))
-      const newIndex = computeNewIndex(snapped)
-      if (newIndex !== oldIndex) {
-        const result = dispatch(new MovePrompterPartCommand({ slideId: slide.id, partId, newIndex } as never))
-        if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+      if (ev.shiftKey) {
+        const newIndex = computeNewIndex(snapped)
+        if (newIndex !== oldIndex) {
+          const result = dispatch(new MovePrompterPartCommand({ slideId: slide.id, partId, newIndex } as never))
+          if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+        }
+      } else {
+        if (Math.abs(snapped - oldStartTime) > 1e-6) {
+          const result = dispatch(new MovePrompterPartCommand({ slideId: slide.id, partId, newStartTime: snapped } as never))
+          if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+        }
       }
       setPrompterMovePreview(null)
       prompterMoveRef.current = null

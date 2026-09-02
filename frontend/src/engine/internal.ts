@@ -1091,33 +1091,22 @@ export class Engine {
     }
     const oldStartTime = part.startTime
     const oldEndTime = part.endTime
-    // Capture linked clips before reorder for atomic move
-    const linkedClipIds = new Set<string>()
-    for (const p of slide.prompter.parts) {
-      if (p.audioClipId) linkedClipIds.add(p.audioClipId)
-      if (p.segments) for (const seg of p.segments) linkedClipIds.add(seg.audioClipId)
-    }
+    // Capture only the dragged part's linked clips (including segments) — free placement allows gaps, so only this part's clips move
+    const draggedClipIds = new Set<string>()
+    if (part.audioClipId) draggedClipIds.add(part.audioClipId)
+    if (part.segments) for (const seg of part.segments) draggedClipIds.add(seg.audioClipId)
     const shiftedClips: { id: string; oldTimelineStart: number }[] = []
     for (const clip of slide.audio.clips) {
-      if (linkedClipIds.has(clip.id)) shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
+      if (draggedClipIds.has(clip.id)) shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
     }
     part.startTime = newStartTime
     part.endTime = newStartTime + part.duration
-    // Keep array sorted by startTime so order == time order, then gap-free reflow
+    // Keep array sorted by startTime so order == time order — gaps allowed (no reflow) to let user drag where they want
     slide.prompter.parts.sort((a, b) => a.startTime - b.startTime)
-    reflowPrompter(slide.prompter)
-    // Move linked clips with their parts gap-free
-    for (const p of slide.prompter.parts) {
-      if (p.audioClipId) {
-        const clip = slide.audio.clips.find((c) => c.id === p.audioClipId)
-        if (clip) clip.timelineStart = p.startTime
-      }
-      if (p.segments) {
-        for (const seg of p.segments) {
-          const clip = slide.audio.clips.find((c) => c.id === seg.audioClipId)
-          if (clip) clip.timelineStart = p.startTime
-        }
-      }
+    // Move only dragged part's clips with it (atomically)
+    for (const cid of draggedClipIds) {
+      const clip = slide.audio.clips.find((c) => c.id === cid)
+      if (clip) clip.timelineStart = part.startTime
     }
     this.#bus.emit({
       type: 'PrompterChanged',

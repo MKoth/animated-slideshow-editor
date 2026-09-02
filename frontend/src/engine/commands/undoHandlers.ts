@@ -1258,7 +1258,7 @@ export function applyUndo(
           part.startTime = oldStartTime
           part.endTime = oldStartTime + part.duration
           slide.prompter!.parts.sort((a, b) => a.startTime - b.startTime)
-          reflowPrompter(slide.prompter!)
+          // Free placement — do not reflow, preserve gaps as user placed
         }
       }
       if (shiftedClips) {
