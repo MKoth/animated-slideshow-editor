@@ -15,7 +15,19 @@ The unit of a scene node's identity. A node is an asset instance, a text, or a c
 _Avoid_: Node type enum
 
 **Transform**:
-A scene node's position, rotation, and scale. The single source of placement for every node; parenting composes transforms.
+A scene node's position, rotation, and scale plus an optional local pivot; the single source of placement for every node; parenting composes transforms.
+
+**Local Pivot**:
+The normalized offset of a node's rotation/scale origin from its bounds center, in the range [-0.5, 0.5] with (0,0) at center (IDENTITY_PIVOT). Static in v1 (not keyframable); changing it recomputes position to keep world placement stable.
+_Avoid_: Anchor offset, pivot point
+
+**Bounding Box**:
+The axis-aligned world bounds of a scene node; the rectangle the canvas selection outline draws.
+_Avoid_: Bounds rect
+
+**Handles**:
+The on-canvas gizmos on a selected node's bounding box: 8 resize handles (4 corners uniform, 4 edges axial) and 1 rotation handle above top-center. They respect the node's local pivot; Shift locks aspect, Alt scales from center.
+_Avoid_: Grips, controls
 
 **Camera Node**:
 The implicit scene node every slide has exactly one of. Its transform drives the viewport (position = pan, scale = zoom); rotation is locked. It is animatable in the timeline like any node.
@@ -59,15 +71,15 @@ A scene node that renders text content with a font size and alignment; color and
 _Avoid_: Text label, label
 
 **Table Component**:
-A scene node component carrying grid configuration: an ordered list of column width definitions, plus inherited defaults for gap, borderColor, and borderWidth. The table node owns TableRowComponent children; it does not carry cell data or content directly. Borders are drawn as a single outer PixiJS Graphics stroke; the table renderer is a thin container that delegates child rendering to the scene renderer.
+A scene node component carrying grid configuration: an ordered list of column width definitions, plus inherited defaults for gap, borderColor, borderWidth, borderRadius (default 0), and padding. The table node owns TableRowComponent children; it does not carry cell data or content directly. Outer border is drawn as a PixiJS Graphics roundedRect when radius > 0; the table renderer delegates child rendering to the scene renderer.
 _Avoid_: Table node, grid component
 
 **Table Row Component**:
-A scene node component for a row within a table. Carries optional borderColor and background overrides (inheriting defaults from the parent table). Row height is set by the grid layout command. The row owns TableCellComponent children. No per-row gap — gap stays on the table to preserve column alignment.
+A scene node component for a row within a table. Carries optional borderColor, background, and borderRadius overrides (inheriting defaults from the parent table). Row height is set by the grid layout command. The row owns TableCellComponent children. No per-row gap — gap stays on the table to preserve column alignment.
 _Avoid_: Row node
 
 **Table Cell Component**:
-A scene node component for a cell within a row. Carries colSpan and rowSpan (both default 1), optional borderColor and background overrides, and optional padding override. Column position is implicit — the cell's index among its row's children determines the column. Cells may contain zero or more child nodes (text, morpheme containers, etc.) with no truncation or wrapping; text overflows visually beyond cell bounds. Borders are drawn per-cell by the renderer.
+A scene node component for a cell within a row. Carries colSpan and rowSpan (both default 1), optional borderColor, background, borderRadius, and padding overrides (padding inherits from table if absent). Column position is implicit — the cell's index among its row's children determines the column. Cells may contain zero or more child nodes with no truncation or wrapping. Borders are drawn per-cell as roundedRect when radius > 0.
 _Avoid_: Cell node
 
 **Grid Layout**:
@@ -89,8 +101,20 @@ _Avoid_: Fish, Flowers, custom per-step category vocabularies
 The reconciliation of a project's asset-definition references against the live library store, run on open/import: references with no definition in the store — and no embedded snapshot in the project — are listed by the affected nodes' names ("Missing Assets: Clock.png, Boy.png"), and the user continues with those nodes rendered as grey-box placeholders on the canvas and marked in the scene tree. Projects are self-contained, so the report applies only to legacy/slim files whose references resolve neither embedded nor store-side.
 _Avoid_: Broken asset, unresolved reference
 
+**Circle Component**:
+A procedural shape component carrying radius, startAngle and endAngle (degrees, 0..360 wedge from +X CCW), and segments. Renderer generates a triangle-fan MeshData on demand with radial UVs; start/end are animatable and UV transform applies.
+_Avoid_: Arc, pie shape
+
+**Texture Attachment**:
+The operation attaching an asset-definition image to any mesh-like node (mesh or circle) by setting its material texture and rewriting or transforming UVs to map the image onto the geometry.
+_Avoid_: UV mapping, assign texture
+
+**UV Transform**:
+The per-instance material parameters controlling how a texture maps onto geometry: uvScale {u,v}, uvOffset {u,v}, and fitMode (stretch | cover | contain). Default scale 1,1 and offset 0,0 with stretch; static v1, animatable later.
+_Avoid_: UV scale, texture offset
+
 **Material Instance**:
-The per-node rendering settings (tint, opacity multiplier, and shader-uniform values) owned by every renderable node — asset instances and text nodes alike. References a material definition and may override its parameter defaults.
+The per-node rendering settings (tint, opacity multiplier, shader-uniform values, and UV transform) owned by every renderable node — asset instances, text nodes, and procedural shapes alike. References a material definition and may override its parameter defaults.
 _Avoid_: Style, fill color
 
 **Material Definition**:
@@ -136,8 +160,24 @@ _Avoid_: Animation instance
 A named scalar on an animation clip of one of two kinds — gain (multiplies the channel's base value) or offset (adds to it). A clip channel links to at most one parameter; unlinked channels are absolute. Instances may override a parameter's default.
 
 **Clip Channel**:
-An animated property inside an animation clip (one of the uniform six), existing while it has at least one keyframe. Keyframe times and values are normalized to the clip.
+An animated property inside an animation clip (one of the uniform six plus visible and circle angles), existing while it has at least one keyframe. Keyframe times and values are normalized to the clip.
 _Avoid_: Track, clip property
+
+**Clip Extraction**:
+The workflow that copies a selection of node keyframes (time/value/interp/tangents) into a new or existing animation clip, normalizing time to clip range [0,1] and value to [0,1] where applicable. Non-destructive copy; invoked via timeline right-click “Add to clip” modal.
+_Avoid_: Bake to clip, export keyframes
+
+**Clip Collection** (also **Rig Animation**, **Hierarchical Clips**):
+A named grouping of per-node clips bound by semantic name: a map from semanticName → clipId plus parent id. Export walks a parent subtree collecting each node's clip instances; apply walks a target subtree and broadcasts each clip to all nodes matching the semantic name.
+_Avoid_: Animation set, pose library
+
+**Scale Group** (also **Group Node** alias):
+An empty scene node used as a parent to uniformly scale a rig and its animations without breaking relative motion; clips remain in local space and compose via world transform. No new component — reuses Rig Handle / Locator primitive.
+_Avoid_: Scale container, multiplier node
+
+**Visible Track**:
+The boolean visibility animation track on a scene node. Interpolates with hold only (no tween); eye icon toggles base value or adds a hold keyframe at playhead in animation mode.
+_Avoid_: Opacity zero, hide track
 
 ### AI
 
@@ -187,8 +227,16 @@ An immutable reusable audio resource: an id, name, `data` (base64 WAV/MP3), `mim
 _Avoid_: Audio file, sound asset (ambiguous vs AudioClip)
 
 **AudioClip**:
-The placement of an AudioAsset on a Slide's timeline: `{id, assetId, trackId, timelineStart, sourceStart, sourceEnd, volume, muted, fadeIn, fadeOut, playbackRate}`. `trackId` is the fixed `AudioTrack` enum (`voice` | `sfx` | `music`); `timelineStart` is seconds within the Slide; `sourceStart/sourceEnd` trim the asset's bytes; `volume` ∈ [0,1]; `playbackRate` (default 1) is a non-destructive speed flag — time-stretch is derived via server FFmpeg RubberBand at export, never by rewriting the asset. Clips are stored flat as `slide.audio.clips[]` (not nested per-track).
+The placement of an AudioAsset on a Slide's timeline: `{id, assetId, trackId, timelineStart, sourceStart, sourceEnd, volume, muted, fadeIn, fadeOut, playbackRate, pitchSemitones?, noiseReduction?, uvTransform?}`. `trackId` is the fixed `AudioTrack` enum (`voice` | `sfx` | `music`); `sourceStart/sourceEnd` define the kept contiguous interval (trim to selection; middle delete splits into two clips); `volume` ∈ [0,1]; `playbackRate` and `pitchSemitones` (-12..+12) are non-destructive speed/pitch flags baked via FFmpeg RubberBand at export; `noiseReduction` (0..1) is a non-destructive flag. Clips are stored flat as `slide.audio.clips[]`.
 _Avoid_: Audio region, audio block
+
+**Audio Effects**:
+The non-destructive per-clip audio parameters: pitchSemitones, noiseReduction (and future eq), plus trim interval. Original AudioAsset immutable; preview via Web Audio OfflineAudioContext, bake at export. Middle-interval deletion splits a clip into two; length mismatch after effects prompts a dialog (stretch rubberband vs trim/shift PrompterPart).
+_Avoid_: Audio filter, destructive edit
+
+**Waveform Editor**:
+The modal editor for an AudioClip showing its waveform: edits sourceStart/sourceEnd (including split on middle delete), pitch, noiseReduction, and audition; on save with derived duration mismatch, offers Stretch / Trim PrompterPart / Shift Downstream choices.
+_Avoid_: Sound editor, audio modal
 
 **AudioTrack**:
 One of three fixed lanes a Slide owns: Voice, SFX, or Music. Not a dynamic entity — the `AudioTrackId` enum enumerates the only legal values for `AudioClip.trackId`. One lane each; no add/remove track commands. Export mixes the three lanes deterministically.
@@ -242,8 +290,8 @@ _Avoid_: IK effector, controller
 The auxiliary transform controlling the elbows/knees of an IK chain (the plane of the solution). Like an IK Handle, it is a one-way driver that follows its own parent, not the chain.
 _Avoid_: Vector handle
 
-**Rig Handle** (also **Group Node**, **Locator**):
-An empty scene node (no mesh, only transform) used to group a rig — mesh, skeleton root, IK handles, and pole vectors — under one transform for rigid moves of the whole setup. Reuses Scene Node composition; moving the handle composes with all children in one Transaction.
+**Rig Handle** (also **Group Node**, **Locator**, **Scale Group**):
+An empty scene node (no mesh, only transform) used to group a rig — mesh, skeleton root, IK handles, and pole vectors — under one transform for rigid moves and uniform scaling of the whole setup. Reuses Scene Node composition; moving/scaling the handle composes with all children in one Transaction. Clips remain local.
 _Avoid_: Rig root object, master bone
 
 **Parenting Mode**:
@@ -267,6 +315,22 @@ _Avoid_: Batch, composite command
 **History Panel**:
 The user-facing timeline view of the undo stack (a bottom-panel tab beside the Timeline): grouped entries, search by name, source filter, AI provenance links. A pure view — selecting an entry never restores state.
 _Avoid_: Command History panel, activity log
+
+### Naming
+
+**Unique Name**:
+The per-scene unique display name of a scene node. User-renamable, validated with block-on-duplicate (inline error); history and scene tree show it. Uniqueness scoped to the slide's scene.
+_Avoid_: Label, id
+
+**Semantic Name**:
+An optional, repeatable tag on a scene node used only for hierarchical clip binding (e.g. left_hand). Many nodes may share it; Clip Collection apply broadcasts to all matches.
+_Avoid_: Tag, category
+
+### Object Library
+
+**Reusable Object** (also **Component**, **Object**):
+An exported subtree of scene nodes (including descendants, bones, IK handles, pole vectors, materials, and clip bindings where applicable) serialized as a `.lesson_object` JSON file. Stored both as downloadable file and as a library entry in the “Objects” panel; import copies the subtree into the active slide with new ids and snapshots definitions into Project.embeddedAssets. May include or reference a Clip Collection.
+_Avoid_: Prefab, template
 
 ### Content authority
 
