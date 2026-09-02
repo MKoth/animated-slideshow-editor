@@ -225,6 +225,11 @@ export function AudioTimelineBody({
     y: number
     partId: string
   } | null>(null)
+  const [audioClipContextMenu, setAudioClipContextMenu] = useState<{
+    x: number
+    y: number
+    clipId: string
+  } | null>(null)
 
   const resolveTrackFromEvent = (event: React.DragEvent): AudioTrackId | null => {
     const target = event.target as HTMLElement
@@ -980,6 +985,7 @@ export function AudioTimelineBody({
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return
       const audioBody = document.querySelector('[data-testid="audio-timeline-body"]')
       const active = document.activeElement
       const isInsideAudio = Boolean(
@@ -1037,12 +1043,24 @@ export function AudioTimelineBody({
       ) {
         // Don't delete if an input is being edited
         if (editingPartId) return
+        // Guard: part may have been already deleted via per-chip handler (stopPropagation should have prevented this, but be safe)
+        const exists = slide.prompter?.parts.some((p) => p.id === focusedId)
+        if (!exists) {
+          const idx = prompterPartIds.indexOf(focusedId)
+          const nextId = prompterPartIds[idx + 1] ?? prompterPartIds[idx - 1] ?? null
+          setFocusedId(nextId)
+          return
+        }
         e.preventDefault()
         const result = dispatch(
           new DeletePrompterPartCommand({ slideId: slide.id, partId: focusedId }),
         )
-        if (!result.ok) useNotificationStore.getState().notify(result.error.message)
-        else {
+        if (!result.ok) {
+          // Only notify if not "not found" due to race (already handled above)
+          if (!result.error.message.includes('not found')) {
+            useNotificationStore.getState().notify(result.error.message)
+          }
+        } else {
           // Move focus to neighbor if available
           const idx = prompterPartIds.indexOf(focusedId)
           const nextId = prompterPartIds[idx + 1] ?? prompterPartIds[idx - 1] ?? null
@@ -1281,11 +1299,29 @@ export function AudioTimelineBody({
   }
 
   const handleDeleteSelected = () => {
-    for (const clipId of Array.from(selectedClipIds)) {
-      const result = dispatch(new DeleteAudioClipCommand({ slideId: slide.id, clipId }))
-      if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+    if (selectedClipIds.size > 0) {
+      for (const clipId of Array.from(selectedClipIds)) {
+        const result = dispatch(new DeleteAudioClipCommand({ slideId: slide.id, clipId }))
+        if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+      }
+      useAudioClipSelectionStore.getState().clear()
+      return
     }
-    useAudioClipSelectionStore.getState().clear()
+    // No audio clips selected: try to delete focused prompter part (so toolbar Delete works for parts)
+    if (focusedId && prompterPartIds.includes(focusedId)) {
+      const result = dispatch(
+        new DeletePrompterPartCommand({ slideId: slide.id, partId: focusedId }),
+      )
+      if (!result.ok) {
+        if (!result.error.message.includes('not found')) {
+          useNotificationStore.getState().notify(result.error.message)
+        }
+      } else {
+        const idx = prompterPartIds.indexOf(focusedId)
+        const nextId = prompterPartIds[idx + 1] ?? prompterPartIds[idx - 1] ?? null
+        setFocusedId(nextId)
+      }
+    }
   }
 
   const handleDuplicateSelected = () => {
@@ -1360,6 +1396,25 @@ export function AudioTimelineBody({
       window.removeEventListener('keydown', onKey)
     }
   }, [prompterContextMenu])
+
+  // Close audio clip context menu on outside click / Escape
+  useEffect(() => {
+    if (!audioClipContextMenu) return
+    const close = () => setAudioClipContextMenu(null)
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as HTMLElement
+      if (!target.closest('[data-testid="audio-clip-context-menu"]')) close()
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close()
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [audioClipContextMenu])
 
   // Recording shortcut handler (when prompter part focused and no modal open)
   useEffect(() => {
@@ -1734,6 +1789,7 @@ export function AudioTimelineBody({
                               if (editingPartId === part.id) return
                               if ((e.key === 'Delete' || e.key === 'Backspace') && isFocused) {
                                 e.preventDefault()
+                                e.stopPropagation()
                                 const result = dispatch(
                                   new DeletePrompterPartCommand({
                                     slideId: slide.id,
@@ -2318,11 +2374,54 @@ export function AudioTimelineBody({
                         flexDirection: 'column',
                         gap: 2,
                         zIndex: 200,
-                        minWidth: 140,
+                        minWidth: 160,
                         boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
                       }}
                       onClick={(e) => e.stopPropagation()}
                     >
+                      {(() => {
+                        const part = slide.prompter?.parts.find(
+                          (p) => p.id === prompterContextMenu.partId,
+                        )
+                        const hasAudio = Boolean(
+                          part?.audioClipId || (part?.segments && part.segments.length > 0),
+                        )
+                        return hasAudio ? (
+                          <button
+                            data-testid="prompter-delete-audio-btn"
+                            onClick={() => {
+                              const partId = prompterContextMenu.partId
+                              const p = slide.prompter?.parts.find((x) => x.id === partId)
+                              const clipId = p?.audioClipId
+                              const segClipIds = p?.segments?.map((s) => s.audioClipId) ?? []
+                              const clipIds = clipId ? [clipId, ...segClipIds] : segClipIds
+                              let ok = true
+                              for (const cid of clipIds) {
+                                const result = dispatch(
+                                  new DeleteAudioClipCommand({ slideId: slide.id, clipId: cid }),
+                                )
+                                if (!result.ok) {
+                                  useNotificationStore.getState().notify(result.error.message)
+                                  ok = false
+                                }
+                              }
+                              if (ok) setPrompterContextMenu(null)
+                            }}
+                            style={{
+                              padding: '6px 10px',
+                              textAlign: 'left',
+                              background: '#ff8c42',
+                              color: '#fff',
+                              border: '1px solid #ff8c42',
+                              borderRadius: 4,
+                              cursor: 'pointer',
+                              fontSize: 11,
+                            }}
+                          >
+                            Delete audio (keep text)
+                          </button>
+                        ) : null
+                      })()}
                       <button
                         data-testid="prompter-delete-btn"
                         onClick={() => {
@@ -2520,6 +2619,19 @@ export function AudioTimelineBody({
                                 }
                                 onFocus={() => setFocusedId(clip.id)}
                                 onClick={(e) => handleClipPointerDownSelect(e, clip.id)}
+                                onContextMenu={(e) => {
+                                  e.preventDefault()
+                                  setFocusedId(clip.id)
+                                  // Ensure clip is selected for context menu delete
+                                  if (!selectedClipIds.has(clip.id)) {
+                                    useAudioClipSelectionStore.getState().select(clip.id)
+                                  }
+                                  setAudioClipContextMenu({
+                                    x: e.clientX,
+                                    y: e.clientY,
+                                    clipId: clip.id,
+                                  })
+                                }}
                                 onPointerDown={(e) => onClipMovePointerDown(e, clip.id)}
                                 onKeyDown={(e) => {
                                   // Roving within clip focus: Up/Down moves to adjacent focusable
@@ -3061,6 +3173,86 @@ export function AudioTimelineBody({
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {audioClipContextMenu && (
+        <div
+          data-testid="audio-clip-context-menu"
+          style={{
+            position: 'fixed',
+            left: audioClipContextMenu.x,
+            top: audioClipContextMenu.y,
+            background: '#1e1e2e',
+            border: '1px solid #7c5cff',
+            borderRadius: 6,
+            padding: 4,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+            zIndex: 200,
+            minWidth: 160,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            data-testid="audio-clip-delete-btn"
+            onClick={() => {
+              const clipId = audioClipContextMenu.clipId
+              const result = dispatch(new DeleteAudioClipCommand({ slideId: slide.id, clipId }))
+              if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+              else {
+                useAudioClipSelectionStore.getState().clear()
+              }
+              setAudioClipContextMenu(null)
+            }}
+            style={{
+              padding: '6px 10px',
+              textAlign: 'left',
+              background: '#ff4d4d',
+              color: '#fff',
+              border: '1px solid #ff4d4d',
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontSize: 11,
+            }}
+          >
+            Delete audio
+          </button>
+          {(() => {
+            const clip = slide.audio.clips.find((c) => c.id === audioClipContextMenu.clipId)
+            const linkedPart = slide.prompter?.parts.find(
+              (p) =>
+                p.audioClipId === audioClipContextMenu.clipId ||
+                p.segments?.some((s) => s.audioClipId === audioClipContextMenu.clipId),
+            )
+            if (!clip || !linkedPart) return null
+            return (
+              <button
+                data-testid="audio-clip-delete-part-btn"
+                onClick={() => {
+                  const partId = linkedPart.id
+                  const result = dispatch(
+                    new DeletePrompterPartCommand({ slideId: slide.id, partId }),
+                  )
+                  if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+                  setAudioClipContextMenu(null)
+                }}
+                style={{
+                  padding: '6px 10px',
+                  textAlign: 'left',
+                  background: '#2a2a3a',
+                  color: '#ff9a9a',
+                  border: '1px solid #444',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  fontSize: 11,
+                }}
+              >
+                Delete part &quot;{linkedPart.text.slice(0, 20)}&quot;
+              </button>
+            )
+          })()}
         </div>
       )}
     </div>

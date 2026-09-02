@@ -1316,6 +1316,48 @@ export function applyUndo(
       const index = inv.index as number
       const slide = engine.getSlide(slideId)
       slide.audio.clips.splice(index, 0, clip)
+      // Restore direct prompter links that were cleared for independent deletion
+      const clearedDirect = inv.clearedDirectLinks as
+        | readonly {
+            partId: string
+            oldAudioClipId: string
+            oldAudioAssetId?: string
+            oldStatus?: string
+          }[]
+        | undefined
+      if (clearedDirect) {
+        for (const link of clearedDirect) {
+          const part = slide.prompter?.parts.find((p) => p.id === link.partId)
+          if (part) {
+            ;(part as unknown as { audioClipId?: string }).audioClipId = link.oldAudioClipId
+            if (link.oldAudioAssetId)
+              (part as unknown as { audioAssetId?: string }).audioAssetId = link.oldAudioAssetId
+            else delete (part as unknown as { audioAssetId?: string }).audioAssetId
+            if (link.oldStatus)
+              (part as unknown as { status?: string }).status =
+                link.oldStatus as import('../prompter').PrompterPartStatus
+            else delete (part as unknown as { status?: string }).status
+          }
+        }
+      }
+      const clearedSegs = inv.clearedSegments as
+        | readonly {
+            partId: string
+            segmentId: string
+            segment: import('../prompter').AudioSegment
+            segmentIndex: number
+          }[]
+        | undefined
+      if (clearedSegs) {
+        for (const segInfo of clearedSegs) {
+          const part = slide.prompter?.parts.find((p) => p.id === segInfo.partId)
+          if (part) {
+            if (!part.segments)
+              (part as unknown as { segments?: import('../prompter').AudioSegment[] }).segments = []
+            part.segments!.splice(segInfo.segmentIndex, 0, segInfo.segment)
+          }
+        }
+      }
       return
     }
     case 'MoveAudioClip': {
@@ -2502,9 +2544,35 @@ export function applyRedo(
       })
       return
     }
-    case 'DeleteAudioClip':
-      engine.deleteAudioClip(params.slideId as string, params.clipId as string)
+    case 'DeleteAudioClip': {
+      const slideId = params.slideId as string
+      const clipId = params.clipId as string
+      const slide = engine.getSlide(slideId)
+      // Clear any direct prompter links and segment links that reference this clip (for redo)
+      if (slide.prompter) {
+        for (const part of slide.prompter.parts) {
+          if (part.audioClipId === clipId) {
+            delete (part as unknown as { audioClipId?: string }).audioClipId
+            delete (part as unknown as { audioAssetId?: string }).audioAssetId
+            delete (part as unknown as { status?: string }).status
+          }
+          if (part.segments) {
+            const idx = part.segments.findIndex((s) => s.audioClipId === clipId)
+            if (idx !== -1) {
+              part.segments.splice(idx, 1)
+              if (part.segments.length === 0)
+                delete (part as unknown as { segments?: unknown }).segments
+            }
+          }
+        }
+      }
+      try {
+        engine.deleteAudioClip(slideId, clipId)
+      } catch {
+        // clip already gone (e.g., already deleted via part delete) — ignore
+      }
       return
+    }
     case 'MoveAudioClip':
       engine.moveAudioClip(params.slideId as string, params.clipId as string, {
         timelineStart: params.timelineStart as number,
