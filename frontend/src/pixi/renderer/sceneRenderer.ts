@@ -386,9 +386,19 @@ export class SceneRenderer {
         if (texId) {
           this.#loadAssetTexture(texId, nodeId, container)
         } else {
-          // Detached: need to revert placeholder texture to default?
-          // For now, placeholder remains; but ensure missing handling cleared
+          // Detached: revert to original assetInstance texture or placeholder hash
           this.#missingNodes.delete(nodeId)
+          const placeholder = placeholderOf(container)
+          if (placeholder) {
+            const fallbackId = node.components.assetInstance?.assetDefinitionId
+            if (fallbackId) {
+              this.#loadAssetTexture(fallbackId, nodeId, container)
+            } else {
+              const fallbackKey = node.id
+              const tex = this.#textureCache.get(fallbackKey)
+              applyAssetTexture(placeholder, tex)
+            }
+          }
         }
       }
     }
