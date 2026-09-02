@@ -64,3 +64,16 @@ export function shortModelLabel(modelId: string): string {
   const parts = modelId.split('/')
   return parts[parts.length - 1] ?? modelId
 }
+
+export function modelDownloadLabel(modelId: string, downloaded?: boolean): string {
+  const base = shortModelLabel(modelId)
+  if (downloaded === true) return `${base}  ✓ downloaded`
+  if (downloaded === false) return `${base}  ↓ needs download`
+  return base
+}
+
+export function modelDownloadStatusIcon(downloaded?: boolean): string {
+  if (downloaded === true) return '✓'
+  if (downloaded === false) return '↓'
+  return ''
+}

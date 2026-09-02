@@ -121,3 +121,52 @@ def normalize_model_id(raw: str | None) -> str | None:
     if stripped not in SUPPORTED_MODELS:
         raise ValueError(f"unknown modelId '{raw}'; must be one of {', '.join(SUPPORTED_MODELS)}")
     return stripped
+
+
+def is_model_downloaded(model_id: str) -> bool:
+    """Check if model weights are fully cached locally (no download needed)."""
+    if model_id not in SUPPORTED_MODELS:
+        return False
+    try:
+        from huggingface_hub import try_to_load_from_cache
+
+        # Fast path: single-file model
+        if try_to_load_from_cache(repo_id=model_id, filename="model.safetensors") is not None:
+            return True
+        # Sharded model: index + all shards
+        index_path = try_to_load_from_cache(
+            repo_id=model_id, filename="model.safetensors.index.json"
+        )
+        if index_path is not None:
+            import json
+
+            try:
+                with open(index_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                return False
+            weight_map = data.get("weight_map", {}) if isinstance(data, dict) else {}
+            shards: set[str] = set()
+            if isinstance(weight_map, dict):
+                for v in weight_map.values():
+                    if isinstance(v, str) and v:
+                        shards.add(v)
+            if not shards:
+                return False
+            for shard in shards:
+                if try_to_load_from_cache(repo_id=model_id, filename=shard) is None:
+                    return False
+            return True
+        # No model file nor index -> not fully downloaded
+        return False
+    except Exception:
+        return False
+
+
+def get_all_download_statuses() -> dict[str, bool]:
+    return {m: is_model_downloaded(m) for m in SUPPORTED_MODELS}
+
+
+def get_model_capabilities_with_status(model_id: str) -> dict[str, object]:
+    base = get_model_capabilities(model_id)
+    return {**base, "downloaded": is_model_downloaded(model_id)}

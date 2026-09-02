@@ -13,7 +13,7 @@ import {
   DEFAULT_PROVIDER,
   SUPPORTED_MODELS,
   SUPPORTED_PROVIDERS,
-  shortModelLabel,
+  modelDownloadLabel,
 } from '../../engine/ttsRegistry'
 
 interface WordLevelTtsModalProps {
@@ -63,6 +63,7 @@ export function WordLevelTtsModal({
   const [providers, setProviders] = useState<string[]>([...SUPPORTED_PROVIDERS])
   const [hasEditedModel, setHasEditedModel] = useState(false)
   const [hasEditedProvider, setHasEditedProvider] = useState(false)
+  const [downloadedMap, setDownloadedMap] = useState<Record<string, boolean>>({})
 
   const [status, setStatus] = useState<'idle' | 'generating' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
@@ -113,6 +114,15 @@ export function WordLevelTtsModal({
         else if (!ttsModel && defModel) setTtsModel(defModel)
         if (!hasEditedProvider && !ttsProviderId && defProv) setTtsProviderId(defProv)
         else if (!ttsProviderId && defProv) setTtsProviderId(defProv)
+        const dl: Record<string, boolean> = {}
+        if ((data as unknown as { downloaded?: Record<string, boolean> }).downloaded) {
+          Object.assign(dl, (data as unknown as { downloaded: Record<string, boolean> }).downloaded)
+        } else if ((data as unknown as { modelsStatus?: Array<{ id: string; downloaded: boolean }> }).modelsStatus) {
+          for (const s of (data as unknown as { modelsStatus: Array<{ id: string; downloaded: boolean }> }).modelsStatus) dl[s.id] = s.downloaded
+        } else if ((data as unknown as { capabilities?: Record<string, { downloaded?: boolean }> }).capabilities) {
+          for (const [k, v] of Object.entries((data as unknown as { capabilities: Record<string, { downloaded?: boolean }> }).capabilities)) dl[k] = Boolean(v.downloaded)
+        }
+        setDownloadedMap(dl)
       } catch {
         if (cancelled) return
         setModels([...SUPPORTED_MODELS])
@@ -480,10 +490,16 @@ export function WordLevelTtsModal({
                 >
                   {models.map((m) => (
                     <option key={m} value={m}>
-                      {shortModelLabel(m)}
+                      {modelDownloadLabel(m, downloadedMap[m])}
                     </option>
                   ))}
                 </select>
+                {formModelId && downloadedMap[formModelId] === false && (
+                  <div style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}>↓ Needs download</div>
+                )}
+                {formModelId && downloadedMap[formModelId] === true && (
+                  <div style={{ fontSize: 10, color: '#6bff6b', marginTop: 2 }}>✓ Downloaded</div>
+                )}
               </label>
               <label style={{ fontSize: 11 }}>
                 Provider
@@ -738,11 +754,21 @@ export function WordLevelTtsModal({
             >
               {models.map((m) => (
                 <option key={m} value={m}>
-                  {shortModelLabel(m)}
+                  {modelDownloadLabel(m, downloadedMap[m])}
                 </option>
               ))}
             </select>
             <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>Per-generation override; stored prompt model is fallback</div>
+            {ttsModel && downloadedMap[ttsModel] === false && (
+              <div data-testid="tts-model-download-warning" style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}>
+                ↓ Not yet downloaded — will be fetched on first generation (1–4 GB, may take a few minutes)
+              </div>
+            )}
+            {ttsModel && downloadedMap[ttsModel] === true && (
+              <div data-testid="tts-model-download-ok" style={{ fontSize: 10, color: '#6bff6b', marginTop: 2 }}>
+                ✓ Cached locally — ready to use
+              </div>
+            )}
           </label>
           <label style={{ fontSize: 11 }}>
             Provider

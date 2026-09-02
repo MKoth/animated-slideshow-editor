@@ -6,6 +6,7 @@ import {
   DEFAULT_PROVIDER,
   SUPPORTED_MODELS,
   SUPPORTED_PROVIDERS,
+  modelDownloadLabel,
   shortModelLabel,
 } from '../../engine/ttsRegistry'
 
@@ -15,6 +16,7 @@ export function TtsGlobalSettings() {
   const [provider, setProvider] = useState('')
   const [models, setModels] = useState<string[]>([...SUPPORTED_MODELS])
   const [providers, setProviders] = useState<string[]>([...SUPPORTED_PROVIDERS])
+  const [downloadedMap, setDownloadedMap] = useState<Record<string, boolean>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -35,6 +37,21 @@ export function TtsGlobalSettings() {
         if (modelsData) {
           if (Array.isArray(modelsData.models) && modelsData.models.length) setModels(modelsData.models)
           if (Array.isArray(modelsData.providers) && modelsData.providers.length) setProviders(modelsData.providers)
+          const dl: Record<string, boolean> = {}
+          const md = modelsData as unknown as { downloaded?: Record<string, boolean>; modelsStatus?: Array<{ id: string; downloaded: boolean }>; capabilities?: Record<string, { downloaded?: boolean }> }
+          if (md.downloaded) Object.assign(dl, md.downloaded)
+          else if (md.modelsStatus) for (const s of md.modelsStatus) dl[s.id] = s.downloaded
+          else if (md.capabilities) for (const [k, v] of Object.entries(md.capabilities)) dl[k] = Boolean(v.downloaded)
+          if (Object.keys(dl).length) setDownloadedMap(dl)
+        }
+        if (settingsData) {
+          const sd = settingsData as unknown as { downloaded?: Record<string, boolean>; modelsStatus?: Array<{ id: string; downloaded: boolean }> }
+          if (sd.downloaded) setDownloadedMap((prev) => ({ ...prev, ...sd.downloaded }))
+          else if (sd.modelsStatus) {
+            const dl: Record<string, boolean> = {}
+            for (const s of sd.modelsStatus) dl[s.id] = s.downloaded
+            setDownloadedMap((prev) => ({ ...prev, ...dl }))
+          }
         }
         // Prefer settings endpoint for defaults, fallback to models endpoint
         const defModel =
@@ -124,11 +141,21 @@ export function TtsGlobalSettings() {
           >
             {models.map((m) => (
               <option key={m} value={m}>
-                {shortModelLabel(m)}
+                {modelDownloadLabel(m, downloadedMap[m])}
               </option>
             ))}
           </select>
           <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>{modelId}</div>
+          {modelId && downloadedMap[modelId] === false && (
+            <div data-testid="tts-global-model-warning" style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}>
+              ↓ Not downloaded — will be fetched on next generation (1–4 GB)
+            </div>
+          )}
+          {modelId && downloadedMap[modelId] === true && (
+            <div data-testid="tts-global-model-ok" style={{ fontSize: 10, color: '#6bff6b', marginTop: 2 }}>
+              ✓ Cached locally — ready to use
+            </div>
+          )}
         </label>
         <label style={{ fontSize: 11 }}>
           Default Provider

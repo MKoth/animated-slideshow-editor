@@ -24,7 +24,7 @@ import {
   DEFAULT_PROVIDER,
   SUPPORTED_MODELS,
   SUPPORTED_PROVIDERS,
-  shortModelLabel,
+  modelDownloadLabel,
 } from '../../engine/ttsRegistry'
 
 interface TtsModalProps {
@@ -82,6 +82,7 @@ export function TtsModal({
   const [hasEditedModel, setHasEditedModel] = useState(false)
   const [hasEditedProvider, setHasEditedProvider] = useState(false)
   const [registryLoading, setRegistryLoading] = useState(true)
+  const [downloadedMap, setDownloadedMap] = useState<Record<string, boolean>>({})
 
   // Create/edit prompt UI
   const [showCreate, setShowCreate] = useState(false)
@@ -132,6 +133,16 @@ export function TtsModal({
         else if (!ttsModel && defModel) setTtsModel(defModel)
         if (!hasEditedProvider && !ttsProviderId && defProv) setTtsProviderId(defProv)
         else if (!ttsProviderId && defProv) setTtsProviderId(defProv)
+        // populate downloaded status
+        const dl: Record<string, boolean> = {}
+        if (data.downloaded) {
+          Object.assign(dl, data.downloaded)
+        } else if (data.modelsStatus) {
+          for (const s of data.modelsStatus) dl[s.id] = s.downloaded
+        } else if (data.capabilities) {
+          for (const [k, v] of Object.entries(data.capabilities)) dl[k] = Boolean((v as unknown as { downloaded?: boolean }).downloaded)
+        }
+        setDownloadedMap(dl)
       } catch {
         if (cancelled) return
         setModels([...SUPPORTED_MODELS])
@@ -632,10 +643,16 @@ export function TtsModal({
                 >
                   {models.map((m) => (
                     <option key={m} value={m}>
-                      {shortModelLabel(m)}
+                      {modelDownloadLabel(m, downloadedMap[m])}
                     </option>
                   ))}
                 </select>
+                {formModelId && downloadedMap[formModelId] === false && (
+                  <div style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}>↓ Needs download</div>
+                )}
+                {formModelId && downloadedMap[formModelId] === true && (
+                  <div style={{ fontSize: 10, color: '#6bff6b', marginTop: 2 }}>✓ Downloaded</div>
+                )}
               </label>
               <label style={{ fontSize: 11 }}>
                 Provider
@@ -889,7 +906,7 @@ export function TtsModal({
               ) : (
                 models.map((m) => (
                   <option key={m} value={m}>
-                    {shortModelLabel(m)}
+                    {modelDownloadLabel(m, downloadedMap[m])}
                   </option>
                 ))
               )}
@@ -897,6 +914,22 @@ export function TtsModal({
             <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
               Default from server Settings; overrides Voice Prompt stored model
             </div>
+            {ttsModel && downloadedMap[ttsModel] === false && (
+              <div
+                data-testid="tts-model-download-warning"
+                style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}
+              >
+                ↓ Not yet downloaded — will be fetched on first generation (1–4 GB, may take a few minutes)
+              </div>
+            )}
+            {ttsModel && downloadedMap[ttsModel] === true && (
+              <div
+                data-testid="tts-model-download-ok"
+                style={{ fontSize: 10, color: '#6bff6b', marginTop: 2 }}
+              >
+                ✓ Cached locally — ready to use
+              </div>
+            )}
           </label>
           <label style={{ fontSize: 11 }}>
             Provider

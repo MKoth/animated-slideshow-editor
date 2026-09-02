@@ -1,5 +1,12 @@
 import { ApiClient } from './apiClient'
 
+export interface ModelCapabilities {
+  languages: string[]
+  speakers: string[]
+  instructionSupported: boolean
+  downloaded?: boolean
+}
+
 export interface TtsModelsResponse {
   models: string[]
   providers: string[]
@@ -7,9 +14,11 @@ export interface TtsModelsResponse {
   defaultProvider: string
   default_model_id?: string
   default_provider?: string
-  capabilities?: Record<string, { languages: string[]; speakers: string[]; instructionSupported: boolean }>
-  perModel?: Record<string, { languages: string[]; speakers: string[]; instructionSupported: boolean }>
+  capabilities?: Record<string, ModelCapabilities>
+  perModel?: Record<string, ModelCapabilities>
   defaults?: { provider: string; modelId: string }
+  downloaded?: Record<string, boolean>
+  modelsStatus?: Array<{ id: string; downloaded: boolean }>
 }
 
 export interface TtsCapabilitiesResponse {
@@ -19,10 +28,12 @@ export interface TtsCapabilitiesResponse {
   defaultProvider: string
   languages: string[]
   speakers: string[]
-  capabilities: Record<string, { languages: string[]; speakers: string[]; instructionSupported: boolean }>
-  perModel: Record<string, { languages: string[]; speakers: string[]; instructionSupported: boolean }>
-  per_model?: Record<string, { languages: string[]; speakers: string[]; instructionSupported: boolean }>
+  capabilities: Record<string, ModelCapabilities>
+  perModel: Record<string, ModelCapabilities>
+  per_model?: Record<string, ModelCapabilities>
   defaults: { provider: string; modelId: string }
+  downloaded?: Record<string, boolean>
+  modelsStatus?: Array<{ id: string; downloaded: boolean }>
 }
 
 export interface TtsSettings {
@@ -31,6 +42,8 @@ export interface TtsSettings {
   model_id?: string
   tts_provider?: string
   tts_model_id?: string
+  downloaded?: Record<string, boolean>
+  modelsStatus?: Array<{ id: string; downloaded: boolean }>
 }
 
 export class TtsSettingsApi {

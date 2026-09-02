@@ -158,9 +158,34 @@ def _get_registry_defaults():
         providers = ["auto", "sine", "mlx"]
 
         def cap():  # type: ignore
-            return {default_model: {"languages": ["zh", "en", "ja", "ko", "de", "fr", "ru", "pt", "es", "it"], "speakers": ["Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_Anna", "Sohee"], "instructionSupported": False}}
+            return {default_model: {"languages": ["zh", "en", "ja", "ko", "de", "fr", "ru", "pt", "es", "it"], "speakers": ["Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_Anna", "Sohee"], "instructionSupported": False, "downloaded": False}}
 
         return default_model, default_provider, models, providers, cap
+
+
+def _enrich_capabilities_with_download(capabilities: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from app.tts.registry import is_model_downloaded
+
+        enriched: dict[str, Any] = {}
+        for mid, cap in capabilities.items():
+            try:
+                downloaded = is_model_downloaded(mid)
+            except Exception:
+                downloaded = False
+            enriched[mid] = {**cap, "downloaded": downloaded}
+        return enriched
+    except Exception:
+        return capabilities
+
+
+def _get_download_statuses(models: list[str]) -> dict[str, bool]:
+    try:
+        from app.tts.registry import is_model_downloaded
+
+        return {m: is_model_downloaded(m) for m in models}
+    except Exception:
+        return {m: False for m in models}
 
 
 def _get_settings_values(request: Request) -> tuple[str, str]:
@@ -178,9 +203,8 @@ def _get_settings_values(request: Request) -> tuple[str, str]:
 def get_tts_models(request: Request) -> dict[str, Any]:
     default_model, default_provider, models, providers, get_all = _get_registry_defaults()
     provider, model_id = _get_settings_values(request)
-    capabilities = get_all()
-    # per-model languages/speakers already in capabilities
-    # also expose supported speakers/languages via engine helpers as fallback
+    capabilities = _enrich_capabilities_with_download(get_all())
+    download_statuses = _get_download_statuses(models)
     return {
         "models": models,
         "providers": providers,
@@ -191,6 +215,11 @@ def get_tts_models(request: Request) -> dict[str, Any]:
         "capabilities": capabilities,
         "perModel": capabilities,
         "defaults": {"provider": provider, "modelId": model_id},
+        "downloaded": download_statuses,
+        "modelsStatus": [
+            {"id": m, "downloaded": download_statuses.get(m, False)}
+            for m in models
+        ],
     }
 
 
@@ -198,7 +227,9 @@ def get_tts_models(request: Request) -> dict[str, Any]:
 def get_tts_capabilities(request: Request) -> dict[str, Any]:
     default_model, default_provider, models, providers, get_all = _get_registry_defaults()
     provider, model_id = _get_settings_values(request)
-    capabilities = get_all()
+    raw_capabilities = get_all()
+    capabilities = _enrich_capabilities_with_download(raw_capabilities)
+    download_statuses = _get_download_statuses(models)
     # aggregate languages/speakers across models
     all_languages: set[str] = set()
     all_speakers: set[str] = set()
@@ -233,6 +264,11 @@ def get_tts_capabilities(request: Request) -> dict[str, Any]:
         "perModel": capabilities,
         "per_model": capabilities,
         "defaults": {"provider": provider, "modelId": model_id},
+        "downloaded": download_statuses,
+        "modelsStatus": [
+            {"id": m, "downloaded": download_statuses.get(m, False)}
+            for m in models
+        ],
     }
 
 
@@ -240,6 +276,7 @@ def get_tts_capabilities(request: Request) -> dict[str, Any]:
 def get_tts_settings(request: Request) -> dict[str, Any]:
     provider, model_id = _get_settings_values(request)
     default_model, default_provider, models, providers, get_all = _get_registry_defaults()
+    download_statuses = _get_download_statuses(models)
     return {
         "provider": provider,
         "modelId": model_id,
@@ -248,6 +285,11 @@ def get_tts_settings(request: Request) -> dict[str, Any]:
         "tts_model_id": model_id,
         "models": models,
         "providers": providers,
+        "downloaded": download_statuses,
+        "modelsStatus": [
+            {"id": m, "downloaded": download_statuses.get(m, False)}
+            for m in models
+        ],
     }
 
 
