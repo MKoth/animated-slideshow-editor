@@ -5,6 +5,8 @@ import { useEngine } from '../../app/useEngine'
 import {
   AUDIO_TRACK_IDS,
   type AudioTrackId,
+  computeAudioClipStretchPlaybackRate,
+  computeAudioClipTrimPatch,
   getAudioClipPlaybackDuration,
   getOverlappingClipIds,
 } from '../../engine/audioClip'
@@ -17,6 +19,7 @@ import {
   ImportPrompterCommand,
   MoveAudioClipCommand,
   MovePrompterPartCommand,
+  SetAudioClipPlaybackRateCommand,
   SplitAudioClipCommand,
   SplitPrompterWordsCommand,
   TransactionCommand,
@@ -24,6 +27,8 @@ import {
   UpdatePrompterPartCommand,
   UpdatePrompterPartWithShiftCommand,
 } from '../../engine/commands'
+import { AudioClipResizeDialog } from '../audio/AudioClipResizeDialog'
+import { useAudioResizePreferenceStore } from '../../stores/audioResizePreferenceStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import {
   DEFAULT_TIMELINE_VIEWPORT_WIDTH,
@@ -47,10 +52,7 @@ import { assetsApi } from '../../api'
 import { RecordModal } from '../audio/RecordModal'
 import { TtsModal } from '../audio/TtsModal'
 import { WordLevelTtsModal } from '../audio/WordLevelTtsModal'
-import {
-  getPrompterRecordingShortcut,
-  getPrompterSecondsPerCharacter,
-} from '../../engine/prompter'
+import { getPrompterRecordingShortcut, getPrompterSecondsPerCharacter } from '../../engine/prompter'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { captureAudioSnapshot } from '../../app/assetSnapshot'
 
@@ -171,8 +173,25 @@ export function AudioTimelineBody({
     width: number
   } | null>(null)
 
+  // Resize dialog pending (trim vs stretch)
+  const [resizePending, setResizePending] = useState<{
+    clipId: string
+    trackId: AudioTrackId
+    side: 'left' | 'right'
+    deltaPlayback: number
+  } | null>(null)
+  const [showAudioSettings, setShowAudioSettings] = useState(false)
+  const resizePrefs = useAudioResizePreferenceStore((s) => s.preferences)
+  const hasResizePrefs =
+    resizePrefs.voice !== null || resizePrefs.sfx !== null || resizePrefs.music !== null
+
   // Prompter move/trim state (like audio clips: draggable, resizable) — gap-free reorder
-  const prompterMoveRef = useRef<{ partId: string; startX: number; startTime: number; oldIndex: number } | null>(null)
+  const prompterMoveRef = useRef<{
+    partId: string
+    startX: number
+    startTime: number
+    oldIndex: number
+  } | null>(null)
   const [prompterMovePreview, setPrompterMovePreview] = useState<{
     partId: string
     startTime: number
@@ -628,7 +647,7 @@ export function AudioTimelineBody({
     window.addEventListener('pointerup', onUp)
   }
 
-  // Trim handling
+  // Trim handling — now Trim vs Time-stretch prompt (issue #246)
   const onTrimPointerDown = (e: React.PointerEvent, clipId: string, side: 'left' | 'right') => {
     e.preventDefault()
     e.stopPropagation()
@@ -638,6 +657,8 @@ export function AudioTimelineBody({
     const startSourceEnd = clip.sourceEnd
     const startX = e.clientX
     const playbackRate = clip.playbackRate || 1
+    const trackId = clip.trackId
+    const clipSnapshot = clip
     const onMove = (ev: PointerEvent) => {
       const dx = ev.clientX - startX
       const dtPlayback = dx / pps
@@ -668,26 +689,66 @@ export function AudioTimelineBody({
         })
       }
     }
+    const applyTrim = (dtPlayback: number) => {
+      const patch = computeAudioClipTrimPatch(clipSnapshot, side, dtPlayback)
+      if (!patch || (patch.sourceStart === undefined && patch.sourceEnd === undefined)) {
+        setTrimPreview(null)
+        return
+      }
+      const toDispatch: { sourceStart?: number; sourceEnd?: number } = {}
+      if (patch.sourceStart !== undefined) toDispatch.sourceStart = patch.sourceStart
+      if (patch.sourceEnd !== undefined) toDispatch.sourceEnd = patch.sourceEnd
+      const result = dispatch(
+        new TrimAudioClipCommand({ slideId: slide.id, clipId, ...toDispatch }),
+      )
+      if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+      setTrimPreview(null)
+    }
+    const applyStretch = (dtPlayback: number) => {
+      const newRate = computeAudioClipStretchPlaybackRate(clipSnapshot, side, dtPlayback)
+      if (newRate === null) {
+        setTrimPreview(null)
+        return
+      }
+      const result = dispatch(
+        new SetAudioClipPlaybackRateCommand({ slideId: slide.id, clipId, playbackRate: newRate }),
+      )
+      if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+      setTrimPreview(null)
+    }
     const onUp = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       const dx = ev.clientX - startX
       const dtPlayback = dx / pps
-      let patch: { sourceStart?: number; sourceEnd?: number } = {}
-      if (side === 'left') {
-        const newSourceStart = Math.max(0, startSourceStart + dtPlayback * playbackRate)
-        const clamped = Math.min(newSourceStart, startSourceEnd - 0.01)
-        if (Math.abs(clamped - startSourceStart) > 1e-6) patch = { sourceStart: clamped }
-      } else {
-        const newSourceEnd = startSourceEnd + dtPlayback * playbackRate
-        const clamped = Math.max(startSourceStart + 0.01, newSourceEnd)
-        if (Math.abs(clamped - startSourceEnd) > 1e-6) patch = { sourceEnd: clamped }
+      if (Math.abs(dtPlayback) < 1e-6) {
+        setTrimPreview(null)
+        return
       }
-      if (patch.sourceStart !== undefined || patch.sourceEnd !== undefined) {
-        const result = dispatch(new TrimAudioClipCommand({ slideId: slide.id, clipId, ...patch }))
-        if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+      const alt = ev.altKey
+      const shift = ev.shiftKey
+      // Modifier overrides
+      if (alt && !shift) {
+        applyStretch(dtPlayback)
+        return
       }
+      if (shift && !alt) {
+        applyTrim(dtPlayback)
+        return
+      }
+      // Per-track preference
+      const pref = useAudioResizePreferenceStore.getState().getPreference(trackId)
+      if (pref === 'trim') {
+        applyTrim(dtPlayback)
+        return
+      }
+      if (pref === 'stretch') {
+        applyStretch(dtPlayback)
+        return
+      }
+      // No modifier nor preference — show prompt
       setTrimPreview(null)
+      setResizePending({ clipId, trackId, side, deltaPlayback: dtPlayback })
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
@@ -762,12 +823,20 @@ export function AudioTimelineBody({
       if (ev.shiftKey) {
         const newIndex = computeNewIndex(snapped)
         if (newIndex !== oldIndex) {
-          const result = dispatch(new MovePrompterPartCommand({ slideId: slide.id, partId, newIndex } as never))
+          const result = dispatch(
+            new MovePrompterPartCommand({ slideId: slide.id, partId, newIndex } as never),
+          )
           if (!result.ok) useNotificationStore.getState().notify(result.error.message)
         }
       } else {
         if (Math.abs(snapped - oldStartTime) > 1e-6) {
-          const result = dispatch(new MovePrompterPartCommand({ slideId: slide.id, partId, newStartTime: snapped } as never))
+          const result = dispatch(
+            new MovePrompterPartCommand({
+              slideId: slide.id,
+              partId,
+              newStartTime: snapped,
+            } as never),
+          )
           if (!result.ok) useNotificationStore.getState().notify(result.error.message)
         }
       }
@@ -1484,8 +1553,93 @@ export function AudioTimelineBody({
                 >
                   Delete
                 </button>
+                <button
+                  data-testid="audio-resize-settings"
+                  aria-label="Audio resize settings"
+                  onClick={() => setShowAudioSettings((v) => !v)}
+                  style={{
+                    fontSize: 10,
+                    padding: '2px 6px',
+                    border: hasResizePrefs ? '1px solid #7c5cff' : '1px solid var(--color-border)',
+                    background: showAudioSettings ? '#7c5cff' : 'var(--color-bg)',
+                    color: showAudioSettings ? '#fff' : undefined,
+                    cursor: 'pointer',
+                    borderRadius: 4,
+                  }}
+                >
+                  Settings
+                </button>
               </div>
             </div>
+            {showAudioSettings && (
+              <div
+                data-testid="audio-resize-settings-panel"
+                style={{
+                  padding: '8px 12px',
+                  background: 'var(--color-bg-panel)',
+                  borderBottom: '1px solid var(--color-border)',
+                  fontSize: 11,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                }}
+              >
+                <div style={{ fontWeight: 600, color: 'var(--color-text)' }}>
+                  Audio clip resize — per-track preference
+                </div>
+                <div style={{ color: 'var(--color-text-muted)', fontSize: 10 }}>
+                  Dragging a clip handle prompts <strong>Trim</strong> (hard cut{' '}
+                  <code>sourceStart/sourceEnd</code>) vs <strong>Time-stretch</strong> (
+                  <code>playbackRate</code>, RubberBand at export, original asset never mutated).
+                  Modifiers: Alt = stretch, Shift = trim (override). &quot;Don&apos;t ask
+                  again&quot; remembers per track.
+                </div>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  {(['voice', 'sfx', 'music'] as AudioTrackId[]).map((tid) => (
+                    <span
+                      key={tid}
+                      data-testid={`audio-resize-pref-${tid}`}
+                      style={{ fontSize: 11 }}
+                    >
+                      {tid}: <strong>{resizePrefs[tid] ?? 'ask'}</strong>
+                      {resizePrefs[tid] && (
+                        <button
+                          data-testid={`audio-resize-clear-${tid}`}
+                          onClick={() =>
+                            useAudioResizePreferenceStore.getState().clearPreference(tid)
+                          }
+                          style={{
+                            marginLeft: 6,
+                            fontSize: 10,
+                            padding: '1px 6px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                  <button
+                    data-testid="audio-resize-reset"
+                    disabled={!hasResizePrefs}
+                    onClick={() => useAudioResizePreferenceStore.getState().clearAll()}
+                    style={{
+                      marginLeft: 'auto',
+                      fontSize: 10,
+                      padding: '4px 8px',
+                      borderRadius: 4,
+                      border: '1px solid var(--color-border)',
+                      background: hasResizePrefs ? '#ff4d4d' : 'var(--color-bg)',
+                      color: hasResizePrefs ? '#fff' : 'var(--color-text-muted)',
+                      cursor: hasResizePrefs ? 'pointer' : 'not-allowed',
+                    }}
+                  >
+                    Reset all (Don&apos;t ask)
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div style={{ position: 'relative', width: contentWidth, overflow: 'visible' }}>
               <div
@@ -2118,7 +2272,9 @@ export function AudioTimelineBody({
                           justifyContent: 'center',
                           cursor: 'pointer',
                           zIndex: isDragTarget ? 8 : 6,
-                          boxShadow: isDragTarget ? '0 2px 8px rgba(124,92,255,0.5)' : '0 1px 4px rgba(0,0,0,0.2)',
+                          boxShadow: isDragTarget
+                            ? '0 2px 8px rgba(124,92,255,0.5)'
+                            : '0 1px 4px rgba(0,0,0,0.2)',
                           opacity: prompterMovePreview ? (isDragTarget ? 1 : 0.35) : 0.9,
                           transition: 'all 120ms ease',
                         }}
@@ -2647,6 +2803,55 @@ export function AudioTimelineBody({
           }}
         />
       )}
+      {resizePending && (
+        <AudioClipResizeDialog
+          trackId={resizePending.trackId}
+          onChoice={(mode) => {
+            const pending = resizePending
+            const clip = slide.audio.clips.find((c) => c.id === pending.clipId)
+            if (!clip) {
+              setResizePending(null)
+              return
+            }
+            if (mode === 'trim') {
+              const patch = computeAudioClipTrimPatch(clip, pending.side, pending.deltaPlayback)
+              if (patch) {
+                const toDispatch: { sourceStart?: number; sourceEnd?: number } = {}
+                if (patch.sourceStart !== undefined) toDispatch.sourceStart = patch.sourceStart
+                if (patch.sourceEnd !== undefined) toDispatch.sourceEnd = patch.sourceEnd
+                if (Object.keys(toDispatch).length > 0) {
+                  const result = dispatch(
+                    new TrimAudioClipCommand({
+                      slideId: slide.id,
+                      clipId: pending.clipId,
+                      ...toDispatch,
+                    }),
+                  )
+                  if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+                }
+              }
+            } else {
+              const newRate = computeAudioClipStretchPlaybackRate(
+                clip,
+                pending.side,
+                pending.deltaPlayback,
+              )
+              if (newRate !== null) {
+                const result = dispatch(
+                  new SetAudioClipPlaybackRateCommand({
+                    slideId: slide.id,
+                    clipId: pending.clipId,
+                    playbackRate: newRate,
+                  }),
+                )
+                if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+              }
+            }
+            setResizePending(null)
+          }}
+          onClose={() => setResizePending(null)}
+        />
+      )}
       {showImport && (
         <div
           role="dialog"
@@ -2682,9 +2887,9 @@ export function AudioTimelineBody({
             <h3 style={{ margin: '0 0 8px', fontSize: 13 }}>Import prompter</h3>
             <p style={{ fontSize: 11, color: '#888', margin: '0 0 8px' }}>
               Paste narration — auto-splits on <code>[.,;:!?{'\\n'}—]</code> (consecutive collapsed,
-              no empty parts). Duration = chars × <code>secondsPerCharacter 0.2</code>. Gap-free reflow
-              (`startTime = prefix sum durations`) — linked AudioClips/Segments move with their parts
-              as one undo entry.
+              no empty parts). Duration = chars × <code>secondsPerCharacter 0.2</code>. Gap-free
+              reflow (`startTime = prefix sum durations`) — linked AudioClips/Segments move with
+              their parts as one undo entry.
             </p>
             <textarea
               data-testid="prompter-import-textarea"
@@ -2704,7 +2909,15 @@ export function AudioTimelineBody({
                 resize: 'vertical',
               }}
             />
-            <div style={{ marginTop: 10, display: 'flex', gap: 12, alignItems: 'center', fontSize: 12 }}>
+            <div
+              style={{
+                marginTop: 10,
+                display: 'flex',
+                gap: 12,
+                alignItems: 'center',
+                fontSize: 12,
+              }}
+            >
               <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
                 <input
                   type="radio"
@@ -2730,7 +2943,15 @@ export function AudioTimelineBody({
               </label>
             </div>
             {importMode === 'append' && prompterParts.length > 0 && (
-              <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', fontSize: 11 }}>
+              <div
+                style={{
+                  marginTop: 8,
+                  display: 'flex',
+                  gap: 8,
+                  alignItems: 'center',
+                  fontSize: 11,
+                }}
+              >
                 <span style={{ color: '#aaa' }}>Insert at:</span>
                 <select
                   data-testid="import-insert-index"
@@ -2761,8 +2982,19 @@ export function AudioTimelineBody({
               </div>
             )}
             {importMode === 'replace' && prompterParts.length > 0 && !showReplaceConfirm && (
-              <p style={{ marginTop: 8, fontSize: 11, color: '#ff9a9a', background: 'rgba(255,77,77,0.08)', border: '1px solid rgba(255,77,77,0.25)', borderRadius: 4, padding: '6px 8px' }}>
-                Replace will overwrite {prompterParts.length} existing part(s) and their linked clips (assets preserved). This is explicit — confirm to proceed.
+              <p
+                style={{
+                  marginTop: 8,
+                  fontSize: 11,
+                  color: '#ff9a9a',
+                  background: 'rgba(255,77,77,0.08)',
+                  border: '1px solid rgba(255,77,77,0.25)',
+                  borderRadius: 4,
+                  padding: '6px 8px',
+                }}
+              >
+                Replace will overwrite {prompterParts.length} existing part(s) and their linked
+                clips (assets preserved). This is explicit — confirm to proceed.
               </p>
             )}
             {showReplaceConfirm && (
@@ -2815,7 +3047,8 @@ export function AudioTimelineBody({
                   padding: '6px 12px',
                   borderRadius: 4,
                   border: '1px solid #7c5cff',
-                  background: importMode === 'replace' && showReplaceConfirm ? '#ff4d4d' : '#7c5cff',
+                  background:
+                    importMode === 'replace' && showReplaceConfirm ? '#ff4d4d' : '#7c5cff',
                   color: '#fff',
                   cursor: 'pointer',
                 }}

@@ -220,6 +220,63 @@ export function audioClipEffectiveGain(
   return clip.volume * trackGain * masterGain * fadeFactor
 }
 
+export type AudioClipResizeHandle = 'left' | 'right'
+
+export function computeAudioClipTrimPatch(
+  clip: AudioClip,
+  side: AudioClipResizeHandle,
+  deltaPlayback: number,
+): { sourceStart?: number; sourceEnd?: number; playbackDurationDelta: number } | null {
+  const rate = clip.playbackRate || 1
+  if (side === 'left') {
+    const newSourceStart = Math.max(0, clip.sourceStart + deltaPlayback * rate)
+    const clamped = Math.min(newSourceStart, clip.sourceEnd - 0.01)
+    if (Math.abs(clamped - clip.sourceStart) < 1e-6) return null
+    return { sourceStart: clamped, sourceEnd: undefined, playbackDurationDelta: -deltaPlayback }
+  } else {
+    const newSourceEnd = clip.sourceEnd + deltaPlayback * rate
+    const clamped = Math.max(clip.sourceStart + 0.01, newSourceEnd)
+    if (Math.abs(clamped - clip.sourceEnd) < 1e-6) return null
+    return { sourceStart: undefined, sourceEnd: clamped, playbackDurationDelta: deltaPlayback }
+  }
+}
+
+export function computeAudioClipStretchPlaybackRate(
+  clip: AudioClip,
+  side: AudioClipResizeHandle,
+  deltaPlayback: number,
+): number | null {
+  const sourceDuration = getAudioClipSourceDuration(clip)
+  const playbackDuration = getAudioClipPlaybackDuration(clip)
+  let desiredPlaybackDuration: number
+  if (side === 'left') {
+    // dragging left handle: dt positive shrinks, dt negative grows
+    desiredPlaybackDuration = playbackDuration - deltaPlayback
+  } else {
+    desiredPlaybackDuration = playbackDuration + deltaPlayback
+  }
+  // clamp minimal playback duration to 0.01
+  desiredPlaybackDuration = Math.max(0.01, desiredPlaybackDuration)
+  if (Math.abs(desiredPlaybackDuration - playbackDuration) < 1e-6) return null
+  const newRate = sourceDuration / desiredPlaybackDuration
+  if (!Number.isFinite(newRate) || newRate <= 0) return null
+  // also clamp extreme rates to avoid pathological 100x
+  // Keep within 0.1..10 for sanity, but not enforced as error — just compute
+  return newRate
+}
+
+export function getAudioClipResizeDesiredPlaybackDuration(
+  clip: AudioClip,
+  side: AudioClipResizeHandle,
+  deltaPlayback: number,
+): number {
+  const playbackDuration = getAudioClipPlaybackDuration(clip)
+  let desired =
+    side === 'left' ? playbackDuration - deltaPlayback : playbackDuration + deltaPlayback
+  desired = Math.max(0.01, desired)
+  return desired
+}
+
 /** Overlap detection for same-track clips. Returns set of ids that overlap at least one other clip on same track. */
 export function getOverlappingClipIds(clips: readonly AudioClip[]): Set<string> {
   const result = new Set<string>()
