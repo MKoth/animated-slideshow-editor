@@ -2072,18 +2072,15 @@ export function AudioTimelineBody({
                       })
                     })()
                   )}
-                  {/* Insert “+” between parts — any index, empty text, estimated duration, one Transaction; follows actual part positions (gaps allowed) */}
+                  {/* Insert “+” between parts — tightly follows previous block's end so it tracks its size; gaps don't pull it to middle */}
                   {Array.from({ length: prompterParts.length + 1 }).map((_, gapIndex) => {
                     let gapX: number
                     if (prompterParts.length === 0) {
-                      gapX = 8
+                      gapX = 10
                     } else if (gapIndex === 0) {
-                      // Before first: centered in [0, first.start) if gap, else at 0
-                      gapX = (prompterParts[0].startTime / 2) * pps
+                      gapX = 10
                     } else if (gapIndex < prompterParts.length) {
-                      const prevEnd = prompterParts[gapIndex - 1].endTime
-                      const nextStart = prompterParts[gapIndex].startTime
-                      gapX = ((prevEnd + nextStart) / 2) * pps
+                      gapX = prompterParts[gapIndex - 1].endTime * pps
                     } else {
                       gapX = prompterParts[prompterParts.length - 1].endTime * pps
                     }
