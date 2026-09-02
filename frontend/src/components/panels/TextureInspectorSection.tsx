@@ -60,8 +60,24 @@ export function TextureInspectorSection({
         }),
       )
       if (!result.ok) throw result.error
-      // snapshot for self-contained .lesson
-      void captureAssetSnapshot(engine, definitionId)
+      // snapshot for self-contained .lesson — after embed, re-trigger load to use data URL
+      void captureAssetSnapshot(engine, definitionId).then((captured) => {
+        if (captured) {
+          // Force a material reload so TextureCache retries with embedded data URL
+          // Dispatch a no-op UV transform to trigger renderer reload (same fitMode)
+          try {
+            const current = engine.getNode(node.id).material
+            const fm = current.uvTransform?.fitMode ?? 'stretch'
+            dispatch(new SetUVTransformCommand({ nodeId: node.id, fitMode: fm }))
+            // Immediately revert the no-op by dispatching again if needed? Actually we just need to trigger
+            // The above dispatch will be undone? Instead we can directly trigger a light refresh:
+            // Use a tiny offset nudge and back to force two dispatches? Simpler: just dispatch same fitMode again
+            // The handler will reload texture with new URL.
+          } catch {
+            // ignore
+          }
+        }
+      })
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error))
     }

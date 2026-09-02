@@ -11,8 +11,9 @@ export class TextureCache {
   readonly #pixi: RendererPixi
   readonly #real = new Map<string, { readonly texture: PixiTexture; readonly url: string }>()
   readonly #placeholders = new Map<string, PixiTexture>()
-  readonly #failed = new Set<string>()
+  readonly #failed = new Map<string, string>()
   readonly #pending = new Map<string, Promise<TextureLoadResult>>()
+  readonly #pendingUrl = new Map<string, string>()
 
   constructor(pixi: RendererPixi) {
     this.#pixi = pixi
@@ -27,15 +28,30 @@ export class TextureCache {
     if (real) {
       return Promise.resolve({ texture: real.texture, real: true })
     }
-    if (this.#failed.has(key)) {
-      return Promise.resolve({ texture: this.#placeholderFor(key), real: false })
+    const failedUrl = this.#failed.get(key)
+    if (failedUrl !== undefined) {
+      if (failedUrl === url) {
+        return Promise.resolve({ texture: this.#placeholderFor(key), real: false })
+      }
+      // Different URL now (e.g., original_url failed, now trying embedded data URL) — retry
+      this.#failed.delete(key)
     }
     const pending = this.#pending.get(key)
+    const pendingUrl = this.#pendingUrl.get(key)
     if (pending) {
-      return pending
+      if (pendingUrl === url) {
+        return pending
+      }
+      // Different URL while pending — chain after pending settles then retry with new URL
+      const chained = pending.then(
+        () => this.load(url, key),
+        () => this.load(url, key),
+      )
+      return chained
     }
     const result = this.#loadTexture(url, key)
     this.#pending.set(key, result)
+    this.#pendingUrl.set(key, url)
     return result
   }
 
@@ -43,13 +59,15 @@ export class TextureCache {
     try {
       const texture = await this.#pixi.Assets.load(url)
       this.#real.set(key, { texture, url })
+      this.#failed.delete(key)
       return { texture, real: true }
     } catch (error) {
       console.error(`[texture-cache] failed to load texture for "${key}" from ${url}:`, error)
-      this.#failed.add(key)
+      this.#failed.set(key, url)
       return { texture: this.#placeholderFor(key), real: false }
     } finally {
       this.#pending.delete(key)
+      this.#pendingUrl.delete(key)
     }
   }
 
@@ -64,6 +82,7 @@ export class TextureCache {
     this.#placeholders.clear()
     this.#failed.clear()
     this.#pending.clear()
+    this.#pendingUrl.clear()
   }
   #placeholderFor(key: string): PixiTexture {
     const cached = this.#placeholders.get(key)

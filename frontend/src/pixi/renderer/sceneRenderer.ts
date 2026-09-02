@@ -778,14 +778,19 @@ export class SceneRenderer {
       applyPivotWithSize(container, node.transform.localPivot, size)
     }
     this.#evaluateAndApply(node.id)
-    const instance = node.components.assetInstance
-    if (instance) {
-      this.#loadAssetTexture(instance.assetDefinitionId, node.id, container)
-    }
-    // Load texture attached via material (mesh/circle UV texture)
     const texId = node.material.textureId
-    if (texId) {
+    const isMeshLike = Boolean(node.components.mesh || node.components.circle)
+    if (texId && isMeshLike) {
+      // Mesh/circle with attached texture — prioritize material texture over assetInstance
       this.#loadAssetTexture(texId, node.id, container)
+    } else {
+      const instance = node.components.assetInstance
+      if (instance) {
+        this.#loadAssetTexture(instance.assetDefinitionId, node.id, container)
+      } else if (texId) {
+        // Non-mesh node with material texture (future-proof)
+        this.#loadAssetTexture(texId, node.id, container)
+      }
     }
     // Apply UV transform after texture placeholder is set
     if (node.components.mesh || node.components.circle) {
@@ -1188,17 +1193,23 @@ export class SceneRenderer {
       return
     }
     for (const node of walkPreOrder(scene.root)) {
-      const containers: string[] = []
-      const instance = node.components.assetInstance
-      if (instance) containers.push(instance.assetDefinitionId)
+      const container = this.#containers.get(node.id)
+      if (!container) {
+        continue
+      }
       const texId = node.material.textureId
-      if (texId) containers.push(texId)
-      for (const defId of containers) {
-        const container = this.#containers.get(node.id)
-        if (!container) {
-          continue
-        }
-        this.#loadAssetTexture(defId, node.id, container)
+      const isMeshLike = Boolean(node.components.mesh || node.components.circle)
+      if (texId && isMeshLike) {
+        this.#loadAssetTexture(texId, node.id, container)
+        continue
+      }
+      const instance = node.components.assetInstance
+      if (instance) {
+        this.#loadAssetTexture(instance.assetDefinitionId, node.id, container)
+        continue
+      }
+      if (texId) {
+        this.#loadAssetTexture(texId, node.id, container)
       }
     }
   }

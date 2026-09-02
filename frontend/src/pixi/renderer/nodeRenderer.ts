@@ -62,12 +62,14 @@ export function createNodeContainer(
     placeholderByContainer.set(container, chartPlaceholder)
     container.addChild(chartPlaceholder)
   } else if (node.components.circle) {
-    const textureKey = node.components.assetInstance?.assetDefinitionId ?? node.id
+    const textureKey =
+      node.material.textureId ?? node.components.assetInstance?.assetDefinitionId ?? node.id
     const circlePlaceholder = createCirclePlaceholder(pixi, node, cache.get(textureKey))
     placeholderByContainer.set(container, circlePlaceholder)
     container.addChild(circlePlaceholder)
   } else if (node.components.mesh) {
-    const textureKey = node.components.assetInstance?.assetDefinitionId ?? node.id
+    const textureKey =
+      node.material.textureId ?? node.components.assetInstance?.assetDefinitionId ?? node.id
     const meshPlaceholder = createMeshPlaceholder(pixi, node, cache.get(textureKey))
     placeholderByContainer.set(container, meshPlaceholder)
     container.addChild(meshPlaceholder)
