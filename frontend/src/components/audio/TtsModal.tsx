@@ -18,6 +18,12 @@ import { useAudioResizePreferenceStore } from '../../stores/audioResizePreferenc
 import { MismatchDialog } from './MismatchDialog'
 import type { EmbeddedAsset } from '../../engine/embeddedAsset'
 import { LANGUAGE_OPTIONS, migrateStoredLanguage } from '../../engine/ttsLanguages'
+import {
+  defaultSpeakerForModel,
+  getFallbackSpeakersForModel,
+  migrateStoredVoice,
+  SPEAKER_HINTS,
+} from '../../engine/ttsVoices'
 import { TtsSettingsApi } from '../../api/ttsSettingsApi'
 import {
   DEFAULT_MODEL_ID,
@@ -83,6 +89,11 @@ export function TtsModal({
   const [hasEditedProvider, setHasEditedProvider] = useState(false)
   const [registryLoading, setRegistryLoading] = useState(true)
   const [downloadedMap, setDownloadedMap] = useState<Record<string, boolean>>({})
+  const [capabilitiesMap, setCapabilitiesMap] = useState<
+    Record<string, { speakers: string[]; speakerHints?: Record<string, string>; speakerMeta?: Record<string, { description: string; nativeLanguage: string }> }>
+  >({})
+  const [ttsVoiceWarning, setTtsVoiceWarning] = useState<string | null>(null)
+  const [formVoiceWarning, setFormVoiceWarning] = useState<string | null>(null)
 
   // Create/edit prompt UI
   const [showCreate, setShowCreate] = useState(false)
@@ -143,6 +154,23 @@ export function TtsModal({
           for (const [k, v] of Object.entries(data.capabilities)) dl[k] = Boolean((v as unknown as { downloaded?: boolean }).downloaded)
         }
         setDownloadedMap(dl)
+        // populate capabilities for voice dropdown (per-model speakers + hints)
+        const capsSource = (data.capabilities ?? data.perModel) as
+          | Record<string, { speakers?: string[]; speakerHints?: Record<string, string>; speakerMeta?: Record<string, { description: string; nativeLanguage: string }> }>
+          | undefined
+        if (capsSource && typeof capsSource === 'object') {
+          const caps: Record<string, { speakers: string[]; speakerHints?: Record<string, string>; speakerMeta?: Record<string, { description: string; nativeLanguage: string }> }> = {}
+          for (const [k, v] of Object.entries(capsSource)) {
+            if (v && Array.isArray((v as { speakers?: string[] }).speakers)) {
+              caps[k] = {
+                speakers: (v as { speakers: string[] }).speakers,
+                speakerHints: (v as { speakerHints?: Record<string, string> }).speakerHints,
+                speakerMeta: (v as { speakerMeta?: Record<string, { description: string; nativeLanguage: string }> }).speakerMeta,
+              }
+            }
+          }
+          if (Object.keys(caps).length) setCapabilitiesMap(caps)
+        }
       } catch {
         if (cancelled) return
         setModels([...SUPPORTED_MODELS])
@@ -160,6 +188,34 @@ export function TtsModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ttsSettingsApi])
 
+  // Derived per-model speaker lists (from backend capabilities, fallback to hardcoded)
+  const ttsSpeakers = useMemo(() => {
+    const effModel = ttsModel || DEFAULT_MODEL_ID
+    const backend = capabilitiesMap[effModel]?.speakers
+    if (Array.isArray(backend) && backend.length) return backend
+    return getFallbackSpeakersForModel(effModel)
+  }, [ttsModel, capabilitiesMap])
+
+  const formSpeakers = useMemo(() => {
+    const effModel = formModelId || ttsModel || DEFAULT_MODEL_ID
+    const backend = capabilitiesMap[effModel]?.speakers
+    if (Array.isArray(backend) && backend.length) return backend
+    return getFallbackSpeakersForModel(effModel)
+  }, [formModelId, ttsModel, capabilitiesMap])
+
+  const getHintForSpeaker = useCallback(
+    (speaker: string, modelId: string): string => {
+      const caps = capabilitiesMap[modelId]
+      if (caps?.speakerHints?.[speaker]) return caps.speakerHints[speaker]!
+      if (caps?.speakerMeta?.[speaker]) {
+        const m = caps.speakerMeta[speaker] as { description: string; nativeLanguage: string }
+        return `${m.description}, ${m.nativeLanguage}`
+      }
+      return SPEAKER_HINTS[speaker] ?? speaker
+    },
+    [capabilitiesMap],
+  )
+
   // Sync overrides when prompt selected: prefill language/voice/instruction/model/provider from prompt
   useEffect(() => {
     if (!selectedPromptId) return
@@ -173,7 +229,14 @@ export function TtsModal({
         } else if (!migrated.isUnknown) setLanguage(migrated.value)
         // unknown stays Auto
       }
-      if (!voice && selected.voice) setVoice(selected.voice)
+      if (!voice && selected.voice) {
+        const promptModel = (selected as unknown as { modelId?: string }).modelId ?? ttsModel ?? DEFAULT_MODEL_ID
+        const backendSpeakers = capabilitiesMap[promptModel]?.speakers ?? getFallbackSpeakersForModel(promptModel)
+        const mig = migrateStoredVoice(selected.voice, promptModel, selected.language, backendSpeakers)
+        // mig.value is '' for unknown (default), canonical for known/legacy nova->Ryan
+        setVoice(mig.value)
+        // warning for prompt-driven unknown is derived via ttsPromptVoiceWarning below, not state
+      }
       if (!instruction && selected.instruction) setInstruction(selected.instruction)
       // Per-generation model/provider: recall stored model; per-generation dropdown overrides at generation time
       const promptModel = (selected as unknown as { modelId?: string }).modelId
@@ -181,7 +244,42 @@ export function TtsModal({
       if (promptModel) setTtsModel(promptModel)
       if (promptProvider) setTtsProviderId(promptProvider)
     }
-  }, [selectedPromptId, prompts, language, voice, instruction])
+  }, [selectedPromptId, prompts, language, voice, instruction, ttsModel, capabilitiesMap])
+
+  // Derived warning when selected prompt's stored voice is unknown for the effective model
+  const ttsPromptVoiceWarning = useMemo(() => {
+    if (!selectedPromptId) return null
+    if (voice) return null // user has overridden voice, don't show prompt's original warning
+    const sel = prompts.find((p) => p.id === selectedPromptId)
+    if (!sel?.voice) return null
+    const promptModel = (sel as unknown as { modelId?: string }).modelId ?? ttsModel ?? DEFAULT_MODEL_ID
+    const backendSpeakers = capabilitiesMap[promptModel]?.speakers ?? getFallbackSpeakersForModel(promptModel)
+    const mig = migrateStoredVoice(sel.voice, promptModel, sel.language, backendSpeakers)
+    return mig.isUnknown ? mig.warning : null
+  }, [selectedPromptId, prompts, voice, ttsModel, capabilitiesMap])
+
+  const effectiveTtsVoiceWarning = ttsVoiceWarning ?? ttsPromptVoiceWarning
+
+  // When ttsModel changes, validate voice against new model's speakers
+  useEffect(() => {
+    if (!voice) return
+    const key = voice.trim().toLowerCase()
+    const lowerSet = new Set(ttsSpeakers.map((s) => s.toLowerCase()))
+    if (lowerSet.has(key)) {
+      setTtsVoiceWarning(null)
+      return
+    }
+    // If voice not valid for new model, warn and default to model's default
+    const def = defaultSpeakerForModel(ttsModel || DEFAULT_MODEL_ID, language)
+    const shortModel = (ttsModel || DEFAULT_MODEL_ID).split('/').pop() ?? ttsModel
+    const knownGlobally = Object.keys(SPEAKER_HINTS).some((k) => k.toLowerCase() === key)
+    const warning = knownGlobally
+      ? `Voice '${voice}' not supported by ${shortModel} — using default (${def})`
+      : `Unknown voice '${voice}' — using default (${def})`
+    setTtsVoiceWarning(warning)
+    setVoice('')
+  }, [ttsModel, ttsSpeakers, language]) // eslint-disable-line react-hooks/exhaustive-deps
+  // Note: voice excluded to avoid loop when we reset to '' ; warning reset handled above
 
   // Atomic commit helper: single CommitTtsCommand covering clip and prompter changes
   const commitTtsAtomic = useCallback(
@@ -353,6 +451,7 @@ export function TtsModal({
     setFormInstruction('')
     setFormLanguage('')
     setFormVoice('')
+    setFormVoiceWarning(null)
     setFormParams('')
     setFormModelId(ttsModel || DEFAULT_MODEL_ID)
     setFormProvider(ttsProviderId || DEFAULT_PROVIDER)
@@ -368,7 +467,17 @@ export function TtsModal({
     setFormTitle(p.title)
     setFormInstruction(p.instruction)
     setFormLanguage(migrateStoredLanguage(p.language).value)
-    setFormVoice(p.voice ?? '')
+    // Migrate voice per model: legacy nova->Ryan, unknown -> default with warning
+    const pmRaw = (p as unknown as { modelId?: string }).modelId ?? ttsModel ?? DEFAULT_MODEL_ID
+    const backendSpeakersForForm = capabilitiesMap[pmRaw]?.speakers ?? getFallbackSpeakersForModel(pmRaw)
+    const mig = migrateStoredVoice(p.voice ?? null, pmRaw, p.language, backendSpeakersForForm)
+    if (mig.isUnknown) {
+      setFormVoice('')
+      setFormVoiceWarning(mig.warning)
+    } else {
+      setFormVoice(mig.value)
+      setFormVoiceWarning(null)
+    }
     setFormParams(p.params ? JSON.stringify(p.params, null, 2) : '')
     const pm = (p as unknown as { modelId?: string }).modelId ?? ''
     const pp = (p as unknown as { provider?: string }).provider ?? ''
@@ -377,6 +486,30 @@ export function TtsModal({
     setFormError(null)
     setShowCreate(true)
   }
+
+  // When formModel changes, validate formVoice
+  useEffect(() => {
+    if (!showCreate) return
+    if (!formVoice) {
+      // keep existing warning if editingPrompt had unknown voice and we show warning derived? clear only if valid
+      // do not auto-clear prompt-derived warning here
+      return
+    }
+    const key = formVoice.trim().toLowerCase()
+    const lowerSet = new Set(formSpeakers.map((s) => s.toLowerCase()))
+    if (lowerSet.has(key)) {
+      setFormVoiceWarning(null)
+      return
+    }
+    const def = defaultSpeakerForModel(formModelId || ttsModel || DEFAULT_MODEL_ID, formLanguage)
+    const shortModel = (formModelId || ttsModel || DEFAULT_MODEL_ID).split('/').pop() ?? formModelId
+    const knownGlobally = Object.keys(SPEAKER_HINTS).some((k) => k.toLowerCase() === key)
+    const warning = knownGlobally
+      ? `Voice '${formVoice}' not supported by ${shortModel} — using default (${def})`
+      : `Unknown voice '${formVoice}' — using default (${def})`
+    setFormVoiceWarning(warning)
+    setFormVoice('')
+  }, [formModelId, formSpeakers, formLanguage, showCreate]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeletePrompt = async () => {
     if (!selectedPromptId) return
@@ -608,11 +741,13 @@ export function TtsModal({
             </label>
             <label style={{ fontSize: 11 }}>
               Voice (optional)
-              <input
+              <select
                 data-testid="voice-prompt-voice"
                 value={formVoice}
-                onChange={(e) => setFormVoice(e.target.value)}
-                placeholder="e.g. nova"
+                onChange={(e) => {
+                  setFormVoice(e.target.value)
+                  setFormVoiceWarning(null)
+                }}
                 style={{
                   width: '100%',
                   padding: '6px 8px',
@@ -622,7 +757,45 @@ export function TtsModal({
                   color: '#e0e0e0',
                   marginTop: 4,
                 }}
-              />
+              >
+                <option value="">— Default (auto) —</option>
+                {formSpeakers.map((v) => {
+                  const hint = getHintForSpeaker(v, formModelId || ttsModel || DEFAULT_MODEL_ID)
+                  return (
+                    <option key={v} value={v}>
+                      {hint ? `${v} (${hint})` : v}
+                    </option>
+                  )
+                })}
+              </select>
+              <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
+                Filtered by selected model; list fetched from backend capabilities
+              </div>
+              {formSpeakers.length === 0 && (
+                <div style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}>No speakers for this model</div>
+              )}
+              {formVoiceWarning && (
+                <div
+                  data-testid="voice-prompt-voice-warning"
+                  style={{ fontSize: 10, color: '#ffb74d', marginTop: 4 }}
+                >
+                  {formVoiceWarning}
+                </div>
+              )}
+              {editingPrompt && (() => {
+                const mig = migrateStoredVoice(editingPrompt.voice ?? null, formModelId || ttsModel || DEFAULT_MODEL_ID, editingPrompt.language, formSpeakers)
+                if (mig.isUnknown && !formVoiceWarning) {
+                  return (
+                    <div
+                      data-testid="voice-prompt-voice-warning"
+                      style={{ fontSize: 10, color: '#ffb74d', marginTop: 4 }}
+                    >
+                      {mig.warning}
+                    </div>
+                  )
+                }
+                return null
+              })()}
             </label>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
               <label style={{ fontSize: 11 }}>
@@ -991,11 +1164,13 @@ export function TtsModal({
           </label>
           <label style={{ fontSize: 11 }}>
             Voice override
-            <input
+            <select
               data-testid="tts-voice"
               value={voice}
-              onChange={(e) => setVoice(e.target.value)}
-              placeholder="e.g. nova"
+              onChange={(e) => {
+                setVoice(e.target.value)
+                setTtsVoiceWarning(null)
+              }}
               style={{
                 width: '100%',
                 padding: '6px 8px',
@@ -1005,7 +1180,28 @@ export function TtsModal({
                 color: '#e0e0e0',
                 marginTop: 4,
               }}
-            />
+            >
+              <option value="">— Default (auto) —</option>
+              {ttsSpeakers.map((v) => {
+                const hint = getHintForSpeaker(v, ttsModel || DEFAULT_MODEL_ID)
+                return (
+                  <option key={v} value={v}>
+                    {hint ? `${v} (${hint})` : v}
+                  </option>
+                )
+              })}
+            </select>
+            <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
+              Filtered by selected model; fetched from backend
+            </div>
+            {effectiveTtsVoiceWarning && (
+              <div
+                data-testid="tts-voice-warning"
+                style={{ fontSize: 10, color: '#ffb74d', marginTop: 4 }}
+              >
+                {effectiveTtsVoiceWarning}
+              </div>
+            )}
           </label>
         </div>
         <div style={{ marginBottom: 12 }}>

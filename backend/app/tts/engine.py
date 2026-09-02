@@ -136,10 +136,15 @@ except Exception:  # pragma: no cover
         return ["zh", "en", "ja", "ko", "de", "fr", "ru", "pt", "es", "it"]
 
     def _get_model_capabilities(model_id: str) -> dict[str, object]:  # type: ignore[no-redef]
+        speakers = _get_supported_speakers(model_id)
+        hints = {s: f"{s}" for s in speakers}
+        # minimal hints fallback; real hints come from registry
         return {
             "languages": _get_supported_languages(model_id),
-            "speakers": _get_supported_speakers(model_id),
+            "speakers": speakers,
             "instructionSupported": False,
+            "speakerHints": hints,
+            "speakerMeta": {},
         }
 
     def _get_all_capabilities() -> dict[str, dict[str, object]]:  # type: ignore[no-redef]
@@ -174,10 +179,25 @@ def map_speaker(raw: str | None, language: str | None = None) -> str:
             return _DEFAULT_SPEAKER_ZH
         return _DEFAULT_SPEAKER_EN
     key = raw.strip().lower()
+    # Legacy migration: nova -> Ryan (spec #253) – keep deterministic
+    if key == "nova":
+        return "Ryan"
     if key in _SPEAKER_LOWER_MAP:
         return _SPEAKER_LOWER_MAP[key]
-    # handle voice names like "nova", "alloy" – map to defaults
-    # we keep deterministic fallback instead of error: return default en
+    # try registry canonical list (includes Base extras) if available
+    try:
+        from app.tts.registry import SPEAKER_META as _META
+
+        lower_meta = {k.lower(): k for k in _META}
+        if key in lower_meta:
+            return lower_meta[key]
+    except Exception:
+        pass
+    # handle other voice names like "alloy" – map to defaults deterministically
+    # we keep deterministic fallback instead of error: return default en/zh based on language
+    lang = (language or "").lower()
+    if lang.startswith("zh") or lang == "chinese":
+        return _DEFAULT_SPEAKER_ZH
     return _DEFAULT_SPEAKER_EN
 
 
@@ -592,10 +612,13 @@ def get_model_capabilities(model_id: str) -> dict[str, object]:
 
         return _reg_cap(model_id)
     except Exception:
+        speakers = get_supported_speakers(model_id)
         return {
             "languages": get_supported_languages(model_id),
-            "speakers": get_supported_speakers(model_id),
+            "speakers": speakers,
             "instructionSupported": False,
+            "speakerHints": {s: s for s in speakers},
+            "speakerMeta": {},
         }
 
 

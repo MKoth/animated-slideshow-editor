@@ -29,6 +29,37 @@ _CANONICAL_CUSTOMVOICE_SPEAKERS: list[str] = [
     "Sohee",
 ]
 
+# Canonical speaker metadata: description + native language hint per spec #253
+# Keep aligned with frontend ttsVoices fallback.
+SPEAKER_META: dict[str, dict[str, str]] = {
+    "Vivian": {"description": "Bright edgy young female", "nativeLanguage": "Chinese", "iso": "zh"},
+    "Serena": {"description": "Warm gentle young female", "nativeLanguage": "Chinese", "iso": "zh"},
+    "Uncle_Fu": {"description": "Seasoned low mellow", "nativeLanguage": "Chinese", "iso": "zh"},
+    "Dylan": {"description": "Beijing", "nativeLanguage": "Chinese", "iso": "zh"},
+    "Eric": {"description": "Chengdu", "nativeLanguage": "Chinese", "iso": "zh"},
+    "Ryan": {"description": "Dynamic", "nativeLanguage": "English", "iso": "en"},
+    "Aiden": {"description": "Sunny American", "nativeLanguage": "English", "iso": "en"},
+    "Ono_Anna": {"description": "Playful", "nativeLanguage": "Japanese", "iso": "ja"},
+    "Sohee": {"description": "Warm rich", "nativeLanguage": "Korean", "iso": "ko"},
+    # Base/VoiceDesign extras (shown when per-model list includes them)
+    "Chelsie": {"description": "Clear female", "nativeLanguage": "English", "iso": "en"},
+    "Ethan": {"description": "Warm male", "nativeLanguage": "English", "iso": "en"},
+}
+
+def _speaker_hint(speaker: str) -> str:
+    meta = SPEAKER_META.get(speaker)
+    if not meta:
+        return speaker
+    return f"{meta['description']}, {meta['nativeLanguage']}"
+
+
+SPEAKER_HINTS: dict[str, str] = {k: _speaker_hint(k) for k in SPEAKER_META}
+
+# Legacy voice alias -> canonical (only nova -> Ryan as migration per spec)
+LEGACY_VOICE_TO_CANONICAL: dict[str, str] = {
+    "nova": "Ryan",
+}
+
 # Base models may use different names; simplified mapping for future distinct sets
 _BASE_SPEAKERS: list[str] = [
     "Chelsie",
@@ -91,11 +122,107 @@ def get_supported_languages(model_id: str) -> list[str]:
     return list(LANGUAGES_BY_MODEL.get(model_id, _SUPPORTED_LANGUAGES))
 
 
+def get_speaker_hint(speaker: str) -> str | None:
+    return SPEAKER_HINTS.get(speaker)
+
+
+def get_speaker_meta(speaker: str) -> dict[str, str] | None:
+    meta = SPEAKER_META.get(speaker)
+    return dict(meta) if meta else None
+
+
+def get_speaker_hints_for_model(model_id: str) -> dict[str, str]:
+    speakers = get_supported_speakers(model_id)
+    return {s: SPEAKER_HINTS.get(s, s) for s in speakers}
+
+
+def is_valid_speaker_for_model(speaker: str, model_id: str) -> bool:
+    if not speaker or not speaker.strip():
+        return False
+    key = speaker.strip().lower()
+    speakers = get_supported_speakers(model_id)
+    lower_map = {s.lower(): s for s in speakers}
+    if key in lower_map:
+        return True
+    # legacy alias counts as valid (will migrate)
+    if key in LEGACY_VOICE_TO_CANONICAL:
+        target = LEGACY_VOICE_TO_CANONICAL[key]
+        return target.lower() in lower_map
+    return False
+
+
+def normalize_speaker(speaker: str | None, model_id: str | None = None) -> str | None:
+    if speaker is None:
+        return None
+    stripped = speaker.strip()
+    if stripped == "":
+        return None
+    key = stripped.lower()
+    if key in LEGACY_VOICE_TO_CANONICAL:
+        return LEGACY_VOICE_TO_CANONICAL[key]
+    # try case-insensitive match against model-specific or canonical list
+    candidates = get_supported_speakers(model_id) if model_id else _CANONICAL_CUSTOMVOICE_SPEAKERS
+    lower_map = {s.lower(): s for s in candidates}
+    if key in lower_map:
+        return lower_map[key]
+    # fallback to global meta keys
+    global_map = {k.lower(): k for k in SPEAKER_META}
+    if key in global_map:
+        return global_map[key]
+    return None
+
+
+def default_speaker_for_model(model_id: str, language: str | None = None) -> str:
+    lang = (language or "").lower()
+    is_zh = lang.startswith("zh") or lang == "chinese"
+    default_zh = "Vivian"
+    default_en = "Ryan"
+    # Ensure default exists in model; otherwise pick first available
+    speakers = get_supported_speakers(model_id)
+    lower_set = {s.lower() for s in speakers}
+    preferred = default_zh if is_zh else default_en
+    if preferred.lower() in lower_set:
+        return preferred
+    # fallback to first speaker of model or hardcode
+    return speakers[0] if speakers else preferred
+
+
+def migrate_stored_voice(
+    raw: str | None, model_id: str | None = None, language: str | None = None
+) -> tuple[str, bool, str | None]:
+    """Return (dropdown_value, is_unknown, warning). dropdown_value is "" for Auto/default."""
+    if raw is None or (isinstance(raw, str) and raw.strip() == ""):
+        return "", False, None
+    stripped = raw.strip()
+    key = stripped.lower()
+    # Legacy nova -> Ryan migration (not unknown)
+    if key in LEGACY_VOICE_TO_CANONICAL:
+        return LEGACY_VOICE_TO_CANONICAL[key], False, None
+    # Check valid for model (case-insensitive)
+    mid = model_id or DEFAULT_MODEL_ID
+    speakers = get_supported_speakers(mid)
+    lower_map = {s.lower(): s for s in speakers}
+    if key in lower_map:
+        return lower_map[key], False, None
+    # Global canonical check (allow cross-model but still valid? treat as unknown if not in model)
+    # If speaker exists globally but not in this model -> unknown for this model
+    if key in {k.lower() for k in SPEAKER_META}:
+        # known speaker but not supported by this model
+        return "", True, f"Voice '{stripped}' not supported by {mid.split('/')[-1]} — using default ({default_speaker_for_model(mid, language)})"
+    # Completely unknown
+    return "", True, f"Unknown voice '{stripped}' — using default ({default_speaker_for_model(mid, language)})"
+
+
 def get_model_capabilities(model_id: str) -> dict[str, object]:
+    speakers = get_supported_speakers(model_id)
+    hints = {s: SPEAKER_HINTS.get(s, s) for s in speakers}
+    meta = {s: SPEAKER_META[s] for s in speakers if s in SPEAKER_META}
     return {
         "languages": get_supported_languages(model_id),
-        "speakers": get_supported_speakers(model_id),
+        "speakers": speakers,
         "instructionSupported": INSTRUCTION_SUPPORTED_BY_MODEL.get(model_id, False),
+        "speakerHints": hints,
+        "speakerMeta": meta,
     }
 
 

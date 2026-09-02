@@ -16,6 +16,9 @@ export interface ModelCapabilities {
   languages: string[]
   speakers: string[]
   instructionSupported: boolean
+  speakerHints?: Record<string, string>
+  speakerMeta?: Record<string, { description: string; nativeLanguage: string; iso: string }>
+  downloaded?: boolean
 }
 
 // Static fallback capabilities (mirrors backend registry)

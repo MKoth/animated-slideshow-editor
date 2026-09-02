@@ -1,0 +1,66 @@
+import { describe, expect, it } from 'vitest'
+import {
+  migrateStoredVoice,
+  getFallbackSpeakersForModel,
+  defaultSpeakerForModel,
+  dropdownLabelForVoice,
+  SPEAKER_HINTS,
+} from '../engine/ttsVoices'
+
+describe('ttsVoices per-model dropdown', () => {
+  it('CustomVoice has 9 canonical speakers with hints', () => {
+    const speakers = getFallbackSpeakersForModel('mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16')
+    expect(speakers).toHaveLength(9)
+    expect(speakers).toEqual(['Vivian', 'Serena', 'Uncle_Fu', 'Dylan', 'Eric', 'Ryan', 'Aiden', 'Ono_Anna', 'Sohee'])
+    // hints contain description + language
+    expect(SPEAKER_HINTS['Vivian']).toBe('Bright edgy young female, Chinese')
+    expect(SPEAKER_HINTS['Ryan']).toBe('Dynamic, English')
+    expect(dropdownLabelForVoice('Vivian')).toBe('Vivian (Bright edgy young female, Chinese)')
+    expect(dropdownLabelForVoice('Ryan')).toBe('Ryan (Dynamic, English)')
+  })
+
+  it('Base model shows Chelsie/Ethan', () => {
+    const base = getFallbackSpeakersForModel('mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16')
+    expect(base).toEqual(['Chelsie', 'Ethan', 'Vivian', 'Serena', 'Ryan', 'Aiden'])
+    const hints = base.map((s) => `${s} (${SPEAKER_HINTS[s]})`)
+    expect(hints).toContain('Chelsie (Clear female, English)')
+  })
+
+  it('legacy nova maps to Ryan', () => {
+    const mig = migrateStoredVoice('nova', 'mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16', 'en')
+    expect(mig.value).toBe('Ryan')
+    expect(mig.isUnknown).toBe(false)
+    const mig2 = migrateStoredVoice('NOVA', 'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16', 'zh')
+    expect(mig2.value).toBe('Ryan')
+  })
+
+  it('unknown voice shows warning and defaults to Ryan/Vivian per language', () => {
+    const unkEn = migrateStoredVoice('foobar', 'mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16', 'en')
+    expect(unkEn.value).toBe('')
+    expect(unkEn.isUnknown).toBe(true)
+    expect(unkEn.warning).toContain('Unknown voice')
+    expect(unkEn.warning).toContain('Ryan')
+
+    const unkZh = migrateStoredVoice('foobar', 'mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16', 'zh')
+    expect(unkZh.warning).toContain('Vivian')
+
+    const chelsieOnCustom = migrateStoredVoice('Chelsie', 'mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16', 'en')
+    expect(chelsieOnCustom.isUnknown).toBe(true)
+    expect(chelsieOnCustom.warning).toContain('not supported')
+    expect(chelsieOnCustom.warning).toContain('Ryan')
+  })
+
+  it('default speaker per model and language', () => {
+    expect(defaultSpeakerForModel('mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16', 'zh')).toBe('Vivian')
+    expect(defaultSpeakerForModel('mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16', 'en')).toBe('Ryan')
+    expect(defaultSpeakerForModel('mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16', '')).toBe('Ryan')
+    expect(defaultSpeakerForModel('mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16', 'Chinese')).toBe('Vivian')
+  })
+
+  it('valid voice for model is case-insensitive', () => {
+    const mig = migrateStoredVoice('ryan', 'mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16', 'en')
+    expect(mig.value).toBe('Ryan')
+    const mig2 = migrateStoredVoice('VIVIAN', 'mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16', 'zh')
+    expect(mig2.value).toBe('Vivian')
+  })
+})

@@ -5,6 +5,8 @@ export interface ModelCapabilities {
   speakers: string[]
   instructionSupported: boolean
   downloaded?: boolean
+  speakerHints?: Record<string, string>
+  speakerMeta?: Record<string, { description: string; nativeLanguage: string; iso: string }>
 }
 
 export interface TtsModelsResponse {
