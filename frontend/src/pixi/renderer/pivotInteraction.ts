@@ -6,6 +6,7 @@ import type { DispatchCommand } from '../../engine/commands'
 import type { SelectionStoreApi } from '../../stores/selectionStore'
 import { worldTransformOf } from '../../engine/worldTransform'
 import type { NodeSizeSource, WorldTransformSource } from './hitTest'
+import { aabbOf } from './hitTest'
 import { cursorToWorld } from './screenToWorld'
 import type { ViewportTransform } from './worldGeometry'
 
@@ -127,10 +128,19 @@ export class PivotInteraction {
     const dx = point.x - world.x
     const dy = point.y - world.y
     const distance = Math.hypot(dx, dy)
-    // Adjust hit radius by zoom
+    // Adjust hit radius by zoom - larger for easier grab
     const zoom = Math.abs(camera.scaleX) || 1
     const hitRadius = PIVOT_HIT_RADIUS / zoom
-    if (distance > hitRadius) return
+    let hitGizmo = distance <= hitRadius
+    if (!hitGizmo) {
+      const node = this.#engine.getNode(nodeId)
+      // Fallback: if p is held and point is inside the node's AABB, treat as pivot drag (more forgiving)
+      const aabb = aabbOf(size, world, node.transform.localPivot)
+      if (aabb && point.x >= aabb.minX && point.x <= aabb.maxX && point.y >= aabb.minY && point.y <= aabb.maxY) {
+        hitGizmo = true
+      }
+    }
+    if (!hitGizmo) return
     // Hit pivot gizmo
     event.preventDefault()
     event.stopPropagation()
