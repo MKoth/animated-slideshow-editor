@@ -6,7 +6,6 @@ import type { DispatchCommand } from '../../engine/commands'
 import type { SelectionStoreApi } from '../../stores/selectionStore'
 import { worldTransformOf } from '../../engine/worldTransform'
 import type { NodeSizeSource, WorldTransformSource } from './hitTest'
-import { aabbOf } from './hitTest'
 import { cursorToWorld } from './screenToWorld'
 import type { ViewportTransform } from './worldGeometry'
 
@@ -21,7 +20,6 @@ export interface PivotInteractionContext {
   readonly dispatch: DispatchCommand
 }
 
-const PIVOT_HIT_RADIUS = 20 // world units at scale 1, will be adjusted by zoom
 const MIN_DRAG_DISTANCE = 2
 
 let pPressedGlobal = false
@@ -124,24 +122,8 @@ export class PivotInteraction {
     const size = this.#getNodeSize(nodeId)
     const world = this.#getWorldTransform(nodeId)
     if (!size || !world) return
-    // Pivot world is transform position (pivot point)
-    const dx = point.x - world.x
-    const dy = point.y - world.y
-    const distance = Math.hypot(dx, dy)
-    // Adjust hit radius by zoom - larger for easier grab
-    const zoom = Math.abs(camera.scaleX) || 1
-    const hitRadius = PIVOT_HIT_RADIUS / zoom
-    let hitGizmo = distance <= hitRadius
-    if (!hitGizmo) {
-      const node = this.#engine.getNode(nodeId)
-      // Fallback: if p is held and point is inside the node's AABB, treat as pivot drag (more forgiving)
-      const aabb = aabbOf(size, world, node.transform.localPivot)
-      if (aabb && point.x >= aabb.minX && point.x <= aabb.maxX && point.y >= aabb.minY && point.y <= aabb.maxY) {
-        hitGizmo = true
-      }
-    }
-    if (!hitGizmo) return
-    // Hit pivot gizmo
+    // For now, when p is held, ANY mousedown with selection starts pivot drag
+    // (hit test was too strict and made it feel stale)
     event.preventDefault()
     event.stopPropagation()
     this.#pressed = true
