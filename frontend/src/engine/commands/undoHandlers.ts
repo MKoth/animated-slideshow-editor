@@ -1048,11 +1048,9 @@ export function applyUndo(
       const newPartIds = inv.newPartIds as readonly string[]
       const mode = (inv as Record<string, unknown>).mode as 'replace' | 'append' | undefined
       const deletedClips = (inv as Record<string, unknown>).deletedClips as
-        | readonly { clip: import('../audioClip').AudioClip; index: number }[]
-        | undefined
+        readonly { clip: import('../audioClip').AudioClip; index: number }[] | undefined
       const shiftedClips = (inv as Record<string, unknown>).shiftedClips as
-        | readonly { id: string; oldTimelineStart: number }[]
-        | undefined
+        readonly { id: string; oldTimelineStart: number }[] | undefined
       const slide = engine.getSlide(slideId)
       // Remove new parts directly (avoid per-part delete shifting)
       for (const pid of newPartIds) {
@@ -1242,7 +1240,8 @@ export function applyUndo(
       const slideId = inv.slideId as string
       const partId = inv.partId as string
       const oldIndex = inv.oldIndex as number | undefined
-      const shiftedClips = inv.shiftedClips as readonly { id: string; oldTimelineStart: number }[] | undefined
+      const shiftedClips = inv.shiftedClips as
+        readonly { id: string; oldTimelineStart: number }[] | undefined
       const slide = engine.getSlide(slideId)
       if (oldIndex !== undefined) {
         const curIdx = slide.prompter!.parts.findIndex((p) => p.id === partId)
@@ -1472,6 +1471,80 @@ export function applyUndo(
         slide.prompter!.parts.splice(oldIndex, 0, oldPart)
       }
       reflowPrompter(slide.prompter!)
+      return
+    }
+    case 'CommitTts': {
+      const slideId = params.slideId as string
+      const partId = params.partId as string
+      const assetId = inv.assetId as string
+      const clipId = inv.clipId as string
+      const oldDuration = inv.oldDuration as number | undefined
+      const oldStartTime = inv.oldStartTime as number | undefined
+      const oldEndTime = inv.oldEndTime as number | undefined
+      const shiftedParts = inv.shiftedParts as
+        readonly { id: string; oldStartTime: number; oldEndTime: number }[] | undefined
+      const shiftedClips = inv.shiftedClips as
+        readonly { id: string; oldTimelineStart: number }[] | undefined
+      const deletedOldClip = inv.deletedOldClip as
+        { clip: import('../audioClip').AudioClip; index: number } | undefined
+      const slide = engine.getSlide(slideId)
+      // Revert shift if present
+      if (oldDuration !== undefined && oldStartTime !== undefined && oldEndTime !== undefined) {
+        const part = slide.prompter?.parts.find((p) => p.id === partId)
+        if (part) {
+          part.duration = oldDuration
+          part.startTime = oldStartTime
+          part.endTime = oldEndTime
+        }
+        if (shiftedParts) {
+          for (const sp of shiftedParts) {
+            const p = slide.prompter?.parts.find((x) => x.id === sp.id)
+            if (p) {
+              p.startTime = sp.oldStartTime
+              p.endTime = sp.oldEndTime
+            }
+          }
+        }
+        if (shiftedClips) {
+          for (const sc of shiftedClips) {
+            const clip = slide.audio.clips.find((c) => c.id === sc.id)
+            if (clip) clip.timelineStart = sc.oldTimelineStart
+          }
+        }
+      }
+      // Revert link
+      const oldAudioClipId = inv.oldAudioClipId as string | undefined
+      const oldAudioAssetId = inv.oldAudioAssetId as string | undefined
+      const oldStatus = inv.oldStatus as string | undefined
+      const part = slide.prompter?.parts.find((p) => p.id === partId)
+      if (part) {
+        if (oldAudioClipId)
+          (part as unknown as { audioClipId?: string }).audioClipId = oldAudioClipId
+        else delete (part as unknown as { audioClipId?: string }).audioClipId
+        if (oldAudioAssetId)
+          (part as unknown as { audioAssetId?: string }).audioAssetId = oldAudioAssetId
+        else delete (part as unknown as { audioAssetId?: string }).audioAssetId
+        if (oldStatus)
+          (part as unknown as { status?: string }).status =
+            oldStatus as import('../prompter').PrompterPartStatus
+        else delete (part as unknown as { status?: string }).status
+      }
+      // Delete new clip
+      try {
+        engine.deleteAudioClip(slideId, clipId)
+      } catch {
+        // ignore
+      }
+      // Delete new asset
+      try {
+        engine.deleteEmbeddedAsset(assetId)
+      } catch {
+        // ignore
+      }
+      // Restore old clip if deleted
+      if (deletedOldClip) {
+        slide.audio.clips.splice(deletedOldClip.index, 0, deletedOldClip.clip)
+      }
       return
     }
     case 'CreateTable': {
@@ -2516,6 +2589,58 @@ export function applyRedo(
         params.endWordIndex as number,
       )
       return
+    case 'CommitTts': {
+      const asset = params.asset as {
+        id: string
+        name: string
+        data: string
+        mimeType: string
+        metadata: Record<string, unknown>
+      }
+      // Re-embed asset
+      try {
+        engine.embedAsset({
+          id: asset.id,
+          name: asset.name,
+          data: asset.data,
+          mimeType: asset.mimeType,
+          metadata: asset.metadata,
+        })
+      } catch {
+        // ignore if already exists
+      }
+      // Recreate clip - need to reuse same clipId from inverse if available, otherwise create new
+      const inv = _inverse as unknown as { clipId?: string } | null
+      const clipId = inv?.clipId as string | undefined
+      engine.createAudioClip(params.slideId as string, {
+        ...(clipId ? { id: clipId } : {}),
+        assetId: asset.id,
+        trackId: params.trackId as import('../audioClip').AudioTrackId,
+        timelineStart: params.timelineStart as number,
+        sourceEnd: params.sourceEnd as number,
+        playbackRate: params.playbackRate as number,
+      })
+      const newClipId =
+        clipId ??
+        engine.getSlide(params.slideId as string).audio.clips.find((c) => c.assetId === asset.id)
+          ?.id
+      if (newClipId) {
+        engine.setPrompterPartAudio(
+          params.slideId as string,
+          params.partId as string,
+          newClipId,
+          asset.id,
+        )
+      }
+      const fit = params.fitTextToClip as { duration: number; shiftDownstream: boolean } | undefined
+      if (fit) {
+        engine.updatePrompterPart(params.slideId as string, params.partId as string, {
+          duration: fit.duration,
+          shiftDownstream: fit.shiftDownstream,
+        })
+      }
+      return
+    }
     case 'CreateTable': {
       const sceneId = params.sceneId as string
       const parentId = params.parentId as string

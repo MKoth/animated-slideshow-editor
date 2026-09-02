@@ -1,19 +1,54 @@
 import { useState } from 'react'
 import type { PrompterMismatchKind } from '../../engine/prompter'
+import type { AudioTrackId } from '../../engine/audioClip'
+import {
+  useAudioResizePreferenceStore,
+  type AudioResizeMode,
+} from '../../stores/audioResizePreferenceStore'
 
 interface MismatchDialogProps {
   plannedDuration: number
   recordedDuration: number
   kind: PrompterMismatchKind
-  onChoice: (choice: 'speed' | 'extend' | 'keep' | 'discard' | 'slow', shift: boolean) => void
+  trackId?: AudioTrackId
+  sourceLabel?: string
+  onChoice: (
+    choice: 'speed' | 'extend' | 'keep' | 'discard' | 'slow',
+    shift: boolean,
+    dontAskAgain?: boolean,
+  ) => void
   onClose: () => void
 }
 
-export function MismatchDialog({ plannedDuration, recordedDuration, kind, onChoice, onClose }: MismatchDialogProps) {
+export function MismatchDialog({
+  plannedDuration,
+  recordedDuration,
+  kind,
+  trackId = 'voice',
+  sourceLabel = 'Recorded',
+  onChoice,
+  onClose,
+}: MismatchDialogProps) {
   const [shift, setShift] = useState(false)
+  const [dontAskAgain, setDontAskAgain] = useState(false)
   const diff = Math.abs(recordedDuration - plannedDuration)
   const threshold = Math.max(0.3, 0.05 * plannedDuration)
   const isLonger = kind === 'longer'
+
+  const handleChoice = (choice: 'speed' | 'extend' | 'keep' | 'discard' | 'slow') => {
+    if (dontAskAgain && choice !== 'discard') {
+      const mode: AudioResizeMode | null =
+        choice === 'speed' || choice === 'slow'
+          ? 'stretch'
+          : choice === 'extend' || choice === 'keep'
+            ? 'trim'
+            : null
+      if (mode) {
+        useAudioResizePreferenceStore.getState().setPreference(trackId, mode)
+      }
+    }
+    onChoice(choice, shift, dontAskAgain)
+  }
 
   return (
     <div
@@ -34,37 +69,79 @@ export function MismatchDialog({ plannedDuration, recordedDuration, kind, onChoi
         if (e.target === e.currentTarget) onClose()
       }}
     >
-      <div style={{ background: '#2a2a2a', border: '1px solid #444', borderRadius: 8, width: 480, padding: 16, color: '#e0e0e0' }}>
+      <div
+        style={{
+          background: '#2a2a2a',
+          border: '1px solid #444',
+          borderRadius: 8,
+          width: 480,
+          padding: 16,
+          color: '#e0e0e0',
+        }}
+      >
         <h3 style={{ margin: '0 0 8px', fontSize: 13 }}>Duration mismatch</h3>
         <p style={{ fontSize: 11, color: '#888', margin: 0 }}>
-          Recorded {recordedDuration.toFixed(2)}s vs planned {plannedDuration.toFixed(2)}s (Δ {diff.toFixed(2)}s &gt; {threshold.toFixed(2)}s — max(0.3 s, 5% planned))
+          {sourceLabel} {recordedDuration.toFixed(2)}s vs planned {plannedDuration.toFixed(2)}s (Δ{' '}
+          {diff.toFixed(2)}s &gt; {threshold.toFixed(2)}s — max(0.3 s, 5% planned))
         </p>
         <p style={{ fontSize: 11, color: '#aaa', margin: '8px 0' }}>
-          Original WAV preserved — <strong>time stretch</strong> (not playbackRate pitch-shift). Tempo stays the same, pitch &amp; formants preserved via RubberBand: preview by WASM offline, export by FFmpeg. <code>playbackRate={(recordedDuration / plannedDuration).toFixed(3)}</code> → <code>timeRatio={(plannedDuration / recordedDuration).toFixed(3)}</code> (output/input).
+          Original WAV preserved — <strong>time stretch</strong> (not playbackRate pitch-shift).
+          Tempo stays the same, pitch &amp; formants preserved via RubberBand: preview by WASM
+          offline, export by FFmpeg.{' '}
+          <code>playbackRate={(recordedDuration / plannedDuration).toFixed(3)}</code> →{' '}
+          <code>timeRatio={(plannedDuration / recordedDuration).toFixed(3)}</code> (output/input).
         </p>
         <p style={{ fontSize: 10, color: '#777', margin: '0 0 4px' }}>
-          <em>Speed ↑ → duration ↓, pitch ≈ unchanged</em> — WSOLA/Phase-vocoder quality, good for 0.5×–2× speech. Extreme values may add light metallic smearing.
+          <em>Speed ↑ → duration ↓, pitch ≈ unchanged</em> — WSOLA/Phase-vocoder quality, good for
+          0.5×–2× speech. Extreme values may add light metallic smearing.
         </p>
         {isLonger ? (
           <div style={{ display: 'flex', gap: 8, flexDirection: 'column', marginTop: 12 }}>
             <button
               data-testid="mismatch-speed-up"
-              onClick={() => onChoice('speed', false)}
-              style={{ padding: '8px 12px', borderRadius: 4, border: '1px solid #7c5cff', background: '#7c5cff', color: '#fff', cursor: 'pointer', textAlign: 'left' }}
+              onClick={() => handleChoice('speed')}
+              style={{
+                padding: '8px 12px',
+                borderRadius: 4,
+                border: '1px solid #7c5cff',
+                background: '#7c5cff',
+                color: '#fff',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
             >
-              <strong>Speed up (time stretch)</strong> — tempo {(recordedDuration / plannedDuration).toFixed(3)}×, timeRatio {(plannedDuration / recordedDuration).toFixed(3)} — pitch preserved
+              <strong>Fit clip to text — Speed up (time stretch)</strong> — tempo{' '}
+              {(recordedDuration / plannedDuration).toFixed(3)}×, timeRatio{' '}
+              {(plannedDuration / recordedDuration).toFixed(3)} — pitch preserved
             </button>
             <button
               data-testid="mismatch-extend"
-              onClick={() => onChoice('extend', shift)}
-              style={{ padding: '8px 12px', borderRadius: 4, border: '1px solid #444', background: '#333', color: '#e0e0e0', cursor: 'pointer', textAlign: 'left' }}
+              onClick={() => handleChoice('extend')}
+              style={{
+                padding: '8px 12px',
+                borderRadius: 4,
+                border: '1px solid #444',
+                background: '#333',
+                color: '#e0e0e0',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
             >
-              <strong>Extend duration</strong> — set part duration to {recordedDuration.toFixed(2)}s
+              <strong>Fit text to clip — Extend duration</strong> — set part duration to{' '}
+              {recordedDuration.toFixed(2)}s
             </button>
             <button
               data-testid="mismatch-discard"
-              onClick={() => onChoice('discard', false)}
-              style={{ padding: '8px 12px', borderRadius: 4, border: '1px solid #444', background: '#333', color: '#e0e0e0', cursor: 'pointer', textAlign: 'left' }}
+              onClick={() => handleChoice('discard')}
+              style={{
+                padding: '8px 12px',
+                borderRadius: 4,
+                border: '1px solid #444',
+                background: '#333',
+                color: '#e0e0e0',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
             >
               Discard recording
             </button>
@@ -73,35 +150,109 @@ export function MismatchDialog({ plannedDuration, recordedDuration, kind, onChoi
           <div style={{ display: 'flex', gap: 8, flexDirection: 'column', marginTop: 12 }}>
             <button
               data-testid="mismatch-slow-down"
-              onClick={() => onChoice('slow', false)}
-              style={{ padding: '8px 12px', borderRadius: 4, border: '1px solid #7c5cff', background: '#7c5cff', color: '#fff', cursor: 'pointer', textAlign: 'left' }}
+              onClick={() => handleChoice('slow')}
+              style={{
+                padding: '8px 12px',
+                borderRadius: 4,
+                border: '1px solid #7c5cff',
+                background: '#7c5cff',
+                color: '#fff',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
             >
-              <strong>Slow down (time stretch)</strong> — tempo {(recordedDuration / plannedDuration).toFixed(3)}×, timeRatio {(plannedDuration / recordedDuration).toFixed(3)} — pitch preserved
+              <strong>Fit clip to text — Slow down (time stretch)</strong> — tempo{' '}
+              {(recordedDuration / plannedDuration).toFixed(3)}×, timeRatio{' '}
+              {(plannedDuration / recordedDuration).toFixed(3)} — pitch preserved
             </button>
             <button
               data-testid="mismatch-keep-shorter"
-              onClick={() => onChoice('keep', shift)}
-              style={{ padding: '8px 12px', borderRadius: 4, border: '1px solid #444', background: '#333', color: '#e0e0e0', cursor: 'pointer', textAlign: 'left' }}
+              onClick={() => handleChoice('keep')}
+              style={{
+                padding: '8px 12px',
+                borderRadius: 4,
+                border: '1px solid #444',
+                background: '#333',
+                color: '#e0e0e0',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
             >
-              <strong>Keep shorter</strong> — set part duration to {recordedDuration.toFixed(2)}s
+              <strong>Fit text to clip — Keep shorter</strong> — set part duration to{' '}
+              {recordedDuration.toFixed(2)}s
             </button>
             <button
               data-testid="mismatch-discard"
-              onClick={() => onChoice('discard', false)}
-              style={{ padding: '8px 12px', borderRadius: 4, border: '1px solid #444', background: '#333', color: '#e0e0e0', cursor: 'pointer', textAlign: 'left' }}
+              onClick={() => handleChoice('discard')}
+              style={{
+                padding: '8px 12px',
+                borderRadius: 4,
+                border: '1px solid #444',
+                background: '#333',
+                color: '#e0e0e0',
+                cursor: 'pointer',
+                textAlign: 'left',
+              }}
             >
               Discard recording
             </button>
           </div>
         )}
         {(kind === 'longer' || kind === 'shorter') && (
-          <label style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 12, fontSize: 11, color: '#aaa' }}>
-            <input data-testid="mismatch-shift-checkbox" type="checkbox" checked={shift} onChange={(e) => setShift(e.target.checked)} />
+          <label
+            style={{
+              display: 'flex',
+              gap: 6,
+              alignItems: 'center',
+              marginTop: 12,
+              fontSize: 11,
+              color: '#aaa',
+            }}
+          >
+            <input
+              data-testid="mismatch-shift-checkbox"
+              type="checkbox"
+              checked={shift}
+              onChange={(e) => setShift(e.target.checked)}
+            />
             Move following parts + clips (single-Slide UpdatePrompterPartWithShift transaction)
           </label>
         )}
+        <label
+          style={{
+            display: 'flex',
+            gap: 6,
+            alignItems: 'center',
+            marginTop: 8,
+            fontSize: 11,
+            color: '#aaa',
+          }}
+        >
+          <input
+            data-testid="mismatch-dont-ask"
+            type="checkbox"
+            checked={dontAskAgain}
+            onChange={(e) => setDontAskAgain(e.target.checked)}
+          />
+          Don&apos;t ask again for {trackId} track
+        </label>
+        <p style={{ fontSize: 10, color: '#666', margin: '4px 0 0 22' }}>
+          Alt = stretch (Fit clip to text), Shift = trim (Fit text to clip) (override). Reset in
+          settings.
+        </p>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
-          <button onClick={onClose} data-testid="mismatch-close" style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid #444', background: '#333', color: '#e0e0e0', cursor: 'pointer' }}>
+          <button
+            onClick={onClose}
+            data-testid="mismatch-close"
+            style={{
+              padding: '6px 12px',
+              borderRadius: 4,
+              border: '1px solid #444',
+              background: '#333',
+              color: '#e0e0e0',
+              cursor: 'pointer',
+            }}
+          >
             Cancel
           </button>
         </div>

@@ -395,3 +395,5 @@ export type {
 } from './splitPrompterWordsCommand'
 export { CreateRigHandleCommand } from './createRigHandleCommand'
 export type { CreateRigHandleInverse, CreateRigHandleParameters } from './createRigHandleCommand'
+export { CommitTtsCommand } from './commitTtsCommand'
+export type { CommitTtsInverse, CommitTtsParameters } from './commitTtsCommand'
