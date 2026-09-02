@@ -1,10 +1,13 @@
 import type { SceneNode } from '../../engine'
 
-export type NodeIconKind = 'folder' | 'image' | 'text' | 'camera' | 'mesh' | 'table'
+export type NodeIconKind = 'folder' | 'image' | 'text' | 'camera' | 'mesh' | 'table' | 'circle'
 
 export function iconOf(node: SceneNode): NodeIconKind {
   if (node.components.camera) {
     return 'camera'
+  }
+  if (node.components.circle) {
+    return 'circle'
   }
   if (node.components.assetInstance) {
     return 'image'

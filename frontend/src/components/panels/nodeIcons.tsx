@@ -52,6 +52,15 @@ export function TableIcon() {
   )
 }
 
+export function CircleIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 12 L22 12 A10 10 0 0 1 12 2 Z" fill="currentColor" stroke="none" opacity="0.3" />
+    </svg>
+  )
+}
+
 export function VisibilityIcon({ visible }: { visible: boolean }) {
   if (!visible) {
     return (
@@ -95,6 +104,8 @@ export function NodeIcon({ node }: { node: SceneNode }) {
       return <MeshIcon />
     case 'table':
       return <TableIcon />
+    case 'circle':
+      return <CircleIcon />
     default:
       return <FolderIcon />
   }

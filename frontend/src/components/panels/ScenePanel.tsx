@@ -10,6 +10,7 @@ import { CreateNodeCommand, CreateRigHandleCommand } from '../../engine/commands
 import { defaultChartComponent } from '../../engine/defaultChart'
 import { defaultTableComponent } from '../../engine/defaultTable'
 import { defaultTextComponent } from '../../engine/defaultText'
+import { createCircleComponent } from '../../engine/circleComponent'
 import { namesInTree, uniqueNodeName } from '../../engine/naming'
 import { useMissingAssetsStore } from '../../stores/missingAssetsStore'
 import { useSelectionStore } from '../../stores/selectionStore'
@@ -361,6 +362,25 @@ export function ScenePanel() {
     setContextMenu(null)
   }
 
+  const handleCreateCircle = () => {
+    const targetSlide = engine.getActiveSlide()
+    if (!targetSlide) return
+    const taken = namesInTree(targetSlide.scene.root)
+    const name = uniqueNodeName(taken, 'Circle')
+    const result = dispatch(
+      new CreateNodeCommand({
+        sceneId: targetSlide.scene.id,
+        parentId: targetSlide.scene.root.id,
+        name,
+        components: { circle: createCircleComponent() },
+      }),
+    )
+    if (result.ok) {
+      useSelectionStore.getState().select(result.inverse.nodeId)
+    }
+    setContextMenu(null)
+  }
+
   const handleCreateGroup = () => {
     const targetSlide = engine.getActiveSlide()
     if (!targetSlide) return
@@ -436,6 +456,14 @@ export function ScenePanel() {
         >
           Create Group
         </button>
+        <button
+          className="scene-panel__create-group"
+          onClick={handleCreateCircle}
+          title="Create procedural Circle (wedge with animatable slice)"
+          aria-label="Create Circle"
+        >
+          Create Circle
+        </button>
       </div>
       <section className="scene-slide" key={slide.id}>
         <h3 className="scene-slide__title">{slide.name}</h3>
@@ -468,6 +496,9 @@ export function ScenePanel() {
           </button>
           <button className="menu__item" role="menuitem" onClick={handleCreateText}>
             Create Text
+          </button>
+          <button className="menu__item" role="menuitem" onClick={handleCreateCircle}>
+            Create Circle
           </button>
           <button className="menu__item" role="menuitem" onClick={handleCreateGroup}>
             Create Group (Rig Handle)
