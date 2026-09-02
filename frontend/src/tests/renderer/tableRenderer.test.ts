@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createEngine } from '../../engine/internal'
-import { CreateProjectCommand, CreateSlideCommand, createCommandSystem } from '../../engine/commands'
+import {
+  CreateProjectCommand,
+  CreateSlideCommand,
+  createCommandSystem,
+} from '../../engine/commands'
 import { CreateTableCommand } from '../../engine/commands/tableCommands'
 import { pixiRegistry } from './pixiFake'
 import { findByLabel, mountRenderer, worldOf } from './testUtils'
@@ -58,6 +62,8 @@ describe('TableRenderer', () => {
           gap: 4,
           borderWidth: 1,
           borderColor: '#000000',
+          borderRadius: 0,
+          padding: 0,
         },
       },
     })
@@ -101,6 +107,8 @@ describe('TableRenderer', () => {
           gap: 0,
           borderWidth: 2,
           borderColor: '#ff0000',
+          borderRadius: 0,
+          padding: 0,
         },
       },
     })
@@ -140,6 +148,8 @@ describe('TableRenderer', () => {
           gap: 0,
           borderWidth: 1,
           borderColor: '#000000',
+          borderRadius: 0,
+          padding: 0,
         },
       },
     })
@@ -180,6 +190,8 @@ describe('TableRenderer', () => {
           gap: 0,
           borderWidth: 1,
           borderColor: '#000000',
+          borderRadius: 0,
+          padding: 0,
         },
       },
     })

@@ -49,11 +49,14 @@ export type NodeComponentsJSON = {
     readonly gap?: number
     readonly borderWidth?: number
     readonly borderColor?: string
+    readonly borderRadius?: number
+    readonly padding?: number
   }
   readonly tableRow?: {
     readonly kind: 'tableRow'
     readonly borderColor?: string
     readonly background?: string
+    readonly borderRadius?: number
   }
   readonly tableCell?: {
     readonly kind: 'tableCell'
@@ -62,6 +65,7 @@ export type NodeComponentsJSON = {
     readonly borderColor?: string
     readonly background?: string
     readonly padding?: number
+    readonly borderRadius?: number
   }
   readonly chart?: {
     readonly kind: 'chart'
@@ -149,12 +153,18 @@ export type CircleTrackJSON = {
   readonly keyframes: readonly KeyframeJSON[]
 }
 
+export type TableTrackJSON = {
+  readonly property: string
+  readonly keyframes: readonly KeyframeJSON[]
+}
+
 export type NodeAnimationJSON = {
   readonly nodeId: string
   readonly tracks: readonly PropertyTrackJSON[]
   readonly materialTracks?: readonly MaterialTrackJSON[]
   readonly dataLabelTracks?: readonly DataLabelTrackJSON[]
   readonly circleTracks?: readonly CircleTrackJSON[]
+  readonly tableTracks?: readonly TableTrackJSON[]
 }
 
 export type SlideAnimationJSON = {

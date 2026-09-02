@@ -1578,6 +1578,22 @@ export class Engine {
     return slide.animation.node(nodeId)?.hasCircleTrack(property) ?? false
   }
 
+  getTableKeyframes(
+    nodeId: string,
+    property: import('./animationProperties').TableAnimationProperty,
+  ): readonly Keyframe[] {
+    const slide = this.getSlideOfNode(nodeId)
+    return slide.animation.node(nodeId)?.tableKeyframes(property) ?? []
+  }
+
+  hasTableTrack(
+    nodeId: string,
+    property: import('./animationProperties').TableAnimationProperty,
+  ): boolean {
+    const slide = this.getSlideOfNode(nodeId)
+    return slide.animation.node(nodeId)?.hasTableTrack(property) ?? false
+  }
+
   getAnimatableParameters(nodeId: string): AnimatableParameter[] {
     const node = this.getNode(nodeId)
     const materialId = node.material.materialDefinitionId
@@ -1589,6 +1605,7 @@ export class Engine {
       (parameter) => this.hasMaterialTrack(nodeId, parameter),
       (label) => this.hasDataLabelTrack(nodeId, label),
       (property) => this.hasCircleTrack(nodeId, property),
+      (property) => this.hasTableTrack(nodeId, property),
     )
   }
 
@@ -1614,6 +1631,9 @@ export class Engine {
     if (resolved.kind === 'circle') {
       return animation.circleKeyframes(resolved.property)
     }
+    if (resolved.kind === 'table') {
+      return animation.tableKeyframes(resolved.property)
+    }
     return animation.materialKeyframes(resolved.parameter)
   }
 
@@ -1638,6 +1658,13 @@ export class Engine {
     time: number,
   ): import('./animationEvaluator').EvaluatedCircleState | null {
     return this.#evaluator.evaluateCircle(nodeId, time)
+  }
+
+  evaluateTable(
+    nodeId: string,
+    time: number,
+  ): import('./animationEvaluator').EvaluatedTableState | null {
+    return this.#evaluator.evaluateTable(nodeId, time)
   }
 
   evaluateMeshDeformation(
@@ -2832,12 +2859,15 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getDataLabelKeyframes: (nodeId, label) => engine.getDataLabelKeyframes(nodeId, label),
     getCircleKeyframes: (nodeId, property) => engine.getCircleKeyframes(nodeId, property),
     hasCircleTrack: (nodeId, property) => engine.hasCircleTrack(nodeId, property),
+    getTableKeyframes: (nodeId, property) => engine.getTableKeyframes(nodeId, property),
+    hasTableTrack: (nodeId, property) => engine.hasTableTrack(nodeId, property),
     getAnimatableParameters: (nodeId) => engine.getAnimatableParameters(nodeId),
     evaluateNode: (nodeId, time, target) => engine.evaluateNode(nodeId, time, target),
     evaluateMaterialOverrides: (nodeId, time, target) =>
       engine.evaluateMaterialOverrides(nodeId, time, target),
     evaluateDataLabels: (nodeId, time) => engine.evaluateDataLabels(nodeId, time),
     evaluateCircle: (nodeId, time) => engine.evaluateCircle(nodeId, time),
+    evaluateTable: (nodeId, time) => engine.evaluateTable(nodeId, time),
     evaluateMeshDeformation: (nodeId, time, boneWorldTransforms, world) =>
       engine.evaluateMeshDeformation(nodeId, time, boneWorldTransforms, world),
     getIKManager: () => engine.getIKManager(),

@@ -657,6 +657,36 @@ function validateAnimation(
         )
       }
     }
+    const tableTracks = (entry as unknown as Record<string, unknown>).tableTracks
+    if (tableTracks !== undefined) {
+      if (!Array.isArray(tableTracks)) {
+        errors.push('Node animation tableTracks must be an array')
+        continue
+      }
+      for (const track of tableTracks) {
+        if (!isRecord(track)) {
+          errors.push('Table track must be an object')
+          continue
+        }
+        const property = requireTableProperty(errors, track.property)
+        if (property === undefined) {
+          continue
+        }
+        validateKeyframeList(
+          errors,
+          track.keyframes,
+          `Table track "${property}"`,
+          duration,
+          keyframeIds,
+          (value, id) => {
+            if (typeof value !== 'number' || !Number.isFinite(value) || (value as number) < 0) {
+              return `Keyframe "${id}" value must be a non-negative finite number`
+            }
+            return null
+          },
+        )
+      }
+    }
   }
 }
 
@@ -894,6 +924,16 @@ const CIRCLE_PROPERTY_NAMES: readonly string[] = ['radius', 'startAngle', 'endAn
 function requireCircleProperty(errors: string[], value: unknown): string | undefined {
   if (typeof value !== 'string' || !(CIRCLE_PROPERTY_NAMES as readonly string[]).includes(value)) {
     errors.push(`Unknown circle animation property: ${String(value)}`)
+    return undefined
+  }
+  return value as string
+}
+
+const TABLE_PROPERTY_NAMES: readonly string[] = ['borderRadius', 'padding']
+
+function requireTableProperty(errors: string[], value: unknown): string | undefined {
+  if (typeof value !== 'string' || !(TABLE_PROPERTY_NAMES as readonly string[]).includes(value)) {
+    errors.push(`Unknown table animation property: ${String(value)}`)
     return undefined
   }
   return value as string

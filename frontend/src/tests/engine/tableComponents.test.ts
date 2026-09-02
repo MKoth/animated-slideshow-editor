@@ -54,6 +54,8 @@ describe('TableComponent simplified', () => {
       gap: 4,
       borderWidth: 1,
       borderColor: '#000000',
+      borderRadius: 0,
+      padding: 0,
     }
     expect(table.columns).toHaveLength(2)
     expect(table.gap).toBe(4)

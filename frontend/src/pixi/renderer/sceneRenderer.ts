@@ -53,6 +53,8 @@ import {
 } from './placeholder'
 import {
   rebuildTable,
+  rebuildTableWithEvaluated,
+  rebuildTableChildWithEvaluated,
   tableChildSizeOf,
   tableLayoutOf,
   tableSizeOf,
@@ -109,6 +111,7 @@ export class SceneRenderer {
   readonly #chartComponentHashes = new Map<string, string>()
   readonly #textComponentHashes = new Map<string, string>()
   readonly #circleHashes = new Map<string, string>()
+  readonly #tableHashes = new Map<string, string>()
   readonly #resolveDataSource: ResolveDataSource
   readonly #scratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #materialScratch: EffectiveMaterialScratch = effectiveMaterialScratch()
@@ -189,6 +192,7 @@ export class SceneRenderer {
     this.#chartComponentHashes.clear()
     this.#textComponentHashes.clear()
     this.#circleHashes.clear()
+    this.#tableHashes.clear()
     this.#scene = scene
     this.#slideId = slideId
     if (!scene) {
@@ -228,6 +232,7 @@ export class SceneRenderer {
         this.#nodeShaders.delete(descendantId)
         this.#missingNodes.delete(descendantId)
         this.#circleHashes.delete(descendantId)
+        this.#tableHashes.delete(descendantId)
       }
       this.#nodeIds.delete(descendant)
     }
@@ -877,6 +882,35 @@ export class SceneRenderer {
         }
       }
     }
+    let tableStyleChanged = false
+    if (node.components.table || node.components.tableCell || node.components.tableRow) {
+      const tableState = this.#engine.evaluateTable(nodeId, time)
+      if (tableState) {
+        const hash = `${tableState.borderRadius}:${tableState.padding}`
+        const prev = this.#tableHashes.get(nodeId)
+        if (prev !== hash) {
+          this.#tableHashes.set(nodeId, hash)
+          tableStyleChanged = true
+          if (node.components.table) {
+            const placeholder = placeholderOf(container)
+            if (placeholder) {
+              const availableWidth = this.#sizes.get(nodeId)?.width ?? DEFAULT_TABLE_WIDTH
+              rebuildTableWithEvaluated(this.#pixi, placeholder, node, availableWidth, tableState)
+            }
+          } else if (node.components.tableCell || node.components.tableRow) {
+            rebuildTableChildWithEvaluated(this.#pixi, container, node, tableState)
+            const size = tableChildSizeOf(container)
+            if (size) {
+              this.#sizes.set(nodeId, {
+                ...size,
+                offsetX: size.width / 2,
+                offsetY: size.height / 2,
+              })
+            }
+          }
+        }
+      }
+    }
     const state = this.#engine.evaluateNode(nodeId, time, this.#scratch)
     const evaluatedOverrides = this.#engine.evaluateMaterialOverrides(
       nodeId,
@@ -893,7 +927,7 @@ export class SceneRenderer {
       !previousMaterial ||
       previousMaterial.tint !== material.tint ||
       previousMaterial.opacityMultiplier !== material.opacityMultiplier
-    if (!stateChanged && !materialChanged && !shaderChanged) {
+    if (!stateChanged && !materialChanged && !shaderChanged && !tableStyleChanged) {
       return
     }
     applyEvaluatedState(container, state, material.opacityMultiplier)
@@ -1287,13 +1321,31 @@ export class SceneRenderer {
     const textGroup = placeholderOf(container)
     const size = textGroup ? textSizeOf(textGroup) : undefined
     if (!size) return
-    const padding = node.parent.components.tableCell.padding ?? 8
+    const cell = node.parent!
+    const slideId = this.#slideId
+    let evaluatedPadding: number | undefined
+    if (slideId) {
+      const time = this.#currentTime.getTime(slideId)
+      const state = this.#engine.evaluateTable(cell.id, time)
+      if (state) evaluatedPadding = state.padding
+    }
+    const table = this.#owningTable(node)?.components.table
+    const padding = evaluatedPadding ?? cell.components.tableCell!.padding ?? table?.padding ?? 0
     container.position.set(padding + size.width / 2, padding + size.height / 2)
   }
 
   #tableTextSize(node: SceneNode, size: WorldSize): WorldSize {
     if (!node.parent?.components.tableCell) return size
-    const padding = node.parent.components.tableCell.padding ?? 8
+    const cell = node.parent!
+    const slideId = this.#slideId
+    let evaluatedPadding: number | undefined
+    if (slideId) {
+      const time = this.#currentTime.getTime(slideId)
+      const state = this.#engine.evaluateTable(cell.id, time)
+      if (state) evaluatedPadding = state.padding
+    }
+    const table = this.#owningTable(node)?.components.table
+    const padding = evaluatedPadding ?? cell.components.tableCell!.padding ?? table?.padding ?? 0
     return {
       ...size,
       offsetX: padding + size.width / 2,

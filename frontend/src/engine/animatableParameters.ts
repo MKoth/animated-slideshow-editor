@@ -1,8 +1,10 @@
 import {
   ANIMATABLE_PROPERTIES,
   CIRCLE_ANIMATABLE_PROPERTIES,
+  TABLE_ANIMATABLE_PROPERTIES,
   type AnimationProperty,
   type CircleAnimationProperty,
+  type TableAnimationProperty,
 } from './animationProperties'
 import type { MaterialParameterDefault } from './materialResolution'
 import { TINT_PARAMETER_KEY, OPACITY_MULTIPLIER_PARAMETER_KEY } from './materialResolution'
@@ -17,7 +19,7 @@ export interface AnimatableParameter {
   /** The value kind (e.g. 'number', 'color', 'vec2'). */
   readonly kind: string
   /** Whether the parameter comes from the standard six, material, or data label. */
-  readonly source: 'standard' | 'material' | 'dataLabel' | 'circle'
+  readonly source: 'standard' | 'material' | 'dataLabel' | 'circle' | 'table'
   /** True when the node already has keyframes on this parameter's track. */
   readonly linked: boolean
 }
@@ -36,6 +38,11 @@ const CIRCLE_LABELS: Readonly<Record<CircleAnimationProperty, string>> = {
   startAngle: 'Start Angle',
   endAngle: 'End Angle',
   segments: 'Segments',
+}
+
+const TABLE_LABELS: Readonly<Record<TableAnimationProperty, string>> = {
+  borderRadius: 'Border Radius',
+  padding: 'Padding',
 }
 
 const BUILT_IN_MATERIAL_KEYS = new Set<string>([
@@ -71,6 +78,9 @@ export function getAnimatableParameters(
       readonly bone?: unknown
       readonly chart?: { readonly dataLabels?: readonly string[] }
       readonly circle?: unknown
+      readonly table?: unknown
+      readonly tableCell?: unknown
+      readonly tableRow?: unknown
     }
   },
   materialParameters: readonly MaterialParameterDefault[],
@@ -78,6 +88,7 @@ export function getAnimatableParameters(
   hasMaterialTrack: (parameter: string) => boolean,
   hasDataLabelTrack?: (label: string) => boolean,
   hasCircleTrack?: (property: CircleAnimationProperty) => boolean,
+  hasTableTrack?: (property: TableAnimationProperty) => boolean,
 ): AnimatableParameter[] {
   const result: AnimatableParameter[] = []
 
@@ -134,6 +145,18 @@ export function getAnimatableParameters(
         kind: 'number',
         source: 'circle',
         linked: hasCircleTrack ? hasCircleTrack(property) : false,
+      })
+    }
+  }
+
+  if (node.components.table || node.components.tableCell || node.components.tableRow) {
+    for (const property of TABLE_ANIMATABLE_PROPERTIES) {
+      result.push({
+        key: `table:${property}`,
+        label: TABLE_LABELS[property],
+        kind: 'number',
+        source: 'table',
+        linked: hasTableTrack ? hasTableTrack(property) : false,
       })
     }
   }

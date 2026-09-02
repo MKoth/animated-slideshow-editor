@@ -19,17 +19,27 @@ export const BONE_ANIMATABLE_PROPERTIES = [
   'scaleY',
 ] as const
 
-export const CIRCLE_ANIMATABLE_PROPERTIES = ['radius', 'startAngle', 'endAngle', 'segments'] as const
+export const CIRCLE_ANIMATABLE_PROPERTIES = [
+  'radius',
+  'startAngle',
+  'endAngle',
+  'segments',
+] as const
+
+export const TABLE_ANIMATABLE_PROPERTIES = ['borderRadius', 'padding'] as const
 
 export type AnimationProperty = (typeof ANIMATABLE_PROPERTIES)[number]
 
 export type CircleAnimationProperty = (typeof CIRCLE_ANIMATABLE_PROPERTIES)[number]
+
+export type TableAnimationProperty = (typeof TABLE_ANIMATABLE_PROPERTIES)[number]
 
 /** The subset of AnimationProperty that bones support. */
 export type BoneAnimationProperty = (typeof BONE_ANIMATABLE_PROPERTIES)[number]
 
 const ANIMATABLE_PROPERTY_VALUES: readonly string[] = ANIMATABLE_PROPERTIES
 const CIRCLE_ANIMATABLE_PROPERTY_VALUES: readonly string[] = CIRCLE_ANIMATABLE_PROPERTIES
+const TABLE_ANIMATABLE_PROPERTY_VALUES: readonly string[] = TABLE_ANIMATABLE_PROPERTIES
 
 export function requireAnimationProperty(value: unknown): AnimationProperty {
   if (
@@ -106,6 +116,39 @@ export function requireAnimatableForCircle(
   const bounded = requireCircleAnimationProperty(property)
   if (!node.components.circle) {
     throw new Error(`Node "${node.name}" does not have a circle component`)
+  }
+  return bounded
+}
+
+export function requireTableAnimationProperty(value: unknown): TableAnimationProperty {
+  if (
+    typeof value !== 'string' ||
+    !(TABLE_ANIMATABLE_PROPERTY_VALUES as readonly string[]).includes(value)
+  ) {
+    throw new Error(`Unknown table animation property: ${String(value)}`)
+  }
+  return value as TableAnimationProperty
+}
+
+export function requireTableKeyframeValue(
+  _property: TableAnimationProperty,
+  value: unknown,
+  what = 'Keyframe value',
+): number {
+  const num = requireFiniteNumber(value, what)
+  if (num < 0) {
+    throw new Error(`${what} must be a non-negative number`)
+  }
+  return num
+}
+
+export function requireAnimatableForTable(
+  node: SceneNode,
+  property: unknown,
+): TableAnimationProperty {
+  const bounded = requireTableAnimationProperty(property)
+  if (!node.components.table && !node.components.tableCell && !node.components.tableRow) {
+    throw new Error(`Node "${node.name}" does not have a table, row, or cell component`)
   }
   return bounded
 }

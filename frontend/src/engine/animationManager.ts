@@ -337,6 +337,9 @@ export class AnimationManager {
     if (track.kind === 'circle') {
       return animation.circleKeyframes(track.property)
     }
+    if (track.kind === 'table') {
+      return animation.tableKeyframes(track.property)
+    }
     return animation.materialKeyframes(track.parameter)
   }
 
@@ -348,6 +351,8 @@ export class AnimationManager {
       animation.addDataLabel(track.label, keyframe)
     } else if (track.kind === 'circle') {
       animation.addCircle(track.property, keyframe)
+    } else if (track.kind === 'table') {
+      animation.addTable(track.property, keyframe)
     } else {
       animation.addMaterial(track.parameter, keyframe)
     }
@@ -361,6 +366,8 @@ export class AnimationManager {
       animation.removeDataLabel(track.label, keyframeId)
     } else if (track.kind === 'circle') {
       animation.removeCircle(track.property, keyframeId)
+    } else if (track.kind === 'table') {
+      animation.removeTable(track.property, keyframeId)
     } else {
       animation.removeMaterial(track.parameter, keyframeId)
     }
@@ -375,6 +382,8 @@ export class AnimationManager {
       keyframe = animation.getDataLabel(track.label, keyframeId)
     } else if (track.kind === 'circle') {
       keyframe = animation.getCircle(track.property, keyframeId)
+    } else if (track.kind === 'table') {
+      keyframe = animation.getTable(track.property, keyframeId)
     } else {
       keyframe = animation.getMaterial(track.parameter, keyframeId)
     }
@@ -386,7 +395,9 @@ export class AnimationManager {
             ? `data label ${track.label}`
             : track.kind === 'circle'
               ? `circle ${track.property}`
-              : `parameter ${track.parameter}`
+              : track.kind === 'table'
+                ? `table ${track.property}`
+                : `parameter ${track.parameter}`
       throw new Error(`Keyframe not found: ${keyframeId} on ${on}`)
     }
     return keyframe
@@ -467,6 +478,9 @@ export class AnimationManager {
     }
     if (track.kind === 'circle') {
       return `circle ${track.property}`
+    }
+    if (track.kind === 'table') {
+      return `table ${track.property}`
     }
     return `parameter ${track.parameter}`
   }

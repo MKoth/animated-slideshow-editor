@@ -105,8 +105,8 @@ export class FakeGraphics extends FakeContainer {
     return this
   }
 
-  roundRect(): this {
-    this.#record('roundRect', [])
+  roundRect(x?: number, y?: number, w?: number, h?: number, radius?: number): this {
+    this.#record('roundRect', [x, y, w, h, radius])
     return this
   }
 

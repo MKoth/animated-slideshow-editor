@@ -35,6 +35,9 @@ export class TableLayoutCache {
       columns: table.columns,
       gap: table.gap,
       borderWidth: table.borderWidth,
+      borderRadius: table.borderRadius,
+      padding: table.padding,
+      borderColor: table.borderColor,
       cells: rows
         .flatMap((r) => r.children)
         .map((c) => ({
@@ -44,6 +47,7 @@ export class TableLayoutCache {
           borderColor: c.components.tableCell?.borderColor,
           background: c.components.tableCell?.background,
           padding: c.components.tableCell?.padding,
+          borderRadius: c.components.tableCell?.borderRadius,
         })),
       availableWidth,
     })

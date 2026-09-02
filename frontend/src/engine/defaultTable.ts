@@ -7,6 +7,8 @@ export function defaultTableComponent(): TableComponent {
     gap: 0,
     borderWidth: 1,
     borderColor: '#000000',
+    borderRadius: 0,
+    padding: 0,
   }
 }
 
@@ -15,5 +17,5 @@ export function defaultTableRowComponent(): TableRowComponent {
 }
 
 export function defaultTableCellComponent(): TableCellComponent {
-  return { kind: 'tableCell', colSpan: 1, rowSpan: 1 }
+  return { kind: 'tableCell', colSpan: 1, rowSpan: 1, borderRadius: 0, padding: 0 }
 }

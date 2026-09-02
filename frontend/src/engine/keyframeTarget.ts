@@ -1,5 +1,9 @@
 import type { SceneNode } from './sceneNode'
-import type { AnimationProperty, CircleAnimationProperty } from './animationProperties'
+import type {
+  AnimationProperty,
+  CircleAnimationProperty,
+  TableAnimationProperty,
+} from './animationProperties'
 import {
   requireAnimationProperty,
   requireAnimatableForNode,
@@ -7,6 +11,9 @@ import {
   requireAnimatableForCircle,
   requireCircleKeyframeValue,
   requireKeyframeValue,
+  requireTableAnimationProperty,
+  requireAnimatableForTable,
+  requireTableKeyframeValue,
 } from './animationProperties'
 import {
   isRecord,
@@ -45,6 +52,13 @@ export interface NodeCircleTarget {
   readonly property: CircleAnimationProperty
 }
 
+/** A table-style target for table/row/cell nodes. */
+export interface NodeTableTarget {
+  readonly kind: 'table'
+  readonly nodeId: string
+  readonly property: TableAnimationProperty
+}
+
 /** A clip channel target (Spec 07 R16/R20). */
 export interface ClipChannelTarget {
   readonly kind: 'clip'
@@ -61,6 +75,7 @@ export type KeyframeTarget =
   | NodeParameterTarget
   | NodeDataLabelTarget
   | NodeCircleTarget
+  | NodeTableTarget
   | ClipChannelTarget
 
 export function isPropertyTarget(target: KeyframeTarget): target is NodePropertyTarget {
@@ -81,6 +96,10 @@ export function isClipChannelTarget(target: KeyframeTarget): target is ClipChann
 
 export function isCircleTarget(target: KeyframeTarget): target is NodeCircleTarget {
   return target.kind === 'circle'
+}
+
+export function isTableTarget(target: KeyframeTarget): target is NodeTableTarget {
+  return target.kind === 'table'
 }
 
 export function requireKeyframeTarget(value: unknown): KeyframeTarget {
@@ -106,6 +125,11 @@ export function requireKeyframeTarget(value: unknown): KeyframeTarget {
     const nodeId = requireString(value.nodeId, 'Circle target node id')
     const property = requireCircleAnimationProperty(value.property)
     return { kind: 'circle', nodeId, property }
+  }
+  if (isRecord(value) && value.kind === 'table') {
+    const nodeId = requireString(value.nodeId, 'Table target node id')
+    const property = requireTableAnimationProperty(value.property)
+    return { kind: 'table', nodeId, property }
   }
   if (isRecord(value) && value.kind === 'clip') {
     const clipId = requireString(value.clipId, 'Keyframe target clip id')
@@ -138,6 +162,7 @@ export type KeyframeTrackRef =
   | { readonly kind: 'parameter'; readonly parameter: string; readonly kindOf: string | undefined }
   | { readonly kind: 'dataLabel'; readonly label: string }
   | { readonly kind: 'circle'; readonly property: CircleAnimationProperty }
+  | { readonly kind: 'table'; readonly property: TableAnimationProperty }
 
 export function resolveKeyframeTrack(
   node: SceneNode,
@@ -156,6 +181,9 @@ export function resolveKeyframeTrack(
   }
   if (isCircleTarget(target)) {
     return { kind: 'circle', property: requireAnimatableForCircle(node, target.property) }
+  }
+  if (isTableTarget(target)) {
+    return { kind: 'table', property: requireAnimatableForTable(node, target.property) }
   }
   const parameter = requireMaterialParameterKey(
     (target as NodeParameterTarget).parameter,
@@ -186,6 +214,9 @@ export function requireTrackKeyframeValue(
   if (track.kind === 'circle') {
     return requireCircleKeyframeValue(track.property, value, what)
   }
+  if (track.kind === 'table') {
+    return requireTableKeyframeValue(track.property, value, what)
+  }
   if (track.kindOf === undefined) {
     return requireMaterialOverrideValue(value, what)
   }
@@ -194,11 +225,26 @@ export function requireTrackKeyframeValue(
 
 export function requireNodeTarget(
   target: KeyframeTarget,
-): NodePropertyTarget | NodeParameterTarget | NodeDataLabelTarget | NodeCircleTarget {
-  if (target.kind !== 'node' && target.kind !== 'dataLabel' && target.kind !== 'circle') {
+):
+  | NodePropertyTarget
+  | NodeParameterTarget
+  | NodeDataLabelTarget
+  | NodeCircleTarget
+  | NodeTableTarget {
+  if (
+    target.kind !== 'node' &&
+    target.kind !== 'dataLabel' &&
+    target.kind !== 'circle' &&
+    target.kind !== 'table'
+  ) {
     throw new Error('This operation only supports node targets')
   }
-  return target as NodePropertyTarget | NodeParameterTarget | NodeDataLabelTarget | NodeCircleTarget
+  return target as
+    | NodePropertyTarget
+    | NodeParameterTarget
+    | NodeDataLabelTarget
+    | NodeCircleTarget
+    | NodeTableTarget
 }
 
 /** Validate a scale factor: a non-negative finite number. */

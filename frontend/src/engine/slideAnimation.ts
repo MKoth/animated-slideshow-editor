@@ -3,8 +3,16 @@ import { requireString } from './guards'
 import { NodeAnimation } from './nodeAnimation'
 import type { MaterialParameterKindOf } from './nodeAnimation'
 import type { NodeAnimationJSON, SlideAnimationJSON } from './json'
-import { ANIMATABLE_PROPERTIES, CIRCLE_ANIMATABLE_PROPERTIES } from './animationProperties'
-import type { AnimationProperty, CircleAnimationProperty } from './animationProperties'
+import {
+  ANIMATABLE_PROPERTIES,
+  CIRCLE_ANIMATABLE_PROPERTIES,
+  TABLE_ANIMATABLE_PROPERTIES,
+} from './animationProperties'
+import type {
+  AnimationProperty,
+  CircleAnimationProperty,
+  TableAnimationProperty,
+} from './animationProperties'
 
 export type ClampedKeyframe =
   | {
@@ -22,6 +30,12 @@ export type ClampedKeyframe =
   | {
       readonly nodeId: string
       readonly circleProperty: CircleAnimationProperty
+      readonly keyframeId: string
+      readonly oldTime: number
+    }
+  | {
+      readonly nodeId: string
+      readonly tableProperty: TableAnimationProperty
       readonly keyframeId: string
       readonly oldTime: number
     }
@@ -100,6 +114,19 @@ export class SlideAnimation {
           }
         }
       }
+      for (const property of TABLE_ANIMATABLE_PROPERTIES) {
+        for (const keyframe of animation.tableKeyframes(property)) {
+          if (keyframe.time > duration) {
+            clamped.push({
+              nodeId,
+              tableProperty: property,
+              keyframeId: keyframe.id,
+              oldTime: keyframe.time,
+            })
+            keyframe.time = duration
+          }
+        }
+      }
       for (const label of animation.dataLabelTrackLabels()) {
         for (const keyframe of animation.dataLabelKeyframes(label)) {
           if (keyframe.time > duration) {
@@ -125,11 +152,13 @@ export class SlideAnimation {
       const materialTracks = animation.materialTracksJSON()
       const dataLabelTracks = animation.dataLabelTracksJSON()
       const circleTracks = animation.circleTracksJSON()
+      const tableTracks = animation.tableTracksJSON()
       if (
         tracks.length > 0 ||
         materialTracks.length > 0 ||
         dataLabelTracks.length > 0 ||
-        circleTracks.length > 0
+        circleTracks.length > 0 ||
+        tableTracks.length > 0
       ) {
         nodes.push({
           nodeId,
@@ -137,6 +166,7 @@ export class SlideAnimation {
           ...(materialTracks.length > 0 ? { materialTracks } : {}),
           ...(dataLabelTracks.length > 0 ? { dataLabelTracks } : {}),
           ...(circleTracks.length > 0 ? { circleTracks } : {}),
+          ...(tableTracks.length > 0 ? { tableTracks } : {}),
         })
       }
     }

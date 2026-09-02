@@ -1,3 +1,7 @@
+import { useState } from 'react'
+import { useEngine, useEngineEvent } from '../../app/useEngine'
+import { useUiStore } from '../../stores/uiStore'
+import { usePlaybackController } from '../../stores/playbackStore'
 import type { SceneNode } from '../../engine'
 import type { TableComponent, TableDimension } from '../../engine/components'
 import type { DispatchCommand } from '../../engine/commands'
@@ -8,7 +12,10 @@ import {
   AddTableColumnCommand,
   RemoveTableColumnCommand,
   SetTableCellComponentCommand,
+  AddKeyframeCommand,
+  SetKeyframeValueCommand,
 } from '../../engine/commands'
+import type { TableAnimationProperty } from '../../engine/animationProperties'
 import { NumericField } from './inspectorFields'
 import { runCommand } from './sectionHelpers'
 
@@ -67,8 +74,60 @@ function TableLevelInspector({
   notify: (message: string) => void
   playing: boolean
 }) {
+  const { engine } = useEngine()
+  const animationMode = useUiStore((s) => s.animationMode)
+  const [, setTick] = useState(0)
+  useEngineEvent(() => setTick((t) => t + 1))
+  usePlaybackController((s) => s.currentTimes)
+
   const table = target.components.table
   if (!table) return null
+
+  const slide = engine.getActiveSlide()
+  const slideId = slide?.id ?? null
+  const playheadTime = slideId ? (usePlaybackController.getState().getTime(slideId) ?? 0) : 0
+  const evaluated =
+    slideId && (animationMode || playing) ? engine.evaluateTable(target.id, playheadTime) : null
+  const displayBorderRadius = evaluated?.borderRadius ?? table.borderRadius ?? 0
+  const displayPadding = evaluated?.padding ?? table.padding ?? 0
+
+  const isAnimated = (prop: TableAnimationProperty) => engine.hasTableTrack(target.id, prop)
+
+  const commitTableField = (property: TableAnimationProperty, value: number) => {
+    if (animationMode && slideId) {
+      const time = usePlaybackController.getState().getTime(slideId)
+      const existing = engine.getTableKeyframes(target.id, property).find((kf) => kf.time === time)
+      try {
+        if (existing) {
+          const result = dispatch(
+            new SetKeyframeValueCommand({
+              target: { kind: 'table', nodeId: target.id, property },
+              keyframeId: existing.id,
+              newValue: value,
+            }),
+          )
+          if (!result.ok) throw result.error
+          return
+        }
+        const result = dispatch(
+          new AddKeyframeCommand({
+            target: { kind: 'table', nodeId: target.id, property },
+            time,
+            value,
+          }),
+        )
+        if (!result.ok) throw result.error
+        return
+      } catch (error) {
+        notify(error instanceof Error ? error.message : String(error))
+        return
+      }
+    }
+    runCommand(notify, () => {
+      const updated = mergeTable(target, { [property]: value } as Partial<TableComponent>)
+      return dispatch(new SetTableComponentCommand({ nodeId: target.id, table: updated }))
+    })
+  }
 
   const apply = (patch: Partial<TableComponent>) => {
     runCommand(notify, () => {
@@ -169,6 +228,38 @@ function TableLevelInspector({
         onAdjust={(value) => apply({ borderWidth: value })}
       />
 
+      <NumericField
+        label="Border Radius"
+        value={displayBorderRadius}
+        step={1}
+        disabled={playing || (!animationMode && isAnimated('borderRadius'))}
+        onCommit={(raw) => {
+          const v = Number(raw)
+          if (!Number.isFinite(v) || v < 0) {
+            notify('Border radius must be a non-negative number')
+            return
+          }
+          commitTableField('borderRadius', v)
+        }}
+        onAdjust={(value) => commitTableField('borderRadius', Math.max(0, value))}
+      />
+
+      <NumericField
+        label="Padding"
+        value={displayPadding}
+        step={1}
+        disabled={playing || (!animationMode && isAnimated('padding'))}
+        onCommit={(raw) => {
+          const v = Number(raw)
+          if (!Number.isFinite(v) || v < 0) {
+            notify('Padding must be a non-negative number')
+            return
+          }
+          commitTableField('padding', v)
+        }}
+        onAdjust={(value) => commitTableField('padding', Math.max(0, value))}
+      />
+
       <div className="inspector-field">
         <label className="inspector-field__label" htmlFor="table-border-color">
           Border Color
@@ -233,8 +324,64 @@ function TableCellInspector({
   notify: (message: string) => void
   playing: boolean
 }) {
+  const { engine } = useEngine()
+  const animationMode = useUiStore((s) => s.animationMode)
+  const [, setTick] = useState(0)
+  useEngineEvent(() => setTick((t) => t + 1))
+  usePlaybackController((s) => s.currentTimes)
+
   const cell = target.components.tableCell
   if (!cell) return null
+
+  const slide = engine.getActiveSlide()
+  const slideId = slide?.id ?? null
+  const playheadTime = slideId ? (usePlaybackController.getState().getTime(slideId) ?? 0) : 0
+  const evaluated =
+    slideId && (animationMode || playing) ? engine.evaluateTable(target.id, playheadTime) : null
+  const displayPadding = evaluated?.padding ?? cell.padding ?? 0
+  const displayBorderRadius = evaluated?.borderRadius ?? cell.borderRadius ?? 0
+
+  const isAnimated = (prop: TableAnimationProperty) => engine.hasTableTrack(target.id, prop)
+
+  const commitCellField = (property: TableAnimationProperty, value: number) => {
+    if (animationMode && slideId) {
+      const time = usePlaybackController.getState().getTime(slideId)
+      const existing = engine.getTableKeyframes(target.id, property).find((kf) => kf.time === time)
+      try {
+        if (existing) {
+          const result = dispatch(
+            new SetKeyframeValueCommand({
+              target: { kind: 'table', nodeId: target.id, property },
+              keyframeId: existing.id,
+              newValue: value,
+            }),
+          )
+          if (!result.ok) throw result.error
+          return
+        }
+        const result = dispatch(
+          new AddKeyframeCommand({
+            target: { kind: 'table', nodeId: target.id, property },
+            time,
+            value,
+          }),
+        )
+        if (!result.ok) throw result.error
+        return
+      } catch (error) {
+        notify(error instanceof Error ? error.message : String(error))
+        return
+      }
+    }
+    runCommand(notify, () => {
+      return dispatch(
+        new SetTableCellComponentCommand({
+          nodeId: target.id,
+          tableCell: { ...cell, [property]: value } as typeof cell,
+        }),
+      )
+    })
+  }
 
   const commitColSpan = (raw: string) => {
     const value = Number(raw)
@@ -267,14 +414,7 @@ function TableCellInspector({
   const commitPadding = (raw: string) => {
     const value = Number(raw)
     if (Number.isFinite(value) && value >= 0) {
-      runCommand(notify, () => {
-        return dispatch(
-          new SetTableCellComponentCommand({
-            nodeId: target.id,
-            tableCell: { ...cell, padding: value },
-          }),
-        )
-      })
+      commitCellField('padding', value)
     }
   }
 
@@ -367,20 +507,27 @@ function TableCellInspector({
 
       <NumericField
         label="Padding"
-        value={cell.padding ?? 0}
+        value={displayPadding}
         step={1}
-        disabled={playing}
+        disabled={playing || (!animationMode && isAnimated('padding'))}
         onCommit={commitPadding}
-        onAdjust={(value) =>
-          runCommand(notify, () =>
-            dispatch(
-              new SetTableCellComponentCommand({
-                nodeId: target.id,
-                tableCell: { ...cell, padding: Math.max(0, value) },
-              }),
-            ),
-          )
-        }
+        onAdjust={(value) => commitCellField('padding', Math.max(0, value))}
+      />
+
+      <NumericField
+        label="Border Radius"
+        value={displayBorderRadius}
+        step={1}
+        disabled={playing || (!animationMode && isAnimated('borderRadius'))}
+        onCommit={(raw) => {
+          const v = Number(raw)
+          if (!Number.isFinite(v) || v < 0) {
+            notify('Border radius must be a non-negative number')
+            return
+          }
+          commitCellField('borderRadius', v)
+        }}
+        onAdjust={(value) => commitCellField('borderRadius', Math.max(0, value))}
       />
 
       <div className="inspector-field">

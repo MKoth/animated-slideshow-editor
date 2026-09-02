@@ -13,6 +13,8 @@ function makeTableComponent(overrides: Partial<TableComponent> = {}): TableCompo
     gap: 0,
     borderWidth: 0,
     borderColor: '#000000',
+    borderRadius: 0,
+    padding: 0,
     ...overrides,
   }
 }

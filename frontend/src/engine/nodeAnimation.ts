@@ -9,16 +9,19 @@ import type {
   MaterialTrackJSON,
   DataLabelTrackJSON,
   CircleTrackJSON,
+  TableTrackJSON,
 } from './json'
 import {
   requireAnimationProperty,
   requireAnimatableForNode,
   requireCircleAnimationProperty,
   requireCircleKeyframeValue,
+  requireTableAnimationProperty,
+  requireTableKeyframeValue,
   requireKeyframeTime,
   requireKeyframeValue,
 } from './animationProperties'
-import type { CircleAnimationProperty } from './animationProperties'
+import type { CircleAnimationProperty, TableAnimationProperty } from './animationProperties'
 import { requireMaterialKeyframeValue } from './materialKeyframes'
 import type { MaterialParameterKindOf } from './keyframeTarget'
 
@@ -29,6 +32,7 @@ export class NodeAnimation {
   readonly #materialTracks = new Map<string, Keyframe[]>()
   readonly #dataLabelTracks = new Map<string, Keyframe[]>()
   readonly #circleTracks = new Map<CircleAnimationProperty, Keyframe[]>()
+  readonly #tableTracks = new Map<TableAnimationProperty, Keyframe[]>()
 
   keyframes(property: AnimationProperty): readonly Keyframe[] {
     return this.#tracks.get(property) ?? []
@@ -74,6 +78,18 @@ export class NodeAnimation {
     return [...this.#circleTracks.keys()] as CircleAnimationProperty[]
   }
 
+  tableKeyframes(property: TableAnimationProperty): readonly Keyframe[] {
+    return this.#tableTracks.get(property) ?? []
+  }
+
+  hasTableTrack(property: TableAnimationProperty): boolean {
+    return this.#tableTracks.has(property)
+  }
+
+  tableTrackKeys(): TableAnimationProperty[] {
+    return [...this.#tableTracks.keys()] as TableAnimationProperty[]
+  }
+
   add(property: AnimationProperty, keyframe: Keyframe): void {
     insertSorted(this.#tracks, property, keyframe)
   }
@@ -88,6 +104,10 @@ export class NodeAnimation {
 
   addCircle(property: CircleAnimationProperty, keyframe: Keyframe): void {
     insertSorted(this.#circleTracks as Map<string, Keyframe[]>, property, keyframe)
+  }
+
+  addTable(property: TableAnimationProperty, keyframe: Keyframe): void {
+    insertSorted(this.#tableTracks as Map<string, Keyframe[]>, property, keyframe)
   }
 
   remove(property: AnimationProperty, keyframeId: string): Keyframe | undefined {
@@ -110,6 +130,10 @@ export class NodeAnimation {
     return removeById(this.#circleTracks as Map<string, Keyframe[]>, property, keyframeId)
   }
 
+  removeTable(property: TableAnimationProperty, keyframeId: string): Keyframe | undefined {
+    return removeById(this.#tableTracks as Map<string, Keyframe[]>, property, keyframeId)
+  }
+
   get(property: AnimationProperty, keyframeId: string): Keyframe | undefined {
     return this.#tracks.get(property)?.find((entry) => entry.id === keyframeId)
   }
@@ -124,6 +148,10 @@ export class NodeAnimation {
 
   getCircle(property: CircleAnimationProperty, keyframeId: string): Keyframe | undefined {
     return this.#circleTracks.get(property)?.find((entry) => entry.id === keyframeId)
+  }
+
+  getTable(property: TableAnimationProperty, keyframeId: string): Keyframe | undefined {
+    return this.#tableTracks.get(property)?.find((entry) => entry.id === keyframeId)
   }
 
   copy(): NodeAnimation {
@@ -148,6 +176,12 @@ export class NodeAnimation {
     }
     for (const [property, keyframes] of this.#circleTracks) {
       copy.#circleTracks.set(
+        property,
+        keyframes.map((keyframe) => copyKeyframe(keyframe)),
+      )
+    }
+    for (const [property, keyframes] of this.#tableTracks) {
+      copy.#tableTracks.set(
         property,
         keyframes.map((keyframe) => copyKeyframe(keyframe)),
       )
@@ -182,6 +216,14 @@ export class NodeAnimation {
   circleTracksJSON(): CircleTrackJSON[] {
     const tracks: CircleTrackJSON[] = []
     for (const [property, keyframes] of this.#circleTracks) {
+      tracks.push({ property, keyframes: keyframes.map((keyframe) => keyframe.toJSON()) })
+    }
+    return tracks
+  }
+
+  tableTracksJSON(): TableTrackJSON[] {
+    const tracks: TableTrackJSON[] = []
+    for (const [property, keyframes] of this.#tableTracks) {
       tracks.push({ property, keyframes: keyframes.map((keyframe) => keyframe.toJSON()) })
     }
     return tracks
@@ -247,6 +289,15 @@ export class NodeAnimation {
       }
       for (const track of circleTracks) {
         readCircleTrack(animation, track, duration, node)
+      }
+    }
+    const tableTracks = (json as Record<string, unknown>).tableTracks
+    if (tableTracks !== undefined) {
+      if (!Array.isArray(tableTracks)) {
+        throw new Error('Node animation tableTracks must be an array')
+      }
+      for (const track of tableTracks) {
+        readTableTrack(animation, track, duration, node)
       }
     }
     return animation
@@ -327,6 +378,33 @@ function readCircleTrack(
   )
   for (const keyframeJson of record.keyframes) {
     animation.addCircle(property, parse(keyframeJson))
+  }
+}
+
+function readTableTrack(
+  animation: NodeAnimation,
+  track: unknown,
+  duration: number,
+  node: SceneNode,
+): void {
+  if (typeof track !== 'object' || track === null) {
+    throw new Error(`Table track must be an object`)
+  }
+  const record = track as Record<string, unknown>
+  const property = requireTableAnimationProperty(record.property)
+  if (!node.components.table && !node.components.tableCell && !node.components.tableRow) {
+    throw new Error(
+      `Node "${node.id}" does not have a table, row, or cell component for table track "${property}"`,
+    )
+  }
+  if (!Array.isArray(record.keyframes)) {
+    throw new Error(`Table track "${property}" must have a keyframes array`)
+  }
+  const parse = trackKeyframeParser(`Table track "${property}"`, duration, (value, what) =>
+    requireTableKeyframeValue(property, value, what),
+  )
+  for (const keyframeJson of record.keyframes) {
+    animation.addTable(property, parse(keyframeJson))
   }
 }
 

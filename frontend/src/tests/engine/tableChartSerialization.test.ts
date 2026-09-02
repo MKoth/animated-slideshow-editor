@@ -24,6 +24,8 @@ describe('TableComponent serialization', () => {
       gap: 5,
       borderWidth: 2,
       borderColor: '#ff0000',
+      borderRadius: 0,
+      padding: 0,
     }
     engine.setTableComponent(node.id, table)
 
@@ -35,6 +37,8 @@ describe('TableComponent serialization', () => {
       gap: 5,
       borderWidth: 2,
       borderColor: '#ff0000',
+      borderRadius: 0,
+      padding: 0,
     })
 
     const restored = deserialize(JSON.stringify(json))
@@ -48,6 +52,8 @@ describe('TableComponent serialization', () => {
       gap: 5,
       borderWidth: 2,
       borderColor: '#ff0000',
+      borderRadius: 0,
+      padding: 0,
     })
   })
 
@@ -61,6 +67,8 @@ describe('TableComponent serialization', () => {
       gap: 0,
       borderWidth: 1,
       borderColor: '#000000',
+      borderRadius: 0,
+      padding: 0,
     }
     engine.setTableComponent(node.id, table)
 
@@ -80,6 +88,8 @@ describe('TableComponent serialization', () => {
       gap: 0,
       borderWidth: 1,
       borderColor: '#000000',
+      borderRadius: 0,
+      padding: 0,
     }
     engine.setTableComponent(node.id, table)
 
@@ -402,6 +412,8 @@ describe('full round-trip with table, chart, and data keyframes', () => {
       gap: 2,
       borderWidth: 1,
       borderColor: '#333333',
+      borderRadius: 0,
+      padding: 0,
     }
     engine.setTableComponent(tableNode.id, table)
 

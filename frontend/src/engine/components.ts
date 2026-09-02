@@ -71,12 +71,15 @@ export interface TableComponent {
   readonly gap: number
   readonly borderWidth: number
   readonly borderColor: string
+  readonly borderRadius: number
+  readonly padding: number
 }
 
 export interface TableRowComponent {
   readonly kind: 'tableRow'
   readonly borderColor?: string
   readonly background?: string
+  readonly borderRadius?: number
   readonly zIndex?: number
 }
 
@@ -87,6 +90,7 @@ export interface TableCellComponent {
   readonly borderColor?: string
   readonly background?: string
   readonly padding?: number
+  readonly borderRadius?: number
   readonly zIndex?: number
 }
 

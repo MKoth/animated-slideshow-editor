@@ -250,6 +250,10 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
       kind: 'tableRow',
       borderColor: typeof rowRecord.borderColor === 'string' ? rowRecord.borderColor : undefined,
       background: typeof rowRecord.background === 'string' ? rowRecord.background : undefined,
+      borderRadius:
+        typeof rowRecord.borderRadius === 'number' && Number.isFinite(rowRecord.borderRadius)
+          ? rowRecord.borderRadius
+          : undefined,
       zIndex:
         typeof rowRecord.zIndex === 'number' && Number.isFinite(rowRecord.zIndex)
           ? rowRecord.zIndex
@@ -276,6 +280,10 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
       padding:
         typeof cellRecord.padding === 'number' && Number.isFinite(cellRecord.padding)
           ? cellRecord.padding
+          : undefined,
+      borderRadius:
+        typeof cellRecord.borderRadius === 'number' && Number.isFinite(cellRecord.borderRadius)
+          ? cellRecord.borderRadius
           : undefined,
       zIndex:
         typeof cellRecord.zIndex === 'number' && Number.isFinite(cellRecord.zIndex)
@@ -360,12 +368,26 @@ function parseTableComponent(component: Record<string, unknown>, nodeId: string)
       ? component.borderWidth
       : 1
   const borderColor = typeof component.borderColor === 'string' ? component.borderColor : '#000000'
+  const borderRadius =
+    typeof component.borderRadius === 'number' && Number.isFinite(component.borderRadius)
+      ? component.borderRadius
+      : 0
+  const padding =
+    typeof component.padding === 'number' && Number.isFinite(component.padding)
+      ? component.padding
+      : 0
+  if (borderRadius < 0) throw new Error(`${ctx} borderRadius must be a non-negative number`)
+  if (padding < 0) throw new Error(`${ctx} padding must be a non-negative number`)
+  if (borderWidth < 0) throw new Error(`${ctx} borderWidth must be a non-negative number`)
+  if (gap < 0) throw new Error(`${ctx} gap must be a non-negative number`)
   return {
     kind: 'table',
     columns,
     gap,
     borderWidth,
     borderColor,
+    borderRadius,
+    padding,
   }
 }
 
@@ -473,6 +495,8 @@ function freezeComponents(components: NodeComponents): NodeComponents {
           gap: components.table.gap,
           borderWidth: components.table.borderWidth,
           borderColor: components.table.borderColor,
+          borderRadius: components.table.borderRadius,
+          padding: components.table.padding,
         })
       : undefined,
     tableRow: components.tableRow ? Object.freeze({ ...components.tableRow }) : undefined,

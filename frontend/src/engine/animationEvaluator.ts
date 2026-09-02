@@ -38,6 +38,11 @@ export interface EvaluatedCircleState {
   readonly segments: number
 }
 
+export interface EvaluatedTableState {
+  readonly borderRadius: number
+  readonly padding: number
+}
+
 export function evaluatedNodeScratch(): EvaluatedNodeScratch {
   return { transform: { ...identityTransform() }, opacity: 1 }
 }
@@ -227,11 +232,7 @@ export class AnimationEvaluator {
     const boundedTime = requireFiniteNumber(time, 'Evaluation time')
     const clampedTime = Math.min(Math.max(boundedTime, 0), slide.duration)
     const animation = slide.animation.node(nodeId)
-    const radius = this.#evaluate(
-      animation?.circleKeyframes('radius'),
-      clampedTime,
-      circle.radius,
-    )
+    const radius = this.#evaluate(animation?.circleKeyframes('radius'), clampedTime, circle.radius)
     const startAngle = this.#evaluate(
       animation?.circleKeyframes('startAngle'),
       clampedTime,
@@ -254,6 +255,68 @@ export class AnimationEvaluator {
     )
     const segments = Math.max(3, Math.min(256, Math.round(segmentsRaw)))
     return { radius, startAngle, endAngle, segments }
+  }
+
+  evaluateTable(nodeId: string, time: number): EvaluatedTableState | null {
+    const node = this.#nodeLookup(nodeId)
+    const hasTable = Boolean(
+      node.components.table || node.components.tableCell || node.components.tableRow,
+    )
+    if (!hasTable) {
+      return null
+    }
+    const slide = this.#slideLookup(nodeId)
+    const boundedTime = requireFiniteNumber(time, 'Evaluation time')
+    const clampedTime = Math.min(Math.max(boundedTime, 0), slide.duration)
+    const animation = slide.animation.node(nodeId)
+    // Resolve base values with inheritance for padding/borderRadius
+    let baseBorderRadius = 0
+    let basePadding = 0
+    if (node.components.table) {
+      baseBorderRadius = node.components.table.borderRadius ?? 0
+      basePadding = node.components.table.padding ?? 0
+    } else if (node.components.tableCell) {
+      baseBorderRadius = node.components.tableCell.borderRadius ?? 0
+      basePadding = node.components.tableCell.padding ?? 0
+      // Inherit from owning table if cell values are fallback 0 and table has non-zero? Keep simple: use cell's own only.
+      // If cell has no explicit radius, fallback to owning table's radius
+      if (node.components.tableCell.borderRadius === undefined) {
+        const owning = this.#findOwningTable(node)
+        if (owning?.components.table?.borderRadius !== undefined) {
+          baseBorderRadius = owning.components.table.borderRadius
+        }
+      }
+      if (node.components.tableCell.padding === undefined) {
+        const owning = this.#findOwningTable(node)
+        if (owning?.components.table?.padding !== undefined) {
+          basePadding = owning.components.table.padding
+        }
+      }
+    } else if (node.components.tableRow) {
+      baseBorderRadius = node.components.tableRow.borderRadius ?? 0
+      // Row padding not currently stored; use 0
+      const owning = this.#findOwningTable(node)
+      if (
+        node.components.tableRow.borderRadius === undefined &&
+        owning?.components.table?.borderRadius !== undefined
+      ) {
+        baseBorderRadius = owning.components.table.borderRadius
+      }
+    }
+    const borderRadius = this.#evaluate(
+      animation?.tableKeyframes('borderRadius'),
+      clampedTime,
+      baseBorderRadius,
+    )
+    const padding = this.#evaluate(animation?.tableKeyframes('padding'), clampedTime, basePadding)
+    return { borderRadius: Math.max(0, borderRadius), padding: Math.max(0, padding) }
+  }
+
+  #findOwningTable(node: SceneNode): SceneNode | null {
+    for (let parent: SceneNode | null = node.parent; parent; parent = parent.parent) {
+      if (parent.components.table) return parent
+    }
+    return null
   }
 
   #applyClipInstances(node: SceneNode, time: number, state: EvaluatedNodeScratch): void {
