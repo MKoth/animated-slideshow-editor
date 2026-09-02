@@ -1,5 +1,5 @@
 import type { EnginePublic, Scene, SceneNode } from '../engine'
-import type { AnimationProperty } from '../engine'
+import type { AnimationProperty, CircleAnimationProperty } from '../engine'
 import type { KeyframeTarget } from '../engine'
 import {
   DeleteKeyframesCommand,
@@ -35,6 +35,13 @@ export interface MaterialKeyframeRef {
 export interface DataLabelKeyframeRef {
   readonly nodeId: string
   readonly label: string
+  readonly keyframeId: string
+  readonly time: number
+}
+
+export interface CircleKeyframeRef {
+  readonly nodeId: string
+  readonly property: CircleAnimationProperty
   readonly keyframeId: string
   readonly time: number
 }
@@ -88,6 +95,24 @@ export function groupDataLabelRefsByTarget<Ref extends { nodeId: string; label: 
       entry.items.push(itemOf(ref))
     } else {
       groups.set(key, { nodeId: ref.nodeId, label: ref.label, items: [itemOf(ref)] })
+    }
+  }
+  return [...groups.values()]
+}
+
+/** Group refs by their circle target, preserving first-seen order. */
+export function groupCircleRefsByTarget<Ref extends { nodeId: string; property: CircleAnimationProperty }, T>(
+  refs: readonly Ref[],
+  itemOf: (ref: Ref) => T,
+): { readonly nodeId: string; readonly property: CircleAnimationProperty; readonly items: T[] }[] {
+  const groups = new Map<string, { nodeId: string; property: CircleAnimationProperty; items: T[] }>()
+  for (const ref of refs) {
+    const key = `${ref.nodeId}\u0000${ref.property}`
+    const entry = groups.get(key)
+    if (entry) {
+      entry.items.push(itemOf(ref))
+    } else {
+      groups.set(key, { nodeId: ref.nodeId, property: ref.property, items: [itemOf(ref)] })
     }
   }
   return [...groups.values()]
@@ -168,6 +193,29 @@ export function dataLabelKeyframeRefsOfScene(
   return refs
 }
 
+export function circleKeyframeRefsOfScene(
+  engine: EnginePublic,
+  scene: Scene,
+): CircleKeyframeRef[] {
+  const refs: CircleKeyframeRef[] = []
+  for (const node of collectNodes(scene)) {
+    if (!node.components.circle) continue
+    for (const property of ['radius', 'startAngle', 'endAngle', 'segments'] as const) {
+      if (engine.hasCircleTrack(node.id, property)) {
+        for (const keyframe of engine.getCircleKeyframes(node.id, property)) {
+          refs.push({
+            nodeId: node.id,
+            property,
+            keyframeId: keyframe.id,
+            time: keyframe.time,
+          })
+        }
+      }
+    }
+  }
+  return refs
+}
+
 function allKeyframeRefs(engine: EnginePublic): KeyframeRef[] {
   const refs: KeyframeRef[] = []
   for (const slide of engine.project?.slides ?? []) {
@@ -188,6 +236,14 @@ function allDataLabelKeyframeRefs(engine: EnginePublic): DataLabelKeyframeRef[] 
   const refs: DataLabelKeyframeRef[] = []
   for (const slide of engine.project?.slides ?? []) {
     refs.push(...dataLabelKeyframeRefsOfScene(engine, slide.scene))
+  }
+  return refs
+}
+
+function allCircleKeyframeRefs(engine: EnginePublic): CircleKeyframeRef[] {
+  const refs: CircleKeyframeRef[] = []
+  for (const slide of engine.project?.slides ?? []) {
+    refs.push(...circleKeyframeRefsOfScene(engine, slide.scene))
   }
   return refs
 }
@@ -219,16 +275,32 @@ export function selectedDataLabelKeyframeRefs(engine: EnginePublic): DataLabelKe
   return allDataLabelKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
 }
 
+export function selectedCircleKeyframeRefs(engine: EnginePublic): CircleKeyframeRef[] {
+  const selectedIds = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+  if (selectedIds.length === 0) {
+    return []
+  }
+  const wanted = new Set(selectedIds)
+  return allCircleKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
+}
+
 type DeleteTarget =
   | { kind: 'property'; nodeId: string; property: AnimationProperty; items: string[] }
   | { kind: 'parameter'; nodeId: string; parameter: string; items: string[] }
   | { kind: 'dataLabel'; nodeId: string; label: string; items: string[] }
+  | { kind: 'circle'; nodeId: string; property: CircleAnimationProperty; items: string[] }
 
 export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: DispatchCommand): boolean {
   const propertyRefs = selectedKeyframeRefs(engine)
   const materialRefs = selectedMaterialKeyframeRefs(engine)
   const dataLabelRefs = selectedDataLabelKeyframeRefs(engine)
-  if (propertyRefs.length === 0 && materialRefs.length === 0 && dataLabelRefs.length === 0) {
+  const circleRefs = selectedCircleKeyframeRefs(engine)
+  if (
+    propertyRefs.length === 0 &&
+    materialRefs.length === 0 &&
+    dataLabelRefs.length === 0 &&
+    circleRefs.length === 0
+  ) {
     return false
   }
   const targets: DeleteTarget[] = []
@@ -256,6 +328,14 @@ export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: Dispatch
       items: group.items,
     })
   }
+  for (const group of groupCircleRefsByTarget(circleRefs, (ref) => ref.keyframeId)) {
+    targets.push({
+      kind: 'circle',
+      nodeId: group.nodeId,
+      property: group.property,
+      items: group.items,
+    } as unknown as DeleteTarget)
+  }
   const deleteCommands = targets.map((target) => {
     if (target.kind === 'property') {
       return new DeleteKeyframesCommand({
@@ -266,6 +346,12 @@ export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: Dispatch
     if (target.kind === 'dataLabel') {
       return new DeleteKeyframesCommand({
         target: { kind: 'dataLabel', nodeId: target.nodeId, label: target.label },
+        keyframeIds: target.items,
+      })
+    }
+    if (target.kind === 'circle') {
+      return new DeleteKeyframesCommand({
+        target: { kind: 'circle', nodeId: target.nodeId, property: target.property },
         keyframeIds: target.items,
       })
     }
@@ -283,7 +369,8 @@ export function pruneKeyframeSelection(engine: EnginePublic): void {
   const validPropertyKeys = new Set(allKeyframeRefs(engine).map((ref) => ref.keyframeId))
   const validMaterialKeys = new Set(allMaterialKeyframeRefs(engine).map((ref) => ref.keyframeId))
   const validDataLabelKeys = new Set(allDataLabelKeyframeRefs(engine).map((ref) => ref.keyframeId))
-  const valid = new Set([...validPropertyKeys, ...validMaterialKeys, ...validDataLabelKeys])
+  const validCircleKeys = new Set(allCircleKeyframeRefs(engine).map((ref) => ref.keyframeId))
+  const valid = new Set([...validPropertyKeys, ...validMaterialKeys, ...validDataLabelKeys, ...validCircleKeys])
   useTimelineSelectionStore.getState().pruneSelection(valid)
 }
 
