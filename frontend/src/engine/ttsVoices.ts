@@ -15,8 +15,6 @@ export const SPEAKER_META: Record<string, VoiceMeta> = {
   Aiden: { description: 'Sunny American', nativeLanguage: 'English', iso: 'en' },
   Ono_Anna: { description: 'Playful', nativeLanguage: 'Japanese', iso: 'ja' },
   Sohee: { description: 'Warm rich', nativeLanguage: 'Korean', iso: 'ko' },
-  Chelsie: { description: 'Clear female', nativeLanguage: 'English', iso: 'en' },
-  Ethan: { description: 'Warm male', nativeLanguage: 'English', iso: 'en' },
 }
 
 export const SPEAKER_HINTS: Record<string, string> = Object.fromEntries(
@@ -56,25 +54,31 @@ export function dropdownLabelForVoice(speaker: string): string {
   return `${speaker} (${meta.description}, ${meta.nativeLanguage})`
 }
 
+// Per-model fallback mirrors backend/app/tts/registry.py
+// CustomVoice: 9 canonical; Base/VoiceDesign: no fixed speakers (voice_clone / voice_design)
 export function getFallbackSpeakersForModel(modelId: string): string[] {
-  // Mirror backend fallback lists (frontend/src/engine/ttsRegistry.ts)
   const FALLBACK: Record<string, string[]> = {
     'mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16': [...CANONICAL_CUSTOMVOICE_SPEAKERS],
     'mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16': [...CANONICAL_CUSTOMVOICE_SPEAKERS],
-    'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16': ['Chelsie', 'Ethan', 'Vivian', 'Serena', 'Ryan', 'Aiden'],
-    'mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16': ['Chelsie', 'Ethan', 'Vivian', 'Serena', 'Ryan', 'Aiden'],
-    'mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16': [
-      'Vivian',
-      'Serena',
-      'Ryan',
-      'Aiden',
-      'Ono_Anna',
-      'Sohee',
-      'Chelsie',
-      'Ethan',
-    ],
+    'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16': [],
+    'mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16': [],
+    'mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16': [],
   }
   return FALLBACK[modelId] ?? [...CANONICAL_CUSTOMVOICE_SPEAKERS]
+}
+
+export function getModelMode(modelId: string): 'custom_voice' | 'voice_clone' | 'voice_design' {
+  if (modelId.includes('-Base-')) return 'voice_clone'
+  if (modelId.includes('-VoiceDesign-')) return 'voice_design'
+  return 'custom_voice'
+}
+
+export function isCustomVoiceModel(modelId: string): boolean {
+  return getModelMode(modelId) === 'custom_voice'
+}
+
+export function isVoiceCloneModel(modelId: string): boolean {
+  return getModelMode(modelId) === 'voice_clone'
 }
 
 export function defaultSpeakerForModel(modelId: string, language?: string | null): string {
@@ -180,30 +184,21 @@ export function migrateStoredVoiceForDisplay(
   return { value: res.value, isUnknown: res.isUnknown, warning: res.warning }
 }
 
-// Language-aware filtering: strict native filter per strict choice
+// Language-aware filtering removed per ChatGPT review: speakers and languages are independent.
+// Any speaker can speak any of the 10 languages; nativeLanguage is a quality hint, not a restriction.
+// Kept for backward compat but returns all speakers unfiltered.
 export function filterSpeakersByLanguage(
   speakers: string[],
-  languageIso: string | null | undefined,
+  _languageIso: string | null | undefined,
 ): { filtered: string[]; isExact: boolean } {
-  const raw = languageIso == null ? '' : String(languageIso).trim().toLowerCase()
-  if (raw === '' || raw === 'auto') return { filtered: speakers, isExact: true }
-  // normalize language like en-US -> en
-  const primary = raw.split('-')[0].split('_')[0]
-  const nativeMatch = speakers.filter((s) => {
-    const meta = SPEAKER_META[s]
-    return meta?.iso === primary
-  })
-  if (nativeMatch.length > 0) return { filtered: nativeMatch, isExact: true }
-  // No native speakers for this language (e.g., de/fr/ru/pt/es/it) -> show all with notice
-  return { filtered: speakers, isExact: false }
+  return { filtered: speakers, isExact: true }
 }
 
 export function getSpeakersForModelAndLanguage(
   modelId: string,
-  languageIso: string | null | undefined,
+  _languageIso: string | null | undefined,
   backendSpeakers?: string[] | null,
 ): { speakers: string[]; isExact: boolean; baseCount: number } {
   const base = backendSpeakers ?? getFallbackSpeakersForModel(modelId)
-  const { filtered, isExact } = filterSpeakersByLanguage(base, languageIso)
-  return { speakers: filtered, isExact, baseCount: base.length }
+  return { speakers: base, isExact: true, baseCount: base.length }
 }

@@ -30,6 +30,8 @@ _CANONICAL_CUSTOMVOICE_SPEAKERS: list[str] = [
 ]
 
 # Canonical speaker metadata: description + native language hint per spec #253
+# Qwen3-TTS CustomVoice provides exactly these 9 built-in voices. Base is voice-clone
+# (reference audio, no fixed speakers) and VoiceDesign uses a description prompt.
 # Keep aligned with frontend ttsVoices fallback.
 SPEAKER_META: dict[str, dict[str, str]] = {
     "Vivian": {"description": "Bright edgy young female", "nativeLanguage": "Chinese", "iso": "zh"},
@@ -41,9 +43,6 @@ SPEAKER_META: dict[str, dict[str, str]] = {
     "Aiden": {"description": "Sunny American", "nativeLanguage": "English", "iso": "en"},
     "Ono_Anna": {"description": "Playful", "nativeLanguage": "Japanese", "iso": "ja"},
     "Sohee": {"description": "Warm rich", "nativeLanguage": "Korean", "iso": "ko"},
-    # Base/VoiceDesign extras (shown when per-model list includes them)
-    "Chelsie": {"description": "Clear female", "nativeLanguage": "English", "iso": "en"},
-    "Ethan": {"description": "Warm male", "nativeLanguage": "English", "iso": "en"},
 }
 
 def _speaker_hint(speaker: str) -> str:
@@ -60,37 +59,32 @@ LEGACY_VOICE_TO_CANONICAL: dict[str, str] = {
     "nova": "Ryan",
 }
 
-# Base models may use different names; simplified mapping for future distinct sets
-_BASE_SPEAKERS: list[str] = [
-    "Chelsie",
-    "Ethan",
-    "Vivian",
-    "Serena",
-    "Ryan",
-    "Aiden",
-]
-
-# VoiceDesign may use generic VoiceDesign voices
-_VOICEDESIGN_SPEAKERS: list[str] = [
-    "Vivian",
-    "Serena",
-    "Ryan",
-    "Aiden",
-    "Ono_Anna",
-    "Sohee",
-    "Chelsie",
-    "Ethan",
-]
-
-# Languages supported per model – all support the same 10 + Auto
+# Languages supported per model – all support the same 10. Auto is UI-only (not in this list);
+# see languages.py LANGUAGE_OPTIONS / ISO_TO_QWEN for Auto handling.
 _SUPPORTED_LANGUAGES: list[str] = ["zh", "en", "ja", "ko", "de", "fr", "ru", "pt", "es", "it"]
+
+# Auto is not part of _SUPPORTED_LANGUAGES; UI exposes it as "" (empty selects Auto).
+LANGUAGE_AUTO = "auto"
+
+# Per-model mode: custom_voice has 9 fixed speakers; Base is voice_clone (reference audio);
+# VoiceDesign is voice_design (description prompt). Speakers and languages are independent — any
+# speaker can speak any supported language; nativeLanguage is a quality hint, not a restriction.
+MODEL_MODE: dict[str, str] = {
+    "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16": "custom_voice",
+    "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16": "custom_voice",
+    "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16": "voice_clone",
+    "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16": "voice_clone",
+    "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16": "voice_design",
+}
 
 SPEAKERS_BY_MODEL: dict[str, list[str]] = {
     "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16": _CANONICAL_CUSTOMVOICE_SPEAKERS,
     "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16": _CANONICAL_CUSTOMVOICE_SPEAKERS,
-    "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16": _BASE_SPEAKERS,
-    "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16": _BASE_SPEAKERS,
-    "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16": _VOICEDESIGN_SPEAKERS,
+    # Base = voice_clone: no fixed speakers, reference audio required
+    "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16": [],
+    "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16": [],
+    # VoiceDesign = voice described via prompt, no fixed speakers
+    "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16": [],
 }
 
 LANGUAGES_BY_MODEL: dict[str, list[str]] = {m: list(_SUPPORTED_LANGUAGES) for m in SUPPORTED_MODELS}
@@ -213,6 +207,10 @@ def migrate_stored_voice(
     return "", True, f"Unknown voice '{stripped}' — using default ({default_speaker_for_model(mid, language)})"
 
 
+def get_model_mode(model_id: str) -> str:
+    return MODEL_MODE.get(model_id, "custom_voice")
+
+
 def get_model_capabilities(model_id: str) -> dict[str, object]:
     speakers = get_supported_speakers(model_id)
     hints = {s: SPEAKER_HINTS.get(s, s) for s in speakers}
@@ -223,6 +221,7 @@ def get_model_capabilities(model_id: str) -> dict[str, object]:
         "instructionSupported": INSTRUCTION_SUPPORTED_BY_MODEL.get(model_id, False),
         "speakerHints": hints,
         "speakerMeta": meta,
+        "mode": get_model_mode(model_id),
     }
 
 

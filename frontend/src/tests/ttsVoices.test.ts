@@ -21,11 +21,13 @@ describe('ttsVoices per-model dropdown', () => {
     expect(dropdownLabelForVoice('Ryan')).toBe('Ryan (Dynamic, English)')
   })
 
-  it('Base model shows Chelsie/Ethan', () => {
+  it('Base and VoiceDesign have no fixed speakers (voice_clone / voice_design)', () => {
     const base = getFallbackSpeakersForModel('mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16')
-    expect(base).toEqual(['Chelsie', 'Ethan', 'Vivian', 'Serena', 'Ryan', 'Aiden'])
-    const hints = base.map((s) => `${s} (${SPEAKER_HINTS[s]})`)
-    expect(hints).toContain('Chelsie (Clear female, English)')
+    expect(base).toEqual([])
+    const base17 = getFallbackSpeakersForModel('mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16')
+    expect(base17).toEqual([])
+    const vd = getFallbackSpeakersForModel('mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16')
+    expect(vd).toEqual([])
   })
 
   it('legacy nova maps to Ryan', () => {
@@ -46,10 +48,10 @@ describe('ttsVoices per-model dropdown', () => {
     const unkZh = migrateStoredVoice('foobar', 'mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16', 'zh')
     expect(unkZh.warning).toContain('Vivian')
 
+    // Chelsie/Ethan no longer exist — treated as unknown voice
     const chelsieOnCustom = migrateStoredVoice('Chelsie', 'mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16', 'en')
     expect(chelsieOnCustom.isUnknown).toBe(true)
-    expect(chelsieOnCustom.warning).toContain('not supported')
-    expect(chelsieOnCustom.warning).toContain('Ryan')
+    expect(chelsieOnCustom.warning).toContain('Unknown voice')
   })
 
   it('default speaker per model and language', () => {
@@ -66,38 +68,36 @@ describe('ttsVoices per-model dropdown', () => {
     expect(mig2.value).toBe('Vivian')
   })
 
-  it('strict native filter by language', () => {
+  it('language does not filter speakers — any speaker can speak any language', () => {
     const base = getFallbackSpeakersForModel('mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16')
-    expect(filterSpeakersByLanguage(base, 'zh').filtered).toEqual(['Vivian', 'Serena', 'Uncle_Fu', 'Dylan', 'Eric'])
-    expect(filterSpeakersByLanguage(base, 'en').filtered).toEqual(['Ryan', 'Aiden'])
-    expect(filterSpeakersByLanguage(base, 'ja').filtered).toEqual(['Ono_Anna'])
-    expect(filterSpeakersByLanguage(base, 'ko').filtered).toEqual(['Sohee'])
+    // All languages return full list unfiltered, isExact true (native is hint only)
+    expect(filterSpeakersByLanguage(base, 'zh').filtered).toHaveLength(9)
+    expect(filterSpeakersByLanguage(base, 'en').filtered).toHaveLength(9)
+    expect(filterSpeakersByLanguage(base, 'ja').filtered).toHaveLength(9)
+    expect(filterSpeakersByLanguage(base, 'ko').filtered).toHaveLength(9)
     expect(filterSpeakersByLanguage(base, '').filtered).toHaveLength(9)
     expect(filterSpeakersByLanguage(base, null).filtered).toHaveLength(9)
-    // no native for es -> shows all with isExact false
-    const es = filterSpeakersByLanguage(base, 'es')
-    expect(es.filtered).toHaveLength(9)
-    expect(es.isExact).toBe(false)
-    // Base model filtering
+    expect(filterSpeakersByLanguage(base, 'es').filtered).toHaveLength(9)
+    expect(filterSpeakersByLanguage(base, 'es').isExact).toBe(true)
     const baseSpeakers = getFallbackSpeakersForModel('mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16')
-    expect(filterSpeakersByLanguage(baseSpeakers, 'zh').filtered).toEqual(['Vivian', 'Serena'])
-    expect(filterSpeakersByLanguage(baseSpeakers, 'en').filtered).toEqual(['Chelsie', 'Ethan', 'Ryan', 'Aiden'])
-    expect(filterSpeakersByLanguage(baseSpeakers, 'ja').filtered).toHaveLength(6) // no native -> all
-    expect(filterSpeakersByLanguage(baseSpeakers, 'ja').isExact).toBe(false)
+    expect(filterSpeakersByLanguage(baseSpeakers, 'zh').filtered).toHaveLength(0)
+    expect(filterSpeakersByLanguage(baseSpeakers, 'en').isExact).toBe(true)
   })
 
-  it('getSpeakersForModelAndLanguage combines model and language', () => {
+  it('getSpeakersForModelAndLanguage returns base list unfiltered', () => {
     const { speakers, isExact } = getSpeakersForModelAndLanguage(
       'mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16',
       'zh',
     )
-    expect(speakers).toEqual(['Vivian', 'Serena', 'Uncle_Fu', 'Dylan', 'Eric'])
+    expect(speakers).toHaveLength(9)
     expect(isExact).toBe(true)
     const es = getSpeakersForModelAndLanguage('mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16', 'es')
     expect(es.speakers).toHaveLength(9)
-    expect(es.isExact).toBe(false)
+    expect(es.isExact).toBe(true)
     const auto = getSpeakersForModelAndLanguage('mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16', '')
     expect(auto.speakers).toHaveLength(9)
     expect(auto.isExact).toBe(true)
+    const base = getSpeakersForModelAndLanguage('mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16', 'en')
+    expect(base.speakers).toHaveLength(0)
   })
 })

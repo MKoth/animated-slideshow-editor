@@ -19,34 +19,41 @@ export interface ModelCapabilities {
   speakerHints?: Record<string, string>
   speakerMeta?: Record<string, { description: string; nativeLanguage: string; iso: string }>
   downloaded?: boolean
+  mode?: 'custom_voice' | 'voice_clone' | 'voice_design' | string
 }
 
 // Static fallback capabilities (mirrors backend registry)
+// CustomVoice: 9 fixed speakers; Base: voice_clone (reference audio, no fixed speakers); VoiceDesign: voice_design (prompt)
 const FALLBACK_CAPABILITIES: Record<string, ModelCapabilities> = {
   'mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16': {
     languages: ['zh', 'en', 'ja', 'ko', 'de', 'fr', 'ru', 'pt', 'es', 'it'],
     speakers: ['Vivian', 'Serena', 'Uncle_Fu', 'Dylan', 'Eric', 'Ryan', 'Aiden', 'Ono_Anna', 'Sohee'],
     instructionSupported: false,
+    mode: 'custom_voice',
   },
   'mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16': {
     languages: ['zh', 'en', 'ja', 'ko', 'de', 'fr', 'ru', 'pt', 'es', 'it'],
     speakers: ['Vivian', 'Serena', 'Uncle_Fu', 'Dylan', 'Eric', 'Ryan', 'Aiden', 'Ono_Anna', 'Sohee'],
     instructionSupported: true,
+    mode: 'custom_voice',
   },
   'mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16': {
     languages: ['zh', 'en', 'ja', 'ko', 'de', 'fr', 'ru', 'pt', 'es', 'it'],
-    speakers: ['Chelsie', 'Ethan', 'Vivian', 'Serena', 'Ryan', 'Aiden'],
+    speakers: [],
     instructionSupported: false,
+    mode: 'voice_clone',
   },
   'mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16': {
     languages: ['zh', 'en', 'ja', 'ko', 'de', 'fr', 'ru', 'pt', 'es', 'it'],
-    speakers: ['Chelsie', 'Ethan', 'Vivian', 'Serena', 'Ryan', 'Aiden'],
+    speakers: [],
     instructionSupported: false,
+    mode: 'voice_clone',
   },
   'mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-bf16': {
     languages: ['zh', 'en', 'ja', 'ko', 'de', 'fr', 'ru', 'pt', 'es', 'it'],
-    speakers: ['Vivian', 'Serena', 'Ryan', 'Aiden', 'Ono_Anna', 'Sohee', 'Chelsie', 'Ethan'],
+    speakers: [],
     instructionSupported: true,
+    mode: 'voice_design',
   },
 }
 

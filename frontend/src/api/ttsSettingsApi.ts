@@ -7,6 +7,7 @@ export interface ModelCapabilities {
   downloaded?: boolean
   speakerHints?: Record<string, string>
   speakerMeta?: Record<string, { description: string; nativeLanguage: string; iso: string }>
+  mode?: 'custom_voice' | 'voice_clone' | 'voice_design' | string
 }
 
 export interface TtsModelsResponse {
