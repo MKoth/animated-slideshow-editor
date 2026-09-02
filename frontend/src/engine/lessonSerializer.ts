@@ -889,7 +889,7 @@ function requireAnimationProperty(errors: string[], value: unknown): AnimationPr
   return value as AnimationProperty
 }
 
-const CIRCLE_PROPERTY_NAMES: readonly string[] = ['startAngle', 'endAngle']
+const CIRCLE_PROPERTY_NAMES: readonly string[] = ['radius', 'startAngle', 'endAngle', 'segments']
 
 function requireCircleProperty(errors: string[], value: unknown): string | undefined {
   if (typeof value !== 'string' || !(CIRCLE_PROPERTY_NAMES as readonly string[]).includes(value)) {

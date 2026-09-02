@@ -311,9 +311,16 @@ export class SceneRenderer {
       const circle = node.components.circle
       if (!circle) continue
       const state = this.#engine.evaluateCircle(node.id, time)
-      const evaluatedMesh = state
-        ? generateCircleMeshData(circle, state.startAngle, state.endAngle)
-        : generateCircleMeshData(circle)
+      const evaluatedCircle: import('../../engine/circleComponent').CircleComponent = state
+        ? {
+            kind: 'circle',
+            radius: state.radius,
+            startAngle: state.startAngle,
+            endAngle: state.endAngle,
+            segments: state.segments,
+          }
+        : circle
+      const evaluatedMesh = generateCircleMeshData(evaluatedCircle)
       const meshTransform = this.#engineWorldTransform(node.id, time)
       if (!meshTransform) continue
       const vertices = evaluateMeshDeformation(evaluatedMesh, bones, meshTransform).deformedVertices
@@ -462,9 +469,11 @@ export class SceneRenderer {
     const state = this.#engine.evaluateCircle(nodeId, time)
     const start = state?.startAngle ?? circle.startAngle
     const end = state?.endAngle ?? circle.endAngle
-    applyCircleData(this.#pixi, container, circle, start, end)
-    const w = circle.radius * 2
-    const h = circle.radius * 2
+    const radius = state?.radius ?? circle.radius
+    const segments = state?.segments ?? circle.segments
+    applyCircleData(this.#pixi, container, circle, start, end, radius, segments)
+    const w = radius * 2
+    const h = radius * 2
     this.#sizes.set(nodeId, { width: w, height: h, offsetX: 0, offsetY: 0 })
     this.refreshDeformedMeshSizes()
     this.#onNodeSizeChanged(nodeId)
@@ -811,6 +820,8 @@ export class SceneRenderer {
             circle,
             circleState.startAngle,
             circleState.endAngle,
+            circleState.radius,
+            circleState.segments,
           )
           const w = circleState.radius * 2
           const h = circleState.radius * 2

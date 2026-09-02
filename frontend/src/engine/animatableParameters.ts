@@ -32,8 +32,10 @@ const STANDARD_LABELS: Readonly<Record<AnimationProperty, string>> = {
 }
 
 const CIRCLE_LABELS: Readonly<Record<CircleAnimationProperty, string>> = {
+  radius: 'Radius',
   startAngle: 'Start Angle',
   endAngle: 'End Angle',
+  segments: 'Segments',
 }
 
 const BUILT_IN_MATERIAL_KEYS = new Set<string>([

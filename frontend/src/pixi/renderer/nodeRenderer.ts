@@ -252,19 +252,30 @@ export function applyCircleData(
   circle: import('../../engine/circleComponent').CircleComponent,
   startAngle?: number,
   endAngle?: number,
+  radius?: number,
+  segments?: number,
 ): void {
   const group = placeholderByContainer.get(container)
   const current = group ? meshByGroup.get(group) : undefined
   if (!group || !current) return
-  const mesh = generateCircleMeshData(circle, startAngle, endAngle)
-  const replacement = createDisplayMesh(pixi, mesh, current.texture)
+  const effectiveCircle: import('../../engine/circleComponent').CircleComponent = {
+    kind: 'circle',
+    radius: radius ?? circle.radius,
+    startAngle: startAngle ?? circle.startAngle,
+    endAngle: endAngle ?? circle.endAngle,
+    ...(segments !== undefined || circle.segments !== undefined
+      ? { segments: segments ?? circle.segments }
+      : {}),
+  }
+  const finalMesh = generateCircleMeshData(effectiveCircle)
+  const replacement = createDisplayMesh(pixi, finalMesh, current.texture)
   const index = group.children.indexOf(current)
   current.destroy()
   meshByGroup.set(group, replacement)
   registerMeshDisplay(group, replacement)
   group.addChildAt(replacement, index < 0 ? group.children.length : index)
-  const w = circle.radius * 2
-  const h = circle.radius * 2
+  const w = (radius ?? circle.radius) * 2
+  const h = (radius ?? circle.radius) * 2
   setMeshPlaceholderSize(group, w, h, 0, 0)
 }
 

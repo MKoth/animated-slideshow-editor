@@ -1660,7 +1660,14 @@ export class Engine {
       try {
         const state = this.evaluateCircle(nodeId, _time)
         if (state) {
-          meshData = generateCircleMeshData(circle, state.startAngle, state.endAngle)
+          const evaluatedCircle: import('./circleComponent').CircleComponent = {
+            kind: 'circle',
+            radius: state.radius,
+            startAngle: state.startAngle,
+            endAngle: state.endAngle,
+            segments: state.segments,
+          }
+          meshData = generateCircleMeshData(evaluatedCircle)
         } else {
           meshData = generateCircleMeshData(circle)
         }

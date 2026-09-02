@@ -19,7 +19,7 @@ export const BONE_ANIMATABLE_PROPERTIES = [
   'scaleY',
 ] as const
 
-export const CIRCLE_ANIMATABLE_PROPERTIES = ['startAngle', 'endAngle'] as const
+export const CIRCLE_ANIMATABLE_PROPERTIES = ['radius', 'startAngle', 'endAngle', 'segments'] as const
 
 export type AnimationProperty = (typeof ANIMATABLE_PROPERTIES)[number]
 

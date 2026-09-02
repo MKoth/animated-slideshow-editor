@@ -227,6 +227,11 @@ export class AnimationEvaluator {
     const boundedTime = requireFiniteNumber(time, 'Evaluation time')
     const clampedTime = Math.min(Math.max(boundedTime, 0), slide.duration)
     const animation = slide.animation.node(nodeId)
+    const radius = this.#evaluate(
+      animation?.circleKeyframes('radius'),
+      clampedTime,
+      circle.radius,
+    )
     const startAngle = this.#evaluate(
       animation?.circleKeyframes('startAngle'),
       clampedTime,
@@ -237,10 +242,17 @@ export class AnimationEvaluator {
       clampedTime,
       circle.endAngle,
     )
-    const radius = circle.radius
-    const arc = (((endAngle - startAngle) % 360) + 360) % 360
-    const effectiveArc = arc === 0 ? 360 : arc
-    const segments = circle.segments ?? circleSegmentsForArc(effectiveArc)
+    const segmentsFallback = (() => {
+      const arc = (((endAngle - startAngle) % 360) + 360) % 360
+      const effectiveArc = arc === 0 ? 360 : arc
+      return circle.segments ?? circleSegmentsForArc(effectiveArc)
+    })()
+    const segmentsRaw = this.#evaluate(
+      animation?.circleKeyframes('segments'),
+      clampedTime,
+      segmentsFallback,
+    )
+    const segments = Math.max(3, Math.min(256, Math.round(segmentsRaw)))
     return { radius, startAngle, endAngle, segments }
   }
 
