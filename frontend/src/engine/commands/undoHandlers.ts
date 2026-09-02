@@ -1088,21 +1088,12 @@ export function applyUndo(
           }
         }
       } else {
-        // append mode: oldParts already contain previous state before insert, but we already removed new parts and reflowed; reflow already gap-free
-        // shiftedClips will restore downstream positions
+        // append mode: restored downstream positions via shiftedClips
         if (shiftedClips) {
           for (const sc of shiftedClips) {
             const clip = slide.audio.clips.find((c) => c.id === sc.id)
             if (clip) clip.timelineStart = sc.oldTimelineStart
           }
-        }
-      }
-      if (mode === 'append' && shiftedClips) {
-        // already handled
-      } else if (shiftedClips) {
-        for (const sc of shiftedClips) {
-          const clip = slide.audio.clips.find((c) => c.id === sc.id)
-          if (clip) clip.timelineStart = sc.oldTimelineStart
         }
       }
       return
