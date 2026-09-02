@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { AnimationProperty, Scene } from '../../engine'
+import type { AnimationProperty, Scene, CircleAnimationProperty } from '../../engine'
 import type { KeyframeTangent } from '../../engine/keyframe'
 import { ZERO_TANGENT } from '../../engine/keyframe'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
 import { animatablePropertiesOf } from '../../app/keyframeActions'
+import { CIRCLE_ANIMATABLE_PROPERTIES } from '../../engine/animationProperties'
 import {
   SetKeyframeTangentsCommand,
   MoveKeyframesCommand,
@@ -38,6 +39,10 @@ const PROPERTY_COLORS: Record<string, string> = {
   scaleX: '#e57373',
   scaleY: '#ba68c8',
   opacity: '#fff176',
+  radius: '#ff8a65',
+  startAngle: '#4db6ac',
+  endAngle: '#9575cd',
+  segments: '#aed581',
 }
 
 const PROPERTY_LABELS: Record<string, string> = {
@@ -47,6 +52,10 @@ const PROPERTY_LABELS: Record<string, string> = {
   scaleX: 'Scale X',
   scaleY: 'Scale Y',
   opacity: 'Opacity',
+  radius: 'Radius',
+  startAngle: 'Start Angle',
+  endAngle: 'End Angle',
+  segments: 'Segments',
 }
 
 function matchesFilter(property: string, filter: string): boolean {
@@ -84,6 +93,23 @@ function buildCurves(
           keyframes,
           color: PROPERTY_COLORS[prop] ?? '#ffffff',
         })
+      }
+    }
+    if (node.components.circle) {
+      for (const prop of CIRCLE_ANIMATABLE_PROPERTIES) {
+        // show circle curves under 'all' or dedicated 'circle' filter; hide under position/rotation etc
+        if (filter !== 'all' && filter !== 'animatedOnly' && filter !== 'circle' && !matchesFilter(prop, filter))
+          continue
+        const keyframes = engine.getCircleKeyframes(nodeId, prop as CircleAnimationProperty)
+        if (keyframes.length > 0) {
+          curves.push({
+            nodeId,
+            property: prop,
+            label: PROPERTY_LABELS[prop] ?? prop,
+            keyframes,
+            color: PROPERTY_COLORS[prop] ?? '#ffffff',
+          })
+        }
       }
     }
     for (const child of node.children) {
@@ -145,12 +171,19 @@ function effectiveDuration(clip: ClipDefinition | undefined, duration: number): 
   return clip ? CLIP_TIME_MAX : duration
 }
 
+function isCircleProperty(prop: string): boolean {
+  return (CIRCLE_ANIMATABLE_PROPERTIES as readonly string[]).includes(prop)
+}
+
 function resolveKeyframes(
   engine: ReturnType<typeof useEngine>['engine'],
   clip: ClipDefinition | undefined,
   nodeId: string,
   property: string,
 ) {
+  if (isCircleProperty(property) && !clip) {
+    return engine.getCircleKeyframes(nodeId, property as CircleAnimationProperty)
+  }
   return clip
     ? engine.getClipChannelKeyframes(clip.id, property as AnimationProperty)
     : engine.getKeyframes(nodeId, property as AnimationProperty)
@@ -162,7 +195,11 @@ function buildTarget(
   property: string,
 ):
   | { kind: 'clip'; clipId: string; channel: AnimationProperty }
-  | { kind: 'node'; nodeId: string; property: AnimationProperty } {
+  | { kind: 'node'; nodeId: string; property: AnimationProperty }
+  | { kind: 'circle'; nodeId: string; property: CircleAnimationProperty } {
+  if (isCircleProperty(property) && !clip) {
+    return { kind: 'circle' as const, nodeId, property: property as CircleAnimationProperty }
+  }
   return clip
     ? { kind: 'clip' as const, clipId: clip.id, channel: property as AnimationProperty }
     : { kind: 'node' as const, nodeId, property: property as AnimationProperty }

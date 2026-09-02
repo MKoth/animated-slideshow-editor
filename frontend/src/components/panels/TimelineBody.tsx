@@ -33,6 +33,7 @@ import {
   ROW_HEIGHT,
   TRACK_HEADER_WIDTH,
   PROPERTY_LABELS,
+  CIRCLE_LABELS,
   materialParameterLabel,
 } from './timelineTracks'
 import type { TimelineRow } from './timelineTracks'
@@ -113,6 +114,10 @@ export function TimelineBody({
       }
     } else if (row.kind === 'dataLabelSubtrack') {
       for (const keyframe of engine.getDataLabelKeyframes(row.node.id, row.label)) {
+        allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
+      }
+    } else if (row.kind === 'circleSubtrack') {
+      for (const keyframe of engine.getCircleKeyframes(row.node.id, row.property)) {
         allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
       }
     }
@@ -368,7 +373,10 @@ export function TimelineBody({
 
   const handleKeyframeContextMenu = (
     event: React.MouseEvent,
-    row: Extract<TimelineRow, { kind: 'subtrack' | 'materialSubtrack' | 'dataLabelSubtrack' }>,
+    row: Extract<
+      TimelineRow,
+      { kind: 'subtrack' | 'materialSubtrack' | 'dataLabelSubtrack' | 'circleSubtrack' }
+    >,
     keyframe: { id: string },
   ) => {
     event.preventDefault()
@@ -389,6 +397,14 @@ export function TimelineBody({
         label: row.label,
         keyframeId: keyframe.id,
       })
+    } else if (row.kind === 'circleSubtrack') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        circleProperty: row.property,
+        keyframeId: keyframe.id,
+      } as unknown as Extract<import('./timelineComponents').TimelineMenuState, { nodeId: string }>)
     } else {
       setMenu({
         x: event.clientX,
@@ -403,7 +419,7 @@ export function TimelineBody({
   const handleTrackListContextMenu = (event: React.MouseEvent) => {
     const target = event.target as HTMLElement
     const subtrack = target.closest<HTMLElement>('[data-property]')
-    if (subtrack) {
+    if (subtrack && !subtrack.hasAttribute('data-circle-property')) {
       const nodeId = subtrack.dataset.nodeId
       const property = subtrack.dataset.property
       if (nodeId && property) {
@@ -414,6 +430,21 @@ export function TimelineBody({
           nodeId,
           property: property as AnimationProperty,
         })
+      }
+      return
+    }
+    const circleSubtrack = target.closest<HTMLElement>('[data-circle-property]')
+    if (circleSubtrack) {
+      const nodeId = circleSubtrack.dataset.nodeId
+      const circleProperty = circleSubtrack.dataset.circleProperty
+      if (nodeId && circleProperty) {
+        event.preventDefault()
+        setMenu({
+          x: event.clientX,
+          y: event.clientY,
+          nodeId,
+          circleProperty: circleProperty as import('../../engine/animationProperties').CircleAnimationProperty,
+        } as unknown as import('./timelineComponents').TimelineMenuState)
       }
       return
     }
@@ -451,6 +482,20 @@ export function TimelineBody({
     let result
     if (target.property) {
       result = addKeyframeAtPlayhead(engine, dispatch, slideId, target.nodeId, target.property)
+    } else if ((target as unknown as { circleProperty?: string }).circleProperty) {
+      const circleProperty = (target as unknown as { circleProperty: import('../../engine/animationProperties').CircleAnimationProperty }).circleProperty
+      const time = usePlaybackController.getState().getTime(slideId)
+      const circle = engine.getNode(target.nodeId).components.circle
+      const fallback = circle ? (circle as unknown as Record<string, number>)[circleProperty] ?? 0 : 0
+      const evaluated = engine.evaluateCircle(target.nodeId, time)
+      const value = evaluated ? (evaluated as unknown as Record<string, number>)[circleProperty] ?? fallback : fallback
+      result = dispatch(
+        new AddKeyframeCommand({
+          target: { kind: 'circle', nodeId: target.nodeId, property: circleProperty },
+          time,
+          value,
+        }),
+      )
     } else if (target.parameter) {
       const time = usePlaybackController.getState().getTime(slideId)
       const node = engine.getNode(target.nodeId)
@@ -489,6 +534,9 @@ export function TimelineBody({
     let deleteTarget
     if (target.property) {
       deleteTarget = { kind: 'node' as const, nodeId: target.nodeId, property: target.property }
+    } else if ((target as unknown as { circleProperty?: string }).circleProperty) {
+      const circleProperty = (target as unknown as { circleProperty: import('../../engine/animationProperties').CircleAnimationProperty }).circleProperty
+      deleteTarget = { kind: 'circle' as const, nodeId: target.nodeId, property: circleProperty }
     } else if (target.parameter) {
       deleteTarget = { kind: 'node' as const, nodeId: target.nodeId, parameter: target.parameter }
     } else if (target.label) {
@@ -653,6 +701,45 @@ export function TimelineBody({
                   +
                 </button>
               </li>
+            ) : row.kind === 'circleSubtrack' ? (
+              <li
+                key={`${row.node.id}:circle:${row.property}`}
+                className="timeline-subtrack"
+                data-node-id={row.node.id}
+                data-circle-property={row.property}
+                data-depth={row.depth}
+                style={{ paddingLeft: 12 + row.depth * 16 }}
+              >
+                <span className="timeline-subtrack__label">{CIRCLE_LABELS[row.property]}</span>
+                <button
+                  className="timeline-subtrack__add"
+                  aria-label={`Add Keyframe to ${CIRCLE_LABELS[row.property]}`}
+                  title="Add keyframe at the playhead"
+                  onClick={() => {
+                    const time = usePlaybackController.getState().getTime(slideId)
+                    const circle = engine.getNode(row.node.id).components.circle
+                    const evaluated = engine.evaluateCircle(row.node.id, time)
+                    const fallback = circle ? (circle as unknown as Record<string, number>)[row.property] ?? 0 : 0
+                    const value = evaluated ? (evaluated as unknown as Record<string, number>)[row.property] ?? fallback : fallback
+                    const result = dispatch(
+                      new AddKeyframeCommand({
+                        target: {
+                          kind: 'circle',
+                          nodeId: row.node.id,
+                          property: row.property,
+                        },
+                        time,
+                        value,
+                      }),
+                    )
+                    if (result && !result.ok) {
+                      notify(result.error.message)
+                    }
+                  }}
+                >
+                  +
+                </button>
+              </li>
             ) : (
               <TrackRow
                 key={row.node.id}
@@ -796,6 +883,42 @@ export function TimelineBody({
                             pps={pps}
                             step={step}
                             parameterLabel={row.label}
+                            onPointerDown={(event) =>
+                              handleKeyframePointerDown(event, keyframe, index)
+                            }
+                            onContextMenu={(event) =>
+                              handleKeyframeContextMenu(event, row, keyframe)
+                            }
+                          />
+                        )
+                      })}
+                    </div>
+                  )
+                }
+                if (row.kind === 'circleSubtrack') {
+                  const keyframes = engine.getCircleKeyframes(row.node.id, row.property)
+
+                  return (
+                    <div
+                      key={`${row.node.id}:circle:${row.property}`}
+                      className="timeline-lane-row"
+                      data-circle-property={row.property}
+                      style={{ top: index * ROW_HEIGHT }}
+                    >
+                      {keyframes.map((keyframe) => {
+                        const previewTime =
+                          scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
+                        const shownTime = previewTime ?? keyframe.time
+                        const selected = selectedKeyframeIds.includes(keyframe.id)
+                        return (
+                          <KeyframeMarker
+                            key={keyframe.id}
+                            keyframeId={keyframe.id}
+                            shownTime={shownTime}
+                            selected={selected}
+                            pps={pps}
+                            step={step}
+                            parameterLabel={CIRCLE_LABELS[row.property]}
                             onPointerDown={(event) =>
                               handleKeyframePointerDown(event, keyframe, index)
                             }

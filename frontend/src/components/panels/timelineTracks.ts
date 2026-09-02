@@ -1,9 +1,10 @@
 import type { Scene, SceneNode } from '../../engine'
-import type { AnimationProperty } from '../../engine'
+import type { AnimationProperty, CircleAnimationProperty } from '../../engine'
 import type { MaterialParameterDefault } from '../../engine'
 import type { ClipDefinition } from '../../engine/clipDefinition'
 import type { ClipParam } from '../../engine/clipDefinition'
 import { animatablePropertiesOf } from '../../app/keyframeActions'
+import { CIRCLE_ANIMATABLE_PROPERTIES } from '../../engine/animationProperties'
 
 export const TRACK_HEADER_WIDTH = 240
 export const ROW_HEIGHT = 28
@@ -37,6 +38,13 @@ export interface DataLabelSubtrackEntry {
   readonly depth: number
 }
 
+export interface CircleSubtrackEntry {
+  readonly kind: 'circleSubtrack'
+  readonly node: SceneNode
+  readonly property: CircleAnimationProperty
+  readonly depth: number
+}
+
 /** A bone node row — distinguished from regular node rows for UI styling. */
 export interface BoneTrackEntry {
   readonly kind: 'bone'
@@ -51,6 +59,7 @@ export type TimelineRow =
   | SubtrackEntry
   | MaterialSubtrackEntry
   | DataLabelSubtrackEntry
+  | CircleSubtrackEntry
   | BoneTrackEntry
 
 export const PROPERTY_LABELS: Record<AnimationProperty, string> = {
@@ -60,6 +69,13 @@ export const PROPERTY_LABELS: Record<AnimationProperty, string> = {
   scaleX: 'Scale X',
   scaleY: 'Scale Y',
   opacity: 'Opacity',
+}
+
+export const CIRCLE_LABELS: Record<CircleAnimationProperty, string> = {
+  radius: 'Radius',
+  startAngle: 'Start Angle',
+  endAngle: 'End Angle',
+  segments: 'Segments',
 }
 
 export function materialParameterLabel(parameter: MaterialParameterDefault): string {
@@ -139,6 +155,16 @@ export function timelineRows(
             kind: 'dataLabelSubtrack',
             node: entry.node,
             label,
+            depth: entry.depth + 1,
+          })
+        }
+      }
+      if (entry.node.components.circle) {
+        for (const property of CIRCLE_ANIMATABLE_PROPERTIES) {
+          rows.push({
+            kind: 'circleSubtrack',
+            node: entry.node,
+            property,
             depth: entry.depth + 1,
           })
         }

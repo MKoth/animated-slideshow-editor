@@ -48,6 +48,8 @@ export function ParameterPicker({
 
   const standardParams = parameters.filter((p) => p.source === 'standard')
   const materialParams = parameters.filter((p) => p.source === 'material')
+  const circleParams = parameters.filter((p) => p.source === 'circle')
+  const dataLabelParams = parameters.filter((p) => p.source === 'dataLabel')
 
   return (
     <div
@@ -72,6 +74,22 @@ export function ParameterPicker({
         <ParameterGroup
           label="Scene Properties"
           parameters={standardParams}
+          clip={clip}
+          onSelect={onSelect}
+        />
+      )}
+      {circleParams.length > 0 && (
+        <ParameterGroup
+          label="Circle Properties"
+          parameters={circleParams}
+          clip={clip}
+          onSelect={onSelect}
+        />
+      )}
+      {dataLabelParams.length > 0 && (
+        <ParameterGroup
+          label="Data Labels"
+          parameters={dataLabelParams}
           clip={clip}
           onSelect={onSelect}
         />
@@ -120,8 +138,11 @@ function ParameterGroup({
       </div>
       {parameters.map((param) => {
         const isStandard = param.source === 'standard'
+        const isCircle = param.source === 'circle'
+        const isDataLabel = param.source === 'dataLabel'
         const property = param.key as AnimationProperty
         const alreadyLinked = isStandard && clip.hasChannel(property)
+        const clipUnsupported = isCircle || isDataLabel
         const color = PROPERTY_COLORS[property] ?? 'var(--color-text)'
 
         return (
@@ -129,9 +150,10 @@ function ParameterGroup({
             key={param.key}
             className="parameter-picker__item"
             data-testid={`parameter-picker-item-${param.key}`}
-            disabled={alreadyLinked}
+            disabled={alreadyLinked || clipUnsupported}
+            title={clipUnsupported ? 'Timeline keyframes only — not a clip channel' : undefined}
             onClick={() => {
-              if (!alreadyLinked && isStandard) {
+              if (!alreadyLinked && isStandard && !clipUnsupported) {
                 onSelect(property)
               }
             }}
@@ -143,15 +165,15 @@ function ParameterGroup({
               padding: '5px 8px',
               border: 'none',
               background: 'transparent',
-              cursor: alreadyLinked ? 'default' : 'pointer',
-              opacity: alreadyLinked ? 0.4 : 1,
+              cursor: alreadyLinked || clipUnsupported ? 'default' : 'pointer',
+              opacity: alreadyLinked || clipUnsupported ? 0.4 : 1,
               textAlign: 'left',
               borderRadius: 4,
               fontSize: 12,
               color: 'var(--color-text)',
             }}
             onMouseEnter={(e) => {
-              if (!alreadyLinked) {
+              if (!alreadyLinked && !clipUnsupported) {
                 e.currentTarget.style.background = 'var(--color-bg-elevated)'
               }
             }}
@@ -180,7 +202,7 @@ function ParameterGroup({
                 flexShrink: 0,
               }}
             >
-              {alreadyLinked ? 'Added' : param.kind}
+              {alreadyLinked ? 'Added' : clipUnsupported ? 'Timeline' : param.kind}
             </span>
           </button>
         )
