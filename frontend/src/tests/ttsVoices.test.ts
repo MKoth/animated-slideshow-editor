@@ -5,6 +5,8 @@ import {
   defaultSpeakerForModel,
   dropdownLabelForVoice,
   SPEAKER_HINTS,
+  filterSpeakersByLanguage,
+  getSpeakersForModelAndLanguage,
 } from '../engine/ttsVoices'
 
 describe('ttsVoices per-model dropdown', () => {
@@ -62,5 +64,40 @@ describe('ttsVoices per-model dropdown', () => {
     expect(mig.value).toBe('Ryan')
     const mig2 = migrateStoredVoice('VIVIAN', 'mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16', 'zh')
     expect(mig2.value).toBe('Vivian')
+  })
+
+  it('strict native filter by language', () => {
+    const base = getFallbackSpeakersForModel('mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16')
+    expect(filterSpeakersByLanguage(base, 'zh').filtered).toEqual(['Vivian', 'Serena', 'Uncle_Fu', 'Dylan', 'Eric'])
+    expect(filterSpeakersByLanguage(base, 'en').filtered).toEqual(['Ryan', 'Aiden'])
+    expect(filterSpeakersByLanguage(base, 'ja').filtered).toEqual(['Ono_Anna'])
+    expect(filterSpeakersByLanguage(base, 'ko').filtered).toEqual(['Sohee'])
+    expect(filterSpeakersByLanguage(base, '').filtered).toHaveLength(9)
+    expect(filterSpeakersByLanguage(base, null).filtered).toHaveLength(9)
+    // no native for es -> shows all with isExact false
+    const es = filterSpeakersByLanguage(base, 'es')
+    expect(es.filtered).toHaveLength(9)
+    expect(es.isExact).toBe(false)
+    // Base model filtering
+    const baseSpeakers = getFallbackSpeakersForModel('mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16')
+    expect(filterSpeakersByLanguage(baseSpeakers, 'zh').filtered).toEqual(['Vivian', 'Serena'])
+    expect(filterSpeakersByLanguage(baseSpeakers, 'en').filtered).toEqual(['Chelsie', 'Ethan', 'Ryan', 'Aiden'])
+    expect(filterSpeakersByLanguage(baseSpeakers, 'ja').filtered).toHaveLength(6) // no native -> all
+    expect(filterSpeakersByLanguage(baseSpeakers, 'ja').isExact).toBe(false)
+  })
+
+  it('getSpeakersForModelAndLanguage combines model and language', () => {
+    const { speakers, isExact } = getSpeakersForModelAndLanguage(
+      'mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16',
+      'zh',
+    )
+    expect(speakers).toEqual(['Vivian', 'Serena', 'Uncle_Fu', 'Dylan', 'Eric'])
+    expect(isExact).toBe(true)
+    const es = getSpeakersForModelAndLanguage('mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16', 'es')
+    expect(es.speakers).toHaveLength(9)
+    expect(es.isExact).toBe(false)
+    const auto = getSpeakersForModelAndLanguage('mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16', '')
+    expect(auto.speakers).toHaveLength(9)
+    expect(auto.isExact).toBe(true)
   })
 })

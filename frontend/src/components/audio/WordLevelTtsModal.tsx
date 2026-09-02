@@ -9,6 +9,7 @@ import { ReplacePrompterWordsCommand } from '../../engine/commands'
 import { LANGUAGE_OPTIONS, migrateStoredLanguage } from '../../engine/ttsLanguages'
 import {
   defaultSpeakerForModel,
+  filterSpeakersByLanguage,
   getFallbackSpeakersForModel,
   migrateStoredVoice,
   SPEAKER_HINTS,
@@ -180,6 +181,16 @@ export function WordLevelTtsModal({
     return getFallbackSpeakersForModel(effModel)
   }, [formModelId, ttsModel, capabilitiesMap])
 
+  const { speakers: ttsSpeakersFiltered, isExact: ttsSpeakersIsExact } = useMemo(() => {
+    const { filtered, isExact } = filterSpeakersByLanguage(ttsSpeakers, language)
+    return { speakers: filtered, isExact }
+  }, [ttsSpeakers, language])
+
+  const { speakers: formSpeakersFiltered, isExact: formSpeakersIsExact } = useMemo(() => {
+    const { filtered, isExact } = filterSpeakersByLanguage(formSpeakers, formLanguage)
+    return { speakers: filtered, isExact }
+  }, [formSpeakers, formLanguage])
+
   const getHintForSpeaker = useCallback(
     (speaker: string, modelId: string): string => {
       const caps = capabilitiesMap[modelId]
@@ -231,20 +242,21 @@ export function WordLevelTtsModal({
   useEffect(() => {
     if (!voice) return
     const key = voice.trim().toLowerCase()
-    const lowerSet = new Set(ttsSpeakers.map((s) => s.toLowerCase()))
+    const lowerSet = new Set(ttsSpeakersFiltered.map((s) => s.toLowerCase()))
     if (lowerSet.has(key)) {
       setTtsVoiceWarning(null)
       return
     }
     const def = defaultSpeakerForModel(ttsModel || DEFAULT_MODEL_ID, language)
     const shortModel = (ttsModel || DEFAULT_MODEL_ID).split('/').pop() ?? ttsModel
+    const langLabel = language ? ` for ${language}` : ''
     const knownGlobally = Object.keys(SPEAKER_HINTS).some((k) => k.toLowerCase() === key)
     const warning = knownGlobally
-      ? `Voice '${voice}' not supported by ${shortModel} — using default (${def})`
+      ? `Voice '${voice}' not available for ${shortModel}${langLabel} — using default (${def})`
       : `Unknown voice '${voice}' — using default (${def})`
     setTtsVoiceWarning(warning)
     setVoice('')
-  }, [ttsModel, ttsSpeakers, language]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ttsModel, ttsSpeakersFiltered, language]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleGenerate = useCallback(async () => {
     if (!part) return
@@ -350,20 +362,21 @@ export function WordLevelTtsModal({
     if (!showCreate) return
     if (!formVoice) return
     const key = formVoice.trim().toLowerCase()
-    const lowerSet = new Set(formSpeakers.map((s) => s.toLowerCase()))
+    const lowerSet = new Set(formSpeakersFiltered.map((s) => s.toLowerCase()))
     if (lowerSet.has(key)) {
       setFormVoiceWarning(null)
       return
     }
     const def = defaultSpeakerForModel(formModelId || ttsModel || DEFAULT_MODEL_ID, formLanguage)
     const shortModel = (formModelId || ttsModel || DEFAULT_MODEL_ID).split('/').pop() ?? formModelId
+    const langLabel = formLanguage ? ` for ${formLanguage}` : ''
     const knownGlobally = Object.keys(SPEAKER_HINTS).some((k) => k.toLowerCase() === key)
     const warning = knownGlobally
-      ? `Voice '${formVoice}' not supported by ${shortModel} — using default (${def})`
+      ? `Voice '${formVoice}' not available for ${shortModel}${langLabel} — using default (${def})`
       : `Unknown voice '${formVoice}' — using default (${def})`
     setFormVoiceWarning(warning)
     setFormVoice('')
-  }, [formModelId, formSpeakers, formLanguage, showCreate]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [formModelId, formSpeakersFiltered, formLanguage, showCreate]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeletePrompt = async () => {
     if (!selectedPromptId) return
@@ -593,7 +606,7 @@ export function WordLevelTtsModal({
                 }}
               >
                 <option value="">— Default (auto) —</option>
-                {formSpeakers.map((v) => {
+                {formSpeakersFiltered.map((v) => {
                   const hint = getHintForSpeaker(v, formModelId || ttsModel || DEFAULT_MODEL_ID)
                   return (
                     <option key={v} value={v}>
@@ -603,8 +616,13 @@ export function WordLevelTtsModal({
                 })}
               </select>
               <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
-                Filtered by selected model; list fetched from backend capabilities
+                Filtered by model + language ({formLanguage || 'Auto'}); list fetched from backend capabilities
               </div>
+              {!formSpeakersIsExact && formLanguage && (
+                <div style={{ fontSize: 10, color: '#8cf', marginTop: 2 }}>
+                  No native {formLanguage} voices for this model — showing all {formSpeakers.length}
+                </div>
+              )}
               {formVoiceWarning && (
                 <div
                   data-testid="voice-prompt-voice-warning"
@@ -1002,7 +1020,7 @@ export function WordLevelTtsModal({
               }}
             >
               <option value="">— Default (auto) —</option>
-              {ttsSpeakers.map((v) => {
+              {ttsSpeakersFiltered.map((v) => {
                 const hint = getHintForSpeaker(v, ttsModel || DEFAULT_MODEL_ID)
                 return (
                   <option key={v} value={v}>
@@ -1012,8 +1030,13 @@ export function WordLevelTtsModal({
               })}
             </select>
             <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
-              Filtered by selected model; fetched from backend
+              Filtered by model + language ({language || 'Auto'}); fetched from backend
             </div>
+            {!ttsSpeakersIsExact && language && (
+              <div style={{ fontSize: 10, color: '#8cf', marginTop: 2 }}>
+                No native {language} voices for this model — showing all {ttsSpeakers.length}
+              </div>
+            )}
             {effectiveTtsVoiceWarning && (
               <div
                 data-testid="tts-voice-warning"

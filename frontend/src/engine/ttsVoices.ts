@@ -179,3 +179,31 @@ export function migrateStoredVoiceForDisplay(
   const res = migrateStoredVoice(raw, modelId ?? undefined, null, backendSpeakers ?? undefined)
   return { value: res.value, isUnknown: res.isUnknown, warning: res.warning }
 }
+
+// Language-aware filtering: strict native filter per strict choice
+export function filterSpeakersByLanguage(
+  speakers: string[],
+  languageIso: string | null | undefined,
+): { filtered: string[]; isExact: boolean } {
+  const raw = languageIso == null ? '' : String(languageIso).trim().toLowerCase()
+  if (raw === '' || raw === 'auto') return { filtered: speakers, isExact: true }
+  // normalize language like en-US -> en
+  const primary = raw.split('-')[0].split('_')[0]
+  const nativeMatch = speakers.filter((s) => {
+    const meta = SPEAKER_META[s]
+    return meta?.iso === primary
+  })
+  if (nativeMatch.length > 0) return { filtered: nativeMatch, isExact: true }
+  // No native speakers for this language (e.g., de/fr/ru/pt/es/it) -> show all with notice
+  return { filtered: speakers, isExact: false }
+}
+
+export function getSpeakersForModelAndLanguage(
+  modelId: string,
+  languageIso: string | null | undefined,
+  backendSpeakers?: string[] | null,
+): { speakers: string[]; isExact: boolean; baseCount: number } {
+  const base = backendSpeakers ?? getFallbackSpeakersForModel(modelId)
+  const { filtered, isExact } = filterSpeakersByLanguage(base, languageIso)
+  return { speakers: filtered, isExact, baseCount: base.length }
+}

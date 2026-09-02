@@ -20,6 +20,7 @@ import type { EmbeddedAsset } from '../../engine/embeddedAsset'
 import { LANGUAGE_OPTIONS, migrateStoredLanguage } from '../../engine/ttsLanguages'
 import {
   defaultSpeakerForModel,
+  filterSpeakersByLanguage,
   getFallbackSpeakersForModel,
   migrateStoredVoice,
   SPEAKER_HINTS,
@@ -203,6 +204,17 @@ export function TtsModal({
     return getFallbackSpeakersForModel(effModel)
   }, [formModelId, ttsModel, capabilitiesMap])
 
+  // Language-aware filtering: strict native filter
+  const { speakers: ttsSpeakersFiltered, isExact: ttsSpeakersIsExact } = useMemo(() => {
+    const { filtered, isExact } = filterSpeakersByLanguage(ttsSpeakers, language)
+    return { speakers: filtered, isExact }
+  }, [ttsSpeakers, language])
+
+  const { speakers: formSpeakersFiltered, isExact: formSpeakersIsExact } = useMemo(() => {
+    const { filtered, isExact } = filterSpeakersByLanguage(formSpeakers, formLanguage)
+    return { speakers: filtered, isExact }
+  }, [formSpeakers, formLanguage])
+
   const getHintForSpeaker = useCallback(
     (speaker: string, modelId: string): string => {
       const caps = capabilitiesMap[modelId]
@@ -260,25 +272,26 @@ export function TtsModal({
 
   const effectiveTtsVoiceWarning = ttsVoiceWarning ?? ttsPromptVoiceWarning
 
-  // When ttsModel changes, validate voice against new model's speakers
+  // When ttsModel or language changes, validate voice against language-filtered speakers
   useEffect(() => {
     if (!voice) return
     const key = voice.trim().toLowerCase()
-    const lowerSet = new Set(ttsSpeakers.map((s) => s.toLowerCase()))
+    const lowerSet = new Set(ttsSpeakersFiltered.map((s) => s.toLowerCase()))
     if (lowerSet.has(key)) {
       setTtsVoiceWarning(null)
       return
     }
-    // If voice not valid for new model, warn and default to model's default
+    // If voice not valid for new model/language, warn and default to model's default
     const def = defaultSpeakerForModel(ttsModel || DEFAULT_MODEL_ID, language)
     const shortModel = (ttsModel || DEFAULT_MODEL_ID).split('/').pop() ?? ttsModel
+    const langLabel = language ? ` for ${language}` : ''
     const knownGlobally = Object.keys(SPEAKER_HINTS).some((k) => k.toLowerCase() === key)
     const warning = knownGlobally
-      ? `Voice '${voice}' not supported by ${shortModel} — using default (${def})`
+      ? `Voice '${voice}' not available for ${shortModel}${langLabel} — using default (${def})`
       : `Unknown voice '${voice}' — using default (${def})`
     setTtsVoiceWarning(warning)
     setVoice('')
-  }, [ttsModel, ttsSpeakers, language]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ttsModel, ttsSpeakersFiltered, language]) // eslint-disable-line react-hooks/exhaustive-deps
   // Note: voice excluded to avoid loop when we reset to '' ; warning reset handled above
 
   // Atomic commit helper: single CommitTtsCommand covering clip and prompter changes
@@ -487,29 +500,28 @@ export function TtsModal({
     setShowCreate(true)
   }
 
-  // When formModel changes, validate formVoice
+  // When formModel or formLanguage changes, validate formVoice against language-filtered list
   useEffect(() => {
     if (!showCreate) return
     if (!formVoice) {
-      // keep existing warning if editingPrompt had unknown voice and we show warning derived? clear only if valid
-      // do not auto-clear prompt-derived warning here
       return
     }
     const key = formVoice.trim().toLowerCase()
-    const lowerSet = new Set(formSpeakers.map((s) => s.toLowerCase()))
+    const lowerSet = new Set(formSpeakersFiltered.map((s) => s.toLowerCase()))
     if (lowerSet.has(key)) {
       setFormVoiceWarning(null)
       return
     }
     const def = defaultSpeakerForModel(formModelId || ttsModel || DEFAULT_MODEL_ID, formLanguage)
     const shortModel = (formModelId || ttsModel || DEFAULT_MODEL_ID).split('/').pop() ?? formModelId
+    const langLabel = formLanguage ? ` for ${formLanguage}` : ''
     const knownGlobally = Object.keys(SPEAKER_HINTS).some((k) => k.toLowerCase() === key)
     const warning = knownGlobally
-      ? `Voice '${formVoice}' not supported by ${shortModel} — using default (${def})`
+      ? `Voice '${formVoice}' not available for ${shortModel}${langLabel} — using default (${def})`
       : `Unknown voice '${formVoice}' — using default (${def})`
     setFormVoiceWarning(warning)
     setFormVoice('')
-  }, [formModelId, formSpeakers, formLanguage, showCreate]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [formModelId, formSpeakersFiltered, formLanguage, showCreate]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDeletePrompt = async () => {
     if (!selectedPromptId) return
@@ -759,7 +771,7 @@ export function TtsModal({
                 }}
               >
                 <option value="">— Default (auto) —</option>
-                {formSpeakers.map((v) => {
+                {formSpeakersFiltered.map((v) => {
                   const hint = getHintForSpeaker(v, formModelId || ttsModel || DEFAULT_MODEL_ID)
                   return (
                     <option key={v} value={v}>
@@ -769,10 +781,15 @@ export function TtsModal({
                 })}
               </select>
               <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
-                Filtered by selected model; list fetched from backend capabilities
+                Filtered by model + language ({formLanguage || 'Auto'}); list fetched from backend capabilities
               </div>
-              {formSpeakers.length === 0 && (
-                <div style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}>No speakers for this model</div>
+              {!formSpeakersIsExact && formLanguage && (
+                <div style={{ fontSize: 10, color: '#8cf', marginTop: 2 }}>
+                  No native {formLanguage} voices for this model — showing all {formSpeakers.length}
+                </div>
+              )}
+              {formSpeakersFiltered.length === 0 && (
+                <div style={{ fontSize: 10, color: '#ffb74d', marginTop: 2 }}>No speakers for this model/language</div>
               )}
               {formVoiceWarning && (
                 <div
@@ -1182,7 +1199,7 @@ export function TtsModal({
               }}
             >
               <option value="">— Default (auto) —</option>
-              {ttsSpeakers.map((v) => {
+              {ttsSpeakersFiltered.map((v) => {
                 const hint = getHintForSpeaker(v, ttsModel || DEFAULT_MODEL_ID)
                 return (
                   <option key={v} value={v}>
@@ -1192,8 +1209,13 @@ export function TtsModal({
               })}
             </select>
             <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
-              Filtered by selected model; fetched from backend
+              Filtered by model + language ({language || 'Auto'}); fetched from backend
             </div>
+            {!ttsSpeakersIsExact && language && (
+              <div style={{ fontSize: 10, color: '#8cf', marginTop: 2 }}>
+                No native {language} voices for this model — showing all {ttsSpeakers.length}
+              </div>
+            )}
             {effectiveTtsVoiceWarning && (
               <div
                 data-testid="tts-voice-warning"
