@@ -1,0 +1,223 @@
+import type { Scene } from '../../engine'
+// eslint-disable-next-line no-restricted-imports -- pivot preview needs internal Engine for transient setTransform; final commit uses commands
+import type { Engine } from '../../engine/internal'
+import { TransactionCommand, SetLocalPivotCommand, MoveNodeCommand } from '../../engine/commands'
+import type { DispatchCommand } from '../../engine/commands'
+import type { SelectionStoreApi } from '../../stores/selectionStore'
+import { worldTransformOf } from '../../engine/worldTransform'
+import type { NodeSizeSource, WorldTransformSource } from './hitTest'
+import { cursorToWorld } from './screenToWorld'
+import type { ViewportTransform } from './worldGeometry'
+
+export interface PivotInteractionContext {
+  readonly canvas: HTMLCanvasElement
+  readonly engine: Engine
+  readonly getScene: () => Scene | null
+  readonly getCameraTransform: () => ViewportTransform | null
+  readonly getNodeSize: NodeSizeSource
+  readonly getWorldTransform: WorldTransformSource
+  readonly store: SelectionStoreApi
+  readonly dispatch: DispatchCommand
+}
+
+const PIVOT_HIT_RADIUS = 12 // world units at scale 1, will be adjusted by zoom
+const MIN_DRAG_DISTANCE = 2
+
+export class PivotInteraction {
+  readonly #canvas: HTMLCanvasElement
+  readonly #engine: Engine
+  readonly #getScene: () => Scene | null
+  readonly #getCameraTransform: () => ViewportTransform | null
+  readonly #getNodeSize: NodeSizeSource
+  readonly #getWorldTransform: WorldTransformSource
+  readonly #store: SelectionStoreApi
+  readonly #dispatch: DispatchCommand
+  #attached = false
+  #dragging = false
+  #pressed = false
+  #activeNodeId: string | null = null
+  #startWorldX = 0
+  #startWorldY = 0
+  #startPivot = { x: 0, y: 0 }
+  #startPosition = { x: 0, y: 0 }
+  #nodeSize: { width: number; height: number } | null = null
+  #worldRotation = 0
+  #worldScaleX = 1
+  #worldScaleY = 1
+  #parentWorld: { x: number; y: number; rotation: number; scaleX: number; scaleY: number } | null = null
+
+  constructor(context: PivotInteractionContext) {
+    this.#canvas = context.canvas
+    this.#engine = context.engine
+    this.#getScene = context.getScene
+    this.#getCameraTransform = context.getCameraTransform
+    this.#getNodeSize = context.getNodeSize
+    this.#getWorldTransform = context.getWorldTransform
+    this.#store = context.store
+    this.#dispatch = context.dispatch
+  }
+
+  attach(): void {
+    if (this.#attached) return
+    this.#attached = true
+    this.#canvas.addEventListener('mousedown', this.#onMouseDown)
+    window.addEventListener('mousemove', this.#onMouseMove)
+    window.addEventListener('mouseup', this.#onMouseUp)
+  }
+
+  detach(): void {
+    if (!this.#attached) return
+    this.#attached = false
+    this.#canvas.removeEventListener('mousedown', this.#onMouseDown)
+    window.removeEventListener('mousemove', this.#onMouseMove)
+    window.removeEventListener('mouseup', this.#onMouseUp)
+    this.#reset()
+  }
+
+  #reset(): void {
+    this.#pressed = false
+    this.#dragging = false
+    this.#activeNodeId = null
+    this.#nodeSize = null
+  }
+
+  readonly #onMouseDown = (event: MouseEvent): void => {
+    if (event.button !== 0 || !event.altKey) return
+    const scene = this.#getScene()
+    const camera = this.#getCameraTransform()
+    if (!scene || !camera) return
+    const point = cursorToWorld(this.#canvas, camera, event.clientX, event.clientY)
+    if (!point) return
+    const selected = this.#store.getState().selectedIds
+    if (selected.length !== 1) return
+    const nodeId = selected[0]
+    const size = this.#getNodeSize(nodeId)
+    const world = this.#getWorldTransform(nodeId)
+    if (!size || !world) return
+    // Pivot world is transform position (pivot point)
+    const dx = point.x - world.x
+    const dy = point.y - world.y
+    const distance = Math.hypot(dx, dy)
+    // Adjust hit radius by zoom
+    const zoom = Math.abs(camera.scaleX) || 1
+    const hitRadius = PIVOT_HIT_RADIUS / zoom
+    if (distance > hitRadius) return
+    // Hit pivot gizmo
+    event.preventDefault()
+    event.stopPropagation()
+    this.#pressed = true
+    this.#activeNodeId = nodeId
+    this.#startWorldX = point.x
+    this.#startWorldY = point.y
+    const node = this.#engine.getNode(nodeId)
+    this.#startPivot = node.transform.localPivot ? { ...node.transform.localPivot } : { x: 0, y: 0 }
+    this.#startPosition = { x: node.transform.x, y: node.transform.y }
+    this.#nodeSize = { width: size.width, height: size.height }
+    this.#worldRotation = world.rotation
+    this.#worldScaleX = world.scaleX
+    this.#worldScaleY = world.scaleY
+    const parent = node.parent
+    if (parent) {
+      const parentWorld = this.#getWorldTransform(parent.id) ?? worldTransformOf(scene, parent.id)
+      this.#parentWorld = parentWorld ? { ...parentWorld } : null
+    } else {
+      this.#parentWorld = null
+    }
+  }
+
+  readonly #onMouseMove = (event: MouseEvent): void => {
+    if (!this.#pressed || !this.#activeNodeId || !this.#nodeSize) return
+    const camera = this.#getCameraTransform()
+    if (!camera) return
+    const point = cursorToWorld(this.#canvas, camera, event.clientX, event.clientY)
+    if (!point) return
+    const dx = point.x - this.#startWorldX
+    const dy = point.y - this.#startWorldY
+    if (!this.#dragging && Math.hypot(dx, dy) < MIN_DRAG_DISTANCE) return
+    this.#dragging = true
+    // Compute new pivot so that pivot point moves to cursor, but bounds center stays
+    // Old bounds center = oldPivotWorld - pivotOffset*scale rotated
+    // New pivotWorld = cursor point (where user drags pivot)
+    // Old bounds center = oldPivotWorld - oldPivotOffset*scale rotated
+    // New bounds center should equal old bounds center
+    // So newPivotWorld = oldBoundsCenter + newPivotOffset*scale rotated
+    // But we set pivotWorld to cursor, so newPivotOffset = (cursor - oldBoundsCenter) in local scaled
+    const oldPivotOffsetLocal = { x: this.#startPivot.x * this.#nodeSize.width, y: this.#startPivot.y * this.#nodeSize.height }
+    const oldPivotWorldX = this.#getWorldTransform(this.#activeNodeId)?.x ?? this.#startPosition.x
+    const oldPivotWorldY = this.#getWorldTransform(this.#activeNodeId)?.y ?? this.#startPosition.y
+    // Compute old bounds center
+    const oldPivotOffsetWorldX = oldPivotOffsetLocal.x * this.#worldScaleX * Math.cos(this.#worldRotation) - oldPivotOffsetLocal.y * this.#worldScaleY * Math.sin(this.#worldRotation)
+    const oldPivotOffsetWorldY = oldPivotOffsetLocal.x * this.#worldScaleX * Math.sin(this.#worldRotation) + oldPivotOffsetLocal.y * this.#worldScaleY * Math.cos(this.#worldRotation)
+    const oldBoundsCenterX = oldPivotWorldX - oldPivotOffsetWorldX
+    const oldBoundsCenterY = oldPivotWorldY - oldPivotOffsetWorldY
+    // New pivot offset from bounds center to cursor
+    const dxCenter = point.x - oldBoundsCenterX
+    const dyCenter = point.y - oldBoundsCenterY
+    const localX = (dxCenter * Math.cos(-this.#worldRotation) - dyCenter * Math.sin(-this.#worldRotation)) / this.#worldScaleX
+    const localY = (dxCenter * Math.sin(-this.#worldRotation) + dyCenter * Math.cos(-this.#worldRotation)) / this.#worldScaleY
+    let newPivotX = localX / this.#nodeSize.width
+    let newPivotY = localY / this.#nodeSize.height
+    // Clamp to [-0.5,0.5]
+    newPivotX = Math.max(-0.5, Math.min(0.5, newPivotX))
+    newPivotY = Math.max(-0.5, Math.min(0.5, newPivotY))
+    // For preview, update engine directly (not via dispatch) so overlay updates
+    // Use engine.setTransform for preview (will be overwritten by Transaction on mouseup, but gives visual feedback)
+    try {
+      const node = this.#engine.getNode(this.#activeNodeId)
+      const current = node.transform
+      // Update pivot
+      const newPivot = { x: newPivotX, y: newPivotY }
+      const isIdentity = newPivot.x === 0 && newPivot.y === 0
+      const nextPivot = isIdentity ? undefined : newPivot
+      const withPivot = nextPivot ? { ...current, localPivot: nextPivot } : { x: current.x, y: current.y, rotation: current.rotation, scaleX: current.scaleX, scaleY: current.scaleY }
+      // Compute new position to keep bounds center stable: newPivotWorld = oldBoundsCenter + newPivotOffsetWorld
+      const newPivotOffsetWorldX = newPivot.x * this.#nodeSize.width * this.#worldScaleX * Math.cos(this.#worldRotation) - newPivot.y * this.#nodeSize.height * this.#worldScaleY * Math.sin(this.#worldRotation)
+      const newPivotOffsetWorldY = newPivot.x * this.#nodeSize.width * this.#worldScaleX * Math.sin(this.#worldRotation) + newPivot.y * this.#nodeSize.height * this.#worldScaleY * Math.cos(this.#worldRotation)
+      const newPivotWorldX = oldBoundsCenterX + newPivotOffsetWorldX
+      const newPivotWorldY = oldBoundsCenterY + newPivotOffsetWorldY
+      // Convert newPivotWorld to local position via parent
+      let newLocalX = newPivotWorldX
+      let newLocalY = newPivotWorldY
+      if (this.#parentWorld) {
+        const dxp = newPivotWorldX - this.#parentWorld.x
+        const dyp = newPivotWorldY - this.#parentWorld.y
+        newLocalX = (dxp * Math.cos(-this.#parentWorld.rotation) - dyp * Math.sin(-this.#parentWorld.rotation)) / this.#parentWorld.scaleX
+        newLocalY = (dxp * Math.sin(-this.#parentWorld.rotation) + dyp * Math.cos(-this.#parentWorld.rotation)) / this.#parentWorld.scaleY
+      }
+      const finalTransform = { ...withPivot, x: newLocalX, y: newLocalY }
+      this.#engine.setTransform(this.#activeNodeId, finalTransform)
+    } catch {
+      // ignore
+    }
+  }
+
+  readonly #onMouseUp = (): void => {
+    if (!this.#pressed || !this.#activeNodeId) {
+      this.#reset()
+      return
+    }
+    const wasDragging = this.#dragging
+    const nodeId = this.#activeNodeId
+    const startPivot = { ...this.#startPivot }
+    const startPos = { ...this.#startPosition }
+    this.#reset()
+    if (!wasDragging) return
+    // On mouseup, compute final pivot/position again and dispatch Transaction
+    // We need to get current preview pivot/position from engine (which we set in mousemove)
+    try {
+      const node = this.#engine.getNode(nodeId)
+      const finalPivot = node.transform.localPivot ? { ...node.transform.localPivot } : { x: 0, y: 0 }
+      const finalPos = { x: node.transform.x, y: node.transform.y }
+      // Restore old state before dispatching Transaction (so undo will work)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- transient preview restore
+      this.#engine.setTransform(nodeId, { ...node.transform, localPivot: startPivot.x === 0 && startPivot.y === 0 ? undefined : startPivot, x: startPos.x, y: startPos.y } as unknown as never)
+      // Now dispatch Transaction with two commands
+      const pivotCmd = new SetLocalPivotCommand({ nodeId, pivot: finalPivot, keepWorldBounds: false })
+      const moveCmd = new MoveNodeCommand({ nodeId, x: finalPos.x, y: finalPos.y })
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Transaction child types
+      this.#dispatch(new TransactionCommand([pivotCmd as unknown as never, moveCmd as unknown as never]))
+    } catch {
+      // ignore
+    }
+  }
+}

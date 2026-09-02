@@ -214,6 +214,17 @@ function composeChain(
   chain: readonly SceneNode[],
   localOf: (node: SceneNode) => Transform,
 ): WorldTransform {
+  // WorldTransform is the pivot point's world position.
+  // Parent→pivot→rotation/scale→translate order:
+  // - Parent world defines the space in which this node's pivot point (local.x,y) lives.
+  // - Pivot offset (localPivot) is the normalized offset from bounds center to the
+  //   pivot point, scaled by the node's own size at render time. For world
+  //   position (pivot point) it does not add an extra translation — the pivot
+  //   point itself is at local.x,y. The pivot offset only affects the visual
+  //   bounds (handled in hitTest/selection), keeping worldTransform position
+  //   stable when pivot changes (only the bounds offset moves).
+  // This matches Pixi's container model where container.position is the pivot
+  // point and container.pivot = pivot*size.
   let x = 0
   let y = 0
   let rotation = 0
@@ -221,6 +232,8 @@ function composeChain(
   let scaleY = 1
   for (const link of chain) {
     const local = localOf(link)
+    // Pivot does not affect the pivot point's own world position — it affects
+    // the bounds offset (see hitTest). So we compose only the pivot point.
     x += rotateX(local.x * scaleX, local.y * scaleY, rotation)
     y += rotateY(local.x * scaleX, local.y * scaleY, rotation)
     rotation += local.rotation

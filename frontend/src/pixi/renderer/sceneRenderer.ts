@@ -37,6 +37,7 @@ import {
   applyMeshData,
   applyMeshVertices,
   applyName,
+  applyPivotWithSize,
   applyTableNodeOrdering,
   createNodeContainer,
   placeholderOf,
@@ -630,6 +631,11 @@ export class SceneRenderer {
     this.#nodeIds.set(container, node.id)
     this.#attachToParent(container, node)
     this.#recordSize(node, container)
+    // Apply size-scaled pivot after size is known (normalized [-0.5,0.5] → pixels)
+    const size = this.#sizes.get(node.id)
+    if (size) {
+      applyPivotWithSize(container, node.transform.localPivot, size)
+    }
     this.#evaluateAndApply(node.id)
     const instance = node.components.assetInstance
     if (instance) {
@@ -699,6 +705,11 @@ export class SceneRenderer {
       return
     }
     applyEvaluatedState(container, state, material.opacityMultiplier)
+    // Update size-scaled pivot (needs current size, which may have changed)
+    const currentSize = this.#sizes.get(nodeId)
+    if (currentSize) {
+      applyPivotWithSize(container, state.transform.localPivot, currentSize)
+    }
     this.#positionTableText(node, container)
     const ikRotation = this.#ikOverrides.get(nodeId)
     if (ikRotation !== undefined) {
@@ -937,6 +948,7 @@ export class SceneRenderer {
     const size = placeholder ? placeholderSize(placeholder) : null
     if (size) {
       this.#sizes.set(node.id, size)
+      applyPivotWithSize(container, node.transform.localPivot, size)
     }
   }
 
@@ -971,6 +983,8 @@ export class SceneRenderer {
       const size = placeholderSize(placeholder)
       if (size) {
         this.#sizes.set(nodeId, size)
+        const n = this.#scene?.getNode(nodeId)
+        if (n) applyPivotWithSize(container, n.transform.localPivot, size)
         this.#onNodeSizeChanged(nodeId)
       }
     })

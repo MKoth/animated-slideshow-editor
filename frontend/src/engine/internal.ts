@@ -1702,6 +1702,10 @@ export class Engine {
     this.#nodes.setTransform(nodeId, transform)
   }
 
+  setLocalPivot(nodeId: string, pivot: import('./transform').Pivot): void {
+    this.#nodes.setLocalPivot(nodeId, pivot)
+  }
+
   setVisibility(nodeId: string, visible: boolean): void {
     this.#nodes.setVisibility(nodeId, visible)
   }

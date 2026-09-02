@@ -83,6 +83,9 @@ export function createNodeContainer(
 }
 
 export function applyTransform(container: PixiContainer, node: SceneNode): void {
+  // Pivot is normalized [-0.5,0.5]; Pixi pivot is in pixels. Size-dependent part is
+  // handled by SceneRenderer after size is known (see applyPivotWithSize). Here we
+  // set a fallback unit pivot so engine-level pivot is respected even before size.
   applyPivot(container, node.transform.localPivot)
   container.position.set(node.transform.x, node.transform.y)
   container.rotation = node.transform.rotation
@@ -106,10 +109,28 @@ function applyPivot(
   pivot?: { readonly x: number; readonly y: number },
 ): void {
   if (pivot) {
+    // Fallback: treat normalized pivot as pixel offset scaled by 1 (unit). Size-scaled
+    // pivot is applied by SceneRenderer when size is known.
     container.pivot.set(pivot.x, pivot.y)
   } else {
     container.pivot.set(0, 0)
   }
+}
+
+export function applyPivotWithSize(
+  container: PixiContainer,
+  pivot: { readonly x: number; readonly y: number } | undefined,
+  size: { readonly width: number; readonly height: number } | null,
+): void {
+  if (!pivot) {
+    container.pivot.set(0, 0)
+    return
+  }
+  if (!size) {
+    container.pivot.set(pivot.x, pivot.y)
+    return
+  }
+  container.pivot.set(pivot.x * size.width, pivot.y * size.height)
 }
 
 export function applyMaterialTint(container: PixiContainer, tint: string): void {

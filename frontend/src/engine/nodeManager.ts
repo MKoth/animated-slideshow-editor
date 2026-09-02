@@ -8,8 +8,13 @@ import {
   walkPreOrder,
   wouldFormCycle,
 } from './sceneNode'
-import type { Transform } from './transform'
-import { identityTransform, normalizeRotation } from './transform'
+import type { Pivot, Transform } from './transform'
+import {
+  identityTransform,
+  normalizeRotation,
+  validatePivot,
+  isIdentityPivot,
+} from './transform'
 import type { NodeComponents } from './components'
 import {
   requireMaterialOverrideValue,
@@ -90,6 +95,9 @@ export class NodeManager {
     if (options.opacity !== undefined) {
       requireOpacity(options.opacity, 'Opacity')
     }
+    if (options.transform?.localPivot !== undefined) {
+      validatePivot(options.transform.localPivot, 'Pivot')
+    }
     const node = new SceneNodeModel(
       options.id ?? newId('node'),
       name,
@@ -165,17 +173,53 @@ export class NodeManager {
     if (node.components.camera && transform.rotation !== node.transform.rotation) {
       throw new Error('Camera rotation is locked')
     }
+    if (transform.localPivot !== undefined) {
+      validatePivot(transform.localPivot, 'Pivot')
+    }
     const normalizedRotation = normalizeRotation(transform.rotation)
+    const oldPivot = node.transform.localPivot
+    const newPivot = transform.localPivot
+    const pivotChanged =
+      (oldPivot?.x ?? 0) !== (newPivot?.x ?? 0) || (oldPivot?.y ?? 0) !== (newPivot?.y ?? 0)
     const changed =
       node.transform.x !== transform.x ||
       node.transform.y !== transform.y ||
       node.transform.rotation !== normalizedRotation ||
       node.transform.scaleX !== transform.scaleX ||
-      node.transform.scaleY !== transform.scaleY
-    node.transform = { ...transform, rotation: normalizedRotation }
+      node.transform.scaleY !== transform.scaleY ||
+      pivotChanged
+    // Strip identity pivot for storage normalization (keep undefined for identity)
+    const sanitizedPivot =
+      newPivot && !isIdentityPivot(newPivot) ? { x: newPivot.x, y: newPivot.y } : undefined
+    const next: Transform = sanitizedPivot
+      ? { ...transform, rotation: normalizedRotation, localPivot: sanitizedPivot }
+      : { x: transform.x, y: transform.y, rotation: normalizedRotation, scaleX: transform.scaleX, scaleY: transform.scaleY }
+    // Preserve undefined vs value semantics: if original had no pivot and new is identity, omit
+    if (sanitizedPivot === undefined && (transform as { localPivot?: Pivot }).localPivot !== undefined) {
+      // explicitly strip
+    }
+    node.transform = next
     if (changed) {
       node.markDirty()
     }
+    this.#bus.emit({ type: 'TransformChanged', nodeId })
+  }
+
+  setLocalPivot(nodeId: string, pivot: Pivot): void {
+    validatePivot(pivot, 'Pivot')
+    const node = this.getById(nodeId)
+    const current = node.transform
+    const sanitized = isIdentityPivot(pivot) ? undefined : { x: pivot.x, y: pivot.y }
+    const next: Transform = sanitized
+      ? { ...current, localPivot: sanitized }
+      : { x: current.x, y: current.y, rotation: current.rotation, scaleX: current.scaleX, scaleY: current.scaleY }
+    const pivotChanged =
+      (current.localPivot?.x ?? 0) !== (pivot.x) || (current.localPivot?.y ?? 0) !== (pivot.y)
+    if (!pivotChanged) {
+      return
+    }
+    node.transform = next
+    node.markDirty()
     this.#bus.emit({ type: 'TransformChanged', nodeId })
   }
 

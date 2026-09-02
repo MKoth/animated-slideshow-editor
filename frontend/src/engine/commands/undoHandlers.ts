@@ -46,6 +46,25 @@ export function applyUndo(
       engine.setTransform(nodeId, { ...node.transform, scaleX: oldScaleX, scaleY: oldScaleY })
       return
     }
+    case 'SetLocalPivot': {
+      const nodeId = inv.nodeId as string
+      const oldPivot = inv.oldPivot as { x: number; y: number } | undefined
+      const oldTransform = inv.oldTransform as { x: number; y: number }
+      const node = engine.getNode(nodeId)
+      const current = node.transform
+      // Restore old pivot and position
+      const restoredPivot = oldPivot
+      const withPivot = restoredPivot
+        ? { ...current, localPivot: restoredPivot }
+        : { x: current.x, y: current.y, rotation: current.rotation, scaleX: current.scaleX, scaleY: current.scaleY }
+      engine.setTransform(nodeId, withPivot)
+      // Restore position (pivot point) - need to set x,y separately if they changed
+      const afterPivot = engine.getNode(nodeId).transform
+      if (afterPivot.x !== oldTransform.x || afterPivot.y !== oldTransform.y) {
+        engine.setTransform(nodeId, { ...afterPivot, x: oldTransform.x, y: oldTransform.y })
+      }
+      return
+    }
     case 'UpdateBone': {
       const nodeId = inv.nodeId as string
       const oldLength = inv.oldLength as number
@@ -2739,6 +2758,13 @@ export function applyRedo(
     case 'ApplyTableLayout': {
       const tableNodeId = params.tableNodeId as string
       applyTableLayout(engine, tableNodeId)
+      return
+    }
+    case 'SetLocalPivot': {
+      const nodeId = params.nodeId as string
+      const pivot = params.pivot as { x: number; y: number }
+      const node = engine.getNode(nodeId)
+      engine.setTransform(nodeId, { ...node.transform, localPivot: pivot })
       return
     }
     default:

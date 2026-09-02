@@ -344,6 +344,22 @@ function validateNode(errors: string[], nodeJson: unknown, nodeIds: Set<string>)
         errors.push(`Node "${String(nodeJson.id)}" transform.${key} must be a number`)
       }
     }
+    if ((transform as Record<string, unknown>).localPivot !== undefined) {
+      const lp = (transform as Record<string, unknown>).localPivot as Record<string, unknown>
+      if (typeof lp.x !== 'number' || !Number.isFinite(lp.x) || typeof lp.y !== 'number' || !Number.isFinite(lp.y)) {
+        errors.push(`Node "${String(nodeJson.id)}" localPivot must have finite x,y`)
+      } else if (lp.x < -0.5 || lp.x > 0.5 || lp.y < -0.5 || lp.y > 0.5) {
+        errors.push(`Node "${String(nodeJson.id)}" localPivot must be between -0.5 and 0.5`)
+      }
+    }
+  }
+  const localPivot = (nodeJson as Record<string, unknown>).localPivot
+  if (localPivot !== undefined) {
+    if (!isRecord(localPivot) || typeof localPivot.x !== 'number' || typeof localPivot.y !== 'number' || !Number.isFinite(localPivot.x) || !Number.isFinite(localPivot.y)) {
+      errors.push(`Node "${String(nodeJson.id)}" localPivot must have finite x,y`)
+    } else if ((localPivot.x as number) < -0.5 || (localPivot.x as number) > 0.5 || (localPivot.y as number) < -0.5 || (localPivot.y as number) > 0.5) {
+      errors.push(`Node "${String(nodeJson.id)}" localPivot must be between -0.5 and 0.5`)
+    }
   }
   if (typeof nodeJson.visible !== 'boolean') {
     errors.push(`Node "${String(nodeJson.id)}" visible must be a boolean`)

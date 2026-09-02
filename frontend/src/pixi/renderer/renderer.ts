@@ -35,6 +35,7 @@ import { OverlayVisibilityStore } from '../../stores/overlayVisibilityStore'
 import { IkOverlay } from './ikOverlay'
 import { IkInteraction } from './ikInteraction'
 import { MarqueeOverlay } from './marqueeOverlay'
+import { PivotInteraction } from './pivotInteraction'
 import { realPixi } from './pixi'
 import type { PixiApplication, RendererPixi } from './pixi'
 import { SceneRenderer } from './sceneRenderer'
@@ -95,6 +96,7 @@ export class Renderer {
   #ikOverlay: IkOverlay | null = null
   #ikInteraction: IkInteraction | null = null
   #marqueeOverlay: MarqueeOverlay | null = null
+  #pivotInteraction: PivotInteraction | null = null
   #transformSource: EvaluatedWorldTransformSource | null = null
   #previewPositions = new Map<string, { x: number; y: number }>()
   readonly #cameraScratch: EvaluatedNodeScratch = evaluatedNodeScratch()
@@ -418,6 +420,18 @@ export class Renderer {
       })
       this.#ikInteraction.attach()
 
+      this.#pivotInteraction = new PivotInteraction({
+        canvas: app.canvas,
+        engine: this.#engine as unknown as import('../../engine/internal').Engine,
+        getScene: () => this.#sceneRenderer?.boundScene ?? null,
+        getCameraTransform: () => this.#cameraTransform(),
+        getNodeSize: (nodeId) => this.#sceneRenderer?.nodeSize(nodeId) ?? null,
+        getWorldTransform: transformOf,
+        store: useSelectionStore,
+        dispatch: this.#dispatch,
+      })
+      this.#pivotInteraction.attach()
+
       app.ticker.add(this.#tick)
       if (import.meta.env.DEV) {
         this.#devOverlay = new DevOverlay(this.#host)
@@ -480,6 +494,8 @@ export class Renderer {
     this.#ikOverlay = null
     this.#ikInteraction?.detach()
     this.#ikInteraction = null
+    this.#pivotInteraction?.detach()
+    this.#pivotInteraction = null
     const app = this.#app
     app?.ticker.remove(this.#tick)
     this.#app = null

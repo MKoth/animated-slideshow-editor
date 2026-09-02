@@ -10,7 +10,7 @@ import type {
 import { validateChartType, DEFAULT_VISUAL_CONFIG } from './chartComponent'
 import { meshDataFromJSON, cloneMeshData } from './mesh'
 import type { Transform } from './transform'
-import { IDENTITY_PIVOT } from './transform'
+import { IDENTITY_PIVOT, validatePivot } from './transform'
 import type { NodeJSON } from './json'
 import { requireOpacity, requireString } from './guards'
 import {
@@ -99,7 +99,19 @@ export class SceneNode {
     const id = requireString(json.id, 'Node id')
     const name = requireString(json.name, 'Node name')
     const transform = requireTransform(json.transform, id)
-    const localPivot = json.localPivot ? { x: json.localPivot.x, y: json.localPivot.y } : undefined
+    let localPivot: { x: number; y: number } | undefined
+    if (json.localPivot !== undefined) {
+      if (
+        typeof json.localPivot !== 'object' ||
+        json.localPivot === null ||
+        typeof (json.localPivot as { x?: unknown }).x !== 'number' ||
+        typeof (json.localPivot as { y?: unknown }).y !== 'number'
+      ) {
+        throw new Error(`Node "${id}" localPivot must be an object with x,y numbers`)
+      }
+      localPivot = { x: json.localPivot.x, y: json.localPivot.y }
+      validatePivot(localPivot, `Node "${id}" localPivot`)
+    }
     const node = new SceneNode(
       id,
       name,
@@ -128,6 +140,13 @@ function requireTransform(value: unknown, nodeId: string): Transform {
     if (typeof transform[key] !== 'number') {
       throw new Error(`Node "${nodeId}" transform.${key} must be a number`)
     }
+  }
+  if (transform.localPivot !== undefined) {
+    const pivot = transform.localPivot as Record<string, unknown>
+    if (typeof pivot.x !== 'number' || typeof pivot.y !== 'number') {
+      throw new Error(`Node "${nodeId}" transform.localPivot must have x,y numbers`)
+    }
+    validatePivot({ x: pivot.x, y: pivot.y }, `Node "${nodeId}" pivot`)
   }
   return transform as unknown as Transform
 }

@@ -134,6 +134,11 @@ export class FakeGraphics extends FakeContainer {
     this.#record('stroke', [options])
     return this
   }
+
+  circle(x?: number, y?: number, radius?: number): this {
+    this.#record('circle', [x, y, radius])
+    return this
+  }
 }
 
 export class FakeText extends FakeContainer {
