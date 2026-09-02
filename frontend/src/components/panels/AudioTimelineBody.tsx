@@ -712,13 +712,17 @@ export function AudioTimelineBody({
     prompterMoveRef.current = { partId, startX: e.clientX, startTime: oldStartTime, oldIndex }
     const target = e.currentTarget as HTMLElement
     target.setPointerCapture(e.pointerId)
-    // Precompute remaining gap times for Shift+gap-free index calculation
+    // Precompute remaining gap times for Shift+gap-free index calculation — use visual borders (prevEnd) so preview aligns with '+' that hugs previous block
     const remaining = partsSnapshot.filter((p) => p.id !== partId)
     const gapTimes: number[] = []
-    let acc = 0
-    for (let i = 0; i <= remaining.length; i++) {
-      gapTimes.push(acc)
-      if (i < remaining.length) acc += remaining[i].duration
+    if (remaining.length === 0) {
+      gapTimes.push(0)
+    } else {
+      gapTimes.push(0)
+      for (let i = 1; i < remaining.length; i++) {
+        gapTimes.push(remaining[i - 1].endTime)
+      }
+      gapTimes.push(remaining[remaining.length - 1].endTime)
     }
     const computeNewIndex = (snapped: number): number => {
       let best = 0
