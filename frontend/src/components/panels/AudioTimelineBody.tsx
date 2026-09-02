@@ -19,6 +19,7 @@ import {
   MovePrompterPartCommand,
   SplitAudioClipCommand,
   SplitPrompterWordsCommand,
+  TransactionCommand,
   TrimAudioClipCommand,
   UpdatePrompterPartCommand,
   UpdatePrompterPartWithShiftCommand,
@@ -797,33 +798,29 @@ export function AudioTimelineBody({
       if (side === 'right') {
         const newDuration = Math.max(0.2, startDuration + dt)
         if (Math.abs(newDuration - startDuration) > 1e-6) {
-          const shift = ev.shiftKey
-          const Cmd = shift ? UpdatePrompterPartWithShiftCommand : UpdatePrompterPartCommand
+          // Unified gap-free: resizing always pushes downstream (reflow prefix sum) — no Shift needed
           const result = dispatch(
-            new Cmd({
+            new UpdatePrompterPartWithShiftCommand({
               slideId: slide.id,
               partId,
               duration: newDuration,
-              ...(shift ? { shiftDownstream: true } : {}),
-            } as never),
+              shiftDownstream: true,
+            }),
           )
           if (!result.ok) useNotificationStore.getState().notify(result.error.message)
         }
       } else {
         const newDuration = Math.max(0.2, startDuration - dt)
         const newStart = Math.max(0, partStart + (startDuration - newDuration))
-        // Left handle: move start and change duration, keep end fixed
+        // Left handle: move start and change duration, keep end fixed — as one Transaction per gesture
         if (Math.abs(newDuration - startDuration) > 1e-6 || Math.abs(newStart - partStart) > 1e-6) {
-          const moveRes = dispatch(
-            new MovePrompterPartCommand({ slideId: slide.id, partId, newStartTime: newStart }),
-          )
-          if (!moveRes.ok) useNotificationStore.getState().notify(moveRes.error.message)
-          else {
-            const durRes = dispatch(
+          const result = dispatch(
+            new TransactionCommand([
+              new MovePrompterPartCommand({ slideId: slide.id, partId, newStartTime: newStart }),
               new UpdatePrompterPartCommand({ slideId: slide.id, partId, duration: newDuration }),
-            )
-            if (!durRes.ok) useNotificationStore.getState().notify(durRes.error.message)
-          }
+            ]),
+          )
+          if (!result.ok) useNotificationStore.getState().notify(result.error.message)
         }
       }
       setPrompterTrimPreview(null)
@@ -2079,17 +2076,20 @@ export function AudioTimelineBody({
                         style={{
                           position: 'absolute',
                           left: gapX - 10,
-                          top: 10,
+                          top: 11,
                           width: 20,
                           height: 20,
                           borderRadius: 999,
                           border: isDragTarget ? '1px solid #fff' : '1px solid #7c5cff',
                           background: isDragTarget ? '#7c5cff' : 'rgba(124,92,255,0.15)',
                           color: isDragTarget ? '#fff' : '#7c5cff',
-                          fontSize: 12,
+                          fontSize: 13,
                           fontWeight: 700,
-                          lineHeight: '18px',
-                          textAlign: 'center',
+                          lineHeight: '1',
+                          padding: 0,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
                           cursor: 'pointer',
                           zIndex: isDragTarget ? 8 : 6,
                           boxShadow: isDragTarget ? '0 2px 8px rgba(124,92,255,0.5)' : '0 1px 4px rgba(0,0,0,0.2)',
