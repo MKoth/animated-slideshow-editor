@@ -17,6 +17,7 @@ import type { AudioTrackId } from '../../engine/audioClip'
 import { useAudioResizePreferenceStore } from '../../stores/audioResizePreferenceStore'
 import { MismatchDialog } from './MismatchDialog'
 import type { EmbeddedAsset } from '../../engine/embeddedAsset'
+import { LANGUAGE_OPTIONS, migrateStoredLanguage } from '../../engine/ttsLanguages'
 
 interface TtsModalProps {
   slideId: string
@@ -98,7 +99,14 @@ export function TtsModal({
     if (!selectedPromptId) return
     const selected = prompts.find((p) => p.id === selectedPromptId)
     if (selected) {
-      if (!language && selected.language) setLanguage(selected.language)
+      if (!language) {
+        const migrated = migrateStoredLanguage(selected.language)
+        if (migrated.value) setLanguage(migrated.value)
+        else if (selected.language == null || selected.language === '') {
+          // keep Auto
+        } else if (!migrated.isUnknown) setLanguage(migrated.value)
+        // unknown stays Auto
+      }
       if (!voice && selected.voice) setVoice(selected.voice)
       if (!instruction && selected.instruction) setInstruction(selected.instruction)
     }
@@ -282,7 +290,7 @@ export function TtsModal({
     setEditingPrompt(p)
     setFormTitle(p.title)
     setFormInstruction(p.instruction)
-    setFormLanguage(p.language ?? '')
+    setFormLanguage(migrateStoredLanguage(p.language).value)
     setFormVoice(p.voice ?? '')
     setFormParams(p.params ? JSON.stringify(p.params, null, 2) : '')
     setFormError(null)
@@ -333,7 +341,7 @@ export function TtsModal({
         await vpApi.update(editingPrompt.id, {
           title,
           instruction: instr,
-          language: formLanguage || null,
+          language: formLanguage ? formLanguage.toLowerCase() : null,
           voice: formVoice || null,
           params: params ?? null,
         })
@@ -341,7 +349,7 @@ export function TtsModal({
         const created = await vpApi.create({
           title,
           instruction: instr,
-          language: formLanguage || undefined,
+          language: formLanguage ? formLanguage.toLowerCase() : undefined,
           voice: formVoice || undefined,
           params,
         })
@@ -469,12 +477,11 @@ export function TtsModal({
               />
             </label>
             <label style={{ fontSize: 11 }}>
-              Language (optional)
-              <input
+              Language
+              <select
                 data-testid="voice-prompt-language"
                 value={formLanguage}
                 onChange={(e) => setFormLanguage(e.target.value)}
-                placeholder="e.g. en"
                 style={{
                   width: '100%',
                   padding: '6px 8px',
@@ -484,7 +491,24 @@ export function TtsModal({
                   color: '#e0e0e0',
                   marginTop: 4,
                 }}
-              />
+              >
+                {LANGUAGE_OPTIONS.map((opt) => (
+                  <option key={opt.value || 'auto'} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <div style={{ fontSize: 10, color: '#888', marginTop: 4 }}>
+                Auto uses automatic language detection
+              </div>
+              {editingPrompt && migrateStoredLanguage(editingPrompt.language).isUnknown && (
+                <div
+                  data-testid="voice-prompt-language-warning"
+                  style={{ fontSize: 10, color: '#ffb74d', marginTop: 4 }}
+                >
+                  {migrateStoredLanguage(editingPrompt.language).warning}
+                </div>
+              )}
             </label>
             <label style={{ fontSize: 11 }}>
               Voice (optional)
@@ -707,11 +731,10 @@ export function TtsModal({
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
           <label style={{ fontSize: 11 }}>
             Language override
-            <input
+            <select
               data-testid="tts-language"
               value={language}
               onChange={(e) => setLanguage(e.target.value)}
-              placeholder="e.g. en, es"
               style={{
                 width: '100%',
                 padding: '6px 8px',
@@ -721,7 +744,16 @@ export function TtsModal({
                 color: '#e0e0e0',
                 marginTop: 4,
               }}
-            />
+            >
+              {LANGUAGE_OPTIONS.map((opt) => (
+                <option key={opt.value || 'auto'} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+            <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
+              Auto uses automatic language detection
+            </div>
           </label>
           <label style={{ fontSize: 11 }}>
             Voice override

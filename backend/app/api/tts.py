@@ -5,7 +5,9 @@ import asyncio
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.tts.languages import normalize_language_code
 
 router = APIRouter()
 
@@ -19,6 +21,18 @@ class TTSGenerateRequest(BaseModel):
     language: str | None = None
     voice: str | None = None
     instruction: str | None = None
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def validate_language(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            raise ValueError("language must be a string")
+        try:
+            return normalize_language_code(v)
+        except ValueError as e:
+            raise ValueError(str(e)) from e
 
 
 @router.post("/tts/generate")

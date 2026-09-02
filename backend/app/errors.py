@@ -18,7 +18,9 @@ def register_error_handlers(app: FastAPI) -> None:
     async def validation_exception_handler(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        return JSONResponse(status_code=422, content={"detail": exc.errors()})
+        from fastapi.encoders import jsonable_encoder
+
+        return JSONResponse(status_code=422, content=jsonable_encoder({"detail": exc.errors()}))
 
     @app.exception_handler(Exception)
     async def unexpected_exception_handler(request: Request, exc: Exception) -> JSONResponse:

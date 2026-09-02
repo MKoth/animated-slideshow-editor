@@ -16,6 +16,7 @@ from typing import Any, Protocol
 # ISO 639-1 -> Qwen language string capitalised. Qwen supports:
 # Chinese, English, Japanese, Korean, German, French, Russian,
 # Portuguese, Spanish, Italian, Auto
+# Keep _LANGUAGE_MAP for backwards compatibility; canonical source is tts.languages
 _LANGUAGE_MAP: dict[str, str] = {
     "en": "English",
     "eng": "English",
@@ -52,6 +53,20 @@ _LANGUAGE_MAP: dict[str, str] = {
     "italian": "Italian",
     "auto": "Auto",
 }
+
+# Re-export canonical language constants for validators
+try:
+    from app.tts.languages import (
+        ALLOWED_TTS_ISOS as _ALLOWED_TTS_ISOS,
+        LANGUAGE_OPTIONS as _LANGUAGE_OPTIONS,
+        TTS_ISO_TO_DISPLAY as _TTS_ISO_TO_DISPLAY,
+        normalize_language_code as _normalize_language_code,
+    )
+except Exception:  # pragma: no cover
+    _ALLOWED_TTS_ISOS = set()
+    _LANGUAGE_OPTIONS = []
+    _TTS_ISO_TO_DISPLAY = {}
+    _normalize_language_code = lambda x: x  # type: ignore
 
 # Canonical speakers for mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16
 # case-insensitive, but we keep canonical capitalisation for the model.
