@@ -346,7 +346,12 @@ function validateNode(errors: string[], nodeJson: unknown, nodeIds: Set<string>)
     }
     if ((transform as Record<string, unknown>).localPivot !== undefined) {
       const lp = (transform as Record<string, unknown>).localPivot as Record<string, unknown>
-      if (typeof lp.x !== 'number' || !Number.isFinite(lp.x) || typeof lp.y !== 'number' || !Number.isFinite(lp.y)) {
+      if (
+        typeof lp.x !== 'number' ||
+        !Number.isFinite(lp.x) ||
+        typeof lp.y !== 'number' ||
+        !Number.isFinite(lp.y)
+      ) {
         errors.push(`Node "${String(nodeJson.id)}" localPivot must have finite x,y`)
       } else if (lp.x < -0.5 || lp.x > 0.5 || lp.y < -0.5 || lp.y > 0.5) {
         errors.push(`Node "${String(nodeJson.id)}" localPivot must be between -0.5 and 0.5`)
@@ -355,9 +360,20 @@ function validateNode(errors: string[], nodeJson: unknown, nodeIds: Set<string>)
   }
   const localPivot = (nodeJson as Record<string, unknown>).localPivot
   if (localPivot !== undefined) {
-    if (!isRecord(localPivot) || typeof localPivot.x !== 'number' || typeof localPivot.y !== 'number' || !Number.isFinite(localPivot.x) || !Number.isFinite(localPivot.y)) {
+    if (
+      !isRecord(localPivot) ||
+      typeof localPivot.x !== 'number' ||
+      typeof localPivot.y !== 'number' ||
+      !Number.isFinite(localPivot.x) ||
+      !Number.isFinite(localPivot.y)
+    ) {
       errors.push(`Node "${String(nodeJson.id)}" localPivot must have finite x,y`)
-    } else if ((localPivot.x as number) < -0.5 || (localPivot.x as number) > 0.5 || (localPivot.y as number) < -0.5 || (localPivot.y as number) > 0.5) {
+    } else if (
+      (localPivot.x as number) < -0.5 ||
+      (localPivot.x as number) > 0.5 ||
+      (localPivot.y as number) < -0.5 ||
+      (localPivot.y as number) > 0.5
+    ) {
       errors.push(`Node "${String(nodeJson.id)}" localPivot must be between -0.5 and 0.5`)
     }
   }
@@ -436,6 +452,49 @@ function validateNode(errors: string[], nodeJson: unknown, nodeIds: Set<string>)
       }
       if (typeof chart.dataSourceId !== 'string' || chart.dataSourceId === '') {
         errors.push(`Node "${String(nodeJson.id)}" chart must have a non-empty dataSourceId`)
+      }
+    }
+  }
+  if (components.circle !== undefined) {
+    const circle = components.circle as Record<string, unknown>
+    if (!isRecord(circle) || circle.kind !== 'circle') {
+      errors.push(`Node "${String(nodeJson.id)}" has an invalid circle component`)
+    } else {
+      if (
+        typeof circle.radius !== 'number' ||
+        !Number.isFinite(circle.radius) ||
+        circle.radius <= 0
+      ) {
+        errors.push(`Node "${String(nodeJson.id)}" circle radius must be a positive finite number`)
+      }
+      if (
+        typeof circle.startAngle !== 'number' ||
+        !Number.isFinite(circle.startAngle) ||
+        circle.startAngle < 0 ||
+        circle.startAngle > 360
+      ) {
+        errors.push(`Node "${String(nodeJson.id)}" circle startAngle must be between 0 and 360`)
+      }
+      if (
+        typeof circle.endAngle !== 'number' ||
+        !Number.isFinite(circle.endAngle) ||
+        circle.endAngle < 0 ||
+        circle.endAngle > 360
+      ) {
+        errors.push(`Node "${String(nodeJson.id)}" circle endAngle must be between 0 and 360`)
+      }
+      if (circle.segments !== undefined) {
+        if (
+          typeof circle.segments !== 'number' ||
+          !Number.isFinite(circle.segments) ||
+          !Number.isInteger(circle.segments) ||
+          circle.segments < 3 ||
+          circle.segments > 256
+        ) {
+          errors.push(
+            `Node "${String(nodeJson.id)}" circle segments must be an integer between 3 and 256`,
+          )
+        }
       }
     }
   }
@@ -568,6 +627,36 @@ function validateAnimation(
         )
       }
     }
+    const circleTracks = (entry as unknown as Record<string, unknown>).circleTracks
+    if (circleTracks !== undefined) {
+      if (!Array.isArray(circleTracks)) {
+        errors.push('Node animation circleTracks must be an array')
+        continue
+      }
+      for (const track of circleTracks) {
+        if (!isRecord(track)) {
+          errors.push('Circle track must be an object')
+          continue
+        }
+        const property = requireCircleProperty(errors, track.property)
+        if (property === undefined) {
+          continue
+        }
+        validateKeyframeList(
+          errors,
+          track.keyframes,
+          `Circle track "${property}"`,
+          duration,
+          keyframeIds,
+          (value, id) => {
+            if (typeof value !== 'number' || !Number.isFinite(value)) {
+              return `Keyframe "${id}" value must be a finite number`
+            }
+            return null
+          },
+        )
+      }
+    }
   }
 }
 
@@ -670,7 +759,9 @@ function buildSlideFromJSON(json: SlideJSON, parameterKindOf: MaterialParameterK
   )
   const prompter = json.prompter !== undefined ? prompterFromJSON(json.prompter) : null
   const audioClips =
-    json.audio?.clips !== undefined ? json.audio.clips.map((clipJson) => audioClipFromJSON(clipJson)) : []
+    json.audio?.clips !== undefined
+      ? json.audio.clips.map((clipJson) => audioClipFromJSON(clipJson))
+      : []
   return new Slide(
     requireString(json.id, 'Slide id'),
     requireString(json.name, 'Slide name'),
@@ -796,4 +887,14 @@ function requireAnimationProperty(errors: string[], value: unknown): AnimationPr
     return undefined
   }
   return value as AnimationProperty
+}
+
+const CIRCLE_PROPERTY_NAMES: readonly string[] = ['startAngle', 'endAngle']
+
+function requireCircleProperty(errors: string[], value: unknown): string | undefined {
+  if (typeof value !== 'string' || !(CIRCLE_PROPERTY_NAMES as readonly string[]).includes(value)) {
+    errors.push(`Unknown circle animation property: ${String(value)}`)
+    return undefined
+  }
+  return value as string
 }

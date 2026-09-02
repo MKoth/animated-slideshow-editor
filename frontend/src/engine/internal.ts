@@ -71,6 +71,7 @@ import { createClipInstance } from './clipInstance'
 import { getAnimatableParameters, type AnimatableParameter } from './animatableParameters'
 import type { MeshData } from './mesh'
 import { evaluateMeshDeformation } from './meshDeformationEvaluator'
+import { generateCircleMeshData } from './circleComponent'
 import type { DeformedMeshResult } from './meshDeformationEvaluator'
 import type { WorldTransform } from './worldTransform'
 import { relativeTransform, worldTransformOf } from './worldTransform'
@@ -282,8 +283,7 @@ export class Engine {
     }
     const previous = slide.prompter.parts
     // Preserve gaps: insertionTime is visual prevEnd (tight to previous block), not prefix-sum, so gaps are kept
-    const insertionTime =
-      insertIndex === 0 ? 0 : (previous[insertIndex - 1]?.endTime ?? 0)
+    const insertionTime = insertIndex === 0 ? 0 : (previous[insertIndex - 1]?.endTime ?? 0)
     // Capture downstream parts and clips before mutation to preserve gaps (shift, not reflow)
     const downstreamParts = previous.slice(insertIndex)
     const shiftedClips: { id: string; oldTimelineStart: number }[] = []
@@ -382,11 +382,20 @@ export class Engine {
         slideId,
       } as unknown as import('./events').EngineEvent)
       if (shiftedClips.length > 0) {
-        this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+        this.#bus.emit({
+          type: 'AudioChanged',
+          slideId,
+        } as unknown as import('./events').EngineEvent)
       }
       return {
         partIds: newPartsRaw.map((p) => p.id),
-        oldParts: oldParts as { id: string; text: string; startTime: number; endTime: number; duration: number }[],
+        oldParts: oldParts as {
+          id: string
+          text: string
+          startTime: number
+          endTime: number
+          duration: number
+        }[],
         mode: 'append',
         insertIndex,
         shiftedClips,
@@ -419,7 +428,13 @@ export class Engine {
     }
     return {
       partIds: newPartsRaw.map((p) => p.id),
-      oldParts: oldParts as { id: string; text: string; startTime: number; endTime: number; duration: number }[],
+      oldParts: oldParts as {
+        id: string
+        text: string
+        startTime: number
+        endTime: number
+        duration: number
+      }[],
       mode: 'replace',
       deletedClips,
     }
@@ -1094,7 +1109,11 @@ export class Engine {
     slideId: string,
     partId: string,
     newStartTime: number,
-  ): { oldStartTime: number; oldEndTime: number; shiftedClips: readonly { id: string; oldTimelineStart: number }[] } {
+  ): {
+    oldStartTime: number
+    oldEndTime: number
+    shiftedClips: readonly { id: string; oldTimelineStart: number }[]
+  } {
     const slide = this.getSlide(slideId)
     if (!slide.prompter) throw new Error(`Slide "${slideId}" has no prompter`)
     const part = slide.prompter.parts.find((p) => p.id === partId)
@@ -1110,7 +1129,8 @@ export class Engine {
     if (part.segments) for (const seg of part.segments) draggedClipIds.add(seg.audioClipId)
     const shiftedClips: { id: string; oldTimelineStart: number }[] = []
     for (const clip of slide.audio.clips) {
-      if (draggedClipIds.has(clip.id)) shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
+      if (draggedClipIds.has(clip.id))
+        shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
     }
     part.startTime = newStartTime
     part.endTime = newStartTime + part.duration
@@ -1542,6 +1562,22 @@ export class Engine {
     return slide.animation.node(nodeId)?.dataLabelKeyframes(label) ?? []
   }
 
+  getCircleKeyframes(
+    nodeId: string,
+    property: import('./animationProperties').CircleAnimationProperty,
+  ): readonly Keyframe[] {
+    const slide = this.getSlideOfNode(nodeId)
+    return slide.animation.node(nodeId)?.circleKeyframes(property) ?? []
+  }
+
+  hasCircleTrack(
+    nodeId: string,
+    property: import('./animationProperties').CircleAnimationProperty,
+  ): boolean {
+    const slide = this.getSlideOfNode(nodeId)
+    return slide.animation.node(nodeId)?.hasCircleTrack(property) ?? false
+  }
+
   getAnimatableParameters(nodeId: string): AnimatableParameter[] {
     const node = this.getNode(nodeId)
     const materialId = node.material.materialDefinitionId
@@ -1551,6 +1587,8 @@ export class Engine {
       definition.parameters,
       (property) => this.getKeyframes(nodeId, property).length > 0,
       (parameter) => this.hasMaterialTrack(nodeId, parameter),
+      (label) => this.hasDataLabelTrack(nodeId, label),
+      (property) => this.hasCircleTrack(nodeId, property),
     )
   }
 
@@ -1573,6 +1611,9 @@ export class Engine {
     if (resolved.kind === 'dataLabel') {
       return animation.dataLabelKeyframes(resolved.label)
     }
+    if (resolved.kind === 'circle') {
+      return animation.circleKeyframes(resolved.property)
+    }
     return animation.materialKeyframes(resolved.parameter)
   }
 
@@ -1592,6 +1633,13 @@ export class Engine {
     return this.#evaluator.evaluateDataLabels(nodeId, time)
   }
 
+  evaluateCircle(
+    nodeId: string,
+    time: number,
+  ): import('./animationEvaluator').EvaluatedCircleState | null {
+    return this.#evaluator.evaluateCircle(nodeId, time)
+  }
+
   evaluateMeshDeformation(
     nodeId: string,
     _time: number,
@@ -1599,14 +1647,29 @@ export class Engine {
     meshWorldTransform?: WorldTransform,
   ): DeformedMeshResult | null {
     const node = this.getNode(nodeId)
-    if (!node.components.mesh) {
-      return null
+    if (node.components.mesh) {
+      return evaluateMeshDeformation(
+        node.components.mesh.mesh,
+        boneWorldTransforms,
+        meshWorldTransform,
+      )
     }
-    return evaluateMeshDeformation(
-      node.components.mesh.mesh,
-      boneWorldTransforms,
-      meshWorldTransform,
-    )
+    if (node.components.circle) {
+      const circle = node.components.circle
+      let meshData: import('./mesh').MeshData
+      try {
+        const state = this.evaluateCircle(nodeId, _time)
+        if (state) {
+          meshData = generateCircleMeshData(circle, state.startAngle, state.endAngle)
+        } else {
+          meshData = generateCircleMeshData(circle)
+        }
+      } catch {
+        meshData = generateCircleMeshData(circle)
+      }
+      return evaluateMeshDeformation(meshData, boneWorldTransforms, meshWorldTransform)
+    }
+    return null
   }
 
   addKeyframe(target: KeyframeTarget, time: number, value: unknown): Keyframe {
@@ -1769,6 +1832,19 @@ export class Engine {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(node as any).components = Object.freeze(newComponents)
     this.#bus.emit({ type: 'TextChanged', nodeId })
+  }
+
+  setCircleComponent(nodeId: string, circle: import('./circleComponent').CircleComponent): void {
+    const node = this.getNode(nodeId)
+    const newComponents = { ...node.components, circle }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(node as any).components = Object.freeze(newComponents)
+    this.#bus.emit({
+      type: 'CircleChanged' as unknown as import('./events').EngineEvent['type'],
+      nodeId,
+    } as unknown as import('./events').EngineEvent)
+    // Reuse TableChanged handler pattern? We'll emit CircleChanged dedicated
+    this.#bus.emit({ type: 'MeshChanged', nodeId })
   }
 
   assignMaterial(nodeId: string, materialDefinitionId: string): void {
@@ -2724,18 +2800,22 @@ export function toReadOnly(engine: Engine): EnginePublic {
     setTableComponent: (nodeId, table) => engine.setTableComponent(nodeId, table),
     setChartComponent: (nodeId, chart) => engine.setChartComponent(nodeId, chart),
     setTextComponent: (nodeId, text) => engine.setTextComponent(nodeId, text),
+    setCircleComponent: (nodeId, circle) => engine.setCircleComponent(nodeId, circle),
     getKeyframes: (nodeId, property) => engine.getKeyframes(nodeId, property),
     getMaterialKeyframes: (nodeId, parameter) => engine.getMaterialKeyframes(nodeId, parameter),
     hasMaterialTrack: (nodeId, parameter) => engine.hasMaterialTrack(nodeId, parameter),
     hasDataLabelTrack: (nodeId, label) => engine.hasDataLabelTrack(nodeId, label),
     getDataLabelKeyframes: (nodeId, label) => engine.getDataLabelKeyframes(nodeId, label),
+    getCircleKeyframes: (nodeId, property) => engine.getCircleKeyframes(nodeId, property),
+    hasCircleTrack: (nodeId, property) => engine.hasCircleTrack(nodeId, property),
     getAnimatableParameters: (nodeId) => engine.getAnimatableParameters(nodeId),
     evaluateNode: (nodeId, time, target) => engine.evaluateNode(nodeId, time, target),
     evaluateMaterialOverrides: (nodeId, time, target) =>
       engine.evaluateMaterialOverrides(nodeId, time, target),
     evaluateDataLabels: (nodeId, time) => engine.evaluateDataLabels(nodeId, time),
-    evaluateMeshDeformation: (nodeId, time, boneWorldTransforms) =>
-      engine.evaluateMeshDeformation(nodeId, time, boneWorldTransforms),
+    evaluateCircle: (nodeId, time) => engine.evaluateCircle(nodeId, time),
+    evaluateMeshDeformation: (nodeId, time, boneWorldTransforms, world) =>
+      engine.evaluateMeshDeformation(nodeId, time, boneWorldTransforms, world),
     getIKManager: () => engine.getIKManager(),
     getConstraintManager: () => engine.getConstraintManager(),
     getClip: (clipId) => engine.getClip(clipId),

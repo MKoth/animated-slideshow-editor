@@ -19,12 +19,17 @@ export const BONE_ANIMATABLE_PROPERTIES = [
   'scaleY',
 ] as const
 
+export const CIRCLE_ANIMATABLE_PROPERTIES = ['startAngle', 'endAngle'] as const
+
 export type AnimationProperty = (typeof ANIMATABLE_PROPERTIES)[number]
+
+export type CircleAnimationProperty = (typeof CIRCLE_ANIMATABLE_PROPERTIES)[number]
 
 /** The subset of AnimationProperty that bones support. */
 export type BoneAnimationProperty = (typeof BONE_ANIMATABLE_PROPERTIES)[number]
 
 const ANIMATABLE_PROPERTY_VALUES: readonly string[] = ANIMATABLE_PROPERTIES
+const CIRCLE_ANIMATABLE_PROPERTY_VALUES: readonly string[] = CIRCLE_ANIMATABLE_PROPERTIES
 
 export function requireAnimationProperty(value: unknown): AnimationProperty {
   if (
@@ -34,6 +39,16 @@ export function requireAnimationProperty(value: unknown): AnimationProperty {
     throw new Error(`Unknown animation property: ${String(value)}`)
   }
   return value as AnimationProperty
+}
+
+export function requireCircleAnimationProperty(value: unknown): CircleAnimationProperty {
+  if (
+    typeof value !== 'string' ||
+    !(CIRCLE_ANIMATABLE_PROPERTY_VALUES as readonly string[]).includes(value)
+  ) {
+    throw new Error(`Unknown circle animation property: ${String(value)}`)
+  }
+  return value as CircleAnimationProperty
 }
 
 export function requireAnimatableForNode(node: SceneNode, property: unknown): AnimationProperty {
@@ -71,4 +86,26 @@ export function requireKeyframeValue(
     return requireOpacity(value, `${what} (opacity)`)
   }
   return requireFiniteNumber(value, what)
+}
+
+export function requireCircleKeyframeValue(
+  _property: CircleAnimationProperty,
+  value: unknown,
+  what = 'Keyframe value',
+): number {
+  const num = requireFiniteNumber(value, what)
+  // Angles are 0..360, but allow any finite for interpolation; clamp validation will enforce on set.
+  // We keep permissive here to allow intermediate evaluated values outside range.
+  return num
+}
+
+export function requireAnimatableForCircle(
+  node: SceneNode,
+  property: unknown,
+): CircleAnimationProperty {
+  const bounded = requireCircleAnimationProperty(property)
+  if (!node.components.circle) {
+    throw new Error(`Node "${node.name}" does not have a circle component`)
+  }
+  return bounded
 }

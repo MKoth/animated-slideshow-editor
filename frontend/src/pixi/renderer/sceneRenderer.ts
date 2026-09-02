@@ -32,6 +32,7 @@ import {
 import type { PixiContainer, PixiFilter, PixiSprite, RendererPixi } from './pixi'
 import type { WorldSize } from './worldGeometry'
 import {
+  applyCircleData,
   applyEvaluatedState,
   applyMaterialTint,
   applyMeshData,
@@ -64,6 +65,7 @@ import { bindFilterSamplers } from './samplerBinding'
 import type { ShaderProgramCache } from './programCache'
 import type { ResolveAssetUrl, TextureCache } from './textureCache'
 import { evaluateMeshDeformation } from '../../engine/meshDeformationEvaluator'
+import { generateCircleMeshData } from '../../engine/circleComponent'
 
 export interface CurrentTimeSource {
   getTime(slideId: string): number
@@ -105,6 +107,7 @@ export class SceneRenderer {
   readonly #tableComponentHashes = new Map<string, string>()
   readonly #chartComponentHashes = new Map<string, string>()
   readonly #textComponentHashes = new Map<string, string>()
+  readonly #circleHashes = new Map<string, string>()
   readonly #resolveDataSource: ResolveDataSource
   readonly #scratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #materialScratch: EffectiveMaterialScratch = effectiveMaterialScratch()
@@ -184,6 +187,7 @@ export class SceneRenderer {
     this.#tableComponentHashes.clear()
     this.#chartComponentHashes.clear()
     this.#textComponentHashes.clear()
+    this.#circleHashes.clear()
     this.#scene = scene
     this.#slideId = slideId
     if (!scene) {
@@ -222,6 +226,7 @@ export class SceneRenderer {
         this.#lastMaterials.delete(descendantId)
         this.#nodeShaders.delete(descendantId)
         this.#missingNodes.delete(descendantId)
+        this.#circleHashes.delete(descendantId)
       }
       this.#nodeIds.delete(descendant)
     }
@@ -282,10 +287,36 @@ export class SceneRenderer {
     }
     for (const node of walkPreOrder(scene.root)) {
       const mesh = node.components.mesh?.mesh
-      if (!mesh) continue
+      if (mesh) {
+        const meshTransform = this.#engineWorldTransform(node.id, time)
+        if (!meshTransform) continue
+        const vertices = evaluateMeshDeformation(mesh, bones, meshTransform).deformedVertices
+        const container = this.#containers.get(node.id)
+        if (container) applyMeshVertices(container, vertices)
+        if (vertices.length === 0) continue
+        const xs = vertices.map((vertex) => vertex.x)
+        const ys = vertices.map((vertex) => vertex.y)
+        const minX = Math.min(...xs)
+        const maxX = Math.max(...xs)
+        const minY = Math.min(...ys)
+        const maxY = Math.max(...ys)
+        this.#sizes.set(node.id, {
+          width: maxX - minX,
+          height: maxY - minY,
+          offsetX: (minX + maxX) / 2,
+          offsetY: (minY + maxY) / 2,
+        })
+        continue
+      }
+      const circle = node.components.circle
+      if (!circle) continue
+      const state = this.#engine.evaluateCircle(node.id, time)
+      const evaluatedMesh = state
+        ? generateCircleMeshData(circle, state.startAngle, state.endAngle)
+        : generateCircleMeshData(circle)
       const meshTransform = this.#engineWorldTransform(node.id, time)
       if (!meshTransform) continue
-      const vertices = evaluateMeshDeformation(mesh, bones, meshTransform).deformedVertices
+      const vertices = evaluateMeshDeformation(evaluatedMesh, bones, meshTransform).deformedVertices
       const container = this.#containers.get(node.id)
       if (container) applyMeshVertices(container, vertices)
       if (vertices.length === 0) continue
@@ -386,6 +417,55 @@ export class SceneRenderer {
     const cx = (minX + maxX) / 2
     const cy = (minY + maxY) / 2
     this.#sizes.set(nodeId, { width: w, height: h, offsetX: cx, offsetY: cy })
+    this.refreshDeformedMeshSizes()
+    this.#onNodeSizeChanged(nodeId)
+  }
+
+  handleCircleChanged(nodeId: string): void {
+    const scene = this.#scene
+    if (!scene) {
+      return
+    }
+    const node = scene.getNode(nodeId)
+    if (!node || !node.components.circle) {
+      return
+    }
+    const circle = node.components.circle
+    const container = this.#containers.get(nodeId)
+    if (!container) {
+      return
+    }
+    // If container does not already host a circle mesh, rebuild whole container
+    const placeholder = placeholderOf(container)
+    const needsRebuild = !placeholder || !placeholder.children[0]?.label?.startsWith('mesh')
+    if (needsRebuild) {
+      const parent = container.parent
+      const index = parent ? parent.children.indexOf(container) : -1
+      container.destroy({ children: true })
+      const replacement = createNodeContainer(this.#pixi, node, this.#textureCache)
+      this.#containers.set(nodeId, replacement)
+      this.#nodeIds.set(replacement, nodeId)
+      if (parent) {
+        parent.addChildAt(replacement, Math.max(0, index))
+      }
+      this.#recordSize(node, replacement)
+      this.#evaluateAndApply(nodeId)
+      const instance = node.components.assetInstance
+      if (instance) {
+        this.#loadAssetTexture(instance.assetDefinitionId, nodeId, replacement)
+      }
+      return
+    }
+    // Otherwise update mesh data for current time (deterministic per frame)
+    const slideId = this.#slideId
+    const time = slideId ? this.#currentTime.getTime(slideId) : 0
+    const state = this.#engine.evaluateCircle(nodeId, time)
+    const start = state?.startAngle ?? circle.startAngle
+    const end = state?.endAngle ?? circle.endAngle
+    applyCircleData(this.#pixi, container, circle, start, end)
+    const w = circle.radius * 2
+    const h = circle.radius * 2
+    this.#sizes.set(nodeId, { width: w, height: h, offsetX: 0, offsetY: 0 })
     this.refreshDeformedMeshSizes()
     this.#onNodeSizeChanged(nodeId)
   }
@@ -717,6 +797,28 @@ export class SceneRenderer {
       }
     }
     const time = this.#currentTime.getTime(slideId)
+    if (node.components.circle) {
+      const circle = node.components.circle
+      const circleState = this.#engine.evaluateCircle(nodeId, time)
+      if (circleState) {
+        const circleHash = `${circleState.startAngle}:${circleState.endAngle}:${circleState.radius}:${circleState.segments}`
+        const prevHash = this.#circleHashes.get(nodeId)
+        if (prevHash !== circleHash) {
+          this.#circleHashes.set(nodeId, circleHash)
+          applyCircleData(
+            this.#pixi,
+            container,
+            circle,
+            circleState.startAngle,
+            circleState.endAngle,
+          )
+          const w = circleState.radius * 2
+          const h = circleState.radius * 2
+          this.#sizes.set(nodeId, { width: w, height: h, offsetX: 0, offsetY: 0 })
+          this.#onNodeSizeChanged(nodeId)
+        }
+      }
+    }
     const state = this.#engine.evaluateNode(nodeId, time, this.#scratch)
     const evaluatedOverrides = this.#engine.evaluateMaterialOverrides(
       nodeId,
@@ -974,6 +1076,18 @@ export class SceneRenderer {
       if (size) {
         this.#sizes.set(node.id, this.#tableTextSize(node, size))
       }
+      return
+    }
+    if (node.components.circle) {
+      const circle = node.components.circle
+      this.#sizes.set(node.id, {
+        width: circle.radius * 2,
+        height: circle.radius * 2,
+        offsetX: 0,
+        offsetY: 0,
+      })
+      const size = { width: circle.radius * 2, height: circle.radius * 2, offsetX: 0, offsetY: 0 }
+      applyPivotWithSize(container, node.transform.localPivot, size)
       return
     }
     const placeholder = placeholderOf(container)

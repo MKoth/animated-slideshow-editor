@@ -3,8 +3,8 @@ import { requireString } from './guards'
 import { NodeAnimation } from './nodeAnimation'
 import type { MaterialParameterKindOf } from './nodeAnimation'
 import type { NodeAnimationJSON, SlideAnimationJSON } from './json'
-import { ANIMATABLE_PROPERTIES } from './animationProperties'
-import type { AnimationProperty } from './animationProperties'
+import { ANIMATABLE_PROPERTIES, CIRCLE_ANIMATABLE_PROPERTIES } from './animationProperties'
+import type { AnimationProperty, CircleAnimationProperty } from './animationProperties'
 
 export type ClampedKeyframe =
   | {
@@ -16,6 +16,12 @@ export type ClampedKeyframe =
   | {
       readonly nodeId: string
       readonly parameterKey: string
+      readonly keyframeId: string
+      readonly oldTime: number
+    }
+  | {
+      readonly nodeId: string
+      readonly circleProperty: CircleAnimationProperty
       readonly keyframeId: string
       readonly oldTime: number
     }
@@ -81,6 +87,33 @@ export class SlideAnimation {
           }
         }
       }
+      for (const property of CIRCLE_ANIMATABLE_PROPERTIES) {
+        for (const keyframe of animation.circleKeyframes(property)) {
+          if (keyframe.time > duration) {
+            clamped.push({
+              nodeId,
+              circleProperty: property,
+              keyframeId: keyframe.id,
+              oldTime: keyframe.time,
+            })
+            keyframe.time = duration
+          }
+        }
+      }
+      for (const label of animation.dataLabelTrackLabels()) {
+        for (const keyframe of animation.dataLabelKeyframes(label)) {
+          if (keyframe.time > duration) {
+            clamped.push({
+              // dataLabel clamping not exposed externally currently; treat as generic
+              nodeId,
+              parameterKey: `data:${label}`,
+              keyframeId: keyframe.id,
+              oldTime: keyframe.time,
+            })
+            keyframe.time = duration
+          }
+        }
+      }
     }
     return clamped
   }
@@ -91,12 +124,19 @@ export class SlideAnimation {
       const tracks = animation.toJSON()
       const materialTracks = animation.materialTracksJSON()
       const dataLabelTracks = animation.dataLabelTracksJSON()
-      if (tracks.length > 0 || materialTracks.length > 0 || dataLabelTracks.length > 0) {
+      const circleTracks = animation.circleTracksJSON()
+      if (
+        tracks.length > 0 ||
+        materialTracks.length > 0 ||
+        dataLabelTracks.length > 0 ||
+        circleTracks.length > 0
+      ) {
         nodes.push({
           nodeId,
           tracks,
           ...(materialTracks.length > 0 ? { materialTracks } : {}),
           ...(dataLabelTracks.length > 0 ? { dataLabelTracks } : {}),
+          ...(circleTracks.length > 0 ? { circleTracks } : {}),
         })
       }
     }

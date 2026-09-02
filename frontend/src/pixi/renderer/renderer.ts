@@ -792,6 +792,10 @@ export class Renderer {
         sceneRenderer.handleMeshChanged(event.nodeId)
         this.#meshOverlay?.redraw()
         break
+      case 'CircleChanged':
+        sceneRenderer.handleCircleChanged(event.nodeId)
+        this.#meshOverlay?.redraw()
+        break
       case 'TableChanged':
         sceneRenderer.handleTableChanged(event.nodeId)
         break

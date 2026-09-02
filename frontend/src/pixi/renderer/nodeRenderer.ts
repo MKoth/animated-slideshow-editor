@@ -2,6 +2,7 @@ import type { SceneNode } from '../../engine'
 import type { MeshData, MeshVertex } from '../../engine/mesh'
 import type { EvaluatedNodeState } from '../../engine/animationEvaluator'
 import type { PixiContainer, PixiMeshSimple, PixiMeshSimpleOptions, RendererPixi } from './pixi'
+import { generateCircleMeshData } from '../../engine/circleComponent'
 import {
   applyPlaceholderName,
   applyTint,
@@ -58,6 +59,11 @@ export function createNodeContainer(
     const chartPlaceholder = createChartContainer(pixi, node)
     placeholderByContainer.set(container, chartPlaceholder)
     container.addChild(chartPlaceholder)
+  } else if (node.components.circle) {
+    const textureKey = node.components.assetInstance?.assetDefinitionId ?? node.id
+    const circlePlaceholder = createCirclePlaceholder(pixi, node, cache.get(textureKey))
+    placeholderByContainer.set(container, circlePlaceholder)
+    container.addChild(circlePlaceholder)
   } else if (node.components.mesh) {
     const textureKey = node.components.assetInstance?.assetDefinitionId ?? node.id
     const meshPlaceholder = createMeshPlaceholder(pixi, node, cache.get(textureKey))
@@ -215,6 +221,51 @@ export function createMeshPlaceholder(
   }
 
   return group
+}
+
+export function createCirclePlaceholder(
+  pixi: RendererPixi,
+  node: SceneNode,
+  texture: PixiMeshSimpleOptions['texture'],
+): PixiContainer {
+  const circle = node.components.circle
+  const group = new pixi.Container()
+  group.label = `placeholder:${node.name}`
+  if (circle) {
+    const mesh = generateCircleMeshData(circle)
+    const displayMesh = createDisplayMesh(pixi, mesh, texture)
+    meshByGroup.set(group, displayMesh)
+    registerMeshDisplay(group, displayMesh)
+    group.addChild(displayMesh)
+    const w = circle.radius * 2
+    const h = circle.radius * 2
+    setMeshPlaceholderSize(group, w, h, 0, 0)
+  } else {
+    setMeshPlaceholderSize(group, 100, 100, 0, 0)
+  }
+  return group
+}
+
+export function applyCircleData(
+  pixi: RendererPixi,
+  container: PixiContainer,
+  circle: import('../../engine/circleComponent').CircleComponent,
+  startAngle?: number,
+  endAngle?: number,
+): void {
+  const group = placeholderByContainer.get(container)
+  const current = group ? meshByGroup.get(group) : undefined
+  if (!group || !current) return
+  const mesh = generateCircleMeshData(circle, startAngle, endAngle)
+  const replacement = createDisplayMesh(pixi, mesh, current.texture)
+  const index = group.children.indexOf(current)
+  current.destroy()
+  meshByGroup.set(group, replacement)
+  registerMeshDisplay(group, replacement)
+  group.addChildAt(replacement, index < 0 ? group.children.length : index)
+  const w = circle.radius * 2
+  const h = circle.radius * 2
+  setMeshPlaceholderSize(group, w, h, 0, 0)
 }
 
 export function applyMeshVertices(container: PixiContainer, vertices: readonly MeshVertex[]): void {

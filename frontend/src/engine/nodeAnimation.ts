@@ -4,13 +4,21 @@ import type { AnimationProperty } from './animationProperties'
 import type { Keyframe, KeyframeValue } from './keyframe'
 import { Keyframe as KeyframeModel, newKeyframeId } from './keyframe'
 import { requireKeyframeInterpolation, requireKeyframeTangent, ZERO_TANGENT } from './keyframe'
-import type { PropertyTrackJSON, MaterialTrackJSON, DataLabelTrackJSON } from './json'
+import type {
+  PropertyTrackJSON,
+  MaterialTrackJSON,
+  DataLabelTrackJSON,
+  CircleTrackJSON,
+} from './json'
 import {
   requireAnimationProperty,
   requireAnimatableForNode,
+  requireCircleAnimationProperty,
+  requireCircleKeyframeValue,
   requireKeyframeTime,
   requireKeyframeValue,
 } from './animationProperties'
+import type { CircleAnimationProperty } from './animationProperties'
 import { requireMaterialKeyframeValue } from './materialKeyframes'
 import type { MaterialParameterKindOf } from './keyframeTarget'
 
@@ -20,6 +28,7 @@ export class NodeAnimation {
   readonly #tracks = new Map<AnimationProperty, Keyframe[]>()
   readonly #materialTracks = new Map<string, Keyframe[]>()
   readonly #dataLabelTracks = new Map<string, Keyframe[]>()
+  readonly #circleTracks = new Map<CircleAnimationProperty, Keyframe[]>()
 
   keyframes(property: AnimationProperty): readonly Keyframe[] {
     return this.#tracks.get(property) ?? []
@@ -53,6 +62,18 @@ export class NodeAnimation {
     return [...this.#dataLabelTracks.keys()]
   }
 
+  circleKeyframes(property: CircleAnimationProperty): readonly Keyframe[] {
+    return this.#circleTracks.get(property) ?? []
+  }
+
+  hasCircleTrack(property: CircleAnimationProperty): boolean {
+    return this.#circleTracks.has(property)
+  }
+
+  circleTrackKeys(): CircleAnimationProperty[] {
+    return [...this.#circleTracks.keys()] as CircleAnimationProperty[]
+  }
+
   add(property: AnimationProperty, keyframe: Keyframe): void {
     insertSorted(this.#tracks, property, keyframe)
   }
@@ -63,6 +84,10 @@ export class NodeAnimation {
 
   addDataLabel(label: string, keyframe: Keyframe): void {
     insertSorted(this.#dataLabelTracks, label, keyframe)
+  }
+
+  addCircle(property: CircleAnimationProperty, keyframe: Keyframe): void {
+    insertSorted(this.#circleTracks as Map<string, Keyframe[]>, property, keyframe)
   }
 
   remove(property: AnimationProperty, keyframeId: string): Keyframe | undefined {
@@ -81,6 +106,10 @@ export class NodeAnimation {
     this.#dataLabelTracks.delete(label)
   }
 
+  removeCircle(property: CircleAnimationProperty, keyframeId: string): Keyframe | undefined {
+    return removeById(this.#circleTracks as Map<string, Keyframe[]>, property, keyframeId)
+  }
+
   get(property: AnimationProperty, keyframeId: string): Keyframe | undefined {
     return this.#tracks.get(property)?.find((entry) => entry.id === keyframeId)
   }
@@ -91,6 +120,10 @@ export class NodeAnimation {
 
   getDataLabel(label: string, keyframeId: string): Keyframe | undefined {
     return this.#dataLabelTracks.get(label)?.find((entry) => entry.id === keyframeId)
+  }
+
+  getCircle(property: CircleAnimationProperty, keyframeId: string): Keyframe | undefined {
+    return this.#circleTracks.get(property)?.find((entry) => entry.id === keyframeId)
   }
 
   copy(): NodeAnimation {
@@ -110,6 +143,12 @@ export class NodeAnimation {
     for (const [label, keyframes] of this.#dataLabelTracks) {
       copy.#dataLabelTracks.set(
         label,
+        keyframes.map((keyframe) => copyKeyframe(keyframe)),
+      )
+    }
+    for (const [property, keyframes] of this.#circleTracks) {
+      copy.#circleTracks.set(
+        property,
         keyframes.map((keyframe) => copyKeyframe(keyframe)),
       )
     }
@@ -136,6 +175,14 @@ export class NodeAnimation {
     const tracks: DataLabelTrackJSON[] = []
     for (const [label, keyframes] of this.#dataLabelTracks) {
       tracks.push({ label, keyframes: keyframes.map((keyframe) => keyframe.toJSON()) })
+    }
+    return tracks
+  }
+
+  circleTracksJSON(): CircleTrackJSON[] {
+    const tracks: CircleTrackJSON[] = []
+    for (const [property, keyframes] of this.#circleTracks) {
+      tracks.push({ property, keyframes: keyframes.map((keyframe) => keyframe.toJSON()) })
     }
     return tracks
   }
@@ -193,6 +240,15 @@ export class NodeAnimation {
         readDataLabelTrack(animation, track, duration)
       }
     }
+    const circleTracks = (json as Record<string, unknown>).circleTracks
+    if (circleTracks !== undefined) {
+      if (!Array.isArray(circleTracks)) {
+        throw new Error('Node animation circleTracks must be an array')
+      }
+      for (const track of circleTracks) {
+        readCircleTrack(animation, track, duration, node)
+      }
+    }
     return animation
   }
 }
@@ -244,6 +300,33 @@ function readDataLabelTrack(animation: NodeAnimation, track: unknown, duration: 
   })
   for (const keyframeJson of record.keyframes) {
     animation.addDataLabel(label, parse(keyframeJson))
+  }
+}
+
+function readCircleTrack(
+  animation: NodeAnimation,
+  track: unknown,
+  duration: number,
+  node: SceneNode,
+): void {
+  if (typeof track !== 'object' || track === null) {
+    throw new Error(`Circle track must be an object`)
+  }
+  const record = track as Record<string, unknown>
+  const property = requireCircleAnimationProperty(record.property)
+  if (!node.components.circle) {
+    throw new Error(
+      `Node "${node.id}" does not have a circle component for circle track "${property}"`,
+    )
+  }
+  if (!Array.isArray(record.keyframes)) {
+    throw new Error(`Circle track "${property}" must have a keyframes array`)
+  }
+  const parse = trackKeyframeParser(`Circle track "${property}"`, duration, (value, what) =>
+    requireCircleKeyframeValue(property, value, what),
+  )
+  for (const keyframeJson of record.keyframes) {
+    animation.addCircle(property, parse(keyframeJson))
   }
 }
 

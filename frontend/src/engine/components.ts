@@ -1,6 +1,8 @@
 import type { MeshData } from './mesh'
 import { cloneMeshData } from './mesh'
 import type { DataPoint } from './dataSourceDefinition'
+import type { CircleComponent } from './circleComponent'
+import { cloneCircleComponent } from './circleComponent'
 
 export type { DataPoint }
 
@@ -99,6 +101,7 @@ export interface NodeComponents {
   readonly tableRow?: TableRowComponent
   readonly tableCell?: TableCellComponent
   readonly chart?: ChartComponent
+  readonly circle?: CircleComponent
 }
 
 export function copyComponents(components: NodeComponents): NodeComponents {
@@ -124,5 +127,6 @@ export function copyComponents(components: NodeComponents): NodeComponents {
           _dirty: components.chart._dirty,
         }
       : undefined,
+    circle: components.circle ? cloneCircleComponent(components.circle) : undefined,
   }
 }

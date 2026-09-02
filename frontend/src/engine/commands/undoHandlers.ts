@@ -56,7 +56,13 @@ export function applyUndo(
       const restoredPivot = oldPivot
       const withPivot = restoredPivot
         ? { ...current, localPivot: restoredPivot }
-        : { x: current.x, y: current.y, rotation: current.rotation, scaleX: current.scaleX, scaleY: current.scaleY }
+        : {
+            x: current.x,
+            y: current.y,
+            rotation: current.rotation,
+            scaleX: current.scaleX,
+            scaleY: current.scaleY,
+          }
       engine.setTransform(nodeId, withPivot)
       // Restore position (pivot point) - need to set x,y separately if they changed
       const afterPivot = engine.getNode(nodeId).transform
@@ -404,6 +410,12 @@ export function applyUndo(
       const nodeId = inv.nodeId as string
       const oldTable = inv.oldTable as import('../components').TableComponent
       engine.setTableComponent(nodeId, oldTable)
+      return
+    }
+    case 'SetCircleComponent': {
+      const nodeId = inv.nodeId as string
+      const oldCircle = inv.oldCircle as import('../circleComponent').CircleComponent
+      engine.setCircleComponent(nodeId, oldCircle)
       return
     }
     case 'SetChartComponent': {
@@ -2054,6 +2066,12 @@ export function applyRedo(
       engine.setTableComponent(
         params.nodeId as string,
         params.table as import('../components').TableComponent,
+      )
+      return
+    case 'SetCircleComponent':
+      engine.setCircleComponent(
+        params.nodeId as string,
+        params.circle as import('../circleComponent').CircleComponent,
       )
       return
     case 'SetChartComponent':

@@ -334,6 +334,9 @@ export class AnimationManager {
     if (track.kind === 'dataLabel') {
       return animation.dataLabelKeyframes(track.label)
     }
+    if (track.kind === 'circle') {
+      return animation.circleKeyframes(track.property)
+    }
     return animation.materialKeyframes(track.parameter)
   }
 
@@ -343,6 +346,8 @@ export class AnimationManager {
       animation.add(track.property, keyframe)
     } else if (track.kind === 'dataLabel') {
       animation.addDataLabel(track.label, keyframe)
+    } else if (track.kind === 'circle') {
+      animation.addCircle(track.property, keyframe)
     } else {
       animation.addMaterial(track.parameter, keyframe)
     }
@@ -354,6 +359,8 @@ export class AnimationManager {
       animation.remove(track.property, keyframeId)
     } else if (track.kind === 'dataLabel') {
       animation.removeDataLabel(track.label, keyframeId)
+    } else if (track.kind === 'circle') {
+      animation.removeCircle(track.property, keyframeId)
     } else {
       animation.removeMaterial(track.parameter, keyframeId)
     }
@@ -366,6 +373,8 @@ export class AnimationManager {
       keyframe = animation.get(track.property, keyframeId)
     } else if (track.kind === 'dataLabel') {
       keyframe = animation.getDataLabel(track.label, keyframeId)
+    } else if (track.kind === 'circle') {
+      keyframe = animation.getCircle(track.property, keyframeId)
     } else {
       keyframe = animation.getMaterial(track.parameter, keyframeId)
     }
@@ -375,7 +384,9 @@ export class AnimationManager {
           ? `property ${track.property}`
           : track.kind === 'dataLabel'
             ? `data label ${track.label}`
-            : `parameter ${track.parameter}`
+            : track.kind === 'circle'
+              ? `circle ${track.property}`
+              : `parameter ${track.parameter}`
       throw new Error(`Keyframe not found: ${keyframeId} on ${on}`)
     }
     return keyframe
@@ -453,6 +464,9 @@ export class AnimationManager {
     }
     if (track.kind === 'dataLabel') {
       return `data label ${track.label}`
+    }
+    if (track.kind === 'circle') {
+      return `circle ${track.property}`
     }
     return `parameter ${track.parameter}`
   }

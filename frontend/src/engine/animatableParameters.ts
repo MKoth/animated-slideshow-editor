@@ -1,4 +1,9 @@
-import { ANIMATABLE_PROPERTIES, type AnimationProperty } from './animationProperties'
+import {
+  ANIMATABLE_PROPERTIES,
+  CIRCLE_ANIMATABLE_PROPERTIES,
+  type AnimationProperty,
+  type CircleAnimationProperty,
+} from './animationProperties'
 import type { MaterialParameterDefault } from './materialResolution'
 import { TINT_PARAMETER_KEY, OPACITY_MULTIPLIER_PARAMETER_KEY } from './materialResolution'
 import { RESERVED_TIME_UNIFORM } from '../shaders/reflection'
@@ -12,7 +17,7 @@ export interface AnimatableParameter {
   /** The value kind (e.g. 'number', 'color', 'vec2'). */
   readonly kind: string
   /** Whether the parameter comes from the standard six, material, or data label. */
-  readonly source: 'standard' | 'material' | 'dataLabel'
+  readonly source: 'standard' | 'material' | 'dataLabel' | 'circle'
   /** True when the node already has keyframes on this parameter's track. */
   readonly linked: boolean
 }
@@ -24,6 +29,11 @@ const STANDARD_LABELS: Readonly<Record<AnimationProperty, string>> = {
   scaleX: 'Scale X',
   scaleY: 'Scale Y',
   opacity: 'Opacity',
+}
+
+const CIRCLE_LABELS: Readonly<Record<CircleAnimationProperty, string>> = {
+  startAngle: 'Start Angle',
+  endAngle: 'End Angle',
 }
 
 const BUILT_IN_MATERIAL_KEYS = new Set<string>([
@@ -58,12 +68,14 @@ export function getAnimatableParameters(
       readonly camera?: unknown
       readonly bone?: unknown
       readonly chart?: { readonly dataLabels?: readonly string[] }
+      readonly circle?: unknown
     }
   },
   materialParameters: readonly MaterialParameterDefault[],
   hasPropertyTrack: (property: AnimationProperty) => boolean,
   hasMaterialTrack: (parameter: string) => boolean,
   hasDataLabelTrack?: (label: string) => boolean,
+  hasCircleTrack?: (property: CircleAnimationProperty) => boolean,
 ): AnimatableParameter[] {
   const result: AnimatableParameter[] = []
 
@@ -108,6 +120,18 @@ export function getAnimatableParameters(
         kind: 'number',
         source: 'dataLabel',
         linked: hasDataLabelTrack(label),
+      })
+    }
+  }
+
+  if (node.components.circle) {
+    for (const property of CIRCLE_ANIMATABLE_PROPERTIES) {
+      result.push({
+        key: `circle:${property}`,
+        label: CIRCLE_LABELS[property],
+        kind: 'number',
+        source: 'circle',
+        linked: hasCircleTrack ? hasCircleTrack(property) : false,
       })
     }
   }

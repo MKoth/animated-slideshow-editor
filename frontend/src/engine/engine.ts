@@ -7,6 +7,8 @@ import type { EmbeddedMaterialDefinition } from './embeddedMaterial'
 import type { EmbeddedShaderDefinition } from './embeddedShader'
 import type { EmbeddedDataSourceUnion } from './project'
 import type { ChartComponent, TableComponent, TextComponent } from './components'
+import type { CircleComponent } from './circleComponent'
+import type { CircleAnimationProperty } from './animationProperties'
 import type { Project } from './project'
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
@@ -63,11 +65,14 @@ export interface EnginePublic {
   setTableComponent(nodeId: string, table: TableComponent): void
   setChartComponent(nodeId: string, chart: ChartComponent): void
   setTextComponent(nodeId: string, text: TextComponent): void
+  setCircleComponent(nodeId: string, circle: CircleComponent): void
   getKeyframes(nodeId: string, property: AnimationProperty): readonly Keyframe[]
   getMaterialKeyframes(nodeId: string, parameter: string): readonly Keyframe[]
   hasMaterialTrack(nodeId: string, parameter: string): boolean
   hasDataLabelTrack(nodeId: string, label: string): boolean
   getDataLabelKeyframes(nodeId: string, label: string): readonly Keyframe[]
+  getCircleKeyframes(nodeId: string, property: CircleAnimationProperty): readonly Keyframe[]
+  hasCircleTrack(nodeId: string, property: CircleAnimationProperty): boolean
   getAnimatableParameters(nodeId: string): AnimatableParameter[]
   evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState
   evaluateMaterialOverrides(
@@ -76,6 +81,10 @@ export interface EnginePublic {
     target?: EvaluatedMaterialOverridesScratch,
   ): MaterialOverrides
   evaluateDataLabels(nodeId: string, time: number): Map<string, number>
+  evaluateCircle(
+    nodeId: string,
+    time: number,
+  ): import('./animationEvaluator').EvaluatedCircleState | null
   evaluateMeshDeformation(
     nodeId: string,
     time: number,

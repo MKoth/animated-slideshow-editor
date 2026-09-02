@@ -399,3 +399,8 @@ export { CommitTtsCommand } from './commitTtsCommand'
 export { SetLocalPivotCommand } from './setLocalPivotCommand'
 export type { SetLocalPivotInverse, SetLocalPivotParameters } from './setLocalPivotCommand'
 export type { CommitTtsInverse, CommitTtsParameters } from './commitTtsCommand'
+export { SetCircleComponentCommand } from './setCircleComponentCommand'
+export type {
+  SetCircleComponentInverse,
+  SetCircleComponentParameters,
+} from './setCircleComponentCommand'

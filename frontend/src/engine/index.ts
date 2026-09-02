@@ -300,3 +300,16 @@ export {
 } from './meshGenerator'
 export { computeTableLayout, TableLayoutCache } from './tableGridLayout'
 export type { TableLayout, CellRect } from './tableGridLayout'
+export type { CircleComponent } from './circleComponent'
+export {
+  createCircleComponent,
+  cloneCircleComponent,
+  circleComponentFromJSON,
+  circleComponentToJSON,
+  generateCircleMeshData,
+  circleArcDegrees,
+  circleSegmentsForArc,
+  DEFAULT_CIRCLE_RADIUS,
+} from './circleComponent'
+export { CIRCLE_ANIMATABLE_PROPERTIES } from './animationProperties'
+export type { CircleAnimationProperty } from './animationProperties'

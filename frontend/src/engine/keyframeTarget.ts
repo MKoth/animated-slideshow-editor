@@ -1,8 +1,11 @@
 import type { SceneNode } from './sceneNode'
-import type { AnimationProperty } from './animationProperties'
+import type { AnimationProperty, CircleAnimationProperty } from './animationProperties'
 import {
   requireAnimationProperty,
   requireAnimatableForNode,
+  requireCircleAnimationProperty,
+  requireAnimatableForCircle,
+  requireCircleKeyframeValue,
   requireKeyframeValue,
 } from './animationProperties'
 import {
@@ -35,6 +38,13 @@ export interface NodeDataLabelTarget {
   readonly label: string
 }
 
+/** A circle-angle target of a node's circle component. */
+export interface NodeCircleTarget {
+  readonly kind: 'circle'
+  readonly nodeId: string
+  readonly property: CircleAnimationProperty
+}
+
 /** A clip channel target (Spec 07 R16/R20). */
 export interface ClipChannelTarget {
   readonly kind: 'clip'
@@ -44,10 +54,14 @@ export interface ClipChannelTarget {
 
 /**
  * A keyframe editing target. The discriminated shape supports node targets,
- * data-label targets, and clip channel targets (Spec 07 R20).
+ * data-label targets, circle targets and clip channel targets (Spec 07 R20).
  */
 export type KeyframeTarget =
-  NodePropertyTarget | NodeParameterTarget | NodeDataLabelTarget | ClipChannelTarget
+  | NodePropertyTarget
+  | NodeParameterTarget
+  | NodeDataLabelTarget
+  | NodeCircleTarget
+  | ClipChannelTarget
 
 export function isPropertyTarget(target: KeyframeTarget): target is NodePropertyTarget {
   return 'property' in target && target.kind === 'node'
@@ -63,6 +77,10 @@ export function isDataLabelTarget(target: KeyframeTarget): target is NodeDataLab
 
 export function isClipChannelTarget(target: KeyframeTarget): target is ClipChannelTarget {
   return target.kind === 'clip'
+}
+
+export function isCircleTarget(target: KeyframeTarget): target is NodeCircleTarget {
+  return target.kind === 'circle'
 }
 
 export function requireKeyframeTarget(value: unknown): KeyframeTarget {
@@ -83,6 +101,11 @@ export function requireKeyframeTarget(value: unknown): KeyframeTarget {
     const nodeId = requireString(value.nodeId, 'Data label target node id')
     const label = requireString(value.label, 'Data label target label')
     return { kind: 'dataLabel', nodeId, label }
+  }
+  if (isRecord(value) && value.kind === 'circle') {
+    const nodeId = requireString(value.nodeId, 'Circle target node id')
+    const property = requireCircleAnimationProperty(value.property)
+    return { kind: 'circle', nodeId, property }
   }
   if (isRecord(value) && value.kind === 'clip') {
     const clipId = requireString(value.clipId, 'Keyframe target clip id')
@@ -108,12 +131,13 @@ export type MaterialParameterKindOf = (node: SceneNode, parameterKey: string) =>
 
 /**
  * The resolved track a target names: a uniform-six property track, a
- * material-parameter track, or a data-label track.
+ * material-parameter track, a data-label track, or a circle track.
  */
 export type KeyframeTrackRef =
   | { readonly kind: 'property'; readonly property: AnimationProperty }
   | { readonly kind: 'parameter'; readonly parameter: string; readonly kindOf: string | undefined }
   | { readonly kind: 'dataLabel'; readonly label: string }
+  | { readonly kind: 'circle'; readonly property: CircleAnimationProperty }
 
 export function resolveKeyframeTrack(
   node: SceneNode,
@@ -130,7 +154,13 @@ export function resolveKeyframeTrack(
   if (isDataLabelTarget(target)) {
     return { kind: 'dataLabel', label: target.label }
   }
-  const parameter = requireMaterialParameterKey(target.parameter, 'Keyframe target parameter')
+  if (isCircleTarget(target)) {
+    return { kind: 'circle', property: requireAnimatableForCircle(node, target.property) }
+  }
+  const parameter = requireMaterialParameterKey(
+    (target as NodeParameterTarget).parameter,
+    'Keyframe target parameter',
+  )
   const kindOfParameter = kindOf(node, parameter)
   if (kindOfParameter === undefined && !hasTrack(parameter)) {
     throw new Error(`Unknown material parameter "${parameter}" on node "${node.name}"`)
@@ -153,6 +183,9 @@ export function requireTrackKeyframeValue(
     }
     return value
   }
+  if (track.kind === 'circle') {
+    return requireCircleKeyframeValue(track.property, value, what)
+  }
   if (track.kindOf === undefined) {
     return requireMaterialOverrideValue(value, what)
   }
@@ -161,11 +194,11 @@ export function requireTrackKeyframeValue(
 
 export function requireNodeTarget(
   target: KeyframeTarget,
-): NodePropertyTarget | NodeParameterTarget | NodeDataLabelTarget {
-  if (target.kind !== 'node' && target.kind !== 'dataLabel') {
+): NodePropertyTarget | NodeParameterTarget | NodeDataLabelTarget | NodeCircleTarget {
+  if (target.kind !== 'node' && target.kind !== 'dataLabel' && target.kind !== 'circle') {
     throw new Error('This operation only supports node targets')
   }
-  return target
+  return target as NodePropertyTarget | NodeParameterTarget | NodeDataLabelTarget | NodeCircleTarget
 }
 
 /** Validate a scale factor: a non-negative finite number. */

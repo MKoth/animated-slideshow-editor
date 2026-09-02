@@ -9,6 +9,7 @@ import type {
 } from './components'
 import { validateChartType, DEFAULT_VISUAL_CONFIG } from './chartComponent'
 import { meshDataFromJSON, cloneMeshData } from './mesh'
+import { circleComponentFromJSON, cloneCircleComponent } from './circleComponent'
 import type { Transform } from './transform'
 import { IDENTITY_PIVOT, validatePivot } from './transform'
 import type { NodeJSON } from './json'
@@ -167,6 +168,7 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
     tableRow?: NodeComponents['tableRow']
     tableCell?: NodeComponents['tableCell']
     chart?: NodeComponents['chart']
+    circle?: NodeComponents['circle']
   } = {}
   if (record.camera !== undefined) {
     if (!isKind(record.camera, 'camera')) {
@@ -286,6 +288,12 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
       throw new Error(`Node "${nodeId}" has an invalid chart component`)
     }
     components.chart = parseChartComponent(record.chart as Record<string, unknown>, nodeId)
+  }
+  if (record.circle !== undefined) {
+    if (!isKind(record.circle, 'circle')) {
+      throw new Error(`Node "${nodeId}" has an invalid circle component`)
+    }
+    components.circle = circleComponentFromJSON(record.circle as Record<string, unknown>, nodeId)
   }
   return components
 }
@@ -482,6 +490,7 @@ function freezeComponents(components: NodeComponents): NodeComponents {
           // NOTE: chart component is NOT frozen — _dirty must remain mutable
         }
       : undefined,
+    circle: components.circle ? Object.freeze(cloneCircleComponent(components.circle)) : undefined,
   }
   return Object.freeze(frozen)
 }

@@ -10,6 +10,7 @@ import { evaluateSegment } from './interpolators'
 import { evaluateMaterialTrackValue } from './materialTrackEvaluation'
 import type { AnimationProperty } from './animationProperties'
 import type { ClipDefinition } from './clipDefinition'
+import { circleSegmentsForArc } from './circleComponent'
 
 export interface EvaluatedNodeState {
   readonly transform: Transform
@@ -28,6 +29,13 @@ type MutableTransform = {
 export interface EvaluatedNodeScratch {
   transform: MutableTransform
   opacity: number
+}
+
+export interface EvaluatedCircleState {
+  readonly radius: number
+  readonly startAngle: number
+  readonly endAngle: number
+  readonly segments: number
 }
 
 export function evaluatedNodeScratch(): EvaluatedNodeScratch {
@@ -207,6 +215,33 @@ export class AnimationEvaluator {
     }
 
     return result
+  }
+
+  evaluateCircle(nodeId: string, time: number): EvaluatedCircleState | null {
+    const node = this.#nodeLookup(nodeId)
+    const circle = node.components.circle
+    if (!circle) {
+      return null
+    }
+    const slide = this.#slideLookup(nodeId)
+    const boundedTime = requireFiniteNumber(time, 'Evaluation time')
+    const clampedTime = Math.min(Math.max(boundedTime, 0), slide.duration)
+    const animation = slide.animation.node(nodeId)
+    const startAngle = this.#evaluate(
+      animation?.circleKeyframes('startAngle'),
+      clampedTime,
+      circle.startAngle,
+    )
+    const endAngle = this.#evaluate(
+      animation?.circleKeyframes('endAngle'),
+      clampedTime,
+      circle.endAngle,
+    )
+    const radius = circle.radius
+    const arc = (((endAngle - startAngle) % 360) + 360) % 360
+    const effectiveArc = arc === 0 ? 360 : arc
+    const segments = circle.segments ?? circleSegmentsForArc(effectiveArc)
+    return { radius, startAngle, endAngle, segments }
   }
 
   #applyClipInstances(node: SceneNode, time: number, state: EvaluatedNodeScratch): void {

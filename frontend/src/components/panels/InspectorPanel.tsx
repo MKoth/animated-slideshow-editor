@@ -45,6 +45,7 @@ import { MeshGenerationSection } from './MeshGenerationSection'
 import { TableInspectorSection } from './TableInspectorSection'
 import { ChartInspectorSection } from './ChartInspectorSection'
 import { TextInspectorSection } from './TextInspectorSection'
+import { CircleInspectorSection } from './CircleInspectorSection'
 import { PROPERTY_LABELS } from './timelineTracks'
 import {
   RenameClipCommand,
@@ -572,6 +573,15 @@ export function InspectorPanel({ width }: { width: number }) {
 
         {targets.length === 1 && targets[0]!.components.text && (
           <TextInspectorSection
+            target={targets[0]!}
+            dispatch={dispatch}
+            notify={notify}
+            playing={playing}
+          />
+        )}
+
+        {targets.length === 1 && targets[0]!.components.circle && (
+          <CircleInspectorSection
             target={targets[0]!}
             dispatch={dispatch}
             notify={notify}

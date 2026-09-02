@@ -301,6 +301,11 @@ export interface TextChanged {
   readonly nodeId: string
 }
 
+export interface CircleChanged {
+  readonly type: 'CircleChanged'
+  readonly nodeId: string
+}
+
 export interface PrompterChanged {
   readonly type: 'PrompterChanged'
   readonly slideId: string
@@ -367,6 +372,7 @@ export type EngineEvent =
   | TableChanged
   | ChartChanged
   | TextChanged
+  | CircleChanged
   | PrompterChanged
   | AudioChanged
 

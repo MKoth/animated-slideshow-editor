@@ -79,6 +79,13 @@ export type NodeComponentsJSON = {
     readonly axisMin?: number
     readonly axisMax?: number
   }
+  readonly circle?: {
+    readonly kind: 'circle'
+    readonly radius: number
+    readonly startAngle: number
+    readonly endAngle: number
+    readonly segments?: number
+  }
 }
 
 export type MaterialJSON = {
@@ -133,11 +140,17 @@ export type DataLabelTrackJSON = {
   readonly keyframes: readonly KeyframeJSON[]
 }
 
+export type CircleTrackJSON = {
+  readonly property: string
+  readonly keyframes: readonly KeyframeJSON[]
+}
+
 export type NodeAnimationJSON = {
   readonly nodeId: string
   readonly tracks: readonly PropertyTrackJSON[]
   readonly materialTracks?: readonly MaterialTrackJSON[]
   readonly dataLabelTracks?: readonly DataLabelTrackJSON[]
+  readonly circleTracks?: readonly CircleTrackJSON[]
 }
 
 export type SlideAnimationJSON = {
