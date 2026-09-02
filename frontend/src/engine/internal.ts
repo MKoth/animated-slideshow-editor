@@ -281,8 +281,11 @@ export class Engine {
       throw new Error(`insertIndex out of bounds: ${insertIndex}`)
     }
     const previous = slide.prompter.parts
-    const insertionTime = previous.slice(0, insertIndex).reduce((sum, part) => sum + part.duration, 0)
-    // Capture downstream clips for gap-free shift (linked and unlinked) to avoid silent hole / overlap
+    // Preserve gaps: insertionTime is visual prevEnd (tight to previous block), not prefix-sum, so gaps are kept
+    const insertionTime =
+      insertIndex === 0 ? 0 : (previous[insertIndex - 1]?.endTime ?? 0)
+    // Capture downstream parts and clips before mutation to preserve gaps (shift, not reflow)
+    const downstreamParts = previous.slice(insertIndex)
     const shiftedClips: { id: string; oldTimelineStart: number }[] = []
     for (const clip of slide.audio.clips) {
       if (clip.timelineStart >= insertionTime - 1e-6) {
@@ -297,8 +300,12 @@ export class Engine {
       duration: input.duration,
     }
     slide.prompter.parts.splice(insertIndex, 0, newPart)
-    if (slide.prompter) reflowPrompter(slide.prompter)
-    // Shift downstream clips right by inserted duration to keep gap-free alignment
+    // Preserve gaps: shift downstream parts (not reflow) so existing gaps stay
+    for (const part of downstreamParts) {
+      part.startTime += input.duration
+      part.endTime += input.duration
+    }
+    // Shift downstream clips right by inserted duration to stay with their parts / preserve gaps
     for (const sc of shiftedClips) {
       const clip = slide.audio.clips.find((c) => c.id === sc.id)
       if (clip) clip.timelineStart = sc.oldTimelineStart + input.duration
@@ -975,10 +982,16 @@ export class Engine {
         deletedClips.push({ clip: removed, index: cIdx })
       }
     }
-    // Delete part and reflow gap-free via reflowPrompter as one Transaction (Spec 7)
+    // Delete part — preserve gaps (shift downstream, not gap-free reflow) so user-placed gaps aren't collapsed
     slide.prompter.parts.splice(index, 1)
-    if (slide.prompter) reflowPrompter(slide.prompter)
-    // Shift downstream clips left by deleted duration to stay gap-free (no silent hole)
+    for (const sp of shiftedParts) {
+      const p = slide.prompter.parts.find((x) => x.id === sp.id)
+      if (p) {
+        p.startTime = sp.oldStartTime - deletedDuration
+        p.endTime = sp.oldEndTime - deletedDuration
+      }
+    }
+    // Shift downstream clips left by deleted duration to stay with their parts / preserve gaps
     for (const sc of shiftedClips) {
       const clip = slide.audio.clips.find((c) => c.id === sc.id)
       if (clip) clip.timelineStart = sc.oldTimelineStart - deletedDuration
