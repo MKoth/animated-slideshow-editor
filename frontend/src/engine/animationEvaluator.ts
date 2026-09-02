@@ -72,6 +72,8 @@ export function copyEvaluatedState(target: EvaluatedNodeScratch, state: Evaluate
   target.transform.scaleY = state.transform.scaleY
   if (state.transform.localPivot) {
     target.transform.localPivot = { ...state.transform.localPivot }
+  } else {
+    delete target.transform.localPivot
   }
   target.opacity = state.opacity
 }
@@ -122,7 +124,9 @@ export class AnimationEvaluator {
     evaluated.scaleX = this.#evaluate(animation?.keyframes('scaleX'), clampedTime, transform.scaleX)
     evaluated.scaleY = this.#evaluate(animation?.keyframes('scaleY'), clampedTime, transform.scaleY)
     if (transform.localPivot) {
-      evaluated.localPivot = transform.localPivot
+      evaluated.localPivot = { ...transform.localPivot }
+    } else {
+      delete evaluated.localPivot
     }
     state.opacity = this.#evaluate(animation?.keyframes('opacity'), clampedTime, node.opacity)
 

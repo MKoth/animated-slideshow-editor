@@ -422,7 +422,7 @@ export class Renderer {
 
       this.#pivotInteraction = new PivotInteraction({
         canvas: app.canvas,
-        engine: this.#engine as unknown as import('../../engine/internal').Engine,
+        engine: this.#engine,
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
         getCameraTransform: () => this.#cameraTransform(),
         getNodeSize: (nodeId) => this.#sceneRenderer?.nodeSize(nodeId) ?? null,
