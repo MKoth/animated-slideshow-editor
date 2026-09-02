@@ -15,6 +15,8 @@ export interface MovePrompterPartInverse {
   readonly partId: string
   readonly oldStartTime: number
   readonly oldEndTime: number
+  readonly oldIndex?: number
+  readonly shiftedClips?: readonly { id: string; oldTimelineStart: number }[]
 }
 
 export class MovePrompterPartCommand implements Command<MovePrompterPartInverse> {
@@ -58,13 +60,12 @@ export class MovePrompterPartCommand implements Command<MovePrompterPartInverse>
 
   execute(engine: Engine): MovePrompterPartInverse {
     if (this.#newStartTime !== undefined) {
-      const { oldStartTime, oldEndTime } = engine.movePrompterPartToTime(this.#slideId, this.#partId, this.#newStartTime)
-      return { slideId: this.#slideId, partId: this.#partId, oldStartTime, oldEndTime }
+      const { oldStartTime, oldEndTime, shiftedClips } = engine.movePrompterPartToTime(this.#slideId, this.#partId, this.#newStartTime)
+      return { slideId: this.#slideId, partId: this.#partId, oldStartTime, oldEndTime, shiftedClips }
     }
-    const oldIndex = engine.movePrompterPart(this.#slideId, this.#partId, this.#newIndex!)
-    // For legacy, fabricate oldStartTime from index (approx)
+    const { oldIndex, shiftedClips } = engine.movePrompterPart(this.#slideId, this.#partId, this.#newIndex!)
     const part = engine.getSlide(this.#slideId).prompter!.parts.find((p) => p.id === this.#partId)!
-    return { slideId: this.#slideId, partId: this.#partId, oldStartTime: part.startTime, oldEndTime: part.endTime, oldIndex } as unknown as MovePrompterPartInverse
+    return { slideId: this.#slideId, partId: this.#partId, oldStartTime: part.startTime, oldEndTime: part.endTime, oldIndex, shiftedClips }
   }
 
   toJSON(): Readonly<Record<string, unknown>> {

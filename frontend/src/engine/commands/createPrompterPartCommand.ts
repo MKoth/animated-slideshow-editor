@@ -1,6 +1,6 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
-import { requireNonEmpty, requireFiniteNumber } from '../guards'
+import { requireFiniteNumber } from '../guards'
 import { newPrompterPartId } from '../prompter'
 
 export interface CreatePrompterPartParameters {
@@ -33,10 +33,15 @@ export class CreatePrompterPartCommand implements Command<CreatePrompterPartInve
 
   validate(engine: Engine): void {
     engine.getSlide(this.#slideId)
-    requireNonEmpty(this.#text, 'PrompterPart text')
+    if (typeof this.#text !== 'string') throw new Error('PrompterPart text must be a string')
     requireFiniteNumber(this.#duration, 'PrompterPart duration', (v) => v >= 0)
     if (this.#insertIndex !== undefined && (!Number.isInteger(this.#insertIndex) || this.#insertIndex < 0)) {
       throw new Error('insertIndex must be a non-negative integer')
+    }
+    const slide = engine.getSlide(this.#slideId)
+    const len = slide.prompter?.parts.length ?? 0
+    if (this.#insertIndex !== undefined && this.#insertIndex > len) {
+      throw new Error(`insertIndex out of bounds: ${this.#insertIndex} > ${len}`)
     }
   }
 

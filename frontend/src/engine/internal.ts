@@ -277,29 +277,52 @@ export class Engine {
       slide.prompter = { parts: [] }
     }
     const insertIndex = input.insertIndex ?? slide.prompter.parts.length
+    if (insertIndex < 0 || insertIndex > slide.prompter.parts.length) {
+      throw new Error(`insertIndex out of bounds: ${insertIndex}`)
+    }
     const previous = slide.prompter.parts
-    const startTime = previous.slice(0, insertIndex).reduce((sum, part) => sum + part.duration, 0)
+    const insertionTime = previous.slice(0, insertIndex).reduce((sum, part) => sum + part.duration, 0)
+    // Capture downstream clips for gap-free shift (linked and unlinked) to avoid silent hole / overlap
+    const shiftedClips: { id: string; oldTimelineStart: number }[] = []
+    for (const clip of slide.audio.clips) {
+      if (clip.timelineStart >= insertionTime - 1e-6) {
+        shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
+      }
+    }
     const newPart = {
       id: input.id,
       text: input.text,
-      startTime,
-      endTime: startTime + input.duration,
+      startTime: insertionTime,
+      endTime: insertionTime + input.duration,
       duration: input.duration,
     }
     slide.prompter.parts.splice(insertIndex, 0, newPart)
     if (slide.prompter) reflowPrompter(slide.prompter)
+    // Shift downstream clips right by inserted duration to keep gap-free alignment
+    for (const sc of shiftedClips) {
+      const clip = slide.audio.clips.find((c) => c.id === sc.id)
+      if (clip) clip.timelineStart = sc.oldTimelineStart + input.duration
+    }
     this.#bus.emit({
       type: 'PrompterChanged',
       slideId,
     } as unknown as import('./events').EngineEvent)
+    if (shiftedClips.length > 0) {
+      this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    }
   }
 
   importPrompter(
     slideId: string,
     rawText: string,
+    options?: { mode?: 'replace' | 'append'; insertIndex?: number },
   ): {
     partIds: string[]
     oldParts: { id: string; text: string; startTime: number; endTime: number; duration: number }[]
+    mode: 'replace' | 'append'
+    insertIndex?: number
+    deletedClips?: readonly { clip: AudioClip; index: number }[]
+    shiftedClips?: readonly { id: string; oldTimelineStart: number }[]
   } {
     const slide = this.getSlide(slideId)
     const settings = this.#projects.current?.settings ?? {}
@@ -312,21 +335,87 @@ export class Engine {
           startTime: p.startTime,
           endTime: p.endTime,
           duration: p.duration,
+          ...(p.audioClipId ? { audioClipId: p.audioClipId } : {}),
+          ...(p.audioAssetId ? { audioAssetId: p.audioAssetId } : {}),
+          ...(p.promptId ? { promptId: p.promptId } : {}),
+          ...(p.status ? { status: p.status } : {}),
+          ...(p.segments ? { segments: JSON.parse(JSON.stringify(p.segments)) } : {}),
         }))
       : []
     const texts = splitImportText(rawText, splitChars)
-    const parts = texts.map((text) => {
+    const newPartsRaw = texts.map((text) => {
       const duration = estimatePrompterDuration(text, secondsPerCharacter)
-      // startTime/endTime will be set by reflow; temporary 0
       return { id: newPrompterPartId(), text, startTime: 0, endTime: duration, duration }
     })
-    slide.prompter = { parts }
+    const mode = options?.mode ?? 'replace'
+    if (mode === 'append' && slide.prompter && slide.prompter.parts.length > 0) {
+      const insertIndex = options?.insertIndex ?? slide.prompter.parts.length
+      if (insertIndex < 0 || insertIndex > slide.prompter.parts.length) {
+        throw new Error(`insertIndex out of bounds: ${insertIndex}`)
+      }
+      const insertionTime = slide.prompter.parts
+        .slice(0, insertIndex)
+        .reduce((sum, p) => sum + p.duration, 0)
+      const totalDuration = newPartsRaw.reduce((sum, p) => sum + p.duration, 0)
+      const shiftedClips: { id: string; oldTimelineStart: number }[] = []
+      for (const clip of slide.audio.clips) {
+        if (clip.timelineStart >= insertionTime - 1e-6) {
+          shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
+        }
+      }
+      // Insert new parts at index, preserve existing parts and clips
+      slide.prompter.parts.splice(insertIndex, 0, ...newPartsRaw)
+      reflowPrompter(slide.prompter)
+      for (const sc of shiftedClips) {
+        const clip = slide.audio.clips.find((c) => c.id === sc.id)
+        if (clip) clip.timelineStart = sc.oldTimelineStart + totalDuration
+      }
+      this.#bus.emit({
+        type: 'PrompterChanged',
+        slideId,
+      } as unknown as import('./events').EngineEvent)
+      if (shiftedClips.length > 0) {
+        this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+      }
+      return {
+        partIds: newPartsRaw.map((p) => p.id),
+        oldParts: oldParts as { id: string; text: string; startTime: number; endTime: number; duration: number }[],
+        mode: 'append',
+        insertIndex,
+        shiftedClips,
+      }
+    }
+    // Replace mode: delete linked clips of old parts (asset preserved), then replace
+    const clipIdsToDelete = new Set<string>()
+    if (slide.prompter) {
+      for (const part of slide.prompter.parts) {
+        if (part.audioClipId) clipIdsToDelete.add(part.audioClipId)
+        if (part.segments) for (const seg of part.segments) clipIdsToDelete.add(seg.audioClipId)
+      }
+    }
+    const deletedClips: { clip: AudioClip; index: number }[] = []
+    for (const cid of clipIdsToDelete) {
+      const cIdx = slide.audio.clips.findIndex((c) => c.id === cid)
+      if (cIdx !== -1) {
+        const [removed] = slide.audio.clips.splice(cIdx, 1)
+        deletedClips.push({ clip: removed, index: cIdx })
+      }
+    }
+    slide.prompter = { parts: newPartsRaw }
     reflowPrompter(slide.prompter)
     this.#bus.emit({
       type: 'PrompterChanged',
       slideId,
     } as unknown as import('./events').EngineEvent)
-    return { partIds: parts.map((p) => p.id), oldParts }
+    if (deletedClips.length > 0) {
+      this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    }
+    return {
+      partIds: newPartsRaw.map((p) => p.id),
+      oldParts: oldParts as { id: string; text: string; startTime: number; endTime: number; duration: number }[],
+      mode: 'replace',
+      deletedClips,
+    }
   }
 
   splitPrompterPart(
@@ -937,7 +1026,11 @@ export class Engine {
     return { oldAudioClipId, oldAudioAssetId, oldStatus }
   }
 
-  movePrompterPart(slideId: string, partId: string, newIndex: number): number {
+  movePrompterPart(
+    slideId: string,
+    partId: string,
+    newIndex: number,
+  ): { oldIndex: number; shiftedClips: readonly { id: string; oldTimelineStart: number }[] } {
     const slide = this.getSlide(slideId)
     if (!slide.prompter) throw new Error(`Slide "${slideId}" has no prompter`)
     const parts = slide.prompter.parts
@@ -945,22 +1038,50 @@ export class Engine {
     if (oldIndex === -1) throw new Error(`PrompterPart not found: ${partId}`)
     if (newIndex < 0 || newIndex >= parts.length)
       throw new Error(`newIndex out of bounds: ${newIndex}`)
-    if (oldIndex === newIndex) return oldIndex
+    if (oldIndex === newIndex) return { oldIndex, shiftedClips: [] }
+    // Capture old clip positions for linked clips (including segments) before reorder
+    const shiftedClips: { id: string; oldTimelineStart: number }[] = []
+    const linkedClipIds = new Set<string>()
+    for (const part of parts) {
+      if (part.audioClipId) linkedClipIds.add(part.audioClipId)
+      if (part.segments) for (const seg of part.segments) linkedClipIds.add(seg.audioClipId)
+    }
+    for (const clip of slide.audio.clips) {
+      if (linkedClipIds.has(clip.id)) {
+        shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
+      }
+    }
     const [moved] = parts.splice(oldIndex, 1)
     parts.splice(newIndex, 0, moved)
     reflowPrompter(slide.prompter)
+    // Move linked clips atomically with their parts (gap-free reflow)
+    for (const part of slide.prompter.parts) {
+      if (part.audioClipId) {
+        const clip = slide.audio.clips.find((c) => c.id === part.audioClipId)
+        if (clip) clip.timelineStart = part.startTime
+      }
+      if (part.segments) {
+        for (const seg of part.segments) {
+          const clip = slide.audio.clips.find((c) => c.id === seg.audioClipId)
+          if (clip) clip.timelineStart = part.startTime
+        }
+      }
+    }
     this.#bus.emit({
       type: 'PrompterChanged',
       slideId,
     } as unknown as import('./events').EngineEvent)
-    return oldIndex
+    if (shiftedClips.length > 0) {
+      this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    }
+    return { oldIndex, shiftedClips }
   }
 
   movePrompterPartToTime(
     slideId: string,
     partId: string,
     newStartTime: number,
-  ): { oldStartTime: number; oldEndTime: number } {
+  ): { oldStartTime: number; oldEndTime: number; shiftedClips: readonly { id: string; oldTimelineStart: number }[] } {
     const slide = this.getSlide(slideId)
     if (!slide.prompter) throw new Error(`Slide "${slideId}" has no prompter`)
     const part = slide.prompter.parts.find((p) => p.id === partId)
@@ -970,15 +1091,42 @@ export class Engine {
     }
     const oldStartTime = part.startTime
     const oldEndTime = part.endTime
+    // Capture linked clips before reorder for atomic move
+    const linkedClipIds = new Set<string>()
+    for (const p of slide.prompter.parts) {
+      if (p.audioClipId) linkedClipIds.add(p.audioClipId)
+      if (p.segments) for (const seg of p.segments) linkedClipIds.add(seg.audioClipId)
+    }
+    const shiftedClips: { id: string; oldTimelineStart: number }[] = []
+    for (const clip of slide.audio.clips) {
+      if (linkedClipIds.has(clip.id)) shiftedClips.push({ id: clip.id, oldTimelineStart: clip.timelineStart })
+    }
     part.startTime = newStartTime
     part.endTime = newStartTime + part.duration
-    // Keep array sorted by startTime so order == time order (gap allowed)
+    // Keep array sorted by startTime so order == time order, then gap-free reflow
     slide.prompter.parts.sort((a, b) => a.startTime - b.startTime)
+    reflowPrompter(slide.prompter)
+    // Move linked clips with their parts gap-free
+    for (const p of slide.prompter.parts) {
+      if (p.audioClipId) {
+        const clip = slide.audio.clips.find((c) => c.id === p.audioClipId)
+        if (clip) clip.timelineStart = p.startTime
+      }
+      if (p.segments) {
+        for (const seg of p.segments) {
+          const clip = slide.audio.clips.find((c) => c.id === seg.audioClipId)
+          if (clip) clip.timelineStart = p.startTime
+        }
+      }
+    }
     this.#bus.emit({
       type: 'PrompterChanged',
       slideId,
     } as unknown as import('./events').EngineEvent)
-    return { oldStartTime, oldEndTime }
+    if (shiftedClips.length > 0) {
+      this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    }
+    return { oldStartTime, oldEndTime, shiftedClips }
   }
 
   createAudioClip(

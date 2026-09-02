@@ -1039,31 +1039,71 @@ export function applyUndo(
         startTime: number
         endTime: number
         duration: number
+        audioClipId?: string
+        audioAssetId?: string
+        promptId?: string
+        status?: import('../prompter').PrompterPartStatus
+        segments?: import('../prompter').AudioSegment[]
       }[]
       const newPartIds = inv.newPartIds as readonly string[]
-      // Remove new parts
+      const mode = (inv as Record<string, unknown>).mode as 'replace' | 'append' | undefined
+      const deletedClips = (inv as Record<string, unknown>).deletedClips as
+        | readonly { clip: import('../audioClip').AudioClip; index: number }[]
+        | undefined
+      const shiftedClips = (inv as Record<string, unknown>).shiftedClips as
+        | readonly { id: string; oldTimelineStart: number }[]
+        | undefined
+      const slide = engine.getSlide(slideId)
+      // Remove new parts directly (avoid per-part delete shifting)
       for (const pid of newPartIds) {
-        try {
-          engine.deletePrompterPart(slideId, pid)
-        } catch {
-          // ignore
+        const idx = slide.prompter?.parts.findIndex((p) => p.id === pid) ?? -1
+        if (idx !== -1) slide.prompter!.parts.splice(idx, 1)
+      }
+      if (slide.prompter) reflowPrompter(slide.prompter)
+      // Restore old parts for replace mode
+      if (mode === 'replace' || mode === undefined) {
+        if (oldParts.length === 0) {
+          slide.prompter = { parts: [] }
+        } else {
+          slide.prompter = {
+            parts: oldParts.map((p) => ({
+              id: p.id,
+              text: p.text,
+              startTime: p.startTime,
+              endTime: p.endTime,
+              duration: p.duration,
+              ...(p.audioClipId ? { audioClipId: p.audioClipId } : {}),
+              ...(p.audioAssetId ? { audioAssetId: p.audioAssetId } : {}),
+              ...(p.promptId ? { promptId: p.promptId } : {}),
+              ...(p.status ? { status: p.status } : {}),
+              ...(p.segments ? { segments: p.segments } : {}),
+            })),
+          }
+          reflowPrompter(slide.prompter)
+        }
+        if (deletedClips) {
+          const sorted = [...deletedClips].sort((a, b) => a.index - b.index)
+          for (const dc of sorted) {
+            slide.audio.clips.splice(dc.index, 0, dc.clip)
+          }
+        }
+      } else {
+        // append mode: oldParts already contain previous state before insert, but we already removed new parts and reflowed; reflow already gap-free
+        // shiftedClips will restore downstream positions
+        if (shiftedClips) {
+          for (const sc of shiftedClips) {
+            const clip = slide.audio.clips.find((c) => c.id === sc.id)
+            if (clip) clip.timelineStart = sc.oldTimelineStart
+          }
         }
       }
-      // Restore old parts
-      const slide = engine.getSlide(slideId)
-      if (oldParts.length === 0) {
-        slide.prompter = { parts: [] }
-      } else {
-        slide.prompter = {
-          parts: oldParts.map((p) => ({
-            id: p.id,
-            text: p.text,
-            startTime: p.startTime,
-            endTime: p.endTime,
-            duration: p.duration,
-          })),
+      if (mode === 'append' && shiftedClips) {
+        // already handled
+      } else if (shiftedClips) {
+        for (const sc of shiftedClips) {
+          const clip = slide.audio.clips.find((c) => c.id === sc.id)
+          if (clip) clip.timelineStart = sc.oldTimelineStart
         }
-        reflowPrompter(slide.prompter)
       }
       return
     }
@@ -1210,13 +1250,31 @@ export function applyUndo(
     case 'MovePrompterPart': {
       const slideId = inv.slideId as string
       const partId = inv.partId as string
-      const oldStartTime = inv.oldStartTime as number
+      const oldIndex = inv.oldIndex as number | undefined
+      const shiftedClips = inv.shiftedClips as readonly { id: string; oldTimelineStart: number }[] | undefined
       const slide = engine.getSlide(slideId)
-      const part = slide.prompter?.parts.find((p) => p.id === partId)
-      if (part) {
-        part.startTime = oldStartTime
-        part.endTime = oldStartTime + part.duration
-        slide.prompter!.parts.sort((a, b) => a.startTime - b.startTime)
+      if (oldIndex !== undefined) {
+        const curIdx = slide.prompter!.parts.findIndex((p) => p.id === partId)
+        if (curIdx !== -1 && curIdx !== oldIndex) {
+          const [moved] = slide.prompter!.parts.splice(curIdx, 1)
+          slide.prompter!.parts.splice(oldIndex, 0, moved)
+          reflowPrompter(slide.prompter!)
+        }
+      } else {
+        const oldStartTime = inv.oldStartTime as number
+        const part = slide.prompter?.parts.find((p) => p.id === partId)
+        if (part) {
+          part.startTime = oldStartTime
+          part.endTime = oldStartTime + part.duration
+          slide.prompter!.parts.sort((a, b) => a.startTime - b.startTime)
+          reflowPrompter(slide.prompter!)
+        }
+      }
+      if (shiftedClips) {
+        for (const sc of shiftedClips) {
+          const clip = slide.audio.clips.find((c) => c.id === sc.id)
+          if (clip) clip.timelineStart = sc.oldTimelineStart
+        }
       }
       return
     }
@@ -2288,7 +2346,10 @@ export function applyRedo(
       engine.deletePrompterPart(params.slideId as string, params.partId as string)
       return
     case 'ImportPrompter':
-      engine.importPrompter(params.slideId as string, params.rawText as string)
+      engine.importPrompter(params.slideId as string, params.rawText as string, {
+        mode: (params.mode as 'replace' | 'append' | undefined) ?? 'replace',
+        insertIndex: params.insertIndex as number | undefined,
+      })
       return
     case 'SplitPrompterPart':
       engine.splitPrompterPart(

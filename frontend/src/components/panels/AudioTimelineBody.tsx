@@ -10,6 +10,7 @@ import {
 } from '../../engine/audioClip'
 import {
   CreateAudioClipCommand,
+  CreatePrompterPartCommand,
   DeleteAudioClipCommand,
   DeletePrompterPartCommand,
   DuplicateAudioClipCommand,
@@ -45,7 +46,10 @@ import { assetsApi } from '../../api'
 import { RecordModal } from '../audio/RecordModal'
 import { TtsModal } from '../audio/TtsModal'
 import { WordLevelTtsModal } from '../audio/WordLevelTtsModal'
-import { getPrompterRecordingShortcut } from '../../engine/prompter'
+import {
+  getPrompterRecordingShortcut,
+  getPrompterSecondsPerCharacter,
+} from '../../engine/prompter'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { captureAudioSnapshot } from '../../app/assetSnapshot'
 
@@ -166,11 +170,12 @@ export function AudioTimelineBody({
     width: number
   } | null>(null)
 
-  // Prompter move/trim state (like audio clips: draggable, resizable)
-  const prompterMoveRef = useRef<{ partId: string; startX: number; startTime: number } | null>(null)
+  // Prompter move/trim state (like audio clips: draggable, resizable) — gap-free reorder
+  const prompterMoveRef = useRef<{ partId: string; startX: number; startTime: number; oldIndex: number } | null>(null)
   const [prompterMovePreview, setPrompterMovePreview] = useState<{
     partId: string
     startTime: number
+    newIndex: number
   } | null>(null)
   const [prompterTrimPreview, setPrompterTrimPreview] = useState<{
     partId: string
@@ -687,7 +692,7 @@ export function AudioTimelineBody({
     window.addEventListener('pointerup', onUp)
   }
 
-  // Prompter move (reorder, gap-free) — like audio clip move, but block when hovering/selecting words
+  // Prompter move (reorder, gap-free) — drag to reorder index, clips move atomically, one Transaction
   const onPrompterMovePointerDown = (e: React.PointerEvent, partId: string) => {
     if (e.button !== 0) return
     const targetEl = e.target as HTMLElement
@@ -697,19 +702,43 @@ export function AudioTimelineBody({
     if (targetEl.closest('[data-testid^="record-btn"]')) return
     e.preventDefault()
     e.stopPropagation()
-    const part = slide.prompter?.parts.find((p) => p.id === partId)
+    const partsSnapshot = [...(slide.prompter?.parts ?? [])]
+    const part = partsSnapshot.find((p) => p.id === partId)
     if (!part) return
+    const oldIndex = partsSnapshot.findIndex((p) => p.id === partId)
     setFocusedId(partId)
-    prompterMoveRef.current = { partId, startX: e.clientX, startTime: part.startTime }
+    prompterMoveRef.current = { partId, startX: e.clientX, startTime: part.startTime, oldIndex }
     const target = e.currentTarget as HTMLElement
     target.setPointerCapture(e.pointerId)
+    // Precompute remaining gap times for index calculation
+    const remaining = partsSnapshot.filter((p) => p.id !== partId)
+    const gapTimes: number[] = []
+    let acc = 0
+    for (let i = 0; i <= remaining.length; i++) {
+      gapTimes.push(acc)
+      if (i < remaining.length) acc += remaining[i].duration
+    }
+    const computeNewIndex = (snapped: number): number => {
+      let best = 0
+      let bestDist = Math.abs(snapped - gapTimes[0])
+      for (let i = 1; i < gapTimes.length; i++) {
+        const dist = Math.abs(snapped - gapTimes[i])
+        if (dist < bestDist) {
+          bestDist = dist
+          best = i
+        }
+      }
+      return best
+    }
     const onMove = (ev: PointerEvent) => {
       if (!prompterMoveRef.current) return
       const dx = ev.clientX - prompterMoveRef.current.startX
       const dt = dx / pps
       const raw = prompterMoveRef.current.startTime + dt
       const snapped = computeSnappedTime(Math.max(0, raw))
-      setPrompterMovePreview({ partId, startTime: snapped })
+      const newIndex = computeNewIndex(snapped)
+      const gapTime = gapTimes[newIndex] ?? 0
+      setPrompterMovePreview({ partId, startTime: gapTime, newIndex })
     }
     const onUp = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', onMove)
@@ -719,11 +748,9 @@ export function AudioTimelineBody({
       const dt = dx / pps
       const raw = prompterMoveRef.current.startTime + dt
       const snapped = computeSnappedTime(Math.max(0, raw))
-      const part = slide.prompter?.parts.find((p) => p.id === partId)
-      if (part && Math.abs(snapped - part.startTime) > 1e-6) {
-        const result = dispatch(
-          new MovePrompterPartCommand({ slideId: slide.id, partId, newStartTime: snapped }),
-        )
+      const newIndex = computeNewIndex(snapped)
+      if (newIndex !== oldIndex) {
+        const result = dispatch(new MovePrompterPartCommand({ slideId: slide.id, partId, newIndex } as never))
         if (!result.ok) useNotificationStore.getState().notify(result.error.message)
       }
       setPrompterMovePreview(null)
@@ -804,6 +831,25 @@ export function AudioTimelineBody({
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
   }
+
+  const handlePrompterInsertAt = useCallback(
+    (insertIndex: number) => {
+      const settings = engine.project?.settings ?? {}
+      const spc = getPrompterSecondsPerCharacter(settings)
+      // Empty text estimated duration — ensure visible chip (min 0.5s, default 5 chars)
+      const duration = Math.max(0.5, spc * 5)
+      const result = dispatch(
+        new CreatePrompterPartCommand({
+          slideId: slide.id,
+          text: '',
+          duration,
+          insertIndex,
+        }),
+      )
+      if (!result.ok) useNotificationStore.getState().notify(result.error.message)
+    },
+    [engine, slide.id, dispatch],
+  )
 
   // Keyboard shortcuts for duplicate/delete/split + nudging + roving
   const nudgeSelected = useCallback(
@@ -1197,6 +1243,9 @@ export function AudioTimelineBody({
   )
   const [showImport, setShowImport] = useState(false)
   const [importText, setImportText] = useState('Hello, world')
+  const [importMode, setImportMode] = useState<'replace' | 'append'>('append')
+  const [importInsertIndex, setImportInsertIndex] = useState<number | undefined>(undefined)
+  const [showReplaceConfirm, setShowReplaceConfirm] = useState(false)
   const selectedWordPart = useMemo(
     () =>
       wordSelection ? (prompterParts.find((p) => p.id === wordSelection.partId) ?? null) : null,
@@ -1290,7 +1339,12 @@ export function AudioTimelineBody({
             <span>Prompter</span>
             <button
               data-testid="prompter-import-btn"
-              onClick={() => setShowImport(true)}
+              onClick={() => {
+                setImportMode('append')
+                setImportInsertIndex(undefined)
+                setShowReplaceConfirm(false)
+                setShowImport(true)
+              }}
               style={{
                 fontSize: 8,
                 padding: '2px 4px',
@@ -2008,6 +2062,46 @@ export function AudioTimelineBody({
                       })
                     })()
                   )}
+                  {/* Unified gap-free insert “+” between parts — any index, empty text, estimated duration, one Transaction */}
+                  {Array.from({ length: prompterParts.length + 1 }).map((_, gapIndex) => {
+                    const gapX = prompterParts.slice(0, gapIndex).reduce((s, p) => s + p.duration, 0) * pps
+                    const isDragTarget = prompterMovePreview?.newIndex === gapIndex
+                    return (
+                      <button
+                        key={`gap-${gapIndex}`}
+                        data-testid={`prompter-insert-${gapIndex}`}
+                        aria-label={`Insert prompter part at ${gapIndex}`}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handlePrompterInsertAt(gapIndex)
+                        }}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        style={{
+                          position: 'absolute',
+                          left: gapX - 10,
+                          top: 10,
+                          width: 20,
+                          height: 20,
+                          borderRadius: 999,
+                          border: isDragTarget ? '1px solid #fff' : '1px solid #7c5cff',
+                          background: isDragTarget ? '#7c5cff' : 'rgba(124,92,255,0.15)',
+                          color: isDragTarget ? '#fff' : '#7c5cff',
+                          fontSize: 12,
+                          fontWeight: 700,
+                          lineHeight: '18px',
+                          textAlign: 'center',
+                          cursor: 'pointer',
+                          zIndex: isDragTarget ? 8 : 6,
+                          boxShadow: isDragTarget ? '0 2px 8px rgba(124,92,255,0.5)' : '0 1px 4px rgba(0,0,0,0.2)',
+                          opacity: prompterMovePreview ? (isDragTarget ? 1 : 0.35) : 0.9,
+                          transition: 'all 120ms ease',
+                        }}
+                        title={`Insert empty part at ${gapIndex === 0 ? 'start' : gapIndex === prompterParts.length ? 'end' : `between ${gapIndex - 1}–${gapIndex}`}`}
+                      >
+                        +
+                      </button>
+                    )
+                  })}
                   {prompterMovePreview && (
                     <div
                       data-testid="prompter-move-preview"
@@ -2543,7 +2637,10 @@ export function AudioTimelineBody({
             zIndex: 100,
           }}
           onClick={(e) => {
-            if (e.target === e.currentTarget) setShowImport(false)
+            if (e.target === e.currentTarget) {
+              setShowImport(false)
+              setShowReplaceConfirm(false)
+            }
           }}
         >
           <div
@@ -2559,7 +2656,9 @@ export function AudioTimelineBody({
             <h3 style={{ margin: '0 0 8px', fontSize: 13 }}>Import prompter</h3>
             <p style={{ fontSize: 11, color: '#888', margin: '0 0 8px' }}>
               Paste narration — auto-splits on <code>[.,;:!?{'\\n'}—]</code> (consecutive collapsed,
-              no empty parts). Duration = chars × <code>secondsPerCharacter 0.2</code>
+              no empty parts). Duration = chars × <code>secondsPerCharacter 0.2</code>. Gap-free reflow
+              (`startTime = prefix sum durations`) — linked AudioClips/Segments move with their parts
+              as one undo entry.
             </p>
             <textarea
               data-testid="prompter-import-textarea"
@@ -2579,10 +2678,79 @@ export function AudioTimelineBody({
                 resize: 'vertical',
               }}
             />
+            <div style={{ marginTop: 10, display: 'flex', gap: 12, alignItems: 'center', fontSize: 12 }}>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="importMode"
+                  data-testid="import-mode-append"
+                  checked={importMode === 'append'}
+                  onChange={() => {
+                    setImportMode('append')
+                    setShowReplaceConfirm(false)
+                  }}
+                />
+                Append (default)
+              </label>
+              <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="importMode"
+                  data-testid="import-mode-replace"
+                  checked={importMode === 'replace'}
+                  onChange={() => setImportMode('replace')}
+                />
+                Replace
+              </label>
+            </div>
+            {importMode === 'append' && prompterParts.length > 0 && (
+              <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', fontSize: 11 }}>
+                <span style={{ color: '#aaa' }}>Insert at:</span>
+                <select
+                  data-testid="import-insert-index"
+                  value={importInsertIndex ?? prompterParts.length}
+                  onChange={(e) => setImportInsertIndex(Number(e.target.value))}
+                  style={{
+                    background: '#1e1e1e',
+                    color: '#e0e0e0',
+                    border: '1px solid #444',
+                    borderRadius: 4,
+                    padding: '4px 6px',
+                    fontSize: 11,
+                  }}
+                >
+                  {Array.from({ length: prompterParts.length + 1 }).map((_, idx) => (
+                    <option key={idx} value={idx}>
+                      {idx === 0
+                        ? 'Before first'
+                        : idx === prompterParts.length
+                          ? 'After last (default)'
+                          : `Between ${idx - 1}–${idx}`}
+                    </option>
+                  ))}
+                </select>
+                <span style={{ color: '#666', fontSize: 10 }}>
+                  gap-free; downstream clips shift right
+                </span>
+              </div>
+            )}
+            {importMode === 'replace' && prompterParts.length > 0 && !showReplaceConfirm && (
+              <p style={{ marginTop: 8, fontSize: 11, color: '#ff9a9a', background: 'rgba(255,77,77,0.08)', border: '1px solid rgba(255,77,77,0.25)', borderRadius: 4, padding: '6px 8px' }}>
+                Replace will overwrite {prompterParts.length} existing part(s) and their linked clips (assets preserved). This is explicit — confirm to proceed.
+              </p>
+            )}
+            {showReplaceConfirm && (
+              <p style={{ marginTop: 8, fontSize: 11, color: '#ff9a9a', fontWeight: 600 }}>
+                Confirm Replace — this will overwrite the existing prompter.
+              </p>
+            )}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
               <button
                 data-testid="prompter-import-cancel"
-                onClick={() => setShowImport(false)}
+                onClick={() => {
+                  setShowImport(false)
+                  setShowReplaceConfirm(false)
+                }}
                 style={{
                   padding: '6px 12px',
                   borderRadius: 4,
@@ -2597,22 +2765,40 @@ export function AudioTimelineBody({
               <button
                 data-testid="prompter-import-confirm"
                 onClick={() => {
+                  if (importMode === 'replace' && prompterParts.length > 0 && !showReplaceConfirm) {
+                    setShowReplaceConfirm(true)
+                    return
+                  }
                   const result = dispatch(
-                    new ImportPrompterCommand({ slideId: slide.id, rawText: importText }),
+                    new ImportPrompterCommand({
+                      slideId: slide.id,
+                      rawText: importText,
+                      mode: importMode,
+                      ...(importMode === 'append' && importInsertIndex !== undefined
+                        ? { insertIndex: importInsertIndex }
+                        : {}),
+                    }),
                   )
                   if (!result.ok) useNotificationStore.getState().notify(result.error.message)
-                  setShowImport(false)
+                  else {
+                    setShowImport(false)
+                    setShowReplaceConfirm(false)
+                  }
                 }}
                 style={{
                   padding: '6px 12px',
                   borderRadius: 4,
                   border: '1px solid #7c5cff',
-                  background: '#7c5cff',
+                  background: importMode === 'replace' && showReplaceConfirm ? '#ff4d4d' : '#7c5cff',
                   color: '#fff',
                   cursor: 'pointer',
                 }}
               >
-                Import
+                {importMode === 'replace' && prompterParts.length > 0 && !showReplaceConfirm
+                  ? 'Confirm Replace'
+                  : importMode === 'replace' && showReplaceConfirm
+                    ? 'Replace — Confirm'
+                    : 'Import (Append)'}
               </button>
             </div>
           </div>
