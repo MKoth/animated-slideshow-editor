@@ -111,74 +111,87 @@ function transformOf(system: CameraControlsHarness['system'], cameraId: string) 
   return system.engine.getNode(cameraId).transform
 }
 
+function viewportOf(app: (typeof pixiRegistry.applications)[number]) {
+  const world = worldOf(app)
+  const scaleX = world.scale.x
+  const scaleY = world.scale.y
+  return {
+    scaleX,
+    scaleY,
+    x: scaleX === 0 ? 0 : -world.position.x / scaleX,
+    y: scaleY === 0 ? 0 : -world.position.y / scaleY,
+  }
+}
+
 describe('wheel zoom', () => {
   it('zooms in toward the cursor, keeping the world point under the cursor fixed', async () => {
-    const { system, canvas, cameraId } = await mountWithControls()
+    const { system, app, canvas, cameraId } = await mountWithControls()
     const cursorX = 400
     const cursorY = 300
 
     wheelAt(canvas, cursorX, cursorY, -100)
+    app.ticker.tick()
 
     const expectedZoom = Math.exp(0.1)
-    const transform = transformOf(system, cameraId)
-    expect(transform.scaleX).toBeCloseTo(expectedZoom)
-    expect(transform.scaleY).toBeCloseTo(expectedZoom)
-    expect(transform.x).toBeCloseTo(cursorX - cursorX / expectedZoom)
-    expect(transform.y).toBeCloseTo(cursorY - cursorY / expectedZoom)
+    const viewport = viewportOf(app)
+    expect(viewport.scaleX).toBeCloseTo(expectedZoom)
+    expect(viewport.scaleY).toBeCloseTo(expectedZoom)
+    expect(viewport.x).toBeCloseTo(cursorX - cursorX / expectedZoom)
+    expect(viewport.y).toBeCloseTo(cursorY - cursorY / expectedZoom)
+    // ephemeral: stored camera stays identity, no history
+    expect(transformOf(system, cameraId).scaleX).toBe(1)
+    expect(system.undoStack.entries).toHaveLength(2)
   })
 
   it('zooms out toward the cursor when scrolling down', async () => {
-    const { system, canvas, cameraId } = await mountWithControls()
+    const { system, app, canvas, cameraId } = await mountWithControls()
 
     wheelAt(canvas, 400, 300, 100)
+    app.ticker.tick()
 
     const expectedZoom = Math.exp(-0.1)
-    const transform = transformOf(system, cameraId)
-    expect(transform.scaleX).toBeCloseTo(expectedZoom)
-    expect(transform.x).toBeCloseTo(400 - 400 / expectedZoom)
-    expect(transform.y).toBeCloseTo(300 - 300 / expectedZoom)
+    const viewport = viewportOf(app)
+    expect(viewport.scaleX).toBeCloseTo(expectedZoom)
+    expect(viewport.x).toBeCloseTo(400 - 400 / expectedZoom)
+    expect(viewport.y).toBeCloseTo(300 - 300 / expectedZoom)
+    expect(transformOf(system, cameraId).scaleX).toBe(1)
   })
 
   it('keeps the world point under the cursor fixed across repeated zooms at different positions', async () => {
-    const { system, canvas, cameraId } = await mountWithControls()
+    const { app, canvas } = await mountWithControls()
 
     wheelAt(canvas, 400, 300, -100)
-    let transform = transformOf(system, cameraId)
+    app.ticker.tick()
+    let viewport = viewportOf(app)
     const firstWorldX = 400
     const firstWorldY = 300
-    expect((firstWorldX - transform.x) * transform.scaleX).toBeCloseTo(400)
-    expect((firstWorldY - transform.y) * transform.scaleY).toBeCloseTo(300)
+    expect((firstWorldX - viewport.x) * viewport.scaleX).toBeCloseTo(400)
+    expect((firstWorldY - viewport.y) * viewport.scaleY).toBeCloseTo(300)
 
     const secondCursorX = 100
     const secondCursorY = 500
-    const secondWorldX = transform.x + secondCursorX / transform.scaleX
-    const secondWorldY = transform.y + secondCursorY / transform.scaleY
+    const secondWorldX = viewport.x + secondCursorX / viewport.scaleX
+    const secondWorldY = viewport.y + secondCursorY / viewport.scaleY
     wheelAt(canvas, secondCursorX, secondCursorY, 100)
-    transform = transformOf(system, cameraId)
-    expect((secondWorldX - transform.x) * transform.scaleX).toBeCloseTo(secondCursorX)
-    expect((secondWorldY - transform.y) * transform.scaleY).toBeCloseTo(secondCursorY)
+    app.ticker.tick()
+    viewport = viewportOf(app)
+    expect((secondWorldX - viewport.x) * viewport.scaleX).toBeCloseTo(secondCursorX)
+    expect((secondWorldY - viewport.y) * viewport.scaleY).toBeCloseTo(secondCursorY)
   })
 
-  it('dispatches MoveNode and ScaleNode commands against the camera node, recording history and log lines', async () => {
-    const { system, canvas, cameraId, log } = await mountWithControls()
+  it('does not pollute history: wheel zoom updates the ephemeral viewport, not the camera node', async () => {
+    const { system, app, canvas, cameraId, log } = await mountWithControls()
     const undoCount = system.undoStack.entries.length
+    const logCount = log.mock.calls.length
 
     wheelAt(canvas, 400, 300, -100)
+    app.ticker.tick()
 
-    expect(system.undoStack.entries).toHaveLength(undoCount + 2)
-    expect(system.undoStack.entries[0]).toMatchObject({ type: 'ScaleNode' })
-    expect(system.undoStack.entries[1]).toMatchObject({ type: 'MoveNode' })
-    const scaleEntry = system.undoStack.entries[0].parameters
-    expect(scaleEntry).toMatchObject({ nodeId: cameraId })
-    expect(scaleEntry.scaleX).toBeCloseTo(Math.exp(0.1))
-    expect(system.undoStack.entries[1].parameters).toMatchObject({
-      nodeId: cameraId,
-      x: expect.any(Number),
-      y: expect.any(Number),
-    })
-    expect(log).toHaveBeenCalledTimes(undoCount + 2)
-    expect(log.mock.calls.at(-2)?.[0]).toMatch(/^MoveNode nodeId=.+ x=.+ y=.+$/)
-    expect(log.mock.calls.at(-1)?.[0]).toMatch(/^ScaleNode nodeId=.+ scaleX=.+ scaleY=.+$/)
+    expect(system.undoStack.entries).toHaveLength(undoCount)
+    expect(log).toHaveBeenCalledTimes(logCount)
+    expect(transformOf(system, cameraId).scaleX).toBe(1)
+    const viewport = viewportOf(app)
+    expect(viewport.scaleX).toBeCloseTo(Math.exp(0.1))
   })
 
   it('prevents the page from scrolling while zooming', async () => {
@@ -190,23 +203,26 @@ describe('wheel zoom', () => {
   })
 
   it('clamps the zoom to a minimum without producing non-finite camera values', async () => {
-    const { system, canvas, cameraId } = await mountWithControls()
+    const { system, app, canvas, cameraId } = await mountWithControls()
 
     wheelAt(canvas, 400, 300, 10_000_000)
+    app.ticker.tick()
 
-    const transform = transformOf(system, cameraId)
-    expect(transform.scaleX).toBe(0.01)
-    expect(transform.scaleY).toBe(0.01)
-    expect(Number.isFinite(transform.x)).toBe(true)
-    expect(Number.isFinite(transform.y)).toBe(true)
+    const viewport = viewportOf(app)
+    expect(viewport.scaleX).toBe(0.01)
+    expect(viewport.scaleY).toBe(0.01)
+    expect(Number.isFinite(viewport.x)).toBe(true)
+    expect(Number.isFinite(viewport.y)).toBe(true)
+    expect(transformOf(system, cameraId).scaleX).toBe(1)
   })
 
   it('clamps the zoom to a maximum', async () => {
-    const { system, canvas, cameraId } = await mountWithControls()
+    const { app, canvas } = await mountWithControls()
 
     wheelAt(canvas, 400, 300, -10_000_000)
+    app.ticker.tick()
 
-    expect(transformOf(system, cameraId).scaleX).toBe(100)
+    expect(viewportOf(app).scaleX).toBe(100)
   })
 
   it('does nothing when no project exists yet', async () => {
@@ -231,18 +247,20 @@ describe('wheel zoom', () => {
 
 describe('middle-button pan', () => {
   it('pans the camera by the drag delta divided by the current zoom', async () => {
-    const { system, canvas, cameraId } = await mountWithControls()
+    const { system, app, canvas, cameraId } = await mountWithControls()
 
     middleDrag(canvas, [300, 200], [350, 220])
+    app.ticker.tick()
 
-    const transform = transformOf(system, cameraId)
-    expect(transform.x).toBeCloseTo(-50)
-    expect(transform.y).toBeCloseTo(-20)
-    expect(system.undoStack.entries[0]).toMatchObject({ type: 'MoveNode' })
+    const viewport = viewportOf(app)
+    expect(viewport.x).toBeCloseTo(-50)
+    expect(viewport.y).toBeCloseTo(-20)
+    expect(transformOf(system, cameraId).x).toBe(0)
+    expect(system.undoStack.entries).toHaveLength(2)
   })
 
-  it('accumulates movement across a continuous drag, one command per move', async () => {
-    const { system, canvas, cameraId } = await mountWithControls()
+  it('accumulates movement across a continuous drag, without creating history entries', async () => {
+    const { system, app, canvas, cameraId } = await mountWithControls()
     const undoCount = system.undoStack.entries.length
 
     canvas.dispatchEvent(
@@ -251,29 +269,29 @@ describe('middle-button pan', () => {
     window.dispatchEvent(new MouseEvent('mousemove', { clientX: 350, clientY: 220, bubbles: true }))
     window.dispatchEvent(new MouseEvent('mousemove', { clientX: 370, clientY: 225, bubbles: true }))
     window.dispatchEvent(new MouseEvent('mouseup', { button: 1, clientX: 370, clientY: 225 }))
+    app.ticker.tick()
 
-    const transform = transformOf(system, cameraId)
-    expect(transform.x).toBeCloseTo(-70)
-    expect(transform.y).toBeCloseTo(-25)
-    expect(system.undoStack.entries).toHaveLength(undoCount + 2)
-    expect(system.undoStack.entries.slice(0, 2).map((entry) => entry.type)).toEqual([
-      'MoveNode',
-      'MoveNode',
-    ])
+    const viewport = viewportOf(app)
+    expect(viewport.x).toBeCloseTo(-70)
+    expect(viewport.y).toBeCloseTo(-25)
+    expect(system.undoStack.entries).toHaveLength(undoCount)
+    expect(transformOf(system, cameraId).x).toBe(0)
   })
 
   it('pans in zoomed coordinates', async () => {
-    const { system, canvas, cameraId } = await mountWithControls()
+    const { app, canvas } = await mountWithControls()
     wheelAt(canvas, 400, 300, -100)
-    const zoomed = transformOf(system, cameraId).scaleX
-    const zoomedX = transformOf(system, cameraId).x
-    const zoomedY = transformOf(system, cameraId).y
+    app.ticker.tick()
+    const zoomed = viewportOf(app).scaleX
+    const zoomedX = viewportOf(app).x
+    const zoomedY = viewportOf(app).y
 
     middleDrag(canvas, [100, 100], [120, 110])
+    app.ticker.tick()
 
-    const transform = transformOf(system, cameraId)
-    expect(transform.x).toBeCloseTo(zoomedX - 20 / zoomed)
-    expect(transform.y).toBeCloseTo(zoomedY - 10 / zoomed)
+    const viewport = viewportOf(app)
+    expect(viewport.x).toBeCloseTo(zoomedX - 20 / zoomed)
+    expect(viewport.y).toBeCloseTo(zoomedY - 10 / zoomed)
   })
 
   it('calls preventDefault on the middle-button mousedown so autoscroll never triggers', async () => {
@@ -292,7 +310,7 @@ describe('middle-button pan', () => {
   })
 
   it('ignores plain left-button drags without the option key', async () => {
-    const { system, canvas, log } = await mountWithControls()
+    const { system, app, canvas, log } = await mountWithControls()
     const undoCount = system.undoStack.entries.length
     const logCount = log.mock.calls.length
 
@@ -300,13 +318,15 @@ describe('middle-button pan', () => {
       new MouseEvent('mousedown', { button: 0, clientX: 300, clientY: 200, bubbles: true }),
     )
     window.dispatchEvent(new MouseEvent('mousemove', { clientX: 350, clientY: 220, bubbles: true }))
+    app.ticker.tick()
 
     expect(system.undoStack.entries).toHaveLength(undoCount)
     expect(log.mock.calls).toHaveLength(logCount)
+    expect(viewportOf(app).x).toBeCloseTo(0)
   })
 
   it('pans on option+left drag, preventing the default mousedown behaviour', async () => {
-    const { system, canvas, cameraId } = await mountWithControls()
+    const { system, app, canvas, cameraId } = await mountWithControls()
 
     const mousedown = new MouseEvent('mousedown', {
       button: 0,
@@ -323,16 +343,17 @@ describe('middle-button pan', () => {
     window.dispatchEvent(
       new MouseEvent('mouseup', { button: 0, altKey: true, clientX: 350, clientY: 220 }),
     )
+    app.ticker.tick()
 
     expect(mousedown.defaultPrevented).toBe(true)
-    const transform = transformOf(system, cameraId)
-    expect(transform.x).toBeCloseTo(-50)
-    expect(transform.y).toBeCloseTo(-20)
-    expect(system.undoStack.entries[0]).toMatchObject({ type: 'MoveNode' })
+    const viewport = viewportOf(app)
+    expect(viewport.x).toBeCloseTo(-50)
+    expect(viewport.y).toBeCloseTo(-20)
+    expect(transformOf(system, cameraId).x).toBe(0)
   })
 
-  it('accumulates movement across an option+left drag, one command per move', async () => {
-    const { system, canvas, cameraId } = await mountWithControls()
+  it('accumulates movement across an option+left drag, without creating history', async () => {
+    const { system, app, canvas, cameraId } = await mountWithControls()
     const undoCount = system.undoStack.entries.length
 
     canvas.dispatchEvent(
@@ -353,33 +374,33 @@ describe('middle-button pan', () => {
     window.dispatchEvent(
       new MouseEvent('mouseup', { button: 0, altKey: true, clientX: 370, clientY: 225 }),
     )
+    app.ticker.tick()
 
-    const transform = transformOf(system, cameraId)
-    expect(transform.x).toBeCloseTo(-70)
-    expect(transform.y).toBeCloseTo(-25)
-    expect(system.undoStack.entries).toHaveLength(undoCount + 2)
-    expect(system.undoStack.entries.slice(0, 2).map((entry) => entry.type)).toEqual([
-      'MoveNode',
-      'MoveNode',
-    ])
+    const viewport = viewportOf(app)
+    expect(viewport.x).toBeCloseTo(-70)
+    expect(viewport.y).toBeCloseTo(-25)
+    expect(system.undoStack.entries).toHaveLength(undoCount)
+    expect(transformOf(system, cameraId).x).toBe(0)
   })
 
   it('pans in zoomed coordinates with option+left drag', async () => {
-    const { system, canvas, cameraId } = await mountWithControls()
+    const { app, canvas } = await mountWithControls()
     wheelAt(canvas, 400, 300, -100)
-    const zoomed = transformOf(system, cameraId).scaleX
-    const zoomedX = transformOf(system, cameraId).x
-    const zoomedY = transformOf(system, cameraId).y
+    app.ticker.tick()
+    const zoomed = viewportOf(app).scaleX
+    const zoomedX = viewportOf(app).x
+    const zoomedY = viewportOf(app).y
 
     optionDrag(canvas, [100, 100], [120, 110])
+    app.ticker.tick()
 
-    const transform = transformOf(system, cameraId)
-    expect(transform.x).toBeCloseTo(zoomedX - 20 / zoomed)
-    expect(transform.y).toBeCloseTo(zoomedY - 10 / zoomed)
+    const viewport = viewportOf(app)
+    expect(viewport.x).toBeCloseTo(zoomedX - 20 / zoomed)
+    expect(viewport.y).toBeCloseTo(zoomedY - 10 / zoomed)
   })
 
-  it('stops panning on mouseup; later moves dispatch nothing', async () => {
-    const { system, canvas, log } = await mountWithControls()
+  it('stops panning on mouseup; later moves do not change viewport', async () => {
+    const { system, app, canvas, log } = await mountWithControls()
     const undoCount = system.undoStack.entries.length
     const logCount = log.mock.calls.length
 
@@ -388,21 +409,30 @@ describe('middle-button pan', () => {
     )
     window.dispatchEvent(new MouseEvent('mouseup', { button: 1, clientX: 300, clientY: 200 }))
     window.dispatchEvent(new MouseEvent('mousemove', { clientX: 350, clientY: 220, bubbles: true }))
+    app.ticker.tick()
 
     expect(system.undoStack.entries).toHaveLength(undoCount)
     expect(log.mock.calls).toHaveLength(logCount)
+    expect(viewportOf(app).x).toBeCloseTo(0)
   })
 })
 
 describe('double-click reset', () => {
-  it('resets the camera to identity through MoveNode and ScaleNode commands', async () => {
-    const { system, canvas, cameraId, log } = await mountWithControls()
+  it('resets the ephemeral viewport to identity without polluting history', async () => {
+    const { system, app, canvas, cameraId, log } = await mountWithControls()
     const undoCount = system.undoStack.entries.length
+    const logCount = log.mock.calls.length
     middleDrag(canvas, [300, 200], [400, 300])
     wheelAt(canvas, 200, 150, -100)
+    app.ticker.tick()
+    expect(viewportOf(app).scaleX).not.toBeCloseTo(1)
 
     canvas.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    app.ticker.tick()
 
+    const viewport = viewportOf(app)
+    expect(viewport).toEqual({ x: 0, y: 0, scaleX: 1, scaleY: 1 })
+    // stored camera stays as authored (identity initially), no extra commands
     expect(transformOf(system, cameraId)).toEqual({
       x: 0,
       y: 0,
@@ -410,55 +440,52 @@ describe('double-click reset', () => {
       scaleX: 1,
       scaleY: 1,
     })
-    expect(system.undoStack.entries).toHaveLength(undoCount + 5)
-    expect(system.undoStack.entries[0]).toMatchObject({ type: 'ScaleNode' })
-    expect(system.undoStack.entries[1]).toMatchObject({ type: 'MoveNode' })
-    expect(system.undoStack.entries[0].parameters).toEqual({
-      nodeId: cameraId,
-      scaleX: 1,
-      scaleY: 1,
-    })
-    expect(system.undoStack.entries[1].parameters).toEqual({ nodeId: cameraId, x: 0, y: 0 })
-    expect(log.mock.calls.at(-2)?.[0]).toMatch(/^MoveNode nodeId=.+ x=0 y=0$/)
-    expect(log.mock.calls.at(-1)?.[0]).toMatch(/^ScaleNode nodeId=.+ scaleX=1 scaleY=1$/)
+    expect(system.undoStack.entries).toHaveLength(undoCount)
+    expect(log.mock.calls).toHaveLength(logCount)
+    const world = worldOf(app)
+    expect(world.scale.x).toBeCloseTo(1)
+    expect(world.position.x).toBeCloseTo(0)
   })
 })
 
 describe('camera integrity', () => {
   it('never modifies the camera rotation across pan, zoom and reset', async () => {
-    const { system, canvas, cameraId } = await mountWithControls()
+    const { system, app, canvas, cameraId } = await mountWithControls()
 
     middleDrag(canvas, [100, 100], [200, 150])
     wheelAt(canvas, 300, 200, -100)
     wheelAt(canvas, 300, 200, 100)
     canvas.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    app.ticker.tick()
 
     expect(transformOf(system, cameraId).rotation).toBe(0)
+    expect(viewportOf(app).scaleX).toBeCloseTo(1)
     expect(system.undoStack.entries.some((entry) => entry.type === 'RotateNode')).toBe(false)
   })
 
   it('mirrors pan and zoom onto the world container on the next tick', async () => {
-    const { system, app, canvas, cameraId } = await mountWithControls()
+    const { app, canvas } = await mountWithControls()
 
     wheelAt(canvas, 400, 300, -100)
     middleDrag(canvas, [100, 100], [140, 120])
     app.ticker.tick()
 
     const world = worldOf(app)
-    const transform = transformOf(system, cameraId)
-    expect(world.scale.x).toBeCloseTo(transform.scaleX)
-    expect(world.scale.y).toBeCloseTo(transform.scaleY)
-    expect(world.position.x).toBeCloseTo(-transform.x * transform.scaleX)
-    expect(world.position.y).toBeCloseTo(-transform.y * transform.scaleY)
+    const viewport = viewportOf(app)
+    expect(world.scale.x).toBeCloseTo(viewport.scaleX)
+    expect(world.scale.y).toBeCloseTo(viewport.scaleY)
+    expect(world.position.x).toBeCloseTo(-viewport.x * viewport.scaleX)
+    expect(world.position.y).toBeCloseTo(-viewport.y * viewport.scaleY)
     expect(world.rotation).toBe(0)
   })
 })
 
 describe('lifecycle', () => {
   it('detaches all listeners on dispose; events do nothing afterwards', async () => {
-    const { system, renderer, canvas, log } = await mountWithControls()
+    const { system, app, renderer, canvas, log } = await mountWithControls()
     const undoCount = system.undoStack.entries.length
     const logCount = log.mock.calls.length
+    const before = viewportOf(app)
 
     renderer.dispose()
     wheelAt(canvas, 100, 100, -100)
@@ -466,5 +493,7 @@ describe('lifecycle', () => {
 
     expect(system.undoStack.entries).toHaveLength(undoCount)
     expect(log.mock.calls).toHaveLength(logCount)
+    // world not ticked after dispose
+    expect(before.x).toBeCloseTo(0)
   })
 })

@@ -104,6 +104,7 @@ export class Renderer {
   readonly #cameraScratch: EvaluatedNodeScratch = evaluatedNodeScratch()
   readonly #viewportScratch: ViewportTransform = { x: 0, y: 0, scaleX: 1, scaleY: 1 }
   #cameraPreview: ViewportTransform | null = null
+  readonly #viewportNavigations = new Map<string, ViewportTransform>()
   #unsubscribe: Unsubscribe | null = null
   #unsubscribeTime: Unsubscribe | null = null
   #unsubscribeVisibility: (() => void) | null = null
@@ -314,6 +315,9 @@ export class Renderer {
         getCameraTransform: () => this.#cameraTransform(),
         setCameraPreview: (transform) => {
           this.#cameraPreview = transform
+        },
+        setViewportTransform: (transform) => {
+          this.#setViewportNavigation(transform)
         },
         getCameraAnimationMode: () => useUiStore.getState().cameraAnimationMode,
         getTime: () => {
@@ -626,16 +630,24 @@ export class Renderer {
     }
     const out = this.#viewportScratch
     if (!useUiStore.getState().cameraAnimationMode) {
-      let stored
-      try {
-        stored = this.#engine.getNode(cameraNode.id).transform
-      } catch {
-        return null
+      const nav = this.#viewportNavigations.get(slideId)
+      if (nav) {
+        out.x = nav.x
+        out.y = nav.y
+        out.scaleX = nav.scaleX
+        out.scaleY = nav.scaleY
+      } else {
+        let stored
+        try {
+          stored = this.#engine.getNode(cameraNode.id).transform
+        } catch {
+          return null
+        }
+        out.x = stored.x
+        out.y = stored.y
+        out.scaleX = stored.scaleX
+        out.scaleY = stored.scaleY
       }
-      out.x = stored.x
-      out.y = stored.y
-      out.scaleX = stored.scaleX
-      out.scaleY = stored.scaleY
     } else {
       let state
       try {
@@ -663,6 +675,19 @@ export class Renderer {
       out.scaleY = preview.scaleY
     }
     return out
+  }
+
+  #setViewportNavigation(transform: ViewportTransform): void {
+    const slideId = this.#sceneRenderer?.boundSlideId ?? null
+    if (!slideId) {
+      return
+    }
+    this.#viewportNavigations.set(slideId, {
+      x: transform.x,
+      y: transform.y,
+      scaleX: transform.scaleX,
+      scaleY: transform.scaleY,
+    })
   }
 
   #refreshGridColors(): void {
@@ -716,9 +741,11 @@ export class Renderer {
     }
     switch (event.type) {
       case 'ProjectCreated':
+        this.#viewportNavigations.clear()
         this.#syncScene(sceneRenderer)
         break
       case 'ProjectLoaded':
+        this.#viewportNavigations.clear()
         this.#thumbnails.handleEvent(event)
         this.#syncScene(sceneRenderer)
         break
@@ -731,6 +758,7 @@ export class Renderer {
         this.#thumbnails.handleEvent(event)
         break
       case 'SlideRemoved':
+        this.#viewportNavigations.delete(event.slideId)
         this.#thumbnails.handleEvent(event)
         this.#syncScene(sceneRenderer)
         break
@@ -747,10 +775,22 @@ export class Renderer {
       case 'NodeOrderChanged':
         sceneRenderer.handleNodeOrderChanged(event.nodeId)
         break
-      case 'TransformChanged':
+      case 'TransformChanged': {
         sceneRenderer.handleTransformChanged(event.nodeId)
         this.#handleTimeChanged()
+        // Ephemeral viewport: if the camera node was authored (inspector / undo / etc.),
+        // discard the ephemeral pan/zoom for that slide so the authored value is visible.
+        if (
+          !useUiStore.getState().cameraAnimationMode &&
+          event.nodeId === sceneRenderer.boundCamera?.id
+        ) {
+          const slideId = sceneRenderer.boundSlideId
+          if (slideId) {
+            this.#viewportNavigations.delete(slideId)
+          }
+        }
         break
+      }
       case 'VisibilityChanged':
         sceneRenderer.handleVisibilityChanged(event.nodeId)
         break

@@ -13,6 +13,7 @@ export interface CameraControlsContext {
   readonly getCamera: () => SceneNode | null
   readonly getCameraTransform: () => ViewportTransform | null
   readonly setCameraPreview: (transform: ViewportTransform | null) => void
+  readonly setViewportTransform?: (transform: ViewportTransform) => void
   readonly getCameraAnimationMode?: () => boolean
   readonly getTime: () => number
   readonly dispatch: DispatchCommand
@@ -29,6 +30,7 @@ export class CameraControls {
   readonly #getCamera: () => SceneNode | null
   readonly #getCameraTransform: () => ViewportTransform | null
   readonly #setCameraPreview: (transform: ViewportTransform | null) => void
+  readonly #setViewportTransform?: (transform: ViewportTransform) => void
   readonly #getCameraAnimationMode?: () => boolean
   readonly #getTime: () => number
   readonly #dispatch: DispatchCommand
@@ -48,6 +50,7 @@ export class CameraControls {
     this.#getCamera = context.getCamera
     this.#getCameraTransform = context.getCameraTransform
     this.#setCameraPreview = context.setCameraPreview
+    this.#setViewportTransform = context.setViewportTransform
     this.#getCameraAnimationMode = context.getCameraAnimationMode
     this.#getTime = context.getTime
     this.#dispatch = context.dispatch
@@ -93,7 +96,7 @@ export class CameraControls {
     }
   }
 
-  readonly #zoomStored = (event: WheelEvent, nodeId: string): void => {
+  readonly #zoomStored = (event: WheelEvent, _nodeId: string): void => {
     const next = this.#zoomedFrom(event)
     if (!next) {
       return
@@ -105,8 +108,15 @@ export class CameraControls {
     if (next.scaleX === transform.scaleX && next.scaleY === transform.scaleY) {
       return
     }
-    this.#dispatch(new MoveNodeCommand({ nodeId, x: next.x, y: next.y }))
-    this.#dispatch(new ScaleNodeCommand({ nodeId, scaleX: next.scaleX, scaleY: next.scaleY }))
+    if (this.#setViewportTransform) {
+      this.#setViewportTransform(next)
+      return
+    }
+    // Fallback for contexts without ephemeral viewport (tests / legacy)
+    this.#dispatch(new MoveNodeCommand({ nodeId: _nodeId, x: next.x, y: next.y }))
+    this.#dispatch(
+      new ScaleNodeCommand({ nodeId: _nodeId, scaleX: next.scaleX, scaleY: next.scaleY }),
+    )
   }
 
   readonly #zoomAnimated = (event: WheelEvent, nodeId: string): void => {
@@ -173,6 +183,10 @@ export class CameraControls {
     const next: ViewportTransform = { x: x - dx / scaleX, y: y - dy / scaleY, scaleX, scaleY }
     this.#panGesture.current = next
     if (!this.#cameraAnimationMode()) {
+      if (this.#setViewportTransform) {
+        this.#setViewportTransform(next)
+        return
+      }
       this.#dispatch(new MoveNodeCommand({ nodeId: camera.nodeId, x: next.x, y: next.y }))
       return
     }
@@ -207,6 +221,10 @@ export class CameraControls {
       return
     }
     if (!this.#cameraAnimationMode()) {
+      if (this.#setViewportTransform) {
+        this.#setViewportTransform({ x: 0, y: 0, scaleX: 1, scaleY: 1 })
+        return
+      }
       this.#dispatch(new MoveNodeCommand({ nodeId: camera.id, x: 0, y: 0 }))
       this.#dispatch(new ScaleNodeCommand({ nodeId: camera.id, scaleX: 1, scaleY: 1 }))
       return

@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AddKeyframeCommand,
   MoveKeyframesCommand,
+  MoveNodeCommand,
+  ScaleNodeCommand,
   CreateNodeCommand,
   CreateProjectCommand,
   CreateSlideCommand,
@@ -167,7 +169,7 @@ describe('evaluated viewport', () => {
     expect(worldOf(app).position.x).toBeCloseTo(-70)
   })
 
-  it('ignores camera keyframes while camera animation mode is off: stored pan/zoom still move the viewport', async () => {
+  it('ignores camera keyframes while camera animation mode is off: ephemeral pan still moves the viewport without touching stored transform', async () => {
     const timeSource = new FakeTimeSource()
     const { system, app, canvas, cameraId } = await mount(timeSource)
     dispatchKeyframe(system, cameraId, 'positionX', 0, 0)
@@ -178,13 +180,15 @@ describe('evaluated viewport', () => {
     app.ticker.tick()
     expect(worldOf(app).position.x).toBeCloseTo(0)
 
+    const undoCount = system.undoStack.entries.length
     middleDrag(canvas, [300, 200], [350, 220])
     app.ticker.tick()
 
     expect(worldOf(app).position.x).toBeCloseTo(50)
     expect(worldOf(app).position.y).toBeCloseTo(20)
-    expect(storedTransformOf(system, cameraId).x).toBeCloseTo(-50)
-    expect(storedTransformOf(system, cameraId).y).toBeCloseTo(-20)
+    expect(storedTransformOf(system, cameraId).x).toBeCloseTo(0)
+    expect(storedTransformOf(system, cameraId).y).toBeCloseTo(0)
+    expect(system.undoStack.entries).toHaveLength(undoCount)
     expect(keyframesOf(system, cameraId, 'positionX')).toHaveLength(2)
   })
 
@@ -504,8 +508,9 @@ describe('animation-mode reset', () => {
   it('creates position/scale keyframes at the playhead in one transaction on double-click reset', async () => {
     const timeSource = new FakeTimeSource()
     const { system, canvas, cameraId } = await mount(timeSource)
-    middleDrag(canvas, [300, 200], [500, 400])
-    wheelAt(canvas, 200, 150, -100)
+    // Authored camera offset (not ephemeral viewport pan) so evaluated is away from identity
+    system.dispatcher.dispatch(new MoveNodeCommand({ nodeId: cameraId, x: 100, y: 50 }))
+    system.dispatcher.dispatch(new ScaleNodeCommand({ nodeId: cameraId, scaleX: 2, scaleY: 2 }))
     timeSource.set(4)
     useUiStore.getState().setCameraAnimationMode(true)
     const stored = storedTransformOf(system, cameraId)
@@ -522,23 +527,23 @@ describe('animation-mode reset', () => {
     expect(system.undoStack.entries[0].type).toBe('Transaction')
   })
 
-  it('keeps the plain stored-value reset when animation mode is off', async () => {
-    const { system, canvas, cameraId } = await mount()
+  it('resets the ephemeral viewport to identity when animation mode is off, without touching stored transform or history', async () => {
+    const { system, app, canvas, cameraId } = await mount()
     middleDrag(canvas, [300, 200], [400, 300])
+    app.ticker.tick()
+    const beforeWorldX = worldOf(app).position.x
+    expect(beforeWorldX).not.toBeCloseTo(0)
+    const storedBefore = storedTransformOf(system, cameraId)
     const undoCount = system.undoStack.entries.length
 
     canvas.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    app.ticker.tick()
 
-    expect(storedTransformOf(system, cameraId)).toEqual({
-      x: 0,
-      y: 0,
-      rotation: 0,
-      scaleX: 1,
-      scaleY: 1,
-    })
-    expect(system.undoStack.entries).toHaveLength(undoCount + 2)
-    expect(system.undoStack.entries[0]).toMatchObject({ type: 'ScaleNode' })
-    expect(system.undoStack.entries[1]).toMatchObject({ type: 'MoveNode' })
+    expect(worldOf(app).position.x).toBeCloseTo(0)
+    expect(worldOf(app).position.y).toBeCloseTo(0)
+    expect(worldOf(app).scale.x).toBeCloseTo(1)
+    expect(storedTransformOf(system, cameraId)).toEqual(storedBefore)
+    expect(system.undoStack.entries).toHaveLength(undoCount)
   })
 })
 
