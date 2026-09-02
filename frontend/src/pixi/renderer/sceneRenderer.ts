@@ -543,6 +543,38 @@ export class SceneRenderer {
     container.position.set(x, y)
   }
 
+  previewFullTransform(
+    nodeId: string,
+    transform: {
+      x: number
+      y: number
+      rotation: number
+      scaleX: number
+      scaleY: number
+      localPivot?: { x: number; y: number }
+    },
+  ): void {
+    const container = this.#containers.get(nodeId)
+    if (!container) {
+      return
+    }
+    const size = this.#sizes.get(nodeId)
+    if (size) {
+      applyPivotWithSize(container, transform.localPivot, size)
+    } else if (transform.localPivot) {
+      container.pivot.set(transform.localPivot.x, transform.localPivot.y)
+    } else {
+      container.pivot.set(0, 0)
+    }
+    container.position.set(transform.x, transform.y)
+    container.rotation = transform.rotation
+    container.scale.set(transform.scaleX, transform.scaleY)
+  }
+
+  clearPreview(nodeId: string): void {
+    this.#evaluateAndApply(nodeId)
+  }
+
   handleVisibilityChanged(nodeId: string): void {
     if (!this.#scene?.getNode(nodeId)) {
       return

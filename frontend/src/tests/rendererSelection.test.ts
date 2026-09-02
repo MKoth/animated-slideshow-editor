@@ -70,18 +70,18 @@ function overlayGraphics(app: Harness['app']): FakeChild | undefined {
   const world = worldOf(app)
   return [...world.children]
     .reverse()
-    .find(
-      (child) => child.kind === 'graphics' && child.label === 'selection-overlay',
-    )
+    .find((child) => child.kind === 'graphics' && child.label === 'selection-overlay')
 }
 
 function overlayRects(app: Harness['app']): { x: number; y: number; w: number; h: number }[] {
   const graphics = overlayGraphics(app) as FakeGraphics | undefined
-  const ops = graphics?.ops ?? []
+  if (!graphics) return []
+  // Extract handle rects
+  const ops = graphics.ops ?? []
   const rects: { x: number; y: number; w: number; h: number }[] = []
   for (let index = 0; index < ops.length; index += 1) {
     if (ops[index] === 'rect') {
-      const call = graphics?.calls[index]
+      const call = graphics.calls[index]
       rects.push({
         x: Number(call?.args[0]),
         y: Number(call?.args[1]),
@@ -91,6 +91,33 @@ function overlayRects(app: Harness['app']): { x: number; y: number; w: number; h
     }
   }
   return rects
+}
+
+function overlayOutlineAabb(
+  app: Harness['app'],
+): { x: number; y: number; w: number; h: number } | null {
+  const graphics = overlayGraphics(app) as FakeGraphics | undefined
+  if (!graphics) return null
+  const points: { x: number; y: number }[] = []
+  for (const call of graphics.calls) {
+    if (call.method === 'moveTo' || call.method === 'lineTo') {
+      if (points.length < 4) {
+        const [x, y] = call.args as [number, number]
+        points.push({ x: Number(x), y: Number(y) })
+      }
+    }
+    if (call.method === 'closePath' && points.length === 4) break
+  }
+  if (points.length !== 4) return null
+  const minX = Math.min(...points.map((p) => p.x))
+  const minY = Math.min(...points.map((p) => p.y))
+  const maxX = Math.max(...points.map((p) => p.x))
+  const maxY = Math.max(...points.map((p) => p.y))
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
+}
+
+function overlayHandles(app: Harness['app']): { x: number; y: number; w: number; h: number }[] {
+  return overlayRects(app)
 }
 
 function click(canvas: HTMLCanvasElement, x: number, y: number): void {
@@ -123,7 +150,8 @@ describe('renderer selection wiring', () => {
 
     expect(useSelectionStore.getState().selectedIds).toEqual([id])
     const graphics = overlayGraphics(app)
-    expect(graphics?.ops?.filter((op) => op === 'rect')).toHaveLength(9)
+    expect(graphics?.ops?.filter((op) => op === 'rect')).toHaveLength(8)
+    expect(overlayOutlineAabb(app)).toEqual({ x: 220, y: 150, w: 160, h: 100 })
   })
 
   it('clears the selection and the overlay when clicking empty canvas', async () => {
@@ -179,13 +207,13 @@ describe('renderer selection wiring', () => {
     textureDeferreds.set('/api/assets/originals/def-1.png', deferred)
     const id = nodeAt(engine, 'Hero', 300, 200)
     click(canvas, 300, 200)
-    expect(overlayRects(app)[0]).toEqual({ x: 220, y: 150, w: 160, h: 100 })
+    expect(overlayOutlineAabb(app)).toEqual({ x: 220, y: 150, w: 160, h: 100 })
 
     void deferred.resolve(new FakeTexture('boy.png', { width: 512, height: 300 }))
 
     await deferred.promise
     await vi.waitFor(() => {
-      expect(overlayRects(app)[0]).toEqual({ x: 44, y: 50, w: 512, h: 300 })
+      expect(overlayOutlineAabb(app)).toEqual({ x: 44, y: 50, w: 512, h: 300 })
     })
     expect(useSelectionStore.getState().selectedIds).toEqual([id])
   })
@@ -196,13 +224,13 @@ describe('renderer selection wiring', () => {
     mouseDown(canvas, 300, 200)
 
     mouseMove(330, 200)
-    expect(overlayRects(app)[0]).toEqual({ x: 250, y: 150, w: 160, h: 100 })
+    expect(overlayOutlineAabb(app)).toEqual({ x: 250, y: 150, w: 160, h: 100 })
 
     mouseMove(380, 200)
-    expect(overlayRects(app)[0]).toEqual({ x: 300, y: 150, w: 160, h: 100 })
+    expect(overlayOutlineAabb(app)).toEqual({ x: 300, y: 150, w: 160, h: 100 })
 
     mouseUp(380, 200)
-    expect(overlayRects(app)[0]).toEqual({ x: 300, y: 150, w: 160, h: 100 })
+    expect(overlayOutlineAabb(app)).toEqual({ x: 300, y: 150, w: 160, h: 100 })
     expect(useSelectionStore.getState().selectedIds).toEqual([id])
   })
 })
@@ -216,13 +244,13 @@ describe('renderer selection with evaluated state', () => {
     engine.addKeyframe({ kind: 'node', nodeId: id, property: 'positionX' }, 10, 500)
     click(canvas, 300, 200)
     expect(useSelectionStore.getState().selectedIds).toEqual([id])
-    expect(overlayRects(app)[0]).toEqual({ x: 220, y: 150, w: 160, h: 100 })
+    expect(overlayOutlineAabb(app)).toEqual({ x: 220, y: 150, w: 160, h: 100 })
 
     timeSource.set(5)
 
-    expect(overlayRects(app)[0]).toEqual({ x: 320, y: 150, w: 160, h: 100 })
+    expect(overlayOutlineAabb(app)).toEqual({ x: 320, y: 150, w: 160, h: 100 })
     timeSource.set(10)
-    expect(overlayRects(app)[0]).toEqual({ x: 420, y: 150, w: 160, h: 100 })
+    expect(overlayOutlineAabb(app)).toEqual({ x: 420, y: 150, w: 160, h: 100 })
   })
 
   it('selects an animated node at its rendered position on click', async () => {
@@ -236,11 +264,11 @@ describe('renderer selection with evaluated state', () => {
     click(canvas, 400, 200)
 
     expect(useSelectionStore.getState().selectedIds).toEqual([id])
-    expect(overlayRects(app)[0]).toEqual({ x: 320, y: 150, w: 160, h: 100 })
+    expect(overlayOutlineAabb(app)).toEqual({ x: 320, y: 150, w: 160, h: 100 })
 
     click(canvas, 300, 200)
     expect(useSelectionStore.getState().selectedIds).toEqual([])
-    expect(overlayRects(app).length).toBe(0)
+    expect(overlayHandles(app).length).toBe(0)
   })
 
   it('redraws the outline when keyframes change via the engine', async () => {
@@ -251,10 +279,10 @@ describe('renderer selection with evaluated state', () => {
     engine.addKeyframe({ kind: 'node', nodeId: id, property: 'positionX' }, 10, 500)
     click(canvas, 300, 200)
     timeSource.set(5)
-    expect(overlayRects(app)[0]).toEqual({ x: 320, y: 150, w: 160, h: 100 })
+    expect(overlayOutlineAabb(app)).toEqual({ x: 320, y: 150, w: 160, h: 100 })
 
     engine.setKeyframeValue({ kind: 'node', nodeId: id, property: 'positionX' }, first.id, 100)
 
-    expect(overlayRects(app)[0]).toEqual({ x: 220, y: 150, w: 160, h: 100 })
+    expect(overlayOutlineAabb(app)).toEqual({ x: 220, y: 150, w: 160, h: 100 })
   })
 })

@@ -36,6 +36,7 @@ import { IkOverlay } from './ikOverlay'
 import { IkInteraction } from './ikInteraction'
 import { MarqueeOverlay } from './marqueeOverlay'
 import { PivotInteraction } from './pivotInteraction'
+import { HandleInteraction } from './handleInteraction'
 import { realPixi } from './pixi'
 import type { PixiApplication, RendererPixi } from './pixi'
 import { SceneRenderer } from './sceneRenderer'
@@ -97,6 +98,7 @@ export class Renderer {
   #ikInteraction: IkInteraction | null = null
   #marqueeOverlay: MarqueeOverlay | null = null
   #pivotInteraction: PivotInteraction | null = null
+  #handleInteraction: HandleInteraction | null = null
   #transformSource: EvaluatedWorldTransformSource | null = null
   #previewPositions = new Map<string, { x: number; y: number }>()
   readonly #cameraScratch: EvaluatedNodeScratch = evaluatedNodeScratch()
@@ -429,8 +431,53 @@ export class Renderer {
         getWorldTransform: transformOf,
         store: useSelectionStore,
         dispatch: this.#dispatch,
+        preview: {
+          setTransform: (nodeId, transform) => {
+            this.#sceneRenderer?.previewFullTransform(nodeId, transform)
+            this.#selectionOverlay?.redraw()
+            this.#meshOverlay?.redraw()
+          },
+          clear: () => {
+            const scene = this.#sceneRenderer?.boundScene
+            if (!scene) return
+            for (const id of useSelectionStore.getState().selectedIds) {
+              this.#sceneRenderer?.clearPreview(id)
+            }
+            this.#selectionOverlay?.redraw()
+            this.#meshOverlay?.redraw()
+          },
+        },
       })
       this.#pivotInteraction.attach()
+
+      this.#handleInteraction = new HandleInteraction({
+        canvas: app.canvas,
+        engine: this.#engine,
+        getScene: () => this.#sceneRenderer?.boundScene ?? null,
+        getCameraTransform: () => this.#cameraTransform(),
+        getNodeSize: (nodeId) => this.#sceneRenderer?.nodeSize(nodeId) ?? null,
+        getWorldTransform: transformOf,
+        store: useSelectionStore,
+        dispatch: this.#dispatch,
+        preview: {
+          setTransform: (nodeId, transform) => {
+            this.#sceneRenderer?.previewFullTransform(nodeId, transform)
+            this.#selectionOverlay?.redraw()
+            this.#meshOverlay?.redraw()
+          },
+          clear: () => {
+            // Clear by re-evaluating all selected nodes
+            const scene = this.#sceneRenderer?.boundScene
+            if (!scene) return
+            for (const id of useSelectionStore.getState().selectedIds) {
+              this.#sceneRenderer?.clearPreview(id)
+            }
+            this.#selectionOverlay?.redraw()
+            this.#meshOverlay?.redraw()
+          },
+        },
+      })
+      this.#handleInteraction.attach()
 
       app.ticker.add(this.#tick)
       if (import.meta.env.DEV) {
@@ -496,6 +543,8 @@ export class Renderer {
     this.#ikInteraction = null
     this.#pivotInteraction?.detach()
     this.#pivotInteraction = null
+    this.#handleInteraction?.detach()
+    this.#handleInteraction = null
     const app = this.#app
     app?.ticker.remove(this.#tick)
     this.#app = null
