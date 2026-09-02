@@ -35,6 +35,7 @@ export class PivotInteraction {
   #attached = false
   #dragging = false
   #pressed = false
+  #pPressed = false
   #activeNodeId: string | null = null
   #startWorldX = 0
   #startWorldY = 0
@@ -63,6 +64,8 @@ export class PivotInteraction {
     this.#canvas.addEventListener('mousedown', this.#onMouseDown)
     window.addEventListener('mousemove', this.#onMouseMove)
     window.addEventListener('mouseup', this.#onMouseUp)
+    window.addEventListener('keydown', this.#onKeyDown)
+    window.addEventListener('keyup', this.#onKeyUp)
   }
 
   detach(): void {
@@ -71,6 +74,8 @@ export class PivotInteraction {
     this.#canvas.removeEventListener('mousedown', this.#onMouseDown)
     window.removeEventListener('mousemove', this.#onMouseMove)
     window.removeEventListener('mouseup', this.#onMouseUp)
+    window.removeEventListener('keydown', this.#onKeyDown)
+    window.removeEventListener('keyup', this.#onKeyUp)
     this.#reset()
   }
 
@@ -81,8 +86,23 @@ export class PivotInteraction {
     this.#nodeSize = null
   }
 
+  readonly #onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === 'p' || event.key === 'P') {
+      this.#pPressed = true
+      // Change cursor to indicate pivot mode
+      this.#canvas.style.cursor = 'crosshair'
+    }
+  }
+
+  readonly #onKeyUp = (event: KeyboardEvent): void => {
+    if (event.key === 'p' || event.key === 'P') {
+      this.#pPressed = false
+      this.#canvas.style.cursor = ''
+    }
+  }
+
   readonly #onMouseDown = (event: MouseEvent): void => {
-    if (event.button !== 0 || !event.altKey) return
+    if (event.button !== 0 || !this.#pPressed) return
     const scene = this.#getScene()
     const camera = this.#getCameraTransform()
     if (!scene || !camera) return
