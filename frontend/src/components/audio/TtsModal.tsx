@@ -18,6 +18,14 @@ import { useAudioResizePreferenceStore } from '../../stores/audioResizePreferenc
 import { MismatchDialog } from './MismatchDialog'
 import type { EmbeddedAsset } from '../../engine/embeddedAsset'
 import { LANGUAGE_OPTIONS, migrateStoredLanguage } from '../../engine/ttsLanguages'
+import { TtsSettingsApi } from '../../api/ttsSettingsApi'
+import {
+  DEFAULT_MODEL_ID,
+  DEFAULT_PROVIDER,
+  SUPPORTED_MODELS,
+  SUPPORTED_PROVIDERS,
+  shortModelLabel,
+} from '../../engine/ttsRegistry'
 
 interface TtsModalProps {
   slideId: string
@@ -46,6 +54,7 @@ export function TtsModal({
 
   const provider = useMemo(() => ttsProvider ?? new TtsApi(apiClient), [ttsProvider])
   const vpApi = voicePromptsApi ?? defaultVoicePromptsApi
+  const ttsSettingsApi = useMemo(() => new TtsSettingsApi(apiClient), [])
 
   const [prompts, setPrompts] = useState<VoicePromptOut[]>([])
   const [promptsLoading, setPromptsLoading] = useState(true)
@@ -65,6 +74,15 @@ export function TtsModal({
     kind: PrompterMismatchKind
   }>(null)
 
+  // TTS model/provider per-generation overrides (with defaults from server Settings)
+  const [ttsModel, setTtsModel] = useState<string>('')
+  const [ttsProviderId, setTtsProviderId] = useState<string>('')
+  const [models, setModels] = useState<string[]>([...SUPPORTED_MODELS])
+  const [providers, setProviders] = useState<string[]>([...SUPPORTED_PROVIDERS])
+  const [hasEditedModel, setHasEditedModel] = useState(false)
+  const [hasEditedProvider, setHasEditedProvider] = useState(false)
+  const [registryLoading, setRegistryLoading] = useState(true)
+
   // Create/edit prompt UI
   const [showCreate, setShowCreate] = useState(false)
   const [editingPrompt, setEditingPrompt] = useState<VoicePromptOut | null>(null)
@@ -73,6 +91,8 @@ export function TtsModal({
   const [formLanguage, setFormLanguage] = useState('')
   const [formVoice, setFormVoice] = useState('')
   const [formParams, setFormParams] = useState('')
+  const [formModelId, setFormModelId] = useState('')
+  const [formProvider, setFormProvider] = useState('')
   const [formError, setFormError] = useState<string | null>(null)
   const [formSaving, setFormSaving] = useState(false)
 
@@ -94,7 +114,42 @@ export function TtsModal({
     void fetchPrompts()
   }, [fetchPrompts])
 
-  // Sync overrides when prompt selected: prefill language/voice/instruction from prompt
+  // Fetch TTS registry defaults from server
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      setRegistryLoading(true)
+      try {
+        const data = await ttsSettingsApi.getModels()
+        if (cancelled) return
+        const fetchedModels = Array.isArray(data.models) && data.models.length ? data.models : [...SUPPORTED_MODELS]
+        const fetchedProviders = Array.isArray(data.providers) && data.providers.length ? data.providers : [...SUPPORTED_PROVIDERS]
+        setModels(fetchedModels)
+        setProviders(fetchedProviders)
+        const defModel = (data.defaultModel || data.default_model_id || DEFAULT_MODEL_ID) as string
+        const defProv = (data.defaultProvider || data.default_provider || DEFAULT_PROVIDER) as string
+        if (!hasEditedModel && !ttsModel && defModel) setTtsModel(defModel)
+        else if (!ttsModel && defModel) setTtsModel(defModel)
+        if (!hasEditedProvider && !ttsProviderId && defProv) setTtsProviderId(defProv)
+        else if (!ttsProviderId && defProv) setTtsProviderId(defProv)
+      } catch {
+        if (cancelled) return
+        setModels([...SUPPORTED_MODELS])
+        setProviders([...SUPPORTED_PROVIDERS])
+        if (!ttsModel) setTtsModel(DEFAULT_MODEL_ID)
+        if (!ttsProviderId) setTtsProviderId(DEFAULT_PROVIDER)
+      } finally {
+        if (!cancelled) setRegistryLoading(false)
+      }
+    }
+    void load()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ttsSettingsApi])
+
+  // Sync overrides when prompt selected: prefill language/voice/instruction/model/provider from prompt
   useEffect(() => {
     if (!selectedPromptId) return
     const selected = prompts.find((p) => p.id === selectedPromptId)
@@ -109,8 +164,13 @@ export function TtsModal({
       }
       if (!voice && selected.voice) setVoice(selected.voice)
       if (!instruction && selected.instruction) setInstruction(selected.instruction)
+      // Per-generation model/provider: recall stored model; per-generation dropdown overrides at generation time
+      const promptModel = (selected as unknown as { modelId?: string }).modelId
+      const promptProvider = (selected as unknown as { provider?: string }).provider
+      if (promptModel) setTtsModel(promptModel)
+      if (promptProvider) setTtsProviderId(promptProvider)
     }
-  }, [selectedPromptId, prompts]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedPromptId, prompts, language, voice, instruction])
 
   // Atomic commit helper: single CommitTtsCommand covering clip and prompter changes
   const commitTtsAtomic = useCallback(
@@ -167,6 +227,8 @@ export function TtsModal({
           language: language || undefined,
           voice: voice || undefined,
           instruction: instruction || undefined,
+          modelId: ttsModel || undefined,
+          provider: ttsProviderId || undefined,
         })
         const metadata = asset.metadata as Record<string, unknown> | undefined
         const duration = typeof metadata?.duration === 'number' ? (metadata.duration as number) : 1
@@ -234,6 +296,8 @@ export function TtsModal({
       language,
       voice,
       instruction,
+      ttsModel,
+      ttsProviderId,
       provider,
       plannedDuration,
       engine,
@@ -279,6 +343,8 @@ export function TtsModal({
     setFormLanguage('')
     setFormVoice('')
     setFormParams('')
+    setFormModelId(ttsModel || DEFAULT_MODEL_ID)
+    setFormProvider(ttsProviderId || DEFAULT_PROVIDER)
     setFormError(null)
     setShowCreate(true)
   }
@@ -293,6 +359,10 @@ export function TtsModal({
     setFormLanguage(migrateStoredLanguage(p.language).value)
     setFormVoice(p.voice ?? '')
     setFormParams(p.params ? JSON.stringify(p.params, null, 2) : '')
+    const pm = (p as unknown as { modelId?: string }).modelId ?? ''
+    const pp = (p as unknown as { provider?: string }).provider ?? ''
+    setFormModelId(pm || ttsModel || DEFAULT_MODEL_ID)
+    setFormProvider(pp || ttsProviderId || DEFAULT_PROVIDER)
     setFormError(null)
     setShowCreate(true)
   }
@@ -344,6 +414,8 @@ export function TtsModal({
           language: formLanguage ? formLanguage.toLowerCase() : null,
           voice: formVoice || null,
           params: params ?? null,
+          modelId: formModelId || null,
+          provider: formProvider || null,
         })
       } else {
         const created = await vpApi.create({
@@ -352,8 +424,19 @@ export function TtsModal({
           language: formLanguage ? formLanguage.toLowerCase() : undefined,
           voice: formVoice || undefined,
           params,
+          modelId: formModelId || undefined,
+          provider: formProvider || undefined,
         })
         setSelectedPromptId(created.id)
+        // reflect per-generation override to stored model for future recall
+        if (formModelId) {
+          setTtsModel(formModelId)
+          setHasEditedModel(true)
+        }
+        if (formProvider) {
+          setTtsProviderId(formProvider)
+          setHasEditedProvider(true)
+        }
       }
       setShowCreate(false)
       await fetchPrompts()
@@ -416,9 +499,11 @@ export function TtsModal({
             background: '#2a2a2a',
             border: '1px solid #444',
             borderRadius: 8,
-            width: 460,
+            width: 500,
             padding: 16,
             color: '#e0e0e0',
+            maxHeight: '90vh',
+            overflowY: 'auto',
           }}
         >
           <h3 style={{ margin: '0 0 8px', fontSize: 13 }}>
@@ -528,6 +613,57 @@ export function TtsModal({
                 }}
               />
             </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <label style={{ fontSize: 11 }}>
+                Model
+                <select
+                  data-testid="voice-prompt-model"
+                  value={formModelId}
+                  onChange={(e) => setFormModelId(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '6px 8px',
+                    background: '#1e1e1e',
+                    border: '1px solid #444',
+                    borderRadius: 4,
+                    color: '#e0e0e0',
+                    marginTop: 4,
+                  }}
+                >
+                  {models.map((m) => (
+                    <option key={m} value={m}>
+                      {shortModelLabel(m)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ fontSize: 11 }}>
+                Provider
+                <select
+                  data-testid="voice-prompt-provider"
+                  value={formProvider}
+                  onChange={(e) => setFormProvider(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '6px 8px',
+                    background: '#1e1e1e',
+                    border: '1px solid #444',
+                    borderRadius: 4,
+                    color: '#e0e0e0',
+                    marginTop: 4,
+                  }}
+                >
+                  {providers.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div style={{ fontSize: 10, color: '#888' }}>
+              Stored model/provider recalled next time this Voice Prompt is selected. Per-generation dropdown overrides it.
+            </div>
             <label style={{ fontSize: 11 }}>
               Params JSON (optional)
               <textarea
@@ -726,6 +862,71 @@ export function TtsModal({
               </button>
             </div>
           )}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+          <label style={{ fontSize: 11 }}>
+            Model (per-generation)
+            <select
+              data-testid="tts-model"
+              value={ttsModel}
+              onChange={(e) => {
+                setTtsModel(e.target.value)
+                setHasEditedModel(true)
+              }}
+              style={{
+                width: '100%',
+                padding: '6px 8px',
+                background: '#1e1e1e',
+                border: '1px solid #444',
+                borderRadius: 4,
+                color: '#e0e0e0',
+                marginTop: 4,
+              }}
+            >
+              {registryLoading && models.length === 0 ? (
+                <option>Loading…</option>
+              ) : (
+                models.map((m) => (
+                  <option key={m} value={m}>
+                    {shortModelLabel(m)}
+                  </option>
+                ))
+              )}
+            </select>
+            <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
+              Default from server Settings; overrides Voice Prompt stored model
+            </div>
+          </label>
+          <label style={{ fontSize: 11 }}>
+            Provider
+            <select
+              data-testid="tts-provider"
+              value={ttsProviderId}
+              onChange={(e) => {
+                setTtsProviderId(e.target.value)
+                setHasEditedProvider(true)
+              }}
+              style={{
+                width: '100%',
+                padding: '6px 8px',
+                background: '#1e1e1e',
+                border: '1px solid #444',
+                borderRadius: 4,
+                color: '#e0e0e0',
+                marginTop: 4,
+              }}
+            >
+              {providers.map((p) => (
+                <option key={p} value={p}>
+                  {p}
+                </option>
+              ))}
+            </select>
+            <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>
+              auto: mlx if installed else sine; mlx requires mlx-audio
+            </div>
+          </label>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>

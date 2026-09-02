@@ -58,8 +58,14 @@ _LANGUAGE_MAP: dict[str, str] = {
 try:
     from app.tts.languages import (
         ALLOWED_TTS_ISOS as _ALLOWED_TTS_ISOS,
+    )
+    from app.tts.languages import (
         LANGUAGE_OPTIONS as _LANGUAGE_OPTIONS,
+    )
+    from app.tts.languages import (
         TTS_ISO_TO_DISPLAY as _TTS_ISO_TO_DISPLAY,
+    )
+    from app.tts.languages import (
         normalize_language_code as _normalize_language_code,
     )
 except Exception:  # pragma: no cover
@@ -84,6 +90,66 @@ _CANONICAL_SPEAKERS: list[str] = [
 _SPEAKER_LOWER_MAP: dict[str, str] = {s.lower(): s for s in _CANONICAL_SPEAKERS}
 _DEFAULT_SPEAKER_EN = "Ryan"
 _DEFAULT_SPEAKER_ZH = "Vivian"
+
+# Re-export registry for capabilities exposure
+try:
+    from app.tts.registry import (
+        DEFAULT_MODEL_ID as _DEFAULT_MODEL_ID,
+    )
+    from app.tts.registry import (
+        DEFAULT_PROVIDER as _DEFAULT_PROVIDER,
+    )
+    from app.tts.registry import (
+        SUPPORTED_MODELS as _SUPPORTED_MODELS,
+    )
+    from app.tts.registry import (
+        SUPPORTED_PROVIDERS as _SUPPORTED_PROVIDERS,
+    )
+    from app.tts.registry import (
+        get_all_capabilities as _get_all_capabilities,
+    )
+    from app.tts.registry import (
+        get_model_capabilities as _get_model_capabilities,
+    )
+    from app.tts.registry import (
+        get_supported_languages as _get_supported_languages,
+    )
+    from app.tts.registry import (
+        get_supported_speakers as _get_supported_speakers,
+    )
+    from app.tts.registry import (
+        is_valid_model as _is_valid_model,
+    )
+    from app.tts.registry import (
+        is_valid_provider as _is_valid_provider,
+    )
+except Exception:  # pragma: no cover
+    _DEFAULT_MODEL_ID = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16"
+    _DEFAULT_PROVIDER = "auto"
+    _SUPPORTED_MODELS = [_DEFAULT_MODEL_ID]
+    _SUPPORTED_PROVIDERS = ["auto", "sine", "mlx"]
+
+    def _get_supported_speakers(model_id: str) -> list[str]:  # type: ignore[no-redef]
+        return list(_CANONICAL_SPEAKERS)
+
+    def _get_supported_languages(model_id: str) -> list[str]:  # type: ignore[no-redef]
+        return ["zh", "en", "ja", "ko", "de", "fr", "ru", "pt", "es", "it"]
+
+    def _get_model_capabilities(model_id: str) -> dict[str, object]:  # type: ignore[no-redef]
+        return {
+            "languages": _get_supported_languages(model_id),
+            "speakers": _get_supported_speakers(model_id),
+            "instructionSupported": False,
+        }
+
+    def _get_all_capabilities() -> dict[str, dict[str, object]]:  # type: ignore[no-redef]
+        return {m: _get_model_capabilities(m) for m in _SUPPORTED_MODELS}
+
+    def _is_valid_model(model_id: str) -> bool:  # type: ignore[no-redef]
+        return model_id == _DEFAULT_MODEL_ID
+
+    def _is_valid_provider(p: str) -> bool:  # type: ignore[no-redef]
+        return p in _SUPPORTED_PROVIDERS
 
 
 def map_language(raw: str | None) -> str:
@@ -423,14 +489,38 @@ def get_tts_engine(
     """
     import os
 
-    raw_provider = provider if provider is not None else os.getenv("TTS_PROVIDER", "auto")
-    eff_provider = (raw_provider or "auto").strip().lower()
+    # Validate against registry if available
+    try:
+        from app.tts.registry import (
+            DEFAULT_MODEL_ID as _DEF_MID,
+        )
+        from app.tts.registry import (
+            DEFAULT_PROVIDER as _DEF_PROV,
+        )
+        from app.tts.registry import (
+            is_valid_model as _is_valid_model,
+        )
+        from app.tts.registry import (
+            is_valid_provider as _is_valid_provider,
+        )
+    except Exception:  # pragma: no cover
+        _DEF_MID = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16"
+        _DEF_PROV = "auto"
+        _is_valid_model = lambda x: True  # type: ignore
+        _is_valid_provider = lambda x: x in ("auto", "sine", "mlx")  # type: ignore
+
+    raw_provider = provider if provider is not None else os.getenv("TTS_PROVIDER", _DEF_PROV)
+    eff_provider = (raw_provider or _DEF_PROV).strip().lower()
+    if not _is_valid_provider(eff_provider):
+        raise ValueError(f"unknown provider '{eff_provider}'")
     raw_model_id = (
         model_id
         if model_id is not None
-        else os.getenv("TTS_MODEL_ID", "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16")
+        else os.getenv("TTS_MODEL_ID", _DEF_MID)
     )
-    eff_model_id = (raw_model_id or "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16").strip()
+    eff_model_id = (raw_model_id or _DEF_MID).strip()
+    if not _is_valid_model(eff_model_id):
+        raise ValueError(f"unknown modelId '{eff_model_id}'")
 
     global _singleton_engine, _singleton_provider, _singleton_model_id
     with _singleton_lock:
@@ -467,3 +557,52 @@ def _reset_singleton_for_tests() -> None:
         _singleton_engine = None
         _singleton_provider = None
         _singleton_model_id = None
+
+
+def reset_tts_engine_singleton() -> None:
+    """Production helper to reset singleton (used on settings change)."""
+    _reset_singleton_for_tests()
+
+
+def get_supported_speakers(model_id: str | None = None) -> list[str]:
+    try:
+        from app.tts.registry import DEFAULT_MODEL_ID as _DEF
+        from app.tts.registry import get_supported_speakers as _reg_speakers
+
+        mid = model_id or _DEF
+        return _reg_speakers(mid)
+    except Exception:
+        return list(_CANONICAL_SPEAKERS)
+
+
+def get_supported_languages(model_id: str | None = None) -> list[str]:
+    try:
+        from app.tts.registry import DEFAULT_MODEL_ID as _DEF
+        from app.tts.registry import get_supported_languages as _reg_langs
+
+        mid = model_id or _DEF
+        return _reg_langs(mid)
+    except Exception:
+        return list(_ALLOWED_TTS_ISOS) if _ALLOWED_TTS_ISOS else ["en", "zh"]
+
+
+def get_model_capabilities(model_id: str) -> dict[str, object]:
+    try:
+        from app.tts.registry import get_model_capabilities as _reg_cap
+
+        return _reg_cap(model_id)
+    except Exception:
+        return {
+            "languages": get_supported_languages(model_id),
+            "speakers": get_supported_speakers(model_id),
+            "instructionSupported": False,
+        }
+
+
+def get_all_capabilities() -> dict[str, dict[str, object]]:
+    try:
+        from app.tts.registry import get_all_capabilities as _reg_all
+
+        return _reg_all()
+    except Exception:
+        return {m: get_model_capabilities(m) for m in [_DEFAULT_MODEL_ID]}

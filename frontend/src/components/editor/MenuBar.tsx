@@ -19,6 +19,7 @@ import { useNotificationStore } from '../../stores/notificationStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { useUiStore } from '../../stores/uiStore'
 import { triggerAssetImport } from '../assets/importTrigger'
+import { TtsGlobalSettingsModal } from '../settings/TtsGlobalSettings'
 
 const IMPORT_ASSETS_ITEM = 'Import Assets'
 const SNAP_TO_GRID_ITEM = 'Snap to Grid'
@@ -28,6 +29,7 @@ const DUPLICATE_ITEM = 'Duplicate'
 const DELETE_ITEM = 'Delete'
 const SAVE_ITEM = 'Save'
 
+const TTS_SETTINGS_ITEM = 'TTS Settings'
 const MENUS = [
   {
     label: 'File',
@@ -57,6 +59,10 @@ const MENUS = [
   {
     label: 'AI',
     items: ['AI Assistant'],
+  },
+  {
+    label: 'Settings',
+    items: [TTS_SETTINGS_ITEM],
   },
   {
     label: 'Help',
@@ -141,6 +147,7 @@ function Menu({
 export function MenuBar() {
   const { engine, dispatch, persistence } = useEngine()
   const [, setTick] = useState(0)
+  const [showTtsSettings, setShowTtsSettings] = useState(false)
   useEngineEvent(() => setTick((tick) => tick + 1))
   const libraryUnavailable = useAssetLibraryStore((state) => state.unavailable)
   const gridSnap = useUiStore((state) => state.gridSnap)
@@ -169,6 +176,8 @@ export function MenuBar() {
       openProjectBrowser()
     } else if (item === 'New Project') {
       requestNewProject()
+    } else if (item === TTS_SETTINGS_ITEM) {
+      setShowTtsSettings(true)
     } else if (item === COPY_ITEM) {
       copySelection(engine)
     } else if (item === PASTE_ITEM) {
@@ -189,21 +198,24 @@ export function MenuBar() {
   }
 
   return (
-    <header className="menu-bar">
-      <span className="menu-bar__title">AI Slideshow Editor</span>
-      <nav className="menu-bar__menus">
-        {MENUS.map((menu) => (
-          <Menu
-            key={menu.label}
-            label={menu.label}
-            items={menu.items}
-            libraryUnavailable={libraryUnavailable}
-            checkedItems={checkedItems}
-            disabledItems={disabledItems}
-            onItemClick={handleItemClick}
-          />
-        ))}
-      </nav>
-    </header>
+    <>
+      <header className="menu-bar">
+        <span className="menu-bar__title">AI Slideshow Editor</span>
+        <nav className="menu-bar__menus">
+          {MENUS.map((menu) => (
+            <Menu
+              key={menu.label}
+              label={menu.label}
+              items={menu.items}
+              libraryUnavailable={libraryUnavailable}
+              checkedItems={checkedItems}
+              disabledItems={disabledItems}
+              onItemClick={handleItemClick}
+            />
+          ))}
+        </nav>
+      </header>
+      {showTtsSettings && <TtsGlobalSettingsModal onClose={() => setShowTtsSettings(false)} />}
+    </>
   )
 }

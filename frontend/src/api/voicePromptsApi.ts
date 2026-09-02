@@ -7,6 +7,8 @@ export interface VoicePromptCreate {
   language?: string
   voice?: string
   params?: Record<string, unknown>
+  modelId?: string
+  provider?: string
 }
 
 export interface VoicePromptUpdate {
@@ -15,6 +17,8 @@ export interface VoicePromptUpdate {
   language?: string | null
   voice?: string | null
   params?: Record<string, unknown> | null
+  modelId?: string | null
+  provider?: string | null
 }
 
 export interface VoicePromptOut extends VoicePrompt {

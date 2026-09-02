@@ -19,10 +19,10 @@ from .languages import (
 __all__ = [
     "ALLOWED_TTS_ISOS",
     "LANGUAGE_OPTIONS",
+    "TTS_ISO_TO_DISPLAY",
     "MlxNotAvailableError",
     "MlxQwenTtsEngine",
     "SineTtsEngine",
-    "TTS_ISO_TO_DISPLAY",
     "TtsEngine",
     "TtsInferenceError",
     "TtsModelLoadError",

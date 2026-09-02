@@ -42,6 +42,8 @@ def create_voice_prompt(request: Request, body: VoicePromptCreate) -> VoicePromp
         language=body.language,
         voice=body.voice,
         params=body.params,
+        model_id=body.modelId,
+        provider=body.provider,
         now=_now(),
     )
     return row_to_schema(row)
@@ -85,6 +87,14 @@ def update_voice_prompt(
         patch["params"] = body.params
     elif "params" in body.model_fields_set:
         patch["params"] = None
+    if body.modelId is not None:
+        patch["model_id"] = body.modelId
+    elif "modelId" in body.model_fields_set:
+        patch["model_id"] = None
+    if body.provider is not None:
+        patch["provider"] = body.provider
+    elif "provider" in body.model_fields_set:
+        patch["provider"] = None
     # if no fields were set, return current
     if not patch and not body.model_fields_set:
         raise HTTPException(status_code=422, detail="no fields to update")

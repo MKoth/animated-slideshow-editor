@@ -6,7 +6,7 @@ DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent / "var"
 DEFAULT_MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 
-@dataclass(frozen=True)
+@dataclass
 class Settings:
     frontend_url: str
     development_mode: bool

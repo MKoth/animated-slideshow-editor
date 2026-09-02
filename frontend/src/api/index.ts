@@ -8,6 +8,7 @@ import { ProjectsApi } from './projectsApi'
 import { ShadersApi } from './shadersApi'
 import { TtsApi } from '../engine/ttsProvider'
 import { VoicePromptsApi } from './voicePromptsApi'
+import { TtsSettingsApi } from './ttsSettingsApi'
 
 export const apiClient = new ApiClient()
 export const assetsApi = new AssetsApi(apiClient)
@@ -19,6 +20,7 @@ export const projectsApi = new ProjectsApi(apiClient)
 export const shadersApi = new ShadersApi(apiClient)
 export const voicePromptsApi = new VoicePromptsApi(apiClient)
 export const ttsApi = new TtsApi(apiClient)
+export const ttsSettingsApi = new TtsSettingsApi(apiClient)
 
 export type { AssetDefinition, AssetSortKey, AssetSortOrder, AssetUploadResult } from './assetsApi'
 export type {

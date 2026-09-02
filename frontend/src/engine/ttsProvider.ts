@@ -8,6 +8,8 @@ export interface TTSRequest {
   readonly language?: string
   readonly voice?: string
   readonly instruction?: string
+  readonly modelId?: string
+  readonly provider?: string
 }
 
 export interface TTSProvider {
@@ -123,6 +125,8 @@ export interface VoicePrompt {
   readonly language?: string
   readonly voice?: string
   readonly params?: Readonly<Record<string, unknown>>
+  readonly modelId?: string
+  readonly provider?: string
 }
 
 export function validateVoicePrompt(value: unknown): string[] {
@@ -137,5 +141,7 @@ export function validateVoicePrompt(value: unknown): string[] {
   if (typeof v.instruction !== 'string' || v.instruction === '') errors.push('VoicePrompt instruction must be a non-empty string')
   if (v.language !== undefined && typeof v.language !== 'string') errors.push('VoicePrompt language must be a string')
   if (v.voice !== undefined && typeof v.voice !== 'string') errors.push('VoicePrompt voice must be a string')
+  if (v.modelId !== undefined && typeof v.modelId !== 'string') errors.push('VoicePrompt modelId must be a string')
+  if (v.provider !== undefined && typeof v.provider !== 'string') errors.push('VoicePrompt provider must be a string')
   return errors
 }

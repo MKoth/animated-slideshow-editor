@@ -55,6 +55,7 @@ import { WordLevelTtsModal } from '../audio/WordLevelTtsModal'
 import { getPrompterRecordingShortcut, getPrompterSecondsPerCharacter } from '../../engine/prompter'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { captureAudioSnapshot } from '../../app/assetSnapshot'
+import { TtsGlobalSettings } from '../settings/TtsGlobalSettings'
 
 const PROMPTER_STRIP_HEIGHT = 42
 const AUDIO_LANE_HEIGHT = 56
@@ -1692,6 +1693,9 @@ export function AudioTimelineBody({
                   >
                     Reset all (Don&apos;t ask)
                   </button>
+                </div>
+                <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--color-border)' }}>
+                  <TtsGlobalSettings />
                 </div>
               </div>
             )}
