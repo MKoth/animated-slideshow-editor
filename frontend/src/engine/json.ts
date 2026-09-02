@@ -91,6 +91,10 @@ export type NodeComponentsJSON = {
 export type MaterialJSON = {
   readonly definitionId: string
   readonly overrides: Readonly<Record<string, MaterialOverrideJSON>>
+  readonly textureId?: string
+  readonly uvScale?: { readonly u: number; readonly v: number }
+  readonly uvOffset?: { readonly u: number; readonly v: number }
+  readonly fitMode?: string
 }
 
 export type FullscreenShaderJSON = {

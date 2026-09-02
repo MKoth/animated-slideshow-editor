@@ -46,6 +46,7 @@ import { TableInspectorSection } from './TableInspectorSection'
 import { ChartInspectorSection } from './ChartInspectorSection'
 import { TextInspectorSection } from './TextInspectorSection'
 import { CircleInspectorSection } from './CircleInspectorSection'
+import { TextureInspectorSection } from './TextureInspectorSection'
 import { PROPERTY_LABELS } from './timelineTracks'
 import {
   RenameClipCommand,
@@ -582,6 +583,15 @@ export function InspectorPanel({ width }: { width: number }) {
 
         {targets.length === 1 && targets[0]!.components.circle && (
           <CircleInspectorSection
+            target={targets[0]!}
+            dispatch={dispatch}
+            notify={notify}
+            playing={playing}
+          />
+        )}
+
+        {targets.length === 1 && (targets[0]!.components.mesh || targets[0]!.components.circle) && (
+          <TextureInspectorSection
             target={targets[0]!}
             dispatch={dispatch}
             notify={notify}

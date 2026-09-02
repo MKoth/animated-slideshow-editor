@@ -1871,6 +1871,23 @@ export class Engine {
     this.#nodes.reorderNode(nodeId, index)
   }
 
+  // --- Texture attachment helpers ---
+  emitMaterialChanged(nodeId: string): void {
+    this.#bus.emit({ type: 'MaterialParameterChanged', nodeId })
+    // Also notify mesh/circle changed so renderer reapplies UV transform and texture
+    const node = this.getNode(nodeId)
+    if (node.components.mesh) {
+      this.#bus.emit({ type: 'MeshChanged', nodeId })
+    }
+    if (node.components.circle) {
+      this.#bus.emit({
+        type: 'CircleChanged' as unknown as import('./events').EngineEvent['type'],
+        nodeId,
+      } as unknown as import('./events').EngineEvent)
+      this.#bus.emit({ type: 'MeshChanged', nodeId })
+    }
+  }
+
   defineAsset(name: string): AssetDefinition {
     return this.#assets.defineAsset(name)
   }

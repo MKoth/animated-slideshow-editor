@@ -1702,6 +1702,66 @@ export function applyUndo(
       void tableNodeId
       return
     }
+    case 'AttachTextureToMesh': {
+      const nodeId = inv.nodeId as string
+      const prevTextureId = inv.previousTextureId as string | undefined
+      const prevUV = inv.previousUVTransform as import('../uvTransform').UVTransform | undefined
+      const node = engine.getNode(nodeId)
+      if (prevTextureId === undefined) {
+        const newMat: Record<string, unknown> = {
+          materialDefinitionId: node.material.materialDefinitionId,
+          overrides: { ...node.material.overrides },
+        }
+        ;(node as unknown as { material: unknown }).material = newMat
+      } else {
+        const newMat: Record<string, unknown> = {
+          materialDefinitionId: node.material.materialDefinitionId,
+          overrides: { ...node.material.overrides },
+          textureId: prevTextureId,
+        }
+        if (prevUV) newMat.uvTransform = prevUV
+        ;(node as unknown as { material: unknown }).material = newMat
+      }
+      engine.emitMaterialChanged(nodeId)
+      return
+    }
+    case 'DetachTexture': {
+      const nodeId = inv.nodeId as string
+      const prevTextureId = inv.previousTextureId as string | undefined
+      const prevUV = inv.previousUVTransform as import('../uvTransform').UVTransform | undefined
+      const node = engine.getNode(nodeId)
+      if (prevTextureId !== undefined) {
+        const newMat: Record<string, unknown> = {
+          materialDefinitionId: node.material.materialDefinitionId,
+          overrides: { ...node.material.overrides },
+          textureId: prevTextureId,
+        }
+        if (prevUV) newMat.uvTransform = prevUV
+        ;(node as unknown as { material: unknown }).material = newMat
+      } else {
+        const newMat: Record<string, unknown> = {
+          materialDefinitionId: node.material.materialDefinitionId,
+          overrides: { ...node.material.overrides },
+        }
+        ;(node as unknown as { material: unknown }).material = newMat
+      }
+      engine.emitMaterialChanged(nodeId)
+      return
+    }
+    case 'SetUVTransform': {
+      const nodeId = inv.nodeId as string
+      const prevUV = inv.previousUVTransform as import('../uvTransform').UVTransform | undefined
+      const node = engine.getNode(nodeId)
+      const newMat: Record<string, unknown> = {
+        materialDefinitionId: node.material.materialDefinitionId,
+        overrides: { ...node.material.overrides },
+        textureId: node.material.textureId,
+      }
+      if (prevUV) newMat.uvTransform = prevUV
+      ;(node as unknown as { material: unknown }).material = newMat
+      engine.emitMaterialChanged(nodeId)
+      return
+    }
     default:
       console.warn(`[undo] No handler for type ${type}`)
       return
@@ -2783,6 +2843,61 @@ export function applyRedo(
       const pivot = params.pivot as { x: number; y: number }
       const node = engine.getNode(nodeId)
       engine.setTransform(nodeId, { ...node.transform, localPivot: pivot })
+      return
+    }
+    case 'AttachTextureToMesh': {
+      const uvScale = params.uvScale as { u: number; v: number } | undefined
+      const uvOffset = params.uvOffset as { u: number; v: number } | undefined
+      const fitMode = params.fitMode as import('../uvTransform').FitMode | undefined
+      const t: import('../uvTransform').UVTransform = {
+        uvScale: uvScale ?? { u: 1, v: 1 },
+        uvOffset: uvOffset ?? { u: 0, v: 0 },
+        fitMode: fitMode ?? 'stretch',
+      }
+      const node = engine.getNode(params.nodeId as string)
+      const newMat: Record<string, unknown> = {
+        materialDefinitionId: node.material.materialDefinitionId,
+        overrides: { ...node.material.overrides },
+        textureId: params.textureId as string,
+        uvTransform: t,
+      }
+      ;(node as unknown as { material: unknown }).material = newMat
+      engine.emitMaterialChanged(params.nodeId as string)
+      return
+    }
+    case 'DetachTexture': {
+      const node = engine.getNode(params.nodeId as string)
+      const newMat: Record<string, unknown> = {
+        materialDefinitionId: node.material.materialDefinitionId,
+        overrides: { ...node.material.overrides },
+      }
+      ;(node as unknown as { material: unknown }).material = newMat
+      engine.emitMaterialChanged(params.nodeId as string)
+      return
+    }
+    case 'SetUVTransform': {
+      const node = engine.getNode(params.nodeId as string)
+      const current = node.material.uvTransform ?? {
+        uvScale: { u: 1, v: 1 },
+        uvOffset: { u: 0, v: 0 },
+        fitMode: 'stretch' as const,
+      }
+      const next: import('../uvTransform').UVTransform = {
+        uvScale: (params.uvScale as { u: number; v: number } | undefined) ?? { ...current.uvScale },
+        uvOffset: (params.uvOffset as { u: number; v: number } | undefined) ?? {
+          ...current.uvOffset,
+        },
+        fitMode:
+          (params.fitMode as import('../uvTransform').FitMode | undefined) ?? current.fitMode,
+      }
+      const newMat: Record<string, unknown> = {
+        materialDefinitionId: node.material.materialDefinitionId,
+        overrides: { ...node.material.overrides },
+        textureId: node.material.textureId,
+        uvTransform: next,
+      }
+      ;(node as unknown as { material: unknown }).material = newMat
+      engine.emitMaterialChanged(params.nodeId as string)
       return
     }
     default:

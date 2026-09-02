@@ -32,14 +32,15 @@ import {
 import type { PixiContainer, PixiFilter, PixiSprite, RendererPixi } from './pixi'
 import type { WorldSize } from './worldGeometry'
 import {
-  applyCircleData,
+  applyCircleDataWithUV,
   applyEvaluatedState,
   applyMaterialTint,
-  applyMeshData,
+  applyMeshDataWithUV,
   applyMeshVertices,
   applyName,
   applyPivotWithSize,
   applyTableNodeOrdering,
+  applyUVTransformToContainer,
   createNodeContainer,
   placeholderOf,
   refreshTableChildContainer,
@@ -374,6 +375,23 @@ export class SceneRenderer {
 
   handleMaterialChanged(nodeId: string): void {
     this.#evaluateAndApply(nodeId)
+    // For mesh/circle nodes, material change may be texture/UV attachment — reapply UV and texture
+    const node = this.#scene?.getNode(nodeId)
+    const container = this.#containers.get(nodeId)
+    if (node && container) {
+      if (node.components.mesh || node.components.circle) {
+        applyUVTransformToContainer(this.#pixi, container, node)
+        // Also refresh texture if textureId changed
+        const texId = node.material.textureId
+        if (texId) {
+          this.#loadAssetTexture(texId, nodeId, container)
+        } else {
+          // Detached: need to revert placeholder texture to default?
+          // For now, placeholder remains; but ensure missing handling cleared
+          this.#missingNodes.delete(nodeId)
+        }
+      }
+    }
   }
 
   handleMeshChanged(nodeId: string): void {
@@ -404,7 +422,8 @@ export class SceneRenderer {
         this.#loadAssetTexture(instance.assetDefinitionId, nodeId, replacement)
       }
     } else if (container) {
-      applyMeshData(this.#pixi, container, mesh)
+      applyMeshDataWithUV(this.#pixi, container, node, mesh)
+      applyUVTransformToContainer(this.#pixi, container, node)
     }
     if (mesh.vertices.length === 0) {
       return
@@ -471,7 +490,8 @@ export class SceneRenderer {
     const end = state?.endAngle ?? circle.endAngle
     const radius = state?.radius ?? circle.radius
     const segments = state?.segments ?? circle.segments
-    applyCircleData(this.#pixi, container, circle, start, end, radius, segments)
+    applyCircleDataWithUV(this.#pixi, container, node, start, end, radius, segments)
+    applyUVTransformToContainer(this.#pixi, container, node)
     const w = radius * 2
     const h = radius * 2
     this.#sizes.set(nodeId, { width: w, height: h, offsetX: 0, offsetY: 0 })
@@ -762,6 +782,15 @@ export class SceneRenderer {
     if (instance) {
       this.#loadAssetTexture(instance.assetDefinitionId, node.id, container)
     }
+    // Load texture attached via material (mesh/circle UV texture)
+    const texId = node.material.textureId
+    if (texId) {
+      this.#loadAssetTexture(texId, node.id, container)
+    }
+    // Apply UV transform after texture placeholder is set
+    if (node.components.mesh || node.components.circle) {
+      applyUVTransformToContainer(this.#pixi, container, node)
+    }
     if (node.components.chart) {
       this.handleChartChanged(node.id)
     }
@@ -807,26 +836,29 @@ export class SceneRenderer {
     }
     const time = this.#currentTime.getTime(slideId)
     if (node.components.circle) {
-      const circle = node.components.circle
       const circleState = this.#engine.evaluateCircle(nodeId, time)
       if (circleState) {
         const circleHash = `${circleState.startAngle}:${circleState.endAngle}:${circleState.radius}:${circleState.segments}`
         const prevHash = this.#circleHashes.get(nodeId)
         if (prevHash !== circleHash) {
           this.#circleHashes.set(nodeId, circleHash)
-          applyCircleData(
+          applyCircleDataWithUV(
             this.#pixi,
             container,
-            circle,
+            node,
             circleState.startAngle,
             circleState.endAngle,
             circleState.radius,
             circleState.segments,
           )
+          applyUVTransformToContainer(this.#pixi, container, node)
           const w = circleState.radius * 2
           const h = circleState.radius * 2
           this.#sizes.set(nodeId, { width: w, height: h, offsetX: 0, offsetY: 0 })
           this.#onNodeSizeChanged(nodeId)
+        } else if (node.material.textureId || node.material.uvTransform) {
+          // Material UV may have changed without circle geometry change — ensure UVs are current
+          applyUVTransformToContainer(this.#pixi, container, node)
         }
       }
     }
@@ -1131,6 +1163,9 @@ export class SceneRenderer {
       }
       applyAssetTexture(placeholder, result.texture)
       const node = this.#scene?.getNode(nodeId)
+      if (node && (node.components.mesh || node.components.circle)) {
+        applyUVTransformToContainer(this.#pixi, container, node)
+      }
       const material = this.#resolveMaterial(
         nodeId,
         node?.material.overrides ?? {},
@@ -1153,15 +1188,18 @@ export class SceneRenderer {
       return
     }
     for (const node of walkPreOrder(scene.root)) {
+      const containers: string[] = []
       const instance = node.components.assetInstance
-      if (!instance) {
-        continue
+      if (instance) containers.push(instance.assetDefinitionId)
+      const texId = node.material.textureId
+      if (texId) containers.push(texId)
+      for (const defId of containers) {
+        const container = this.#containers.get(node.id)
+        if (!container) {
+          continue
+        }
+        this.#loadAssetTexture(defId, node.id, container)
       }
-      const container = this.#containers.get(node.id)
-      if (!container) {
-        continue
-      }
-      this.#loadAssetTexture(instance.assetDefinitionId, node.id, container)
     }
   }
 

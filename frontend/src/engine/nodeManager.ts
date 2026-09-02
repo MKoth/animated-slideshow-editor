@@ -9,12 +9,7 @@ import {
   wouldFormCycle,
 } from './sceneNode'
 import type { Pivot, Transform } from './transform'
-import {
-  identityTransform,
-  normalizeRotation,
-  validatePivot,
-  isIdentityPivot,
-} from './transform'
+import { identityTransform, normalizeRotation, validatePivot, isIdentityPivot } from './transform'
 import type { NodeComponents } from './components'
 import {
   requireMaterialOverrideValue,
@@ -193,9 +188,18 @@ export class NodeManager {
       newPivot && !isIdentityPivot(newPivot) ? { x: newPivot.x, y: newPivot.y } : undefined
     const next: Transform = sanitizedPivot
       ? { ...transform, rotation: normalizedRotation, localPivot: sanitizedPivot }
-      : { x: transform.x, y: transform.y, rotation: normalizedRotation, scaleX: transform.scaleX, scaleY: transform.scaleY }
+      : {
+          x: transform.x,
+          y: transform.y,
+          rotation: normalizedRotation,
+          scaleX: transform.scaleX,
+          scaleY: transform.scaleY,
+        }
     // Preserve undefined vs value semantics: if original had no pivot and new is identity, omit
-    if (sanitizedPivot === undefined && (transform as { localPivot?: Pivot }).localPivot !== undefined) {
+    if (
+      sanitizedPivot === undefined &&
+      (transform as { localPivot?: Pivot }).localPivot !== undefined
+    ) {
       // explicitly strip
     }
     node.transform = next
@@ -212,9 +216,15 @@ export class NodeManager {
     const sanitized = isIdentityPivot(pivot) ? undefined : { x: pivot.x, y: pivot.y }
     const next: Transform = sanitized
       ? { ...current, localPivot: sanitized }
-      : { x: current.x, y: current.y, rotation: current.rotation, scaleX: current.scaleX, scaleY: current.scaleY }
+      : {
+          x: current.x,
+          y: current.y,
+          rotation: current.rotation,
+          scaleX: current.scaleX,
+          scaleY: current.scaleY,
+        }
     const pivotChanged =
-      (current.localPivot?.x ?? 0) !== (pivot.x) || (current.localPivot?.y ?? 0) !== (pivot.y)
+      (current.localPivot?.x ?? 0) !== pivot.x || (current.localPivot?.y ?? 0) !== pivot.y
     if (!pivotChanged) {
       return
     }
@@ -260,7 +270,11 @@ export class NodeManager {
 
   assignMaterial(nodeId: string, materialDefinitionId: string): void {
     const node = this.getById(nodeId)
-    node.material = { materialDefinitionId, overrides: {} }
+    const previous = node.material
+    const next: Record<string, unknown> = { materialDefinitionId, overrides: {} }
+    if (previous.textureId) next.textureId = previous.textureId
+    if (previous.uvTransform) next.uvTransform = previous.uvTransform
+    node.material = next as unknown as typeof node.material
     this.#bus.emit({ type: 'MaterialAssigned', nodeId })
   }
 

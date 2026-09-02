@@ -404,3 +404,16 @@ export type {
   SetCircleComponentInverse,
   SetCircleComponentParameters,
 } from './setCircleComponentCommand'
+export {
+  AttachTextureToMeshCommand,
+  DetachTextureCommand,
+  SetUVTransformCommand,
+} from './attachTextureCommand'
+export type {
+  AttachTextureParameters,
+  AttachTextureInverse,
+  DetachTextureParameters,
+  DetachTextureInverse,
+  SetUVTransformParameters,
+  SetUVTransformInverse,
+} from './attachTextureCommand'

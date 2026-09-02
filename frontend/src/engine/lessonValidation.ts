@@ -22,6 +22,43 @@ export function validateMaterial(errors: string[], value: unknown, nodeId: strin
   }
   requireNonEmptyString(errors, value.definitionId, `Node "${nodeId}" material definition id`)
   validateOverrides(errors, value.overrides, `Node "${nodeId}" material overrides`)
+  if (value.textureId !== undefined) {
+    if (typeof value.textureId !== 'string' || value.textureId === '') {
+      errors.push(`Node "${nodeId}" material textureId must be a non-empty string`)
+    }
+  }
+  if (value.uvScale !== undefined) {
+    if (
+      !isRecord(value.uvScale) ||
+      typeof value.uvScale.u !== 'number' ||
+      typeof value.uvScale.v !== 'number' ||
+      !Number.isFinite(value.uvScale.u) ||
+      !Number.isFinite(value.uvScale.v) ||
+      value.uvScale.u <= 0 ||
+      value.uvScale.v <= 0
+    ) {
+      errors.push(`Node "${nodeId}" material uvScale must have positive finite u and v`)
+    }
+  }
+  if (value.uvOffset !== undefined) {
+    if (
+      !isRecord(value.uvOffset) ||
+      typeof value.uvOffset.u !== 'number' ||
+      typeof value.uvOffset.v !== 'number' ||
+      !Number.isFinite(value.uvOffset.u) ||
+      !Number.isFinite(value.uvOffset.v)
+    ) {
+      errors.push(`Node "${nodeId}" material uvOffset must have finite u and v`)
+    }
+  }
+  if (value.fitMode !== undefined) {
+    if (
+      typeof value.fitMode !== 'string' ||
+      !['stretch', 'cover', 'contain'].includes(value.fitMode as string)
+    ) {
+      errors.push(`Node "${nodeId}" material fitMode must be one of stretch, cover, contain`)
+    }
+  }
 }
 
 export function validateKeyframeList(

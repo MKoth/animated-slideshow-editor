@@ -45,6 +45,9 @@ export {
   DEFAULT_MATERIAL_DEFINITION_ID,
   DEFAULT_MATERIAL_NAME,
   defaultMaterial,
+  defaultUVTransformForMaterial,
+  isDefaultUVTransform,
+  materialHasTexture,
 } from './materialInstance'
 export type { MaterialInstance, MaterialOverrides, MaterialOverrideValue } from './materialInstance'
 export {
@@ -313,3 +316,13 @@ export {
 } from './circleComponent'
 export { CIRCLE_ANIMATABLE_PROPERTIES } from './animationProperties'
 export type { CircleAnimationProperty } from './animationProperties'
+export type { FitMode, UVTransform, UVScale, UVOffset } from './uvTransform'
+export {
+  DEFAULT_FIT_MODE,
+  DEFAULT_UV_SCALE,
+  DEFAULT_UV_OFFSET,
+  defaultUVTransform,
+  applyUVTransformToUVs,
+  applyUVTransformToSingle,
+} from './uvTransform'
+export { AttachTextureToMeshCommand, DetachTextureCommand, SetUVTransformCommand } from './commands'

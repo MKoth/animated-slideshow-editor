@@ -20,6 +20,23 @@ export function collectReferencedDefinitionIds(project: Project): Set<string> {
       if (instance) {
         ids.add(instance.assetDefinitionId)
       }
+      const textureId = node.material.textureId
+      if (typeof textureId === 'string' && textureId !== '') {
+        ids.add(textureId)
+      }
+    }
+  }
+  return ids
+}
+
+export function collectReferencedTextureIds(project: Project): Set<string> {
+  const ids = new Set<string>()
+  for (const slide of project.slides) {
+    for (const node of walkPreOrder(slide.scene.root)) {
+      const textureId = node.material.textureId
+      if (typeof textureId === 'string' && textureId !== '') {
+        ids.add(textureId)
+      }
     }
   }
   return ids
@@ -74,23 +91,26 @@ export function reconcileMissingAssets(
   const names: string[] = []
   for (const slide of project.slides) {
     for (const node of walkPreOrder(slide.scene.root)) {
+      const textureId = node.material.textureId
       const instance = node.components.assetInstance
-      if (!instance) {
-        continue
-      }
-      if (availableDefinitionIds.has(instance.assetDefinitionId)) {
-        continue
-      }
-      affectedNodeIds.push(node.id)
-      const nodes = missingByDefinition.get(instance.assetDefinitionId)
-      if (nodes) {
-        nodes.push(node.id)
-      } else {
-        missingByDefinition.set(instance.assetDefinitionId, [node.id])
-      }
-      if (!seenNames.has(node.name)) {
-        seenNames.add(node.name)
-        names.push(node.name)
+      const definitionIds: string[] = []
+      if (instance) definitionIds.push(instance.assetDefinitionId)
+      if (textureId) definitionIds.push(textureId)
+      for (const definitionId of definitionIds) {
+        if (availableDefinitionIds.has(definitionId)) {
+          continue
+        }
+        if (!affectedNodeIds.includes(node.id)) affectedNodeIds.push(node.id)
+        const nodes = missingByDefinition.get(definitionId)
+        if (nodes) {
+          if (!nodes.includes(node.id)) nodes.push(node.id)
+        } else {
+          missingByDefinition.set(definitionId, [node.id])
+        }
+        if (!seenNames.has(node.name)) {
+          seenNames.add(node.name)
+          names.push(node.name)
+        }
       }
     }
   }

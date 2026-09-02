@@ -15,6 +15,8 @@ import { createTableContainer, rebuildTableChild, DEFAULT_TABLE_WIDTH } from './
 import { createChartContainer } from './chartRenderer'
 import { createTextContainer, applyTextTint, textDisplayOf } from './textRenderer'
 import type { TextureCache } from './textureCache'
+import { applyUVTransformToUVs, type UVTransform } from '../../engine/uvTransform'
+import { DEFAULT_FIT_MODE } from '../../engine/uvTransform'
 
 const placeholderByContainer = new WeakMap<PixiContainer, PixiContainer>()
 const meshByGroup = new WeakMap<PixiContainer, PixiMeshSimple>()
@@ -197,7 +199,8 @@ export function createMeshPlaceholder(
   group.label = `placeholder:${node.name}`
 
   if (mesh && mesh.vertices.length > 0) {
-    const displayMesh = createDisplayMesh(pixi, mesh, texture)
+    const transformed = transformedMeshForNode(node, mesh, texture)
+    const displayMesh = createDisplayMesh(pixi, transformed, texture)
     meshByGroup.set(group, displayMesh)
     registerMeshDisplay(group, displayMesh)
     group.addChild(displayMesh)
@@ -233,7 +236,8 @@ export function createCirclePlaceholder(
   group.label = `placeholder:${node.name}`
   if (circle) {
     const mesh = generateCircleMeshData(circle)
-    const displayMesh = createDisplayMesh(pixi, mesh, texture)
+    const transformed = transformedMeshForNode(node, mesh, texture)
+    const displayMesh = createDisplayMesh(pixi, transformed, texture)
     meshByGroup.set(group, displayMesh)
     registerMeshDisplay(group, displayMesh)
     group.addChild(displayMesh)
@@ -268,7 +272,52 @@ export function applyCircleData(
       : {}),
   }
   const finalMesh = generateCircleMeshData(effectiveCircle)
-  const replacement = createDisplayMesh(pixi, finalMesh, current.texture)
+  // Try to find owning scene node for UV transform. Fallback to raw mesh if not found.
+  const transformedMesh = finalMesh
+  try {
+    // placeholderOf container maps to group, we need node reference. We'll rely on caller to apply UV via separate call if needed.
+    // For now, attempt to use material if we can find node via container label? Fallback: use finalMesh as is.
+    // The actual UV transform will be applied by sceneRenderer after this call via applyUVTransform.
+  } catch {
+    // ignore
+  }
+  const replacement = createDisplayMesh(pixi, transformedMesh, current.texture)
+  const index = group.children.indexOf(current)
+  current.destroy()
+  meshByGroup.set(group, replacement)
+  registerMeshDisplay(group, replacement)
+  group.addChildAt(replacement, index < 0 ? group.children.length : index)
+  const w = (radius ?? circle.radius) * 2
+  const h = (radius ?? circle.radius) * 2
+  setMeshPlaceholderSize(group, w, h, 0, 0)
+}
+
+export function applyCircleDataWithUV(
+  pixi: RendererPixi,
+  container: PixiContainer,
+  node: SceneNode,
+  startAngle?: number,
+  endAngle?: number,
+  radius?: number,
+  segments?: number,
+): void {
+  const group = placeholderByContainer.get(container)
+  const current = group ? meshByGroup.get(group) : undefined
+  if (!group || !current) return
+  const circle = node.components.circle
+  if (!circle) return
+  const effectiveCircle: import('../../engine/circleComponent').CircleComponent = {
+    kind: 'circle',
+    radius: radius ?? circle.radius,
+    startAngle: startAngle ?? circle.startAngle,
+    endAngle: endAngle ?? circle.endAngle,
+    ...(segments !== undefined || circle.segments !== undefined
+      ? { segments: segments ?? circle.segments }
+      : {}),
+  }
+  const baseMesh = generateCircleMeshData(effectiveCircle)
+  const transformed = transformedMeshForNode(node, baseMesh, current.texture)
+  const replacement = createDisplayMesh(pixi, transformed, current.texture)
   const index = group.children.indexOf(current)
   current.destroy()
   meshByGroup.set(group, replacement)
@@ -298,6 +347,85 @@ export function applyMeshData(pixi: RendererPixi, container: PixiContainer, mesh
   group.addChildAt(replacement, index < 0 ? group.children.length : index)
 }
 
+export function applyMeshDataWithUV(
+  pixi: RendererPixi,
+  container: PixiContainer,
+  node: SceneNode,
+  mesh: MeshData,
+): void {
+  const group = placeholderByContainer.get(container)
+  const current = group ? meshByGroup.get(group) : undefined
+  if (!group || !current) return
+  const transformed = transformedMeshForNode(node, mesh, current.texture)
+  const replacement = createDisplayMesh(pixi, transformed, current.texture)
+  const index = group.children.indexOf(current)
+  current.destroy()
+  meshByGroup.set(group, replacement)
+  registerMeshDisplay(group, replacement)
+  group.addChildAt(replacement, index < 0 ? group.children.length : index)
+}
+
+export function applyUVTransformToContainer(
+  pixi: RendererPixi,
+  container: PixiContainer,
+  node: SceneNode,
+): void {
+  const group = placeholderByContainer.get(container)
+  const current = group ? meshByGroup.get(group) : undefined
+  if (!group || !current) return
+  const isMesh = Boolean(node.components.mesh)
+  const isCircle = Boolean(node.components.circle)
+  if (!isMesh && !isCircle) return
+  let baseMesh: MeshData | null = null
+  if (isMesh) {
+    const mesh = node.components.mesh?.mesh
+    if (!mesh) return
+    baseMesh = mesh
+  } else if (isCircle) {
+    const circle = node.components.circle
+    if (!circle) return
+    baseMesh = generateCircleMeshData(circle)
+  }
+  if (!baseMesh) return
+  const transformed = transformedMeshForNode(node, baseMesh, current.texture)
+  // If transformed UVs equal to current's uvs, no need to recreate
+  const newUVs = flattenUvs(transformed.uvs)
+  const currentUVs = (current as unknown as { uvs: Float32Array }).uvs as Float32Array
+  let identical = currentUVs.length === newUVs.length
+  if (identical) {
+    for (let i = 0; i < newUVs.length; i++) {
+      if (Math.abs((currentUVs as unknown as number[])[i] - newUVs[i]) > 1e-6) {
+        identical = false
+        break
+      }
+    }
+  }
+  if (identical) {
+    return
+  }
+  // Recreate mesh with same vertices but new UVs, preserving texture
+  const meshWithNewUVs: MeshData = {
+    vertices: baseMesh.vertices,
+    faces: baseMesh.faces,
+    uvs: transformed.uvs,
+    boneWeights: baseMesh.boneWeights,
+    bindPose: baseMesh.bindPose,
+  }
+  const replacement = createDisplayMesh(pixi, meshWithNewUVs, current.texture)
+  // Preserve vertices deformation if any: copy vertices from current
+  try {
+    ;(replacement as unknown as { vertices: Float32Array }).vertices =
+      current.vertices as unknown as Float32Array
+  } catch {
+    // ignore
+  }
+  const index = group.children.indexOf(current)
+  current.destroy()
+  meshByGroup.set(group, replacement)
+  registerMeshDisplay(group, replacement)
+  group.addChildAt(replacement, index < 0 ? group.children.length : index)
+}
+
 function createDisplayMesh(
   pixi: RendererPixi,
   mesh: MeshData,
@@ -320,4 +448,75 @@ function flattenVertices(vertices: readonly MeshVertex[]): Float32Array {
 
 function flattenUvs(uvs: readonly { readonly u: number; readonly v: number }[]): Float32Array {
   return new Float32Array(uvs.flatMap((uv) => [uv.u, uv.v]))
+}
+
+function transformedMeshForNode(
+  node: SceneNode,
+  mesh: MeshData,
+  texture: PixiMeshSimpleOptions['texture'],
+): MeshData {
+  const textureId = node.material.textureId
+  const uvTransform = node.material.uvTransform
+  // If no texture attached, no transform needed — return original
+  if (!textureId && !uvTransform) {
+    return mesh
+  }
+  const transform: UVTransform = uvTransform ?? {
+    uvScale: { u: 1, v: 1 },
+    uvOffset: { u: 0, v: 0 },
+    fitMode: DEFAULT_FIT_MODE,
+  }
+  // If transform is default identity and fitMode stretch, no-op
+  const isDefault =
+    transform.uvScale.u === 1 &&
+    transform.uvScale.v === 1 &&
+    transform.uvOffset.u === 0 &&
+    transform.uvOffset.v === 0 &&
+    transform.fitMode === 'stretch'
+  if (isDefault && !textureId) {
+    return mesh
+  }
+  // For cover/contain with no texture yet, we still apply if fitMode non-stretch but transform is non-default
+  // Compute geometry size
+  let geometrySize: { width: number; height: number } | undefined
+  if (node.components.mesh) {
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const v of mesh.vertices) {
+      if (v.x < minX) minX = v.x
+      if (v.y < minY) minY = v.y
+      if (v.x > maxX) maxX = v.x
+      if (v.y > maxY) maxY = v.y
+    }
+    const w = maxX - minX
+    const h = maxY - minY
+    if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+      geometrySize = { width: w, height: h }
+    }
+  } else if (node.components.circle) {
+    const circle = node.components.circle
+    if (circle) {
+      geometrySize = { width: circle.radius * 2, height: circle.radius * 2 }
+    }
+  }
+  // Texture size: try to read from provided texture if it's a real texture (not 1x1 placeholder)
+  let textureSize: { width: number; height: number } | undefined
+  if (texture) {
+    const anyTex = texture as unknown as { width?: number; height?: number }
+    if (
+      typeof anyTex.width === 'number' &&
+      typeof anyTex.height === 'number' &&
+      anyTex.width > 1 &&
+      anyTex.height > 1
+    ) {
+      textureSize = { width: anyTex.width, height: anyTex.height }
+    } else if (typeof anyTex.width === 'number' && typeof anyTex.height === 'number') {
+      // Even placeholder 1x1 still considered, but we treat as fallback 1x1
+      textureSize = { width: anyTex.width, height: anyTex.height }
+    }
+  }
+  const transformedUvs = applyUVTransformToUVs(mesh.uvs, transform, geometrySize, textureSize)
+  return { ...mesh, uvs: transformedUvs }
 }
