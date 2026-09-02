@@ -17,6 +17,13 @@ export function CanvasPanel() {
   const hostRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    const state = useAssetLibraryStore.getState()
+    if (!state.loaded && !state.loading && !state.unavailable) {
+      void state.loadLibrary()
+    }
+  }, [])
+
+  useEffect(() => {
     const host = hostRef.current
     if (!host) {
       return

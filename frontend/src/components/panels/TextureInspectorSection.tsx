@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { SceneNode } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
 import {
@@ -27,6 +27,15 @@ export function TextureInspectorSection({
   useEngineEvent(() => setTick((t) => t + 1))
 
   const definitions = useAssetLibraryStore((s) => s.definitions)
+  const loaded = useAssetLibraryStore((s) => s.loaded)
+  const loading = useAssetLibraryStore((s) => s.loading)
+  const loadLibrary = useAssetLibraryStore((s) => s.loadLibrary)
+
+  useEffect(() => {
+    if (!loaded && !loading) {
+      void loadLibrary()
+    }
+  }, [loaded, loading, loadLibrary])
 
   const node = (() => {
     try {
@@ -158,7 +167,7 @@ export function TextureInspectorSection({
             id="texture-picker"
             className="inspector-field__input inspector-field__select"
             aria-label="Attach Texture"
-            disabled={playing}
+            disabled={playing || (loading && definitions.length === 0)}
             value=""
             onChange={(e) => {
               const val = e.target.value
@@ -166,7 +175,7 @@ export function TextureInspectorSection({
             }}
           >
             <option value="" disabled>
-              Select asset…
+              {loading && definitions.length === 0 ? 'Loading…' : 'Select asset…'}
             </option>
             {definitions.map((def) => (
               <option key={def.id} value={def.id}>
