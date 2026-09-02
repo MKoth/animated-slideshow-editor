@@ -4,13 +4,17 @@ import { CommandDispatcher, UndoStack } from '../../engine/commands'
 import type { CreateAssetInstanceInverse } from '../../engine/commands/createAssetInstanceCommand'
 import { CreateAssetInstanceCommand } from '../../engine/commands/createAssetInstanceCommand'
 import {
+  AttachTextureToMeshCommand,
   CreateProjectCommand,
   CreateSlideCommand,
+  CreateNodeCommand,
+  DetachTextureCommand,
   DeleteNodeCommand,
   MoveNodeCommand,
 } from '../../engine/commands'
 import type { Engine } from '../../engine/internal'
 import { createEngine } from '../../engine/internal'
+import { createDefaultRectangleMesh } from '../../engine/mesh'
 import { realPixi } from '../../pixi/renderer/pixi'
 import { Renderer } from '../../pixi/renderer/renderer'
 import { ALWAYS_ZERO_TIME } from '../../pixi/renderer/sceneRenderer'
@@ -297,5 +301,39 @@ describe('real textures in the renderer', () => {
     }
     await flushAsync()
     expect(spriteOf(instanceContainer(root, 'Boy'))?.texture).toBe(BOY_IMAGE)
+  })
+
+  it('ignores a texture that finishes loading after it was detached', async () => {
+    const pending = deferredTexture()
+    textureDeferreds.set(ORIGINAL_URL, pending)
+    const { system, app, definitionId } = await setup()
+    const slide = system.engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('Slide was not created')
+    }
+    const created = system.dispatcher.dispatch(
+      new CreateNodeCommand({
+        sceneId: slide.scene.id,
+        parentId: slide.scene.root.id,
+        name: 'Mesh',
+        components: { mesh: { kind: 'mesh', mesh: createDefaultRectangleMesh(100, 100) } },
+      }),
+    )
+    if (!created.ok || !created.inverse) {
+      throw new Error('Mesh was not created')
+    }
+    system.dispatcher.dispatch(
+      new AttachTextureToMeshCommand({ nodeId: created.inverse.nodeId, textureId: definitionId }),
+    )
+    system.dispatcher.dispatch(new DetachTextureCommand({ nodeId: created.inverse.nodeId }))
+
+    pending.resolve(BOY_IMAGE)
+    await flushAsync()
+
+    const root = findByLabel(worldOf(app), 'Root')
+    const mesh = findByLabel(root ?? { children: [] }, 'Mesh')
+    expect(mesh?.children[0]?.children.find((child) => child.kind === 'mesh')?.texture).not.toBe(
+      BOY_IMAGE,
+    )
   })
 })

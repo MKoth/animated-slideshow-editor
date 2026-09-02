@@ -1173,25 +1173,33 @@ export class SceneRenderer {
     }
     const load = this.#textureCache.load(url, definitionId)
     void load.then((result) => {
-      if (!result.real || container.destroyed) {
+      // A node may have changed or detached its texture while this request was pending.
+      // Never let an old request overwrite the currently selected material.
+      const currentNode = this.#scene?.getNode(nodeId)
+      const currentTextureId =
+        currentNode?.material.textureId ?? currentNode?.components.assetInstance?.assetDefinitionId
+      if (
+        !result.real ||
+        container.destroyed ||
+        !currentNode ||
+        currentTextureId !== definitionId
+      ) {
         return
       }
       applyAssetTexture(placeholder, result.texture)
-      const node = this.#scene?.getNode(nodeId)
-      if (node && (node.components.mesh || node.components.circle)) {
-        applyUVTransformToContainer(this.#pixi, container, node)
+      if (currentNode.components.mesh || currentNode.components.circle) {
+        applyUVTransformToContainer(this.#pixi, container, currentNode)
       }
       const material = this.#resolveMaterial(
         nodeId,
-        node?.material.overrides ?? {},
+        currentNode.material.overrides,
         this.#materialScratch,
       )
       applyMaterialTint(container, material.tint)
       const size = placeholderSize(placeholder)
       if (size) {
         this.#sizes.set(nodeId, size)
-        const n = this.#scene?.getNode(nodeId)
-        if (n) applyPivotWithSize(container, n.transform.localPivot, size)
+        applyPivotWithSize(container, currentNode.transform.localPivot, size)
         this.#onNodeSizeChanged(nodeId)
       }
     })

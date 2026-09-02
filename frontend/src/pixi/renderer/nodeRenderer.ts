@@ -20,6 +20,7 @@ import { DEFAULT_FIT_MODE } from '../../engine/uvTransform'
 
 const placeholderByContainer = new WeakMap<PixiContainer, PixiContainer>()
 const meshByGroup = new WeakMap<PixiContainer, PixiMeshSimple>()
+const uvsByMesh = new WeakMap<PixiMeshSimple, Float32Array>()
 
 export function placeholderOf(container: PixiContainer): PixiContainer | undefined {
   return placeholderByContainer.get(container)
@@ -392,7 +393,10 @@ export function applyUVTransformToContainer(
   const transformed = transformedMeshForNode(node, baseMesh, current.texture)
   // If transformed UVs equal to current's uvs, no need to recreate
   const newUVs = flattenUvs(transformed.uvs)
-  const currentUVs = (current as unknown as { uvs: Float32Array }).uvs as Float32Array
+  const currentUVs = uvsByMesh.get(current)
+  if (!currentUVs) {
+    return
+  }
   let identical = currentUVs.length === newUVs.length
   if (identical) {
     for (let i = 0; i < newUVs.length; i++) {
@@ -441,6 +445,7 @@ function createDisplayMesh(
     topology: 'triangle-list',
   })
   displayMesh.label = 'mesh-display'
+  uvsByMesh.set(displayMesh, mesh.uvs.length === 0 ? new Float32Array() : flattenUvs(mesh.uvs))
   return displayMesh
 }
 
