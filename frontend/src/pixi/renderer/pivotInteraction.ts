@@ -20,8 +20,13 @@ export interface PivotInteractionContext {
   readonly dispatch: DispatchCommand
 }
 
-const PIVOT_HIT_RADIUS = 12 // world units at scale 1, will be adjusted by zoom
+const PIVOT_HIT_RADIUS = 20 // world units at scale 1, will be adjusted by zoom
 const MIN_DRAG_DISTANCE = 2
+
+let pPressedGlobal = false
+export function isPivotKeyPressed(): boolean {
+  return pPressedGlobal
+}
 
 export class PivotInteraction {
   readonly #canvas: HTMLCanvasElement
@@ -61,7 +66,8 @@ export class PivotInteraction {
   attach(): void {
     if (this.#attached) return
     this.#attached = true
-    this.#canvas.addEventListener('mousedown', this.#onMouseDown)
+    // Use capture so we outrun CanvasSelection (bubble) and can stopPropagation
+    this.#canvas.addEventListener('mousedown', this.#onMouseDown, true)
     window.addEventListener('mousemove', this.#onMouseMove)
     window.addEventListener('mouseup', this.#onMouseUp)
     window.addEventListener('keydown', this.#onKeyDown)
@@ -71,7 +77,7 @@ export class PivotInteraction {
   detach(): void {
     if (!this.#attached) return
     this.#attached = false
-    this.#canvas.removeEventListener('mousedown', this.#onMouseDown)
+    this.#canvas.removeEventListener('mousedown', this.#onMouseDown, true)
     window.removeEventListener('mousemove', this.#onMouseMove)
     window.removeEventListener('mouseup', this.#onMouseUp)
     window.removeEventListener('keydown', this.#onKeyDown)
@@ -88,7 +94,9 @@ export class PivotInteraction {
 
   readonly #onKeyDown = (event: KeyboardEvent): void => {
     if (event.key === 'p' || event.key === 'P') {
+      if ((event.target as HTMLElement)?.tagName === 'INPUT' || (event.target as HTMLElement)?.tagName === 'TEXTAREA') return
       this.#pPressed = true
+      pPressedGlobal = true
       // Change cursor to indicate pivot mode
       this.#canvas.style.cursor = 'crosshair'
     }
@@ -97,6 +105,7 @@ export class PivotInteraction {
   readonly #onKeyUp = (event: KeyboardEvent): void => {
     if (event.key === 'p' || event.key === 'P') {
       this.#pPressed = false
+      pPressedGlobal = false
       this.#canvas.style.cursor = ''
     }
   }

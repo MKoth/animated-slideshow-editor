@@ -1,6 +1,7 @@
 import type { EnginePublic, Scene } from '../../engine'
 import { walkPreOrder } from '../../engine/sceneNode'
 import { worldTransformOf as storedWorldTransformOf } from '../../engine/worldTransform'
+import { isPivotKeyPressed } from './pivotInteraction'
 import type { DispatchCommand } from '../../engine/commands'
 import { MoveNodeCommand, TransactionCommand } from '../../engine/commands'
 import type { SelectionActions } from '../../stores/selectionStore'
@@ -150,7 +151,7 @@ export class CanvasSelection {
   }
 
   readonly #onMouseDown = (event: MouseEvent): void => {
-    if (event.button !== 0 || event.altKey) {
+    if (event.button !== 0 || event.altKey || isPivotKeyPressed()) {
       return
     }
     const { mode } = useEditingModeStore.getState()
