@@ -2072,9 +2072,21 @@ export function AudioTimelineBody({
                       })
                     })()
                   )}
-                  {/* Unified gap-free insert “+” between parts — any index, empty text, estimated duration, one Transaction */}
+                  {/* Insert “+” between parts — any index, empty text, estimated duration, one Transaction; follows actual part positions (gaps allowed) */}
                   {Array.from({ length: prompterParts.length + 1 }).map((_, gapIndex) => {
-                    const gapX = prompterParts.slice(0, gapIndex).reduce((s, p) => s + p.duration, 0) * pps
+                    let gapX: number
+                    if (prompterParts.length === 0) {
+                      gapX = 8
+                    } else if (gapIndex === 0) {
+                      // Before first: centered in [0, first.start) if gap, else at 0
+                      gapX = (prompterParts[0].startTime / 2) * pps
+                    } else if (gapIndex < prompterParts.length) {
+                      const prevEnd = prompterParts[gapIndex - 1].endTime
+                      const nextStart = prompterParts[gapIndex].startTime
+                      gapX = ((prevEnd + nextStart) / 2) * pps
+                    } else {
+                      gapX = prompterParts[prompterParts.length - 1].endTime * pps
+                    }
                     const isDragTarget = prompterMovePreview?.newIndex === gapIndex
                     return (
                       <button
