@@ -64,6 +64,15 @@ export function applyPlaceholderName(group: PixiContainer, name: string): void {
   const label = labelByGroup.get(group)
   if (label) {
     label.text = name
+    return
+  }
+  // Fallback for bone placeholder (and any future placeholder that doesn't use labelByGroup):
+  // the label Text is stored as a direct child with a `text` property.
+  for (const child of group.children as unknown as readonly PixiText[]) {
+    if (child && typeof child.text === 'string') {
+      child.text = name
+      break
+    }
   }
 }
 
