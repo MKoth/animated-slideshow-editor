@@ -321,7 +321,31 @@ export class HandleInteraction {
     const isShift = event.shiftKey
     const handleKind = this.#activeHandle!
     const isCorner = ['tl', 'tr', 'bl', 'br'].includes(handleKind)
-    const isUniform = isCorner || isShift
+    // Scale Group / Rig Handle is empty Group Node (no mesh/bone/text/circle/assetInstance/table/chart/camera)
+    // For groups, force uniform even on edge handles to keep skinning local (single Gm)
+    let isGroup = false
+    try {
+      const scene = this.#getScene()
+      const node = scene?.getNode(this.#nodeId!)
+      if (node) {
+        const c = node.components as Record<string, unknown>
+        isGroup =
+          !c.mesh &&
+          !c.bone &&
+          !c.text &&
+          !c.circle &&
+          !c.assetInstance &&
+          !c.table &&
+          !c.tableRow &&
+          !c.tableCell &&
+          !c.chart &&
+          !c.camera &&
+          node.children.length > 0
+      }
+    } catch {
+      isGroup = false
+    }
+    const isUniform = isCorner || isShift || isGroup
 
     const anchorWorld = isAlt ? this.#anchorCenterWorld : this.#anchorOppositeWorld
     const anchorLocal = isAlt ? { x: 0, y: 0 } : this.#anchorLocal
