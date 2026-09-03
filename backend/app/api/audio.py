@@ -75,7 +75,7 @@ def _probe_wav_duration(content: bytes) -> tuple[float, int, int] | None:
             nchannels = w.getnchannels() or 1
             duration = nframes / framerate if framerate else 0
             return (float(duration), int(framerate), int(nchannels))
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -86,9 +86,10 @@ def _ffmpeg_has_filter(filter_name: str) -> bool:
             capture_output=True,
             text=True,
             timeout=2,
+            check=False,
         )
         return filter_name in result.stdout
-    except Exception:
+    except Exception:  # noqa: BLE001
         return False
 
 

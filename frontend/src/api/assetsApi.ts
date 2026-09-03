@@ -71,10 +71,15 @@ export class AssetsApi {
     return this.client.get<AssetDefinition[]>(`/api/assets?${query.toString()}`)
   }
 
-  async uploadAssets(files: File[]): Promise<AssetUploadResult> {
+  async uploadAssets(files: File[], categories?: string[]): Promise<AssetUploadResult> {
     const formData = new FormData()
-    for (const file of files) {
-      formData.append('files', file)
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i])
+    }
+    if (categories) {
+      for (const category of categories) {
+        formData.append('categories', category)
+      }
     }
     return this.client.postForm<AssetUploadResult>('/api/assets', formData)
   }

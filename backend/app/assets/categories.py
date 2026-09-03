@@ -4,6 +4,7 @@ ASSET_CATEGORIES: tuple[str, ...] = (
     "Animal",
     "Plant",
     "Object",
+    "object",
     "Background",
     "UI",
     "Decoration",

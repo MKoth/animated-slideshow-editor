@@ -45,6 +45,14 @@ class AssetImporter:
                 for upload in uploads:
                     try:
                         validate_category(upload.category)
+                        # Reusable objects are stored as JSON blobs, not images — bypass the image pipeline
+                        if upload.category in ("object", "Object"):
+                            definition = self._create_object_definition(upload, imported_at)
+                            session.add(definition)
+                            written_paths.append(definition.original_path)
+                            written_paths.append(definition.thumbnail_path)
+                            result.created.append(definition)
+                            continue
                         inspected = self._pipeline.inspect(upload.content)
                         definition = self._create_definition(upload, inspected, imported_at)
                         session.add(definition)
@@ -59,6 +67,52 @@ class AssetImporter:
                     self._storage.remove(relative_path)
                 raise
         return result
+
+    def _create_object_definition(self, upload: Upload, imported_at: datetime) -> AssetDefinition:
+        import json
+
+        try:
+            parsed = json.loads(upload.content.decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            raise ImageValidationError(f"reusable object JSON is invalid: {exc}") from exc
+        if not isinstance(parsed, dict) or "nodes" not in parsed:
+            raise ImageValidationError("reusable object JSON must contain a nodes array")
+        definition_id = str(uuid4())
+        name = Path(upload.filename).stem or upload.filename
+        # Ensure .lesson_object extension is preserved in the stored filename, but the storage layer
+        # always uses the id + extension – for objects we force .json so the file is servable.
+        original_path = self._storage.save_original(definition_id, ".json", upload.content)
+        # Generic placeholder thumbnail for objects (grey tile)
+        from io import BytesIO
+
+        from PIL import Image as PILImage
+
+        placeholder = PILImage.new("RGBA", (256, 256), (60, 60, 60, 255))
+        buf = BytesIO()
+        placeholder.save(buf, format="PNG")
+        thumbnail_path = self._storage.save_thumbnail(definition_id, buf.getvalue())
+        # Preserve object metadata (name, description, node count) for filtering/preview
+        asset_metadata: dict[str, object] = {
+            "objectName": parsed.get("name", name),
+            "nodeCount": len(parsed.get("nodes", [])),
+        }
+        if isinstance(parsed.get("description"), str):
+            asset_metadata["description"] = parsed["description"]
+        return AssetDefinition(
+            id=definition_id,
+            name=name,
+            category="object",
+            original_filename=upload.filename,
+            import_date=imported_at,
+            width=1,
+            height=1,
+            file_size=len(upload.content),
+            aspect_ratio=1.0,
+            original_path=original_path,
+            thumbnail_path=thumbnail_path,
+            mime_type="application/json",
+            asset_metadata=asset_metadata,  # type: ignore[arg-type]
+        )
 
     def _create_definition(
         self, upload: Upload, inspected: InspectedImage, imported_at: datetime

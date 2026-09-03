@@ -1,7 +1,7 @@
 export type Theme = 'light' | 'dark'
 
 export type SidebarTab =
-  'assets' | 'slides' | 'scene' | 'materials' | 'animations' | 'dataSources' | 'rigging'
+  'assets' | 'slides' | 'scene' | 'materials' | 'animations' | 'dataSources' | 'rigging' | 'objects'
 
 export interface VisiblePanels {
   leftSidebar: boolean

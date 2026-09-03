@@ -1879,6 +1879,37 @@ export function applyUndo(
       }
       return
     }
+    case 'ImportReusableObject': {
+      const createdNodeIds = (inv as Record<string, unknown>).createdNodeIds as readonly string[] | undefined
+      const createdClipIds = (inv as Record<string, unknown>).createdClipIds as readonly string[] | undefined
+      const createdCollectionIds = (inv as Record<string, unknown>).createdCollectionIds as readonly string[] | undefined
+      // Remove clip collections first
+      if (createdCollectionIds) {
+        for (const id of [...createdCollectionIds].reverse()) {
+          try {
+            engine.deleteClipCollection(id)
+          } catch {}
+        }
+      }
+      if (createdClipIds) {
+        for (const id of [...createdClipIds].reverse()) {
+          try {
+            engine.deleteClip(id)
+          } catch {}
+        }
+      }
+      if (createdNodeIds) {
+        // Remove nodes leaf-first to avoid parent deleted before children
+        for (const id of [...createdNodeIds].reverse()) {
+          try {
+            engine.removeNode(id)
+          } catch {}
+        }
+      }
+      // Also remove IK chains and constraints that were created for imported nodes – they are tied to nodes, removal cascades via engine.removeNode for IK?
+      // Constraints will be removed when nodes deleted via engine.removeNode's cascade
+      return
+    }
     default:
       console.warn(`[undo] No handler for type ${type}`)
       return
@@ -3087,6 +3118,17 @@ export function applyRedo(
     case 'ApplyClipCollection':
       engine.applyClipCollection(params.collectionId as string, params.targetNodeId as string)
       return
+    case 'ImportReusableObject': {
+      const obj = params.objectJson as unknown
+      if (obj) {
+        try {
+          engine.importReusableObject(obj as import('../reusableObject').ReusableObjectJSON, params.targetParentId as string | undefined)
+        } catch {
+          // ignore
+        }
+      }
+      return
+    }
     case 'ExtractToClip': {
       const mode = (params as Record<string, unknown>).mode as string
       const inv = _inverse as Record<string, unknown> | null

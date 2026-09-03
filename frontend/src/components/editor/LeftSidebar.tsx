@@ -7,6 +7,7 @@ import { MaterialsPanel } from '../panels/MaterialsPanel'
 import { RiggingPanel } from '../panels/RiggingPanel'
 import { ScenePanel } from '../panels/ScenePanel'
 import { SlidesPanel } from '../panels/SlidesPanel'
+import { ObjectsPanel } from '../panels/ObjectsPanel'
 
 const TABS = [
   { id: 'assets', label: 'Assets' },
@@ -16,6 +17,7 @@ const TABS = [
   { id: 'animations', label: 'Animations' },
   { id: 'dataSources', label: 'Data' },
   { id: 'rigging', label: 'Rigging' },
+  { id: 'objects', label: 'Objects' },
 ] as const satisfies readonly { id: SidebarTab; label: string }[]
 
 const PANELS: Record<SidebarTab, () => React.JSX.Element> = {
@@ -26,6 +28,7 @@ const PANELS: Record<SidebarTab, () => React.JSX.Element> = {
   animations: AnimationsPanel,
   dataSources: DataSourcesPanel,
   rigging: RiggingPanel,
+  objects: ObjectsPanel,
 }
 
 export function LeftSidebar({ width }: { width: number }) {

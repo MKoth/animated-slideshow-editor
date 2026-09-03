@@ -120,6 +120,43 @@ import {
   type ExportPerSlideDescriptor,
   type ExportSettings,
 } from './export'
+import { newId } from './ids'
+import { newClipId } from './clipDefinition'
+import { newClipCollectionId } from './clipCollection'
+import { Keyframe as KeyframeModel } from './keyframe'
+import {
+  REUSABLE_OBJECT_VERSION,
+  validateReusableObject,
+  type ReusableObjectJSON,
+} from './reusableObject'
+import { materialFromJSON } from './materialInstance'
+import { clipInstanceFromJSON } from './clipInstance'
+
+function constraintParamsToJSON(c: Constraint): import('./json').ConstraintParamsJSON {
+  switch (c.type) {
+    case 'rotationLimit': {
+      const p = c.params as import('./constraint').RotationLimitParams
+      return { minRotation: p.minRotation, maxRotation: p.maxRotation }
+    }
+    case 'lookAt': {
+      const p = c.params as import('./constraint').LookAtParams
+      return { targetX: p.targetX, targetY: p.targetY, targetNodeId: p.targetNodeId }
+    }
+    case 'distance': {
+      const p = c.params as import('./constraint').DistanceParams
+      return { targetNodeId: p.targetNodeId, minDistance: p.minDistance, maxDistance: p.maxDistance }
+    }
+    case 'parent': {
+      const p = c.params as import('./constraint').ParentConstraintParams
+      return {
+        targetNodeId: p.targetNodeId,
+        positionInfluence: p.positionInfluence,
+        rotationInfluence: p.rotationInfluence,
+        scaleInfluence: p.scaleInfluence,
+      }
+    }
+  }
+}
 
 const DEFAULT_MATERIAL_KINDS: Readonly<Record<string, string>> = Object.fromEntries(
   DEFAULT_MATERIAL_PARAMETERS.map((parameter) => [parameter.key, parameter.kind]),
@@ -2482,6 +2519,755 @@ export class Engine {
     }
   }
 
+  // --- Reusable Object (Spec 267) ---
+  exportReusableObject(
+    rootNodeId: string,
+    name: string,
+    description?: string,
+  ): ReusableObjectJSON {
+    if (typeof name !== 'string' || name.trim() === '') {
+      throw new Error('Reusable object name must be a non-empty string')
+    }
+    const root = this.getNode(rootNodeId)
+    const project = this.#projects.current
+    if (!project) throw new Error('No project exists in memory')
+    let slide: Slide | null = null
+    for (const candidate of project.slides) {
+      for (const node of walkPreOrder(candidate.scene.root)) {
+        if (node.id === rootNodeId) {
+          slide = candidate
+          break
+        }
+      }
+      if (slide) break
+    }
+    if (!slide) throw new Error(`Node not found in any slide: ${rootNodeId}`)
+    if (root === slide.scene.root) throw new Error('The scene root cannot be exported as an object')
+    if (root.components.camera) throw new Error('The camera node cannot be exported as an object')
+
+    const ikManager = this.#ik
+    const constraintManager = this.#constraints
+
+    const descendants = [...walkPreOrder(root)]
+    const nodeIds = new Set<string>(descendants.map((n) => n.id))
+
+    const extraGhostIds = new Set<string>()
+    for (const chain of ikManager.getChainsForSlide(slide.id)) {
+      const intersects = chain.boneIds.some((bid) => nodeIds.has(bid))
+      if (intersects) {
+        if (chain.ghostNodeId && !nodeIds.has(chain.ghostNodeId)) extraGhostIds.add(chain.ghostNodeId)
+        if (chain.poleGhostNodeId && !nodeIds.has(chain.poleGhostNodeId))
+          extraGhostIds.add(chain.poleGhostNodeId)
+      }
+    }
+    for (const ghostId of extraGhostIds) {
+      try {
+        const ghostNode = this.getNode(ghostId)
+        nodeIds.add(ghostNode.id)
+        for (const d of walkPreOrder(ghostNode)) nodeIds.add(d.id)
+      } catch {
+        // ignore missing
+      }
+    }
+
+    const orderedNodeIds: string[] = []
+    const visited = new Set<string>()
+    for (const node of descendants) {
+      if (!visited.has(node.id)) {
+        visited.add(node.id)
+        orderedNodeIds.push(node.id)
+      }
+    }
+    for (const ghostId of extraGhostIds) {
+      if (!visited.has(ghostId)) {
+        visited.add(ghostId)
+        orderedNodeIds.push(ghostId)
+        try {
+          const ghost = this.getNode(ghostId)
+          for (const d of walkPreOrder(ghost)) {
+            if (d.id !== ghostId && !visited.has(d.id)) {
+              visited.add(d.id)
+              orderedNodeIds.push(d.id)
+            }
+          }
+        } catch {}
+      }
+    }
+
+    const nodes: import('./json').NodeJSON[] = []
+    for (const id of orderedNodeIds) {
+      const node = this.getNode(id)
+      const json = node.toJSON()
+      if (id === rootNodeId) {
+        nodes.push({ ...json, parentId: null } as import('./json').NodeJSON)
+      } else {
+        const parentId = json.parentId
+        if (typeof parentId === 'string' && !nodeIds.has(parentId)) {
+          nodes.push({ ...json, parentId: rootNodeId } as import('./json').NodeJSON)
+        } else {
+          nodes.push(json)
+        }
+      }
+    }
+
+    let animation: import('./json').SlideAnimationJSON | undefined
+    try {
+      const fullAnim = (slide.animation as unknown as { toJSON: () => import('./json').SlideAnimationJSON }).toJSON()
+      const filtered = fullAnim.nodes.filter((entry) => nodeIds.has(entry.nodeId))
+      if (filtered.length > 0) animation = { nodes: filtered }
+    } catch {
+      animation = undefined
+    }
+
+    const referencedAssetIds = new Set<string>()
+    const referencedMaterialIds = new Set<string>()
+    const referencedShaderIds = new Set<string>()
+    const referencedClipIds = new Set<string>()
+    const referencedDataSourceIds = new Set<string>()
+
+    for (const id of nodeIds) {
+      const node = this.getNode(id)
+      const assetInst = node.components.assetInstance
+      if (assetInst) referencedAssetIds.add(assetInst.assetDefinitionId)
+      const tex = node.material.textureId
+      if (typeof tex === 'string' && tex !== '') referencedAssetIds.add(tex)
+      referencedMaterialIds.add(node.material.materialDefinitionId)
+      for (const inst of node.clipInstances) referencedClipIds.add(inst.clipId)
+      const chart = node.components.chart
+      if (chart) referencedDataSourceIds.add(chart.dataSourceId)
+    }
+
+    for (const matId of referencedMaterialIds) {
+      if (matId === DEFAULT_MATERIAL_DEFINITION_ID) continue
+      try {
+        const matDef = this.getMaterialDefinition(matId)
+        const sid = (matDef as unknown as { shaderId?: string | null }).shaderId
+        if (typeof sid === 'string' && sid !== '') referencedShaderIds.add(sid)
+      } catch {
+        const embedded = this.getEmbeddedMaterial(matId)
+        if (embedded?.shaderId) referencedShaderIds.add(embedded.shaderId)
+      }
+    }
+
+    const clips: ClipDefinition[] = []
+    for (const clipId of referencedClipIds) {
+      try {
+        clips.push(this.getClip(clipId))
+      } catch {}
+    }
+
+    const clipCollections: ClipCollection[] = []
+    for (const col of this.#clipCollections.collections) {
+      let include = false
+      if (col.sourceNodeId && nodeIds.has(col.sourceNodeId)) include = true
+      if (!include) {
+        for (const clipId of col.bindings.values()) {
+          if (referencedClipIds.has(clipId)) {
+            include = true
+            break
+          }
+        }
+      }
+      if (include) {
+        clipCollections.push(col)
+        for (const clipId of col.bindings.values()) {
+          if (!referencedClipIds.has(clipId)) {
+            try {
+              clips.push(this.getClip(clipId))
+              referencedClipIds.add(clipId)
+            } catch {}
+          }
+        }
+      }
+    }
+
+    const dedupedClips = new Map<string, ClipDefinition>()
+    for (const clip of clips) if (!dedupedClips.has(clip.id)) dedupedClips.set(clip.id, clip)
+
+    const embeddedAssets: EmbeddedAsset[] = []
+    for (const aid of referencedAssetIds) {
+      const embedded = this.getEmbeddedAsset(aid) ?? project.embeddedAssets.find((a) => a.id === aid)
+      if (embedded) embeddedAssets.push(embedded)
+    }
+    const embeddedMaterials: EmbeddedMaterialDefinition[] = []
+    for (const mid of referencedMaterialIds) {
+      if (mid === DEFAULT_MATERIAL_DEFINITION_ID) continue
+      const embedded = this.getEmbeddedMaterial(mid) ?? project.embeddedMaterials.find((m) => m.id === mid)
+      if (embedded) embeddedMaterials.push(embedded)
+    }
+    const embeddedShaders: EmbeddedShaderDefinition[] = []
+    for (const sid of referencedShaderIds) {
+      const embedded = this.getEmbeddedShader(sid) ?? project.embeddedShaders.find((s) => s.id === sid)
+      if (embedded) embeddedShaders.push(embedded)
+    }
+    const embeddedDataSources: EmbeddedDataSourceUnion[] = []
+    for (const dsId of referencedDataSourceIds) {
+      const ds = project.embeddedDataSources.find((d) => d.id === dsId)
+      if (ds) embeddedDataSources.push(ds as EmbeddedDataSourceUnion)
+    }
+
+    let library: import('./json').LessonLibraryJSON | undefined
+    if (
+      embeddedAssets.length > 0 ||
+      embeddedMaterials.length > 0 ||
+      embeddedShaders.length > 0 ||
+      embeddedDataSources.length > 0 ||
+      dedupedClips.size > 0 ||
+      clipCollections.length > 0
+    ) {
+      const assetsJson = embeddedAssets.map((a) => ({
+        id: a.id,
+        name: a.name,
+        data: a.data,
+        mimeType: a.mimeType,
+        ...(a.metadata !== undefined ? { metadata: a.metadata } : {}),
+      }))
+      const materialsJson = embeddedMaterials.map((m) => ({
+        id: m.id,
+        name: m.name,
+        description: m.description,
+        tags: [...m.tags],
+        created_at: m.createdAt,
+        updated_at: m.updatedAt,
+        parameters: m.parameters.map((p) => ({ key: p.key, kind: p.kind, default: p.default })),
+        ...(m.shaderId !== null ? { shader_id: m.shaderId } : {}),
+      }))
+      const shadersJson = embeddedShaders.map((s) => ({
+        id: s.id,
+        name: s.name,
+        description: s.description,
+        tags: [...s.tags],
+        created_at: s.createdAt,
+        updated_at: s.updatedAt,
+        source: s.source,
+        default_uniforms: s.defaultUniforms.map((u) => ({ ...u })),
+        is_builtin: s.isBuiltin,
+      }))
+      const dataSourcesJson = embeddedDataSources.map((ds) => {
+        if ('nodes' in ds) {
+          return {
+            id: ds.id,
+            name: ds.name,
+            flowchart: {
+              nodes: ds.nodes.map((n) => ({ id: n.id, label: n.label })),
+              edges: ds.edges.map((e) => ({ from: e.from, to: e.to })),
+            },
+          }
+        }
+        return {
+          id: ds.id,
+          name: ds.name,
+          data_points: ds.dataPoints.map((p) => ({
+            label: p.label,
+            value: p.value,
+            ...(p.series !== undefined ? { series: p.series } : {}),
+            ...(p.tooltip !== undefined ? { tooltip: p.tooltip } : {}),
+            ...(p.color !== undefined ? { color: p.color } : {}),
+          })),
+        }
+      })
+      library = {
+        ...(assetsJson.length > 0 ? { assets: assetsJson } : {}),
+        ...(materialsJson.length > 0 ? { materials: materialsJson } : {}),
+        ...(shadersJson.length > 0 ? { shaders: shadersJson } : {}),
+        ...(dataSourcesJson.length > 0 ? { data_sources: dataSourcesJson } : {}),
+        ...(dedupedClips.size > 0 ? { clips: [...dedupedClips.values()].map((c) => c.toJSON()) } : {}),
+        ...(clipCollections.length > 0 ? { clipCollections: clipCollections.map((c) => c.toJSON()) } : {}),
+      } as import('./json').LessonLibraryJSON
+      if (Object.keys(library).length === 0) library = undefined
+    }
+
+    let ikChains: import('./json').IKManagerJSON | undefined
+    {
+      const chains = ikManager.getChainsForSlide(slide.id).filter((chain) => chain.boneIds.some((bid) => nodeIds.has(bid)))
+      if (chains.length > 0) {
+        const slides: Record<string, readonly string[]> = { [slide.id]: chains.map((c) => c.id) }
+        ikChains = { slides, chains: chains.map((c) => c.toJSON()) }
+      }
+    }
+
+    let constraints: import('./json').ConstraintManagerJSON | undefined
+    {
+      const nodeConstraints: Record<string, readonly import('./json').ConstraintJSON[]> = {}
+      let hasAny = false
+      for (const nid of nodeIds) {
+        const list = constraintManager.getConstraintsForNode(nid)
+        if (list.length > 0) {
+          nodeConstraints[nid] = list.map((c) => ({
+            id: c.id,
+            type: c.type,
+            priority: c.priority,
+            params: constraintParamsToJSON(c),
+          }))
+          hasAny = true
+        }
+      }
+      if (hasAny) constraints = { nodeConstraints: nodeConstraints as import('./json').ConstraintManagerJSON['nodeConstraints'] }
+    }
+
+    const result: ReusableObjectJSON = {
+      version: REUSABLE_OBJECT_VERSION,
+      name: name.trim(),
+      ...(description !== undefined && description.trim() !== '' ? { description: description.trim() } : {}),
+      rootId: rootNodeId,
+      nodes,
+      ...(animation !== undefined ? { animation } : {}),
+      ...(library !== undefined ? { library } : {}),
+      ...(ikChains !== undefined ? { ikChains } : {}),
+      ...(constraints !== undefined ? { constraints } : {}),
+    }
+    const errors = validateReusableObject(result)
+    if (errors.length > 0) throw new Error(errors.join('; '))
+    return result
+  }
+
+  importReusableObject(
+    objectJson: ReusableObjectJSON,
+    targetParentId?: string,
+  ): { nodeIdMap: Map<string, string>; clipIdMap: Map<string, string>; collectionIdMap: Map<string, string>; rootNewId: string } {
+    const errors = validateReusableObject(objectJson)
+    if (errors.length > 0) throw new Error(errors.join('; '))
+    const project = this.#projects.current
+    if (!project) throw new Error('No project exists in memory')
+    const activeSlide = this.getActiveSlide() ?? project.slides[0]
+    if (!activeSlide) throw new Error('No active slide')
+    const targetParent = targetParentId ? this.getNode(targetParentId) : activeSlide.scene.root
+    const targetScene = this.getNodeScene(targetParent.id)
+    if (targetScene.id !== activeSlide.scene.id) throw new Error('Target parent must belong to the active slide')
+
+    const nodeIdMap = new Map<string, string>()
+    const clipIdMap = new Map<string, string>()
+    const collectionIdMap = new Map<string, string>()
+
+    const library = objectJson.library
+
+    if (library?.assets) {
+      for (const assetJson of library.assets) {
+        const asset: EmbeddedAsset = {
+          id: assetJson.id,
+          name: assetJson.name,
+          data: assetJson.data,
+          mimeType: assetJson.mimeType,
+          ...(assetJson.metadata !== undefined ? { metadata: assetJson.metadata as Record<string, unknown> } : {}),
+        }
+        this.embedAsset(asset)
+      }
+    }
+    if (library?.materials) {
+      for (const matJson of library.materials) {
+        const mat: EmbeddedMaterialDefinition = {
+          id: matJson.id,
+          name: matJson.name,
+          description: matJson.description,
+          tags: [...matJson.tags],
+          createdAt: matJson.created_at,
+          updatedAt: matJson.updated_at,
+          parameters: matJson.parameters.map((p) => ({ key: p.key, kind: p.kind, default: p.default })),
+          shaderId: (matJson.shader_id as string | null | undefined) ?? null,
+        }
+        this.embedMaterial(mat)
+      }
+    }
+    if (library?.shaders) {
+      for (const shaderJson of library.shaders) {
+        const shader: EmbeddedShaderDefinition = {
+          id: shaderJson.id,
+          name: shaderJson.name,
+          description: shaderJson.description,
+          tags: [...shaderJson.tags],
+          createdAt: shaderJson.created_at,
+          updatedAt: shaderJson.updated_at,
+          source: shaderJson.source,
+          defaultUniforms: shaderJson.default_uniforms.map((u) => ({ ...(u as Record<string, unknown>) })),
+          isBuiltin: shaderJson.is_builtin,
+        }
+        this.embedShader(shader)
+      }
+    }
+    if (library?.data_sources) {
+      for (const dsJson of library.data_sources) {
+        const ds = dsJson as Record<string, unknown>
+        const anyRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null
+        if (anyRecord(ds.flowchart)) {
+          const flow = ds.flowchart as Record<string, unknown>
+          const nodes = (flow.nodes as unknown[]) ?? []
+          const edges = (flow.edges as unknown[]) ?? []
+          const def = {
+            id: ds.id as string,
+            name: ds.name as string,
+            nodes: nodes
+              .filter((n): n is { id: string; label: string } => anyRecord(n) && typeof n.id === 'string' && typeof n.label === 'string')
+              .map((n) => ({ id: n.id, label: n.label })),
+            edges: edges
+              .filter((e): e is { from: string; to: string } => anyRecord(e) && typeof e.from === 'string' && typeof e.to === 'string')
+              .map((e) => ({ from: e.from, to: e.to })),
+          } as EmbeddedDataSourceUnion
+          this.embedDataSource(def)
+        } else if (Array.isArray(ds.data_points)) {
+          const dps = ds.data_points as unknown[]
+          const def = {
+            id: ds.id as string,
+            name: ds.name as string,
+            dataPoints: dps
+              .filter((p): p is { label: string; value: number; series?: string; tooltip?: string; color?: string } =>
+                anyRecord(p) && typeof p.label === 'string' && typeof p.value === 'number',
+              )
+              .map((p) => ({
+                label: p.label,
+                value: p.value,
+                ...(typeof p.series === 'string' ? { series: p.series } : {}),
+                ...(typeof p.tooltip === 'string' ? { tooltip: p.tooltip } : {}),
+                ...(typeof p.color === 'string' ? { color: p.color } : {}),
+              })),
+          } as EmbeddedDataSourceUnion
+          this.embedDataSource(def)
+        }
+      }
+    }
+
+    const clipsJson = library?.clips ?? []
+    for (const clipJson of clipsJson) {
+      const oldId = (clipJson as unknown as { id: string }).id
+      clipIdMap.set(oldId, newClipId())
+    }
+    const collectionsJson = library?.clipCollections ?? []
+    for (const colJson of collectionsJson) {
+      const oldId = (colJson as unknown as { id: string }).id
+      collectionIdMap.set(oldId, newClipCollectionId())
+    }
+
+    for (const clipJson of clipsJson) {
+      const oldId = (clipJson as unknown as { id: string }).id
+      const newId = clipIdMap.get(oldId)!
+      const newClipJson = { ...(clipJson as unknown as Record<string, unknown>), id: newId } as unknown
+      const clip = ClipDefinition.fromJSON(newClipJson)
+      this.#clips.importClip(clip)
+    }
+
+    for (const colJson of collectionsJson) {
+      const oldId = (colJson as unknown as { id: string }).id
+      const newId = collectionIdMap.get(oldId)!
+      const bindings = (colJson as unknown as { bindings: Record<string, string> }).bindings ?? {}
+      const newBindings: Record<string, string> = {}
+      for (const [sem, oldClipId] of Object.entries(bindings)) newBindings[sem] = clipIdMap.get(oldClipId) ?? oldClipId
+      const collection = new ClipCollection(newId, (colJson as unknown as { name: string }).name, newBindings, (colJson as unknown as { sourceNodeId?: string }).sourceNodeId)
+      this.#clipCollections.importCollection(collection)
+    }
+
+    for (const nodeJson of objectJson.nodes) nodeIdMap.set(nodeJson.id, newId('node'))
+
+    // Fix clipCollection sourceNodeId remapping
+    for (const colJson of collectionsJson) {
+      const oldId = (colJson as unknown as { id: string }).id
+      const newId = collectionIdMap.get(oldId)!
+      const collection = this.#clipCollections.getCollection(newId)
+      const oldSource = (colJson as unknown as { sourceNodeId?: string }).sourceNodeId
+      if (oldSource && nodeIdMap.has(oldSource)) collection.sourceNodeId = nodeIdMap.get(oldSource)
+    }
+
+    // Prepare new node JSONs with remapped ids and parents
+    const newNodesJson = objectJson.nodes.map((orig) => {
+      const newIdVal = nodeIdMap.get(orig.id)!
+      let newParentId: string | null
+      if (orig.id === objectJson.rootId) newParentId = targetParent.id
+      else {
+        const origParent = orig.parentId
+        if (origParent === null || origParent === undefined) newParentId = targetParent.id
+        else newParentId = nodeIdMap.get(origParent) ?? targetParent.id
+      }
+      const cloned: Record<string, unknown> = { ...(orig as unknown as Record<string, unknown>), id: newIdVal, parentId: newParentId }
+      if (Array.isArray(cloned.clipInstances)) {
+        cloned.clipInstances = (cloned.clipInstances as unknown[]).map((inst) => {
+          if (typeof inst !== 'object' || inst === null || typeof (inst as Record<string, unknown>).clipId !== 'string') return inst
+          const oldClipId = (inst as Record<string, unknown>).clipId as string
+          return { ...(inst as Record<string, unknown>), clipId: clipIdMap.get(oldClipId) ?? oldClipId }
+        })
+      }
+      const components = cloned.components as Record<string, unknown> | undefined
+      if (components && typeof components.mesh === 'object' && components.mesh !== null) {
+        const meshComp = components.mesh as Record<string, unknown>
+        const mesh = meshComp.mesh as Record<string, unknown> | undefined
+        if (mesh && Array.isArray(mesh.boneWeights)) {
+          const newWeights = (mesh.boneWeights as unknown[]).map((arr) => {
+            if (!Array.isArray(arr)) return arr
+            return (arr as unknown[]).map((entry) => {
+              if (typeof entry !== 'object' || entry === null || typeof (entry as Record<string, unknown>).boneId !== 'string') return entry
+              const oldBoneId = (entry as Record<string, unknown>).boneId as string
+              return { ...(entry as Record<string, unknown>), boneId: nodeIdMap.get(oldBoneId) ?? oldBoneId }
+            })
+          })
+          const newMesh: Record<string, unknown> = { ...mesh, boneWeights: newWeights }
+          if (typeof mesh.bindPose === 'object' && mesh.bindPose !== null) {
+            const newBindPose: Record<string, unknown> = {}
+            for (const [boneId, transform] of Object.entries(mesh.bindPose as Record<string, unknown>)) {
+              newBindPose[nodeIdMap.get(boneId) ?? boneId] = transform
+            }
+            newMesh.bindPose = newBindPose
+          }
+          components.mesh = { ...meshComp, mesh: newMesh }
+          cloned.components = { ...components, mesh: components.mesh }
+        }
+      }
+      return cloned as unknown as import('./json').NodeJSON
+    })
+
+    // Ensure unique names
+    const existingNames = new Set<string>([...walkPreOrder(activeSlide.scene.root)].map((n) => n.name))
+    for (const nodeJson of newNodesJson) {
+      let nameVal = nodeJson.name as string
+      if (existingNames.has(nameVal)) {
+        let counter = 1
+        let candidate = `${nameVal} ${counter}`
+        while (existingNames.has(candidate)) {
+          counter += 1
+          candidate = `${nameVal} ${counter}`
+        }
+        ;(nodeJson as unknown as Record<string, unknown>).name = candidate
+        nameVal = candidate
+      }
+      existingNames.add(nameVal)
+    }
+
+    // Create nodes in order ensuring parents exist
+    for (const nodeJson of newNodesJson) {
+      const nid = nodeJson.id
+      const parentId = nodeJson.parentId as string
+      const components = (nodeJson.components ?? {}) as import('./components').NodeComponents
+      const transform = (nodeJson.transform ?? { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }) as import('./transform').Transform
+      const semanticName = (nodeJson as unknown as { semanticName?: string }).semanticName
+      const node = this.createNode(activeSlide.scene.id, parentId, nodeJson.name, {
+        id: nid,
+        transform,
+        components,
+        semanticName,
+      })
+      node.visible = typeof nodeJson.visible === 'boolean' ? nodeJson.visible : true
+      node.opacity = typeof nodeJson.opacity === 'number' ? nodeJson.opacity : 1
+      const matJson = (nodeJson as unknown as { material?: unknown }).material
+      if (matJson !== undefined) {
+        try {
+          node.material = materialFromJSON(matJson, nid)
+        } catch {
+          // keep default
+        }
+      }
+      // clipInstances: replace with imported instances (already remapped)
+      node.clipInstances.length = 0
+      if (Array.isArray((nodeJson as unknown as { clipInstances?: unknown }).clipInstances)) {
+        for (const ci of (nodeJson as unknown as { clipInstances: readonly unknown[] }).clipInstances) {
+          try {
+            node.clipInstances.push(clipInstanceFromJSON(ci as unknown as import('./json').ClipInstanceJSON))
+          } catch {}
+        }
+      }
+      // localPivot already handled via transform
+    }
+
+    // Animation: import keyframes for nodes
+    if (objectJson.animation) {
+      for (const nodeAnimJson of objectJson.animation.nodes) {
+        const oldNodeId = nodeAnimJson.nodeId
+        const newNodeId = nodeIdMap.get(oldNodeId)
+        if (!newNodeId) continue
+        const targetAnim = activeSlide.animation.ensure(newNodeId)
+        for (const track of nodeAnimJson.tracks) {
+          for (const kfJson of track.keyframes) {
+            const kf = new KeyframeModel(
+              kfJson.id,
+              kfJson.time,
+              kfJson.value as unknown as import('./keyframe').KeyframeValue,
+              (kfJson.interpolation as import('./keyframe').InterpolationType) ?? 'linear',
+              (kfJson.tangentIn as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+              (kfJson.tangentOut as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+            )
+            try {
+              targetAnim.add(track.property as unknown as import('./animationProperties').AnimationProperty, kf)
+            } catch {}
+          }
+        }
+        if (nodeAnimJson.materialTracks) {
+          for (const track of nodeAnimJson.materialTracks) {
+            for (const kfJson of track.keyframes) {
+              const kf = new KeyframeModel(
+                kfJson.id,
+                kfJson.time,
+                kfJson.value as unknown as import('./keyframe').KeyframeValue,
+                (kfJson.interpolation as import('./keyframe').InterpolationType) ?? 'linear',
+                (kfJson.tangentIn as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+                (kfJson.tangentOut as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+              )
+              try {
+                targetAnim.addMaterial(track.parameter, kf)
+              } catch {}
+            }
+          }
+        }
+        const dataLabelTracks = (nodeAnimJson as unknown as { dataLabelTracks?: readonly { label: string; keyframes: readonly import('./json').KeyframeJSON[] }[] }).dataLabelTracks
+        if (dataLabelTracks) {
+          for (const track of dataLabelTracks) {
+            for (const kfJson of track.keyframes) {
+              const kf = new KeyframeModel(
+                kfJson.id,
+                kfJson.time,
+                kfJson.value as unknown as import('./keyframe').KeyframeValue,
+                (kfJson.interpolation as import('./keyframe').InterpolationType) ?? 'linear',
+                (kfJson.tangentIn as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+                (kfJson.tangentOut as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+              )
+              try {
+                targetAnim.addDataLabel(track.label, kf)
+              } catch {}
+            }
+          }
+        }
+        const circleTracks = (nodeAnimJson as unknown as { circleTracks?: readonly { property: string; keyframes: readonly import('./json').KeyframeJSON[] }[] }).circleTracks
+        if (circleTracks) {
+          for (const track of circleTracks) {
+            for (const kfJson of track.keyframes) {
+              const kf = new KeyframeModel(
+                kfJson.id,
+                kfJson.time,
+                kfJson.value as unknown as import('./keyframe').KeyframeValue,
+                (kfJson.interpolation as import('./keyframe').InterpolationType) ?? 'linear',
+                (kfJson.tangentIn as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+                (kfJson.tangentOut as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+              )
+              try {
+                targetAnim.addCircle(track.property as unknown as import('./animationProperties').CircleAnimationProperty, kf)
+              } catch {}
+            }
+          }
+        }
+        const tableTracks = (nodeAnimJson as unknown as { tableTracks?: readonly { property: string; keyframes: readonly import('./json').KeyframeJSON[] }[] }).tableTracks
+        if (tableTracks) {
+          for (const track of tableTracks) {
+            for (const kfJson of track.keyframes) {
+              const kf = new KeyframeModel(
+                kfJson.id,
+                kfJson.time,
+                kfJson.value as unknown as import('./keyframe').KeyframeValue,
+                (kfJson.interpolation as import('./keyframe').InterpolationType) ?? 'linear',
+                (kfJson.tangentIn as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+                (kfJson.tangentOut as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+              )
+              try {
+                targetAnim.addTable(track.property as unknown as import('./animationProperties').TableAnimationProperty, kf)
+              } catch {}
+            }
+          }
+        }
+        const visibleTrack = (nodeAnimJson as unknown as { visibleTrack?: { keyframes: readonly import('./json').KeyframeJSON[] } }).visibleTrack
+        if (visibleTrack) {
+          for (const kfJson of visibleTrack.keyframes) {
+            const kf = new KeyframeModel(
+              kfJson.id,
+              kfJson.time,
+              kfJson.value as unknown as import('./keyframe').KeyframeValue,
+              (kfJson.interpolation as import('./keyframe').InterpolationType) ?? 'hold',
+              (kfJson.tangentIn as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+              (kfJson.tangentOut as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+            )
+            try {
+              targetAnim.addVisible(kf)
+            } catch {}
+          }
+        }
+      }
+    }
+
+    // IK chains
+    if (objectJson.ikChains) {
+      for (const chainJson of objectJson.ikChains.chains) {
+        const oldBoneIds = chainJson.boneIds as unknown as string[]
+        const newBoneIds = oldBoneIds.map((bid) => nodeIdMap.get(bid) ?? bid)
+        // Verify all bones exist
+        let valid = true
+        for (const bid of newBoneIds) {
+          try {
+            this.getNode(bid)
+          } catch {
+            valid = false
+            break
+          }
+        }
+        if (!valid) continue
+        const target = chainJson.target as import('./ikChain').BoneIKTarget
+        const poleTarget = chainJson.poleTarget as import('./ikChain').PoleTarget | null
+        const newTarget: import('./ikChain').BoneIKTarget = target.nodeId
+          ? { ...target, nodeId: nodeIdMap.get(target.nodeId) ?? target.nodeId }
+          : { ...target }
+        const newPole: import('./ikChain').PoleTarget | null = poleTarget
+          ? poleTarget.nodeId
+            ? { ...poleTarget, nodeId: nodeIdMap.get(poleTarget.nodeId) ?? poleTarget.nodeId }
+            : { ...poleTarget }
+          : null
+        // Create chain via manager; this will also create new ghost nodes, but we already have imported ghost nodes as scene nodes.
+        // To avoid duplicate ghosts, we will create chain then overwrite its ghost ids to point to imported ghosts.
+        let created: import('./ikChain').IKChain
+        try {
+          created = this.#ik.createChain(activeSlide.id, newBoneIds, newTarget, newPole)
+        } catch {
+          continue
+        }
+        const oldGhostId = (chainJson as unknown as { ghostNodeId?: string | null }).ghostNodeId
+        const oldPoleGhostId = (chainJson as unknown as { poleGhostNodeId?: string | null }).poleGhostNodeId
+        const newGhostId = oldGhostId ? (nodeIdMap.get(oldGhostId) ?? oldGhostId) : null
+        const newPoleGhostId = oldPoleGhostId ? (nodeIdMap.get(oldPoleGhostId) ?? oldPoleGhostId) : null
+        // If imported ghost nodes exist, delete the auto-created ghosts and replace
+        if (newGhostId) {
+          const autoGhost = (created as unknown as { ghostNodeId: string | null }).ghostNodeId
+          if (autoGhost && autoGhost !== newGhostId) {
+            try {
+              // Remove auto ghost node (it was created under handle)
+              this.removeNode(autoGhost)
+            } catch {}
+            ;(created as unknown as { ghostNodeId: string | null }).ghostNodeId = newGhostId
+            // Ensure the imported ghost's parent is correct (should already be handle)
+            // Update target nodeId to point to newGhost
+            created.target = { ...created.target, nodeId: newGhostId }
+          }
+        }
+        if (newPoleGhostId) {
+          const autoPole = (created as unknown as { poleGhostNodeId: string | null }).poleGhostNodeId
+          if (autoPole && autoPole !== newPoleGhostId) {
+            try {
+              this.removeNode(autoPole)
+            } catch {}
+            ;(created as unknown as { poleGhostNodeId: string | null }).poleGhostNodeId = newPoleGhostId
+            if (created.poleTarget) {
+              created.poleTarget = { ...created.poleTarget, nodeId: newPoleGhostId }
+            }
+          }
+        }
+      }
+    }
+
+    // Constraints
+    if (objectJson.constraints) {
+      for (const [oldNodeId, list] of Object.entries(objectJson.constraints.nodeConstraints)) {
+        const newNodeId = nodeIdMap.get(oldNodeId) ?? oldNodeId
+        try {
+          this.getNode(newNodeId)
+        } catch {
+          continue
+        }
+        for (const c of list as unknown as readonly { id: string; type: string; priority: number; params: Record<string, unknown> }[]) {
+          const newParams: Record<string, unknown> = { ...c.params }
+          if (typeof newParams.targetNodeId === 'string') {
+            newParams.targetNodeId = nodeIdMap.get(newParams.targetNodeId as string) ?? (newParams.targetNodeId as string)
+          }
+          try {
+            this.#constraints.addConstraint(newNodeId, c.type as ConstraintType, c.priority, newParams as unknown as ConstraintParams)
+          } catch {}
+        }
+      }
+    }
+
+    const rootNewId = nodeIdMap.get(objectJson.rootId)!
+    this.#bus.emit({ type: 'NodeCreated', nodeId: rootNewId })
+    return { nodeIdMap, clipIdMap, collectionIdMap, rootNewId }
+  }
+
   get shaderDefinitions(): readonly ShaderDefinition[] {
     return this.#shaders.definitions
   }
@@ -3143,6 +3929,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
     buildExportJobDescriptor: (settings) => engine.buildExportJobDescriptor(settings),
     toJSON: () => engine.toJSON(),
     restoreFromJSON: (json) => engine.restoreFromJSON(json),
+    exportReusableObject: (rootNodeId, name, description) => engine.exportReusableObject(rootNodeId, name, description),
+    importReusableObject: (objectJson, targetParentId) => engine.importReusableObject(objectJson, targetParentId),
   }
 }
 

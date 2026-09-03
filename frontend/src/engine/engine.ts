@@ -135,6 +135,11 @@ export interface EnginePublic {
   buildExportJobDescriptor(settings: ExportSettings): ExportJobDescriptor
   toJSON(): LessonJSON
   restoreFromJSON(json: LessonJSON): void
+  exportReusableObject(rootNodeId: string, name: string, description?: string): import('./reusableObject').ReusableObjectJSON
+  importReusableObject(
+    objectJson: import('./reusableObject').ReusableObjectJSON,
+    targetParentId?: string,
+  ): { nodeIdMap: Map<string, string>; clipIdMap: Map<string, string>; collectionIdMap: Map<string, string>; rootNewId: string }
 }
 
 export function createEngine(): EnginePublic {

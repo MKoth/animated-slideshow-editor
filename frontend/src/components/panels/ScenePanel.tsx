@@ -25,6 +25,7 @@ import { useUiStore } from '../../stores/uiStore'
 import { iconOf } from './nodeIconKinds'
 import { LockIcon, MissingAssetIcon, NodeIcon, VisibilityIcon } from './nodeIcons'
 import { ParentingModeDialog } from './ParentingModeDialog'
+import { ExportObjectModal } from './ExportObjectModal'
 
 interface ContextMenuState {
   x: number
@@ -488,6 +489,8 @@ export function ScenePanel() {
     setContextMenu(null)
   }
 
+  const [exportOpen, setExportOpen] = useState(false)
+
   const project = engine.project
   const slide = engine.getActiveSlide()
 
@@ -525,6 +528,15 @@ export function ScenePanel() {
           aria-label="Create Circle"
         >
           Create Circle
+        </button>
+        <button
+          className="scene-panel__create-group"
+          onClick={() => setExportOpen(true)}
+          title="Export selected subtree as Reusable Object (.lesson_object)"
+          aria-label="Export Object"
+          data-testid="scene-export-object"
+        >
+          Export Object
         </button>
       </div>
       <section className="scene-slide" key={slide.id}>
@@ -585,6 +597,7 @@ export function ScenePanel() {
         onConfirm={handleParentingConfirm}
         onCancel={handleParentingCancel}
       />
+      <ExportObjectModal open={exportOpen} onClose={() => setExportOpen(false)} />
     </div>
   )
 }

@@ -461,3 +461,8 @@ export type {
   ApplyClipCollectionInverse,
   ApplyClipCollectionParameters,
 } from './applyClipCollectionCommand'
+export { ImportReusableObjectCommand } from './importReusableObjectCommand'
+export type {
+  ImportReusableObjectInverse,
+  ImportReusableObjectParameters,
+} from './importReusableObjectCommand'
