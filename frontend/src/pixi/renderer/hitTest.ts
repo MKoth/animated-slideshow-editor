@@ -158,8 +158,6 @@ function containsPoint(
   return Math.abs(cx) <= size.width / 2 && Math.abs(cy) <= size.height / 2
 }
 
-
-
 function intersects(a: WorldRect, b: WorldRect): boolean {
   return a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY
 }
@@ -172,10 +170,18 @@ function rotatedCornersCenter(
 ): WorldPoint[] {
   const centerX =
     transform.x +
-    rotateX((size.offsetX ?? 0) * transform.scaleX, (size.offsetY ?? 0) * transform.scaleY, transform.rotation)
+    rotateX(
+      (size.offsetX ?? 0) * transform.scaleX,
+      (size.offsetY ?? 0) * transform.scaleY,
+      transform.rotation,
+    )
   const centerY =
     transform.y +
-    rotateY((size.offsetX ?? 0) * transform.scaleX, (size.offsetY ?? 0) * transform.scaleY, transform.rotation)
+    rotateY(
+      (size.offsetX ?? 0) * transform.scaleX,
+      (size.offsetY ?? 0) * transform.scaleY,
+      transform.rotation,
+    )
   const corners = [
     { x: -halfWidth, y: -halfHeight },
     { x: halfWidth, y: -halfHeight },
@@ -198,6 +204,9 @@ function rotateY(x: number, y: number, rotation: number): number {
 
 function selectable(node: SceneNode): boolean {
   if (node.components.camera) {
+    return false
+  }
+  if (node.components.tableRow) {
     return false
   }
   for (let cursor: SceneNode | null = node; cursor !== null; cursor = cursor.parent) {

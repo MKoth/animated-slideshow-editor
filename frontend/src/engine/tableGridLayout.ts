@@ -38,6 +38,7 @@ export class TableLayoutCache {
       borderRadius: table.borderRadius,
       padding: table.padding,
       borderColor: table.borderColor,
+      background: table.background,
       cells: rows
         .flatMap((r) => r.children)
         .map((c) => ({
@@ -69,13 +70,14 @@ export function computeTableLayout(
   rows: readonly SceneNode[],
   availableWidth: number,
 ): TableLayout {
-  const { columns, gap } = table
+  const { columns, gap, padding } = table
   const colsCount = columns.length
   const flatCells = rows.flatMap((row) => row.children).filter((node) => node.components.tableCell)
   const rowsCount = Math.max(1, Math.ceil(flatCells.length / Math.max(1, colsCount)))
 
+  const pad = Math.max(0, padding ?? 0)
   const totalGapsX = Math.max(0, colsCount - 1) * gap
-  const innerWidth = availableWidth - totalGapsX
+  const innerWidth = Math.max(0, availableWidth - totalGapsX - 2 * pad)
 
   const colWidths = resolveDimensions(columns, innerWidth, 0)
 
@@ -98,9 +100,9 @@ export function computeTableLayout(
       }
     }
 
-    let x = 0
+    let x = pad
     for (let c = 0; c < column; c++) x += colWidths[c] + gap
-    let y = 0
+    let y = pad
     for (let r = 0; r < row; r++) y += rowHeights[r] + gap
     let width = 0
     for (let c = 0; c < effectiveColSpan; c++) width += colWidths[column + c]
@@ -113,13 +115,13 @@ export function computeTableLayout(
     cellRects.set(cellNode.id, rect)
   }
 
-  let totalWidth = 0
+  let totalWidth = 2 * pad
   for (let c = 0; c < colsCount; c++) {
     totalWidth += colWidths[c]
     if (c < colsCount - 1) totalWidth += gap
   }
 
-  let totalHeight = 0
+  let totalHeight = 2 * pad
   for (let r = 0; r < rowHeights.length; r++) {
     totalHeight += rowHeights[r]
     if (r < rowHeights.length - 1) totalHeight += gap
@@ -141,12 +143,13 @@ function computeLegacyCellRects(
   colWidths: readonly number[],
   gap: number,
 ): ReadonlyMap<string, CellRect> {
+  const pad = Math.max(0, table.padding ?? 0)
   const result = new Map<string, CellRect>()
   const rowHeights = rows.map(resolveRowHeight)
   const covered = new Set<string>()
-  let y = 0
+  let y = pad
   for (let r = 0; r < rows.length; r++) {
-    let x = 0
+    let x = pad
     let childIndex = 0
     for (let c = 0; c < table.columns.length; c++) {
       if (covered.has(`${r},${c}`)) {

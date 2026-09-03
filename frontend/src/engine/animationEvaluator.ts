@@ -259,9 +259,7 @@ export class AnimationEvaluator {
 
   evaluateTable(nodeId: string, time: number): EvaluatedTableState | null {
     const node = this.#nodeLookup(nodeId)
-    const hasTable = Boolean(
-      node.components.table || node.components.tableCell || node.components.tableRow,
-    )
+    const hasTable = Boolean(node.components.table || node.components.tableCell)
     if (!hasTable) {
       return null
     }
@@ -278,8 +276,6 @@ export class AnimationEvaluator {
     } else if (node.components.tableCell) {
       baseBorderRadius = node.components.tableCell.borderRadius ?? 0
       basePadding = node.components.tableCell.padding ?? 0
-      // Inherit from owning table if cell values are fallback 0 and table has non-zero? Keep simple: use cell's own only.
-      // If cell has no explicit radius, fallback to owning table's radius
       if (node.components.tableCell.borderRadius === undefined) {
         const owning = this.#findOwningTable(node)
         if (owning?.components.table?.borderRadius !== undefined) {
@@ -291,16 +287,6 @@ export class AnimationEvaluator {
         if (owning?.components.table?.padding !== undefined) {
           basePadding = owning.components.table.padding
         }
-      }
-    } else if (node.components.tableRow) {
-      baseBorderRadius = node.components.tableRow.borderRadius ?? 0
-      // Row padding not currently stored; use 0
-      const owning = this.#findOwningTable(node)
-      if (
-        node.components.tableRow.borderRadius === undefined &&
-        owning?.components.table?.borderRadius !== undefined
-      ) {
-        baseBorderRadius = owning.components.table.borderRadius
       }
     }
     const borderRadius = this.#evaluate(

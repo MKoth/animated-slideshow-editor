@@ -144,6 +144,8 @@ export class HandleInteraction {
     const selected = this.#store.getState().selectedIds
     if (selected.length !== 1) return
     const nodeId = selected[0]
+    const sceneNode = scene.getNode(nodeId)
+    if (sceneNode?.components.tableRow) return
     const size = this.#getNodeSize(nodeId)
     const world = this.#getWorldTransform(nodeId)
     if (!size || !world) return

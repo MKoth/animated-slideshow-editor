@@ -9,6 +9,7 @@ export function defaultTableComponent(): TableComponent {
     borderColor: '#000000',
     borderRadius: 0,
     padding: 0,
+    background: '#ffffff',
   }
 }
 

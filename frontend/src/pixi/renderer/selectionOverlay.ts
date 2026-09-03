@@ -126,13 +126,16 @@ export class SelectionOverlay {
       if (!size) {
         continue
       }
+      const node = scene.getNode(nodeId)
+      if (node?.components.tableRow) {
+        continue
+      }
       const transform = this.#getWorldTransform
         ? this.#getWorldTransform(nodeId)
         : storedWorldTransformOf(scene, nodeId)
       if (!transform) {
         continue
       }
-      const node = scene.getNode(nodeId)
       const pivot = node?.transform.localPivot ?? null
       const corners = this.#orientedCorners(size, transform, pivot)
       if (!corners) {

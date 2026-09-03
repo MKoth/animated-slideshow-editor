@@ -154,6 +154,10 @@ function TableLevelInspector({
     apply({ borderColor: event.target.value })
   }
 
+  const commitBackground = (event: React.ChangeEvent<HTMLInputElement>) => {
+    apply({ background: event.target.value })
+  }
+
   const commitColumnWidth = (index: number, raw: string) => {
     apply(commitDimensionWidths(target, 'columns', index, raw))
   }
@@ -272,6 +276,21 @@ function TableLevelInspector({
           value={table.borderColor}
           disabled={playing}
           onChange={commitBorderColor}
+        />
+      </div>
+
+      <div className="inspector-field">
+        <label className="inspector-field__label" htmlFor="table-background">
+          Background
+        </label>
+        <input
+          id="table-background"
+          className="inspector-field__color"
+          type="color"
+          aria-label="Background"
+          value={table.background ?? '#ffffff'}
+          disabled={playing}
+          onChange={commitBackground}
         />
       </div>
 

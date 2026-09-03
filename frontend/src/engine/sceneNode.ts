@@ -376,10 +376,14 @@ function parseTableComponent(component: Record<string, unknown>, nodeId: string)
     typeof component.padding === 'number' && Number.isFinite(component.padding)
       ? component.padding
       : 0
+  const background = typeof component.background === 'string' ? component.background : undefined
   if (borderRadius < 0) throw new Error(`${ctx} borderRadius must be a non-negative number`)
   if (padding < 0) throw new Error(`${ctx} padding must be a non-negative number`)
   if (borderWidth < 0) throw new Error(`${ctx} borderWidth must be a non-negative number`)
   if (gap < 0) throw new Error(`${ctx} gap must be a non-negative number`)
+  if (background !== undefined && !/^#[0-9a-f]{6}$/i.test(background)) {
+    throw new Error(`${ctx} background must be a hex color`)
+  }
   return {
     kind: 'table',
     columns,
@@ -388,6 +392,7 @@ function parseTableComponent(component: Record<string, unknown>, nodeId: string)
     borderColor,
     borderRadius,
     padding,
+    background,
   }
 }
 
@@ -497,6 +502,7 @@ function freezeComponents(components: NodeComponents): NodeComponents {
           borderColor: components.table.borderColor,
           borderRadius: components.table.borderRadius,
           padding: components.table.padding,
+          background: components.table.background,
         })
       : undefined,
     tableRow: components.tableRow ? Object.freeze({ ...components.tableRow }) : undefined,

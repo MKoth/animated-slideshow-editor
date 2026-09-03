@@ -147,8 +147,8 @@ export function requireAnimatableForTable(
   property: unknown,
 ): TableAnimationProperty {
   const bounded = requireTableAnimationProperty(property)
-  if (!node.components.table && !node.components.tableCell && !node.components.tableRow) {
-    throw new Error(`Node "${node.name}" does not have a table, row, or cell component`)
+  if (!node.components.table && !node.components.tableCell) {
+    throw new Error(`Node "${node.name}" does not have a table or cell component`)
   }
   return bounded
 }

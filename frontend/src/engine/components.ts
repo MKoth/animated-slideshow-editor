@@ -73,6 +73,7 @@ export interface TableComponent {
   readonly borderColor: string
   readonly borderRadius: number
   readonly padding: number
+  readonly background?: string
 }
 
 export interface TableRowComponent {

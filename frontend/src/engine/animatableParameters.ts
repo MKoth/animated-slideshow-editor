@@ -149,7 +149,7 @@ export function getAnimatableParameters(
     }
   }
 
-  if (node.components.table || node.components.tableCell || node.components.tableRow) {
+  if (node.components.table || node.components.tableCell) {
     for (const property of TABLE_ANIMATABLE_PROPERTIES) {
       result.push({
         key: `table:${property}`,

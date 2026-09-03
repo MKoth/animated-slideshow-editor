@@ -664,6 +664,16 @@ export class SceneRenderer {
     if (!container) {
       return
     }
+    const node = this.#scene?.getNode(nodeId)
+    if (node?.components.text && node.parent?.components.tableCell) {
+      const textGroup = placeholderOf(container)
+      const size = textGroup ? textSizeOf(textGroup) : undefined
+      if (size) {
+        const base = this.#tableTextBaseOffset(node, size)
+        container.position.set(base.x + x, base.y + y)
+        return
+      }
+    }
     container.position.set(x, y)
   }
 
@@ -689,6 +699,18 @@ export class SceneRenderer {
       container.pivot.set(transform.localPivot.x, transform.localPivot.y)
     } else {
       container.pivot.set(0, 0)
+    }
+    const node = this.#scene?.getNode(nodeId)
+    if (node?.components.text && node.parent?.components.tableCell) {
+      const textGroup = placeholderOf(container)
+      const tSize = textGroup ? textSizeOf(textGroup) : undefined
+      if (tSize) {
+        const base = this.#tableTextBaseOffset(node, tSize)
+        container.position.set(base.x + transform.x, base.y + transform.y)
+        container.rotation = transform.rotation
+        container.scale.set(transform.scaleX, transform.scaleY)
+        return
+      }
     }
     container.position.set(transform.x, transform.y)
     container.rotation = transform.rotation
@@ -883,7 +905,7 @@ export class SceneRenderer {
       }
     }
     let tableStyleChanged = false
-    if (node.components.table || node.components.tableCell || node.components.tableRow) {
+    if (node.components.table || node.components.tableCell) {
       const tableState = this.#engine.evaluateTable(nodeId, time)
       if (tableState) {
         const hash = `${tableState.borderRadius}:${tableState.padding}`
@@ -897,7 +919,7 @@ export class SceneRenderer {
               const availableWidth = this.#sizes.get(nodeId)?.width ?? DEFAULT_TABLE_WIDTH
               rebuildTableWithEvaluated(this.#pixi, placeholder, node, availableWidth, tableState)
             }
-          } else if (node.components.tableCell || node.components.tableRow) {
+          } else if (node.components.tableCell) {
             rebuildTableChildWithEvaluated(this.#pixi, container, node, tableState)
             const size = tableChildSizeOf(container)
             if (size) {
@@ -936,7 +958,7 @@ export class SceneRenderer {
     if (currentSize) {
       applyPivotWithSize(container, state.transform.localPivot, currentSize)
     }
-    this.#positionTableText(node, container)
+    this.#positionTableText(node, container, state)
     const ikRotation = this.#ikOverrides.get(nodeId)
     if (ikRotation !== undefined) {
       container.rotation = ikRotation
@@ -1150,9 +1172,12 @@ export class SceneRenderer {
       }
       return
     }
-    if (node.components.tableRow || node.components.tableCell) {
+    if (node.components.tableCell) {
       const size = tableChildSizeOf(container)
       if (size) this.#sizes.set(node.id, size)
+      return
+    }
+    if (node.components.tableRow) {
       return
     }
     if (node.components.chart) {
@@ -1316,22 +1341,31 @@ export class SceneRenderer {
     }
   }
 
-  #positionTableText(node: SceneNode, container: PixiContainer): void {
-    if (!node.components.text || !node.parent?.components.tableCell) return
-    const textGroup = placeholderOf(container)
-    const size = textGroup ? textSizeOf(textGroup) : undefined
-    if (!size) return
+  #tableTextBaseOffset(node: SceneNode, size: WorldSize): { x: number; y: number } {
     const cell = node.parent!
     const slideId = this.#slideId
     let evaluatedPadding: number | undefined
     if (slideId) {
       const time = this.#currentTime.getTime(slideId)
-      const state = this.#engine.evaluateTable(cell.id, time)
-      if (state) evaluatedPadding = state.padding
+      const tableState = this.#engine.evaluateTable(cell.id, time)
+      if (tableState) evaluatedPadding = tableState.padding
     }
     const table = this.#owningTable(node)?.components.table
     const padding = evaluatedPadding ?? cell.components.tableCell!.padding ?? table?.padding ?? 0
-    container.position.set(padding + size.width / 2, padding + size.height / 2)
+    return { x: padding + size.width / 2, y: padding + size.height / 2 }
+  }
+
+  #positionTableText(
+    node: SceneNode,
+    container: PixiContainer,
+    state: { transform: { x: number; y: number } },
+  ): void {
+    if (!node.components.text || !node.parent?.components.tableCell) return
+    const textGroup = placeholderOf(container)
+    const size = textGroup ? textSizeOf(textGroup) : undefined
+    if (!size) return
+    const base = this.#tableTextBaseOffset(node, size)
+    container.position.set(base.x + state.transform.x, base.y + state.transform.y)
   }
 
   #tableTextSize(node: SceneNode, size: WorldSize): WorldSize {
