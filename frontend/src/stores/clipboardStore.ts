@@ -7,6 +7,7 @@ export interface ClipboardItem {
   readonly parentId: string
   readonly name: string
   readonly transform: Transform
+  readonly semanticName?: string
 }
 
 export interface ClipboardState {

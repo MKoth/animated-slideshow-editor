@@ -226,6 +226,19 @@ function validateSlide(
   for (const nodeJson of nodes) {
     validateNode(errors, nodeJson, nodeIds)
   }
+  // Unique Name per scene validation (block duplicate)
+  {
+    const seen = new Set<string>()
+    for (const nodeJson of nodes) {
+      if (isRecord(nodeJson) && typeof nodeJson.name === 'string') {
+        if (seen.has(nodeJson.name)) {
+          errors.push(`Duplicate node name "${nodeJson.name}" in scene "${String(scene.id)}"`)
+        } else {
+          seen.add(nodeJson.name)
+        }
+      }
+    }
+  }
   const nodeById = new Map<string, Record<string, unknown>>()
   for (const nodeJson of nodes) {
     if (isRecord(nodeJson) && typeof nodeJson.id === 'string') {
@@ -332,6 +345,12 @@ function validateNode(errors: string[], nodeJson: unknown, nodeIds: Set<string>)
     }
   }
   requireNonEmptyString(errors, nodeJson.name, 'Node name')
+  if (
+    nodeJson.semanticName !== undefined &&
+    (typeof nodeJson.semanticName !== 'string' || nodeJson.semanticName.trim() === '')
+  ) {
+    errors.push(`Node "${String(nodeJson.id)}" semanticName must be a non-empty string if provided`)
+  }
   if (typeof nodeJson.parentId !== 'string' && nodeJson.parentId !== null) {
     errors.push('Node parentId must be a string or null')
   }

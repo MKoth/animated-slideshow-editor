@@ -9,6 +9,7 @@ import {
   RotateNodeCommand,
   ScaleNodeCommand,
   SetOpacityCommand,
+  SetSemanticNameCommand,
   TransactionCommand,
 } from '../engine/commands'
 import type { Command } from '../engine/commands'
@@ -227,13 +228,15 @@ export function applyNodeName(
     if (!scene) {
       return null
     }
-    const taken = namesInTree(scene.root)
-    taken.delete(node.name)
-    const candidate = uniqueNodeName(taken, name)
-    if (candidate === node.name) {
+    if (name === node.name) {
       return null
     }
-    return dispatch(new RenameNodeCommand({ nodeId, name: candidate }))
+    const taken = namesInTree(scene.root)
+    taken.delete(node.name)
+    if (taken.has(name)) {
+      throw new Error(`A node with name "${name}" already exists in this scene`)
+    }
+    return dispatch(new RenameNodeCommand({ nodeId, name }))
   }
   const scenes = nodeIds.map((nodeId) => slideOfNode(engine, nodeId))
   const groups = new Map<string, { ids: string[]; taken: Set<string> }>()
@@ -264,6 +267,38 @@ export function applyNodeName(
         children.push(new RenameNodeCommand({ nodeId, name: candidate }))
       }
       group.taken.add(candidate)
+    }
+  }
+  if (children.length === 0) {
+    return null
+  }
+  return dispatch(new TransactionCommand(children))
+}
+
+export function applySemanticName(
+  engine: EnginePublic,
+  dispatch: DispatchCommand,
+  nodeIds: readonly string[],
+  requested: string,
+): CommandResult<unknown> | null {
+  const trimmed = requested.trim()
+  const semanticName = trimmed === '' ? undefined : trimmed
+  if (nodeIds.length === 0) {
+    return null
+  }
+  if (nodeIds.length === 1) {
+    const nodeId = nodeIds[0]
+    const node = engine.getNode(nodeId)
+    if ((node.semanticName ?? undefined) === semanticName) {
+      return null
+    }
+    return dispatch(new SetSemanticNameCommand({ nodeId, semanticName }))
+  }
+  const children: Command<unknown>[] = []
+  for (const nodeId of nodeIds) {
+    const node = engine.getNode(nodeId)
+    if ((node.semanticName ?? undefined) !== semanticName) {
+      children.push(new SetSemanticNameCommand({ nodeId, semanticName }))
     }
   }
   if (children.length === 0) {

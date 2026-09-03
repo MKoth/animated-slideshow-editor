@@ -1,6 +1,7 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
 import { requireNonEmpty } from '../guards'
+import { walkPreOrder } from '../sceneNode'
 
 export interface RenameNodeParameters {
   readonly nodeId: string
@@ -26,12 +27,21 @@ export class RenameNodeCommand implements Command<RenameNodeInverse> {
 
   validate(engine: Engine): void {
     requireNonEmpty(this.#name, 'Node name')
-    engine.getNode(this.#nodeId)
+    const node = engine.getNode(this.#nodeId)
+    const trimmed = this.#name.trim()
+    if (trimmed !== node.name) {
+      const scene = engine.getNodeScene(this.#nodeId)
+      for (const other of walkPreOrder(scene.root)) {
+        if (other.id !== this.#nodeId && other.name === trimmed) {
+          throw new Error(`A node with name "${trimmed}" already exists in this scene`)
+        }
+      }
+    }
   }
 
   execute(engine: Engine): RenameNodeInverse {
     const { name } = engine.getNode(this.#nodeId)
-    engine.renameNode(this.#nodeId, this.#name)
+    engine.renameNode(this.#nodeId, this.#name.trim())
     return { nodeId: this.#nodeId, oldName: name }
   }
 

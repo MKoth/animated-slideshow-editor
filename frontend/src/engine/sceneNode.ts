@@ -36,6 +36,7 @@ export interface CachedWorldTransform {
 export class SceneNode {
   readonly id: string
   name: string
+  semanticName?: string
   parent: SceneNode | null
   readonly children: SceneNode[]
   transform: Transform
@@ -47,9 +48,16 @@ export class SceneNode {
   _worldTransformDirty = true
   _cachedWorldTransform: CachedWorldTransform | null = null
 
-  constructor(id: string, name: string, transform: Transform, components: NodeComponents = {}) {
+  constructor(
+    id: string,
+    name: string,
+    transform: Transform,
+    components: NodeComponents = {},
+    semanticName?: string,
+  ) {
     this.id = id
     this.name = name
+    this.semanticName = semanticName
     this.transform = transform
     this.components = freezeComponents(components)
     this.parent = null
@@ -77,6 +85,7 @@ export class SceneNode {
     return {
       id: this.id,
       name: this.name,
+      ...(this.semanticName !== undefined ? { semanticName: this.semanticName } : {}),
       parentId: this.parent ? this.parent.id : null,
       transform: {
         x: this.transform.x,
@@ -113,11 +122,22 @@ export class SceneNode {
       localPivot = { x: json.localPivot.x, y: json.localPivot.y }
       validatePivot(localPivot, `Node "${id}" localPivot`)
     }
+    let semanticName: string | undefined
+    if (json.semanticName !== undefined) {
+      if (typeof json.semanticName !== 'string') {
+        throw new Error(`Node "${id}" semanticName must be a string`)
+      }
+      const trimmed = json.semanticName.trim()
+      if (trimmed !== '') {
+        semanticName = trimmed
+      }
+    }
     const node = new SceneNode(
       id,
       name,
       localPivot ? { ...transform, localPivot } : transform,
       componentsFromJSON(json.components, id),
+      semanticName,
     )
     node.visible = typeof json.visible === 'boolean' ? json.visible : true
     node.opacity =

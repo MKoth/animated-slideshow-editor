@@ -39,11 +39,22 @@ describe('reconcileMissingAssets', () => {
   })
 
   it('reports the deduplicated names of the affected nodes for the friendly message', () => {
-    const { project } = makeProjectWithAssets('Demo', [
-      { name: 'Boy', definitionId: 'def-boy' },
-      { name: 'Girl', definitionId: 'def-girl' },
-      { name: 'Boy', definitionId: 'def-other' },
-    ])
+    const engine = createEngine()
+    engine.createProject({ name: 'Demo' })
+    engine.createSlide('Slide 1')
+    const slide = engine.project!.slides[0]
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy', {
+      components: { assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-boy' } },
+    })
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Girl', {
+      components: { assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-girl' } },
+    })
+    const boy2 = engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy2', {
+      components: { assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-other' } },
+    })
+    // Force duplicate name to test deduplication (unique enforcement would suffix otherwise)
+    boy2.name = 'Boy'
+    const project = engine.project!
 
     const report = reconcileMissingAssets(project, new Set([]))
 

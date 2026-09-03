@@ -109,6 +109,7 @@ export type FullscreenShaderJSON = {
 export type NodeJSON = {
   readonly id: string
   readonly name: string
+  readonly semanticName?: string
   readonly parentId: string | null
   readonly transform: TransformJSON
   readonly localPivot?: PivotJSON

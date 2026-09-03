@@ -3,6 +3,7 @@ import type { Command } from './command'
 import type { Transform } from '../transform'
 import { relativeTransform, transformsEqual, worldTransformOf } from '../worldTransform'
 import { requireNonEmpty } from '../guards'
+import { namesInTree, uniqueNodeName } from '../naming'
 
 export interface CreateRigHandleParameters {
   readonly sceneId: string
@@ -89,8 +90,9 @@ export class CreateRigHandleCommand implements Command<CreateRigHandleInverse> {
   execute(engine: Engine): CreateRigHandleInverse {
     const scene = engine.getScene(this.#sceneId)
     const handleParentId = this.#parentId ?? scene.root.id
+    const uniqueName = uniqueNodeName(namesInTree(scene.root), this.#name)
     // Create empty group/locator node (only Transform)
-    const handle = engine.createNode(this.#sceneId, handleParentId, this.#name, {
+    const handle = engine.createNode(this.#sceneId, handleParentId, uniqueName, {
       ...(this.#transform !== undefined && { transform: this.#transform }),
     })
     const handleId = handle.id

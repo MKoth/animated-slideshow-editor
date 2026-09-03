@@ -3,6 +3,7 @@ import type { Command } from './command'
 import { copyComponents, type NodeComponents } from '../components'
 import type { Transform } from '../transform'
 import { requireOpacity } from '../guards'
+import { namesInTree, uniqueNodeName } from '../naming'
 
 export interface CreateNodeParameters {
   readonly sceneId: string
@@ -13,6 +14,7 @@ export interface CreateNodeParameters {
   readonly visible?: boolean
   readonly opacity?: number
   readonly components?: NodeComponents
+  readonly semanticName?: string
 }
 
 export interface CreateNodeInverse {
@@ -30,6 +32,7 @@ export class CreateNodeCommand implements Command<CreateNodeInverse> {
   readonly #visible: boolean | undefined
   readonly #opacity: number | undefined
   readonly #components: NodeComponents | undefined
+  readonly #semanticName: string | undefined
 
   constructor(input: CreateNodeParameters) {
     this.#sceneId = input.sceneId
@@ -40,6 +43,10 @@ export class CreateNodeCommand implements Command<CreateNodeInverse> {
     this.#visible = input.visible
     this.#opacity = input.opacity
     this.#components = input.components ? copyComponents(input.components) : undefined
+    this.#semanticName =
+      input.semanticName !== undefined && input.semanticName.trim() !== ''
+        ? input.semanticName.trim()
+        : undefined
     this.parameters = {
       sceneId: input.sceneId,
       parentId: input.parentId,
@@ -49,6 +56,7 @@ export class CreateNodeCommand implements Command<CreateNodeInverse> {
       ...(this.#visible !== undefined && { visible: this.#visible }),
       ...(this.#opacity !== undefined && { opacity: this.#opacity }),
       ...(this.#components !== undefined && { components: this.#components }),
+      ...(this.#semanticName !== undefined && { semanticName: this.#semanticName }),
     }
   }
 
@@ -72,12 +80,15 @@ export class CreateNodeCommand implements Command<CreateNodeInverse> {
   }
 
   execute(engine: Engine): CreateNodeInverse {
-    const node = engine.createNode(this.#sceneId, this.#parentId, this.#name, {
+    const scene = engine.getScene(this.#sceneId)
+    const unique = uniqueNodeName(namesInTree(scene.root), this.#name)
+    const node = engine.createNode(this.#sceneId, this.#parentId, unique, {
       ...(this.#id !== undefined && { id: this.#id }),
       ...(this.#transform !== undefined && { transform: this.#transform }),
       ...(this.#visible !== undefined && { visible: this.#visible }),
       ...(this.#opacity !== undefined && { opacity: this.#opacity }),
       ...(this.#components !== undefined && { components: this.#components }),
+      ...(this.#semanticName !== undefined && { semanticName: this.#semanticName }),
     })
     return { nodeId: node.id }
   }

@@ -30,6 +30,7 @@ export function copySelection(engine: EnginePublic): void {
       parentId: node.parent?.id ?? slide.scene.root.id,
       name: node.name,
       transform: { ...node.transform },
+      ...(node.semanticName !== undefined ? { semanticName: node.semanticName } : {}),
     })
   }
   const items: ClipboardItem[] = []
@@ -65,6 +66,7 @@ export function pasteClipboard(dispatch: DispatchCommand): void {
         rotation: item.transform.rotation,
         scaleX: item.transform.scaleX,
         scaleY: item.transform.scaleY,
+        ...(item.semanticName !== undefined ? { semanticName: item.semanticName } : {}),
       }),
     )
     if (result.ok) {

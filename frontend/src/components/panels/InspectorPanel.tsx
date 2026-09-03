@@ -7,6 +7,7 @@ import {
   applyNodeName,
   applyNodeOpacity,
   applyNodeOpacityAutoKey,
+  applySemanticName,
   commonValueOf,
   degreesOf,
   FIELD_LABELS,
@@ -160,7 +161,11 @@ export function InspectorPanel({ width }: { width: number }) {
   )
   void timelineSelectionVersion
   const [, setTick] = useState(0)
-  useEngineEvent(() => setTick((tick) => tick + 1))
+  const [nameError, setNameError] = useState<string | null>(null)
+  useEngineEvent(() => {
+    setTick((tick) => tick + 1)
+    setNameError(null)
+  })
 
   const targets = inspectedTargets(engine, selectedIds)
   const slide = engine.getActiveSlide()
@@ -347,6 +352,7 @@ export function InspectorPanel({ width }: { width: number }) {
     propertyStateOf(engine, targets[0].id, FIELD_PROPERTY[field], indicatorTime)
   const opacityIndicator = propertyStateOf(engine, targets[0].id, 'opacity', indicatorTime)
   const commonName = commonValueOf(targets, (node) => node.name)
+  const commonSemanticName = commonValueOf(targets, (node) => node.semanticName ?? '')
   const commonOpacity = commonValueOf(targets, modeActions.opacityOf)
   const transformReadings = targets.map(
     (node) => modeActions.readWorld(engine, node.id)?.world ?? null,
@@ -384,6 +390,23 @@ export function InspectorPanel({ width }: { width: number }) {
   const commitName = (raw: string) => {
     try {
       const result = applyNodeName(engine, dispatch, targetIds, raw)
+      if (result && !result.ok) {
+        throw result.error
+      }
+      setNameError(null)
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      if (msg.toLowerCase().includes('already exists')) {
+        setNameError(msg)
+      } else {
+        notify(msg)
+      }
+    }
+  }
+
+  const commitSemanticName = (raw: string) => {
+    try {
+      const result = applySemanticName(engine, dispatch, targetIds, raw)
       if (result && !result.ok) {
         throw result.error
       }
@@ -446,7 +469,20 @@ export function InspectorPanel({ width }: { width: number }) {
         )}
 
         <InspectorSection title={multi ? `${targets.length} Objects Selected` : 'General'}>
-          <NameField value={commonName} onCommit={commitName} disabled={playing} />
+          <NameField
+            label="Unique Name"
+            value={commonName}
+            onCommit={commitName}
+            disabled={playing}
+            error={nameError}
+          />
+          <NameField
+            label="Semantic Name"
+            value={commonSemanticName}
+            onCommit={commitSemanticName}
+            disabled={playing}
+            placeholder="e.g. left_hand"
+          />
         </InspectorSection>
 
         <InspectorSection title="Transform">

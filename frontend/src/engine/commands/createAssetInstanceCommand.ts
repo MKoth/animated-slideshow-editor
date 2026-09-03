@@ -13,6 +13,7 @@ export interface CreateAssetInstanceParameters {
   readonly rotation?: number
   readonly scaleX?: number
   readonly scaleY?: number
+  readonly semanticName?: string
 }
 
 export interface CreateAssetInstanceInverse {
@@ -31,6 +32,7 @@ export class CreateAssetInstanceCommand implements Command<CreateAssetInstanceIn
   readonly #rotation: number | undefined
   readonly #scaleX: number | undefined
   readonly #scaleY: number | undefined
+  readonly #semanticName: string | undefined
 
   constructor(input: CreateAssetInstanceParameters) {
     this.#sceneId = input.sceneId
@@ -42,6 +44,10 @@ export class CreateAssetInstanceCommand implements Command<CreateAssetInstanceIn
     this.#rotation = input.rotation
     this.#scaleX = input.scaleX
     this.#scaleY = input.scaleY
+    this.#semanticName =
+      input.semanticName !== undefined && input.semanticName.trim() !== ''
+        ? input.semanticName.trim()
+        : undefined
     const parameters: Record<string, unknown> = {
       sceneId: input.sceneId,
       parentId: input.parentId,
@@ -57,6 +63,9 @@ export class CreateAssetInstanceCommand implements Command<CreateAssetInstanceIn
     }
     if (input.scaleY !== undefined) {
       parameters.scaleY = input.scaleY
+    }
+    if (this.#semanticName !== undefined) {
+      parameters.semanticName = this.#semanticName
     }
     this.parameters = parameters
   }
@@ -98,6 +107,7 @@ export class CreateAssetInstanceCommand implements Command<CreateAssetInstanceIn
           scaleX: this.#scaleX ?? 1,
           scaleY: this.#scaleY ?? 1,
         },
+        ...(this.#semanticName !== undefined ? { semanticName: this.#semanticName } : {}),
       },
     )
     return { nodeId: node.id }

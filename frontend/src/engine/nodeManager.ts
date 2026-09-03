@@ -19,6 +19,7 @@ import {
 } from './guards'
 import type { MaterialOverrideValue } from './materialInstance'
 import { requireMaterialOverridePresent } from './materialInstance'
+import { namesInTree, uniqueNodeName } from './naming'
 
 export interface CreateNodeOptions {
   readonly id?: string
@@ -26,6 +27,7 @@ export interface CreateNodeOptions {
   readonly visible?: boolean
   readonly opacity?: number
   readonly components?: NodeComponents
+  readonly semanticName?: string
 }
 
 export class NodeManager {
@@ -93,11 +95,13 @@ export class NodeManager {
     if (options.transform?.localPivot !== undefined) {
       validatePivot(options.transform.localPivot, 'Pivot')
     }
+    const uniqueName = uniqueNodeName(namesInTree(scene.root), name.trim())
     const node = new SceneNodeModel(
       options.id ?? newId('node'),
-      name,
+      uniqueName,
       options.transform ?? identityTransform(),
       options.components,
+      options.semanticName,
     )
     if (this.#byId.has(node.id)) {
       throw new Error(`A node with id "${node.id}" already exists`)
@@ -257,7 +261,17 @@ export class NodeManager {
   renameNode(nodeId: string, name: string): void {
     const node = this.getById(nodeId)
     requireNonEmpty(name, 'Node name')
-    node.name = name
+    node.name = name.trim()
+    this.#bus.emit({ type: 'NodeRenamed', nodeId })
+  }
+
+  setSemanticName(nodeId: string, semanticName: string | undefined): void {
+    const node = this.getById(nodeId)
+    if (semanticName === undefined || semanticName.trim() === '') {
+      node.semanticName = undefined
+    } else {
+      node.semanticName = semanticName.trim()
+    }
     this.#bus.emit({ type: 'NodeRenamed', nodeId })
   }
 

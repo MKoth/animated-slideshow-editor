@@ -88,6 +88,7 @@ function copyNodeDeep(
     source.name,
     { ...source.transform },
     copyComponents(source.components),
+    source.semanticName,
   )
   copy.visible = source.visible
   copy.opacity = source.opacity

@@ -84,6 +84,11 @@ function SceneTreeRow({
           <NodeIcon node={node} />
         </span>
         <span className="scene-tree__name">{node.name}</span>
+        {node.semanticName && (
+          <span className="scene-tree__semantic" title={`Semantic: ${node.semanticName}`}>
+            {node.semanticName}
+          </span>
+        )}
         <span className="scene-tree__indicators">
           <span className="scene-tree__indicator" title={node.visible ? 'Visible' : 'Hidden'}>
             <VisibilityIcon visible={node.visible} />

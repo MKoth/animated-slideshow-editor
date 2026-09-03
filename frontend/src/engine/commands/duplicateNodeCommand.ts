@@ -48,9 +48,14 @@ export class DuplicateNodeCommand implements Command<DuplicateNodeInverse> {
           x: node.transform.x + DUPLICATE_OFFSET.x,
           y: node.transform.y + DUPLICATE_OFFSET.y,
         },
+        ...(node.semanticName !== undefined ? { semanticName: node.semanticName } : {}),
       },
     )
     copy.material = copyMaterialInstance(node.material)
+    // clipInstances are not copied here (asset instance only); if node had semanticName it's already handled
+    if (node.semanticName !== undefined) {
+      copy.semanticName = node.semanticName
+    }
     return { nodeId: copy.id }
   }
 

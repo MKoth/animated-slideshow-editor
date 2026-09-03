@@ -131,11 +131,15 @@ export function NameField({
   onCommit,
   disabled = false,
   label = 'Name',
+  placeholder,
+  error,
 }: {
   value: string | null
   onCommit: (raw: string) => void
   disabled?: boolean
   label?: string
+  placeholder?: string
+  error?: string | null
 }) {
   const display = value === null ? MIXED_MARKER : value
   const buffer = useEditBuffer(display)
@@ -151,9 +155,11 @@ export function NameField({
       </label>
       <input
         id={label}
-        className="inspector-field__input"
+        className={`inspector-field__input${error ? ' inspector-field__input--error' : ''}`}
         type="text"
         aria-label={label}
+        aria-invalid={Boolean(error)}
+        placeholder={placeholder}
         disabled={disabled}
         value={buffer.text}
         onChange={(event) => {
@@ -173,6 +179,11 @@ export function NameField({
           }
         }}
       />
+      {error && (
+        <span className="inspector-field__error" role="alert">
+          {error}
+        </span>
+      )}
     </div>
   )
 }

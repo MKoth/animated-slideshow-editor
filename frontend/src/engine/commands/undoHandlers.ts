@@ -108,6 +108,12 @@ export function applyUndo(
       engine.renameNode(nodeId, oldName)
       return
     }
+    case 'SetSemanticName': {
+      const nodeId = inv.nodeId as string
+      const oldSemanticName = inv.oldSemanticName as string | undefined
+      engine.setSemanticName(nodeId, oldSemanticName)
+      return
+    }
     case 'ReorderNode': {
       const nodeId = inv.nodeId as string
       const oldIndex = inv.oldIndex as number
@@ -205,6 +211,7 @@ export function applyUndo(
               visible: json.visible,
               opacity: json.opacity,
               components: json.components as unknown as import('../components').NodeComponents,
+              semanticName: json.semanticName as string | undefined,
             })
             // Restore material if present
             if (json.material) {
@@ -226,17 +233,17 @@ export function applyUndo(
                   // ignore
                 }
               }
-              // Restore clipInstances if any
-              const clips = json.clipInstances as ClipInstanceJSON[] | undefined
-              if (clips) {
-                for (const ci of clips) {
-                  try {
-                    const inst = clipInstanceFromJSON(ci)
-                    const n = engine.getNode(nodeId)
-                    n.clipInstances.push(inst)
-                  } catch {
-                    // ignore
-                  }
+            }
+            // Restore clipInstances if any
+            const clips = json.clipInstances as ClipInstanceJSON[] | undefined
+            if (clips) {
+              for (const ci of clips) {
+                try {
+                  const inst = clipInstanceFromJSON(ci)
+                  const n = engine.getNode(nodeId)
+                  n.clipInstances.push(inst)
+                } catch {
+                  // ignore
                 }
               }
             }
@@ -1831,6 +1838,12 @@ export function applyRedo(
       return
     case 'RenameNode':
       engine.renameNode(params.nodeId as string, params.name as string)
+      return
+    case 'SetSemanticName':
+      engine.setSemanticName(
+        params.nodeId as string,
+        (params.semanticName as string | undefined) ?? undefined,
+      )
       return
     case 'ReorderNode':
       engine.reorderNode(params.nodeId as string, params.index as number)

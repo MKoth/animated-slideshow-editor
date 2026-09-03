@@ -1811,6 +1811,10 @@ export class Engine {
     this.#nodes.renameNode(nodeId, name)
   }
 
+  setSemanticName(nodeId: string, semanticName: string | undefined): void {
+    this.#nodes.setSemanticName(nodeId, semanticName)
+  }
+
   setOpacity(nodeId: string, opacity: number): void {
     this.#nodes.setOpacity(nodeId, opacity)
   }
