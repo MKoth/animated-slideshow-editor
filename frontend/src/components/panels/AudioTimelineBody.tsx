@@ -52,6 +52,7 @@ import { assetsApi } from '../../api'
 import { RecordModal } from '../audio/RecordModal'
 import { TtsModal } from '../audio/TtsModal'
 import { WordLevelTtsModal } from '../audio/WordLevelTtsModal'
+import { WaveformEditorModal } from '../audio/WaveformEditorModal'
 import { getPrompterRecordingShortcut, getPrompterSecondsPerCharacter } from '../../engine/prompter'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { captureAudioSnapshot } from '../../app/assetSnapshot'
@@ -231,6 +232,7 @@ export function AudioTimelineBody({
     y: number
     clipId: string
   } | null>(null)
+  const [waveformClipId, setWaveformClipId] = useState<string | null>(null)
 
   const resolveTrackFromEvent = (event: React.DragEvent): AudioTrackId | null => {
     const target = event.target as HTMLElement
@@ -2623,6 +2625,11 @@ export function AudioTimelineBody({
                                 }
                                 onFocus={() => setFocusedId(clip.id)}
                                 onClick={(e) => handleClipPointerDownSelect(e, clip.id)}
+                                onDoubleClick={(e) => {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  setWaveformClipId(clip.id)
+                                }}
                                 onContextMenu={(e) => {
                                   e.preventDefault()
                                   setFocusedId(clip.id)
@@ -3200,6 +3207,26 @@ export function AudioTimelineBody({
           onClick={(e) => e.stopPropagation()}
         >
           <button
+            data-testid="audio-clip-waveform-btn"
+            onClick={() => {
+              const cid = audioClipContextMenu.clipId
+              setWaveformClipId(cid)
+              setAudioClipContextMenu(null)
+            }}
+            style={{
+              padding: '6px 10px',
+              textAlign: 'left',
+              background: '#7c5cff',
+              color: '#fff',
+              border: '1px solid #7c5cff',
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontSize: 11,
+            }}
+          >
+            Edit waveform…
+          </button>
+          <button
             data-testid="audio-clip-delete-btn"
             onClick={() => {
               const clipId = audioClipContextMenu.clipId
@@ -3258,6 +3285,9 @@ export function AudioTimelineBody({
             )
           })()}
         </div>
+      )}
+      {waveformClipId && (
+        <WaveformEditorModal slideId={slide.id} clipId={waveformClipId} onClose={() => setWaveformClipId(null)} />
       )}
     </div>
   )
