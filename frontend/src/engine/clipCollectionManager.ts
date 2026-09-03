@@ -23,11 +23,18 @@ export class ClipCollectionManager {
     return this.#collections.has(collectionId)
   }
 
-  createCollection(name: string, bindings: Record<string, string>, sourceNodeId?: string): ClipCollection {
+  createCollection(
+    name: string,
+    bindings: Record<string, string>,
+    sourceNodeId?: string,
+  ): ClipCollection {
     const id = newClipCollectionId()
     const collection = new ClipCollection(id, name, bindings, sourceNodeId)
     this.#collections.set(id, collection)
-    this.#bus.emit({ type: 'ClipCollectionCreated', collectionId: id } as unknown as import('./events').EngineEvent)
+    this.#bus.emit({
+      type: 'ClipCollectionCreated',
+      collectionId: id,
+    } as unknown as import('./events').EngineEvent)
     return collection
   }
 
@@ -39,14 +46,20 @@ export class ClipCollectionManager {
   deleteCollection(collectionId: string): ClipCollection {
     const c = this.getCollection(collectionId)
     this.#collections.delete(collectionId)
-    this.#bus.emit({ type: 'ClipCollectionRemoved', collectionId } as unknown as import('./events').EngineEvent)
+    this.#bus.emit({
+      type: 'ClipCollectionRemoved',
+      collectionId,
+    } as unknown as import('./events').EngineEvent)
     return c
   }
 
   renameCollection(collectionId: string, name: string): void {
     const c = this.getCollection(collectionId)
     c.name = name
-    this.#bus.emit({ type: 'ClipCollectionRenamed', collectionId } as unknown as import('./events').EngineEvent)
+    this.#bus.emit({
+      type: 'ClipCollectionRenamed',
+      collectionId,
+    } as unknown as import('./events').EngineEvent)
   }
 
   setBindings(collectionId: string, bindings: Record<string, string>): Map<string, string> {
@@ -57,7 +70,10 @@ export class ClipCollectionManager {
     const copy = new ClipCollection(c.id, c.name, bindings, c.sourceNodeId)
     // replace in map
     this.#collections.set(collectionId, copy)
-    this.#bus.emit({ type: 'ClipCollectionBindingsChanged', collectionId } as unknown as import('./events').EngineEvent)
+    this.#bus.emit({
+      type: 'ClipCollectionBindingsChanged',
+      collectionId,
+    } as unknown as import('./events').EngineEvent)
     return old
   }
 

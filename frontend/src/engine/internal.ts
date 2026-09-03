@@ -195,7 +195,11 @@ export class Engine {
     this.#bus.emit({ type: 'SlideActivated', slideId })
   }
 
-  openProject(project: Project, clips?: readonly ClipDefinition[], collections?: readonly ClipCollection[]): void {
+  openProject(
+    project: Project,
+    clips?: readonly ClipDefinition[],
+    collections?: readonly ClipCollection[],
+  ): void {
     this.#validateOrThrow(toLessonJSON(project, clips, collections))
     this.#replaceProject(project)
     this.#clips.clear()
@@ -2312,7 +2316,11 @@ export class Engine {
     return this.#clipCollections.getCollection(collectionId)
   }
 
-  createClipCollection(name: string, bindings: Record<string, string>, sourceNodeId?: string): ClipCollection {
+  createClipCollection(
+    name: string,
+    bindings: Record<string, string>,
+    sourceNodeId?: string,
+  ): ClipCollection {
     // Validate bindings reference existing clips
     for (const clipId of Object.values(bindings)) {
       this.getClip(clipId)
@@ -3002,7 +3010,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
       return engine.clipCollections
     },
     subscribe: (listener) => engine.subscribe(listener),
-    openProject: (project, clips, clipCollections) => engine.openProject(project, clips, clipCollections),
+    openProject: (project, clips, clipCollections) =>
+      engine.openProject(project, clips, clipCollections),
     setActiveSlide: (slideId) => engine.setActiveSlide(slideId),
     getActiveSlide: () => engine.getActiveSlide(),
     getSlide: (slideId) => engine.getSlide(slideId),
@@ -3053,11 +3062,13 @@ export function toReadOnly(engine: Engine): EnginePublic {
     isClipReferenced: (clipId) => engine.isClipReferenced(clipId),
     getClipBlockingNodeNames: (clipId) => engine.getClipBlockingNodeNames(clipId),
     getClipCollection: (collectionId) => engine.getClipCollection(collectionId),
-    createClipCollection: (name, bindings, sourceNodeId) => engine.createClipCollection(name, bindings, sourceNodeId),
+    createClipCollection: (name, bindings, sourceNodeId) =>
+      engine.createClipCollection(name, bindings, sourceNodeId),
     deleteClipCollection: (collectionId) => engine.deleteClipCollection(collectionId),
     renameClipCollection: (collectionId, name) => engine.renameClipCollection(collectionId, name),
     exportClipCollection: (parentNodeId, name) => engine.exportClipCollection(parentNodeId, name),
-    applyClipCollection: (collectionId, targetNodeId) => engine.applyClipCollection(collectionId, targetNodeId),
+    applyClipCollection: (collectionId, targetNodeId) =>
+      engine.applyClipCollection(collectionId, targetNodeId),
     getExportFrameCount: (duration, fps) => engine.getExportFrameCount(duration, fps),
     getExportFrameTimestamps: (duration, fps) => engine.getExportFrameTimestamps(duration, fps),
     getRubberbandTempoForPlaybackRate: (rate) => engine.getRubberbandTempoForPlaybackRate(rate),

@@ -12,7 +12,12 @@ export class ClipCollection {
   #bindings: Map<string, string>
   #sourceNodeId?: string
 
-  constructor(id: string, name: string, bindings: ReadonlyMap<string, string> | Record<string, string>, sourceNodeId?: string) {
+  constructor(
+    id: string,
+    name: string,
+    bindings: ReadonlyMap<string, string> | Record<string, string>,
+    sourceNodeId?: string,
+  ) {
     this.id = id
     this.#name = name
     if (bindings instanceof Map) {
@@ -119,8 +124,10 @@ export function validateClipCollectionBindings(bindings: unknown): Record<string
   if (!isRecord(bindings)) throw new Error('ClipCollection bindings must be an object')
   const result: Record<string, string> = {}
   for (const [k, v] of Object.entries(bindings)) {
-    if (typeof k !== 'string' || k.trim() === '') throw new Error('Binding key must be non-empty string')
-    if (typeof v !== 'string' || v === '') throw new Error(`Binding value for "${k}" must be non-empty string`)
+    if (typeof k !== 'string' || k.trim() === '')
+      throw new Error('Binding key must be non-empty string')
+    if (typeof v !== 'string' || v === '')
+      throw new Error(`Binding value for "${k}" must be non-empty string`)
     result[k.trim()] = v
   }
   return result

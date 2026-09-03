@@ -17,7 +17,8 @@ export class DeleteClipCollectionCommand implements Command<DeleteClipCollection
   readonly #collectionId: string
 
   constructor(input: DeleteClipCollectionParameters) {
-    if (!input.collectionId || typeof input.collectionId !== 'string') throw new Error('collectionId must be non-empty string')
+    if (!input.collectionId || typeof input.collectionId !== 'string')
+      throw new Error('collectionId must be non-empty string')
     this.#collectionId = input.collectionId
     this.parameters = { collectionId: input.collectionId }
   }

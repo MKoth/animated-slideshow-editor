@@ -709,15 +709,24 @@ export function validateLibraryClipCollections(errors: string[], collections: un
     } else {
       for (const [k, v] of Object.entries(col.bindings as Record<string, unknown>)) {
         if (typeof k !== 'string' || k.trim() === '') {
-          errors.push(`Library clipCollection "${String(col.id)}" binding key must be non-empty string`)
+          errors.push(
+            `Library clipCollection "${String(col.id)}" binding key must be non-empty string`,
+          )
         }
         if (typeof v !== 'string' || v === '') {
-          errors.push(`Library clipCollection "${String(col.id)}" binding "${k}" must be non-empty string`)
+          errors.push(
+            `Library clipCollection "${String(col.id)}" binding "${k}" must be non-empty string`,
+          )
         }
       }
     }
-    if (col.sourceNodeId !== undefined && (typeof col.sourceNodeId !== 'string' || col.sourceNodeId === '')) {
-      errors.push(`Library clipCollection "${String(col.id)}" sourceNodeId must be non-empty string`)
+    if (
+      col.sourceNodeId !== undefined &&
+      (typeof col.sourceNodeId !== 'string' || col.sourceNodeId === '')
+    ) {
+      errors.push(
+        `Library clipCollection "${String(col.id)}" sourceNodeId must be non-empty string`,
+      )
     }
     if (typeof col.id === 'string' && col.id !== '') {
       if (ids.has(col.id)) {

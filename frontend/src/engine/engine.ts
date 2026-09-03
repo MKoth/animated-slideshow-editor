@@ -46,7 +46,11 @@ export interface EnginePublic {
   readonly clips: readonly ClipDefinition[]
   readonly clipCollections: readonly ClipCollection[]
   subscribe(listener: (event: EngineEvent) => void): Unsubscribe
-  openProject(project: Project, clips?: readonly ClipDefinition[], clipCollections?: readonly ClipCollection[]): void
+  openProject(
+    project: Project,
+    clips?: readonly ClipDefinition[],
+    clipCollections?: readonly ClipCollection[],
+  ): void
   setActiveSlide(slideId: string): void
   getActiveSlide(): Slide | null
   getSlide(slideId: string): Slide
@@ -111,11 +115,18 @@ export interface EnginePublic {
   getClipBlockingNodeNames(clipId: string): string[]
   // ClipCollection
   getClipCollection(collectionId: string): ClipCollection
-  createClipCollection(name: string, bindings: Record<string, string>, sourceNodeId?: string): ClipCollection
+  createClipCollection(
+    name: string,
+    bindings: Record<string, string>,
+    sourceNodeId?: string,
+  ): ClipCollection
   deleteClipCollection(collectionId: string): ClipCollection
   renameClipCollection(collectionId: string, name: string): void
   exportClipCollection(parentNodeId: string, name: string): ClipCollection
-  applyClipCollection(collectionId: string, targetNodeId: string): { nodeId: string; instanceId: string; clipId: string }[]
+  applyClipCollection(
+    collectionId: string,
+    targetNodeId: string,
+  ): { nodeId: string; instanceId: string; clipId: string }[]
   getExportFrameCount(duration: number, fps: number): number
   getExportFrameTimestamps(duration: number, fps: number): number[]
   getRubberbandTempoForPlaybackRate(playbackRate: number): number

@@ -989,12 +989,15 @@ function validateClipCollectionReferencesInJSON(errors: string[], json: LessonJS
         errors.push(`ClipCollection "${col.id}" has empty semanticName`)
       }
       if (!clipIds.has(clipId)) {
-        errors.push(`ClipCollection "${col.id}" binding "${semanticName}" references unknown clip id: ${clipId}`)
+        errors.push(
+          `ClipCollection "${col.id}" binding "${semanticName}" references unknown clip id: ${clipId}`,
+        )
       }
     }
   }
   // Also validate raw JSON for structural errors not caught by fromJSON (duplicate ids, missing fields)
-  const rawCollections = (json.clipCollections as unknown) ?? (json.library?.clipCollections as unknown)
+  const rawCollections =
+    (json.clipCollections as unknown) ?? (json.library?.clipCollections as unknown)
   if (Array.isArray(rawCollections)) {
     const seen = new Set<string>()
     for (const raw of rawCollections) {

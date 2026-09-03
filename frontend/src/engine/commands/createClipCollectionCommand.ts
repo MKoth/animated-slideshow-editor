@@ -27,8 +27,10 @@ export class CreateClipCollectionCommand implements Command<CreateClipCollection
     }
     const bindings: Record<string, string> = {}
     for (const [k, v] of Object.entries(input.bindings)) {
-      if (typeof k !== 'string' || k.trim() === '') throw new Error('Binding key must be non-empty string')
-      if (typeof v !== 'string' || v === '') throw new Error(`Binding "${k}" must be non-empty string`)
+      if (typeof k !== 'string' || k.trim() === '')
+        throw new Error('Binding key must be non-empty string')
+      if (typeof v !== 'string' || v === '')
+        throw new Error(`Binding "${k}" must be non-empty string`)
       bindings[k.trim()] = v
     }
     this.#name = input.name

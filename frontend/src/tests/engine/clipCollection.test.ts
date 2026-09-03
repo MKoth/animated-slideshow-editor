@@ -54,7 +54,9 @@ describe('ClipCollection schema', () => {
   it('rejects empty name or bindings with empty keys/values', () => {
     expect(() => ClipCollection.fromJSON({ id: '', name: 'n', bindings: {} })).toThrow()
     expect(() => ClipCollection.fromJSON({ id: 'id', name: '', bindings: {} })).toThrow()
-    expect(() => ClipCollection.fromJSON({ id: 'id', name: 'n', bindings: { '': 'clip1' } })).toThrow()
+    expect(() =>
+      ClipCollection.fromJSON({ id: 'id', name: 'n', bindings: { '': 'clip1' } }),
+    ).toThrow()
     expect(() => ClipCollection.fromJSON({ id: 'id', name: 'n', bindings: { hand: '' } })).toThrow()
     expect(() => ClipCollection.fromJSON({ id: 'id', name: 'n', bindings: 'notobject' })).toThrow()
   })
@@ -68,12 +70,18 @@ describe('ClipCollection schema', () => {
 
   it('CreateClipCollectionCommand validates clip references', () => {
     const { dispatcher } = setupEngine()
-    const clipId = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' }))).clipId
+    const clipId = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' })),
+    ).clipId
     // valid
-    const ok = dispatcher.dispatch(new CreateClipCollectionCommand({ name: 'Rig', bindings: { hand: clipId } }))
+    const ok = dispatcher.dispatch(
+      new CreateClipCollectionCommand({ name: 'Rig', bindings: { hand: clipId } }),
+    )
     expect(ok.ok).toBe(true)
     // invalid clip
-    const bad = dispatcher.dispatch(new CreateClipCollectionCommand({ name: 'Bad', bindings: { hand: 'ghost' } }))
+    const bad = dispatcher.dispatch(
+      new CreateClipCollectionCommand({ name: 'Bad', bindings: { hand: 'ghost' } }),
+    )
     expect(bad.ok).toBe(false)
   })
 })
@@ -83,16 +91,40 @@ describe('Hierarchical export', () => {
     const { engine, dispatcher } = setupEngine()
     const slide = engine.getActiveSlide()!
     // Create parent rig handle
-    const parent = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'RigRoot' }))).nodeId
+    const parent = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'RigRoot',
+        }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: parent, semanticName: 'rig_root' }))
-    const child1 = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'LeftHand' }))).nodeId
+    const child1 = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'LeftHand' }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: child1, semanticName: 'left_hand' }))
-    const child2 = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'RightHand' }))).nodeId
+    const child2 = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'RightHand' }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: child2, semanticName: 'right_hand' }))
-    const noSem = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'NoSem' }))).nodeId
+    const noSem = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'NoSem' }),
+      ),
+    ).nodeId
     // Create clips
-    const clip1 = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'Wave', duration: 1, category: '' }))).clipId
-    const clip2 = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'Shake', duration: 1, category: '' }))).clipId
+    const clip1 = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'Wave', duration: 1, category: '' })),
+    ).clipId
+    const clip2 = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'Shake', duration: 1, category: '' })),
+    ).clipId
     // Assign clips to children (including parent)
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: parent, clipId: clip1 })))
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: child1, clipId: clip1 })))
@@ -100,9 +132,12 @@ describe('Hierarchical export', () => {
     // No semantic node should be ignored even with clip
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: noSem, clipId: clip1 })))
 
-    const exportRes = dispatcher.dispatch(new ExportClipCollectionCommand({ parentNodeId: parent, name: 'MyRig' }))
+    const exportRes = dispatcher.dispatch(
+      new ExportClipCollectionCommand({ parentNodeId: parent, name: 'MyRig' }),
+    )
     expect(exportRes.ok).toBe(true)
-    const colId = (exportRes as { ok: true; inverse: { collectionId: string } }).inverse.collectionId
+    const colId = (exportRes as { ok: true; inverse: { collectionId: string } }).inverse
+      .collectionId
     const col = engine.getClipCollection(colId)
     expect(col.name).toBe('MyRig')
     expect(col.getBinding('rig_root')).toBe(clip1)
@@ -116,18 +151,42 @@ describe('Hierarchical export', () => {
   it('export handles duplicate semanticName by keeping first encountered (preorder)', () => {
     const { engine, dispatcher } = setupEngine()
     const slide = engine.getActiveSlide()!
-    const parent = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'Root' }))).nodeId
-    const a = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'A' }))).nodeId
+    const parent = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'Root',
+        }),
+      ),
+    ).nodeId
+    const a = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'A' }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: a, semanticName: 'hand' }))
-    const b = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'B' }))).nodeId
+    const b = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'B' }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: b, semanticName: 'hand' }))
-    const clip1 = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'C1', duration: 1, category: '' }))).clipId
-    const clip2 = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'C2', duration: 1, category: '' }))).clipId
+    const clip1 = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C1', duration: 1, category: '' })),
+    ).clipId
+    const clip2 = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C2', duration: 1, category: '' })),
+    ).clipId
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: a, clipId: clip1 })))
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: b, clipId: clip2 })))
-    const res = dispatcher.dispatch(new ExportClipCollectionCommand({ parentNodeId: parent, name: 'Dup' }))
+    const res = dispatcher.dispatch(
+      new ExportClipCollectionCommand({ parentNodeId: parent, name: 'Dup' }),
+    )
     expect(res.ok).toBe(true)
-    const col = engine.getClipCollection((res as { ok: true; inverse: { collectionId: string } }).inverse.collectionId)
+    const col = engine.getClipCollection(
+      (res as { ok: true; inverse: { collectionId: string } }).inverse.collectionId,
+    )
     // Should keep first (a's clip)
     expect(col.getBinding('hand')).toBe(clip1)
   })
@@ -135,11 +194,23 @@ describe('Hierarchical export', () => {
   it('export is undoable', () => {
     const { engine, dispatcher, undoStack } = setupEngine()
     const slide = engine.getActiveSlide()!
-    const parent = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'Root' }))).nodeId
+    const parent = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'Root',
+        }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: parent, semanticName: 'root' }))
-    const clip = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' }))).clipId
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' })),
+    ).clipId
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: parent, clipId: clip })))
-    const exportRes = dispatcher.dispatch(new ExportClipCollectionCommand({ parentNodeId: parent, name: 'Rig' }))
+    const exportRes = dispatcher.dispatch(
+      new ExportClipCollectionCommand({ parentNodeId: parent, name: 'Rig' }),
+    )
     expect(exportRes.ok).toBe(true)
     expect(engine.clipCollections).toHaveLength(1)
     undoStack.undo(engine)
@@ -152,26 +223,88 @@ describe('Hierarchical export', () => {
   it('works with bone/mesh/circle nodes', () => {
     const { engine, dispatcher } = setupEngine()
     const slide = engine.getActiveSlide()!
-    const parent = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'Rig' }))).nodeId
+    const parent = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'Rig',
+        }),
+      ),
+    ).nodeId
     // bone node
-    const bone = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'Bone', components: { bone: { kind: 'bone', length: 100 } } }))).nodeId
+    const bone = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: parent,
+          name: 'Bone',
+          components: { bone: { kind: 'bone', length: 100 } },
+        }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: bone, semanticName: 'bone1' }))
     // mesh node
-    const mesh = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'Mesh', components: { mesh: { kind: 'mesh', mesh: { vertices: [{x:0,y:0},{x:10,y:0},{x:10,y:10}], faces: [{v0:0,v1:1,v2:2}], uvs: [{u:0,v:0},{u:1,v:0},{u:1,v:1}] } } } }))).nodeId
+    const mesh = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: parent,
+          name: 'Mesh',
+          components: {
+            mesh: {
+              kind: 'mesh',
+              mesh: {
+                vertices: [
+                  { x: 0, y: 0 },
+                  { x: 10, y: 0 },
+                  { x: 10, y: 10 },
+                ],
+                faces: [{ v0: 0, v1: 1, v2: 2 }],
+                uvs: [
+                  { u: 0, v: 0 },
+                  { u: 1, v: 0 },
+                  { u: 1, v: 1 },
+                ],
+              },
+            },
+          },
+        }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: mesh, semanticName: 'mesh1' }))
     // circle node
-    const circle = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'Circle', components: { circle: { kind: 'circle', radius: 10, startAngle: 0, endAngle: 90 } } } ) )).nodeId
+    const circle = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: parent,
+          name: 'Circle',
+          components: { circle: { kind: 'circle', radius: 10, startAngle: 0, endAngle: 90 } },
+        }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: circle, semanticName: 'circle1' }))
 
-    const clip1 = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'C1', duration: 1, category: '' }))).clipId
-    const clip2 = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'C2', duration: 1, category: '' }))).clipId
-    const clip3 = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'C3', duration: 1, category: '' }))).clipId
+    const clip1 = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C1', duration: 1, category: '' })),
+    ).clipId
+    const clip2 = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C2', duration: 1, category: '' })),
+    ).clipId
+    const clip3 = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C3', duration: 1, category: '' })),
+    ).clipId
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: bone, clipId: clip1 })))
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: mesh, clipId: clip2 })))
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: circle, clipId: clip3 })))
-    const res = dispatcher.dispatch(new ExportClipCollectionCommand({ parentNodeId: parent, name: 'MixedRig' }))
+    const res = dispatcher.dispatch(
+      new ExportClipCollectionCommand({ parentNodeId: parent, name: 'MixedRig' }),
+    )
     expect(res.ok).toBe(true)
-    const col = engine.getClipCollection((res as { ok: true; inverse: { collectionId: string } }).inverse.collectionId)
+    const col = engine.getClipCollection(
+      (res as { ok: true; inverse: { collectionId: string } }).inverse.collectionId,
+    )
     expect(col.getBinding('bone1')).toBe(clip1)
     expect(col.getBinding('mesh1')).toBe(clip2)
     expect(col.getBinding('circle1')).toBe(clip3)
@@ -183,23 +316,61 @@ describe('Hierarchical apply', () => {
     const { engine, dispatcher } = setupEngine()
     const slide = engine.getActiveSlide()!
     // Source rig
-    const srcRoot = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'SrcRoot' }))).nodeId
-    const srcHand = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: srcRoot, name: 'SrcHand' }))).nodeId
+    const srcRoot = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'SrcRoot',
+        }),
+      ),
+    ).nodeId
+    const srcHand = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: srcRoot, name: 'SrcHand' }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: srcHand, semanticName: 'hand' }))
-    const clip = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'Wave', duration: 1, category: '' }))).clipId
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'Wave', duration: 1, category: '' })),
+    ).clipId
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: srcHand, clipId: clip })))
-    const colId = expectOk(dispatcher.dispatch(new ExportClipCollectionCommand({ parentNodeId: srcRoot, name: 'Rig' }))).collectionId
+    const colId = expectOk(
+      dispatcher.dispatch(new ExportClipCollectionCommand({ parentNodeId: srcRoot, name: 'Rig' })),
+    ).collectionId
 
     // Target rig with duplicate semanticName (two hands)
-    const tgtRoot = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'TgtRoot' }))).nodeId
-    const tgtHand1 = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: tgtRoot, name: 'TgtHand1' }))).nodeId
+    const tgtRoot = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'TgtRoot',
+        }),
+      ),
+    ).nodeId
+    const tgtHand1 = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: tgtRoot, name: 'TgtHand1' }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: tgtHand1, semanticName: 'hand' }))
-    const tgtHand2 = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: tgtRoot, name: 'TgtHand2' }))).nodeId
+    const tgtHand2 = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: tgtRoot, name: 'TgtHand2' }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: tgtHand2, semanticName: 'hand' }))
-    const other = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: tgtRoot, name: 'Other' }))).nodeId
+    const other = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: tgtRoot, name: 'Other' }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: other, semanticName: 'foot' }))
 
-    const applyRes = dispatcher.dispatch(new ApplyClipCollectionCommand({ collectionId: colId, targetNodeId: tgtRoot }))
+    const applyRes = dispatcher.dispatch(
+      new ApplyClipCollectionCommand({ collectionId: colId, targetNodeId: tgtRoot }),
+    )
     expect(applyRes.ok).toBe(true)
     // Both hands should have clip assigned (broadcast)
     expect(engine.getClipInstances(tgtHand1)).toHaveLength(1)
@@ -214,12 +385,32 @@ describe('Hierarchical apply', () => {
   it('applies to target itself if it matches semanticName', () => {
     const { engine, dispatcher } = setupEngine()
     const slide = engine.getActiveSlide()!
-    const src = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'Src' }))).nodeId
+    const src = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'Src',
+        }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: src, semanticName: 'root_s' }))
-    const clip = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' }))).clipId
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' })),
+    ).clipId
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: src, clipId: clip })))
-    const colId = expectOk(dispatcher.dispatch(new ExportClipCollectionCommand({ parentNodeId: src, name: 'Rig' }))).collectionId
-    const tgt = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'Tgt' }))).nodeId
+    const colId = expectOk(
+      dispatcher.dispatch(new ExportClipCollectionCommand({ parentNodeId: src, name: 'Rig' })),
+    ).collectionId
+    const tgt = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'Tgt',
+        }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: tgt, semanticName: 'root_s' }))
     dispatcher.dispatch(new ApplyClipCollectionCommand({ collectionId: colId, targetNodeId: tgt }))
     expect(engine.getClipInstances(tgt)).toHaveLength(1)
@@ -228,19 +419,49 @@ describe('Hierarchical apply', () => {
   it('is undoable and reapplies all matches', () => {
     const { engine, dispatcher, undoStack } = setupEngine()
     const slide = engine.getActiveSlide()!
-    const srcHand = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'SrcHand' }))).nodeId
+    const srcHand = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'SrcHand',
+        }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: srcHand, semanticName: 'hand' }))
-    const clip = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' }))).clipId
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' })),
+    ).clipId
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: srcHand, clipId: clip })))
-    const colId = expectOk(dispatcher.dispatch(new ExportClipCollectionCommand({ parentNodeId: srcHand, name: 'Rig' }))).collectionId
+    const colId = expectOk(
+      dispatcher.dispatch(new ExportClipCollectionCommand({ parentNodeId: srcHand, name: 'Rig' })),
+    ).collectionId
 
-    const root = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'RootForApply' }))).nodeId
-    const tgt1 = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: root, name: 'T1' }))).nodeId
+    const root = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'RootForApply',
+        }),
+      ),
+    ).nodeId
+    const tgt1 = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: root, name: 'T1' }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: tgt1, semanticName: 'hand' }))
-    const tgt2 = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: root, name: 'T2' }))).nodeId
+    const tgt2 = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: root, name: 'T2' }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: tgt2, semanticName: 'hand' }))
 
-    const res = dispatcher.dispatch(new ApplyClipCollectionCommand({ collectionId: colId, targetNodeId: root }))
+    const res = dispatcher.dispatch(
+      new ApplyClipCollectionCommand({ collectionId: colId, targetNodeId: root }),
+    )
     expect(res.ok).toBe(true)
     expect(engine.getClipInstances(tgt1)).toHaveLength(1)
     expect(engine.getClipInstances(tgt2)).toHaveLength(1)
@@ -256,17 +477,59 @@ describe('Hierarchical apply', () => {
     const { engine, dispatcher } = setupEngine()
     const slide = engine.getActiveSlide()!
     // Create a bone chain and IK handle
-    const rigHandle = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'Handle' }))).nodeId
-    const bone = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: rigHandle, name: 'Bone', components: { bone: { kind: 'bone', length: 80 } } }))).nodeId
+    const rigHandle = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'Handle',
+        }),
+      ),
+    ).nodeId
+    const bone = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: rigHandle,
+          name: 'Bone',
+          components: { bone: { kind: 'bone', length: 80 } },
+        }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: bone, semanticName: 'arm' }))
-    const clip = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'ArmClip', duration: 1, category: '' }))).clipId
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'ArmClip', duration: 1, category: '' })),
+    ).clipId
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: bone, clipId: clip })))
-    const colId = expectOk(dispatcher.dispatch(new ExportClipCollectionCommand({ parentNodeId: rigHandle, name: 'IKRig' }))).collectionId
+    const colId = expectOk(
+      dispatcher.dispatch(
+        new ExportClipCollectionCommand({ parentNodeId: rigHandle, name: 'IKRig' }),
+      ),
+    ).collectionId
     // target
-    const tgtHandle = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'TgtHandle' }))).nodeId
-    const tgtBone = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: tgtHandle, name: 'TgtBone', components: { bone: { kind: 'bone', length: 80 } } }))).nodeId
+    const tgtHandle = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'TgtHandle',
+        }),
+      ),
+    ).nodeId
+    const tgtBone = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: tgtHandle,
+          name: 'TgtBone',
+          components: { bone: { kind: 'bone', length: 80 } },
+        }),
+      ),
+    ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: tgtBone, semanticName: 'arm' }))
-    dispatcher.dispatch(new ApplyClipCollectionCommand({ collectionId: colId, targetNodeId: tgtHandle }))
+    dispatcher.dispatch(
+      new ApplyClipCollectionCommand({ collectionId: colId, targetNodeId: tgtHandle }),
+    )
     expect(engine.getClipInstances(tgtBone)).toHaveLength(1)
     expect(engine.getClipInstances(tgtBone)[0]!.clipId).toBe(clip)
   })
@@ -275,8 +538,14 @@ describe('Hierarchical apply', () => {
 describe('ClipCollection persistence', () => {
   it('serializes via LessonJSON and restores', () => {
     const { engine, dispatcher } = setupEngine()
-    const clip = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: 'cat' }))).clipId
-    const col = expectOk(dispatcher.dispatch(new CreateClipCollectionCommand({ name: 'MyCol', bindings: { hand: clip } })))
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: 'cat' })),
+    ).clipId
+    const col = expectOk(
+      dispatcher.dispatch(
+        new CreateClipCollectionCommand({ name: 'MyCol', bindings: { hand: clip } }),
+      ),
+    )
     const json = engine.toJSON()
     expect(json.clipCollections).toBeDefined()
     expect(json.clipCollections![0]!.name).toBe('MyCol')
@@ -290,11 +559,19 @@ describe('ClipCollection persistence', () => {
 
   it('library storage self-contained: collection references remain after restore', () => {
     const { engine, dispatcher } = setupEngine()
-    const clip = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' }))).clipId
-    expectOk(dispatcher.dispatch(new CreateClipCollectionCommand({ name: 'Col', bindings: { a: clip } })))
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' })),
+    ).clipId
+    expectOk(
+      dispatcher.dispatch(new CreateClipCollectionCommand({ name: 'Col', bindings: { a: clip } })),
+    )
     const json = engine.toJSON()
     // Simulate library storage: move clipCollections to library
-    const withLibrary = { ...json, clipCollections: undefined, library: { ...json.library, clipCollections: json.clipCollections } } as unknown as import('../../engine/json').LessonJSON
+    const withLibrary = {
+      ...json,
+      clipCollections: undefined,
+      library: { ...json.library, clipCollections: json.clipCollections },
+    } as unknown as import('../../engine/json').LessonJSON
     const engine2 = createEngine()
     engine2.restoreFromJSON(withLibrary)
     expect(engine2.clipCollections).toHaveLength(1)
@@ -302,8 +579,12 @@ describe('ClipCollection persistence', () => {
 
   it('validates unknown clip references in collection', () => {
     const { engine, dispatcher } = setupEngine()
-    const clip = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' }))).clipId
-    expectOk(dispatcher.dispatch(new CreateClipCollectionCommand({ name: 'Col', bindings: { a: clip } })))
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' })),
+    ).clipId
+    expectOk(
+      dispatcher.dispatch(new CreateClipCollectionCommand({ name: 'Col', bindings: { a: clip } })),
+    )
     const json = engine.toJSON()
     // Corrupt binding to ghost clip
     ;(json.clipCollections![0]!.bindings as unknown as Record<string, string>).a = 'ghost-clip'
@@ -313,10 +594,18 @@ describe('ClipCollection persistence', () => {
 
   it('Create/Delete/Rename are undoable', () => {
     const { engine, dispatcher, undoStack } = setupEngine()
-    const clip = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' }))).clipId
-    const colId = expectOk(dispatcher.dispatch(new CreateClipCollectionCommand({ name: 'First', bindings: { hand: clip } }))).collectionId
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' })),
+    ).clipId
+    const colId = expectOk(
+      dispatcher.dispatch(
+        new CreateClipCollectionCommand({ name: 'First', bindings: { hand: clip } }),
+      ),
+    ).collectionId
     expect(engine.clipCollections).toHaveLength(1)
-    expectOk(dispatcher.dispatch(new RenameClipCollectionCommand({ collectionId: colId, name: 'Second' })))
+    expectOk(
+      dispatcher.dispatch(new RenameClipCollectionCommand({ collectionId: colId, name: 'Second' })),
+    )
     expect(engine.getClipCollection(colId).name).toBe('Second')
     undoStack.undo(engine)
     expect(engine.getClipCollection(colId).name).toBe('First')
@@ -334,8 +623,14 @@ describe('ClipCollection persistence', () => {
 describe('ClipCollection events and self-contained', () => {
   it('references stay valid after clip duplicate and delete handling', () => {
     const { engine, dispatcher } = setupEngine()
-    const clip = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' }))).clipId
-    const colId = expectOk(dispatcher.dispatch(new CreateClipCollectionCommand({ name: 'Col', bindings: { hand: clip } }))).collectionId
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' })),
+    ).clipId
+    const colId = expectOk(
+      dispatcher.dispatch(
+        new CreateClipCollectionCommand({ name: 'Col', bindings: { hand: clip } }),
+      ),
+    ).collectionId
     // Clip still exists, collection valid
     expect(engine.getClipCollection(colId).getBinding('hand')).toBe(clip)
     // Attempt delete clip while referenced by collection? Currently not blocked; but self-contained means collection just references clip, not block delete.
