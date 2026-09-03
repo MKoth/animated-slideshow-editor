@@ -1,5 +1,5 @@
-import type { AnimationProperty } from './animationProperties'
-import type { Keyframe } from './keyframe'
+import type { AnimationProperty, CircleAnimationProperty } from './animationProperties'
+import type { Keyframe, KeyframeValue } from './keyframe'
 import type { ClipChannelJSON, ClipJSON } from './json'
 import { newId } from './ids'
 import { Keyframe as KeyframeModel, newKeyframeId, ZERO_TANGENT } from './keyframe'
@@ -30,6 +30,13 @@ export const CLIP_CHANNELS: readonly ClipChannel[] = [
   'scaleX',
   'scaleY',
   'opacity',
+]
+
+export const CLIP_CIRCLE_CHANNELS: readonly CircleAnimationProperty[] = [
+  'radius',
+  'startAngle',
+  'endAngle',
+  'segments',
 ]
 
 /** A parameter that a clip channel can be linked to. */
@@ -115,49 +122,65 @@ export class ClipChannelAnimation {
   }
 
   static fromJSON(json: unknown): ClipChannelAnimation {
-    const anim = new ClipChannelAnimation()
-    if (!isRecord(json) || !Array.isArray(json.keyframes)) {
-      throw new Error('Clip channel animation must have a keyframes array')
-    }
-    let previousTime = -Infinity
-    const seenIds = new Set<string>()
-    for (const kfJson of json.keyframes) {
-      if (typeof kfJson !== 'object' || kfJson === null) {
-        throw new Error('Clip channel keyframe must be an object')
-      }
-      const record = kfJson as Record<string, unknown>
-      const id = requireString(record.id, 'Clip keyframe id')
-      if (seenIds.has(id)) {
-        throw new Error(`Duplicate clip keyframe id: ${id}`)
-      }
-      seenIds.add(id)
-      const time = requireFiniteNumber(record.time, `Clip keyframe "${id}" time`)
-      if (time < 0 || time > 1) {
-        throw new Error(`Clip keyframe time must be within [0, 1]`)
-      }
-      if (time < previousTime) {
-        throw new Error(`Clip keyframe times must not decrease (out-of-order time ${time})`)
-      }
-      if (time === previousTime && time !== 1) {
-        throw new Error(`Clip keyframe times must be distinct (duplicate time ${time} not at 1)`)
-      }
-      previousTime = time
-      if (typeof record.value !== 'number' || !Number.isFinite(record.value)) {
+    return fromJSONWithValueValidator(json, (value, id) => {
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
         throw new Error(`Clip keyframe "${id}" value must be a finite number`)
       }
-      const value = record.value
-      const interpolation =
-        record.interpolation === undefined
-          ? 'linear'
-          : requireKeyframeInterpolation(record.interpolation)
-      const tangentIn =
-        record.tangentIn === undefined ? ZERO_TANGENT : requireKeyframeTangent(record.tangentIn)
-      const tangentOut =
-        record.tangentOut === undefined ? ZERO_TANGENT : requireKeyframeTangent(record.tangentOut)
-      anim.add(new KeyframeModel(id, time, value, interpolation, tangentIn, tangentOut))
-    }
-    return anim
+      return value
+    })
   }
+
+  static fromJSONWithKind(
+    json: unknown,
+    validator: (value: unknown, id: string) => KeyframeValue,
+  ): ClipChannelAnimation {
+    return fromJSONWithValueValidator(json, validator)
+  }
+}
+
+function fromJSONWithValueValidator(
+  json: unknown,
+  validateValue: (value: unknown, id: string) => KeyframeValue,
+): ClipChannelAnimation {
+  const anim = new ClipChannelAnimation()
+  if (!isRecord(json) || !Array.isArray(json.keyframes)) {
+    throw new Error('Clip channel animation must have a keyframes array')
+  }
+  let previousTime = -Infinity
+  const seenIds = new Set<string>()
+  for (const kfJson of json.keyframes) {
+    if (typeof kfJson !== 'object' || kfJson === null) {
+      throw new Error('Clip channel keyframe must be an object')
+    }
+    const record = kfJson as Record<string, unknown>
+    const id = requireString(record.id, 'Clip keyframe id')
+    if (seenIds.has(id)) {
+      throw new Error(`Duplicate clip keyframe id: ${id}`)
+    }
+    seenIds.add(id)
+    const time = requireFiniteNumber(record.time, `Clip keyframe "${id}" time`)
+    if (time < 0 || time > 1) {
+      throw new Error(`Clip keyframe time must be within [0, 1]`)
+    }
+    if (time < previousTime) {
+      throw new Error(`Clip keyframe times must not decrease (out-of-order time ${time})`)
+    }
+    if (time === previousTime && time !== 1) {
+      throw new Error(`Clip keyframe times must be distinct (duplicate time ${time} not at 1)`)
+    }
+    previousTime = time
+    const value = validateValue(record.value, id)
+    const interpolation =
+      record.interpolation === undefined
+        ? 'linear'
+        : requireKeyframeInterpolation(record.interpolation)
+    const tangentIn =
+      record.tangentIn === undefined ? ZERO_TANGENT : requireKeyframeTangent(record.tangentIn)
+    const tangentOut =
+      record.tangentOut === undefined ? ZERO_TANGENT : requireKeyframeTangent(record.tangentOut)
+    anim.add(new KeyframeModel(id, time, value, interpolation, tangentIn, tangentOut))
+  }
+  return anim
 }
 
 function insertSortedKeyframes(keyframes: Keyframe[], keyframe: Keyframe): void {
@@ -178,6 +201,8 @@ export class ClipDefinition {
   #channels: ClipChannelDef[]
   readonly #channelAnimations = new Map<ClipChannel, ClipChannelAnimation>()
   readonly #materialChannelAnimations = new Map<string, ClipChannelAnimation>()
+  readonly #visibleAnimation = new ClipChannelAnimation()
+  readonly #circleAnimations = new Map<CircleAnimationProperty, ClipChannelAnimation>()
 
   constructor(
     id: string,
@@ -294,12 +319,48 @@ export class ClipDefinition {
     return this.#materialChannelAnimations.get(parameterKey)?.keyframes() ?? []
   }
 
+  getVisibleKeyframes(): readonly Keyframe[] {
+    return this.#visibleAnimation.keyframes()
+  }
+
+  hasVisibleTrack(): boolean {
+    return this.#visibleAnimation.length > 0
+  }
+
+  getCircleKeyframes(property: CircleAnimationProperty): readonly Keyframe[] {
+    return this.#circleAnimations.get(property)?.keyframes() ?? []
+  }
+
+  hasCircleTrack(property: CircleAnimationProperty): boolean {
+    return this.#circleAnimations.has(property)
+  }
+
+  get circleTrackKeys(): readonly CircleAnimationProperty[] {
+    return [...this.#circleAnimations.keys()]
+  }
+
+  visibleAnimation(): ClipChannelAnimation {
+    return this.#visibleAnimation
+  }
+
+  circleAnimation(property: CircleAnimationProperty): ClipChannelAnimation | undefined {
+    return this.#circleAnimations.get(property)
+  }
+
   getChannelKeyframe(property: ClipChannel, keyframeId: string): Keyframe | undefined {
     return this.#channelAnimations.get(property)?.getKeyframe(keyframeId)
   }
 
   getMaterialChannelKeyframe(parameterKey: string, keyframeId: string): Keyframe | undefined {
     return this.#materialChannelAnimations.get(parameterKey)?.getKeyframe(keyframeId)
+  }
+
+  getVisibleKeyframe(keyframeId: string): Keyframe | undefined {
+    return this.#visibleAnimation.getKeyframe(keyframeId)
+  }
+
+  getCircleKeyframe(property: CircleAnimationProperty, keyframeId: string): Keyframe | undefined {
+    return this.#circleAnimations.get(property)?.getKeyframe(keyframeId)
   }
 
   addChannelKeyframe(property: ClipChannel, keyframe: Keyframe): void {
@@ -316,6 +377,19 @@ export class ClipDefinition {
     if (!anim) {
       anim = new ClipChannelAnimation()
       this.#materialChannelAnimations.set(parameterKey, anim)
+    }
+    anim.add(keyframe)
+  }
+
+  addVisibleKeyframe(keyframe: Keyframe): void {
+    this.#visibleAnimation.add(keyframe)
+  }
+
+  addCircleKeyframe(property: CircleAnimationProperty, keyframe: Keyframe): void {
+    let anim = this.#circleAnimations.get(property)
+    if (!anim) {
+      anim = new ClipChannelAnimation()
+      this.#circleAnimations.set(property, anim)
     }
     anim.add(keyframe)
   }
@@ -339,6 +413,20 @@ export class ClipDefinition {
     if (anim.length === 0) {
       this.#materialChannelAnimations.delete(parameterKey)
       this.#channels = this.#channels.filter((ch) => ch.materialParameter !== parameterKey)
+    }
+    return removed
+  }
+
+  removeVisibleKeyframe(keyframeId: string): Keyframe | undefined {
+    return this.#visibleAnimation.remove(keyframeId)
+  }
+
+  removeCircleKeyframe(property: CircleAnimationProperty, keyframeId: string): Keyframe | undefined {
+    const anim = this.#circleAnimations.get(property)
+    if (!anim) return undefined
+    const removed = anim.remove(keyframeId)
+    if (anim.length === 0) {
+      this.#circleAnimations.delete(property)
     }
     return removed
   }
@@ -411,11 +499,30 @@ export class ClipDefinition {
     for (const [param, anim] of this.#materialChannelAnimations) {
       copy.#materialChannelAnimations.set(param, anim.copy())
     }
+    // Copy visible and circle animations
+    for (const kf of this.#visibleAnimation.keyframes()) {
+      copy.#visibleAnimation.add(
+        new KeyframeModel(
+          kf.id,
+          kf.time,
+          kf.value,
+          kf.interpolation,
+          { time: kf.tangentIn.time, value: kf.tangentIn.value },
+          { time: kf.tangentOut.time, value: kf.tangentOut.value },
+        ),
+      )
+    }
+    for (const [prop, anim] of this.#circleAnimations) {
+      copy.#circleAnimations.set(prop, anim.copy())
+    }
     return copy
   }
 
   toJSON(): ClipJSON {
-    return {
+    const json: ClipJSON & {
+      visibleAnimation?: ReturnType<ClipChannelAnimation['toJSON']>
+      circleChannelAnimations?: Record<string, ReturnType<ClipChannelAnimation['toJSON']>>
+    } = {
       id: this.id,
       name: this.#name,
       duration: this.#duration,
@@ -437,6 +544,15 @@ export class ClipDefinition {
         ]),
       ),
     }
+    if (this.#visibleAnimation.length > 0) {
+      ;(json as Record<string, unknown>).visibleAnimation = this.#visibleAnimation.toJSON()
+    }
+    if (this.#circleAnimations.size > 0) {
+      ;(json as Record<string, unknown>).circleChannelAnimations = Object.fromEntries(
+        [...this.#circleAnimations.entries()].map(([prop, anim]) => [prop, anim.toJSON()]),
+      )
+    }
+    return json as ClipJSON
   }
 
   static fromJSON(json: unknown): ClipDefinition {
@@ -508,6 +624,38 @@ export class ClipDefinition {
         json.materialChannelAnimations as Record<string, unknown>,
       )) {
         clip.#materialChannelAnimations.set(param, ClipChannelAnimation.fromJSON(animJson))
+      }
+    }
+    const visibleAnim = (json as Record<string, unknown>).visibleAnimation
+    if (isRecord(visibleAnim) && visibleAnim !== null) {
+      const anim = ClipChannelAnimation.fromJSONWithKind(visibleAnim, (value, id) => {
+        if (typeof value !== 'boolean') {
+          throw new Error(`Clip visible keyframe "${id}" value must be a boolean`)
+        }
+        return value
+      })
+      for (const kf of anim.keyframes()) {
+        clip.#visibleAnimation.add(
+          new KeyframeModel(
+            kf.id,
+            kf.time,
+            kf.value,
+            kf.interpolation,
+            { time: kf.tangentIn.time, value: kf.tangentIn.value },
+            { time: kf.tangentOut.time, value: kf.tangentOut.value },
+          ),
+        )
+      }
+    }
+    const circleAnims = (json as Record<string, unknown>).circleChannelAnimations
+    if (isRecord(circleAnims) && circleAnims !== null) {
+      for (const [prop, animJson] of Object.entries(circleAnims as Record<string, unknown>)) {
+        if ((CLIP_CIRCLE_CHANNELS as readonly string[]).includes(prop)) {
+          clip.#circleAnimations.set(
+            prop as CircleAnimationProperty,
+            ClipChannelAnimation.fromJSON(animJson),
+          )
+        }
       }
     }
     return clip

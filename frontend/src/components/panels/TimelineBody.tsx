@@ -45,6 +45,12 @@ import {
   TrackRow,
 } from './timelineComponents'
 import type { TimelineMenuState } from './timelineComponents'
+import { ClipExtractionModal } from './ClipExtractionModal'
+import {
+  collectSelectedExtractableKeyframes,
+  collectExtractableForSingle,
+} from '../../app/clipExtractionActions'
+import type { ExtractableKeyframe } from '../../engine/clipExtraction'
 
 const MARQUEE_START_DISTANCE = 4
 
@@ -79,6 +85,7 @@ export function TimelineBody({
   const timelineSelection = useTimelineSelectionStore()
   const selectedKeyframeIds = selectedKeyframeIdsOf(timelineSelection)
   const [menu, setMenu] = useState<TimelineMenuState | null>(null)
+  const [extraction, setExtraction] = useState<ExtractableKeyframe[] | null>(null)
   const [marqueeRect, setMarqueeRect] = useState<{
     readonly x: number
     readonly y: number
@@ -615,6 +622,42 @@ export function TimelineBody({
     useTimelineSelectionStore.getState().clearSelection()
   }
 
+  const addToClipFromMenu = () => {
+    const target = menu
+    setMenu(null)
+    if (!target?.keyframeId) {
+      return
+    }
+    const selectedIds = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+    let extractable: ExtractableKeyframe[] = []
+    if (selectedIds.includes(target.keyframeId)) {
+      extractable = collectSelectedExtractableKeyframes(engine)
+    } else {
+      let singleTarget: import('../../engine/keyframeTarget').KeyframeTarget | undefined
+      if ((target.property as unknown as string) === 'visible') {
+        singleTarget = { kind: 'visible', nodeId: target.nodeId }
+      } else if (target.property) {
+        singleTarget = { kind: 'node', nodeId: target.nodeId, property: target.property }
+      } else if ((target as unknown as { circleProperty?: string }).circleProperty) {
+        const cp = (target as unknown as { circleProperty: import('../../engine/animationProperties').CircleAnimationProperty }).circleProperty
+        singleTarget = { kind: 'circle', nodeId: target.nodeId, property: cp }
+      } else if (target.parameter) {
+        singleTarget = { kind: 'node', nodeId: target.nodeId, parameter: target.parameter }
+      } else if (target.label) {
+        singleTarget = { kind: 'dataLabel', nodeId: target.nodeId, label: target.label }
+      }
+      if (singleTarget) {
+        const single = collectExtractableForSingle(engine, singleTarget, target.keyframeId)
+        if (single) extractable = [single]
+      }
+    }
+    if (extractable.length === 0) {
+      notify('No extractable keyframes for Add to clip (only position/rotation/scale/opacity/visible/circle are supported)')
+      return
+    }
+    setExtraction(extractable)
+  }
+
   const step = rulerTickStep(pps)
   const visibleEnd = scrollTime + viewportWidth / pps
   const ticks = rulerTickTimes(scrollTime, visibleEnd, step)
@@ -1146,8 +1189,12 @@ export function TimelineBody({
           menu={menu}
           onAdd={addKeyframeFromMenu}
           onDelete={deleteKeyframeFromMenu}
+          onAddToClip={addToClipFromMenu}
           onClose={() => setMenu(null)}
         />
+      )}
+      {extraction && (
+        <ClipExtractionModal keyframes={extraction} onClose={() => setExtraction(null)} />
       )}
     </div>
   )

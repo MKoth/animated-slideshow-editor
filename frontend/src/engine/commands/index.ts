@@ -398,6 +398,8 @@ export type {
 export { CreateRigHandleCommand } from './createRigHandleCommand'
 export type { CreateRigHandleInverse, CreateRigHandleParameters } from './createRigHandleCommand'
 export { CommitTtsCommand } from './commitTtsCommand'
+export { ExtractToClipCommand } from './extractToClipCommand'
+export type { ExtractToClipInverse, ExtractToClipParameters } from './extractToClipCommand'
 export { SetLocalPivotCommand } from './setLocalPivotCommand'
 export type { SetLocalPivotInverse, SetLocalPivotParameters } from './setLocalPivotCommand'
 export type { CommitTtsInverse, CommitTtsParameters } from './commitTtsCommand'
