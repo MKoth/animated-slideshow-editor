@@ -28,7 +28,12 @@ export function NumericField({
   const display = value === null ? MIXED_MARKER : formatDecimal(value)
   const buffer = useEditBuffer(display)
   const inputRef = useRef<HTMLInputElement>(null)
-  const dragRef = useRef<{ startX: number; startValue: number; dragging: boolean; lastValue: number } | null>(null)
+  const dragRef = useRef<{
+    startX: number
+    startValue: number
+    dragging: boolean
+    lastValue: number
+  } | null>(null)
 
   const commit = () => {
     onCommit(buffer.commit())
@@ -75,7 +80,12 @@ export function NumericField({
     if (value === null || disabled) {
       return
     }
-    dragRef.current = { startX: event.clientX, startValue: value, dragging: false, lastValue: value }
+    dragRef.current = {
+      startX: event.clientX,
+      startValue: value,
+      dragging: false,
+      lastValue: value,
+    }
     event.preventDefault()
     window.addEventListener('pointermove', handlePointerMove)
     window.addEventListener('pointerup', handlePointerUp)
