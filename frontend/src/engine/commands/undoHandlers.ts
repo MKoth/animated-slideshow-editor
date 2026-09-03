@@ -1789,6 +1789,66 @@ export function applyUndo(
       }
       return
     }
+    case 'CreateClipCollection': {
+      const collectionId = (inv as Record<string, unknown>).collectionId as string
+      try {
+        engine.deleteClipCollection(collectionId)
+      } catch {
+        // ignore
+      }
+      return
+    }
+    case 'DeleteClipCollection': {
+      const snapshot = (inv as Record<string, unknown>).snapshot as unknown
+      try {
+        engine.restoreClipCollectionFromJSON(snapshot)
+      } catch {
+        // ignore
+      }
+      return
+    }
+    case 'RenameClipCollection': {
+      const collectionId = (inv as Record<string, unknown>).collectionId as string
+      const oldName = (inv as Record<string, unknown>).oldName as string
+      engine.renameClipCollection(collectionId, oldName)
+      return
+    }
+    case 'ExportClipCollection': {
+      const collectionId = (inv as Record<string, unknown>).collectionId as string
+      try {
+        engine.deleteClipCollection(collectionId)
+      } catch {
+        // ignore
+      }
+      return
+    }
+    case 'ApplyClipCollection': {
+      const created = (inv as Record<string, unknown>).created as readonly {
+        nodeId: string
+        instanceId: string
+        clipId: string
+      }[]
+      if (!created) return
+      for (const entry of created) {
+        try {
+          engine.removeClipInstance(entry.nodeId, entry.instanceId)
+        } catch {
+          // Fallback: try to remove by clipId if instanceId not found (handles redo id divergence)
+          try {
+            const node = engine.getNode(entry.nodeId)
+            // Find instance with matching clipId (last one)
+            const instances = node.clipInstances.filter((i) => i.clipId === entry.clipId)
+            if (instances.length > 0) {
+              const last = instances[instances.length - 1]!
+              engine.removeClipInstance(entry.nodeId, last.id)
+            }
+          } catch {
+            // ignore
+          }
+        }
+      }
+      return
+    }
     default:
       console.warn(`[undo] No handler for type ${type}`)
       return
@@ -2933,6 +2993,47 @@ export function applyRedo(
       engine.emitMaterialChanged(params.nodeId as string)
       return
     }
+    case 'CreateClipCollection': {
+      const inv = _inverse as Record<string, unknown> | null
+      const snapshot = inv?.snapshot as unknown
+      if (snapshot) {
+        try {
+          engine.restoreClipCollectionFromJSON(snapshot)
+          return
+        } catch {
+          // fallback to create
+        }
+      }
+      engine.createClipCollection(
+        params.name as string,
+        params.bindings as Record<string, string>,
+        params.sourceNodeId as string | undefined,
+      )
+      return
+    }
+    case 'DeleteClipCollection':
+      engine.deleteClipCollection(params.collectionId as string)
+      return
+    case 'RenameClipCollection':
+      engine.renameClipCollection(params.collectionId as string, params.name as string)
+      return
+    case 'ExportClipCollection': {
+      const inv = _inverse as Record<string, unknown> | null
+      const snapshot = inv?.snapshot as unknown
+      if (snapshot) {
+        try {
+          engine.restoreClipCollectionFromJSON(snapshot)
+          return
+        } catch {
+          // fallback
+        }
+      }
+      engine.exportClipCollection(params.parentNodeId as string, params.name as string)
+      return
+    }
+    case 'ApplyClipCollection':
+      engine.applyClipCollection(params.collectionId as string, params.targetNodeId as string)
+      return
     case 'ExtractToClip': {
       const mode = (params as Record<string, unknown>).mode as string
       const inv = _inverse as Record<string, unknown> | null
@@ -2954,7 +3055,9 @@ export function applyRedo(
         if (targetSnap) {
           try {
             engine.restoreClipFromJSON(targetSnap)
-          } catch {}
+          } catch {
+            // ignore
+          }
         }
       }
       return

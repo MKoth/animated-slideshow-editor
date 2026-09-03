@@ -317,6 +317,7 @@ export type LessonLibraryJSON = {
   readonly shaders?: readonly EmbeddedShaderJSON[]
   readonly data_sources?: readonly (EmbeddedDataSourceJSON | EmbeddedFlowchartDataSourceJSON)[]
   readonly clips?: readonly ClipJSON[]
+  readonly clipCollections?: readonly ClipCollectionJSON[]
 }
 
 export type ClipParamJSON = {
@@ -357,6 +358,13 @@ export type ClipInstanceJSON = {
   readonly speed: number
   readonly enabled: boolean
   readonly paramOverrides?: Readonly<Record<string, number>>
+}
+
+export type ClipCollectionJSON = {
+  readonly id: string
+  readonly name: string
+  readonly bindings: Readonly<Record<string, string>>
+  readonly sourceNodeId?: string
 }
 
 export type IKChainJSON = {
@@ -410,6 +418,7 @@ export type LessonJSON = {
   readonly project: LessonProjectJSON
   readonly slides: readonly SlideJSON[]
   readonly clips?: readonly ClipJSON[]
+  readonly clipCollections?: readonly ClipCollectionJSON[]
   readonly library?: LessonLibraryJSON
   readonly ikChains?: IKManagerJSON
   readonly constraints?: ConstraintManagerJSON

@@ -57,10 +57,13 @@ import {
   toLessonJSON,
   validate,
   parseClipsFromLessonJSON,
+  parseClipCollectionsFromLessonJSON,
 } from './lessonSerializer'
 
 import type { EnginePublic } from './engine'
 import { ClipManager } from './clipManager'
+import { ClipCollectionManager } from './clipCollectionManager'
+import { ClipCollection } from './clipCollection'
 import { IKManager } from './ikManager'
 import { ConstraintManager } from './constraintManager'
 import type { Constraint, ConstraintType, ConstraintParams } from './constraint'
@@ -134,6 +137,7 @@ export class Engine {
   readonly #animations: AnimationManager
   readonly #evaluator: AnimationEvaluator
   readonly #clips: ClipManager
+  readonly #clipCollections: ClipCollectionManager
   readonly #ik: IKManager
   readonly #constraints: ConstraintManager
   readonly #embeddedAssets = new Map<string, EmbeddedAsset>()
@@ -168,6 +172,7 @@ export class Engine {
       (clipId) => this.getClip(clipId),
     )
     this.#clips = new ClipManager(this.#bus)
+    this.#clipCollections = new ClipCollectionManager(this.#bus)
     this.#ik = new IKManager(this.#bus, (nodeId) => this.getNode(nodeId))
     this.#constraints = new ConstraintManager(this.#bus, (nodeId) => this.getNode(nodeId))
   }
@@ -190,13 +195,19 @@ export class Engine {
     this.#bus.emit({ type: 'SlideActivated', slideId })
   }
 
-  openProject(project: Project, clips?: readonly ClipDefinition[]): void {
-    this.#validateOrThrow(toLessonJSON(project, clips))
+  openProject(project: Project, clips?: readonly ClipDefinition[], collections?: readonly ClipCollection[]): void {
+    this.#validateOrThrow(toLessonJSON(project, clips, collections))
     this.#replaceProject(project)
     this.#clips.clear()
     if (clips) {
       for (const clip of clips) {
         this.#clips.importClip(clip)
+      }
+    }
+    this.#clipCollections.clear()
+    if (collections) {
+      for (const c of collections) {
+        this.#clipCollections.importCollection(c)
       }
     }
     const first = project.slides[0]
@@ -213,6 +224,7 @@ export class Engine {
     this.#embeddedShaders.clear()
     this.#embeddedDataSources.clear()
     this.#clips.clear()
+    this.#clipCollections.clear()
     return this.#projects.create(input)
   }
 
@@ -2290,6 +2302,113 @@ export class Engine {
     return names
   }
 
+  // --- ClipCollection methods ---
+
+  get clipCollections(): readonly ClipCollection[] {
+    return this.#clipCollections.collections
+  }
+
+  getClipCollection(collectionId: string): ClipCollection {
+    return this.#clipCollections.getCollection(collectionId)
+  }
+
+  createClipCollection(name: string, bindings: Record<string, string>, sourceNodeId?: string): ClipCollection {
+    // Validate bindings reference existing clips
+    for (const clipId of Object.values(bindings)) {
+      this.getClip(clipId)
+    }
+    return this.#clipCollections.createCollection(name, bindings, sourceNodeId)
+  }
+
+  deleteClipCollection(collectionId: string): ClipCollection {
+    return this.#clipCollections.deleteCollection(collectionId)
+  }
+
+  renameClipCollection(collectionId: string, name: string): void {
+    this.#clipCollections.renameCollection(collectionId, name)
+  }
+
+  setClipCollectionBindings(collectionId: string, bindings: Record<string, string>): void {
+    for (const clipId of Object.values(bindings)) {
+      this.getClip(clipId)
+    }
+    this.#clipCollections.setBindings(collectionId, bindings)
+  }
+
+  importClipCollection(collection: ClipCollection): void {
+    // Validate bindings still reference existing clips (allow missing for self-contained? but warn)
+    this.#clipCollections.importCollection(collection)
+  }
+
+  restoreClipCollectionFromJSON(snapshot: unknown): void {
+    const collection = ClipCollection.fromJSON(snapshot)
+    try {
+      this.#clipCollections.deleteCollection(collection.id)
+    } catch {
+      // not exists
+    }
+    this.#clipCollections.importCollection(collection)
+  }
+
+  exportClipCollection(parentNodeId: string, name: string): ClipCollection {
+    const parent = this.getNode(parentNodeId)
+    const bindings: Record<string, string> = {}
+    for (const node of walkPreOrder(parent)) {
+      const sem = node.semanticName
+      if (!sem || sem.trim() === '') continue
+      if (bindings[sem] !== undefined) continue // already collected, keep first
+      if (node.clipInstances.length === 0) continue
+      // Take first clipInstance's clipId
+      const clipId = node.clipInstances[0]!.clipId
+      // Validate clip still exists
+      try {
+        this.getClip(clipId)
+      } catch {
+        continue
+      }
+      bindings[sem] = clipId
+    }
+    return this.createClipCollection(name, bindings, parentNodeId)
+  }
+
+  applyClipCollection(
+    collectionId: string,
+    targetNodeId: string,
+  ): { nodeId: string; instanceId: string; clipId: string }[] {
+    const collection = this.getClipCollection(collectionId)
+    const target = this.getNode(targetNodeId)
+    const created: { nodeId: string; instanceId: string; clipId: string }[] = []
+    for (const node of walkPreOrder(target)) {
+      const sem = node.semanticName
+      if (!sem) continue
+      const clipId = collection.getBinding(sem)
+      if (!clipId) continue
+      // Validate clip exists
+      this.getClip(clipId)
+      const instance = this.assignClipInstance(node.id, clipId, 0, 1, true, {})
+      created.push({ nodeId: node.id, instanceId: instance.id, clipId })
+    }
+    this.#bus.emit({
+      type: 'ClipCollectionApplied',
+      collectionId,
+      targetNodeId,
+    } as unknown as import('./events').EngineEvent)
+    return created
+  }
+
+  removeClipCollectionInstances(
+    _targetNodeId: string,
+    instanceIds: readonly { nodeId: string; instanceId: string }[],
+  ): void {
+    for (const { nodeId, instanceId } of instanceIds) {
+      try {
+        this.removeClipInstance(nodeId, instanceId)
+      } catch {
+        // ignore missing
+      }
+    }
+  }
+
   get shaderDefinitions(): readonly ShaderDefinition[] {
     return this.#shaders.definitions
   }
@@ -2315,12 +2434,16 @@ export class Engine {
     const hasIK = ikJson.chains.length > 0
     const constraintsJson = this.#constraints.toJSON()
     const hasConstraints = Object.keys(constraintsJson.nodeConstraints).length > 0
-    // Add clips to the top-level clips array
-    if (this.#clips.clips.length > 0 || hasIK || hasConstraints) {
+    const hasClipCollections = this.#clipCollections.collections.length > 0
+    // Add clips and collections to the top-level arrays
+    if (this.#clips.clips.length > 0 || hasIK || hasConstraints || hasClipCollections) {
       return {
         ...json,
         ...(this.#clips.clips.length > 0
           ? { clips: this.#clips.clips.map((clip) => clip.toJSON()) }
+          : {}),
+        ...(hasClipCollections
+          ? { clipCollections: this.#clipCollections.collections.map((c) => c.toJSON()) }
           : {}),
         ...(hasIK ? { ikChains: ikJson } : {}),
         ...(hasConstraints ? { constraints: constraintsJson } : {}),
@@ -2338,6 +2461,11 @@ export class Engine {
       const clips = parseClipsFromLessonJSON(json)
       for (const clip of clips) {
         this.#clips.importClip(clip)
+      }
+      // Restore clip collections
+      const collections = parseClipCollectionsFromLessonJSON(json)
+      for (const col of collections) {
+        this.#clipCollections.importCollection(col)
       }
       // Restore IK chains from JSON
       if (json.ikChains) {
@@ -2814,6 +2942,8 @@ export class Engine {
       this.#embeddedMaterials.set(material.id, material)
     }
     this.#embeddedShaders.clear()
+    this.#clips.clear()
+    this.#clipCollections.clear()
     this.#ik.clear()
     this.#constraints.clear()
     for (const shader of project.embeddedShaders) {
@@ -2868,8 +2998,11 @@ export function toReadOnly(engine: Engine): EnginePublic {
     get clips() {
       return engine.clips
     },
+    get clipCollections() {
+      return engine.clipCollections
+    },
     subscribe: (listener) => engine.subscribe(listener),
-    openProject: (project, clips) => engine.openProject(project, clips),
+    openProject: (project, clips, clipCollections) => engine.openProject(project, clips, clipCollections),
     setActiveSlide: (slideId) => engine.setActiveSlide(slideId),
     getActiveSlide: () => engine.getActiveSlide(),
     getSlide: (slideId) => engine.getSlide(slideId),
@@ -2919,6 +3052,12 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getClipInstances: (nodeId) => engine.getClipInstances(nodeId),
     isClipReferenced: (clipId) => engine.isClipReferenced(clipId),
     getClipBlockingNodeNames: (clipId) => engine.getClipBlockingNodeNames(clipId),
+    getClipCollection: (collectionId) => engine.getClipCollection(collectionId),
+    createClipCollection: (name, bindings, sourceNodeId) => engine.createClipCollection(name, bindings, sourceNodeId),
+    deleteClipCollection: (collectionId) => engine.deleteClipCollection(collectionId),
+    renameClipCollection: (collectionId, name) => engine.renameClipCollection(collectionId, name),
+    exportClipCollection: (parentNodeId, name) => engine.exportClipCollection(parentNodeId, name),
+    applyClipCollection: (collectionId, targetNodeId) => engine.applyClipCollection(collectionId, targetNodeId),
     getExportFrameCount: (duration, fps) => engine.getExportFrameCount(duration, fps),
     getExportFrameTimestamps: (duration, fps) => engine.getExportFrameTimestamps(duration, fps),
     getRubberbandTempoForPlaybackRate: (rate) => engine.getRubberbandTempoForPlaybackRate(rate),

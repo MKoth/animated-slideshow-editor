@@ -14,6 +14,7 @@ import {
   embeddedLibraryJSON,
   validateLibrary,
   validateLibraryClips,
+  validateLibraryClipCollections,
 } from './librarySection'
 import { ANIMATABLE_PROPERTIES } from './animationProperties'
 import type { AnimationProperty } from './animationProperties'
@@ -31,6 +32,7 @@ import { DEFAULT_MATERIAL_DEFINITION_ID } from './materialInstance'
 import { DEFAULT_MATERIAL_PARAMETERS } from './materialResolution'
 import type { MaterialDefinition } from './materialDefinition'
 import { ClipDefinition } from './clipDefinition'
+import { ClipCollection } from './clipCollection'
 
 export const LESSON_VERSION = 2
 
@@ -49,6 +51,21 @@ export function parseClipsFromLessonJSON(json: LessonJSON): ClipDefinition[] {
   return clips
 }
 
+export function parseClipCollectionsFromLessonJSON(json: LessonJSON): ClipCollection[] {
+  const collectionsJson = json.clipCollections ?? json.library?.clipCollections
+  const out: ClipCollection[] = []
+  if (Array.isArray(collectionsJson)) {
+    for (const colJson of collectionsJson) {
+      try {
+        out.push(ClipCollection.fromJSON(colJson))
+      } catch {
+        // skip invalid
+      }
+    }
+  }
+  return out
+}
+
 const TRANSFORM_KEYS = ['x', 'y', 'rotation', 'scaleX', 'scaleY'] as const
 const TEXT_ALIGNMENTS: readonly string[] = ['left', 'center', 'right']
 const ANIMATABLE_PROPERTY_NAMES: readonly string[] = ANIMATABLE_PROPERTIES
@@ -56,11 +73,19 @@ const DEFAULT_MATERIAL_KINDS: Readonly<Record<string, string>> = Object.fromEntr
   DEFAULT_MATERIAL_PARAMETERS.map((parameter) => [parameter.key, parameter.kind]),
 )
 
-export function serialize(project: Project, clips?: readonly ClipDefinition[]): string {
-  return JSON.stringify(toLessonJSON(project, clips))
+export function serialize(
+  project: Project,
+  clips?: readonly ClipDefinition[],
+  clipCollections?: readonly ClipCollection[],
+): string {
+  return JSON.stringify(toLessonJSON(project, clips, clipCollections))
 }
 
-export function toLessonJSON(project: Project, clips?: readonly ClipDefinition[]): LessonJSON {
+export function toLessonJSON(
+  project: Project,
+  clips?: readonly ClipDefinition[],
+  clipCollections?: readonly ClipCollection[],
+): LessonJSON {
   const library =
     project.embeddedAssets.length > 0 ||
     project.embeddedMaterials.length > 0 ||
@@ -87,6 +112,9 @@ export function toLessonJSON(project: Project, clips?: readonly ClipDefinition[]
     slides: project.slides.map((slide) => slide.toJSON()),
     ...(clips !== undefined && clips.length > 0
       ? { clips: clips.map((clip) => clip.toJSON()) }
+      : {}),
+    ...(clipCollections !== undefined && clipCollections.length > 0
+      ? { clipCollections: clipCollections.map((c) => c.toJSON()) }
       : {}),
     ...(library !== undefined ? { library } : {}),
   }
@@ -166,7 +194,10 @@ export function validate(json: unknown): string[] {
   }
   validateLibrary(errors, json.library)
   validateLibraryClips(errors, (json as { clips?: unknown }).clips)
+  validateLibraryClipCollections(errors, (json as { clipCollections?: unknown }).clipCollections)
+  // also validate library clipCollections if present in library but already covered by validateLibrary
   validateClipReferencesInJSON(errors, json as LessonJSON)
+  validateClipCollectionReferencesInJSON(errors, json as LessonJSON)
   const slideIds = new Set<string>()
   const sceneIds = new Set<string>()
   const nodeIds = new Set<string>()
@@ -934,6 +965,56 @@ function validateClipReferencesInJSON(errors: string[], json: LessonJSON): void 
             }
           }
         }
+      }
+    }
+  }
+}
+
+function validateClipCollectionReferencesInJSON(errors: string[], json: LessonJSON): void {
+  const clips = parseClipsFromLessonJSON(json)
+  const clipIds = new Set(clips.map((c) => c.id))
+  const collections = parseClipCollectionsFromLessonJSON(json)
+  const collectionIds = new Set<string>()
+  for (const col of collections) {
+    if (collectionIds.has(col.id)) {
+      errors.push(`A clipCollection with id "${col.id}" already exists`)
+    } else {
+      collectionIds.add(col.id)
+    }
+    if (col.name.trim() === '') {
+      errors.push(`ClipCollection "${col.id}" name must be non-empty`)
+    }
+    for (const [semanticName, clipId] of col.bindings) {
+      if (typeof semanticName !== 'string' || semanticName.trim() === '') {
+        errors.push(`ClipCollection "${col.id}" has empty semanticName`)
+      }
+      if (!clipIds.has(clipId)) {
+        errors.push(`ClipCollection "${col.id}" binding "${semanticName}" references unknown clip id: ${clipId}`)
+      }
+    }
+  }
+  // Also validate raw JSON for structural errors not caught by fromJSON (duplicate ids, missing fields)
+  const rawCollections = (json.clipCollections as unknown) ?? (json.library?.clipCollections as unknown)
+  if (Array.isArray(rawCollections)) {
+    const seen = new Set<string>()
+    for (const raw of rawCollections) {
+      if (!isRecord(raw)) {
+        errors.push('ClipCollection must be an object')
+        continue
+      }
+      const id = raw.id
+      if (typeof id !== 'string' || id === '') {
+        errors.push('ClipCollection id must be non-empty string')
+      } else if (seen.has(id)) {
+        // already reported via collectionIds but also raw
+      } else {
+        seen.add(id)
+      }
+      if (typeof raw.name !== 'string' || raw.name === '') {
+        errors.push(`ClipCollection "${String(id)}" name must be non-empty string`)
+      }
+      if (!isRecord(raw.bindings)) {
+        errors.push(`ClipCollection "${String(id)}" bindings must be an object`)
       }
     }
   }

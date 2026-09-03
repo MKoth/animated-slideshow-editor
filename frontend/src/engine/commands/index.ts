@@ -421,3 +421,28 @@ export type {
   SetUVTransformParameters,
   SetUVTransformInverse,
 } from './attachTextureCommand'
+export { CreateClipCollectionCommand } from './createClipCollectionCommand'
+export type {
+  CreateClipCollectionInverse,
+  CreateClipCollectionParameters,
+} from './createClipCollectionCommand'
+export { DeleteClipCollectionCommand } from './deleteClipCollectionCommand'
+export type {
+  DeleteClipCollectionInverse,
+  DeleteClipCollectionParameters,
+} from './deleteClipCollectionCommand'
+export { RenameClipCollectionCommand } from './renameClipCollectionCommand'
+export type {
+  RenameClipCollectionInverse,
+  RenameClipCollectionParameters,
+} from './renameClipCollectionCommand'
+export { ExportClipCollectionCommand } from './exportClipCollectionCommand'
+export type {
+  ExportClipCollectionInverse,
+  ExportClipCollectionParameters,
+} from './exportClipCollectionCommand'
+export { ApplyClipCollectionCommand } from './applyClipCollectionCommand'
+export type {
+  ApplyClipCollectionInverse,
+  ApplyClipCollectionParameters,
+} from './applyClipCollectionCommand'

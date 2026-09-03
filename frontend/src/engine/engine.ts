@@ -24,6 +24,7 @@ import type { LessonJSON } from './json'
 import type { MaterialOverrides } from './materialInstance'
 import type { ClipDefinition } from './clipDefinition'
 import type { ClipInstance } from './clipInstance'
+import type { ClipCollection } from './clipCollection'
 import type { AnimatableParameter } from './animatableParameters'
 import { createBuiltInClips } from './builtInClips'
 import type { IKManager } from './ikManager'
@@ -43,8 +44,9 @@ export interface EnginePublic {
   readonly embeddedDataSources: readonly EmbeddedDataSourceUnion[]
   readonly activeSlideId: string | null
   readonly clips: readonly ClipDefinition[]
+  readonly clipCollections: readonly ClipCollection[]
   subscribe(listener: (event: EngineEvent) => void): Unsubscribe
-  openProject(project: Project, clips?: readonly ClipDefinition[]): void
+  openProject(project: Project, clips?: readonly ClipDefinition[], clipCollections?: readonly ClipCollection[]): void
   setActiveSlide(slideId: string): void
   getActiveSlide(): Slide | null
   getSlide(slideId: string): Slide
@@ -107,6 +109,13 @@ export interface EnginePublic {
   getClipInstances(nodeId: string): readonly ClipInstance[]
   isClipReferenced(clipId: string): boolean
   getClipBlockingNodeNames(clipId: string): string[]
+  // ClipCollection
+  getClipCollection(collectionId: string): ClipCollection
+  createClipCollection(name: string, bindings: Record<string, string>, sourceNodeId?: string): ClipCollection
+  deleteClipCollection(collectionId: string): ClipCollection
+  renameClipCollection(collectionId: string, name: string): void
+  exportClipCollection(parentNodeId: string, name: string): ClipCollection
+  applyClipCollection(collectionId: string, targetNodeId: string): { nodeId: string; instanceId: string; clipId: string }[]
   getExportFrameCount(duration: number, fps: number): number
   getExportFrameTimestamps(duration: number, fps: number): number[]
   getRubberbandTempoForPlaybackRate(playbackRate: number): number

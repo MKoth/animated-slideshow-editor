@@ -8,6 +8,7 @@ import type {
 import type { LessonLibraryJSON } from './json'
 import { isRecord } from './guards'
 import { ClipDefinition } from './clipDefinition'
+import { ClipCollection } from './clipCollection'
 
 export function embeddedLibraryJSON(
   assets: readonly EmbeddedAsset[],
@@ -17,6 +18,7 @@ export function embeddedLibraryJSON(
     EmbeddedDataSourceDefinition | EmbeddedFlowchartDataSourceDefinition
   )[] = [],
   clips: readonly ClipDefinition[] = [],
+  clipCollections: readonly import('./clipCollection').ClipCollection[] = [],
 ): LessonLibraryJSON {
   const library: LessonLibraryJSON = {
     assets: assets.map((asset) => ({
@@ -79,6 +81,9 @@ export function embeddedLibraryJSON(
         }
       : {}),
     ...(clips.length > 0 ? { clips: clips.map((clip) => clip.toJSON()) } : {}),
+    ...(clipCollections.length > 0
+      ? { clipCollections: clipCollections.map((c) => c.toJSON()) }
+      : {}),
   }
   return library
 }
@@ -91,7 +96,14 @@ export function validateLibrary(errors: string[], library: unknown): void {
     errors.push('Invalid lesson JSON: library must be an object')
     return
   }
-  for (const reserved of ['assets', 'materials', 'shaders', 'data_sources', 'clips'] as const) {
+  for (const reserved of [
+    'assets',
+    'materials',
+    'shaders',
+    'data_sources',
+    'clips',
+    'clipCollections',
+  ] as const) {
     if (library[reserved] !== undefined && !Array.isArray(library[reserved])) {
       errors.push(`Invalid lesson JSON: library.${reserved} must be an array`)
     }
@@ -101,6 +113,7 @@ export function validateLibrary(errors: string[], library: unknown): void {
   validateLibraryShaders(errors, library.shaders)
   validateLibraryDataSources(errors, library.data_sources)
   validateLibraryClips(errors, library.clips)
+  validateLibraryClipCollections(errors, library.clipCollections)
 }
 
 function validateLibraryAssets(errors: string[], assets: unknown): void {
@@ -678,4 +691,55 @@ export function buildClipsFromJSON(library: unknown): ClipDefinition[] {
     }
   }
   return clips
+}
+
+export function validateLibraryClipCollections(errors: string[], collections: unknown): void {
+  if (collections === undefined) return
+  if (!Array.isArray(collections)) return
+  const ids = new Set<string>()
+  for (const col of collections) {
+    if (!isRecord(col)) {
+      errors.push('Library clipCollection must be an object')
+      continue
+    }
+    requireNonEmptyString(errors, col.id, 'Library clipCollection id')
+    requireNonEmptyString(errors, col.name, 'Library clipCollection name')
+    if (!isRecord(col.bindings)) {
+      errors.push(`Library clipCollection "${String(col.id)}" bindings must be an object`)
+    } else {
+      for (const [k, v] of Object.entries(col.bindings as Record<string, unknown>)) {
+        if (typeof k !== 'string' || k.trim() === '') {
+          errors.push(`Library clipCollection "${String(col.id)}" binding key must be non-empty string`)
+        }
+        if (typeof v !== 'string' || v === '') {
+          errors.push(`Library clipCollection "${String(col.id)}" binding "${k}" must be non-empty string`)
+        }
+      }
+    }
+    if (col.sourceNodeId !== undefined && (typeof col.sourceNodeId !== 'string' || col.sourceNodeId === '')) {
+      errors.push(`Library clipCollection "${String(col.id)}" sourceNodeId must be non-empty string`)
+    }
+    if (typeof col.id === 'string' && col.id !== '') {
+      if (ids.has(col.id)) {
+        errors.push(`A library clipCollection with id "${col.id}" already exists`)
+      } else {
+        ids.add(col.id)
+      }
+    }
+  }
+}
+
+export function buildClipCollectionsFromJSON(library: unknown): ClipCollection[] {
+  if (!isRecord(library) || !Array.isArray(library.clipCollections)) {
+    return []
+  }
+  const out: ClipCollection[] = []
+  for (const json of library.clipCollections) {
+    try {
+      out.push(ClipCollection.fromJSON(json))
+    } catch {
+      // skip invalid
+    }
+  }
+  return out
 }

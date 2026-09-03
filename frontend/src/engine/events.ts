@@ -316,6 +316,32 @@ export interface AudioChanged {
   readonly slideId: string
 }
 
+export interface ClipCollectionCreated {
+  readonly type: 'ClipCollectionCreated'
+  readonly collectionId: string
+}
+
+export interface ClipCollectionRemoved {
+  readonly type: 'ClipCollectionRemoved'
+  readonly collectionId: string
+}
+
+export interface ClipCollectionRenamed {
+  readonly type: 'ClipCollectionRenamed'
+  readonly collectionId: string
+}
+
+export interface ClipCollectionBindingsChanged {
+  readonly type: 'ClipCollectionBindingsChanged'
+  readonly collectionId: string
+}
+
+export interface ClipCollectionApplied {
+  readonly type: 'ClipCollectionApplied'
+  readonly collectionId: string
+  readonly targetNodeId: string
+}
+
 export type EngineEvent =
   | ProjectCreated
   | ProjectLoaded
@@ -375,6 +401,11 @@ export type EngineEvent =
   | CircleChanged
   | PrompterChanged
   | AudioChanged
+  | ClipCollectionCreated
+  | ClipCollectionRemoved
+  | ClipCollectionRenamed
+  | ClipCollectionBindingsChanged
+  | ClipCollectionApplied
 
 export type EventListener = (event: EngineEvent) => void
 
