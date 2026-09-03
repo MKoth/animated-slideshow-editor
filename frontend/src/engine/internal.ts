@@ -1181,6 +1181,8 @@ export class Engine {
       fadeIn?: number
       fadeOut?: number
       playbackRate?: number
+      pitchSemitones?: number
+      noiseReduction?: number
     },
   ): AudioClip {
     const slide = this.getSlide(slideId)
@@ -1297,6 +1299,8 @@ export class Engine {
       volume: clip.volume,
       muted: clip.muted,
       playbackRate: clip.playbackRate,
+      pitchSemitones: clip.pitchSemitones,
+      noiseReduction: clip.noiseReduction,
       ...(clip.fadeIn !== undefined
         ? { fadeIn: clampAudioFade(clip.fadeIn, originalSourceEnd - sourceSplit) }
         : {}),
@@ -1329,6 +1333,8 @@ export class Engine {
       volume: clip.volume,
       muted: clip.muted,
       playbackRate: clip.playbackRate,
+      pitchSemitones: clip.pitchSemitones,
+      noiseReduction: clip.noiseReduction,
       ...(clip.fadeIn !== undefined ? { fadeIn: clip.fadeIn } : {}),
       ...(clip.fadeOut !== undefined ? { fadeOut: clip.fadeOut } : {}),
     }
@@ -1372,6 +1378,65 @@ export class Engine {
     clip.playbackRate = rate
     this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
     return old
+  }
+
+  setAudioClipPitchSemitones(slideId: string, clipId: string, pitch: number): number {
+    const slide = this.getSlide(slideId)
+    const clip = slide.audio.clips.find((c) => c.id === clipId)
+    if (!clip) throw new Error(`AudioClip not found: ${clipId}`)
+    if (typeof pitch !== 'number' || !Number.isFinite(pitch) || pitch < -12 || pitch > 12) {
+      throw new Error('AudioClip pitchSemitones must be between -12 and 12')
+    }
+    const old = clip.pitchSemitones
+    clip.pitchSemitones = pitch
+    this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    return old
+  }
+
+  setAudioClipNoiseReduction(slideId: string, clipId: string, value: number): number {
+    const slide = this.getSlide(slideId)
+    const clip = slide.audio.clips.find((c) => c.id === clipId)
+    if (!clip) throw new Error(`AudioClip not found: ${clipId}`)
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+      throw new Error('AudioClip noiseReduction must be between 0 and 1')
+    }
+    const old = clip.noiseReduction
+    clip.noiseReduction = value
+    this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    return old
+  }
+
+  setAudioClipEffects(
+    slideId: string,
+    clipId: string,
+    patch: { playbackRate?: number; pitchSemitones?: number; noiseReduction?: number },
+  ): { oldPlaybackRate: number; oldPitchSemitones: number; oldNoiseReduction: number } {
+    const slide = this.getSlide(slideId)
+    const clip = slide.audio.clips.find((c) => c.id === clipId)
+    if (!clip) throw new Error(`AudioClip not found: ${clipId}`)
+    const oldPlaybackRate = clip.playbackRate
+    const oldPitchSemitones = clip.pitchSemitones
+    const oldNoiseReduction = clip.noiseReduction
+    if (patch.playbackRate !== undefined) {
+      if (typeof patch.playbackRate !== 'number' || !Number.isFinite(patch.playbackRate) || patch.playbackRate <= 0) {
+        throw new Error('AudioClip playbackRate must be a positive finite number')
+      }
+      clip.playbackRate = patch.playbackRate
+    }
+    if (patch.pitchSemitones !== undefined) {
+      if (typeof patch.pitchSemitones !== 'number' || !Number.isFinite(patch.pitchSemitones) || patch.pitchSemitones < -12 || patch.pitchSemitones > 12) {
+        throw new Error('AudioClip pitchSemitones must be between -12 and 12')
+      }
+      clip.pitchSemitones = patch.pitchSemitones
+    }
+    if (patch.noiseReduction !== undefined) {
+      if (typeof patch.noiseReduction !== 'number' || !Number.isFinite(patch.noiseReduction) || patch.noiseReduction < 0 || patch.noiseReduction > 1) {
+        throw new Error('AudioClip noiseReduction must be between 0 and 1')
+      }
+      clip.noiseReduction = patch.noiseReduction
+    }
+    this.#bus.emit({ type: 'AudioChanged', slideId } as unknown as import('./events').EngineEvent)
+    return { oldPlaybackRate, oldPitchSemitones, oldNoiseReduction }
   }
 
   setAudioClipFade(

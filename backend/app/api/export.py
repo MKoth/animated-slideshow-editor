@@ -25,10 +25,14 @@ class ExportClipDescriptor(BaseModel):
     volume: float
     muted: bool
     playbackRate: float
+    pitchSemitones: float | None = None
+    noiseReduction: float | None = None
     fadeIn: float | None = None
     fadeOut: float | None = None
     derivedAssetKey: str | None = None
     rubberbandTempo: float | None = None
+    rubberbandPitch: float | None = None
+    afftdnNr: int | None = None
     isStretched: bool | None = None
     trimEnd: float | None = None
     filterFragment: str | None = None
@@ -224,19 +228,37 @@ def _validate_descriptor(job: ExportJobRequest) -> None:
                 raise HTTPException(
                     status_code=422, detail=f"clip {clip.id} filterFragment must contain atrim=end={slide.duration}"
                 )
-            if clip.playbackRate != 1:
-                if clip.rubberbandTempo is None:
-                    raise HTTPException(status_code=422, detail=f"clip {clip.id} with playbackRate !=1 must have rubberbandTempo")
-                expected_tempo = 1 / clip.playbackRate
-                if abs(clip.rubberbandTempo - expected_tempo) > 1e-4:
-                    raise HTTPException(
-                        status_code=422,
-                        detail=f"clip {clip.id} tempo {clip.rubberbandTempo} != 1/playbackRate {expected_tempo}",
-                    )
-                if "rubberband=tempo=" not in clip.filterFragment:
+            # Determine if clip has any non-default audio effect (rate/pitch/noise)
+            has_pitch = clip.pitchSemitones is not None and abs(clip.pitchSemitones) > 1e-9
+            has_nr = clip.noiseReduction is not None and clip.noiseReduction > 1e-9
+            has_rate = clip.playbackRate != 1
+            has_effect = has_rate or has_pitch or has_nr
+            if has_effect:
+                if has_rate:
+                    if clip.rubberbandTempo is None:
+                        raise HTTPException(status_code=422, detail=f"clip {clip.id} with playbackRate !=1 must have rubberbandTempo")
+                    expected_tempo = 1 / clip.playbackRate
+                    if abs(clip.rubberbandTempo - expected_tempo) > 1e-4:
+                        raise HTTPException(
+                            status_code=422,
+                            detail=f"clip {clip.id} tempo {clip.rubberbandTempo} != 1/playbackRate {expected_tempo}",
+                        )
+                if has_pitch:
+                    if clip.rubberbandPitch is None:
+                        raise HTTPException(status_code=422, detail=f"clip {clip.id} with pitch !=0 must have rubberbandPitch")
+                    # pitchScale = 2^(semitones/12)
+                    import math
+                    expected_pitch = math.pow(2, clip.pitchSemitones / 12.0)
+                    if abs(clip.rubberbandPitch - expected_pitch) > 1e-4:
+                        raise HTTPException(status_code=422, detail=f"clip {clip.id} pitch {clip.rubberbandPitch} != expected {expected_pitch}")
+                if "rubberband=tempo=" not in clip.filterFragment and has_rate:
                     raise HTTPException(status_code=422, detail=f"clip {clip.id} filterFragment must contain rubberband")
+                if has_pitch and "rubberband" not in clip.filterFragment:
+                    raise HTTPException(status_code=422, detail=f"clip {clip.id} with pitch must contain rubberband")
+                if has_nr and "afftdn" not in clip.filterFragment:
+                    raise HTTPException(status_code=422, detail=f"clip {clip.id} with noiseReduction must contain afftdn")
                 if clip.derivedAssetKey is None:
-                    raise HTTPException(status_code=422, detail=f"clip {clip.id} with playbackRate !=1 must have derivedAssetKey")
+                    raise HTTPException(status_code=422, detail=f"clip {clip.id} with effect must have derivedAssetKey")
                 # cache key must be assetId:rate — normalized check is fuzzy on backend
                 # allow startswith assetId: for tolerant comparison
                 if not clip.derivedAssetKey.startswith(f"{clip.assetId}:"):
@@ -244,8 +266,15 @@ def _validate_descriptor(job: ExportJobRequest) -> None:
             else:
                 if clip.rubberbandTempo is not None and abs(clip.rubberbandTempo - 1) > 1e-9:
                     raise HTTPException(status_code=422, detail=f"clip {clip.id} with rate 1 must not have tempo !=1")
-                if clip.filterFragment and "rubberband=" in clip.filterFragment:
-                    raise HTTPException(status_code=422, detail=f"clip {clip.id} with rate 1 must not contain rubberband")
+                if has_pitch:
+                    raise HTTPException(status_code=422, detail=f"clip {clip.id} pitch should be 0 when no effect")
+                # For clips without effects, rubberband/afftdn should not appear (but allow if not present)
+                # To keep backward compat, we only error if filterFragment contains rubberband/afftdn without effect flag
+                # Actually has_effect already false, so any rubberband/afftdn present would be unexpected
+                if clip.filterFragment and "rubberband=" in clip.filterFragment and not has_effect:
+                    raise HTTPException(status_code=422, detail=f"clip {clip.id} with rate 1 and no pitch must not contain rubberband")
+                if clip.filterFragment and "afftdn" in clip.filterFragment and not has_nr:
+                    raise HTTPException(status_code=422, detail=f"clip {clip.id} with no noiseReduction must not contain afftdn")
 
     # Global checks
     if job.global_.concatMethod != EXPECTED_CONCAT:

@@ -51,6 +51,20 @@ export function __setMockStretch(fn: typeof mockStretchFn) {
   mockStretchFn = fn
 }
 
+let mockEffectsFn: ((buffer: AudioBuffer, timeRatio: number, pitchSemitones: number, noiseReduction: number) => Promise<AudioBuffer>) | null = null
+export function __setMockEffects(fn: typeof mockEffectsFn) {
+  mockEffectsFn = fn
+}
+
+export function getPitchScaleForSemitones(semitones: number): number {
+  return Math.pow(2, semitones / 12)
+}
+
+export function getSemitonesForPitchScale(scale: number): number {
+  if (scale <= 0) throw new Error('scale must be positive')
+  return 12 * Math.log2(scale)
+}
+
 export function getTimeRatioForPlaybackRate(playbackRate: number): number {
   if (playbackRate <= 0) throw new Error('playbackRate must be >0')
   return 1 / playbackRate
@@ -140,9 +154,44 @@ function linearStretch(buffer: AudioBuffer, timeRatio: number): AudioBuffer {
   return newBuffer
 }
 
-async function rubberBandStretch(buffer: AudioBuffer, timeRatio: number): Promise<AudioBuffer> {
+async function rubberBandStretchWithPitch(buffer: AudioBuffer, timeRatio: number, pitchScale: number): Promise<AudioBuffer> {
   const rb = await loadRubberBand()
   if (!rb) {
+    // fallback: time stretch only, pitch shift approximated via linear fallback (ignores formant)
+    // For fallback, if pitchScale !=1 we do a naive pitch shift via resampling + time correction approx
+    if (Math.abs(pitchScale - 1) > 1e-6) {
+      // Simple fallback: resample by pitchScale then correct duration via linear stretch
+      const pitchedLength = Math.max(1, Math.round(buffer.length / pitchScale))
+      const ctxCtor = (globalThis as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
+        ?? (globalThis as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+      let pitched: AudioBuffer
+      if (ctxCtor) {
+        let tmp: AudioContext | null = null
+        try {
+          tmp = new ctxCtor()
+          pitched = tmp.createBuffer(buffer.numberOfChannels, pitchedLength, buffer.sampleRate)
+        } catch {
+          pitched = buffer
+        } finally {
+          if (tmp) try { tmp.close() } catch { /* ignore */ }
+        }
+        // naive copy with linear interpolation for pitch (changes duration)
+        for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+          const src = buffer.getChannelData(ch)
+          const dst = pitched.getChannelData(ch)
+          for (let i = 0; i < pitchedLength; i++) {
+            const srcIdx = i * pitchScale
+            const low = Math.floor(srcIdx)
+            const high = Math.min(src.length - 1, low + 1)
+            const frac = srcIdx - low
+            dst[i] = (src[low] ?? 0) * (1 - frac) + (src[high] ?? 0) * frac
+          }
+        }
+        // then stretch pitched back to timeRatio duration
+        return linearStretch(pitched, timeRatio)
+      }
+      return linearStretch(buffer, timeRatio)
+    }
     return linearStretch(buffer, timeRatio)
   }
   const sampleRate = buffer.sampleRate
@@ -158,7 +207,7 @@ async function rubberBandStretch(buffer: AudioBuffer, timeRatio: number): Promis
     RubberBandOption.RubberBandOptionEngineFiner |
     RubberBandOption.RubberBandOptionPitchHighQuality
 
-  const state = rb.rubberband_new(sampleRate, channels, options, timeRatio, 1.0)
+  const state = rb.rubberband_new(sampleRate, channels, options, timeRatio, pitchScale)
   try {
     rb.rubberband_set_expected_input_duration(state, inputLength)
 
@@ -240,6 +289,148 @@ async function rubberBandStretch(buffer: AudioBuffer, timeRatio: number): Promis
     console.warn('[timeStretch] rubberband failed, falling back', e)
     return linearStretch(buffer, timeRatio)
   }
+}
+
+async function rubberBandStretch(buffer: AudioBuffer, timeRatio: number): Promise<AudioBuffer> {
+  return rubberBandStretchWithPitch(buffer, timeRatio, 1.0)
+}
+
+async function applyNoiseReductionOffline(buffer: AudioBuffer, amount: number): Promise<AudioBuffer> {
+  if (amount <= 1e-6) return buffer
+  if (amount < 0) amount = 0
+  if (amount > 1) amount = 1
+  // Try OfflineAudioContext graph first (Web Audio based, non-destructive, no asset rewrite)
+  const OfflineCtor = (globalThis as unknown as { OfflineAudioContext?: typeof OfflineAudioContext }).OfflineAudioContext
+  if (OfflineCtor) {
+    try {
+      const offline = new OfflineCtor(buffer.numberOfChannels, buffer.length, buffer.sampleRate)
+      const source = offline.createBufferSource()
+      source.buffer = buffer
+      // Simple denoiser chain: high-pass + compressor gate
+      // Use Biquad high-pass to remove rumble, plus DynamicsCompressor as gate
+      let lastNode: AudioNode = source as unknown as AudioNode
+      try {
+        const hp = offline.createBiquadFilter()
+        hp.type = 'highpass'
+        hp.frequency.value = 80 + amount * 40 // 80-120 Hz
+        hp.Q.value = 0.7
+        lastNode.connect(hp)
+        lastNode = hp
+      } catch {
+        // ignore filter creation
+      }
+      try {
+        const comp = offline.createDynamicsCompressor()
+        // More aggressive when amount higher
+        comp.threshold.value = -50 + amount * 10 // -50 to -40 dB
+        comp.ratio.value = 4 + amount * 8 // 4 to 12
+        comp.attack.value = 0.003
+        comp.release.value = 0.25
+        comp.knee.value = 10
+        lastNode.connect(comp)
+        lastNode = comp
+      } catch {
+        // ignore
+      }
+      // Add subtle low-pass for high-freq hiss when amount high
+      if (amount > 0.5) {
+        try {
+          const lp = offline.createBiquadFilter()
+          lp.type = 'lowpass'
+          lp.frequency.value = 8000 - (amount - 0.5) * 6000 // 8000 -> 5000
+          lp.Q.value = 0.5
+          lastNode.connect(lp)
+          lastNode = lp
+        } catch {
+          // ignore
+        }
+      }
+      // Attenuate overall low-level based on amount via Gain
+      try {
+        const gain = offline.createGain()
+        gain.gain.value = 1 - amount * 0.05 // slight overall reduction 0-0.05
+        lastNode.connect(gain)
+        lastNode = gain
+      } catch {
+        // ignore
+      }
+      lastNode.connect(offline.destination)
+      source.start(0)
+      const rendered = await offline.startRendering()
+      return rendered
+    } catch {
+      // fall through to manual
+    }
+  }
+  // Manual fallback: simple gate processing
+  const ctxCtor = (globalThis as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
+    ?? (globalThis as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  let outBuffer: AudioBuffer
+  if (ctxCtor) {
+    try {
+      const tmp = new ctxCtor()
+      outBuffer = tmp.createBuffer(buffer.numberOfChannels, buffer.length, buffer.sampleRate)
+      try { tmp.close() } catch { /* ignore */ }
+    } catch {
+      return buffer
+    }
+  } else if (OfflineCtor) {
+    const offline = new OfflineCtor(buffer.numberOfChannels, buffer.length, buffer.sampleRate)
+    outBuffer = offline.createBuffer(buffer.numberOfChannels, buffer.length, buffer.sampleRate)
+  } else {
+    return buffer
+  }
+  const threshold = 0.02 + amount * 0.03 // 0.02 - 0.05
+  const attenuation = 1 - amount * 0.85 // 1 -> 0.15
+  for (let ch = 0; ch < buffer.numberOfChannels; ch++) {
+    const src = buffer.getChannelData(ch)
+    const dst = outBuffer.getChannelData(ch)
+    for (let i = 0; i < src.length; i++) {
+      const v = src[i]
+      if (Math.abs(v) < threshold) dst[i] = v * attenuation
+      else {
+        // subtle smoothing for higher amount
+        if (amount > 0.5) {
+          const factor = 1 - (amount - 0.5) * 0.1
+          dst[i] = v * factor
+        } else dst[i] = v
+      }
+    }
+  }
+  return outBuffer
+}
+
+export async function applyAudioEffects(
+  buffer: AudioBuffer,
+  timeRatio: number,
+  pitchSemitones: number,
+  noiseReduction: number,
+): Promise<AudioBuffer> {
+  if (mockEffectsFn) return mockEffectsFn(buffer, timeRatio, pitchSemitones, noiseReduction)
+  if (mockStretchFn && pitchSemitones === 0 && noiseReduction === 0) {
+    // legacy mock for tempo only
+    return mockStretchFn(buffer, timeRatio)
+  }
+  const hasTempo = Math.abs(timeRatio - 1) > 1e-6
+  const hasPitch = Math.abs(pitchSemitones) > 1e-6
+  const hasNoise = noiseReduction > 1e-6
+  if (!hasTempo && !hasPitch && !hasNoise) return buffer
+  let out: AudioBuffer = buffer
+  const clampedTime = Math.max(0.25, Math.min(4, timeRatio))
+  const pitchScale = getPitchScaleForSemitones(pitchSemitones)
+  if (hasTempo || hasPitch) {
+    try {
+      out = await rubberBandStretchWithPitch(out, clampedTime, pitchScale)
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('[timeStretch] effects failed, linear fallback', e)
+      out = linearStretch(out, clampedTime)
+    }
+  }
+  if (hasNoise) {
+    out = await applyNoiseReductionOffline(out, noiseReduction)
+  }
+  return out
 }
 
 export async function stretchAudioBuffer(buffer: AudioBuffer, timeRatio: number): Promise<AudioBuffer> {

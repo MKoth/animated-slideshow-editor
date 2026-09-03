@@ -19,7 +19,7 @@ import { AudioBufferCache } from '../engine/audioBufferCache'
 import type { EnginePublic } from '../engine'
 import { getAudioClipSourceDuration } from '../engine/audioClip'
 import { useAssetLibraryStore } from '../stores/assetLibraryStore'
-import { stretchAudioBuffer, getTimeRatioForPlaybackRate } from './timeStretch'
+import { getTimeRatioForPlaybackRate, applyAudioEffects, getPitchScaleForSemitones } from './timeStretch'
 
 type Engine = EnginePublic
 
@@ -285,22 +285,31 @@ export class SyncedAudioController {
     }
     const uniqueAssetIds = [...new Set(clips.map((c) => c.assetId))]
     await Promise.all(uniqueAssetIds.map((id) => this.ensureBufferForAsset(id)))
-    // Also warm stretched buffers for clips with rate !=1 (pitch-preserving)
+    // Also warm stretched/effects buffers for clips with any non-default effect (pitch-preserving)
     await Promise.all(
       clips
-        .filter((c) => Math.abs((c.playbackRate || 1) - 1) > 1e-6)
+        .filter((c) => this.hasClipEffects(c))
         .map((c) => this.ensureStretchedBufferForClip(c).catch(() => false)),
     )
   }
 
-  private getStretchedKey(assetId: string, playbackRate: number): string {
-    return `${assetId}:stretch:${playbackRate.toFixed(6)}`
+  private getStretchedKey(assetId: string, playbackRate: number, pitchSemitones = 0, noiseReduction = 0): string {
+    return `${assetId}:stretch:${playbackRate.toFixed(6)}:pitch:${pitchSemitones.toFixed(2)}:nr:${noiseReduction.toFixed(2)}`
+  }
+
+  private hasClipEffects(clip: import('../engine/audioClip').AudioClip): boolean {
+    const rate = clip.playbackRate || 1
+    const pitch = clip.pitchSemitones || 0
+    const nr = clip.noiseReduction || 0
+    return Math.abs(rate - 1) > 1e-6 || Math.abs(pitch) > 1e-6 || nr > 1e-6
   }
 
   private async ensureStretchedBufferForClip(clip: import('../engine/audioClip').AudioClip): Promise<boolean> {
     const rate = clip.playbackRate || 1
-    if (Math.abs(rate - 1) < 1e-6) return true
-    const key = this.getStretchedKey(clip.assetId, rate)
+    const pitch = clip.pitchSemitones ?? 0
+    const nr = clip.noiseReduction ?? 0
+    if (!this.hasClipEffects(clip)) return true
+    const key = this.getStretchedKey(clip.assetId, rate, pitch, nr)
     if (this.stretchedCache.has(key)) return true
     if (this.pendingStretches.has(key)) return false
     // Need original buffer
@@ -314,11 +323,14 @@ export class SyncedAudioController {
     const originalBuffer = originalEntry.buffer as AudioBuffer
     if (!originalBuffer || typeof (originalBuffer as AudioBuffer).getChannelData !== 'function') return false
     const timeRatio = getTimeRatioForPlaybackRate(rate)
+    const pitchScale = getPitchScaleForSemitones(pitch)
+    // pitch does not change duration, only tempo does, so stretchedDuration still timeRatio * original
     const stretchedDuration = originalBuffer.duration * timeRatio
+    void pitchScale
     if (this.cache.shouldUseMediaElement(stretchedDuration)) return false
     this.pendingStretches.add(key)
     try {
-      const stretched = await stretchAudioBuffer(originalBuffer, timeRatio)
+      const stretched = await applyAudioEffects(originalBuffer, timeRatio, pitch, nr)
       if (!stretched) return false
       const byteSize = stretched.length * stretched.numberOfChannels * 4
       this.stretchedCache.set(key, { buffer: stretched, duration: stretched.duration, byteSize })
@@ -330,14 +342,18 @@ export class SyncedAudioController {
     }
   }
 
-  private getStretchedBuffer(assetId: string, playbackRate: number): { buffer: AudioBuffer; duration: number } | null {
-    const key = this.getStretchedKey(assetId, playbackRate)
+  private getStretchedBuffer(assetId: string, playbackRate: number, pitchSemitones = 0, noiseReduction = 0): { buffer: AudioBuffer; duration: number } | null {
+    const key = this.getStretchedKey(assetId, playbackRate, pitchSemitones, noiseReduction)
     const entry = this.stretchedCache.get(key)
     if (!entry) return null
     // LRU touch
     this.stretchedCache.delete(key)
     this.stretchedCache.set(key, entry)
     return entry
+  }
+
+  private getStretchedBufferForClip(clip: import('../engine/audioClip').AudioClip): { buffer: AudioBuffer; duration: number } | null {
+    return this.getStretchedBuffer(clip.assetId, clip.playbackRate || 1, clip.pitchSemitones ?? 0, clip.noiseReduction ?? 0)
   }
 
   attach(): void {
@@ -655,15 +671,14 @@ export class SyncedAudioController {
     for (const clip of audibleWindow) {
       if (this.scheduled.has(clip.id)) continue
       if (!isClipAudibleWithSoloMute(clip, mutedTracks, soloTracks)) continue
-      const rate = clip.playbackRate || 1
-      const needsStretch = Math.abs(rate - 1) > 1e-6
-      if (needsStretch) {
-        const stretched = this.getStretchedBuffer(clip.assetId, rate)
+      const needsEffects = this.hasClipEffects(clip)
+      if (needsEffects) {
+        const stretched = this.getStretchedBufferForClip(clip)
         if (stretched) {
           this.scheduleStretchedClip(clip, playhead, audioTime, ctx, slideDuration, stretched.buffer)
           continue
         }
-        // trigger async stretch (ensures original decoded first)
+        // trigger async effects (ensures original decoded first)
         void this.ensureStretchedBufferForClip(clip).then((ok) => {
           if (ok && this.isPlaying) this.tick()
         })
@@ -934,10 +949,10 @@ export class SyncedAudioController {
     if (ctx) {
       try {
         const rate = clip.playbackRate || 1
-        const needsStretch = Math.abs(rate - 1) > 1e-6
-        const stretched = needsStretch ? this.getStretchedBuffer(clip.assetId, rate) : null
+        const needsEffects = this.hasClipEffects(clip)
+        const stretched = needsEffects ? this.getStretchedBufferForClip(clip) : null
         // Try to ensure stretched for next time
-        if (needsStretch && !stretched) {
+        if (needsEffects && !stretched) {
           void this.ensureStretchedBufferForClip(clip)
         }
         let buffer: AudioBuffer | null = null

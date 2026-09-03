@@ -28,10 +28,26 @@ export interface AudioClip {
   fadeIn?: number
   fadeOut?: number
   playbackRate: number
+  pitchSemitones: number
+  noiseReduction: number
 }
 
 export function newAudioClipId(): string {
   return newId('audio-clip')
+}
+
+export const AUDIO_PITCH_MIN = -12
+export const AUDIO_PITCH_MAX = 12
+export const AUDIO_NOISE_MIN = 0
+export const AUDIO_NOISE_MAX = 1
+
+export function getPitchScaleForSemitones(semitones: number): number {
+  return Math.pow(2, semitones / 12)
+}
+
+export function getSemitonesForPitchScale(scale: number): number {
+  if (scale <= 0) throw new Error('scale must be positive')
+  return 12 * Math.log2(scale)
 }
 
 export function createAudioClip(input: {
@@ -46,6 +62,8 @@ export function createAudioClip(input: {
   fadeIn?: number
   fadeOut?: number
   playbackRate?: number
+  pitchSemitones?: number
+  noiseReduction?: number
 }): AudioClip {
   const id = input.id ?? newAudioClipId()
   requireString(id, 'AudioClip id')
@@ -75,6 +93,22 @@ export function createAudioClip(input: {
       input.playbackRate !== undefined
         ? requireFiniteNumber(input.playbackRate, 'AudioClip playbackRate', (v) => v > 0)
         : 1,
+    pitchSemitones:
+      input.pitchSemitones !== undefined
+        ? requireFiniteNumber(
+            input.pitchSemitones,
+            'AudioClip pitchSemitones',
+            (v) => v >= AUDIO_PITCH_MIN && v <= AUDIO_PITCH_MAX,
+          )
+        : 0,
+    noiseReduction:
+      input.noiseReduction !== undefined
+        ? requireFiniteNumber(
+            input.noiseReduction,
+            'AudioClip noiseReduction',
+            (v) => v >= AUDIO_NOISE_MIN && v <= AUDIO_NOISE_MAX,
+          )
+        : 0,
   }
   if (input.fadeIn !== undefined) {
     clip.fadeIn = requireFiniteNumber(input.fadeIn, 'AudioClip fadeIn', (v) => v >= 0)
@@ -101,6 +135,8 @@ export function audioClipToJSON(clip: AudioClip): AudioClipJSON {
     ...(clip.fadeIn !== undefined ? { fadeIn: clip.fadeIn } : {}),
     ...(clip.fadeOut !== undefined ? { fadeOut: clip.fadeOut } : {}),
     playbackRate: clip.playbackRate,
+    ...(clip.pitchSemitones !== 0 ? { pitchSemitones: clip.pitchSemitones } : {}),
+    ...(clip.noiseReduction !== 0 ? { noiseReduction: clip.noiseReduction } : {}),
   }
 }
 
@@ -117,6 +153,8 @@ export function audioClipFromJSON(json: AudioClipJSON): AudioClip {
     fadeIn: json.fadeIn,
     fadeOut: json.fadeOut,
     playbackRate: json.playbackRate ?? 1,
+    pitchSemitones: (json as { pitchSemitones?: unknown }).pitchSemitones as number | undefined ?? 0,
+    noiseReduction: (json as { noiseReduction?: unknown }).noiseReduction as number | undefined ?? 0,
   })
 }
 
@@ -159,6 +197,22 @@ export function validateAudioClipJSON(errors: string[], value: unknown, where: s
     (typeof v.playbackRate !== 'number' || !Number.isFinite(v.playbackRate) || v.playbackRate <= 0)
   )
     errors.push(`${where} playbackRate must be a positive finite number`)
+  if (
+    v.pitchSemitones !== undefined &&
+    (typeof v.pitchSemitones !== 'number' ||
+      !Number.isFinite(v.pitchSemitones) ||
+      v.pitchSemitones < AUDIO_PITCH_MIN ||
+      v.pitchSemitones > AUDIO_PITCH_MAX)
+  )
+    errors.push(`${where} pitchSemitones must be between ${AUDIO_PITCH_MIN} and ${AUDIO_PITCH_MAX}`)
+  if (
+    v.noiseReduction !== undefined &&
+    (typeof v.noiseReduction !== 'number' ||
+      !Number.isFinite(v.noiseReduction) ||
+      v.noiseReduction < AUDIO_NOISE_MIN ||
+      v.noiseReduction > AUDIO_NOISE_MAX)
+  )
+    errors.push(`${where} noiseReduction must be between ${AUDIO_NOISE_MIN} and ${AUDIO_NOISE_MAX}`)
   if (
     typeof v.sourceStart === 'number' &&
     typeof v.sourceEnd === 'number' &&

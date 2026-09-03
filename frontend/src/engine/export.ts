@@ -5,7 +5,7 @@
 // Job descriptors are deterministic and asserted in unit tests (no live FFmpeg).
 
 import type { AudioClip } from './audioClip'
-import { AUDIO_TRACK_IDS } from './audioClip'
+import { AUDIO_TRACK_IDS, getPitchScaleForSemitones } from './audioClip'
 import type { Slide } from './slide'
 import type { Project } from './project'
 
@@ -70,12 +70,26 @@ export function getRubberbandTempoForPlaybackRate(playbackRate: number): number 
   return 1 / playbackRate
 }
 
-export function getDerivedAssetCacheKey(assetId: string, playbackRate: number): string {
+export function getRubberbandPitchForSemitones(pitchSemitones: number): number {
+  if (!Number.isFinite(pitchSemitones) || pitchSemitones < -12 || pitchSemitones > 12) throw new Error('pitchSemitones must be between -12 and 12')
+  return getPitchScaleForSemitones(pitchSemitones)
+}
+
+export function getAfftdnNrForNoiseReduction(noiseReduction: number): number {
+  if (!Number.isFinite(noiseReduction) || noiseReduction < 0 || noiseReduction > 1) throw new Error('noiseReduction must be between 0 and 1')
+  // Map 0..1 to afftdn nr dB 0..97 (approx). RubberBand denoise uses afftdn; 0 = no effect
+  return Math.round(noiseReduction * 97)
+}
+
+export function getDerivedAssetCacheKey(assetId: string, playbackRate: number, pitchSemitones = 0, noiseReduction = 0): string {
   if (!assetId) throw new Error('assetId must be non-empty')
   if (!Number.isFinite(playbackRate) || playbackRate <= 0) throw new Error('playbackRate must be positive')
   // Normalize to fixed precision to keep deterministic key (avoid 1.5000000001 vs 1.5)
   const normalized = Number(playbackRate.toFixed(6))
-  return `${assetId}:${normalized}`
+  const pitchNorm = Number(pitchSemitones.toFixed(2))
+  const nrNorm = Number(noiseReduction.toFixed(2))
+  if (Math.abs(pitchSemitones) < 1e-6 && Math.abs(noiseReduction) < 1e-6) return `${assetId}:${normalized}`
+  return `${assetId}:${normalized}:pitch:${pitchNorm}:nr:${nrNorm}`
 }
 
 // ---------------------------------------------------------------------------
@@ -92,11 +106,15 @@ export interface ExportPerClipDescriptor {
   readonly volume: number
   readonly muted: boolean
   readonly playbackRate: number
+  readonly pitchSemitones: number
+  readonly noiseReduction: number
   readonly fadeIn?: number
   readonly fadeOut?: number
   // Derived handling
   readonly derivedAssetKey?: string
   readonly rubberbandTempo?: number
+  readonly rubberbandPitch?: number
+  readonly afftdnNr?: number
   readonly isStretched: boolean
   // Trim end = slide.duration (no bleed)
   readonly trimEnd: number
@@ -144,7 +162,11 @@ export interface ExportPerSlideDescriptor {
 export interface ExportDerivedAssetEntry {
   readonly assetId: string
   readonly playbackRate: number
+  readonly pitchSemitones: number
+  readonly noiseReduction: number
   readonly tempo: number
+  readonly pitchScale: number
+  readonly afftdnNr: number
   readonly cacheKey: string
 }
 
@@ -186,12 +208,26 @@ function buildPerClipFilter(clip: AudioClip, slideDuration: number): string {
   parts.push(EXPORT_AFORMAT_FILTER)
   // volume per-clip (deterministic lane mix volume*trackGain*masterGain, but mixer is later amix; here just volume)
   parts.push(`volume=${clip.volume}`)
-  // rubberband when playbackRate != 1, tempo = 1/playbackRate
-  if (Math.abs(clip.playbackRate - 1) > 1e-9) {
+  // rubberband when playbackRate !=1 or pitch !=0 (tempo preserves pitch, pitch shifts without duration change)
+  const hasTempo = Math.abs(clip.playbackRate - 1) > 1e-9
+  const hasPitch = Math.abs(clip.pitchSemitones ?? 0) > 1e-9
+  if (hasTempo || hasPitch) {
     const tempo = getRubberbandTempoForPlaybackRate(clip.playbackRate)
-    // Use 6 decimal formatted like Filter string expects
     const tempoStr = Number(tempo.toFixed(6)).toString()
-    parts.push(`rubberband=tempo=${tempoStr}`)
+    if (hasPitch) {
+      const pitchScale = getRubberbandPitchForSemitones(clip.pitchSemitones ?? 0)
+      const pitchStr = Number(pitchScale.toFixed(6)).toString()
+      parts.push(`rubberband=tempo=${tempoStr}:pitch=${pitchStr}`)
+    } else {
+      parts.push(`rubberband=tempo=${tempoStr}`)
+    }
+  }
+  // denoise via afftdn when noiseReduction >0 (non-destructive, baked at export)
+  const nr = clip.noiseReduction ?? 0
+  if (nr > 1e-9) {
+    const nrVal = getAfftdnNrForNoiseReduction(nr)
+    // afftdn filter: noise reduction amount, simple mapping
+    parts.push(`afftdn=nr=${nrVal}`)
   }
   // trim at slide.duration, no bleed tails
   parts.push(`atrim=end=${slideDuration}`)
@@ -211,9 +247,17 @@ export function buildPerSlideExportDescriptor(slide: Slide, settings: ExportSett
   const sortedClips = [...slide.audio.clips].sort((a, b) => a.id.localeCompare(b.id))
 
   const perClipDescriptors: ExportPerClipDescriptor[] = sortedClips.map((clip) => {
-    const isStretched = Math.abs(clip.playbackRate - 1) > 1e-9
-    const tempo = isStretched ? getRubberbandTempoForPlaybackRate(clip.playbackRate) : undefined
-    const cacheKey = isStretched ? getDerivedAssetCacheKey(clip.assetId, clip.playbackRate) : undefined
+    const rate = clip.playbackRate ?? 1
+    const pitch = clip.pitchSemitones ?? 0
+    const nr = clip.noiseReduction ?? 0
+    const hasTempo = Math.abs(rate - 1) > 1e-9
+    const hasPitch = Math.abs(pitch) > 1e-9
+    const hasNr = nr > 1e-9
+    const isStretched = hasTempo || hasPitch || hasNr
+    const tempo = hasTempo || hasPitch ? getRubberbandTempoForPlaybackRate(rate) : undefined
+    const pitchScale = hasPitch ? getRubberbandPitchForSemitones(pitch) : undefined
+    const afftdnNr = hasNr ? getAfftdnNrForNoiseReduction(nr) : undefined
+    const cacheKey = isStretched ? getDerivedAssetCacheKey(clip.assetId, rate, pitch, nr) : undefined
     const filterFragment = buildPerClipFilter(clip, duration)
     return {
       id: clip.id,
@@ -224,11 +268,15 @@ export function buildPerSlideExportDescriptor(slide: Slide, settings: ExportSett
       sourceEnd: clip.sourceEnd,
       volume: clip.volume,
       muted: clip.muted,
-      playbackRate: clip.playbackRate,
+      playbackRate: rate,
+      pitchSemitones: pitch,
+      noiseReduction: nr,
       ...(clip.fadeIn !== undefined ? { fadeIn: clip.fadeIn } : {}),
       ...(clip.fadeOut !== undefined ? { fadeOut: clip.fadeOut } : {}),
       isStretched,
       ...(tempo !== undefined ? { rubberbandTempo: tempo } : {}),
+      ...(pitchScale !== undefined ? { rubberbandPitch: pitchScale } : {}),
+      ...(afftdnNr !== undefined ? { afftdnNr } : {}),
       ...(cacheKey !== undefined ? { derivedAssetKey: cacheKey } : {}),
       trimEnd: duration,
       filterFragment,
@@ -312,16 +360,20 @@ export function buildExportJobDescriptor(project: Project, settings: ExportSetti
   const totalDuration = project.slides.reduce((sum, s) => sum + s.duration, 0)
   const totalFrames = slideDescriptors.reduce((sum, s) => sum + s.frameCount, 0)
 
-  // Derived asset cache: unique by assetId+rate where playbackRate !=1
+  // Derived asset cache: unique by assetId+rate+pitch+nr where any effect != default
   const cacheMap = new Map<string, ExportDerivedAssetEntry>()
   for (const slideDesc of slideDescriptors) {
     for (const clip of slideDesc.audio.clips) {
-      if (clip.isStretched && clip.derivedAssetKey && clip.rubberbandTempo !== undefined) {
+      if (clip.isStretched && clip.derivedAssetKey) {
         if (!cacheMap.has(clip.derivedAssetKey)) {
           cacheMap.set(clip.derivedAssetKey, {
             assetId: clip.assetId,
             playbackRate: clip.playbackRate,
-            tempo: clip.rubberbandTempo,
+            pitchSemitones: clip.pitchSemitones,
+            noiseReduction: clip.noiseReduction,
+            tempo: clip.rubberbandTempo ?? 1,
+            pitchScale: clip.rubberbandPitch ?? 1,
+            afftdnNr: clip.afftdnNr ?? 0,
             cacheKey: clip.derivedAssetKey,
           })
         }
@@ -355,6 +407,8 @@ export function buildExportJobDescriptor(project: Project, settings: ExportSetti
         volume: c.volume,
         muted: c.muted,
         playbackRate: c.playbackRate,
+        pitchSemitones: c.pitchSemitones,
+        noiseReduction: c.noiseReduction,
       })),
     })),
   }

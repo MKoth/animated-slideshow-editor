@@ -214,6 +214,8 @@ export type AudioClipJSON = {
   readonly fadeIn?: number
   readonly fadeOut?: number
   readonly playbackRate: number
+  readonly pitchSemitones?: number
+  readonly noiseReduction?: number
 }
 
 export type SlideAudioJSON = {

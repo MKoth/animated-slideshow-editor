@@ -4,6 +4,9 @@ import {
   TrimAudioClipCommand,
   CreateAudioClipCommand,
   TransactionCommand,
+  SetAudioClipEffectsCommand,
+  UpdatePrompterPartCommand,
+  UpdatePrompterPartWithShiftCommand,
 } from '../../engine/commands'
 import { WaveformCanvas } from './WaveformCanvas'
 import {
@@ -15,6 +18,9 @@ import { useNotificationStore } from '../../stores/notificationStore'
 import { assetsApi } from '../../api'
 import { rulerTickStep, rulerTickTimes, tickLabel } from '../../stores/timelineViewStore'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
+import { getPitchScaleForSemitones } from '../../engine/audioClip'
+import { applyAudioEffects, getTimeRatioForPlaybackRate } from '../../audio/timeStretch'
+import { AudioEffectsMismatchDialog } from './AudioEffectsMismatchDialog'
 
 interface WaveformEditorModalProps {
   readonly slideId: string
@@ -96,9 +102,24 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
   const [isPlaying, setIsPlaying] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
-
+  // Audio effects — non-destructive params (pitch -12..+12, noise 0..1, plus playbackRate)
+  const [editPitch, setEditPitch] = useState(clip?.pitchSemitones ?? 0)
+  const [editNoise, setEditNoise] = useState(clip?.noiseReduction ?? 0)
+  const [editRate, setEditRate] = useState(clip?.playbackRate ?? 1)
   // Derived: playbackRate to convert source seconds to timeline seconds
-  const rate = clip?.playbackRate || 1
+  const rate = editRate
+  // Mismatch dialog state
+  const [mismatch, setMismatch] = useState<null | {
+    derivedDuration: number
+    prompterDuration: number
+    partId: string
+    partText: string
+    effectiveStart: number
+    effectiveEnd: number
+    selStart: number | null
+    selEnd: number | null
+    isInteriorDelete: boolean
+  }>(null)
 
   // Load peaks: cached → decoded → backend canonical
   useEffect(() => {
@@ -227,7 +248,10 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setEditStart(clip.sourceStart)
     setEditEnd(clip.sourceEnd)
-  }, [clip?.sourceStart, clip?.sourceEnd, isDragging, clip])
+    setEditPitch(clip.pitchSemitones ?? 0)
+    setEditNoise(clip.noiseReduction ?? 0)
+    setEditRate(clip.playbackRate ?? 1)
+  }, [clip?.sourceStart, clip?.sourceEnd, clip?.pitchSemitones, clip?.noiseReduction, clip?.playbackRate, isDragging, clip])
 
   // Ruler calculation — shares timeline ruler logic
   const width = 640
@@ -313,6 +337,71 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
         useNotificationStore.getState().notify('Nothing to audition — interval empty')
         return
       }
+      const hasEffects = Math.abs(editPitch) > 1e-6 || Math.abs(editNoise) > 1e-6 || Math.abs(editRate - 1) > 1e-6
+      // If effects present, use Web Audio OfflineAudioContext preview (non-destructive, no asset rewrite)
+      if (hasEffects) {
+        try {
+          // Decode asset to buffer
+          let arrayBuffer: ArrayBuffer | null = null
+          if (asset) {
+            const bytes = base64ToBytes(asset.data)
+            if (bytes) arrayBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
+          } else if (globalDef?.original_url) {
+            try {
+              const resp = await fetch(globalDef.original_url)
+              if (resp.ok) arrayBuffer = await resp.arrayBuffer()
+            } catch { /* ignore */ }
+          }
+          if (!arrayBuffer) throw new Error('no buffer')
+          const Ctor = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext ??
+            (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+          let tmpCtx: AudioContext | null = null
+          let decoded: AudioBuffer | null = null
+          try {
+            if (Ctor) {
+              tmpCtx = new Ctor()
+              decoded = await tmpCtx.decodeAudioData(arrayBuffer.slice(0))
+            }
+          } finally {
+            if (tmpCtx) try { await tmpCtx.close() } catch { /* ignore */ }
+          }
+          if (!decoded) throw new Error('decode failed')
+          const timeRatio = getTimeRatioForPlaybackRate(editRate || 1)
+          const processed = await applyAudioEffects(decoded, timeRatio, editPitch, editNoise)
+          // slice interval in processed domain: processed duration = original * timeRatio, pitch doesn't change duration
+          const processedStart = startSrc * timeRatio
+          const processedEnd = endSrc * timeRatio
+          const auditionDuration = (processedEnd - processedStart) // at rate 1 post-process, playback is 1:1
+          // Play via AudioContext buffer source
+          const playCtxCtor = Ctor
+          if (!playCtxCtor) throw new Error('no ctx')
+          const playCtx = new playCtxCtor()
+          const source = playCtx.createBufferSource()
+          source.buffer = processed
+          const gainNode = playCtx.createGain()
+          gainNode.gain.value = clip.muted ? 0 : clip.volume
+          source.connect(gainNode)
+          gainNode.connect(playCtx.destination)
+          // Keep ref for stop
+          const fakeAudio: unknown = { pause: () => { try { source.stop(); playCtx.close() } catch { /* ignore */ } }, currentTime: 0 }
+          audioRef.current = fakeAudio as HTMLAudioElement
+          source.start(0, processedStart, auditionDuration)
+          setIsPlaying(true)
+          setTimeout(
+            () => {
+              try { source.stop(); playCtx.close() } catch { /* ignore */ }
+              stopAudition()
+            },
+            auditionDuration * 1000 + 300,
+          )
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          void getPitchScaleForSemitones
+          return
+        } catch {
+          // fall through to HTMLAudio fallback
+        }
+      }
+      // Fallback HTMLAudio preview (no offline effects or decode failed)
       // Resolve audio source
       let srcUrl: string
       if (asset) {
@@ -326,10 +415,10 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
       }
       const audio = new Audio(srcUrl)
       audioRef.current = audio
-      // Respect volume/muted and playbackRate
+      // Respect volume/muted and playbackRate (preview shows effects via rate; pitch via detune approximated by rate for fallback)
       audio.volume = clip.muted ? 0 : clip.volume
       audio.muted = clip.muted
-      audio.playbackRate = clip.playbackRate || 1
+      audio.playbackRate = editRate || 1
       audio.currentTime = startSrc
       // Play selected interval; stop after playback duration = (endSrc - startSrc)/rate
       const playbackDuration = (endSrc - startSrc) / rate
@@ -382,6 +471,9 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
       clip,
       assetDuration,
       rate,
+      editPitch,
+      editNoise,
+      editRate,
     ],
   )
 
@@ -516,8 +608,11 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
       Math.abs(editStart - clip.sourceStart) > 1e-6 || Math.abs(editEnd - clip.sourceEnd) > 1e-6
     const hasDelete = selectionActive && isInteriorDelete
     const hasEdgeDelete = selectionActive && isEdgeTrimSelection
+    const pitchChanged = Math.abs(editPitch - (clip.pitchSemitones ?? 0)) > 1e-6
+    const noiseChanged = Math.abs(editNoise - (clip.noiseReduction ?? 0)) > 1e-6
+    const rateChanged = Math.abs(editRate - (clip.playbackRate ?? 1)) > 1e-6
     // If edge delete selection, it will be treated as trim to selection bounds? We consider it as trim
-    return trimChanged || hasDelete || hasEdgeDelete
+    return trimChanged || hasDelete || hasEdgeDelete || pitchChanged || noiseChanged || rateChanged
   }, [
     editStart,
     editEnd,
@@ -528,12 +623,13 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
     clip,
     isInteriorDelete,
     isEdgeTrimSelection,
+    editPitch,
+    editNoise,
+    editRate,
   ])
 
   const handleSave = useCallback(() => {
     if (!clip || !slide) return
-    // Build Transaction
-    const commands: Array<Parameters<typeof dispatch>[0]> = []
     // Determine effective trim
     let effectiveStart = editStart
     let effectiveEnd = editEnd
@@ -560,11 +656,60 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
       Math.abs(effectiveStart - clip.sourceStart) > 1e-6 ||
       Math.abs(effectiveEnd - clip.sourceEnd) > 1e-6
     const hasInteriorDelete = selectionActive && isInteriorDelete
+    const pitchChanged = Math.abs(editPitch - (clip.pitchSemitones ?? 0)) > 1e-6
+    const noiseChanged = Math.abs(editNoise - (clip.noiseReduction ?? 0)) > 1e-6
+    const rateChanged = Math.abs(editRate - (clip.playbackRate ?? 1)) > 1e-6
+    const effectsChanged = pitchChanged || noiseChanged || rateChanged
+
+    // Compute derived duration after effects (pitch/noise don't change duration, only rate)
+    const sourceDurationForDerived = hasInteriorDelete
+      ? (selStart! - effectiveStart) + (effectiveEnd - selEnd!)
+      : effectiveEnd - effectiveStart
+    const derivedDuration = sourceDurationForDerived / (editRate || 1)
+
+    // Find linked PrompterPart (TTS or recorded) — 0..1 per part, plus segments
+    const findLinkedPart = () => {
+      const parts = slide.prompter?.parts ?? []
+      for (const p of parts) {
+        if (p.audioClipId === clip.id) return p
+        if (p.segments?.some((s) => s.audioClipId === clip.id)) return p
+      }
+      return null
+    }
+    const linkedPart = findLinkedPart()
+    const prompterDuration = linkedPart?.duration ?? null
+    const mismatchExists =
+      linkedPart !== null &&
+      prompterDuration !== null &&
+      Math.abs(derivedDuration - prompterDuration) > 1e-6
+
+    // If mismatch and there's any change that affects derived, show blocking dialog
+    if (mismatchExists && (trimChanged || hasInteriorDelete || effectsChanged)) {
+      setMismatch({
+        derivedDuration,
+        prompterDuration: prompterDuration!,
+        partId: linkedPart!.id,
+        partText: linkedPart!.text,
+        effectiveStart,
+        effectiveEnd,
+        selStart: selStart ?? null,
+        selEnd: selEnd ?? null,
+        isInteriorDelete: !!hasInteriorDelete,
+      })
+      return
+    }
+
+    if (!trimChanged && !hasInteriorDelete && !effectsChanged) {
+      useNotificationStore.getState().notify('No changes to save')
+      return
+    }
+
+    // Build Transaction
+    const commands: Array<Parameters<typeof dispatch>[0]> = []
 
     if (hasInteriorDelete) {
       const delStart = selStart!
       const delEnd = selEnd!
-      // Effective kept interval is [effectiveStart, effectiveEnd]; delete interior [delStart, delEnd] inside it
       // Validate delete inside effective
       if (delStart <= effectiveStart + 1e-6 || delEnd >= effectiveEnd - 1e-6) {
         useNotificationStore
@@ -572,9 +717,6 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
           .notify('Delete interval must be strictly inside kept interval')
         return
       }
-      // First clip: trim to [effectiveStart, delStart]
-      // If effectiveStart/ delStart differs from original, we need trim; otherwise keep original first part
-      // We'll trim original clip to left part
       const needTrimLeft =
         Math.abs(effectiveStart - clip.sourceStart) > 1e-6 ||
         Math.abs(delStart - clip.sourceEnd) > 1e-6
@@ -588,8 +730,7 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
           }),
         )
       }
-      // Second clip: create with [delEnd, effectiveEnd] at gap-free position
-      const leftPlayback = (delStart - effectiveStart) / rate
+      const leftPlayback = (delStart - effectiveStart) / editRate
       const secondTimelineStart = clip.timelineStart + leftPlayback
       commands.push(
         new CreateAudioClipCommand({
@@ -603,21 +744,48 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
           muted: clip.muted,
           fadeIn: clip.fadeIn,
           fadeOut: clip.fadeOut,
-          playbackRate: clip.playbackRate,
+          playbackRate: editRate,
+          pitchSemitones: editPitch,
+          noiseReduction: editNoise,
         }),
       )
-      // Note: if effectiveStart != clip.sourceStart, second's timelineStart computed from effectiveStart ensures gap-free as adjacent to trimmed first
-      // No asset rewrite; original asset preserved
-    } else if (trimChanged) {
-      // Simple edge trim (including edge delete case)
-      commands.push(
-        new TrimAudioClipCommand({
-          slideId,
-          clipId,
-          sourceStart: effectiveStart,
-          sourceEnd: effectiveEnd,
-        }),
-      )
+      // Apply effects to original clip as well if changed and we trimmed left part
+      if (effectsChanged) {
+        // If we already trimmed left, the remaining left clip needs effects updated; second clip already has new effects
+        // So update left clip's effects
+        commands.push(
+          new SetAudioClipEffectsCommand({
+            slideId,
+            clipId,
+            playbackRate: editRate,
+            pitchSemitones: editPitch,
+            noiseReduction: editNoise,
+          }),
+        )
+      }
+    } else if (trimChanged || effectsChanged) {
+      // Simple edge trim and/or effects
+      if (trimChanged) {
+        commands.push(
+          new TrimAudioClipCommand({
+            slideId,
+            clipId,
+            sourceStart: effectiveStart,
+            sourceEnd: effectiveEnd,
+          }),
+        )
+      }
+      if (effectsChanged) {
+        commands.push(
+          new SetAudioClipEffectsCommand({
+            slideId,
+            clipId,
+            playbackRate: editRate,
+            pitchSemitones: editPitch,
+            noiseReduction: editNoise,
+          }),
+        )
+      }
     } else {
       useNotificationStore.getState().notify('No changes to save')
       return
@@ -645,11 +813,140 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
     slideId,
     clipId,
     rate,
+    editRate,
+    editPitch,
+    editNoise,
     dispatch,
     isInteriorDelete,
     stopAudition,
     onClose,
   ])
+
+  const handleMismatchChoice = useCallback(
+    (choice: 'stretch' | 'trim' | 'shift') => {
+      if (!clip || !slide || !mismatch) return
+      const { derivedDuration, prompterDuration, partId, effectiveStart, effectiveEnd, selStart: mSelStart, selEnd: mSelEnd, isInteriorDelete } = mismatch
+      const commands: Array<Parameters<typeof dispatch>[0]> = []
+      const hasInterior = isInteriorDelete && mSelStart !== null && mSelEnd !== null
+      const sourceDurationForDerived = hasInterior
+        ? (mSelStart! - effectiveStart) + (effectiveEnd - mSelEnd!)
+        : effectiveEnd - effectiveStart
+
+      // Helper to push trim/split base commands (same as handleSave but without mismatch check)
+      const pushBaseCommands = (targetRate: number) => {
+        if (hasInterior) {
+          const delStart = mSelStart!
+          const delEnd = mSelEnd!
+          const needTrimLeft =
+            Math.abs(effectiveStart - clip.sourceStart) > 1e-6 ||
+            Math.abs(delStart - clip.sourceEnd) > 1e-6
+          if (needTrimLeft) {
+            commands.push(
+              new TrimAudioClipCommand({
+                slideId,
+                clipId,
+                sourceStart: effectiveStart,
+                sourceEnd: delStart,
+              }),
+            )
+          }
+          const leftPlayback = (delStart - effectiveStart) / targetRate
+          const secondTimelineStart = clip.timelineStart + leftPlayback
+          commands.push(
+            new CreateAudioClipCommand({
+              slideId,
+              assetId: clip.assetId,
+              trackId: clip.trackId,
+              timelineStart: secondTimelineStart,
+              sourceStart: delEnd,
+              sourceEnd: effectiveEnd,
+              volume: clip.volume,
+              muted: clip.muted,
+              fadeIn: clip.fadeIn,
+              fadeOut: clip.fadeOut,
+              playbackRate: targetRate,
+              pitchSemitones: editPitch,
+              noiseReduction: editNoise,
+            }),
+          )
+          // left clip effects to targetRate
+          commands.push(
+            new SetAudioClipEffectsCommand({
+              slideId,
+              clipId,
+              playbackRate: targetRate,
+              pitchSemitones: editPitch,
+              noiseReduction: editNoise,
+            }),
+          )
+        } else {
+          const trimChanged =
+            Math.abs(effectiveStart - clip.sourceStart) > 1e-6 ||
+            Math.abs(effectiveEnd - clip.sourceEnd) > 1e-6
+          if (trimChanged) {
+            commands.push(
+              new TrimAudioClipCommand({
+                slideId,
+                clipId,
+                sourceStart: effectiveStart,
+                sourceEnd: effectiveEnd,
+              }),
+            )
+          }
+          // Effects with targetRate
+          commands.push(
+            new SetAudioClipEffectsCommand({
+              slideId,
+              clipId,
+              playbackRate: targetRate,
+              pitchSemitones: editPitch,
+              noiseReduction: editNoise,
+            }),
+          )
+        }
+      }
+
+      if (choice === 'stretch') {
+        // Stretch Audio (rubberband to fit) — adjust playbackRate to fit prompterDuration, pitch preserved
+        const neededRate = sourceDurationForDerived / prompterDuration
+        // Clamp neededRate to sane 0.25..4? but allow
+        const clamped = Math.max(0.25, Math.min(4, neededRate))
+        pushBaseCommands(clamped)
+      } else if (choice === 'trim') {
+        // Trim/Split PrompterPart — set PrompterPart.duration to derived without shift
+        pushBaseCommands(editRate)
+        commands.push(
+          new UpdatePrompterPartCommand({
+            slideId,
+            partId,
+            duration: derivedDuration,
+          }),
+        )
+      } else if (choice === 'shift') {
+        // Shift Downstream (reflow) — set duration and shift downstream gap-free
+        pushBaseCommands(editRate)
+        commands.push(
+          new UpdatePrompterPartWithShiftCommand({
+            slideId,
+            partId,
+            duration: derivedDuration,
+            shiftDownstream: true,
+          }),
+        )
+      }
+
+      const tx = new TransactionCommand(commands as never[])
+      const result = dispatch(tx)
+      if (!result.ok) {
+        useNotificationStore.getState().notify(result.error.message)
+        return
+      }
+      setMismatch(null)
+      stopAudition()
+      onClose()
+    },
+    [clip, slide, mismatch, slideId, clipId, editPitch, editNoise, editRate, dispatch, stopAudition, onClose],
+  )
 
   const clippedPeaksForDisplay = useMemo(() => {
     // For performance, we slice peaks to full asset; WaveformCanvas will downsample internally
@@ -1063,6 +1360,69 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
             Clear selection
           </button>
         </div>
+        {/* Audio Effects — non-destructive pitch/noise/rate, preview via OfflineAudioContext, bake via FFmpeg RubberBand */}
+        <div
+          data-testid="waveform-effects"
+          style={{
+            display: 'flex',
+            gap: 16,
+            marginTop: 12,
+            padding: 8,
+            background: '#252538',
+            border: '1px solid #333',
+            borderRadius: 6,
+            flexWrap: 'wrap',
+            fontSize: 11,
+          }}
+        >
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 140 }}>
+            <span style={{ color: '#aaa' }}>
+              Pitch {editPitch > 0 ? `+${editPitch}` : editPitch} semitones {Math.abs(editPitch) > 1e-6 ? `(×${getPitchScaleForSemitones(editPitch).toFixed(3)})` : '(×1.000)'}
+            </span>
+            <input
+              data-testid="waveform-pitch"
+              type="range"
+              min={-12}
+              max={12}
+              step={1}
+              value={editPitch}
+              onChange={(e) => setEditPitch(parseFloat(e.target.value))}
+              style={{ width: 140 }}
+            />
+            <span style={{ fontSize: 10, color: '#777' }}>-12..+12 (RubberBand pitch, preview OfflineAudioContext, export bake)</span>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 140 }}>
+            <span style={{ color: '#aaa' }}>Noise reduction {(editNoise * 100).toFixed(0)}% ({editNoise.toFixed(2)})</span>
+            <input
+              data-testid="waveform-noise"
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={editNoise}
+              onChange={(e) => setEditNoise(parseFloat(e.target.value))}
+              style={{ width: 140 }}
+            />
+            <span style={{ fontSize: 10, color: '#777' }}>0..1 (0 off, 1 max, afftdn at export, Offline filter preview)</span>
+          </label>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 140 }}>
+            <span style={{ color: '#aaa' }}>Playback rate ×{editRate.toFixed(2)} (tempo { (1/editRate).toFixed(3)})</span>
+            <input
+              data-testid="waveform-rate"
+              type="range"
+              min={0.5}
+              max={2}
+              step={0.05}
+              value={editRate}
+              onChange={(e) => setEditRate(parseFloat(e.target.value))}
+              style={{ width: 140 }}
+            />
+            <span style={{ fontSize: 10, color: '#777' }}>0.5×–2× pitch-preserved RubberBand</span>
+          </label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, color: '#888' }}>
+            Original asset never rewritten — preview offline, bake FFmpeg. Derived {(editEnd - editStart).toFixed(2)}s / {editRate.toFixed(2)} = {((editEnd - editStart) / editRate).toFixed(2)}s
+          </div>
+        </div>
         <div style={{ display: 'flex', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
           <button
             data-testid="waveform-audition-kept"
@@ -1174,11 +1534,20 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
           Drag on waveform to select middle interval; handles for edge trim; interior delete splits
           into <strong>two clips gap-free</strong> — timeline reflects new clips. Audition respects{' '}
           <code>
-            volume {clip.volume} {clip.muted ? '(muted)' : ''}
+            volume {clip.volume} {clip.muted ? '(muted)' : ''} pitch {clip.pitchSemitones ?? 0} noise {clip.noiseReduction ?? 0}
           </code>
-          . Single undo entry. Original asset bytes never rewritten.
+          . Single undo entry. Original asset bytes never rewritten. Preview via OfflineAudioContext — export bake via FFmpeg RubberBand (pitch+tempo) + afftdn (denoise). Works for TTS and recorded assets; preview equals export per timestamp determinism (same evaluator, same derived buffer).
         </div>
       </div>
+      {mismatch && (
+        <AudioEffectsMismatchDialog
+          derivedDuration={mismatch.derivedDuration}
+          prompterDuration={mismatch.prompterDuration}
+          partText={mismatch.partText}
+          onChoice={handleMismatchChoice}
+          onClose={() => setMismatch(null)}
+        />
+      )}
     </div>
   )
 }

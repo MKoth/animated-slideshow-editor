@@ -378,6 +378,21 @@ export type {
   SetAudioClipPlaybackRateInverse,
   SetAudioClipPlaybackRateParameters,
 } from './setAudioClipPlaybackRateCommand'
+export { SetAudioClipPitchSemitonesCommand } from './setAudioClipPitchSemitonesCommand'
+export type {
+  SetAudioClipPitchSemitonesInverse,
+  SetAudioClipPitchSemitonesParameters,
+} from './setAudioClipPitchSemitonesCommand'
+export { SetAudioClipNoiseReductionCommand } from './setAudioClipNoiseReductionCommand'
+export type {
+  SetAudioClipNoiseReductionInverse,
+  SetAudioClipNoiseReductionParameters,
+} from './setAudioClipNoiseReductionCommand'
+export { SetAudioClipEffectsCommand } from './setAudioClipEffectsCommand'
+export type {
+  SetAudioClipEffectsInverse,
+  SetAudioClipEffectsParameters,
+} from './setAudioClipEffectsCommand'
 export { SetAudioClipFadeCommand } from './setAudioClipFadeCommand'
 export type { SetAudioClipFadeInverse, SetAudioClipFadeParameters } from './setAudioClipFadeCommand'
 export { SetPrompterPartAudioCommand } from './setPrompterPartAudioCommand'

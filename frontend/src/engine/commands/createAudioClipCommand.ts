@@ -18,6 +18,8 @@ export interface CreateAudioClipParameters {
   readonly fadeIn?: number
   readonly fadeOut?: number
   readonly playbackRate?: number
+  readonly pitchSemitones?: number
+  readonly noiseReduction?: number
 }
 
 export interface CreateAudioClipInverse {
@@ -40,6 +42,8 @@ export class CreateAudioClipCommand implements Command<CreateAudioClipInverse> {
   readonly #fadeIn?: number
   readonly #fadeOut?: number
   readonly #playbackRate: number
+  readonly #pitchSemitones: number
+  readonly #noiseReduction: number
 
   constructor(input: CreateAudioClipParameters) {
     this.#id = input.id
@@ -54,6 +58,8 @@ export class CreateAudioClipCommand implements Command<CreateAudioClipInverse> {
     this.#fadeIn = input.fadeIn
     this.#fadeOut = input.fadeOut
     this.#playbackRate = input.playbackRate ?? 1
+    this.#pitchSemitones = input.pitchSemitones ?? 0
+    this.#noiseReduction = input.noiseReduction ?? 0
     this.parameters = {
       ...(input.id ? { id: input.id } : {}),
       slideId: input.slideId,
@@ -67,6 +73,8 @@ export class CreateAudioClipCommand implements Command<CreateAudioClipInverse> {
       ...(input.fadeIn !== undefined ? { fadeIn: input.fadeIn } : {}),
       ...(input.fadeOut !== undefined ? { fadeOut: input.fadeOut } : {}),
       playbackRate: this.#playbackRate,
+      ...(input.pitchSemitones !== undefined ? { pitchSemitones: this.#pitchSemitones } : {}),
+      ...(input.noiseReduction !== undefined ? { noiseReduction: this.#noiseReduction } : {}),
     }
   }
 
@@ -99,6 +107,8 @@ export class CreateAudioClipCommand implements Command<CreateAudioClipInverse> {
     if (this.#sourceEnd <= this.#sourceStart) throw new Error('AudioClip sourceEnd must be greater than sourceStart')
     requireFiniteNumber(this.#volume, 'AudioClip volume', (v) => v >= 0 && v <= 1)
     requireFiniteNumber(this.#playbackRate, 'AudioClip playbackRate', (v) => v > 0)
+    requireFiniteNumber(this.#pitchSemitones, 'AudioClip pitchSemitones', (v) => v >= -12 && v <= 12)
+    requireFiniteNumber(this.#noiseReduction, 'AudioClip noiseReduction', (v) => v >= 0 && v <= 1)
     if (this.#fadeIn !== undefined) requireFiniteNumber(this.#fadeIn, 'AudioClip fadeIn', (v) => v >= 0)
     if (this.#fadeOut !== undefined) requireFiniteNumber(this.#fadeOut, 'AudioClip fadeOut', (v) => v >= 0)
   }
@@ -116,6 +126,8 @@ export class CreateAudioClipCommand implements Command<CreateAudioClipInverse> {
       fadeIn: this.#fadeIn,
       fadeOut: this.#fadeOut,
       playbackRate: this.#playbackRate,
+      pitchSemitones: this.#pitchSemitones,
+      noiseReduction: this.#noiseReduction,
     })
     return { slideId: this.#slideId, clipId: clip.id }
   }

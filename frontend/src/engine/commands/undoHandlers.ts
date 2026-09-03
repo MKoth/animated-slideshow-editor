@@ -1470,6 +1470,36 @@ export function applyUndo(
       if (clip) clip.playbackRate = oldPlaybackRate
       return
     }
+    case 'SetAudioClipPitchSemitones': {
+      const slideId = inv.slideId as string
+      const clipId = inv.clipId as string
+      const oldPitchSemitones = inv.oldPitchSemitones as number
+      const clip = engine.getSlide(slideId).audio.clips.find((c) => c.id === clipId)
+      if (clip) clip.pitchSemitones = oldPitchSemitones
+      return
+    }
+    case 'SetAudioClipNoiseReduction': {
+      const slideId = inv.slideId as string
+      const clipId = inv.clipId as string
+      const oldNoiseReduction = inv.oldNoiseReduction as number
+      const clip = engine.getSlide(slideId).audio.clips.find((c) => c.id === clipId)
+      if (clip) clip.noiseReduction = oldNoiseReduction
+      return
+    }
+    case 'SetAudioClipEffects': {
+      const slideId = inv.slideId as string
+      const clipId = inv.clipId as string
+      const oldPlaybackRate = inv.oldPlaybackRate as number
+      const oldPitchSemitones = inv.oldPitchSemitones as number
+      const oldNoiseReduction = inv.oldNoiseReduction as number
+      const clip = engine.getSlide(slideId).audio.clips.find((c) => c.id === clipId)
+      if (clip) {
+        clip.playbackRate = oldPlaybackRate
+        clip.pitchSemitones = oldPitchSemitones
+        clip.noiseReduction = oldNoiseReduction
+      }
+      return
+    }
     case 'SetAudioClipFade': {
       const slideId = inv.slideId as string
       const clipId = inv.clipId as string
@@ -2731,6 +2761,8 @@ export function applyRedo(
         fadeIn: params.fadeIn as number | undefined,
         fadeOut: params.fadeOut as number | undefined,
         playbackRate: (params.playbackRate as number) ?? 1,
+        pitchSemitones: (params.pitchSemitones as number | undefined) ?? 0,
+        noiseReduction: (params.noiseReduction as number | undefined) ?? 0,
       })
       return
     }
@@ -2798,6 +2830,27 @@ export function applyRedo(
         params.clipId as string,
         params.muted as boolean,
       )
+      return
+    case 'SetAudioClipPitchSemitones':
+      engine.setAudioClipPitchSemitones(
+        params.slideId as string,
+        params.clipId as string,
+        params.pitchSemitones as number,
+      )
+      return
+    case 'SetAudioClipNoiseReduction':
+      engine.setAudioClipNoiseReduction(
+        params.slideId as string,
+        params.clipId as string,
+        params.noiseReduction as number,
+      )
+      return
+    case 'SetAudioClipEffects':
+      engine.setAudioClipEffects(params.slideId as string, params.clipId as string, {
+        playbackRate: params.playbackRate as number | undefined,
+        pitchSemitones: params.pitchSemitones as number | undefined,
+        noiseReduction: params.noiseReduction as number | undefined,
+      })
       return
     case 'SetAudioClipPlaybackRate':
       engine.setAudioClipPlaybackRate(
