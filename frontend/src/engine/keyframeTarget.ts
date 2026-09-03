@@ -59,6 +59,12 @@ export interface NodeTableTarget {
   readonly property: TableAnimationProperty
 }
 
+/** A visible boolean track target (hold-only, Spec 07 Visible Track). */
+export interface NodeVisibleTarget {
+  readonly kind: 'visible'
+  readonly nodeId: string
+}
+
 /** A clip channel target (Spec 07 R16/R20). */
 export interface ClipChannelTarget {
   readonly kind: 'clip'
@@ -68,7 +74,7 @@ export interface ClipChannelTarget {
 
 /**
  * A keyframe editing target. The discriminated shape supports node targets,
- * data-label targets, circle targets and clip channel targets (Spec 07 R20).
+ * data-label targets, circle targets, visible targets and clip channel targets (Spec 07 R20).
  */
 export type KeyframeTarget =
   | NodePropertyTarget
@@ -76,6 +82,7 @@ export type KeyframeTarget =
   | NodeDataLabelTarget
   | NodeCircleTarget
   | NodeTableTarget
+  | NodeVisibleTarget
   | ClipChannelTarget
 
 export function isPropertyTarget(target: KeyframeTarget): target is NodePropertyTarget {
@@ -100,6 +107,10 @@ export function isCircleTarget(target: KeyframeTarget): target is NodeCircleTarg
 
 export function isTableTarget(target: KeyframeTarget): target is NodeTableTarget {
   return target.kind === 'table'
+}
+
+export function isVisibleTarget(target: KeyframeTarget): target is NodeVisibleTarget {
+  return target.kind === 'visible'
 }
 
 export function requireKeyframeTarget(value: unknown): KeyframeTarget {
@@ -131,6 +142,10 @@ export function requireKeyframeTarget(value: unknown): KeyframeTarget {
     const property = requireTableAnimationProperty(value.property)
     return { kind: 'table', nodeId, property }
   }
+  if (isRecord(value) && value.kind === 'visible') {
+    const nodeId = requireString(value.nodeId, 'Visible target node id')
+    return { kind: 'visible', nodeId }
+  }
   if (isRecord(value) && value.kind === 'clip') {
     const clipId = requireString(value.clipId, 'Keyframe target clip id')
     const channel = requireAnimationProperty(value.channel)
@@ -155,7 +170,7 @@ export type MaterialParameterKindOf = (node: SceneNode, parameterKey: string) =>
 
 /**
  * The resolved track a target names: a uniform-six property track, a
- * material-parameter track, a data-label track, or a circle track.
+ * material-parameter track, a data-label track, a circle track, a table track, or the visible hold-only track.
  */
 export type KeyframeTrackRef =
   | { readonly kind: 'property'; readonly property: AnimationProperty }
@@ -163,6 +178,7 @@ export type KeyframeTrackRef =
   | { readonly kind: 'dataLabel'; readonly label: string }
   | { readonly kind: 'circle'; readonly property: CircleAnimationProperty }
   | { readonly kind: 'table'; readonly property: TableAnimationProperty }
+  | { readonly kind: 'visible' }
 
 export function resolveKeyframeTrack(
   node: SceneNode,
@@ -175,6 +191,9 @@ export function resolveKeyframeTrack(
   }
   if (isPropertyTarget(target)) {
     return { kind: 'property', property: requireAnimatableForNode(node, target.property) }
+  }
+  if (isVisibleTarget(target)) {
+    return { kind: 'visible' }
   }
   if (isDataLabelTarget(target)) {
     return { kind: 'dataLabel', label: target.label }
@@ -196,12 +215,18 @@ export function resolveKeyframeTrack(
   return { kind: 'parameter', parameter, kindOf: kindOfParameter }
 }
 
-/** Validate a keyframe value for a resolved track (property, material kind, or data label). */
+/** Validate a keyframe value for a resolved track (property, material kind, data label, or visible). */
 export function requireTrackKeyframeValue(
   track: KeyframeTrackRef,
   value: unknown,
   what = 'Keyframe value',
 ): KeyframeValue {
+  if (track.kind === 'visible') {
+    if (typeof value !== 'boolean') {
+      throw new Error(`${what} must be a boolean for visible`)
+    }
+    return value
+  }
   if (track.kind === 'property') {
     return requireKeyframeValue(track.property, value, what)
   }
@@ -230,12 +255,14 @@ export function requireNodeTarget(
   | NodeParameterTarget
   | NodeDataLabelTarget
   | NodeCircleTarget
-  | NodeTableTarget {
+  | NodeTableTarget
+  | NodeVisibleTarget {
   if (
     target.kind !== 'node' &&
     target.kind !== 'dataLabel' &&
     target.kind !== 'circle' &&
-    target.kind !== 'table'
+    target.kind !== 'table' &&
+    target.kind !== 'visible'
   ) {
     throw new Error('This operation only supports node targets')
   }
@@ -245,6 +272,7 @@ export function requireNodeTarget(
     | NodeDataLabelTarget
     | NodeCircleTarget
     | NodeTableTarget
+    | NodeVisibleTarget
 }
 
 /** Validate a scale factor: a non-negative finite number. */

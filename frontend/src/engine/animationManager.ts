@@ -94,17 +94,29 @@ export class AnimationManager {
     return slide.animation.node(nodeId)?.hasMaterialTrack(parameter) ?? false
   }
 
+  getVisibleKeyframes(nodeId: string): readonly Keyframe[] {
+    const slide = this.#slideLookup(nodeId)
+    return slide.animation.node(nodeId)?.visibleKeyframes() ?? []
+  }
+
+  hasVisibleTrack(nodeId: string): boolean {
+    const slide = this.#slideLookup(nodeId)
+    return slide.animation.node(nodeId)?.hasVisibleTrack() ?? false
+  }
+
   addKeyframe(target: KeyframeTarget, time: number, value: unknown): Keyframe {
     const resolved = this.#resolve(target)
     const boundedTime = requireKeyframeTime(time, resolved.slide.duration)
     const boundedValue = requireTrackKeyframeValue(resolved.track, value)
     this.#assertTimeFree(resolved, boundedTime, [], [])
-    const keyframe = new KeyframeModel(
-      newKeyframeId(),
-      boundedTime,
-      boundedValue,
-      previousInterpolation(this.#keyframesOf(resolved), boundedTime),
-    )
+    let interpolation = previousInterpolation(this.#keyframesOf(resolved), boundedTime)
+    if (resolved.track.kind === 'visible') {
+      interpolation = 'hold'
+    }
+    const keyframe = new KeyframeModel(newKeyframeId(), boundedTime, boundedValue, interpolation)
+    if (resolved.track.kind === 'visible') {
+      keyframe.interpolation = 'hold'
+    }
     this.#addToTrack(resolved, keyframe)
     this.#bus.emit({ type: 'KeyframeAdded', target, keyframeId: keyframe.id })
     return keyframe
@@ -201,6 +213,9 @@ export class AnimationManager {
   ): InterpolationType {
     const resolved = this.#resolve(target)
     const bounded = requireKeyframeInterpolation(interpolation)
+    if (resolved.track.kind === 'visible' && bounded !== 'hold') {
+      throw new Error('Visible track only supports hold interpolation')
+    }
     const keyframe = this.#requireKeyframe(resolved, keyframeId)
     const oldInterpolation = keyframe.interpolation
     keyframe.interpolation = bounded
@@ -215,6 +230,9 @@ export class AnimationManager {
     tangentOut: unknown,
   ): KeyframeTangents {
     const resolved = this.#resolve(target)
+    if (resolved.track.kind === 'visible') {
+      throw new Error('Visible track does not support tangents')
+    }
     const boundedIn = requireKeyframeTangent(tangentIn, 'Keyframe tangent in')
     const boundedOut = requireKeyframeTangent(tangentOut, 'Keyframe tangent out')
     const keyframe = this.#requireKeyframe(resolved, keyframeId)
@@ -252,14 +270,24 @@ export class AnimationManager {
     const created: Keyframe[] = []
     for (const entry of pending) {
       const value = requireTrackKeyframeValue(resolved.track, entry.payload.value)
+      let interpolation = requireKeyframeInterpolation(entry.payload.interpolation)
+      if (resolved.track.kind === 'visible' && interpolation !== 'hold') {
+        throw new Error('Visible track only supports hold interpolation')
+      }
+      if (resolved.track.kind === 'visible') {
+        interpolation = 'hold'
+      }
       const keyframe = new KeyframeModel(
         newKeyframeId(),
         entry.time,
         value,
-        requireKeyframeInterpolation(entry.payload.interpolation),
+        interpolation,
         requireKeyframeTangent(entry.payload.tangentIn, 'Keyframe tangent in'),
         requireKeyframeTangent(entry.payload.tangentOut, 'Keyframe tangent out'),
       )
+      if (resolved.track.kind === 'visible') {
+        keyframe.interpolation = 'hold'
+      }
       this.#addToTrack(resolved, keyframe)
       created.push(keyframe)
     }
@@ -331,6 +359,9 @@ export class AnimationManager {
     if (track.kind === 'property') {
       return animation.keyframes(track.property)
     }
+    if (track.kind === 'visible') {
+      return animation.visibleKeyframes()
+    }
     if (track.kind === 'dataLabel') {
       return animation.dataLabelKeyframes(track.label)
     }
@@ -347,6 +378,8 @@ export class AnimationManager {
     const { animation, track } = resolved
     if (track.kind === 'property') {
       animation.add(track.property, keyframe)
+    } else if (track.kind === 'visible') {
+      animation.addVisible(keyframe)
     } else if (track.kind === 'dataLabel') {
       animation.addDataLabel(track.label, keyframe)
     } else if (track.kind === 'circle') {
@@ -362,6 +395,8 @@ export class AnimationManager {
     const { animation, track } = resolved
     if (track.kind === 'property') {
       animation.remove(track.property, keyframeId)
+    } else if (track.kind === 'visible') {
+      animation.removeVisible(keyframeId)
     } else if (track.kind === 'dataLabel') {
       animation.removeDataLabel(track.label, keyframeId)
     } else if (track.kind === 'circle') {
@@ -378,6 +413,8 @@ export class AnimationManager {
     let keyframe: Keyframe | undefined
     if (track.kind === 'property') {
       keyframe = animation.get(track.property, keyframeId)
+    } else if (track.kind === 'visible') {
+      keyframe = animation.getVisible(keyframeId)
     } else if (track.kind === 'dataLabel') {
       keyframe = animation.getDataLabel(track.label, keyframeId)
     } else if (track.kind === 'circle') {
@@ -391,13 +428,15 @@ export class AnimationManager {
       const on =
         track.kind === 'property'
           ? `property ${track.property}`
-          : track.kind === 'dataLabel'
-            ? `data label ${track.label}`
-            : track.kind === 'circle'
-              ? `circle ${track.property}`
-              : track.kind === 'table'
-                ? `table ${track.property}`
-                : `parameter ${track.parameter}`
+          : track.kind === 'visible'
+            ? `visible`
+            : track.kind === 'dataLabel'
+              ? `data label ${track.label}`
+              : track.kind === 'circle'
+                ? `circle ${track.property}`
+                : track.kind === 'table'
+                  ? `table ${track.property}`
+                  : `parameter ${track.parameter}`
       throw new Error(`Keyframe not found: ${keyframeId} on ${on}`)
     }
     return keyframe
@@ -472,6 +511,9 @@ export class AnimationManager {
     const { track } = resolved
     if (track.kind === 'property') {
       return `property ${track.property}`
+    }
+    if (track.kind === 'visible') {
+      return `visible`
     }
     if (track.kind === 'dataLabel') {
       return `data label ${track.label}`

@@ -39,6 +39,12 @@ export type ClampedKeyframe =
       readonly keyframeId: string
       readonly oldTime: number
     }
+  | {
+      readonly nodeId: string
+      readonly visible: true
+      readonly keyframeId: string
+      readonly oldTime: number
+    }
 
 export class SlideAnimation {
   readonly #nodes = new Map<string, NodeAnimation>()
@@ -141,6 +147,17 @@ export class SlideAnimation {
           }
         }
       }
+      for (const keyframe of animation.visibleKeyframes()) {
+        if (keyframe.time > duration) {
+          clamped.push({
+            nodeId,
+            visible: true,
+            keyframeId: keyframe.id,
+            oldTime: keyframe.time,
+          })
+          keyframe.time = duration
+        }
+      }
     }
     return clamped
   }
@@ -153,12 +170,14 @@ export class SlideAnimation {
       const dataLabelTracks = animation.dataLabelTracksJSON()
       const circleTracks = animation.circleTracksJSON()
       const tableTracks = animation.tableTracksJSON()
+      const visibleTrack = animation.visibleTrackJSON()
       if (
         tracks.length > 0 ||
         materialTracks.length > 0 ||
         dataLabelTracks.length > 0 ||
         circleTracks.length > 0 ||
-        tableTracks.length > 0
+        tableTracks.length > 0 ||
+        visibleTrack !== undefined
       ) {
         nodes.push({
           nodeId,
@@ -167,6 +186,7 @@ export class SlideAnimation {
           ...(dataLabelTracks.length > 0 ? { dataLabelTracks } : {}),
           ...(circleTracks.length > 0 ? { circleTracks } : {}),
           ...(tableTracks.length > 0 ? { tableTracks } : {}),
+          ...(visibleTrack !== undefined ? { visibleTrack } : {}),
         })
       }
     }

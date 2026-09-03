@@ -40,7 +40,10 @@ export class SetKeyframeTangentsCommand implements Command<SetKeyframeTangentsIn
   }
 
   validate(engine: Engine): void {
-    engine.resolveAnimationTarget(this.#target)
+    const resolved = engine.resolveAnimationTarget(this.#target)
+    if (resolved.kind === 'visible') {
+      throw new Error('Visible track does not support tangents')
+    }
     requireKeyframeTangent(this.#tangentIn, 'Keyframe tangent in')
     requireKeyframeTangent(this.#tangentOut, 'Keyframe tangent out')
     this.#requireKeyframe(engine)

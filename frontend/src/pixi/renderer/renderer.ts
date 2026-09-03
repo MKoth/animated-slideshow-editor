@@ -814,11 +814,16 @@ export class Renderer {
       case 'KeyframeMoved':
       case 'KeyframeValueChanged':
       case 'KeyframeInterpolationChanged':
-      case 'KeyframeTangentsChanged':
-        if (event.target.kind === 'node') {
-          sceneRenderer.handleKeyframeChanged(event.target.nodeId)
+      case 'KeyframeTangentsChanged': {
+        const target = event.target as { nodeId?: string }
+        if (target.nodeId) {
+          sceneRenderer.handleKeyframeChanged(target.nodeId)
+          if ((event.target as { kind?: string }).kind === 'visible') {
+            sceneRenderer.handleVisibleTrackChanged(target.nodeId)
+          }
         }
         break
+      }
       case 'ClipInstanceAdded':
       case 'ClipInstanceRemoved':
       case 'ClipLayerMoved':

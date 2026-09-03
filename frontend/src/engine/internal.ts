@@ -1594,6 +1594,18 @@ export class Engine {
     return slide.animation.node(nodeId)?.hasTableTrack(property) ?? false
   }
 
+  getVisibleKeyframes(nodeId: string): readonly Keyframe[] {
+    return this.#animations.getVisibleKeyframes(nodeId)
+  }
+
+  hasVisibleTrack(nodeId: string): boolean {
+    return this.#animations.hasVisibleTrack(nodeId)
+  }
+
+  evaluateVisible(nodeId: string, time: number): boolean {
+    return this.#evaluator.evaluateVisible(nodeId, time)
+  }
+
   getAnimatableParameters(nodeId: string): AnimatableParameter[] {
     const node = this.getNode(nodeId)
     const materialId = node.material.materialDefinitionId
@@ -1624,6 +1636,9 @@ export class Engine {
     }
     if (resolved.kind === 'property') {
       return animation.keyframes(resolved.property)
+    }
+    if (resolved.kind === 'visible') {
+      return animation.visibleKeyframes()
     }
     if (resolved.kind === 'dataLabel') {
       return animation.dataLabelKeyframes(resolved.label)
@@ -2865,6 +2880,9 @@ export function toReadOnly(engine: Engine): EnginePublic {
     hasCircleTrack: (nodeId, property) => engine.hasCircleTrack(nodeId, property),
     getTableKeyframes: (nodeId, property) => engine.getTableKeyframes(nodeId, property),
     hasTableTrack: (nodeId, property) => engine.hasTableTrack(nodeId, property),
+    getVisibleKeyframes: (nodeId) => engine.getVisibleKeyframes(nodeId),
+    hasVisibleTrack: (nodeId) => engine.hasVisibleTrack(nodeId),
+    evaluateVisible: (nodeId, time) => engine.evaluateVisible(nodeId, time),
     getAnimatableParameters: (nodeId) => engine.getAnimatableParameters(nodeId),
     evaluateNode: (nodeId, time, target) => engine.evaluateNode(nodeId, time, target),
     evaluateMaterialOverrides: (nodeId, time, target) =>

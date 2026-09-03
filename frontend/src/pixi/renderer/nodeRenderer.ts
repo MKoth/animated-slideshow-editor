@@ -113,6 +113,7 @@ export function applyEvaluatedState(
   container.rotation = state.transform.rotation
   container.scale.set(state.transform.scaleX, state.transform.scaleY)
   container.alpha = state.opacity * opacityMultiplier
+  container.visible = state.visible
 }
 
 function applyPivot(

@@ -174,7 +174,7 @@ describe('InspectorPanel empty state', () => {
 
     expect(screen.getByRole('heading', { name: 'General' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Transform' })).toBeInTheDocument()
-    const name = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement
+    const name = screen.getByRole('textbox', { name: 'Unique Name' }) as HTMLInputElement
     expect(name.value).toBe('Camera')
     const rotation = screen.getByRole('spinbutton', { name: 'Rotation' }) as HTMLInputElement
     expect(rotation).toBeDisabled()
@@ -213,7 +213,7 @@ describe('InspectorPanel sections', () => {
     expect(screen.getByRole('heading', { name: 'Appearance' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Reset Transform' })).toBeInTheDocument()
 
-    const name = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement
+    const name = screen.getByRole('textbox', { name: 'Unique Name' }) as HTMLInputElement
     expect(name).not.toBeDisabled()
     expect(name.value).toBe('Boy')
 
@@ -674,7 +674,7 @@ describe('InspectorPanel name editing', () => {
     const events: string[] = []
     engine.subscribe((event) => events.push(event.type))
 
-    const name = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement
+    const name = screen.getByRole('textbox', { name: 'Unique Name' }) as HTMLInputElement
     await user.clear(name)
     await user.type(name, 'Hero')
     await user.keyboard('{Enter}')
@@ -687,7 +687,7 @@ describe('InspectorPanel name editing', () => {
     expect(name.value).toBe('Hero')
   })
 
-  it('auto-suffixes a duplicate name within the slide', async () => {
+  it('blocks a duplicate name within the slide with inline error', async () => {
     const { engine, undoStack } = renderPanel()
     const { nodeId } = createSceneWithNode(engine)
     const kidId = createSecondNode(engine, 'Kid')
@@ -695,16 +695,15 @@ describe('InspectorPanel name editing', () => {
     const user = userEvent.setup()
     const before = undoStack.entries.length
 
-    const name = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement
+    const name = screen.getByRole('textbox', { name: 'Unique Name' }) as HTMLInputElement
     await user.clear(name)
     await user.type(name, 'Boy')
     await user.keyboard('{Enter}')
 
     expect(engine.getNode(nodeId).name).toBe('Boy')
-    expect(engine.getNode(kidId).name).toBe('Boy (2)')
-    expect(undoStack.entries).toHaveLength(before + 1)
-    expect(undoStack.entries[0].type).toBe('RenameNode')
-    expect(undoStack.entries[0].inverse).toEqual({ nodeId: kidId, oldName: 'Kid' })
+    expect(engine.getNode(kidId).name).toBe('Kid')
+    expect(undoStack.entries).toHaveLength(before)
+    expect(screen.getByText(/already exists/i)).toBeInTheDocument()
   })
 
   it('rejects an empty name with a notification and leaves the engine unchanged', async () => {
@@ -714,7 +713,7 @@ describe('InspectorPanel name editing', () => {
     const user = userEvent.setup()
     const before = undoStack.entries.length
 
-    const name = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement
+    const name = screen.getByRole('textbox', { name: 'Unique Name' }) as HTMLInputElement
     await user.clear(name)
     await user.keyboard('{Enter}')
 
@@ -733,7 +732,7 @@ describe('InspectorPanel name editing', () => {
     const user = userEvent.setup()
     const before = undoStack.entries.length
 
-    const name = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement
+    const name = screen.getByRole('textbox', { name: 'Unique Name' }) as HTMLInputElement
     await user.clear(name)
     await user.type(name, 'Hero')
     await user.tab()
@@ -850,7 +849,9 @@ describe('InspectorPanel multi-selection', () => {
 
     expect(screen.getByRole('heading', { name: '2 Objects Selected' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'General' })).not.toBeInTheDocument()
-    expect((screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement).value).toBe('—')
+    expect((screen.getByRole('textbox', { name: 'Unique Name' }) as HTMLInputElement).value).toBe(
+      '—',
+    )
     expect((screen.getByRole('textbox', { name: 'X' }) as HTMLInputElement).value).toBe('—')
     expect((screen.getByRole('textbox', { name: 'Opacity' }) as HTMLInputElement).value).toBe('—')
     expect((screen.getByRole('spinbutton', { name: 'Rotation' }) as HTMLInputElement).value).toBe(
@@ -866,7 +867,7 @@ describe('InspectorPanel multi-selection', () => {
     const user = userEvent.setup()
     const before = undoStack.entries.length
 
-    const name = screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement
+    const name = screen.getByRole('textbox', { name: 'Unique Name' }) as HTMLInputElement
     await user.clear(name)
     await user.type(name, 'Hero')
     await user.keyboard('{Enter}')
@@ -1311,7 +1312,7 @@ describe('InspectorPanel during playback', () => {
     expect(fields()['Scale X']).toBeDisabled()
     expect(fields()['Scale Y']).toBeDisabled()
     expect(screen.getByRole('spinbutton', { name: 'Opacity' })).toBeDisabled()
-    expect(screen.getByRole('textbox', { name: 'Name' })).toBeDisabled()
+    expect(screen.getByRole('textbox', { name: 'Unique Name' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Reset Transform' })).toBeDisabled()
   })
 
@@ -1325,7 +1326,7 @@ describe('InspectorPanel during playback', () => {
     })
 
     expect(fields().Y).not.toBeDisabled()
-    expect(screen.getByRole('textbox', { name: 'Name' })).not.toBeDisabled()
+    expect(screen.getByRole('textbox', { name: 'Unique Name' })).not.toBeDisabled()
     expect(screen.getByRole('button', { name: 'Reset Transform' })).not.toBeDisabled()
   })
 

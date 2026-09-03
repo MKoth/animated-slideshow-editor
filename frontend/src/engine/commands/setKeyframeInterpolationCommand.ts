@@ -41,6 +41,9 @@ export class SetKeyframeInterpolationCommand implements Command<SetKeyframeInter
   validate(engine: Engine): void {
     const resolved = engine.resolveAnimationTarget(this.#target)
     requireKeyframeInterpolation(this.#interpolation)
+    if (resolved.kind === 'visible' && this.#interpolation !== 'hold') {
+      throw new Error('Visible track only supports hold interpolation')
+    }
     if (
       resolved.kind === 'parameter' &&
       resolved.kindOf !== undefined &&

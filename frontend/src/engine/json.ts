@@ -159,6 +159,10 @@ export type TableTrackJSON = {
   readonly keyframes: readonly KeyframeJSON[]
 }
 
+export type VisibleTrackJSON = {
+  readonly keyframes: readonly KeyframeJSON[]
+}
+
 export type NodeAnimationJSON = {
   readonly nodeId: string
   readonly tracks: readonly PropertyTrackJSON[]
@@ -166,6 +170,7 @@ export type NodeAnimationJSON = {
   readonly dataLabelTracks?: readonly DataLabelTrackJSON[]
   readonly circleTracks?: readonly CircleTrackJSON[]
   readonly tableTracks?: readonly TableTrackJSON[]
+  readonly visibleTrack?: VisibleTrackJSON
 }
 
 export type SlideAnimationJSON = {

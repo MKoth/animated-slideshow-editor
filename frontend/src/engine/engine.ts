@@ -75,6 +75,9 @@ export interface EnginePublic {
   hasCircleTrack(nodeId: string, property: CircleAnimationProperty): boolean
   getTableKeyframes(nodeId: string, property: TableAnimationProperty): readonly Keyframe[]
   hasTableTrack(nodeId: string, property: TableAnimationProperty): boolean
+  getVisibleKeyframes(nodeId: string): readonly Keyframe[]
+  hasVisibleTrack(nodeId: string): boolean
+  evaluateVisible(nodeId: string, time: number): boolean
   getAnimatableParameters(nodeId: string): AnimatableParameter[]
   evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState
   evaluateMaterialOverrides(

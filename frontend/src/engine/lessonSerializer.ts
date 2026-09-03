@@ -706,6 +706,32 @@ function validateAnimation(
         )
       }
     }
+    const visibleTrack = (entry as unknown as Record<string, unknown>).visibleTrack
+    if (visibleTrack !== undefined) {
+      if (!isRecord(visibleTrack) || !Array.isArray(visibleTrack.keyframes)) {
+        errors.push('Visible track must be an object with a keyframes array')
+        continue
+      }
+      validateKeyframeList(
+        errors,
+        visibleTrack.keyframes,
+        'Visible track',
+        duration,
+        keyframeIds,
+        (value, id) => {
+          if (typeof value !== 'boolean') {
+            return `Keyframe "${id}" value must be a boolean for visible`
+          }
+          return null
+        },
+      )
+      // Validate hold-only
+      for (const kf of visibleTrack.keyframes as unknown[]) {
+        if (isRecord(kf) && kf.interpolation !== undefined && kf.interpolation !== 'hold') {
+          errors.push(`Visible track keyframe "${String(kf.id)}" interpolation must be "hold"`)
+        }
+      }
+    }
   }
 }
 

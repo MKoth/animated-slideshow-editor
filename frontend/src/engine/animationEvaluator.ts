@@ -15,6 +15,7 @@ import { circleSegmentsForArc } from './circleComponent'
 export interface EvaluatedNodeState {
   readonly transform: Transform
   readonly opacity: number
+  readonly visible: boolean
 }
 
 type MutableTransform = {
@@ -29,6 +30,7 @@ type MutableTransform = {
 export interface EvaluatedNodeScratch {
   transform: MutableTransform
   opacity: number
+  visible: boolean
 }
 
 export interface EvaluatedCircleState {
@@ -44,7 +46,7 @@ export interface EvaluatedTableState {
 }
 
 export function evaluatedNodeScratch(): EvaluatedNodeScratch {
-  return { transform: { ...identityTransform() }, opacity: 1 }
+  return { transform: { ...identityTransform() }, opacity: 1, visible: true }
 }
 
 /** A reusable target for evaluated material overrides (Spec 07 R29). */
@@ -73,7 +75,8 @@ export function evaluatedStatesEqual(
     previous.transform.scaleX === state.transform.scaleX &&
     previous.transform.scaleY === state.transform.scaleY &&
     pivotEqual &&
-    previous.opacity === state.opacity
+    previous.opacity === state.opacity &&
+    previous.visible === state.visible
   )
 }
 
@@ -89,6 +92,7 @@ export function copyEvaluatedState(target: EvaluatedNodeScratch, state: Evaluate
     delete target.transform.localPivot
   }
   target.opacity = state.opacity
+  target.visible = state.visible
 }
 
 const CHANNEL_TO_TRANSFORM_KEY: Record<AnimationProperty, string> = {
@@ -142,10 +146,42 @@ export class AnimationEvaluator {
       delete evaluated.localPivot
     }
     state.opacity = this.#evaluate(animation?.keyframes('opacity'), clampedTime, node.opacity)
+    state.visible = this.evaluateVisible(nodeId, clampedTime)
 
     this.#applyClipInstances(node, clampedTime, state)
 
     return state
+  }
+
+  evaluateVisible(nodeId: string, time: number): boolean {
+    const node = this.#nodeLookup(nodeId)
+    const slide = this.#slideLookup(nodeId)
+    const boundedTime = requireFiniteNumber(time, 'Evaluation time')
+    const clampedTime = Math.min(Math.max(boundedTime, 0), slide.duration)
+    const animation = slide.animation.node(nodeId)
+    const keyframes = animation?.visibleKeyframes()
+    if (!keyframes || keyframes.length === 0) {
+      return node.visible
+    }
+    const first = keyframes[0]
+    if (clampedTime <= first.time) {
+      return first.value as boolean
+    }
+    const last = keyframes[keyframes.length - 1]
+    if (clampedTime >= last.time) {
+      return last.value as boolean
+    }
+    for (let i = 0; i < keyframes.length - 1; i += 1) {
+      const from = keyframes[i]
+      const to = keyframes[i + 1]
+      if (clampedTime >= from.time && clampedTime < to.time) {
+        if (from.interpolation !== 'hold') {
+          throw new Error('Visible track only supports hold interpolation')
+        }
+        return from.value as boolean
+      }
+    }
+    return last.value as boolean
   }
 
   /**

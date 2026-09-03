@@ -34,6 +34,7 @@ import {
   TRACK_HEADER_WIDTH,
   PROPERTY_LABELS,
   CIRCLE_LABELS,
+  VISIBLE_LABEL,
   materialParameterLabel,
 } from './timelineTracks'
 import type { TimelineRow } from './timelineTracks'
@@ -106,6 +107,10 @@ export function TimelineBody({
     const row = rows[rowIndex]
     if (row.kind === 'subtrack') {
       for (const keyframe of engine.getKeyframes(row.node.id, row.property)) {
+        allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
+      }
+    } else if (row.kind === 'visibleSubtrack') {
+      for (const keyframe of engine.getVisibleKeyframes(row.node.id)) {
         allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
       }
     } else if (row.kind === 'materialSubtrack') {
@@ -375,7 +380,14 @@ export function TimelineBody({
     event: React.MouseEvent,
     row: Extract<
       TimelineRow,
-      { kind: 'subtrack' | 'materialSubtrack' | 'dataLabelSubtrack' | 'circleSubtrack' }
+      {
+        kind:
+          | 'subtrack'
+          | 'visibleSubtrack'
+          | 'materialSubtrack'
+          | 'dataLabelSubtrack'
+          | 'circleSubtrack'
+      }
     >,
     keyframe: { id: string },
   ) => {
@@ -389,6 +401,14 @@ export function TimelineBody({
         property: row.property,
         keyframeId: keyframe.id,
       })
+    } else if (row.kind === 'visibleSubtrack') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        property: 'visible' as unknown as AnimationProperty,
+        keyframeId: keyframe.id,
+      } as unknown as Extract<import('./timelineComponents').TimelineMenuState, { nodeId: string }>)
     } else if (row.kind === 'dataLabelSubtrack') {
       setMenu({
         x: event.clientX,
@@ -418,6 +438,20 @@ export function TimelineBody({
 
   const handleTrackListContextMenu = (event: React.MouseEvent) => {
     const target = event.target as HTMLElement
+    const visibleSubtrack = target.closest<HTMLElement>('[data-visible]')
+    if (visibleSubtrack) {
+      const nodeId = visibleSubtrack.dataset.nodeId
+      if (nodeId) {
+        event.preventDefault()
+        setMenu({
+          x: event.clientX,
+          y: event.clientY,
+          nodeId,
+          property: 'visible' as unknown as AnimationProperty,
+        } as unknown as import('./timelineComponents').TimelineMenuState)
+      }
+      return
+    }
     const subtrack = target.closest<HTMLElement>('[data-property]')
     if (subtrack && !subtrack.hasAttribute('data-circle-property')) {
       const nodeId = subtrack.dataset.nodeId
@@ -443,7 +477,8 @@ export function TimelineBody({
           x: event.clientX,
           y: event.clientY,
           nodeId,
-          circleProperty: circleProperty as import('../../engine/animationProperties').CircleAnimationProperty,
+          circleProperty:
+            circleProperty as import('../../engine/animationProperties').CircleAnimationProperty,
         } as unknown as import('./timelineComponents').TimelineMenuState)
       }
       return
@@ -480,15 +515,33 @@ export function TimelineBody({
       return
     }
     let result
-    if (target.property) {
+    if ((target.property as unknown as string) === 'visible') {
+      const time = usePlaybackController.getState().getTime(slideId)
+      const visible = engine.evaluateVisible(target.nodeId, time)
+      result = dispatch(
+        new AddKeyframeCommand({
+          target: { kind: 'visible', nodeId: target.nodeId },
+          time,
+          value: !visible,
+        }),
+      )
+    } else if (target.property) {
       result = addKeyframeAtPlayhead(engine, dispatch, slideId, target.nodeId, target.property)
     } else if ((target as unknown as { circleProperty?: string }).circleProperty) {
-      const circleProperty = (target as unknown as { circleProperty: import('../../engine/animationProperties').CircleAnimationProperty }).circleProperty
+      const circleProperty = (
+        target as unknown as {
+          circleProperty: import('../../engine/animationProperties').CircleAnimationProperty
+        }
+      ).circleProperty
       const time = usePlaybackController.getState().getTime(slideId)
       const circle = engine.getNode(target.nodeId).components.circle
-      const fallback = circle ? (circle as unknown as Record<string, number>)[circleProperty] ?? 0 : 0
+      const fallback = circle
+        ? ((circle as unknown as Record<string, number>)[circleProperty] ?? 0)
+        : 0
       const evaluated = engine.evaluateCircle(target.nodeId, time)
-      const value = evaluated ? (evaluated as unknown as Record<string, number>)[circleProperty] ?? fallback : fallback
+      const value = evaluated
+        ? ((evaluated as unknown as Record<string, number>)[circleProperty] ?? fallback)
+        : fallback
       result = dispatch(
         new AddKeyframeCommand({
           target: { kind: 'circle', nodeId: target.nodeId, property: circleProperty },
@@ -532,10 +585,16 @@ export function TimelineBody({
       return
     }
     let deleteTarget
-    if (target.property) {
+    if ((target.property as unknown as string) === 'visible') {
+      deleteTarget = { kind: 'visible' as const, nodeId: target.nodeId }
+    } else if (target.property) {
       deleteTarget = { kind: 'node' as const, nodeId: target.nodeId, property: target.property }
     } else if ((target as unknown as { circleProperty?: string }).circleProperty) {
-      const circleProperty = (target as unknown as { circleProperty: import('../../engine/animationProperties').CircleAnimationProperty }).circleProperty
+      const circleProperty = (
+        target as unknown as {
+          circleProperty: import('../../engine/animationProperties').CircleAnimationProperty
+        }
+      ).circleProperty
       deleteTarget = { kind: 'circle' as const, nodeId: target.nodeId, property: circleProperty }
     } else if (target.parameter) {
       deleteTarget = { kind: 'node' as const, nodeId: target.nodeId, parameter: target.parameter }
@@ -615,6 +674,38 @@ export function TimelineBody({
                       slideId,
                       row.node.id,
                       row.property,
+                    )
+                    if (result && !result.ok) {
+                      notify(result.error.message)
+                    }
+                  }}
+                >
+                  +
+                </button>
+              </li>
+            ) : row.kind === 'visibleSubtrack' ? (
+              <li
+                key={`${row.node.id}:visible`}
+                className="timeline-subtrack timeline-subtrack--visible"
+                data-node-id={row.node.id}
+                data-visible="true"
+                data-depth={row.depth}
+                style={{ paddingLeft: 12 + row.depth * 16 }}
+              >
+                <span className="timeline-subtrack__label">{VISIBLE_LABEL}</span>
+                <button
+                  className="timeline-subtrack__add"
+                  aria-label={`Add Keyframe to ${VISIBLE_LABEL}`}
+                  title="Add hold keyframe at the playhead (toggles visibility)"
+                  onClick={() => {
+                    const time = usePlaybackController.getState().getTime(slideId)
+                    const visible = engine.evaluateVisible(row.node.id, time)
+                    const result = dispatch(
+                      new AddKeyframeCommand({
+                        target: { kind: 'visible', nodeId: row.node.id },
+                        time,
+                        value: !visible,
+                      }),
                     )
                     if (result && !result.ok) {
                       notify(result.error.message)
@@ -719,8 +810,12 @@ export function TimelineBody({
                     const time = usePlaybackController.getState().getTime(slideId)
                     const circle = engine.getNode(row.node.id).components.circle
                     const evaluated = engine.evaluateCircle(row.node.id, time)
-                    const fallback = circle ? (circle as unknown as Record<string, number>)[row.property] ?? 0 : 0
-                    const value = evaluated ? (evaluated as unknown as Record<string, number>)[row.property] ?? fallback : fallback
+                    const fallback = circle
+                      ? ((circle as unknown as Record<string, number>)[row.property] ?? 0)
+                      : 0
+                    const value = evaluated
+                      ? ((evaluated as unknown as Record<string, number>)[row.property] ?? fallback)
+                      : fallback
                     const result = dispatch(
                       new AddKeyframeCommand({
                         target: {
@@ -818,6 +913,80 @@ export function TimelineBody({
                               handleKeyframeContextMenu(event, row, keyframe)
                             }
                           />
+                        )
+                      })}
+                    </div>
+                  )
+                }
+                if (row.kind === 'visibleSubtrack') {
+                  const keyframes = engine.getVisibleKeyframes(row.node.id)
+                  const sorted = [...keyframes].sort((a, b) => a.time - b.time)
+                  return (
+                    <div
+                      key={`${row.node.id}:visible`}
+                      className="timeline-lane-row timeline-lane-row--visible"
+                      data-visible="true"
+                      style={{ top: index * ROW_HEIGHT }}
+                    >
+                      {sorted.map((keyframe, idx) => {
+                        const next = sorted[idx + 1]
+                        const nextTime = next ? next.time : duration
+                        const isVisible = keyframe.value as boolean
+                        const segmentWidth = (nextTime - keyframe.time) * pps
+                        const previewTime =
+                          scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
+                        const shownTime = previewTime ?? keyframe.time
+                        const selected = selectedKeyframeIds.includes(keyframe.id)
+                        return (
+                          <div
+                            key={keyframe.id}
+                            style={{
+                              position: 'absolute',
+                              left: 0,
+                              top: 0,
+                              right: 0,
+                              bottom: 0,
+                              pointerEvents: 'none',
+                            }}
+                          >
+                            <div
+                              className={`timeline-visible-segment${isVisible ? '' : ' timeline-visible-segment--hidden'}`}
+                              data-testid="visible-segment"
+                              style={{
+                                position: 'absolute',
+                                left: keyframe.time * pps,
+                                top: 0,
+                                width: Math.max(0, segmentWidth),
+                                height: '100%',
+                                background: isVisible
+                                  ? 'rgba(76,175,80,0.18)'
+                                  : 'rgba(239,83,80,0.18)',
+                                borderTop: `2px solid ${isVisible ? '#4caf50' : '#ef5350'}`,
+                                pointerEvents: 'none',
+                              }}
+                              title={isVisible ? 'Visible (hold)' : 'Hidden (hold)'}
+                            />
+                            <div
+                              className={`timeline-keyframe timeline-keyframe--visible${selected ? ' timeline-keyframe--selected' : ''}`}
+                              data-testid="keyframe-marker"
+                              data-keyframe-id={keyframe.id}
+                              data-visible="true"
+                              data-time={String(shownTime)}
+                              role="button"
+                              aria-label={`Visible ${isVisible ? 'shown' : 'hidden'} at ${tickLabel(shownTime, step)}`}
+                              style={{
+                                left: shownTime * pps,
+                                position: 'absolute',
+                                pointerEvents: 'auto',
+                              }}
+                              onPointerDown={(event) =>
+                                handleKeyframePointerDown(event, keyframe, index)
+                              }
+                              onContextMenu={(event) =>
+                                handleKeyframeContextMenu(event, row, keyframe)
+                              }
+                            />
+                          </div>
                         )
                       })}
                     </div>

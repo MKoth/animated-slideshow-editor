@@ -10,6 +10,7 @@ import type {
   DataLabelTrackJSON,
   CircleTrackJSON,
   TableTrackJSON,
+  VisibleTrackJSON,
 } from './json'
 import {
   requireAnimationProperty,
@@ -33,6 +34,7 @@ export class NodeAnimation {
   readonly #dataLabelTracks = new Map<string, Keyframe[]>()
   readonly #circleTracks = new Map<CircleAnimationProperty, Keyframe[]>()
   readonly #tableTracks = new Map<TableAnimationProperty, Keyframe[]>()
+  readonly #visible: Keyframe[] = []
 
   keyframes(property: AnimationProperty): readonly Keyframe[] {
     return this.#tracks.get(property) ?? []
@@ -88,6 +90,36 @@ export class NodeAnimation {
 
   tableTrackKeys(): TableAnimationProperty[] {
     return [...this.#tableTracks.keys()] as TableAnimationProperty[]
+  }
+
+  visibleKeyframes(): readonly Keyframe[] {
+    return this.#visible
+  }
+
+  hasVisibleTrack(): boolean {
+    return this.#visible.length > 0
+  }
+
+  addVisible(keyframe: Keyframe): void {
+    const index = this.#visible.findIndex((entry) => entry.time > keyframe.time)
+    if (index === -1) {
+      this.#visible.push(keyframe)
+    } else {
+      this.#visible.splice(index, 0, keyframe)
+    }
+  }
+
+  removeVisible(keyframeId: string): Keyframe | undefined {
+    const index = this.#visible.findIndex((entry) => entry.id === keyframeId)
+    if (index === -1) {
+      return undefined
+    }
+    const [removed] = this.#visible.splice(index, 1)
+    return removed
+  }
+
+  getVisible(keyframeId: string): Keyframe | undefined {
+    return this.#visible.find((entry) => entry.id === keyframeId)
   }
 
   add(property: AnimationProperty, keyframe: Keyframe): void {
@@ -186,6 +218,9 @@ export class NodeAnimation {
         keyframes.map((keyframe) => copyKeyframe(keyframe)),
       )
     }
+    for (const keyframe of this.#visible) {
+      copy.#visible.push(copyKeyframe(keyframe))
+    }
     return copy
   }
 
@@ -227,6 +262,13 @@ export class NodeAnimation {
       tracks.push({ property, keyframes: keyframes.map((keyframe) => keyframe.toJSON()) })
     }
     return tracks
+  }
+
+  visibleTrackJSON(): VisibleTrackJSON | undefined {
+    if (this.#visible.length === 0) {
+      return undefined
+    }
+    return { keyframes: this.#visible.map((keyframe) => keyframe.toJSON()) }
   }
 
   removeOrphanDataLabelTracks(validLabels: ReadonlySet<string>): void {
@@ -299,6 +341,10 @@ export class NodeAnimation {
       for (const track of tableTracks) {
         readTableTrack(animation, track, duration, node)
       }
+    }
+    const visibleTrack = (json as Record<string, unknown>).visibleTrack
+    if (visibleTrack !== undefined) {
+      readVisibleTrack(animation, visibleTrack, duration)
     }
     return animation
   }
@@ -405,6 +451,29 @@ function readTableTrack(
   )
   for (const keyframeJson of record.keyframes) {
     animation.addTable(property, parse(keyframeJson))
+  }
+}
+
+function readVisibleTrack(animation: NodeAnimation, track: unknown, duration: number): void {
+  if (typeof track !== 'object' || track === null) {
+    throw new Error('Visible track must be an object')
+  }
+  const record = track as Record<string, unknown>
+  if (!Array.isArray(record.keyframes)) {
+    throw new Error('Visible track must have a keyframes array')
+  }
+  const parse = trackKeyframeParser('Visible track', duration, (value, what) => {
+    if (typeof value !== 'boolean') {
+      throw new Error(`${what} must be a boolean`)
+    }
+    return value
+  })
+  for (const keyframeJson of record.keyframes) {
+    const keyframe = parse(keyframeJson)
+    if (keyframe.interpolation !== 'hold') {
+      throw new Error(`Visible track keyframe "${keyframe.id}" interpolation must be "hold"`)
+    }
+    animation.addVisible(keyframe)
   }
 }
 

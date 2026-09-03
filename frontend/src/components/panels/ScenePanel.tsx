@@ -6,7 +6,13 @@ import { applyZOrder, canApplyZOrder, Z_ORDER_ITEMS } from '../../app/zOrderActi
 import type { SceneNode } from '../../engine'
 import type { ZOrderMode } from '../../engine/commands'
 import type { ParentingMode } from '../../engine/commands/reparentNodeCommand'
-import { CreateNodeCommand, CreateRigHandleCommand } from '../../engine/commands'
+import {
+  AddKeyframeCommand,
+  CreateNodeCommand,
+  CreateRigHandleCommand,
+  SetKeyframeValueCommand,
+  SetVisibilityCommand,
+} from '../../engine/commands'
 import { defaultChartComponent } from '../../engine/defaultChart'
 import { defaultTableComponent } from '../../engine/defaultTable'
 import { defaultTextComponent } from '../../engine/defaultText'
@@ -14,6 +20,8 @@ import { createCircleComponent } from '../../engine/circleComponent'
 import { namesInTree, uniqueNodeName } from '../../engine/naming'
 import { useMissingAssetsStore } from '../../stores/missingAssetsStore'
 import { useSelectionStore } from '../../stores/selectionStore'
+import { usePlaybackController } from '../../stores/playbackStore'
+import { useUiStore } from '../../stores/uiStore'
 import { iconOf } from './nodeIconKinds'
 import { LockIcon, MissingAssetIcon, NodeIcon, VisibilityIcon } from './nodeIcons'
 import { ParentingModeDialog } from './ParentingModeDialog'
@@ -50,12 +58,54 @@ function SceneTreeRow({
   onDragEnd,
   dropOver,
 }: SceneTreeRowProps) {
+  const { engine, dispatch } = useEngine()
   const selected = useSelectionStore((state) => state.selectedIds.includes(node.id))
+  const animationMode = useUiStore((state) => state.animationMode)
   const children = visibleChildren(node)
   const missing = missingNodeIds.has(node.id)
   let affordanceClass = ''
   if (dropOver?.targetId === node.id) {
     affordanceClass = ` scene-tree__row--drop-${dropOver.zone}`
+  }
+
+  const handleEyeClick = (event: React.MouseEvent) => {
+    event.stopPropagation()
+    event.preventDefault()
+    const activeSlide = engine.getActiveSlide()
+    if (!activeSlide) {
+      return
+    }
+    if (animationMode) {
+      const time = usePlaybackController.getState().getTime(activeSlide.id)
+      const evaluatedVisible = (() => {
+        try {
+          return engine.evaluateVisible(node.id, time)
+        } catch {
+          return node.visible
+        }
+      })()
+      const visibleKeyframes = engine.getVisibleKeyframes(node.id)
+      const existing = visibleKeyframes.find((kf) => kf.time === time)
+      if (existing) {
+        dispatch(
+          new SetKeyframeValueCommand({
+            target: { kind: 'visible', nodeId: node.id },
+            keyframeId: existing.id,
+            newValue: !evaluatedVisible,
+          }),
+        )
+      } else {
+        dispatch(
+          new AddKeyframeCommand({
+            target: { kind: 'visible', nodeId: node.id },
+            time,
+            value: !evaluatedVisible,
+          }),
+        )
+      }
+    } else {
+      dispatch(new SetVisibilityCommand({ nodeId: node.id, visible: !node.visible }))
+    }
   }
   return (
     <li>
@@ -90,9 +140,16 @@ function SceneTreeRow({
           </span>
         )}
         <span className="scene-tree__indicators">
-          <span className="scene-tree__indicator" title={node.visible ? 'Visible' : 'Hidden'}>
+          <button
+            className="scene-tree__indicator scene-tree__indicator--eye"
+            title={node.visible ? 'Visible' : 'Hidden'}
+            aria-label={node.visible ? 'Hide node' : 'Show node'}
+            onClick={handleEyeClick}
+            onPointerDown={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
+          >
             <VisibilityIcon visible={node.visible} />
-          </span>
+          </button>
           <span className="scene-tree__indicator" title="Locked">
             <LockIcon />
           </span>

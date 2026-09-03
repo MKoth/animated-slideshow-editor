@@ -725,11 +725,11 @@ export class SceneRenderer {
     if (!this.#scene?.getNode(nodeId)) {
       return
     }
-    const container = this.#containers.get(nodeId)
-    if (!container) {
-      return
-    }
-    container.visible = this.#engine.getNode(nodeId).visible
+    this.#evaluateAndApply(nodeId)
+  }
+
+  handleVisibleTrackChanged(nodeId: string): void {
+    this.#evaluateAndApply(nodeId)
   }
 
   handleNodeRenamed(nodeId: string): void {
