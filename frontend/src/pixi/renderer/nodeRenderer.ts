@@ -89,6 +89,10 @@ export function createNodeContainer(
     container.addChild(bonePlaceholder)
   } else if (node.components.tableCell) {
     rebuildTableChild(pixi, container, node)
+  } else if (node.components.ghost) {
+    const ghostPlaceholder = createGhostPlaceholder(pixi, node)
+    placeholderByContainer.set(container, ghostPlaceholder)
+    container.addChild(ghostPlaceholder)
   }
   return container
 }
@@ -190,6 +194,35 @@ function createBonePlaceholder(pixi: RendererPixi, node: SceneNode, length: numb
   group.addChild(label)
 
   setBoneSize(group, length, 10, length / 2, 0)
+  return group
+}
+
+function createGhostPlaceholder(pixi: RendererPixi, node: SceneNode): PixiContainer {
+  const group = new pixi.Container()
+  group.label = `placeholder:${node.name}`
+
+  const graphics = new pixi.Graphics()
+  // Crosshair for IK handle ghost — visible but distinct from bone/mesh
+  graphics.moveTo(-12, 0).lineTo(12, 0).stroke({ width: 2, color: 0x00e5ff })
+  graphics.moveTo(0, -12).lineTo(0, 12).stroke({ width: 2, color: 0x00e5ff })
+  graphics.circle(0, 0, 6).stroke({ width: 2, color: 0x00e5ff })
+  graphics.circle(0, 0, 2).fill({ color: 0x00e5ff })
+  group.addChild(graphics)
+
+  const label = new pixi.Text({
+    text: node.name,
+    style: {
+      fontSize: 11,
+      fill: 0x00e5ff,
+      fontWeight: '600',
+      fontFamily: 'system-ui, sans-serif',
+    },
+  })
+  label.anchor.set(0.5, 0.5)
+  label.position.set(0, -18)
+  group.addChild(label)
+
+  setBoneSize(group, 24, 24, 0, 0)
   return group
 }
 

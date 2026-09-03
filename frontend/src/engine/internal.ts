@@ -2149,6 +2149,26 @@ export class Engine {
     return this.#clips.importClipFromLibrary(entry)
   }
 
+  restoreClipFromJSON(snapshot: unknown): void {
+    const clip = ClipDefinition.fromJSON(snapshot)
+    // Replace existing clip with snapshot
+    try {
+      this.#clips.deleteClip(clip.id)
+    } catch {
+      // not exists
+    }
+    this.#clips.importClip(clip)
+  }
+
+  emitKeyframeAdded(target: import('./keyframeTarget').KeyframeTarget, keyframeId: string): void {
+    this.#bus.emit({ type: 'KeyframeAdded', target, keyframeId })
+  }
+
+  emitClipChanged(clipId: string): void {
+    // Generic clip change; emit ClipCategoryChanged as refresh trigger
+    this.#bus.emit({ type: 'ClipCategoryChanged', clipId })
+  }
+
   getClipChannelKeyframes(clipId: string, channel: AnimationProperty): readonly Keyframe[] {
     return this.#clips.getChannelKeyframes(clipId, channel)
   }

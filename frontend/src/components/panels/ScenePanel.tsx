@@ -32,7 +32,7 @@ interface ContextMenuState {
 }
 
 function visibleChildren(node: SceneNode): SceneNode[] {
-  return node.children.filter((child) => !child.components.camera && !child.components.ghost)
+  return node.children.filter((child) => !child.components.camera)
 }
 
 interface SceneTreeRowProps {

@@ -1769,6 +1769,26 @@ export function applyUndo(
       engine.emitMaterialChanged(nodeId)
       return
     }
+    case 'ExtractToClip': {
+      const mode = (inv as Record<string, unknown>).mode as string
+      const clipId = (inv as Record<string, unknown>).clipId as string
+      const snapshot = (inv as Record<string, unknown>).snapshot as unknown
+      if (mode === 'new') {
+        try {
+          engine.deleteClip(clipId)
+        } catch {
+          // already deleted
+        }
+      } else {
+        // existing: restore snapshot
+        try {
+          engine.restoreClipFromJSON(snapshot)
+        } catch {
+          // ignore
+        }
+      }
+      return
+    }
     default:
       console.warn(`[undo] No handler for type ${type}`)
       return
@@ -2911,6 +2931,32 @@ export function applyRedo(
       }
       ;(node as unknown as { material: unknown }).material = newMat
       engine.emitMaterialChanged(params.nodeId as string)
+      return
+    }
+    case 'ExtractToClip': {
+      const mode = (params as Record<string, unknown>).mode as string
+      const inv = _inverse as Record<string, unknown> | null
+      const snap = inv?.snapshot as unknown
+      const afterSnap = inv?.afterSnapshot as unknown
+      if (mode === 'new') {
+        // Redo new: re-import snapshot
+        if (snap) {
+          try {
+            const clip = ClipDefinition.fromJSON(snap as unknown as import('../json').ClipJSON)
+            engine.importClip(clip)
+          } catch {
+            // fallback
+          }
+        }
+      } else {
+        // Existing: redo restores afterSnapshot if available, else try before
+        const targetSnap = afterSnap ?? snap
+        if (targetSnap) {
+          try {
+            engine.restoreClipFromJSON(targetSnap)
+          } catch {}
+        }
+      }
       return
     }
     default:

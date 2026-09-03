@@ -346,6 +346,8 @@ export type ClipJSON = {
   readonly channels: readonly ClipChannelDefJSON[]
   readonly channelAnimations?: Readonly<Record<string, ClipChannelJSON>>
   readonly materialChannelAnimations?: Readonly<Record<string, ClipChannelJSON>>
+  readonly visibleAnimation?: ClipChannelJSON
+  readonly circleChannelAnimations?: Readonly<Record<string, ClipChannelJSON>>
 }
 
 export type ClipInstanceJSON = {

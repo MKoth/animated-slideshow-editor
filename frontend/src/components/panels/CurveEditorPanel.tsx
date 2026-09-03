@@ -31,6 +31,9 @@ import { useNotificationStore } from '../../stores/notificationStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { CurveEditorCanvas } from './CurveEditorCanvas'
 import { ParameterPicker } from './ParameterPicker'
+import { ClipExtractionModal } from './ClipExtractionModal'
+import { collectSelectedExtractableKeyframes } from '../../app/clipExtractionActions'
+import type { ExtractableKeyframe } from '../../engine/clipExtraction'
 
 const PROPERTY_COLORS: Record<string, string> = {
   positionX: '#4fc3f7',
@@ -304,6 +307,19 @@ export function CurveEditorPanel({
   const selectedKeyframeIds = useMemo(
     () => new Set(selectedKeyframeIdsOf(timelineSelection)),
     [timelineSelection],
+  )
+  const [extraction, setExtraction] = useState<ExtractableKeyframe[] | null>(null)
+  const handleCurveContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      const extractable = collectSelectedExtractableKeyframes(engine)
+      if (extractable.length === 0) {
+        useNotificationStore.getState().notify('Select keyframes to Add to clip')
+        return
+      }
+      setExtraction(extractable)
+    },
+    [engine],
   )
 
   const curves = useMemo(
@@ -669,7 +685,11 @@ export function CurveEditorPanel({
   )
 
   return (
-    <div className="curve-editor-panel" style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+    <div
+      className="curve-editor-panel"
+      style={{ display: 'flex', flex: 1, minHeight: 0 }}
+      onContextMenu={handleCurveContextMenu}
+    >
       <CurveEditorTrackList
         curves={curves}
         selectedKeyframeIds={selectedKeyframeIds}
@@ -700,6 +720,7 @@ export function CurveEditorPanel({
           onZoom={handleZoom}
         />
       </div>
+      {extraction && <ClipExtractionModal keyframes={extraction} onClose={() => setExtraction(null)} />}
     </div>
   )
 }

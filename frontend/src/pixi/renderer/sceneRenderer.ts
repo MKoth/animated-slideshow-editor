@@ -3,6 +3,7 @@ import type { Scene } from '../../engine'
 import type { SceneNode } from '../../engine'
 import type { ChartComponent } from '../../engine/components'
 import { walkPreOrder } from '../../engine/sceneNode'
+import { useOverlayVisibilityStore } from '../../stores/overlayVisibilityStore'
 import type { EvaluatedNodeScratch } from '../../engine/animationEvaluator'
 import {
   copyEvaluatedState,
@@ -756,6 +757,24 @@ export class SceneRenderer {
     }
   }
 
+  setIkHandlesVisible(visible: boolean): void {
+    for (const [nodeId, container] of this.#containers) {
+      const node = this.#scene?.getNode(nodeId)
+      if (!node || !node.components.ghost) continue
+      container.visible = visible ? node.visible : false
+    }
+  }
+
+  setGhostsVisible(ikVisible: boolean, poleVisible: boolean): void {
+    for (const [nodeId, container] of this.#containers) {
+      const node = this.#scene?.getNode(nodeId)
+      if (!node || !node.components.ghost) continue
+      const isPole = node.name.toLowerCase().includes('pole')
+      const shouldVisible = isPole ? poleVisible : ikVisible
+      container.visible = shouldVisible ? node.visible : false
+    }
+  }
+
   handleNodeReparented(nodeId: string): void {
     if (!this.#scene?.getNode(nodeId)) {
       return
@@ -953,6 +972,15 @@ export class SceneRenderer {
       return
     }
     applyEvaluatedState(container, state, material.opacityMultiplier)
+    // Respect ghost overlay visibility after evaluated state
+    if (node.components.ghost) {
+      const { ikHandlesVisible, poleHandlesVisible } = useOverlayVisibilityStore.getState()
+      const isPole = node.name.toLowerCase().includes('pole')
+      const shouldVisible = isPole ? poleHandlesVisible : ikHandlesVisible
+      if (!shouldVisible) {
+        container.visible = false
+      }
+    }
     // Update size-scaled pivot (needs current size, which may have changed)
     const currentSize = this.#sizes.get(nodeId)
     if (currentSize) {

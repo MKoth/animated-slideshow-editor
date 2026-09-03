@@ -276,11 +276,13 @@ export function TimelineContextMenu({
   menu,
   onAdd,
   onDelete,
+  onAddToClip,
   onClose,
 }: {
   menu: TimelineMenuState
   onAdd: () => void
   onDelete: () => void
+  onAddToClip?: () => void
   onClose: () => void
 }) {
   return (
@@ -296,9 +298,20 @@ export function TimelineContextMenu({
         style={{ left: menu.x, top: menu.y }}
       >
         {menu.keyframeId ? (
-          <button className="timeline-context-menu__item" onClick={onDelete}>
-            Delete Keyframe
-          </button>
+          <>
+            <button className="timeline-context-menu__item" onClick={onDelete}>
+              Delete Keyframe
+            </button>
+            {onAddToClip && (
+              <button
+                className="timeline-context-menu__item"
+                data-testid="add-to-clip-button"
+                onClick={onAddToClip}
+              >
+                Add to clip
+              </button>
+            )}
+          </>
         ) : (
           <button className="timeline-context-menu__item" onClick={onAdd}>
             Add Keyframe

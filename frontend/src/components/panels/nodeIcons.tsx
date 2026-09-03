@@ -92,6 +92,15 @@ export function MissingAssetIcon() {
   )
 }
 
+export function GhostIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 8V4M12 16v4M8 12H4m12 0h-4" />
+    </svg>
+  )
+}
+
 export function NodeIcon({ node }: { node: SceneNode }) {
   switch (iconOf(node)) {
     case 'image':
@@ -106,6 +115,8 @@ export function NodeIcon({ node }: { node: SceneNode }) {
       return <TableIcon />
     case 'circle':
       return <CircleIcon />
+    case 'ghost':
+      return <GhostIcon />
     default:
       return <FolderIcon />
   }
