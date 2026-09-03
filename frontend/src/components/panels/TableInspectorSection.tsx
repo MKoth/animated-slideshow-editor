@@ -16,6 +16,8 @@ import {
   SetKeyframeValueCommand,
 } from '../../engine/commands'
 import type { TableAnimationProperty } from '../../engine/animationProperties'
+import { walkPreOrder } from '../../engine/sceneNode'
+import { useSelectionStore } from '../../stores/selectionStore'
 import { NumericField } from './inspectorFields'
 import { runCommand } from './sectionHelpers'
 
@@ -194,6 +196,22 @@ function TableLevelInspector({
     })
   }
 
+  const selectAllCells = () => {
+    const ids: string[] = []
+    for (const node of walkPreOrder(target)) {
+      if (node !== target && node.components.tableCell) ids.push(node.id)
+    }
+    if (ids.length) useSelectionStore.getState().selectMany(ids)
+  }
+
+  const selectAllTexts = () => {
+    const ids: string[] = []
+    for (const node of walkPreOrder(target)) {
+      if (node.components.text) ids.push(node.id)
+    }
+    if (ids.length) useSelectionStore.getState().selectMany(ids)
+  }
+
   return (
     <section className="inspector-section">
       <h3 className="inspector-section__title">Table</h3>
@@ -326,6 +344,25 @@ function TableLevelInspector({
           title="Remove Column"
         >
           - Column
+        </button>
+      </div>
+
+      <div className="inspector-field inspector-field--buttons">
+        <button
+          className="inspector-field__button"
+          disabled={playing}
+          onClick={selectAllCells}
+          title="Select all cells in this table"
+        >
+          Select All Cells
+        </button>
+        <button
+          className="inspector-field__button"
+          disabled={playing}
+          onClick={selectAllTexts}
+          title="Select all text in this table"
+        >
+          Select All Texts
         </button>
       </div>
     </section>
