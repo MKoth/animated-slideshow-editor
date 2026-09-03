@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { WorldTransform } from '../../engine/worldTransform'
 import { normalizeRotation } from '../../engine'
 import {
@@ -161,13 +161,17 @@ export function InspectorPanel({ width }: { width: number }) {
   )
   void timelineSelectionVersion
   const [, setTick] = useState(0)
-  const [nameError, setNameError] = useState<string | null>(null)
+  const [nameError, setNameError] = useState<{ msg: string; targets: string } | null>(null)
   useEngineEvent(() => {
     setTick((tick) => tick + 1)
     setNameError(null)
   })
 
   const targets = inspectedTargets(engine, selectedIds)
+
+  useEffect(() => {
+    setNameError(null)
+  }, [selectedIds.join(',')])
   const slide = engine.getActiveSlide()
   const cameraSelected = targets.length === 1 && Boolean(targets[0]?.components.camera)
   const animatingCamera = cameraAnimationMode && cameraSelected
@@ -397,7 +401,7 @@ export function InspectorPanel({ width }: { width: number }) {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
       if (msg.toLowerCase().includes('already exists')) {
-        setNameError(msg)
+        setNameError({ msg, targets: targetIds.join(',') })
       } else {
         notify(msg)
       }
@@ -474,7 +478,9 @@ export function InspectorPanel({ width }: { width: number }) {
             value={commonName}
             onCommit={commitName}
             disabled={playing}
-            error={nameError}
+            error={
+              nameError && nameError.targets === targetIds.join(',') ? nameError.msg : null
+            }
           />
           <NameField
             label="Semantic Name"
