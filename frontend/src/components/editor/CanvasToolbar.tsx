@@ -33,8 +33,12 @@ export function CanvasToolbar() {
   const selectedBoneId = useBoneEditStore((state) => state.selectedBoneId)
   const meshVisible = useOverlayVisibilityStore((state) => state.meshVisible)
   const bonesVisible = useOverlayVisibilityStore((state) => state.bonesVisible)
+  const ikHandlesVisible = useOverlayVisibilityStore((state) => state.ikHandlesVisible)
+  const poleHandlesVisible = useOverlayVisibilityStore((state) => state.poleHandlesVisible)
   const toggleMeshVisible = useOverlayVisibilityStore((state) => state.toggleMeshVisible)
   const toggleBonesVisible = useOverlayVisibilityStore((state) => state.toggleBonesVisible)
+  const toggleIkHandlesVisible = useOverlayVisibilityStore((state) => state.toggleIkHandlesVisible)
+  const togglePoleHandlesVisible = useOverlayVisibilityStore((state) => state.togglePoleHandlesVisible)
 
   const handleModeChange = (newMode: EditingMode) => {
     // exit bone edit when switching to other modes
@@ -130,6 +134,20 @@ export function CanvasToolbar() {
         >
           <input type="checkbox" checked={bonesVisible} onChange={toggleBonesVisible} />
           Bones
+        </label>
+        <label
+          className="canvas-toolbar__toggle"
+          style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer' }}
+        >
+          <input type="checkbox" checked={ikHandlesVisible} onChange={toggleIkHandlesVisible} />
+          IK Handles
+        </label>
+        <label
+          className="canvas-toolbar__toggle"
+          style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, cursor: 'pointer' }}
+        >
+          <input type="checkbox" checked={poleHandlesVisible} onChange={togglePoleHandlesVisible} />
+          Pole Vectors
         </label>
         {boneEditing && (
           <span style={{ fontSize: 11, color: 'var(--color-text-muted)', marginLeft: 8 }}>

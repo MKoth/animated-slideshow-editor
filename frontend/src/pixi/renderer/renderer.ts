@@ -213,11 +213,16 @@ export class Renderer {
       this.#unsubscribeTime = this.#currentTime.subscribe(() => this.#handleTimeChanged())
       this.#unsubscribeVisibility = OverlayVisibilityStore.subscribe((state) => {
         this.#sceneRenderer?.setBonesVisible(state.bonesVisible)
+        this.#sceneRenderer?.setGhostsVisible(state.ikHandlesVisible, state.poleHandlesVisible)
         this.#meshOverlay?.redraw()
         this.#boneEditOverlay?.redraw()
       })
       // Initialize visibility
       this.#sceneRenderer?.setBonesVisible(OverlayVisibilityStore.getState().bonesVisible)
+      this.#sceneRenderer?.setGhostsVisible(
+        OverlayVisibilityStore.getState().ikHandlesVisible,
+        OverlayVisibilityStore.getState().poleHandlesVisible,
+      )
       this.#syncScene(this.#sceneRenderer)
 
       this.#transformSource = new EvaluatedWorldTransformSource(
