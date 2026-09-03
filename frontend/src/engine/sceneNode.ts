@@ -152,6 +152,10 @@ export class SceneNode {
   }
 }
 
+export function isGroupNode(node: SceneNode): boolean {
+  return Object.keys(node.components).length === 0 && node.children.length > 0
+}
+
 function requireTransform(value: unknown, nodeId: string): Transform {
   if (typeof value !== 'object' || value === null) {
     throw new Error(`Node "${nodeId}" must have a transform`)

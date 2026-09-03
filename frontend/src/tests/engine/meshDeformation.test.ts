@@ -569,6 +569,32 @@ describe('Mesh Deformation Evaluation', () => {
     expect(result.deformedVertices[1].y).toBeCloseTo(0)
   })
 
+  it('keeps weighted vertices aligned when a parent group is uniformly scaled', () => {
+    const mesh: MeshData = {
+      vertices: [{ x: 10, y: 0 }],
+      faces: [],
+      uvs: [{ u: 0, v: 0 }],
+      boneWeights: [[{ boneId: 'bone1', weight: 1 }]],
+      bindPose: {
+        bone1: { x: 5, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+      },
+    }
+
+    const beforeScale = evaluateMeshDeformation(
+      mesh,
+      new Map([['bone1', { x: 60, y: 0, rotation: 0, scaleX: 2, scaleY: 2 }]]),
+      { x: 50, y: 0, rotation: 0, scaleX: 2, scaleY: 2 },
+    )
+    const afterScale = evaluateMeshDeformation(
+      mesh,
+      new Map([['bone1', { x: 70, y: 0, rotation: 0, scaleX: 4, scaleY: 4 }]]),
+      { x: 50, y: 0, rotation: 0, scaleX: 4, scaleY: 4 },
+    )
+
+    expect(beforeScale.deformedVertices[0]).toEqual({ x: 10, y: 0 })
+    expect(afterScale.deformedVertices[0]).toEqual({ x: 10, y: 0 })
+  })
+
   it('is deterministic', () => {
     const mesh = createDefaultRectangleMesh(100, 100)
     const meshWithWeights: MeshData = {

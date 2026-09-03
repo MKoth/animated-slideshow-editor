@@ -153,6 +153,41 @@ describe('IK Solvers', () => {
     expect(typeof solution.rotations[1]).toBe('number')
   })
 
+  it('solves against scaled world targets and scaled bone reach', () => {
+    const handle = {
+      id: 'handle',
+      parent: null,
+      components: {},
+    } as unknown as import('../../engine/sceneNode').SceneNode
+    const bone1 = {
+      id: 'bone1',
+      parent: handle,
+      components: { bone: { kind: 'bone' as const } },
+    } as unknown as import('../../engine/sceneNode').SceneNode
+    const bone2 = {
+      id: 'bone2',
+      parent: bone1,
+      components: { bone: { kind: 'bone' as const } },
+    } as unknown as import('../../engine/sceneNode').SceneNode
+
+    const getLocalTransform = (id: string) => {
+      if (id === 'handle') return { x: 50, y: 0, rotation: 0, scaleX: 2, scaleY: 2 }
+      if (id === 'bone1') return { x: 10, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }
+      return { x: 100, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }
+    }
+
+    const solution = solveTwoBoneIK(
+      [bone1, bone2],
+      { x: 70, y: 200 },
+      null,
+      getLocalTransform,
+      [100, 100],
+    )
+
+    expect(solution.rotations[0]).toBeCloseTo(Math.PI / 6, 5)
+    expect(solution.rotations[1]).toBeCloseTo(Math.PI / 3, 5)
+  })
+
   it('solves CCD IK for chains longer than 2', () => {
     const bone1 = {
       id: 'bone1',

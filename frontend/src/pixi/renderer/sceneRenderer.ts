@@ -24,7 +24,7 @@ import {
 } from '../../engine/materialResolution'
 import type { MaterialOverrides } from '../../engine/materialInstance'
 import type { WorldTransform } from '../../engine/worldTransform'
-import { relativeTransform } from '../../engine/worldTransform'
+import { composeChain, relativeTransform } from '../../engine/worldTransform'
 import {
   applyConstraints,
   type ConstraintEvaluationContext,
@@ -1024,25 +1024,11 @@ export class SceneRenderer {
       chain.push(cursor)
     }
     chain.reverse()
-
-    let x = 0
-    let y = 0
-    let rotation = 0
-    let scaleX = 1
-    let scaleY = 1
-    for (const link of chain) {
+    return composeChain(chain, (link) => {
       const local = this.#engine.evaluateNode(link.id, time, this.#scratch).transform
-      const ikRot = this.#ikOverrides.get(link.id)
-      const r = ikRot !== undefined ? ikRot : local.rotation
-      const cosR = Math.cos(rotation)
-      const sinR = Math.sin(rotation)
-      x += local.x * cosR - local.y * sinR
-      y += local.x * sinR + local.y * cosR
-      rotation += r
-      scaleX *= local.scaleX
-      scaleY *= local.scaleY
-    }
-    return { x, y, rotation, scaleX, scaleY }
+      const ikRotation = this.#ikOverrides.get(link.id)
+      return ikRotation === undefined ? local : { ...local, rotation: ikRotation }
+    })
   }
 
   #applyLocalRotationLimit(nodeId: string, transform: { rotation: number }): void {

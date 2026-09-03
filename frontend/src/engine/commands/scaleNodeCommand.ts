@@ -1,6 +1,7 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
 import { requireFiniteNumber } from '../guards'
+import { isGroupNode } from '../sceneNode'
 
 export interface ScaleNodeParameters {
   readonly nodeId: string
@@ -37,23 +38,9 @@ export class ScaleNodeCommand implements Command<ScaleNodeInverse> {
   execute(engine: Engine): ScaleNodeInverse {
     const node = engine.getNode(this.#nodeId)
     const { transform } = node
-    // Scale Group / Rig Handle is empty Group Node - force uniform scale to keep skinning local (single Gm)
-    const c = node.components as Record<string, unknown>
-    const isGroup =
-      !c.mesh &&
-      !c.bone &&
-      !c.text &&
-      !c.circle &&
-      !c.assetInstance &&
-      !c.table &&
-      !c.tableRow &&
-      !c.tableCell &&
-      !c.chart &&
-      !c.camera &&
-      node.children.length > 0
     let scaleX = this.#scaleX
     let scaleY = this.#scaleY
-    if (isGroup && Math.abs(scaleX - scaleY) > 1e-6) {
+    if (isGroupNode(node) && Math.abs(scaleX - scaleY) > 1e-6) {
       // Use the axis that actually changed, fallback to average
       if (Math.abs(scaleX - transform.scaleX) > 1e-6) {
         scaleY = scaleX

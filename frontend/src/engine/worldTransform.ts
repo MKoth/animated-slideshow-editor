@@ -210,7 +210,7 @@ export class EvaluatedWorldTransformSource {
   }
 }
 
-function composeChain(
+export function composeChain(
   chain: readonly SceneNode[],
   localOf: (node: SceneNode) => Transform,
 ): WorldTransform {

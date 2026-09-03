@@ -1,5 +1,5 @@
 import type { SceneNode } from './sceneNode'
-import { rotateX, rotateY } from './worldTransform'
+import { composeChain, rotateX, rotateY } from './worldTransform'
 import type { Transform } from './transform'
 
 export interface IKSolution {
@@ -30,37 +30,23 @@ export function solveTwoBoneIK(
   const L1 = boneLengths[0] ?? 100
   const L2 = boneLengths[1] ?? 100
 
-  const worldPos = (node: SceneNode): { x: number; y: number } => {
-    const chain: SceneNode[] = []
-    for (let cur: SceneNode | null = node; cur !== null; cur = cur.parent) {
-      chain.push(cur)
-    }
-    chain.reverse()
-    let x = 0
-    let y = 0
-    let rotation = 0
-    for (const link of chain) {
-      const local = getLocalTransform(link.id)
-      x += rotateX(local.x, local.y, rotation)
-      y += rotateY(local.x, local.y, rotation)
-      rotation += local.rotation
-    }
-    return { x, y }
-  }
-
-  const bone1World = worldPos(bone1)
+  const bone1World = worldTransformOf(bone1, getLocalTransform)
   const dx = target.x - bone1World.x
   const dy = target.y - bone1World.y
   const dist = Math.hypot(dx, dy)
-  const maxReach = L1 + L2
-  const minReach = Math.abs(L1 - L2)
+  const lengths = [
+    L1 * Math.abs(bone1World.scaleX),
+    L2 * Math.abs(worldTransformOf(boneNodes[1], getLocalTransform).scaleX),
+  ]
+  const maxReach = lengths[0] + lengths[1]
+  const minReach = Math.abs(lengths[0] - lengths[1])
   const clampedDist = Math.min(Math.max(dist, minReach), maxReach)
-  const cosAngle1 = (L1 * L1 + clampedDist * clampedDist - L2 * L2) / (2 * L1 * clampedDist)
+  const cosAngle1 =
+    (lengths[0] * lengths[0] + clampedDist * clampedDist - lengths[1] * lengths[1]) /
+    (2 * lengths[0] * clampedDist)
   const angle1 = Math.acos(Math.min(Math.max(cosAngle1, -1), 1))
   const targetAngle = Math.atan2(dy, dx)
-  const parentWorldRotation = bone1.parent
-    ? computeWorldRotation(bone1.parent, getLocalTransform)
-    : 0
+  const parentWorldRotation = bone1World.rotation - getLocalTransform(bone1.id).rotation
 
   let sign = 1
   if (poleTarget) {
@@ -74,17 +60,6 @@ export function solveTwoBoneIK(
   const bone2WorldRotation = targetAngle
   const bone2LocalRotation = bone2WorldRotation - bone1WorldRotation
   return { rotations: [bone1LocalRotation, bone2LocalRotation] }
-}
-
-function computeWorldRotation(
-  node: SceneNode,
-  getLocalTransform: (nodeId: string) => Transform,
-): number {
-  let rotation = 0
-  for (let cur: SceneNode | null = node; cur !== null; cur = cur.parent) {
-    rotation += getLocalTransform(cur.id).rotation
-  }
-  return rotation
 }
 
 /**
@@ -111,24 +86,21 @@ export function solveCCDIK(
     throw new Error('IK chain must have at least 2 bones')
   }
   const rotations = boneNodes.map((node) => getLocalTransform(node.id).rotation)
-  const lengths: number[] = boneLengths.map((l) => l)
+  const lengths: number[] = boneNodes.map((node, index) => {
+    const world = worldTransformOf(node, getLocalTransform)
+    return (boneLengths[index] ?? 100) * Math.abs(world.scaleX)
+  })
 
   // Compute max reach for distance clamping
   const maxReach = lengths.reduce((sum, l) => sum + l, 0)
 
   // Compute bone1's world position and parent world rotation
-  const bone1World = (() => {
-    let x = 0
-    let y = 0
-    let rotation = 0
-    for (let cur: SceneNode | null = boneNodes[0]; cur !== null; cur = cur.parent) {
-      const local = getLocalTransform(cur.id)
-      x += rotateX(local.x, local.y, rotation)
-      y += rotateY(local.x, local.y, rotation)
-      rotation += local.rotation
-    }
-    return { x, y, parentRotation: rotation - getLocalTransform(boneNodes[0].id).rotation }
-  })()
+  const rootWorld = worldTransformOf(boneNodes[0], getLocalTransform)
+  const bone1World = {
+    x: rootWorld.x,
+    y: rootWorld.y,
+    parentRotation: rootWorld.rotation - getLocalTransform(boneNodes[0].id).rotation,
+  }
 
   // Clamp target distance to maxReach to prevent wild rotations
   let relTarget = { x: target.x - bone1World.x, y: target.y - bone1World.y }
@@ -199,4 +171,16 @@ export function solveCCDIK(
     }
     return { x, y }
   }
+}
+
+function worldTransformOf(
+  node: SceneNode,
+  getLocalTransform: (nodeId: string) => Transform,
+): { x: number; y: number; rotation: number; scaleX: number; scaleY: number } {
+  const chain: SceneNode[] = []
+  for (let current: SceneNode | null = node; current !== null; current = current.parent) {
+    chain.push(current)
+  }
+  chain.reverse()
+  return composeChain(chain, (link) => getLocalTransform(link.id))
 }

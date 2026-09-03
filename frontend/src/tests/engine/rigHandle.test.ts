@@ -151,6 +151,21 @@ describe('Rig Handle Group + one-way IK/Pole follow', () => {
     expect(ghostWorldAfter.x).toBeCloseTo(ghostWorldBefore.x + 50, 5)
   })
 
+  it('scales descendant translations when composing a Rig Handle world transform', () => {
+    const { engine, slide } = setup()
+    const handle = engine.createNode(slide.scene.id, slide.scene.root.id, 'Rig Handle', {
+      transform: { x: 50, y: 0, rotation: 0, scaleX: 2, scaleY: 2 },
+    })
+    const child = createMesh(engine, handle.id, 'Mesh', 5, 3)
+
+    const world = worldTransformOf(slide.scene, child.id)!
+
+    expect(world.x).toBeCloseTo(60, 5)
+    expect(world.y).toBeCloseTo(6, 5)
+    expect(world.scaleX).toBe(2)
+    expect(world.scaleY).toBe(2)
+  })
+
   it('IK Handle moves chain via solver; dragging chain bones FK does not reposition handle/pole', () => {
     const { engine, slide } = setup()
     const rootId = slide.scene.root.id
