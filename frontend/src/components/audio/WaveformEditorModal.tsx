@@ -22,17 +22,22 @@ interface WaveformEditorModalProps {
   readonly onClose: () => void
 }
 
-function getAssetDurationFromMetadata(metadata: Record<string, unknown> | undefined): number | null {
+function getAssetDurationFromMetadata(
+  metadata: Record<string, unknown> | undefined,
+): number | null {
   if (!metadata) return null
   const d = (metadata as Record<string, unknown>).duration
   if (typeof d === 'number' && Number.isFinite(d)) return d
   return null
 }
 
-function getWaveformPeaksFromMetadata(metadata: Record<string, unknown> | undefined): number[] | null {
+function getWaveformPeaksFromMetadata(
+  metadata: Record<string, unknown> | undefined,
+): number[] | null {
   if (!metadata) return null
   const p = (metadata as Record<string, unknown>).waveformPeaks
-  if (Array.isArray(p) && p.length > 0 && p.every((x) => typeof x === 'number')) return p as number[]
+  if (Array.isArray(p) && p.length > 0 && p.every((x) => typeof x === 'number'))
+    return p as number[]
   return null
 }
 
@@ -64,7 +69,8 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
   const globalDef = clip
     ? useAssetLibraryStore.getState().definitions.find((d) => d.id === clip.assetId)
     : undefined
-  const assetMetadata = (asset?.metadata as Record<string, unknown> | undefined) ??
+  const assetMetadata =
+    (asset?.metadata as Record<string, unknown> | undefined) ??
     (globalDef?.metadata as Record<string, unknown> | undefined)
   const assetDurationRaw = getAssetDurationFromMetadata(assetMetadata)
   // fallback: if no duration metadata, estimate from sourceEnd or assume 5
@@ -84,7 +90,9 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
   // Selection for middle delete — interval inside [editStart, editEnd] to delete
   const [selStart, setSelStart] = useState<number | null>(null)
   const [selEnd, setSelEnd] = useState<number | null>(null)
-  const [isDragging, setIsDragging] = useState<'left' | 'right' | 'selLeft' | 'selRight' | 'selMove' | null>(null)
+  const [isDragging, setIsDragging] = useState<
+    'left' | 'right' | 'selLeft' | 'selRight' | 'selMove' | null
+  >(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -109,14 +117,26 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
         if (bytes) {
           setIsDecoding(true)
           try {
-            const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
-            const Ctor = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
-              ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+            const buffer = bytes.buffer.slice(
+              bytes.byteOffset,
+              bytes.byteOffset + bytes.byteLength,
+            ) as ArrayBuffer
+            const Ctor =
+              (
+                window as unknown as {
+                  AudioContext?: typeof AudioContext
+                  webkitAudioContext?: typeof AudioContext
+                }
+              ).AudioContext ??
+              (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
             if (Ctor) {
               const ctx = new Ctor()
               try {
                 const audioBuffer = await ctx.decodeAudioData(buffer.slice(0))
-                const computed = computePeaksFromAudioBuffer(audioBuffer, bucketCountForDuration(audioBuffer.duration))
+                const computed = computePeaksFromAudioBuffer(
+                  audioBuffer,
+                  bucketCountForDuration(audioBuffer.duration),
+                )
                 if (!cancelled) {
                   setPeaks(computed)
                   setPeaksSource('decoded')
@@ -138,13 +158,23 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
             const resp = await fetch(globalDef.original_url)
             if (resp.ok) {
               const buf = await resp.arrayBuffer()
-              const Ctor = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
-                ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+              const Ctor =
+                (
+                  window as unknown as {
+                    AudioContext?: typeof AudioContext
+                    webkitAudioContext?: typeof AudioContext
+                  }
+                ).AudioContext ??
+                (window as unknown as { webkitAudioContext?: typeof AudioContext })
+                  .webkitAudioContext
               if (Ctor) {
                 const ctx = new Ctor()
                 try {
                   const audioBuffer = await ctx.decodeAudioData(buf)
-                  const qp = computePeaksFromAudioBuffer(audioBuffer, bucketCountForDuration(audioBuffer.duration))
+                  const qp = computePeaksFromAudioBuffer(
+                    audioBuffer,
+                    bucketCountForDuration(audioBuffer.duration),
+                  )
                   if (!cancelled) {
                     setPeaks(qp)
                     setPeaksSource('decoded')
@@ -207,10 +237,7 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
   const ticks = rulerTickTimes(0, assetDuration, tickStep)
 
   // Convert source time to pixel left
-  const sourceToPx = useCallback(
-    (t: number) => (t / assetDuration) * width,
-    [assetDuration, width],
-  )
+  const sourceToPx = useCallback((t: number) => (t / assetDuration) * width, [assetDuration, width])
   // const pxToSource = useCallback((px: number) => (px / width) * assetDuration, [assetDuration, width])
 
   const keptLeft = sourceToPx(editStart)
@@ -325,22 +352,37 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
         await audio.play()
         setIsPlaying(true)
         // Fallback timer to stop after playbackDuration
-        setTimeout(() => {
-          if (audioRef.current === audio) {
-            try {
-              audio.pause()
-            } catch {
-              // ignore
+        setTimeout(
+          () => {
+            if (audioRef.current === audio) {
+              try {
+                audio.pause()
+              } catch {
+                // ignore
+              }
+              stopAudition()
             }
-            stopAudition()
-          }
-        }, playbackDuration * 1000 + 300)
+          },
+          playbackDuration * 1000 + 300,
+        )
       } catch {
         useNotificationStore.getState().notify('Audition playback failed')
         stopAudition()
       }
     },
-    [stopAudition, selectionActive, selStart, selEnd, editStart, editEnd, asset, globalDef, clip, assetDuration, rate],
+    [
+      stopAudition,
+      selectionActive,
+      selStart,
+      selEnd,
+      editStart,
+      editEnd,
+      asset,
+      globalDef,
+      clip,
+      assetDuration,
+      rate,
+    ],
   )
 
   const handleDragStart = useCallback(
@@ -470,12 +512,23 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
       if (selEnd! - selStart! < 0.03) return false
     }
     // Check if anything changed
-    const trimChanged = Math.abs(editStart - clip.sourceStart) > 1e-6 || Math.abs(editEnd - clip.sourceEnd) > 1e-6
+    const trimChanged =
+      Math.abs(editStart - clip.sourceStart) > 1e-6 || Math.abs(editEnd - clip.sourceEnd) > 1e-6
     const hasDelete = selectionActive && isInteriorDelete
     const hasEdgeDelete = selectionActive && isEdgeTrimSelection
     // If edge delete selection, it will be treated as trim to selection bounds? We consider it as trim
     return trimChanged || hasDelete || hasEdgeDelete
-  }, [editStart, editEnd, assetDuration, selectionActive, selStart, selEnd, clip, isInteriorDelete, isEdgeTrimSelection])
+  }, [
+    editStart,
+    editEnd,
+    assetDuration,
+    selectionActive,
+    selStart,
+    selEnd,
+    clip,
+    isInteriorDelete,
+    isEdgeTrimSelection,
+  ])
 
   const handleSave = useCallback(() => {
     if (!clip || !slide) return
@@ -503,7 +556,9 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
       }
     }
 
-    const trimChanged = Math.abs(effectiveStart - clip.sourceStart) > 1e-6 || Math.abs(effectiveEnd - clip.sourceEnd) > 1e-6
+    const trimChanged =
+      Math.abs(effectiveStart - clip.sourceStart) > 1e-6 ||
+      Math.abs(effectiveEnd - clip.sourceEnd) > 1e-6
     const hasInteriorDelete = selectionActive && isInteriorDelete
 
     if (hasInteriorDelete) {
@@ -512,13 +567,17 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
       // Effective kept interval is [effectiveStart, effectiveEnd]; delete interior [delStart, delEnd] inside it
       // Validate delete inside effective
       if (delStart <= effectiveStart + 1e-6 || delEnd >= effectiveEnd - 1e-6) {
-        useNotificationStore.getState().notify('Delete interval must be strictly inside kept interval')
+        useNotificationStore
+          .getState()
+          .notify('Delete interval must be strictly inside kept interval')
         return
       }
       // First clip: trim to [effectiveStart, delStart]
       // If effectiveStart/ delStart differs from original, we need trim; otherwise keep original first part
       // We'll trim original clip to left part
-      const needTrimLeft = Math.abs(effectiveStart - clip.sourceStart) > 1e-6 || Math.abs(delStart - clip.sourceEnd) > 1e-6
+      const needTrimLeft =
+        Math.abs(effectiveStart - clip.sourceStart) > 1e-6 ||
+        Math.abs(delStart - clip.sourceEnd) > 1e-6
       if (needTrimLeft) {
         commands.push(
           new TrimAudioClipCommand({
@@ -602,7 +661,9 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
     return (
       <div role="dialog" aria-label="Waveform Editor" data-testid="waveform-editor-modal">
         Clip not found
-        <button onClick={onClose} data-testid="waveform-editor-close">Close</button>
+        <button onClick={onClose} data-testid="waveform-editor-close">
+          Close
+        </button>
       </div>
     )
   }
@@ -642,8 +703,17 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
           boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
         }}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>Waveform Editor — {clip.assetId.slice(0, 8)}…</h3>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 12,
+          }}
+        >
+          <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>
+            Waveform Editor — {clip.assetId.slice(0, 8)}…
+          </h3>
           <button
             data-testid="waveform-editor-close"
             onClick={() => {
@@ -664,7 +734,9 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
           </button>
         </div>
         <div style={{ fontSize: 10, color: '#888', marginBottom: 8 }}>
-          {asset ? `Project asset • ${asset.mimeType} • ${assetDuration.toFixed(2)}s` : `Global asset • ${globalDef?.original_filename} • ${assetDuration.toFixed(2)}s`}
+          {asset
+            ? `Project asset • ${asset.mimeType} • ${assetDuration.toFixed(2)}s`
+            : `Global asset • ${globalDef?.original_filename} • ${assetDuration.toFixed(2)}s`}
           {peaksSource === 'cached' && ' • peaks cached'}
           {peaksSource === 'decoded' && ' • peaks decoded'}
           {peaksSource === 'backend' && ' • peaks canonical'}
@@ -700,7 +772,16 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
                 color: '#aaa',
               }}
             >
-              <span style={{ position: 'absolute', top: 1, left: 2, whiteSpace: 'nowrap', fontFamily: 'monospace', fontSize: 8 }}>
+              <span
+                style={{
+                  position: 'absolute',
+                  top: 1,
+                  left: 2,
+                  whiteSpace: 'nowrap',
+                  fontFamily: 'monospace',
+                  fontSize: 8,
+                }}
+              >
                 {tickLabel(t, tickStep)}
               </span>
             </div>
@@ -754,7 +835,14 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
             }}
           >
             <div style={{ width: keptLeft, background: 'rgba(0,0,0,0.55)' }} />
-            <div style={{ flex: keptWidth, background: 'transparent', borderLeft: '1px solid rgba(255,255,255,0.2)', borderRight: '1px solid rgba(255,255,255,0.2)' }} />
+            <div
+              style={{
+                flex: keptWidth,
+                background: 'transparent',
+                borderLeft: '1px solid rgba(255,255,255,0.2)',
+                borderRight: '1px solid rgba(255,255,255,0.2)',
+              }}
+            />
             <div style={{ flex: 1, background: 'rgba(0,0,0,0.55)' }} />
           </div>
           {/* Selection overlay */}
@@ -887,7 +975,16 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
             </>
           )}
         </div>
-        <div style={{ display: 'flex', gap: 12, marginTop: 10, fontSize: 11, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div
+          style={{
+            display: 'flex',
+            gap: 12,
+            marginTop: 10,
+            fontSize: 11,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+          }}
+        >
           <label style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
             sourceStart
             <input
@@ -901,7 +998,15 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
                 const v = parseFloat(e.target.value)
                 if (Number.isFinite(v)) setEditStart(Math.max(0, Math.min(v, editEnd - 0.05)))
               }}
-              style={{ width: 70, padding: '3px 6px', background: '#2a2a3a', border: '1px solid #444', borderRadius: 4, color: '#e0e0e0', fontSize: 11 }}
+              style={{
+                width: 70,
+                padding: '3px 6px',
+                background: '#2a2a3a',
+                border: '1px solid #444',
+                borderRadius: 4,
+                color: '#e0e0e0',
+                fontSize: 11,
+              }}
             />
           </label>
           <label style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
@@ -915,15 +1020,27 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
               value={editEnd}
               onChange={(e) => {
                 const v = parseFloat(e.target.value)
-                if (Number.isFinite(v)) setEditEnd(Math.min(assetDuration, Math.max(v, editStart + 0.05)))
+                if (Number.isFinite(v))
+                  setEditEnd(Math.min(assetDuration, Math.max(v, editStart + 0.05)))
               }}
-              style={{ width: 70, padding: '3px 6px', background: '#2a2a3a', border: '1px solid #444', borderRadius: 4, color: '#e0e0e0', fontSize: 11 }}
+              style={{
+                width: 70,
+                padding: '3px 6px',
+                background: '#2a2a3a',
+                border: '1px solid #444',
+                borderRadius: 4,
+                color: '#e0e0e0',
+                fontSize: 11,
+              }}
             />
           </label>
-          <span style={{ color: '#888' }}>kept {(editEnd - editStart).toFixed(2)}s • dur {assetDuration.toFixed(2)}s</span>
+          <span style={{ color: '#888' }}>
+            kept {(editEnd - editStart).toFixed(2)}s • dur {assetDuration.toFixed(2)}s
+          </span>
           {selectionActive && (
             <span style={{ color: isInteriorDelete ? '#ff6b6b' : '#ffb74d' }}>
-              sel {selStart!.toFixed(2)}–{selEnd!.toFixed(2)} ({(selEnd! - selStart!).toFixed(2)}s) {isInteriorDelete ? '→ split gap-free' : '→ edge'}
+              sel {selStart!.toFixed(2)}–{selEnd!.toFixed(2)} ({(selEnd! - selStart!).toFixed(2)}s){' '}
+              {isInteriorDelete ? '→ split gap-free' : '→ edge'}
             </span>
           )}
           <button
@@ -971,7 +1088,12 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
               padding: '6px 10px',
               borderRadius: 4,
               border: `1px solid ${isInteriorDelete ? '#ff4d4d' : '#444'}`,
-              background: selectionActive && !isPlaying ? (isInteriorDelete ? 'rgba(255,77,77,0.2)' : '#2a2a3a') : '#1a1a1a',
+              background:
+                selectionActive && !isPlaying
+                  ? isInteriorDelete
+                    ? 'rgba(255,77,77,0.2)'
+                    : '#2a2a3a'
+                  : '#1a1a1a',
               color: selectionActive ? '#e0e0e0' : '#666',
               cursor: selectionActive && !isPlaying ? 'pointer' : 'not-allowed',
               fontSize: 11,
@@ -1049,7 +1171,12 @@ export function WaveformEditorModal({ slideId, clipId, onClose }: WaveformEditor
           </button>
         </div>
         <div style={{ marginTop: 8, fontSize: 10, color: '#777' }}>
-          Drag on waveform to select middle interval; handles for edge trim; interior delete splits into <strong>two clips gap-free</strong> — timeline reflects new clips. Audition respects <code>volume {clip.volume} {clip.muted ? '(muted)' : ''}</code>. Single undo entry. Original asset bytes never rewritten.
+          Drag on waveform to select middle interval; handles for edge trim; interior delete splits
+          into <strong>two clips gap-free</strong> — timeline reflects new clips. Audition respects{' '}
+          <code>
+            volume {clip.volume} {clip.muted ? '(muted)' : ''}
+          </code>
+          . Single undo entry. Original asset bytes never rewritten.
         </div>
       </div>
     </div>

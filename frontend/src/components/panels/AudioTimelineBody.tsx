@@ -1696,7 +1696,13 @@ export function AudioTimelineBody({
                     Reset all (Don&apos;t ask)
                   </button>
                 </div>
-                <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--color-border)' }}>
+                <div
+                  style={{
+                    marginTop: 12,
+                    paddingTop: 12,
+                    borderTop: '1px solid var(--color-border)',
+                  }}
+                >
                   <TtsGlobalSettings />
                 </div>
               </div>
@@ -3287,7 +3293,11 @@ export function AudioTimelineBody({
         </div>
       )}
       {waveformClipId && (
-        <WaveformEditorModal slideId={slide.id} clipId={waveformClipId} onClose={() => setWaveformClipId(null)} />
+        <WaveformEditorModal
+          slideId={slide.id}
+          clipId={waveformClipId}
+          onClose={() => setWaveformClipId(null)}
+        />
       )}
     </div>
   )
