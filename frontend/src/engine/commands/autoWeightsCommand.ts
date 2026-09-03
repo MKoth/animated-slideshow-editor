@@ -3,7 +3,7 @@ import type { Command } from './command'
 import { requireFiniteNumber } from '../guards'
 import type { VertexBoneWeight, BoneBindPose } from '../mesh'
 import { ensureBoneWeightsArray } from '../mesh'
-import { worldTransformOf } from '../worldTransform'
+import { worldTransformOf, relativeTransform } from '../worldTransform'
 
 export interface AutoWeightsParameters {
   readonly nodeId: string
@@ -70,17 +70,30 @@ export class AutoWeightsCommand implements Command<AutoWeightsInverse> {
     }
     const oldBindPose = mesh.bindPose ? { ...mesh.bindPose } : undefined
 
-    // Get world transforms of bones and record as bind poses
+    // Get world transforms of bones and record as bind poses (mesh-local)
     const bindPose: Record<string, BoneBindPose> = mesh.bindPose ? { ...mesh.bindPose } : {}
     for (const boneId of this.#boneIds) {
       const worldTransform = worldTransformOf(scene, boneId)
       if (worldTransform) {
-        bindPose[boneId] = {
-          x: worldTransform.x,
-          y: worldTransform.y,
-          rotation: worldTransform.rotation,
-          scaleX: worldTransform.scaleX,
-          scaleY: worldTransform.scaleY,
+        const relative = meshWorldTransform
+          ? relativeTransform(worldTransform, meshWorldTransform)
+          : null
+        if (relative) {
+          bindPose[boneId] = {
+            x: relative.x,
+            y: relative.y,
+            rotation: relative.rotation,
+            scaleX: relative.scaleX,
+            scaleY: relative.scaleY,
+          }
+        } else {
+          bindPose[boneId] = {
+            x: worldTransform.x,
+            y: worldTransform.y,
+            rotation: worldTransform.rotation,
+            scaleX: worldTransform.scaleX,
+            scaleY: worldTransform.scaleY,
+          }
         }
       }
     }

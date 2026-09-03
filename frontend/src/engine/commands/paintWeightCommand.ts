@@ -3,7 +3,7 @@ import type { Command } from './command'
 import { requireFiniteNumber } from '../guards'
 import type { VertexBoneWeight, BoneBindPose } from '../mesh'
 import { ensureBoneWeightsArray } from '../mesh'
-import { worldTransformOf } from '../worldTransform'
+import { worldTransformOf, relativeTransform } from '../worldTransform'
 
 export interface PaintWeightParameters {
   readonly nodeId: string
@@ -75,18 +75,30 @@ export class PaintWeightCommand implements Command<PaintWeightInverse> {
     }))
     const oldBindPose = mesh.bindPose ? { ...mesh.bindPose } : undefined
 
-    // Record bind pose for this bone if not already set
+    // Record bind pose for this bone if not already set (mesh-local)
     const bindPose: Record<string, BoneBindPose> = mesh.bindPose ? { ...mesh.bindPose } : {}
     if (!bindPose[this.#boneId]) {
       const scene = engine.getNodeScene(this.#nodeId)
-      const worldTransform = worldTransformOf(scene, this.#boneId)
-      if (worldTransform) {
-        bindPose[this.#boneId] = {
-          x: worldTransform.x,
-          y: worldTransform.y,
-          rotation: worldTransform.rotation,
-          scaleX: worldTransform.scaleX,
-          scaleY: worldTransform.scaleY,
+      const boneWorld = worldTransformOf(scene, this.#boneId)
+      const meshWorld = worldTransformOf(scene, this.#nodeId)
+      if (boneWorld) {
+        const relative = meshWorld ? relativeTransform(boneWorld, meshWorld) : null
+        if (relative) {
+          bindPose[this.#boneId] = {
+            x: relative.x,
+            y: relative.y,
+            rotation: relative.rotation,
+            scaleX: relative.scaleX,
+            scaleY: relative.scaleY,
+          }
+        } else {
+          bindPose[this.#boneId] = {
+            x: boneWorld.x,
+            y: boneWorld.y,
+            rotation: boneWorld.rotation,
+            scaleX: boneWorld.scaleX,
+            scaleY: boneWorld.scaleY,
+          }
         }
       }
     }

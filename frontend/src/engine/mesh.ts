@@ -15,6 +15,7 @@ export interface VertexBoneWeight {
 }
 
 export interface BoneBindPose {
+  /** Mesh-local bind pose: inv(meshWorld0) * boneWorld0 */
   readonly x: number
   readonly y: number
   readonly rotation: number
@@ -27,6 +28,7 @@ export interface MeshData {
   readonly faces: readonly MeshFace[]
   readonly uvs: readonly { readonly u: number; readonly v: number }[]
   readonly boneWeights?: readonly (readonly VertexBoneWeight[])[]
+  /** Per-bone bind pose in mesh-local space (inv(meshWorld0) * boneWorld0). Single-scale invariant. */
   readonly bindPose?: Readonly<Record<string, BoneBindPose>>
 }
 

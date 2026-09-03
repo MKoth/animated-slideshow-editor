@@ -48,12 +48,27 @@ export function evaluateMeshDeformation(
         continue
       }
 
-      const meshVertex = applyTransform(vertex, meshWorldTransform)
       const bp = bindPose?.[entry.boneId]
-      const worldVertex = bp
-        ? applyBoneTransform(meshVertex, bp, boneTransform)
-        : applyAbsoluteBoneTransform(meshVertex, boneTransform)
-      const localVertex = toLocal(worldVertex.x, worldVertex.y, meshWorldTransform)
+      let localVertex: MeshVertex
+      if (bp) {
+        // bindPose is mesh-local: inv(meshWorld0) * boneWorld0
+        // relativeCurrent = inv(meshWorld) * boneWorld  (bone pose relative to mesh current)
+        // deformedLocal = relativeCurrent * inv(bindPose) * vertex
+        const relative = relativeTransform(boneTransform, meshWorldTransform)
+        if (!relative) {
+          continue
+        }
+        localVertex = applyRelativeBoneTransform(vertex, bp, relative)
+      } else {
+        // Legacy meshes have no bind matrix: retain rotation/scale-only behavior.
+        // Use relative to keep Scale Group single-scale, but ignore translation.
+        const relative = relativeTransform(boneTransform, meshWorldTransform)
+        if (relative) {
+          localVertex = applyAbsoluteBoneTransform(vertex, relative)
+        } else {
+          localVertex = applyAbsoluteBoneTransform(vertex, boneTransform)
+        }
+      }
       deformedX += entry.weight * localVertex.x
       deformedY += entry.weight * localVertex.y
       totalWeight += entry.weight
@@ -68,23 +83,25 @@ export function evaluateMeshDeformation(
   return { deformedVertices }
 }
 
-function applyBoneTransform(
+function applyRelativeBoneTransform(
   vertex: MeshVertex,
-  bindPose: NonNullable<MeshData['bindPose']>[string],
-  current: WorldTransform,
+  bindPoseLocal: NonNullable<MeshData['bindPose']>[string],
+  relativeCurrent: WorldTransform,
 ): MeshVertex {
-  // Transform the vertex through the inverse bind matrix, then through the current bone matrix.
+  // Transform vertex through inverse bind-local, then through current relative bone transform.
+  // bindPoseLocal = inv(meshWorld0) * boneWorld0  (mesh-local)
+  // relativeCurrent = inv(meshWorld) * boneWorld  (mesh-local current)
   const bindLocalX =
-    rotateX(vertex.x - bindPose.x, vertex.y - bindPose.y, -bindPose.rotation) /
-    (bindPose.scaleX || 1)
+    rotateX(vertex.x - bindPoseLocal.x, vertex.y - bindPoseLocal.y, -bindPoseLocal.rotation) /
+    (bindPoseLocal.scaleX || 1)
   const bindLocalY =
-    rotateY(vertex.x - bindPose.x, vertex.y - bindPose.y, -bindPose.rotation) /
-    (bindPose.scaleY || 1)
-  const scaledX = bindLocalX * current.scaleX
-  const scaledY = bindLocalY * current.scaleY
+    rotateY(vertex.x - bindPoseLocal.x, vertex.y - bindPoseLocal.y, -bindPoseLocal.rotation) /
+    (bindPoseLocal.scaleY || 1)
+  const scaledX = bindLocalX * relativeCurrent.scaleX
+  const scaledY = bindLocalY * relativeCurrent.scaleY
   return {
-    x: rotateX(scaledX, scaledY, current.rotation) + current.x,
-    y: rotateY(scaledX, scaledY, current.rotation) + current.y,
+    x: rotateX(scaledX, scaledY, relativeCurrent.rotation) + relativeCurrent.x,
+    y: rotateY(scaledX, scaledY, relativeCurrent.rotation) + relativeCurrent.y,
   }
 }
 
@@ -98,20 +115,20 @@ function applyAbsoluteBoneTransform(vertex: MeshVertex, current: WorldTransform)
   }
 }
 
-function applyTransform(vertex: MeshVertex, transform: WorldTransform): MeshVertex {
-  const scaledX = vertex.x * transform.scaleX
-  const scaledY = vertex.y * transform.scaleY
-  return {
-    x: rotateX(scaledX, scaledY, transform.rotation) + transform.x,
-    y: rotateY(scaledX, scaledY, transform.rotation) + transform.y,
+function relativeTransform(
+  world: WorldTransform,
+  parentWorld: WorldTransform,
+): WorldTransform | null {
+  if (parentWorld.scaleX === 0 || parentWorld.scaleY === 0) {
+    return null
   }
-}
-
-function toLocal(x: number, y: number, transform: WorldTransform): MeshVertex {
-  const localX = rotateX(x - transform.x, y - transform.y, -transform.rotation)
-  const localY = rotateY(x - transform.x, y - transform.y, -transform.rotation)
+  const dx = world.x - parentWorld.x
+  const dy = world.y - parentWorld.y
   return {
-    x: localX / (transform.scaleX || 1),
-    y: localY / (transform.scaleY || 1),
+    x: rotateX(dx, dy, -parentWorld.rotation) / parentWorld.scaleX,
+    y: rotateY(dx, dy, -parentWorld.rotation) / parentWorld.scaleY,
+    rotation: world.rotation - parentWorld.rotation,
+    scaleX: world.scaleX / parentWorld.scaleX,
+    scaleY: world.scaleY / parentWorld.scaleY,
   }
 }
