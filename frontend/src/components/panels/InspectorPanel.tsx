@@ -71,7 +71,7 @@ function inspectedTargets(engine: EnginePublic, selectedIds: readonly string[]):
   for (const nodeId of selectedIds) {
     try {
       const node = engine.getNode(nodeId)
-      if (activeScene.getNode(nodeId) && !node.components.ghost) {
+      if (activeScene.getNode(nodeId)) {
         targets.push(node)
       }
     } catch {
