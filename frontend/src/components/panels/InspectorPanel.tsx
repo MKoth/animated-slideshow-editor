@@ -42,9 +42,9 @@ import { FullscreenShaderInspectorSection } from './FullscreenShaderInspectorSec
 import { AnimationsInspectorSection } from './AnimationsInspectorSection'
 import { KeyframeInspector } from './KeyframeInspector'
 import { MeshGenerationSection } from './MeshGenerationSection'
-import { TableInspectorSection } from './TableInspectorSection'
+import { TableInspectorSection, TableCellMultiInspector } from './TableInspectorSection'
 import { ChartInspectorSection } from './ChartInspectorSection'
-import { TextInspectorSection } from './TextInspectorSection'
+import { TextInspectorSection, TextMultiInspector } from './TextInspectorSection'
 import { CircleInspectorSection } from './CircleInspectorSection'
 import { TextureInspectorSection } from './TextureInspectorSection'
 import { PROPERTY_LABELS } from './timelineTracks'
@@ -575,6 +575,24 @@ export function InspectorPanel({ width }: { width: number }) {
         {targets.length === 1 && targets[0]!.components.text && (
           <TextInspectorSection
             target={targets[0]!}
+            dispatch={dispatch}
+            notify={notify}
+            playing={playing}
+          />
+        )}
+
+        {targets.length > 1 && targets.every((n) => n.components.tableCell) && (
+          <TableCellMultiInspector
+            targets={targets}
+            dispatch={dispatch}
+            notify={notify}
+            playing={playing}
+          />
+        )}
+
+        {targets.length > 1 && targets.every((n) => n.components.text) && (
+          <TextMultiInspector
+            targets={targets}
             dispatch={dispatch}
             notify={notify}
             playing={playing}

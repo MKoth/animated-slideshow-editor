@@ -6,9 +6,19 @@ import {
   SetTextContentCommand,
   SetTextFontSizeCommand,
   SplitIntoMorphemesCommand,
+  TransactionCommand,
 } from '../../engine/commands'
 import { NumericField, NameField } from './inspectorFields'
 import { runCommand } from './sectionHelpers'
+
+function commonTextValue<T>(targets: readonly SceneNode[], get: (n: SceneNode) => T): T | null {
+  if (targets.length === 0) return null
+  const first = get(targets[0] as SceneNode)
+  for (let i = 1; i < targets.length; i++) {
+    if (get(targets[i] as SceneNode) !== first) return null
+  }
+  return first
+}
 
 export function TextInspectorSection({
   target,
@@ -104,6 +114,74 @@ export function TextInspectorSection({
       <button className="inspector-reset" disabled={playing} onClick={handleSplitMorphemes}>
         Split into Morphemes
       </button>
+    </section>
+  )
+}
+
+export function TextMultiInspector({
+  targets,
+  dispatch,
+  notify,
+  playing,
+}: {
+  targets: readonly SceneNode[]
+  dispatch: DispatchCommand
+  notify: (message: string) => void
+  playing: boolean
+}) {
+  if (targets.length === 0) return null
+  const commonFontSize = commonTextValue(targets, (n) => n.components.text!.fontSize)
+  const commonAlignment = commonTextValue(targets, (n) => n.components.text!.alignment)
+
+  const commitFontSize = (raw: string) => {
+    const value = Number(raw)
+    if (!Number.isFinite(value) || value <= 0) return
+    const cmds = targets.map((t) => new SetTextFontSizeCommand({ nodeId: t.id, fontSize: value }))
+    runCommand(notify, () => dispatch(new TransactionCommand(cmds as never)))
+  }
+  const adjustFontSize = (value: number) => {
+    const cmds = targets.map((t) => new SetTextFontSizeCommand({ nodeId: t.id, fontSize: value }))
+    runCommand(notify, () => dispatch(new TransactionCommand(cmds as never)))
+  }
+  const commitAlignment = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const alignment = event.target.value as TextAlignment
+    const cmds = targets.map((t) => new SetTextAlignmentCommand({ nodeId: t.id, alignment }))
+    runCommand(notify, () => dispatch(new TransactionCommand(cmds as never)))
+  }
+
+  return (
+    <section className="inspector-section">
+      <h3 className="inspector-section__title">Text — {targets.length} selected</h3>
+      <NumericField
+        label="Font Size"
+        value={commonFontSize}
+        step={1}
+        disabled={playing}
+        onCommit={commitFontSize}
+        onAdjust={adjustFontSize}
+      />
+      <div className="inspector-field">
+        <label className="inspector-field__label" htmlFor="text-alignment-multi">
+          Alignment
+        </label>
+        <select
+          id="text-alignment-multi"
+          className="inspector-field__input inspector-field__select"
+          aria-label="Alignment"
+          disabled={playing}
+          value={commonAlignment ?? ''}
+          onChange={commitAlignment}
+        >
+          {commonAlignment === null && (
+            <option value="" disabled>
+              — Mixed —
+            </option>
+          )}
+          <option value="left">Left</option>
+          <option value="center">Center</option>
+          <option value="right">Right</option>
+        </select>
+      </div>
     </section>
   )
 }

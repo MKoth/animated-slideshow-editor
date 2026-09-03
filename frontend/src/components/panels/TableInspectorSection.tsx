@@ -14,12 +14,25 @@ import {
   SetTableCellComponentCommand,
   AddKeyframeCommand,
   SetKeyframeValueCommand,
+  TransactionCommand,
 } from '../../engine/commands'
 import type { TableAnimationProperty } from '../../engine/animationProperties'
 import { walkPreOrder } from '../../engine/sceneNode'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { NumericField } from './inspectorFields'
 import { runCommand } from './sectionHelpers'
+
+function commonCellValue<T>(
+  targets: readonly SceneNode[],
+  get: (c: NonNullable<SceneNode['components']['tableCell']>) => T,
+): T | null {
+  if (targets.length === 0) return null
+  const first = get(targets[0]!.components.tableCell!)
+  for (let i = 1; i < targets.length; i++) {
+    if (get(targets[i]!.components.tableCell!) !== first) return null
+  }
+  return first
+}
 
 function mergeTable(node: SceneNode, patch: Partial<TableComponent>): TableComponent {
   const t = node.components.table!
@@ -623,6 +636,183 @@ function TableCellInspector({
         disabled={playing}
         onCommit={commitZIndex}
         onAdjust={adjustZIndex}
+      />
+    </section>
+  )
+}
+
+export function TableCellMultiInspector({
+  targets,
+  dispatch,
+  notify,
+  playing,
+}: {
+  targets: readonly SceneNode[]
+  dispatch: DispatchCommand
+  notify: (message: string) => void
+  playing: boolean
+}) {
+  const { engine } = useEngine()
+  const animationMode = useUiStore((s) => s.animationMode)
+  const [, setTick] = useState(0)
+  useEngineEvent(() => setTick((t) => t + 1))
+  usePlaybackController((s) => s.currentTimes)
+  if (targets.length === 0) return null
+
+  const commonPadding = commonCellValue(targets, (c) => c.padding ?? 0)
+  const commonBorderRadius = commonCellValue(targets, (c) => c.borderRadius ?? 0)
+  const commonBorderColor = commonCellValue(targets, (c) => c.borderColor ?? '#000000')
+  const commonBackground = commonCellValue(targets, (c) => c.background ?? '#ffffff')
+  const commonZIndex = commonCellValue(targets, (c) => c.zIndex ?? 0)
+
+  const isAnyAnimated = (prop: TableAnimationProperty) =>
+    targets.some((t) => engine.hasTableTrack(t.id, prop))
+
+  const commitFieldMulti = (prop: TableAnimationProperty, value: number) => {
+    const slideId = engine.getActiveSlide()?.id ?? null
+    if (animationMode && slideId) {
+      const time = usePlaybackController.getState().getTime(slideId)
+      const cmds: InstanceType<typeof AddKeyframeCommand | typeof SetKeyframeValueCommand>[] = []
+      for (const t of targets) {
+        const existing = engine.getTableKeyframes(t.id, prop).find((k) => k.time === time)
+        if (existing) {
+          cmds.push(
+            new SetKeyframeValueCommand({
+              target: { kind: 'table', nodeId: t.id, property: prop },
+              keyframeId: existing.id,
+              newValue: value,
+            }) as never,
+          )
+        } else {
+          cmds.push(
+            new AddKeyframeCommand({
+              target: { kind: 'table', nodeId: t.id, property: prop },
+              time,
+              value,
+            }) as never,
+          )
+        }
+      }
+      runCommand(notify, () => dispatch(new TransactionCommand(cmds as never)))
+      return
+    }
+    const cmds = targets.map((t) => {
+      const cell = t.components.tableCell!
+      return new SetTableCellComponentCommand({
+        nodeId: t.id,
+        tableCell: { ...cell, [prop]: value } as typeof cell,
+      })
+    })
+    runCommand(notify, () => dispatch(new TransactionCommand(cmds as never)))
+  }
+
+  const commitColorMulti = (key: 'borderColor' | 'background', value: string) => {
+    const cmds = targets.map((t) => {
+      const cell = t.components.tableCell!
+      return new SetTableCellComponentCommand({
+        nodeId: t.id,
+        tableCell: { ...cell, [key]: value },
+      })
+    })
+    runCommand(notify, () => dispatch(new TransactionCommand(cmds as never)))
+  }
+
+  const commitZIndexMulti = (raw: string) => {
+    const value = Number(raw)
+    if (!Number.isFinite(value) || !Number.isInteger(value)) return
+    const cmds = targets.map((t) => {
+      const cell = t.components.tableCell!
+      return new SetTableCellComponentCommand({
+        nodeId: t.id,
+        tableCell: { ...cell, zIndex: Math.floor(value) },
+      })
+    })
+    runCommand(notify, () => dispatch(new TransactionCommand(cmds as never)))
+  }
+  const adjustZIndexMulti = (value: number) => {
+    const cmds = targets.map((t) => {
+      const cell = t.components.tableCell!
+      return new SetTableCellComponentCommand({
+        nodeId: t.id,
+        tableCell: { ...cell, zIndex: Math.floor(value) },
+      })
+    })
+    runCommand(notify, () => dispatch(new TransactionCommand(cmds as never)))
+  }
+
+  return (
+    <section className="inspector-section">
+      <h3 className="inspector-section__title">Table Cells — {targets.length} selected</h3>
+
+      <NumericField
+        label="Padding"
+        value={commonPadding}
+        step={1}
+        disabled={playing || (!animationMode && isAnyAnimated('padding'))}
+        onCommit={(raw) => {
+          const v = Number(raw)
+          if (Number.isFinite(v) && v >= 0) commitFieldMulti('padding', v)
+        }}
+        onAdjust={(v) => commitFieldMulti('padding', Math.max(0, v))}
+      />
+
+      <NumericField
+        label="Border Radius"
+        value={commonBorderRadius}
+        step={1}
+        disabled={playing || (!animationMode && isAnyAnimated('borderRadius'))}
+        onCommit={(raw) => {
+          const v = Number(raw)
+          if (!Number.isFinite(v) || v < 0) {
+            notify('Border radius must be a non-negative number')
+            return
+          }
+          commitFieldMulti('borderRadius', v)
+        }}
+        onAdjust={(v) => commitFieldMulti('borderRadius', Math.max(0, v))}
+      />
+
+      <div className="inspector-field">
+        <label className="inspector-field__label" htmlFor="cell-border-color-multi">
+          Border Color
+        </label>
+        <input
+          id="cell-border-color-multi"
+          className="inspector-field__color"
+          type="color"
+          aria-label="Border Color"
+          value={commonBorderColor ?? '#000000'}
+          data-mixed={commonBorderColor === null ? 'true' : undefined}
+          title={commonBorderColor === null ? 'Mixed values' : undefined}
+          disabled={playing}
+          onChange={(e) => commitColorMulti('borderColor', e.target.value)}
+        />
+      </div>
+
+      <div className="inspector-field">
+        <label className="inspector-field__label" htmlFor="cell-background-multi">
+          Background
+        </label>
+        <input
+          id="cell-background-multi"
+          className="inspector-field__color"
+          type="color"
+          aria-label="Background"
+          value={commonBackground ?? '#ffffff'}
+          data-mixed={commonBackground === null ? 'true' : undefined}
+          title={commonBackground === null ? 'Mixed values' : undefined}
+          disabled={playing}
+          onChange={(e) => commitColorMulti('background', e.target.value)}
+        />
+      </div>
+
+      <NumericField
+        label="Z-Index"
+        value={commonZIndex}
+        step={1}
+        disabled={playing}
+        onCommit={commitZIndexMulti}
+        onAdjust={adjustZIndexMulti}
       />
     </section>
   )
