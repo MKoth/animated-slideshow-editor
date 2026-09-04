@@ -70,6 +70,7 @@ import type { ShaderProgramCache } from './programCache'
 import type { ResolveAssetUrl, TextureCache } from './textureCache'
 import { evaluateMeshDeformation } from '../../engine/meshDeformationEvaluator'
 import { generateCircleMeshData } from '../../engine/circleComponent'
+import { useShapePreviewStore } from '../../stores/shapePreviewStore'
 
 export interface CurrentTimeSource {
   getTime(slideId: string): number
@@ -89,6 +90,26 @@ interface NodeShaderState {
 }
 
 export type ResolveShaderSource = (shaderId: string) => string | null
+
+function effectiveMeshForPreview(
+  mesh: import('../../engine/mesh').MeshData,
+  nodeId: string,
+  engine: EnginePublic,
+): import('../../engine/mesh').MeshData {
+  const preview = useShapePreviewStore.getState()
+  if (preview.previewNodeId !== nodeId || !preview.previewShapeId) return mesh
+  try {
+    const node = engine.getNode(nodeId)
+    const shapes = node.components.mesh?.shapes
+    const shape = shapes?.find((s) => s.id === preview.previewShapeId)
+    if (shape) {
+      return { ...mesh, vertices: shape.vertices as unknown as import('../../engine/mesh').MeshData['vertices'] }
+    }
+  } catch (_e) {
+    void _e
+  }
+  return mesh
+}
 
 export class SceneRenderer {
   readonly #engine: EnginePublic
@@ -147,6 +168,14 @@ export class SceneRenderer {
     this.#isAssetMissing = isAssetMissing
     this.#resolveShaderSource = resolveShaderSource
     this.#resolveDataSource = resolveDataSource
+    void useShapePreviewStore.subscribe(() => {
+      this.refreshDeformedMeshSizes()
+      if (this.#scene) {
+        for (const node of walkPreOrder(this.#scene.root)) {
+          if (node.components.mesh) this.#evaluateAndApply(node.id)
+        }
+      }
+    })
   }
 
   nodeSize(nodeId: string): WorldSize | null {
@@ -293,8 +322,9 @@ export class SceneRenderer {
       }
     }
     for (const node of walkPreOrder(scene.root)) {
-      const mesh = node.components.mesh?.mesh
-      if (mesh) {
+      const rawMesh = node.components.mesh?.mesh
+      if (rawMesh) {
+        const mesh = effectiveMeshForPreview(rawMesh, node.id, this.#engine)
         const meshTransform = this.#engineWorldTransform(node.id, time)
         if (!meshTransform) continue
         const vertices = evaluateMeshDeformation(mesh, bones, meshTransform).deformedVertices

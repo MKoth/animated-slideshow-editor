@@ -77,7 +77,20 @@ export class MeshEditInteraction {
     window.removeEventListener('keydown', this.#onKeyDown)
   }
 
+  #isTopologyFrozen(nodeId: string): boolean {
+    const scene = this.#getScene()
+    if (!scene) return false
+    try {
+      const node = scene.getNode(nodeId)
+      return (node?.components.mesh?.shapes?.length ?? 0) > 0
+    } catch {
+      return false
+    }
+  }
+
   deleteSelected(): void {
+    const { meshEditNodeId } = useMeshEditStore.getState()
+    if (meshEditNodeId && this.#isTopologyFrozen(meshEditNodeId)) return
     const { selectMode } = useMeshEditStore.getState()
     if (selectMode === 'vertex') {
       this.#deleteSelectedVertices()
@@ -128,24 +141,40 @@ export class MeshEditInteraction {
     }
 
     if (meshEditTool === 'delete') {
+      if (this.#isTopologyFrozen(meshEditNodeId)) {
+        useMeshEditStore.getState().setMeshEditTool('select')
+        return
+      }
       this.#handleDeleteClick(point.x, point.y, scene, meshEditNodeId, selectMode)
       useMeshEditStore.getState().setMeshEditTool('select')
       return
     }
 
     if (meshEditTool === 'extrude') {
+      if (this.#isTopologyFrozen(meshEditNodeId)) {
+        useMeshEditStore.getState().setMeshEditTool('select')
+        return
+      }
       this.#handleExtrudeClick(meshEditNodeId, selectMode)
       useMeshEditStore.getState().setMeshEditTool('select')
       return
     }
 
     if (meshEditTool === 'subdivide') {
+      if (this.#isTopologyFrozen(meshEditNodeId)) {
+        useMeshEditStore.getState().setMeshEditTool('select')
+        return
+      }
       this.#handleSubdivideClick(meshEditNodeId, selectMode)
       useMeshEditStore.getState().setMeshEditTool('select')
       return
     }
 
     if (meshEditTool === 'mirror') {
+      if (this.#isTopologyFrozen(meshEditNodeId)) {
+        useMeshEditStore.getState().setMeshEditTool('select')
+        return
+      }
       this.#handleMirrorClick(meshEditNodeId)
       useMeshEditStore.getState().setMeshEditTool('select')
       return

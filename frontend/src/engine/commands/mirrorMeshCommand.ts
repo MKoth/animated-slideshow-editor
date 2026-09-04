@@ -41,6 +41,9 @@ export class MirrorMeshCommand implements Command<MirrorMeshInverse> {
     if (!node.components.mesh) {
       throw new Error(`Node "${this.#nodeId}" does not have a mesh component`)
     }
+    if ((node.components.mesh.shapes?.length ?? 0) > 0) {
+      throw new Error('Remove Shapes to edit topology')
+    }
     if (this.#axis !== 'x' && this.#axis !== 'y') {
       throw new Error(`Axis must be "x" or "y", got "${this.#axis}"`)
     }

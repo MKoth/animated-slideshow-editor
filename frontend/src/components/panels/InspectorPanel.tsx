@@ -43,6 +43,7 @@ import { FullscreenShaderInspectorSection } from './FullscreenShaderInspectorSec
 import { AnimationsInspectorSection } from './AnimationsInspectorSection'
 import { KeyframeInspector } from './KeyframeInspector'
 import { MeshGenerationSection } from './MeshGenerationSection'
+import { MeshInspectorSection } from './MeshInspectorSection'
 import { TableInspectorSection, TableCellMultiInspector } from './TableInspectorSection'
 import { ChartInspectorSection } from './ChartInspectorSection'
 import { TextInspectorSection, TextMultiInspector } from './TextInspectorSection'
@@ -170,6 +171,7 @@ export function InspectorPanel({ width }: { width: number }) {
   const targets = inspectedTargets(engine, selectedIds)
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setNameError(null)
   }, [selectedIds.join(',')])
   const slide = engine.getActiveSlide()
@@ -576,6 +578,16 @@ export function InspectorPanel({ width }: { width: number }) {
             playing={playing}
             animationMode={animationMode}
             playheadTime={indicatorTime}
+          />
+        )}
+
+        {targets.length === 1 && targets[0]!.components.mesh && (
+          <MeshInspectorSection
+            target={targets[0]!}
+            engine={engine}
+            dispatch={dispatch}
+            notify={notify}
+            playing={playing}
           />
         )}
 
