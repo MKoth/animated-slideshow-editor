@@ -168,6 +168,15 @@ export type VisibleTrackJSON = {
   readonly keyframes: readonly KeyframeJSON[]
 }
 
+export type MorphBindingJSON = {
+  readonly fromShapeId: string | null
+  readonly toShapeId: string | null
+}
+
+export type MorphTrackJSON = {
+  readonly keyframes: readonly KeyframeJSON[]
+}
+
 export type NodeAnimationJSON = {
   readonly nodeId: string
   readonly tracks: readonly PropertyTrackJSON[]
@@ -176,6 +185,8 @@ export type NodeAnimationJSON = {
   readonly circleTracks?: readonly CircleTrackJSON[]
   readonly tableTracks?: readonly TableTrackJSON[]
   readonly visibleTrack?: VisibleTrackJSON
+  readonly morphBinding?: MorphBindingJSON | null
+  readonly morphTrack?: MorphTrackJSON
 }
 
 export type SlideAnimationJSON = {

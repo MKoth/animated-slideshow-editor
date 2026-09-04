@@ -1019,6 +1019,12 @@ export function applyUndo(
       engine.setShapeVertex(nodeId, shapeId, vertexIndex, oldX, oldY)
       return
     }
+    case 'SetMorphBinding': {
+      const nodeId = inv.nodeId as string
+      const oldBinding = inv.oldBinding as import('../shape').MorphBinding | null
+      engine.setMorphBinding(nodeId, oldBinding)
+      return
+    }
     case 'SetVertexWeights': {
       const nodeId = inv.nodeId as string
       const vertexIndex = inv.vertexIndex as number
@@ -3213,6 +3219,12 @@ export function applyRedo(
     }
     case 'ApplyClipCollection':
       engine.applyClipCollection(params.collectionId as string, params.targetNodeId as string)
+      return
+    case 'SetMorphBinding':
+      engine.setMorphBinding(
+        params.nodeId as string,
+        params.binding as import('../shape').MorphBinding | null,
+      )
       return
     case 'ImportReusableObject': {
       const obj = params.objectJson as unknown

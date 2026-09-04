@@ -763,6 +763,41 @@ function validateAnimation(
         }
       }
     }
+    const morphTrack = (entry as unknown as Record<string, unknown>).morphTrack
+    if (morphTrack !== undefined) {
+      if (!isRecord(morphTrack) || !Array.isArray(morphTrack.keyframes)) {
+        errors.push('Morph track must be an object with a keyframes array')
+        continue
+      }
+      validateKeyframeList(
+        errors,
+        morphTrack.keyframes,
+        'Morph track',
+        duration,
+        keyframeIds,
+        (value, id) => {
+          if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+            return `Keyframe "${id}" value must be a number between 0 and 1`
+          }
+          return null
+        },
+      )
+    }
+    const morphBinding = (entry as unknown as Record<string, unknown>).morphBinding
+    if (morphBinding !== undefined && morphBinding !== null) {
+      if (!isRecord(morphBinding)) {
+        errors.push(`Node "${nodeId}" morphBinding must be an object`)
+      } else {
+        const from = morphBinding.fromShapeId
+        const to = morphBinding.toShapeId
+        if (from !== null && typeof from !== 'string') {
+          errors.push(`Node "${nodeId}" morphBinding fromShapeId must be string or null`)
+        }
+        if (to !== null && typeof to !== 'string') {
+          errors.push(`Node "${nodeId}" morphBinding toShapeId must be string or null`)
+        }
+      }
+    }
   }
 }
 

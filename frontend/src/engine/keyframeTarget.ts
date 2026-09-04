@@ -65,6 +65,12 @@ export interface NodeVisibleTarget {
   readonly nodeId: string
 }
 
+/** Morph coefficient track target — one scalar per mesh node (Spec 281) */
+export interface NodeMorphTarget {
+  readonly kind: 'morph'
+  readonly nodeId: string
+}
+
 /** A clip channel target (Spec 07 R16/R20). */
 export interface ClipChannelTarget {
   readonly kind: 'clip'
@@ -83,6 +89,7 @@ export type KeyframeTarget =
   | NodeCircleTarget
   | NodeTableTarget
   | NodeVisibleTarget
+  | NodeMorphTarget
   | ClipChannelTarget
 
 export function isPropertyTarget(target: KeyframeTarget): target is NodePropertyTarget {
@@ -111,6 +118,10 @@ export function isTableTarget(target: KeyframeTarget): target is NodeTableTarget
 
 export function isVisibleTarget(target: KeyframeTarget): target is NodeVisibleTarget {
   return target.kind === 'visible'
+}
+
+export function isMorphTarget(target: KeyframeTarget): target is NodeMorphTarget {
+  return target.kind === 'morph'
 }
 
 export function requireKeyframeTarget(value: unknown): KeyframeTarget {
@@ -146,6 +157,10 @@ export function requireKeyframeTarget(value: unknown): KeyframeTarget {
     const nodeId = requireString(value.nodeId, 'Visible target node id')
     return { kind: 'visible', nodeId }
   }
+  if (isRecord(value) && value.kind === 'morph') {
+    const nodeId = requireString(value.nodeId, 'Morph target node id')
+    return { kind: 'morph', nodeId }
+  }
   if (isRecord(value) && value.kind === 'clip') {
     const clipId = requireString(value.clipId, 'Keyframe target clip id')
     const channel = requireAnimationProperty(value.channel)
@@ -179,6 +194,7 @@ export type KeyframeTrackRef =
   | { readonly kind: 'circle'; readonly property: CircleAnimationProperty }
   | { readonly kind: 'table'; readonly property: TableAnimationProperty }
   | { readonly kind: 'visible' }
+  | { readonly kind: 'morph' }
 
 export function resolveKeyframeTrack(
   node: SceneNode,
@@ -194,6 +210,9 @@ export function resolveKeyframeTrack(
   }
   if (isVisibleTarget(target)) {
     return { kind: 'visible' }
+  }
+  if (isMorphTarget(target)) {
+    return { kind: 'morph' }
   }
   if (isDataLabelTarget(target)) {
     return { kind: 'dataLabel', label: target.label }
@@ -215,7 +234,7 @@ export function resolveKeyframeTrack(
   return { kind: 'parameter', parameter, kindOf: kindOfParameter }
 }
 
-/** Validate a keyframe value for a resolved track (property, material kind, data label, or visible). */
+/** Validate a keyframe value for a resolved track (property, material kind, data label, visible or morph). */
 export function requireTrackKeyframeValue(
   track: KeyframeTrackRef,
   value: unknown,
@@ -224,6 +243,12 @@ export function requireTrackKeyframeValue(
   if (track.kind === 'visible') {
     if (typeof value !== 'boolean') {
       throw new Error(`${what} must be a boolean for visible`)
+    }
+    return value
+  }
+  if (track.kind === 'morph') {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+      throw new Error(`${what} must be a number between 0 and 1`)
     }
     return value
   }
@@ -256,13 +281,15 @@ export function requireNodeTarget(
   | NodeDataLabelTarget
   | NodeCircleTarget
   | NodeTableTarget
-  | NodeVisibleTarget {
+  | NodeVisibleTarget
+  | NodeMorphTarget {
   if (
     target.kind !== 'node' &&
     target.kind !== 'dataLabel' &&
     target.kind !== 'circle' &&
     target.kind !== 'table' &&
-    target.kind !== 'visible'
+    target.kind !== 'visible' &&
+    target.kind !== 'morph'
   ) {
     throw new Error('This operation only supports node targets')
   }
@@ -273,6 +300,7 @@ export function requireNodeTarget(
     | NodeCircleTarget
     | NodeTableTarget
     | NodeVisibleTarget
+    | NodeMorphTarget
 }
 
 /** Validate a scale factor: a non-negative finite number. */

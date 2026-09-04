@@ -104,6 +104,16 @@ export class AnimationManager {
     return slide.animation.node(nodeId)?.hasVisibleTrack() ?? false
   }
 
+  getMorphKeyframes(nodeId: string): readonly Keyframe[] {
+    const slide = this.#slideLookup(nodeId)
+    return slide.animation.node(nodeId)?.morphKeyframes() ?? []
+  }
+
+  hasMorphTrack(nodeId: string): boolean {
+    const slide = this.#slideLookup(nodeId)
+    return slide.animation.node(nodeId)?.hasMorphTrack() ?? false
+  }
+
   addKeyframe(target: KeyframeTarget, time: number, value: unknown): Keyframe {
     const resolved = this.#resolve(target)
     const boundedTime = requireKeyframeTime(time, resolved.slide.duration)
@@ -362,6 +372,9 @@ export class AnimationManager {
     if (track.kind === 'visible') {
       return animation.visibleKeyframes()
     }
+    if (track.kind === 'morph') {
+      return animation.morphKeyframes()
+    }
     if (track.kind === 'dataLabel') {
       return animation.dataLabelKeyframes(track.label)
     }
@@ -380,6 +393,8 @@ export class AnimationManager {
       animation.add(track.property, keyframe)
     } else if (track.kind === 'visible') {
       animation.addVisible(keyframe)
+    } else if (track.kind === 'morph') {
+      animation.addMorph(keyframe)
     } else if (track.kind === 'dataLabel') {
       animation.addDataLabel(track.label, keyframe)
     } else if (track.kind === 'circle') {
@@ -397,6 +412,8 @@ export class AnimationManager {
       animation.remove(track.property, keyframeId)
     } else if (track.kind === 'visible') {
       animation.removeVisible(keyframeId)
+    } else if (track.kind === 'morph') {
+      animation.removeMorph(keyframeId)
     } else if (track.kind === 'dataLabel') {
       animation.removeDataLabel(track.label, keyframeId)
     } else if (track.kind === 'circle') {
@@ -415,6 +432,8 @@ export class AnimationManager {
       keyframe = animation.get(track.property, keyframeId)
     } else if (track.kind === 'visible') {
       keyframe = animation.getVisible(keyframeId)
+    } else if (track.kind === 'morph') {
+      keyframe = animation.getMorph(keyframeId)
     } else if (track.kind === 'dataLabel') {
       keyframe = animation.getDataLabel(track.label, keyframeId)
     } else if (track.kind === 'circle') {
@@ -430,13 +449,15 @@ export class AnimationManager {
           ? `property ${track.property}`
           : track.kind === 'visible'
             ? `visible`
-            : track.kind === 'dataLabel'
-              ? `data label ${track.label}`
-              : track.kind === 'circle'
-                ? `circle ${track.property}`
-                : track.kind === 'table'
-                  ? `table ${track.property}`
-                  : `parameter ${track.parameter}`
+            : track.kind === 'morph'
+              ? `morph`
+              : track.kind === 'dataLabel'
+                ? `data label ${track.label}`
+                : track.kind === 'circle'
+                  ? `circle ${track.property}`
+                  : track.kind === 'table'
+                    ? `table ${track.property}`
+                    : `parameter ${track.parameter}`
       throw new Error(`Keyframe not found: ${keyframeId} on ${on}`)
     }
     return keyframe
@@ -514,6 +535,9 @@ export class AnimationManager {
     }
     if (track.kind === 'visible') {
       return `visible`
+    }
+    if (track.kind === 'morph') {
+      return `morph`
     }
     if (track.kind === 'dataLabel') {
       return `data label ${track.label}`

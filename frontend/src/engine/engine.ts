@@ -84,6 +84,11 @@ export interface EnginePublic {
   getVisibleKeyframes(nodeId: string): readonly Keyframe[]
   hasVisibleTrack(nodeId: string): boolean
   evaluateVisible(nodeId: string, time: number): boolean
+  getMorphKeyframes(nodeId: string): readonly Keyframe[]
+  hasMorphTrack(nodeId: string): boolean
+  getMorphBinding(nodeId: string): import('./shape').MorphBinding | null
+  setMorphBinding(nodeId: string, binding: import('./shape').MorphBinding | null): import('./shape').MorphBinding | null
+  evaluateMorph(nodeId: string, time: number): number
   getAnimatableParameters(nodeId: string): AnimatableParameter[]
   evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState
   evaluateMaterialOverrides(

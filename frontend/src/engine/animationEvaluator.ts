@@ -184,6 +184,18 @@ export class AnimationEvaluator {
     return last.value as boolean
   }
 
+  evaluateMorph(nodeId: string, time: number): number {
+    const slide = this.#slideLookup(nodeId)
+    const boundedTime = requireFiniteNumber(time, 'Evaluation time')
+    const clampedTime = Math.min(Math.max(boundedTime, 0), slide.duration)
+    const animation = slide.animation.node(nodeId)
+    const keyframes = animation?.morphKeyframes()
+    if (!keyframes || keyframes.length === 0) {
+      return 0
+    }
+    return this.#evaluate(keyframes, clampedTime, 0)
+  }
+
   /**
    * The node's static material overrides overlaid with its material keyframe
    * tracks (later wins for the same key, Spec 07 R29). Continuous kinds

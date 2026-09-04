@@ -75,8 +75,12 @@ import type { ClipInstance } from './clipInstance'
 import { createClipInstance } from './clipInstance'
 import { getAnimatableParameters, type AnimatableParameter } from './animatableParameters'
 import type { MeshData } from './mesh'
-import { evaluateMeshDeformation } from './meshDeformationEvaluator'
+import {
+  evaluateMeshDeformation,
+  evaluateMorphedMeshDeformation,
+} from './meshDeformationEvaluator'
 import { generateCircleMeshData } from './circleComponent'
+import type { MorphBinding } from './shape'
 import type { DeformedMeshResult } from './meshDeformationEvaluator'
 import type { WorldTransform } from './worldTransform'
 import { relativeTransform, worldTransformOf } from './worldTransform'
@@ -1778,6 +1782,9 @@ export class Engine {
     if (resolved.kind === 'visible') {
       return animation.visibleKeyframes()
     }
+    if (resolved.kind === 'morph') {
+      return animation.morphKeyframes()
+    }
     if (resolved.kind === 'dataLabel') {
       return animation.dataLabelKeyframes(resolved.label)
     }
@@ -1828,11 +1835,30 @@ export class Engine {
   ): DeformedMeshResult | null {
     const node = this.getNode(nodeId)
     if (node.components.mesh) {
-      return evaluateMeshDeformation(
-        node.components.mesh.mesh,
-        boneWorldTransforms,
-        meshWorldTransform,
-      )
+      const mesh = node.components.mesh.mesh
+      const shapes = node.components.mesh.shapes
+      let morphBinding: MorphBinding | null = null
+      try {
+        morphBinding = this.getMorphBinding(nodeId)
+      } catch {
+        morphBinding = null
+      }
+      let coefficient = 0
+      try {
+        coefficient = this.evaluateMorph(nodeId, _time)
+      } catch {
+        coefficient = 0
+      }
+      if (morphBinding && morphBinding.fromShapeId !== null && morphBinding.toShapeId !== null) {
+        return evaluateMorphedMeshDeformation(
+          mesh,
+          { binding: morphBinding, coefficient },
+          shapes,
+          boneWorldTransforms,
+          meshWorldTransform,
+        )
+      }
+      return evaluateMeshDeformation(mesh, boneWorldTransforms, meshWorldTransform)
     }
     if (node.components.circle) {
       const circle = node.components.circle
@@ -2100,6 +2126,54 @@ export class Engine {
     const newShape: Shape = { ...shape, vertices: newVertices }
     const newShapes = existing.map((s, i) => (i === idx ? newShape : s))
     this.#setShapes(nodeId, newShapes)
+  }
+
+  // --- Morph binding & coefficient (Spec 281) ---
+  getMorphBinding(nodeId: string): MorphBinding | null {
+    const slide = this.getSlideOfNode(nodeId)
+    return slide.animation.node(nodeId)?.morphBinding ?? null
+  }
+
+  setMorphBinding(nodeId: string, binding: MorphBinding | null): MorphBinding | null {
+    const slide = this.getSlideOfNode(nodeId)
+    const animation = slide.animation.ensure(nodeId)
+    const previous = animation.morphBinding
+    if (binding === null) {
+      animation.setMorphBinding(null)
+    } else {
+      if (
+        binding.fromShapeId !== null &&
+        typeof binding.fromShapeId !== 'string' &&
+        binding.fromShapeId !== undefined
+      ) {
+        throw new Error('MorphBinding fromShapeId must be string or null')
+      }
+      if (
+        binding.toShapeId !== null &&
+        typeof binding.toShapeId !== 'string' &&
+        binding.toShapeId !== undefined
+      ) {
+        throw new Error('MorphBinding toShapeId must be string or null')
+      }
+      animation.setMorphBinding({
+        fromShapeId: binding.fromShapeId ?? null,
+        toShapeId: binding.toShapeId ?? null,
+      })
+    }
+    this.#bus.emit({ type: 'MorphBindingChanged' as unknown as import('./events').EngineEvent['type'], nodeId } as unknown as import('./events').EngineEvent)
+    return previous
+  }
+
+  getMorphKeyframes(nodeId: string): readonly import('./keyframe').Keyframe[] {
+    return this.#animations.getMorphKeyframes(nodeId)
+  }
+
+  hasMorphTrack(nodeId: string): boolean {
+    return this.#animations.hasMorphTrack(nodeId)
+  }
+
+  evaluateMorph(nodeId: string, time: number): number {
+    return this.#evaluator.evaluateMorph(nodeId, time)
   }
 
   setBoneLength(nodeId: string, length: number): void {
@@ -4236,6 +4310,11 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getVisibleKeyframes: (nodeId) => engine.getVisibleKeyframes(nodeId),
     hasVisibleTrack: (nodeId) => engine.hasVisibleTrack(nodeId),
     evaluateVisible: (nodeId, time) => engine.evaluateVisible(nodeId, time),
+    getMorphKeyframes: (nodeId) => engine.getMorphKeyframes(nodeId),
+    hasMorphTrack: (nodeId) => engine.hasMorphTrack(nodeId),
+    getMorphBinding: (nodeId) => engine.getMorphBinding(nodeId),
+    setMorphBinding: (nodeId, binding) => engine.setMorphBinding(nodeId, binding),
+    evaluateMorph: (nodeId, time) => engine.evaluateMorph(nodeId, time),
     getAnimatableParameters: (nodeId) => engine.getAnimatableParameters(nodeId),
     evaluateNode: (nodeId, time, target) => engine.evaluateNode(nodeId, time, target),
     evaluateMaterialOverrides: (nodeId, time, target) =>

@@ -87,12 +87,13 @@ export function resolveMorphedVertices(
   shapes: readonly Shape[] | undefined,
   morph: MorphState | null,
 ): readonly MeshVertex[] {
-  if (
-    !morph ||
-    !morph.binding ||
-    morph.binding.fromShapeId === null ||
-    morph.binding.toShapeId === null
-  ) {
+  if (!morph || !morph.binding) {
+    return baseVertices
+  }
+  if (morph.binding.fromShapeId === null || morph.binding.toShapeId === null) {
+    console.warn(
+      `[morph] Incomplete binding from=${morph.binding.fromShapeId} to=${morph.binding.toShapeId} — falling back to base`,
+    )
     return baseVertices
   }
   if (!shapes || shapes.length === 0) {
@@ -126,4 +127,11 @@ export function uniqueShapeName(base: string, existing: readonly Shape[]): strin
   let i = 2
   while (names.has(`${base} ${i}`)) i += 1
   return `${base} ${i}`
+}
+
+export function requireMorphCoefficientValue(value: unknown, what = 'Morph coefficient'): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+    throw new Error(`${what} must be a number between 0 and 1`)
+  }
+  return value
 }

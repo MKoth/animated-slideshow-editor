@@ -324,10 +324,19 @@ export class SceneRenderer {
     for (const node of walkPreOrder(scene.root)) {
       const rawMesh = node.components.mesh?.mesh
       if (rawMesh) {
-        const mesh = effectiveMeshForPreview(rawMesh, node.id, this.#engine)
+        // If shape preview is active (Inspector highlight), reuse preview mesh directly
+        const preview = useShapePreviewStore.getState()
+        const hasShapePreview = preview.previewNodeId === node.id && preview.previewShapeId
         const meshTransform = this.#engineWorldTransform(node.id, time)
         if (!meshTransform) continue
-        const vertices = evaluateMeshDeformation(mesh, bones, meshTransform).deformedVertices
+        let vertices: readonly import('../../engine/mesh').MeshVertex[]
+        if (hasShapePreview) {
+          const mesh = effectiveMeshForPreview(rawMesh, node.id, this.#engine)
+          vertices = evaluateMeshDeformation(mesh, bones, meshTransform).deformedVertices
+        } else {
+          const deformed = this.#engine.evaluateMeshDeformation(node.id, time, bones, meshTransform)
+          vertices = deformed ? deformed.deformedVertices : []
+        }
         const container = this.#containers.get(node.id)
         if (container) applyMeshVertices(container, vertices)
         if (vertices.length === 0) continue
