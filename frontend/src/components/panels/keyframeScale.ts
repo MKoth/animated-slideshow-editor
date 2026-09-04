@@ -15,8 +15,18 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
 }
 
+interface MorphKeyframeRefForScale {
+  readonly nodeId: string
+  readonly keyframeId: string
+  readonly time: number
+  readonly morph: true
+}
+
 interface ScaleSession {
-  readonly keyframeRefs: ReadonlyMap<string, KeyframeRef | MaterialKeyframeRef>
+  readonly keyframeRefs: ReadonlyMap<
+    string,
+    KeyframeRef | MaterialKeyframeRef | MorphKeyframeRefForScale
+  >
   readonly isAlt: boolean
   readonly playheadTime: number
   readonly edge: 'left' | 'right'
@@ -25,7 +35,10 @@ interface ScaleSession {
 }
 
 export interface KeyframeScaleOptions {
-  readonly keyframeRefs: ReadonlyMap<string, KeyframeRef | MaterialKeyframeRef>
+  readonly keyframeRefs: ReadonlyMap<
+    string,
+    KeyframeRef | MaterialKeyframeRef | MorphKeyframeRefForScale
+  >
   readonly duration: number
   readonly pps: number
   readonly timeFromClientX: (clientX: number) => number
@@ -47,7 +60,7 @@ export interface SelectionBounds {
 
 export function computeSelectionBounds(
   selectedKeyframeIds: readonly string[],
-  keyframeRefs: ReadonlyMap<string, KeyframeRef | MaterialKeyframeRef>,
+  keyframeRefs: ReadonlyMap<string, KeyframeRef | MaterialKeyframeRef | MorphKeyframeRefForScale>,
 ): SelectionBounds | null {
   if (selectedKeyframeIds.length === 0) {
     return null
@@ -116,12 +129,15 @@ export function useKeyframeScale(options: KeyframeScaleOptions): KeyframeScale {
 
     const propertyRefs: (KeyframeRef & { keyframeId: string })[] = []
     const materialRefs: (MaterialKeyframeRef & { keyframeId: string })[] = []
+    const morphRefs: (MorphKeyframeRefForScale & { keyframeId: string })[] = []
 
     for (const [id, ref] of session.keyframeRefs) {
       if (!wanted.has(id)) {
         continue
       }
-      if ('property' in ref) {
+      if ('morph' in ref && (ref as MorphKeyframeRefForScale).morph) {
+        morphRefs.push(ref as MorphKeyframeRefForScale & { keyframeId: string })
+      } else if ('property' in ref) {
         propertyRefs.push(ref as KeyframeRef & { keyframeId: string })
       } else if ('parameter' in ref) {
         materialRefs.push(ref as MaterialKeyframeRef & { keyframeId: string })
@@ -167,6 +183,32 @@ export function useKeyframeScale(options: KeyframeScaleOptions): KeyframeScale {
           new MoveKeyframesCommand({
             target: { kind: 'node', nodeId: group.nodeId, parameter: group.parameter },
             moves,
+          }),
+        )
+      }
+    }
+
+    // morph moves grouped by node
+    {
+      const groups = new Map<
+        string,
+        { nodeId: string; items: { keyframeId: string; newTime: number }[] }
+      >()
+      for (const ref of morphRefs) {
+        const previewTime = preview.get(ref.keyframeId)
+        if (previewTime === undefined || previewTime === ref.time) continue
+        let entry = groups.get(ref.nodeId)
+        if (!entry) {
+          entry = { nodeId: ref.nodeId, items: [] }
+          groups.set(ref.nodeId, entry)
+        }
+        entry.items.push({ keyframeId: ref.keyframeId, newTime: previewTime })
+      }
+      for (const group of groups.values()) {
+        commands.push(
+          new MoveKeyframesCommand({
+            target: { kind: 'morph', nodeId: group.nodeId },
+            moves: group.items,
           }),
         )
       }

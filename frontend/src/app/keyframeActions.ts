@@ -14,7 +14,7 @@ import {
   materialParameterEditCommands,
 } from '../engine/keyframeEdit'
 import type { KeyframeEdit, MaterialParameterEdit, TimedKeyframeEdit } from '../engine/keyframeEdit'
-import { isParameterTarget, isPropertyTarget } from '../engine/keyframeTarget'
+import { isMorphTarget, isParameterTarget, isPropertyTarget } from '../engine/keyframeTarget'
 
 export type { KeyframeEdit, MaterialParameterEdit } from '../engine/keyframeEdit'
 export {
@@ -115,16 +115,51 @@ export function autoKeyEdit(
 ): CommandResult<unknown> | null {
   const timed: TimedKeyframeEdit[] = []
   for (const edit of edits) {
-    if (!isPropertyTarget(edit.target) && !isParameterTarget(edit.target)) {
+    if (
+      !isPropertyTarget(edit.target) &&
+      !isParameterTarget(edit.target) &&
+      !isMorphTarget(edit.target)
+    ) {
       continue
     }
-    const time = playheadTimeOf(engine, edit.target.nodeId)
+    const nodeId = (edit.target as { nodeId: string }).nodeId
+    const time = playheadTimeOf(engine, nodeId)
     if (time === null) {
       continue
     }
     timed.push({ ...edit, time })
   }
   return dispatchKeyframeCommands(dispatch, autoKeyCommands(engine, timed))
+}
+
+export function morphAutoKey(
+  engine: EnginePublic,
+  dispatch: DispatchCommand,
+  nodeId: string,
+  value: number,
+): CommandResult<unknown> | null {
+  const time = playheadTimeOf(engine, nodeId)
+  if (time === null) return null
+  // clamp stored track 0..1 (preview 1.5 not stored)
+  const clamped = Math.max(0, Math.min(1, value))
+  return autoKeyEdit(engine, dispatch, [{ target: { kind: 'morph', nodeId }, value: clamped }])
+}
+
+export function morphStateOf(
+  engine: EnginePublic,
+  nodeId: string,
+  time: number,
+): PropertyState | null {
+  try {
+    engine.getNode(nodeId)
+  } catch {
+    return null
+  }
+  if (!engine.hasMorphTrack(nodeId)) return 'static'
+  const kfs = engine.getMorphKeyframes(nodeId)
+  if (kfs.length === 0) return 'static'
+  if (kfs.some((kf) => kf.time === time)) return 'onKeyframe'
+  return 'animated'
 }
 
 export function addKeyframeAtPlayhead(

@@ -4307,6 +4307,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     hasCircleTrack: (nodeId, property) => engine.hasCircleTrack(nodeId, property),
     getTableKeyframes: (nodeId, property) => engine.getTableKeyframes(nodeId, property),
     hasTableTrack: (nodeId, property) => engine.hasTableTrack(nodeId, property),
+    getShapes: (nodeId) => engine.getShapes(nodeId),
     getVisibleKeyframes: (nodeId) => engine.getVisibleKeyframes(nodeId),
     hasVisibleTrack: (nodeId) => engine.hasVisibleTrack(nodeId),
     evaluateVisible: (nodeId, time) => engine.evaluateVisible(nodeId, time),

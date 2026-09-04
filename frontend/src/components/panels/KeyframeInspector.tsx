@@ -58,6 +58,7 @@ export interface KeyframeInspectorProps {
   readonly nodeId?: string
   readonly property?: string
   readonly parameter?: string
+  readonly morphNodeId?: string
   readonly clipTarget?: { clipId: string; channel: AnimationProperty }
   readonly keyframe: Keyframe
   readonly playing: boolean
@@ -69,21 +70,26 @@ export function KeyframeInspector({
   nodeId,
   property,
   parameter,
+  morphNodeId,
   clipTarget,
   keyframe,
   playing,
   notify,
 }: KeyframeInspectorProps) {
   const isClip = clipTarget !== undefined
+  const isMorph = morphNodeId !== undefined
   const target = useMemo(() => {
     if (isClip && clipTarget) {
       return { kind: 'clip' as const, clipId: clipTarget.clipId, channel: clipTarget.channel }
+    }
+    if (isMorph && morphNodeId) {
+      return { kind: 'morph' as const, nodeId: morphNodeId }
     }
     if (parameter) {
       return { kind: 'node' as const, nodeId: nodeId!, parameter }
     }
     return { kind: 'node' as const, nodeId: nodeId!, property: property as 'positionX' }
-  }, [nodeId, property, parameter, clipTarget, isClip])
+  }, [nodeId, property, parameter, morphNodeId, clipTarget, isClip, isMorph])
 
   const handleInterpolationChange = useCallback(
     (newInterpolation: InterpolationType) => {
@@ -103,7 +109,8 @@ export function KeyframeInspector({
           new SetKeyframeInterpolationCommand({
             target: target as
               | import('../../engine/keyframeTarget').NodePropertyTarget
-              | import('../../engine/keyframeTarget').NodeParameterTarget,
+              | import('../../engine/keyframeTarget').NodeParameterTarget
+              | import('../../engine/keyframeTarget').NodeMorphTarget,
             keyframeId: keyframe.id,
             interpolation: newInterpolation,
           }),
@@ -145,14 +152,16 @@ export function KeyframeInspector({
           new SetKeyframeInterpolationCommand({
             target: target as
               | import('../../engine/keyframeTarget').NodePropertyTarget
-              | import('../../engine/keyframeTarget').NodeParameterTarget,
+              | import('../../engine/keyframeTarget').NodeParameterTarget
+              | import('../../engine/keyframeTarget').NodeMorphTarget,
             keyframeId: keyframe.id,
             interpolation: 'bezier',
           }),
           new SetKeyframeTangentsCommand({
             target: target as
               | import('../../engine/keyframeTarget').NodePropertyTarget
-              | import('../../engine/keyframeTarget').NodeParameterTarget,
+              | import('../../engine/keyframeTarget').NodeParameterTarget
+              | import('../../engine/keyframeTarget').NodeMorphTarget,
             keyframeId: keyframe.id,
             tangentIn: { ...preset.tangentIn },
             tangentOut: { ...preset.tangentOut },
@@ -194,7 +203,8 @@ export function KeyframeInspector({
           new SetKeyframeTangentsCommand({
             target: target as
               | import('../../engine/keyframeTarget').NodePropertyTarget
-              | import('../../engine/keyframeTarget').NodeParameterTarget,
+              | import('../../engine/keyframeTarget').NodeParameterTarget
+              | import('../../engine/keyframeTarget').NodeMorphTarget,
             keyframeId: keyframe.id,
             tangentIn,
             tangentOut,
@@ -241,7 +251,8 @@ export function KeyframeInspector({
           new SetKeyframeValueCommand({
             target: target as
               | import('../../engine/keyframeTarget').NodePropertyTarget
-              | import('../../engine/keyframeTarget').NodeParameterTarget,
+              | import('../../engine/keyframeTarget').NodeParameterTarget
+              | import('../../engine/keyframeTarget').NodeMorphTarget,
             keyframeId: keyframe.id,
             newValue: num,
           }),

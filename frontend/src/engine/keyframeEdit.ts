@@ -7,7 +7,7 @@ import { SetKeyframeValueCommand } from './commands/setKeyframeValueCommand'
 import { OverrideMaterialParameterCommand } from './commands/overrideMaterialParameterCommand'
 import { TransactionCommand } from './commands/transactionCommand'
 import type { KeyframeTarget } from './keyframeTarget'
-import { isParameterTarget, isPropertyTarget } from './keyframeTarget'
+import { isMorphTarget, isParameterTarget, isPropertyTarget } from './keyframeTarget'
 import { uniformValuesEqual } from './materialResolution'
 import type { KeyframeValue } from './keyframe'
 
@@ -88,6 +88,12 @@ export function autoKeyCommands(
     ) {
       continue
     }
+    if (
+      isMorphTarget(edit.target) &&
+      engine.evaluateMorph(edit.target.nodeId, edit.time) === edit.value
+    ) {
+      continue
+    }
     commands.push(
       new AddKeyframeCommand({
         target: edit.target,
@@ -147,6 +153,21 @@ function targetKeyframes(engine: EnginePublic, target: KeyframeTarget): readonly
   }
   if (isPropertyTarget(target)) {
     return engine.getKeyframes(target.nodeId, target.property)
+  }
+  if (isMorphTarget(target)) {
+    return engine.getMorphKeyframes(target.nodeId)
+  }
+  if (target.kind === 'visible') {
+    return engine.getVisibleKeyframes(target.nodeId)
+  }
+  if (target.kind === 'circle') {
+    return engine.getCircleKeyframes(target.nodeId, target.property)
+  }
+  if (target.kind === 'dataLabel') {
+    return engine.getDataLabelKeyframes(target.nodeId, target.label)
+  }
+  if (target.kind === 'table') {
+    return engine.getTableKeyframes(target.nodeId, target.property)
   }
   return []
 }

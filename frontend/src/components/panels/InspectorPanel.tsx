@@ -24,6 +24,7 @@ import { playheadTimeOf, propertyStateOf } from '../../app/keyframeActions'
 import {
   selectedKeyframeRefs,
   selectedMaterialKeyframeRefs,
+  selectedMorphKeyframeRefs,
 } from '../../app/keyframeSelectionActions'
 import { selectedClipKeyframeRefs } from '../../app/clipKeyframeActions'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
@@ -261,7 +262,8 @@ export function InspectorPanel({ width }: { width: number }) {
     }
     const propertyRefs = selectedKeyframeRefs(engine)
     const materialRefs = selectedMaterialKeyframeRefs(engine)
-    const totalSelected = propertyRefs.length + materialRefs.length
+    const morphRefs = selectedMorphKeyframeRefs(engine)
+    const totalSelected = propertyRefs.length + materialRefs.length + morphRefs.length
     if (totalSelected === 1) {
       return (
         <div className="inspector-panel" style={{ width }}>
@@ -288,6 +290,21 @@ export function InspectorPanel({ width }: { width: number }) {
                     dispatch={dispatch}
                     nodeId={ref.nodeId}
                     property={ref.property}
+                    keyframe={keyframe}
+                    playing={playing}
+                    notify={notify}
+                  />
+                )
+              }
+              if (morphRefs.length === 1) {
+                const ref = morphRefs[0]
+                const keyframes = engine.getMorphKeyframes(ref.nodeId)
+                const keyframe = keyframes.find((kf) => kf.id === ref.keyframeId)
+                if (!keyframe) return null
+                return (
+                  <KeyframeInspector
+                    dispatch={dispatch}
+                    morphNodeId={ref.nodeId}
                     keyframe={keyframe}
                     playing={playing}
                     notify={notify}
@@ -492,9 +509,7 @@ export function InspectorPanel({ width }: { width: number }) {
             value={commonName}
             onCommit={commitName}
             disabled={playing}
-            error={
-              nameError && nameError.targets === targetIds.join(',') ? nameError.msg : null
-            }
+            error={nameError && nameError.targets === targetIds.join(',') ? nameError.msg : null}
           />
           <NameField
             label="Semantic Name"
@@ -697,7 +712,8 @@ export function InspectorPanel({ width }: { width: number }) {
         {(() => {
           const propertyRefs = selectedKeyframeRefs(engine)
           const materialRefs = selectedMaterialKeyframeRefs(engine)
-          const totalSelected = propertyRefs.length + materialRefs.length
+          const morphRefs = selectedMorphKeyframeRefs(engine)
+          const totalSelected = propertyRefs.length + materialRefs.length + morphRefs.length
           if (totalSelected !== 1) {
             return null
           }
@@ -713,6 +729,21 @@ export function InspectorPanel({ width }: { width: number }) {
                 dispatch={dispatch}
                 nodeId={ref.nodeId}
                 property={ref.property}
+                keyframe={keyframe}
+                playing={playing}
+                notify={notify}
+              />
+            )
+          }
+          if (morphRefs.length === 1) {
+            const ref = morphRefs[0]
+            const keyframes = engine.getMorphKeyframes(ref.nodeId)
+            const keyframe = keyframes.find((kf) => kf.id === ref.keyframeId)
+            if (!keyframe) return null
+            return (
+              <KeyframeInspector
+                dispatch={dispatch}
+                morphNodeId={ref.nodeId}
                 keyframe={keyframe}
                 playing={playing}
                 notify={notify}

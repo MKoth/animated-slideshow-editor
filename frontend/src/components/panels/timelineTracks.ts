@@ -51,6 +51,12 @@ export interface VisibleSubtrackEntry {
   readonly depth: number
 }
 
+export interface MorphSubtrackEntry {
+  readonly kind: 'morphSubtrack'
+  readonly node: SceneNode
+  readonly depth: number
+}
+
 /** A bone node row — distinguished from regular node rows for UI styling. */
 export interface BoneTrackEntry {
   readonly kind: 'bone'
@@ -67,6 +73,7 @@ export type TimelineRow =
   | DataLabelSubtrackEntry
   | CircleSubtrackEntry
   | VisibleSubtrackEntry
+  | MorphSubtrackEntry
   | BoneTrackEntry
 
 export const PROPERTY_LABELS: Record<AnimationProperty, string> = {
@@ -86,6 +93,8 @@ export const CIRCLE_LABELS: Record<CircleAnimationProperty, string> = {
 }
 
 export const VISIBLE_LABEL = 'Visible'
+
+export const MORPH_LABEL = 'Morph'
 
 export function materialParameterLabel(parameter: MaterialParameterDefault): string {
   return parameter.key
@@ -155,6 +164,9 @@ export function timelineRows(
         rows.push({ kind: 'subtrack', node: entry.node, property, depth: entry.depth + 1 })
       }
       rows.push({ kind: 'visibleSubtrack', node: entry.node, depth: entry.depth + 1 })
+      if (entry.node.components.mesh) {
+        rows.push({ kind: 'morphSubtrack', node: entry.node, depth: entry.depth + 1 })
+      }
       for (const parameter of materialParametersOf(entry.node, materialDefinitions)) {
         rows.push({ kind: 'materialSubtrack', node: entry.node, parameter, depth: entry.depth + 1 })
       }

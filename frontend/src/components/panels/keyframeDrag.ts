@@ -17,6 +17,7 @@ interface DragMove {
   readonly nodeId: string
   readonly property?: AnimationProperty
   readonly parameter?: string
+  readonly morph?: boolean
   readonly originalTime: number
 }
 
@@ -25,8 +26,15 @@ interface DragSession {
   readonly moves: readonly DragMove[]
 }
 
+export interface MorphKeyframeRef {
+  readonly nodeId: string
+  readonly keyframeId: string
+  readonly time: number
+  readonly morph: true
+}
+
 export interface KeyframeDragOptions {
-  readonly keyframeRefs: ReadonlyMap<string, KeyframeRef | MaterialKeyframeRef>
+  readonly keyframeRefs: ReadonlyMap<string, KeyframeRef | MaterialKeyframeRef | MorphKeyframeRef>
   readonly duration: number
   readonly pps: number
   readonly timeFromClientX: (clientX: number) => number
@@ -59,7 +67,14 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
     for (const keyframeId of selectedKeyframeIdsOf(useTimelineSelectionStore.getState())) {
       const ref = keyframeRefs.get(keyframeId)
       if (ref) {
-        if ('property' in ref) {
+        if ('morph' in ref && (ref as MorphKeyframeRef).morph) {
+          moves.push({
+            keyframeId,
+            nodeId: ref.nodeId,
+            morph: true,
+            originalTime: ref.time,
+          })
+        } else if ('property' in ref) {
           moves.push({
             keyframeId,
             nodeId: ref.nodeId,
@@ -110,6 +125,9 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
     const materialMoves = moved.filter(
       (move): move is MovedDragMove & { parameter: string } => move.parameter !== undefined,
     )
+    const morphMoves = moved.filter(
+      (move): move is MovedDragMove & { morph: true } => (move as DragMove).morph === true,
+    )
     const commands: MoveKeyframesCommand[] = []
     for (const group of groupRefsByTarget(propertyMoves, (move) => ({
       keyframeId: move.keyframeId,
@@ -132,6 +150,29 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
           moves: group.items,
         }),
       )
+    }
+    // morph moves grouped by node
+    {
+      const groups = new Map<
+        string,
+        { nodeId: string; items: { keyframeId: string; newTime: number }[] }
+      >()
+      for (const move of morphMoves) {
+        let entry = groups.get(move.nodeId)
+        if (!entry) {
+          entry = { nodeId: move.nodeId, items: [] }
+          groups.set(move.nodeId, entry)
+        }
+        entry.items.push({ keyframeId: move.keyframeId, newTime: move.newTime })
+      }
+      for (const group of groups.values()) {
+        commands.push(
+          new MoveKeyframesCommand({
+            target: { kind: 'morph', nodeId: group.nodeId },
+            moves: group.items,
+          }),
+        )
+      }
     }
     const result = dispatchKeyframeCommands(dispatch, commands)
     if (result && !result.ok) {

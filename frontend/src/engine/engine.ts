@@ -84,6 +84,7 @@ export interface EnginePublic {
   getVisibleKeyframes(nodeId: string): readonly Keyframe[]
   hasVisibleTrack(nodeId: string): boolean
   evaluateVisible(nodeId: string, time: number): boolean
+  getShapes(nodeId: string): readonly import('./shape').Shape[]
   getMorphKeyframes(nodeId: string): readonly Keyframe[]
   hasMorphTrack(nodeId: string): boolean
   getMorphBinding(nodeId: string): import('./shape').MorphBinding | null
