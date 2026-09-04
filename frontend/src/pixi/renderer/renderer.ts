@@ -27,6 +27,7 @@ import { MeshOverlay } from './meshOverlay'
 import { MeshEditInteraction } from './meshEditInteraction'
 import { WeightPaintOverlay } from './weightPaintOverlay'
 import { WeightPaintInteraction } from './weightPaintInteraction'
+import { SculptInteraction } from './sculptInteraction'
 import { RiggingInteraction } from './riggingInteraction'
 import { BoneCreationPreview } from './boneCreationPreview'
 import { BoneEditInteraction } from './boneEditInteraction'
@@ -90,6 +91,7 @@ export class Renderer {
   #meshEditInteraction: MeshEditInteraction | null = null
   #weightPaintOverlay: WeightPaintOverlay | null = null
   #weightPaintInteraction: WeightPaintInteraction | null = null
+  #sculptInteraction: SculptInteraction | null = null
   #riggingInteraction: RiggingInteraction | null = null
   #boneCreationPreview: BoneCreationPreview | null = null
   #boneEditOverlay: BoneEditOverlay | null = null
@@ -373,6 +375,16 @@ export class Renderer {
       })
       this.#weightPaintInteraction.attach()
 
+      this.#sculptInteraction = new SculptInteraction({
+        canvas: app.canvas,
+        getScene: () => this.#sceneRenderer?.boundScene ?? null,
+        getCameraTransform: () => this.#cameraTransform(),
+        dispatch: this.#dispatch,
+        meshOverlay: this.#meshOverlay,
+        getWorldTransform: transformOf,
+      })
+      this.#sculptInteraction.attach()
+
       this.#riggingInteraction = new RiggingInteraction({
         canvas: app.canvas,
         engine: this.#engine,
@@ -538,6 +550,8 @@ export class Renderer {
     this.#weightPaintOverlay = null
     this.#weightPaintInteraction?.detach()
     this.#weightPaintInteraction = null
+    this.#sculptInteraction?.detach()
+    this.#sculptInteraction = null
     this.#riggingInteraction?.detach()
     this.#riggingInteraction = null
     this.#boneCreationPreview?.detach()

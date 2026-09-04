@@ -1,15 +1,13 @@
-// PROTOTYPE — throwaway sculptInteraction for research/morph-brush
-// Mirrors weightPaintInteraction.ts falloff + Transaction pattern, but edits rest vertices of the active Shape
-// via MoveVertexCommand preview (meshOverlay.setPreviewVertices) then commit as Transaction(MoveVertex...).
-// Preview uses deformedMeshWorldVertices so brush follows bone-deformed pose; mutation is mesh-local rest.
 import type { Scene } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
-import { MoveVertexCommand, TransactionCommand } from '../../engine/commands'
+import { MoveShapeVertexCommand, TransactionCommand } from '../../engine/commands'
 import { useMeshEditStore } from '../../stores/meshEditStore'
 import { cursorToWorld } from './screenToWorld'
 import { deformedMeshWorldVertices } from './deformedMeshWorld'
 import type { ViewportTransform, WorldTransform } from './worldGeometry'
 import { worldTransformOf } from '../../engine/worldTransform'
+import type { WorldTransformSource } from './hitTest'
+import { computeSculptOffsets, isBrushOverMesh } from '../../engine/sculptBrush'
 import type { MeshOverlay } from './meshOverlay'
 
 export interface SculptContext {
@@ -18,27 +16,7 @@ export interface SculptContext {
   readonly getCameraTransform: () => ViewportTransform | null
   readonly dispatch: DispatchCommand
   readonly meshOverlay: MeshOverlay
-}
-
-function hitTestFace(
-  px: number,
-  py: number,
-  worldVerts: { x: number; y: number }[],
-  faces: readonly { v0: number; v1: number; v2: number }[],
-): boolean {
-  for (const f of faces) {
-    const a = worldVerts[f.v0],
-      b = worldVerts[f.v1],
-      c = worldVerts[f.v2]
-    if (!a || !b || !c) continue
-    const d1 = (px - b.x) * (a.y - b.y) - (a.x - b.x) * (py - b.y)
-    const d2 = (px - c.x) * (b.y - c.y) - (b.x - c.x) * (py - c.y)
-    const d3 = (px - a.x) * (c.y - a.y) - (c.x - a.x) * (py - a.y)
-    const hasNeg = d1 < 0 || d2 < 0 || d3 < 0
-    const hasPos = d1 > 0 || d2 > 0 || d3 > 0
-    if (!(hasNeg && hasPos)) return true
-  }
-  return false
+  readonly getWorldTransform?: WorldTransformSource
 }
 
 export class SculptInteraction {
@@ -47,11 +25,18 @@ export class SculptInteraction {
   readonly #getCameraTransform: () => ViewportTransform | null
   readonly #dispatch: DispatchCommand
   readonly #meshOverlay: MeshOverlay
+  readonly #getWorldTransform?: WorldTransformSource
   #attached = false
   #pressed = false
+  #lastWorldX = 0
+  #lastWorldY = 0
   #lastClientX = 0
   #lastClientY = 0
+  // original shape rest positions at stroke start (for per-stroke commit diff)
+  #originalRestPositions = new Map<number, { x: number; y: number }>()
+  // current preview positions (rest space) that are displayed via overlay
   #previewPositions = new Map<number, { x: number; y: number }>()
+  // mutable base for accumulation (starts as original, updated per dab)
   #basePositions = new Map<number, { x: number; y: number }>()
 
   constructor(ctx: SculptContext) {
@@ -60,6 +45,7 @@ export class SculptInteraction {
     this.#getCameraTransform = ctx.getCameraTransform
     this.#dispatch = ctx.dispatch
     this.#meshOverlay = ctx.meshOverlay
+    this.#getWorldTransform = ctx.getWorldTransform
   }
 
   attach(): void {
@@ -79,32 +65,54 @@ export class SculptInteraction {
     window.removeEventListener('mouseup', this.#onMouseUp)
   }
 
+  #resolveMeshTransform(scene: Scene, nodeId: string): WorldTransform | null {
+    if (this.#getWorldTransform) {
+      return this.#getWorldTransform(nodeId)
+    }
+    return worldTransformOf(scene, nodeId)
+  }
+
   readonly #onMouseDown = (e: MouseEvent): void => {
     if (e.button !== 0) return
-    const { meshEditNodeId, meshEditTool } = useMeshEditStore.getState()
+    const { meshEditNodeId, meshEditTool, activeShapeId } = useMeshEditStore.getState()
     if (!meshEditNodeId || meshEditTool !== 'sculpt') return
     const scene = this.#getScene()
     const camera = this.#getCameraTransform()
     if (!scene || !camera) return
     const pt = cursorToWorld(this.#canvas, camera, e.clientX, e.clientY)
     if (!pt) return
+    const node = scene.getNode(meshEditNodeId)
+    if (!node?.components.mesh) return
+    // Require active shape — if not set, pick first shape or bail
+    let shapeId = activeShapeId
+    if (!shapeId) {
+      const first = node.components.mesh.shapes?.[0]
+      if (!first) return
+      shapeId = first.id
+      useMeshEditStore.getState().setActiveShapeId(shapeId)
+    }
+    const shape = node.components.mesh.shapes?.find((s) => s.id === shapeId)
+    if (!shape) return
+
     this.#pressed = true
     this.#lastClientX = e.clientX
     this.#lastClientY = e.clientY
-    // seed base positions from deformedLocal (morph-then-bones preview base)
-    const deformed = this.#meshOverlay.deformedLocalVertices(scene, meshEditNodeId)
-    if (deformed) {
-      for (let i = 0; i < deformed.length; i++)
-        this.#basePositions.set(i, { x: deformed[i].x, y: deformed[i].y })
+    this.#lastWorldX = pt.x
+    this.#lastWorldY = pt.y
+
+    // Seed base/original positions from shape rest vertices
+    this.#originalRestPositions.clear()
+    this.#basePositions.clear()
+    this.#previewPositions.clear()
+    for (let i = 0; i < shape.vertices.length; i++) {
+      const v = shape.vertices[i]
+      if (!v) continue
+      const pos = { x: v.x, y: v.y }
+      this.#originalRestPositions.set(i, pos)
+      this.#basePositions.set(i, pos)
     }
-    this.#applyBrush(
-      pt.x,
-      pt.y,
-      scene,
-      meshEditNodeId,
-      e.shiftKey || e.altKey ? 'remove' : 'add',
-      camera,
-    )
+    // No initial dab on mousedown — sculpt occurs on drag (per spec drag-direction)
+    // But we still want face guard check on mousedown? Defer to mousemove.
   }
 
   readonly #onMouseMove = (e: MouseEvent): void => {
@@ -113,6 +121,8 @@ export class SculptInteraction {
     if (!meshEditNodeId || meshEditTool !== 'sculpt') return
     // throttle like weightPaint: ignore <3px screen moves
     if (Math.hypot(e.clientX - this.#lastClientX, e.clientY - this.#lastClientY) < 3) return
+    const prevWorldX = this.#lastWorldX
+    const prevWorldY = this.#lastWorldY
     this.#lastClientX = e.clientX
     this.#lastClientY = e.clientY
     const scene = this.#getScene()
@@ -120,14 +130,12 @@ export class SculptInteraction {
     if (!scene || !camera) return
     const pt = cursorToWorld(this.#canvas, camera, e.clientX, e.clientY)
     if (!pt) return
-    this.#applyBrush(
-      pt.x,
-      pt.y,
-      scene,
-      meshEditNodeId,
-      e.shiftKey || e.altKey ? 'remove' : 'add',
-      camera,
-    )
+    this.#lastWorldX = pt.x
+    this.#lastWorldY = pt.y
+
+    const dragDeltaWorld = { x: pt.x - prevWorldX, y: pt.y - prevWorldY }
+    const invert = e.shiftKey || e.altKey
+    this.#applyBrush(pt.x, pt.y, dragDeltaWorld, scene, meshEditNodeId, invert, camera)
   }
 
   readonly #onMouseUp = (): void => {
@@ -139,68 +147,98 @@ export class SculptInteraction {
   #applyBrush(
     worldX: number,
     worldY: number,
+    dragDeltaWorld: { x: number; y: number },
     scene: Scene,
     nodeId: string,
-    mode: 'add' | 'remove',
+    invert: boolean,
     camera: ViewportTransform,
   ): void {
     const node = scene.getNode(nodeId)
     if (!node?.components.mesh) return
     const mesh = node.components.mesh.mesh
-    const worldTransform: WorldTransform | null = worldTransformOf(scene, nodeId)
+    const { activeShapeId, sculptRadius, sculptStrength, sculptFalloff } =
+      useMeshEditStore.getState()
+    if (!activeShapeId) return
+    const shape = node.components.mesh.shapes?.find((s) => s.id === activeShapeId)
+    if (!shape) return
+    const worldTransform = this.#resolveMeshTransform(scene, nodeId)
     if (!worldTransform) return
-    // use deformed world vertices for distance (so brush follows skin)
-    const worldVerts = deformedMeshWorldVertices(mesh, scene, worldTransform)
-    // face guard — don't sculpt empty space
-    if (!hitTestFace(worldX, worldY, worldVerts, mesh.faces)) return
 
-    const { sculptRadius, sculptStrength, sculptFalloff } = useMeshEditStore.getState()
-    const radiusScreen = sculptRadius // 25px default per #272
-    const radiusWorldScale = Math.max(Math.abs(camera.scaleX), Math.abs(camera.scaleY), 0.1)
-    // infer drag dir from last move: for prototype use upward push (0,-1) * strength; real dir = normalized drag vector
-    const dirX = 0
-    const dirY = mode === 'remove' ? 1 : -1 // invert with Shift
+    // Build active shape mesh for deformed evaluation (shape shares topology)
+    const activeShapeMesh = { ...mesh, vertices: shape.vertices as unknown as typeof mesh.vertices }
+    const worldVerts = deformedMeshWorldVertices(
+      activeShapeMesh,
+      scene,
+      worldTransform,
+      this.#getWorldTransform,
+    )
 
-    for (let i = 0; i < worldVerts.length; i++) {
-      const v = worldVerts[i]
-      const distWorld = Math.hypot(v.x - worldX, v.y - worldY)
-      const distScreen = distWorld * radiusWorldScale
-      if (distScreen > radiusScreen) continue
-      let factor = 1 - distScreen / radiusScreen // 1 - dist/radius
-      if (sculptFalloff !== 1) factor = Math.pow(Math.max(0, factor), sculptFalloff) // pow(1-dist/radius, falloff) #272
-      const delta = sculptStrength * factor
-      const base = this.#basePositions.get(i) ?? { x: mesh.vertices[i].x, y: mesh.vertices[i].y }
-      // vertex += dir * strength * falloff — world+screen hybrid, preview in mesh-local deformed space
-      // For prototype we push along Y in world; mesh-local is approximated as same axis (valid when rotation≈0)
-      const nx = base.x + dirX * delta * 10
-      const ny = base.y + dirY * delta * 10
-      this.#previewPositions.set(i, { x: nx, y: ny })
-      this.#basePositions.set(i, { x: nx, y: ny }) // accumulate per dab
+    // Face guard — don't sculpt empty space (must be over visible face)
+    if (!isBrushOverMesh(worldX, worldY, worldVerts, mesh.faces)) return
+
+    const scale = Math.max(Math.abs(camera.scaleX), Math.abs(camera.scaleY), 0.1)
+    const radiusScreen = sculptRadius
+
+    const offsets = computeSculptOffsets({
+      worldVerts,
+      brushWorld: { x: worldX, y: worldY },
+      radiusScreen,
+      scale,
+      falloff: sculptFalloff,
+      strength: sculptStrength,
+      dragDeltaWorld,
+      invert,
+    })
+
+    if (offsets.size === 0) return
+
+    // Apply offsets to basePositions (accumulating per dab) and update preview
+    for (const [idx, off] of offsets) {
+      const base = this.#basePositions.get(idx)
+      if (!base) continue
+      const nx = base.x + off.dx
+      const ny = base.y + off.dy
+      this.#basePositions.set(idx, { x: nx, y: ny })
+      this.#previewPositions.set(idx, { x: nx, y: ny })
     }
+
+    // Ensure preview contains all vertices that have been moved at least once
+    // (basePositions already has all indices, but previewPositions only those touched)
     this.#meshOverlay.setPreviewVertices(this.#previewPositions)
     this.#meshOverlay.redraw()
   }
 
   #commit(): void {
-    const { meshEditNodeId } = useMeshEditStore.getState()
-    if (!meshEditNodeId || this.#previewPositions.size === 0) return
-    // PROTOTYPE: commit as MoveVertexCommands on the activeShape — here we commit to base mesh for preview
-    // Real impl would patch the active Shape's vertices via a dedicated SculptShapeCommand (see shape.ts)
-    const cmds: MoveVertexCommand[] = []
+    const { meshEditNodeId, activeShapeId } = useMeshEditStore.getState()
+    if (!meshEditNodeId || !activeShapeId || this.#previewPositions.size === 0) return
+    // Build Transaction of per-vertex moves (per-stroke, not per-dab)
+    const cmds: MoveShapeVertexCommand[] = []
     for (const [idx, pos] of this.#previewPositions) {
+      const orig = this.#originalRestPositions.get(idx)
+      if (!orig) continue
+      // Only commit if changed (with epsilon)
+      if (Math.hypot(pos.x - orig.x, pos.y - orig.y) < 1e-9) continue
       cmds.push(
-        new MoveVertexCommand({ nodeId: meshEditNodeId, vertexIndex: idx, x: pos.x, y: pos.y }),
+        new MoveShapeVertexCommand({
+          nodeId: meshEditNodeId,
+          shapeId: activeShapeId,
+          vertexIndex: idx,
+          x: pos.x,
+          y: pos.y,
+        }),
       )
     }
+    if (cmds.length === 0) return
     if (cmds.length === 1) this.#dispatch(cmds[0])
-    else if (cmds.length > 1) this.#dispatch(new TransactionCommand(cmds))
+    else this.#dispatch(new TransactionCommand(cmds))
   }
 
   #reset(): void {
     this.#pressed = false
     this.#previewPositions.clear()
-    // keep basePositions across drag? clear on mouse up
     this.#basePositions.clear()
+    this.#originalRestPositions.clear()
     this.#meshOverlay.clearPreviewVertices()
+    this.#meshOverlay.redraw()
   }
 }

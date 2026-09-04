@@ -232,6 +232,8 @@ export type {
 } from './setConstraintParamsCommand'
 export { MoveVertexCommand } from './moveVertexCommand'
 export type { MoveVertexInverse, MoveVertexParameters } from './moveVertexCommand'
+export { MoveShapeVertexCommand } from './moveShapeVertexCommand'
+export type { MoveShapeVertexInverse, MoveShapeVertexParameters } from './moveShapeVertexCommand'
 export { DeleteVerticesCommand } from './deleteVerticesCommand'
 export type { DeleteVerticesInverse, DeleteVerticesParameters } from './deleteVerticesCommand'
 export { ExtrudeFacesCommand } from './extrudeFacesCommand'

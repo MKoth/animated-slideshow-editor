@@ -124,7 +124,7 @@ export class MeshEditInteraction {
       return
     }
     const { meshEditNodeId, meshEditTool, selectMode } = useMeshEditStore.getState()
-    if (!meshEditNodeId || meshEditTool === 'weightPaint') {
+    if (!meshEditNodeId || meshEditTool === 'weightPaint' || meshEditTool === 'sculpt') {
       return
     }
     const scene = this.#getScene()
@@ -401,7 +401,7 @@ export class MeshEditInteraction {
     }
 
     const { meshEditNodeId, meshEditTool, selectMode } = useMeshEditStore.getState()
-    if (!meshEditNodeId || meshEditTool === 'weightPaint') {
+    if (!meshEditNodeId || meshEditTool === 'weightPaint' || meshEditTool === 'sculpt') {
       return
     }
     const scene = this.#getScene()

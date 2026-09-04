@@ -1010,6 +1010,15 @@ export function applyUndo(
       engine.restoreShapes(nodeId, newShapes)
       return
     }
+    case 'MoveShapeVertex': {
+      const nodeId = inv.nodeId as string
+      const shapeId = inv.shapeId as string
+      const vertexIndex = inv.vertexIndex as number
+      const oldX = inv.oldX as number
+      const oldY = inv.oldY as number
+      engine.setShapeVertex(nodeId, shapeId, vertexIndex, oldX, oldY)
+      return
+    }
     case 'SetVertexWeights': {
       const nodeId = inv.nodeId as string
       const vertexIndex = inv.vertexIndex as number
@@ -2683,6 +2692,15 @@ export function applyRedo(
         vertices: mesh.vertices.map((v, i) => (i === vertexIndex ? { x, y } : { ...v })),
       }
       engine.setMeshData(nodeId, newMesh)
+      return
+    }
+    case 'MoveShapeVertex': {
+      const nodeId = params.nodeId as string
+      const shapeId = params.shapeId as string
+      const vertexIndex = params.vertexIndex as number
+      const x = params.x as number
+      const y = params.y as number
+      engine.setShapeVertex(nodeId, shapeId, vertexIndex, x, y)
       return
     }
     case 'NormalizeWeights': {

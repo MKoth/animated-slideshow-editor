@@ -9,6 +9,7 @@ import {
 } from '../../engine/commands'
 import { useEngineEvent } from '../../app/useEngine'
 import { useShapePreviewStore } from '../../stores/shapePreviewStore'
+import { useMeshEditStore } from '../../stores/meshEditStore'
 import { NameField } from './inspectorFields'
 
 interface MeshInspectorSectionProps {
@@ -37,7 +38,8 @@ export function MeshInspectorSection({
     setTick((t) => t + 1)
   })
 
-  const shapes = (target.components.mesh?.shapes ?? []) as readonly import('../../engine/shape').Shape[]
+  const shapes = (target.components.mesh?.shapes ??
+    []) as readonly import('../../engine/shape').Shape[]
   const shapeIdsKey = shapes.map((s) => s.id).join(',')
 
   // Clear preview when target changes
@@ -64,11 +66,12 @@ export function MeshInspectorSection({
   if (!target.components.mesh) return null
 
   const isFrozen = shapes.length > 0
-  const isPreviewSelected = (shapeId: string) => previewNodeId === target.id && previewShapeId === shapeId
+  const isPreviewSelected = (shapeId: string) =>
+    previewNodeId === target.id && previewShapeId === shapeId
 
   const handleCreate = () => {
     const existingNames = shapes.map((s: import('../../engine/shape').Shape) => s.name)
-    let base = 'Shape'
+    const base = 'Shape'
     let name = base
     let i = 2
     const namesSet = new Set(existingNames)
@@ -79,6 +82,12 @@ export function MeshInspectorSection({
     const result = dispatch(new CreateShapeCommand({ nodeId: target.id, name }))
     if (!result.ok) {
       notify(result.error.message)
+    } else if (result.ok) {
+      // Set active shape for sculpt convenience
+      const shapeId = (result.inverse as { shapeId?: string })?.shapeId
+      if (shapeId) {
+        useMeshEditStore.getState().setActiveShapeId(shapeId)
+      }
     }
   }
 
@@ -86,6 +95,11 @@ export function MeshInspectorSection({
     const result = dispatch(new DuplicateShapeCommand({ nodeId: target.id, shapeId }))
     if (!result.ok) {
       notify(result.error.message)
+    } else if (result.ok) {
+      const newId = (result.inverse as { shapeId?: string })?.shapeId
+      if (newId) {
+        useMeshEditStore.getState().setActiveShapeId(newId)
+      }
     }
   }
 
@@ -97,6 +111,10 @@ export function MeshInspectorSection({
       if (previewShapeId === shapeId && previewNodeId === target.id) {
         useShapePreviewStore.getState().clearPreview()
       }
+      const active = useMeshEditStore.getState().activeShapeId
+      if (active === shapeId) {
+        useMeshEditStore.getState().setActiveShapeId(null)
+      }
     }
   }
 
@@ -106,11 +124,15 @@ export function MeshInspectorSection({
       setRenameError('Shape name must be a non-empty string')
       return
     }
-    if (shapes.some((s: import('../../engine/shape').Shape) => s.id !== shapeId && s.name === trimmed)) {
+    if (
+      shapes.some((s: import('../../engine/shape').Shape) => s.id !== shapeId && s.name === trimmed)
+    ) {
       setRenameError(`A shape with name "${trimmed}" already exists on this mesh`)
       return
     }
-    const result = dispatch(new RenameShapeCommand({ nodeId: target.id, shapeId, newName: trimmed }))
+    const result = dispatch(
+      new RenameShapeCommand({ nodeId: target.id, shapeId, newName: trimmed }),
+    )
     if (!result.ok) {
       const msg = result.error.message
       if (msg.toLowerCase().includes('already exists')) {
@@ -131,6 +153,8 @@ export function MeshInspectorSection({
       store.clearPreview()
     } else {
       store.setPreview(target.id, shapeId)
+      // Also set as active sculpt shape for convenience
+      useMeshEditStore.getState().setActiveShapeId(shapeId)
     }
   }
 
@@ -172,9 +196,20 @@ export function MeshInspectorSection({
       </div>
 
       {shapes.length === 0 ? (
-        <p className="inspector-section__notice">No Shapes. Create one to snapshot current vertices.</p>
+        <p className="inspector-section__notice">
+          No Shapes. Create one to snapshot current vertices.
+        </p>
       ) : (
-        <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <ul
+          style={{
+            listStyle: 'none',
+            padding: 0,
+            margin: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+          }}
+        >
           {shapes.map((shape: import('../../engine/shape').Shape) => {
             const selected = isPreviewSelected(shape.id)
             const isRenaming = renameId === shape.id
@@ -185,15 +220,28 @@ export function MeshInspectorSection({
                   border: `1px solid ${selected ? '#1a73e8' : 'var(--color-border)'}`,
                   borderRadius: 6,
                   padding: 6,
-                  background: selected ? 'color-mix(in srgb, #1a73e8 8%, var(--color-bg))' : 'var(--color-bg)',
+                  background: selected
+                    ? 'color-mix(in srgb, #1a73e8 8%, var(--color-bg))'
+                    : 'var(--color-bg)',
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: isRenaming ? 6 : 0 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    marginBottom: isRenaming ? 6 : 0,
+                  }}
+                >
                   <button
                     aria-label={`Preview shape ${shape.name}`}
                     aria-pressed={selected}
                     onClick={() => handlePreviewToggle(shape.id)}
-                    title={selected ? 'Click to restore base mesh' : 'Preview at coefficient 1 (no keyframe)'}
+                    title={
+                      selected
+                        ? 'Click to restore base mesh'
+                        : 'Preview at coefficient 1 (no keyframe)'
+                    }
                     style={{
                       flex: 1,
                       textAlign: 'left',

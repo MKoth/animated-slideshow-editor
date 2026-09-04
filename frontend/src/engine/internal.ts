@@ -2083,6 +2083,25 @@ export class Engine {
     this.#setShapes(nodeId, shapes)
   }
 
+  setShapeVertex(nodeId: string, shapeId: string, vertexIndex: number, x: number, y: number): void {
+    const node = this.getNode(nodeId)
+    if (!node.components.mesh) throw new Error(`Node "${nodeId}" does not have a mesh component`)
+    const existing = node.components.mesh.shapes ?? []
+    const idx = existing.findIndex((s) => s.id === shapeId)
+    if (idx === -1) throw new Error(`Shape not found: ${shapeId}`)
+    const shape = existing[idx]
+    if (!shape) throw new Error(`Shape not found: ${shapeId}`)
+    if (vertexIndex < 0 || vertexIndex >= shape.vertices.length) {
+      throw new Error(`Vertex index ${vertexIndex} is out of bounds`)
+    }
+    const newVertices = shape.vertices.map((v, i) =>
+      i === vertexIndex ? { x, y } : { x: v.x, y: v.y },
+    )
+    const newShape: Shape = { ...shape, vertices: newVertices }
+    const newShapes = existing.map((s, i) => (i === idx ? newShape : s))
+    this.#setShapes(nodeId, newShapes)
+  }
+
   setBoneLength(nodeId: string, length: number): void {
     this.#nodes.setBoneLength(nodeId, length)
   }
