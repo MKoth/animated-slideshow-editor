@@ -116,6 +116,31 @@ export class ClipManager {
         }
       }
     }
+    const visibleJson = (jsonCopy as unknown as Record<string, unknown>).visibleAnimation as
+      { keyframes: { id: string }[] } | undefined
+    if (visibleJson && Array.isArray(visibleJson.keyframes)) {
+      for (const kf of visibleJson.keyframes) {
+        kf.id = newKeyframeId()
+      }
+    }
+    const circleJson = (jsonCopy as unknown as Record<string, unknown>).circleChannelAnimations as
+      Record<string, { keyframes: { id: string }[] }> | undefined
+    if (circleJson) {
+      for (const anim of Object.values(circleJson)) {
+        if (anim && Array.isArray(anim.keyframes)) {
+          for (const kf of anim.keyframes) {
+            kf.id = newKeyframeId()
+          }
+        }
+      }
+    }
+    const morphJson = (jsonCopy as unknown as Record<string, unknown>).morphAnimation as
+      { keyframes: { id: string }[] } | undefined
+    if (morphJson && Array.isArray(morphJson.keyframes)) {
+      for (const kf of morphJson.keyframes) {
+        kf.id = newKeyframeId()
+      }
+    }
     const clipCopy = ClipDefinition.fromJSON(jsonCopy)
     this.#clips.set(id, clipCopy)
     this.#bus.emit({ type: 'ClipDuplicated', clipId: id })

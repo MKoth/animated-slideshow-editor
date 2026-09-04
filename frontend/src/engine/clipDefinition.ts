@@ -203,6 +203,7 @@ export class ClipDefinition {
   readonly #materialChannelAnimations = new Map<string, ClipChannelAnimation>()
   readonly #visibleAnimation = new ClipChannelAnimation()
   readonly #circleAnimations = new Map<CircleAnimationProperty, ClipChannelAnimation>()
+  readonly #morphAnimation = new ClipChannelAnimation()
 
   constructor(
     id: string,
@@ -339,12 +340,24 @@ export class ClipDefinition {
     return [...this.#circleAnimations.keys()]
   }
 
+  getMorphKeyframes(): readonly Keyframe[] {
+    return this.#morphAnimation.keyframes()
+  }
+
+  hasMorphTrack(): boolean {
+    return this.#morphAnimation.length > 0
+  }
+
   visibleAnimation(): ClipChannelAnimation {
     return this.#visibleAnimation
   }
 
   circleAnimation(property: CircleAnimationProperty): ClipChannelAnimation | undefined {
     return this.#circleAnimations.get(property)
+  }
+
+  morphAnimation(): ClipChannelAnimation {
+    return this.#morphAnimation
   }
 
   getChannelKeyframe(property: ClipChannel, keyframeId: string): Keyframe | undefined {
@@ -361,6 +374,10 @@ export class ClipDefinition {
 
   getCircleKeyframe(property: CircleAnimationProperty, keyframeId: string): Keyframe | undefined {
     return this.#circleAnimations.get(property)?.getKeyframe(keyframeId)
+  }
+
+  getMorphKeyframe(keyframeId: string): Keyframe | undefined {
+    return this.#morphAnimation.getKeyframe(keyframeId)
   }
 
   addChannelKeyframe(property: ClipChannel, keyframe: Keyframe): void {
@@ -394,6 +411,10 @@ export class ClipDefinition {
     anim.add(keyframe)
   }
 
+  addMorphKeyframe(keyframe: Keyframe): void {
+    this.#morphAnimation.add(keyframe)
+  }
+
   removeChannelKeyframe(property: ClipChannel, keyframeId: string): Keyframe | undefined {
     const anim = this.#channelAnimations.get(property)
     if (!anim) return undefined
@@ -421,7 +442,10 @@ export class ClipDefinition {
     return this.#visibleAnimation.remove(keyframeId)
   }
 
-  removeCircleKeyframe(property: CircleAnimationProperty, keyframeId: string): Keyframe | undefined {
+  removeCircleKeyframe(
+    property: CircleAnimationProperty,
+    keyframeId: string,
+  ): Keyframe | undefined {
     const anim = this.#circleAnimations.get(property)
     if (!anim) return undefined
     const removed = anim.remove(keyframeId)
@@ -429,6 +453,10 @@ export class ClipDefinition {
       this.#circleAnimations.delete(property)
     }
     return removed
+  }
+
+  removeMorphKeyframe(keyframeId: string): Keyframe | undefined {
+    return this.#morphAnimation.remove(keyframeId)
   }
 
   removeChannel(property: ClipChannel): void {
@@ -499,7 +527,7 @@ export class ClipDefinition {
     for (const [param, anim] of this.#materialChannelAnimations) {
       copy.#materialChannelAnimations.set(param, anim.copy())
     }
-    // Copy visible and circle animations
+    // Copy visible, circle and morph animations
     for (const kf of this.#visibleAnimation.keyframes()) {
       copy.#visibleAnimation.add(
         new KeyframeModel(
@@ -514,6 +542,18 @@ export class ClipDefinition {
     }
     for (const [prop, anim] of this.#circleAnimations) {
       copy.#circleAnimations.set(prop, anim.copy())
+    }
+    for (const kf of this.#morphAnimation.keyframes()) {
+      copy.#morphAnimation.add(
+        new KeyframeModel(
+          kf.id,
+          kf.time,
+          kf.value,
+          kf.interpolation,
+          { time: kf.tangentIn.time, value: kf.tangentIn.value },
+          { time: kf.tangentOut.time, value: kf.tangentOut.value },
+        ),
+      )
     }
     return copy
   }
@@ -551,6 +591,9 @@ export class ClipDefinition {
       ;(json as Record<string, unknown>).circleChannelAnimations = Object.fromEntries(
         [...this.#circleAnimations.entries()].map(([prop, anim]) => [prop, anim.toJSON()]),
       )
+    }
+    if (this.#morphAnimation.length > 0) {
+      ;(json as Record<string, unknown>).morphAnimation = this.#morphAnimation.toJSON()
     }
     return json as ClipJSON
   }
@@ -656,6 +699,27 @@ export class ClipDefinition {
             ClipChannelAnimation.fromJSON(animJson),
           )
         }
+      }
+    }
+    const morphAnim = (json as Record<string, unknown>).morphAnimation
+    if (isRecord(morphAnim) && morphAnim !== null) {
+      const anim = ClipChannelAnimation.fromJSONWithKind(morphAnim, (value, id) => {
+        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+          throw new Error(`Clip morph keyframe "${id}" value must be a number between 0 and 1`)
+        }
+        return value
+      })
+      for (const kf of anim.keyframes()) {
+        clip.#morphAnimation.add(
+          new KeyframeModel(
+            kf.id,
+            kf.time,
+            kf.value,
+            kf.interpolation,
+            { time: kf.tangentIn.time, value: kf.tangentIn.value },
+            { time: kf.tangentOut.time, value: kf.tangentOut.value },
+          ),
+        )
       }
     }
     return clip

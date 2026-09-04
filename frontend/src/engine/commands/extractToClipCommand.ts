@@ -13,7 +13,6 @@ import {
 } from '../clipExtraction'
 import { Keyframe as KeyframeModel, newKeyframeId } from '../keyframe'
 
-
 export interface ExtractToNewClipParams {
   readonly keyframes: readonly ExtractableKeyframe[]
   readonly name: string
@@ -43,9 +42,7 @@ export interface ExtractToClipInverseNew {
 
 export type ExtractToClipInverse = ExtractToClipInverseExisting | ExtractToClipInverseNew
 
-function isExistingParams(
-  params: ExtractToClipParameters,
-): params is ExtractToExistingClipParams {
+function isExistingParams(params: ExtractToClipParameters): params is ExtractToExistingClipParams {
   return 'clipId' in params
 }
 
@@ -53,7 +50,9 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
   readonly type = 'ExtractToClip'
   readonly parameters: Readonly<Record<string, unknown>>
   readonly #keyframes: readonly ExtractableKeyframe[]
-  readonly #destination: { mode: 'new'; name: string; duration?: number; category?: string } | { mode: 'existing'; clipId: string }
+  readonly #destination:
+    | { mode: 'new'; name: string; duration?: number; category?: string }
+    | { mode: 'existing'; clipId: string }
 
   constructor(input: ExtractToClipParameters) {
     if (isExistingParams(input)) {
@@ -127,6 +126,8 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
           existing = clip.getChannelKeyframes(nkTarget.property).map((k) => k.time)
         } else if (nkTarget.kind === 'visible') {
           existing = clip.getVisibleKeyframes().map((k) => k.time)
+        } else if (nkTarget.kind === 'morph') {
+          existing = clip.getMorphKeyframes().map((k) => k.time)
         } else if (nkTarget.kind === 'circle') {
           existing = clip.getCircleKeyframes(nkTarget.property).map((k) => k.time)
         } else if (nkTarget.kind === 'node' && 'parameter' in nkTarget) {
@@ -206,20 +207,43 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
           }
           if (sample.kind === 'node' && 'property' in sample) {
             clip.addChannelKeyframe(sample.property, kf)
-            engine.emitKeyframeAdded({ kind: 'clip', clipId: clip.id, channel: sample.property }, kf.id)
+            engine.emitKeyframeAdded(
+              { kind: 'clip', clipId: clip.id, channel: sample.property },
+              kf.id,
+            )
           } else if (sample.kind === 'visible') {
             clip.addVisibleKeyframe(kf)
-            engine.emitKeyframeAdded({ kind: 'visible', nodeId: 'clip-' + clip.id } as unknown as KeyframeTarget, kf.id)
+            engine.emitKeyframeAdded(
+              { kind: 'visible', nodeId: 'clip-' + clip.id } as unknown as KeyframeTarget,
+              kf.id,
+            )
             // Also emit clip-specific event for UI refresh
+            engine.emitClipChanged(clip.id)
+          } else if (sample.kind === 'morph') {
+            clip.addMorphKeyframe(kf)
+            engine.emitKeyframeAdded(
+              { kind: 'morph', nodeId: 'clip-' + clip.id } as unknown as KeyframeTarget,
+              kf.id,
+            )
             engine.emitClipChanged(clip.id)
           } else if (sample.kind === 'circle') {
             clip.addCircleKeyframe(sample.property, kf)
-            engine.emitKeyframeAdded({ kind: 'circle', nodeId: 'clip-' + clip.id, property: sample.property } as unknown as KeyframeTarget, kf.id)
+            engine.emitKeyframeAdded(
+              {
+                kind: 'circle',
+                nodeId: 'clip-' + clip.id,
+                property: sample.property,
+              } as unknown as KeyframeTarget,
+              kf.id,
+            )
             engine.emitClipChanged(clip.id)
           } else if (sample.kind === 'node' && 'parameter' in sample) {
             const param = (sample as { parameter: string }).parameter
             clip.addMaterialChannelKeyframe(param, kf)
-            engine.emitKeyframeAdded({ kind: 'clip', clipId: clip.id, channel: param } as unknown as KeyframeTarget, kf.id)
+            engine.emitKeyframeAdded(
+              { kind: 'clip', clipId: clip.id, channel: param } as unknown as KeyframeTarget,
+              kf.id,
+            )
           } else if (sample.kind === 'dataLabel') {
             // Not supported in clips; skip
           } else if (sample.kind === 'table') {
@@ -251,7 +275,10 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
         } else if (sample.kind === 'node' && 'parameter' in sample) {
           const param = (sample as { parameter: string }).parameter
           if (!clip.hasMaterialChannel(param)) {
-            engine.addClipChannel(clip.id, { property: 'opacity', materialParameter: param } as ClipChannelDef)
+            engine.addClipChannel(clip.id, {
+              property: 'opacity',
+              materialParameter: param,
+            } as ClipChannelDef)
           }
         }
       }
@@ -274,19 +301,42 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
           if (sample.kind === 'node' && 'property' in sample) {
             // Use direct clip insertion to preserve full data, but emit via manager
             clip.addChannelKeyframe(sample.property, kf)
-            engine.emitKeyframeAdded({ kind: 'clip', clipId: clip.id, channel: sample.property }, kf.id)
+            engine.emitKeyframeAdded(
+              { kind: 'clip', clipId: clip.id, channel: sample.property },
+              kf.id,
+            )
           } else if (sample.kind === 'visible') {
             clip.addVisibleKeyframe(kf)
-            engine.emitKeyframeAdded({ kind: 'visible', nodeId: 'clip-' + clip.id } as unknown as KeyframeTarget, kf.id)
+            engine.emitKeyframeAdded(
+              { kind: 'visible', nodeId: 'clip-' + clip.id } as unknown as KeyframeTarget,
+              kf.id,
+            )
+            engine.emitClipChanged(clip.id)
+          } else if (sample.kind === 'morph') {
+            clip.addMorphKeyframe(kf)
+            engine.emitKeyframeAdded(
+              { kind: 'morph', nodeId: 'clip-' + clip.id } as unknown as KeyframeTarget,
+              kf.id,
+            )
             engine.emitClipChanged(clip.id)
           } else if (sample.kind === 'circle') {
             clip.addCircleKeyframe(sample.property, kf)
-            engine.emitKeyframeAdded({ kind: 'circle', nodeId: 'clip-' + clip.id, property: sample.property } as unknown as KeyframeTarget, kf.id)
+            engine.emitKeyframeAdded(
+              {
+                kind: 'circle',
+                nodeId: 'clip-' + clip.id,
+                property: sample.property,
+              } as unknown as KeyframeTarget,
+              kf.id,
+            )
             engine.emitClipChanged(clip.id)
           } else if (sample.kind === 'node' && 'parameter' in sample) {
             const param2 = (sample as { parameter: string }).parameter
             clip.addMaterialChannelKeyframe(param2, kf)
-            engine.emitKeyframeAdded({ kind: 'clip', clipId: clip.id, channel: param2 } as unknown as KeyframeTarget, kf.id)
+            engine.emitKeyframeAdded(
+              { kind: 'clip', clipId: clip.id, channel: param2 } as unknown as KeyframeTarget,
+              kf.id,
+            )
           }
         }
       }

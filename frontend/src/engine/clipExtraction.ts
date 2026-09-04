@@ -3,7 +3,6 @@ import type { Keyframe, KeyframeTangent, InterpolationType, KeyframeValue } from
 import { Keyframe as KeyframeModel, newKeyframeId } from './keyframe'
 import type { KeyframeTarget } from './keyframeTarget'
 
-
 export interface ExtractableKeyframe {
   readonly target: KeyframeTarget
   readonly time: number
@@ -31,7 +30,9 @@ export interface ExtractionBounds {
   readonly clipDuration: number
 }
 
-export function computeExtractionBounds(keyframes: readonly ExtractableKeyframe[]): ExtractionBounds {
+export function computeExtractionBounds(
+  keyframes: readonly ExtractableKeyframe[],
+): ExtractionBounds {
   if (keyframes.length === 0) {
     throw new Error('At least one keyframe is required for extraction')
   }
@@ -74,11 +75,12 @@ export function normalizeExtractable(
   }
   const clampedTime = Math.min(Math.max(normalizedTime, 0), 1)
 
-  // Validate value where applicable (opacity)
-  if (isOpacityTarget(kf.target)) {
+  // Validate value where applicable (opacity and morph)
+  if (isOpacityTarget(kf.target) || isMorphTarget(kf.target)) {
     const v = normalizedValue as number
     if (typeof v !== 'number' || !Number.isFinite(v) || v < -1e-9 || v > 1 + 1e-9) {
-      throw new Error(`Clip keyframe value for opacity must be within [0,1], got ${String(v)}`)
+      const kind = isMorphTarget(kf.target) ? 'morphCoefficient' : 'opacity'
+      throw new Error(`Clip keyframe value for ${kind} must be within [0,1], got ${String(v)}`)
     }
   }
 
@@ -97,6 +99,10 @@ function isOpacityTarget(target: KeyframeTarget): boolean {
   return target.kind === 'node' && 'property' in target && target.property === 'opacity'
 }
 
+function isMorphTarget(target: KeyframeTarget): boolean {
+  return target.kind === 'morph'
+}
+
 export type NormalizedChannelKey =
   | { kind: 'property'; property: AnimationProperty }
   | { kind: 'visible'; nodeId: string } // visible is per-node but clip's visible is global; we merge all visible into one clip visible track
@@ -104,6 +110,7 @@ export type NormalizedChannelKey =
   | { kind: 'parameter'; parameter: string; nodeId: string }
   | { kind: 'dataLabel'; label: string }
   | { kind: 'table'; property: import('./animationProperties').TableAnimationProperty }
+  | { kind: 'morph' }
 
 export function channelKeyOf(target: KeyframeTarget): string {
   if (target.kind === 'node') {
@@ -116,6 +123,9 @@ export function channelKeyOf(target: KeyframeTarget): string {
   }
   if (target.kind === 'visible') {
     return `visible`
+  }
+  if (target.kind === 'morph') {
+    return `morph`
   }
   if (target.kind === 'circle') {
     return `circle:${target.property}`
@@ -184,9 +194,7 @@ export function validateNoDuplicateTimes(
   }
 }
 
-export function createNormalizedClipKeyframes(
-  keyframes: readonly ExtractableKeyframe[],
-): {
+export function createNormalizedClipKeyframes(keyframes: readonly ExtractableKeyframe[]): {
   bounds: ExtractionBounds
   normalized: NormalizedKeyframe[]
   groups: Map<string, NormalizedKeyframe[]>
@@ -202,9 +210,7 @@ export function createNormalizedClipKeyframes(
  * Build KeyframeModel instances for insertion into a ClipDefinition,
  * generating new ids and preserving normalized data.
  */
-export function toClipKeyframes(
-  normalized: readonly NormalizedKeyframe[],
-): Keyframe[] {
+export function toClipKeyframes(normalized: readonly NormalizedKeyframe[]): Keyframe[] {
   return normalized.map(
     (nk) =>
       new KeyframeModel(

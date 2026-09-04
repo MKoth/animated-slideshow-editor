@@ -185,15 +185,42 @@ export class AnimationEvaluator {
   }
 
   evaluateMorph(nodeId: string, time: number): number {
+    const node = this.#nodeLookup(nodeId)
     const slide = this.#slideLookup(nodeId)
     const boundedTime = requireFiniteNumber(time, 'Evaluation time')
     const clampedTime = Math.min(Math.max(boundedTime, 0), slide.duration)
     const animation = slide.animation.node(nodeId)
     const keyframes = animation?.morphKeyframes()
+    let coefficient: number
     if (!keyframes || keyframes.length === 0) {
-      return 0
+      coefficient = 0
+    } else {
+      coefficient = this.#evaluate(keyframes, clampedTime, 0)
     }
-    return this.#evaluate(keyframes, clampedTime, 0)
+
+    // Layer enabled clip instances in order that have started (last-wins)
+    const instances = node.clipInstances
+    if (instances.length > 0) {
+      for (const instance of instances) {
+        if (!instance.enabled) continue
+        let clip: ClipDefinition
+        try {
+          clip = this.#clipLookup(instance.clipId)
+        } catch {
+          continue
+        }
+        if (clip.duration <= 0) continue
+        if (clampedTime < instance.startTime) continue
+        const u = Math.min(
+          Math.max(((clampedTime - instance.startTime) * instance.speed) / clip.duration, 0),
+          1,
+        )
+        const anim = clip.morphAnimation()
+        if (!anim || anim.length === 0) continue
+        coefficient = this.#evaluateClipChannel(anim.keyframes(), u)
+      }
+    }
+    return coefficient
   }
 
   /**
