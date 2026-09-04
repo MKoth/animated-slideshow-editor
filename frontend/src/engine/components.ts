@@ -3,6 +3,7 @@ import { cloneMeshData } from './mesh'
 import type { DataPoint } from './dataSourceDefinition'
 import type { CircleComponent } from './circleComponent'
 import { cloneCircleComponent } from './circleComponent'
+import type { Shape } from './shape'
 
 export type { DataPoint }
 
@@ -54,6 +55,10 @@ export interface BoneComponent {
 export interface MeshComponent {
   readonly kind: 'mesh'
   readonly mesh: MeshData
+  // PROTOTYPE — absolute per-mesh snapshots sharing topology (ADR 0007)
+  // `mesh` is the base rest; `shapes` are additional snapshots. faces/uvs/boneWeights/bindPose are NOT duplicated per Shape.
+  // Invariant: shape.vertices.length === mesh.vertices.length; validated on load, soft-warn fallback.
+  readonly shapes?: readonly Shape[]
 }
 
 export interface GhostComponent {
@@ -115,7 +120,22 @@ export function copyComponents(components: NodeComponents): NodeComponents {
     assetInstance: components.assetInstance ? { ...components.assetInstance } : undefined,
     text: components.text ? { ...components.text } : undefined,
     bone: components.bone ? { ...components.bone } : undefined,
-    mesh: components.mesh ? { kind: 'mesh', mesh: cloneMeshData(components.mesh.mesh) } : undefined,
+    mesh: components.mesh
+      ? {
+          kind: 'mesh',
+          mesh: cloneMeshData(components.mesh.mesh),
+          // PROTOTYPE deep-clone shapes with same ids (caller remaps on ReusableObject import per ADR 0008)
+          ...(components.mesh.shapes
+            ? {
+                shapes: components.mesh.shapes.map((s) => ({
+                  id: s.id,
+                  name: s.name,
+                  vertices: s.vertices.map((v) => ({ x: v.x, y: v.y })),
+                })),
+              }
+            : {}),
+        }
+      : undefined,
     ghost: components.ghost ? { ...components.ghost } : undefined,
     table: components.table ? { ...components.table } : undefined,
     tableRow: components.tableRow ? { ...components.tableRow } : undefined,

@@ -1,12 +1,25 @@
 import { describe, it, expect } from 'vitest'
 import { createEngine } from '../../engine/internal'
 import type { Engine } from '../../engine/internal'
-import { CommandDispatcher, UndoStack, CreateProjectCommand, CreateSlideCommand, CreateNodeCommand, CreateClipCommand, AssignClipCommand, SetSemanticNameCommand } from '../../engine/commands'
+import {
+  CommandDispatcher,
+  UndoStack,
+  CreateProjectCommand,
+  CreateSlideCommand,
+  CreateNodeCommand,
+  CreateClipCommand,
+  AssignClipCommand,
+  SetSemanticNameCommand,
+} from '../../engine/commands'
 import { ExportClipCollectionCommand } from '../../engine/commands'
 import { validateReusableObject } from '../../engine/reusableObject'
 import { walkPreOrder } from '../../engine/sceneNode'
 
-function setupEngine(): { engine: Engine; dispatcher: import('../../engine/commands').CommandDispatcher; undoStack: import('../../engine/commands').UndoStack } {
+function setupEngine(): {
+  engine: Engine
+  dispatcher: import('../../engine/commands').CommandDispatcher
+  undoStack: import('../../engine/commands').UndoStack
+} {
   const engine = createEngine()
   const undoStack = new UndoStack()
   const dispatcher = new CommandDispatcher(engine, undoStack, () => {})
@@ -27,17 +40,79 @@ describe('ReusableObject export/import', () => {
     const { engine, dispatcher } = setupEngine()
     const slide = engine.getActiveSlide()!
     // Create a simple rig: handle + bone + mesh + circle with materials and semanticNames
-    const handle = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'RigHandle' }))).nodeId
-    const bone = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: handle, name: 'BoneA', components: { bone: { kind: 'bone', length: 80 } } }))).nodeId
+    const handle = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'RigHandle',
+        }),
+      ),
+    ).nodeId
+    const bone = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: handle,
+          name: 'BoneA',
+          components: { bone: { kind: 'bone', length: 80 } },
+        }),
+      ),
+    ).nodeId
     expectOk(dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: bone, semanticName: 'arm' })))
-    const mesh = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: handle, name: 'MeshNode', components: { mesh: { kind: 'mesh', mesh: { vertices: [{x:0,y:0},{x:10,y:0},{x:10,y:10}], faces: [{v0:0,v1:1,v2:2}], uvs: [{u:0,v:0},{u:1,v:0},{u:1,v:1}] } } } }))).nodeId
-    expectOk(dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: mesh, semanticName: 'mesh_part' })))
-    const circle = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: handle, name: 'CircleNode', components: { circle: { kind: 'circle', radius: 20, startAngle: 0, endAngle: 180 } } }))).nodeId
-    expectOk(dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: circle, semanticName: 'circle_part' })))
+    const mesh = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: handle,
+          name: 'MeshNode',
+          components: {
+            mesh: {
+              kind: 'mesh',
+              mesh: {
+                vertices: [
+                  { x: 0, y: 0 },
+                  { x: 10, y: 0 },
+                  { x: 10, y: 10 },
+                ],
+                faces: [{ v0: 0, v1: 1, v2: 2 }],
+                uvs: [
+                  { u: 0, v: 0 },
+                  { u: 1, v: 0 },
+                  { u: 1, v: 1 },
+                ],
+              },
+            },
+          },
+        }),
+      ),
+    ).nodeId
+    expectOk(
+      dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: mesh, semanticName: 'mesh_part' })),
+    )
+    const circle = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: handle,
+          name: 'CircleNode',
+          components: { circle: { kind: 'circle', radius: 20, startAngle: 0, endAngle: 180 } },
+        }),
+      ),
+    ).nodeId
+    expectOk(
+      dispatcher.dispatch(
+        new SetSemanticNameCommand({ nodeId: circle, semanticName: 'circle_part' }),
+      ),
+    )
 
     // Create clips and assign
-    const clip1 = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'Wave', duration: 1, category: '' }))).clipId
-    const clip2 = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'Spin', duration: 1, category: '' }))).clipId
+    const clip1 = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'Wave', duration: 1, category: '' })),
+    ).clipId
+    const clip2 = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'Spin', duration: 1, category: '' })),
+    ).clipId
     // Add channel keyframes to clips for meaningful animation
     engine.addClipChannelKeyframe(clip1, 'positionX', 0, 0)
     engine.addClipChannelKeyframe(clip1, 'positionX', 1, 10)
@@ -52,19 +127,41 @@ describe('ReusableObject export/import', () => {
     engine.registerMaterialDefinition(matId, 'TestMat')
     engine.assignMaterial(bone, matId)
     // Embed snapshot so export includes it
-    engine.embedMaterial({ id: matId, name: 'TestMat', description: '', tags: [], createdAt: '2026-01-01', updatedAt: '2026-01-01', parameters: [], shaderId: null })
+    engine.embedMaterial({
+      id: matId,
+      name: 'TestMat',
+      description: '',
+      tags: [],
+      createdAt: '2026-01-01',
+      updatedAt: '2026-01-01',
+      parameters: [],
+      shaderId: null,
+    })
 
     // Asset: embed a fake asset
     const assetId = 'asset-test-1'
-    engine.embedAsset({ id: assetId, name: 'Fake', data: 'QUJD', mimeType: 'image/png', metadata: { width: 10, height: 10 } })
+    engine.embedAsset({
+      id: assetId,
+      name: 'Fake',
+      data: 'QUJD',
+      mimeType: 'image/png',
+      metadata: { width: 10, height: 10 },
+    })
     // Attach asset instance to mesh? Simulate via component
     // For simplicity assign asset instance component to mesh node via direct node mutation (since no command for assetInstance change beyond create)
     // We'll manually set component
     const meshNode = engine.getNode(mesh)
-    ;(meshNode as unknown as { components: Record<string, unknown> }).components = Object.freeze({ ...(meshNode.components as object), assetInstance: { kind: 'assetInstance', assetDefinitionId: assetId } } as unknown as import('../../engine/components').NodeComponents)
+    ;(meshNode as unknown as { components: Record<string, unknown> }).components = Object.freeze({
+      ...(meshNode.components as object),
+      assetInstance: { kind: 'assetInstance', assetDefinitionId: assetId },
+    } as unknown as import('../../engine/components').NodeComponents)
 
     // Create clip collection via hierarchical export
-    const col = expectOk(dispatcher.dispatch(new ExportClipCollectionCommand({ parentNodeId: handle, name: 'RigAnim' })))
+    const col = expectOk(
+      dispatcher.dispatch(
+        new ExportClipCollectionCommand({ parentNodeId: handle, name: 'RigAnim' }),
+      ),
+    )
     expect(col.collectionId).toBeDefined()
 
     // Export reusable object
@@ -100,11 +197,42 @@ describe('ReusableObject export/import', () => {
   it('export modal auxiliary nodes: includes IK handle/pole ghosts', () => {
     const { engine, dispatcher } = setupEngine()
     const slide = engine.getActiveSlide()!
-    const handle = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'RigHandle' }))).nodeId
-    const boneA = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: handle, name: 'BoneA', components: { bone: { kind: 'bone', length: 80 } } }))).nodeId
-    const boneB = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: boneA, name: 'BoneB', components: { bone: { kind: 'bone', length: 80 } } }))).nodeId
+    const handle = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'RigHandle',
+        }),
+      ),
+    ).nodeId
+    const boneA = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: handle,
+          name: 'BoneA',
+          components: { bone: { kind: 'bone', length: 80 } },
+        }),
+      ),
+    ).nodeId
+    const boneB = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: boneA,
+          name: 'BoneB',
+          components: { bone: { kind: 'bone', length: 80 } },
+        }),
+      ),
+    ).nodeId
     // Create IK chain: this will create ghost nodes under handle
-    const chain = engine.createIKChain(slide.id, [boneA, boneB], { position: { x: 100, y: 0 } }, { position: { x: 0, y: 50 } })
+    const chain = engine.createIKChain(
+      slide.id,
+      [boneA, boneB],
+      { position: { x: 100, y: 0 } },
+      { position: { x: 0, y: 50 } },
+    )
     expect(chain.ghostNodeId).toBeTruthy()
     expect(chain.poleGhostNodeId).toBeTruthy()
     const ghostId = chain.ghostNodeId!
@@ -123,21 +251,71 @@ describe('ReusableObject export/import', () => {
   it('import creates new ids, snaps definitions, preserves clip bindings and semanticNames', () => {
     const { engine, dispatcher } = setupEngine()
     const slide = engine.getActiveSlide()!
-    const handle = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'RigHandle' }))).nodeId
-    const bone = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: handle, name: 'Bone', components: { bone: { kind: 'bone', length: 80 } } }))).nodeId
+    const handle = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'RigHandle',
+        }),
+      ),
+    ).nodeId
+    const bone = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: handle,
+          name: 'Bone',
+          components: { bone: { kind: 'bone', length: 80 } },
+        }),
+      ),
+    ).nodeId
     expectOk(dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: bone, semanticName: 'arm' })))
-    const clip = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'Wave', duration: 1, category: '' }))).clipId
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'Wave', duration: 1, category: '' })),
+    ).clipId
     engine.addClipChannelKeyframe(clip, 'positionX', 0, 0)
     engine.addClipChannelKeyframe(clip, 'positionX', 1, 10)
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: bone, clipId: clip })))
-    const col = expectOk(dispatcher.dispatch(new ExportClipCollectionCommand({ parentNodeId: handle, name: 'Anim' }))).collectionId
+    const col = expectOk(
+      dispatcher.dispatch(new ExportClipCollectionCommand({ parentNodeId: handle, name: 'Anim' })),
+    ).collectionId
 
     // Embed asset for snap
     const assetId = 'asset-snap-1'
     engine.embedAsset({ id: assetId, name: 'Snap', data: 'QUJD', mimeType: 'image/png' })
-    const meshNodeId = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: handle, name: 'MeshPart', components: { mesh: { kind: 'mesh', mesh: { vertices: [{x:0,y:0},{x:10,y:0},{x:10,y:10}], faces: [{v0:0,v1:1,v2:2}], uvs: [{u:0,v:0},{u:1,v:0},{u:1,v:1}] } } } }))).nodeId
+    const meshNodeId = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: handle,
+          name: 'MeshPart',
+          components: {
+            mesh: {
+              kind: 'mesh',
+              mesh: {
+                vertices: [
+                  { x: 0, y: 0 },
+                  { x: 10, y: 0 },
+                  { x: 10, y: 10 },
+                ],
+                faces: [{ v0: 0, v1: 1, v2: 2 }],
+                uvs: [
+                  { u: 0, v: 0 },
+                  { u: 1, v: 0 },
+                  { u: 1, v: 1 },
+                ],
+              },
+            },
+          },
+        }),
+      ),
+    ).nodeId
     const meshNode = engine.getNode(meshNodeId)
-    ;(meshNode as unknown as { components: Record<string, unknown> }).components = Object.freeze({ ...(meshNode.components as object), assetInstance: { kind: 'assetInstance', assetDefinitionId: assetId } } as unknown as import('../../engine/components').NodeComponents)
+    ;(meshNode as unknown as { components: Record<string, unknown> }).components = Object.freeze({
+      ...(meshNode.components as object),
+      assetInstance: { kind: 'assetInstance', assetDefinitionId: assetId },
+    } as unknown as import('../../engine/components').NodeComponents)
     engine.assignMaterial(meshNodeId, '0d3f4464-8300-5b6d-ae14-45246fefbeae') // default
     // Ensure handle has material snapshot? not needed
 
@@ -150,8 +328,10 @@ describe('ReusableObject export/import', () => {
     expectOk(disp2.dispatch(new CreateProjectCommand({ name: 'P2' })))
     expectOk(disp2.dispatch(new CreateSlideCommand({ name: 'S1' })))
     const activeSlide2 = engine2.getActiveSlide()!
-    const beforeIds = new Set([...walkPreOrder(activeSlide2.scene.root)].map((n) => n.id))
-    const beforeClipIds = new Set(engine2.clips.map((c) => c.id))
+    const beforeIds_unused = new Set([...walkPreOrder(activeSlide2.scene.root)].map((n) => n.id))
+    void beforeIds_unused
+    const beforeClipIds_unused = new Set(engine2.clips.map((c) => c.id))
+    void beforeClipIds_unused
 
     const result = engine2.importReusableObject(obj)
     expect(result.nodeIdMap.size).toBe(obj.nodes.length)
@@ -192,20 +372,58 @@ describe('ReusableObject export/import', () => {
     const { engine, dispatcher } = setupEngine()
     const slide = engine.getActiveSlide()!
     // Source rig
-    const rigHandle = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'RigHandle' }))).nodeId
-    const boneLeft = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: rigHandle, name: 'LeftArm', components: { bone: { kind: 'bone', length: 80 } } }))).nodeId
-    expectOk(dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: boneLeft, semanticName: 'left_arm' })))
-    const boneRight = expectOk(dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: rigHandle, name: 'RightArm', components: { bone: { kind: 'bone', length: 80 } } }))).nodeId
-    expectOk(dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: boneRight, semanticName: 'right_arm' })))
+    const rigHandle = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'RigHandle',
+        }),
+      ),
+    ).nodeId
+    const boneLeft = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: rigHandle,
+          name: 'LeftArm',
+          components: { bone: { kind: 'bone', length: 80 } },
+        }),
+      ),
+    ).nodeId
+    expectOk(
+      dispatcher.dispatch(
+        new SetSemanticNameCommand({ nodeId: boneLeft, semanticName: 'left_arm' }),
+      ),
+    )
+    const boneRight = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: rigHandle,
+          name: 'RightArm',
+          components: { bone: { kind: 'bone', length: 80 } },
+        }),
+      ),
+    ).nodeId
+    expectOk(
+      dispatcher.dispatch(
+        new SetSemanticNameCommand({ nodeId: boneRight, semanticName: 'right_arm' }),
+      ),
+    )
 
     // Create two clips with distinct channels
-    const clipA = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'Raise', duration: 1, category: '' }))).clipId
+    const clipA = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'Raise', duration: 1, category: '' })),
+    ).clipId
     engine.addClipChannelKeyframe(clipA, 'positionX', 0, 0)
     engine.addClipChannelKeyframe(clipA, 'positionX', 1, 100)
     engine.addClipChannelKeyframe(clipA, 'positionY', 0, 0)
     engine.addClipChannelKeyframe(clipA, 'positionY', 1, 50)
 
-    const clipB = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'Lower', duration: 1, category: '' }))).clipId
+    const clipB = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'Lower', duration: 1, category: '' })),
+    ).clipId
     engine.addClipChannelKeyframe(clipB, 'positionX', 0, 10)
     engine.addClipChannelKeyframe(clipB, 'positionX', 1, -10)
 
@@ -214,7 +432,11 @@ describe('ReusableObject export/import', () => {
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: boneRight, clipId: clipB })))
 
     // Export collection for rig
-    const colId = expectOk(dispatcher.dispatch(new ExportClipCollectionCommand({ parentNodeId: rigHandle, name: 'ArmMotion' }))).collectionId
+    const colId = expectOk(
+      dispatcher.dispatch(
+        new ExportClipCollectionCommand({ parentNodeId: rigHandle, name: 'ArmMotion' }),
+      ),
+    ).collectionId
     // Export reusable object (includes collection and clips)
     const obj = engine.exportReusableObject(rigHandle, 'ArmRig')
     expect(obj.library?.clipCollections?.length).toBe(1)
@@ -231,11 +453,43 @@ describe('ReusableObject export/import', () => {
     // Verify imported clips animate same as original when evaluated via AnimationEvaluator? Use clip evaluation directly?
     // Instead, create fresh target rig in new project and apply collection
     const slide2 = engine2.getActiveSlide()!
-    const targetHandle = expectOk(disp2.dispatch(new CreateNodeCommand({ sceneId: slide2.scene.id, parentId: slide2.scene.root.id, name: 'TargetHandle' }))).nodeId
-    const targetLeft = expectOk(disp2.dispatch(new CreateNodeCommand({ sceneId: slide2.scene.id, parentId: targetHandle, name: 'TgtLeft', components: { bone: { kind: 'bone', length: 80 } } }))).nodeId
-    expectOk(disp2.dispatch(new SetSemanticNameCommand({ nodeId: targetLeft, semanticName: 'left_arm' })))
-    const targetRight = expectOk(disp2.dispatch(new CreateNodeCommand({ sceneId: slide2.scene.id, parentId: targetHandle, name: 'TgtRight', components: { bone: { kind: 'bone', length: 80 } } }))).nodeId
-    expectOk(disp2.dispatch(new SetSemanticNameCommand({ nodeId: targetRight, semanticName: 'right_arm' })))
+    const targetHandle = expectOk(
+      disp2.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide2.scene.id,
+          parentId: slide2.scene.root.id,
+          name: 'TargetHandle',
+        }),
+      ),
+    ).nodeId
+    const targetLeft = expectOk(
+      disp2.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide2.scene.id,
+          parentId: targetHandle,
+          name: 'TgtLeft',
+          components: { bone: { kind: 'bone', length: 80 } },
+        }),
+      ),
+    ).nodeId
+    expectOk(
+      disp2.dispatch(new SetSemanticNameCommand({ nodeId: targetLeft, semanticName: 'left_arm' })),
+    )
+    const targetRight = expectOk(
+      disp2.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide2.scene.id,
+          parentId: targetHandle,
+          name: 'TgtRight',
+          components: { bone: { kind: 'bone', length: 80 } },
+        }),
+      ),
+    ).nodeId
+    expectOk(
+      disp2.dispatch(
+        new SetSemanticNameCommand({ nodeId: targetRight, semanticName: 'right_arm' }),
+      ),
+    )
 
     // Apply imported collection to target
     const applied = engine2.applyClipCollection(importedColId, targetHandle)
@@ -250,15 +504,21 @@ describe('ReusableObject export/import', () => {
     // Verify imported clips have identical channel keyframes to originals
     const origClipA = engine.getClip(clipA)
     const importedClipAObj = engine2.getClip(importedClipA)
-    expect(origClipA.getChannelKeyframes('positionX').map((k) => ({ t: k.time, v: k.value }))).toEqual(
+    expect(
+      origClipA.getChannelKeyframes('positionX').map((k) => ({ t: k.time, v: k.value })),
+    ).toEqual(
       importedClipAObj.getChannelKeyframes('positionX').map((k) => ({ t: k.time, v: k.value })),
     )
-    expect(origClipA.getChannelKeyframes('positionY').map((k) => ({ t: k.time, v: k.value }))).toEqual(
+    expect(
+      origClipA.getChannelKeyframes('positionY').map((k) => ({ t: k.time, v: k.value })),
+    ).toEqual(
       importedClipAObj.getChannelKeyframes('positionY').map((k) => ({ t: k.time, v: k.value })),
     )
     const origClipB = engine.getClip(clipB)
     const importedClipBObj = engine2.getClip(importedClipB)
-    expect(origClipB.getChannelKeyframes('positionX').map((k) => ({ t: k.time, v: k.value }))).toEqual(
+    expect(
+      origClipB.getChannelKeyframes('positionX').map((k) => ({ t: k.time, v: k.value })),
+    ).toEqual(
       importedClipBObj.getChannelKeyframes('positionX').map((k) => ({ t: k.time, v: k.value })),
     )
     // Also verify that applying collection produced same bindings semantic → same clip mapping

@@ -2,7 +2,8 @@ import { create } from 'zustand'
 import type { MeshEdge } from '../engine/mesh'
 import { edgeKey } from '../engine/mesh'
 
-export type MeshEditTool = 'select' | 'delete' | 'extrude' | 'subdivide' | 'mirror' | 'weightPaint'
+export type MeshEditTool =
+  'select' | 'delete' | 'extrude' | 'subdivide' | 'mirror' | 'weightPaint' | 'sculpt'
 export type MeshSelectMode = 'vertex' | 'edge' | 'face'
 export type WeightPaintTool = 'paint' | 'smooth' | 'fill' | 'blur' | 'autoWeights'
 
@@ -20,6 +21,11 @@ export interface MeshEditState {
   readonly brushStrength: number
   readonly brushFalloff: number
   readonly heatmapVisible: boolean
+  // PROTOTYPE sculpt state (research/morph-brush) — mirrors brushRadius/Strength/Falloff but for sculpt tool
+  readonly sculptRadius: number
+  readonly sculptStrength: number
+  readonly sculptFalloff: number
+  readonly activeShapeId: string | null
   enterMeshEdit(nodeId: string): void
   exitMeshEdit(): void
   setMeshEditTool(tool: MeshEditTool): void
@@ -48,6 +54,10 @@ export interface MeshEditState {
   setBrushFalloff(falloff: number): void
   toggleHeatmap(): void
   setHeatmapVisible(visible: boolean): void
+  setSculptRadius: (radius: number) => void
+  setSculptStrength: (strength: number) => void
+  setSculptFalloff: (falloff: number) => void
+  setActiveShapeId: (shapeId: string | null) => void
 }
 
 function edgesEqual(a: MeshEdge, b: MeshEdge): boolean {
@@ -72,6 +82,10 @@ export const useMeshEditStore = create<MeshEditState>()((set) => ({
   brushStrength: 1.0,
   brushFalloff: 1.0,
   heatmapVisible: true,
+  sculptRadius: 25,
+  sculptStrength: 1.0,
+  sculptFalloff: 1.0,
+  activeShapeId: null,
 
   enterMeshEdit: (nodeId) =>
     set({
@@ -88,6 +102,10 @@ export const useMeshEditStore = create<MeshEditState>()((set) => ({
       brushStrength: 1.0,
       brushFalloff: 1.0,
       heatmapVisible: true,
+      sculptRadius: 25,
+      sculptStrength: 1.0,
+      sculptFalloff: 1.0,
+      activeShapeId: null,
     }),
 
   exitMeshEdit: () =>
@@ -105,6 +123,10 @@ export const useMeshEditStore = create<MeshEditState>()((set) => ({
       brushStrength: 1.0,
       brushFalloff: 1.0,
       heatmapVisible: true,
+      sculptRadius: 25,
+      sculptStrength: 1.0,
+      sculptFalloff: 1.0,
+      activeShapeId: null,
     }),
 
   setMeshEditTool: (tool) => set({ meshEditTool: tool }),
@@ -187,4 +209,8 @@ export const useMeshEditStore = create<MeshEditState>()((set) => ({
   setBrushFalloff: (falloff) => set({ brushFalloff: falloff }),
   toggleHeatmap: () => set((state) => ({ heatmapVisible: !state.heatmapVisible })),
   setHeatmapVisible: (visible) => set({ heatmapVisible: visible }),
+  setSculptRadius: (radius) => set({ sculptRadius: radius }),
+  setSculptStrength: (strength) => set({ sculptStrength: strength }),
+  setSculptFalloff: (falloff) => set({ sculptFalloff: falloff }),
+  setActiveShapeId: (shapeId) => set({ activeShapeId: shapeId }),
 }))

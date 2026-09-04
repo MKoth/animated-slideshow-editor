@@ -1,5 +1,7 @@
 import type { MeshData, MeshVertex } from './mesh'
 import type { WorldTransform } from './worldTransform'
+import type { Shape, MorphState } from './shape'
+import { resolveMorphedVertices } from './shape'
 
 export interface DeformedMeshResult {
   readonly deformedVertices: readonly MeshVertex[]
@@ -11,6 +13,28 @@ function rotateX(x: number, y: number, rotation: number): number {
 
 function rotateY(x: number, y: number, rotation: number): number {
   return x * Math.sin(rotation) + y * Math.cos(rotation)
+}
+
+// PROTOTYPE helper — morph-then-bones composition (research/morph-brush)
+// Thin wrapper that lerps rest vertices before delegating to existing skin evaluator.
+export function evaluateMorphedMeshDeformation(
+  mesh: MeshData,
+  morph: MorphState | null,
+  shapes: readonly Shape[] | undefined,
+  boneWorldTransforms: ReadonlyMap<string, WorldTransform>,
+  meshWorldTransform?: WorldTransform,
+): DeformedMeshResult {
+  if (
+    !morph ||
+    !morph.binding ||
+    morph.binding.fromShapeId === null ||
+    morph.binding.toShapeId === null
+  ) {
+    return evaluateMeshDeformation(mesh, boneWorldTransforms, meshWorldTransform)
+  }
+  const morphedVerts = resolveMorphedVertices(mesh.vertices, shapes, morph)
+  const morphedMesh: MeshData = { ...mesh, vertices: morphedVerts as MeshVertex[] }
+  return evaluateMeshDeformation(morphedMesh, boneWorldTransforms, meshWorldTransform)
 }
 
 export function evaluateMeshDeformation(

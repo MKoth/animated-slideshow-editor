@@ -160,15 +160,15 @@ _Avoid_: Animation instance
 A named scalar on an animation clip of one of two kinds — gain (multiplies the channel's base value) or offset (adds to it). A clip channel links to at most one parameter; unlinked channels are absolute. Instances may override a parameter's default.
 
 **Clip Channel**:
-An animated property inside an animation clip (one of the uniform six plus visible and circle angles), existing while it has at least one keyframe. Keyframe times and values are normalized to the clip.
+An animated property inside an animation clip (one of the uniform six plus visible and circle angles and morph coefficient), existing while it has at least one keyframe. Keyframe times and values are normalized to the clip (`morphCoefficient` normalized to [0,1] like `opacity`; bespoke lane like `visible`, not a `ClipChannelDef` property).
 _Avoid_: Track, clip property
 
 **Clip Extraction**:
-The workflow that copies a selection of node keyframes (time/value/interp/tangents) into a new or existing animation clip, normalizing time to clip range [0,1] and value to [0,1] where applicable. Non-destructive copy; invoked via timeline right-click “Add to clip” modal.
+The workflow that copies a selection of node keyframes (time/value/interp/tangents) into a new or existing animation clip, normalizing time to clip range [0,1] and value to [0,1] where applicable (including `morphCoefficient`). Non-destructive copy; invoked via timeline right-click “Add to clip” modal. `morphCoefficient` keyframes layer on the target node's `MorphBinding {fromShapeId,toShapeId}` at apply time; shape ids are not stored in the clip and must resolve in the target scene (missing → warn + fallback to base mesh).
 _Avoid_: Bake to clip, export keyframes
 
 **Clip Collection** (also **Rig Animation**, **Hierarchical Clips**):
-A named grouping of per-node clips bound by semantic name: a map from semanticName → clipId plus parent id. Export walks a parent subtree collecting each node's clip instances; apply walks a target subtree and broadcasts each clip to all nodes matching the semantic name.
+A named grouping of per-node clips bound by semantic name: a map from semanticName → clipId plus parent id. Export walks a parent subtree collecting each node's clip instances (including `morphCoefficient` clips); apply walks a target subtree and broadcasts each clip to all nodes matching the semantic name. No morph-specific naming convention — the same `semanticName` (e.g. `left_hand`) carries any morph clip; binding remains node-local (`MorphBinding` stays on `NodeAnimation`, not in the clip).
 _Avoid_: Animation set, pose library
 
 **Scale Group** (also **Group Node** alias):
@@ -298,6 +298,14 @@ _Avoid_: Rig root object, master bone
 The policy applied when reparenting a bone or node: `Keep World Transform` (recompute local so world position stays, default) vs `Snap to Parent Tail` (child local reset to 0 at parent's tail, legacy rigging snap). Chosen per reparent via intercept dialog that remembers last choice per session; the operation acts on the dragged root, its descendant chain follows rigidly.
 _Avoid_: Parent type
 
+**Shape**:
+An absolute per-mesh snapshot of all rest vertices sharing the mesh's topology. A `Shape {id, name, vertices: MeshVertex[]}` lives inside `MeshComponent.shapes`; `faces`/`uvs`/`boneWeights`/`bindPose` are not duplicated per Shape and `shape.vertices.length === mesh.vertices.length` is invariant. Shapes are node-owned and embedded in `NodeJSON` (and copied into `ReusableObjectJSON` and `LessonJSON` via `SlideAnimation` sidecars), never in `library`/`embeddedAssets`.
+_Avoid_: Morph target, blendshape (topology-varying)
+
+**Morph**:
+The one-active-at-a-time lerp between any two Shapes on the same mesh, defined by `Morph {fromShapeId, toShapeId, coefficient}` with `coefficient` in [0,1] (exaggeration beyond 1 allowed in preview). Evaluated as `lerp(from.vertices[i], to.vertices[i], coefficient)` on rest vertices before `evaluateMeshDeformation` (morph then bones), deterministic per frame for preview and Video Export. `coefficient` is the `morphCoefficient` track on `NodeAnimation` with static sidecar `MorphBinding {fromShapeId,toShapeId|null}` (one lane, visible-pattern); clip and collection portability animates only the coefficient — the binding stays node-local and soft-warns if shape ids are missing on the target.
+_Avoid_: Blend, shape key
+
 ### Undo & history
 
 **Undo Stack**:
@@ -329,7 +337,7 @@ _Avoid_: Tag, category
 ### Object Library
 
 **Reusable Object** (also **Component**, **Object**):
-An exported subtree of scene nodes (including descendants, bones, IK handles, pole vectors, materials, and clip bindings where applicable) serialized as a `.lesson_object` JSON file. Stored both as downloadable file and as a library entry in the “Objects” panel; import copies the subtree into the active slide with new ids and snapshots definitions into Project.embeddedAssets. May include or reference a Clip Collection.
+An exported subtree of scene nodes (including descendants, bones, IK handles, pole vectors, materials, clip bindings, Shapes, and morph tracks where applicable) serialized as a `.lesson_object` JSON file. Stored both as downloadable file and as a library entry in the “Objects” panel; import copies the subtree into the active slide with new node/clip/collection ids and remapped shape ids, and snapshots definitions into Project.embeddedAssets. May include or reference a Clip Collection; `MeshComponent.shapes` are embedded in `nodes[].components.mesh.shapes` and `SlideAnimation` carries `morphBinding`/`morphTrack` per node, with referenced morph clips/collections in `library`.
 _Avoid_: Prefab, template
 
 ### Content authority
