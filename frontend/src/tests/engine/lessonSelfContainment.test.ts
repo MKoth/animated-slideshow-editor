@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
- /* Seam 1 — lesson self-containment, backward compat & export determinism (fixes #285) */
+/* Seam 1 — lesson self-containment, backward compat & export determinism (fixes #285) */
 import { describe, it, expect, vi } from 'vitest'
 import { createEngineInternal } from '../../engine/internal'
 import { createDefaultRectangleMesh } from '../../engine/mesh'
@@ -29,12 +29,7 @@ function dispatcherFor(engine: ReturnType<typeof createEngineInternal>) {
   return { dispatcher, undo }
 }
 
-function addMorphKey(
-  dispatcher: CommandDispatcher,
-  nodeId: string,
-  time: number,
-  value: number,
-) {
+function addMorphKey(dispatcher: CommandDispatcher, nodeId: string, time: number, value: number) {
   const res = dispatcher.dispatch(
     new AddKeyframeCommand({ target: { kind: 'morph', nodeId }, time, value }) as any,
   )
@@ -61,8 +56,12 @@ describe('lesson self-containment, backward compat & Video Export determinism (2
     // clip morph channel
     const clip = engine.createClip('MorphClip', 1, '', [], [])
     // add morph keyframes to clip via ClipDefinition API
-    clip.addMorphKeyframe(new Keyframe('kf1', 0, 0, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
-    clip.addMorphKeyframe(new Keyframe('kf2', 1, 1, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
+    clip.addMorphKeyframe(
+      new Keyframe('kf1', 0, 0, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+    )
+    clip.addMorphKeyframe(
+      new Keyframe('kf2', 1, 1, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+    )
     engine.assignClipInstance(node.id, clip.id, 0, 1, true, {})
 
     const json = engine.toJSON() as LessonJSON
@@ -149,7 +148,10 @@ describe('lesson self-containment, backward compat & Video Export determinism (2
       name: 'Bad',
       vertices: [{ x: 0, y: 0 }], // wrong length (base is 4 vertices for rectangle)
     }
-    const shapesArr = [...(nodeJson.components.mesh!.shapes as unknown as unknown[]), mismatched] as any
+    const shapesArr = [
+      ...(nodeJson.components.mesh!.shapes as unknown as unknown[]),
+      mismatched,
+    ] as any
     ;(nodeJson.components.mesh as unknown as Record<string, unknown>).shapes = shapesArr
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -172,7 +174,8 @@ describe('lesson self-containment, backward compat & Video Export determinism (2
     // shapes A,B with offset
     const sA = engine.createShape(node.id, 'A')
     const sB = engine.createShape(node.id, 'B')
-    for (let i = 0; i < sB.vertices.length; i++) engine.setShapeVertex(node.id, sB.id, i, sB.vertices[i].x + 20, sB.vertices[i].y)
+    for (let i = 0; i < sB.vertices.length; i++)
+      engine.setShapeVertex(node.id, sB.id, i, sB.vertices[i].x + 20, sB.vertices[i].y)
     const shapes = engine.getShapes(node.id)
     const a = shapes.find((s) => s.id === sA.id)!
     const b = shapes.find((s) => s.id === sB.id)!
@@ -184,8 +187,12 @@ describe('lesson self-containment, backward compat & Video Export determinism (2
     // clip morph animation that overrides (last-wins)
     const clip = engine.createClip('MorphClip', 1, '', [], [])
     // clip anim 0->1 normalized; at clip time 0 -> 0, at 1 -> 1 (hold linear)
-    clip.addMorphKeyframe(new Keyframe('ck1', 0, 0.2, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
-    clip.addMorphKeyframe(new Keyframe('ck2', 1, 0.8, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
+    clip.addMorphKeyframe(
+      new Keyframe('ck1', 0, 0.2, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+    )
+    clip.addMorphKeyframe(
+      new Keyframe('ck2', 1, 0.8, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+    )
     engine.assignClipInstance(node.id, clip.id, 0, 1, true, {})
 
     const fps = 4
@@ -227,7 +234,8 @@ describe('lesson self-containment, backward compat & Video Export determinism (2
     const { engine, node } = setupEngineWithMorph()
     const sA = engine.createShape(node.id, 'A')
     const sB = engine.createShape(node.id, 'B')
-    for (let i = 0; i < sB.vertices.length; i++) engine.setShapeVertex(node.id, sB.id, i, sB.vertices[i].x + 5, sB.vertices[i].y + 5)
+    for (let i = 0; i < sB.vertices.length; i++)
+      engine.setShapeVertex(node.id, sB.id, i, sB.vertices[i].x + 5, sB.vertices[i].y + 5)
     const a = engine.getShapes(node.id).find((s) => s.id === sA.id)!
     const b = engine.getShapes(node.id).find((s) => s.id === sB.id)!
     engine.setMorphBinding(node.id, { fromShapeId: a.id, toShapeId: b.id })
