@@ -1,6 +1,5 @@
-// PROTOTYPE — throwaway shape model for research/morph-brush
-// Mirrors ADR 0007: Shape as absolute snapshot sharing topology.
-// Not production until spec lands; shapes live inline in MeshComponent, not library.
+// Shape — absolute per-mesh snapshots sharing topology (ADR 0007)
+// Shapes live inline in MeshComponent, not library. faces/uvs/boneWeights/bindPose stay on mesh.
 import type { MeshVertex } from './mesh'
 import { newId } from './ids'
 

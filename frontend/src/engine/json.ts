@@ -38,6 +38,11 @@ export type NodeComponentsJSON = {
       }[])[]
       readonly bindPose?: Readonly<Record<string, TransformJSON>>
     }
+    readonly shapes?: readonly {
+      readonly id: string
+      readonly name: string
+      readonly vertices: readonly { readonly x: number; readonly y: number }[]
+    }[]
   }
   readonly ghost?: { readonly kind: 'ghost' }
   readonly table?: {

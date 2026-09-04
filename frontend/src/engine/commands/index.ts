@@ -466,3 +466,11 @@ export type {
   ImportReusableObjectInverse,
   ImportReusableObjectParameters,
 } from './importReusableObjectCommand'
+export { CreateShapeCommand } from './createShapeCommand'
+export type { CreateShapeInverse, CreateShapeParameters } from './createShapeCommand'
+export { DuplicateShapeCommand } from './duplicateShapeCommand'
+export type { DuplicateShapeInverse, DuplicateShapeParameters } from './duplicateShapeCommand'
+export { RenameShapeCommand } from './renameShapeCommand'
+export type { RenameShapeInverse, RenameShapeParameters } from './renameShapeCommand'
+export { DeleteShapeCommand } from './deleteShapeCommand'
+export type { DeleteShapeInverse, DeleteShapeParameters } from './deleteShapeCommand'

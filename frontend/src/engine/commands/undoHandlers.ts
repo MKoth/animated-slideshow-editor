@@ -80,13 +80,13 @@ export function applyUndo(
       try {
         engine.setBoneLength(nodeId, oldLength)
       } catch {
-        // bone may be deleted
+        void 0
       }
       try {
         const node = engine.getNode(nodeId)
         engine.setTransform(nodeId, { ...node.transform, x: oldX, y: oldY, rotation: oldRotation })
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -128,7 +128,7 @@ export function applyUndo(
       try {
         engine.setTransform(nodeId, oldTransform)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -140,7 +140,7 @@ export function applyUndo(
       try {
         engine.setTransform(nodeId, oldTransform)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -155,7 +155,7 @@ export function applyUndo(
       try {
         engine.removeNode(nodeId)
       } catch {
-        // already gone
+        void 0
       }
       return
     }
@@ -173,13 +173,13 @@ export function applyUndo(
           engine.reparentNode(c.nodeId, c.oldParentId)
           engine.setTransform(c.nodeId, c.oldTransform)
         } catch {
-          // ignore
+          void 0
         }
       }
       try {
         engine.removeNode(handleId)
       } catch {
-        // already gone
+        void 0
       }
       return
     }
@@ -200,7 +200,7 @@ export function applyUndo(
           engine.getNode(nodeId)
           continue
         } catch {
-          // not exists, create
+          void 0
         }
         if (parent) {
           try {
@@ -230,7 +230,7 @@ export function applyUndo(
                     }
                   }
                 } catch {
-                  // ignore
+                  void 0
                 }
               }
             }
@@ -243,12 +243,12 @@ export function applyUndo(
                   const n = engine.getNode(nodeId)
                   n.clipInstances.push(inst)
                 } catch {
-                  // ignore
+                  void 0
                 }
               }
             }
           } catch {
-            // ignore failures
+            void 0
           }
         }
       }
@@ -259,7 +259,7 @@ export function applyUndo(
       try {
         engine.removeNode(nodeId)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -268,7 +268,7 @@ export function applyUndo(
       try {
         engine.removeNode(nodeId)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -277,7 +277,7 @@ export function applyUndo(
       try {
         engine.removeSlide(slideId)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -293,7 +293,7 @@ export function applyUndo(
         ;(jsonAny.slides as unknown[]) = [...slides, slideJSON]
         engine.restoreFromJSON(jsonAny as unknown as import('../json').LessonJSON)
       } catch {
-        // fallback: try direct slideManager install?
+        void 0
       }
       return
     }
@@ -314,7 +314,7 @@ export function applyUndo(
       try {
         engine.removeSlide(slideId)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -340,7 +340,7 @@ export function applyUndo(
               engine.addKeyframe(target, kf.time, kf.value)
             }
           } catch {
-            // ignore
+            void 0
           }
         }
       }
@@ -462,7 +462,7 @@ export function applyUndo(
       try {
         engine.removeNode(containerNodeId)
       } catch {
-        // ignore
+        void 0
       }
       const originalText = inv.originalTextContent as string
       const originalFontSize = inv.originalFontSize as number
@@ -478,7 +478,7 @@ export function applyUndo(
         const origTransform = inv.originalTransform as Transform
         if (origTransform) engine.setTransform(originalNodeId, origTransform)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -506,7 +506,7 @@ export function applyUndo(
           engine.setKeyframeInterpolation(target, kf.keyframeId, kf.interpolation)
           engine.setKeyframeTangents(target, kf.keyframeId, kf.tangentIn, kf.tangentOut)
         } catch {
-          // ignore
+          void 0
         }
       }
       return
@@ -574,7 +574,7 @@ export function applyUndo(
       try {
         engine.deleteClip(clipId)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -585,7 +585,7 @@ export function applyUndo(
           const clip = ClipDefinition.fromJSON(clipData as unknown as import('../json').ClipJSON)
           engine.importClip(clip)
         } catch {
-          // ignore
+          void 0
         }
       }
       return
@@ -601,7 +601,7 @@ export function applyUndo(
       try {
         engine.deleteClip(clipId)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -811,7 +811,7 @@ export function applyUndo(
       try {
         engine.deleteClip(clipId)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -820,7 +820,7 @@ export function applyUndo(
       try {
         engine.deleteIKChain(chainId)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -840,7 +840,7 @@ export function applyUndo(
             ghostNode.id,
           )
         } catch {
-          // ignore
+          void 0
         }
       }
       if (poleGhostNode) {
@@ -854,7 +854,7 @@ export function applyUndo(
             poleGhostNode.id,
           )
         } catch {
-          // ignore
+          void 0
         }
       }
       // Restore chain via internal IKManager
@@ -889,7 +889,7 @@ export function applyUndo(
           }
         }
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -911,7 +911,7 @@ export function applyUndo(
       try {
         engine.removeConstraint(nodeId, constraintId)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -927,7 +927,7 @@ export function applyUndo(
           ;(newest as unknown as Record<string, unknown>).id = constraint.id
         }
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -976,6 +976,38 @@ export function applyUndo(
         delete (newComponents as Record<string, unknown>).mesh
         ;(node as unknown as Record<string, unknown>).components = Object.freeze(newComponents)
       }
+      return
+    }
+    case 'CreateShape':
+    case 'DuplicateShape': {
+      const nodeId = inv.nodeId as string
+      const shapeId = inv.shapeId as string
+      try {
+        engine.deleteShape(nodeId, shapeId)
+      } catch {
+        void 0
+      }
+      return
+    }
+    case 'RenameShape': {
+      const nodeId = inv.nodeId as string
+      const shapeId = inv.shapeId as string
+      const oldName = inv.oldName as string
+      try {
+        engine.renameShape(nodeId, shapeId, oldName)
+      } catch {
+        void 0
+      }
+      return
+    }
+    case 'DeleteShape': {
+      const nodeId = inv.nodeId as string
+      const shape = inv.shape as import('../shape').Shape
+      const index = inv.index as number
+      const existing = engine.getShapes(nodeId)
+      const newShapes = [...existing]
+      newShapes.splice(index, 0, shape)
+      engine.restoreShapes(nodeId, newShapes)
       return
     }
     case 'SetVertexWeights': {
@@ -1027,7 +1059,7 @@ export function applyUndo(
       try {
         engine.deletePrompterPart(slideId, partId)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -1146,7 +1178,7 @@ export function applyUndo(
           try {
             engine.deletePrompterPart(slideId, nid)
           } catch {
-            // ignore
+            void 0
           }
         }
       }
@@ -1238,7 +1270,7 @@ export function applyUndo(
           }
         }
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -1329,7 +1361,7 @@ export function applyUndo(
       try {
         engine.deleteEmbeddedAsset(assetId)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -1344,7 +1376,7 @@ export function applyUndo(
       try {
         engine.deleteAudioClip(slideId, clipId)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -1442,7 +1474,7 @@ export function applyUndo(
       try {
         engine.deleteAudioClip(slideId, newClipId)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -1539,7 +1571,7 @@ export function applyUndo(
         try {
           engine.deleteEmbeddedAsset(createdAssetId)
         } catch {
-          // ignore
+          void 0
         }
       }
       // Restore old part at oldIndex
@@ -1643,13 +1675,13 @@ export function applyUndo(
       try {
         engine.deleteAudioClip(slideId, clipId)
       } catch {
-        // ignore
+        void 0
       }
       // Delete new asset
       try {
         engine.deleteEmbeddedAsset(assetId)
       } catch {
-        // ignore
+        void 0
       }
       // Restore old clip if deleted
       if (deletedOldClip) {
@@ -1662,7 +1694,7 @@ export function applyUndo(
       try {
         engine.removeNode(tableNodeId)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -1671,7 +1703,7 @@ export function applyUndo(
       try {
         engine.removeNode(rowNodeId)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -1702,7 +1734,7 @@ export function applyUndo(
         // We'll attempt to call engine.setTableComponent to restore previous columns
         // But inverse doesn't have old columns. So we skip
       } catch {
-        // ignore
+        void 0
       }
       void tableNodeId
       void colIdx
@@ -1732,7 +1764,7 @@ export function applyUndo(
           try {
             engine.setTransform(nodeId, transform)
           } catch {
-            // ignore
+            void 0
           }
         }
       }
@@ -1807,14 +1839,14 @@ export function applyUndo(
         try {
           engine.deleteClip(clipId)
         } catch {
-          // already deleted
+          void 0
         }
       } else {
         // existing: restore snapshot
         try {
           engine.restoreClipFromJSON(snapshot)
         } catch {
-          // ignore
+          void 0
         }
       }
       return
@@ -1824,7 +1856,7 @@ export function applyUndo(
       try {
         engine.deleteClipCollection(collectionId)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -1833,7 +1865,7 @@ export function applyUndo(
       try {
         engine.restoreClipCollectionFromJSON(snapshot)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -1848,7 +1880,7 @@ export function applyUndo(
       try {
         engine.deleteClipCollection(collectionId)
       } catch {
-        // ignore
+        void 0
       }
       return
     }
@@ -1873,29 +1905,36 @@ export function applyUndo(
               engine.removeClipInstance(entry.nodeId, last.id)
             }
           } catch {
-            // ignore
+            void 0
           }
         }
       }
       return
     }
     case 'ImportReusableObject': {
-      const createdNodeIds = (inv as Record<string, unknown>).createdNodeIds as readonly string[] | undefined
-      const createdClipIds = (inv as Record<string, unknown>).createdClipIds as readonly string[] | undefined
-      const createdCollectionIds = (inv as Record<string, unknown>).createdCollectionIds as readonly string[] | undefined
+      const createdNodeIds = (inv as Record<string, unknown>).createdNodeIds as
+        readonly string[] | undefined
+      const createdClipIds = (inv as Record<string, unknown>).createdClipIds as
+        readonly string[] | undefined
+      const createdCollectionIds = (inv as Record<string, unknown>).createdCollectionIds as
+        readonly string[] | undefined
       // Remove clip collections first
       if (createdCollectionIds) {
         for (const id of [...createdCollectionIds].reverse()) {
           try {
             engine.deleteClipCollection(id)
-          } catch {}
+          } catch {
+            void 0
+          }
         }
       }
       if (createdClipIds) {
         for (const id of [...createdClipIds].reverse()) {
           try {
             engine.deleteClip(id)
-          } catch {}
+          } catch {
+            void 0
+          }
         }
       }
       if (createdNodeIds) {
@@ -1903,7 +1942,9 @@ export function applyUndo(
         for (const id of [...createdNodeIds].reverse()) {
           try {
             engine.removeNode(id)
-          } catch {}
+          } catch {
+            void 0
+          }
         }
       }
       // Also remove IK chains and constraints that were created for imported nodes – they are tied to nodes, removal cascades via engine.removeNode for IK?
@@ -2003,7 +2044,7 @@ export function applyRedo(
           oldWorld = worldTransformOf(scene, nodeId)
           newParentWorld = worldTransformOf(scene, newParentId)
         } catch {
-          // fallback: will compute after reparent if needed
+          void 0
         }
       }
       engine.reparentNode(nodeId, newParentId)
@@ -2012,7 +2053,7 @@ export function applyRedo(
         try {
           engine.reorderNode(nodeId, idx)
         } catch {
-          // ignore
+          void 0
         }
       }
       if (parentingMode === 'snapToTail') {
@@ -2032,7 +2073,7 @@ export function applyRedo(
             engine.setTransform(nodeId, snapTransform)
           }
         } catch {
-          // ignore
+          void 0
         }
       } else if (oldWorld && newParentWorld) {
         try {
@@ -2042,7 +2083,7 @@ export function applyRedo(
             engine.setTransform(nodeId, adjusted)
           }
         } catch {
-          // ignore
+          void 0
         }
       }
       return
@@ -2059,7 +2100,7 @@ export function applyRedo(
           oldWorld = worldTransformOf(scene, nodeId)
           newParentWorld = worldTransformOf(scene, parentId)
         } catch {
-          // ignore
+          void 0
         }
       }
       engine.reparentNode(nodeId, parentId)
@@ -2068,7 +2109,7 @@ export function applyRedo(
         try {
           engine.reorderNode(nodeId, idx)
         } catch {
-          // ignore
+          void 0
         }
       }
       if (maintainWorld && oldWorld && newParentWorld) {
@@ -2079,7 +2120,7 @@ export function applyRedo(
             engine.setTransform(nodeId, adjusted)
           }
         } catch {
-          // ignore
+          void 0
         }
       }
       return
@@ -2162,7 +2203,7 @@ export function applyRedo(
       try {
         handleWorld = worldTransformOf(scene, hId)
       } catch {
-        // ignore
+        void 0
       }
       for (const childId of childIds) {
         try {
@@ -2176,7 +2217,7 @@ export function applyRedo(
             }
           }
         } catch {
-          // ignore missing child
+          void 0
         }
       }
       return
@@ -2584,7 +2625,7 @@ export function applyRedo(
         try {
           engine.importClipFromLibrary(entry)
         } catch {
-          // ignore
+          void 0
         }
       }
       return
@@ -2689,6 +2730,43 @@ export function applyRedo(
       engine.setMeshData(nodeId, newMesh2)
       return
     }
+    case 'CreateShape': {
+      const inv = _inverse as unknown as {
+        shape?: import('../shape').Shape
+        shapeId?: string
+      } | null
+      if (inv?.shape) {
+        const existing = engine.getShapes(params.nodeId as string)
+        engine.restoreShapes(params.nodeId as string, [...existing, inv.shape])
+        return
+      }
+      engine.createShape(params.nodeId as string, params.name as string)
+      return
+    }
+    case 'DuplicateShape': {
+      const inv = _inverse as unknown as { shape?: import('../shape').Shape } | null
+      if (inv?.shape) {
+        const existing = engine.getShapes(params.nodeId as string)
+        engine.restoreShapes(params.nodeId as string, [...existing, inv.shape])
+        return
+      }
+      engine.duplicateShape(params.nodeId as string, params.shapeId as string)
+      return
+    }
+    case 'RenameShape':
+      engine.renameShape(
+        params.nodeId as string,
+        params.shapeId as string,
+        params.newName as string,
+      )
+      return
+    case 'DeleteShape':
+      try {
+        engine.deleteShape(params.nodeId as string, params.shapeId as string)
+      } catch {
+        void 0
+      }
+      return
     case 'CreatePrompterPart': {
       engine.createPrompterPart(params.slideId as string, {
         id: (params.partId as string | undefined) ?? newId('prompter-part'),
@@ -2822,7 +2900,7 @@ export function applyRedo(
       try {
         engine.deleteAudioClip(slideId, clipId)
       } catch {
-        // clip already gone (e.g., already deleted via part delete) — ignore
+        void 0
       }
       return
     }
@@ -2949,7 +3027,7 @@ export function applyRedo(
           metadata: asset.metadata,
         })
       } catch {
-        // ignore if already exists
+        void 0
       }
       // Recreate clip - need to reuse same clipId from inverse if available, otherwise create new
       const inv = _inverse as unknown as { clipId?: string } | null
@@ -3085,7 +3163,7 @@ export function applyRedo(
           engine.restoreClipCollectionFromJSON(snapshot)
           return
         } catch {
-          // fallback to create
+          void 0
         }
       }
       engine.createClipCollection(
@@ -3109,7 +3187,7 @@ export function applyRedo(
           engine.restoreClipCollectionFromJSON(snapshot)
           return
         } catch {
-          // fallback
+          void 0
         }
       }
       engine.exportClipCollection(params.parentNodeId as string, params.name as string)
@@ -3122,9 +3200,12 @@ export function applyRedo(
       const obj = params.objectJson as unknown
       if (obj) {
         try {
-          engine.importReusableObject(obj as import('../reusableObject').ReusableObjectJSON, params.targetParentId as string | undefined)
+          engine.importReusableObject(
+            obj as import('../reusableObject').ReusableObjectJSON,
+            params.targetParentId as string | undefined,
+          )
         } catch {
-          // ignore
+          void 0
         }
       }
       return
@@ -3141,7 +3222,7 @@ export function applyRedo(
             const clip = ClipDefinition.fromJSON(snap as unknown as import('../json').ClipJSON)
             engine.importClip(clip)
           } catch {
-            // fallback
+            void 0
           }
         }
       } else {
@@ -3151,7 +3232,7 @@ export function applyRedo(
           try {
             engine.restoreClipFromJSON(targetSnap)
           } catch {
-            // ignore
+            void 0
           }
         }
       }
