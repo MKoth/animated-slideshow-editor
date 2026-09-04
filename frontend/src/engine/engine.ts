@@ -87,7 +87,10 @@ export interface EnginePublic {
   getMorphKeyframes(nodeId: string): readonly Keyframe[]
   hasMorphTrack(nodeId: string): boolean
   getMorphBinding(nodeId: string): import('./shape').MorphBinding | null
-  setMorphBinding(nodeId: string, binding: import('./shape').MorphBinding | null): import('./shape').MorphBinding | null
+  setMorphBinding(
+    nodeId: string,
+    binding: import('./shape').MorphBinding | null,
+  ): import('./shape').MorphBinding | null
   evaluateMorph(nodeId: string, time: number): number
   getAnimatableParameters(nodeId: string): AnimatableParameter[]
   evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState
@@ -140,11 +143,20 @@ export interface EnginePublic {
   buildExportJobDescriptor(settings: ExportSettings): ExportJobDescriptor
   toJSON(): LessonJSON
   restoreFromJSON(json: LessonJSON): void
-  exportReusableObject(rootNodeId: string, name: string, description?: string): import('./reusableObject').ReusableObjectJSON
+  exportReusableObject(
+    rootNodeId: string,
+    name: string,
+    description?: string,
+  ): import('./reusableObject').ReusableObjectJSON
   importReusableObject(
     objectJson: import('./reusableObject').ReusableObjectJSON,
     targetParentId?: string,
-  ): { nodeIdMap: Map<string, string>; clipIdMap: Map<string, string>; collectionIdMap: Map<string, string>; rootNewId: string }
+  ): {
+    nodeIdMap: Map<string, string>
+    clipIdMap: Map<string, string>
+    collectionIdMap: Map<string, string>
+    rootNewId: string
+  }
 }
 
 export function createEngine(): EnginePublic {

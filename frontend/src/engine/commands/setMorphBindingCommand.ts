@@ -21,7 +21,10 @@ export class SetMorphBindingCommand implements Command<SetMorphBindingInverse> {
   constructor(input: SetMorphBindingParameters) {
     this.#nodeId = input.nodeId
     this.#binding = input.binding
-      ? { fromShapeId: input.binding.fromShapeId ?? null, toShapeId: input.binding.toShapeId ?? null }
+      ? {
+          fromShapeId: input.binding.fromShapeId ?? null,
+          toShapeId: input.binding.toShapeId ?? null,
+        }
       : null
     this.parameters = {
       nodeId: input.nodeId,
@@ -32,16 +35,10 @@ export class SetMorphBindingCommand implements Command<SetMorphBindingInverse> {
   validate(engine: Engine): void {
     engine.getNode(this.#nodeId)
     if (this.#binding !== null) {
-      if (
-        this.#binding.fromShapeId !== null &&
-        typeof this.#binding.fromShapeId !== 'string'
-      ) {
+      if (this.#binding.fromShapeId !== null && typeof this.#binding.fromShapeId !== 'string') {
         throw new Error('MorphBinding fromShapeId must be string or null')
       }
-      if (
-        this.#binding.toShapeId !== null &&
-        typeof this.#binding.toShapeId !== 'string'
-      ) {
+      if (this.#binding.toShapeId !== null && typeof this.#binding.toShapeId !== 'string') {
         throw new Error('MorphBinding toShapeId must be string or null')
       }
     }

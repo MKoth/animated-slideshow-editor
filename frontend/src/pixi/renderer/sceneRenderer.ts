@@ -103,7 +103,10 @@ function effectiveMeshForPreview(
     const shapes = node.components.mesh?.shapes
     const shape = shapes?.find((s) => s.id === preview.previewShapeId)
     if (shape) {
-      return { ...mesh, vertices: shape.vertices as unknown as import('../../engine/mesh').MeshData['vertices'] }
+      return {
+        ...mesh,
+        vertices: shape.vertices as unknown as import('../../engine/mesh').MeshData['vertices'],
+      }
     }
   } catch (_e) {
     void _e

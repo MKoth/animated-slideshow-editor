@@ -75,10 +75,7 @@ import type { ClipInstance } from './clipInstance'
 import { createClipInstance } from './clipInstance'
 import { getAnimatableParameters, type AnimatableParameter } from './animatableParameters'
 import type { MeshData } from './mesh'
-import {
-  evaluateMeshDeformation,
-  evaluateMorphedMeshDeformation,
-} from './meshDeformationEvaluator'
+import { evaluateMeshDeformation, evaluateMorphedMeshDeformation } from './meshDeformationEvaluator'
 import { generateCircleMeshData } from './circleComponent'
 import type { MorphBinding } from './shape'
 import type { DeformedMeshResult } from './meshDeformationEvaluator'
@@ -2160,7 +2157,10 @@ export class Engine {
         toShapeId: binding.toShapeId ?? null,
       })
     }
-    this.#bus.emit({ type: 'MorphBindingChanged' as unknown as import('./events').EngineEvent['type'], nodeId } as unknown as import('./events').EngineEvent)
+    this.#bus.emit({
+      type: 'MorphBindingChanged' as unknown as import('./events').EngineEvent['type'],
+      nodeId,
+    } as unknown as import('./events').EngineEvent)
     return previous
   }
 

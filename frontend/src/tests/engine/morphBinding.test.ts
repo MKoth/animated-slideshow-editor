@@ -3,7 +3,12 @@ import { describe, it, expect, vi } from 'vitest'
 import { createEngineInternal } from '../../engine/internal'
 import { createDefaultRectangleMesh } from '../../engine/mesh'
 import { resolveMorphedVertices } from '../../engine/shape'
-import { SetMorphBindingCommand, AddKeyframeCommand, SetKeyframeInterpolationCommand, SetKeyframeTangentsCommand } from '../../engine/commands'
+import {
+  SetMorphBindingCommand,
+  AddKeyframeCommand,
+  SetKeyframeInterpolationCommand,
+  SetKeyframeTangentsCommand,
+} from '../../engine/commands'
 import { CommandDispatcher } from '../../engine/commands/dispatcher'
 import { UndoStack } from '../../engine/commands/undoStack'
 
@@ -27,18 +32,25 @@ function setupEngineWithMeshAndShapes() {
   const shapeB = engine.createShape(nodeId, 'B')
   // Manually offset B vertices by +10, +5
   const shapes = engine.getShapes(nodeId)
-  const b = shapes.find(s => s.id === shapeB.id)!
-  for (let i=0;i<b.vertices.length;i++) {
+  const b = shapes.find((s) => s.id === shapeB.id)!
+  for (let i = 0; i < b.vertices.length; i++) {
     engine.setShapeVertex(nodeId, b.id, i, b.vertices[i].x + 10, b.vertices[i].y + 5)
   }
   // Refresh shapeB after mutation
-  const shapeAAfter = engine.getShapes(nodeId).find(s=>s.id===shapeA.id)!
-  const shapeBAfter = engine.getShapes(nodeId).find(s=>s.id===shapeB.id)!
+  const shapeAAfter = engine.getShapes(nodeId).find((s) => s.id === shapeA.id)!
+  const shapeBAfter = engine.getShapes(nodeId).find((s) => s.id === shapeB.id)!
   return { engine, system, nodeId, slide, shapeA: shapeAAfter, shapeB: shapeBAfter }
 }
 
-function addMorphKeyframe(system: { dispatcher: CommandDispatcher }, nodeId: string, time: number, value: number) {
-  const res = system.dispatcher.dispatch(new AddKeyframeCommand({ target: { kind: 'morph', nodeId }, time, value }) as any)
+function addMorphKeyframe(
+  system: { dispatcher: CommandDispatcher },
+  nodeId: string,
+  time: number,
+  value: number,
+) {
+  const res = system.dispatcher.dispatch(
+    new AddKeyframeCommand({ target: { kind: 'morph', nodeId }, time, value }) as any,
+  )
   if (!res.ok) throw new Error(`add morph keyframe failed: ${(res as any).error.message}`)
   return (res as any).inverse.keyframe.keyframeId as string
 }
@@ -69,17 +81,42 @@ describe('Morph binding & coefficient (281)', () => {
     // linear default -> 0.5 at 0.5
     expect(engine.evaluateMorph(nodeId, 0.5)).toBeCloseTo(0.5)
     // hold
-    system.dispatcher.dispatch(new SetKeyframeInterpolationCommand({ target: { kind: 'morph', nodeId }, keyframeId: k1, interpolation: 'hold' }) as any)
+    system.dispatcher.dispatch(
+      new SetKeyframeInterpolationCommand({
+        target: { kind: 'morph', nodeId },
+        keyframeId: k1,
+        interpolation: 'hold',
+      }) as any,
+    )
     expect(engine.evaluateMorph(nodeId, 0.5)).toBe(0)
     expect(engine.evaluateMorph(nodeId, 1)).toBe(1)
     // bezier with tangents
-    system.dispatcher.dispatch(new SetKeyframeInterpolationCommand({ target: { kind: 'morph', nodeId }, keyframeId: k1, interpolation: 'bezier' }) as any)
-    system.dispatcher.dispatch(new SetKeyframeTangentsCommand({ target: { kind: 'morph', nodeId }, keyframeId: k1, tangentIn: { time: 0, value: 0 }, tangentOut: { time: 0.5, value: 0.5 } }) as any)
+    system.dispatcher.dispatch(
+      new SetKeyframeInterpolationCommand({
+        target: { kind: 'morph', nodeId },
+        keyframeId: k1,
+        interpolation: 'bezier',
+      }) as any,
+    )
+    system.dispatcher.dispatch(
+      new SetKeyframeTangentsCommand({
+        target: { kind: 'morph', nodeId },
+        keyframeId: k1,
+        tangentIn: { time: 0, value: 0 },
+        tangentOut: { time: 0.5, value: 0.5 },
+      }) as any,
+    )
     const valBezier = engine.evaluateMorph(nodeId, 0.5)
     expect(typeof valBezier).toBe('number')
     // parametric bounce/elastic/spring
-    for (const interp of ['bounce','elastic','spring'] as const) {
-      system.dispatcher.dispatch(new SetKeyframeInterpolationCommand({ target: { kind: 'morph', nodeId }, keyframeId: k1, interpolation: interp }) as any)
+    for (const interp of ['bounce', 'elastic', 'spring'] as const) {
+      system.dispatcher.dispatch(
+        new SetKeyframeInterpolationCommand({
+          target: { kind: 'morph', nodeId },
+          keyframeId: k1,
+          interpolation: interp,
+        }) as any,
+      )
       const v = engine.evaluateMorph(nodeId, 0.5)
       expect(typeof v).toBe('number')
       expect(v).toBeGreaterThanOrEqual(0)
@@ -103,8 +140,8 @@ describe('Morph binding & coefficient (281)', () => {
     expect(res0.deformedVertices[0].x).toBeCloseTo(a.vertices[0].x)
     expect(res0.deformedVertices[0].y).toBeCloseTo(a.vertices[0].y)
     // At 1, should be mid lerp 0.5
-    expect(resMid.deformedVertices[0].x).toBeCloseTo((a.vertices[0].x + b.vertices[0].x)/2)
-    expect(resMid.deformedVertices[0].y).toBeCloseTo((a.vertices[0].y + b.vertices[0].y)/2)
+    expect(resMid.deformedVertices[0].x).toBeCloseTo((a.vertices[0].x + b.vertices[0].x) / 2)
+    expect(resMid.deformedVertices[0].y).toBeCloseTo((a.vertices[0].y + b.vertices[0].y) / 2)
     // At 2, should be to shape
     expect(res1.deformedVertices[0].x).toBeCloseTo(b.vertices[0].x)
     expect(res1.deformedVertices[0].y).toBeCloseTo(b.vertices[0].y)
@@ -125,14 +162,25 @@ describe('Morph binding & coefficient (281)', () => {
     expect(() => addMorphKeyframe(system, nodeId, 1, -0.1)).toThrow(/between 0 and 1/)
     // preview clamp 1.5: directly call resolveMorphedVertices with coefficient 1.5
     const base = engine.getNode(nodeId).components.mesh!.mesh.vertices
-    const coeff15 = resolveMorphedVertices(base, shapes, { binding: { fromShapeId: shapes[0]!.id, toShapeId: shapes[1]!.id }, coefficient: 1.5 })
+    const coeff15 = resolveMorphedVertices(base, shapes, {
+      binding: { fromShapeId: shapes[0]!.id, toShapeId: shapes[1]!.id },
+      coefficient: 1.5,
+    })
     // should be extrapolate beyond b by 0.5
-    expect(coeff15[0].x).toBeCloseTo(shapes[0]!.vertices[0].x + (shapes[1]!.vertices[0].x - shapes[0]!.vertices[0].x)*1.5)
-    const coeff2 = resolveMorphedVertices(base, shapes, { binding: { fromShapeId: shapes[0]!.id, toShapeId: shapes[1]!.id }, coefficient: 2 })
+    expect(coeff15[0].x).toBeCloseTo(
+      shapes[0]!.vertices[0].x + (shapes[1]!.vertices[0].x - shapes[0]!.vertices[0].x) * 1.5,
+    )
+    const coeff2 = resolveMorphedVertices(base, shapes, {
+      binding: { fromShapeId: shapes[0]!.id, toShapeId: shapes[1]!.id },
+      coefficient: 2,
+    })
     // clamped to 1.5
     expect(coeff2[0].x).toBeCloseTo(coeff15[0].x)
     // also clamped lower 0
-    const coeffNeg = resolveMorphedVertices(base, shapes, { binding: { fromShapeId: shapes[0]!.id, toShapeId: shapes[1]!.id }, coefficient: -1 })
+    const coeffNeg = resolveMorphedVertices(base, shapes, {
+      binding: { fromShapeId: shapes[0]!.id, toShapeId: shapes[1]!.id },
+      coefficient: -1,
+    })
     expect(coeffNeg[0].x).toBeCloseTo(shapes[0]!.vertices[0].x)
   })
 
@@ -154,10 +202,17 @@ describe('Morph binding & coefficient (281)', () => {
     warn.mockRestore()
     // length mismatch: create mismatch shape manually via restoreShapes?
     const shapes = engine.getShapes(nodeId)
-    const mismatched = { id: shapes[0]!.id, name: shapes[0]!.name, vertices: [{x:0,y:0}] } as any
-    const warn2 = vi.spyOn(console, 'warn').mockImplementation(()=>{})
+    const mismatched = {
+      id: shapes[0]!.id,
+      name: shapes[0]!.name,
+      vertices: [{ x: 0, y: 0 }],
+    } as any
+    const warn2 = vi.spyOn(console, 'warn').mockImplementation(() => {})
     // Use resolve directly for length mismatch test
-    const resMismatch = resolveMorphedVertices(base, [mismatched, shapes[1]!], { binding: { fromShapeId: mismatched.id, toShapeId: shapes[1]!.id }, coefficient: 0.5 })
+    const resMismatch = resolveMorphedVertices(base, [mismatched, shapes[1]!], {
+      binding: { fromShapeId: mismatched.id, toShapeId: shapes[1]!.id },
+      coefficient: 0.5,
+    })
     expect(resMismatch).toBe(base) // fallback
     expect(warn2).toHaveBeenCalledWith(expect.stringContaining('length mismatch'))
     warn2.mockRestore()
@@ -171,11 +226,17 @@ describe('Morph binding & coefficient (281)', () => {
     const b = shapesBefore[1]!
     // Create C as duplicate of B but offset again
     const cShape = engine.createShape(nodeId, 'C')
-    for (let i=0;i<cShape.vertices.length;i++) {
-      engine.setShapeVertex(nodeId, cShape.id, i, cShape.vertices[i].x + 20, cShape.vertices[i].y + 10)
+    for (let i = 0; i < cShape.vertices.length; i++) {
+      engine.setShapeVertex(
+        nodeId,
+        cShape.id,
+        i,
+        cShape.vertices[i].x + 20,
+        cShape.vertices[i].y + 10,
+      )
     }
     const shapes = engine.getShapes(nodeId)
-    const c = shapes.find(s=>s.id===cShape.id)!
+    const c = shapes.find((s) => s.id === cShape.id)!
     // Binding A->B, animate 0 at t0, hold 1 at t1, then at boundary hold cut to C?
     // Actually spec says hold-cut sequencing via contiguous hold keyframes at boundary.
     // We simulate: hold at 1 until t=1, then new binding? But binding is static per node, so hold-cut is about coefficient?
@@ -186,7 +247,13 @@ describe('Morph binding & coefficient (281)', () => {
     engine.setMorphBinding(nodeId, { fromShapeId: a.id, toShapeId: b.id })
     const k0 = addMorphKeyframe(system, nodeId, 0, 0)
     const k1 = addMorphKeyframe(system, nodeId, 1, 1)
-    system.dispatcher.dispatch(new SetKeyframeInterpolationCommand({ target: { kind: 'morph', nodeId }, keyframeId: k0, interpolation: 'hold' }) as any)
+    system.dispatcher.dispatch(
+      new SetKeyframeInterpolationCommand({
+        target: { kind: 'morph', nodeId },
+        keyframeId: k0,
+        interpolation: 'hold',
+      }) as any,
+    )
     // At 0.5, should hold 0
     expect(engine.evaluateMorph(nodeId, 0.5)).toBe(0)
     // At 1, should be 1
@@ -196,7 +263,13 @@ describe('Morph binding & coefficient (281)', () => {
     // But the key is that hold at boundary allows sequencing without blending.
     // We'll just verify hold holds: if we have two hold keyframes at contiguous times, value doesn't blend.
     void addMorphKeyframe(system, nodeId, 2, 0)
-    system.dispatcher.dispatch(new SetKeyframeInterpolationCommand({ target: { kind: 'morph', nodeId }, keyframeId: k1, interpolation: 'hold' }) as any)
+    system.dispatcher.dispatch(
+      new SetKeyframeInterpolationCommand({
+        target: { kind: 'morph', nodeId },
+        keyframeId: k1,
+        interpolation: 'hold',
+      }) as any,
+    )
     expect(engine.evaluateMorph(nodeId, 1.5)).toBe(1)
     expect(engine.evaluateMorph(nodeId, 2)).toBe(0)
     // Change binding to B->C and verify lerp would be B->C at 2+
@@ -213,7 +286,10 @@ describe('Morph binding & coefficient (281)', () => {
     const text = JSON.stringify(json)
     const restoredEngine = createEngineInternal()
     restoredEngine.restoreFromJSON(JSON.parse(text) as any)
-    expect(restoredEngine.getMorphBinding(nodeId)).toEqual({ fromShapeId: shapeA.id, toShapeId: shapeB.id })
+    expect(restoredEngine.getMorphBinding(nodeId)).toEqual({
+      fromShapeId: shapeA.id,
+      toShapeId: shapeB.id,
+    })
     expect(restoredEngine.getMorphKeyframes(nodeId)).toHaveLength(2)
     expect(restoredEngine.evaluateMorph(nodeId, 0.5)).toBeCloseTo(0.5)
   })
@@ -233,7 +309,9 @@ describe('Morph binding & coefficient (281)', () => {
     // set boneWeights manually via setMeshData
     const meshWithWeights: import('../../engine/mesh').MeshData = {
       ...mesh,
-      boneWeights: mesh.vertices.map((_, idx) => idx < 2 ? [{ boneId: boneNode.id, weight: 1 }] : []),
+      boneWeights: mesh.vertices.map((_, idx) =>
+        idx < 2 ? [{ boneId: boneNode.id, weight: 1 }] : [],
+      ),
       bindPose: { [boneNode.id]: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 } },
     }
     const meshNode = engine.createNode(slide.scene.id, slide.scene.root.id, 'Mesh', {
@@ -242,8 +320,14 @@ describe('Morph binding & coefficient (281)', () => {
     })
     void engine.createShape(meshNode.id, 'A')
     const shapeB = engine.createShape(meshNode.id, 'B')
-    for (let i=0;i<shapeB.vertices.length;i++) {
-      engine.setShapeVertex(meshNode.id, shapeB.id, i, shapeB.vertices[i].x + 10, shapeB.vertices[i].y + 10)
+    for (let i = 0; i < shapeB.vertices.length; i++) {
+      engine.setShapeVertex(
+        meshNode.id,
+        shapeB.id,
+        i,
+        shapeB.vertices[i].x + 10,
+        shapeB.vertices[i].y + 10,
+      )
     }
     const shapes = engine.getShapes(meshNode.id)
     const a = shapes[0]!
@@ -268,7 +352,7 @@ describe('Morph binding & coefficient (281)', () => {
     // Since bone weight 1 for first verts, and bindPose at origin, deformed should be morphed+5
     expect(res0.deformedVertices[0].x).toBeCloseTo(a.vertices[0].x + 5)
     expect(res1.deformedVertices[0].x).toBeCloseTo(b.vertices[0].x + 5)
-    expect(resMid.deformedVertices[0].x).toBeCloseTo((a.vertices[0].x + b.vertices[0].x)/2 + 5)
+    expect(resMid.deformedVertices[0].x).toBeCloseTo((a.vertices[0].x + b.vertices[0].x) / 2 + 5)
   })
 
   it('Export determinism: t = i/fps timestamps equal preview scrub', () => {
@@ -276,13 +360,14 @@ describe('Morph binding & coefficient (281)', () => {
     engine.createProject({ name: 'P' })
     engine.createSlide('S1')
     const slide = engine.getActiveSlide()!
-    const mesh = createDefaultRectangleMesh(10,10)
+    const mesh = createDefaultRectangleMesh(10, 10)
     const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'Mesh', {
       components: { mesh: { kind: 'mesh', mesh } },
     })
     void engine.createShape(node.id, 'A')
     const sB = engine.createShape(node.id, 'B')
-    for (let i=0;i<sB.vertices.length;i++) engine.setShapeVertex(node.id, sB.id, i, sB.vertices[i].x + 20, sB.vertices[i].y)
+    for (let i = 0; i < sB.vertices.length; i++)
+      engine.setShapeVertex(node.id, sB.id, i, sB.vertices[i].x + 20, sB.vertices[i].y)
     const shapes = engine.getShapes(node.id)
     engine.setMorphBinding(node.id, { fromShapeId: shapes[0]!.id, toShapeId: shapes[1]!.id })
     const undo = new UndoStack()
@@ -308,7 +393,7 @@ describe('Morph binding & coefficient (281)', () => {
     engine.createProject({ name: 'P' })
     engine.createSlide('S1')
     const slide = engine.getActiveSlide()!
-    const mesh = createDefaultRectangleMesh(10,10)
+    const mesh = createDefaultRectangleMesh(10, 10)
     const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'M', {
       components: { mesh: { kind: 'mesh', mesh } },
     })
@@ -326,7 +411,7 @@ describe('Morph binding & coefficient (281)', () => {
     expect(engine.getMorphBinding(node.id)).toEqual(binding)
     // Delete shape should cause stale fallback
     engine.deleteShape(node.id, sA.id)
-    const warn = vi.spyOn(console, 'warn').mockImplementation(()=>{})
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const boneMap = new Map()
     const resAfter = engine.evaluateMeshDeformation(node.id, 0, boneMap)!
     const base = node.components.mesh!.mesh.vertices
