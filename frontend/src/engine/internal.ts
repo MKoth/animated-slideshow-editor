@@ -3255,6 +3255,25 @@ export class Engine {
 
     for (const nodeJson of objectJson.nodes) nodeIdMap.set(nodeJson.id, newId('node'))
 
+    // Shape id remapping per Mesh node (ADR 0008): fresh ids per imported Mesh, patch bindings
+    const shapeIdMapPerOldNode = new Map<string, Map<string, string>>()
+    for (const nodeJson of objectJson.nodes) {
+      const comp = (nodeJson as unknown as { components?: Record<string, unknown> }).components
+      const meshComp = comp?.mesh as Record<string, unknown> | undefined
+      const shapes = meshComp?.shapes as unknown[] | undefined
+      if (Array.isArray(shapes) && shapes.length > 0) {
+        const m = new Map<string, string>()
+        for (const s of shapes) {
+          const rec = s as Record<string, unknown>
+          const oldId = rec.id as string
+          if (typeof oldId === 'string' && oldId !== '') {
+            m.set(oldId, newId('shape'))
+          }
+        }
+        if (m.size > 0) shapeIdMapPerOldNode.set(nodeJson.id, m)
+      }
+    }
+
     // Fix clipCollection sourceNodeId remapping
     for (const colJson of collectionsJson) {
       const oldId = (colJson as unknown as { id: string }).id
@@ -3294,9 +3313,24 @@ export class Engine {
           }
         })
       }
-      const components = cloned.components as Record<string, unknown> | undefined
+      let components = cloned.components as Record<string, unknown> | undefined
       if (components && typeof components.mesh === 'object' && components.mesh !== null) {
-        const meshComp = components.mesh as Record<string, unknown>
+        let meshComp = components.mesh as Record<string, unknown>
+        // Remap shape ids to fresh ids per mesh (referential integrity for bindings)
+        if (Array.isArray(meshComp.shapes)) {
+          const shapeMap = shapeIdMapPerOldNode.get(orig.id)
+          if (shapeMap) {
+            const newShapes = (meshComp.shapes as unknown[]).map((s) => {
+              const rec = s as Record<string, unknown>
+              const oldId = rec.id as string
+              const newIdVal2 = shapeMap.get(oldId) ?? oldId
+              return { ...rec, id: newIdVal2 }
+            })
+            meshComp = { ...meshComp, shapes: newShapes }
+            components = { ...components, mesh: meshComp }
+            cloned.components = components
+          }
+        }
         const mesh = meshComp.mesh as Record<string, unknown> | undefined
         if (mesh && Array.isArray(mesh.boneWeights)) {
           const newWeights = (mesh.boneWeights as unknown[]).map((arr) => {
@@ -3325,8 +3359,12 @@ export class Engine {
             }
             newMesh.bindPose = newBindPose
           }
-          components.mesh = { ...meshComp, mesh: newMesh }
-          cloned.components = { ...components, mesh: components.mesh }
+          const updatedMeshComp = { ...meshComp, mesh: newMesh }
+          components = { ...components, mesh: updatedMeshComp }
+          cloned.components = components
+        } else if (components !== cloned.components) {
+          // shapes were remapped but no boneWeights; ensure cloned reflects it
+          cloned.components = components
         }
       }
       return cloned as unknown as import('./json').NodeJSON
@@ -3559,6 +3597,55 @@ export class Engine {
             )
             try {
               targetAnim.addVisible(kf)
+            } catch {
+              void 0
+            }
+          }
+        }
+        const morphTrack = (
+          nodeAnimJson as unknown as {
+            morphTrack?: { keyframes: readonly import('./json').KeyframeJSON[] }
+          }
+        ).morphTrack
+        if (morphTrack) {
+          for (const kfJson of morphTrack.keyframes) {
+            const kf = new KeyframeModel(
+              kfJson.id,
+              kfJson.time,
+              kfJson.value as unknown as import('./keyframe').KeyframeValue,
+              (kfJson.interpolation as import('./keyframe').InterpolationType) ?? 'linear',
+              (kfJson.tangentIn as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+              (kfJson.tangentOut as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+            )
+            try {
+              targetAnim.addMorph(kf)
+            } catch {
+              void 0
+            }
+          }
+        }
+        const morphBindingRaw = (
+          nodeAnimJson as unknown as {
+            morphBinding?: { fromShapeId: string | null; toShapeId: string | null } | null
+          }
+        ).morphBinding
+        if (morphBindingRaw !== undefined) {
+          if (morphBindingRaw === null) {
+            try {
+              targetAnim.setMorphBinding(null)
+            } catch {
+              void 0
+            }
+          } else {
+            let from = morphBindingRaw.fromShapeId
+            let to = morphBindingRaw.toShapeId
+            const shapeMap = shapeIdMapPerOldNode.get(oldNodeId)
+            if (shapeMap) {
+              if (from !== null && shapeMap.has(from)) from = shapeMap.get(from)!
+              if (to !== null && shapeMap.has(to)) to = shapeMap.get(to)!
+            }
+            try {
+              targetAnim.setMorphBinding({ fromShapeId: from, toShapeId: to })
             } catch {
               void 0
             }
