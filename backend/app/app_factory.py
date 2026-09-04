@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api import (
     assets,
     audio,
+    clip_collections,
     clips,
     export,
     health,
@@ -19,6 +20,7 @@ from app.assets.importer import AssetImporter
 from app.assets.library import AssetLibrary
 from app.assets.pipeline import ImagePipeline
 from app.assets.storage import AssetStorage
+from app.clip_collections.library import ClipCollectionLibrary
 from app.clips.library import ClipLibrary
 from app.config import Settings, load_settings
 from app.database import Database
@@ -59,6 +61,7 @@ class AppFactory:
         clip_library = ClipLibrary(database)
         clip_library.ensure_seeded(now_utc())
         app.state.clip_library = clip_library
+        app.state.clip_collection_library = ClipCollectionLibrary(database)
         app.state.voice_prompt_library = VoicePromptLibrary(database)
         # TTS engine singleton (lazy model load on first generate, cached in app.state like asset_library)
         try:
@@ -95,6 +98,7 @@ class AppFactory:
         app.include_router(shaders.router, prefix="/api")
         app.include_router(projects.router, prefix="/api")
         app.include_router(clips.router, prefix="/api")
+        app.include_router(clip_collections.router, prefix="/api")
         app.include_router(voice_prompts.router, prefix="/api")
         app.include_router(tts.router, prefix="/api")
         app.include_router(export.router, prefix="/api")

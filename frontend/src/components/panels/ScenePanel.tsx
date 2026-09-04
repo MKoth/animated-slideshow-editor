@@ -26,10 +26,12 @@ import { iconOf } from './nodeIconKinds'
 import { LockIcon, MissingAssetIcon, NodeIcon, VisibilityIcon } from './nodeIcons'
 import { ParentingModeDialog } from './ParentingModeDialog'
 import { ExportObjectModal } from './ExportObjectModal'
+import { ExportClipCollectionModal } from './ExportClipCollectionModal'
 
 interface ContextMenuState {
   x: number
   y: number
+  nodeId: string
 }
 
 function visibleChildren(node: SceneNode): SceneNode[] {
@@ -360,7 +362,7 @@ export function ScenePanel() {
     if (!selectedIds.includes(node.id)) {
       useSelectionStore.getState().select(node.id)
     }
-    setContextMenu({ x: event.clientX, y: event.clientY })
+    setContextMenu({ x: event.clientX, y: event.clientY, nodeId: node.id })
   }
 
   const handleContextMenuAction = (mode: ZOrderMode) => {
@@ -490,6 +492,7 @@ export function ScenePanel() {
   }
 
   const [exportOpen, setExportOpen] = useState(false)
+  const [exportCollectionParentId, setExportCollectionParentId] = useState<string | null>(null)
 
   const project = engine.project
   const slide = engine.getActiveSlide()
@@ -577,6 +580,17 @@ export function ScenePanel() {
           <button className="menu__item" role="menuitem" onClick={handleCreateGroup}>
             Create Group (Rig Handle)
           </button>
+          <button
+            className="menu__item"
+            role="menuitem"
+            data-testid="scene-export-clip-collection"
+            onClick={() => {
+              if (contextMenu) setExportCollectionParentId(contextMenu.nodeId)
+              setContextMenu(null)
+            }}
+          >
+            Export Clip Collection…
+          </button>
           <hr className="menu__separator" />
           {Z_ORDER_ITEMS.map((item) => (
             <button
@@ -598,6 +612,11 @@ export function ScenePanel() {
         onCancel={handleParentingCancel}
       />
       <ExportObjectModal open={exportOpen} onClose={() => setExportOpen(false)} />
+      <ExportClipCollectionModal
+        open={exportCollectionParentId !== null}
+        parentNodeId={exportCollectionParentId}
+        onClose={() => setExportCollectionParentId(null)}
+      />
     </div>
   )
 }

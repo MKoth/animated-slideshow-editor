@@ -1,6 +1,7 @@
 import { ApiClient } from './apiClient'
 import { AssetsApi } from './assetsApi'
 import { ClipsApi } from './clipsApi'
+import { ClipCollectionsApi } from './clipCollectionsApi'
 import { HealthApi } from './healthApi'
 import { MaterialsApi } from './materialsApi'
 import { PingApi } from './pingApi'
@@ -13,6 +14,7 @@ import { TtsSettingsApi } from './ttsSettingsApi'
 export const apiClient = new ApiClient()
 export const assetsApi = new AssetsApi(apiClient)
 export const clipsApi = new ClipsApi(apiClient)
+export const clipCollectionsApi = new ClipCollectionsApi(apiClient)
 export const healthApi = new HealthApi(apiClient)
 export const materialsApi = new MaterialsApi(apiClient)
 export const pingApi = new PingApi(apiClient)
@@ -30,6 +32,11 @@ export type {
   ClipParamDef,
   ClipUpdateInput,
 } from './clipsApi'
+export type {
+  ClipCollectionCreateInput,
+  ClipCollectionLibraryEntry,
+  ClipCollectionUpdateInput,
+} from './clipCollectionsApi'
 export type { HealthResponse } from './healthApi'
 export type {
   MaterialCreateInput,

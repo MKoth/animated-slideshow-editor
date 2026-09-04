@@ -357,6 +357,18 @@ export function InspectorPanel({ width }: { width: number }) {
   const opacityIndicator = propertyStateOf(engine, targets[0].id, 'opacity', indicatorTime)
   const commonName = commonValueOf(targets, (node) => node.name)
   const commonSemanticName = commonValueOf(targets, (node) => node.semanticName ?? '')
+  const semanticWarning = (() => {
+    if (playing) return null
+    const missing = targets.filter(
+      (n) => engine.getClipInstances(n.id).length > 0 && !n.semanticName?.trim(),
+    )
+    if (missing.length === 0) return null
+    if (targets.length === 1) {
+      return `Node "${missing[0]!.name}" has a clip but no Semantic Name — export will be blocked. Set e.g. left_hand.`
+    }
+    const names = missing.map((n) => n.name).join(', ')
+    return `${missing.length} node(s) with clips have no Semantic Name: ${names}. Set Semantic Name before exporting collection.`
+  })()
   const commonOpacity = commonValueOf(targets, modeActions.opacityOf)
   const transformReadings = targets.map(
     (node) => modeActions.readWorld(engine, node.id)?.world ?? null,
@@ -488,6 +500,7 @@ export function InspectorPanel({ width }: { width: number }) {
             onCommit={commitSemanticName}
             disabled={playing}
             placeholder="e.g. left_hand"
+            error={semanticWarning}
           />
         </InspectorSection>
 

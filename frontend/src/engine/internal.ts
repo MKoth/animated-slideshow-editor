@@ -2462,6 +2462,27 @@ export class Engine {
 
   exportClipCollection(parentNodeId: string, name: string): ClipCollection {
     const parent = this.getNode(parentNodeId)
+    const missingSemantic: string[] = []
+    let hasClip = false
+    for (const node of walkPreOrder(parent)) {
+      if (node.clipInstances.length > 0) {
+        hasClip = true
+        const sem = node.semanticName
+        if (!sem || sem.trim() === '') {
+          missingSemantic.push(node.name)
+        }
+      }
+    }
+    if (!hasClip) {
+      throw new Error(
+        `No clips found in hierarchy rooted at "${parent.name}". Assign a clip to at least one node in the subtree before exporting.`,
+      )
+    }
+    if (missingSemantic.length > 0) {
+      throw new Error(
+        `Cannot export ClipCollection: ${missingSemantic.length} node(s) with clips have no Semantic Name: ${missingSemantic.join(', ')}. Set Semantic Name in Inspector (e.g. left_hand) before export.`,
+      )
+    }
     const bindings: Record<string, string> = {}
     for (const node of walkPreOrder(parent)) {
       const sem = node.semanticName
@@ -2477,6 +2498,11 @@ export class Engine {
         continue
       }
       bindings[sem] = clipId
+    }
+    if (Object.keys(bindings).length === 0) {
+      throw new Error(
+        `No exportable bindings found in hierarchy rooted at "${parent.name}". Ensure nodes have both a Semantic Name and a clip.`,
+      )
     }
     return this.createClipCollection(name, bindings, parentNodeId)
   }

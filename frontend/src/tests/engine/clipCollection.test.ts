@@ -113,11 +113,9 @@ describe('Hierarchical export', () => {
       ),
     ).nodeId
     dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: child2, semanticName: 'right_hand' }))
-    const noSem = expectOk(
-      dispatcher.dispatch(
-        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'NoSem' }),
-      ),
-    ).nodeId
+    dispatcher.dispatch(
+      new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'NoSem' }),
+    )
     // Create clips
     const clip1 = expectOk(
       dispatcher.dispatch(new CreateClipCommand({ name: 'Wave', duration: 1, category: '' })),
@@ -125,12 +123,11 @@ describe('Hierarchical export', () => {
     const clip2 = expectOk(
       dispatcher.dispatch(new CreateClipCommand({ name: 'Shake', duration: 1, category: '' })),
     ).clipId
-    // Assign clips to children (including parent)
+    // Assign clips to children (including parent) — NoSem intentionally has NO clip so export succeeds
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: parent, clipId: clip1 })))
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: child1, clipId: clip1 })))
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: child2, clipId: clip2 })))
-    // No semantic node should be ignored even with clip
-    expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: noSem, clipId: clip1 })))
+    // NoSem has no clip and no semanticName — should be ignored
 
     const exportRes = dispatcher.dispatch(
       new ExportClipCollectionCommand({ parentNodeId: parent, name: 'MyRig' }),
@@ -218,6 +215,57 @@ describe('Hierarchical export', () => {
     undoStack.redo(engine)
     expect(engine.clipCollections).toHaveLength(1)
     expect(engine.clipCollections[0]!.name).toBe('Rig')
+  })
+
+  it('blocks export when hierarchy has no clips', () => {
+    const { engine, dispatcher: d2 } = setupEngine()
+    const s = engine.getActiveSlide()!
+    const parent = expectOk(
+      d2.dispatch(
+        new CreateNodeCommand({
+          sceneId: s.scene.id,
+          parentId: s.scene.root.id,
+          name: 'EmptyRig',
+        }),
+      ),
+    ).nodeId
+    // No clips assigned — should block
+    const res = d2.dispatch(new ExportClipCollectionCommand({ parentNodeId: parent, name: 'ShouldFail' }))
+    expect(res.ok).toBe(false)
+    if (res.ok) throw new Error('expected export to fail')
+    expect(res.error.message).toMatch(/No clips found/)
+  })
+
+  it('blocks export when a node with a clip has no semanticName', () => {
+    const { engine, dispatcher } = setupEngine()
+    const slide = engine.getActiveSlide()!
+    const parent = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'Root',
+        }),
+      ),
+    ).nodeId
+    dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: parent, semanticName: 'root' }))
+    const child = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'ChildNoSem' }),
+      ),
+    ).nodeId
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' })),
+    ).clipId
+    expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: child, clipId: clip })))
+    // child has clip but no semanticName — should block and list component name
+    const res = dispatcher.dispatch(
+      new ExportClipCollectionCommand({ parentNodeId: parent, name: 'Bad' }),
+    )
+    expect(res.ok).toBe(false)
+    if (res.ok) throw new Error('expected export to fail')
+    expect(res.error.message).toMatch(/no Semantic Name/)
+    expect(res.error.message).toMatch(/ChildNoSem/)
   })
 
   it('works with bone/mesh/circle nodes', () => {
