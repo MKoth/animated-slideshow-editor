@@ -137,6 +137,7 @@ export type NodeJSON = {
   readonly components: NodeComponentsJSON
   readonly clipInstances?: readonly ClipInstanceJSON[]
   readonly shadowEffect?: ShadowEffectJSON
+  readonly castShadow?: boolean
 }
 
 export type SceneJSON = {

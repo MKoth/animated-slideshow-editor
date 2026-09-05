@@ -901,6 +901,9 @@ export class Renderer {
       case 'ShadowEffectChanged':
         sceneRenderer.handleShadowEffectChanged(event.nodeId)
         break
+      case 'CastShadowChanged':
+        sceneRenderer.handleCastShadowChanged(event.nodeId)
+        break
     }
   }
 

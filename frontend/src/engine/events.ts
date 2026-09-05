@@ -311,6 +311,11 @@ export interface ShadowEffectChanged {
   readonly nodeId: string
 }
 
+export interface CastShadowChanged {
+  readonly type: 'CastShadowChanged'
+  readonly nodeId: string
+}
+
 export interface PrompterChanged {
   readonly type: 'PrompterChanged'
   readonly slideId: string
@@ -405,6 +410,7 @@ export type EngineEvent =
   | TextChanged
   | CircleChanged
   | ShadowEffectChanged
+  | CastShadowChanged
   | PrompterChanged
   | AudioChanged
   | ClipCollectionCreated

@@ -426,6 +426,13 @@ export function applyUndo(
       engine.setShadowParam(nodeId, property, oldValue)
       return
     }
+    case 'SetCastShadow': {
+      const nodeId = inv.nodeId as string
+      const oldCastShadow = inv.oldCastShadow as boolean | undefined
+      const hadCastShadow = inv.hadCastShadow as boolean
+      engine.setCastShadow(nodeId, hadCastShadow ? (oldCastShadow as boolean) : undefined)
+      return
+    }
     case 'SetTableComponent': {
       const nodeId = inv.nodeId as string
       const oldTable = inv.oldTable as import('../components').TableComponent
@@ -2356,6 +2363,10 @@ export function applyRedo(
         params.property as import('../shadowEffect').ShadowProperty,
         params.value as number | string,
       )
+      return
+    }
+    case 'SetCastShadow': {
+      engine.setCastShadow(params.nodeId as string, params.castShadow as boolean)
       return
     }
     case 'SetTableComponent':

@@ -4,7 +4,11 @@ import type { SceneNode } from '../../engine'
 import type { ChartComponent } from '../../engine/components'
 import { isGroupNode, walkPreOrder } from '../../engine/sceneNode'
 import { useOverlayVisibilityStore } from '../../stores/overlayVisibilityStore'
-import { clampShadowEffect, hexStringToTint } from '../../engine/shadowEffect'
+import {
+  clampShadowEffect,
+  collectShadowCasters as collectShadowCastersPure,
+  hexStringToTint,
+} from '../../engine/shadowEffect'
 import type { EvaluatedNodeScratch } from '../../engine/animationEvaluator'
 import {
   copyEvaluatedState,
@@ -127,27 +131,7 @@ function rtSizeForAabb(
 }
 
 function collectShadowCasters(host: SceneNode): SceneNode[] {
-  const out: SceneNode[] = []
-  const stack: SceneNode[] = [...host.children].reverse()
-  while (stack.length) {
-    const cur = stack.pop()!
-    // For tracer bullet, ignore Cast Shadow pruning — include all renderable descendants
-    // Renderable = assetInstance | text | mesh | circle | table | chart (+ tableRow/cell via table)
-    const c = cur.components as Record<string, unknown>
-    const renderable = !!(
-      c.assetInstance ||
-      c.text ||
-      c.mesh ||
-      c.circle ||
-      c.table ||
-      c.chart ||
-      c.tableRow ||
-      c.tableCell
-    )
-    if (renderable) out.push(cur)
-    for (let i = cur.children.length - 1; i >= 0; i--) stack.push(cur.children[i])
-  }
-  return out
+  return collectShadowCastersPure(host as unknown as { children: readonly unknown[] }) as SceneNode[]
 }
 
 function worldAabbOfNode(
@@ -2070,6 +2054,14 @@ export class SceneRenderer {
         this.#updateShadowForGroup(node.parent.id)
       }
     }
+  }
+
+  handleCastShadowChanged(nodeId: string): void {
+    // Ancestor groups' silhouettes may have changed; brute update all shadow groups
+    for (const gid of this.#shadowContainers.keys()) {
+      this.#updateShadowForGroup(gid)
+    }
+    void nodeId
   }
 
   #syncShadowLifecycleForNode(nodeId: string): void {

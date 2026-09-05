@@ -1,12 +1,16 @@
 import { useState, useRef } from 'react'
 import type { SceneNode } from '../../engine'
-import { isGroupNode } from '../../engine/sceneNode'
+import { isGroupNode, walkPreOrder } from '../../engine/sceneNode'
 import {
   DEFAULT_SHADOW_EFFECT,
+  collectShadowCasters,
+  getCastShadow,
+  isCasterRenderable,
   type ShadowEffect,
   type ShadowProperty,
 } from '../../engine/shadowEffect'
 import {
+  SetCastShadowCommand,
   SetShadowEffectCommand,
   SetShadowParamCommand,
   TransactionCommand,
@@ -48,6 +52,8 @@ export function ShadowInspectorSection({
 }: ShadowInspectorSectionProps) {
   void _engine
   const [draft, setDraft] = useState<Partial<ShadowEffect>>({})
+  const [isEditingSource, setIsEditingSource] = useState(false)
+  const [showSilhouette, setShowSilhouette] = useState(false)
   // drag state for coalescing sliders
   const dragRef = useRef<{ property: ShadowProperty; startValue: number } | null>(null)
 
@@ -158,6 +164,36 @@ export function ShadowInspectorSection({
       notify(e instanceof Error ? e.message : String(e))
     }
   }
+
+  const allDescendants: SceneNode[] = (() => {
+    const out: SceneNode[] = []
+    for (const n of walkPreOrder(target)) {
+      if (n.id !== target.id) out.push(n)
+    }
+    return out
+  })()
+
+  const casterSet = (() => {
+    const casters = collectShadowCasters(target as unknown as { children: readonly unknown[] }) as SceneNode[]
+    return new Set<string>(casters.map((c) => c.id))
+  })()
+
+  const toggleCastShadow = (node: SceneNode) => {
+    const isBoneOrGhost = !!(node.components.bone || node.components.ghost || node.components.camera)
+    if (isBoneOrGhost) {
+      notify('Bone / Ghost / Camera nodes cannot cast shadows')
+      return
+    }
+    const currentCast = getCastShadow(node as unknown as { components: Record<string, unknown>; castShadow?: boolean })
+    try {
+      const result = dispatch(new SetCastShadowCommand({ nodeId: node.id, castShadow: !currentCast }))
+      if (result && !result.ok) throw result.error
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const pad = effect ? Math.ceil(effect.blur * 2 + 4) : 4
 
   const titleId = `shadow-section-${target.id}`
 
@@ -680,6 +716,95 @@ export function ShadowInspectorSection({
               aria-label="Color hex"
             />
           </label>
+        </div>
+      )}
+      {enabled && (
+        <div style={{ marginTop: 12, display: 'grid', gap: 8 }}>
+          <button
+            type="button"
+            onClick={() => setIsEditingSource((v) => !v)}
+            disabled={playing}
+            title={playing ? 'Cannot edit while playing' : 'Edit which descendants cast shadows'}
+            style={{ fontSize: 12, padding: '4px 8px' }}
+          >
+            {isEditingSource ? 'Done Editing Shadow Source' : 'Edit Shadow Source…'}
+          </button>
+          {isEditingSource && (
+            <div style={{ display: 'grid', gap: 4, border: '1px solid #555', padding: 8, borderRadius: 4 }}>
+              <div style={{ fontSize: 11, color: '#aaa' }}>
+                Click descendant to toggle Cast Shadow. Bone / Ghost / Camera cannot cast (disabled). Non-casters dimmed to 30%, casters amber 2px outline.
+              </div>
+              {allDescendants.length === 0 && <div style={{ fontSize: 12 }}>No descendants</div>}
+              {allDescendants.map((node) => {
+                const isBoneOrGhost = !!(node.components.bone || node.components.ghost || node.components.camera)
+                const isCaster = casterSet.has(node.id)
+                const castShadowVal = getCastShadow(node as unknown as { components: Record<string, unknown>; castShadow?: boolean })
+                const isPrunedByAncestor = (() => {
+                  let cur: SceneNode | null = node.parent
+                  while (cur && cur.id !== target.id) {
+                    if (!getCastShadow(cur as unknown as { components: Record<string, unknown>; castShadow?: boolean })) return true
+                    cur = cur.parent
+                  }
+                  if (target.id !== node.id) {
+                    // also check direct? Already handled via casterSet? Actually if ancestor false, casterSet won't contain node
+                  }
+                  return false
+                })()
+                return (
+                  <div
+                    key={node.id}
+                    onClick={() => !isBoneOrGhost && toggleCastShadow(node)}
+                    title={
+                      isBoneOrGhost
+                        ? 'Bone / Ghost / Camera nodes cannot cast shadows'
+                        : isPrunedByAncestor
+                          ? 'Pruned by ancestor with Cast Shadow = false — child cannot re-enable'
+                          : isCaster
+                            ? 'Caster — click to disable Cast Shadow'
+                            : 'Non-caster — click to enable Cast Shadow'
+                    }
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '2px 4px',
+                      cursor: isBoneOrGhost ? 'not-allowed' : 'pointer',
+                      opacity: isBoneOrGhost ? 0.5 : isCaster ? 1 : 0.3,
+                      border: isCaster ? '2px solid #f59e0b' : '1px solid transparent',
+                      borderRadius: 3,
+                      background: isCaster ? 'rgba(245,158,11,0.1)' : 'transparent',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={castShadowVal}
+                      disabled={isBoneOrGhost}
+                      onChange={() => toggleCastShadow(node)}
+                      onClick={(e) => e.stopPropagation()}
+                      title={isBoneOrGhost ? 'Bone / Ghost / Camera cannot cast' : undefined}
+                    />
+                    <span style={{ fontSize: 12, flex: 1 }}>{node.name}</span>
+                    <span style={{ fontSize: 10, color: '#888' }}>
+                      {isBoneOrGhost ? 'Bone/Ghost' : isCasterRenderable(node as unknown as { components: Record<string, unknown> }) ? '' : ' (group)'}
+                      {isCaster ? ' ● caster' : ' ○ non-caster'}
+                    </span>
+                  </div>
+                )
+              })}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, marginTop: 4 }}>
+                <input type="checkbox" checked={showSilhouette} onChange={(e) => setShowSilhouette(e.target.checked)} />
+                Show silhouette
+              </label>
+              {showSilhouette && (
+                <div style={{ fontSize: 11, color: '#aaa', border: '1px dashed #f59e0b', padding: 4, borderRadius: 3 }}>
+                  Silhouette BBox debug overlay: union world AABB + pad {pad}px
+                  <div>Pad = ceil(blur*2+4) = {pad}</div>
+                  <div>Casters: {casterSet.size} / Descendants: {allDescendants.length}</div>
+                  <div style={{ marginTop: 4, fontStyle: 'italic' }}>Canvas overlay draws amber rect around silhouette bounds when enabled.</div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </section>

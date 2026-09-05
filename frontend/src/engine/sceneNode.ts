@@ -50,6 +50,7 @@ export class SceneNode {
   readonly components: NodeComponents
   readonly clipInstances: ClipInstance[]
   shadowEffect?: ShadowEffect
+  castShadow?: boolean
   _worldTransformDirty = true
   _cachedWorldTransform: CachedWorldTransform | null = null
 
@@ -126,6 +127,7 @@ export class SceneNode {
       ...(this.shadowEffect !== undefined
         ? { shadowEffect: shadowEffectToJSON(this.shadowEffect) }
         : {}),
+      ...(this.castShadow !== undefined ? { castShadow: this.castShadow } : {}),
     }
   }
 
@@ -175,6 +177,12 @@ export class SceneNode {
     const parsedShadow = shadowEffectFromJSON((json as Record<string, unknown>).shadowEffect, id)
     if (parsedShadow !== undefined) {
       node.shadowEffect = parsedShadow
+    }
+    const rawCastShadow = (json as Record<string, unknown>).castShadow
+    if (typeof rawCastShadow === 'boolean') {
+      node.castShadow = rawCastShadow
+    } else if (rawCastShadow !== undefined) {
+      console.warn(`[shadow] Node "${id}" castShadow must be a boolean — ignoring`)
     }
     return node
   }

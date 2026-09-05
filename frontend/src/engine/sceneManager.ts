@@ -97,6 +97,9 @@ function copyNodeDeep(
   if (source.shadowEffect) {
     copy.shadowEffect = cloneShadowEffect(source.shadowEffect)
   }
+  if (source.castShadow !== undefined) {
+    copy.castShadow = source.castShadow
+  }
   copy.parent = parent
   if (parent) {
     parent.children.push(copy)

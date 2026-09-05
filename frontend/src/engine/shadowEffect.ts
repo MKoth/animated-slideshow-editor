@@ -189,3 +189,47 @@ export function isShadowEffectEqual(a: ShadowEffect, b: ShadowEffect): boolean {
     a.color === b.color
   )
 }
+
+export function getCastShadow(node: { components: unknown; castShadow?: boolean }): boolean {
+  const c = node.components as Record<string, unknown>
+  if (c.bone !== undefined || c.ghost !== undefined || c.camera !== undefined) {
+    return false
+  }
+  return (node as { castShadow?: boolean }).castShadow ?? true
+}
+
+export function isCasterRenderable(node: { components: unknown }): boolean {
+  const c = node.components as Record<string, unknown>
+  return !!(
+    c.assetInstance ||
+    c.text ||
+    c.mesh ||
+    c.circle ||
+    c.table ||
+    c.chart ||
+    c.tableRow ||
+    c.tableCell
+  )
+}
+
+export function collectShadowCasters(host: { children: readonly unknown[] }): unknown[] {
+  const out: unknown[] = []
+  const stack: unknown[] = [...(host.children as unknown[])].reverse()
+  while (stack.length) {
+    const cur = stack.pop() as { components: Record<string, unknown>; castShadow?: boolean; children: readonly unknown[] }
+    if (!cur) continue
+    if (!getCastShadow(cur as { components: Record<string, unknown>; castShadow?: boolean })) {
+      continue
+    }
+    if (isCasterRenderable(cur as { components: Record<string, unknown> })) {
+      out.push(cur)
+    }
+    for (let i = cur.children.length - 1; i >= 0; i--) {
+      stack.push(cur.children[i])
+    }
+  }
+  return out
+}
+
+// Typed convenience for SceneNode callers (avoids import cycle at runtime — type-only)
+export type CastShadowNode = { components: Record<string, unknown>; castShadow?: boolean; children: readonly unknown[] }

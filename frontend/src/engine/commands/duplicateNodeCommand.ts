@@ -52,6 +52,9 @@ export class DuplicateNodeCommand implements Command<DuplicateNodeInverse> {
       },
     )
     copy.material = copyMaterialInstance(node.material)
+    if (node.castShadow !== undefined) {
+      ;(copy as unknown as { castShadow?: boolean }).castShadow = node.castShadow
+    }
     // clipInstances are not copied here (asset instance only); if node had semanticName it's already handled
     if (node.semanticName !== undefined) {
       copy.semanticName = node.semanticName

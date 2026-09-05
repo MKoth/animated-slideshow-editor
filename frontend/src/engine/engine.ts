@@ -125,6 +125,8 @@ export interface EnginePublic {
   getClipBlockingNodeNames(clipId: string): string[]
   getShadowEffect(nodeId: string): import('./shadowEffect').ShadowEffect | undefined
   evaluateShadow(nodeId: string, time: number): import('./shadowEffect').ShadowEffect | null
+  getCastShadow(nodeId: string): boolean
+  setCastShadow(nodeId: string, castShadow: boolean | undefined): void
   // ClipCollection
   getClipCollection(collectionId: string): ClipCollection
   createClipCollection(

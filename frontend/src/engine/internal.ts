@@ -48,7 +48,7 @@ import type { CreateProjectInput, EmbeddedDataSourceUnion, Project } from './pro
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
 import { isGroupNode, walkPreOrder } from './sceneNode'
-import { clampShadowEffect } from './shadowEffect'
+import { clampShadowEffect, shadowEffectFromJSON } from './shadowEffect'
 import type { ShadowEffect } from './shadowEffect'
 import type { Slide } from './slide'
 import type { SlideDurationChange } from './slideManager'
@@ -2110,6 +2110,28 @@ export class Engine {
     }
   }
 
+  setCastShadow(nodeId: string, castShadow: boolean | undefined): void {
+    const node = this.getNode(nodeId)
+    const previous = node.castShadow
+    const hadPrevious = node.castShadow !== undefined
+    if (castShadow === undefined) {
+      delete (node as unknown as { castShadow?: boolean }).castShadow
+    } else {
+      ;(node as unknown as { castShadow?: boolean }).castShadow = castShadow
+    }
+    const changed = previous !== castShadow || hadPrevious !== (castShadow !== undefined)
+    if (changed) {
+      this.#bus.emit({ type: 'CastShadowChanged', nodeId } as unknown as import('./events').EngineEvent)
+    }
+  }
+
+  getCastShadow(nodeId: string): boolean {
+    const node = this.getNode(nodeId)
+    const c = node.components as Record<string, unknown>
+    if (c.bone !== undefined || c.ghost !== undefined || c.camera !== undefined) return false
+    return node.castShadow ?? true
+  }
+
   setMeshData(nodeId: string, mesh: MeshData): void {
     const node = this.getNode(nodeId)
     const existingShapes = node.components.mesh?.shapes
@@ -3551,6 +3573,19 @@ export class Engine {
           }
         }
       }
+      const shadowEffectJson = (nodeJson as unknown as { shadowEffect?: unknown }).shadowEffect
+      if (shadowEffectJson !== undefined) {
+        try {
+          const parsed = shadowEffectFromJSON(shadowEffectJson, nid)
+          if (parsed) (node as unknown as { shadowEffect?: ShadowEffect }).shadowEffect = parsed
+        } catch {
+          void 0
+        }
+      }
+      const castShadowRaw = (nodeJson as unknown as { castShadow?: unknown }).castShadow
+      if (typeof castShadowRaw === 'boolean') {
+        ;(node as unknown as { castShadow?: boolean }).castShadow = castShadowRaw
+      }
       // localPivot already handled via transform
     }
 
@@ -4570,6 +4605,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getClipBlockingNodeNames: (clipId) => engine.getClipBlockingNodeNames(clipId),
     getShadowEffect: (nodeId) => engine.getShadowEffect(nodeId),
     evaluateShadow: (nodeId, time) => engine.evaluateShadow(nodeId, time),
+    getCastShadow: (nodeId) => engine.getCastShadow(nodeId),
+    setCastShadow: (nodeId, castShadow) => engine.setCastShadow(nodeId, castShadow),
     getClipCollection: (collectionId) => engine.getClipCollection(collectionId),
     createClipCollection: (name, bindings, sourceNodeId) =>
       engine.createClipCollection(name, bindings, sourceNodeId),
