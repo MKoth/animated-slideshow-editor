@@ -132,6 +132,32 @@ _Avoid_: Shader code (ambiguous)
 **Fullscreen Shader**:
 The shader a slide renders its entire scene through; the slide references one, with per-slide uniform overrides.
 
+### Scene Effects
+
+**Shadow Effect**:
+The per-group-node effect that casts one projected shadow from its subtree; absent means no shadow. One effect per group node (`isGroupNode`), source is its filtered descendants.
+_Avoid_: Shadow Component, Shadow Layer, Shadow Map
+
+**Shadow Source**:
+The filtered descendant set of a Shadow Effect's host group that contributes alpha to its Silhouette — gated by source mode (`Children` vs `Entire hierarchy`) and per-node `Cast Shadow`.
+_Avoid_: Caster set, Data Source
+
+**Shadow Caster**:
+A node in a Shadow Source whose rendered alpha contributes to the Silhouette; governed by the node's `Cast Shadow` flag.
+_Avoid_: Shadow Source (the set), light caster
+
+**Cast Shadow**:
+The boolean flag on a scene node controlling whether it contributes to any ancestor Shadow Source's Silhouette; default true for renderable nodes, false for `Bone`/`Ghost`/`Camera`.
+_Avoid_: Casts Shadow, castShadow, shadow enabled
+
+**Silhouette**:
+The combined, untransformed alpha of a Shadow Source — BBox-sized, pre-projection, sampled pre-shader and post-deformed/morphed vertices — that the renderer blur-tints into a projection.
+_Avoid_: Shadow Mask, Shadow Map, Alpha Mask, MeshData
+
+**Shadow Projection**:
+The visible, transformed Silhouette after applying the Shadow Effect's offset, scale, skew, rotation, blur, opacity, and color and compositing beneath its source group.
+_Avoid_: Shadow Sprite, shadow instance, shadow
+
 ### Animation
 
 **Keyframe**:
