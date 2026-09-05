@@ -6,6 +6,7 @@ import { identityTransform } from './transform'
 import type { NodeManager } from './nodeManager'
 import { copyComponents } from './components'
 import { copyMaterialInstance } from './materialInstance'
+import { cloneShadowEffect } from './shadowEffect'
 
 export interface CopiedScene {
   readonly scene: Scene
@@ -93,6 +94,9 @@ function copyNodeDeep(
   copy.visible = source.visible
   copy.opacity = source.opacity
   copy.material = copyMaterialInstance(source.material)
+  if (source.shadowEffect) {
+    copy.shadowEffect = cloneShadowEffect(source.shadowEffect)
+  }
   copy.parent = parent
   if (parent) {
     parent.children.push(copy)

@@ -478,3 +478,8 @@ export { DeleteShapeCommand } from './deleteShapeCommand'
 export type { DeleteShapeInverse, DeleteShapeParameters } from './deleteShapeCommand'
 export { SetMorphBindingCommand } from './setMorphBindingCommand'
 export type { SetMorphBindingInverse, SetMorphBindingParameters } from './setMorphBindingCommand'
+export { SetShadowEffectCommand } from './setShadowEffectCommand'
+export type {
+  SetShadowEffectInverse,
+  SetShadowEffectParameters,
+} from './setShadowEffectCommand'

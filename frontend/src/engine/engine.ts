@@ -123,6 +123,8 @@ export interface EnginePublic {
   getClipInstances(nodeId: string): readonly ClipInstance[]
   isClipReferenced(clipId: string): boolean
   getClipBlockingNodeNames(clipId: string): string[]
+  getShadowEffect(nodeId: string): import('./shadowEffect').ShadowEffect | undefined
+  evaluateShadow(nodeId: string, time: number): import('./shadowEffect').ShadowEffect | null
   // ClipCollection
   getClipCollection(collectionId: string): ClipCollection
   createClipCollection(

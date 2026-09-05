@@ -50,7 +50,9 @@ import { ChartInspectorSection } from './ChartInspectorSection'
 import { TextInspectorSection, TextMultiInspector } from './TextInspectorSection'
 import { CircleInspectorSection } from './CircleInspectorSection'
 import { TextureInspectorSection } from './TextureInspectorSection'
+import { ShadowInspectorSection } from './ShadowInspectorSection'
 import { PROPERTY_LABELS } from './timelineTracks'
+import { isGroupNode } from '../../engine/sceneNode'
 import {
   RenameClipCommand,
   SetClipDurationCommand,
@@ -583,6 +585,16 @@ export function InspectorPanel({ width }: { width: number }) {
             onAdjust={adjustOpacity}
           />
         </InspectorSection>
+
+        {targets.length === 1 && isGroupNode(targets[0]!) && (
+          <ShadowInspectorSection
+            target={targets[0]!}
+            engine={engine}
+            dispatch={dispatch}
+            notify={notify}
+            playing={playing}
+          />
+        )}
 
         {targets.length > 0 && targets.every(isRenderableNode) && (
           <MaterialInspectorSection

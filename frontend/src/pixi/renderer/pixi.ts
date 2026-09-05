@@ -1,6 +1,7 @@
 import {
   Application,
   Assets,
+  BlurFilter,
   Container,
   Filter,
   GlProgram,
@@ -41,6 +42,7 @@ export interface RendererPixi {
   readonly Sprite: typeof Sprite
   readonly Texture: typeof Texture
   readonly Filter: typeof Filter
+  readonly BlurFilter: typeof BlurFilter
   readonly GlProgram: {
     from: (options: PixiGlProgramOptions) => PixiGlProgram
   }
@@ -62,6 +64,7 @@ export const realPixi: RendererPixi = {
   Sprite,
   Texture,
   Filter,
+  BlurFilter,
   GlProgram: {
     from: (options) => GlProgram.from(options),
   },
@@ -82,5 +85,6 @@ export type PixiText = Text
 export type PixiSprite = Sprite
 export type PixiTexture = Texture
 export type PixiFilter = Filter
+export type PixiBlurFilter = BlurFilter
 export type PixiGlProgram = GlProgram
 export type PixiRenderTexture = RenderTexture

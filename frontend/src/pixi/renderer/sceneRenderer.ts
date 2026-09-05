@@ -2,8 +2,9 @@ import type { EnginePublic, Unsubscribe } from '../../engine'
 import type { Scene } from '../../engine'
 import type { SceneNode } from '../../engine'
 import type { ChartComponent } from '../../engine/components'
-import { walkPreOrder } from '../../engine/sceneNode'
+import { isGroupNode, walkPreOrder } from '../../engine/sceneNode'
 import { useOverlayVisibilityStore } from '../../stores/overlayVisibilityStore'
+import { clampShadowEffect, hexStringToTint } from '../../engine/shadowEffect'
 import type { EvaluatedNodeScratch } from '../../engine/animationEvaluator'
 import {
   copyEvaluatedState,
@@ -30,7 +31,7 @@ import {
   applyConstraints,
   type ConstraintEvaluationContext,
 } from '../../engine/constraintEvaluator'
-import type { PixiContainer, PixiFilter, PixiSprite, RendererPixi } from './pixi'
+import type { PixiContainer, PixiFilter, PixiRenderTexture, PixiSprite, RendererPixi } from './pixi'
 import type { WorldSize } from './worldGeometry'
 import {
   applyCircleDataWithUV,
@@ -83,6 +84,97 @@ export const ALWAYS_ZERO_TIME: CurrentTimeSource = {
 }
 
 const UNKNOWN_DEFINITION_PARAMETERS: readonly MaterialParameterDefault[] = []
+
+// ── Shadow Effect helpers (spec #298 — tracer bullet minimal) ──────────────
+const WHITE_ALPHA_FRAGMENT = `
+in vec2 vUv;
+uniform sampler2D uTexture;
+void main() {
+  vec4 c = texture(uTexture, vUv);
+  gl_FragColor = vec4(c.a, c.a, c.a, c.a);
+}
+`
+
+type WorldAabb = { minX: number; minY: number; maxX: number; maxY: number }
+
+function mergeAabb(a: WorldAabb, b: WorldAabb): WorldAabb {
+  return {
+    minX: Math.min(a.minX, b.minX),
+    minY: Math.min(a.minY, b.minY),
+    maxX: Math.max(a.maxX, b.maxX),
+    maxY: Math.max(a.maxY, b.maxY),
+  }
+}
+
+function rtSizeForAabb(aabb: WorldAabb | null, blur: number): { width: number; height: number; pad: number } {
+  const pad = Math.ceil(blur * 2 + 4)
+  if (!aabb) return { width: 4, height: 4, pad }
+  const w = Math.ceil(aabb.maxX - aabb.minX + pad * 2)
+  const h = Math.ceil(aabb.maxY - aabb.minY + pad * 2)
+  const cap = 2048
+  let rw = Math.max(4, Math.min(cap, w))
+  let rh = Math.max(4, Math.min(cap, h))
+  if (w > cap || h > cap) {
+    const s = cap / Math.max(w, h)
+    rw = Math.max(4, Math.ceil(w * s))
+    rh = Math.max(4, Math.ceil(h * s))
+    console.warn(`[shadow] RT clamped to ${rw}×${rh} (was ${w}×${h})`)
+  }
+  return { width: rw, height: rh, pad }
+}
+
+function collectShadowCasters(host: SceneNode): SceneNode[] {
+  const out: SceneNode[] = []
+  const stack: SceneNode[] = [...host.children].reverse()
+  while (stack.length) {
+    const cur = stack.pop()!
+    // For tracer bullet, ignore Cast Shadow pruning — include all renderable descendants
+    // Renderable = assetInstance | text | mesh | circle | table | chart (+ tableRow/cell via table)
+    const c = cur.components as Record<string, unknown>
+    const renderable = !!(
+      c.assetInstance ||
+      c.text ||
+      c.mesh ||
+      c.circle ||
+      c.table ||
+      c.chart ||
+      c.tableRow ||
+      c.tableCell
+    )
+    if (renderable) out.push(cur)
+    for (let i = cur.children.length - 1; i >= 0; i--) stack.push(cur.children[i])
+  }
+  return out
+}
+
+function worldAabbOfNode(
+  size: WorldSize,
+  transform: { x: number; y: number; rotation: number; scaleX: number; scaleY: number },
+): WorldAabb {
+  const hw = (size.width * transform.scaleX) / 2
+  const hh = (size.height * transform.scaleY) / 2
+  const ox = (size.offsetX ?? 0) * transform.scaleX
+  const oy = (size.offsetY ?? 0) * transform.scaleY
+  const cos = Math.cos(transform.rotation)
+  const sin = Math.sin(transform.rotation)
+  const cx = transform.x + ox * cos - oy * sin
+  const cy = transform.y + ox * sin + oy * cos
+  const corners = [
+    { x: -hw, y: -hh },
+    { x: hw, y: -hh },
+    { x: hw, y: hh },
+    { x: -hw, y: hh },
+  ].map((p) => ({
+    x: cx + p.x * cos - p.y * sin,
+    y: cy + p.x * sin + p.y * cos,
+  }))
+  return {
+    minX: Math.min(...corners.map((c) => c.x)),
+    minY: Math.min(...corners.map((c) => c.y)),
+    maxX: Math.max(...corners.map((c) => c.x)),
+    maxY: Math.max(...corners.map((c) => c.y)),
+  }
+}
 
 interface NodeShaderState {
   filter: PixiFilter | null
@@ -144,6 +236,18 @@ export class SceneRenderer {
   readonly #materialOverridesScratch: EvaluatedMaterialOverridesScratch =
     evaluatedMaterialOverridesScratch()
   readonly #onNodeSizeChanged: (nodeId: string) => void
+  // ── Shadow Effect state (per-group) ──────────────────────────────────────
+  readonly #shadowContainers = new Map<string, PixiContainer>()
+  readonly #shadowSprites = new Map<string, PixiSprite>()
+  readonly #shadowTextures = new Map<string, PixiRenderTexture>()
+  readonly #shadowBlurFilters = new Map<string, PixiFilter | null>()
+  #shadowWhiteFilter: PixiFilter | null = null
+  readonly #renderToTexture: (options: {
+    container: PixiContainer
+    target: PixiRenderTexture
+    clearColor?: number
+    clear?: boolean
+  }) => void
   #scene: Scene | null = null
   #slideId: string | null = null
 
@@ -159,6 +263,12 @@ export class SceneRenderer {
     isAssetMissing: (definitionId: string) => boolean = () => false,
     resolveShaderSource: ResolveShaderSource = () => null,
     resolveDataSource: ResolveDataSource = () => null,
+    renderToTexture: (options: {
+      container: PixiContainer
+      target: PixiRenderTexture
+      clearColor?: number
+      clear?: boolean
+    }) => void = () => undefined,
   ) {
     this.#engine = engine
     this.#world = world
@@ -171,6 +281,7 @@ export class SceneRenderer {
     this.#isAssetMissing = isAssetMissing
     this.#resolveShaderSource = resolveShaderSource
     this.#resolveDataSource = resolveDataSource
+    this.#renderToTexture = renderToTexture
     void useShapePreviewStore.subscribe(() => {
       this.refreshDeformedMeshSizes()
       if (this.#scene) {
@@ -212,6 +323,8 @@ export class SceneRenderer {
   }
 
   bind(scene: Scene | null, slideId: string | null = null): void {
+    // Destroy existing shadows (RT lifecycle: bind(null) destroys)
+    this.#destroyAllShadows()
     for (const container of this.#containers.values()) {
       container.destroy({ children: true })
     }
@@ -235,6 +348,12 @@ export class SceneRenderer {
       this.#addNode(node)
     }
     this.refreshDeformedMeshSizes()
+    // Create shadows for existing group nodes with effect
+    for (const node of walkPreOrder(scene.root)) {
+      if (node.shadowEffect && isGroupNode(node)) {
+        this.#ensureShadowForGroup(node)
+      }
+    }
   }
 
   handleNodeCreated(nodeId: string): void {
@@ -247,17 +366,31 @@ export class SceneRenderer {
     const node = this.#engine.getNode(nodeId)
     this.#addNode(node)
     this.#refreshOwningTable(node)
+    this.#syncShadowLifecycleForNode(nodeId)
+    // If parent is group with shadow, its silhouette changed (new caster)
+    if (node.parent && this.#shadowContainers.has(node.parent.id)) {
+      this.#updateShadowForGroup(node.parent.id)
+    }
+    // If new node itself is group with shadow, its parent's shadow may need update? Already handled
   }
 
   handleNodeRemoved(nodeId: string): void {
     const container = this.#containers.get(nodeId)
     if (!container) {
+      // Still need to destroy shadow if group removed but container missing (e.g., root)
+      this.#destroyShadowForGroup(nodeId)
       return
     }
+    // Capture parent before destroy for shadow update
+    const node = this.#scene?.getNode(nodeId)
+    const parentId = node?.parent?.id ?? null
     const tableId = this.#tableAncestorId(container)
+    // Collect descendant ids before deletion to destroy their shadows
+    const descendantShadowIds: string[] = []
     for (const descendant of walkContainers(container)) {
       const descendantId = this.#nodeIds.get(descendant)
       if (descendantId) {
+        if (this.#shadowContainers.has(descendantId)) descendantShadowIds.push(descendantId)
         this.#containers.delete(descendantId)
         this.#sizes.delete(descendantId)
         this.#lastEvaluated.delete(descendantId)
@@ -269,9 +402,14 @@ export class SceneRenderer {
       }
       this.#nodeIds.delete(descendant)
     }
+    for (const sid of descendantShadowIds) this.#destroyShadowForGroup(sid)
+    this.#destroyShadowForGroup(nodeId)
     container.destroy({ children: true })
     if (tableId) {
       this.handleTableChanged(tableId)
+    }
+    if (parentId && this.#shadowContainers.has(parentId)) {
+      this.#updateShadowForGroup(parentId)
     }
   }
 
@@ -292,11 +430,18 @@ export class SceneRenderer {
         }
       }
     }
+    // Shadow: if this node is group, check lifecycle; also update any ancestor shadow and all shadows
+    this.#syncShadowLifecycleForNode(nodeId)
+    // Update shadows that depend on this caster (walk parents to groups, or just update all)
+    for (const gid of this.#shadowContainers.keys()) {
+      this.#updateShadowForGroup(gid)
+    }
   }
 
   handleKeyframeChanged(nodeId: string): void {
     this.#evaluateAndApply(nodeId)
     this.refreshDeformedMeshSizes()
+    for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
   }
 
   handleTimeChanged(): void {
@@ -308,6 +453,9 @@ export class SceneRenderer {
       this.#evaluateAndApply(node.id)
     }
     this.refreshDeformedMeshSizes()
+    for (const gid of [...this.#shadowContainers.keys()]) {
+      this.#updateShadowForGroup(gid)
+    }
   }
 
   refreshDeformedMeshSizes(): void {
@@ -450,6 +598,9 @@ export class SceneRenderer {
         }
       }
     }
+    // Shadow: if node was group with shadow that now has material, destroy; if caster, update
+    this.#syncShadowLifecycleForNode(nodeId)
+    for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
   }
 
   handleMeshChanged(nodeId: string): void {
@@ -503,6 +654,8 @@ export class SceneRenderer {
     this.#sizes.set(nodeId, { width: w, height: h, offsetX: cx, offsetY: cy })
     this.refreshDeformedMeshSizes()
     this.#onNodeSizeChanged(nodeId)
+    this.#syncShadowLifecycleForNode(nodeId)
+    for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
   }
 
   handleCircleChanged(nodeId: string): void {
@@ -555,6 +708,8 @@ export class SceneRenderer {
     this.#sizes.set(nodeId, { width: w, height: h, offsetX: 0, offsetY: 0 })
     this.refreshDeformedMeshSizes()
     this.#onNodeSizeChanged(nodeId)
+    this.#syncShadowLifecycleForNode(nodeId)
+    for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
   }
 
   handleTableChanged(nodeId: string): void {
@@ -571,9 +726,15 @@ export class SceneRenderer {
       applyTableNodeOrdering(nodeContainer, node)
     }
     const tableNode = node.components.table ? node : this.#owningTable(node)
-    if (!tableNode) return
+    if (!tableNode) {
+      this.#syncShadowLifecycleForNode(nodeId)
+      for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
+      return
+    }
     if (!node.components.table) {
       this.#refreshTableChildren(tableNode)
+      this.#syncShadowLifecycleForNode(nodeId)
+      for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
       return
     }
     const table = tableNode
@@ -583,6 +744,8 @@ export class SceneRenderer {
     }
     const placeholder = placeholderOf(container)
     if (!placeholder) {
+      this.#syncShadowLifecycleForNode(nodeId)
+      for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
       return
     }
     const previousLayout = tableLayoutOf(placeholder)
@@ -604,11 +767,15 @@ export class SceneRenderer {
       this.#onNodeSizeChanged(table.id)
     }
     this.#refreshTableChildren(table)
+    this.#syncShadowLifecycleForNode(nodeId)
+    for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
   }
 
   handleChartChanged(nodeId: string): void {
     const chartAndSprite = this.#getChartAndSprite(nodeId)
     if (!chartAndSprite) {
+      this.#syncShadowLifecycleForNode(nodeId)
+      for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
       return
     }
     const { chart, sprite } = chartAndSprite
@@ -618,7 +785,12 @@ export class SceneRenderer {
     void rebuildChartTexture(this.#pixi, sprite, chart, data, width, height).then(() => {
       this.#sizes.set(nodeId, { width, height })
       this.#onNodeSizeChanged(nodeId)
+      this.#syncShadowLifecycleForNode(nodeId)
+      for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
     })
+    // sync now (before async texture)
+    this.#syncShadowLifecycleForNode(nodeId)
+    for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
   }
 
   handleTextChanged(nodeId: string): void {
@@ -628,14 +800,20 @@ export class SceneRenderer {
     }
     const node = scene.getNode(nodeId)
     if (!node || !node.components.text) {
+      this.#syncShadowLifecycleForNode(nodeId)
+      for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
       return
     }
     const container = this.#containers.get(nodeId)
     if (!container) {
+      this.#syncShadowLifecycleForNode(nodeId)
+      for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
       return
     }
     const placeholder = placeholderOf(container)
     if (!placeholder) {
+      this.#syncShadowLifecycleForNode(nodeId)
+      for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
       return
     }
     rebuildText(this.#pixi, placeholder, node.components.text)
@@ -644,6 +822,8 @@ export class SceneRenderer {
       this.#sizes.set(nodeId, this.#tableTextSize(node, size))
       this.#onNodeSizeChanged(nodeId)
     }
+    this.#syncShadowLifecycleForNode(nodeId)
+    for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
   }
 
   handleDataTransition(nodeId: string): void {
@@ -769,10 +949,18 @@ export class SceneRenderer {
       return
     }
     this.#evaluateAndApply(nodeId)
+    if (this.#shadowContainers.has(nodeId)) {
+      const c = this.#shadowContainers.get(nodeId)!
+      const gc = this.#containers.get(nodeId)
+      if (gc) c.visible = gc.visible
+    }
+    // Caster visibility affects shadow silhouette
+    for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
   }
 
   handleVisibleTrackChanged(nodeId: string): void {
     this.#evaluateAndApply(nodeId)
+    for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
   }
 
   handleNodeRenamed(nodeId: string): void {
@@ -788,6 +976,14 @@ export class SceneRenderer {
 
   handleOpacityChanged(nodeId: string): void {
     this.#evaluateAndApply(nodeId)
+    if (this.#shadowContainers.has(nodeId)) {
+      this.#updateShadowSpriteProps(nodeId)
+    }
+    // Any caster opacity change affects shadow silhouette & alpha
+    for (const gid of this.#shadowContainers.keys()) {
+      this.#updateShadowSpriteProps(gid)
+      this.#updateShadowForGroup(gid)
+    }
   }
 
   setBonesVisible(visible: boolean): void {
@@ -826,6 +1022,17 @@ export class SceneRenderer {
       return
     }
     this.#attachToParent(container, this.#engine.getNode(nodeId))
+    // Shadow sibling-under must follow
+    if (this.#shadowContainers.has(nodeId)) {
+      const shadow = this.#shadowContainers.get(nodeId)!
+      this.#attachShadowSiblingUnder(this.#engine.getNode(nodeId), shadow)
+    }
+    this.#syncShadowLifecycleForNode(nodeId)
+    // If reparented node was caster, update old and new parent shadows
+    const node = this.#engine.getNode(nodeId)
+    if (node.parent && this.#shadowContainers.has(node.parent.id)) this.#updateShadowForGroup(node.parent.id)
+    // Also need to consider previous parent — but we don't have it; brute update all
+    for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
   }
 
   handleNodeOrderChanged(nodeId: string): void {
@@ -862,6 +1069,19 @@ export class SceneRenderer {
         Math.min(base + offset, parentContainer.children.length),
       )
     })
+    // Restore shadow-before-group for any shadow hosts among siblings
+    for (const sibling of parent.children) {
+      if (this.#shadowContainers.has(sibling.id)) {
+        const shadow = this.#shadowContainers.get(sibling.id)!
+        const groupContainer = this.#containers.get(sibling.id)!
+        const idx = parentContainer.children.indexOf(groupContainer as unknown as PixiContainer)
+        const curIdx = parentContainer.children.indexOf(shadow as unknown as PixiContainer)
+        if (idx >= 0 && curIdx !== idx) {
+          parentContainer.removeChild(shadow as unknown as PixiContainer)
+          parentContainer.addChildAt(shadow as unknown as PixiContainer, idx)
+        }
+      }
+    }
   }
 
   #addNode(node: SceneNode): void {
@@ -1441,6 +1661,390 @@ export class SceneRenderer {
       offsetX: padding + size.width / 2,
       offsetY: padding + size.height / 2,
     }
+  }
+
+  // ── Shadow Effect lifecycle & rendering ────────────────────────────────
+  #ensureShadowWhiteFilter(): PixiFilter {
+    if (this.#shadowWhiteFilter) return this.#shadowWhiteFilter
+    const program = this.#programCache.get(WHITE_ALPHA_FRAGMENT)
+    this.#shadowWhiteFilter = new this.#pixi.Filter({ glProgram: program, resources: {} })
+    return this.#shadowWhiteFilter
+  }
+
+  #destroyAllShadows(): void {
+    for (const groupId of [...this.#shadowContainers.keys()]) {
+      this.#destroyShadowForGroup(groupId)
+    }
+    this.#shadowWhiteFilter?.destroy()
+    this.#shadowWhiteFilter = null
+  }
+
+  #destroyShadowForGroup(groupId: string): void {
+    const container = this.#shadowContainers.get(groupId)
+    const sprite = this.#shadowSprites.get(groupId)
+    const rt = this.#shadowTextures.get(groupId)
+    const blur = this.#shadowBlurFilters.get(groupId)
+    // Clean sprite filters
+    if (sprite) {
+      ;(sprite as unknown as { filters: unknown }).filters = []
+    }
+    if (blur) {
+      try {
+        ;(blur as unknown as { destroy?: () => void }).destroy?.()
+      } catch {
+        void 0
+      }
+    }
+    this.#shadowBlurFilters.delete(groupId)
+    this.#shadowSprites.delete(groupId)
+    this.#shadowTextures.delete(groupId)
+    this.#shadowContainers.delete(groupId)
+    if (container) {
+      try {
+        container.destroy({ children: true })
+      } catch {
+        void 0
+      }
+    }
+    if (rt) {
+      try {
+        rt.destroy()
+      } catch {
+        void 0
+      }
+    }
+  }
+
+  #ensureShadowForGroup(groupNode: SceneNode): void {
+    if (!groupNode.shadowEffect) return
+    if (!isGroupNode(groupNode)) return
+    const groupId = groupNode.id
+    if (this.#shadowContainers.has(groupId)) {
+      // already exists — update properties
+      this.#updateShadowSpriteProps(groupId)
+      return
+    }
+    const effect = clampShadowEffect(groupNode.shadowEffect, groupId)
+    const pad = Math.ceil(effect.blur * 2 + 4)
+    void pad
+    // Create RT
+    const rt = this.#pixi.RenderTexture.create({ width: 4, height: 4 })
+    // Create sprite from RT
+    const sprite = new this.#pixi.Sprite(rt as unknown as import('pixi.js').Texture)
+    sprite.label = `shadow-sprite:${groupId}`
+    sprite.anchor?.set?.(0, 0)
+    // Container
+    const container = new this.#pixi.Container()
+    container.label = `shadow:${groupId}`
+    container.addChild(sprite as unknown as PixiContainer)
+    container.sortableChildren = false
+    // Blur filter
+    let blurFilter: PixiFilter | null = null
+    if (effect.blur > 0) {
+      try {
+        blurFilter = new this.#pixi.BlurFilter({
+          strength: effect.blur,
+          quality: 2,
+          kernelSize: 5,
+        } as unknown as Record<string, unknown>) as unknown as PixiFilter
+      } catch {
+        blurFilter = null
+      }
+    }
+    if (blurFilter) {
+      sprite.filters = [blurFilter as unknown as PixiFilter]
+    } else {
+      ;(sprite as unknown as { filters: unknown }).filters = []
+    }
+    this.#shadowContainers.set(groupId, container)
+    this.#shadowSprites.set(groupId, sprite as unknown as PixiSprite)
+    this.#shadowTextures.set(groupId, rt)
+    this.#shadowBlurFilters.set(groupId, blurFilter)
+
+    // Insert sibling-under
+    this.#attachShadowSiblingUnder(groupNode, container)
+
+    // Initial props
+    this.#updateShadowSpriteProps(groupId)
+    // Initial size + render
+    this.#updateShadowForGroup(groupId)
+  }
+
+  #attachShadowSiblingUnder(groupNode: SceneNode, shadowContainer: PixiContainer): void {
+    const renderParent = groupNode.components.tableCell ? this.#owningTable(groupNode) : groupNode.parent
+    const parentContainer = renderParent ? this.#containers.get(renderParent.id) : undefined
+    const worldOrParent = (parentContainer ?? this.#world) as PixiContainer
+    const groupContainer = this.#containers.get(groupNode.id)
+    if (!groupContainer) {
+      worldOrParent.addChild(shadowContainer)
+      return
+    }
+    const idx = worldOrParent.children.indexOf(groupContainer as unknown as PixiContainer)
+    const at = idx >= 0 ? idx : worldOrParent.children.length
+    // Ensure sortableChildren for table parent
+    if (worldOrParent) (worldOrParent as unknown as { sortableChildren: boolean }).sortableChildren = true
+    worldOrParent.addChildAt(shadowContainer as unknown as PixiContainer, at)
+  }
+
+  #updateShadowSpriteProps(groupId: string): void {
+    const groupNode = this.#scene?.getNode(groupId)
+    if (!groupNode || !groupNode.shadowEffect) return
+    const effect = clampShadowEffect(groupNode.shadowEffect, groupId)
+    const sprite = this.#shadowSprites.get(groupId)
+    const container = this.#shadowContainers.get(groupId)
+    if (!sprite || !container) return
+    // Position / rotation / scale / skew pivot 0,0
+    const s = sprite as unknown as {
+      x: number
+      y: number
+      rotation: number
+      scale: { x: number; y: number; set: (x: number, y: number) => void }
+      skew: { x: number; y: number; set: (x: number, y: number) => void }
+      alpha: number
+      tint: number
+      visible: boolean
+      blendMode: string
+    }
+    s.x = effect.offsetX
+    s.y = effect.offsetY
+    s.rotation = (effect.rotation * Math.PI) / 180
+    s.scale.set(effect.scaleX, effect.scaleY)
+    s.skew.set((effect.skewX * Math.PI) / 180, (effect.skewY * Math.PI) / 180)
+    // Alpha = groupChainOpacity * shadowOpacity
+    const groupAlpha = this.#worldAlphaForNode(groupId)
+    s.alpha = groupAlpha * effect.opacity
+    s.tint = hexStringToTint(effect.color)
+    ;(sprite as unknown as { blendMode: string }).blendMode = 'normal'
+    // Blur filter update
+    const currentBlur = this.#shadowBlurFilters.get(groupId)
+    if (effect.blur <= 0) {
+      if (currentBlur) {
+        ;(sprite as unknown as { filters: unknown }).filters = []
+        try {
+          ;(currentBlur as unknown as { destroy?: () => void }).destroy?.()
+        } catch {
+          void 0
+        }
+        this.#shadowBlurFilters.set(groupId, null)
+      }
+    } else {
+      let blurFilter = currentBlur
+      if (!blurFilter) {
+        try {
+          blurFilter = new this.#pixi.BlurFilter({
+            strength: effect.blur,
+            quality: 2,
+            kernelSize: 5,
+          } as unknown as Record<string, unknown>) as unknown as PixiFilter
+        } catch {
+          blurFilter = null
+        }
+        if (blurFilter) {
+          sprite.filters = [blurFilter as unknown as PixiFilter]
+          this.#shadowBlurFilters.set(groupId, blurFilter)
+        }
+      } else {
+        // Update strength if api allows
+        try {
+          ;(blurFilter as unknown as { strength: number }).strength = effect.blur
+        } catch {
+          void 0
+        }
+      }
+    }
+    // Mirror visible
+    const groupContainer = this.#containers.get(groupId)
+    if (groupContainer) {
+      container.visible = groupContainer.visible
+    } else {
+      container.visible = groupNode.visible
+    }
+  }
+
+  #worldAlphaForNode(nodeId: string): number {
+    let alpha = 1
+    let cur: SceneNode | null | undefined = this.#scene?.getNode(nodeId)
+    const slideId = this.#slideId
+    const time = slideId ? this.#currentTime.getTime(slideId) : 0
+    // Walk up and multiply evaluated opacity
+    while (cur) {
+      try {
+        const state = this.#engine.evaluateNode(cur.id, time)
+        alpha *= state.opacity
+        // Also multiply material opacityMultiplier? Use evaluateMaterialOverrides
+        const overrides = this.#engine.evaluateMaterialOverrides(cur.id, time)
+        // Try to get tint opacity? For simplicity ignore
+        void overrides
+      } catch {
+        alpha *= cur.opacity
+      }
+      cur = cur.parent
+    }
+    return alpha
+  }
+
+  #updateShadowForGroup(groupId: string): void {
+    const groupNode = this.#scene?.getNode(groupId)
+    if (!groupNode || !groupNode.shadowEffect) return
+    if (!isGroupNode(groupNode)) {
+      this.#destroyShadowForGroup(groupId)
+      return
+    }
+    const effect = clampShadowEffect(groupNode.shadowEffect, groupId)
+    const casters = collectShadowCasters(groupNode)
+    // Gate visible/opacity >0.01 at render time
+    const slideId = this.#slideId
+    const time = slideId ? this.#currentTime.getTime(slideId) : 0
+    let union: WorldAabb | null = null
+    for (const caster of casters) {
+      let visible = true
+      let worldAlpha = 1
+      try {
+        const st = this.#engine.evaluateNode(caster.id, time)
+        visible = st.visible
+        worldAlpha = st.opacity
+      } catch {
+        visible = caster.visible
+        worldAlpha = caster.opacity
+      }
+      if (!visible || worldAlpha <= 0.01) continue
+      const size = this.#sizes.get(caster.id)
+      if (!size) continue
+      let worldTr: { x: number; y: number; rotation: number; scaleX: number; scaleY: number } | null = null
+      try {
+        const ev = this.#engine.evaluateNode(caster.id, time)
+        worldTr = { x: ev.transform.x, y: ev.transform.y, rotation: ev.transform.rotation, scaleX: ev.transform.scaleX, scaleY: ev.transform.scaleY }
+      } catch {
+        const t = caster.transform
+        worldTr = { x: t.x, y: t.y, rotation: t.rotation, scaleX: t.scaleX, scaleY: t.scaleY }
+      }
+      // Compute world transform chain? For simplicity use evaluated local + parent chain via compose? Use engineWorldTransform helper
+      const world = this.#engineWorldTransformForShadow(caster.id, time)
+      const trForAabb = world ?? worldTr
+      if (!trForAabb) continue
+      const aabb = worldAabbOfNode(size, trForAabb)
+      union = union ? mergeAabb(union, aabb) : aabb
+    }
+    const { width, height, pad } = rtSizeForAabb(union, effect.blur)
+    const rt = this.#shadowTextures.get(groupId)
+    if (!rt) return
+    if (rt.width !== width || rt.height !== height) {
+      try {
+        rt.resize(width, height)
+      } catch {
+        void 0
+      }
+    }
+    // Silhouette generation: temp clone with white-alpha filter
+    // For tracer bullet we render a dummy white container to prove RT usage
+    const temp = new this.#pixi.Container()
+    temp.label = `shadow-silhouette:${groupId}`
+    // Build simple white graphics for each caster's bbox centered at pad
+    // If union exists, place graphics relative to union.min
+    if (union) {
+      const minX = union.minX
+      const minY = union.minY
+      for (const caster of casters) {
+        const size = this.#sizes.get(caster.id)
+        if (!size) continue
+        let visible = true
+        let worldAlpha = 1
+        try {
+          const st = this.#engine.evaluateNode(caster.id, time)
+          visible = st.visible
+          worldAlpha = st.opacity
+        } catch {
+          visible = caster.visible
+          worldAlpha = caster.opacity
+        }
+        if (!visible || worldAlpha <= 0.01) continue
+        const world = this.#engineWorldTransformForShadow(caster.id, time)
+        if (!world) continue
+        const aabb = worldAabbOfNode(size, world)
+        const rectX = aabb.minX - minX + pad
+        const rectY = aabb.minY - minY + pad
+        const rectW = aabb.maxX - aabb.minX
+        const rectH = aabb.maxY - aabb.minY
+        if (rectW <= 0 || rectH <= 0) continue
+        const g = new this.#pixi.Graphics()
+        // White opaque rect — alpha preserved via filter later, but for now use white
+        g.rect(rectX, rectY, rectW, rectH).fill({ color: 0xffffff, alpha: worldAlpha })
+        temp.addChild(g as unknown as PixiContainer)
+      }
+    } else {
+      // No casters / hidden — keep temp empty, RT stays clear
+    }
+    // Apply white-alpha filter to preserve soft edges (placeholder: use white filter)
+    try {
+      const wf = this.#ensureShadowWhiteFilter()
+      temp.filters = [wf as unknown as PixiFilter]
+    } catch {
+      void 0
+    }
+    // Render to RT with clear 0x00000000
+    try {
+      this.#renderToTexture({ container: temp as unknown as PixiContainer, target: rt, clear: true, clearColor: 0x00000000 as unknown as number })
+    } catch {
+      // Fallback without clearColor
+      try {
+        this.#renderToTexture({ container: temp as unknown as PixiContainer, target: rt, clear: true })
+      } catch {
+        void 0
+      }
+    }
+    temp.destroy({ children: true })
+    // Update sprite position already done, but also need to keep sprite at 0,0? Sprite itself is transformed, not temp
+    this.#updateShadowSpriteProps(groupId)
+  }
+
+  #engineWorldTransformForShadow(nodeId: string, time: number): { x: number; y: number; rotation: number; scaleX: number; scaleY: number } | null {
+    try {
+      const node = this.#engine.getNode(nodeId)
+      const chain: SceneNode[] = []
+      for (let cursor: SceneNode | null = node; cursor !== null; cursor = cursor.parent) chain.push(cursor)
+      chain.reverse()
+      const composed = composeChain(chain, (link) => {
+        try {
+          return this.#engine.evaluateNode(link.id, time).transform
+        } catch {
+          return link.transform
+        }
+      })
+      if (!composed) return null
+      return { x: composed.x, y: composed.y, rotation: composed.rotation, scaleX: composed.scaleX, scaleY: composed.scaleY }
+    } catch {
+      return null
+    }
+  }
+
+  handleShadowEffectChanged(nodeId: string): void {
+    const node = this.#scene?.getNode(nodeId)
+    if (!node) return
+    if (node.shadowEffect && isGroupNode(node)) {
+      this.#ensureShadowForGroup(node)
+    } else {
+      this.#destroyShadowForGroup(nodeId)
+      // Also check if node was group that lost status — ensure destroyed
+      // Check parent groups that might have lost child
+      if (node.parent && node.parent.shadowEffect) {
+        this.#updateShadowForGroup(node.parent.id)
+      }
+    }
+  }
+
+  #syncShadowLifecycleForNode(nodeId: string): void {
+    const node = this.#scene?.getNode(nodeId)
+    if (!node) return
+    // If node itself is group with effect, ensure or destroy based on current state
+    if (node.shadowEffect) {
+      if (isGroupNode(node)) this.#ensureShadowForGroup(node)
+      else this.#destroyShadowForGroup(nodeId)
+    }
+    // If node's parent is group with effect, that group's shadow may need update (child added/removed)
+    if (node.parent && node.parent.shadowEffect && isGroupNode(node.parent)) {
+      this.#updateShadowForGroup(node.parent.id)
+    }
+    // If node had shadow but is being removed, already destroyed via #destroyShadowForGroup
   }
 }
 

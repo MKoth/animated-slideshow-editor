@@ -23,6 +23,9 @@ import {
 } from './materialInstance'
 import type { ClipInstance } from './clipInstance'
 import { clipInstanceFromJSON, clipInstanceToJSON } from './clipInstance'
+import type { ShadowEffect } from './shadowEffect'
+import { shadowEffectFromJSON, shadowEffectToJSON,
+} from './shadowEffect'
 
 const TEXT_ALIGNMENTS: readonly TextAlignment[] = ['left', 'center', 'right']
 
@@ -46,6 +49,7 @@ export class SceneNode {
   material: MaterialInstance
   readonly components: NodeComponents
   readonly clipInstances: ClipInstance[]
+  shadowEffect?: ShadowEffect
   _worldTransformDirty = true
   _cachedWorldTransform: CachedWorldTransform | null = null
 
@@ -119,6 +123,9 @@ export class SceneNode {
       ...(this.clipInstances.length > 0
         ? { clipInstances: this.clipInstances.map(clipInstanceToJSON) }
         : {}),
+      ...(this.shadowEffect !== undefined
+        ? { shadowEffect: shadowEffectToJSON(this.shadowEffect) }
+        : {}),
     }
   }
 
@@ -165,12 +172,16 @@ export class SceneNode {
         node.clipInstances.push(clipInstanceFromJSON(clipJson))
       }
     }
+    const parsedShadow = shadowEffectFromJSON((json as Record<string, unknown>).shadowEffect, id)
+    if (parsedShadow !== undefined) {
+      node.shadowEffect = parsedShadow
+    }
     return node
   }
 }
 
 export function isGroupNode(node: SceneNode): boolean {
-  return Object.keys(node.components).length === 0 && node.children.length > 0
+  return Object.values(node.components).every((v) => v === undefined) && node.children.length > 0
 }
 
 function requireTransform(value: unknown, nodeId: string): Transform {

@@ -47,7 +47,9 @@ import type {
 import type { CreateProjectInput, EmbeddedDataSourceUnion, Project } from './project'
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
-import { walkPreOrder } from './sceneNode'
+import { isGroupNode, walkPreOrder } from './sceneNode'
+import { clampShadowEffect } from './shadowEffect'
+import type { ShadowEffect } from './shadowEffect'
 import type { Slide } from './slide'
 import type { SlideDurationChange } from './slideManager'
 import type { EngineEvent, Unsubscribe } from './events'
@@ -2004,6 +2006,43 @@ export class Engine {
 
   setOpacity(nodeId: string, opacity: number): void {
     this.#nodes.setOpacity(nodeId, opacity)
+  }
+
+  setShadowEffect(nodeId: string, shadowEffect: ShadowEffect | null): void {
+    const node = this.getNode(nodeId)
+    const previous = node.shadowEffect ? { ...node.shadowEffect } : null
+    const next = shadowEffect ? { ...shadowEffect } : undefined
+    if (next) {
+      const clamped = clampShadowEffect(next, nodeId)
+      ;(node as unknown as { shadowEffect?: ShadowEffect }).shadowEffect = clamped
+    } else {
+      ;(node as unknown as { shadowEffect?: ShadowEffect }).shadowEffect = undefined
+    }
+    if (next && !isGroupNode(node)) {
+      console.warn(
+        `[shadow] SetShadowEffect on non-group node "${nodeId}" — effect stored but will not render until node becomes a group`,
+      )
+    }
+    const changed =
+      (previous === null && next !== undefined) ||
+      (previous !== null && next === undefined) ||
+      (previous !== null &&
+        next !== undefined &&
+        JSON.stringify(previous) !== JSON.stringify(next))
+    if (changed) {
+      this.#bus.emit({ type: 'ShadowEffectChanged', nodeId })
+    }
+  }
+
+  getShadowEffect(nodeId: string): ShadowEffect | undefined {
+    const node = this.getNode(nodeId)
+    return node.shadowEffect ? { ...node.shadowEffect } : undefined
+  }
+
+  evaluateShadow(nodeId: string, _time: number): ShadowEffect | null {
+    const node = this.getNode(nodeId)
+    if (!isGroupNode(node) || !node.shadowEffect) return null
+    return { ...node.shadowEffect }
   }
 
   setMeshData(nodeId: string, mesh: MeshData): void {
@@ -4463,6 +4502,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getClipInstances: (nodeId) => engine.getClipInstances(nodeId),
     isClipReferenced: (clipId) => engine.isClipReferenced(clipId),
     getClipBlockingNodeNames: (clipId) => engine.getClipBlockingNodeNames(clipId),
+    getShadowEffect: (nodeId) => engine.getShadowEffect(nodeId),
+    evaluateShadow: (nodeId, time) => engine.evaluateShadow(nodeId, time),
     getClipCollection: (collectionId) => engine.getClipCollection(collectionId),
     createClipCollection: (name, bindings, sourceNodeId) =>
       engine.createClipCollection(name, bindings, sourceNodeId),

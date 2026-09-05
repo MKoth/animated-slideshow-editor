@@ -111,6 +111,19 @@ export type FullscreenShaderJSON = {
   readonly overrides: Readonly<Record<string, MaterialOverrideJSON>>
 }
 
+export type ShadowEffectJSON = {
+  readonly offsetX: number
+  readonly offsetY: number
+  readonly scaleX: number
+  readonly scaleY: number
+  readonly skewX: number
+  readonly skewY: number
+  readonly rotation: number
+  readonly blur: number
+  readonly opacity: number
+  readonly color: string
+}
+
 export type NodeJSON = {
   readonly id: string
   readonly name: string
@@ -123,6 +136,7 @@ export type NodeJSON = {
   readonly material?: MaterialJSON
   readonly components: NodeComponentsJSON
   readonly clipInstances?: readonly ClipInstanceJSON[]
+  readonly shadowEffect?: ShadowEffectJSON
 }
 
 export type SceneJSON = {

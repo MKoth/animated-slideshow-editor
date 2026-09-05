@@ -24,10 +24,15 @@ export class FakeContainer {
   filters: FakeFilter[] = []
   position: FakePoint = makePoint()
   scale: FakePoint = makePoint()
+  skew: FakePoint = makePoint()
   pivot: FakePoint = makePoint()
   rotation = 0
   visible = true
   alpha = 1
+  tint = 0xffffff
+  blendMode = 'normal'
+  sortableChildren = false
+  zIndex = 0
   anchor: FakePoint = makePoint()
   width = 0
   height = 0
@@ -319,6 +324,24 @@ export class FakeFilter {
   }
 }
 
+export class FakeBlurFilter extends FakeFilter {
+  strength: number
+  quality: number
+  kernelSize: number
+  constructor(
+    options: { strength?: number; quality?: number; kernelSize?: number } & FakeFilterOptions = {
+      glProgram: fakeGlPrograms.from({ vertex: '', fragment: '' }),
+    } as unknown as { strength?: number; quality?: number; kernelSize?: number } & FakeFilterOptions,
+  ) {
+    // Allow calling with just {strength, quality, kernelSize} without glProgram
+    const glProgram = (options as FakeFilterOptions).glProgram ?? fakeGlPrograms.from({ vertex: '', fragment: '' })
+    super({ glProgram, resources: (options as FakeFilterOptions).resources })
+    this.strength = (options as { strength?: number }).strength ?? 8
+    this.quality = (options as { quality?: number }).quality ?? 4
+    this.kernelSize = (options as { kernelSize?: number }).kernelSize ?? 5
+  }
+}
+
 export function resetShaderRegistries(): void {
   fakeGlPrograms.calls.length = 0
   fakeGlPrograms.cache.clear()
@@ -480,6 +503,7 @@ export function createPixiFake() {
     Texture: fakeTexture,
     Assets: fakeAssets,
     Filter: FakeFilter,
+    BlurFilter: FakeBlurFilter,
     GlProgram: fakeGlPrograms,
     RenderTexture: fakeRenderTextures,
   }

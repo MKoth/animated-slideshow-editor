@@ -413,6 +413,12 @@ export function applyUndo(
       // No engine method to delete project; ignore as CreateProject rarely undone
       return
     }
+    case 'SetShadowEffect': {
+      const nodeId = inv.nodeId as string
+      const oldShadowEffect = inv.oldShadowEffect as import('../shadowEffect').ShadowEffect | null
+      engine.setShadowEffect(nodeId, oldShadowEffect)
+      return
+    }
     case 'SetTableComponent': {
       const nodeId = inv.nodeId as string
       const oldTable = inv.oldTable as import('../components').TableComponent
@@ -2330,6 +2336,11 @@ export function applyRedo(
         description: params.description as string | undefined,
         author: params.author as string | undefined,
       })
+      return
+    }
+    case 'SetShadowEffect': {
+      const se = params.shadowEffect as import('../shadowEffect').ShadowEffect | null
+      engine.setShadowEffect(params.nodeId as string, se)
       return
     }
     case 'SetTableComponent':

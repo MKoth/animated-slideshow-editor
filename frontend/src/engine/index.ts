@@ -326,3 +326,17 @@ export {
   applyUVTransformToSingle,
 } from './uvTransform'
 export { AttachTextureToMeshCommand, DetachTextureCommand, SetUVTransformCommand } from './commands'
+export type { ShadowEffect, ShadowEffectJSON, ShadowProperty } from './shadowEffect'
+export {
+  DEFAULT_SHADOW_EFFECT,
+  SHADOW_PROPERTIES,
+  SHADOW_LABELS,
+  cloneShadowEffect,
+  clampShadowEffect,
+  shadowEffectFromJSON,
+  shadowEffectToJSON,
+  hexStringToTint,
+  isShadowEffectEqual,
+} from './shadowEffect'
+export { SetShadowEffectCommand } from './commands'
+export type { SetShadowEffectParameters, SetShadowEffectInverse } from './commands'

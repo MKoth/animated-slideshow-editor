@@ -211,6 +211,10 @@ export class Renderer {
           }
           return null
         },
+        (options) => {
+          // Render to texture for shadow silhouette (clear 0x00000000)
+          app.renderer.render(options as unknown as Parameters<typeof app.renderer.render>[0])
+        },
       )
       this.#thumbnails.attach(app)
       this.#unsubscribe = this.#engine.subscribe((event) => this.#handleEvent(event))
@@ -893,6 +897,9 @@ export class Renderer {
       case 'ConstraintRemoved':
       case 'ConstraintChanged':
         this.#handleTimeChanged()
+        break
+      case 'ShadowEffectChanged':
+        sceneRenderer.handleShadowEffectChanged(event.nodeId)
         break
     }
   }
