@@ -131,7 +131,9 @@ function rtSizeForAabb(
 }
 
 function collectShadowCasters(host: SceneNode): SceneNode[] {
-  return collectShadowCastersPure(host as unknown as { children: readonly unknown[] }) as SceneNode[]
+  return collectShadowCastersPure(
+    host as unknown as { children: readonly unknown[] },
+  ) as SceneNode[]
 }
 
 function worldAabbOfNode(

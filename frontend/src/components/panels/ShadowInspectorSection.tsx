@@ -174,19 +174,29 @@ export function ShadowInspectorSection({
   })()
 
   const casterSet = (() => {
-    const casters = collectShadowCasters(target as unknown as { children: readonly unknown[] }) as SceneNode[]
+    const casters = collectShadowCasters(
+      target as unknown as { children: readonly unknown[] },
+    ) as SceneNode[]
     return new Set<string>(casters.map((c) => c.id))
   })()
 
   const toggleCastShadow = (node: SceneNode) => {
-    const isBoneOrGhost = !!(node.components.bone || node.components.ghost || node.components.camera)
+    const isBoneOrGhost = !!(
+      node.components.bone ||
+      node.components.ghost ||
+      node.components.camera
+    )
     if (isBoneOrGhost) {
       notify('Bone / Ghost / Camera nodes cannot cast shadows')
       return
     }
-    const currentCast = getCastShadow(node as unknown as { components: Record<string, unknown>; castShadow?: boolean })
+    const currentCast = getCastShadow(
+      node as unknown as { components: Record<string, unknown>; castShadow?: boolean },
+    )
     try {
-      const result = dispatch(new SetCastShadowCommand({ nodeId: node.id, castShadow: !currentCast }))
+      const result = dispatch(
+        new SetCastShadowCommand({ nodeId: node.id, castShadow: !currentCast }),
+      )
       if (result && !result.ok) throw result.error
     } catch (e) {
       notify(e instanceof Error ? e.message : String(e))
@@ -730,19 +740,42 @@ export function ShadowInspectorSection({
             {isEditingSource ? 'Done Editing Shadow Source' : 'Edit Shadow Source…'}
           </button>
           {isEditingSource && (
-            <div style={{ display: 'grid', gap: 4, border: '1px solid #555', padding: 8, borderRadius: 4 }}>
+            <div
+              style={{
+                display: 'grid',
+                gap: 4,
+                border: '1px solid #555',
+                padding: 8,
+                borderRadius: 4,
+              }}
+            >
               <div style={{ fontSize: 11, color: '#aaa' }}>
-                Click descendant to toggle Cast Shadow. Bone / Ghost / Camera cannot cast (disabled). Non-casters dimmed to 30%, casters amber 2px outline.
+                Click descendant to toggle Cast Shadow. Bone / Ghost / Camera cannot cast
+                (disabled). Non-casters dimmed to 30%, casters amber 2px outline.
               </div>
               {allDescendants.length === 0 && <div style={{ fontSize: 12 }}>No descendants</div>}
               {allDescendants.map((node) => {
-                const isBoneOrGhost = !!(node.components.bone || node.components.ghost || node.components.camera)
+                const isBoneOrGhost = !!(
+                  node.components.bone ||
+                  node.components.ghost ||
+                  node.components.camera
+                )
                 const isCaster = casterSet.has(node.id)
-                const castShadowVal = getCastShadow(node as unknown as { components: Record<string, unknown>; castShadow?: boolean })
+                const castShadowVal = getCastShadow(
+                  node as unknown as { components: Record<string, unknown>; castShadow?: boolean },
+                )
                 const isPrunedByAncestor = (() => {
                   let cur: SceneNode | null = node.parent
                   while (cur && cur.id !== target.id) {
-                    if (!getCastShadow(cur as unknown as { components: Record<string, unknown>; castShadow?: boolean })) return true
+                    if (
+                      !getCastShadow(
+                        cur as unknown as {
+                          components: Record<string, unknown>
+                          castShadow?: boolean
+                        },
+                      )
+                    )
+                      return true
                     cur = cur.parent
                   }
                   if (target.id !== node.id) {
@@ -785,22 +818,52 @@ export function ShadowInspectorSection({
                     />
                     <span style={{ fontSize: 12, flex: 1 }}>{node.name}</span>
                     <span style={{ fontSize: 10, color: '#888' }}>
-                      {isBoneOrGhost ? 'Bone/Ghost' : isCasterRenderable(node as unknown as { components: Record<string, unknown> }) ? '' : ' (group)'}
+                      {isBoneOrGhost
+                        ? 'Bone/Ghost'
+                        : isCasterRenderable(
+                              node as unknown as { components: Record<string, unknown> },
+                            )
+                          ? ''
+                          : ' (group)'}
                       {isCaster ? ' ● caster' : ' ○ non-caster'}
                     </span>
                   </div>
                 )
               })}
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, marginTop: 4 }}>
-                <input type="checkbox" checked={showSilhouette} onChange={(e) => setShowSilhouette(e.target.checked)} />
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  fontSize: 12,
+                  marginTop: 4,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={showSilhouette}
+                  onChange={(e) => setShowSilhouette(e.target.checked)}
+                />
                 Show silhouette
               </label>
               {showSilhouette && (
-                <div style={{ fontSize: 11, color: '#aaa', border: '1px dashed #f59e0b', padding: 4, borderRadius: 3 }}>
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: '#aaa',
+                    border: '1px dashed #f59e0b',
+                    padding: 4,
+                    borderRadius: 3,
+                  }}
+                >
                   Silhouette BBox debug overlay: union world AABB + pad {pad}px
                   <div>Pad = ceil(blur*2+4) = {pad}</div>
-                  <div>Casters: {casterSet.size} / Descendants: {allDescendants.length}</div>
-                  <div style={{ marginTop: 4, fontStyle: 'italic' }}>Canvas overlay draws amber rect around silhouette bounds when enabled.</div>
+                  <div>
+                    Casters: {casterSet.size} / Descendants: {allDescendants.length}
+                  </div>
+                  <div style={{ marginTop: 4, fontStyle: 'italic' }}>
+                    Canvas overlay draws amber rect around silhouette bounds when enabled.
+                  </div>
                 </div>
               )}
             </div>

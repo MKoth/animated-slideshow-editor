@@ -24,8 +24,7 @@ import {
 import type { ClipInstance } from './clipInstance'
 import { clipInstanceFromJSON, clipInstanceToJSON } from './clipInstance'
 import type { ShadowEffect } from './shadowEffect'
-import { shadowEffectFromJSON, shadowEffectToJSON,
-} from './shadowEffect'
+import { shadowEffectFromJSON, shadowEffectToJSON } from './shadowEffect'
 
 const TEXT_ALIGNMENTS: readonly TextAlignment[] = ['left', 'center', 'right']
 

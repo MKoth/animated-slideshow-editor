@@ -103,7 +103,15 @@ export function clampShadowEffect(effect: ShadowEffect, nodeId?: string): Shadow
     // normalize to lower? keep as is but ensure # prefix
     out.color = out.color.toLowerCase()
   }
-  for (const k of ['offsetX', 'offsetY', 'scaleX', 'scaleY', 'skewX', 'skewY', 'rotation'] as const) {
+  for (const k of [
+    'offsetX',
+    'offsetY',
+    'scaleX',
+    'scaleY',
+    'skewX',
+    'skewY',
+    'rotation',
+  ] as const) {
     const v = out[k] as unknown
     if (typeof v !== 'number' || !Number.isFinite(v)) {
       console.warn(`[shadow] ${prefix} bad ${k} ${String(v)} → ${k.startsWith('scale') ? 1 : 0}`)
@@ -151,7 +159,9 @@ export function shadowEffectFromJSON(value: unknown, nodeId: string): ShadowEffe
   // Detect missing fields to warn
   for (const k of SHADOW_PROPERTIES) {
     if (!(k in r)) {
-      console.warn(`[shadow] Node "${nodeId}" shadowEffect missing "${k}" → ${String(candidate[k])}`)
+      console.warn(
+        `[shadow] Node "${nodeId}" shadowEffect missing "${k}" → ${String(candidate[k])}`,
+      )
     }
   }
   // Detect extra type mismatches already handled via fallback, but warn if wrong type
@@ -163,7 +173,9 @@ export function shadowEffectFromJSON(value: unknown, nodeId: string): ShadowEffe
           // will be warned in clamp
         }
       } else if (typeof rawVal !== 'number' || !Number.isFinite(rawVal as number)) {
-        console.warn(`[shadow] Node "${nodeId}" shadowEffect bad ${k} ${String(rawVal)} → ${String(candidate[k])}`)
+        console.warn(
+          `[shadow] Node "${nodeId}" shadowEffect bad ${k} ${String(rawVal)} → ${String(candidate[k])}`,
+        )
       }
     }
   }
@@ -216,7 +228,11 @@ export function collectShadowCasters(host: { children: readonly unknown[] }): un
   const out: unknown[] = []
   const stack: unknown[] = [...(host.children as unknown[])].reverse()
   while (stack.length) {
-    const cur = stack.pop() as { components: Record<string, unknown>; castShadow?: boolean; children: readonly unknown[] }
+    const cur = stack.pop() as {
+      components: Record<string, unknown>
+      castShadow?: boolean
+      children: readonly unknown[]
+    }
     if (!cur) continue
     if (!getCastShadow(cur as { components: Record<string, unknown>; castShadow?: boolean })) {
       continue
@@ -232,4 +248,8 @@ export function collectShadowCasters(host: { children: readonly unknown[] }): un
 }
 
 // Typed convenience for SceneNode callers (avoids import cycle at runtime — type-only)
-export type CastShadowNode = { components: Record<string, unknown>; castShadow?: boolean; children: readonly unknown[] }
+export type CastShadowNode = {
+  components: Record<string, unknown>
+  castShadow?: boolean
+  children: readonly unknown[]
+}

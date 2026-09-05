@@ -341,7 +341,12 @@ export {
   isCasterRenderable,
   collectShadowCasters,
 } from './shadowEffect'
-export { SetShadowEffectCommand, SetShadowParamCommand, SetCastShadowCommand, TransactionCommand } from './commands'
+export {
+  SetShadowEffectCommand,
+  SetShadowParamCommand,
+  SetCastShadowCommand,
+  TransactionCommand,
+} from './commands'
 export type { SetShadowEffectParameters, SetShadowEffectInverse } from './commands'
 export type { SetShadowParamParameters, SetShadowParamInverse } from './commands'
 export type { SetCastShadowParameters, SetCastShadowInverse } from './commands'

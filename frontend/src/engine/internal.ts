@@ -2121,7 +2121,10 @@ export class Engine {
     }
     const changed = previous !== castShadow || hadPrevious !== (castShadow !== undefined)
     if (changed) {
-      this.#bus.emit({ type: 'CastShadowChanged', nodeId } as unknown as import('./events').EngineEvent)
+      this.#bus.emit({
+        type: 'CastShadowChanged',
+        nodeId,
+      } as unknown as import('./events').EngineEvent)
     }
   }
 
