@@ -23,6 +23,7 @@ import { ErrorOverlay } from './errorOverlay'
 import { DEFAULT_GRID_STEP } from './gridSnap'
 import { DEFAULT_MAJOR_COLOR, DEFAULT_MINOR_COLOR, GridRenderer } from './gridRenderer'
 import { GuideOverlay } from './guideOverlay'
+import { BrushOverlay } from './brushOverlay'
 import { MeshOverlay } from './meshOverlay'
 import { MeshEditInteraction } from './meshEditInteraction'
 import { WeightPaintOverlay } from './weightPaintOverlay'
@@ -92,6 +93,7 @@ export class Renderer {
   #weightPaintOverlay: WeightPaintOverlay | null = null
   #weightPaintInteraction: WeightPaintInteraction | null = null
   #sculptInteraction: SculptInteraction | null = null
+  #brushOverlay: BrushOverlay | null = null
   #riggingInteraction: RiggingInteraction | null = null
   #boneCreationPreview: BoneCreationPreview | null = null
   #boneEditOverlay: BoneEditOverlay | null = null
@@ -385,6 +387,17 @@ export class Renderer {
       })
       this.#sculptInteraction.attach()
 
+      this.#brushOverlay = new BrushOverlay({
+        pixi: this.#pixi,
+        world,
+        canvas: app.canvas,
+        engine: this.#engine,
+        getScene: () => this.#sceneRenderer?.boundScene ?? null,
+        getCameraTransform: () => this.#cameraTransform(),
+      })
+      this.#brushOverlay.attach()
+      this.#brushOverlay.bringToFront()
+
       this.#riggingInteraction = new RiggingInteraction({
         canvas: app.canvas,
         engine: this.#engine,
@@ -552,6 +565,8 @@ export class Renderer {
     this.#weightPaintInteraction = null
     this.#sculptInteraction?.detach()
     this.#sculptInteraction = null
+    this.#brushOverlay?.detach()
+    this.#brushOverlay = null
     this.#riggingInteraction?.detach()
     this.#riggingInteraction = null
     this.#boneCreationPreview?.detach()
@@ -638,6 +653,7 @@ export class Renderer {
         nodeCount: sceneRenderer.renderedNodeCount,
       })
     }
+    this.#brushOverlay?.handleTick()
   }
 
   #cameraTransform(): ViewportTransform | null {
@@ -894,6 +910,7 @@ export class Renderer {
       this.#guideOverlay?.bringToFront()
       this.#meshOverlay?.bringToFront()
       this.#weightPaintOverlay?.bringToFront()
+      this.#brushOverlay?.bringToFront()
       this.#boneCreationPreview?.bringToFront()
       this.#boneEditOverlay?.bringToFront()
       this.#boneEditInteraction?.bringToFront()

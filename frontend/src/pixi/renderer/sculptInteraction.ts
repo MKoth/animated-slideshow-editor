@@ -38,6 +38,8 @@ export class SculptInteraction {
   #previewPositions = new Map<number, { x: number; y: number }>()
   // mutable base for accumulation (starts as original, updated per dab)
   #basePositions = new Map<number, { x: number; y: number }>()
+  // vertices grabbed at first contact — keep moving them for the whole stroke so an edge vert follows the mouse beyond brush diameter
+  #grabbedFactors = new Map<number, number>()
 
   constructor(ctx: SculptContext) {
     this.#canvas = ctx.canvas
@@ -104,6 +106,7 @@ export class SculptInteraction {
     this.#originalRestPositions.clear()
     this.#basePositions.clear()
     this.#previewPositions.clear()
+    this.#grabbedFactors.clear()
     for (let i = 0; i < shape.vertices.length; i++) {
       const v = shape.vertices[i]
       if (!v) continue
@@ -164,8 +167,22 @@ export class SculptInteraction {
     const worldTransform = this.#resolveMeshTransform(scene, nodeId)
     if (!worldTransform) return
 
-    // Build active shape mesh for deformed evaluation (shape shares topology)
-    const activeShapeMesh = { ...mesh, vertices: shape.vertices as unknown as typeof mesh.vertices }
+    const scale = Math.max(Math.abs(camera.scaleX), Math.abs(camera.scaleY), 0.1)
+    const radiusScreen = sculptRadius
+
+    // Build mesh from current preview rest positions so vertices follow the brush
+    // (previously used original shape.vertices each dab, causing vertices to drop out once brush moved > radius)
+    const currentRestVertices: { x: number; y: number }[] = new Array(shape.vertices.length)
+    for (let i = 0; i < shape.vertices.length; i++) {
+      const preview = this.#basePositions.get(i)
+      if (preview) {
+        currentRestVertices[i] = { x: preview.x, y: preview.y }
+      } else {
+        const v = shape.vertices[i]
+        currentRestVertices[i] = v ? { x: v.x, y: v.y } : { x: 0, y: 0 }
+      }
+    }
+    const activeShapeMesh = { ...mesh, vertices: currentRestVertices as unknown as typeof mesh.vertices }
     const worldVerts = deformedMeshWorldVertices(
       activeShapeMesh,
       scene,
@@ -173,11 +190,58 @@ export class SculptInteraction {
       this.#getWorldTransform,
     )
 
-    // Face guard — don't sculpt empty space (must be over visible face)
-    if (!isBrushOverMesh(worldX, worldY, worldVerts, mesh.faces)) return
-
-    const scale = Math.max(Math.abs(camera.scaleX), Math.abs(camera.scaleY), 0.1)
-    const radiusScreen = sculptRadius
+    // Face guard — allow sculpt at silhouette edges. Original strict check `isBrushOverMesh`
+    // rejected edge vertices when brush center was just outside the triangle (common at mesh boundary).
+    // Now allow if any vertex is within radius (expanded by 1px for tolerance) OR inside a face.
+    const overFace = isBrushOverMesh(worldX, worldY, worldVerts, mesh.faces)
+    if (!overFace) {
+      let nearVertex = false
+      const toleranceWorld = (radiusScreen + 1) / scale
+      const tolSq = toleranceWorld * toleranceWorld
+      for (let i = 0; i < worldVerts.length; i++) {
+        const v = worldVerts[i]
+        if (!v) continue
+        const dx = v.x - worldX
+        const dy = v.y - worldY
+        if (dx * dx + dy * dy <= tolSq) {
+          nearVertex = true
+          break
+        }
+        // early exit if within brute-force radius check (avoid scanning all on large meshes when near)
+        if (nearVertex) break
+      }
+      // Also allow if brush is close to any edge segment (covers thin silhouette where no vertex is within radius but edge is)
+      if (!nearVertex) {
+        for (const face of mesh.faces) {
+          const a = worldVerts[face.v0]
+          const b = worldVerts[face.v1]
+          const c = worldVerts[face.v2]
+          if (!a || !b || !c) continue
+          // distance to each edge
+          const edges: [typeof a, typeof b][] = [
+            [a, b],
+            [b, c],
+            [c, a],
+          ]
+          for (const [p, q] of edges) {
+            const dx = q.x - p.x
+            const dy = q.y - p.y
+            const lenSq = dx * dx + dy * dy
+            if (lenSq === 0) continue
+            const t = Math.max(0, Math.min(1, ((worldX - p.x) * dx + (worldY - p.y) * dy) / lenSq))
+            const projX = p.x + t * dx
+            const projY = p.y + t * dy
+            const distSq = (worldX - projX) ** 2 + (worldY - projY) ** 2
+            if (distSq <= tolSq) {
+              nearVertex = true
+              break
+            }
+          }
+          if (nearVertex) break
+        }
+      }
+      if (!nearVertex) return
+    }
 
     const offsets = computeSculptOffsets({
       worldVerts,
@@ -189,6 +253,27 @@ export class SculptInteraction {
       dragDeltaWorld,
       invert,
     })
+
+    // Keep edge vertices following the mouse beyond brush diameter: remember every vertex
+    // that was ever within radius during this stroke and keep moving it with its initial falloff.
+    // Without this, a vertex stops as soon as the brush center moves > radius away from its original pos.
+    if (offsets.size === 0 && this.#grabbedFactors.size === 0) return
+    for (const [idx, off] of offsets) {
+      if (!this.#grabbedFactors.has(idx)) this.#grabbedFactors.set(idx, off.factor)
+    }
+    // Add persistent follow for previously grabbed verts that have fallen outside radius
+    if (this.#grabbedFactors.size > 0) {
+      const sign = invert ? -1 : 1
+      for (const [idx, factor] of this.#grabbedFactors) {
+        if (offsets.has(idx)) continue
+        // re-apply with stored factor so edge verts keep following
+        const deltaScale = sculptStrength * factor * sign
+        const dx = dragDeltaWorld.x * deltaScale
+        const dy = dragDeltaWorld.y * deltaScale
+        if (Math.hypot(dx, dy) < 1e-9) continue
+        offsets.set(idx, { dx, dy, factor })
+      }
+    }
 
     if (offsets.size === 0) return
 
@@ -238,6 +323,7 @@ export class SculptInteraction {
     this.#previewPositions.clear()
     this.#basePositions.clear()
     this.#originalRestPositions.clear()
+    this.#grabbedFactors.clear()
     this.#meshOverlay.clearPreviewVertices()
     this.#meshOverlay.redraw()
   }

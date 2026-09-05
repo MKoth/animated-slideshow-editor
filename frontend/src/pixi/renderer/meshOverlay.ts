@@ -492,18 +492,23 @@ export class MeshOverlay {
     if (!transform) {
       return null
     }
+    // Slightly larger screen-constant radius (was 4/scale+2 -> 8/scale+3) for reliable edge picking
     const hitRadius =
-      VERTEX_RADIUS / Math.max(Math.abs(transform.scaleX), Math.abs(transform.scaleY), 0.1) + 2
+      8 / Math.max(Math.abs(transform.scaleX), Math.abs(transform.scaleY), 0.1) + 3
     const worldVertices = this.#worldVerticesFor(scene, meshEditNodeId, this.#previewVertices)
     if (!worldVertices) return null
+    // Return nearest within radius, not first in array order (fixes edge vs interior snap)
+    let bestIdx: number | null = null
+    let bestDist = Infinity
     for (let i = 0; i < worldVertices.length; i++) {
       const v = worldVertices[i]
       const dist = Math.hypot(worldX - v.x, worldY - v.y)
-      if (dist <= hitRadius) {
-        return i
+      if (dist <= hitRadius && dist < bestDist) {
+        bestDist = dist
+        bestIdx = i
       }
     }
-    return null
+    return bestIdx
   }
 
   hitTestEdge(
