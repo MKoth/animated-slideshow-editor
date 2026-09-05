@@ -2026,9 +2026,7 @@ export class Engine {
     const changed =
       (previous === null && next !== undefined) ||
       (previous !== null && next === undefined) ||
-      (previous !== null &&
-        next !== undefined &&
-        JSON.stringify(previous) !== JSON.stringify(next))
+      (previous !== null && next !== undefined && JSON.stringify(previous) !== JSON.stringify(next))
     if (changed) {
       this.#bus.emit({ type: 'ShadowEffectChanged', nodeId })
     }
@@ -2040,9 +2038,76 @@ export class Engine {
   }
 
   evaluateShadow(nodeId: string, _time: number): ShadowEffect | null {
+    void _time
     const node = this.getNode(nodeId)
     if (!isGroupNode(node) || !node.shadowEffect) return null
     return { ...node.shadowEffect }
+  }
+
+  setShadowParam(
+    nodeId: string,
+    property: import('./shadowEffect').ShadowProperty,
+    value: number | string,
+  ): void {
+    const node = this.getNode(nodeId)
+    if (!node.shadowEffect) {
+      throw new Error(`Node "${nodeId}" has no shadowEffect`)
+    }
+    const nextEffect = { ...node.shadowEffect } as unknown as Record<string, unknown>
+    // Apply clamped value already computed by command; but also clamp conservatively here for direct engine usage
+    if (property === 'blur') {
+      const raw = value as number
+      if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+        console.warn(`[shadow] Node "${nodeId}" shadowEffect bad blur ${String(raw)} → 0`)
+        nextEffect[property] = 0
+      } else {
+        nextEffect[property] = Math.max(0, Math.min(32, raw))
+      }
+    } else if (property === 'opacity') {
+      const raw = value as number
+      if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+        console.warn(`[shadow] Node "${nodeId}" shadowEffect bad opacity ${String(raw)} → 0.35`)
+        nextEffect[property] = 0.35
+      } else {
+        nextEffect[property] = Math.max(0, Math.min(1, raw))
+      }
+    } else if (property === 'color') {
+      const raw = String(value)
+      if (!/^#[0-9a-f]{6}$/i.test(raw)) {
+        console.warn(`[shadow] Node "${nodeId}" shadowEffect bad color "${String(raw)}" → #000000`)
+        nextEffect[property] = '#000000'
+      } else {
+        nextEffect[property] = raw.toLowerCase()
+      }
+    } else if (property === 'scaleX' || property === 'scaleY') {
+      const raw = value as number
+      if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+        throw new Error(`Shadow ${property} must be a finite number (0 allowed)`)
+      }
+      nextEffect[property] = raw
+      if (raw === 0) {
+        console.warn(
+          `[shadow] Node "${nodeId}" shadowEffect degenerate scale 0 — renders collapsed`,
+        )
+      }
+    } else {
+      const raw = value as number
+      if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+        throw new Error(`Shadow ${property} must be a finite number`)
+      }
+      nextEffect[property] = raw
+    }
+    const previous = { ...node.shadowEffect } as unknown as Record<string, unknown>
+    const clamped = clampShadowEffect(
+      nextEffect as unknown as import('./shadowEffect').ShadowEffect,
+      nodeId,
+    )
+    ;(node as unknown as { shadowEffect?: import('./shadowEffect').ShadowEffect }).shadowEffect =
+      clamped
+    const changed = JSON.stringify(previous) !== JSON.stringify(clamped)
+    if (changed) {
+      this.#bus.emit({ type: 'ShadowEffectChanged', nodeId })
+    }
   }
 
   setMeshData(nodeId: string, mesh: MeshData): void {
@@ -3662,7 +3727,8 @@ export class Engine {
           }
         ).morphBinding
         // Remap legacy global binding ids if present
-        let remappedBinding: { fromShapeId: string | null; toShapeId: string | null } | null | undefined = undefined
+        let remappedBinding:
+          { fromShapeId: string | null; toShapeId: string | null } | null | undefined = undefined
         if (morphBindingRaw !== undefined) {
           if (morphBindingRaw === null) {
             remappedBinding = null

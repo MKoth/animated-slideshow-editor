@@ -479,7 +479,6 @@ export type { DeleteShapeInverse, DeleteShapeParameters } from './deleteShapeCom
 export { SetMorphBindingCommand } from './setMorphBindingCommand'
 export type { SetMorphBindingInverse, SetMorphBindingParameters } from './setMorphBindingCommand'
 export { SetShadowEffectCommand } from './setShadowEffectCommand'
-export type {
-  SetShadowEffectInverse,
-  SetShadowEffectParameters,
-} from './setShadowEffectCommand'
+export type { SetShadowEffectInverse, SetShadowEffectParameters } from './setShadowEffectCommand'
+export { SetShadowParamCommand } from './setShadowParamCommand'
+export type { SetShadowParamInverse, SetShadowParamParameters } from './setShadowParamCommand'

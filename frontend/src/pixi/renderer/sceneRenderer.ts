@@ -106,7 +106,10 @@ function mergeAabb(a: WorldAabb, b: WorldAabb): WorldAabb {
   }
 }
 
-function rtSizeForAabb(aabb: WorldAabb | null, blur: number): { width: number; height: number; pad: number } {
+function rtSizeForAabb(
+  aabb: WorldAabb | null,
+  blur: number,
+): { width: number; height: number; pad: number } {
   const pad = Math.ceil(blur * 2 + 4)
   if (!aabb) return { width: 4, height: 4, pad }
   const w = Math.ceil(aabb.maxX - aabb.minX + pad * 2)
@@ -1030,7 +1033,8 @@ export class SceneRenderer {
     this.#syncShadowLifecycleForNode(nodeId)
     // If reparented node was caster, update old and new parent shadows
     const node = this.#engine.getNode(nodeId)
-    if (node.parent && this.#shadowContainers.has(node.parent.id)) this.#updateShadowForGroup(node.parent.id)
+    if (node.parent && this.#shadowContainers.has(node.parent.id))
+      this.#updateShadowForGroup(node.parent.id)
     // Also need to consider previous parent — but we don't have it; brute update all
     for (const gid of this.#shadowContainers.keys()) this.#updateShadowForGroup(gid)
   }
@@ -1771,7 +1775,9 @@ export class SceneRenderer {
   }
 
   #attachShadowSiblingUnder(groupNode: SceneNode, shadowContainer: PixiContainer): void {
-    const renderParent = groupNode.components.tableCell ? this.#owningTable(groupNode) : groupNode.parent
+    const renderParent = groupNode.components.tableCell
+      ? this.#owningTable(groupNode)
+      : groupNode.parent
     const parentContainer = renderParent ? this.#containers.get(renderParent.id) : undefined
     const worldOrParent = (parentContainer ?? this.#world) as PixiContainer
     const groupContainer = this.#containers.get(groupNode.id)
@@ -1782,7 +1788,8 @@ export class SceneRenderer {
     const idx = worldOrParent.children.indexOf(groupContainer as unknown as PixiContainer)
     const at = idx >= 0 ? idx : worldOrParent.children.length
     // Ensure sortableChildren for table parent
-    if (worldOrParent) (worldOrParent as unknown as { sortableChildren: boolean }).sortableChildren = true
+    if (worldOrParent)
+      (worldOrParent as unknown as { sortableChildren: boolean }).sortableChildren = true
     worldOrParent.addChildAt(shadowContainer as unknown as PixiContainer, at)
   }
 
@@ -1910,10 +1917,22 @@ export class SceneRenderer {
       if (!visible || worldAlpha <= 0.01) continue
       const size = this.#sizes.get(caster.id)
       if (!size) continue
-      let worldTr: { x: number; y: number; rotation: number; scaleX: number; scaleY: number } | null = null
+      let worldTr: {
+        x: number
+        y: number
+        rotation: number
+        scaleX: number
+        scaleY: number
+      } | null = null
       try {
         const ev = this.#engine.evaluateNode(caster.id, time)
-        worldTr = { x: ev.transform.x, y: ev.transform.y, rotation: ev.transform.rotation, scaleX: ev.transform.scaleX, scaleY: ev.transform.scaleY }
+        worldTr = {
+          x: ev.transform.x,
+          y: ev.transform.y,
+          rotation: ev.transform.rotation,
+          scaleX: ev.transform.scaleX,
+          scaleY: ev.transform.scaleY,
+        }
       } catch {
         const t = caster.transform
         worldTr = { x: t.x, y: t.y, rotation: t.rotation, scaleX: t.scaleX, scaleY: t.scaleY }
@@ -1983,11 +2002,20 @@ export class SceneRenderer {
     }
     // Render to RT with clear 0x00000000
     try {
-      this.#renderToTexture({ container: temp as unknown as PixiContainer, target: rt, clear: true, clearColor: 0x00000000 as unknown as number })
+      this.#renderToTexture({
+        container: temp as unknown as PixiContainer,
+        target: rt,
+        clear: true,
+        clearColor: 0x00000000 as unknown as number,
+      })
     } catch {
       // Fallback without clearColor
       try {
-        this.#renderToTexture({ container: temp as unknown as PixiContainer, target: rt, clear: true })
+        this.#renderToTexture({
+          container: temp as unknown as PixiContainer,
+          target: rt,
+          clear: true,
+        })
       } catch {
         void 0
       }
@@ -1997,11 +2025,15 @@ export class SceneRenderer {
     this.#updateShadowSpriteProps(groupId)
   }
 
-  #engineWorldTransformForShadow(nodeId: string, time: number): { x: number; y: number; rotation: number; scaleX: number; scaleY: number } | null {
+  #engineWorldTransformForShadow(
+    nodeId: string,
+    time: number,
+  ): { x: number; y: number; rotation: number; scaleX: number; scaleY: number } | null {
     try {
       const node = this.#engine.getNode(nodeId)
       const chain: SceneNode[] = []
-      for (let cursor: SceneNode | null = node; cursor !== null; cursor = cursor.parent) chain.push(cursor)
+      for (let cursor: SceneNode | null = node; cursor !== null; cursor = cursor.parent)
+        chain.push(cursor)
       chain.reverse()
       const composed = composeChain(chain, (link) => {
         try {
@@ -2011,7 +2043,13 @@ export class SceneRenderer {
         }
       })
       if (!composed) return null
-      return { x: composed.x, y: composed.y, rotation: composed.rotation, scaleX: composed.scaleX, scaleY: composed.scaleY }
+      return {
+        x: composed.x,
+        y: composed.y,
+        rotation: composed.rotation,
+        scaleX: composed.scaleX,
+        scaleY: composed.scaleY,
+      }
     } catch {
       return null
     }
@@ -2022,6 +2060,8 @@ export class SceneRenderer {
     if (!node) return
     if (node.shadowEffect && isGroupNode(node)) {
       this.#ensureShadowForGroup(node)
+      this.#updateShadowForGroup(nodeId)
+      this.#updateShadowSpriteProps(nodeId)
     } else {
       this.#destroyShadowForGroup(nodeId)
       // Also check if node was group that lost status — ensure destroyed

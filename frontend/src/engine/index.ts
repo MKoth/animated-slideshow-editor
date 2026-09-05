@@ -338,5 +338,7 @@ export {
   hexStringToTint,
   isShadowEffectEqual,
 } from './shadowEffect'
-export { SetShadowEffectCommand } from './commands'
+export { SetShadowEffectCommand, SetShadowParamCommand, TransactionCommand } from './commands'
 export type { SetShadowEffectParameters, SetShadowEffectInverse } from './commands'
+export type { SetShadowParamParameters, SetShadowParamInverse } from './commands'
+export type { TransactionParameters, TransactionInverse } from './commands'

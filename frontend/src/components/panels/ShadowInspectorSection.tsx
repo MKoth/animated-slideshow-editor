@@ -1,9 +1,18 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import type { SceneNode } from '../../engine'
 import { isGroupNode } from '../../engine/sceneNode'
-import { DEFAULT_SHADOW_EFFECT, type ShadowEffect } from '../../engine/shadowEffect'
-import { SetShadowEffectCommand } from '../../engine/commands'
+import {
+  DEFAULT_SHADOW_EFFECT,
+  type ShadowEffect,
+  type ShadowProperty,
+} from '../../engine/shadowEffect'
+import {
+  SetShadowEffectCommand,
+  SetShadowParamCommand,
+  TransactionCommand,
+} from '../../engine/commands'
 import type { DispatchCommand } from '../../engine/commands'
+
 interface ShadowInspectorSectionProps {
   target: SceneNode
   engine: unknown
@@ -39,7 +48,9 @@ export function ShadowInspectorSection({
 }: ShadowInspectorSectionProps) {
   void _engine
   const [draft, setDraft] = useState<Partial<ShadowEffect>>({})
-  // Only for single group node — parent caller ensures this, but double-check
+  // drag state for coalescing sliders
+  const dragRef = useRef<{ property: ShadowProperty; startValue: number } | null>(null)
+
   if (!isGroupNode(target)) return null
   const effect = target.shadowEffect
   const enabled = !!effect
@@ -63,36 +74,86 @@ export function ShadowInspectorSection({
     }
   }
 
-  const commitField = (key: keyof ShadowEffect, rawValue: string | number) => {
+  const commitParam = (property: ShadowProperty, rawValue: string | number) => {
     if (!effect) return
-    let nextEffect: ShadowEffect = { ...effect }
-    if (key === 'color') {
-      const color = String(rawValue).trim()
-      if (!/^#[0-9a-f]{6}$/i.test(color)) {
-        notify(`Shadow ${LABELS[key]} must be #rrggbb`)
-        return
-      }
-      nextEffect = { ...effect, color: color.toLowerCase() }
-    } else if (key === 'opacity') {
-      const percent = parseNumber(String(rawValue), effect.opacity * 100)
-      const clamped = Math.max(0, Math.min(100, percent))
-      nextEffect = { ...effect, opacity: clamped / 100 }
-    } else if (key === 'blur') {
-      const n = parseNumber(String(rawValue), effect.blur)
-      const clamped = Math.max(0, Math.min(32, Math.round(n)))
-      nextEffect = { ...effect, blur: clamped }
-    } else {
-      const n = parseNumber(String(rawValue), effect[key] as number)
-      if (!Number.isFinite(n)) {
-        notify(`Shadow ${LABELS[key]} must be a finite number`)
-        return
-      }
-      nextEffect = { ...effect, [key]: n } as ShadowEffect
-    }
     try {
-      const result = dispatch(new SetShadowEffectCommand({ nodeId: target.id, shadowEffect: nextEffect }))
+      let value: number | string
+      if (property === 'color') {
+        value = String(rawValue).trim()
+      } else if (property === 'opacity') {
+        // UI percent 0..100 -> fraction 0..1; NaN handled by command
+        const rawNum = typeof rawValue === 'number' ? rawValue : Number(String(rawValue).trim())
+        if (!Number.isFinite(rawNum)) {
+          value = rawNum
+        } else if (typeof rawValue === 'string') {
+          // String from number input: treat as percent 0..100
+          const p = Number(String(rawValue).trim())
+          value = Number.isFinite(p) ? Math.max(0, Math.min(100, p)) / 100 : p
+        } else {
+          // Number from range/slider: already percent 0..100, but could be direct fraction from code
+          // If value >1, treat as percent; else fraction (to support programmatic calls)
+          value = rawNum > 1 ? rawNum / 100 : rawNum
+        }
+      } else if (property === 'blur') {
+        const n = typeof rawValue === 'number' ? rawValue : Number(String(rawValue).trim())
+        value = n
+      } else {
+        const n = typeof rawValue === 'number' ? rawValue : Number(String(rawValue).trim())
+        if (!Number.isFinite(n)) {
+          notify(`Shadow ${LABELS[property]} must be a finite number`)
+          return
+        }
+        value = n
+      }
+      const result = dispatch(new SetShadowParamCommand({ nodeId: target.id, property, value }))
       if (result && !result.ok) throw result.error
       setDraft({})
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  // For drag coalescing: NumericField-like behavior where pointerMove updates draft but only pointerUp commits as one Transaction
+  const commitParamAsTransaction = (property: ShadowProperty, value: number | string) => {
+    if (!effect) return
+    try {
+      let v: number | string = value
+      if (property === 'opacity') {
+        // value is percent 0..100 from slider drag
+        const num = typeof value === 'number' ? value : Number(String(value).trim())
+        if (!Number.isFinite(num)) {
+          v = num
+        } else {
+          v = num > 1 ? num / 100 : num
+        }
+      }
+      const cmd = new SetShadowParamCommand({ nodeId: target.id, property, value: v })
+      const tx = new TransactionCommand([cmd])
+      const result = dispatch(tx)
+      if (result && !result.ok) throw result.error
+      setDraft({})
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  const applyGroundPreset = () => {
+    if (!effect) return
+    if (playing) {
+      notify('Cannot edit shadow while playing')
+      return
+    }
+    try {
+      const cmds = [
+        new SetShadowParamCommand({ nodeId: target.id, property: 'scaleX', value: 1.1 }),
+        new SetShadowParamCommand({ nodeId: target.id, property: 'scaleY', value: 0.2 }),
+        new SetShadowParamCommand({ nodeId: target.id, property: 'skewX', value: -12 }),
+        new SetShadowParamCommand({ nodeId: target.id, property: 'blur', value: 11 }),
+        new SetShadowParamCommand({ nodeId: target.id, property: 'opacity', value: 0.25 }),
+        new SetShadowParamCommand({ nodeId: target.id, property: 'offsetY', value: 8 }),
+      ]
+      const result = dispatch(new TransactionCommand(cmds))
+      if (result && !result.ok) throw result.error
     } catch (e) {
       notify(e instanceof Error ? e.message : String(e))
     }
@@ -102,8 +163,19 @@ export function ShadowInspectorSection({
 
   return (
     <section className="inspector-section" aria-labelledby={titleId}>
-      <h3 id={titleId} className="inspector-section__title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: playing ? 'not-allowed' : 'pointer' }}>
+      <h3
+        id={titleId}
+        className="inspector-section__title"
+        style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+      >
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            cursor: playing ? 'not-allowed' : 'pointer',
+          }}
+        >
           <input
             type="checkbox"
             checked={enabled}
@@ -114,6 +186,18 @@ export function ShadowInspectorSection({
           />
           Shadow
         </label>
+        {enabled && (
+          <button
+            type="button"
+            onClick={applyGroundPreset}
+            disabled={playing}
+            title={playing ? 'Cannot edit while playing' : 'Apply Ground preset (one undo)'}
+            aria-label="Ground preset"
+            style={{ marginLeft: 'auto', fontSize: 12, padding: '2px 6px' }}
+          >
+            ↘ Ground
+          </button>
+        )}
       </h3>
       {enabled && effect && (
         <div className="inspector-shadow-fields" style={{ display: 'grid', gap: 8 }}>
@@ -126,10 +210,37 @@ export function ShadowInspectorSection({
               value={String(current.offsetX)}
               disabled={playing}
               title={playing ? 'Cannot edit while playing' : undefined}
-              onChange={(e) => setDraft((d) => ({ ...d, offsetX: parseNumber(e.target.value, current.offsetX) }))}
-              onBlur={(e) => commitField('offsetX', e.target.value)}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, offsetX: parseNumber(e.target.value, current.offsetX) }))
+              }
+              onBlur={(e) => commitParam('offsetX', e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') commitField('offsetX', (e.target as HTMLInputElement).value)
+                if (e.key === 'Enter') commitParam('offsetX', (e.target as HTMLInputElement).value)
+              }}
+              onPointerDown={(e) => {
+                if (playing) return
+                const startX = e.clientX
+                const startValue = current.offsetX
+                let lastValue = startValue
+                let dragging = false
+                const onMove = (ev: PointerEvent) => {
+                  const delta = ev.clientX - startX
+                  if (!dragging && Math.abs(delta) < 3) return
+                  dragging = true
+                  ev.preventDefault()
+                  const next = Math.round(startValue + delta * 1)
+                  lastValue = next
+                  setDraft((d) => ({ ...d, offsetX: next }))
+                }
+                const onUp = () => {
+                  window.removeEventListener('pointermove', onMove)
+                  window.removeEventListener('pointerup', onUp)
+                  if (dragging && lastValue !== startValue) {
+                    commitParamAsTransaction('offsetX', lastValue)
+                  }
+                }
+                window.addEventListener('pointermove', onMove)
+                window.addEventListener('pointerup', onUp)
               }}
               aria-label={LABELS.offsetX}
             />
@@ -142,10 +253,37 @@ export function ShadowInspectorSection({
               value={String(current.offsetY)}
               disabled={playing}
               title={playing ? 'Cannot edit while playing' : undefined}
-              onChange={(e) => setDraft((d) => ({ ...d, offsetY: parseNumber(e.target.value, current.offsetY) }))}
-              onBlur={(e) => commitField('offsetY', e.target.value)}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, offsetY: parseNumber(e.target.value, current.offsetY) }))
+              }
+              onBlur={(e) => commitParam('offsetY', e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') commitField('offsetY', (e.target as HTMLInputElement).value)
+                if (e.key === 'Enter') commitParam('offsetY', (e.target as HTMLInputElement).value)
+              }}
+              onPointerDown={(e) => {
+                if (playing) return
+                const startX = e.clientX
+                const startValue = current.offsetY
+                let lastValue = startValue
+                let dragging = false
+                const onMove = (ev: PointerEvent) => {
+                  const delta = ev.clientX - startX
+                  if (!dragging && Math.abs(delta) < 3) return
+                  dragging = true
+                  ev.preventDefault()
+                  const next = Math.round(startValue + delta * 1)
+                  lastValue = next
+                  setDraft((d) => ({ ...d, offsetY: next }))
+                }
+                const onUp = () => {
+                  window.removeEventListener('pointermove', onMove)
+                  window.removeEventListener('pointerup', onUp)
+                  if (dragging && lastValue !== startValue) {
+                    commitParamAsTransaction('offsetY', lastValue)
+                  }
+                }
+                window.addEventListener('pointermove', onMove)
+                window.addEventListener('pointerup', onUp)
               }}
               aria-label={LABELS.offsetY}
             />
@@ -158,10 +296,40 @@ export function ShadowInspectorSection({
               value={String(current.scaleX)}
               disabled={playing}
               title={playing ? 'Cannot edit while playing' : undefined}
-              onChange={(e) => setDraft((d) => ({ ...d, scaleX: parseNumber(e.target.value, current.scaleX) }))}
-              onBlur={(e) => commitField('scaleX', e.target.value)}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, scaleX: parseNumber(e.target.value, current.scaleX) }))
+              }
+              onBlur={(e) => commitParam('scaleX', e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') commitField('scaleX', (e.target as HTMLInputElement).value)
+                if (e.key === 'Enter') commitParam('scaleX', (e.target as HTMLInputElement).value)
+              }}
+              onPointerDown={(e) => {
+                if (playing) return
+                const startX = e.clientX
+                const startValue = current.scaleX
+                let lastValue = startValue
+                let dragging = false
+                const onMove = (ev: PointerEvent) => {
+                  const delta = ev.clientX - startX
+                  if (!dragging && Math.abs(delta) < 3) return
+                  dragging = true
+                  ev.preventDefault()
+                  const step = 0.05
+                  const next = Number(
+                    (Math.round((startValue + delta * step) / step) * step).toFixed(4),
+                  )
+                  lastValue = next
+                  setDraft((d) => ({ ...d, scaleX: next }))
+                }
+                const onUp = () => {
+                  window.removeEventListener('pointermove', onMove)
+                  window.removeEventListener('pointerup', onUp)
+                  if (dragging && lastValue !== startValue) {
+                    commitParamAsTransaction('scaleX', lastValue)
+                  }
+                }
+                window.addEventListener('pointermove', onMove)
+                window.addEventListener('pointerup', onUp)
               }}
               aria-label={LABELS.scaleX}
             />
@@ -170,14 +338,44 @@ export function ShadowInspectorSection({
             <span className="inspector-field__label">{LABELS.scaleY}</span>
             <input
               type="number"
-              step={0.05}
+              step={0.01}
               value={String(current.scaleY)}
               disabled={playing}
               title={playing ? 'Cannot edit while playing' : undefined}
-              onChange={(e) => setDraft((d) => ({ ...d, scaleY: parseNumber(e.target.value, current.scaleY) }))}
-              onBlur={(e) => commitField('scaleY', e.target.value)}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, scaleY: parseNumber(e.target.value, current.scaleY) }))
+              }
+              onBlur={(e) => commitParam('scaleY', e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') commitField('scaleY', (e.target as HTMLInputElement).value)
+                if (e.key === 'Enter') commitParam('scaleY', (e.target as HTMLInputElement).value)
+              }}
+              onPointerDown={(e) => {
+                if (playing) return
+                const startX = e.clientX
+                const startValue = current.scaleY
+                let lastValue = startValue
+                let dragging = false
+                const onMove = (ev: PointerEvent) => {
+                  const delta = ev.clientX - startX
+                  if (!dragging && Math.abs(delta) < 3) return
+                  dragging = true
+                  ev.preventDefault()
+                  const step = 0.01
+                  const next = Number(
+                    (Math.round((startValue + delta * step) / step) * step).toFixed(4),
+                  )
+                  lastValue = next
+                  setDraft((d) => ({ ...d, scaleY: next }))
+                }
+                const onUp = () => {
+                  window.removeEventListener('pointermove', onMove)
+                  window.removeEventListener('pointerup', onUp)
+                  if (dragging && lastValue !== startValue) {
+                    commitParamAsTransaction('scaleY', lastValue)
+                  }
+                }
+                window.addEventListener('pointermove', onMove)
+                window.addEventListener('pointerup', onUp)
               }}
               aria-label={LABELS.scaleY}
             />
@@ -190,10 +388,37 @@ export function ShadowInspectorSection({
               value={String(current.skewX)}
               disabled={playing}
               title={playing ? 'Cannot edit while playing' : undefined}
-              onChange={(e) => setDraft((d) => ({ ...d, skewX: parseNumber(e.target.value, current.skewX) }))}
-              onBlur={(e) => commitField('skewX', e.target.value)}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, skewX: parseNumber(e.target.value, current.skewX) }))
+              }
+              onBlur={(e) => commitParam('skewX', e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') commitField('skewX', (e.target as HTMLInputElement).value)
+                if (e.key === 'Enter') commitParam('skewX', (e.target as HTMLInputElement).value)
+              }}
+              onPointerDown={(e) => {
+                if (playing) return
+                const startX = e.clientX
+                const startValue = current.skewX
+                let lastValue = startValue
+                let dragging = false
+                const onMove = (ev: PointerEvent) => {
+                  const delta = ev.clientX - startX
+                  if (!dragging && Math.abs(delta) < 3) return
+                  dragging = true
+                  ev.preventDefault()
+                  const next = Math.round(startValue + delta * 1)
+                  lastValue = next
+                  setDraft((d) => ({ ...d, skewX: next }))
+                }
+                const onUp = () => {
+                  window.removeEventListener('pointermove', onMove)
+                  window.removeEventListener('pointerup', onUp)
+                  if (dragging && lastValue !== startValue) {
+                    commitParamAsTransaction('skewX', lastValue)
+                  }
+                }
+                window.addEventListener('pointermove', onMove)
+                window.addEventListener('pointerup', onUp)
               }}
               aria-label={LABELS.skewX}
             />
@@ -206,10 +431,37 @@ export function ShadowInspectorSection({
               value={String(current.skewY)}
               disabled={playing}
               title={playing ? 'Cannot edit while playing' : undefined}
-              onChange={(e) => setDraft((d) => ({ ...d, skewY: parseNumber(e.target.value, current.skewY) }))}
-              onBlur={(e) => commitField('skewY', e.target.value)}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, skewY: parseNumber(e.target.value, current.skewY) }))
+              }
+              onBlur={(e) => commitParam('skewY', e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') commitField('skewY', (e.target as HTMLInputElement).value)
+                if (e.key === 'Enter') commitParam('skewY', (e.target as HTMLInputElement).value)
+              }}
+              onPointerDown={(e) => {
+                if (playing) return
+                const startX = e.clientX
+                const startValue = current.skewY
+                let lastValue = startValue
+                let dragging = false
+                const onMove = (ev: PointerEvent) => {
+                  const delta = ev.clientX - startX
+                  if (!dragging && Math.abs(delta) < 3) return
+                  dragging = true
+                  ev.preventDefault()
+                  const next = Math.round(startValue + delta * 1)
+                  lastValue = next
+                  setDraft((d) => ({ ...d, skewY: next }))
+                }
+                const onUp = () => {
+                  window.removeEventListener('pointermove', onMove)
+                  window.removeEventListener('pointerup', onUp)
+                  if (dragging && lastValue !== startValue) {
+                    commitParamAsTransaction('skewY', lastValue)
+                  }
+                }
+                window.addEventListener('pointermove', onMove)
+                window.addEventListener('pointerup', onUp)
               }}
               aria-label={LABELS.skewY}
             />
@@ -222,10 +474,37 @@ export function ShadowInspectorSection({
               value={String(current.rotation)}
               disabled={playing}
               title={playing ? 'Cannot edit while playing' : undefined}
-              onChange={(e) => setDraft((d) => ({ ...d, rotation: parseNumber(e.target.value, current.rotation) }))}
-              onBlur={(e) => commitField('rotation', e.target.value)}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, rotation: parseNumber(e.target.value, current.rotation) }))
+              }
+              onBlur={(e) => commitParam('rotation', e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') commitField('rotation', (e.target as HTMLInputElement).value)
+                if (e.key === 'Enter') commitParam('rotation', (e.target as HTMLInputElement).value)
+              }}
+              onPointerDown={(e) => {
+                if (playing) return
+                const startX = e.clientX
+                const startValue = current.rotation
+                let lastValue = startValue
+                let dragging = false
+                const onMove = (ev: PointerEvent) => {
+                  const delta = ev.clientX - startX
+                  if (!dragging && Math.abs(delta) < 3) return
+                  dragging = true
+                  ev.preventDefault()
+                  const next = Math.round(startValue + delta * 1)
+                  lastValue = next
+                  setDraft((d) => ({ ...d, rotation: next }))
+                }
+                const onUp = () => {
+                  window.removeEventListener('pointermove', onMove)
+                  window.removeEventListener('pointerup', onUp)
+                  if (dragging && lastValue !== startValue) {
+                    commitParamAsTransaction('rotation', lastValue)
+                  }
+                }
+                window.addEventListener('pointermove', onMove)
+                window.addEventListener('pointerup', onUp)
               }}
               aria-label={LABELS.rotation}
             />
@@ -240,10 +519,23 @@ export function ShadowInspectorSection({
               value={String(current.blur)}
               disabled={playing}
               title={playing ? 'Cannot edit while playing' : undefined}
+              onPointerDown={() => {
+                if (playing) return
+                dragRef.current = { property: 'blur', startValue: current.blur }
+              }}
+              onPointerUp={(e) => {
+                const drag = dragRef.current
+                dragRef.current = null
+                if (drag && playing) return
+                const v = parseNumber((e.target as HTMLInputElement).value, current.blur)
+                // Commit as transaction (one undo)
+                const clamped = Math.max(0, Math.min(32, Math.round(v)))
+                commitParamAsTransaction('blur', clamped)
+              }}
               onChange={(e) => {
                 const v = parseNumber(e.target.value, current.blur)
                 setDraft((d) => ({ ...d, blur: v }))
-                commitField('blur', v)
+                // Don't commit on change during drag; wait for pointerUp
               }}
               aria-label={LABELS.blur}
             />
@@ -254,10 +546,38 @@ export function ShadowInspectorSection({
               max={32}
               value={String(current.blur)}
               disabled={playing}
-              onChange={(e) => setDraft((d) => ({ ...d, blur: parseNumber(e.target.value, current.blur) }))}
-              onBlur={(e) => commitField('blur', e.target.value)}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, blur: parseNumber(e.target.value, current.blur) }))
+              }
+              onBlur={(e) => commitParam('blur', e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') commitField('blur', (e.target as HTMLInputElement).value)
+                if (e.key === 'Enter') commitParam('blur', (e.target as HTMLInputElement).value)
+              }}
+              onPointerDown={(e) => {
+                if (playing) return
+                const startX = e.clientX
+                const startValue = current.blur
+                let lastValue = startValue
+                let dragging = false
+                const onMove = (ev: PointerEvent) => {
+                  const delta = ev.clientX - startX
+                  if (!dragging && Math.abs(delta) < 3) return
+                  dragging = true
+                  ev.preventDefault()
+                  const next = Math.round(startValue + delta * 1)
+                  const clamped = Math.max(0, Math.min(32, next))
+                  lastValue = clamped
+                  setDraft((d) => ({ ...d, blur: clamped }))
+                }
+                const onUp = () => {
+                  window.removeEventListener('pointermove', onMove)
+                  window.removeEventListener('pointerup', onUp)
+                  if (dragging && lastValue !== startValue) {
+                    commitParamAsTransaction('blur', lastValue)
+                  }
+                }
+                window.addEventListener('pointermove', onMove)
+                window.addEventListener('pointerup', onUp)
               }}
               aria-label="Blur value"
             />
@@ -272,10 +592,23 @@ export function ShadowInspectorSection({
               value={String(Math.round(current.opacity * 100))}
               disabled={playing}
               title={playing ? 'Cannot edit while playing' : undefined}
+              onPointerDown={() => {
+                if (playing) return
+                dragRef.current = {
+                  property: 'opacity',
+                  startValue: Math.round(current.opacity * 100),
+                }
+              }}
+              onPointerUp={(e) => {
+                const drag = dragRef.current
+                dragRef.current = null
+                if (drag && playing) return
+                const v = parseNumber((e.target as HTMLInputElement).value, current.opacity * 100)
+                commitParamAsTransaction('opacity', v)
+              }}
               onChange={(e) => {
                 const v = parseNumber(e.target.value, current.opacity * 100)
                 setDraft((d) => ({ ...d, opacity: v / 100 }))
-                commitField('opacity', v)
               }}
               aria-label={LABELS.opacity}
             />
@@ -286,10 +619,38 @@ export function ShadowInspectorSection({
               max={100}
               value={String(Math.round(current.opacity * 100))}
               disabled={playing}
-              onChange={(e) => setDraft((d) => ({ ...d, opacity: parseNumber(e.target.value, 0) / 100 }))}
-              onBlur={(e) => commitField('opacity', e.target.value)}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, opacity: parseNumber(e.target.value, 0) / 100 }))
+              }
+              onBlur={(e) => commitParam('opacity', e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') commitField('opacity', (e.target as HTMLInputElement).value)
+                if (e.key === 'Enter') commitParam('opacity', (e.target as HTMLInputElement).value)
+              }}
+              onPointerDown={(e) => {
+                if (playing) return
+                const startX = e.clientX
+                const startValue = Math.round(current.opacity * 100)
+                let lastValue = startValue
+                let dragging = false
+                const onMove = (ev: PointerEvent) => {
+                  const delta = ev.clientX - startX
+                  if (!dragging && Math.abs(delta) < 3) return
+                  dragging = true
+                  ev.preventDefault()
+                  const next = Math.round(startValue + delta * 1)
+                  const clamped = Math.max(0, Math.min(100, next))
+                  lastValue = clamped
+                  setDraft((d) => ({ ...d, opacity: clamped / 100 }))
+                }
+                const onUp = () => {
+                  window.removeEventListener('pointermove', onMove)
+                  window.removeEventListener('pointerup', onUp)
+                  if (dragging && lastValue !== startValue) {
+                    commitParamAsTransaction('opacity', lastValue)
+                  }
+                }
+                window.addEventListener('pointermove', onMove)
+                window.addEventListener('pointerup', onUp)
               }}
               aria-label="Opacity value"
             />
@@ -303,7 +664,7 @@ export function ShadowInspectorSection({
               title={playing ? 'Cannot edit while playing' : undefined}
               onChange={(e) => {
                 setDraft((d) => ({ ...d, color: e.target.value }))
-                commitField('color', e.target.value)
+                commitParam('color', e.target.value)
               }}
               aria-label={LABELS.color}
             />
@@ -312,9 +673,9 @@ export function ShadowInspectorSection({
               value={current.color}
               disabled={playing}
               onChange={(e) => setDraft((d) => ({ ...d, color: e.target.value }))}
-              onBlur={(e) => commitField('color', e.target.value)}
+              onBlur={(e) => commitParam('color', e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') commitField('color', (e.target as HTMLInputElement).value)
+                if (e.key === 'Enter') commitParam('color', (e.target as HTMLInputElement).value)
               }}
               aria-label="Color hex"
             />
