@@ -58,7 +58,11 @@ export class BrushOverlay {
 
     this.#unsubscribeStore = useMeshEditStore.subscribe(() => this.redraw())
     this.#unsubscribeEngine = this.#engine.subscribe((event) => {
-      if (event.type === 'MeshChanged' || event.type === 'NodeRemoved' || event.type === 'NodeCreated') {
+      if (
+        event.type === 'MeshChanged' ||
+        event.type === 'NodeRemoved' ||
+        event.type === 'NodeCreated'
+      ) {
         this.redraw()
       }
     })

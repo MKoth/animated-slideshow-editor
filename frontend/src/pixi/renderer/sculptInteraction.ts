@@ -182,7 +182,10 @@ export class SculptInteraction {
         currentRestVertices[i] = v ? { x: v.x, y: v.y } : { x: 0, y: 0 }
       }
     }
-    const activeShapeMesh = { ...mesh, vertices: currentRestVertices as unknown as typeof mesh.vertices }
+    const activeShapeMesh = {
+      ...mesh,
+      vertices: currentRestVertices as unknown as typeof mesh.vertices,
+    }
     const worldVerts = deformedMeshWorldVertices(
       activeShapeMesh,
       scene,
