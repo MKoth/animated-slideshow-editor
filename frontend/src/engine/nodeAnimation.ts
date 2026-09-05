@@ -11,7 +11,10 @@ import type {
   CircleTrackJSON,
   TableTrackJSON,
   VisibleTrackJSON,
+  MorphTrackJSON,
 } from './json'
+import type { MorphBinding } from './shape'
+import { requireMorphKeyframeValue } from './shape'
 import {
   requireAnimationProperty,
   requireAnimatableForNode,
@@ -35,6 +38,8 @@ export class NodeAnimation {
   readonly #circleTracks = new Map<CircleAnimationProperty, Keyframe[]>()
   readonly #tableTracks = new Map<TableAnimationProperty, Keyframe[]>()
   readonly #visible: Keyframe[] = []
+  #morphBinding: MorphBinding | null = null
+  readonly #morph: Keyframe[] = []
 
   keyframes(property: AnimationProperty): readonly Keyframe[] {
     return this.#tracks.get(property) ?? []
@@ -120,6 +125,55 @@ export class NodeAnimation {
 
   getVisible(keyframeId: string): Keyframe | undefined {
     return this.#visible.find((entry) => entry.id === keyframeId)
+  }
+
+  // --- Morph binding & coefficient track (Spec 281, migrated to per-keyframe pair in morph rework) ---
+  /** @deprecated legacy global binding — retained only for JSON migration; new code uses per-keyframe MorphKeyframeValue */
+  get morphBinding(): MorphBinding | null {
+    return this.#morphBinding
+  }
+
+  /** @deprecated */
+  setMorphBinding(binding: MorphBinding | null): void {
+    if (binding === null) {
+      this.#morphBinding = null
+      return
+    }
+    // allow both nullable, but if provided must be object with nullable ids
+    this.#morphBinding = {
+      fromShapeId: binding.fromShapeId,
+      toShapeId: binding.toShapeId,
+    }
+  }
+
+  morphKeyframes(): readonly Keyframe[] {
+    return this.#morph
+  }
+
+  hasMorphTrack(): boolean {
+    return this.#morph.length > 0
+  }
+
+  addMorph(keyframe: Keyframe): void {
+    const index = this.#morph.findIndex((entry) => entry.time > keyframe.time)
+    if (index === -1) {
+      this.#morph.push(keyframe)
+    } else {
+      this.#morph.splice(index, 0, keyframe)
+    }
+  }
+
+  removeMorph(keyframeId: string): Keyframe | undefined {
+    const index = this.#morph.findIndex((entry) => entry.id === keyframeId)
+    if (index === -1) {
+      return undefined
+    }
+    const [removed] = this.#morph.splice(index, 1)
+    return removed
+  }
+
+  getMorph(keyframeId: string): Keyframe | undefined {
+    return this.#morph.find((entry) => entry.id === keyframeId)
   }
 
   add(property: AnimationProperty, keyframe: Keyframe): void {
@@ -221,6 +275,12 @@ export class NodeAnimation {
     for (const keyframe of this.#visible) {
       copy.#visible.push(copyKeyframe(keyframe))
     }
+    for (const keyframe of this.#morph) {
+      copy.#morph.push(copyKeyframe(keyframe))
+    }
+    if (this.#morphBinding) {
+      copy.#morphBinding = { ...this.#morphBinding }
+    }
     return copy
   }
 
@@ -269,6 +329,18 @@ export class NodeAnimation {
       return undefined
     }
     return { keyframes: this.#visible.map((keyframe) => keyframe.toJSON()) }
+  }
+
+  morphTrackJSON(): MorphTrackJSON | undefined {
+    if (this.#morph.length === 0) {
+      return undefined
+    }
+    return { keyframes: this.#morph.map((keyframe) => keyframe.toJSON()) }
+  }
+
+  morphBindingJSON(): import('./json').MorphBindingJSON | null | undefined {
+    // No longer persisted — per-keyframe pair owns the binding. Retained only for reading legacy files.
+    return undefined
   }
 
   removeOrphanDataLabelTracks(validLabels: ReadonlySet<string>): void {
@@ -345,6 +417,16 @@ export class NodeAnimation {
     const visibleTrack = (json as Record<string, unknown>).visibleTrack
     if (visibleTrack !== undefined) {
       readVisibleTrack(animation, visibleTrack, duration)
+    }
+    let legacyBinding: MorphBinding | null = null
+    const morphBinding = (json as Record<string, unknown>).morphBinding
+    if (morphBinding !== undefined && morphBinding !== null) {
+      legacyBinding = readMorphBinding(morphBinding)
+      animation.setMorphBinding(legacyBinding)
+    }
+    const morphTrack = (json as Record<string, unknown>).morphTrack
+    if (morphTrack !== undefined) {
+      readMorphTrack(animation, morphTrack, duration, legacyBinding)
     }
     return animation
   }
@@ -477,6 +559,60 @@ function readVisibleTrack(animation: NodeAnimation, track: unknown, duration: nu
   }
 }
 
+function readMorphBinding(json: unknown): MorphBinding | null {
+  if (json === null) {
+    return null
+  }
+  if (typeof json !== 'object' || json === null) {
+    throw new Error('Morph binding must be an object')
+  }
+  const record = json as Record<string, unknown>
+  const fromShapeId = record.fromShapeId
+  const toShapeId = record.toShapeId
+  if (fromShapeId !== null && typeof fromShapeId !== 'string') {
+    throw new Error('Morph binding fromShapeId must be string or null')
+  }
+  if (toShapeId !== null && typeof toShapeId !== 'string') {
+    throw new Error('Morph binding toShapeId must be string or null')
+  }
+  return {
+    fromShapeId: fromShapeId as string | null,
+    toShapeId: toShapeId as string | null,
+  }
+}
+
+function readMorphTrack(
+  animation: NodeAnimation,
+  track: unknown,
+  duration: number,
+  legacyBinding: MorphBinding | null,
+): void {
+  if (typeof track !== 'object' || track === null) {
+    throw new Error('Morph track must be an object')
+  }
+  const record = track as Record<string, unknown>
+  if (!Array.isArray(record.keyframes)) {
+    throw new Error('Morph track must have a keyframes array')
+  }
+  const parse = trackKeyframeParser('Morph track', duration, (value, what) => {
+    // Legacy scalar support: number 0..1 → migrate to object with legacy binding
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value) || value < 0 || value > 1) {
+        throw new Error(`${what} must be a number between 0 and 1`)
+      }
+      return {
+        fromShapeId: legacyBinding?.fromShapeId ?? null,
+        toShapeId: legacyBinding?.toShapeId ?? null,
+        coefficient: value,
+      } as import('./shape').MorphKeyframeValue
+    }
+    return requireMorphKeyframeValue(value, what)
+  })
+  for (const keyframeJson of record.keyframes) {
+    animation.addMorph(parse(keyframeJson))
+  }
+}
+
 function insertSorted(tracks: Map<string, Keyframe[]>, key: string, keyframe: Keyframe): void {
   const existing = tracks.get(key)
   if (!existing) {
@@ -512,10 +648,16 @@ function removeById(
 }
 
 function copyKeyframe(keyframe: Keyframe): Keyframe {
+  let value: import('./keyframe').KeyframeValue = keyframe.value
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    value = { ...((value as unknown) as Record<string, unknown>) } as unknown as import('./keyframe').KeyframeValue
+  } else if (Array.isArray(value)) {
+    value = [...value] as unknown as import('./keyframe').KeyframeValue
+  }
   return new KeyframeModel(
     newKeyframeId(),
     keyframe.time,
-    keyframe.value,
+    value,
     keyframe.interpolation,
     { time: keyframe.tangentIn.time, value: keyframe.tangentIn.value },
     { time: keyframe.tangentOut.time, value: keyframe.tangentOut.value },

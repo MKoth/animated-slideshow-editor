@@ -6,6 +6,7 @@ import {
   keyframeRefsOfScene,
   circleKeyframeRefsOfScene,
   visibleKeyframeRefsOfScene,
+  morphKeyframeRefsOfScene,
 } from './keyframeSelectionActions'
 import type { KeyframeTarget } from '../engine/keyframeTarget'
 
@@ -32,6 +33,12 @@ function allRefsForExtraction(engine: EnginePublic): { target: KeyframeTarget; k
       const kfs = engine.getCircleKeyframes(ref.nodeId, ref.property)
       const kf = kfs.find((k) => k.id === ref.keyframeId)
       if (kf) results.push({ target: { kind: 'circle', nodeId: ref.nodeId, property: ref.property }, keyframe: kf })
+    }
+    // morph
+    for (const ref of morphKeyframeRefsOfScene(engine, scene)) {
+      const kfs = engine.getMorphKeyframes(ref.nodeId)
+      const kf = kfs.find((k) => k.id === ref.keyframeId)
+      if (kf) results.push({ target: { kind: 'morph', nodeId: ref.nodeId }, keyframe: kf })
     }
     // Also dataLabel/table? Skip for now
   }
@@ -70,6 +77,8 @@ export function collectExtractableForSingle(
     kf = engine.getKeyframes(target.nodeId, target.property).find((k) => k.id === keyframeId)
   } else if (target.kind === 'visible') {
     kf = engine.getVisibleKeyframes(target.nodeId).find((k) => k.id === keyframeId)
+  } else if (target.kind === 'morph') {
+    kf = engine.getMorphKeyframes(target.nodeId).find((k) => k.id === keyframeId)
   } else if (target.kind === 'circle') {
     kf = engine.getCircleKeyframes(target.nodeId, target.property).find((k) => k.id === keyframeId)
   } else if (target.kind === 'node' && 'parameter' in target) {

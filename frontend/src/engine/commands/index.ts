@@ -232,6 +232,8 @@ export type {
 } from './setConstraintParamsCommand'
 export { MoveVertexCommand } from './moveVertexCommand'
 export type { MoveVertexInverse, MoveVertexParameters } from './moveVertexCommand'
+export { MoveShapeVertexCommand } from './moveShapeVertexCommand'
+export type { MoveShapeVertexInverse, MoveShapeVertexParameters } from './moveShapeVertexCommand'
 export { DeleteVerticesCommand } from './deleteVerticesCommand'
 export type { DeleteVerticesInverse, DeleteVerticesParameters } from './deleteVerticesCommand'
 export { ExtrudeFacesCommand } from './extrudeFacesCommand'
@@ -466,3 +468,13 @@ export type {
   ImportReusableObjectInverse,
   ImportReusableObjectParameters,
 } from './importReusableObjectCommand'
+export { CreateShapeCommand } from './createShapeCommand'
+export type { CreateShapeInverse, CreateShapeParameters } from './createShapeCommand'
+export { DuplicateShapeCommand } from './duplicateShapeCommand'
+export type { DuplicateShapeInverse, DuplicateShapeParameters } from './duplicateShapeCommand'
+export { RenameShapeCommand } from './renameShapeCommand'
+export type { RenameShapeInverse, RenameShapeParameters } from './renameShapeCommand'
+export { DeleteShapeCommand } from './deleteShapeCommand'
+export type { DeleteShapeInverse, DeleteShapeParameters } from './deleteShapeCommand'
+export { SetMorphBindingCommand } from './setMorphBindingCommand'
+export type { SetMorphBindingInverse, SetMorphBindingParameters } from './setMorphBindingCommand'

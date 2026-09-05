@@ -46,6 +46,7 @@ const PROPERTY_COLORS: Record<string, string> = {
   startAngle: '#4db6ac',
   endAngle: '#9575cd',
   segments: '#aed581',
+  morph: '#ff7043',
 }
 
 const PROPERTY_LABELS: Record<string, string> = {
@@ -59,6 +60,7 @@ const PROPERTY_LABELS: Record<string, string> = {
   startAngle: 'Start Angle',
   endAngle: 'End Angle',
   segments: 'Segments',
+  morph: 'Morph',
 }
 
 function matchesFilter(property: string, filter: string): boolean {
@@ -68,6 +70,9 @@ function matchesFilter(property: string, filter: string): boolean {
   if (filter === 'rotation') return property === 'rotation'
   if (filter === 'scale') return property === 'scaleX' || property === 'scaleY'
   if (filter === 'opacity') return property === 'opacity'
+  if (filter === 'morph') return property === 'morph'
+  if (property === 'morph' && filter !== 'all' && filter !== 'animatedOnly' && filter !== 'morph')
+    return false
   return true
 }
 
@@ -101,7 +106,12 @@ function buildCurves(
     if (node.components.circle) {
       for (const prop of CIRCLE_ANIMATABLE_PROPERTIES) {
         // show circle curves under 'all' or dedicated 'circle' filter; hide under position/rotation etc
-        if (filter !== 'all' && filter !== 'animatedOnly' && filter !== 'circle' && !matchesFilter(prop, filter))
+        if (
+          filter !== 'all' &&
+          filter !== 'animatedOnly' &&
+          filter !== 'circle' &&
+          !matchesFilter(prop, filter)
+        )
           continue
         const keyframes = engine.getCircleKeyframes(nodeId, prop as CircleAnimationProperty)
         if (keyframes.length > 0) {
@@ -111,6 +121,21 @@ function buildCurves(
             label: PROPERTY_LABELS[prop] ?? prop,
             keyframes,
             color: PROPERTY_COLORS[prop] ?? '#ffffff',
+          })
+        }
+      }
+    }
+    // morph track per mesh node
+    if (node.components.mesh) {
+      if (matchesFilter('morph', filter)) {
+        const mKeyframes = engine.getMorphKeyframes(nodeId)
+        if (mKeyframes.length > 0) {
+          curves.push({
+            nodeId,
+            property: 'morph',
+            label: PROPERTY_LABELS['morph'] ?? 'Morph',
+            keyframes: mKeyframes,
+            color: PROPERTY_COLORS['morph'] ?? '#ff7043',
           })
         }
       }
@@ -178,6 +203,10 @@ function isCircleProperty(prop: string): boolean {
   return (CIRCLE_ANIMATABLE_PROPERTIES as readonly string[]).includes(prop)
 }
 
+function isMorphProperty(prop: string): boolean {
+  return prop === 'morph'
+}
+
 function resolveKeyframes(
   engine: ReturnType<typeof useEngine>['engine'],
   clip: ClipDefinition | undefined,
@@ -186,6 +215,9 @@ function resolveKeyframes(
 ) {
   if (isCircleProperty(property) && !clip) {
     return engine.getCircleKeyframes(nodeId, property as CircleAnimationProperty)
+  }
+  if (isMorphProperty(property) && !clip) {
+    return engine.getMorphKeyframes(nodeId)
   }
   return clip
     ? engine.getClipChannelKeyframes(clip.id, property as AnimationProperty)
@@ -199,7 +231,11 @@ function buildTarget(
 ):
   | { kind: 'clip'; clipId: string; channel: AnimationProperty }
   | { kind: 'node'; nodeId: string; property: AnimationProperty }
-  | { kind: 'circle'; nodeId: string; property: CircleAnimationProperty } {
+  | { kind: 'circle'; nodeId: string; property: CircleAnimationProperty }
+  | { kind: 'morph'; nodeId: string } {
+  if (isMorphProperty(property) && !clip) {
+    return { kind: 'morph' as const, nodeId }
+  }
   if (isCircleProperty(property) && !clip) {
     return { kind: 'circle' as const, nodeId, property: property as CircleAnimationProperty }
   }
@@ -720,7 +756,9 @@ export function CurveEditorPanel({
           onZoom={handleZoom}
         />
       </div>
-      {extraction && <ClipExtractionModal keyframes={extraction} onClose={() => setExtraction(null)} />}
+      {extraction && (
+        <ClipExtractionModal keyframes={extraction} onClose={() => setExtraction(null)} />
+      )}
     </div>
   )
 }

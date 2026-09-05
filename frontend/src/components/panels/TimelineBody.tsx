@@ -29,12 +29,15 @@ import {
 } from '../../stores/timelineViewStore'
 import { useKeyframeDrag } from './keyframeDrag'
 import { useKeyframeScale, computeSelectionBounds } from './keyframeScale'
+import { useUiStore } from '../../stores/uiStore'
+import { morphAutoKey } from '../../app/keyframeActions'
 import {
   ROW_HEIGHT,
   TRACK_HEADER_WIDTH,
   PROPERTY_LABELS,
   CIRCLE_LABELS,
   VISIBLE_LABEL,
+  MORPH_LABEL,
   materialParameterLabel,
 } from './timelineTracks'
 import type { TimelineRow } from './timelineTracks'
@@ -53,6 +56,147 @@ import {
 import type { ExtractableKeyframe } from '../../engine/clipExtraction'
 
 const MARQUEE_START_DISTANCE = 4
+
+function MorphSubtrackHeader({
+  node,
+  depth,
+  slideId,
+}: {
+  node: import('../../engine').SceneNode
+  depth: number
+  slideId: string
+}) {
+  const { engine, dispatch } = useEngine()
+  const notify = useNotificationStore((state) => state.notify)
+  const animationMode = useUiStore((s) => s.animationMode)
+  const currentTime = usePlaybackController((s) => s.currentTimes[slideId] ?? 0)
+  let shapes: readonly import('../../engine/shape').Shape[] = []
+  try {
+    shapes = engine.getShapes(node.id)
+  } catch {
+    shapes = []
+  }
+  // Current evaluated morph value at playhead (per-keyframe pair+coeff)
+  let evaluated: import('../../engine/shape').MorphKeyframeValue | null = null
+  try {
+    evaluated = engine.evaluateMorphValue(node.id, currentTime)
+  } catch {
+    evaluated = null
+  }
+  const fromId = evaluated?.fromShapeId ?? (shapes[0]?.id ?? '')
+  const toId = evaluated?.toShapeId ?? (shapes[1]?.id ?? shapes[0]?.id ?? '')
+  const currentCoeff = evaluated?.coefficient ?? 0
+
+  const commitMorphValue = (next: import('../../engine/shape').MorphKeyframeValue) => {
+    if (!animationMode) {
+      notify('Enter animation mode to keyframe morph')
+      return
+    }
+    const result = morphAutoKey(engine, dispatch, node.id, next)
+    if (result && !result.ok) notify(result.error.message)
+  }
+
+  const handleFromChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newFrom = e.target.value || null
+    commitMorphValue({ fromShapeId: newFrom, toShapeId: evaluated?.toShapeId ?? toId ?? null, coefficient: currentCoeff })
+  }
+  const handleToChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const newTo = e.target.value || null
+    commitMorphValue({ fromShapeId: evaluated?.fromShapeId ?? fromId ?? null, toShapeId: newTo, coefficient: currentCoeff })
+  }
+  const handleAdd = () => {
+    const time = usePlaybackController.getState().getTime(slideId)
+    const value: import('../../engine/shape').MorphKeyframeValue = {
+      fromShapeId: evaluated?.fromShapeId ?? (shapes[0]?.id ?? null),
+      toShapeId: evaluated?.toShapeId ?? (shapes[1]?.id ?? shapes[0]?.id ?? null),
+      coefficient: currentCoeff,
+    }
+    const result = dispatch(
+      new AddKeyframeCommand({ target: { kind: 'morph', nodeId: node.id }, time, value: value as unknown as import('../../engine/keyframe').KeyframeValue }),
+    )
+    if (result && !result.ok) notify(result.error.message)
+  }
+  const handleCoeffChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = parseFloat(e.target.value)
+    if (Number.isNaN(v)) return
+    commitMorphValue({ fromShapeId: evaluated?.fromShapeId ?? fromId ?? null, toShapeId: evaluated?.toShapeId ?? toId ?? null, coefficient: v })
+  }
+  return (
+    <li
+      className="timeline-subtrack timeline-subtrack--morph"
+      data-node-id={node.id}
+      data-morph="true"
+      data-depth={depth}
+      style={{
+        paddingLeft: 12 + depth * 16,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 4,
+        flexWrap: 'wrap',
+      }}
+    >
+      <span className="timeline-subtrack__label" style={{ minWidth: 44 }}>
+        {MORPH_LABEL}
+      </span>
+      <select
+        aria-label={`Morph From for ${node.name}`}
+        data-testid={`morph-from-${node.id}`}
+        value={fromId}
+        onChange={handleFromChange}
+        style={{ flex: 1, minWidth: 60, fontSize: 11, padding: '2px 4px' }}
+      >
+        <option value="">— None —</option>
+        {shapes.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}
+          </option>
+        ))}
+      </select>
+      <span style={{ fontSize: 11, opacity: 0.7 }}>→</span>
+      <select
+        aria-label={`Morph To for ${node.name}`}
+        data-testid={`morph-to-${node.id}`}
+        value={toId}
+        onChange={handleToChange}
+        style={{ flex: 1, minWidth: 60, fontSize: 11, padding: '2px 4px' }}
+      >
+        <option value="">— None —</option>
+        {shapes.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}
+          </option>
+        ))}
+      </select>
+      <input
+        type="range"
+        min={0}
+        max={1.5}
+        step={0.01}
+        aria-label={`Morph coefficient for ${node.name}`}
+        data-testid={`morph-coeff-${node.id}`}
+        value={currentCoeff}
+        onChange={handleCoeffChange}
+        style={{ width: 60 }}
+        title={
+          currentCoeff > 1
+            ? 'Preview 1.5 (stored clamps 0..1)'
+            : `Coefficient ${currentCoeff.toFixed(2)}`
+        }
+      />
+      <span style={{ fontSize: 10, minWidth: 28, textAlign: 'right' }}>
+        {currentCoeff.toFixed(2)}
+      </span>
+      <button
+        className="timeline-subtrack__add"
+        aria-label={`Add Keyframe to ${MORPH_LABEL}`}
+        title="Add morph keyframe at the playhead"
+        onClick={handleAdd}
+      >
+        +
+      </button>
+    </li>
+  )
+}
 
 export function TimelineBody({
   slideId,
@@ -106,8 +250,24 @@ export function TimelineBody({
 
   const propertyKeyframeRefs = keyframeRefsOfScene(engine, scene)
   const materialKeyframeRefs = materialKeyframeRefsOfScene(engine, scene)
+  // morph refs for selection/drag scale
+  const morphKeyframeRefs: { nodeId: string; keyframeId: string; time: number; morph: true }[] = []
+  for (const trackRow of rows) {
+    if (trackRow.kind === 'morphSubtrack') {
+      for (const kf of engine.getMorphKeyframes(trackRow.node.id)) {
+        morphKeyframeRefs.push({
+          nodeId: trackRow.node.id,
+          keyframeId: kf.id,
+          time: kf.time,
+          morph: true,
+        })
+      }
+    }
+  }
   const allKeyframeRefs = [...propertyKeyframeRefs, ...materialKeyframeRefs]
-  const keyframeRefs = new Map(allKeyframeRefs.map((ref) => [ref.keyframeId, ref] as const))
+  const keyframeRefs = new Map(
+    [...allKeyframeRefs, ...morphKeyframeRefs].map((ref) => [ref.keyframeId, ref] as const),
+  )
 
   const allSelectionItems: KeyframeSelectionItem[] = []
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
@@ -118,6 +278,10 @@ export function TimelineBody({
       }
     } else if (row.kind === 'visibleSubtrack') {
       for (const keyframe of engine.getVisibleKeyframes(row.node.id)) {
+        allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
+      }
+    } else if (row.kind === 'morphSubtrack') {
+      for (const keyframe of engine.getMorphKeyframes(row.node.id)) {
         allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
       }
     } else if (row.kind === 'materialSubtrack') {
@@ -394,6 +558,7 @@ export function TimelineBody({
           | 'materialSubtrack'
           | 'dataLabelSubtrack'
           | 'circleSubtrack'
+          | 'morphSubtrack'
       }
     >,
     keyframe: { id: string },
@@ -416,6 +581,14 @@ export function TimelineBody({
         property: 'visible' as unknown as AnimationProperty,
         keyframeId: keyframe.id,
       } as unknown as Extract<import('./timelineComponents').TimelineMenuState, { nodeId: string }>)
+    } else if (row.kind === 'morphSubtrack') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        morph: true,
+        keyframeId: keyframe.id,
+      })
     } else if (row.kind === 'dataLabelSubtrack') {
       setMenu({
         x: event.clientX,
@@ -505,6 +678,20 @@ export function TimelineBody({
       }
       return
     }
+    const morphSubtrack = target.closest<HTMLElement>('[data-morph]')
+    if (morphSubtrack) {
+      const nodeId = morphSubtrack.dataset.nodeId
+      if (nodeId) {
+        event.preventDefault()
+        setMenu({
+          x: event.clientX,
+          y: event.clientY,
+          nodeId,
+          morph: true,
+        })
+      }
+      return
+    }
     const row = target.closest<HTMLElement>('[data-node-id]')
     if (row) {
       const nodeId = row.dataset.nodeId
@@ -522,7 +709,30 @@ export function TimelineBody({
       return
     }
     let result
-    if ((target.property as unknown as string) === 'visible') {
+    if (target.morph) {
+      const time = usePlaybackController.getState().getTime(slideId)
+      let value: import('../../engine/shape').MorphKeyframeValue | null = null
+      try {
+        value = engine.evaluateMorphValue(target.nodeId, time)
+      } catch {
+        value = null
+      }
+      if (!value) {
+        try {
+          const shapes = engine.getShapes(target.nodeId)
+          value = { fromShapeId: shapes[0]?.id ?? null, toShapeId: shapes[1]?.id ?? shapes[0]?.id ?? null, coefficient: 0 }
+        } catch {
+          value = { fromShapeId: null, toShapeId: null, coefficient: 0 }
+        }
+      }
+      result = dispatch(
+        new AddKeyframeCommand({
+          target: { kind: 'morph', nodeId: target.nodeId },
+          time,
+          value: value as unknown as import('../../engine/keyframe').KeyframeValue,
+        }),
+      )
+    } else if ((target.property as unknown as string) === 'visible') {
       const time = usePlaybackController.getState().getTime(slideId)
       const visible = engine.evaluateVisible(target.nodeId, time)
       result = dispatch(
@@ -592,7 +802,9 @@ export function TimelineBody({
       return
     }
     let deleteTarget
-    if ((target.property as unknown as string) === 'visible') {
+    if (target.morph) {
+      deleteTarget = { kind: 'morph' as const, nodeId: target.nodeId }
+    } else if ((target.property as unknown as string) === 'visible') {
       deleteTarget = { kind: 'visible' as const, nodeId: target.nodeId }
     } else if (target.property) {
       deleteTarget = { kind: 'node' as const, nodeId: target.nodeId, property: target.property }
@@ -634,12 +846,18 @@ export function TimelineBody({
       extractable = collectSelectedExtractableKeyframes(engine)
     } else {
       let singleTarget: import('../../engine/keyframeTarget').KeyframeTarget | undefined
-      if ((target.property as unknown as string) === 'visible') {
+      if (target.morph) {
+        singleTarget = { kind: 'morph', nodeId: target.nodeId }
+      } else if ((target.property as unknown as string) === 'visible') {
         singleTarget = { kind: 'visible', nodeId: target.nodeId }
       } else if (target.property) {
         singleTarget = { kind: 'node', nodeId: target.nodeId, property: target.property }
       } else if ((target as unknown as { circleProperty?: string }).circleProperty) {
-        const cp = (target as unknown as { circleProperty: import('../../engine/animationProperties').CircleAnimationProperty }).circleProperty
+        const cp = (
+          target as unknown as {
+            circleProperty: import('../../engine/animationProperties').CircleAnimationProperty
+          }
+        ).circleProperty
         singleTarget = { kind: 'circle', nodeId: target.nodeId, property: cp }
       } else if (target.parameter) {
         singleTarget = { kind: 'node', nodeId: target.nodeId, parameter: target.parameter }
@@ -652,7 +870,9 @@ export function TimelineBody({
       }
     }
     if (extractable.length === 0) {
-      notify('No extractable keyframes for Add to clip (only position/rotation/scale/opacity/visible/circle are supported)')
+      notify(
+        'No extractable keyframes for Add to clip (only position/rotation/scale/opacity/visible/circle are supported)',
+      )
       return
     }
     setExtraction(extractable)
@@ -835,6 +1055,13 @@ export function TimelineBody({
                   +
                 </button>
               </li>
+            ) : row.kind === 'morphSubtrack' ? (
+              <MorphSubtrackHeader
+                key={`${row.node.id}:morph`}
+                node={row.node}
+                depth={row.depth}
+                slideId={slideId}
+              />
             ) : row.kind === 'circleSubtrack' ? (
               <li
                 key={`${row.node.id}:circle:${row.property}`}
@@ -1131,6 +1358,41 @@ export function TimelineBody({
                             pps={pps}
                             step={step}
                             parameterLabel={CIRCLE_LABELS[row.property]}
+                            onPointerDown={(event) =>
+                              handleKeyframePointerDown(event, keyframe, index)
+                            }
+                            onContextMenu={(event) =>
+                              handleKeyframeContextMenu(event, row, keyframe)
+                            }
+                          />
+                        )
+                      })}
+                    </div>
+                  )
+                }
+                if (row.kind === 'morphSubtrack') {
+                  const keyframes = engine.getMorphKeyframes(row.node.id)
+                  return (
+                    <div
+                      key={`${row.node.id}:morph`}
+                      className="timeline-lane-row"
+                      data-morph="true"
+                      style={{ top: index * ROW_HEIGHT }}
+                    >
+                      {keyframes.map((keyframe) => {
+                        const previewTime =
+                          scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
+                        const shownTime = previewTime ?? keyframe.time
+                        const selected = selectedKeyframeIds.includes(keyframe.id)
+                        return (
+                          <KeyframeMarker
+                            key={keyframe.id}
+                            keyframeId={keyframe.id}
+                            shownTime={shownTime}
+                            selected={selected}
+                            pps={pps}
+                            step={step}
+                            parameterLabel={MORPH_LABEL}
                             onPointerDown={(event) =>
                               handleKeyframePointerDown(event, keyframe, index)
                             }

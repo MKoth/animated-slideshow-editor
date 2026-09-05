@@ -1,6 +1,6 @@
 import { isOverrideValue, isRecord } from './guards'
 
-const INTERPOLATIONS = ['hold', 'linear', 'bezier'] as const
+const INTERPOLATIONS = ['hold', 'linear', 'bezier', 'bounce', 'elastic', 'spring'] as const
 
 export function validateFullscreenShader(errors: string[], value: unknown, slideId: string): void {
   if (!isRecord(value)) {
@@ -108,7 +108,7 @@ export function validateKeyframeList(
       !(INTERPOLATIONS as readonly string[]).includes(keyframeJson.interpolation as string)
     ) {
       errors.push(
-        `Keyframe "${String(keyframeJson.id)}" interpolation must be hold, linear, or bezier`,
+        `Keyframe "${String(keyframeJson.id)}" interpolation must be hold, linear, bezier, bounce, elastic, or spring`,
       )
     }
     for (const side of ['tangentIn', 'tangentOut'] as const) {

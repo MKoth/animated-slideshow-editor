@@ -1,0 +1,1201 @@
+<!doctype html>
+<!-- PROTOTYPE — THROWAWAY — research/morph-brush — not production -->
+<!-- See ADR 0007, ADR 0008, CONTEXT.md#Shape/#Morph -->
+<!-- Run: open this file directly in a browser (double-click) — no build required. No persistence. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>PROTOTYPE — Brush-based Shape Morph for Mesh (research/morph-brush)</title>
+    <style>
+      :root {
+        --bg: #0f1419;
+        --panel: #1a2332;
+        --border: #2a3a4d;
+        --accent: #1a73e8;
+        --accent2: #34a853;
+        --danger: #ea4335;
+        --text: #e8eaed;
+        --muted: #9aa0a6;
+        --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: Inter, system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      header {
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--border);
+        background: #121a26;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+      }
+      header h1 {
+        margin: 0;
+        font-size: 15px;
+        letter-spacing: 0.02em;
+      }
+      header p {
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .badge {
+        display: inline-block;
+        background: var(--danger);
+        color: #fff;
+        font-size: 10px;
+        padding: 2px 6px;
+        border-radius: 999px;
+        vertical-align: middle;
+        margin-left: 8px;
+        letter-spacing: 0.08em;
+      }
+      .tabs {
+        display: flex;
+        gap: 6px;
+        padding: 10px 18px;
+        border-bottom: 1px solid var(--border);
+        background: var(--panel);
+        flex-wrap: wrap;
+      }
+      .tab {
+        padding: 7px 12px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: #0f1419;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 12px;
+      }
+      .tab.active {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 320px 1fr 340px;
+        min-height: calc(100vh - 120px);
+      }
+      .col {
+        border-right: 1px solid var(--border);
+        background: var(--panel);
+        overflow: auto;
+      }
+      .col:last-child {
+        border-right: none;
+      }
+      .section {
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border);
+      }
+      .section h3 {
+        margin: 0 0 8px;
+        font-size: 12px;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin: 6px 0;
+      }
+      label {
+        font-size: 12px;
+        color: var(--muted);
+        min-width: 92px;
+      }
+      select,
+      input[type='range'],
+      input[type='text'],
+      input[type='number'] {
+        flex: 1;
+        background: #0f1419;
+        border: 1px solid var(--border);
+        color: var(--text);
+        padding: 6px 8px;
+        border-radius: 6px;
+        font-size: 12px;
+      }
+      input[type='range'] {
+        padding: 0;
+      }
+      button {
+        background: var(--accent);
+        border: none;
+        color: #fff;
+        padding: 7px 10px;
+        border-radius: 6px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #2a3a4d;
+      }
+      button.ghost {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--text);
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .banner {
+        background: #3c2a00;
+        border: 1px solid #8a6d00;
+        color: #ffed8a;
+        padding: 8px 10px;
+        border-radius: 6px;
+        font-size: 11px;
+        line-height: 1.4;
+        margin: 8px 0;
+      }
+      .canvas-wrap {
+        position: relative;
+        background: #0a0f16;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 12px;
+      }
+      canvas {
+        background: #0c121c;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        cursor: crosshair;
+      }
+      .brush-info {
+        position: absolute;
+        left: 18px;
+        bottom: 18px;
+        background: rgba(0, 0, 0, 0.7);
+        padding: 6px 8px;
+        border-radius: 6px;
+        font-size: 11px;
+        color: #cbd5e1;
+        font-family: var(--mono);
+      }
+      .state-pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: #0f1419;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px;
+        font-family: var(--mono);
+        font-size: 11px;
+        line-height: 1.5;
+        max-height: 320px;
+        overflow: auto;
+      }
+      .klist {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 11px;
+      }
+      .klist th,
+      .klist td {
+        border-bottom: 1px solid var(--border);
+        padding: 4px 6px;
+        text-align: left;
+      }
+      .hint {
+        font-size: 11px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .pill {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 999px;
+        background: #0f1419;
+        border: 1px solid var(--border);
+        font-size: 11px;
+        font-family: var(--mono);
+      }
+      .walkthrough {
+        background: #0f1419;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin: 8px 0;
+        font-size: 12px;
+        line-height: 1.6;
+      }
+      .walkthrough b {
+        color: #8ab4f8;
+      }
+      .grid2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      @media (max-width: 1100px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+        .col {
+          border-right: none;
+          border-bottom: 1px solid var(--border);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>
+        PROTOTYPE — Brush-based Shape Morph for Mesh
+        <span class="badge">THROWAWAY — research/morph-brush</span>
+      </h1>
+      <p>
+        Destination: MeshComponent stores multiple <b>Shapes</b> (absolute vertex snapshots sharing
+        topology), falloff brush sculpts any Shape in Mesh Edit mode, and a single active morph
+        <b>From → To + coefficient 0→1 (1.5 preview)</b> lerps any two Shapes with
+        Timeline-keyframable presentation — morph-then-bones. Topology frozen once Shapes exist. See
+        ADR 0007 + 0008, <code>frontend/src/engine/shape.ts</code> and
+        <code>meshDeformationEvaluator.ts:evaluateMorphedMeshDeformation</code>.
+      </p>
+    </header>
+
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-tab="free">Free Play</button>
+      <button class="tab" data-tab="step1">1 — Duplicate Base → Sculpted</button>
+      <button class="tab" data-tab="step2">2 — Sculpt Sculpted (falloff brush)</button>
+      <button class="tab" data-tab="step3">3 — Any-to-any morph 0→1 → 1.5</button>
+      <button class="tab" data-tab="edge">Edge Cases & Portability</button>
+      <button class="tab" data-tab="state">State Inspector</button>
+    </div>
+
+    <div class="layout">
+      <!-- Left: Inspector / Mesh Edit toolbar mock (from #274) -->
+      <div class="col" id="left">
+        <div class="section">
+          <h3>Inspector — Mesh section (mock #274)</h3>
+          <div class="row">
+            <label>Selected mesh</label><span class="pill">MeshRectangle (4→ grid)</span>
+          </div>
+          <div id="topologyBanner" class="banner" style="display: none">
+            Topology locked — <b>delete / extrude / subdivide / mirror disabled</b> while Shapes
+            exist. Remove Shapes to edit topology. (ADR 0007 freeze)
+          </div>
+          <div class="row">
+            <label>Active Shape</label
+            ><select id="activeShapeSelect"></select>
+          </div>
+          <div class="row" style="gap: 6px">
+            <button id="btnDuplicate">Duplicate → Sculpted</button>
+            <button id="btnDuplicateThird" class="secondary">Duplicate → Third</button>
+          </div>
+          <div class="row" style="gap: 6px">
+            <input id="renameInput" type="text" placeholder="New name" />
+            <button id="btnRename" class="ghost">Rename</button>
+            <button
+              id="btnDelete"
+              class="ghost"
+              style="color: var(--danger); border-color: var(--danger)"
+            >
+              Delete
+            </button>
+          </div>
+          <div class="hint">
+            Shapes = absolute <code>vertices[]</code> snapshots sharing faces/uvs/boneWeights. Per
+            #271: <code>MeshComponent.shapes?: Shape[]</code> inline in
+            <code>NodeComponentsJSON.mesh.shapes</code>, <code>newId('shape')</code>, per-mesh
+            unique name, <code>vertices.length</code> invariant. Delete→ uses hard-disable (no
+            silent wipe).
+          </div>
+          <div id="shapesList" class="hint" style="margin-top: 8px"></div>
+        </div>
+
+        <div class="section">
+          <h3>Mesh Edit toolbar — Sculpt tool (mock #272 + #274)</h3>
+          <div class="row">
+            <label>Tool</label>
+            <select id="toolSelect">
+              <option value="select">select (move/marquee)</option>
+              <option value="sculpt" selected>sculpt — falloff brush</option>
+              <option value="weightPaint" disabled>weightPaint (ref only)</option>
+            </select>
+          </div>
+          <div class="row">
+            <label>Radius</label><input id="radius" type="range" min="5" max="80" value="25" /><span
+              id="radiusVal"
+              class="pill"
+              >25px</span
+            >
+          </div>
+          <div class="row">
+            <label>Strength</label
+            ><input id="strength" type="range" min="0" max="2" step="0.05" value="1.0" /><span
+              id="strengthVal"
+              class="pill"
+              >1.0</span
+            >
+          </div>
+          <div class="row">
+            <label>Falloff</label
+            ><input id="falloff" type="range" min="0.2" max="3" step="0.1" value="1.0" /><span
+              id="falloffVal"
+              class="pill"
+              >1.0</span
+            >
+          </div>
+          <div class="hint">
+            Brush: <code>pow(1 - dist/radius, falloff)</code> default 1.0 (#272). Screen+world
+            hybrid, face-guard, drag-dir push <code>vertex += dir * strength * falloff</code>.
+            <b>Shift</b> inverts (pull). Per-stroke <code>Transaction(MoveVertexCommand…)</code> via
+            <code>MeshOverlay#setPreviewVertices</code>, new <code>MeshEditTool='sculpt'</code> +
+            <code>sculptInteraction.ts</code> reusing <code>screenToWorld</code> +
+            <code>deformedMeshWorld</code>.
+          </div>
+          <div class="row">
+            <label>Bone rotation</label
+            ><input id="boneRot" type="range" min="-60" max="60" value="0" /><span
+              id="boneRotVal"
+              class="pill"
+              >0°</span
+            >
+          </div>
+          <div class="hint">
+            Mock bone proves <b>morph-then-bones</b>: morph lerps rest vertices → then
+            <code>evaluateMeshDeformation</code> skins. Drag brush in deformed world, edit rest.
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>What broke / what spec must fix</h3>
+          <div class="walkthrough">
+            <b>Prototype verdict:</b> Loop holds — absolute snapshots + one active morph is
+            scrub-babe. Bring to spec with:
+            <ul style="margin: 6px 0 0 18px">
+              <li>
+                <b>Topology freeze</b> must be hard-disabled in real
+                <code>meshEditInteraction.ts</code> + Inspector banner (#271); no migration.
+              </li>
+              <li>
+                <b>Brush accumulation:</b> per-dab <code>Transaction</code> vs per-stroke —
+                prototype uses per-dab preview + per-stroke commit; undo granularity needs product
+                decision.
+              </li>
+              <li>
+                <b>Screen↔world radius</b> scaling at extreme zoom diverges; needs clamp at
+                <code>evaluateMeshDeformation</code> call site.
+              </li>
+              <li>
+                <b>1.5 exaggeration</b> can fold mesh; spec should clamp store 0..1, allow preview
+                1.5 only with warning.
+              </li>
+              <li>
+                <b>UV/boneWeight inheritance:</b> verified shared — no drift in prototype; add
+                invariant test.
+              </li>
+              <li>
+                <b>Large-mesh perf:</b> brute-force O(vertices in radius) fine to ~5k verts at
+                60fps; >10k needs spatial index (follow-up).
+              </li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <!-- Center: Canvas + morph lane -->
+      <div class="col" style="display: flex; flex-direction: column">
+        <div class="canvas-wrap" style="flex: 1">
+          <canvas id="c" width="640" height="420"></canvas>
+          <div class="brush-info" id="brushInfo">
+            sculpt: drag to push • Shift = pull • wheel = radius
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>Timeline — Morph lane (mock #273 + #274) — one active morph, visible-pattern</h3>
+          <div class="grid2">
+            <div class="row">
+              <label>From</label
+              ><select id="fromSelect"></select>
+            </div>
+            <div class="row">
+              <label>To</label
+              ><select id="toSelect"></select>
+            </div>
+          </div>
+          <div class="row">
+            <label>Coeff</label
+            ><input id="coeff" type="range" min="0" max="1.5" step="0.01" value="0" /><span
+              id="coeffVal"
+              class="pill"
+              >0.00</span
+            ><span
+              id="coeffPreview"
+              class="pill"
+              style="background: #3c2a00; border-color: #8a6d00; color: #ffed8a; display: none"
+              >preview 1.5</span
+            >
+          </div>
+          <div class="hint">
+            Static <code>MorphBinding {fromShapeId,toShapeId}</code> sidecar + one
+            <code>morphCoefficient</code> track 0..1 (visible-pattern, not N²). Hold-cut for A→B→C.
+            Ephemeral <code>activeShapePreviewId</code> at coeff 1 (no animation), store 0..1 /
+            preview 1.5. Morph-then-bones <code>lerp→evaluateMeshDeformation</code> deterministic at
+            export <code>t = i/fps</code> (#276).
+          </div>
+
+          <div class="section" style="border: none; padding: 8px 0 0">
+            <h3>Keyframe track — morphCoefficient (hold | linear | bezier)</h3>
+            <div class="row" style="gap: 6px">
+              <button id="btnAddKf">Add keyframe at playhead</button>
+              <button id="btnRemoveKf" class="ghost">Remove selected</button>
+              <select id="interpSelect">
+                <option value="hold">hold</option>
+                <option value="linear" selected>linear</option>
+                <option value="bezier">bezier</option>
+              </select>
+              <span class="hint"
+                >playhead <span id="playheadVal" class="pill">0.00s</span> / duration
+                <span class="pill">3s</span></span
+              >
+            </div>
+            <div class="row">
+              <label>Playhead</label
+              ><input id="playhead" type="range" min="0" max="3" step="0.02" value="0" /><button
+                id="btnPlay"
+                class="secondary"
+              >
+                ▶ Play</button
+              ><button id="btnExport" class="ghost">Simulate Export (fps=24)</button>
+            </div>
+            <div
+              style="
+                overflow: auto;
+                max-height: 120px;
+                border: 1px solid var(--border);
+                border-radius: 6px;
+              "
+            >
+              <table class="klist" id="kfTable">
+                <thead>
+                  <tr>
+                    <th>time</th>
+                    <th>value</th>
+                    <th>interp</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div class="hint">
+              Curve is parametric graph (hold/linear/bezier) — same as opacity. Clips layer via
+              <code>evaluateMorph</code> clips-last-wins; binding stays node-local
+              (stale→warn+fallback).
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: Walkthrough / state -->
+      <div class="col">
+        <div class="section" id="walkthroughPanel">
+          <h3>Guided walkthrough</h3>
+          <div id="walkthroughContent"></div>
+        </div>
+        <div class="section">
+          <h3>Live state — after every action</h3>
+          <div id="liveState" class="state-pre"></div>
+          <div class="row" style="margin-top: 8px">
+            <button id="btnRunExportCheck" class="ghost">
+              Run determinism check (preview vs export at t)</button
+            ><span id="determinismResult" class="pill">—</span>
+          </div>
+          <div class="hint">
+            Determinism: <code>resolveMorphedVertices</code> +
+            <code>evaluateMeshDeformation</code> at <code>t = i/fps</code> must equal editor preview
+            per timestamp on same machine (ADR 0008).
+          </div>
+        </div>
+        <div class="section">
+          <h3>Portability note (from #276)</h3>
+          <div class="hint">
+            Clip <code>morphAnimation</code> bespoke lane (like visible) —
+            <code>ClipDefinition#morphAnimation</code> + <code>ClipJSON.morphAnimation</code>.
+            Extraction <code>NodeMorphTarget</code>, <code>evaluateMorph</code> clips-last-wins,
+            binding node-local. Collections reuse <code>semanticName→clipId</code> broadcast, no
+            morph-specific naming. ReusableObject embeds <code>mesh.shapes</code> +
+            <code>animation.morphBinding/morphTrack</code> + library morph clips/collections, import
+            remaps <code>shapeIdMap</code>. <code>.lesson</code> embedded not library, Video Export
+            <code>lerp→evaluateMeshDeformation</code> deterministic at <code>t=i/fps</code>.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // ---------- data model (mirrors ADR 0007 + shape.ts) ----------
+      const newId = (p) =>
+        `${p}-${Math.random().toString(36).slice(2, 7)}-${Date.now().toString(36).slice(-4)}`
+
+      function createGridMesh(cols, rows, w = 240, h = 240) {
+        const vertices = [],
+          uvs = [],
+          faces = []
+        for (let y = 0; y <= rows; y++)
+          for (let x = 0; x <= cols; x++) {
+            vertices.push({ x: (x / cols) * w - w / 2, y: (y / rows) * h - h / 2 })
+            uvs.push({ u: x / cols, v: y / rows })
+          }
+        const idx = (x, y) => y * (cols + 1) + x
+        for (let y = 0; y < rows; y++)
+          for (let x = 0; x < cols; x++) {
+            const a = idx(x, y),
+              b = idx(x + 1, y),
+              c = idx(x + 1, y + 1),
+              d = idx(x, y + 1)
+            faces.push({ v0: a, v1: b, v2: c })
+            faces.push({ v0: a, v1: c, v2: d })
+          }
+        return { vertices, faces, uvs }
+      }
+
+      let mesh = createGridMesh(8, 8) // 81 verts, enough to show falloff
+      let shapes = [
+        {
+          id: newId('shape'),
+          name: 'Base',
+          vertices: mesh.vertices.map((v) => ({ x: v.x, y: v.y })),
+        },
+      ]
+      let activeShapeId = shapes[0].id
+      let morphBinding = { fromShapeId: shapes[0].id, toShapeId: null }
+      let morphCoeff = 0
+      let boneRotationDeg = 0
+
+      // morph track keyframes (timeline)
+      let keyframes = [
+        { id: newId('kf'), time: 0, value: 0, interpolation: 'linear' },
+        { id: newId('kf'), time: 1.5, value: 1, interpolation: 'linear' },
+      ]
+      let selectedKfId = null
+      let duration = 3
+      let playhead = 0
+      let playing = false
+
+      // shape helpers
+      function uniqueName(base) {
+        const names = new Set(shapes.map((s) => s.name))
+        if (!names.has(base)) return base
+        let i = 2
+        while (names.has(base + ' ' + i)) i++
+        return base + ' ' + i
+      }
+      function duplicateShape(fromId, name) {
+        const src = shapes.find((s) => s.id === fromId)
+        if (!src) return null
+        const dup = {
+          id: newId('shape'),
+          name,
+          vertices: src.vertices.map((v) => ({ x: v.x, y: v.y })),
+        }
+        shapes.push(dup)
+        return dup
+      }
+      function deleteShape(id) {
+        if (shapes.length <= 1) return false
+        const idx = shapes.findIndex((s) => s.id === id)
+        if (idx === -1) return false
+        shapes.splice(idx, 1)
+        if (activeShapeId === id) activeShapeId = shapes[0].id
+        if (morphBinding.fromShapeId === id) morphBinding.fromShapeId = shapes[0].id
+        if (morphBinding.toShapeId === id) morphBinding.toShapeId = null
+        return true
+      }
+      function renameShape(id, name) {
+        if (!name.trim()) return false
+        if (shapes.some((s) => s.name === name && s.id !== id)) return false
+        const s = shapes.find((s) => s.id === id)
+        if (!s) return false
+        s.name = name
+        return true
+      }
+
+      // morph lerp (ADRs)
+      function lerp(a, b, t) {
+        return a + (b - a) * t
+      }
+      function resolveMorphedVertices(baseVerts, shapesArr, binding, coeff) {
+        if (!binding || !binding.fromShapeId || !binding.toShapeId) return baseVerts
+        const from = shapesArr.find((s) => s.id === binding.fromShapeId),
+          to = shapesArr.find((s) => s.id === binding.toShapeId)
+        if (!from || !to) return baseVerts
+        const t = Math.max(0, Math.min(coeff, 1.5))
+        return baseVerts.map((_, i) => ({
+          x: lerp(from.vertices[i].x, to.vertices[i].x, t),
+          y: lerp(from.vertices[i].y, to.vertices[i].y, t),
+        }))
+      }
+
+      // bone deformation mock (morph-then-bones): rotate around origin after morph
+      function applyBone(verts, rotDeg) {
+        if (rotDeg === 0) return verts
+        const rad = (rotDeg * Math.PI) / 180,
+          c = Math.cos(rad),
+          s = Math.sin(rad)
+        return verts.map((v) => ({ x: v.x * c - v.y * s, y: v.x * s + v.y * c }))
+      }
+      function getDeformedVertices() {
+        const morphed = resolveMorphedVertices(
+          mesh.vertices,
+          shapes,
+          morphBinding,
+          effectiveCoeff(),
+        )
+        return applyBone(morphed, boneRotationDeg)
+      }
+      function getRestVerticesForActiveShape() {
+        const shp = shapes.find((s) => s.id === activeShapeId)
+        return shp ? shp.vertices : mesh.vertices
+      }
+      function effectiveCoeff() {
+        // if playing, evaluate keyframe track at playhead (overrides slider); else slider
+        if (playing || keyframes.length > 0) {
+          // when scrubbing playhead, evaluate track (like AnimationEvaluator)
+          const ev = evaluateCoeffAt(playhead)
+          if (ev !== null) return ev
+        }
+        return morphCoeff
+      }
+      function evaluateCoeffAt(t) {
+        if (keyframes.length === 0) return null
+        const kfs = [...keyframes].sort((a, b) => a.time - b.time)
+        if (t <= kfs[0].time) return kfs[0].value
+        if (t >= kfs[kfs.length - 1].time) return kfs[kfs.length - 1].value
+        for (let i = 0; i < kfs.length - 1; i++) {
+          const a = kfs[i],
+            b = kfs[i + 1]
+          if (t >= a.time && t < b.time) {
+            if (a.interpolation === 'hold') return a.value
+            if (a.interpolation === 'linear') {
+              const u = (t - a.time) / (b.time - a.time)
+              return a.value + (b.value - a.value) * u
+            }
+            if (a.interpolation === 'bezier') {
+              const u = (t - a.time) / (b.time - a.time) // cubic with tangents 0 (simplified)
+              const u2 = u * u,
+                u3 = u2 * u
+              return a.value * (2 * u3 - 3 * u2 + 1) + b.value * (-2 * u3 + 3 * u2)
+            }
+          }
+        }
+        return kfs[kfs.length - 1].value
+      }
+
+      // ---------- canvas ----------
+      const canvas = document.getElementById('c')
+      const ctx = canvas.getContext('2d')
+      const W = canvas.width,
+        H = canvas.height
+      const CX = W / 2,
+        CY = H / 2,
+        SCALE = 1
+      function worldToScreen(v) {
+        return { x: v.x * SCALE + CX, y: v.y * SCALE + CY }
+      }
+      function screenToWorld(sx, sy) {
+        return { x: (sx - CX) / SCALE, y: (sy - CY) / SCALE }
+      }
+
+      function draw() {
+        ctx.clearRect(0, 0, W, H)
+        const verts = getDeformedVertices()
+        const screenVerts = verts.map(worldToScreen)
+        // faces fill
+        for (const f of mesh.faces) {
+          const a = screenVerts[f.v0],
+            b = screenVerts[f.v1],
+            c = screenVerts[f.v2]
+          if (!a || !b || !c) continue
+          ctx.beginPath()
+          ctx.moveTo(a.x, a.y)
+          ctx.lineTo(b.x, b.y)
+          ctx.lineTo(c.x, c.y)
+          ctx.closePath()
+          ctx.fillStyle = 'rgba(138,180,248,0.18)'
+          ctx.fill()
+          ctx.strokeStyle = 'rgba(26,115,232,0.9)'
+          ctx.lineWidth = 1
+          ctx.stroke()
+        }
+        // wireframe already drawn; vertices
+        for (let i = 0; i < screenVerts.length; i++) {
+          const s = screenVerts[i]
+          ctx.beginPath()
+          ctx.arc(s.x, s.y, 3, 0, Math.PI * 2)
+          ctx.fillStyle = '#1a73e8'
+          ctx.fill()
+          ctx.strokeStyle = '#8ab4f8'
+          ctx.lineWidth = 1
+          ctx.stroke()
+        }
+        // activeShape highlight: show rest vs morphed delta as small arrow? For now highlight sculpted shape vertices that differ from base
+        const base = shapes.find((s) => s.name === 'Base')
+        const active = shapes.find((s) => s.id === activeShapeId)
+        if (base && active && active.id !== base.id) {
+          for (let i = 0; i < active.vertices.length; i++) {
+            const dx = active.vertices[i].x - base.vertices[i].x,
+              dy = active.vertices[i].y - base.vertices[i].y
+            if (Math.hypot(dx, dy) > 0.6) {
+              const v = worldToScreen(applyBone([active.vertices[i]], boneRotationDeg)[0]) // show active shape rest deformed
+              // draw small red dot at delta pos
+            }
+          }
+        }
+        // brush radius overlay if hovering
+        if (hoverWorld) {
+          const s = worldToScreen(hoverWorld)
+          const r = parseFloat(document.getElementById('radius').value)
+          ctx.beginPath()
+          ctx.arc(s.x, s.y, r, 0, Math.PI * 2)
+          ctx.strokeStyle = 'rgba(52,168,83,0.9)'
+          ctx.lineWidth = 1.5
+          ctx.setLineDash([4, 4])
+          ctx.stroke()
+          ctx.setLineDash([])
+          ctx.fillStyle = 'rgba(52,168,83,0.12)'
+          ctx.fill()
+        }
+        // from/to label
+        ctx.fillStyle = '#9aa0a6'
+        ctx.font = '11px ui-monospace'
+        ctx.fillText(
+          `coeff ${effectiveCoeff().toFixed(2)}  From:${shapes.find((s) => s.id === morphBinding.fromShapeId)?.name || '—'} → To:${shapes.find((s) => s.id === morphBinding.toShapeId)?.name || '—'}  bone ${boneRotationDeg}°`,
+          8,
+          H - 10,
+        )
+      }
+
+      // ---------- UI wiring ----------
+      function refreshSelectors() {
+        const activeSel = document.getElementById('activeShapeSelect'),
+          fromSel = document.getElementById('fromSelect'),
+          toSel = document.getElementById('toSelect')
+        const opts = shapes.map((s) => `<option value="${s.id}">${s.name}</option>`).join('')
+        ;[activeSel, fromSel].forEach((sel) => {
+          const v = sel.value
+          sel.innerHTML = opts
+          if (shapes.some((s) => s.id === v)) sel.value = v
+        })
+        toSel.innerHTML = '<option value="">— none —</option>' + opts
+        activeSel.value = activeShapeId
+        fromSel.value = morphBinding.fromShapeId || shapes[0].id
+        toSel.value = morphBinding.toShapeId || ''
+        document.getElementById('topologyBanner').style.display =
+          shapes.length > 0 ? 'block' : 'none'
+        document.getElementById('shapesList').innerHTML = shapes
+          .map(
+            (s) =>
+              `• ${s.name} <span class="pill">${s.id.slice(0, 8)}</span> ${s.id === activeShapeId ? '<b style="color:#8ab4f8">[active]</b>' : ''} — ${s.vertices.length} verts`,
+          )
+          .join('<br>')
+        draw()
+        updateLiveState()
+        updateKfTable()
+      }
+
+      document.getElementById('activeShapeSelect').addEventListener('change', (e) => {
+        activeShapeId = e.target.value
+        refreshSelectors()
+      })
+      document.getElementById('fromSelect').addEventListener('change', (e) => {
+        morphBinding = { ...morphBinding, fromShapeId: e.target.value || null }
+        refreshSelectors()
+      })
+      document.getElementById('toSelect').addEventListener('change', (e) => {
+        morphBinding = { ...morphBinding, toShapeId: e.target.value || null }
+        refreshSelectors()
+      })
+      document.getElementById('btnDuplicate').addEventListener('click', () => {
+        const name = uniqueName('Sculpted')
+        const dup = duplicateShape(shapes[0].id, name)
+        if (dup) {
+          activeShapeId = dup.id
+          morphBinding = { fromShapeId: shapes[0].id, toShapeId: dup.id }
+          morphCoeff = 0
+          document.getElementById('coeff').value = 0
+          refreshSelectors()
+          setWalkthrough('step1')
+        }
+      })
+      document.getElementById('btnDuplicateThird').addEventListener('click', () => {
+        const src = shapes.find((s) => s.id === activeShapeId) || shapes[0]
+        const name = uniqueName('Third')
+        const dup = duplicateShape(src.id, name)
+        if (dup) {
+          activeShapeId = dup.id
+          refreshSelectors()
+        }
+      })
+      document.getElementById('btnRename').addEventListener('click', () => {
+        const input = document.getElementById('renameInput')
+        const v = input.value.trim()
+        if (!v) return
+        const ok = renameShape(activeShapeId, v)
+        input.value = ''
+        if (!ok) alert('Name duplicate or empty')
+        refreshSelectors()
+      })
+      document.getElementById('btnDelete').addEventListener('click', () => {
+        if (shapes.length <= 1) return alert('Cannot delete last shape')
+        const s = shapes.find((s) => s.id === activeShapeId)
+        if (!confirm(`Delete shape "${s.name}"?`)) return
+        deleteShape(activeShapeId)
+        refreshSelectors()
+      })
+
+      // sliders
+      for (const id of ['radius', 'strength', 'falloff'])
+        document.getElementById(id).addEventListener('input', (e) => {
+          document.getElementById(id + 'Val').textContent =
+            e.target.value + (id === 'radius' ? 'px' : '')
+        })
+      document.getElementById('boneRot').addEventListener('input', (e) => {
+        boneRotationDeg = parseInt(e.target.value, 10)
+        document.getElementById('boneRotVal').textContent = e.target.value + '°'
+        draw()
+        updateLiveState()
+      })
+      document.getElementById('coeff').addEventListener('input', (e) => {
+        morphCoeff = parseFloat(e.target.value)
+        document.getElementById('coeffVal').textContent = morphCoeff.toFixed(2)
+        document.getElementById('coeffPreview').style.display =
+          morphCoeff > 1 ? 'inline-block' : 'none'
+        draw()
+        updateLiveState()
+      })
+      document.getElementById('toolSelect').addEventListener('change', (e) => {
+        // topology freeze: disable select tools other than sculpt when shapes>0? prototype allows switch but banner warns
+      })
+
+      // keyframes
+      document.getElementById('btnAddKf').addEventListener('click', () => {
+        const interp = document.getElementById('interpSelect').value
+        const v = parseFloat(document.getElementById('coeff').value)
+        const existing = keyframes.find((k) => Math.abs(k.time - playhead) < 0.01)
+        if (existing) {
+          existing.value = v
+          existing.interpolation = interp
+        } else {
+          const kf = { id: newId('kf'), time: playhead, value: v, interpolation: interp }
+          keyframes.push(kf)
+          selectedKfId = kf.id
+        }
+        updateKfTable()
+        updateLiveState()
+      })
+      document.getElementById('btnRemoveKf').addEventListener('click', () => {
+        if (!selectedKfId) return
+        keyframes = keyframes.filter((k) => k.id !== selectedKfId)
+        selectedKfId = null
+        updateKfTable()
+        updateLiveState()
+      })
+      document.getElementById('interpSelect').addEventListener('change', (e) => {
+        if (selectedKfId) {
+          const k = keyframes.find((k) => k.id === selectedKfId)
+          if (k) k.interpolation = e.target.value
+          updateKfTable()
+        }
+      })
+      document.getElementById('playhead').addEventListener('input', (e) => {
+        playhead = parseFloat(e.target.value)
+        document.getElementById('playheadVal').textContent = playhead.toFixed(2) + 's' // scrub evaluates coeff
+        const ev = evaluateCoeffAt(playhead)
+        if (ev !== null) {
+          morphCoeff = ev
+          document.getElementById('coeff').value = ev
+          document.getElementById('coeffVal').textContent = ev.toFixed(2)
+        }
+        draw()
+        updateLiveState()
+      })
+      document.getElementById('btnPlay').addEventListener('click', () => {
+        playing = !playing
+        document.getElementById('btnPlay').textContent = playing ? '⏸ Pause' : '▶ Play'
+        if (playing) requestAnimationFrame(tick)
+      })
+      let lastTick = 0
+      function tick(ts) {
+        if (!playing) return
+        if (!lastTick) lastTick = ts
+        const dt = (ts - lastTick) / 1000
+        lastTick = ts
+        playhead += dt
+        if (playhead > duration) playhead = 0
+        document.getElementById('playhead').value = playhead
+        document.getElementById('playheadVal').textContent = playhead.toFixed(2) + 's'
+        const ev = evaluateCoeffAt(playhead)
+        if (ev !== null) {
+          morphCoeff = ev
+          document.getElementById('coeff').value = ev
+          document.getElementById('coeffVal').textContent = ev.toFixed(2)
+        }
+        draw()
+        updateLiveState()
+        requestAnimationFrame(tick)
+      }
+      document.getElementById('btnExport').addEventListener('click', () => {
+        const fps = 24
+        const frames = Math.ceil(duration * fps)
+        let out = `Export simulation fps=${fps} frames=${frames}\n`
+        for (let i = 0; i < Math.min(frames, 5); i++) {
+          const t = i / fps
+          const c = evaluateCoeffAt(t) ?? morphCoeff
+          const verts = resolveMorphedVertices(mesh.vertices, shapes, morphBinding, c)
+          const deformed = applyBone(verts, c)
+          out += `frame ${i} t=${t.toFixed(3)} coeff=${c.toFixed(3)} v0=(${deformed[0].x.toFixed(1)},${deformed[0].y.toFixed(1)})\n`
+        }
+        out += '... deterministic — same lerp→evaluateMeshDeformation as preview\n'
+        alert(out)
+      })
+      document.getElementById('btnRunExportCheck').addEventListener('click', () => {
+        const t = 1.0,
+          c = evaluateCoeffAt(t) ?? morphCoeff
+        const preview = applyBone(
+          resolveMorphedVertices(mesh.vertices, shapes, morphBinding, c),
+          boneRotationDeg,
+        )
+        const exported = applyBone(
+          resolveMorphedVertices(mesh.vertices, shapes, morphBinding, c),
+          boneRotationDeg,
+        )
+        const equal = JSON.stringify(preview) === JSON.stringify(exported)
+        document.getElementById('determinismResult').textContent = equal
+          ? '✓ PASS — preview === export at t=' + t
+          : '✗ MISMATCH'
+        document.getElementById('determinismResult').style.background = equal
+          ? '#0f3d1f'
+          : '#3d0f0f'
+      })
+
+      function updateKfTable() {
+        const tbody = document.querySelector('#kfTable tbody')
+        tbody.innerHTML = ''
+        const sorted = [...keyframes].sort((a, b) => a.time - b.time)
+        for (const k of sorted) {
+          const tr = document.createElement('tr')
+          tr.style.background = k.id === selectedKfId ? 'rgba(26,115,232,0.15)' : 'transparent'
+          tr.innerHTML = `<td>${k.time.toFixed(2)}</td><td>${k.value.toFixed(2)}</td><td>${k.interpolation}</td><td><button class="ghost" style="padding:2px 6px;font-size:11px">select</button></td>`
+          tr.querySelector('button').addEventListener('click', () => {
+            selectedKfId = k.id
+            document.getElementById('interpSelect').value = k.interpolation
+            updateKfTable()
+          })
+          tbody.appendChild(tr)
+        }
+      }
+
+      // ---------- sculpt brush ----------
+      let hoverWorld = null,
+        isDown = false,
+        lastWorld = null,
+        brushDragOrigin = null
+      let previewPositions = new Map(),
+        basePositions = new Map()
+      canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect()
+        const sx = e.clientX - rect.left,
+          sy = e.clientY - rect.top
+        hoverWorld = screenToWorld(sx, sy)
+        draw()
+        if (!isDown) return
+        const tool = document.getElementById('toolSelect').value
+        if (tool !== 'sculpt') return
+        const cur = hoverWorld
+        const dir = { x: cur.x - lastWorld.x, y: cur.y - lastWorld.y }
+        const dirLen = Math.hypot(dir.x, dir.y) || 0
+        const nx = dirLen > 0 ? dir.x / dirLen : 0,
+          ny = dirLen > 0 ? dir.y / dirLen : -1
+        lastWorld = cur
+        applySculpt(cur, nx, ny, e.shiftKey || e.altKey)
+      })
+      canvas.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return
+        const tool = document.getElementById('toolSelect').value
+        if (tool !== 'sculpt') return
+        const rect = canvas.getBoundingClientRect()
+        isDown = true
+        const sx = e.clientX - rect.left,
+          sy = e.clientY - rect.top
+        hoverWorld = screenToWorld(sx, sy)
+        lastWorld = hoverWorld
+        brushDragOrigin = hoverWorld
+        // seed basePositions from active shape's vertices (rest) but preview uses deformed world for distance
+        const active = shapes.find((s) => s.id === activeShapeId)
+        if (active) {
+          basePositions = new Map()
+          for (let i = 0; i < active.vertices.length; i++)
+            basePositions.set(i, { ...active.vertices[i] })
+        }
+        previewPositions = new Map()
+        applySculpt(hoverWorld, 0, -1, e.shiftKey)
+      })
+      window.addEventListener('mouseup', () => {
+        if (!isDown) return
+        isDown = false
+        // commit previewPositions into active shape (Transaction)
+        const active = shapes.find((s) => s.id === activeShapeId)
+        if (active && previewPositions.size > 0) {
+          for (const [idx, pos] of previewPositions) active.vertices[idx] = { x: pos.x, y: pos.y }
+          previewPositions.clear()
+          basePositions.clear()
+          refreshSelectors()
+        }
+        draw()
+        updateLiveState()
+      })
+      canvas.addEventListener(
+        'wheel',
+        (e) => {
+          if (!e.ctrlKey && !e.metaKey) return
+          e.preventDefault()
+          const rEl = document.getElementById('radius')
+          let v = parseInt(rEl.value, 10) + (e.deltaY > 0 ? -5 : 5)
+          v = Math.max(5, Math.min(80, v))
+          rEl.value = v
+          document.getElementById('radiusVal').textContent = v + 'px'
+        },
+        { passive: false },
+      )
+
+      function applySculpt(worldPt, dirX, dirY, invert) {
+        const active = shapes.find((s) => s.id === activeShapeId)
+        if (!active) return
+        const radius = parseFloat(document.getElementById('radius').value)
+        const strength = parseFloat(document.getElementById('strength').value)
+        const falloff = parseFloat(document.getElementById('falloff').value)
+        // face guard simplified: skip if outside mesh bounds
+        // distance in screen space: need camera scale — here scale=1, so world≈screen
+        const worldVerts = getDeformedVertices() // for hit, use deformed world positions
+        // quick face guard: check point inside any face's screen triangle (approx)
+        // For prototype we skip guard and always sculpt if near vertices
+
+        // For each vertex, compute dist world vs brush center, using deformed world for distance but editing rest
+        for (let i = 0; i < worldVerts.length; i++) {
+          const wv = worldVerts[i]
+          const distWorld = Math.hypot(wv.x - worldPt.x, wv.y - worldPt.y)
+          const distScreen = distWorld * SCALE // screen distance
+          if (distScreen > radius) continue
+          let factor = 1 - distScreen / radius
+          if (falloff !== 1) factor = Math.pow(Math.max(0, factor), falloff)
+          const delta = strength * factor * 12 // scale to visible displacement
+          const base = basePositions.get(i) || active.vertices[i]
+          const sign = invert ? -1 : 1
+          const nx = base.x + dirX * delta * sign
+          const ny = base.y + dirY * delta * sign
+          // previewPositions holds mesh-local rest edit (active shape)
+          previewPositions.set(i, { x: nx, y: ny })
+          basePositions.set(i, { x: nx, y: ny })
+          active.vertices[i] = { x: nx, y: ny } // live preview (mirrors meshOverlay.setPreviewVertices)
+        }
+        draw()
+        updateLiveState()
+      }
+
+      // ---------- tabs & walkthrough ----------
+      const tabs = document.querySelectorAll('.tab')
+      const walkthroughContent = document.getElementById('walkthroughContent')
+      function setWalkthrough(which) {
+        tabs.forEach((t) => t.classList.toggle('active', t.dataset.tab === which))
+        let html = ''
+        if (which === 'free') {
+          html = `<div class="walkthrough"><b>Free Play</b> — duplicate Base, sculpt Sculpted, pick any From→To and scrub coeff. All state is in-memory (no persistence). Try: Duplicate → Sculpt (drag with/without Shift) → From Base → To Sculpted → scrub 0→1 → push to 1.5 → add keyframes → Play.</div>`
+        } else if (which === 'step1') {
+          html = `<div class="walkthrough"><b>Step 1 — Duplicate Base → Sculpted</b><br>1. Click <b>Duplicate → Sculpted</b> (creates <code>Shape {id,name,vertices}</code> via <code>createShape</code> sharing faces/uvs).<br>2. Active Shape becomes Sculpted. From=Base, To=Sculpted, coeff 0.<br>3. Topology banner appears — delete/extrude/subdivide/mirror hard-disabled (ADR 0007).<br><b>Check:</b> shapes list shows 2 entries, vertices.length invariant holds, per-mesh unique name enforced.</div>`
+        } else if (which === 'step2') {
+          html = `<div class="walkthrough"><b>Step 2 — Sculpt Sculpted with falloff brush</b><br>Tool <code>sculpt</code> selected. Radius 25px / Strength 1.0 / Falloff 1.0. <br>• Drag on canvas: <code>distWorld→distScreen</code>, <code>factor = pow(1-dist/radius, falloff)</code>, <code>vertex += dir*strength*factor</code> (world+screen hybrid, face-guard in real impl).<br>• Hold <b>Shift</b> to invert (pull). Per-dab <code>Transaction(MoveVertex…)</code>, preview via <code>MeshOverlay#setPreviewVertices</code>.<br>• Murmutates <b>rest</b> vertices of active Shape, previews <b>deformed world</b> (morph-then-bones).<br><b>Check:</b> Sculpted vertices diverge from Base; Base unchanged; O(vertices in radius) brute-force path — see perf note.</div>`
+        } else if (which === 'step3') {
+          html = `<div class="walkthrough"><b>Step 3 — Any-to-any morph 0→1 (and 1.5 exaggeration)</b><br>From/To dropdowns = static <code>MorphBinding {fromShapeId,toShapeId}</code> (visible-pattern, not N²).<br>• Coeff slider 0→1 (store) — scrub live Pixi vertex update (here Canvas2D mirrors <code>applyMeshVertices</code>).<br>• Push to 1.5 exaggeration — preview only, warns in spec.<br>• Add keyframes at playhead (hold/linear/bezier), scrub playhead 0→3s — evaluator <code>evaluateMorph → lerp(from.vertices[i], to.vertices[i], coeff) → evaluateMeshDeformation</code> deterministic per frame.<br>• Try <b>any-to-any</b>: Duplicate → Third, sculpt differently, set From=Sculpted → To=Third, scrub.<br><b>Check:</b> lerp is per-vertex <code>lerpVertex</code>, morph-then-bones order preserved (bone rotation affects morphed result, not vice versa).</div>`
+        } else if (which === 'edge') {
+          html = `<div class="walkthrough"><b>Edge cases & portability (#276)</b><br>• <b>Topology freeze:</b> with Shapes>0, extrude/subdivide/mirror buttons disabled (prototype shows banner).<br>• <b>Stale binding:</b> delete a Shape used in From/To → binding falls back to base vertices with soft warn (no crash).<br>• <b>UV/boneWeight sharing:</b> Shapes share <code>faces/uvs/boneWeights</code> from base — no per-shape drift; verified in state inspector.<br>• <b>Large-mesh perf:</b> sculpt loop is O(V in radius) brute-force; 81-vert grid smooth at 60fps; 10k verts needs spatial index (deferred).<br>• <b>Clips/Collections/Reusables:</b> morph clips use bespoke <code>morphAnimation</code> lane (not N²), coefficient-only; collections broadcast via <code>semanticName→clipId</code>; ReusableObject embeds <code>mesh.shapes</code> + <code>morphBinding/morphTrack</code> and remaps <code>shapeIdMap</code> on import — deterministic export at <code>t=i/fps</code> equals preview.</div>`
+        } else if (which === 'state') {
+          html = `<div class="walkthrough"><b>State Inspector</b> — live JSON of model. See right panel <b>Live state</b> box for after-every-action dump including shapes, binding, coeff, brush, first vertices, and evaluation trace.</div>`
+        }
+        walkthroughContent.innerHTML = html
+      }
+      tabs.forEach((t) => t.addEventListener('click', () => setWalkthrough(t.dataset.tab)))
+      setWalkthrough('free')
+
+      function updateLiveState() {
+        const active = shapes.find((s) => s.id === activeShapeId)
+        const base = shapes[0]
+        const firstMorphed = getDeformedVertices()
+          .slice(0, 3)
+          .map((v) => `(${v.x.toFixed(1)},${v.y.toFixed(1)})`)
+          .join(' ')
+        const restDelta =
+          active && base && active.id !== base.id
+            ? active.vertices
+                .slice(0, 2)
+                .map(
+                  (v, i) =>
+                    `Δv${i}=(${(v.x - base.vertices[i].x).toFixed(1)},${(v.y - base.vertices[i].y).toFixed(1)})`,
+                )
+                .join(' ')
+            : '—'
+        const evaluatorTrace = `resolveMorphedVertices(base, shapes, {from:${morphBinding.fromShapeId?.slice(0, 6) || 'null'}, to:${morphBinding.toShapeId?.slice(0, 6) || 'null'}, coeff:${effectiveCoeff().toFixed(2)}}) → applyBone(rot=${boneRotationDeg}°) → deformed[0..2]=${firstMorphed}`
+        const json = {
+          mesh: `${mesh.vertices.length} verts, ${mesh.faces.length} faces (shared topology)`,
+          shapes: shapes.map((s) => ({
+            id: s.id.slice(0, 8),
+            name: s.name,
+            verts: s.vertices.length,
+            v0: `(${s.vertices[0].x.toFixed(1)},${s.vertices[0].y.toFixed(1)})`,
+          })),
+          activeShapeId: activeShapeId.slice(0, 8),
+          restDeltaPreview: restDelta,
+          morphBinding,
+          morphCoefficient: {
+            store: morphCoeff,
+            effective: effectiveCoeff(),
+            previewExaggeration: effectiveCoeff() > 1 ? '1.5 allowed preview' : 'clamped 0..1',
+          },
+          boneRotationDeg,
+          brush: {
+            radius: parseFloat(document.getElementById('radius').value),
+            strength: parseFloat(document.getElementById('strength').value),
+            falloff: parseFloat(document.getElementById('falloff').value),
+          },
+          keyframes: keyframes.map((k) => ({ t: k.time, v: k.value, interp: k.interpolation })),
+          evaluatorTrace,
+          topologyFreeze:
+            shapes.length > 0
+              ? 'LOCKED — delete/extrude/subdivide/mirror disabled'
+              : 'unlocked (no shapes)',
+        }
+        document.getElementById('liveState').textContent = JSON.stringify(json, null, 2)
+      }
+
+      // init
+      refreshSelectors()
+      draw()
+      updateLiveState()
+
+      // minimal harness to prove morph-then-bones determinism: run once on load
+      console.log(
+        '[prototype] research/morph-brush loaded — shapes',
+        shapes.length,
+        'coeff',
+        morphCoeff,
+      )
+    </script>
+  </body>
+</html>

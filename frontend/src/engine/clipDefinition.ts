@@ -203,6 +203,7 @@ export class ClipDefinition {
   readonly #materialChannelAnimations = new Map<string, ClipChannelAnimation>()
   readonly #visibleAnimation = new ClipChannelAnimation()
   readonly #circleAnimations = new Map<CircleAnimationProperty, ClipChannelAnimation>()
+  readonly #morphAnimation = new ClipChannelAnimation()
 
   constructor(
     id: string,
@@ -339,12 +340,24 @@ export class ClipDefinition {
     return [...this.#circleAnimations.keys()]
   }
 
+  getMorphKeyframes(): readonly Keyframe[] {
+    return this.#morphAnimation.keyframes()
+  }
+
+  hasMorphTrack(): boolean {
+    return this.#morphAnimation.length > 0
+  }
+
   visibleAnimation(): ClipChannelAnimation {
     return this.#visibleAnimation
   }
 
   circleAnimation(property: CircleAnimationProperty): ClipChannelAnimation | undefined {
     return this.#circleAnimations.get(property)
+  }
+
+  morphAnimation(): ClipChannelAnimation {
+    return this.#morphAnimation
   }
 
   getChannelKeyframe(property: ClipChannel, keyframeId: string): Keyframe | undefined {
@@ -361,6 +374,10 @@ export class ClipDefinition {
 
   getCircleKeyframe(property: CircleAnimationProperty, keyframeId: string): Keyframe | undefined {
     return this.#circleAnimations.get(property)?.getKeyframe(keyframeId)
+  }
+
+  getMorphKeyframe(keyframeId: string): Keyframe | undefined {
+    return this.#morphAnimation.getKeyframe(keyframeId)
   }
 
   addChannelKeyframe(property: ClipChannel, keyframe: Keyframe): void {
@@ -394,6 +411,10 @@ export class ClipDefinition {
     anim.add(keyframe)
   }
 
+  addMorphKeyframe(keyframe: Keyframe): void {
+    this.#morphAnimation.add(keyframe)
+  }
+
   removeChannelKeyframe(property: ClipChannel, keyframeId: string): Keyframe | undefined {
     const anim = this.#channelAnimations.get(property)
     if (!anim) return undefined
@@ -421,7 +442,10 @@ export class ClipDefinition {
     return this.#visibleAnimation.remove(keyframeId)
   }
 
-  removeCircleKeyframe(property: CircleAnimationProperty, keyframeId: string): Keyframe | undefined {
+  removeCircleKeyframe(
+    property: CircleAnimationProperty,
+    keyframeId: string,
+  ): Keyframe | undefined {
     const anim = this.#circleAnimations.get(property)
     if (!anim) return undefined
     const removed = anim.remove(keyframeId)
@@ -429,6 +453,10 @@ export class ClipDefinition {
       this.#circleAnimations.delete(property)
     }
     return removed
+  }
+
+  removeMorphKeyframe(keyframeId: string): Keyframe | undefined {
+    return this.#morphAnimation.remove(keyframeId)
   }
 
   removeChannel(property: ClipChannel): void {
@@ -499,7 +527,7 @@ export class ClipDefinition {
     for (const [param, anim] of this.#materialChannelAnimations) {
       copy.#materialChannelAnimations.set(param, anim.copy())
     }
-    // Copy visible and circle animations
+    // Copy visible, circle and morph animations
     for (const kf of this.#visibleAnimation.keyframes()) {
       copy.#visibleAnimation.add(
         new KeyframeModel(
@@ -514,6 +542,18 @@ export class ClipDefinition {
     }
     for (const [prop, anim] of this.#circleAnimations) {
       copy.#circleAnimations.set(prop, anim.copy())
+    }
+    for (const kf of this.#morphAnimation.keyframes()) {
+      copy.#morphAnimation.add(
+        new KeyframeModel(
+          kf.id,
+          kf.time,
+          kf.value,
+          kf.interpolation,
+          { time: kf.tangentIn.time, value: kf.tangentIn.value },
+          { time: kf.tangentOut.time, value: kf.tangentOut.value },
+        ),
+      )
     }
     return copy
   }
@@ -551,6 +591,9 @@ export class ClipDefinition {
       ;(json as Record<string, unknown>).circleChannelAnimations = Object.fromEntries(
         [...this.#circleAnimations.entries()].map(([prop, anim]) => [prop, anim.toJSON()]),
       )
+    }
+    if (this.#morphAnimation.length > 0) {
+      ;(json as Record<string, unknown>).morphAnimation = this.#morphAnimation.toJSON()
     }
     return json as ClipJSON
   }
@@ -656,6 +699,75 @@ export class ClipDefinition {
             ClipChannelAnimation.fromJSON(animJson),
           )
         }
+      }
+    }
+    const morphAnim = (json as Record<string, unknown>).morphAnimation
+    if (isRecord(morphAnim) && morphAnim !== null) {
+      const anim = ClipChannelAnimation.fromJSONWithKind(morphAnim, (value, id) => {
+        // Support both legacy scalar 0..1 and new name-based object
+        if (typeof value === 'number') {
+          if (!Number.isFinite(value) || value < 0 || value > 1) {
+            throw new Error(`Clip morph keyframe "${id}" value must be a number between 0 and 1`)
+          }
+          return { fromShapeName: null, toShapeName: null, coefficient: value }
+        }
+        if (typeof value === 'object' && value !== null) {
+          const rec = value as Record<string, unknown>
+          // New clip format: name-based
+          if ('fromShapeName' in rec || 'toShapeName' in rec || 'coefficient' in rec) {
+            const fromShapeName = rec.fromShapeName
+            const toShapeName = rec.toShapeName
+            const coeff = rec.coefficient
+            if (fromShapeName !== null && typeof fromShapeName !== 'string') {
+              throw new Error(`Clip morph keyframe "${id}" fromShapeName must be string or null`)
+            }
+            if (toShapeName !== null && typeof toShapeName !== 'string') {
+              throw new Error(`Clip morph keyframe "${id}" toShapeName must be string or null`)
+            }
+            if (typeof coeff !== 'number' || !Number.isFinite(coeff) || coeff < 0 || coeff > 1) {
+              throw new Error(`Clip morph keyframe "${id}" coefficient must be between 0 and 1`)
+            }
+            return {
+              fromShapeName: fromShapeName as string | null,
+              toShapeName: toShapeName as string | null,
+              coefficient: coeff as number,
+            }
+          }
+          // legacy id-based object (from old per-keyframe pair using ids) — treat names as ids fallback
+          if ('fromShapeId' in rec || 'toShapeId' in rec) {
+            const fromId = (rec.fromShapeId as string | null) ?? null
+            const toId = (rec.toShapeId as string | null) ?? null
+            const coeff = rec.coefficient as number
+            if (fromId !== null && typeof fromId !== 'string') {
+              throw new Error(`Clip morph keyframe "${id}" fromShapeId must be string or null`)
+            }
+            if (toId !== null && typeof toId !== 'string') {
+              throw new Error(`Clip morph keyframe "${id}" toShapeId must be string or null`)
+            }
+            if (typeof coeff !== 'number' || !Number.isFinite(coeff) || coeff < 0 || coeff > 1) {
+              throw new Error(`Clip morph keyframe "${id}" coefficient must be between 0 and 1`)
+            }
+            // Map legacy ids to names by using them as names (best-effort)
+            return {
+              fromShapeName: fromId,
+              toShapeName: toId,
+              coefficient: coeff,
+            }
+          }
+        }
+        throw new Error(`Clip morph keyframe "${id}" value must be number or morph clip object`)
+      })
+      for (const kf of anim.keyframes()) {
+        clip.#morphAnimation.add(
+          new KeyframeModel(
+            kf.id,
+            kf.time,
+            kf.value,
+            kf.interpolation,
+            { time: kf.tangentIn.time, value: kf.tangentIn.value },
+            { time: kf.tangentOut.time, value: kf.tangentOut.value },
+          ),
+        )
       }
     }
     return clip

@@ -14,6 +14,7 @@ import {
 } from '../../engine/commands'
 import { dispatchKeyframeCommands } from '../../engine/keyframeEdit'
 import { NumericField } from './inspectorFields'
+import { useEngine } from '../../app/useEngine'
 
 function tangentLabel(kind: 'in' | 'out'): string {
   return kind === 'in' ? 'Tangent In' : 'Tangent Out'
@@ -58,6 +59,7 @@ export interface KeyframeInspectorProps {
   readonly nodeId?: string
   readonly property?: string
   readonly parameter?: string
+  readonly morphNodeId?: string
   readonly clipTarget?: { clipId: string; channel: AnimationProperty }
   readonly keyframe: Keyframe
   readonly playing: boolean
@@ -69,21 +71,48 @@ export function KeyframeInspector({
   nodeId,
   property,
   parameter,
+  morphNodeId,
   clipTarget,
   keyframe,
   playing,
   notify,
 }: KeyframeInspectorProps) {
   const isClip = clipTarget !== undefined
+  const isMorph = morphNodeId !== undefined
+  const { engine: inspectorEngine } = useEngine()
+  let morphShapes: readonly import('../../engine/shape').Shape[] = []
+  let morphValue: import('../../engine/shape').MorphKeyframeValue | null = null
+  if (isMorph && morphNodeId) {
+    try {
+      morphShapes = inspectorEngine.getShapes(morphNodeId)
+      const v = keyframe.value as unknown
+      if (typeof v === 'object' && v !== null && 'coefficient' in (v as Record<string, unknown>)) {
+        const r = v as Record<string, unknown>
+        morphValue = {
+          fromShapeId: (r.fromShapeId as string | null) ?? null,
+          toShapeId: (r.toShapeId as string | null) ?? null,
+          coefficient: r.coefficient as number,
+        }
+      } else if (typeof v === 'number') {
+        morphValue = { fromShapeId: null, toShapeId: null, coefficient: v as number }
+      }
+    } catch {
+      morphShapes = []
+      morphValue = null
+    }
+  }
   const target = useMemo(() => {
     if (isClip && clipTarget) {
       return { kind: 'clip' as const, clipId: clipTarget.clipId, channel: clipTarget.channel }
+    }
+    if (isMorph && morphNodeId) {
+      return { kind: 'morph' as const, nodeId: morphNodeId }
     }
     if (parameter) {
       return { kind: 'node' as const, nodeId: nodeId!, parameter }
     }
     return { kind: 'node' as const, nodeId: nodeId!, property: property as 'positionX' }
-  }, [nodeId, property, parameter, clipTarget, isClip])
+  }, [nodeId, property, parameter, morphNodeId, clipTarget, isClip, isMorph])
 
   const handleInterpolationChange = useCallback(
     (newInterpolation: InterpolationType) => {
@@ -103,7 +132,8 @@ export function KeyframeInspector({
           new SetKeyframeInterpolationCommand({
             target: target as
               | import('../../engine/keyframeTarget').NodePropertyTarget
-              | import('../../engine/keyframeTarget').NodeParameterTarget,
+              | import('../../engine/keyframeTarget').NodeParameterTarget
+              | import('../../engine/keyframeTarget').NodeMorphTarget,
             keyframeId: keyframe.id,
             interpolation: newInterpolation,
           }),
@@ -145,14 +175,16 @@ export function KeyframeInspector({
           new SetKeyframeInterpolationCommand({
             target: target as
               | import('../../engine/keyframeTarget').NodePropertyTarget
-              | import('../../engine/keyframeTarget').NodeParameterTarget,
+              | import('../../engine/keyframeTarget').NodeParameterTarget
+              | import('../../engine/keyframeTarget').NodeMorphTarget,
             keyframeId: keyframe.id,
             interpolation: 'bezier',
           }),
           new SetKeyframeTangentsCommand({
             target: target as
               | import('../../engine/keyframeTarget').NodePropertyTarget
-              | import('../../engine/keyframeTarget').NodeParameterTarget,
+              | import('../../engine/keyframeTarget').NodeParameterTarget
+              | import('../../engine/keyframeTarget').NodeMorphTarget,
             keyframeId: keyframe.id,
             tangentIn: { ...preset.tangentIn },
             tangentOut: { ...preset.tangentOut },
@@ -194,7 +226,8 @@ export function KeyframeInspector({
           new SetKeyframeTangentsCommand({
             target: target as
               | import('../../engine/keyframeTarget').NodePropertyTarget
-              | import('../../engine/keyframeTarget').NodeParameterTarget,
+              | import('../../engine/keyframeTarget').NodeParameterTarget
+              | import('../../engine/keyframeTarget').NodeMorphTarget,
             keyframeId: keyframe.id,
             tangentIn,
             tangentOut,
@@ -236,12 +269,29 @@ export function KeyframeInspector({
         if (!result.ok) {
           notify(result.error.message)
         }
+      } else if (isMorph && morphValue) {
+        const next: import('../../engine/shape').MorphKeyframeValue = {
+          fromShapeId: morphValue.fromShapeId,
+          toShapeId: morphValue.toShapeId,
+          coefficient: Math.max(0, Math.min(1, num)),
+        }
+        const result = dispatch(
+          new SetKeyframeValueCommand({
+            target: target as import('../../engine/keyframeTarget').NodeMorphTarget,
+            keyframeId: keyframe.id,
+            newValue: next as unknown as import('../../engine/keyframe').KeyframeValue,
+          }),
+        )
+        if (!result.ok) {
+          notify(result.error.message)
+        }
       } else {
         const result = dispatch(
           new SetKeyframeValueCommand({
             target: target as
               | import('../../engine/keyframeTarget').NodePropertyTarget
-              | import('../../engine/keyframeTarget').NodeParameterTarget,
+              | import('../../engine/keyframeTarget').NodeParameterTarget
+              | import('../../engine/keyframeTarget').NodeMorphTarget,
             keyframeId: keyframe.id,
             newValue: num,
           }),
@@ -251,22 +301,112 @@ export function KeyframeInspector({
         }
       }
     },
-    [dispatch, target, keyframe.id, notify, isClip, clipTarget],
+    // morphValue is a fresh object each render — depend on its primitive fields to satisfy react-compiler
+    [dispatch, target, keyframe.id, notify, isClip, clipTarget, isMorph, morphValue?.fromShapeId, morphValue?.toShapeId, morphValue?.coefficient],
+  )
+
+  const handleMorphFromChange = useCallback(
+    (newFrom: string | null) => {
+      if (!isMorph || !morphValue) return
+      const next: import('../../engine/shape').MorphKeyframeValue = {
+        fromShapeId: newFrom,
+        toShapeId: morphValue.toShapeId,
+        coefficient: morphValue.coefficient,
+      }
+      const result = dispatch(
+        new SetKeyframeValueCommand({
+          target: { kind: 'morph', nodeId: morphNodeId! },
+          keyframeId: keyframe.id,
+          newValue: next as unknown as import('../../engine/keyframe').KeyframeValue,
+        }),
+      )
+      if (!result.ok) notify(result.error.message)
+    },
+    [dispatch, morphNodeId, keyframe.id, morphValue?.toShapeId, morphValue?.coefficient, notify, isMorph],
+  )
+
+  const handleMorphToChange = useCallback(
+    (newTo: string | null) => {
+      if (!isMorph || !morphValue) return
+      const next: import('../../engine/shape').MorphKeyframeValue = {
+        fromShapeId: morphValue.fromShapeId,
+        toShapeId: newTo,
+        coefficient: morphValue.coefficient,
+      }
+      const result = dispatch(
+        new SetKeyframeValueCommand({
+          target: { kind: 'morph', nodeId: morphNodeId! },
+          keyframeId: keyframe.id,
+          newValue: next as unknown as import('../../engine/keyframe').KeyframeValue,
+        }),
+      )
+      if (!result.ok) notify(result.error.message)
+    },
+    [dispatch, morphNodeId, keyframe.id, morphValue?.fromShapeId, morphValue?.coefficient, notify, isMorph],
   )
 
   return (
     <section className="inspector-section">
       <h3 className="inspector-section__title">Keyframe</h3>
-      <div className="inspector-field">
-        <NumericField
-          label="Value"
-          value={typeof keyframe.value === 'number' ? keyframe.value : null}
-          step={0.1}
-          disabled={playing}
-          onCommit={handleValueCommit}
-          onAdjust={() => {}}
-        />
-      </div>
+      {isMorph && morphValue ? (
+        <>
+          <div className="inspector-field">
+            <label className="inspector-field__label">From Shape</label>
+            <select
+              className="inspector-field__input inspector-field__select"
+              aria-label="Morph From Shape"
+              disabled={playing}
+              value={morphValue.fromShapeId ?? ''}
+              onChange={(e) => handleMorphFromChange(e.target.value || null)}
+            >
+              <option value="">— None —</option>
+              {morphShapes.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="inspector-field">
+            <label className="inspector-field__label">To Shape</label>
+            <select
+              className="inspector-field__input inspector-field__select"
+              aria-label="Morph To Shape"
+              disabled={playing}
+              value={morphValue.toShapeId ?? ''}
+              onChange={(e) => handleMorphToChange(e.target.value || null)}
+            >
+              <option value="">— None —</option>
+              {morphShapes.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="inspector-field">
+            <NumericField
+              label="Coefficient"
+              value={morphValue.coefficient}
+              step={0.01}
+              disabled={playing}
+              onCommit={handleValueCommit}
+              onAdjust={() => {}}
+            />
+          </div>
+        </>
+      ) : (
+        <div className="inspector-field">
+          <NumericField
+            label="Value"
+            value={typeof keyframe.value === 'number' ? keyframe.value : null}
+            step={0.1}
+            disabled={playing}
+            onCommit={handleValueCommit}
+            onAdjust={() => {}}
+          />
+        </div>
+      )}
       <div className="inspector-field">
         <label className="inspector-field__label" htmlFor="interpolation-picker">
           Interpolation

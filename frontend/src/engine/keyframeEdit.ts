@@ -7,7 +7,7 @@ import { SetKeyframeValueCommand } from './commands/setKeyframeValueCommand'
 import { OverrideMaterialParameterCommand } from './commands/overrideMaterialParameterCommand'
 import { TransactionCommand } from './commands/transactionCommand'
 import type { KeyframeTarget } from './keyframeTarget'
-import { isParameterTarget, isPropertyTarget } from './keyframeTarget'
+import { isMorphTarget, isParameterTarget, isPropertyTarget } from './keyframeTarget'
 import { uniformValuesEqual } from './materialResolution'
 import type { KeyframeValue } from './keyframe'
 
@@ -70,7 +70,10 @@ export function autoKeyCommands(
     const keyframes = targetKeyframes(engine, edit.target)
     const existing = keyframeAtTime(keyframes, edit.time)
     if (existing) {
-      if (!uniformValuesEqual(existing.value, edit.value)) {
+      const equal = isMorphTarget(edit.target)
+        ? JSON.stringify(existing.value) === JSON.stringify(edit.value)
+        : uniformValuesEqual(existing.value as unknown as import('./materialInstance').MaterialOverrideValue, edit.value as unknown as import('./materialInstance').MaterialOverrideValue)
+      if (!equal) {
         commands.push(
           new SetKeyframeValueCommand({
             target: edit.target,
@@ -87,6 +90,15 @@ export function autoKeyCommands(
         edit.value
     ) {
       continue
+    }
+    if (isMorphTarget(edit.target)) {
+      // For morph, compare full object value (pair+coeff) via evaluateMorphValue when available
+      const evalFn = (engine as unknown as { evaluateMorphValue?: (id: string, t: number) => unknown }).evaluateMorphValue
+      const cur = evalFn ? evalFn.call(engine, edit.target.nodeId, edit.time) : engine.evaluateMorph(edit.target.nodeId, edit.time)
+      const isEqual = typeof cur === 'object' && cur !== null && typeof edit.value === 'object' && edit.value !== null
+        ? JSON.stringify(cur) === JSON.stringify(edit.value)
+        : cur === edit.value
+      if (isEqual) continue
     }
     commands.push(
       new AddKeyframeCommand({
@@ -120,7 +132,7 @@ export function materialParameterEditCommands(
         new OverrideMaterialParameterCommand({
           nodeId: edit.nodeId,
           parameter: edit.parameter,
-          value: edit.value,
+          value: edit.value as unknown as import('./materialInstance').MaterialOverrideValue,
         }),
       )
     }
@@ -147,6 +159,21 @@ function targetKeyframes(engine: EnginePublic, target: KeyframeTarget): readonly
   }
   if (isPropertyTarget(target)) {
     return engine.getKeyframes(target.nodeId, target.property)
+  }
+  if (isMorphTarget(target)) {
+    return engine.getMorphKeyframes(target.nodeId)
+  }
+  if (target.kind === 'visible') {
+    return engine.getVisibleKeyframes(target.nodeId)
+  }
+  if (target.kind === 'circle') {
+    return engine.getCircleKeyframes(target.nodeId, target.property)
+  }
+  if (target.kind === 'dataLabel') {
+    return engine.getDataLabelKeyframes(target.nodeId, target.label)
+  }
+  if (target.kind === 'table') {
+    return engine.getTableKeyframes(target.nodeId, target.property)
   }
   return []
 }

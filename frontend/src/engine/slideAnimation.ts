@@ -45,6 +45,12 @@ export type ClampedKeyframe =
       readonly keyframeId: string
       readonly oldTime: number
     }
+  | {
+      readonly nodeId: string
+      readonly morph: true
+      readonly keyframeId: string
+      readonly oldTime: number
+    }
 
 export class SlideAnimation {
   readonly #nodes = new Map<string, NodeAnimation>()
@@ -158,6 +164,17 @@ export class SlideAnimation {
           keyframe.time = duration
         }
       }
+      for (const keyframe of animation.morphKeyframes()) {
+        if (keyframe.time > duration) {
+          clamped.push({
+            nodeId,
+            morph: true,
+            keyframeId: keyframe.id,
+            oldTime: keyframe.time,
+          })
+          keyframe.time = duration
+        }
+      }
     }
     return clamped
   }
@@ -171,13 +188,17 @@ export class SlideAnimation {
       const circleTracks = animation.circleTracksJSON()
       const tableTracks = animation.tableTracksJSON()
       const visibleTrack = animation.visibleTrackJSON()
+      const morphTrack = animation.morphTrackJSON()
+      const morphBinding = animation.morphBindingJSON()
       if (
         tracks.length > 0 ||
         materialTracks.length > 0 ||
         dataLabelTracks.length > 0 ||
         circleTracks.length > 0 ||
         tableTracks.length > 0 ||
-        visibleTrack !== undefined
+        visibleTrack !== undefined ||
+        morphTrack !== undefined ||
+        morphBinding !== undefined
       ) {
         nodes.push({
           nodeId,
@@ -187,6 +208,8 @@ export class SlideAnimation {
           ...(circleTracks.length > 0 ? { circleTracks } : {}),
           ...(tableTracks.length > 0 ? { tableTracks } : {}),
           ...(visibleTrack !== undefined ? { visibleTrack } : {}),
+          ...(morphTrack !== undefined ? { morphTrack } : {}),
+          ...(morphBinding !== undefined ? { morphBinding } : {}),
         })
       }
     }

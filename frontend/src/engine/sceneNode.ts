@@ -10,6 +10,7 @@ import type {
 import { validateChartType, DEFAULT_VISUAL_CONFIG } from './chartComponent'
 import { meshDataFromJSON, cloneMeshData } from './mesh'
 import { circleComponentFromJSON, cloneCircleComponent } from './circleComponent'
+import { shapeFromJSON, shapeToJSON } from './shape'
 import type { Transform } from './transform'
 import { IDENTITY_PIVOT, validatePivot } from './transform'
 import type { NodeJSON } from './json'
@@ -82,6 +83,22 @@ export class SceneNode {
     const material = materialToJSON(this.material)
     const pivot = this.transform.localPivot ?? IDENTITY_PIVOT
     const hasPivot = pivot.x !== IDENTITY_PIVOT.x || pivot.y !== IDENTITY_PIVOT.y
+    const componentsJSON: Record<string, unknown> = { ...this.components }
+    if (this.components.mesh) {
+      const meshComp = this.components.mesh
+      if (meshComp.shapes && meshComp.shapes.length > 0) {
+        componentsJSON.mesh = {
+          kind: 'mesh',
+          mesh: meshComp.mesh,
+          shapes: meshComp.shapes.map(shapeToJSON),
+        }
+      } else {
+        componentsJSON.mesh = {
+          kind: 'mesh',
+          mesh: meshComp.mesh,
+        }
+      }
+    }
     return {
       id: this.id,
       name: this.name,
@@ -98,7 +115,7 @@ export class SceneNode {
       visible: this.visible,
       opacity: this.opacity,
       ...(material !== undefined ? { material } : {}),
-      components: { ...this.components },
+      components: componentsJSON as unknown as import('./json').NodeComponentsJSON,
       ...(this.clipInstances.length > 0
         ? { clipInstances: this.clipInstances.map(clipInstanceToJSON) }
         : {}),
@@ -248,9 +265,38 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
     if (!isKind(record.mesh, 'mesh')) {
       throw new Error(`Node "${nodeId}" has an invalid mesh component`)
     }
+    const meshRecord = record.mesh as Record<string, unknown>
+    const mesh = meshDataFromJSON(meshRecord.mesh)
+    const rawShapes = meshRecord.shapes
+    let shapes: import('./shape').Shape[] | undefined
+    if (rawShapes !== undefined) {
+      if (!Array.isArray(rawShapes)) {
+        throw new Error(`Node "${nodeId}" mesh.shapes must be an array if provided`)
+      }
+      const parsed: import('./shape').Shape[] = []
+      for (let idx = 0; idx < rawShapes.length; idx += 1) {
+        const raw = rawShapes[idx]
+        try {
+          const shape = shapeFromJSON(raw)
+          if (shape.vertices.length !== mesh.vertices.length) {
+            console.warn(
+              `[shape] Dropping mismatched shape "${shape.name}" (${shape.vertices.length} != ${mesh.vertices.length}) on node "${nodeId}"`,
+            )
+            continue
+          }
+          parsed.push(shape)
+        } catch (err) {
+          console.warn(
+            `[shape] Dropping invalid shape at index ${idx} on node "${nodeId}": ${err instanceof Error ? err.message : String(err)}`,
+          )
+        }
+      }
+      if (parsed.length > 0) shapes = parsed
+    }
     components.mesh = {
       kind: 'mesh',
-      mesh: meshDataFromJSON((record.mesh as Record<string, unknown>).mesh),
+      mesh,
+      ...(shapes !== undefined ? { shapes } : {}),
     }
   }
   if (record.ghost !== undefined) {
@@ -514,7 +560,25 @@ function freezeComponents(components: NodeComponents): NodeComponents {
     text: components.text ? Object.freeze({ ...components.text }) : undefined,
     bone: components.bone ? Object.freeze({ ...components.bone }) : undefined,
     mesh: components.mesh
-      ? Object.freeze({ kind: 'mesh' as const, mesh: cloneMeshData(components.mesh.mesh) })
+      ? Object.freeze({
+          kind: 'mesh' as const,
+          mesh: cloneMeshData(components.mesh.mesh),
+          ...(components.mesh.shapes
+            ? {
+                shapes: Object.freeze(
+                  components.mesh.shapes.map((s) =>
+                    Object.freeze({
+                      id: s.id,
+                      name: s.name,
+                      vertices: Object.freeze(
+                        s.vertices.map((v) => Object.freeze({ x: v.x, y: v.y })),
+                      ),
+                    }),
+                  ),
+                ),
+              }
+            : {}),
+        })
       : undefined,
     ghost: components.ghost ? Object.freeze({ ...components.ghost }) : undefined,
     table: components.table

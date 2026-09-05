@@ -11,6 +11,8 @@ import { usePlaybackController } from '../../stores/playbackStore'
 import { useShaderLibraryStore } from '../../stores/shaderLibraryStore'
 import { CanvasToolbar } from '../editor/CanvasToolbar'
 import { WeightPaintToolbar } from '../editor/WeightPaintToolbar'
+import { SculptToolbar } from '../editor/SculptToolbar'
+import { MeshEditToolbar } from '../editor/MeshEditToolbar'
 
 export function CanvasPanel() {
   const { engine, dispatch } = useEngine()
@@ -108,7 +110,9 @@ export function CanvasPanel() {
     <div className="canvas-panel">
       <div className="canvas-host" ref={hostRef} />
       <CanvasToolbar />
+      <MeshEditToolbar />
       <WeightPaintToolbar />
+      <SculptToolbar />
     </div>
   )
 }

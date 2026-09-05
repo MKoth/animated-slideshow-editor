@@ -6,6 +6,7 @@ import { useMeshEditStore } from '../../stores/meshEditStore'
 import { useMeshPreviewStore } from '../../stores/meshPreviewStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { useOverlayVisibilityStore } from '../../stores/overlayVisibilityStore'
+import { useShapePreviewStore } from '../../stores/shapePreviewStore'
 import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
 import type { WorldTransform, WorldRect } from './worldGeometry'
 import { worldTransformOf } from '../../engine/worldTransform'
@@ -64,6 +65,22 @@ function getDeformedVertices(
   }
   const result = evaluateMeshDeformation(mesh, boneTransforms, meshTransform)
   return result.deformedVertices.map((v) => ({ x: v.x, y: v.y }))
+}
+
+function effectiveMeshForPreview(mesh: MeshData, nodeId: string, engine: EnginePublic): MeshData {
+  const preview = useShapePreviewStore.getState()
+  if (preview.previewNodeId !== nodeId || !preview.previewShapeId) return mesh
+  try {
+    const node = engine.getNode(nodeId)
+    const shapes = node.components.mesh?.shapes
+    const shape = shapes?.find((s) => s.id === preview.previewShapeId)
+    if (shape) {
+      return { ...mesh, vertices: shape.vertices as unknown as MeshData['vertices'] }
+    }
+  } catch (_e) {
+    void _e
+  }
+  return mesh
 }
 
 export interface MeshOverlayContext {
@@ -141,6 +158,7 @@ export class MeshOverlay {
   #unsubscribeEngine: (() => void) | null = null
   #previewVertices: Map<number, { x: number; y: number }> | null = null
   #unsubscribePreview: (() => void) | null = null
+  #unsubscribeShapePreview: (() => void) | null = null
   #unsubscribeVisibility: (() => void) | null = null
 
   constructor(context: MeshOverlayContext) {
@@ -168,6 +186,7 @@ export class MeshOverlay {
       }
     })
     this.#unsubscribePreview = useMeshPreviewStore.subscribe(() => this.redraw())
+    this.#unsubscribeShapePreview = useShapePreviewStore.subscribe(() => this.redraw())
     this.#unsubscribeVisibility = useOverlayVisibilityStore.subscribe(() => this.redraw())
     this.redraw()
   }
@@ -185,6 +204,8 @@ export class MeshOverlay {
     this.#unsubscribeEngine = null
     this.#unsubscribePreview?.()
     this.#unsubscribePreview = null
+    this.#unsubscribeShapePreview?.()
+    this.#unsubscribeShapePreview = null
     this.#unsubscribeVisibility?.()
     this.#unsubscribeVisibility = null
     this.#graphics?.destroy()
@@ -212,7 +233,7 @@ export class MeshOverlay {
   ): { x: number; y: number }[] | null {
     const node = scene.getNode(nodeId)
     if (!node || !node.components.mesh) return null
-    const mesh = node.components.mesh.mesh
+    const mesh = effectiveMeshForPreview(node.components.mesh.mesh, nodeId, this.#engine)
     const transform = this.#resolveTransform(scene, nodeId)
     if (!transform) return null
     const deformed = getDeformedVertices(mesh, scene, transform, this.#getWorldTransform)
@@ -241,7 +262,7 @@ export class MeshOverlay {
   deformedLocalVertices(scene: Scene, nodeId: string): { x: number; y: number }[] | null {
     const node = scene.getNode(nodeId)
     if (!node || !node.components.mesh) return null
-    const mesh = node.components.mesh.mesh
+    const mesh = effectiveMeshForPreview(node.components.mesh.mesh, nodeId, this.#engine)
     const transform = this.#resolveTransform(scene, nodeId)
     if (!transform) return null
     return getDeformedVertices(mesh, scene, transform, this.#getWorldTransform)
@@ -266,7 +287,8 @@ export class MeshOverlay {
       if (!node || !node.components.mesh) {
         return
       }
-      const mesh = node.components.mesh.mesh
+      const rawMesh = node.components.mesh.mesh
+      const mesh = effectiveMeshForPreview(rawMesh, meshEditNodeId, this.#engine)
       const transform = this.#resolveTransform(scene, meshEditNodeId)
       if (!transform) {
         return
@@ -281,7 +303,9 @@ export class MeshOverlay {
         if (!transform) {
           continue
         }
-        this.#drawWireframe(graphics, node.components.mesh.mesh, transform, scene)
+        const rawMesh = node.components.mesh.mesh
+        const mesh = effectiveMeshForPreview(rawMesh, node.id, this.#engine)
+        this.#drawWireframe(graphics, mesh, transform, scene)
       }
     }
     const { previewMesh, nodeId: previewNodeId } = useMeshPreviewStore.getState()
@@ -464,18 +488,22 @@ export class MeshOverlay {
     if (!transform) {
       return null
     }
-    const hitRadius =
-      VERTEX_RADIUS / Math.max(Math.abs(transform.scaleX), Math.abs(transform.scaleY), 0.1) + 2
+    // Slightly larger screen-constant radius (was 4/scale+2 -> 8/scale+3) for reliable edge picking
+    const hitRadius = 8 / Math.max(Math.abs(transform.scaleX), Math.abs(transform.scaleY), 0.1) + 3
     const worldVertices = this.#worldVerticesFor(scene, meshEditNodeId, this.#previewVertices)
     if (!worldVertices) return null
+    // Return nearest within radius, not first in array order (fixes edge vs interior snap)
+    let bestIdx: number | null = null
+    let bestDist = Infinity
     for (let i = 0; i < worldVertices.length; i++) {
       const v = worldVertices[i]
       const dist = Math.hypot(worldX - v.x, worldY - v.y)
-      if (dist <= hitRadius) {
-        return i
+      if (dist <= hitRadius && dist < bestDist) {
+        bestDist = dist
+        bestIdx = i
       }
     }
-    return null
+    return bestIdx
   }
 
   hitTestEdge(

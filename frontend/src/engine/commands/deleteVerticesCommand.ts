@@ -33,6 +33,9 @@ export class DeleteVerticesCommand implements Command<DeleteVerticesInverse> {
     if (!node.components.mesh) {
       throw new Error(`Node "${this.#nodeId}" does not have a mesh component`)
     }
+    if ((node.components.mesh.shapes?.length ?? 0) > 0) {
+      throw new Error('Remove Shapes to edit topology')
+    }
     const mesh = node.components.mesh.mesh
     for (const idx of this.#vertexIndices) {
       if (idx < 0 || idx >= mesh.vertices.length) {

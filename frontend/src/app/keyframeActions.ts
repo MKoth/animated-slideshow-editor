@@ -14,7 +14,7 @@ import {
   materialParameterEditCommands,
 } from '../engine/keyframeEdit'
 import type { KeyframeEdit, MaterialParameterEdit, TimedKeyframeEdit } from '../engine/keyframeEdit'
-import { isParameterTarget, isPropertyTarget } from '../engine/keyframeTarget'
+import { isMorphTarget, isParameterTarget, isPropertyTarget } from '../engine/keyframeTarget'
 
 export type { KeyframeEdit, MaterialParameterEdit } from '../engine/keyframeEdit'
 export {
@@ -115,16 +115,83 @@ export function autoKeyEdit(
 ): CommandResult<unknown> | null {
   const timed: TimedKeyframeEdit[] = []
   for (const edit of edits) {
-    if (!isPropertyTarget(edit.target) && !isParameterTarget(edit.target)) {
+    if (
+      !isPropertyTarget(edit.target) &&
+      !isParameterTarget(edit.target) &&
+      !isMorphTarget(edit.target)
+    ) {
       continue
     }
-    const time = playheadTimeOf(engine, edit.target.nodeId)
+    const nodeId = (edit.target as { nodeId: string }).nodeId
+    const time = playheadTimeOf(engine, nodeId)
     if (time === null) {
       continue
     }
     timed.push({ ...edit, time })
   }
   return dispatchKeyframeCommands(dispatch, autoKeyCommands(engine, timed))
+}
+
+export function morphAutoKey(
+  engine: EnginePublic,
+  dispatch: DispatchCommand,
+  nodeId: string,
+  value: number | import('../engine/shape').MorphKeyframeValue,
+): CommandResult<unknown> | null {
+  const time = playheadTimeOf(engine, nodeId)
+  if (time === null) return null
+  if (typeof value === 'number') {
+    const clamped = Math.max(0, Math.min(1, value))
+    // legacy scalar: convert to object with null binding (will be overridden by evaluateMorphValue's binding hold)
+    // Prefer caller passes full object; this path keeps old TimelineBody scalar usage from before migration.
+    let from: string | null = null
+    let to: string | null = null
+    try {
+      const cur = (engine as unknown as { evaluateMorphValue?: (id: string, t: number) => import('../engine/shape').MorphKeyframeValue | null }).evaluateMorphValue?.(nodeId, time)
+      if (cur) {
+        from = cur.fromShapeId
+        to = cur.toShapeId
+      } else {
+        const fetched = (engine as unknown as { getMorphBinding?: (id: string) => import('../engine/shape').MorphBinding | null }).getMorphBinding?.(nodeId)
+        if (fetched) {
+          from = fetched.fromShapeId
+          to = fetched.toShapeId
+        }
+      }
+    } catch (_e) {
+      // ignore missing engine method
+    }
+    return autoKeyEdit(engine, dispatch, [{ target: { kind: 'morph', nodeId }, value: { fromShapeId: from, toShapeId: to, coefficient: clamped } }])
+  }
+  const clampedCoeff = Math.max(0, Math.min(1, value.coefficient))
+  const morphValue = { fromShapeId: value.fromShapeId, toShapeId: value.toShapeId, coefficient: clampedCoeff }
+  return autoKeyEdit(engine, dispatch, [{ target: { kind: 'morph', nodeId }, value: morphValue }])
+}
+
+export function morphAutoKeyValue(
+  engine: EnginePublic,
+  dispatch: DispatchCommand,
+  nodeId: string,
+  morphValue: import('../engine/shape').MorphKeyframeValue,
+): CommandResult<unknown> | null {
+  return morphAutoKey(engine, dispatch, nodeId, morphValue)
+}
+
+export function morphStateOf(
+  engine: EnginePublic,
+  nodeId: string,
+  time: number,
+): PropertyState | null {
+  try {
+    engine.getNode(nodeId)
+  } catch {
+    return null
+  }
+  if (!engine.hasMorphTrack(nodeId)) return 'static'
+  const kfs = engine.getMorphKeyframes(nodeId)
+  if (kfs.length === 0) return 'static'
+  if (kfs.some((kf) => kf.time === time)) return 'onKeyframe'
+  return 'animated'
 }
 
 export function addKeyframeAtPlayhead(

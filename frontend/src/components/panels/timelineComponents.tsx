@@ -24,6 +24,7 @@ export interface TimelineMenuState {
   readonly parameter?: string
   readonly label?: string
   readonly circleProperty?: import('../../engine/animationProperties').CircleAnimationProperty
+  readonly morph?: boolean
   readonly keyframeId?: string
 }
 

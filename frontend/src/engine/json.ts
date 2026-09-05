@@ -38,6 +38,11 @@ export type NodeComponentsJSON = {
       }[])[]
       readonly bindPose?: Readonly<Record<string, TransformJSON>>
     }
+    readonly shapes?: readonly {
+      readonly id: string
+      readonly name: string
+      readonly vertices: readonly { readonly x: number; readonly y: number }[]
+    }[]
   }
   readonly ghost?: { readonly kind: 'ghost' }
   readonly table?: {
@@ -163,6 +168,15 @@ export type VisibleTrackJSON = {
   readonly keyframes: readonly KeyframeJSON[]
 }
 
+export type MorphBindingJSON = {
+  readonly fromShapeId: string | null
+  readonly toShapeId: string | null
+}
+
+export type MorphTrackJSON = {
+  readonly keyframes: readonly KeyframeJSON[]
+}
+
 export type NodeAnimationJSON = {
   readonly nodeId: string
   readonly tracks: readonly PropertyTrackJSON[]
@@ -171,6 +185,8 @@ export type NodeAnimationJSON = {
   readonly circleTracks?: readonly CircleTrackJSON[]
   readonly tableTracks?: readonly TableTrackJSON[]
   readonly visibleTrack?: VisibleTrackJSON
+  readonly morphBinding?: MorphBindingJSON | null
+  readonly morphTrack?: MorphTrackJSON
 }
 
 export type SlideAnimationJSON = {
@@ -351,6 +367,7 @@ export type ClipJSON = {
   readonly materialChannelAnimations?: Readonly<Record<string, ClipChannelJSON>>
   readonly visibleAnimation?: ClipChannelJSON
   readonly circleChannelAnimations?: Readonly<Record<string, ClipChannelJSON>>
+  readonly morphAnimation?: ClipChannelJSON
 }
 
 export type ClipInstanceJSON = {
