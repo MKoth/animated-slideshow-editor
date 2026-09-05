@@ -277,7 +277,7 @@ describe('Morph binding & coefficient (281)', () => {
     engine.evaluateMorph(nodeId, 2.5) // just ensure no crash
   })
 
-  it('Persistence via JSON round-trip (binding + track)', () => {
+  it('Persistence via JSON round-trip (per-keyframe pair+coeff)', () => {
     const { engine, system, nodeId, shapeA, shapeB } = setupEngineWithMeshAndShapes()
     engine.setMorphBinding(nodeId, { fromShapeId: shapeA.id, toShapeId: shapeB.id })
     addMorphKeyframe(system, nodeId, 0, 0)
@@ -286,12 +286,23 @@ describe('Morph binding & coefficient (281)', () => {
     const text = JSON.stringify(json)
     const restoredEngine = createEngineInternal()
     restoredEngine.restoreFromJSON(JSON.parse(text) as any)
-    expect(restoredEngine.getMorphBinding(nodeId)).toEqual({
-      fromShapeId: shapeA.id,
-      toShapeId: shapeB.id,
-    })
-    expect(restoredEngine.getMorphKeyframes(nodeId)).toHaveLength(2)
+    // Global binding no longer persisted — per-keyframe pair owns the binding
+    expect(restoredEngine.getMorphBinding(nodeId)).toBeNull()
+    const restoredKfs = restoredEngine.getMorphKeyframes(nodeId)
+    expect(restoredKfs).toHaveLength(2)
+    // Per-keyframe values retain the binding via migration
+    for (const kf of restoredKfs) {
+      const v = kf.value as unknown as { fromShapeId: string | null; toShapeId: string | null; coefficient: number }
+      expect(v.fromShapeId).toBe(shapeA.id)
+      expect(v.toShapeId).toBe(shapeB.id)
+    }
     expect(restoredEngine.evaluateMorph(nodeId, 0.5)).toBeCloseTo(0.5)
+    // Vertex lerp still correct
+    const shapes = restoredEngine.getShapes(nodeId)
+    const a = shapes.find((s) => s.id === shapeA.id)!
+    const b = shapes.find((s) => s.id === shapeB.id)!
+    const viaEngine = restoredEngine.evaluateMeshDeformation(nodeId, 0.5, new Map())!
+    expect(viaEngine.deformedVertices[0].x).toBeCloseTo((a.vertices[0].x + b.vertices[0].x) / 2)
   })
 
   it('Lerp-then-bones determinism with bone deformation', () => {

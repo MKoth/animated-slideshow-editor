@@ -93,6 +93,7 @@ export interface EnginePublic {
     binding: import('./shape').MorphBinding | null,
   ): import('./shape').MorphBinding | null
   evaluateMorph(nodeId: string, time: number): number
+  evaluateMorphValue(nodeId: string, time: number): import('./shape').MorphKeyframeValue | null
   getAnimatableParameters(nodeId: string): AnimatableParameter[]
   evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState
   evaluateMaterialOverrides(

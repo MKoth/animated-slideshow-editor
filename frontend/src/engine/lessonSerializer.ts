@@ -776,10 +776,29 @@ function validateAnimation(
         duration,
         keyframeIds,
         (value, id) => {
-          if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
-            return `Keyframe "${id}" value must be a number between 0 and 1`
+          if (typeof value === 'number') {
+            if (!Number.isFinite(value) || value < 0 || value > 1) {
+              return `Keyframe "${id}" value must be a number between 0 and 1`
+            }
+            return null
           }
-          return null
+          if (typeof value === 'object' && value !== null) {
+            const r = value as Record<string, unknown>
+            const from = r.fromShapeId
+            const to = r.toShapeId
+            const coeff = r.coefficient
+            if (from !== null && typeof from !== 'string') {
+              return `Keyframe "${id}" fromShapeId must be string or null`
+            }
+            if (to !== null && typeof to !== 'string') {
+              return `Keyframe "${id}" toShapeId must be string or null`
+            }
+            if (typeof coeff !== 'number' || !Number.isFinite(coeff) || coeff < 0 || coeff > 1) {
+              return `Keyframe "${id}" coefficient must be between 0 and 1`
+            }
+            return null
+          }
+          return `Keyframe "${id}" value must be number or morph object`
         },
       )
     }

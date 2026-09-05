@@ -70,7 +70,10 @@ export function autoKeyCommands(
     const keyframes = targetKeyframes(engine, edit.target)
     const existing = keyframeAtTime(keyframes, edit.time)
     if (existing) {
-      if (!uniformValuesEqual(existing.value, edit.value)) {
+      const equal = isMorphTarget(edit.target)
+        ? JSON.stringify(existing.value) === JSON.stringify(edit.value)
+        : uniformValuesEqual(existing.value as unknown as import('./materialInstance').MaterialOverrideValue, edit.value as unknown as import('./materialInstance').MaterialOverrideValue)
+      if (!equal) {
         commands.push(
           new SetKeyframeValueCommand({
             target: edit.target,
@@ -88,11 +91,14 @@ export function autoKeyCommands(
     ) {
       continue
     }
-    if (
-      isMorphTarget(edit.target) &&
-      engine.evaluateMorph(edit.target.nodeId, edit.time) === edit.value
-    ) {
-      continue
+    if (isMorphTarget(edit.target)) {
+      // For morph, compare full object value (pair+coeff) via evaluateMorphValue when available
+      const evalFn = (engine as unknown as { evaluateMorphValue?: (id: string, t: number) => unknown }).evaluateMorphValue
+      const cur = evalFn ? evalFn.call(engine, edit.target.nodeId, edit.time) : engine.evaluateMorph(edit.target.nodeId, edit.time)
+      const isEqual = typeof cur === 'object' && cur !== null && typeof edit.value === 'object' && edit.value !== null
+        ? JSON.stringify(cur) === JSON.stringify(edit.value)
+        : cur === edit.value
+      if (isEqual) continue
     }
     commands.push(
       new AddKeyframeCommand({
@@ -126,7 +132,7 @@ export function materialParameterEditCommands(
         new OverrideMaterialParameterCommand({
           nodeId: edit.nodeId,
           parameter: edit.parameter,
-          value: edit.value,
+          value: edit.value as unknown as import('./materialInstance').MaterialOverrideValue,
         }),
       )
     }

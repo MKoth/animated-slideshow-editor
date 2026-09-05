@@ -704,10 +704,58 @@ export class ClipDefinition {
     const morphAnim = (json as Record<string, unknown>).morphAnimation
     if (isRecord(morphAnim) && morphAnim !== null) {
       const anim = ClipChannelAnimation.fromJSONWithKind(morphAnim, (value, id) => {
-        if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
-          throw new Error(`Clip morph keyframe "${id}" value must be a number between 0 and 1`)
+        // Support both legacy scalar 0..1 and new name-based object
+        if (typeof value === 'number') {
+          if (!Number.isFinite(value) || value < 0 || value > 1) {
+            throw new Error(`Clip morph keyframe "${id}" value must be a number between 0 and 1`)
+          }
+          return { fromShapeName: null, toShapeName: null, coefficient: value }
         }
-        return value
+        if (typeof value === 'object' && value !== null) {
+          const rec = value as Record<string, unknown>
+          // New clip format: name-based
+          if ('fromShapeName' in rec || 'toShapeName' in rec || 'coefficient' in rec) {
+            const fromShapeName = rec.fromShapeName
+            const toShapeName = rec.toShapeName
+            const coeff = rec.coefficient
+            if (fromShapeName !== null && typeof fromShapeName !== 'string') {
+              throw new Error(`Clip morph keyframe "${id}" fromShapeName must be string or null`)
+            }
+            if (toShapeName !== null && typeof toShapeName !== 'string') {
+              throw new Error(`Clip morph keyframe "${id}" toShapeName must be string or null`)
+            }
+            if (typeof coeff !== 'number' || !Number.isFinite(coeff) || coeff < 0 || coeff > 1) {
+              throw new Error(`Clip morph keyframe "${id}" coefficient must be between 0 and 1`)
+            }
+            return {
+              fromShapeName: fromShapeName as string | null,
+              toShapeName: toShapeName as string | null,
+              coefficient: coeff as number,
+            }
+          }
+          // legacy id-based object (from old per-keyframe pair using ids) — treat names as ids fallback
+          if ('fromShapeId' in rec || 'toShapeId' in rec) {
+            const fromId = (rec.fromShapeId as string | null) ?? null
+            const toId = (rec.toShapeId as string | null) ?? null
+            const coeff = rec.coefficient as number
+            if (fromId !== null && typeof fromId !== 'string') {
+              throw new Error(`Clip morph keyframe "${id}" fromShapeId must be string or null`)
+            }
+            if (toId !== null && typeof toId !== 'string') {
+              throw new Error(`Clip morph keyframe "${id}" toShapeId must be string or null`)
+            }
+            if (typeof coeff !== 'number' || !Number.isFinite(coeff) || coeff < 0 || coeff > 1) {
+              throw new Error(`Clip morph keyframe "${id}" coefficient must be between 0 and 1`)
+            }
+            // Map legacy ids to names by using them as names (best-effort)
+            return {
+              fromShapeName: fromId,
+              toShapeName: toId,
+              coefficient: coeff,
+            }
+          }
+        }
+        throw new Error(`Clip morph keyframe "${id}" value must be number or morph clip object`)
       })
       for (const kf of anim.keyframes()) {
         clip.#morphAnimation.add(

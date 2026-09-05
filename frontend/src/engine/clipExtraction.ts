@@ -76,11 +76,38 @@ export function normalizeExtractable(
   const clampedTime = Math.min(Math.max(normalizedTime, 0), 1)
 
   // Validate value where applicable (opacity and morph)
-  if (isOpacityTarget(kf.target) || isMorphTarget(kf.target)) {
+  if (isOpacityTarget(kf.target)) {
     const v = normalizedValue as number
     if (typeof v !== 'number' || !Number.isFinite(v) || v < -1e-9 || v > 1 + 1e-9) {
-      const kind = isMorphTarget(kf.target) ? 'morphCoefficient' : 'opacity'
-      throw new Error(`Clip keyframe value for ${kind} must be within [0,1], got ${String(v)}`)
+      throw new Error(`Clip keyframe value for opacity must be within [0,1], got ${String(v)}`)
+    }
+  }
+  if (isMorphTarget(kf.target)) {
+    const v = normalizedValue as unknown
+    if (typeof v === 'number') {
+      if (!Number.isFinite(v) || v < -1e-9 || v > 1 + 1e-9) {
+        throw new Error(`Clip keyframe value for morphCoefficient must be within [0,1], got ${String(v)}`)
+      }
+    } else if (typeof v === 'object' && v !== null) {
+      const r = v as Record<string, unknown>
+      const coeff = r.coefficient
+      if (typeof coeff !== 'number' || !Number.isFinite(coeff) || coeff < -1e-9 || coeff > 1 + 1e-9) {
+        throw new Error(`Clip morph keyframe coefficient must be within [0,1], got ${String(coeff)}`)
+      }
+      if (r.fromShapeId !== undefined && r.fromShapeId !== null && typeof r.fromShapeId !== 'string') {
+        throw new Error(`Morph clip keyframe fromShapeId must be string or null`)
+      }
+      if (r.toShapeId !== undefined && r.toShapeId !== null && typeof r.toShapeId !== 'string') {
+        throw new Error(`Morph clip keyframe toShapeId must be string or null`)
+      }
+      if (r.fromShapeName !== undefined && r.fromShapeName !== null && typeof r.fromShapeName !== 'string') {
+        throw new Error(`Morph clip keyframe fromShapeName must be string or null`)
+      }
+      if (r.toShapeName !== undefined && r.toShapeName !== null && typeof r.toShapeName !== 'string') {
+        throw new Error(`Morph clip keyframe toShapeName must be string or null`)
+      }
+    } else {
+      throw new Error(`Morph keyframe value must be number or object`)
     }
   }
 

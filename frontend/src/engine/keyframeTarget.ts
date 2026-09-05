@@ -23,6 +23,7 @@ import {
 } from './guards'
 import type { KeyframeValue } from './keyframe'
 import { requireMaterialKeyframeValue } from './materialKeyframes'
+import { requireMorphKeyframeValue } from './shape'
 
 /** A uniform-six property target of a node (Spec 07 R9). */
 export interface NodePropertyTarget {
@@ -247,10 +248,18 @@ export function requireTrackKeyframeValue(
     return value
   }
   if (track.kind === 'morph') {
-    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
-      throw new Error(`${what} must be a number between 0 and 1`)
+    // New per-keyframe pair+coefficient object; legacy scalar also accepted for migration via animationManager enrichment
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value) || value < 0 || value > 1) {
+        throw new Error(`${what} must be a number between 0 and 1`)
+      }
+      return {
+        fromShapeId: null,
+        toShapeId: null,
+        coefficient: value,
+      } as unknown as KeyframeValue
     }
-    return value
+    return requireMorphKeyframeValue(value, what) as unknown as KeyframeValue
   }
   if (track.kind === 'property') {
     return requireKeyframeValue(track.property, value, what)

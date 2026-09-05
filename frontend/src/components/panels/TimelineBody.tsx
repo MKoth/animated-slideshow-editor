@@ -8,11 +8,7 @@ import {
   materialKeyframeRefsOfScene,
 } from '../../app/keyframeSelectionActions'
 import { useEngine } from '../../app/useEngine'
-import {
-  AddKeyframeCommand,
-  DeleteKeyframesCommand,
-  SetMorphBindingCommand,
-} from '../../engine/commands'
+import { AddKeyframeCommand, DeleteKeyframesCommand } from '../../engine/commands'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { useSelectionStore } from '../../stores/selectionStore'
@@ -75,60 +71,55 @@ function MorphSubtrackHeader({
   const animationMode = useUiStore((s) => s.animationMode)
   const currentTime = usePlaybackController((s) => s.currentTimes[slideId] ?? 0)
   let shapes: readonly import('../../engine/shape').Shape[] = []
-  let binding: import('../../engine/shape').MorphBinding | null = null
   try {
     shapes = engine.getShapes(node.id)
   } catch {
     shapes = []
   }
+  // Current evaluated morph value at playhead (per-keyframe pair+coeff)
+  let evaluated: import('../../engine/shape').MorphKeyframeValue | null = null
   try {
-    binding = engine.getMorphBinding(node.id)
+    evaluated = engine.evaluateMorphValue(node.id, currentTime)
   } catch {
-    binding = null
+    evaluated = null
   }
-  const fromId = binding?.fromShapeId ?? ''
-  const toId = binding?.toShapeId ?? ''
-  let currentCoeff = 0
-  try {
-    currentCoeff = engine.evaluateMorph(node.id, currentTime)
-  } catch {
-    currentCoeff = 0
+  const fromId = evaluated?.fromShapeId ?? (shapes[0]?.id ?? '')
+  const toId = evaluated?.toShapeId ?? (shapes[1]?.id ?? shapes[0]?.id ?? '')
+  const currentCoeff = evaluated?.coefficient ?? 0
+
+  const commitMorphValue = (next: import('../../engine/shape').MorphKeyframeValue) => {
+    if (!animationMode) {
+      notify('Enter animation mode to keyframe morph')
+      return
+    }
+    const result = morphAutoKey(engine, dispatch, node.id, next)
+    if (result && !result.ok) notify(result.error.message)
   }
+
   const handleFromChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newFrom = e.target.value || null
-    const newBinding = { fromShapeId: newFrom, toShapeId: binding?.toShapeId ?? null }
-    const result = dispatch(new SetMorphBindingCommand({ nodeId: node.id, binding: newBinding }))
-    if (result && !result.ok) notify(result.error.message)
+    commitMorphValue({ fromShapeId: newFrom, toShapeId: evaluated?.toShapeId ?? toId ?? null, coefficient: currentCoeff })
   }
   const handleToChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newTo = e.target.value || null
-    const newBinding = { fromShapeId: binding?.fromShapeId ?? null, toShapeId: newTo }
-    const result = dispatch(new SetMorphBindingCommand({ nodeId: node.id, binding: newBinding }))
-    if (result && !result.ok) notify(result.error.message)
+    commitMorphValue({ fromShapeId: evaluated?.fromShapeId ?? fromId ?? null, toShapeId: newTo, coefficient: currentCoeff })
   }
   const handleAdd = () => {
     const time = usePlaybackController.getState().getTime(slideId)
-    let value = 0
-    try {
-      value = engine.evaluateMorph(node.id, time)
-    } catch {
-      value = 0
+    const value: import('../../engine/shape').MorphKeyframeValue = {
+      fromShapeId: evaluated?.fromShapeId ?? (shapes[0]?.id ?? null),
+      toShapeId: evaluated?.toShapeId ?? (shapes[1]?.id ?? shapes[0]?.id ?? null),
+      coefficient: currentCoeff,
     }
     const result = dispatch(
-      new AddKeyframeCommand({ target: { kind: 'morph', nodeId: node.id }, time, value }),
+      new AddKeyframeCommand({ target: { kind: 'morph', nodeId: node.id }, time, value: value as unknown as import('../../engine/keyframe').KeyframeValue }),
     )
     if (result && !result.ok) notify(result.error.message)
   }
   const handleCoeffChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = parseFloat(e.target.value)
     if (Number.isNaN(v)) return
-    if (animationMode) {
-      const result = morphAutoKey(engine, dispatch, node.id, v)
-      if (result && !result.ok) notify(result.error.message)
-    } else {
-      // No animation mode: clamp and set directly via keyframe at playhead? For preview we require animation mode; notify.
-      notify('Enter animation mode to keyframe morph')
-    }
+    commitMorphValue({ fromShapeId: evaluated?.fromShapeId ?? fromId ?? null, toShapeId: evaluated?.toShapeId ?? toId ?? null, coefficient: v })
   }
   return (
     <li
@@ -720,17 +711,25 @@ export function TimelineBody({
     let result
     if (target.morph) {
       const time = usePlaybackController.getState().getTime(slideId)
-      let value = 0
+      let value: import('../../engine/shape').MorphKeyframeValue | null = null
       try {
-        value = engine.evaluateMorph(target.nodeId, time)
+        value = engine.evaluateMorphValue(target.nodeId, time)
       } catch {
-        value = 0
+        value = null
+      }
+      if (!value) {
+        try {
+          const shapes = engine.getShapes(target.nodeId)
+          value = { fromShapeId: shapes[0]?.id ?? null, toShapeId: shapes[1]?.id ?? shapes[0]?.id ?? null, coefficient: 0 }
+        } catch {
+          value = { fromShapeId: null, toShapeId: null, coefficient: 0 }
+        }
       }
       result = dispatch(
         new AddKeyframeCommand({
           target: { kind: 'morph', nodeId: target.nodeId },
           time,
-          value,
+          value: value as unknown as import('../../engine/keyframe').KeyframeValue,
         }),
       )
     } else if ((target.property as unknown as string) === 'visible') {

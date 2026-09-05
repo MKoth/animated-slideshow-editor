@@ -1834,6 +1834,17 @@ export class Engine {
     if (node.components.mesh) {
       const mesh = node.components.mesh.mesh
       const shapes = node.components.mesh.shapes
+      // New per-keyframe morph: evaluate morphed rest vertices via cross-blend (includes clip layering)
+      try {
+        const morphed = this.#evaluator.evaluateMorphVertices(nodeId, _time, mesh.vertices, shapes)
+        if (morphed && morphed !== mesh.vertices) {
+          const morphedMesh = { ...mesh, vertices: morphed as import('./mesh').MeshVertex[] }
+          return evaluateMeshDeformation(morphedMesh, boneWorldTransforms, meshWorldTransform)
+        }
+      } catch {
+        // fallback to base
+      }
+      // Legacy fallback: try old binding+coefficient path for old files that haven't migrated vertex blend yet
       let morphBinding: MorphBinding | null = null
       try {
         morphBinding = this.getMorphBinding(nodeId)
@@ -2174,6 +2185,10 @@ export class Engine {
 
   evaluateMorph(nodeId: string, time: number): number {
     return this.#evaluator.evaluateMorph(nodeId, time)
+  }
+
+  evaluateMorphValue(nodeId: string, time: number): import('./shape').MorphKeyframeValue | null {
+    return this.#evaluator.evaluateMorphValue(nodeId, time)
   }
 
   setBoneLength(nodeId: string, length: number): void {
@@ -3602,6 +3617,27 @@ export class Engine {
             }
           }
         }
+        const morphBindingRaw = (
+          nodeAnimJson as unknown as {
+            morphBinding?: { fromShapeId: string | null; toShapeId: string | null } | null
+          }
+        ).morphBinding
+        // Remap legacy global binding ids if present
+        let remappedBinding: { fromShapeId: string | null; toShapeId: string | null } | null | undefined = undefined
+        if (morphBindingRaw !== undefined) {
+          if (morphBindingRaw === null) {
+            remappedBinding = null
+          } else {
+            let from = morphBindingRaw.fromShapeId
+            let to = morphBindingRaw.toShapeId
+            const shapeMap = shapeIdMapPerOldNode.get(oldNodeId)
+            if (shapeMap) {
+              if (from !== null && shapeMap.has(from)) from = shapeMap.get(from)!
+              if (to !== null && shapeMap.has(to)) to = shapeMap.get(to)!
+            }
+            remappedBinding = { fromShapeId: from, toShapeId: to }
+          }
+        }
         const morphTrack = (
           nodeAnimJson as unknown as {
             morphTrack?: { keyframes: readonly import('./json').KeyframeJSON[] }
@@ -3609,10 +3645,29 @@ export class Engine {
         ).morphTrack
         if (morphTrack) {
           for (const kfJson of morphTrack.keyframes) {
+            let val = kfJson.value as unknown
+            // Migrate legacy scalar or id-based morph values with remapping
+            if (typeof val === 'number') {
+              const from = remappedBinding ? remappedBinding.fromShapeId : null
+              const to = remappedBinding ? remappedBinding.toShapeId : null
+              val = { fromShapeId: from, toShapeId: to, coefficient: val }
+            } else if (typeof val === 'object' && val !== null) {
+              const rec = val as Record<string, unknown>
+              if ('fromShapeId' in rec || 'toShapeId' in rec) {
+                const shapeMap = shapeIdMapPerOldNode.get(oldNodeId)
+                let from = rec.fromShapeId as string | null
+                let to = rec.toShapeId as string | null
+                if (shapeMap) {
+                  if (from !== null && shapeMap.has(from)) from = shapeMap.get(from)!
+                  if (to !== null && shapeMap.has(to)) to = shapeMap.get(to)!
+                }
+                val = { fromShapeId: from, toShapeId: to, coefficient: rec.coefficient as number }
+              }
+            }
             const kf = new KeyframeModel(
               kfJson.id,
               kfJson.time,
-              kfJson.value as unknown as import('./keyframe').KeyframeValue,
+              val as unknown as import('./keyframe').KeyframeValue,
               (kfJson.interpolation as import('./keyframe').InterpolationType) ?? 'linear',
               (kfJson.tangentIn as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
               (kfJson.tangentOut as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
@@ -3624,28 +3679,16 @@ export class Engine {
             }
           }
         }
-        const morphBindingRaw = (
-          nodeAnimJson as unknown as {
-            morphBinding?: { fromShapeId: string | null; toShapeId: string | null } | null
-          }
-        ).morphBinding
-        if (morphBindingRaw !== undefined) {
-          if (morphBindingRaw === null) {
+        if (remappedBinding !== undefined) {
+          if (remappedBinding === null) {
             try {
               targetAnim.setMorphBinding(null)
             } catch {
               void 0
             }
           } else {
-            let from = morphBindingRaw.fromShapeId
-            let to = morphBindingRaw.toShapeId
-            const shapeMap = shapeIdMapPerOldNode.get(oldNodeId)
-            if (shapeMap) {
-              if (from !== null && shapeMap.has(from)) from = shapeMap.get(from)!
-              if (to !== null && shapeMap.has(to)) to = shapeMap.get(to)!
-            }
             try {
-              targetAnim.setMorphBinding({ fromShapeId: from, toShapeId: to })
+              targetAnim.setMorphBinding(remappedBinding)
             } catch {
               void 0
             }
@@ -4403,6 +4446,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getMorphBinding: (nodeId) => engine.getMorphBinding(nodeId),
     setMorphBinding: (nodeId, binding) => engine.setMorphBinding(nodeId, binding),
     evaluateMorph: (nodeId, time) => engine.evaluateMorph(nodeId, time),
+    evaluateMorphValue: (nodeId, time) => engine.evaluateMorphValue(nodeId, time),
     getAnimatableParameters: (nodeId) => engine.getAnimatableParameters(nodeId),
     evaluateNode: (nodeId, time, target) => engine.evaluateNode(nodeId, time, target),
     evaluateMaterialOverrides: (nodeId, time, target) =>

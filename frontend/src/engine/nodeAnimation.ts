@@ -14,7 +14,7 @@ import type {
   MorphTrackJSON,
 } from './json'
 import type { MorphBinding } from './shape'
-import { requireMorphCoefficientValue } from './shape'
+import { requireMorphKeyframeValue } from './shape'
 import {
   requireAnimationProperty,
   requireAnimatableForNode,
@@ -127,11 +127,13 @@ export class NodeAnimation {
     return this.#visible.find((entry) => entry.id === keyframeId)
   }
 
-  // --- Morph binding & coefficient track (Spec 281) ---
+  // --- Morph binding & coefficient track (Spec 281, migrated to per-keyframe pair in morph rework) ---
+  /** @deprecated legacy global binding — retained only for JSON migration; new code uses per-keyframe MorphKeyframeValue */
   get morphBinding(): MorphBinding | null {
     return this.#morphBinding
   }
 
+  /** @deprecated */
   setMorphBinding(binding: MorphBinding | null): void {
     if (binding === null) {
       this.#morphBinding = null
@@ -337,10 +339,8 @@ export class NodeAnimation {
   }
 
   morphBindingJSON(): import('./json').MorphBindingJSON | null | undefined {
-    if (this.#morphBinding === null) {
-      return undefined
-    }
-    return { fromShapeId: this.#morphBinding.fromShapeId, toShapeId: this.#morphBinding.toShapeId }
+    // No longer persisted — per-keyframe pair owns the binding. Retained only for reading legacy files.
+    return undefined
   }
 
   removeOrphanDataLabelTracks(validLabels: ReadonlySet<string>): void {
@@ -418,13 +418,15 @@ export class NodeAnimation {
     if (visibleTrack !== undefined) {
       readVisibleTrack(animation, visibleTrack, duration)
     }
+    let legacyBinding: MorphBinding | null = null
     const morphBinding = (json as Record<string, unknown>).morphBinding
     if (morphBinding !== undefined && morphBinding !== null) {
-      readMorphBinding(animation, morphBinding)
+      legacyBinding = readMorphBinding(morphBinding)
+      animation.setMorphBinding(legacyBinding)
     }
     const morphTrack = (json as Record<string, unknown>).morphTrack
     if (morphTrack !== undefined) {
-      readMorphTrack(animation, morphTrack, duration)
+      readMorphTrack(animation, morphTrack, duration, legacyBinding)
     }
     return animation
   }
@@ -557,10 +559,9 @@ function readVisibleTrack(animation: NodeAnimation, track: unknown, duration: nu
   }
 }
 
-function readMorphBinding(animation: NodeAnimation, json: unknown): void {
+function readMorphBinding(json: unknown): MorphBinding | null {
   if (json === null) {
-    animation.setMorphBinding(null)
-    return
+    return null
   }
   if (typeof json !== 'object' || json === null) {
     throw new Error('Morph binding must be an object')
@@ -574,13 +575,18 @@ function readMorphBinding(animation: NodeAnimation, json: unknown): void {
   if (toShapeId !== null && typeof toShapeId !== 'string') {
     throw new Error('Morph binding toShapeId must be string or null')
   }
-  animation.setMorphBinding({
+  return {
     fromShapeId: fromShapeId as string | null,
     toShapeId: toShapeId as string | null,
-  })
+  }
 }
 
-function readMorphTrack(animation: NodeAnimation, track: unknown, duration: number): void {
+function readMorphTrack(
+  animation: NodeAnimation,
+  track: unknown,
+  duration: number,
+  legacyBinding: MorphBinding | null,
+): void {
   if (typeof track !== 'object' || track === null) {
     throw new Error('Morph track must be an object')
   }
@@ -588,9 +594,20 @@ function readMorphTrack(animation: NodeAnimation, track: unknown, duration: numb
   if (!Array.isArray(record.keyframes)) {
     throw new Error('Morph track must have a keyframes array')
   }
-  const parse = trackKeyframeParser('Morph track', duration, (value, what) =>
-    requireMorphCoefficientValue(value, what),
-  )
+  const parse = trackKeyframeParser('Morph track', duration, (value, what) => {
+    // Legacy scalar support: number 0..1 → migrate to object with legacy binding
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value) || value < 0 || value > 1) {
+        throw new Error(`${what} must be a number between 0 and 1`)
+      }
+      return {
+        fromShapeId: legacyBinding?.fromShapeId ?? null,
+        toShapeId: legacyBinding?.toShapeId ?? null,
+        coefficient: value,
+      } as import('./shape').MorphKeyframeValue
+    }
+    return requireMorphKeyframeValue(value, what)
+  })
   for (const keyframeJson of record.keyframes) {
     animation.addMorph(parse(keyframeJson))
   }
@@ -631,10 +648,16 @@ function removeById(
 }
 
 function copyKeyframe(keyframe: Keyframe): Keyframe {
+  let value: import('./keyframe').KeyframeValue = keyframe.value
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    value = { ...((value as unknown) as Record<string, unknown>) } as unknown as import('./keyframe').KeyframeValue
+  } else if (Array.isArray(value)) {
+    value = [...value] as unknown as import('./keyframe').KeyframeValue
+  }
   return new KeyframeModel(
     newKeyframeId(),
     keyframe.time,
-    keyframe.value,
+    value,
     keyframe.interpolation,
     { time: keyframe.tangentIn.time, value: keyframe.tangentIn.value },
     { time: keyframe.tangentOut.time, value: keyframe.tangentOut.value },

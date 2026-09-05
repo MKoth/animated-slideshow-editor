@@ -117,7 +117,8 @@ export class AnimationManager {
   addKeyframe(target: KeyframeTarget, time: number, value: unknown): Keyframe {
     const resolved = this.#resolve(target)
     const boundedTime = requireKeyframeTime(time, resolved.slide.duration)
-    const boundedValue = requireTrackKeyframeValue(resolved.track, value)
+    const normalizedValue = this.#normalizeMorphValueIfNeeded(resolved, value)
+    const boundedValue = requireTrackKeyframeValue(resolved.track, normalizedValue)
     this.#assertTimeFree(resolved, boundedTime, [], [])
     let interpolation = previousInterpolation(this.#keyframesOf(resolved), boundedTime)
     if (resolved.track.kind === 'visible') {
@@ -208,7 +209,8 @@ export class AnimationManager {
 
   setKeyframeValue(target: KeyframeTarget, keyframeId: string, value: unknown): unknown {
     const resolved = this.#resolve(target)
-    const boundedValue = requireTrackKeyframeValue(resolved.track, value)
+    const normalizedValue = this.#normalizeMorphValueIfNeeded(resolved, value)
+    const boundedValue = requireTrackKeyframeValue(resolved.track, normalizedValue)
     const keyframe = this.#requireKeyframe(resolved, keyframeId)
     const oldValue = keyframe.value
     keyframe.value = boundedValue
@@ -279,7 +281,8 @@ export class AnimationManager {
     )
     const created: Keyframe[] = []
     for (const entry of pending) {
-      const value = requireTrackKeyframeValue(resolved.track, entry.payload.value)
+      const normalizedVal = this.#normalizeMorphValueIfNeeded(resolved, entry.payload.value)
+      const value = requireTrackKeyframeValue(resolved.track, normalizedVal)
       let interpolation = requireKeyframeInterpolation(entry.payload.interpolation)
       if (resolved.track.kind === 'visible' && interpolation !== 'hold') {
         throw new Error('Visible track only supports hold interpolation')
@@ -549,6 +552,25 @@ export class AnimationManager {
       return `table ${track.property}`
     }
     return `parameter ${track.parameter}`
+  }
+
+  #normalizeMorphValueIfNeeded(resolved: ResolvedTarget, value: unknown): unknown {
+    if (resolved.track.kind !== 'morph') return value
+    if (typeof value === 'number') {
+      // Legacy scalar: enrich with current global binding if present
+      const binding = resolved.animation.morphBinding
+      return {
+        fromShapeId: binding?.fromShapeId ?? null,
+        toShapeId: binding?.toShapeId ?? null,
+        coefficient: value,
+      }
+    }
+    if (typeof value === 'object' && value !== null) {
+      const r = value as Record<string, unknown>
+      // Already object — ensure coefficient present; if missing binding, keep as is
+      if ('coefficient' in r) return value
+    }
+    return value
   }
 }
 

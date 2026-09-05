@@ -145,7 +145,48 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
 
   execute(engine: Engine): ExtractToClipInverse {
     const bounds = computeExtractionBounds(this.#keyframes)
-    const normalized = this.#keyframes.map((kf) => normalizeExtractable(kf, bounds))
+    const normalizedRaw = this.#keyframes.map((kf) => normalizeExtractable(kf, bounds))
+    // Convert morph id-based values to name-based clip values
+    const normalized = normalizedRaw.map((nk) => {
+      if (nk.target.kind === 'morph') {
+        const raw = nk.value as unknown
+        let morphVal: { fromShapeId: string | null; toShapeId: string | null; coefficient: number }
+        if (typeof raw === 'number') {
+          morphVal = { fromShapeId: null, toShapeId: null, coefficient: raw as number }
+        } else if (typeof raw === 'object' && raw !== null && 'coefficient' in (raw as Record<string, unknown>)) {
+          const r = raw as Record<string, unknown>
+          // already name-based? keep as is
+          if ('fromShapeName' in r || 'toShapeName' in r) {
+            return nk
+          }
+          morphVal = {
+            fromShapeId: (r.fromShapeId as string | null) ?? null,
+            toShapeId: (r.toShapeId as string | null) ?? null,
+            coefficient: r.coefficient as number,
+          }
+        } else {
+          return nk
+        }
+        let fromName: string | null = null
+        let toName: string | null = null
+        try {
+          const shapes = engine.getShapes((nk.target as unknown as { nodeId: string }).nodeId)
+          if (morphVal.fromShapeId) {
+            const s = shapes.find((sh) => sh.id === morphVal.fromShapeId)
+            if (s) fromName = s.name
+          }
+          if (morphVal.toShapeId) {
+            const s = shapes.find((sh) => sh.id === morphVal.toShapeId)
+            if (s) toName = s.name
+          }
+        } catch {
+          // ignore, keep null
+        }
+        const clipVal = { fromShapeName: fromName, toShapeName: toName, coefficient: morphVal.coefficient }
+        return { ...nk, value: clipVal as unknown as import('../keyframe').KeyframeValue }
+      }
+      return nk
+    })
 
     if (this.#destination.mode === 'new') {
       const clipDuration = this.#destination.duration ?? bounds.clipDuration
