@@ -388,8 +388,37 @@ export function buildExportJobDescriptor(project: Project, settings: ExportSetti
   const globalAudioFinalFilter = EXPORT_LOUDNORM_FILTER
   const ffmpegGlobalArgs = [...globalVideoArgs, '-filter:a', globalAudioFinalFilter, EXPORT_CONCAT_METHOD]
 
-  // Determinism key: stable string derived from project id + slide ids/durations/fps + clip identities
+  // Determinism key: stable string derived from project id + slide ids/durations/fps + clip identities + shadow data
   // Sort for determinism; project slides are already ordered, but we include deterministic serialization.
+  // Include shadowEffects + shadowTracks + clipIds per spec #301 for pixel-identical determinism
+  const shadowPayload = project.slides.map((slide) => {
+    const nodesWithShadow: { id: string; shadowEffect?: unknown; shadowTracks?: unknown }[] = []
+    const walk = (node: { id: string; shadowEffect?: unknown; children: readonly { id: string; shadowEffect?: unknown; children: readonly unknown[] }[] } & Record<string, unknown>) => {
+      const shadowEff = (node as unknown as { shadowEffect?: unknown }).shadowEffect
+      const anim = slide.animation.node(node.id)
+      const shadowTracks = anim
+        ? (anim as unknown as { shadowTracksJSON: () => unknown[] }).shadowTracksJSON()
+        : []
+      if (shadowEff) {
+        nodesWithShadow.push({
+          id: node.id,
+          shadowEffect: shadowEff,
+          shadowTracks: (shadowTracks as unknown[]).length > 0 ? shadowTracks : undefined,
+        })
+      } else if ((shadowTracks as unknown[]).length > 0) {
+        nodesWithShadow.push({
+          id: node.id,
+          shadowTracks,
+        })
+      }
+      for (const child of node.children as unknown as typeof walk extends (n: infer U) => void ? U[] : never) walk(child as unknown as Parameters<typeof walk>[0])
+    }
+    walk(slide.scene.root as unknown as Parameters<typeof walk>[0])
+    return {
+      slideId: slide.id,
+      shadows: nodesWithShadow,
+    }
+  })
   const determinismPayload = {
     projectId: project.id,
     fps: settings.fps,
@@ -411,6 +440,18 @@ export function buildExportJobDescriptor(project: Project, settings: ExportSetti
         noiseReduction: c.noiseReduction,
       })),
     })),
+    shadows: shadowPayload,
+    clipIds: project.slides.flatMap((slide) => {
+      const ids: string[] = []
+      const stack: unknown[] = [slide.scene.root]
+      while (stack.length) {
+        const cur = stack.pop() as { clipInstances: readonly { clipId: string }[]; children: readonly unknown[] }
+        if (!cur) continue
+        for (const inst of cur.clipInstances) ids.push(inst.clipId)
+        for (let i = cur.children.length - 1; i >= 0; i--) stack.push(cur.children[i])
+      }
+      return ids
+    }).sort(),
   }
   // Simple deterministic JSON + hash-like base64 of JSON (not crypto, just stable)
   const determinismKey = btoa(JSON.stringify(determinismPayload)).slice(0, 48)

@@ -75,7 +75,7 @@ export function normalizeExtractable(
   }
   const clampedTime = Math.min(Math.max(normalizedTime, 0), 1)
 
-  // Validate value where applicable (opacity and morph)
+  // Validate value where applicable (opacity, morph, shadow)
   if (isOpacityTarget(kf.target)) {
     const v = normalizedValue as number
     if (typeof v !== 'number' || !Number.isFinite(v) || v < -1e-9 || v > 1 + 1e-9) {
@@ -110,6 +110,27 @@ export function normalizeExtractable(
       throw new Error(`Morph keyframe value must be number or object`)
     }
   }
+  if (isShadowTarget(kf.target)) {
+    const prop = (kf.target as { property: string }).property
+    const v = normalizedValue
+    if (prop === 'color') {
+      if (typeof v !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(v)) {
+        throw new Error(`Clip shadow keyframe color must be hex #rrggbb, got ${String(v)}`)
+      }
+    } else if (prop === 'opacity') {
+      if (typeof v !== 'number' || !Number.isFinite(v) || v < -1e-9 || v > 1 + 1e-9) {
+        throw new Error(`Clip shadow keyframe opacity must be within [0,1], got ${String(v)}`)
+      }
+    } else if (prop === 'blur') {
+      if (typeof v !== 'number' || !Number.isFinite(v) || v < -1e-9) {
+        throw new Error(`Clip shadow keyframe blur must be a non-negative finite number, got ${String(v)}`)
+      }
+    } else {
+      if (typeof v !== 'number' || !Number.isFinite(v)) {
+        throw new Error(`Clip shadow keyframe ${prop} must be a finite number, got ${String(v)}`)
+      }
+    }
+  }
 
   return {
     target: kf.target,
@@ -130,6 +151,10 @@ function isMorphTarget(target: KeyframeTarget): boolean {
   return target.kind === 'morph'
 }
 
+function isShadowTarget(target: KeyframeTarget): boolean {
+  return target.kind === 'shadow'
+}
+
 export type NormalizedChannelKey =
   | { kind: 'property'; property: AnimationProperty }
   | { kind: 'visible'; nodeId: string } // visible is per-node but clip's visible is global; we merge all visible into one clip visible track
@@ -138,8 +163,12 @@ export type NormalizedChannelKey =
   | { kind: 'dataLabel'; label: string }
   | { kind: 'table'; property: import('./animationProperties').TableAnimationProperty }
   | { kind: 'morph' }
+  | { kind: 'shadow'; property: import('./shadowEffect').ShadowProperty }
 
 export function channelKeyOf(target: KeyframeTarget): string {
+  if (target.kind === 'shadow') {
+    return `shadow:${target.property}`
+  }
   if (target.kind === 'node') {
     if ('property' in target) {
       return `property:${target.property}`

@@ -6,6 +6,8 @@ import { Keyframe as KeyframeModel, newKeyframeId, ZERO_TANGENT } from './keyfra
 import { requireKeyframeInterpolation, requireKeyframeTangent } from './keyframe'
 import { isRecord, requireFiniteNumber, requireString } from './guards'
 import { requireAnimationProperty } from './animationProperties'
+import type { ShadowProperty } from './shadowEffect'
+import { SHADOW_PROPERTIES, requireShadowKeyframeValue } from './shadowEffect'
 
 /** The recognised kind values for clip parameters. */
 export const CLIP_PARAM_KINDS = ['number', 'color', 'vec2'] as const
@@ -204,6 +206,7 @@ export class ClipDefinition {
   readonly #visibleAnimation = new ClipChannelAnimation()
   readonly #circleAnimations = new Map<CircleAnimationProperty, ClipChannelAnimation>()
   readonly #morphAnimation = new ClipChannelAnimation()
+  readonly #shadowChannelAnimations = new Map<ShadowProperty, ClipChannelAnimation>()
 
   constructor(
     id: string,
@@ -380,6 +383,26 @@ export class ClipDefinition {
     return this.#morphAnimation.getKeyframe(keyframeId)
   }
 
+  getShadowChannelKeyframes(property: ShadowProperty): readonly Keyframe[] {
+    return this.#shadowChannelAnimations.get(property)?.keyframes() ?? []
+  }
+
+  hasShadowChannel(property: ShadowProperty): boolean {
+    return this.#shadowChannelAnimations.has(property)
+  }
+
+  get shadowChannelKeys(): readonly ShadowProperty[] {
+    return [...this.#shadowChannelAnimations.keys()]
+  }
+
+  shadowChannelAnimation(property: ShadowProperty): ClipChannelAnimation | undefined {
+    return this.#shadowChannelAnimations.get(property)
+  }
+
+  getShadowKeyframe(property: ShadowProperty, keyframeId: string): Keyframe | undefined {
+    return this.#shadowChannelAnimations.get(property)?.getKeyframe(keyframeId)
+  }
+
   addChannelKeyframe(property: ClipChannel, keyframe: Keyframe): void {
     let anim = this.#channelAnimations.get(property)
     if (!anim) {
@@ -413,6 +436,15 @@ export class ClipDefinition {
 
   addMorphKeyframe(keyframe: Keyframe): void {
     this.#morphAnimation.add(keyframe)
+  }
+
+  addShadowChannelKeyframe(property: ShadowProperty, keyframe: Keyframe): void {
+    let anim = this.#shadowChannelAnimations.get(property)
+    if (!anim) {
+      anim = new ClipChannelAnimation()
+      this.#shadowChannelAnimations.set(property, anim)
+    }
+    anim.add(keyframe)
   }
 
   removeChannelKeyframe(property: ClipChannel, keyframeId: string): Keyframe | undefined {
@@ -457,6 +489,20 @@ export class ClipDefinition {
 
   removeMorphKeyframe(keyframeId: string): Keyframe | undefined {
     return this.#morphAnimation.remove(keyframeId)
+  }
+
+  removeShadowChannelKeyframe(property: ShadowProperty, keyframeId: string): Keyframe | undefined {
+    const anim = this.#shadowChannelAnimations.get(property)
+    if (!anim) return undefined
+    const removed = anim.remove(keyframeId)
+    if (anim.length === 0) {
+      this.#shadowChannelAnimations.delete(property)
+    }
+    return removed
+  }
+
+  removeShadowChannel(property: ShadowProperty): void {
+    this.#shadowChannelAnimations.delete(property)
   }
 
   removeChannel(property: ClipChannel): void {
@@ -555,6 +601,9 @@ export class ClipDefinition {
         ),
       )
     }
+    for (const [prop, anim] of this.#shadowChannelAnimations) {
+      copy.#shadowChannelAnimations.set(prop, anim.copy())
+    }
     return copy
   }
 
@@ -594,6 +643,11 @@ export class ClipDefinition {
     }
     if (this.#morphAnimation.length > 0) {
       ;(json as Record<string, unknown>).morphAnimation = this.#morphAnimation.toJSON()
+    }
+    if (this.#shadowChannelAnimations.size > 0) {
+      ;(json as Record<string, unknown>).shadowChannelAnimations = Object.fromEntries(
+        [...this.#shadowChannelAnimations.entries()].map(([prop, anim]) => [prop, anim.toJSON()]),
+      )
     }
     return json as ClipJSON
   }
@@ -769,6 +823,64 @@ export class ClipDefinition {
           ),
         )
       }
+    }
+    const shadowAnims = (json as Record<string, unknown>).shadowChannelAnimations
+    if (isRecord(shadowAnims) && shadowAnims !== null) {
+      for (const [prop, animJson] of Object.entries(shadowAnims as Record<string, unknown>)) {
+        if (!(SHADOW_PROPERTIES as readonly string[]).includes(prop)) {
+          console.warn(`[shadow] Clip shadowChannelAnimations bad property "${prop}" — ignoring`)
+          continue
+        }
+        const property = prop as ShadowProperty
+        const kind = property === 'color' ? 'color' : 'number'
+        try {
+          const anim = ClipChannelAnimation.fromJSONWithKind(animJson, (value, id) => {
+            if (kind === 'color') {
+              if (typeof value !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(value)) {
+                console.warn(`[shadow] Clip shadow color bad "${String(value)}" at "${id}" → #000000`)
+                return '#000000'
+              }
+              return (value as string).toLowerCase()
+            }
+            // numeric continuous: validate per property (blur ≥0, opacity 0..1)
+            try {
+              return requireShadowKeyframeValue(property, value, `Clip shadow keyframe "${id}" value`) as unknown as KeyframeValue
+            } catch (e) {
+              // tolerant clamp/warn like node animation
+              if (property === 'blur') {
+                const num = value as number
+                if (typeof num !== 'number' || !Number.isFinite(num) || num < 0) {
+                  console.warn(`[shadow] Clip shadow blur bad ${String(value)} at "${id}" → 0`)
+                  return 0
+                }
+                if (num > 32) return 32
+                return num
+              }
+              if (property === 'opacity') {
+                const num = value as number
+                if (typeof num !== 'number' || !Number.isFinite(num)) {
+                  console.warn(`[shadow] Clip shadow opacity bad ${String(value)} at "${id}" → 0.35`)
+                  return 0.35
+                }
+                return Math.max(0, Math.min(1, num))
+              }
+              if (typeof value !== 'number' || !Number.isFinite(value as number)) {
+                const fallback = property.startsWith('scale') ? 1 : 0
+                console.warn(`[shadow] Clip shadow ${property} bad ${String(value)} at "${id}" → ${fallback}`)
+                return fallback
+              }
+              throw e
+            }
+          })
+          clip.#shadowChannelAnimations.set(property, anim)
+        } catch (e) {
+          console.warn(
+            `[shadow] Clip shadow track "${property}" invalid — ignoring: ${e instanceof Error ? e.message : String(e)}`,
+          )
+        }
+      }
+    } else if (shadowAnims !== undefined && shadowAnims !== null) {
+      console.warn('[shadow] Clip shadowChannelAnimations must be an object — ignoring')
     }
     return clip
   }

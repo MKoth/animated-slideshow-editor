@@ -1743,6 +1743,27 @@ export class Engine {
     return this.#animations.hasVisibleTrack(nodeId)
   }
 
+  getShadowKeyframes(nodeId: string, property: import('./shadowEffect').ShadowProperty): readonly Keyframe[] {
+    return this.#animations.getShadowKeyframes(nodeId, property)
+  }
+
+  hasShadowTrack(nodeId: string, property: import('./shadowEffect').ShadowProperty): boolean {
+    return this.#animations.hasShadowTrack(nodeId, property)
+  }
+
+  clearShadowTracks(nodeId: string): import('./json').ShadowTrackJSON[] {
+    const slide = this.getSlideOfNode(nodeId)
+    const anim = slide.animation.node(nodeId)
+    if (!anim) return []
+    return anim.clearShadowTracks()
+  }
+
+  restoreShadowTracks(nodeId: string, tracks: ReadonlyArray<import('./json').ShadowTrackJSON>): void {
+    const slide = this.getSlideOfNode(nodeId)
+    const anim = slide.animation.ensure(nodeId)
+    anim.restoreShadowTracks(tracks as unknown as import('./json').ShadowTrackJSON[], slide.duration, nodeId)
+  }
+
   evaluateVisible(nodeId: string, time: number): boolean {
     return this.#evaluator.evaluateVisible(nodeId, time)
   }
@@ -1783,6 +1804,9 @@ export class Engine {
     }
     if (resolved.kind === 'morph') {
       return animation.morphKeyframes()
+    }
+    if (resolved.kind === 'shadow') {
+      return animation.shadowKeyframes(resolved.property)
     }
     if (resolved.kind === 'dataLabel') {
       return animation.dataLabelKeyframes(resolved.label)
@@ -2037,11 +2061,8 @@ export class Engine {
     return node.shadowEffect ? { ...node.shadowEffect } : undefined
   }
 
-  evaluateShadow(nodeId: string, _time: number): ShadowEffect | null {
-    void _time
-    const node = this.getNode(nodeId)
-    if (!isGroupNode(node) || !node.shadowEffect) return null
-    return { ...node.shadowEffect }
+  evaluateShadow(nodeId: string, time: number): ShadowEffect | null {
+    return this.#evaluator.evaluateShadow(nodeId, time)
   }
 
   setShadowParam(
@@ -3759,6 +3780,38 @@ export class Engine {
             }
           }
         }
+        const shadowTracks = (
+          nodeAnimJson as unknown as {
+            shadowTracks?: readonly {
+              property: string
+              keyframes: readonly import('./json').KeyframeJSON[]
+            }[]
+          }
+        ).shadowTracks
+        if (shadowTracks) {
+          for (const track of shadowTracks) {
+            for (const kfJson of track.keyframes) {
+              let val: unknown = kfJson.value
+              // Strict validation via requireShadowKeyframeValue; but tolerant via fromJSON already clamps, so just try
+              const kf = new KeyframeModel(
+                kfJson.id,
+                kfJson.time,
+                val as unknown as import('./keyframe').KeyframeValue,
+                (kfJson.interpolation as import('./keyframe').InterpolationType) ?? 'linear',
+                (kfJson.tangentIn as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+                (kfJson.tangentOut as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+              )
+              try {
+                targetAnim.addShadow(
+                  track.property as unknown as import('./shadowEffect').ShadowProperty,
+                  kf,
+                )
+              } catch {
+                void 0
+              }
+            }
+          }
+        }
         const morphBindingRaw = (
           nodeAnimJson as unknown as {
             morphBinding?: { fromShapeId: string | null; toShapeId: string | null } | null
@@ -4608,6 +4661,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getClipBlockingNodeNames: (clipId) => engine.getClipBlockingNodeNames(clipId),
     getShadowEffect: (nodeId) => engine.getShadowEffect(nodeId),
     evaluateShadow: (nodeId, time) => engine.evaluateShadow(nodeId, time),
+    getShadowKeyframes: (nodeId, property) => engine.getShadowKeyframes(nodeId, property),
+    hasShadowTrack: (nodeId, property) => engine.hasShadowTrack(nodeId, property),
     getCastShadow: (nodeId) => engine.getCastShadow(nodeId),
     setCastShadow: (nodeId, castShadow) => engine.setCastShadow(nodeId, castShadow),
     getClipCollection: (collectionId) => engine.getClipCollection(collectionId),

@@ -12,6 +12,7 @@ import type {
   TableTrackJSON,
   VisibleTrackJSON,
   MorphTrackJSON,
+  ShadowTrackJSON,
 } from './json'
 import type { MorphBinding } from './shape'
 import { requireMorphKeyframeValue } from './shape'
@@ -28,6 +29,8 @@ import {
 import type { CircleAnimationProperty, TableAnimationProperty } from './animationProperties'
 import { requireMaterialKeyframeValue } from './materialKeyframes'
 import type { MaterialParameterKindOf } from './keyframeTarget'
+import type { ShadowProperty } from './shadowEffect'
+import { requireShadowProperty, requireShadowKeyframeValue } from './shadowEffect'
 
 export type { MaterialParameterKindOf } from './keyframeTarget'
 
@@ -40,6 +43,7 @@ export class NodeAnimation {
   readonly #visible: Keyframe[] = []
   #morphBinding: MorphBinding | null = null
   readonly #morph: Keyframe[] = []
+  readonly #shadowTracks = new Map<ShadowProperty, Keyframe[]>()
 
   keyframes(property: AnimationProperty): readonly Keyframe[] {
     return this.#tracks.get(property) ?? []
@@ -95,6 +99,71 @@ export class NodeAnimation {
 
   tableTrackKeys(): TableAnimationProperty[] {
     return [...this.#tableTracks.keys()] as TableAnimationProperty[]
+  }
+
+  shadowKeyframes(property: ShadowProperty): readonly Keyframe[] {
+    return this.#shadowTracks.get(property) ?? []
+  }
+
+  hasShadowTrack(property: ShadowProperty): boolean {
+    return this.#shadowTracks.has(property)
+  }
+
+  shadowTrackKeys(): ShadowProperty[] {
+    return [...this.#shadowTracks.keys()] as ShadowProperty[]
+  }
+
+  addShadow(property: ShadowProperty, keyframe: Keyframe): void {
+    insertSorted(this.#shadowTracks as Map<string, Keyframe[]>, property, keyframe)
+  }
+
+  removeShadow(property: ShadowProperty, keyframeId: string): Keyframe | undefined {
+    return removeById(this.#shadowTracks as Map<string, Keyframe[]>, property, keyframeId)
+  }
+
+  getShadow(property: ShadowProperty, keyframeId: string): Keyframe | undefined {
+    return this.#shadowTracks.get(property)?.find((entry) => entry.id === keyframeId)
+  }
+
+  removeShadowTrack(property: ShadowProperty): void {
+    this.#shadowTracks.delete(property)
+  }
+
+  clearShadowTracks(): ShadowTrackJSON[] {
+    const snapshot = this.shadowTracksJSON()
+    this.#shadowTracks.clear()
+    return snapshot
+  }
+
+  restoreShadowTracks(tracks: readonly ShadowTrackJSON[], duration: number, _nodeId: string): void {
+    void _nodeId
+    this.#shadowTracks.clear()
+    for (const track of tracks as unknown as readonly { property: string; keyframes: readonly import('./json').KeyframeJSON[] }[]) {
+      // Use tolerant read but with strict ids preserved
+      const prop = track.property as ShadowProperty
+      try {
+        // Validate property
+        requireShadowProperty(prop)
+      } catch {
+        continue
+      }
+      for (const kfJson of track.keyframes) {
+        try {
+          const id = kfJson.id
+          const time = kfJson.time
+          const value = requireShadowKeyframeValue(prop, kfJson.value, `Shadow track "${prop}"`)
+          const interpolation = kfJson.interpolation ?? 'linear'
+          const tangentIn = kfJson.tangentIn ?? { time: 0, value: 0 }
+          const tangentOut = kfJson.tangentOut ?? { time: 0, value: 0 }
+          // Validate time within duration
+          if (typeof time !== 'number' || time < 0 || time > duration) continue
+          const kf = new KeyframeModel(id, time, value as unknown as import('./keyframe').KeyframeValue, interpolation as import('./keyframe').InterpolationType, tangentIn as import('./keyframe').KeyframeTangent, tangentOut as import('./keyframe').KeyframeTangent)
+          this.addShadow(prop, kf)
+        } catch {
+          continue
+        }
+      }
+    }
   }
 
   visibleKeyframes(): readonly Keyframe[] {
@@ -272,6 +341,12 @@ export class NodeAnimation {
         keyframes.map((keyframe) => copyKeyframe(keyframe)),
       )
     }
+    for (const [property, keyframes] of this.#shadowTracks) {
+      copy.#shadowTracks.set(
+        property,
+        keyframes.map((keyframe) => copyKeyframe(keyframe)),
+      )
+    }
     for (const keyframe of this.#visible) {
       copy.#visible.push(copyKeyframe(keyframe))
     }
@@ -319,6 +394,14 @@ export class NodeAnimation {
   tableTracksJSON(): TableTrackJSON[] {
     const tracks: TableTrackJSON[] = []
     for (const [property, keyframes] of this.#tableTracks) {
+      tracks.push({ property, keyframes: keyframes.map((keyframe) => keyframe.toJSON()) })
+    }
+    return tracks
+  }
+
+  shadowTracksJSON(): ShadowTrackJSON[] {
+    const tracks: ShadowTrackJSON[] = []
+    for (const [property, keyframes] of this.#shadowTracks) {
       tracks.push({ property, keyframes: keyframes.map((keyframe) => keyframe.toJSON()) })
     }
     return tracks
@@ -427,6 +510,16 @@ export class NodeAnimation {
     const morphTrack = (json as Record<string, unknown>).morphTrack
     if (morphTrack !== undefined) {
       readMorphTrack(animation, morphTrack, duration, legacyBinding)
+    }
+    const shadowTracks = (json as Record<string, unknown>).shadowTracks
+    if (shadowTracks !== undefined) {
+      if (!Array.isArray(shadowTracks)) {
+        console.warn(`[shadow] Node "${node.id}" shadowTracks must be an array — ignoring`)
+      } else {
+        for (const track of shadowTracks) {
+          readShadowTrack(animation, track, duration, node.id)
+        }
+      }
     }
     return animation
   }
@@ -610,6 +703,78 @@ function readMorphTrack(
   })
   for (const keyframeJson of record.keyframes) {
     animation.addMorph(parse(keyframeJson))
+  }
+}
+
+function readShadowTrack(
+  animation: NodeAnimation,
+  track: unknown,
+  duration: number,
+  nodeId: string,
+): void {
+  if (typeof track !== 'object' || track === null) {
+    console.warn(`[shadow] Node "${nodeId}" shadow track must be an object — ignoring`)
+    return
+  }
+  const record = track as Record<string, unknown>
+  let property: import('./shadowEffect').ShadowProperty
+  try {
+    property = requireShadowProperty(record.property)
+  } catch (e) {
+    console.warn(
+      `[shadow] Node "${nodeId}" shadow track bad property "${String(record.property)}" — ignoring track: ${e instanceof Error ? e.message : String(e)}`,
+    )
+    return
+  }
+  if (!Array.isArray(record.keyframes)) {
+    console.warn(`[shadow] Node "${nodeId}" shadow track "${property}" must have a keyframes array — ignoring`)
+    return
+  }
+  const parse = trackKeyframeParser(`Shadow track "${property}"`, duration, (value, what) => {
+    try {
+      return requireShadowKeyframeValue(property, value, what) as import('./keyframe').KeyframeValue
+    } catch (e) {
+      // Tolerant clamp / warn path per spec
+      if (property === 'color') {
+        console.warn(`[shadow] Node "${nodeId}" shadow color bad "${String(value)}" → #000000`)
+        return '#000000' as import('./keyframe').KeyframeValue
+      }
+      if (property === 'blur') {
+        const num = value as number
+        if (typeof num !== 'number' || !Number.isFinite(num) || num < 0) {
+          console.warn(`[shadow] Node "${nodeId}" shadow blur bad ${String(value)} → 0`)
+          return 0 as import('./keyframe').KeyframeValue
+        }
+        if (num > 32) return 32 as import('./keyframe').KeyframeValue
+        return num as import('./keyframe').KeyframeValue
+      }
+      if (property === 'opacity') {
+        const num = value as number
+        if (typeof num !== 'number' || !Number.isFinite(num)) {
+          console.warn(`[shadow] Node "${nodeId}" shadow opacity bad ${String(value)} → 0.35`)
+          return 0.35 as import('./keyframe').KeyframeValue
+        }
+        return Math.max(0, Math.min(1, num)) as import('./keyframe').KeyframeValue
+      }
+      // numeric others: check finite
+      if (typeof value !== 'number' || !Number.isFinite(value as number)) {
+        const fallback = property.startsWith('scale') ? 1 : 0
+        console.warn(`[shadow] Node "${nodeId}" shadow ${property} bad ${String(value)} → ${fallback}`)
+        return fallback as import('./keyframe').KeyframeValue
+      }
+      // if still throws, rethrow original
+      throw e
+    }
+  })
+  for (const keyframeJson of record.keyframes) {
+    try {
+      const kf = parse(keyframeJson)
+      animation.addShadow(property, kf)
+    } catch (e) {
+      console.warn(
+        `[shadow] Node "${nodeId}" shadow track "${property}" bad keyframe — ignoring: ${e instanceof Error ? e.message : String(e)}`,
+      )
+    }
   }
 }
 

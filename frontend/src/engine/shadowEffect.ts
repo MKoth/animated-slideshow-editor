@@ -70,6 +70,62 @@ export const SHADOW_LABELS: Record<ShadowProperty, string> = {
 }
 
 const HEX_COLOR_RE = /^#[0-9a-f]{6}$/i
+const HEX_COLOR_STRICT_RE = /^#[0-9a-fA-F]{6}$/
+
+export function isShadowProperty(value: unknown): value is ShadowProperty {
+  return typeof value === 'string' && (SHADOW_PROPERTIES as readonly string[]).includes(value)
+}
+
+export function requireShadowProperty(value: unknown): ShadowProperty {
+  if (typeof value !== 'string' || !(SHADOW_PROPERTIES as readonly string[]).includes(value)) {
+    throw new Error(`Unknown shadow property: ${String(value)}`)
+  }
+  return value as ShadowProperty
+}
+
+export function requireShadowKeyframeValue(
+  property: ShadowProperty,
+  value: unknown,
+  what = 'Keyframe value',
+): string | number {
+  if (property === 'color') {
+    if (typeof value !== 'string' || !HEX_COLOR_STRICT_RE.test(value)) {
+      throw new Error(`${what} must be a hex color like #rrggbb`)
+    }
+    return value.toLowerCase()
+  }
+  if (property === 'opacity') {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1) {
+      throw new Error(`${what} must be a number between 0 and 1`)
+    }
+    return value
+  }
+  if (property === 'blur') {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+      throw new Error(`${what} must be a non-negative finite number`)
+    }
+    return value
+  }
+  // offsetX/Y, scaleX/Y, skewX/Y, rotation: any finite
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`${what} must be a finite number`)
+  }
+  return value
+}
+
+export function lerpHexColor(from: string, to: string, ratio: number): string {
+  const fromRed = parseInt(from.slice(1, 3), 16)
+  const fromGreen = parseInt(from.slice(3, 5), 16)
+  const fromBlue = parseInt(from.slice(5, 7), 16)
+  const toRed = parseInt(to.slice(1, 3), 16)
+  const toGreen = parseInt(to.slice(3, 5), 16)
+  const toBlue = parseInt(to.slice(5, 7), 16)
+  const ch = (f: number, t: number) =>
+    Math.round(f + (t - f) * ratio)
+      .toString(16)
+      .padStart(2, '0')
+  return `#${ch(fromRed, toRed)}${ch(fromGreen, toGreen)}${ch(fromBlue, toBlue)}`.toLowerCase()
+}
 
 export function cloneShadowEffect(effect: ShadowEffect): ShadowEffect {
   return { ...effect }

@@ -3,6 +3,7 @@ import type { Keyframe } from './keyframe'
 import type { MaterialOverrideValue, MaterialOverrides } from './materialInstance'
 import type { MaterialParameterKindOf } from './keyframeTarget'
 import type { SceneNode } from './sceneNode'
+import { isGroupNode } from './sceneNode'
 import type { Slide } from './slide'
 import { identityTransform, pivotsEqual } from './transform'
 import type { Transform, Pivot } from './transform'
@@ -18,6 +19,8 @@ import {
   resolveMorphedVerticesFromKeyframe,
 } from './shape'
 import type { MorphKeyframeValue, MorphClipKeyframeValue } from './shape'
+import type { ShadowEffect, ShadowProperty } from './shadowEffect'
+import { SHADOW_PROPERTIES, lerpHexColor } from './shadowEffect'
 
 export interface EvaluatedNodeState {
   readonly transform: Transform
@@ -189,6 +192,172 @@ export class AnimationEvaluator {
       }
     }
     return last.value as boolean
+  }
+
+  evaluateShadow(nodeId: string, time: number): ShadowEffect | null {
+    const node = this.#nodeLookup(nodeId)
+    const slide = this.#slideLookup(nodeId)
+    if (!isGroupNode(node) || !node.shadowEffect) return null
+    const boundedTime = requireFiniteNumber(time, 'Evaluation time')
+    const clampedTime = Math.min(Math.max(boundedTime, 0), slide.duration)
+    const animation = slide.animation.node(nodeId)
+    const base = node.shadowEffect
+    const result: ShadowEffect = { ...base }
+    // Evaluate each shadow track after visible (so we can compute shadowAlpha), before clip layering
+    // Nine numerics via evaluateSegment, color via lerpHexColor
+    for (const prop of SHADOW_PROPERTIES) {
+      const keyframes = animation?.shadowKeyframes(prop as ShadowProperty)
+      if (!keyframes || keyframes.length === 0) continue
+      if (prop === 'color') {
+        result.color = this.#evaluateShadowColor(keyframes, clampedTime, base.color)
+      } else {
+        const fallback = base[prop as Exclude<ShadowProperty, 'color'>] as number
+        const evaluated = this.#evaluateShadowNumeric(keyframes, clampedTime, fallback)
+        ;(result as unknown as Record<string, unknown>)[prop] = evaluated
+      }
+    }
+    // shadowAlpha = nodeOpacity * shadowOpacity (evaluated)
+    // Need evaluated node opacity (including its own clips via evaluateNode)
+    // Do this before clip layering per spec ordering
+    const nodeOpacity = this.evaluateNode(nodeId, clampedTime).opacity
+    result.opacity = Math.max(0, Math.min(1, nodeOpacity * result.opacity))
+    // Blur clamp
+    if (!Number.isFinite(result.blur) || result.blur < 0) result.blur = 0
+    else if (result.blur > 32) result.blur = 32
+    // Apply clip layering last-wins
+    this.#applyClipShadowInstances(node, clampedTime, result)
+    this.#evaluateClipShadowColor(node, clampedTime, result)
+    // Final clamp for numeric after clip
+    if (!Number.isFinite(result.blur) || result.blur < 0) result.blur = 0
+    else if (result.blur > 32) result.blur = 32
+    result.opacity = Math.max(0, Math.min(1, result.opacity))
+    if (typeof result.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(result.color)) {
+      result.color = '#000000'
+    } else {
+      result.color = result.color.toLowerCase()
+    }
+    // Ensure finite for other numerics (fallback to base if NaN)
+    for (const k of ['offsetX', 'offsetY', 'scaleX', 'scaleY', 'skewX', 'skewY', 'rotation'] as const) {
+      const v = result[k] as unknown
+      if (typeof v !== 'number' || !Number.isFinite(v)) {
+        result[k] = base[k]
+      }
+    }
+    return result
+  }
+
+  #evaluateShadowNumeric(keyframes: readonly Keyframe[], time: number, fallback: number): number {
+    if (!keyframes || keyframes.length === 0) return fallback
+    const first = keyframes[0]
+    if (time <= first.time) return first.value as number
+    const last = keyframes[keyframes.length - 1]
+    if (time >= last.time) return last.value as number
+    for (let i = 0; i < keyframes.length - 1; i += 1) {
+      const from = keyframes[i]
+      const to = keyframes[i + 1]
+      if (to.time > from.time && time >= from.time && time < to.time) {
+        return evaluateSegment(from, to, time)
+      }
+    }
+    return last.value as number
+  }
+
+  #evaluateShadowColor(keyframes: readonly Keyframe[], time: number, fallback: string): string {
+    if (!keyframes || keyframes.length === 0) return fallback
+    const first = keyframes[0]
+    if (time <= first.time) return (first.value as string).toLowerCase()
+    const last = keyframes[keyframes.length - 1]
+    if (time >= last.time) return (last.value as string).toLowerCase()
+    for (let i = 0; i < keyframes.length - 1; i += 1) {
+      const from = keyframes[i]
+      const to = keyframes[i + 1]
+      if (time >= from.time && time < to.time) {
+        if (from.interpolation === 'hold') return (from.value as string).toLowerCase()
+        const ratio = (time - from.time) / (to.time - from.time)
+        return lerpHexColor(from.value as string, to.value as string, ratio)
+      }
+    }
+    return (last.value as string).toLowerCase()
+  }
+
+  #applyClipShadowInstances(node: SceneNode, time: number, state: ShadowEffect): void {
+    const instances = node.clipInstances
+    if (instances.length === 0) return
+    for (const instance of instances) {
+      if (!instance.enabled) continue
+      let clip: ClipDefinition
+      try {
+        clip = this.#clipLookup(instance.clipId)
+      } catch {
+        continue
+      }
+      if (clip.duration <= 0) continue
+      if (time < instance.startTime) continue
+      const u = Math.min(Math.max(((time - instance.startTime) * instance.speed) / clip.duration, 0), 1)
+      for (const prop of SHADOW_PROPERTIES) {
+        if (prop === 'color') continue
+        const anim = clip.shadowChannelAnimation(prop as ShadowProperty)
+        if (!anim || anim.length === 0) continue
+        const kfValue = this.#evaluateClipShadowNumeric(anim.keyframes(), u)
+        // Opacity clip should not be re-multiplied by nodeOpacity; last-wins directly
+        ;(state as unknown as Record<string, unknown>)[prop] = kfValue
+      }
+    }
+  }
+
+  #evaluateClipShadowColor(node: SceneNode, time: number, state: ShadowEffect): void {
+    const instances = node.clipInstances
+    if (instances.length === 0) return
+    for (const instance of instances) {
+      if (!instance.enabled) continue
+      let clip: ClipDefinition
+      try {
+        clip = this.#clipLookup(instance.clipId)
+      } catch {
+        continue
+      }
+      if (clip.duration <= 0) continue
+      if (time < instance.startTime) continue
+      const u = Math.min(Math.max(((time - instance.startTime) * instance.speed) / clip.duration, 0), 1)
+      const anim = clip.shadowChannelAnimation('color' as ShadowProperty)
+      if (!anim || anim.length === 0) continue
+      const kfValue = this.#evaluateClipShadowColorValue(anim.keyframes(), u)
+      state.color = kfValue
+    }
+  }
+
+  #evaluateClipShadowNumeric(keyframes: readonly Keyframe[], u: number): number {
+    if (keyframes.length === 0) return 0
+    const first = keyframes[0]
+    if (u <= first.time) return first.value as number
+    const last = keyframes[keyframes.length - 1]
+    if (u >= last.time) return last.value as number
+    for (let i = 0; i < keyframes.length - 1; i += 1) {
+      const from = keyframes[i]
+      const to = keyframes[i + 1]
+      if (to.time > from.time && u >= from.time && u < to.time) {
+        return evaluateSegment(from, to, u)
+      }
+    }
+    return last.value as number
+  }
+
+  #evaluateClipShadowColorValue(keyframes: readonly Keyframe[], u: number): string {
+    if (keyframes.length === 0) return '#000000'
+    const first = keyframes[0]
+    if (u <= first.time) return (first.value as string).toLowerCase()
+    const last = keyframes[keyframes.length - 1]
+    if (u >= last.time) return (last.value as string).toLowerCase()
+    for (let i = 0; i < keyframes.length - 1; i += 1) {
+      const from = keyframes[i]
+      const to = keyframes[i + 1]
+      if (u >= from.time && u < to.time) {
+        if (from.interpolation === 'hold') return (from.value as string).toLowerCase()
+        const ratio = (u - from.time) / (to.time - from.time)
+        return lerpHexColor(from.value as string, to.value as string, ratio)
+      }
+    }
+    return (last.value as string).toLowerCase()
   }
 
   evaluateMorph(nodeId: string, time: number): number {

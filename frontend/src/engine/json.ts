@@ -192,6 +192,11 @@ export type MorphTrackJSON = {
   readonly keyframes: readonly KeyframeJSON[]
 }
 
+export type ShadowTrackJSON = {
+  readonly property: string
+  readonly keyframes: readonly KeyframeJSON[]
+}
+
 export type NodeAnimationJSON = {
   readonly nodeId: string
   readonly tracks: readonly PropertyTrackJSON[]
@@ -202,6 +207,7 @@ export type NodeAnimationJSON = {
   readonly visibleTrack?: VisibleTrackJSON
   readonly morphBinding?: MorphBindingJSON | null
   readonly morphTrack?: MorphTrackJSON
+  readonly shadowTracks?: readonly ShadowTrackJSON[]
 }
 
 export type SlideAnimationJSON = {
@@ -383,6 +389,7 @@ export type ClipJSON = {
   readonly visibleAnimation?: ClipChannelJSON
   readonly circleChannelAnimations?: Readonly<Record<string, ClipChannelJSON>>
   readonly morphAnimation?: ClipChannelJSON
+  readonly shadowChannelAnimations?: Readonly<Record<string, ClipChannelJSON>>
 }
 
 export type ClipInstanceJSON = {

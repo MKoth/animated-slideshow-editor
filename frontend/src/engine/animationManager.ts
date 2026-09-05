@@ -114,6 +114,21 @@ export class AnimationManager {
     return slide.animation.node(nodeId)?.hasMorphTrack() ?? false
   }
 
+  getShadowKeyframes(nodeId: string, property: import('./shadowEffect').ShadowProperty): readonly Keyframe[] {
+    const slide = this.#slideLookup(nodeId)
+    return slide.animation.node(nodeId)?.shadowKeyframes(property) ?? []
+  }
+
+  hasShadowTrack(nodeId: string, property: import('./shadowEffect').ShadowProperty): boolean {
+    const slide = this.#slideLookup(nodeId)
+    return slide.animation.node(nodeId)?.hasShadowTrack(property) ?? false
+  }
+
+  shadowTrackKeys(nodeId: string): import('./shadowEffect').ShadowProperty[] {
+    const slide = this.#slideLookup(nodeId)
+    return slide.animation.node(nodeId)?.shadowTrackKeys() ?? []
+  }
+
   addKeyframe(target: KeyframeTarget, time: number, value: unknown): Keyframe {
     const resolved = this.#resolve(target)
     const boundedTime = requireKeyframeTime(time, resolved.slide.duration)
@@ -124,9 +139,15 @@ export class AnimationManager {
     if (resolved.track.kind === 'visible') {
       interpolation = 'hold'
     }
+    if (resolved.track.kind === 'shadow' && resolved.track.property === 'color') {
+      if (interpolation !== 'hold' && interpolation !== 'linear') interpolation = 'linear'
+    }
     const keyframe = new KeyframeModel(newKeyframeId(), boundedTime, boundedValue, interpolation)
     if (resolved.track.kind === 'visible') {
       keyframe.interpolation = 'hold'
+    }
+    if (resolved.track.kind === 'shadow' && resolved.track.property === 'color') {
+      if (keyframe.interpolation !== 'hold' && keyframe.interpolation !== 'linear') keyframe.interpolation = 'linear'
     }
     this.#addToTrack(resolved, keyframe)
     this.#bus.emit({ type: 'KeyframeAdded', target, keyframeId: keyframe.id })
@@ -228,6 +249,9 @@ export class AnimationManager {
     if (resolved.track.kind === 'visible' && bounded !== 'hold') {
       throw new Error('Visible track only supports hold interpolation')
     }
+    if (resolved.track.kind === 'shadow' && resolved.track.property === 'color' && bounded !== 'hold' && bounded !== 'linear') {
+      throw new Error('Shadow color track only supports hold and linear interpolation')
+    }
     const keyframe = this.#requireKeyframe(resolved, keyframeId)
     const oldInterpolation = keyframe.interpolation
     keyframe.interpolation = bounded
@@ -244,6 +268,9 @@ export class AnimationManager {
     const resolved = this.#resolve(target)
     if (resolved.track.kind === 'visible') {
       throw new Error('Visible track does not support tangents')
+    }
+    if (resolved.track.kind === 'shadow' && resolved.track.property === 'color') {
+      throw new Error('Shadow color track does not support tangents')
     }
     const boundedIn = requireKeyframeTangent(tangentIn, 'Keyframe tangent in')
     const boundedOut = requireKeyframeTangent(tangentOut, 'Keyframe tangent out')
@@ -290,6 +317,12 @@ export class AnimationManager {
       if (resolved.track.kind === 'visible') {
         interpolation = 'hold'
       }
+      if (resolved.track.kind === 'shadow' && resolved.track.property === 'color' && interpolation !== 'hold' && interpolation !== 'linear') {
+        throw new Error('Shadow color track only supports hold and linear interpolation')
+      }
+      if (resolved.track.kind === 'shadow' && resolved.track.property === 'color' && interpolation !== 'hold' && interpolation !== 'linear') {
+        interpolation = 'linear'
+      }
       const keyframe = new KeyframeModel(
         newKeyframeId(),
         entry.time,
@@ -300,6 +333,9 @@ export class AnimationManager {
       )
       if (resolved.track.kind === 'visible') {
         keyframe.interpolation = 'hold'
+      }
+      if (resolved.track.kind === 'shadow' && resolved.track.property === 'color' && keyframe.interpolation !== 'hold' && keyframe.interpolation !== 'linear') {
+        keyframe.interpolation = 'linear'
       }
       this.#addToTrack(resolved, keyframe)
       created.push(keyframe)
@@ -378,6 +414,9 @@ export class AnimationManager {
     if (track.kind === 'morph') {
       return animation.morphKeyframes()
     }
+    if (track.kind === 'shadow') {
+      return animation.shadowKeyframes(track.property)
+    }
     if (track.kind === 'dataLabel') {
       return animation.dataLabelKeyframes(track.label)
     }
@@ -398,6 +437,8 @@ export class AnimationManager {
       animation.addVisible(keyframe)
     } else if (track.kind === 'morph') {
       animation.addMorph(keyframe)
+    } else if (track.kind === 'shadow') {
+      animation.addShadow(track.property, keyframe)
     } else if (track.kind === 'dataLabel') {
       animation.addDataLabel(track.label, keyframe)
     } else if (track.kind === 'circle') {
@@ -417,6 +458,8 @@ export class AnimationManager {
       animation.removeVisible(keyframeId)
     } else if (track.kind === 'morph') {
       animation.removeMorph(keyframeId)
+    } else if (track.kind === 'shadow') {
+      animation.removeShadow(track.property, keyframeId)
     } else if (track.kind === 'dataLabel') {
       animation.removeDataLabel(track.label, keyframeId)
     } else if (track.kind === 'circle') {
@@ -437,6 +480,8 @@ export class AnimationManager {
       keyframe = animation.getVisible(keyframeId)
     } else if (track.kind === 'morph') {
       keyframe = animation.getMorph(keyframeId)
+    } else if (track.kind === 'shadow') {
+      keyframe = animation.getShadow(track.property, keyframeId)
     } else if (track.kind === 'dataLabel') {
       keyframe = animation.getDataLabel(track.label, keyframeId)
     } else if (track.kind === 'circle') {
@@ -454,13 +499,15 @@ export class AnimationManager {
             ? `visible`
             : track.kind === 'morph'
               ? `morph`
-              : track.kind === 'dataLabel'
-                ? `data label ${track.label}`
-                : track.kind === 'circle'
-                  ? `circle ${track.property}`
-                  : track.kind === 'table'
-                    ? `table ${track.property}`
-                    : `parameter ${track.parameter}`
+              : track.kind === 'shadow'
+                ? `shadow ${track.property}`
+                : track.kind === 'dataLabel'
+                  ? `data label ${track.label}`
+                  : track.kind === 'circle'
+                    ? `circle ${track.property}`
+                    : track.kind === 'table'
+                      ? `table ${track.property}`
+                      : `parameter ${track.parameter}`
       throw new Error(`Keyframe not found: ${keyframeId} on ${on}`)
     }
     return keyframe
@@ -541,6 +588,9 @@ export class AnimationManager {
     }
     if (track.kind === 'morph') {
       return `morph`
+    }
+    if (track.kind === 'shadow') {
+      return `shadow ${track.property}`
     }
     if (track.kind === 'dataLabel') {
       return `data label ${track.label}`

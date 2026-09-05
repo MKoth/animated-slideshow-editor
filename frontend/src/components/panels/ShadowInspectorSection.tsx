@@ -16,6 +16,10 @@ import {
   TransactionCommand,
 } from '../../engine/commands'
 import type { DispatchCommand } from '../../engine/commands'
+import { useUiStore } from '../../stores/uiStore'
+import type { EnginePublic } from '../../engine'
+import { autoKeyEdit } from '../../app/keyframeActions'
+import type { EnginePublic as EnginePublicType } from '../../engine/engine'
 
 interface ShadowInspectorSectionProps {
   target: SceneNode
@@ -50,7 +54,8 @@ export function ShadowInspectorSection({
   notify,
   playing,
 }: ShadowInspectorSectionProps) {
-  void _engine
+  const enginePublic = _engine as unknown as EnginePublicType | undefined
+  const animationMode = useUiStore((s) => s.animationMode)
   const [draft, setDraft] = useState<Partial<ShadowEffect>>({})
   const [isEditingSource, setIsEditingSource] = useState(false)
   const [showSilhouette, setShowSilhouette] = useState(false)
@@ -85,7 +90,7 @@ export function ShadowInspectorSection({
     try {
       let value: number | string
       if (property === 'color') {
-        value = String(rawValue).trim()
+        value = String(rawValue).trim().toLowerCase()
       } else if (property === 'opacity') {
         // UI percent 0..100 -> fraction 0..1; NaN handled by command
         const rawNum = typeof rawValue === 'number' ? rawValue : Number(String(rawValue).trim())
@@ -111,6 +116,16 @@ export function ShadowInspectorSection({
         }
         value = n
       }
+      if (animationMode && enginePublic) {
+        // Route via autoKeyEdit — creates/updates keyframe at playhead instead of direct param write
+        const res = autoKeyEdit(enginePublic as unknown as EnginePublic, dispatch, [
+          { target: { kind: 'shadow', nodeId: target.id, property }, value: value as unknown as import('../../engine/keyframe').KeyframeValue },
+        ])
+        // autoKeyEdit returns null if evaluated value equals edit value (no-op); still clear draft
+        void res
+        setDraft({})
+        return
+      }
       const result = dispatch(new SetShadowParamCommand({ nodeId: target.id, property, value }))
       if (result && !result.ok) throw result.error
       setDraft({})
@@ -133,6 +148,15 @@ export function ShadowInspectorSection({
           v = num > 1 ? num / 100 : num
         }
       }
+      if (property === 'color' && typeof v === 'string') v = v.toLowerCase()
+      if (animationMode && enginePublic) {
+        const res = autoKeyEdit(enginePublic as unknown as EnginePublic, dispatch, [
+          { target: { kind: 'shadow', nodeId: target.id, property }, value: v as unknown as import('../../engine/keyframe').KeyframeValue },
+        ])
+        void res
+        setDraft({})
+        return
+      }
       const cmd = new SetShadowParamCommand({ nodeId: target.id, property, value: v })
       const tx = new TransactionCommand([cmd])
       const result = dispatch(tx)
@@ -148,6 +172,24 @@ export function ShadowInspectorSection({
     if (playing) {
       notify('Cannot edit shadow while playing')
       return
+    }
+    if (animationMode && enginePublic) {
+      try {
+        const edits: { target: { kind: 'shadow'; nodeId: string; property: ShadowProperty }; value: import('../../engine/keyframe').KeyframeValue }[] = [
+          { target: { kind: 'shadow', nodeId: target.id, property: 'scaleX' }, value: 1.1 as unknown as import('../../engine/keyframe').KeyframeValue },
+          { target: { kind: 'shadow', nodeId: target.id, property: 'scaleY' }, value: 0.2 as unknown as import('../../engine/keyframe').KeyframeValue },
+          { target: { kind: 'shadow', nodeId: target.id, property: 'skewX' }, value: -12 as unknown as import('../../engine/keyframe').KeyframeValue },
+          { target: { kind: 'shadow', nodeId: target.id, property: 'blur' }, value: 11 as unknown as import('../../engine/keyframe').KeyframeValue },
+          { target: { kind: 'shadow', nodeId: target.id, property: 'opacity' }, value: 0.25 as unknown as import('../../engine/keyframe').KeyframeValue },
+          { target: { kind: 'shadow', nodeId: target.id, property: 'offsetY' }, value: 8 as unknown as import('../../engine/keyframe').KeyframeValue },
+        ]
+        const res = autoKeyEdit(enginePublic as unknown as EnginePublic, dispatch, edits)
+        void res
+        return
+      } catch (e) {
+        notify(e instanceof Error ? e.message : String(e))
+        return
+      }
     }
     try {
       const cmds = [

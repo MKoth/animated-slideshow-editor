@@ -13,6 +13,8 @@ import type {
   CircleAnimationProperty,
   TableAnimationProperty,
 } from './animationProperties'
+import type { ShadowProperty } from './shadowEffect'
+import { SHADOW_PROPERTIES } from './shadowEffect'
 
 export type ClampedKeyframe =
   | {
@@ -48,6 +50,12 @@ export type ClampedKeyframe =
   | {
       readonly nodeId: string
       readonly morph: true
+      readonly keyframeId: string
+      readonly oldTime: number
+    }
+  | {
+      readonly nodeId: string
+      readonly shadowProperty: ShadowProperty
       readonly keyframeId: string
       readonly oldTime: number
     }
@@ -175,6 +183,19 @@ export class SlideAnimation {
           keyframe.time = duration
         }
       }
+      for (const property of SHADOW_PROPERTIES) {
+        for (const keyframe of animation.shadowKeyframes(property)) {
+          if (keyframe.time > duration) {
+            clamped.push({
+              nodeId,
+              shadowProperty: property,
+              keyframeId: keyframe.id,
+              oldTime: keyframe.time,
+            })
+            keyframe.time = duration
+          }
+        }
+      }
     }
     return clamped
   }
@@ -190,6 +211,7 @@ export class SlideAnimation {
       const visibleTrack = animation.visibleTrackJSON()
       const morphTrack = animation.morphTrackJSON()
       const morphBinding = animation.morphBindingJSON()
+      const shadowTracks = animation.shadowTracksJSON()
       if (
         tracks.length > 0 ||
         materialTracks.length > 0 ||
@@ -198,7 +220,8 @@ export class SlideAnimation {
         tableTracks.length > 0 ||
         visibleTrack !== undefined ||
         morphTrack !== undefined ||
-        morphBinding !== undefined
+        morphBinding !== undefined ||
+        shadowTracks.length > 0
       ) {
         nodes.push({
           nodeId,
@@ -210,6 +233,7 @@ export class SlideAnimation {
           ...(visibleTrack !== undefined ? { visibleTrack } : {}),
           ...(morphTrack !== undefined ? { morphTrack } : {}),
           ...(morphBinding !== undefined ? { morphBinding } : {}),
+          ...(shadowTracks.length > 0 ? { shadowTracks } : {}),
         })
       }
     }

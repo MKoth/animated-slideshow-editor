@@ -24,6 +24,8 @@ import {
 import type { KeyframeValue } from './keyframe'
 import { requireMaterialKeyframeValue } from './materialKeyframes'
 import { requireMorphKeyframeValue } from './shape'
+import type { ShadowProperty } from './shadowEffect'
+import { requireShadowProperty, requireShadowKeyframeValue } from './shadowEffect'
 
 /** A uniform-six property target of a node (Spec 07 R9). */
 export interface NodePropertyTarget {
@@ -72,6 +74,13 @@ export interface NodeMorphTarget {
   readonly nodeId: string
 }
 
+/** Shadow projection per-property target (Spec Shadow 04) */
+export interface NodeShadowTarget {
+  readonly kind: 'shadow'
+  readonly nodeId: string
+  readonly property: ShadowProperty
+}
+
 /** A clip channel target (Spec 07 R16/R20). */
 export interface ClipChannelTarget {
   readonly kind: 'clip'
@@ -81,7 +90,7 @@ export interface ClipChannelTarget {
 
 /**
  * A keyframe editing target. The discriminated shape supports node targets,
- * data-label targets, circle targets, visible targets and clip channel targets (Spec 07 R20).
+ * data-label targets, circle targets, visible targets, shadow targets and clip channel targets (Spec 07 R20 + Shadow 04).
  */
 export type KeyframeTarget =
   | NodePropertyTarget
@@ -91,6 +100,7 @@ export type KeyframeTarget =
   | NodeTableTarget
   | NodeVisibleTarget
   | NodeMorphTarget
+  | NodeShadowTarget
   | ClipChannelTarget
 
 export function isPropertyTarget(target: KeyframeTarget): target is NodePropertyTarget {
@@ -125,7 +135,16 @@ export function isMorphTarget(target: KeyframeTarget): target is NodeMorphTarget
   return target.kind === 'morph'
 }
 
+export function isShadowTarget(target: KeyframeTarget): target is NodeShadowTarget {
+  return target.kind === 'shadow'
+}
+
 export function requireKeyframeTarget(value: unknown): KeyframeTarget {
+  if (isRecord(value) && value.kind === 'shadow') {
+    const nodeId = requireString(value.nodeId, 'Shadow target node id')
+    const property = requireShadowProperty(value.property)
+    return { kind: 'shadow', nodeId, property }
+  }
   if (isRecord(value) && value.kind === 'node') {
     const nodeId = requireString(value.nodeId, 'Keyframe target node id')
     if ('property' in value) {
@@ -186,7 +205,7 @@ export type MaterialParameterKindOf = (node: SceneNode, parameterKey: string) =>
 
 /**
  * The resolved track a target names: a uniform-six property track, a
- * material-parameter track, a data-label track, a circle track, a table track, or the visible hold-only track.
+ * material-parameter track, a data-label track, a circle track, a table track, the visible hold-only track, morph or shadow.
  */
 export type KeyframeTrackRef =
   | { readonly kind: 'property'; readonly property: AnimationProperty }
@@ -196,6 +215,7 @@ export type KeyframeTrackRef =
   | { readonly kind: 'table'; readonly property: TableAnimationProperty }
   | { readonly kind: 'visible' }
   | { readonly kind: 'morph' }
+  | { readonly kind: 'shadow'; readonly property: ShadowProperty }
 
 export function resolveKeyframeTrack(
   node: SceneNode,
@@ -205,6 +225,9 @@ export function resolveKeyframeTrack(
 ): KeyframeTrackRef {
   if (isClipChannelTarget(target)) {
     throw new Error('Clip channel targets cannot be resolved through node animation tracks')
+  }
+  if (isShadowTarget(target)) {
+    return { kind: 'shadow', property: requireShadowProperty(target.property) }
   }
   if (isPropertyTarget(target)) {
     return { kind: 'property', property: requireAnimatableForNode(node, target.property) }
@@ -235,12 +258,15 @@ export function resolveKeyframeTrack(
   return { kind: 'parameter', parameter, kindOf: kindOfParameter }
 }
 
-/** Validate a keyframe value for a resolved track (property, material kind, data label, visible or morph). */
+/** Validate a keyframe value for a resolved track (property, material kind, data label, visible, morph or shadow). */
 export function requireTrackKeyframeValue(
   track: KeyframeTrackRef,
   value: unknown,
   what = 'Keyframe value',
 ): KeyframeValue {
+  if (track.kind === 'shadow') {
+    return requireShadowKeyframeValue(track.property, value, what) as unknown as KeyframeValue
+  }
   if (track.kind === 'visible') {
     if (typeof value !== 'boolean') {
       throw new Error(`${what} must be a boolean for visible`)
@@ -291,14 +317,16 @@ export function requireNodeTarget(
   | NodeCircleTarget
   | NodeTableTarget
   | NodeVisibleTarget
-  | NodeMorphTarget {
+  | NodeMorphTarget
+  | NodeShadowTarget {
   if (
     target.kind !== 'node' &&
     target.kind !== 'dataLabel' &&
     target.kind !== 'circle' &&
     target.kind !== 'table' &&
     target.kind !== 'visible' &&
-    target.kind !== 'morph'
+    target.kind !== 'morph' &&
+    target.kind !== 'shadow'
   ) {
     throw new Error('This operation only supports node targets')
   }
@@ -310,6 +338,7 @@ export function requireNodeTarget(
     | NodeTableTarget
     | NodeVisibleTarget
     | NodeMorphTarget
+    | NodeShadowTarget
 }
 
 /** Validate a scale factor: a non-negative finite number. */

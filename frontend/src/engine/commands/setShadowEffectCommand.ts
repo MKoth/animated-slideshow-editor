@@ -1,6 +1,7 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
 import type { ShadowEffect } from '../shadowEffect'
+import type { ShadowTrackJSON } from '../json'
 import { clampShadowEffect, DEFAULT_SHADOW_EFFECT } from '../shadowEffect'
 import { isGroupNode } from '../sceneNode'
 
@@ -12,6 +13,7 @@ export interface SetShadowEffectParameters {
 export interface SetShadowEffectInverse {
   readonly nodeId: string
   readonly oldShadowEffect: ShadowEffect | null
+  readonly oldShadowTracks?: readonly ShadowTrackJSON[]
 }
 
 export class SetShadowEffectCommand implements Command<SetShadowEffectInverse> {
@@ -48,14 +50,28 @@ export class SetShadowEffectCommand implements Command<SetShadowEffectInverse> {
   execute(engine: Engine): SetShadowEffectInverse {
     const node = engine.getNode(this.#nodeId)
     const old = node.shadowEffect ? { ...node.shadowEffect } : null
+    // Capture shadowTracks before mutation (for lifecycle)
+    let oldTracks: readonly ShadowTrackJSON[] | undefined
+    try {
+      const slide = engine.getSlideOfNode(this.#nodeId) as unknown as { animation: { node: (id: string) => { shadowTracksJSON: () => ShadowTrackJSON[] } | undefined } }
+      oldTracks = slide.animation.node(this.#nodeId)?.shadowTracksJSON()
+    } catch {
+      oldTracks = undefined
+    }
     if (this.#shadowEffect === null) {
       engine.setShadowEffect(this.#nodeId, null)
+      // Destroy shadow tracks + RT lifecycle (one entry)
+      try {
+        engine.clearShadowTracks(this.#nodeId)
+      } catch {
+        void 0
+      }
     } else {
       // Use default fallback if caller passed incomplete? Already validated
       const effect = this.#shadowEffect ?? { ...DEFAULT_SHADOW_EFFECT }
       engine.setShadowEffect(this.#nodeId, effect)
     }
-    return { nodeId: this.#nodeId, oldShadowEffect: old }
+    return { nodeId: this.#nodeId, oldShadowEffect: old, ...(oldTracks && oldTracks.length > 0 ? { oldShadowTracks: oldTracks } : {}) }
   }
 
   toJSON(): Readonly<Record<string, unknown>> {

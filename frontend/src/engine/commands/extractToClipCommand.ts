@@ -122,7 +122,9 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
       for (const [key, arr] of groups) {
         const nkTarget = arr[0].target
         let existing: readonly number[] | undefined
-        if (nkTarget.kind === 'node' && 'property' in nkTarget) {
+        if (nkTarget.kind === 'shadow') {
+          existing = clip.getShadowChannelKeyframes(nkTarget.property).map((k) => k.time)
+        } else if (nkTarget.kind === 'node' && 'property' in nkTarget) {
           existing = clip.getChannelKeyframes(nkTarget.property).map((k) => k.time)
         } else if (nkTarget.kind === 'visible') {
           existing = clip.getVisibleKeyframes().map((k) => k.time)
@@ -246,7 +248,17 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
           if (sample.kind === 'visible' && kf.interpolation !== 'hold') {
             kf.interpolation = 'hold'
           }
-          if (sample.kind === 'node' && 'property' in sample) {
+          if (sample.kind === 'shadow' && (sample as { property: string }).property === 'color' && kf.interpolation !== 'hold' && kf.interpolation !== 'linear') {
+            kf.interpolation = 'linear'
+          }
+          if (sample.kind === 'shadow') {
+            clip.addShadowChannelKeyframe((sample as { property: import('../shadowEffect').ShadowProperty }).property, kf)
+            engine.emitKeyframeAdded(
+              { kind: 'shadow', nodeId: 'clip-' + clip.id, property: (sample as { property: import('../shadowEffect').ShadowProperty }).property } as unknown as KeyframeTarget,
+              kf.id,
+            )
+            engine.emitClipChanged(clip.id)
+          } else if (sample.kind === 'node' && 'property' in sample) {
             clip.addChannelKeyframe(sample.property, kf)
             engine.emitKeyframeAdded(
               { kind: 'clip', clipId: clip.id, channel: sample.property },
@@ -339,7 +351,17 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
           if (sample.kind === 'visible' && kf.interpolation !== 'hold') {
             kf.interpolation = 'hold'
           }
-          if (sample.kind === 'node' && 'property' in sample) {
+          if (sample.kind === 'shadow' && (sample as { property: string }).property === 'color' && kf.interpolation !== 'hold' && kf.interpolation !== 'linear') {
+            kf.interpolation = 'linear'
+          }
+          if (sample.kind === 'shadow') {
+            clip.addShadowChannelKeyframe((sample as { property: import('../shadowEffect').ShadowProperty }).property, kf)
+            engine.emitKeyframeAdded(
+              { kind: 'shadow', nodeId: 'clip-' + clip.id, property: (sample as { property: import('../shadowEffect').ShadowProperty }).property } as unknown as KeyframeTarget,
+              kf.id,
+            )
+            engine.emitClipChanged(clip.id)
+          } else if (sample.kind === 'node' && 'property' in sample) {
             // Use direct clip insertion to preserve full data, but emit via manager
             clip.addChannelKeyframe(sample.property, kf)
             engine.emitKeyframeAdded(

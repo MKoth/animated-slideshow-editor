@@ -7,7 +7,7 @@ import { SetKeyframeValueCommand } from './commands/setKeyframeValueCommand'
 import { OverrideMaterialParameterCommand } from './commands/overrideMaterialParameterCommand'
 import { TransactionCommand } from './commands/transactionCommand'
 import type { KeyframeTarget } from './keyframeTarget'
-import { isMorphTarget, isParameterTarget, isPropertyTarget } from './keyframeTarget'
+import { isMorphTarget, isParameterTarget, isPropertyTarget, isShadowTarget } from './keyframeTarget'
 import { uniformValuesEqual } from './materialResolution'
 import type { KeyframeValue } from './keyframe'
 
@@ -54,6 +54,22 @@ export function evaluatedPropertyValue(
   }
 }
 
+export function evaluatedShadowValue(
+  engine: EnginePublic,
+  nodeId: string,
+  property: import('./shadowEffect').ShadowProperty,
+  time: number,
+): string | number {
+  const effect = engine.evaluateShadow(nodeId, time)
+  if (!effect) {
+    // fallback to static if no effect
+    const node = engine.getNode(nodeId)
+    const base = (node.shadowEffect as unknown as Record<string, unknown>)?.[property]
+    return base as string | number
+  }
+  return (effect as unknown as Record<string, unknown>)[property] as string | number
+}
+
 /**
  * The Spec 04 auto-key pattern generalized to targets: editing a value at a
  * time creates or updates that target's keyframe at the time. Property edits
@@ -72,7 +88,9 @@ export function autoKeyCommands(
     if (existing) {
       const equal = isMorphTarget(edit.target)
         ? JSON.stringify(existing.value) === JSON.stringify(edit.value)
-        : uniformValuesEqual(existing.value as unknown as import('./materialInstance').MaterialOverrideValue, edit.value as unknown as import('./materialInstance').MaterialOverrideValue)
+        : isShadowTarget(edit.target)
+          ? existing.value === edit.value
+          : uniformValuesEqual(existing.value as unknown as import('./materialInstance').MaterialOverrideValue, edit.value as unknown as import('./materialInstance').MaterialOverrideValue)
       if (!equal) {
         commands.push(
           new SetKeyframeValueCommand({
@@ -90,6 +108,12 @@ export function autoKeyCommands(
         edit.value
     ) {
       continue
+    }
+    if (isShadowTarget(edit.target)) {
+      const cur = evaluatedShadowValue(engine, edit.target.nodeId, edit.target.property, edit.time)
+      if (cur === edit.value) continue
+      // For color, string case sensitive lower?
+      if (typeof cur === 'string' && typeof edit.value === 'string' && cur.toLowerCase() === (edit.value as string).toLowerCase()) continue
     }
     if (isMorphTarget(edit.target)) {
       // For morph, compare full object value (pair+coeff) via evaluateMorphValue when available
@@ -162,6 +186,9 @@ function targetKeyframes(engine: EnginePublic, target: KeyframeTarget): readonly
   }
   if (isMorphTarget(target)) {
     return engine.getMorphKeyframes(target.nodeId)
+  }
+  if (isShadowTarget(target)) {
+    return (engine as unknown as { getShadowKeyframes?: (id: string, prop: string) => readonly Keyframe[] }).getShadowKeyframes?.(target.nodeId, target.property) ?? []
   }
   if (target.kind === 'visible') {
     return engine.getVisibleKeyframes(target.nodeId)

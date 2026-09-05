@@ -416,7 +416,15 @@ export function applyUndo(
     case 'SetShadowEffect': {
       const nodeId = inv.nodeId as string
       const oldShadowEffect = inv.oldShadowEffect as import('../shadowEffect').ShadowEffect | null
+      const oldShadowTracks = inv.oldShadowTracks as readonly import('../json').ShadowTrackJSON[] | undefined
       engine.setShadowEffect(nodeId, oldShadowEffect)
+      if (oldShadowTracks && oldShadowTracks.length > 0) {
+        try {
+          engine.restoreShadowTracks(nodeId, oldShadowTracks)
+        } catch {
+          void 0
+        }
+      }
       return
     }
     case 'SetShadowParam': {
@@ -2355,6 +2363,13 @@ export function applyRedo(
     case 'SetShadowEffect': {
       const se = params.shadowEffect as import('../shadowEffect').ShadowEffect | null
       engine.setShadowEffect(params.nodeId as string, se)
+      if (se === null) {
+        try {
+          engine.clearShadowTracks(params.nodeId as string)
+        } catch {
+          void 0
+        }
+      }
       return
     }
     case 'SetShadowParam': {
