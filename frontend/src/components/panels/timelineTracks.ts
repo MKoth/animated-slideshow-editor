@@ -5,6 +5,9 @@ import type { ClipDefinition } from '../../engine/clipDefinition'
 import type { ClipParam } from '../../engine/clipDefinition'
 import { animatablePropertiesOf } from '../../app/keyframeActions'
 import { CIRCLE_ANIMATABLE_PROPERTIES } from '../../engine/animationProperties'
+import { SHADOW_PROPERTIES, SHADOW_LABELS } from '../../engine/shadowEffect'
+import type { ShadowProperty } from '../../engine/shadowEffect'
+import { isGroupNode } from '../../engine/sceneNode'
 
 export const TRACK_HEADER_WIDTH = 240
 export const ROW_HEIGHT = 28
@@ -57,6 +60,13 @@ export interface MorphSubtrackEntry {
   readonly depth: number
 }
 
+export interface ShadowSubtrackEntry {
+  readonly kind: 'shadowSubtrack'
+  readonly node: SceneNode
+  readonly property: ShadowProperty
+  readonly depth: number
+}
+
 /** A bone node row — distinguished from regular node rows for UI styling. */
 export interface BoneTrackEntry {
   readonly kind: 'bone'
@@ -74,6 +84,7 @@ export type TimelineRow =
   | CircleSubtrackEntry
   | VisibleSubtrackEntry
   | MorphSubtrackEntry
+  | ShadowSubtrackEntry
   | BoneTrackEntry
 
 export const PROPERTY_LABELS: Record<AnimationProperty, string> = {
@@ -95,6 +106,8 @@ export const CIRCLE_LABELS: Record<CircleAnimationProperty, string> = {
 export const VISIBLE_LABEL = 'Visible'
 
 export const MORPH_LABEL = 'Morph'
+
+export const SHADOW_LABELS_MAP = SHADOW_LABELS
 
 export function materialParameterLabel(parameter: MaterialParameterDefault): string {
   return parameter.key
@@ -185,6 +198,18 @@ export function timelineRows(
         for (const property of CIRCLE_ANIMATABLE_PROPERTIES) {
           rows.push({
             kind: 'circleSubtrack',
+            node: entry.node,
+            property,
+            depth: entry.depth + 1,
+          })
+        }
+      }
+      // Shadow subtracks: flat under expanded Group at parent.depth+1, no intermediate header
+      // Only for groups that have shadowEffect — hidden until ☑ Shadow checked
+      if (isGroupNode(entry.node) && entry.node.shadowEffect) {
+        for (const property of SHADOW_PROPERTIES) {
+          rows.push({
+            kind: 'shadowSubtrack',
             node: entry.node,
             property,
             depth: entry.depth + 1,

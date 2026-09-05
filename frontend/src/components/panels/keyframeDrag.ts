@@ -4,7 +4,11 @@ import { MoveKeyframesCommand } from '../../engine/commands'
 import type { DispatchCommand } from '../../engine/commands'
 import { dispatchKeyframeCommands } from '../../engine/keyframeEdit'
 import { groupRefsByTarget, groupMaterialRefsByTarget } from '../../app/keyframeSelectionActions'
-import type { KeyframeRef, MaterialKeyframeRef } from '../../app/keyframeSelectionActions'
+import type {
+  KeyframeRef,
+  MaterialKeyframeRef,
+  ShadowKeyframeRef,
+} from '../../app/keyframeSelectionActions'
 import {
   useTimelineSelectionStore,
   selectedKeyframeIdsOf,
@@ -18,6 +22,7 @@ interface DragMove {
   readonly property?: AnimationProperty
   readonly parameter?: string
   readonly morph?: boolean
+  readonly shadowProperty?: import('../../engine/shadowEffect').ShadowProperty
   readonly originalTime: number
 }
 
@@ -34,7 +39,10 @@ export interface MorphKeyframeRef {
 }
 
 export interface KeyframeDragOptions {
-  readonly keyframeRefs: ReadonlyMap<string, KeyframeRef | MaterialKeyframeRef | MorphKeyframeRef>
+  readonly keyframeRefs: ReadonlyMap<
+    string,
+    KeyframeRef | MaterialKeyframeRef | MorphKeyframeRef | ShadowKeyframeRef
+  >
   readonly duration: number
   readonly pps: number
   readonly timeFromClientX: (clientX: number) => number
@@ -66,29 +74,35 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
     const moves: DragMove[] = []
     for (const keyframeId of selectedKeyframeIdsOf(useTimelineSelectionStore.getState())) {
       const ref = keyframeRefs.get(keyframeId)
-      if (ref) {
-        if ('morph' in ref && (ref as MorphKeyframeRef).morph) {
-          moves.push({
-            keyframeId,
-            nodeId: ref.nodeId,
-            morph: true,
-            originalTime: ref.time,
-          })
-        } else if ('property' in ref) {
-          moves.push({
-            keyframeId,
-            nodeId: ref.nodeId,
-            property: ref.property,
-            originalTime: ref.time,
-          })
-        } else if ('parameter' in ref) {
-          moves.push({
-            keyframeId,
-            nodeId: ref.nodeId,
-            parameter: (ref as MaterialKeyframeRef).parameter,
-            originalTime: ref.time,
-          })
-        }
+      if (!ref) continue
+      if ('shadow' in ref && (ref as ShadowKeyframeRef).shadow) {
+        moves.push({
+          keyframeId,
+          nodeId: ref.nodeId,
+          shadowProperty: (ref as ShadowKeyframeRef).property,
+          originalTime: ref.time,
+        })
+      } else if ('morph' in ref && (ref as MorphKeyframeRef).morph) {
+        moves.push({
+          keyframeId,
+          nodeId: ref.nodeId,
+          morph: true,
+          originalTime: ref.time,
+        })
+      } else if ('property' in ref) {
+        moves.push({
+          keyframeId,
+          nodeId: ref.nodeId,
+          property: ref.property as AnimationProperty,
+          originalTime: ref.time,
+        })
+      } else if ('parameter' in ref) {
+        moves.push({
+          keyframeId,
+          nodeId: ref.nodeId,
+          parameter: (ref as MaterialKeyframeRef).parameter,
+          originalTime: ref.time,
+        })
       }
     }
     return moves
@@ -127,6 +141,13 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
     )
     const morphMoves = moved.filter(
       (move): move is MovedDragMove & { morph: true } => (move as DragMove).morph === true,
+    )
+    const shadowMoves = moved.filter(
+      (
+        move,
+      ): move is MovedDragMove & {
+        shadowProperty: import('../../engine/shadowEffect').ShadowProperty
+      } => move.shadowProperty !== undefined,
     )
     const commands: MoveKeyframesCommand[] = []
     for (const group of groupRefsByTarget(propertyMoves, (move) => ({
@@ -169,6 +190,34 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
         commands.push(
           new MoveKeyframesCommand({
             target: { kind: 'morph', nodeId: group.nodeId },
+            moves: group.items,
+          }),
+        )
+      }
+    }
+    // shadow moves grouped by node+property
+    {
+      const groups = new Map<
+        string,
+        {
+          nodeId: string
+          property: import('../../engine/shadowEffect').ShadowProperty
+          items: { keyframeId: string; newTime: number }[]
+        }
+      >()
+      for (const move of shadowMoves) {
+        const key = `${move.nodeId}\u0000${move.shadowProperty}`
+        let entry = groups.get(key)
+        if (!entry) {
+          entry = { nodeId: move.nodeId, property: move.shadowProperty, items: [] }
+          groups.set(key, entry)
+        }
+        entry.items.push({ keyframeId: move.keyframeId, newTime: move.newTime })
+      }
+      for (const group of groups.values()) {
+        commands.push(
+          new MoveKeyframesCommand({
+            target: { kind: 'shadow', nodeId: group.nodeId, property: group.property },
             moves: group.items,
           }),
         )

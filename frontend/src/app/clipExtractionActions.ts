@@ -7,10 +7,13 @@ import {
   circleKeyframeRefsOfScene,
   visibleKeyframeRefsOfScene,
   morphKeyframeRefsOfScene,
+  shadowKeyframeRefsOfScene,
 } from './keyframeSelectionActions'
 import type { KeyframeTarget } from '../engine/keyframeTarget'
 
-function allRefsForExtraction(engine: EnginePublic): { target: KeyframeTarget; keyframe: import('../engine/keyframe').Keyframe }[] {
+function allRefsForExtraction(
+  engine: EnginePublic,
+): { target: KeyframeTarget; keyframe: import('../engine/keyframe').Keyframe }[] {
   const results: { target: KeyframeTarget; keyframe: import('../engine/keyframe').Keyframe }[] = []
   for (const slide of engine.project?.slides ?? []) {
     const scene = slide.scene
@@ -18,7 +21,11 @@ function allRefsForExtraction(engine: EnginePublic): { target: KeyframeTarget; k
     for (const ref of keyframeRefsOfScene(engine, scene)) {
       const kfs = engine.getKeyframes(ref.nodeId, ref.property)
       const kf = kfs.find((k) => k.id === ref.keyframeId)
-      if (kf) results.push({ target: { kind: 'node', nodeId: ref.nodeId, property: ref.property }, keyframe: kf })
+      if (kf)
+        results.push({
+          target: { kind: 'node', nodeId: ref.nodeId, property: ref.property },
+          keyframe: kf,
+        })
     }
     // material - skip for extraction (clip material channels are separate but we could include)
     // For now, skip material extraction as spec says uniform-six + visible + circle
@@ -32,13 +39,27 @@ function allRefsForExtraction(engine: EnginePublic): { target: KeyframeTarget; k
     for (const ref of circleKeyframeRefsOfScene(engine, scene)) {
       const kfs = engine.getCircleKeyframes(ref.nodeId, ref.property)
       const kf = kfs.find((k) => k.id === ref.keyframeId)
-      if (kf) results.push({ target: { kind: 'circle', nodeId: ref.nodeId, property: ref.property }, keyframe: kf })
+      if (kf)
+        results.push({
+          target: { kind: 'circle', nodeId: ref.nodeId, property: ref.property },
+          keyframe: kf,
+        })
     }
     // morph
     for (const ref of morphKeyframeRefsOfScene(engine, scene)) {
       const kfs = engine.getMorphKeyframes(ref.nodeId)
       const kf = kfs.find((k) => k.id === ref.keyframeId)
       if (kf) results.push({ target: { kind: 'morph', nodeId: ref.nodeId }, keyframe: kf })
+    }
+    // shadow
+    for (const ref of shadowKeyframeRefsOfScene(engine, scene)) {
+      const kfs = engine.getShadowKeyframes(ref.nodeId, ref.property)
+      const kf = kfs.find((k) => k.id === ref.keyframeId)
+      if (kf)
+        results.push({
+          target: { kind: 'shadow', nodeId: ref.nodeId, property: ref.property },
+          keyframe: kf,
+        })
     }
     // Also dataLabel/table? Skip for now
   }
@@ -73,7 +94,9 @@ export function collectExtractableForSingle(
   keyframeId: string,
 ): ExtractableKeyframe | null {
   let kf: import('../engine/keyframe').Keyframe | undefined
-  if (target.kind === 'node' && 'property' in target) {
+  if (target.kind === 'shadow') {
+    kf = engine.getShadowKeyframes(target.nodeId, target.property).find((k) => k.id === keyframeId)
+  } else if (target.kind === 'node' && 'property' in target) {
     kf = engine.getKeyframes(target.nodeId, target.property).find((k) => k.id === keyframeId)
   } else if (target.kind === 'visible') {
     kf = engine.getVisibleKeyframes(target.nodeId).find((k) => k.id === keyframeId)
@@ -82,7 +105,9 @@ export function collectExtractableForSingle(
   } else if (target.kind === 'circle') {
     kf = engine.getCircleKeyframes(target.nodeId, target.property).find((k) => k.id === keyframeId)
   } else if (target.kind === 'node' && 'parameter' in target) {
-    kf = engine.getMaterialKeyframes(target.nodeId, target.parameter).find((k) => k.id === keyframeId)
+    kf = engine
+      .getMaterialKeyframes(target.nodeId, target.parameter)
+      .find((k) => k.id === keyframeId)
   } else {
     return null
   }

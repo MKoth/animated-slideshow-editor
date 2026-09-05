@@ -5,6 +5,9 @@ import { ZERO_TANGENT } from '../../engine/keyframe'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
 import { animatablePropertiesOf } from '../../app/keyframeActions'
 import { CIRCLE_ANIMATABLE_PROPERTIES } from '../../engine/animationProperties'
+import { SHADOW_PROPERTIES, SHADOW_LABELS } from '../../engine/shadowEffect'
+import type { ShadowProperty } from '../../engine/shadowEffect'
+import { isGroupNode } from '../../engine/sceneNode'
 import {
   SetKeyframeTangentsCommand,
   MoveKeyframesCommand,
@@ -47,6 +50,12 @@ const PROPERTY_COLORS: Record<string, string> = {
   endAngle: '#9575cd',
   segments: '#aed581',
   morph: '#ff7043',
+  offsetX: '#64b5f6',
+  offsetY: '#90caf9',
+  skewX: '#ffab91',
+  skewY: '#ffcc80',
+  blur: '#b39ddb',
+  color: '#ef5350',
 }
 
 const PROPERTY_LABELS: Record<string, string> = {
@@ -61,11 +70,19 @@ const PROPERTY_LABELS: Record<string, string> = {
   endAngle: 'End Angle',
   segments: 'Segments',
   morph: 'Morph',
+  offsetX: 'Shadow Offset X',
+  offsetY: 'Shadow Offset Y',
+  skewX: 'Shadow Skew X',
+  skewY: 'Shadow Skew Y',
+  blur: 'Shadow Blur',
+  opacityShadow: 'Shadow Opacity',
+  color: 'Shadow Color',
 }
 
 function matchesFilter(property: string, filter: string): boolean {
   if (filter === 'all') return true
   if (filter === 'animatedOnly') return true
+  if (filter === 'shadow' && property.startsWith('shadow')) return true
   if (filter === 'position') return property === 'positionX' || property === 'positionY'
   if (filter === 'rotation') return property === 'rotation'
   if (filter === 'scale') return property === 'scaleX' || property === 'scaleY'
@@ -73,7 +90,20 @@ function matchesFilter(property: string, filter: string): boolean {
   if (filter === 'morph') return property === 'morph'
   if (property === 'morph' && filter !== 'all' && filter !== 'animatedOnly' && filter !== 'morph')
     return false
+  if (
+    property.startsWith('shadow') &&
+    filter !== 'all' &&
+    filter !== 'animatedOnly' &&
+    filter !== 'shadow'
+  ) {
+    // Shadow numeric keys: offsetX, blur etc without prefix — treat separately via direct check in caller
+    return false
+  }
   return true
+}
+
+function isShadowFilter(filter: string): boolean {
+  return filter === 'shadow' || filter === 'all' || filter === 'animatedOnly'
 }
 
 function buildCurves(
@@ -136,6 +166,25 @@ function buildCurves(
             label: PROPERTY_LABELS['morph'] ?? 'Morph',
             keyframes: mKeyframes,
             color: PROPERTY_COLORS['morph'] ?? '#ff7043',
+          })
+        }
+      }
+    }
+    // shadow tracks per group node — nine numeric + one color swatch (color handled separately but still as curve for selection)
+    if (isGroupNode(node) && isShadowFilter(filter)) {
+      for (const prop of SHADOW_PROPERTIES) {
+        // color excluded from numeric curves — will be rendered as swatch lane in track list, but still need numeric handling for drag? Exclude here to avoid numeric interpretation
+        if (prop === 'color') continue
+        const keyframes = engine.getShadowKeyframes(nodeId, prop as ShadowProperty)
+        if (keyframes.length > 0) {
+          // For ambiguous names like rotation/scaleX/Y/opacity, label disambiguate
+          const label = `Shadow ${SHADOW_LABELS[prop as ShadowProperty]}`
+          curves.push({
+            nodeId,
+            property: prop,
+            label,
+            keyframes,
+            color: PROPERTY_COLORS[prop] ?? '#ffffff',
           })
         }
       }
@@ -207,12 +256,19 @@ function isMorphProperty(prop: string): boolean {
   return prop === 'morph'
 }
 
+function isShadowProperty(prop: string): boolean {
+  return (SHADOW_PROPERTIES as readonly string[]).includes(prop)
+}
+
 function resolveKeyframes(
   engine: ReturnType<typeof useEngine>['engine'],
   clip: ClipDefinition | undefined,
   nodeId: string,
   property: string,
 ) {
+  if (isShadowProperty(property) && !clip) {
+    return engine.getShadowKeyframes(nodeId, property as ShadowProperty)
+  }
   if (isCircleProperty(property) && !clip) {
     return engine.getCircleKeyframes(nodeId, property as CircleAnimationProperty)
   }
@@ -232,7 +288,11 @@ function buildTarget(
   | { kind: 'clip'; clipId: string; channel: AnimationProperty }
   | { kind: 'node'; nodeId: string; property: AnimationProperty }
   | { kind: 'circle'; nodeId: string; property: CircleAnimationProperty }
-  | { kind: 'morph'; nodeId: string } {
+  | { kind: 'morph'; nodeId: string }
+  | { kind: 'shadow'; nodeId: string; property: ShadowProperty } {
+  if (isShadowProperty(property) && !clip) {
+    return { kind: 'shadow' as const, nodeId, property: property as ShadowProperty }
+  }
   if (isMorphProperty(property) && !clip) {
     return { kind: 'morph' as const, nodeId }
   }
@@ -731,6 +791,7 @@ export function CurveEditorPanel({
         selectedKeyframeIds={selectedKeyframeIds}
         clip={clip}
         dispatch={dispatch}
+        scene={scene}
       />
       <div
         ref={canvasContainerRef}
@@ -768,16 +829,48 @@ function CurveEditorTrackList({
   selectedKeyframeIds,
   clip,
   dispatch,
+  scene,
 }: {
   curves: readonly CurveData[]
   selectedKeyframeIds: ReadonlySet<string>
   clip?: ClipDefinition
   dispatch: ReturnType<typeof useEngine>['dispatch']
+  scene?: Scene
 }) {
   const notify = useNotificationStore((state) => state.notify)
   const [pickerOpen, setPickerOpen] = useState(false)
   const selectedNodeId = useSelectionStore((state) => state.selectedIds[0])
   const engine = useEngine().engine
+  const shadowColorEntries = useMemo(() => {
+    if (clip) return []
+    if (!scene) return []
+    const entries: CurveData[] = []
+    const walk = (nodeId: string) => {
+      let node
+      try {
+        node = engine.getNode(nodeId)
+      } catch {
+        return
+      }
+      if (isGroupNode(node)) {
+        const kfs = engine.getShadowKeyframes(nodeId, 'color' as ShadowProperty)
+        if (kfs.length > 0) {
+          entries.push({
+            nodeId,
+            property: 'color' as ShadowProperty,
+            label: `Shadow Color (${node.name})`,
+            keyframes: kfs,
+            color: '#ef5350',
+          })
+        }
+      }
+      for (const child of node.children) {
+        if (!child.components.camera) walk(child.id)
+      }
+    }
+    walk(scene.root.id)
+    return entries
+  }, [engine, scene, clip])
 
   const animatableParams = useMemo(() => {
     if (!selectedNodeId) return []
@@ -850,6 +943,60 @@ function CurveEditorTrackList({
               }}
             >
               {curve.label}
+            </span>
+          </div>
+        )
+      })}
+      {shadowColorEntries.map((entry) => {
+        const hasSelection = entry.keyframes.some((kf) => selectedKeyframeIds.has(kf.id))
+        return (
+          <div
+            key={`${entry.nodeId}-${entry.property}-color`}
+            className="curve-editor-track-item curve-editor-track-item--shadow-color"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              padding: '4px 8px',
+              gap: 6,
+              borderBottom: '1px solid var(--color-border)',
+              background: hasSelection ? 'var(--color-bg-elevated)' : undefined,
+            }}
+          >
+            <span
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: 2,
+                background: (entry.keyframes[0]?.value as string) ?? '#000000',
+                flexShrink: 0,
+                border: '1px solid #555',
+              }}
+            />
+            <span
+              style={{
+                fontSize: 12,
+                color: 'var(--color-text)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {entry.label}
+            </span>
+            <span style={{ display: 'flex', gap: 2, marginLeft: 'auto' }}>
+              {entry.keyframes.map((kf) => (
+                <span
+                  key={kf.id}
+                  title={`${kf.value as string} @ ${kf.time.toFixed(2)}s (${kf.interpolation})`}
+                  style={{
+                    width: 12,
+                    height: 12,
+                    background: kf.value as string,
+                    border: '1px solid #333',
+                    borderRadius: 2,
+                  }}
+                />
+              ))}
             </span>
           </div>
         )

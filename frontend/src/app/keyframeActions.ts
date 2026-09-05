@@ -14,7 +14,13 @@ import {
   materialParameterEditCommands,
 } from '../engine/keyframeEdit'
 import type { KeyframeEdit, MaterialParameterEdit, TimedKeyframeEdit } from '../engine/keyframeEdit'
-import { isMorphTarget, isParameterTarget, isPropertyTarget } from '../engine/keyframeTarget'
+import {
+  isMorphTarget,
+  isParameterTarget,
+  isPropertyTarget,
+  isShadowTarget,
+} from '../engine/keyframeTarget'
+import type { ShadowProperty } from '../engine/shadowEffect'
 
 export type { KeyframeEdit, MaterialParameterEdit } from '../engine/keyframeEdit'
 export {
@@ -108,6 +114,27 @@ export function materialParameterStateOf(
   return 'animated'
 }
 
+export function shadowPropertyStateOf(
+  engine: EnginePublic,
+  nodeId: string,
+  property: ShadowProperty,
+  time: number,
+): PropertyState | null {
+  try {
+    engine.getNode(nodeId)
+  } catch {
+    return null
+  }
+  const keyframes = engine.getShadowKeyframes(nodeId, property)
+  if (keyframes.length === 0) {
+    return 'static'
+  }
+  if (keyframes.some((keyframe) => keyframe.time === time)) {
+    return 'onKeyframe'
+  }
+  return 'animated'
+}
+
 export function autoKeyEdit(
   engine: EnginePublic,
   dispatch: DispatchCommand,
@@ -118,7 +145,8 @@ export function autoKeyEdit(
     if (
       !isPropertyTarget(edit.target) &&
       !isParameterTarget(edit.target) &&
-      !isMorphTarget(edit.target)
+      !isMorphTarget(edit.target) &&
+      !isShadowTarget(edit.target)
     ) {
       continue
     }
@@ -147,24 +175,44 @@ export function morphAutoKey(
     let from: string | null = null
     let to: string | null = null
     try {
-      const cur = (engine as unknown as { evaluateMorphValue?: (id: string, t: number) => import('../engine/shape').MorphKeyframeValue | null }).evaluateMorphValue?.(nodeId, time)
+      const cur = (
+        engine as unknown as {
+          evaluateMorphValue?: (
+            id: string,
+            t: number,
+          ) => import('../engine/shape').MorphKeyframeValue | null
+        }
+      ).evaluateMorphValue?.(nodeId, time)
       if (cur) {
         from = cur.fromShapeId
         to = cur.toShapeId
       } else {
-        const fetched = (engine as unknown as { getMorphBinding?: (id: string) => import('../engine/shape').MorphBinding | null }).getMorphBinding?.(nodeId)
+        const fetched = (
+          engine as unknown as {
+            getMorphBinding?: (id: string) => import('../engine/shape').MorphBinding | null
+          }
+        ).getMorphBinding?.(nodeId)
         if (fetched) {
           from = fetched.fromShapeId
           to = fetched.toShapeId
         }
       }
-    } catch (_e) {
+    } catch {
       // ignore missing engine method
     }
-    return autoKeyEdit(engine, dispatch, [{ target: { kind: 'morph', nodeId }, value: { fromShapeId: from, toShapeId: to, coefficient: clamped } }])
+    return autoKeyEdit(engine, dispatch, [
+      {
+        target: { kind: 'morph', nodeId },
+        value: { fromShapeId: from, toShapeId: to, coefficient: clamped },
+      },
+    ])
   }
   const clampedCoeff = Math.max(0, Math.min(1, value.coefficient))
-  const morphValue = { fromShapeId: value.fromShapeId, toShapeId: value.toShapeId, coefficient: clampedCoeff }
+  const morphValue = {
+    fromShapeId: value.fromShapeId,
+    toShapeId: value.toShapeId,
+    coefficient: clampedCoeff,
+  }
   return autoKeyEdit(engine, dispatch, [{ target: { kind: 'morph', nodeId }, value: morphValue }])
 }
 

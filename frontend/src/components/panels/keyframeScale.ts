@@ -2,8 +2,16 @@ import { useRef, useState } from 'react'
 import { MoveKeyframesCommand } from '../../engine/commands'
 import type { DispatchCommand } from '../../engine/commands'
 import { dispatchKeyframeCommands } from '../../engine/keyframeEdit'
-import { groupRefsByTarget, groupMaterialRefsByTarget } from '../../app/keyframeSelectionActions'
-import type { KeyframeRef, MaterialKeyframeRef } from '../../app/keyframeSelectionActions'
+import {
+  groupRefsByTarget,
+  groupMaterialRefsByTarget,
+  groupShadowRefsByTarget,
+} from '../../app/keyframeSelectionActions'
+import type {
+  KeyframeRef,
+  MaterialKeyframeRef,
+  ShadowKeyframeRef,
+} from '../../app/keyframeSelectionActions'
 import {
   useTimelineSelectionStore,
   selectedKeyframeIdsOf,
@@ -25,7 +33,7 @@ interface MorphKeyframeRefForScale {
 interface ScaleSession {
   readonly keyframeRefs: ReadonlyMap<
     string,
-    KeyframeRef | MaterialKeyframeRef | MorphKeyframeRefForScale
+    KeyframeRef | MaterialKeyframeRef | MorphKeyframeRefForScale | ShadowKeyframeRef
   >
   readonly isAlt: boolean
   readonly playheadTime: number
@@ -37,7 +45,7 @@ interface ScaleSession {
 export interface KeyframeScaleOptions {
   readonly keyframeRefs: ReadonlyMap<
     string,
-    KeyframeRef | MaterialKeyframeRef | MorphKeyframeRefForScale
+    KeyframeRef | MaterialKeyframeRef | MorphKeyframeRefForScale | ShadowKeyframeRef
   >
   readonly duration: number
   readonly pps: number
@@ -60,7 +68,10 @@ export interface SelectionBounds {
 
 export function computeSelectionBounds(
   selectedKeyframeIds: readonly string[],
-  keyframeRefs: ReadonlyMap<string, KeyframeRef | MaterialKeyframeRef | MorphKeyframeRefForScale>,
+  keyframeRefs: ReadonlyMap<
+    string,
+    KeyframeRef | MaterialKeyframeRef | MorphKeyframeRefForScale | ShadowKeyframeRef
+  >,
 ): SelectionBounds | null {
   if (selectedKeyframeIds.length === 0) {
     return null
@@ -130,12 +141,15 @@ export function useKeyframeScale(options: KeyframeScaleOptions): KeyframeScale {
     const propertyRefs: (KeyframeRef & { keyframeId: string })[] = []
     const materialRefs: (MaterialKeyframeRef & { keyframeId: string })[] = []
     const morphRefs: (MorphKeyframeRefForScale & { keyframeId: string })[] = []
+    const shadowRefs: (ShadowKeyframeRef & { keyframeId: string })[] = []
 
     for (const [id, ref] of session.keyframeRefs) {
       if (!wanted.has(id)) {
         continue
       }
-      if ('morph' in ref && (ref as MorphKeyframeRefForScale).morph) {
+      if ('shadow' in ref && (ref as ShadowKeyframeRef).shadow) {
+        shadowRefs.push(ref as ShadowKeyframeRef & { keyframeId: string })
+      } else if ('morph' in ref && (ref as MorphKeyframeRefForScale).morph) {
         morphRefs.push(ref as MorphKeyframeRefForScale & { keyframeId: string })
       } else if ('property' in ref) {
         propertyRefs.push(ref as KeyframeRef & { keyframeId: string })
@@ -211,6 +225,27 @@ export function useKeyframeScale(options: KeyframeScaleOptions): KeyframeScale {
             moves: group.items,
           }),
         )
+      }
+    }
+    // shadow moves grouped by node+property
+    {
+      for (const group of groupShadowRefsByTarget(shadowRefs, (ref) => ref.keyframeId)) {
+        const moves = group.items
+          .map((keyframeId) => {
+            const previewTime = preview.get(keyframeId)
+            const ref = session.keyframeRefs.get(keyframeId) as ShadowKeyframeRef | undefined
+            if (previewTime === undefined || !ref || previewTime === ref.time) return null
+            return { keyframeId, newTime: previewTime }
+          })
+          .filter((m): m is { keyframeId: string; newTime: number } => m !== null)
+        if (moves.length > 0) {
+          commands.push(
+            new MoveKeyframesCommand({
+              target: { kind: 'shadow', nodeId: group.nodeId, property: group.property },
+              moves,
+            }),
+          )
+        }
       }
     }
 

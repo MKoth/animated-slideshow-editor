@@ -18,8 +18,10 @@ import {
 import type { DispatchCommand } from '../../engine/commands'
 import { useUiStore } from '../../stores/uiStore'
 import type { EnginePublic } from '../../engine'
-import { autoKeyEdit } from '../../app/keyframeActions'
+import { autoKeyEdit, shadowPropertyStateOf, playheadTimeOf } from '../../app/keyframeActions'
 import type { EnginePublic as EnginePublicType } from '../../engine/engine'
+import { AddKeyframeCommand } from '../../engine/commands'
+import { usePlaybackController } from '../../stores/playbackStore'
 
 interface ShadowInspectorSectionProps {
   target: SceneNode
@@ -61,6 +63,10 @@ export function ShadowInspectorSection({
   const [showSilhouette, setShowSilhouette] = useState(false)
   // drag state for coalescing sliders
   const dragRef = useRef<{ property: ShadowProperty; startValue: number } | null>(null)
+  // Subscribe to playhead/timeline changes so indicators update — must be before early return per hooks rules
+
+  const playheadTick = usePlaybackController((s) => s.currentTimes[target.id] ?? 0)
+  void playheadTick
 
   if (!isGroupNode(target)) return null
   const effect = target.shadowEffect
@@ -69,6 +75,59 @@ export function ShadowInspectorSection({
   const current: ShadowEffect = effect
     ? { ...effect, ...draft }
     : { ...DEFAULT_SHADOW_EFFECT, ...draft }
+
+  // Shadow inspector animation state — mirrors transform lanes: ● animated / ◆ onKeyframe via shadowPropertyStateOf
+  // Disabled while playing or (!animationMode && animated)
+  const playheadTime = enginePublic
+    ? (playheadTimeOf(enginePublic as unknown as EnginePublic, target.id) ?? 0)
+    : 0
+  const shadowStateOf = (prop: ShadowProperty) => {
+    if (!enginePublic) return null
+    try {
+      return shadowPropertyStateOf(
+        enginePublic as unknown as EnginePublic,
+        target.id,
+        prop,
+        playheadTime,
+      )
+    } catch {
+      return null
+    }
+  }
+  const isFieldDisabled = (prop: ShadowProperty) => {
+    if (playing) return true
+    const state = shadowStateOf(prop)
+    const animated = state !== null && state !== 'static'
+    return !animationMode && animated
+  }
+  const handleAddShadowKeyframe = (prop: ShadowProperty) => {
+    if (!enginePublic || !effect) return
+    try {
+      const time = playheadTime
+      const evaluated = enginePublic.evaluateShadow(target.id, time)
+      const rawVal = evaluated
+        ? (evaluated as unknown as Record<string, unknown>)[prop]
+        : (effect as unknown as Record<string, unknown>)[prop]
+      let value: unknown = rawVal
+      if (value === undefined) {
+        if (prop === 'color') value = '#000000'
+        else if (prop === 'opacity') value = 0.35
+        else if (prop === 'blur') value = 8
+        else if (prop.startsWith('scale')) value = 1
+        else value = 0
+      }
+      const result = dispatch(
+        new AddKeyframeCommand({
+          target: { kind: 'shadow', nodeId: target.id, property: prop },
+          time,
+          value: value as unknown as import('../../engine/keyframe').KeyframeValue,
+        }),
+      )
+      if (result && !result.ok) throw result.error
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e))
+    }
+  }
 
   const toggleEnabled = () => {
     if (playing) {
@@ -319,12 +378,30 @@ export function ShadowInspectorSection({
           {/* Offset X */}
           <label className="inspector-field">
             <span className="inspector-field__label">{LABELS.offsetX}</span>
+            {(() => {
+              const s = shadowStateOf('offsetX')
+              return s && s !== 'static' ? (
+                <span
+                  className="inspector-field__indicator"
+                  data-state={s}
+                  title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
+                >
+                  {s === 'animated' ? '●' : '◆'}
+                </span>
+              ) : null
+            })()}
             <input
               type="number"
               step={1}
               value={String(current.offsetX)}
-              disabled={playing}
-              title={playing ? 'Cannot edit while playing' : undefined}
+              disabled={isFieldDisabled('offsetX')}
+              title={
+                isFieldDisabled('offsetX')
+                  ? playing
+                    ? 'Cannot edit while playing'
+                    : 'Enter animation mode to edit animated property'
+                  : undefined
+              }
               onChange={(e) =>
                 setDraft((d) => ({ ...d, offsetX: parseNumber(e.target.value, current.offsetX) }))
               }
@@ -333,7 +410,7 @@ export function ShadowInspectorSection({
                 if (e.key === 'Enter') commitParam('offsetX', (e.target as HTMLInputElement).value)
               }}
               onPointerDown={(e) => {
-                if (playing) return
+                if (isFieldDisabled('offsetX')) return
                 const startX = e.clientX
                 const startValue = current.offsetX
                 let lastValue = startValue
@@ -359,15 +436,45 @@ export function ShadowInspectorSection({
               }}
               aria-label={LABELS.offsetX}
             />
+            {animationMode && !playing && (
+              <button
+                type="button"
+                className="inspector-field__add"
+                aria-label={`Add Keyframe to ${LABELS.offsetX}`}
+                title="Add keyframe at playhead"
+                onClick={() => handleAddShadowKeyframe('offsetX')}
+                style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
+              >
+                +
+              </button>
+            )}
           </label>
           <label className="inspector-field">
             <span className="inspector-field__label">{LABELS.offsetY}</span>
+            {(() => {
+              const s = shadowStateOf('offsetY')
+              return s && s !== 'static' ? (
+                <span
+                  className="inspector-field__indicator"
+                  data-state={s}
+                  title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
+                >
+                  {s === 'animated' ? '●' : '◆'}
+                </span>
+              ) : null
+            })()}
             <input
               type="number"
               step={1}
               value={String(current.offsetY)}
-              disabled={playing}
-              title={playing ? 'Cannot edit while playing' : undefined}
+              disabled={isFieldDisabled('offsetY')}
+              title={
+                isFieldDisabled('offsetY')
+                  ? playing
+                    ? 'Cannot edit while playing'
+                    : 'Enter animation mode to edit animated property'
+                  : undefined
+              }
               onChange={(e) =>
                 setDraft((d) => ({ ...d, offsetY: parseNumber(e.target.value, current.offsetY) }))
               }
@@ -376,7 +483,7 @@ export function ShadowInspectorSection({
                 if (e.key === 'Enter') commitParam('offsetY', (e.target as HTMLInputElement).value)
               }}
               onPointerDown={(e) => {
-                if (playing) return
+                if (isFieldDisabled('offsetY')) return
                 const startX = e.clientX
                 const startValue = current.offsetY
                 let lastValue = startValue
@@ -402,15 +509,45 @@ export function ShadowInspectorSection({
               }}
               aria-label={LABELS.offsetY}
             />
+            {animationMode && !playing && (
+              <button
+                type="button"
+                className="inspector-field__add"
+                aria-label={`Add Keyframe to ${LABELS.offsetY}`}
+                title="Add keyframe at playhead"
+                onClick={() => handleAddShadowKeyframe('offsetY')}
+                style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
+              >
+                +
+              </button>
+            )}
           </label>
           <label className="inspector-field">
             <span className="inspector-field__label">{LABELS.scaleX}</span>
+            {(() => {
+              const s = shadowStateOf('scaleX')
+              return s && s !== 'static' ? (
+                <span
+                  className="inspector-field__indicator"
+                  data-state={s}
+                  title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
+                >
+                  {s === 'animated' ? '●' : '◆'}
+                </span>
+              ) : null
+            })()}
             <input
               type="number"
               step={0.05}
               value={String(current.scaleX)}
-              disabled={playing}
-              title={playing ? 'Cannot edit while playing' : undefined}
+              disabled={isFieldDisabled('scaleX')}
+              title={
+                isFieldDisabled('scaleX')
+                  ? playing
+                    ? 'Cannot edit while playing'
+                    : 'Enter animation mode to edit animated property'
+                  : undefined
+              }
               onChange={(e) =>
                 setDraft((d) => ({ ...d, scaleX: parseNumber(e.target.value, current.scaleX) }))
               }
@@ -419,7 +556,7 @@ export function ShadowInspectorSection({
                 if (e.key === 'Enter') commitParam('scaleX', (e.target as HTMLInputElement).value)
               }}
               onPointerDown={(e) => {
-                if (playing) return
+                if (isFieldDisabled('scaleX')) return
                 const startX = e.clientX
                 const startValue = current.scaleX
                 let lastValue = startValue
@@ -448,15 +585,45 @@ export function ShadowInspectorSection({
               }}
               aria-label={LABELS.scaleX}
             />
+            {animationMode && !playing && (
+              <button
+                type="button"
+                className="inspector-field__add"
+                aria-label={`Add Keyframe to ${LABELS.scaleX}`}
+                title="Add keyframe at playhead"
+                onClick={() => handleAddShadowKeyframe('scaleX')}
+                style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
+              >
+                +
+              </button>
+            )}
           </label>
           <label className="inspector-field">
             <span className="inspector-field__label">{LABELS.scaleY}</span>
+            {(() => {
+              const s = shadowStateOf('scaleY')
+              return s && s !== 'static' ? (
+                <span
+                  className="inspector-field__indicator"
+                  data-state={s}
+                  title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
+                >
+                  {s === 'animated' ? '●' : '◆'}
+                </span>
+              ) : null
+            })()}
             <input
               type="number"
               step={0.01}
               value={String(current.scaleY)}
-              disabled={playing}
-              title={playing ? 'Cannot edit while playing' : undefined}
+              disabled={isFieldDisabled('scaleY')}
+              title={
+                isFieldDisabled('scaleY')
+                  ? playing
+                    ? 'Cannot edit while playing'
+                    : 'Enter animation mode to edit animated property'
+                  : undefined
+              }
               onChange={(e) =>
                 setDraft((d) => ({ ...d, scaleY: parseNumber(e.target.value, current.scaleY) }))
               }
@@ -465,7 +632,7 @@ export function ShadowInspectorSection({
                 if (e.key === 'Enter') commitParam('scaleY', (e.target as HTMLInputElement).value)
               }}
               onPointerDown={(e) => {
-                if (playing) return
+                if (isFieldDisabled('scaleY')) return
                 const startX = e.clientX
                 const startValue = current.scaleY
                 let lastValue = startValue
@@ -494,15 +661,45 @@ export function ShadowInspectorSection({
               }}
               aria-label={LABELS.scaleY}
             />
+            {animationMode && !playing && (
+              <button
+                type="button"
+                className="inspector-field__add"
+                aria-label={`Add Keyframe to ${LABELS.scaleY}`}
+                title="Add keyframe at playhead"
+                onClick={() => handleAddShadowKeyframe('scaleY')}
+                style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
+              >
+                +
+              </button>
+            )}
           </label>
           <label className="inspector-field">
             <span className="inspector-field__label">{LABELS.skewX}</span>
+            {(() => {
+              const s = shadowStateOf('skewX')
+              return s && s !== 'static' ? (
+                <span
+                  className="inspector-field__indicator"
+                  data-state={s}
+                  title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
+                >
+                  {s === 'animated' ? '●' : '◆'}
+                </span>
+              ) : null
+            })()}
             <input
               type="number"
               step={1}
               value={String(current.skewX)}
-              disabled={playing}
-              title={playing ? 'Cannot edit while playing' : undefined}
+              disabled={isFieldDisabled('skewX')}
+              title={
+                isFieldDisabled('skewX')
+                  ? playing
+                    ? 'Cannot edit while playing'
+                    : 'Enter animation mode to edit animated property'
+                  : undefined
+              }
               onChange={(e) =>
                 setDraft((d) => ({ ...d, skewX: parseNumber(e.target.value, current.skewX) }))
               }
@@ -511,7 +708,7 @@ export function ShadowInspectorSection({
                 if (e.key === 'Enter') commitParam('skewX', (e.target as HTMLInputElement).value)
               }}
               onPointerDown={(e) => {
-                if (playing) return
+                if (isFieldDisabled('skewX')) return
                 const startX = e.clientX
                 const startValue = current.skewX
                 let lastValue = startValue
@@ -537,15 +734,45 @@ export function ShadowInspectorSection({
               }}
               aria-label={LABELS.skewX}
             />
+            {animationMode && !playing && (
+              <button
+                type="button"
+                className="inspector-field__add"
+                aria-label={`Add Keyframe to ${LABELS.skewX}`}
+                title="Add keyframe at playhead"
+                onClick={() => handleAddShadowKeyframe('skewX')}
+                style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
+              >
+                +
+              </button>
+            )}
           </label>
           <label className="inspector-field">
             <span className="inspector-field__label">{LABELS.skewY}</span>
+            {(() => {
+              const s = shadowStateOf('skewY')
+              return s && s !== 'static' ? (
+                <span
+                  className="inspector-field__indicator"
+                  data-state={s}
+                  title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
+                >
+                  {s === 'animated' ? '●' : '◆'}
+                </span>
+              ) : null
+            })()}
             <input
               type="number"
               step={1}
               value={String(current.skewY)}
-              disabled={playing}
-              title={playing ? 'Cannot edit while playing' : undefined}
+              disabled={isFieldDisabled('skewY')}
+              title={
+                isFieldDisabled('skewY')
+                  ? playing
+                    ? 'Cannot edit while playing'
+                    : 'Enter animation mode to edit animated property'
+                  : undefined
+              }
               onChange={(e) =>
                 setDraft((d) => ({ ...d, skewY: parseNumber(e.target.value, current.skewY) }))
               }
@@ -554,7 +781,7 @@ export function ShadowInspectorSection({
                 if (e.key === 'Enter') commitParam('skewY', (e.target as HTMLInputElement).value)
               }}
               onPointerDown={(e) => {
-                if (playing) return
+                if (isFieldDisabled('skewY')) return
                 const startX = e.clientX
                 const startValue = current.skewY
                 let lastValue = startValue
@@ -580,15 +807,45 @@ export function ShadowInspectorSection({
               }}
               aria-label={LABELS.skewY}
             />
+            {animationMode && !playing && (
+              <button
+                type="button"
+                className="inspector-field__add"
+                aria-label={`Add Keyframe to ${LABELS.skewY}`}
+                title="Add keyframe at playhead"
+                onClick={() => handleAddShadowKeyframe('skewY')}
+                style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
+              >
+                +
+              </button>
+            )}
           </label>
           <label className="inspector-field">
             <span className="inspector-field__label">{LABELS.rotation}</span>
+            {(() => {
+              const s = shadowStateOf('rotation')
+              return s && s !== 'static' ? (
+                <span
+                  className="inspector-field__indicator"
+                  data-state={s}
+                  title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
+                >
+                  {s === 'animated' ? '●' : '◆'}
+                </span>
+              ) : null
+            })()}
             <input
               type="number"
               step={1}
               value={String(current.rotation)}
-              disabled={playing}
-              title={playing ? 'Cannot edit while playing' : undefined}
+              disabled={isFieldDisabled('rotation')}
+              title={
+                isFieldDisabled('rotation')
+                  ? playing
+                    ? 'Cannot edit while playing'
+                    : 'Enter animation mode to edit animated property'
+                  : undefined
+              }
               onChange={(e) =>
                 setDraft((d) => ({ ...d, rotation: parseNumber(e.target.value, current.rotation) }))
               }
@@ -597,7 +854,7 @@ export function ShadowInspectorSection({
                 if (e.key === 'Enter') commitParam('rotation', (e.target as HTMLInputElement).value)
               }}
               onPointerDown={(e) => {
-                if (playing) return
+                if (isFieldDisabled('rotation')) return
                 const startX = e.clientX
                 const startValue = current.rotation
                 let lastValue = startValue
@@ -623,19 +880,49 @@ export function ShadowInspectorSection({
               }}
               aria-label={LABELS.rotation}
             />
+            {animationMode && !playing && (
+              <button
+                type="button"
+                className="inspector-field__add"
+                aria-label={`Add Keyframe to ${LABELS.rotation}`}
+                title="Add keyframe at playhead"
+                onClick={() => handleAddShadowKeyframe('rotation')}
+                style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
+              >
+                +
+              </button>
+            )}
           </label>
           <label className="inspector-field">
             <span className="inspector-field__label">{LABELS.blur}</span>
+            {(() => {
+              const s = shadowStateOf('blur')
+              return s && s !== 'static' ? (
+                <span
+                  className="inspector-field__indicator"
+                  data-state={s}
+                  title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
+                >
+                  {s === 'animated' ? '●' : '◆'}
+                </span>
+              ) : null
+            })()}
             <input
               type="range"
               min={0}
               max={32}
               step={1}
               value={String(current.blur)}
-              disabled={playing}
-              title={playing ? 'Cannot edit while playing' : undefined}
+              disabled={isFieldDisabled('blur')}
+              title={
+                isFieldDisabled('blur')
+                  ? playing
+                    ? 'Cannot edit while playing'
+                    : 'Enter animation mode to edit animated property'
+                  : undefined
+              }
               onPointerDown={() => {
-                if (playing) return
+                if (isFieldDisabled('blur')) return
                 dragRef.current = { property: 'blur', startValue: current.blur }
               }}
               onPointerUp={(e) => {
@@ -660,7 +947,7 @@ export function ShadowInspectorSection({
               min={0}
               max={32}
               value={String(current.blur)}
-              disabled={playing}
+              disabled={isFieldDisabled('blur')}
               onChange={(e) =>
                 setDraft((d) => ({ ...d, blur: parseNumber(e.target.value, current.blur) }))
               }
@@ -669,7 +956,7 @@ export function ShadowInspectorSection({
                 if (e.key === 'Enter') commitParam('blur', (e.target as HTMLInputElement).value)
               }}
               onPointerDown={(e) => {
-                if (playing) return
+                if (isFieldDisabled('blur')) return
                 const startX = e.clientX
                 const startValue = current.blur
                 let lastValue = startValue
@@ -696,19 +983,49 @@ export function ShadowInspectorSection({
               }}
               aria-label="Blur value"
             />
+            {animationMode && !playing && (
+              <button
+                type="button"
+                className="inspector-field__add"
+                aria-label={`Add Keyframe to ${LABELS.blur}`}
+                title="Add keyframe at playhead"
+                onClick={() => handleAddShadowKeyframe('blur')}
+                style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
+              >
+                +
+              </button>
+            )}
           </label>
           <label className="inspector-field">
             <span className="inspector-field__label">{LABELS.opacity}</span>
+            {(() => {
+              const s = shadowStateOf('opacity')
+              return s && s !== 'static' ? (
+                <span
+                  className="inspector-field__indicator"
+                  data-state={s}
+                  title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
+                >
+                  {s === 'animated' ? '●' : '◆'}
+                </span>
+              ) : null
+            })()}
             <input
               type="range"
               min={0}
               max={100}
               step={1}
               value={String(Math.round(current.opacity * 100))}
-              disabled={playing}
-              title={playing ? 'Cannot edit while playing' : undefined}
+              disabled={isFieldDisabled('opacity')}
+              title={
+                isFieldDisabled('opacity')
+                  ? playing
+                    ? 'Cannot edit while playing'
+                    : 'Enter animation mode to edit animated property'
+                  : undefined
+              }
               onPointerDown={() => {
-                if (playing) return
+                if (isFieldDisabled('opacity')) return
                 dragRef.current = {
                   property: 'opacity',
                   startValue: Math.round(current.opacity * 100),
@@ -733,7 +1050,7 @@ export function ShadowInspectorSection({
               min={0}
               max={100}
               value={String(Math.round(current.opacity * 100))}
-              disabled={playing}
+              disabled={isFieldDisabled('opacity')}
               onChange={(e) =>
                 setDraft((d) => ({ ...d, opacity: parseNumber(e.target.value, 0) / 100 }))
               }
@@ -742,7 +1059,7 @@ export function ShadowInspectorSection({
                 if (e.key === 'Enter') commitParam('opacity', (e.target as HTMLInputElement).value)
               }}
               onPointerDown={(e) => {
-                if (playing) return
+                if (isFieldDisabled('opacity')) return
                 const startX = e.clientX
                 const startValue = Math.round(current.opacity * 100)
                 let lastValue = startValue
@@ -769,14 +1086,44 @@ export function ShadowInspectorSection({
               }}
               aria-label="Opacity value"
             />
+            {animationMode && !playing && (
+              <button
+                type="button"
+                className="inspector-field__add"
+                aria-label={`Add Keyframe to ${LABELS.opacity}`}
+                title="Add keyframe at playhead"
+                onClick={() => handleAddShadowKeyframe('opacity')}
+                style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
+              >
+                +
+              </button>
+            )}
           </label>
           <label className="inspector-field">
             <span className="inspector-field__label">{LABELS.color}</span>
+            {(() => {
+              const s = shadowStateOf('color')
+              return s && s !== 'static' ? (
+                <span
+                  className="inspector-field__indicator"
+                  data-state={s}
+                  title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
+                >
+                  {s === 'animated' ? '●' : '◆'}
+                </span>
+              ) : null
+            })()}
             <input
               type="color"
               value={current.color}
-              disabled={playing}
-              title={playing ? 'Cannot edit while playing' : undefined}
+              disabled={isFieldDisabled('color')}
+              title={
+                isFieldDisabled('color')
+                  ? playing
+                    ? 'Cannot edit while playing'
+                    : 'Enter animation mode to edit animated property'
+                  : undefined
+              }
               onChange={(e) => {
                 setDraft((d) => ({ ...d, color: e.target.value }))
                 commitParam('color', e.target.value)
@@ -786,7 +1133,7 @@ export function ShadowInspectorSection({
             <input
               type="text"
               value={current.color}
-              disabled={playing}
+              disabled={isFieldDisabled('color')}
               onChange={(e) => setDraft((d) => ({ ...d, color: e.target.value }))}
               onBlur={(e) => commitParam('color', e.target.value)}
               onKeyDown={(e) => {
@@ -794,6 +1141,18 @@ export function ShadowInspectorSection({
               }}
               aria-label="Color hex"
             />
+            {animationMode && !playing && (
+              <button
+                type="button"
+                className="inspector-field__add"
+                aria-label={`Add Keyframe to ${LABELS.color}`}
+                title="Add keyframe at playhead"
+                onClick={() => handleAddShadowKeyframe('color')}
+                style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
+              >
+                +
+              </button>
+            )}
           </label>
         </div>
       )}

@@ -40,6 +40,7 @@ import {
   MORPH_LABEL,
   materialParameterLabel,
 } from './timelineTracks'
+import { SHADOW_LABELS } from '../../engine/shadowEffect'
 import type { TimelineRow } from './timelineTracks'
 import {
   KeyframeMarker,
@@ -83,8 +84,8 @@ function MorphSubtrackHeader({
   } catch {
     evaluated = null
   }
-  const fromId = evaluated?.fromShapeId ?? (shapes[0]?.id ?? '')
-  const toId = evaluated?.toShapeId ?? (shapes[1]?.id ?? shapes[0]?.id ?? '')
+  const fromId = evaluated?.fromShapeId ?? shapes[0]?.id ?? ''
+  const toId = evaluated?.toShapeId ?? shapes[1]?.id ?? shapes[0]?.id ?? ''
   const currentCoeff = evaluated?.coefficient ?? 0
 
   const commitMorphValue = (next: import('../../engine/shape').MorphKeyframeValue) => {
@@ -98,28 +99,44 @@ function MorphSubtrackHeader({
 
   const handleFromChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newFrom = e.target.value || null
-    commitMorphValue({ fromShapeId: newFrom, toShapeId: evaluated?.toShapeId ?? toId ?? null, coefficient: currentCoeff })
+    commitMorphValue({
+      fromShapeId: newFrom,
+      toShapeId: evaluated?.toShapeId ?? toId ?? null,
+      coefficient: currentCoeff,
+    })
   }
   const handleToChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newTo = e.target.value || null
-    commitMorphValue({ fromShapeId: evaluated?.fromShapeId ?? fromId ?? null, toShapeId: newTo, coefficient: currentCoeff })
+    commitMorphValue({
+      fromShapeId: evaluated?.fromShapeId ?? fromId ?? null,
+      toShapeId: newTo,
+      coefficient: currentCoeff,
+    })
   }
   const handleAdd = () => {
     const time = usePlaybackController.getState().getTime(slideId)
     const value: import('../../engine/shape').MorphKeyframeValue = {
-      fromShapeId: evaluated?.fromShapeId ?? (shapes[0]?.id ?? null),
-      toShapeId: evaluated?.toShapeId ?? (shapes[1]?.id ?? shapes[0]?.id ?? null),
+      fromShapeId: evaluated?.fromShapeId ?? shapes[0]?.id ?? null,
+      toShapeId: evaluated?.toShapeId ?? shapes[1]?.id ?? shapes[0]?.id ?? null,
       coefficient: currentCoeff,
     }
     const result = dispatch(
-      new AddKeyframeCommand({ target: { kind: 'morph', nodeId: node.id }, time, value: value as unknown as import('../../engine/keyframe').KeyframeValue }),
+      new AddKeyframeCommand({
+        target: { kind: 'morph', nodeId: node.id },
+        time,
+        value: value as unknown as import('../../engine/keyframe').KeyframeValue,
+      }),
     )
     if (result && !result.ok) notify(result.error.message)
   }
   const handleCoeffChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const v = parseFloat(e.target.value)
     if (Number.isNaN(v)) return
-    commitMorphValue({ fromShapeId: evaluated?.fromShapeId ?? fromId ?? null, toShapeId: evaluated?.toShapeId ?? toId ?? null, coefficient: v })
+    commitMorphValue({
+      fromShapeId: evaluated?.fromShapeId ?? fromId ?? null,
+      toShapeId: evaluated?.toShapeId ?? toId ?? null,
+      coefficient: v,
+    })
   }
   return (
     <li
@@ -264,9 +281,34 @@ export function TimelineBody({
       }
     }
   }
+  const shadowKeyframeRefs: {
+    nodeId: string
+    property: import('../../engine/shadowEffect').ShadowProperty
+    keyframeId: string
+    time: number
+    shadow: true
+  }[] = []
+  for (const trackRow of rows) {
+    if (trackRow.kind === 'shadowSubtrack') {
+      for (const kf of engine.getShadowKeyframes(
+        trackRow.node.id,
+        trackRow.property as import('../../engine/shadowEffect').ShadowProperty,
+      )) {
+        shadowKeyframeRefs.push({
+          nodeId: trackRow.node.id,
+          property: trackRow.property as import('../../engine/shadowEffect').ShadowProperty,
+          keyframeId: kf.id,
+          time: kf.time,
+          shadow: true as const,
+        })
+      }
+    }
+  }
   const allKeyframeRefs = [...propertyKeyframeRefs, ...materialKeyframeRefs]
   const keyframeRefs = new Map(
-    [...allKeyframeRefs, ...morphKeyframeRefs].map((ref) => [ref.keyframeId, ref] as const),
+    [...allKeyframeRefs, ...morphKeyframeRefs, ...shadowKeyframeRefs].map(
+      (ref) => [ref.keyframeId, ref] as const,
+    ),
   )
 
   const allSelectionItems: KeyframeSelectionItem[] = []
@@ -282,6 +324,13 @@ export function TimelineBody({
       }
     } else if (row.kind === 'morphSubtrack') {
       for (const keyframe of engine.getMorphKeyframes(row.node.id)) {
+        allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
+      }
+    } else if (row.kind === 'shadowSubtrack') {
+      for (const keyframe of engine.getShadowKeyframes(
+        row.node.id,
+        row.property as import('../../engine/shadowEffect').ShadowProperty,
+      )) {
         allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
       }
     } else if (row.kind === 'materialSubtrack') {
@@ -559,6 +608,7 @@ export function TimelineBody({
           | 'dataLabelSubtrack'
           | 'circleSubtrack'
           | 'morphSubtrack'
+          | 'shadowSubtrack'
       }
     >,
     keyframe: { id: string },
@@ -587,6 +637,14 @@ export function TimelineBody({
         y: event.clientY,
         nodeId: row.node.id,
         morph: true,
+        keyframeId: keyframe.id,
+      })
+    } else if (row.kind === 'shadowSubtrack') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        shadowProperty: row.property as import('../../engine/shadowEffect').ShadowProperty,
         keyframeId: keyframe.id,
       })
     } else if (row.kind === 'dataLabelSubtrack') {
@@ -632,8 +690,27 @@ export function TimelineBody({
       }
       return
     }
+    const shadowSubtrack = target.closest<HTMLElement>('[data-shadow-property]')
+    if (shadowSubtrack) {
+      const nodeId = shadowSubtrack.dataset.nodeId
+      const shadowProperty = shadowSubtrack.dataset.shadowProperty
+      if (nodeId && shadowProperty) {
+        event.preventDefault()
+        setMenu({
+          x: event.clientX,
+          y: event.clientY,
+          nodeId,
+          shadowProperty: shadowProperty as import('../../engine/shadowEffect').ShadowProperty,
+        })
+        return
+      }
+    }
     const subtrack = target.closest<HTMLElement>('[data-property]')
-    if (subtrack && !subtrack.hasAttribute('data-circle-property')) {
+    if (
+      subtrack &&
+      !subtrack.hasAttribute('data-circle-property') &&
+      !subtrack.hasAttribute('data-shadow-property')
+    ) {
       const nodeId = subtrack.dataset.nodeId
       const property = subtrack.dataset.property
       if (nodeId && property) {
@@ -720,7 +797,11 @@ export function TimelineBody({
       if (!value) {
         try {
           const shapes = engine.getShapes(target.nodeId)
-          value = { fromShapeId: shapes[0]?.id ?? null, toShapeId: shapes[1]?.id ?? shapes[0]?.id ?? null, coefficient: 0 }
+          value = {
+            fromShapeId: shapes[0]?.id ?? null,
+            toShapeId: shapes[1]?.id ?? shapes[0]?.id ?? null,
+            coefficient: 0,
+          }
         } catch {
           value = { fromShapeId: null, toShapeId: null, coefficient: 0 }
         }
@@ -730,6 +811,44 @@ export function TimelineBody({
           target: { kind: 'morph', nodeId: target.nodeId },
           time,
           value: value as unknown as import('../../engine/keyframe').KeyframeValue,
+        }),
+      )
+    } else if ((target as unknown as { shadowProperty?: string }).shadowProperty) {
+      const shadowProperty = (
+        target as unknown as { shadowProperty: import('../../engine/shadowEffect').ShadowProperty }
+      ).shadowProperty
+      const time = usePlaybackController.getState().getTime(slideId)
+      let shadowValue: string | number
+      try {
+        const evaluated = engine.evaluateShadow(target.nodeId, time)
+        if (evaluated) {
+          shadowValue = (evaluated as unknown as Record<string, unknown>)[shadowProperty] as
+            string | number
+        } else {
+          const node = engine.getNode(target.nodeId)
+          shadowValue = (node.shadowEffect as unknown as Record<string, unknown>)?.[
+            shadowProperty
+          ] as string | number
+        }
+      } catch {
+        const node = engine.getNode(target.nodeId)
+        shadowValue =
+          ((node.shadowEffect as unknown as Record<string, unknown>)?.[shadowProperty] as
+            string | number) ?? 0
+      }
+      // fallback defaults if undefined
+      if (shadowValue === undefined) {
+        if (shadowProperty === 'color') shadowValue = '#000000'
+        else if (shadowProperty === 'opacity') shadowValue = 0.35
+        else if (shadowProperty === 'blur') shadowValue = 8
+        else if (shadowProperty.startsWith('scale')) shadowValue = 1
+        else shadowValue = 0
+      }
+      result = dispatch(
+        new AddKeyframeCommand({
+          target: { kind: 'shadow', nodeId: target.nodeId, property: shadowProperty },
+          time,
+          value: shadowValue as unknown as import('../../engine/keyframe').KeyframeValue,
         }),
       )
     } else if ((target.property as unknown as string) === 'visible') {
@@ -804,6 +923,11 @@ export function TimelineBody({
     let deleteTarget
     if (target.morph) {
       deleteTarget = { kind: 'morph' as const, nodeId: target.nodeId }
+    } else if ((target as unknown as { shadowProperty?: string }).shadowProperty) {
+      const shadowProperty = (
+        target as unknown as { shadowProperty: import('../../engine/shadowEffect').ShadowProperty }
+      ).shadowProperty
+      deleteTarget = { kind: 'shadow' as const, nodeId: target.nodeId, property: shadowProperty }
     } else if ((target.property as unknown as string) === 'visible') {
       deleteTarget = { kind: 'visible' as const, nodeId: target.nodeId }
     } else if (target.property) {
@@ -848,6 +972,13 @@ export function TimelineBody({
       let singleTarget: import('../../engine/keyframeTarget').KeyframeTarget | undefined
       if (target.morph) {
         singleTarget = { kind: 'morph', nodeId: target.nodeId }
+      } else if ((target as unknown as { shadowProperty?: string }).shadowProperty) {
+        const sp = (
+          target as unknown as {
+            shadowProperty: import('../../engine/shadowEffect').ShadowProperty
+          }
+        ).shadowProperty
+        singleTarget = { kind: 'shadow', nodeId: target.nodeId, property: sp }
       } else if ((target.property as unknown as string) === 'visible') {
         singleTarget = { kind: 'visible', nodeId: target.nodeId }
       } else if (target.property) {
@@ -871,7 +1002,7 @@ export function TimelineBody({
     }
     if (extractable.length === 0) {
       notify(
-        'No extractable keyframes for Add to clip (only position/rotation/scale/opacity/visible/circle are supported)',
+        'No extractable keyframes for Add to clip (only position/rotation/scale/opacity/visible/circle/morph/shadow are supported)',
       )
       return
     }
@@ -1095,6 +1226,78 @@ export function TimelineBody({
                         },
                         time,
                         value,
+                      }),
+                    )
+                    if (result && !result.ok) {
+                      notify(result.error.message)
+                    }
+                  }}
+                >
+                  +
+                </button>
+              </li>
+            ) : row.kind === 'shadowSubtrack' ? (
+              <li
+                key={`${row.node.id}:shadow:${row.property}`}
+                className="timeline-subtrack timeline-subtrack--shadow"
+                data-node-id={row.node.id}
+                data-shadow-property={row.property}
+                data-depth={row.depth}
+                style={{ paddingLeft: 12 + row.depth * 16 }}
+              >
+                <span className="timeline-subtrack__label">
+                  {
+                    SHADOW_LABELS[
+                      row.property as import('../../engine/shadowEffect').ShadowProperty
+                    ]
+                  }
+                </span>
+                <button
+                  className="timeline-subtrack__add"
+                  aria-label={`Add Keyframe to ${SHADOW_LABELS[row.property as import('../../engine/shadowEffect').ShadowProperty]}`}
+                  title="Add keyframe at the playhead"
+                  onClick={() => {
+                    const time = usePlaybackController.getState().getTime(slideId)
+                    let shadowValue: string | number
+                    try {
+                      const evaluated = engine.evaluateShadow(row.node.id, time)
+                      if (evaluated) {
+                        shadowValue = (evaluated as unknown as Record<string, unknown>)[
+                          row.property
+                        ] as string | number
+                      } else {
+                        const node = engine.getNode(row.node.id)
+                        shadowValue = (node.shadowEffect as unknown as Record<string, unknown>)?.[
+                          row.property
+                        ] as string | number
+                      }
+                    } catch {
+                      const node = engine.getNode(row.node.id)
+                      shadowValue =
+                        ((node.shadowEffect as unknown as Record<string, unknown>)?.[
+                          row.property
+                        ] as string | number) ?? 0
+                    }
+                    if (shadowValue === undefined) {
+                      const prop =
+                        row.property as import('../../engine/shadowEffect').ShadowProperty
+                      if (prop === 'color') shadowValue = '#000000'
+                      else if (prop === 'opacity') shadowValue = 0.35
+                      else if (prop === 'blur') shadowValue = 8
+                      else if (prop.startsWith('scale')) shadowValue = 1
+                      else shadowValue = 0
+                    }
+                    const result = dispatch(
+                      new AddKeyframeCommand({
+                        target: {
+                          kind: 'shadow',
+                          nodeId: row.node.id,
+                          property:
+                            row.property as import('../../engine/shadowEffect').ShadowProperty,
+                        },
+                        time,
+                        value:
+                          shadowValue as unknown as import('../../engine/keyframe').KeyframeValue,
                       }),
                     )
                     if (result && !result.ok) {
@@ -1393,6 +1596,127 @@ export function TimelineBody({
                             pps={pps}
                             step={step}
                             parameterLabel={MORPH_LABEL}
+                            onPointerDown={(event) =>
+                              handleKeyframePointerDown(event, keyframe, index)
+                            }
+                            onContextMenu={(event) =>
+                              handleKeyframeContextMenu(event, row, keyframe)
+                            }
+                          />
+                        )
+                      })}
+                    </div>
+                  )
+                }
+                if (row.kind === 'shadowSubtrack') {
+                  const keyframes = engine.getShadowKeyframes(
+                    row.node.id,
+                    row.property as import('../../engine/shadowEffect').ShadowProperty,
+                  )
+                  const isColor = (row.property as string) === 'color'
+                  if (isColor) {
+                    const sorted = [...keyframes].sort((a, b) => a.time - b.time)
+                    return (
+                      <div
+                        key={`${row.node.id}:shadow:${row.property}`}
+                        className="timeline-lane-row timeline-lane-row--shadow timeline-lane-row--shadow-color"
+                        data-shadow-property={row.property}
+                        style={{ top: index * ROW_HEIGHT }}
+                      >
+                        {sorted.map((keyframe, idx) => {
+                          const next = sorted[idx + 1]
+                          const nextTime = next ? next.time : duration
+                          const segmentWidth = (nextTime - keyframe.time) * pps
+                          const previewTime =
+                            scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
+                          const shownTime = previewTime ?? keyframe.time
+                          const selected = selectedKeyframeIds.includes(keyframe.id)
+                          const color = (keyframe.value as string) ?? '#000000'
+                          const HOLD_COLOR = color
+                          // Show segment with hold vs linear indication: linear lerp preview via background gradient? For v1, show solid color of from keyframe.
+                          return (
+                            <div
+                              key={keyframe.id}
+                              style={{
+                                position: 'absolute',
+                                left: 0,
+                                top: 0,
+                                right: 0,
+                                bottom: 0,
+                                pointerEvents: 'none',
+                              }}
+                            >
+                              <div
+                                className="timeline-shadow-color-segment"
+                                data-testid="shadow-color-segment"
+                                style={{
+                                  position: 'absolute',
+                                  left: keyframe.time * pps,
+                                  top: 2,
+                                  width: Math.max(0, segmentWidth),
+                                  height: ROW_HEIGHT - 4,
+                                  background:
+                                    keyframe.interpolation === 'hold'
+                                      ? HOLD_COLOR
+                                      : `linear-gradient(to right, ${color}, ${next ? (next.value as string) : color})`,
+                                  border: '1px solid rgba(0,0,0,0.2)',
+                                  pointerEvents: 'none',
+                                }}
+                                title={`${color} ${keyframe.interpolation}`}
+                              />
+                              <div
+                                className={`timeline-keyframe timeline-keyframe--shadow${selected ? ' timeline-keyframe--selected' : ''}`}
+                                data-testid="keyframe-marker"
+                                data-keyframe-id={keyframe.id}
+                                data-shadow-property={row.property}
+                                data-time={String(shownTime)}
+                                role="button"
+                                aria-label={`Shadow ${row.property} ${color} at ${tickLabel(shownTime, step)}`}
+                                style={{
+                                  left: shownTime * pps,
+                                  position: 'absolute',
+                                  pointerEvents: 'auto',
+                                  background: color,
+                                  borderColor: selected ? '#fff' : color,
+                                }}
+                                onPointerDown={(event) =>
+                                  handleKeyframePointerDown(event, keyframe, index)
+                                }
+                                onContextMenu={(event) =>
+                                  handleKeyframeContextMenu(event, row, keyframe)
+                                }
+                              />
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  }
+                  return (
+                    <div
+                      key={`${row.node.id}:shadow:${row.property}`}
+                      className="timeline-lane-row timeline-lane-row--shadow"
+                      data-shadow-property={row.property}
+                      style={{ top: index * ROW_HEIGHT }}
+                    >
+                      {keyframes.map((keyframe) => {
+                        const previewTime =
+                          scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
+                        const shownTime = previewTime ?? keyframe.time
+                        const selected = selectedKeyframeIds.includes(keyframe.id)
+                        return (
+                          <KeyframeMarker
+                            key={keyframe.id}
+                            keyframeId={keyframe.id}
+                            shownTime={shownTime}
+                            selected={selected}
+                            pps={pps}
+                            step={step}
+                            parameterLabel={
+                              SHADOW_LABELS[
+                                row.property as import('../../engine/shadowEffect').ShadowProperty
+                              ]
+                            }
                             onPointerDown={(event) =>
                               handleKeyframePointerDown(event, keyframe, index)
                             }

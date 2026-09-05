@@ -17,6 +17,8 @@ import { usePlaybackController } from '../stores/playbackStore'
 import { useTimelineViewStore } from '../stores/timelineViewStore'
 import { snapToFrameGrid } from '../engine/timelineSnapping'
 import { animatablePropertiesOf } from './keyframeActions'
+import { SHADOW_PROPERTIES } from '../engine/shadowEffect'
+import type { ShadowProperty } from '../engine/shadowEffect'
 
 export interface KeyframeRef {
   readonly nodeId: string
@@ -56,6 +58,34 @@ export interface MorphKeyframeRef {
   readonly nodeId: string
   readonly keyframeId: string
   readonly time: number
+}
+
+export interface ShadowKeyframeRef {
+  readonly nodeId: string
+  readonly property: ShadowProperty
+  readonly keyframeId: string
+  readonly time: number
+  readonly shadow: true
+}
+
+export function groupShadowRefsByTarget<
+  Ref extends { nodeId: string; property: ShadowProperty },
+  T,
+>(
+  refs: readonly Ref[],
+  itemOf: (ref: Ref) => T,
+): { readonly nodeId: string; readonly property: ShadowProperty; readonly items: T[] }[] {
+  const groups = new Map<string, { nodeId: string; property: ShadowProperty; items: T[] }>()
+  for (const ref of refs) {
+    const key = `${ref.nodeId}\u0000${ref.property}`
+    const entry = groups.get(key)
+    if (entry) {
+      entry.items.push(itemOf(ref))
+    } else {
+      groups.set(key, { nodeId: ref.nodeId, property: ref.property, items: [itemOf(ref)] })
+    }
+  }
+  return [...groups.values()]
 }
 
 /** Group refs by their node property target, preserving first-seen order. */
@@ -246,6 +276,26 @@ export function circleKeyframeRefsOfScene(engine: EnginePublic, scene: Scene): C
   return refs
 }
 
+export function shadowKeyframeRefsOfScene(engine: EnginePublic, scene: Scene): ShadowKeyframeRef[] {
+  const refs: ShadowKeyframeRef[] = []
+  for (const node of collectNodes(scene)) {
+    for (const property of SHADOW_PROPERTIES) {
+      if (engine.hasShadowTrack(node.id, property as ShadowProperty)) {
+        for (const keyframe of engine.getShadowKeyframes(node.id, property as ShadowProperty)) {
+          refs.push({
+            nodeId: node.id,
+            property: property as ShadowProperty,
+            keyframeId: keyframe.id,
+            time: keyframe.time,
+            shadow: true as const,
+          })
+        }
+      }
+    }
+  }
+  return refs
+}
+
 function allKeyframeRefs(engine: EnginePublic): KeyframeRef[] {
   const refs: KeyframeRef[] = []
   for (const slide of engine.project?.slides ?? []) {
@@ -286,6 +336,14 @@ function allVisibleKeyframeRefs(engine: EnginePublic): VisibleKeyframeRef[] {
   return refs
 }
 
+function allShadowKeyframeRefs(engine: EnginePublic): ShadowKeyframeRef[] {
+  const refs: ShadowKeyframeRef[] = []
+  for (const slide of engine.project?.slides ?? []) {
+    refs.push(...shadowKeyframeRefsOfScene(engine, slide.scene))
+  }
+  return refs
+}
+
 export function morphKeyframeRefsOfScene(engine: EnginePublic, scene: Scene): MorphKeyframeRef[] {
   const refs: MorphKeyframeRef[] = []
   for (const node of collectNodes(scene)) {
@@ -303,6 +361,13 @@ function allMorphKeyframeRefs(engine: EnginePublic): MorphKeyframeRef[] {
     refs.push(...morphKeyframeRefsOfScene(engine, slide.scene))
   }
   return refs
+}
+
+export function selectedShadowKeyframeRefs(engine: EnginePublic): ShadowKeyframeRef[] {
+  const selectedIds = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+  if (selectedIds.length === 0) return []
+  const wanted = new Set(selectedIds)
+  return allShadowKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
 }
 
 export function selectedMorphKeyframeRefs(engine: EnginePublic): MorphKeyframeRef[] {
@@ -364,6 +429,7 @@ type DeleteTarget =
   | { kind: 'circle'; nodeId: string; property: CircleAnimationProperty; items: string[] }
   | { kind: 'visible'; nodeId: string; items: string[] }
   | { kind: 'morph'; nodeId: string; items: string[] }
+  | { kind: 'shadow'; nodeId: string; property: ShadowProperty; items: string[] }
 
 export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: DispatchCommand): boolean {
   const propertyRefs = selectedKeyframeRefs(engine)
@@ -372,13 +438,15 @@ export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: Dispatch
   const circleRefs = selectedCircleKeyframeRefs(engine)
   const visibleRefs = selectedVisibleKeyframeRefs(engine)
   const morphRefs = selectedMorphKeyframeRefs(engine)
+  const shadowRefs = selectedShadowKeyframeRefs(engine)
   if (
     propertyRefs.length === 0 &&
     materialRefs.length === 0 &&
     dataLabelRefs.length === 0 &&
     circleRefs.length === 0 &&
     visibleRefs.length === 0 &&
-    morphRefs.length === 0
+    morphRefs.length === 0 &&
+    shadowRefs.length === 0
   ) {
     return false
   }
@@ -437,6 +505,16 @@ export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: Dispatch
       targets.push({ kind: 'morph', nodeId, items })
     }
   }
+  {
+    for (const group of groupShadowRefsByTarget(shadowRefs, (ref) => ref.keyframeId)) {
+      targets.push({
+        kind: 'shadow',
+        nodeId: group.nodeId,
+        property: group.property,
+        items: group.items,
+      })
+    }
+  }
   const deleteCommands = targets.map((target) => {
     if (target.kind === 'property') {
       return new DeleteKeyframesCommand({
@@ -453,6 +531,12 @@ export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: Dispatch
     if (target.kind === 'morph') {
       return new DeleteKeyframesCommand({
         target: { kind: 'morph', nodeId: target.nodeId },
+        keyframeIds: target.items,
+      })
+    }
+    if (target.kind === 'shadow') {
+      return new DeleteKeyframesCommand({
+        target: { kind: 'shadow', nodeId: target.nodeId, property: target.property },
         keyframeIds: target.items,
       })
     }
@@ -485,6 +569,7 @@ export function pruneKeyframeSelection(engine: EnginePublic): void {
   const validCircleKeys = new Set(allCircleKeyframeRefs(engine).map((ref) => ref.keyframeId))
   const validVisibleKeys = new Set(allVisibleKeyframeRefs(engine).map((ref) => ref.keyframeId))
   const validMorphKeys = new Set(allMorphKeyframeRefs(engine).map((ref) => ref.keyframeId))
+  const validShadowKeys = new Set(allShadowKeyframeRefs(engine).map((ref) => ref.keyframeId))
   const valid = new Set([
     ...validPropertyKeys,
     ...validMaterialKeys,
@@ -492,6 +577,7 @@ export function pruneKeyframeSelection(engine: EnginePublic): void {
     ...validCircleKeys,
     ...validVisibleKeys,
     ...validMorphKeys,
+    ...validShadowKeys,
   ])
   useTimelineSelectionStore.getState().pruneSelection(valid)
 }
