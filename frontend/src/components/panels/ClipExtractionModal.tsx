@@ -41,7 +41,9 @@ export function ClipExtractionModal({ keyframes, onClose }: Props) {
     return [...set].sort()
   }, [keyframes])
 
-  const [enabledShadowProps, setEnabledShadowProps] = useState<Set<ShadowProperty>>(() => new Set(shadowProps))
+  const [enabledShadowProps, setEnabledShadowProps] = useState<Set<ShadowProperty>>(
+    () => new Set(shadowProps),
+  )
 
   const toggleShadowProp = (prop: ShadowProperty, checked: boolean) => {
     setEnabledShadowProps((prev) => {
@@ -147,33 +149,87 @@ export function ClipExtractionModal({ keyframes, onClose }: Props) {
   const displayCount = filteredKeyframes.length
   return (
     <div className="clip-extraction-modal" data-testid="clip-extraction-modal">
-      <div className="clip-extraction-modal__backdrop" data-testid="clip-extraction-backdrop" onClick={onClose} />
-      <div className="clip-extraction-modal__content" style={{ position: 'fixed', left: '50%', top: '50%', transform: 'translate(-50%, -50%)', background: 'var(--color-bg-panel, #fff)', border: '1px solid var(--color-border)', padding: 16, borderRadius: 8, zIndex: 1000, minWidth: 360 }}>
+      <div
+        className="clip-extraction-modal__backdrop"
+        data-testid="clip-extraction-backdrop"
+        onClick={onClose}
+      />
+      <div
+        className="clip-extraction-modal__content"
+        style={{
+          position: 'fixed',
+          left: '50%',
+          top: '50%',
+          transform: 'translate(-50%, -50%)',
+          background: 'var(--color-bg-panel, #fff)',
+          border: '1px solid var(--color-border)',
+          padding: 16,
+          borderRadius: 8,
+          zIndex: 1000,
+          minWidth: 360,
+        }}
+      >
         <h3 style={{ margin: '0 0 12px' }}>Add to Clip</h3>
         <p style={{ fontSize: 12, color: 'var(--color-text-muted)', margin: '0 0 12px' }}>
-          {displayCount} keyframe(s) selected{displayCount !== keyframes.length ? ` (filtered from ${keyframes.length})` : ''} — time range {displayBounds ? `${displayBounds.selStart.toFixed(2)}s to ${displayBounds.selEnd.toFixed(2)}s (${displayBounds.clipDuration.toFixed(2)}s duration)` : '—'}
+          {displayCount} keyframe(s) selected
+          {displayCount !== keyframes.length ? ` (filtered from ${keyframes.length})` : ''} — time
+          range{' '}
+          {displayBounds
+            ? `${displayBounds.selStart.toFixed(2)}s to ${displayBounds.selEnd.toFixed(2)}s (${displayBounds.clipDuration.toFixed(2)}s duration)`
+            : '—'}
         </p>
 
         <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input type="radio" name="clip-extraction-mode" checked={mode === 'new'} onChange={() => setMode('new')} />
+            <input
+              type="radio"
+              name="clip-extraction-mode"
+              checked={mode === 'new'}
+              onChange={() => setMode('new')}
+            />
             New clip
           </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: clips.length === 0 ? 0.5 : 1 }}>
-            <input type="radio" name="clip-extraction-mode" checked={mode === 'existing'} onChange={() => setMode('existing')} disabled={clips.length === 0} />
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              opacity: clips.length === 0 ? 0.5 : 1,
+            }}
+          >
+            <input
+              type="radio"
+              name="clip-extraction-mode"
+              checked={mode === 'existing'}
+              onChange={() => setMode('existing')}
+              disabled={clips.length === 0}
+            />
             Existing clip
           </label>
         </div>
 
         {shadowProps.length > 0 && (
-          <div data-testid="clip-extraction-shadow-section" style={{ border: '1px solid var(--color-border)', borderRadius: 4, padding: 8, marginBottom: 12, background: 'var(--color-bg-elevated, #f7f7f7)' }}>
+          <div
+            data-testid="clip-extraction-shadow-section"
+            style={{
+              border: '1px solid var(--color-border)',
+              borderRadius: 4,
+              padding: 8,
+              marginBottom: 12,
+              background: 'var(--color-bg-elevated, #f7f7f7)',
+            }}
+          >
             <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6 }}>Shadow</div>
             <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 6 }}>
-              Only animated shadow props — checked by default, normalized to <code>shadow:${'{property}'}</code> in [0,1]
+              Only animated shadow props — checked by default, normalized to{' '}
+              <code>shadow:${'{property}'}</code> in [0,1]
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               {shadowProps.map((prop) => (
-                <label key={prop} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                <label
+                  key={prop}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}
+                >
                   <input
                     type="checkbox"
                     data-testid={`shadow-prop-${prop}`}
@@ -181,9 +237,20 @@ export function ClipExtractionModal({ keyframes, onClose }: Props) {
                     onChange={(e) => toggleShadowProp(prop, e.target.checked)}
                   />
                   <span>{SHADOW_LABELS[prop]} </span>
-                  <code style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{`shadow:${prop}`}</code>
-                  <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--color-text-muted)' }}>
-                    {keyframes.filter((k) => k.target.kind === 'shadow' && (k.target as { property: ShadowProperty }).property === prop).length} keyframe(s)
+                  <code
+                    style={{ fontSize: 11, color: 'var(--color-text-muted)' }}
+                  >{`shadow:${prop}`}</code>
+                  <span
+                    style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--color-text-muted)' }}
+                  >
+                    {
+                      keyframes.filter(
+                        (k) =>
+                          k.target.kind === 'shadow' &&
+                          (k.target as { property: ShadowProperty }).property === prop,
+                      ).length
+                    }{' '}
+                    keyframe(s)
                   </span>
                 </label>
               ))}
@@ -222,9 +289,27 @@ export function ClipExtractionModal({ keyframes, onClose }: Props) {
             </label>
           </div>
         ) : (
-          <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid var(--color-border)', borderRadius: 4 }}>
+          <div
+            style={{
+              maxHeight: 200,
+              overflowY: 'auto',
+              border: '1px solid var(--color-border)',
+              borderRadius: 4,
+            }}
+          >
             {clips.map((clip) => (
-              <label key={clip.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderBottom: '1px solid var(--color-border)', cursor: 'pointer', background: selectedClipId === clip.id ? 'var(--color-bg-elevated)' : undefined }}>
+              <label
+                key={clip.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '6px 8px',
+                  borderBottom: '1px solid var(--color-border)',
+                  cursor: 'pointer',
+                  background: selectedClipId === clip.id ? 'var(--color-bg-elevated)' : undefined,
+                }}
+              >
                 <input
                   type="radio"
                   name="existing-clip"
@@ -232,7 +317,9 @@ export function ClipExtractionModal({ keyframes, onClose }: Props) {
                   onChange={() => setSelectedClipId(clip.id)}
                 />
                 <span style={{ fontSize: 13 }}>{clip.name}</span>
-                <span style={{ fontSize: 11, color: 'var(--color-text-muted)', marginLeft: 'auto' }}>
+                <span
+                  style={{ fontSize: 11, color: 'var(--color-text-muted)', marginLeft: 'auto' }}
+                >
                   {clip.duration}s · {clip.category || 'uncategorized'}
                 </span>
               </label>
@@ -241,14 +328,27 @@ export function ClipExtractionModal({ keyframes, onClose }: Props) {
         )}
 
         {error && (
-          <div data-testid="clip-extraction-error" style={{ color: 'var(--color-error, red)', fontSize: 12, marginTop: 8 }}>
+          <div
+            data-testid="clip-extraction-error"
+            style={{ color: 'var(--color-error, red)', fontSize: 12, marginTop: 8 }}
+          >
             {error}
           </div>
         )}
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
           <button onClick={onClose}>Cancel</button>
-          <button data-testid="clip-extraction-confirm" onClick={handleConfirm} style={{ background: 'var(--color-accent)', color: 'white', border: 'none', padding: '6px 12px', borderRadius: 4 }}>
+          <button
+            data-testid="clip-extraction-confirm"
+            onClick={handleConfirm}
+            style={{
+              background: 'var(--color-accent)',
+              color: 'white',
+              border: 'none',
+              padding: '6px 12px',
+              borderRadius: 4,
+            }}
+          >
             {mode === 'new' ? 'Create Clip' : 'Add to Clip'}
           </button>
         </div>

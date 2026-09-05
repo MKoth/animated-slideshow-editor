@@ -54,7 +54,9 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
     const { engine, dispatcher, pub } = setup()
     const slide = engine.getActiveSlide()!
     const group = engine.createNode(slide.scene.id, slide.scene.root.id, 'HeroGroup')
-    dispatcher.dispatch(new SetShadowEffectCommand({ nodeId: group.id, shadowEffect: DEFAULT_SHADOW_EFFECT }))
+    dispatcher.dispatch(
+      new SetShadowEffectCommand({ nodeId: group.id, shadowEffect: DEFAULT_SHADOW_EFFECT }),
+    )
     engine.addKeyframe({ kind: 'shadow', nodeId: group.id, property: 'offsetX' }, 1, 10)
     engine.addKeyframe({ kind: 'shadow', nodeId: group.id, property: 'offsetX' }, 2, 20)
     engine.addKeyframe({ kind: 'shadow', nodeId: group.id, property: 'offsetX' }, 4, 30)
@@ -80,7 +82,9 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
       }
     }
     expect(targets.length).toBeGreaterThan(0)
-    expect(targets.some((t) => (t.target as { property: string }).property === 'offsetX')).toBe(true)
+    expect(targets.some((t) => (t.target as { property: string }).property === 'offsetX')).toBe(
+      true,
+    )
 
     const bounds = computeExtractionBounds(targets)
     expect(bounds.selStart).toBe(0)
@@ -93,7 +97,9 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
     }
     const groups = groupNormalizedByChannel(normalized)
     const shadowKeys = [...groups.keys()].filter((k) => k.startsWith('shadow:'))
-    expect(shadowKeys).toEqual(expect.arrayContaining(['shadow:offsetX', 'shadow:blur', 'shadow:color', 'shadow:opacity']))
+    expect(shadowKeys).toEqual(
+      expect.arrayContaining(['shadow:offsetX', 'shadow:blur', 'shadow:color', 'shadow:opacity']),
+    )
     for (const [key, arr] of groups) {
       if (key.startsWith('shadow:')) {
         const prop = key.slice('shadow:'.length) as ShadowProperty
@@ -108,13 +114,25 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
     }
     validateNoDuplicateTimes(groups)
 
-    const badColor = makeExtractable({ kind: 'shadow', nodeId: group.id, property: 'color' }, 1, '#gggggg')
+    const badColor = makeExtractable(
+      { kind: 'shadow', nodeId: group.id, property: 'color' },
+      1,
+      '#gggggg',
+    )
     expect(() => normalizeExtractable(badColor, bounds)).toThrow(/hex/)
-    const badOpacity = makeExtractable({ kind: 'shadow', nodeId: group.id, property: 'opacity' }, 1, 2)
+    const badOpacity = makeExtractable(
+      { kind: 'shadow', nodeId: group.id, property: 'opacity' },
+      1,
+      2,
+    )
     expect(() => normalizeExtractable(badOpacity, bounds)).toThrow(/opacity.*\[0,1\]/)
     const badBlur = makeExtractable({ kind: 'shadow', nodeId: group.id, property: 'blur' }, 1, -1)
     expect(() => normalizeExtractable(badBlur, bounds)).toThrow(/non-negative/)
-    const badFinite = makeExtractable({ kind: 'shadow', nodeId: group.id, property: 'offsetX' }, 1, NaN)
+    const badFinite = makeExtractable(
+      { kind: 'shadow', nodeId: group.id, property: 'offsetX' },
+      1,
+      NaN,
+    )
     expect(() => normalizeExtractable(badFinite, bounds)).toThrow(/finite/)
 
     void pub
@@ -124,11 +142,17 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
     const { engine, dispatcher } = setup()
     const slide = engine.getActiveSlide()!
     const group = engine.createNode(slide.scene.id, slide.scene.root.id, 'G')
-    dispatcher.dispatch(new SetShadowEffectCommand({ nodeId: group.id, shadowEffect: DEFAULT_SHADOW_EFFECT }))
+    dispatcher.dispatch(
+      new SetShadowEffectCommand({ nodeId: group.id, shadowEffect: DEFAULT_SHADOW_EFFECT }),
+    )
     engine.addKeyframe({ kind: 'shadow', nodeId: group.id, property: 'offsetX' }, 1, 10)
     engine.addKeyframe({ kind: 'shadow', nodeId: group.id, property: 'offsetX' }, 2, 20)
     const offsetXKF = engine.getShadowKeyframes(group.id, 'offsetX')[1]!
-    engine.setKeyframeInterpolation({ kind: 'shadow', nodeId: group.id, property: 'offsetX' }, offsetXKF.id, 'bezier')
+    engine.setKeyframeInterpolation(
+      { kind: 'shadow', nodeId: group.id, property: 'offsetX' },
+      offsetXKF.id,
+      'bezier',
+    )
     engine.addKeyframe({ kind: 'shadow', nodeId: group.id, property: 'color' }, 1, '#000000')
     engine.addKeyframe({ kind: 'shadow', nodeId: group.id, property: 'color' }, 2, '#ffffff')
     engine.addKeyframe({ kind: 'shadow', nodeId: group.id, property: 'blur' }, 0, 0)
@@ -148,7 +172,14 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
         })
       }
     }
-    const res = dispatcher.dispatch(new ExtractToClipCommand({ keyframes: extractable, name: 'ShadowClip', duration: 2, category: 'test' }))
+    const res = dispatcher.dispatch(
+      new ExtractToClipCommand({
+        keyframes: extractable,
+        name: 'ShadowClip',
+        duration: 2,
+        category: 'test',
+      }),
+    )
     expect(res.ok).toBe(true)
     const clip = engine.clips[0]!
     expect(clip.shadowChannelKeys).toEqual(expect.arrayContaining(['offsetX', 'blur', 'color']))
@@ -177,8 +208,30 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
       channels: [],
       channelAnimations: {},
       shadowChannelAnimations: {
-        color: { keyframes: [{ id: 'k1', time: 0, value: '#gggggg', interpolation: 'linear', tangentIn: { time: 0, value: 0 }, tangentOut: { time: 0, value: 0 } }] },
-        blur: { keyframes: [{ id: 'k2', time: 0, value: -5, interpolation: 'linear', tangentIn: { time: 0, value: 0 }, tangentOut: { time: 0, value: 0 } }] },
+        color: {
+          keyframes: [
+            {
+              id: 'k1',
+              time: 0,
+              value: '#gggggg',
+              interpolation: 'linear',
+              tangentIn: { time: 0, value: 0 },
+              tangentOut: { time: 0, value: 0 },
+            },
+          ],
+        },
+        blur: {
+          keyframes: [
+            {
+              id: 'k2',
+              time: 0,
+              value: -5,
+              interpolation: 'linear',
+              tangentIn: { time: 0, value: 0 },
+              tangentOut: { time: 0, value: 0 },
+            },
+          ],
+        },
       },
     }
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -202,13 +255,43 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
     engine.setSemanticName(rightHand.id, 'right_hand')
 
     const clipA = engine.createClip('ShadowA', 1, 'test', [], [])
-    clipA.addShadowChannelKeyframe('offsetX', new Keyframe(newKeyframeId(), 0, 10, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
-    clipA.addShadowChannelKeyframe('offsetX', new Keyframe(newKeyframeId(), 1, 20, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
+    clipA.addShadowChannelKeyframe(
+      'offsetX',
+      new Keyframe(newKeyframeId(), 0, 10, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+    )
+    clipA.addShadowChannelKeyframe(
+      'offsetX',
+      new Keyframe(newKeyframeId(), 1, 20, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+    )
     const clipB = engine.createClip('ShadowB', 1, 'test', [], [])
-    clipB.addShadowChannelKeyframe('color', new Keyframe(newKeyframeId(), 0, '#000000', 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
-    clipB.addShadowChannelKeyframe('color', new Keyframe(newKeyframeId(), 1, '#ff0000', 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
+    clipB.addShadowChannelKeyframe(
+      'color',
+      new Keyframe(
+        newKeyframeId(),
+        0,
+        '#000000',
+        'linear',
+        { time: 0, value: 0 },
+        { time: 0, value: 0 },
+      ),
+    )
+    clipB.addShadowChannelKeyframe(
+      'color',
+      new Keyframe(
+        newKeyframeId(),
+        1,
+        '#ff0000',
+        'linear',
+        { time: 0, value: 0 },
+        { time: 0, value: 0 },
+      ),
+    )
 
-    const collection = engine.createClipCollection('RigCollection', { left_hand: clipA.id, right_hand: clipB.id }, handle.id)
+    const collection = engine.createClipCollection(
+      'RigCollection',
+      { left_hand: clipA.id, right_hand: clipB.id },
+      handle.id,
+    )
     expect(collection.getBinding('left_hand')).toBe(clipA.id)
     expect(collection.getBinding('right_hand')).toBe(clipB.id)
     const colJson = collection.toJSON()
@@ -217,7 +300,10 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
     const lessonJson = engine.toJSON()
     expect(lessonJson.clipCollections).toBeDefined()
     expect(lessonJson.clipCollections!.length).toBe(1)
-    expect(lessonJson.clipCollections![0].bindings).toEqual({ left_hand: clipA.id, right_hand: clipB.id })
+    expect(lessonJson.clipCollections![0].bindings).toEqual({
+      left_hand: clipA.id,
+      right_hand: clipB.id,
+    })
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     engine.restoreFromJSON(lessonJson)
     warn.mockRestore()
@@ -262,19 +348,51 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
     })
     engine.setSemanticName(childCircle.id, 'right_hand')
     // Host now has children, so it is a group — set shadowEffect after children
-    dispatcher.dispatch(new SetShadowEffectCommand({ nodeId: host.id, shadowEffect: DEFAULT_SHADOW_EFFECT }))
+    dispatcher.dispatch(
+      new SetShadowEffectCommand({ nodeId: host.id, shadowEffect: DEFAULT_SHADOW_EFFECT }),
+    )
 
     const clip1 = engine.createClip('ShadowOffset', 1, 'test', [], [])
-    clip1.addShadowChannelKeyframe('offsetX', new Keyframe(newKeyframeId(), 0, 5, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
-    clip1.addShadowChannelKeyframe('offsetX', new Keyframe(newKeyframeId(), 1, 15, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
+    clip1.addShadowChannelKeyframe(
+      'offsetX',
+      new Keyframe(newKeyframeId(), 0, 5, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+    )
+    clip1.addShadowChannelKeyframe(
+      'offsetX',
+      new Keyframe(newKeyframeId(), 1, 15, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+    )
     const clip2 = engine.createClip('ShadowColor', 1, 'test', [], [])
-    clip2.addShadowChannelKeyframe('color', new Keyframe(newKeyframeId(), 0, '#000000', 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
-    clip2.addShadowChannelKeyframe('color', new Keyframe(newKeyframeId(), 1, '#ff0000', 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
+    clip2.addShadowChannelKeyframe(
+      'color',
+      new Keyframe(
+        newKeyframeId(),
+        0,
+        '#000000',
+        'linear',
+        { time: 0, value: 0 },
+        { time: 0, value: 0 },
+      ),
+    )
+    clip2.addShadowChannelKeyframe(
+      'color',
+      new Keyframe(
+        newKeyframeId(),
+        1,
+        '#ff0000',
+        'linear',
+        { time: 0, value: 0 },
+        { time: 0, value: 0 },
+      ),
+    )
 
     dispatcher.dispatch(new AssignClipCommand({ nodeId: childAsset.id, clipId: clip1.id }))
     dispatcher.dispatch(new AssignClipCommand({ nodeId: childCircle.id, clipId: clip2.id }))
 
-    const col = engine.createClipCollection('RigShadows', { left_hand: clip1.id, right_hand: clip2.id }, host.id)
+    const col = engine.createClipCollection(
+      'RigShadows',
+      { left_hand: clip1.id, right_hand: clip2.id },
+      host.id,
+    )
 
     engine.addKeyframe({ kind: 'shadow', nodeId: host.id, property: 'blur' }, 0, 8)
     engine.addKeyframe({ kind: 'shadow', nodeId: host.id, property: 'blur' }, 1, 16)
@@ -285,10 +403,18 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
     engine.addKeyframe({ kind: 'shadow', nodeId: childCircle.id, property: 'offsetY' }, 0, 10)
     engine.addKeyframe({ kind: 'shadow', nodeId: childCircle.id, property: 'offsetY' }, 1, 20)
     const offYKf = engine.getShadowKeyframes(childCircle.id, 'offsetY')[1]!
-    engine.setKeyframeInterpolation({ kind: 'shadow', nodeId: childCircle.id, property: 'offsetY' }, offYKf.id, 'bounce')
+    engine.setKeyframeInterpolation(
+      { kind: 'shadow', nodeId: childCircle.id, property: 'offsetY' },
+      offYKf.id,
+      'bounce',
+    )
 
     const hostShadowBefore = pub.evaluateShadow(host.id, 0.5)!
-    const hostShadowTracksBefore = [...engine.getShadowKeyframes(host.id, 'blur').map((k) => ({ id: k.id, time: k.time, value: k.value }))]
+    const hostShadowTracksBefore = [
+      ...engine
+        .getShadowKeyframes(host.id, 'blur')
+        .map((k) => ({ id: k.id, time: k.time, value: k.value })),
+    ]
     const clip1JsonBefore = clip1.toJSON()
 
     const obj = engine.exportReusableObject(host.id, 'HeroRig', 'Test rig')
@@ -302,12 +428,17 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
     expect(obj.library?.clips).toBeDefined()
     expect(obj.library!.clips!.some((c) => (c as { id: string }).id === clip1.id)).toBe(true)
     expect(obj.library!.clips!.some((c) => (c as { id: string }).id === clip2.id)).toBe(true)
-    const libClip1 = obj.library!.clips!.find((c) => (c as { id: string }).id === clip1.id) as unknown as { shadowChannelAnimations: Record<string, unknown> }
+    const libClip1 = obj.library!.clips!.find(
+      (c) => (c as { id: string }).id === clip1.id,
+    ) as unknown as { shadowChannelAnimations: Record<string, unknown> }
     expect(libClip1.shadowChannelAnimations).toBeDefined()
     expect(libClip1.shadowChannelAnimations['offsetX']).toBeDefined()
     expect(obj.library?.clipCollections).toBeDefined()
     expect(obj.library!.clipCollections!.length).toBe(1)
-    expect(obj.library!.clipCollections![0].bindings).toEqual({ left_hand: clip1.id, right_hand: clip2.id })
+    expect(obj.library!.clipCollections![0].bindings).toEqual({
+      left_hand: clip1.id,
+      right_hand: clip2.id,
+    })
     expect(obj.animation).toBeDefined()
     const animNodeIds = obj.animation!.nodes.map((n) => n.nodeId)
     expect(animNodeIds).toEqual(expect.arrayContaining([host.id, childCircle.id]))
@@ -322,7 +453,9 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
     const pub2 = toReadOnly(engine2)
     engine2.createProject({ name: 'P2' })
     engine2.createSlide('S2')
-    const beforeIds = new Set([...walkPreOrder(engine2.getActiveSlide()!.scene.root)].map((n) => n.id))
+    const beforeIds = new Set(
+      [...walkPreOrder(engine2.getActiveSlide()!.scene.root)].map((n) => n.id),
+    )
     const importResult = engine2.importReusableObject(obj)
     for (const [oldId, newId] of importResult.nodeIdMap) {
       expect(oldId).not.toBe(newId)
@@ -338,12 +471,21 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
     expect(importedHostShadowTracks.length).toBe(2)
     for (const orig of hostShadowTracksBefore) {
       expect(importedHostShadowTracks.some((k) => k.id === orig.id)).toBe(false)
-      expect(importedHostShadowTracks.some((k) => k.time === orig.time && k.value === orig.value)).toBe(true)
+      expect(
+        importedHostShadowTracks.some((k) => k.time === orig.time && k.value === orig.value),
+      ).toBe(true)
     }
     const newClip1Id = importResult.clipIdMap.get(clip1.id)!
     const newClip1 = engine2.getClip(newClip1Id)
-    const origClip1KfIds = (clip1JsonBefore as unknown as { shadowChannelAnimations: Record<string, { keyframes: { id: string }[] }> }).shadowChannelAnimations['offsetX'].keyframes.map((k) => k.id)
-    const newClip1KfIds = newClip1.shadowChannelAnimation('offsetX')!.keyframes().map((k) => k.id)
+    const origClip1KfIds = (
+      clip1JsonBefore as unknown as {
+        shadowChannelAnimations: Record<string, { keyframes: { id: string }[] }>
+      }
+    ).shadowChannelAnimations['offsetX'].keyframes.map((k) => k.id)
+    const newClip1KfIds = newClip1
+      .shadowChannelAnimation('offsetX')!
+      .keyframes()
+      .map((k) => k.id)
     for (const oldKfId of origClip1KfIds) {
       expect(newClip1KfIds).not.toContain(oldKfId)
     }
@@ -369,7 +511,9 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
     const child = engine.createNode(slide.scene.id, host.id, 'ChildAsset', {
       components: { assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def1' } },
     })
-    dispatcher.dispatch(new SetShadowEffectCommand({ nodeId: host.id, shadowEffect: DEFAULT_SHADOW_EFFECT }))
+    dispatcher.dispatch(
+      new SetShadowEffectCommand({ nodeId: host.id, shadowEffect: DEFAULT_SHADOW_EFFECT }),
+    )
     dispatcher.dispatch(new SetCastShadowCommand({ nodeId: child.id, castShadow: false }))
     engine.addKeyframe({ kind: 'shadow', nodeId: host.id, property: 'blur' }, 0, 5)
     engine.addKeyframe({ kind: 'shadow', nodeId: host.id, property: 'opacity' }, 0, 0.4)
@@ -379,7 +523,9 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
     const beforeEmbeddedAssets = engine.embeddedAssets.length
     expect(beforeEmbeddedAssets).toBe(0)
     const dupSlide = engine.duplicateSlide(slide.id)
-    const dupHost = [...walkPreOrder(dupSlide.scene.root)].find((n) => n.name === 'HostGroup' && n.id !== host.id)!
+    const dupHost = [...walkPreOrder(dupSlide.scene.root)].find(
+      (n) => n.name === 'HostGroup' && n.id !== host.id,
+    )!
     expect(dupHost.shadowEffect).toEqual(DEFAULT_SHADOW_EFFECT)
     const dupChild = dupHost.children.find((c) => c.name === 'ChildAsset')!
     expect(dupChild.castShadow).toBe(false)
@@ -416,7 +562,9 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
     engine.createNode(slide.scene.id, hero.id, 'HeroChild', {
       components: { circle: { kind: 'circle', radius: 5, startAngle: 0, endAngle: 360 } },
     })
-    dispatcher.dispatch(new SetShadowEffectCommand({ nodeId: hero.id, shadowEffect: DEFAULT_SHADOW_EFFECT }))
+    dispatcher.dispatch(
+      new SetShadowEffectCommand({ nodeId: hero.id, shadowEffect: DEFAULT_SHADOW_EFFECT }),
+    )
     engine.addKeyframe({ kind: 'shadow', nodeId: hero.id, property: 'offsetX' }, 0, 12)
     engine.addKeyframe({ kind: 'shadow', nodeId: hero.id, property: 'offsetX' }, 1, 32)
     engine.addKeyframe({ kind: 'shadow', nodeId: hero.id, property: 'scaleY' }, 0, 1)
@@ -438,7 +586,9 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
         })
       }
     }
-    const extractRes = dispatcher.dispatch(new ExtractToClipCommand({ keyframes: extractable, name: 'HeroShadowClip', duration: 1 }))
+    const extractRes = dispatcher.dispatch(
+      new ExtractToClipCommand({ keyframes: extractable, name: 'HeroShadowClip', duration: 1 }),
+    )
     expect(extractRes.ok).toBe(true)
     const heroClip = engine.clips[0]!
     expect(heroClip.shadowChannelAnimation('offsetX')!.length).toBe(2)
@@ -449,7 +599,12 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
     engine.createNode(slide.scene.id, otherGroup.id, 'OtherChild', {
       components: { circle: { kind: 'circle', radius: 5, startAngle: 0, endAngle: 360 } },
     })
-    dispatcher.dispatch(new SetShadowEffectCommand({ nodeId: otherGroup.id, shadowEffect: { ...DEFAULT_SHADOW_EFFECT, offsetX: 0, scaleY: 1, color: '#000000' } }))
+    dispatcher.dispatch(
+      new SetShadowEffectCommand({
+        nodeId: otherGroup.id,
+        shadowEffect: { ...DEFAULT_SHADOW_EFFECT, offsetX: 0, scaleY: 1, color: '#000000' },
+      }),
+    )
     dispatcher.dispatch(new AssignClipCommand({ nodeId: otherGroup.id, clipId: heroClip.id }))
     const evalBegin = pub.evaluateShadow(otherGroup.id, 0)!
     expect(evalBegin.offsetX).toBe(12)

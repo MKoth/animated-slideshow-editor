@@ -3655,7 +3655,8 @@ export class Engine {
         if (nodeAnimJson.materialTracks) {
           for (const track of nodeAnimJson.materialTracks) {
             for (const kfJson of track.keyframes) {
-              const kf = new KeyframeModel(newKeyframeId(),
+              const kf = new KeyframeModel(
+                newKeyframeId(),
                 kfJson.time,
                 kfJson.value as unknown as import('./keyframe').KeyframeValue,
                 (kfJson.interpolation as import('./keyframe').InterpolationType) ?? 'linear',
@@ -3684,7 +3685,8 @@ export class Engine {
         if (dataLabelTracks) {
           for (const track of dataLabelTracks) {
             for (const kfJson of track.keyframes) {
-              const kf = new KeyframeModel(newKeyframeId(),
+              const kf = new KeyframeModel(
+                newKeyframeId(),
                 kfJson.time,
                 kfJson.value as unknown as import('./keyframe').KeyframeValue,
                 (kfJson.interpolation as import('./keyframe').InterpolationType) ?? 'linear',
@@ -3713,7 +3715,8 @@ export class Engine {
         if (circleTracks) {
           for (const track of circleTracks) {
             for (const kfJson of track.keyframes) {
-              const kf = new KeyframeModel(newKeyframeId(),
+              const kf = new KeyframeModel(
+                newKeyframeId(),
                 kfJson.time,
                 kfJson.value as unknown as import('./keyframe').KeyframeValue,
                 (kfJson.interpolation as import('./keyframe').InterpolationType) ?? 'linear',
@@ -3745,7 +3748,8 @@ export class Engine {
         if (tableTracks) {
           for (const track of tableTracks) {
             for (const kfJson of track.keyframes) {
-              const kf = new KeyframeModel(newKeyframeId(),
+              const kf = new KeyframeModel(
+                newKeyframeId(),
                 kfJson.time,
                 kfJson.value as unknown as import('./keyframe').KeyframeValue,
                 (kfJson.interpolation as import('./keyframe').InterpolationType) ?? 'linear',
@@ -3801,7 +3805,8 @@ export class Engine {
             for (const kfJson of track.keyframes) {
               const val: unknown = kfJson.value
               // Strict validation via requireShadowKeyframeValue; but tolerant via fromJSON already clamps, so just try
-              const kf = new KeyframeModel(newKeyframeId(),
+              const kf = new KeyframeModel(
+                newKeyframeId(),
                 kfJson.time,
                 val as unknown as import('./keyframe').KeyframeValue,
                 (kfJson.interpolation as import('./keyframe').InterpolationType) ?? 'linear',
