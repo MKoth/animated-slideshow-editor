@@ -114,7 +114,10 @@ export class AnimationManager {
     return slide.animation.node(nodeId)?.hasMorphTrack() ?? false
   }
 
-  getShadowKeyframes(nodeId: string, property: import('./shadowEffect').ShadowProperty): readonly Keyframe[] {
+  getShadowKeyframes(
+    nodeId: string,
+    property: import('./shadowEffect').ShadowProperty,
+  ): readonly Keyframe[] {
     const slide = this.#slideLookup(nodeId)
     return slide.animation.node(nodeId)?.shadowKeyframes(property) ?? []
   }
@@ -147,7 +150,8 @@ export class AnimationManager {
       keyframe.interpolation = 'hold'
     }
     if (resolved.track.kind === 'shadow' && resolved.track.property === 'color') {
-      if (keyframe.interpolation !== 'hold' && keyframe.interpolation !== 'linear') keyframe.interpolation = 'linear'
+      if (keyframe.interpolation !== 'hold' && keyframe.interpolation !== 'linear')
+        keyframe.interpolation = 'linear'
     }
     this.#addToTrack(resolved, keyframe)
     this.#bus.emit({ type: 'KeyframeAdded', target, keyframeId: keyframe.id })
@@ -249,7 +253,12 @@ export class AnimationManager {
     if (resolved.track.kind === 'visible' && bounded !== 'hold') {
       throw new Error('Visible track only supports hold interpolation')
     }
-    if (resolved.track.kind === 'shadow' && resolved.track.property === 'color' && bounded !== 'hold' && bounded !== 'linear') {
+    if (
+      resolved.track.kind === 'shadow' &&
+      resolved.track.property === 'color' &&
+      bounded !== 'hold' &&
+      bounded !== 'linear'
+    ) {
       throw new Error('Shadow color track only supports hold and linear interpolation')
     }
     const keyframe = this.#requireKeyframe(resolved, keyframeId)
@@ -317,10 +326,20 @@ export class AnimationManager {
       if (resolved.track.kind === 'visible') {
         interpolation = 'hold'
       }
-      if (resolved.track.kind === 'shadow' && resolved.track.property === 'color' && interpolation !== 'hold' && interpolation !== 'linear') {
+      if (
+        resolved.track.kind === 'shadow' &&
+        resolved.track.property === 'color' &&
+        interpolation !== 'hold' &&
+        interpolation !== 'linear'
+      ) {
         throw new Error('Shadow color track only supports hold and linear interpolation')
       }
-      if (resolved.track.kind === 'shadow' && resolved.track.property === 'color' && interpolation !== 'hold' && interpolation !== 'linear') {
+      if (
+        resolved.track.kind === 'shadow' &&
+        resolved.track.property === 'color' &&
+        interpolation !== 'hold' &&
+        interpolation !== 'linear'
+      ) {
         interpolation = 'linear'
       }
       const keyframe = new KeyframeModel(
@@ -334,7 +353,12 @@ export class AnimationManager {
       if (resolved.track.kind === 'visible') {
         keyframe.interpolation = 'hold'
       }
-      if (resolved.track.kind === 'shadow' && resolved.track.property === 'color' && keyframe.interpolation !== 'hold' && keyframe.interpolation !== 'linear') {
+      if (
+        resolved.track.kind === 'shadow' &&
+        resolved.track.property === 'color' &&
+        keyframe.interpolation !== 'hold' &&
+        keyframe.interpolation !== 'linear'
+      ) {
         keyframe.interpolation = 'linear'
       }
       this.#addToTrack(resolved, keyframe)

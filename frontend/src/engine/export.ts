@@ -40,16 +40,19 @@ export function validateExportSettings(settings: ExportSettings): void {
     throw new Error('ExportSettings fps must be a positive finite number')
   }
   if (settings.width !== undefined) {
-    if (!Number.isFinite(settings.width) || settings.width <= 0) throw new Error('ExportSettings width must be positive')
+    if (!Number.isFinite(settings.width) || settings.width <= 0)
+      throw new Error('ExportSettings width must be positive')
   }
   if (settings.height !== undefined) {
-    if (!Number.isFinite(settings.height) || settings.height <= 0) throw new Error('ExportSettings height must be positive')
+    if (!Number.isFinite(settings.height) || settings.height <= 0)
+      throw new Error('ExportSettings height must be positive')
   }
 }
 
 // N = round(duration × fps) — Spec 15.11 per-Slide frame count
 export function getExportFrameCount(duration: number, fps: number): number {
-  if (!Number.isFinite(duration) || duration < 0) throw new Error('duration must be non-negative finite')
+  if (!Number.isFinite(duration) || duration < 0)
+    throw new Error('duration must be non-negative finite')
   if (!Number.isFinite(fps) || fps <= 0) throw new Error('fps must be positive finite')
   return Math.round(duration * fps)
 }
@@ -66,29 +69,39 @@ export function getExportFrameTimestamps(duration: number, fps: number): number[
 // RubberBand tempo for non-destructive playbackRate
 // Spec 15.11 says tempo=1/playbackRate (timeRatio) — pitch preserved, original WAV untouched
 export function getRubberbandTempoForPlaybackRate(playbackRate: number): number {
-  if (!Number.isFinite(playbackRate) || playbackRate <= 0) throw new Error('playbackRate must be positive finite')
+  if (!Number.isFinite(playbackRate) || playbackRate <= 0)
+    throw new Error('playbackRate must be positive finite')
   return 1 / playbackRate
 }
 
 export function getRubberbandPitchForSemitones(pitchSemitones: number): number {
-  if (!Number.isFinite(pitchSemitones) || pitchSemitones < -12 || pitchSemitones > 12) throw new Error('pitchSemitones must be between -12 and 12')
+  if (!Number.isFinite(pitchSemitones) || pitchSemitones < -12 || pitchSemitones > 12)
+    throw new Error('pitchSemitones must be between -12 and 12')
   return getPitchScaleForSemitones(pitchSemitones)
 }
 
 export function getAfftdnNrForNoiseReduction(noiseReduction: number): number {
-  if (!Number.isFinite(noiseReduction) || noiseReduction < 0 || noiseReduction > 1) throw new Error('noiseReduction must be between 0 and 1')
+  if (!Number.isFinite(noiseReduction) || noiseReduction < 0 || noiseReduction > 1)
+    throw new Error('noiseReduction must be between 0 and 1')
   // Map 0..1 to afftdn nr dB 0..97 (approx). RubberBand denoise uses afftdn; 0 = no effect
   return Math.round(noiseReduction * 97)
 }
 
-export function getDerivedAssetCacheKey(assetId: string, playbackRate: number, pitchSemitones = 0, noiseReduction = 0): string {
+export function getDerivedAssetCacheKey(
+  assetId: string,
+  playbackRate: number,
+  pitchSemitones = 0,
+  noiseReduction = 0,
+): string {
   if (!assetId) throw new Error('assetId must be non-empty')
-  if (!Number.isFinite(playbackRate) || playbackRate <= 0) throw new Error('playbackRate must be positive')
+  if (!Number.isFinite(playbackRate) || playbackRate <= 0)
+    throw new Error('playbackRate must be positive')
   // Normalize to fixed precision to keep deterministic key (avoid 1.5000000001 vs 1.5)
   const normalized = Number(playbackRate.toFixed(6))
   const pitchNorm = Number(pitchSemitones.toFixed(2))
   const nrNorm = Number(noiseReduction.toFixed(2))
-  if (Math.abs(pitchSemitones) < 1e-6 && Math.abs(noiseReduction) < 1e-6) return `${assetId}:${normalized}`
+  if (Math.abs(pitchSemitones) < 1e-6 && Math.abs(noiseReduction) < 1e-6)
+    return `${assetId}:${normalized}`
   return `${assetId}:${normalized}:pitch:${pitchNorm}:nr:${nrNorm}`
 }
 
@@ -235,7 +248,10 @@ function buildPerClipFilter(clip: AudioClip, slideDuration: number): string {
   return parts.join(',')
 }
 
-export function buildPerSlideExportDescriptor(slide: Slide, settings: ExportSettings): ExportPerSlideDescriptor {
+export function buildPerSlideExportDescriptor(
+  slide: Slide,
+  settings: ExportSettings,
+): ExportPerSlideDescriptor {
   validateExportSettings(settings)
   const fps = settings.fps
   const duration = slide.duration
@@ -257,7 +273,9 @@ export function buildPerSlideExportDescriptor(slide: Slide, settings: ExportSett
     const tempo = hasTempo || hasPitch ? getRubberbandTempoForPlaybackRate(rate) : undefined
     const pitchScale = hasPitch ? getRubberbandPitchForSemitones(pitch) : undefined
     const afftdnNr = hasNr ? getAfftdnNrForNoiseReduction(nr) : undefined
-    const cacheKey = isStretched ? getDerivedAssetCacheKey(clip.assetId, rate, pitch, nr) : undefined
+    const cacheKey = isStretched
+      ? getDerivedAssetCacheKey(clip.assetId, rate, pitch, nr)
+      : undefined
     const filterFragment = buildPerClipFilter(clip, duration)
     return {
       id: clip.id,
@@ -313,7 +331,14 @@ export function buildPerSlideExportDescriptor(slide: Slide, settings: ExportSett
   filterComplexParts.push(loudnorm)
   const filterComplex = filterComplexParts.join('; ')
 
-  const videoArgs = ['-c:v', EXPORT_VIDEO_CODEC, '-pix_fmt', EXPORT_VIDEO_PIX_FMT, '-movflags', EXPORT_VIDEO_MOVFLAGS]
+  const videoArgs = [
+    '-c:v',
+    EXPORT_VIDEO_CODEC,
+    '-pix_fmt',
+    EXPORT_VIDEO_PIX_FMT,
+    '-movflags',
+    EXPORT_VIDEO_MOVFLAGS,
+  ]
   const audioArgs = ['-c:a', 'aac', '-filter:a', loudnorm]
 
   return {
@@ -353,9 +378,14 @@ export function buildPerSlideExportDescriptor(slide: Slide, settings: ExportSett
   }
 }
 
-export function buildExportJobDescriptor(project: Project, settings: ExportSettings): ExportJobDescriptor {
+export function buildExportJobDescriptor(
+  project: Project,
+  settings: ExportSettings,
+): ExportJobDescriptor {
   validateExportSettings(settings)
-  const slideDescriptors = project.slides.map((slide) => buildPerSlideExportDescriptor(slide, settings))
+  const slideDescriptors = project.slides.map((slide) =>
+    buildPerSlideExportDescriptor(slide, settings),
+  )
 
   const totalDuration = project.slides.reduce((sum, s) => sum + s.duration, 0)
   const totalFrames = slideDescriptors.reduce((sum, s) => sum + s.frameCount, 0)
@@ -380,20 +410,40 @@ export function buildExportJobDescriptor(project: Project, settings: ExportSetti
       }
     }
   }
-  const derivedAssetCache = [...cacheMap.values()].sort((a, b) => a.cacheKey.localeCompare(b.cacheKey))
+  const derivedAssetCache = [...cacheMap.values()].sort((a, b) =>
+    a.cacheKey.localeCompare(b.cacheKey),
+  )
 
   const inputFiles = slideDescriptors.map((s) => s.segment.outputFile)
   const concatArgs = ['-f', 'concat', '-safe', '0', '-i', 'concat.txt']
-  const globalVideoArgs = ['-c:v', EXPORT_VIDEO_CODEC, '-pix_fmt', EXPORT_VIDEO_PIX_FMT, '-movflags', EXPORT_VIDEO_MOVFLAGS]
+  const globalVideoArgs = [
+    '-c:v',
+    EXPORT_VIDEO_CODEC,
+    '-pix_fmt',
+    EXPORT_VIDEO_PIX_FMT,
+    '-movflags',
+    EXPORT_VIDEO_MOVFLAGS,
+  ]
   const globalAudioFinalFilter = EXPORT_LOUDNORM_FILTER
-  const ffmpegGlobalArgs = [...globalVideoArgs, '-filter:a', globalAudioFinalFilter, EXPORT_CONCAT_METHOD]
+  const ffmpegGlobalArgs = [
+    ...globalVideoArgs,
+    '-filter:a',
+    globalAudioFinalFilter,
+    EXPORT_CONCAT_METHOD,
+  ]
 
   // Determinism key: stable string derived from project id + slide ids/durations/fps + clip identities + shadow data
   // Sort for determinism; project slides are already ordered, but we include deterministic serialization.
   // Include shadowEffects + shadowTracks + clipIds per spec #301 for pixel-identical determinism
   const shadowPayload = project.slides.map((slide) => {
     const nodesWithShadow: { id: string; shadowEffect?: unknown; shadowTracks?: unknown }[] = []
-    const walk = (node: { id: string; shadowEffect?: unknown; children: readonly { id: string; shadowEffect?: unknown; children: readonly unknown[] }[] } & Record<string, unknown>) => {
+    const walk = (
+      node: {
+        id: string
+        shadowEffect?: unknown
+        children: readonly { id: string; shadowEffect?: unknown; children: readonly unknown[] }[]
+      } & Record<string, unknown>,
+    ) => {
       const shadowEff = (node as unknown as { shadowEffect?: unknown }).shadowEffect
       const anim = slide.animation.node(node.id)
       const shadowTracks = anim
@@ -411,7 +461,10 @@ export function buildExportJobDescriptor(project: Project, settings: ExportSetti
           shadowTracks,
         })
       }
-      for (const child of node.children as unknown as typeof walk extends (n: infer U) => void ? U[] : never) walk(child as unknown as Parameters<typeof walk>[0])
+      for (const child of node.children as unknown as typeof walk extends (n: infer U) => void
+        ? U[]
+        : never)
+        walk(child as unknown as Parameters<typeof walk>[0])
     }
     walk(slide.scene.root as unknown as Parameters<typeof walk>[0])
     return {
@@ -441,17 +494,22 @@ export function buildExportJobDescriptor(project: Project, settings: ExportSetti
       })),
     })),
     shadows: shadowPayload,
-    clipIds: project.slides.flatMap((slide) => {
-      const ids: string[] = []
-      const stack: unknown[] = [slide.scene.root]
-      while (stack.length) {
-        const cur = stack.pop() as { clipInstances: readonly { clipId: string }[]; children: readonly unknown[] }
-        if (!cur) continue
-        for (const inst of cur.clipInstances) ids.push(inst.clipId)
-        for (let i = cur.children.length - 1; i >= 0; i--) stack.push(cur.children[i])
-      }
-      return ids
-    }).sort(),
+    clipIds: project.slides
+      .flatMap((slide) => {
+        const ids: string[] = []
+        const stack: unknown[] = [slide.scene.root]
+        while (stack.length) {
+          const cur = stack.pop() as {
+            clipInstances: readonly { clipId: string }[]
+            children: readonly unknown[]
+          }
+          if (!cur) continue
+          for (const inst of cur.clipInstances) ids.push(inst.clipId)
+          for (let i = cur.children.length - 1; i >= 0; i--) stack.push(cur.children[i])
+        }
+        return ids
+      })
+      .sort(),
   }
   // Simple deterministic JSON + hash-like base64 of JSON (not crypto, just stable)
   const determinismKey = btoa(JSON.stringify(determinismPayload)).slice(0, 48)

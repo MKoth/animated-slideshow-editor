@@ -119,7 +119,10 @@ export function ShadowInspectorSection({
       if (animationMode && enginePublic) {
         // Route via autoKeyEdit — creates/updates keyframe at playhead instead of direct param write
         const res = autoKeyEdit(enginePublic as unknown as EnginePublic, dispatch, [
-          { target: { kind: 'shadow', nodeId: target.id, property }, value: value as unknown as import('../../engine/keyframe').KeyframeValue },
+          {
+            target: { kind: 'shadow', nodeId: target.id, property },
+            value: value as unknown as import('../../engine/keyframe').KeyframeValue,
+          },
         ])
         // autoKeyEdit returns null if evaluated value equals edit value (no-op); still clear draft
         void res
@@ -151,7 +154,10 @@ export function ShadowInspectorSection({
       if (property === 'color' && typeof v === 'string') v = v.toLowerCase()
       if (animationMode && enginePublic) {
         const res = autoKeyEdit(enginePublic as unknown as EnginePublic, dispatch, [
-          { target: { kind: 'shadow', nodeId: target.id, property }, value: v as unknown as import('../../engine/keyframe').KeyframeValue },
+          {
+            target: { kind: 'shadow', nodeId: target.id, property },
+            value: v as unknown as import('../../engine/keyframe').KeyframeValue,
+          },
         ])
         void res
         setDraft({})
@@ -175,13 +181,34 @@ export function ShadowInspectorSection({
     }
     if (animationMode && enginePublic) {
       try {
-        const edits: { target: { kind: 'shadow'; nodeId: string; property: ShadowProperty }; value: import('../../engine/keyframe').KeyframeValue }[] = [
-          { target: { kind: 'shadow', nodeId: target.id, property: 'scaleX' }, value: 1.1 as unknown as import('../../engine/keyframe').KeyframeValue },
-          { target: { kind: 'shadow', nodeId: target.id, property: 'scaleY' }, value: 0.2 as unknown as import('../../engine/keyframe').KeyframeValue },
-          { target: { kind: 'shadow', nodeId: target.id, property: 'skewX' }, value: -12 as unknown as import('../../engine/keyframe').KeyframeValue },
-          { target: { kind: 'shadow', nodeId: target.id, property: 'blur' }, value: 11 as unknown as import('../../engine/keyframe').KeyframeValue },
-          { target: { kind: 'shadow', nodeId: target.id, property: 'opacity' }, value: 0.25 as unknown as import('../../engine/keyframe').KeyframeValue },
-          { target: { kind: 'shadow', nodeId: target.id, property: 'offsetY' }, value: 8 as unknown as import('../../engine/keyframe').KeyframeValue },
+        const edits: {
+          target: { kind: 'shadow'; nodeId: string; property: ShadowProperty }
+          value: import('../../engine/keyframe').KeyframeValue
+        }[] = [
+          {
+            target: { kind: 'shadow', nodeId: target.id, property: 'scaleX' },
+            value: 1.1 as unknown as import('../../engine/keyframe').KeyframeValue,
+          },
+          {
+            target: { kind: 'shadow', nodeId: target.id, property: 'scaleY' },
+            value: 0.2 as unknown as import('../../engine/keyframe').KeyframeValue,
+          },
+          {
+            target: { kind: 'shadow', nodeId: target.id, property: 'skewX' },
+            value: -12 as unknown as import('../../engine/keyframe').KeyframeValue,
+          },
+          {
+            target: { kind: 'shadow', nodeId: target.id, property: 'blur' },
+            value: 11 as unknown as import('../../engine/keyframe').KeyframeValue,
+          },
+          {
+            target: { kind: 'shadow', nodeId: target.id, property: 'opacity' },
+            value: 0.25 as unknown as import('../../engine/keyframe').KeyframeValue,
+          },
+          {
+            target: { kind: 'shadow', nodeId: target.id, property: 'offsetY' },
+            value: 8 as unknown as import('../../engine/keyframe').KeyframeValue,
+          },
         ]
         const res = autoKeyEdit(enginePublic as unknown as EnginePublic, dispatch, edits)
         void res

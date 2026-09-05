@@ -1743,7 +1743,10 @@ export class Engine {
     return this.#animations.hasVisibleTrack(nodeId)
   }
 
-  getShadowKeyframes(nodeId: string, property: import('./shadowEffect').ShadowProperty): readonly Keyframe[] {
+  getShadowKeyframes(
+    nodeId: string,
+    property: import('./shadowEffect').ShadowProperty,
+  ): readonly Keyframe[] {
     return this.#animations.getShadowKeyframes(nodeId, property)
   }
 
@@ -1758,10 +1761,17 @@ export class Engine {
     return anim.clearShadowTracks()
   }
 
-  restoreShadowTracks(nodeId: string, tracks: ReadonlyArray<import('./json').ShadowTrackJSON>): void {
+  restoreShadowTracks(
+    nodeId: string,
+    tracks: ReadonlyArray<import('./json').ShadowTrackJSON>,
+  ): void {
     const slide = this.getSlideOfNode(nodeId)
     const anim = slide.animation.ensure(nodeId)
-    anim.restoreShadowTracks(tracks as unknown as import('./json').ShadowTrackJSON[], slide.duration, nodeId)
+    anim.restoreShadowTracks(
+      tracks as unknown as import('./json').ShadowTrackJSON[],
+      slide.duration,
+      nodeId,
+    )
   }
 
   evaluateVisible(nodeId: string, time: number): boolean {
@@ -3791,7 +3801,7 @@ export class Engine {
         if (shadowTracks) {
           for (const track of shadowTracks) {
             for (const kfJson of track.keyframes) {
-              let val: unknown = kfJson.value
+              const val: unknown = kfJson.value
               // Strict validation via requireShadowKeyframeValue; but tolerant via fromJSON already clamps, so just try
               const kf = new KeyframeModel(
                 kfJson.id,
@@ -3799,7 +3809,10 @@ export class Engine {
                 val as unknown as import('./keyframe').KeyframeValue,
                 (kfJson.interpolation as import('./keyframe').InterpolationType) ?? 'linear',
                 (kfJson.tangentIn as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
-                (kfJson.tangentOut as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+                (kfJson.tangentOut as import('./keyframe').KeyframeTangent) ?? {
+                  time: 0,
+                  value: 0,
+                },
               )
               try {
                 targetAnim.addShadow(

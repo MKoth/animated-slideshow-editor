@@ -7,7 +7,12 @@ import { SetKeyframeValueCommand } from './commands/setKeyframeValueCommand'
 import { OverrideMaterialParameterCommand } from './commands/overrideMaterialParameterCommand'
 import { TransactionCommand } from './commands/transactionCommand'
 import type { KeyframeTarget } from './keyframeTarget'
-import { isMorphTarget, isParameterTarget, isPropertyTarget, isShadowTarget } from './keyframeTarget'
+import {
+  isMorphTarget,
+  isParameterTarget,
+  isPropertyTarget,
+  isShadowTarget,
+} from './keyframeTarget'
 import { uniformValuesEqual } from './materialResolution'
 import type { KeyframeValue } from './keyframe'
 
@@ -90,7 +95,10 @@ export function autoKeyCommands(
         ? JSON.stringify(existing.value) === JSON.stringify(edit.value)
         : isShadowTarget(edit.target)
           ? existing.value === edit.value
-          : uniformValuesEqual(existing.value as unknown as import('./materialInstance').MaterialOverrideValue, edit.value as unknown as import('./materialInstance').MaterialOverrideValue)
+          : uniformValuesEqual(
+              existing.value as unknown as import('./materialInstance').MaterialOverrideValue,
+              edit.value as unknown as import('./materialInstance').MaterialOverrideValue,
+            )
       if (!equal) {
         commands.push(
           new SetKeyframeValueCommand({
@@ -113,15 +121,28 @@ export function autoKeyCommands(
       const cur = evaluatedShadowValue(engine, edit.target.nodeId, edit.target.property, edit.time)
       if (cur === edit.value) continue
       // For color, string case sensitive lower?
-      if (typeof cur === 'string' && typeof edit.value === 'string' && cur.toLowerCase() === (edit.value as string).toLowerCase()) continue
+      if (
+        typeof cur === 'string' &&
+        typeof edit.value === 'string' &&
+        cur.toLowerCase() === (edit.value as string).toLowerCase()
+      )
+        continue
     }
     if (isMorphTarget(edit.target)) {
       // For morph, compare full object value (pair+coeff) via evaluateMorphValue when available
-      const evalFn = (engine as unknown as { evaluateMorphValue?: (id: string, t: number) => unknown }).evaluateMorphValue
-      const cur = evalFn ? evalFn.call(engine, edit.target.nodeId, edit.time) : engine.evaluateMorph(edit.target.nodeId, edit.time)
-      const isEqual = typeof cur === 'object' && cur !== null && typeof edit.value === 'object' && edit.value !== null
-        ? JSON.stringify(cur) === JSON.stringify(edit.value)
-        : cur === edit.value
+      const evalFn = (
+        engine as unknown as { evaluateMorphValue?: (id: string, t: number) => unknown }
+      ).evaluateMorphValue
+      const cur = evalFn
+        ? evalFn.call(engine, edit.target.nodeId, edit.time)
+        : engine.evaluateMorph(edit.target.nodeId, edit.time)
+      const isEqual =
+        typeof cur === 'object' &&
+        cur !== null &&
+        typeof edit.value === 'object' &&
+        edit.value !== null
+          ? JSON.stringify(cur) === JSON.stringify(edit.value)
+          : cur === edit.value
       if (isEqual) continue
     }
     commands.push(
@@ -188,7 +209,13 @@ function targetKeyframes(engine: EnginePublic, target: KeyframeTarget): readonly
     return engine.getMorphKeyframes(target.nodeId)
   }
   if (isShadowTarget(target)) {
-    return (engine as unknown as { getShadowKeyframes?: (id: string, prop: string) => readonly Keyframe[] }).getShadowKeyframes?.(target.nodeId, target.property) ?? []
+    return (
+      (
+        engine as unknown as {
+          getShadowKeyframes?: (id: string, prop: string) => readonly Keyframe[]
+        }
+      ).getShadowKeyframes?.(target.nodeId, target.property) ?? []
+    )
   }
   if (target.kind === 'visible') {
     return engine.getVisibleKeyframes(target.nodeId)

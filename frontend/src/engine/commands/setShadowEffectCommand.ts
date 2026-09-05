@@ -53,7 +53,11 @@ export class SetShadowEffectCommand implements Command<SetShadowEffectInverse> {
     // Capture shadowTracks before mutation (for lifecycle)
     let oldTracks: readonly ShadowTrackJSON[] | undefined
     try {
-      const slide = engine.getSlideOfNode(this.#nodeId) as unknown as { animation: { node: (id: string) => { shadowTracksJSON: () => ShadowTrackJSON[] } | undefined } }
+      const slide = engine.getSlideOfNode(this.#nodeId) as unknown as {
+        animation: {
+          node: (id: string) => { shadowTracksJSON: () => ShadowTrackJSON[] } | undefined
+        }
+      }
       oldTracks = slide.animation.node(this.#nodeId)?.shadowTracksJSON()
     } catch {
       oldTracks = undefined
@@ -71,7 +75,11 @@ export class SetShadowEffectCommand implements Command<SetShadowEffectInverse> {
       const effect = this.#shadowEffect ?? { ...DEFAULT_SHADOW_EFFECT }
       engine.setShadowEffect(this.#nodeId, effect)
     }
-    return { nodeId: this.#nodeId, oldShadowEffect: old, ...(oldTracks && oldTracks.length > 0 ? { oldShadowTracks: oldTracks } : {}) }
+    return {
+      nodeId: this.#nodeId,
+      oldShadowEffect: old,
+      ...(oldTracks && oldTracks.length > 0 ? { oldShadowTracks: oldTracks } : {}),
+    }
   }
 
   toJSON(): Readonly<Record<string, unknown>> {

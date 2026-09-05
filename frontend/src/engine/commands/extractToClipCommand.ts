@@ -155,7 +155,11 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
         let morphVal: { fromShapeId: string | null; toShapeId: string | null; coefficient: number }
         if (typeof raw === 'number') {
           morphVal = { fromShapeId: null, toShapeId: null, coefficient: raw as number }
-        } else if (typeof raw === 'object' && raw !== null && 'coefficient' in (raw as Record<string, unknown>)) {
+        } else if (
+          typeof raw === 'object' &&
+          raw !== null &&
+          'coefficient' in (raw as Record<string, unknown>)
+        ) {
           const r = raw as Record<string, unknown>
           // already name-based? keep as is
           if ('fromShapeName' in r || 'toShapeName' in r) {
@@ -184,7 +188,11 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
         } catch {
           // ignore, keep null
         }
-        const clipVal = { fromShapeName: fromName, toShapeName: toName, coefficient: morphVal.coefficient }
+        const clipVal = {
+          fromShapeName: fromName,
+          toShapeName: toName,
+          coefficient: morphVal.coefficient,
+        }
         return { ...nk, value: clipVal as unknown as import('../keyframe').KeyframeValue }
       }
       return nk
@@ -248,13 +256,26 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
           if (sample.kind === 'visible' && kf.interpolation !== 'hold') {
             kf.interpolation = 'hold'
           }
-          if (sample.kind === 'shadow' && (sample as { property: string }).property === 'color' && kf.interpolation !== 'hold' && kf.interpolation !== 'linear') {
+          if (
+            sample.kind === 'shadow' &&
+            (sample as { property: string }).property === 'color' &&
+            kf.interpolation !== 'hold' &&
+            kf.interpolation !== 'linear'
+          ) {
             kf.interpolation = 'linear'
           }
           if (sample.kind === 'shadow') {
-            clip.addShadowChannelKeyframe((sample as { property: import('../shadowEffect').ShadowProperty }).property, kf)
+            clip.addShadowChannelKeyframe(
+              (sample as { property: import('../shadowEffect').ShadowProperty }).property,
+              kf,
+            )
             engine.emitKeyframeAdded(
-              { kind: 'shadow', nodeId: 'clip-' + clip.id, property: (sample as { property: import('../shadowEffect').ShadowProperty }).property } as unknown as KeyframeTarget,
+              {
+                kind: 'shadow',
+                nodeId: 'clip-' + clip.id,
+                property: (sample as { property: import('../shadowEffect').ShadowProperty })
+                  .property,
+              } as unknown as KeyframeTarget,
               kf.id,
             )
             engine.emitClipChanged(clip.id)
@@ -351,13 +372,26 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
           if (sample.kind === 'visible' && kf.interpolation !== 'hold') {
             kf.interpolation = 'hold'
           }
-          if (sample.kind === 'shadow' && (sample as { property: string }).property === 'color' && kf.interpolation !== 'hold' && kf.interpolation !== 'linear') {
+          if (
+            sample.kind === 'shadow' &&
+            (sample as { property: string }).property === 'color' &&
+            kf.interpolation !== 'hold' &&
+            kf.interpolation !== 'linear'
+          ) {
             kf.interpolation = 'linear'
           }
           if (sample.kind === 'shadow') {
-            clip.addShadowChannelKeyframe((sample as { property: import('../shadowEffect').ShadowProperty }).property, kf)
+            clip.addShadowChannelKeyframe(
+              (sample as { property: import('../shadowEffect').ShadowProperty }).property,
+              kf,
+            )
             engine.emitKeyframeAdded(
-              { kind: 'shadow', nodeId: 'clip-' + clip.id, property: (sample as { property: import('../shadowEffect').ShadowProperty }).property } as unknown as KeyframeTarget,
+              {
+                kind: 'shadow',
+                nodeId: 'clip-' + clip.id,
+                property: (sample as { property: import('../shadowEffect').ShadowProperty })
+                  .property,
+              } as unknown as KeyframeTarget,
               kf.id,
             )
             engine.emitClipChanged(clip.id)

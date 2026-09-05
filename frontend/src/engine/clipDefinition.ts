@@ -837,14 +837,20 @@ export class ClipDefinition {
           const anim = ClipChannelAnimation.fromJSONWithKind(animJson, (value, id) => {
             if (kind === 'color') {
               if (typeof value !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(value)) {
-                console.warn(`[shadow] Clip shadow color bad "${String(value)}" at "${id}" → #000000`)
+                console.warn(
+                  `[shadow] Clip shadow color bad "${String(value)}" at "${id}" → #000000`,
+                )
                 return '#000000'
               }
               return (value as string).toLowerCase()
             }
             // numeric continuous: validate per property (blur ≥0, opacity 0..1)
             try {
-              return requireShadowKeyframeValue(property, value, `Clip shadow keyframe "${id}" value`) as unknown as KeyframeValue
+              return requireShadowKeyframeValue(
+                property,
+                value,
+                `Clip shadow keyframe "${id}" value`,
+              ) as unknown as KeyframeValue
             } catch (e) {
               // tolerant clamp/warn like node animation
               if (property === 'blur') {
@@ -859,14 +865,18 @@ export class ClipDefinition {
               if (property === 'opacity') {
                 const num = value as number
                 if (typeof num !== 'number' || !Number.isFinite(num)) {
-                  console.warn(`[shadow] Clip shadow opacity bad ${String(value)} at "${id}" → 0.35`)
+                  console.warn(
+                    `[shadow] Clip shadow opacity bad ${String(value)} at "${id}" → 0.35`,
+                  )
                   return 0.35
                 }
                 return Math.max(0, Math.min(1, num))
               }
               if (typeof value !== 'number' || !Number.isFinite(value as number)) {
                 const fallback = property.startsWith('scale') ? 1 : 0
-                console.warn(`[shadow] Clip shadow ${property} bad ${String(value)} at "${id}" → ${fallback}`)
+                console.warn(
+                  `[shadow] Clip shadow ${property} bad ${String(value)} at "${id}" → ${fallback}`,
+                )
                 return fallback
               }
               throw e

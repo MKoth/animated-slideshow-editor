@@ -14,10 +14,7 @@ import type { ClipDefinition } from './clipDefinition'
 import { circleSegmentsForArc } from './circleComponent'
 import type { MeshVertex } from './mesh'
 import type { Shape } from './shape'
-import {
-  resolveCrossBlendedVertices,
-  resolveMorphedVerticesFromKeyframe,
-} from './shape'
+import { resolveCrossBlendedVertices, resolveMorphedVerticesFromKeyframe } from './shape'
 import type { MorphKeyframeValue, MorphClipKeyframeValue } from './shape'
 import type { ShadowEffect, ShadowProperty } from './shadowEffect'
 import { SHADOW_PROPERTIES, lerpHexColor } from './shadowEffect'
@@ -237,7 +234,15 @@ export class AnimationEvaluator {
       result.color = result.color.toLowerCase()
     }
     // Ensure finite for other numerics (fallback to base if NaN)
-    for (const k of ['offsetX', 'offsetY', 'scaleX', 'scaleY', 'skewX', 'skewY', 'rotation'] as const) {
+    for (const k of [
+      'offsetX',
+      'offsetY',
+      'scaleX',
+      'scaleY',
+      'skewX',
+      'skewY',
+      'rotation',
+    ] as const) {
       const v = result[k] as unknown
       if (typeof v !== 'number' || !Number.isFinite(v)) {
         result[k] = base[k]
@@ -293,7 +298,10 @@ export class AnimationEvaluator {
       }
       if (clip.duration <= 0) continue
       if (time < instance.startTime) continue
-      const u = Math.min(Math.max(((time - instance.startTime) * instance.speed) / clip.duration, 0), 1)
+      const u = Math.min(
+        Math.max(((time - instance.startTime) * instance.speed) / clip.duration, 0),
+        1,
+      )
       for (const prop of SHADOW_PROPERTIES) {
         if (prop === 'color') continue
         const anim = clip.shadowChannelAnimation(prop as ShadowProperty)
@@ -318,7 +326,10 @@ export class AnimationEvaluator {
       }
       if (clip.duration <= 0) continue
       if (time < instance.startTime) continue
-      const u = Math.min(Math.max(((time - instance.startTime) * instance.speed) / clip.duration, 0), 1)
+      const u = Math.min(
+        Math.max(((time - instance.startTime) * instance.speed) / clip.duration, 0),
+        1,
+      )
       const anim = clip.shadowChannelAnimation('color' as ShadowProperty)
       if (!anim || anim.length === 0) continue
       const kfValue = this.#evaluateClipShadowColorValue(anim.keyframes(), u)
@@ -462,17 +473,19 @@ export class AnimationEvaluator {
         )
         const anim = clip.morphAnimation()
         if (!anim || anim.length === 0) continue
-        const clipMorphed = this.#evaluateMorphClipVertices(anim.keyframes(), u, baseVertices, shapes)
+        const clipMorphed = this.#evaluateMorphClipVertices(
+          anim.keyframes(),
+          u,
+          baseVertices,
+          shapes,
+        )
         if (clipMorphed) morphed = clipMorphed
       }
     }
     return morphed
   }
 
-  #evaluateMorphKeyframes(
-    keyframes: readonly Keyframe[],
-    time: number,
-  ): MorphKeyframeValue | null {
+  #evaluateMorphKeyframes(keyframes: readonly Keyframe[], time: number): MorphKeyframeValue | null {
     if (keyframes.length === 0) return null
     const first = keyframes[0]
     const last = keyframes[keyframes.length - 1]

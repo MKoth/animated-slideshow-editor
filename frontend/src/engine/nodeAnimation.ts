@@ -138,7 +138,10 @@ export class NodeAnimation {
   restoreShadowTracks(tracks: readonly ShadowTrackJSON[], duration: number, _nodeId: string): void {
     void _nodeId
     this.#shadowTracks.clear()
-    for (const track of tracks as unknown as readonly { property: string; keyframes: readonly import('./json').KeyframeJSON[] }[]) {
+    for (const track of tracks as unknown as readonly {
+      property: string
+      keyframes: readonly import('./json').KeyframeJSON[]
+    }[]) {
       // Use tolerant read but with strict ids preserved
       const prop = track.property as ShadowProperty
       try {
@@ -157,7 +160,14 @@ export class NodeAnimation {
           const tangentOut = kfJson.tangentOut ?? { time: 0, value: 0 }
           // Validate time within duration
           if (typeof time !== 'number' || time < 0 || time > duration) continue
-          const kf = new KeyframeModel(id, time, value as unknown as import('./keyframe').KeyframeValue, interpolation as import('./keyframe').InterpolationType, tangentIn as import('./keyframe').KeyframeTangent, tangentOut as import('./keyframe').KeyframeTangent)
+          const kf = new KeyframeModel(
+            id,
+            time,
+            value as unknown as import('./keyframe').KeyframeValue,
+            interpolation as import('./keyframe').InterpolationType,
+            tangentIn as import('./keyframe').KeyframeTangent,
+            tangentOut as import('./keyframe').KeyframeTangent,
+          )
           this.addShadow(prop, kf)
         } catch {
           continue
@@ -727,7 +737,9 @@ function readShadowTrack(
     return
   }
   if (!Array.isArray(record.keyframes)) {
-    console.warn(`[shadow] Node "${nodeId}" shadow track "${property}" must have a keyframes array — ignoring`)
+    console.warn(
+      `[shadow] Node "${nodeId}" shadow track "${property}" must have a keyframes array — ignoring`,
+    )
     return
   }
   const parse = trackKeyframeParser(`Shadow track "${property}"`, duration, (value, what) => {
@@ -759,7 +771,9 @@ function readShadowTrack(
       // numeric others: check finite
       if (typeof value !== 'number' || !Number.isFinite(value as number)) {
         const fallback = property.startsWith('scale') ? 1 : 0
-        console.warn(`[shadow] Node "${nodeId}" shadow ${property} bad ${String(value)} → ${fallback}`)
+        console.warn(
+          `[shadow] Node "${nodeId}" shadow ${property} bad ${String(value)} → ${fallback}`,
+        )
         return fallback as import('./keyframe').KeyframeValue
       }
       // if still throws, rethrow original
@@ -815,7 +829,9 @@ function removeById(
 function copyKeyframe(keyframe: Keyframe): Keyframe {
   let value: import('./keyframe').KeyframeValue = keyframe.value
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-    value = { ...((value as unknown) as Record<string, unknown>) } as unknown as import('./keyframe').KeyframeValue
+    value = {
+      ...(value as unknown as Record<string, unknown>),
+    } as unknown as import('./keyframe').KeyframeValue
   } else if (Array.isArray(value)) {
     value = [...value] as unknown as import('./keyframe').KeyframeValue
   }

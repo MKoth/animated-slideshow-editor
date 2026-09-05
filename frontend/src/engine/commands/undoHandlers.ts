@@ -416,7 +416,8 @@ export function applyUndo(
     case 'SetShadowEffect': {
       const nodeId = inv.nodeId as string
       const oldShadowEffect = inv.oldShadowEffect as import('../shadowEffect').ShadowEffect | null
-      const oldShadowTracks = inv.oldShadowTracks as readonly import('../json').ShadowTrackJSON[] | undefined
+      const oldShadowTracks = inv.oldShadowTracks as
+        readonly import('../json').ShadowTrackJSON[] | undefined
       engine.setShadowEffect(nodeId, oldShadowEffect)
       if (oldShadowTracks && oldShadowTracks.length > 0) {
         try {
