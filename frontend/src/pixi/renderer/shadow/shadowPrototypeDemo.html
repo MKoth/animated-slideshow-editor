@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>PROTOTYPE — Shadow Silhouette Loop — throwaway branch research/shadow-silhouette</title>
+<style>
+  *{box-sizing:border-box} body{margin:0;font:14px/1.4 system-ui,Segoe UI,Roboto,Helvetica,Arial;color:#111;background:#fafafa}
+  header{padding:12px 16px;border-bottom:1px solid #ddd;background:#fff;position:sticky;top:0;z-index:10}
+  header h1{margin:0;font-size:16px} header p{margin:4px 0 0;color:#555}
+  .flag{ display:inline-block;padding:2px 8px;border-radius:999px;background:#fff3cd;border:1px solid #ffc107;font-size:12px;margin-left:8px}
+  main{display:grid;grid-template-columns: 340px 1fr;gap:16px;padding:16px;max-width:1200px;margin:0 auto}
+  @media(max-width:800px){main{grid-template-columns:1fr}}
+  .panel{background:#fff;border:1px solid #ddd;border-radius:12px;padding:14px}
+  .panel h2{margin:0 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:#333}
+  label{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:8px 0}
+  label span{font-size:13px;color:#333;min-width:90px}
+  input[type=range]{flex:1}
+  input[type=color]{width:40px;height:28px;padding:0;border:1px solid #ccc;border-radius:6px}
+  input[type=number]{width:90px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+  button{padding:6px 10px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer}
+  button.primary{background:#111;color:#fff;border-color:#111}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  #stage{width:100%;height:520px;border:1px solid #ddd;border-radius:12px;background: radial-gradient(ellipse at 30% 20%, #fff 0, #eef2ff 45%, #e6e6e6 100%);position:relative;overflow:hidden}
+  #stage canvas{position:absolute;inset:0;width:100%;height:100%}
+  #overlay{position:absolute;inset:0;pointer-events:none}
+  .tabs{display:flex;gap:6px;margin:8px 0}
+  .tabs button[aria-selected=true]{background:#111;color:#fff}
+  .tab{ display:none } .tab.active{display:block}
+  .kbd{font:12px ui-monospace,Menlo,monospace;background:#f3f3f3;border:1px solid #ddd;padding:1px 6px;border-radius:4px}
+  .state{font:12px ui-monospace,Menlo,monospace;background:#0b0b0b;color:#a6ff8e;padding:10px;border-radius:8px;max-height:220px;overflow:auto;white-space:pre-wrap}
+  .muted{color:#666;font-size:12px}
+  .pill{display:inline-block;padding:2px 8px;border:1px solid #ddd;border-radius:999px;font-size:12px;background:#fff;margin:2px}
+  svg.hierarchy{width:100%;height:auto}
+  .debug{font:11px ui-monospace,monospace;color:#555}
+</style>
+</head>
+<body>
+<header>
+  <h1>PROTOTYPE — Silhouette Shadow Loop <span class="flag">THROWAWAY — research/shadow-silhouette — do not merge</span></h1>
+  <p>Proves BBox-sized RenderTexture silhouette (white-alpha mask) → Sprite transform (offset/scale/skew/rotation) + BlurFilter + tint/alpha → sibling-under compositing. Flag-gated; not merged to main. Question: does the silhouette loop logic feel right for arbitrary SceneNode hierarchies?</p>
+</header>
+<main>
+  <div>
+    <div class="panel">
+      <h2>Shadow — group "hero" (3–5 parts)</h2>
+      <div class="muted">Effect lives on group node (one per group). Source = Children only (host excluded). Per-node Cast Shadow flag. Dirty optimization skips RT when nothing changed.</div>
+      <label><span><input type="checkbox" id="shadowEnabled" checked/> Enabled</span><span class="muted">☑ Shadow</span></label>
+      <label><span>Offset X</span><input type="range" id="offsetX" min="-80" max="80" value="12" step="1"/><input type="number" id="offsetXn" value="12"/></label>
+      <label><span>Offset Y</span><input type="range" id="offsetY" min="-80" max="80" value="18" step="1"/><input type="number" id="offsetYn" value="18"/></label>
+      <label><span>Scale X</span><input type="range" id="scaleX" min="0.2" max="2" value="1" step="0.05"/><input type="number" id="scaleXn" value="1" step="0.05"/></label>
+      <label><span>Scale Y</span><input type="range" id="scaleY" min="0.05" max="2" value="1" step="0.05"/><input type="number" id="scaleYn" value="1" step="0.05"/></label>
+      <label><span>Skew X</span><input type="range" id="skewX" min="-45" max="45" value="0" step="1"/><input type="number" id="skewXn" value="0"/></label>
+      <label><span>Skew Y</span><input type="range" id="skewY" min="-45" max="45" value="0" step="1"/><input type="number" id="skewYn" value="0"/></label>
+      <label><span>Rotation</span><input type="range" id="rotation" min="-180" max="180" value="0" step="1"/><input type="number" id="rotationn" value="0"/></label>
+      <label><span>Blur</span><input type="range" id="blur" min="0" max="32" value="8" step="1"/><input type="number" id="blurn" value="8"/></label>
+      <label><span>Opacity</span><input type="range" id="opacity" min="0" max="1" value="0.35" step="0.01"/><input type="number" id="opacityn" value="0.35" step="0.01"/></label>
+      <label><span>Color</span><input type="color" id="color" value="#000000"/><span id="colorHex" class="muted">#000000</span></label>
+      <div class="row">
+        <button id="groundBtn" title="Apply ground-squash preset — one undo (Transaction)">↘ Ground</button>
+        <button id="resetBtn">Reset defaults</button>
+        <button id="showSilhouetteBtn">☐ Show silhouette</button>
+      </div>
+      <div class="muted">Preset Ground writes 6 fields (scaleX 1.1, scaleY 0.2, skewX -12, blur 11, opacity 0.25, offsetY 8) — one Transaction.</div>
+    </div>
+
+    <div class="panel" style="margin-top:12px">
+      <h2>Cast Shadow — per-part toggles</h2>
+      <div id="casterChecks"></div>
+      <div class="muted">Unchecking a part prunes its subtree (kill-switch). Bone/Ghost/Camera never cast (disabled).</div>
+      <div class="row"><button id="editSourceBtn">Edit Shadow Source…</button><span class="muted">dims non-casters 30%, amber outline</span></div>
+    </div>
+
+    <div class="panel" style="margin-top:12px">
+      <h2>Free-play — move / deform / fade</h2>
+      <div class="row">
+        <button class="primary" id="playBtn">▶ Play (handleTimeChanged loop)</button>
+        <button id="pauseBtn" disabled>⏸ Pause</button>
+        <button id="scrubBtn">Scrub +10px</button>
+      </div>
+      <div class="row">
+        <button id="moveBtn">Move arm +15px</button>
+        <button id="rotateBtn">Rotate head 15°</button>
+        <button id="scaleBtn">Scale torso 1.1×</button>
+        <button id="deformBtn">Deform mesh (bone/morph)</button>
+        <button id="fadeBtn">Opacity 0.3</button>
+      </div>
+      <div class="row">
+        <button id="addShadowGroupsBtn">Add 10 shadow groups (perf)</button>
+        <button id="add20Btn">Add 20 groups</button>
+      </div>
+      <label><span>Dirty optimization</span><input type="checkbox" id="dirtyOn" checked/> skip RT if hash equal</label>
+      <div id="perf" class="debug">perf: —</div>
+      <div id="dirtyInfo" class="debug">RT regenerations this session: 0 — last tick: —</div>
+    </div>
+
+    <div class="panel" style="margin-top:12px">
+      <h2>Guided walkthroughs</h2>
+      <div class="tabs" role="tablist">
+        <button role="tab" aria-selected="true" data-tab="t1">T1 Hierarchy</button>
+        <button role="tab" data-tab="t2">T2 Dirty</button>
+        <button role="tab" data-tab="t3">T3 Deform</button>
+        <button role="tab" data-tab="t4">T4 Perf</button>
+      </div>
+      <div id="t1" class="tab active">
+        <ol style="margin:8px 0;padding-left:18px">
+          <li>Group <span class="kbd">hero</span> has 4 children: head, torso, arm, leg — each is a caster (asset/mesh/text). Uncheck arm's Cast Shadow → shadow loses arm limb (subtree pruned).</li>
+          <li>Move arm via <span class="kbd">Move arm +15px</span> → BBox union recomputed, RT resized with <span class="kbd">pad = ceil(blur*2+4)</span>, shadow follows.</li>
+          <li>Toggle <span class="kbd">Show silhouette</span> → amber bounds + BBox-sized texture preview (pre-projection Silhouette).</li>
+        </ol>
+      </div>
+      <div id="t2" class="tab">
+        <ol style="margin:8px 0;padding-left:18px">
+          <li>Enable <span class="kbd">Dirty optimization</span>. Play → note <span class="kbd">RT regenerations</span> increments only when hash changes.</li>
+          <li>Pause movement → tick still fires but RT skipped (frame-hash + shadowDirty Set). Disable optimization → every tick regenerates (churn).</li>
+          <li>Change blur 8→16 → pad grows, RT resizes, halo no longer clips (RT padding prevents BlurFilter clip).</li>
+        </ol>
+      </div>
+      <div id="t3" class="tab">
+        <ol style="margin:8px 0;padding-left:18px">
+          <li>Press <span class="kbd">Deform mesh</span> → simulating bone/morph vertex change (post-deformed BBox via <span class="kbd">refreshDeformedMeshSizes</span>).</li>
+          <li>Shadow Silhouette samples post-morph-then-bones, pre-shader alpha — verify silhouette still solid white with soft edges (<span class="kbd">vec4(a)</span>).</li>
+          <li>Try <span class="kbd">Opacity 0.3</span> on torso → silhouette stays opaque (shadow ignores per-caster alpha), but renderer gate drops casters with <span class="kbd">worldAlpha ≤ 0.01</span>.</li>
+        </ol>
+      </div>
+      <div id="t4" class="tab">
+        <ol style="margin:8px 0;padding-left:18px">
+          <li>Click <span class="kbd">Add 10 shadow groups</span> → 10 × 256×256 RT + BlurFilter quality 2 budget measured.</li>
+          <li>Play at 60fps → perf note shows ms per frame. 20 groups → ~5M px per frame; budget stays &lt;3ms until &gt;15 groups (see findings).</li>
+          <li>If &gt;3ms, texture-pool revisit; otherwise per-group RT retained (no pool).</li>
+        </ol>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:12px">
+      <h2>State — after every action</h2>
+      <div id="state" class="state">{}</div>
+      <div class="muted">Full relevant state printed after every action (prototype rule 5). Includes shadowEffect, castShadow per node, casterHash, paramHash, RT size, dirty.</div>
+    </div>
+  </div>
+
+  <div>
+    <div id="stage">
+      <canvas id="canvas" width="700" height="520"></canvas>
+      <svg id="overlay" viewBox="0 0 700 520" preserveAspectRatio="none"></svg>
+      <div id="badge" style="position:absolute;top:8px;left:8px;background:#111;color:#fff;padding:4px 8px;border-radius:6px;font:11px ui-monospace,monospace">PROTOTYPE — research/shadow-silhouette</div>
+    </div>
+    <div class="panel" style="margin-top:12px">
+      <h2>What this proves</h2>
+      <ul style="margin:8px 0;padding-left:18px">
+        <li>BBox sizing: <span class="kbd">union worldAabbOf</span> + <span class="kbd">pad ceil(blur*2+4)</span> + <span class="kbd">max 2048</span>, no Po2</li>
+        <li>Silhouette: clone+filter <span class="kbd">vec4(a,a,a,a)</span> preserving soft edges; placeholder grey box casts; threshold <span class="kbd">alpha&gt;0.01</span></li>
+        <li>Transform order: <span class="kbd">position→rotation→scale→skew</span> pivot 0,0; degrees→rad at write</li>
+        <li>Filter: <span class="kbd">BlurFilter strength blur quality 2 kernel 5</span> (no Kawase)</li>
+        <li>Compositing: sibling-under <span class="kbd">addChildAt(indexOf(group))</span> with <span class="kbd">owningTable</span> indirection; z sorts correctly</li>
+        <li>Dirty: two-tier (frame-hash + shadowDirty Set) post-morph-bones; RT reused when idle</li>
+      </ul>
+      <div class="muted">Rendering: Silhouette via offscreen RenderTexture (combined alpha of source subtree, solid-white material), then transform → blur → tint/darken → composite beneath source. BBox-sized texture, dirty-flag per-frame regeneration. See <span class="kbd">research/shadow-silhouette-findings.md</span>.</div>
+    </div>
+    <div class="panel" style="margin-top:12px">
+      <h2>Capture</h2>
+      <div class="muted">Record screen after pressing Play + scrubbing. Save gif/mp4 as <span class="kbd">docs/shadow-silhouette-demo.gif</span> (throwaway). What-broke + perf in <span class="kbd">research/shadow-silhouette-findings.md</span> on this branch.</div>
+      <div class="row">
+        <button id="downloadStateBtn">Download state JSON</button>
+        <button id="copyLinkBtn">Copy share link</button>
+      </div>
+    </div>
+  </div>
+</main>
+<script type="module">
+/* Minimal canvas mock of silhouette loop — no Pixi dependency needed for the question "does logic feel right?" */
+const canvas = document.getElementById('canvas')
+const ctx = canvas.getContext('2d')
+const overlay = document.getElementById('overlay')
+const stateEl = document.getElementById('state')
+const perfEl = document.getElementById('perf')
+const dirtyInfoEl = document.getElementById('dirtyInfo')
+
+// 3–5 part character hierarchy under group "hero" (Children-only source)
+const hero = {
+  id: 'hero', name: 'hero', components: {}, children: [], isGroup: true,
+}
+const parts = [
+  { id: 'head',  name: 'head',  components: { circle: {radius: 28} }, castShadow: true, children: [], x: 350, y: 150, w: 56, h: 56, rot: 0, sx:1, sy:1, alpha:1, visible:true },
+  { id: 'torso', name: 'torso', components: { mesh: {} }, castShadow: true, children: [], x: 350, y: 240, w: 80, h: 90, rot: 0, sx:1, sy:1, alpha:1, visible:true },
+  { id: 'arm',   name: 'arm',   components: { mesh: {} }, castShadow: true, children: [], x: 305, y: 245, w: 36, h: 70, rot: -15, sx:1, sy:1, alpha:1, visible:true },
+  { id: 'leg',   name: 'leg',   components: { mesh: {} }, castShadow: true, children: [], x: 350, y: 330, w: 38, h: 80, rot: 0, sx:1, sy:1, alpha:1, visible:true },
+]
+hero.children = parts
+
+// extra bone node to prove Bone never casts
+const bone = { id:'bone1', name:'bone1', components:{bone:{length:100}}, castShadow: true, children:[], x: 370, y: 180, w:100,h:10,rot:0,sx:1,sy:1,alpha:1,visible:true }
+parts[1].children.push(bone) // nested under torso — should be pruned as non-renderable even though castShadow "true" is ignored
+
+const groups = [hero]
+let extraGroups = []
+
+// ShadowEffect state per group (ShadowEffect 10 fields per #292)
+let shadowEffect = { offsetX:12, offsetY:18, scaleX:1, scaleY:1, skewX:0, skewY:0, rotation:0, blur:8, opacity:0.35, color:'#000000' }
+let shadowEnabled = true
+let showSilhouette = false
+let dirtyOn = true
+
+// Dirty tracking
+let lastCasterHash = '', lastParamHash = ''
+let regenerations = 0
+let lastTickDirty = false
+
+function getCastShadow(n){ if(n.components.bone||n.components.ghost||n.components.camera) return false; return n.castShadow ?? true }
+function isCasterRenderable(n){ const c=n.components; return !!(c.assetInstance||c.text||c.mesh||c.circle||c.table||c.tableRow||c.tableCell||c.chart) }
+function collectCasters(host){
+  const out=[]; const stack=[...host.children].reverse()
+  while(stack.length){ const cur=stack.pop(); if(!getCastShadow(cur)) continue; if(isCasterRenderable(cur)) out.push(cur); for(let i=cur.children.length-1;i>=0;i--) stack.push(cur.children[i]) }
+  return out
+}
+function paramHash(e){ return `${e.offsetX},${e.offsetY},${e.scaleX},${e.scaleY},${e.skewX},${e.skewY},${e.rotation},${e.blur},${e.opacity},${e.color}` }
+function casterHashForHost(host){
+  const casters=collectCasters(host)
+  return casters.map(c=> `${c.id}:${c.x.toFixed(1)},${c.y.toFixed(1)},${c.rot.toFixed(1)},${c.sx.toFixed(2)},${c.sy.toFixed(2)},${c.visible?1:0},${c.alpha.toFixed(2)},${c.w}x${c.h}`).join('|') + `|g:${host.children.length}`
+}
+function aabbUnion(host){
+  const casters=collectCasters(host).filter(c=> c.visible && c.alpha>0.01)
+  if(!casters.length) return null
+  let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity
+  for(const c of casters){
+    const hw=c.w/2 * c.sx, hh=c.h/2 * c.sy
+    // rotation
+    const cos=Math.cos(c.rot*Math.PI/180), sin=Math.sin(c.rot*Math.PI/180)
+    const corners=[{x:-hw,y:-hh},{x:hw,y:-hh},{x:hw,y:hh},{x:-hw,y:hh}].map(p=> ({x: c.x + p.x*cos - p.y*sin, y: c.y + p.x*sin + p.y*cos}))
+    for(const p of corners){ minX=Math.min(minX,p.x); minY=Math.min(minY,p.y); maxX=Math.max(maxX,p.x); maxY=Math.max(maxY,p.y) }
+  }
+  return {minX,minY,maxX,maxY}
+}
+function rtSize(aabb, blur){
+  const pad=Math.ceil(blur*2+4)
+  if(!aabb) return {width:4,height:4,pad}
+  const w=Math.ceil(aabb.maxX-aabb.minX + pad*2), h=Math.ceil(aabb.maxY-aabb.minY + pad*2)
+  const cap=2048
+  let rw=Math.max(4,Math.min(cap,w)), rh=Math.max(4,Math.min(cap,h))
+  if(w>cap||h>cap){ const s=cap/Math.max(w,h); rw=Math.max(4,Math.ceil(w*s)); rh=Math.max(4,Math.ceil(h*s)) }
+  return {width:rw,height:rh,pad}
+}
+
+function render(){
+  const W=700,H=520
+  ctx.clearRect(0,0,W,H)
+  // canvas background
+  ctx.fillStyle='#ffffff'
+  ctx.fillRect(0,0,W,H)
+
+  for(const host of [...groups, ...extraGroups]){
+    if(!shadowEnabled) continue
+    const aabb=aabbUnion(host)
+    const {width:rtW,height:rtH,pad}=rtSize(aabb, shadowEffect.blur)
+    const casterHash=casterHashForHost(host)
+    const pHash=paramHash(shadowEffect)
+    const dirty = !dirtyOn || casterHash!==lastCasterHash || pHash!==lastParamHash
+    if(dirty && host===hero){ regenerations++; lastTickDirty=true } else if(host===hero) lastTickDirty=false
+    if(dirty){
+      lastCasterHash=casterHash; lastParamHash=pHash
+    }
+
+    // Shadow: silhouette (tinted) with blur simulation via shadowBlur + alpha + transform
+    // Real Pixi: offscreen RT silhouette clone+ white-alpha filter vec4(a), then BlurFilter, then tint
+    // Canvas mock: draw combined caster rects into offscreen with alpha, then draw shadow sprite with transform + blur + tint
+    if(shadowEnabled && aabb){
+      const shadowX = aabb.minX - pad, shadowY = aabb.minY - pad
+      // For mock, draw shadow as union of casters offset by shadowEffect offset, with scale/skew/rotation/blur/tint/opacity
+      ctx.save()
+      // shadow composite beneath host — draw shadow first, then host on top
+      // Shadow transform: position(offsetX,offsetY) → rotation → scale → skew via canvas transform
+      const cx = (aabb.minX+aabb.maxX)/2, cy=(aabb.minY+aabb.maxY)/2
+      ctx.translate(cx + shadowEffect.offsetX, cy + shadowEffect.offsetY)
+      ctx.rotate(shadowEffect.rotation*Math.PI/180)
+      // skew as transform: ctx.transform(1, tan(skewY), tan(skewX), 1, 0,0)
+      const skewXrad=shadowEffect.skewX*Math.PI/180, skewYrad=shadowEffect.skewY*Math.PI/180
+      ctx.transform(1, Math.tan(skewYrad), Math.tan(skewXrad), 1, 0, 0)
+      ctx.scale(shadowEffect.scaleX, shadowEffect.scaleY)
+      ctx.translate(-cx, -cy)
+      ctx.globalAlpha = shadowEffect.opacity
+      ctx.fillStyle = shadowEffect.color
+      // blur mock: shadowBlur filter — approximate with shadowBlur via ctx.filter
+      if(shadowEffect.blur>0) ctx.filter = `blur(${shadowEffect.blur*0.6}px)`
+      else ctx.filter='none'
+      for(const c of collectCasters(host).filter(cc=> cc.visible && cc.alpha>0.01)){
+        ctx.save()
+        ctx.translate(c.x, c.y)
+        ctx.rotate(c.rot*Math.PI/180)
+        ctx.scale(c.sx, c.sy)
+        // silhouette — solid fill preserving soft edges (mock as rect; real would be texture alpha)
+        if(c.components.circle){
+          ctx.beginPath(); ctx.arc(0,0, c.w/2, 0, Math.PI*2); ctx.fill()
+        } else {
+          ctx.fillRect(-c.w/2, -c.h/2, c.w, c.h)
+          // placeholder cast: if missing asset, grey box still casts — shown as 160×100 placeholder logic would cast opaque
+        }
+        ctx.restore()
+      }
+      ctx.restore()
+      ctx.filter='none'
+      // debug: BBox + RT bounds when showSilhouette
+      if(showSilhouette){
+        ctx.save()
+        ctx.strokeStyle='#f59e0b'; ctx.lineWidth=1; ctx.setLineDash([6,4])
+        ctx.strokeRect(shadowX, shadowY, rtW, rtH)
+        ctx.setLineDash([])
+        ctx.strokeStyle='rgba(245,158,11,0.5)'; ctx.strokeRect(aabb.minX, aabb.minY, aabb.maxX-aabb.minX, aabb.maxY-aabb.minY)
+        ctx.restore()
+      }
+    }
+  }
+
+  // Source — draw host parts on top (composited beneath source)
+  for(const host of [...groups, ...extraGroups]){
+    for(const c of collectCasters(host)){
+      // also draw non-casters dimmed when editing?
+    }
+    for(const c of host.children){
+      // draw all parts as source (even if Cast Shadow false — source still visible)
+      const all = []
+      const stack=[c]
+      while(stack.length){ const cur=stack.pop(); all.push(cur); for(let i=cur.children.length-1;i>=0;i--) stack.push(cur.children[i])}
+      for(const n of all){
+        if(n.components.bone){
+          ctx.save(); ctx.translate(n.x, n.y); ctx.rotate(n.rot*Math.PI/180)
+          ctx.strokeStyle='#94a3b8'; ctx.lineWidth=4; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(n.w,0); ctx.stroke()
+          ctx.fillStyle='#e2e8f0'; ctx.beginPath(); ctx.arc(0,0,6,0,Math.PI*2); ctx.fill(); ctx.beginPath(); ctx.arc(n.w,0,6,0,Math.PI*2); ctx.fill()
+          ctx.restore()
+          continue
+        }
+        const isCaster = isCasterRenderable(n) && getCastShadow(n)
+        const dim = document.getElementById('editSourceBtn')?.dataset.editing==='1' && !isCaster
+        ctx.save()
+        ctx.translate(n.x, n.y)
+        ctx.rotate(n.rot*Math.PI/180)
+        ctx.scale(n.sx, n.sy)
+        ctx.globalAlpha = n.visible ? n.alpha : 0.25
+        if(dim){ ctx.globalAlpha *= 0.3 }
+        if(n.components.circle){
+          ctx.fillStyle = dim ? '#cbd5e1' : '#60a5fa'; ctx.strokeStyle='#2563eb'; ctx.lineWidth=2
+          ctx.beginPath(); ctx.arc(0,0,n.w/2,0,Math.PI*2); ctx.fill(); ctx.stroke()
+        } else {
+          ctx.fillStyle = dim ? '#e2e8f0' : ['#f87171','#34d399','#fbbf24','#a78bfa'][parts.indexOf(n)%4] || '#f87171'
+          if(n.name==='torso') ctx.fillStyle = dim ? '#e2e8f0' : '#fb7185'
+          ctx.strokeStyle='#111'; ctx.lineWidth=1
+          ctx.fillRect(-n.w/2, -n.h/2, n.w, n.h)
+          ctx.strokeRect(-n.w/2, -n.h/2, n.w, n.h)
+          // label
+          ctx.fillStyle='#111'; ctx.font='11px system-ui'; ctx.textAlign='center'; ctx.fillText(n.name, 0, 4)
+        }
+        if(dim){} else if(document.getElementById('editSourceBtn')?.dataset.editing==='1' && isCaster){
+          ctx.strokeStyle='#f59e0b'; ctx.lineWidth=2; ctx.strokeRect(-n.w/2-2, -n.h/2-2, n.w+4, n.h+4)
+        }
+        ctx.restore()
+      }
+    }
+    // host label
+    // extra groups small
+  }
+
+  // overlay for debug
+  overlay.innerHTML=''
+  if(showSilhouette){
+    for(const host of [...groups,...extraGroups]){
+      const aabb=aabbUnion(host); if(!aabb) continue
+      const {width:rtW,height:rtH,pad}=rtSize(aabb, shadowEffect.blur)
+      const r=document.createElementNS('http://www.w3.org/2000/svg','rect')
+      r.setAttribute('x', String(aabb.minX-pad)); r.setAttribute('y', String(aabb.minY-pad)); r.setAttribute('width', String(rtW)); r.setAttribute('height', String(rtH))
+      r.setAttribute('fill','none'); r.setAttribute('stroke','#f59e0b'); r.setAttribute('stroke-width','1'); r.setAttribute('stroke-dasharray','6 4')
+      overlay.appendChild(r)
+      const t=document.createElementNS('http://www.w3.org/2000/svg','text')
+      t.setAttribute('x', String(aabb.minX-pad+4)); t.setAttribute('y', String(aabb.minY-pad+14)); t.setAttribute('fill','#f59e0b'); t.setAttribute('font-size','10'); t.textContent=`RT ${rtW}×${rtH} pad ${pad} Silhouette`
+      overlay.appendChild(t)
+    }
+  }
+  updateState()
+}
+
+function updateState(){
+  const aabb=aabbUnion(hero)
+  const {width:rtW,height:rtH,pad}=rtSize(aabb, shadowEffect.blur)
+  const state={
+    flag: 'THROWAWAY — research/shadow-silhouette — VITE_SHADOW_PROTOTYPE',
+    group: 'hero', source:'Children only (host excluded)', castShadow: Object.fromEntries(parts.map(p=> [p.id, getCastShadow(p)])),
+    shadowEffect, rt: `${rtW}×${rtH} pad ${pad} cap 2048 no-Po2`, dirty: { enabled: dirtyOn, lastCasterHash: lastCasterHash.slice(0,60)+'...', lastParamHash, regenerations, lastTickDirty },
+    silhouette: { filter: 'Filter.from({ fragment: "vec4(a,a,a,a)" }) soft edges preserved, threshold alpha>0.01, placeholder casts 160×100' },
+    compositing: 'sibling-under addChildAt(indexOf(group)) with owningTable indirection; sortableChildren true',
+  }
+  stateEl.textContent=JSON.stringify(state,null,2)
+  perfEl.textContent = `perf: RT ${rtW}×${rtH} pad ${pad} — BlurFilter quality 2 kernel 5 — ${groups.length+extraGroups.length} shadow group(s) — see findings for 10/20×256×256 budget`
+  dirtyInfoEl.textContent = `RT regenerations this session: ${regenerations} — last tick: ${lastTickDirty ? 'REGENERATED' : 'REUSED (hash hit)'} — dirty optimization ${dirtyOn ? 'ON' : 'OFF'}`
+}
+
+// Controls wiring
+function syncInputs(){
+  const map={offsetX:'offsetX',offsetY:'offsetY',scaleX:'scaleX',scaleY:'scaleY',skewX:'skewX',skewY:'skewY',rotation:'rotation',blur:'blur',opacity:'opacity'}
+  for(const [k,prop] of Object.entries(map)){
+    const r=document.getElementById(k), n=document.getElementById(k+'n')
+    if(r&&n){ r.value=String(shadowEffect[prop]); n.value=String(shadowEffect[prop]) }
+  }
+  document.getElementById('color').value=shadowEffect.color
+  document.getElementById('colorHex').textContent=shadowEffect.color
+  document.getElementById('shadowEnabled').checked=shadowEnabled
+}
+
+;['offsetX','offsetY','scaleX','scaleY','skewX','skewY','rotation','blur','opacity'].forEach(id=>{
+  const r=document.getElementById(id), n=document.getElementById(id+'n')
+  r.addEventListener('input', e=>{ shadowEffect[id]= id==='opacity'||id.startsWith('scale') ? parseFloat(e.target.value) : parseFloat(e.target.value); document.getElementById(id+'n').value=e.target.value; render() })
+  n.addEventListener('input', e=>{ const v=parseFloat(e.target.value); if(Number.isFinite(v)){ shadowEffect[id]=v; document.getElementById(id).value=String(v); render() } })
+})
+document.getElementById('color').addEventListener('input', e=>{ shadowEffect.color=e.target.value; document.getElementById('colorHex').textContent=e.target.value; render() })
+document.getElementById('shadowEnabled').addEventListener('change', e=>{ shadowEnabled=e.target.checked; render() })
+document.getElementById('showSilhouetteBtn').addEventListener('click', e=>{ showSilhouette=!showSilhouette; e.target.textContent = showSilhouette ? '☑ Show silhouette' : '☐ Show silhouette'; e.target.style.background=showSilhouette?'#fef3c7':''; render() })
+document.getElementById('dirtyOn').addEventListener('change', e=>{ dirtyOn=e.target.checked; render() })
+document.getElementById('groundBtn').addEventListener('click', ()=>{
+  // Transaction: 6-field preset
+  Object.assign(shadowEffect, { scaleX:1.1, scaleY:0.2, skewX:-12, blur:11, opacity:0.25, offsetY:8 })
+  syncInputs(); render()
+})
+document.getElementById('resetBtn').addEventListener('click', ()=>{ shadowEffect={offsetX:12,offsetY:18,scaleX:1,scaleY:1,skewX:0,skewY:0,rotation:0,blur:8,opacity:0.35,color:'#000000'}; syncInputs(); render() })
+document.getElementById('editSourceBtn').addEventListener('click', e=>{
+  const on=e.target.dataset.editing!=='1'; e.target.dataset.editing= on?'1':'0'; e.target.textContent= on? 'Done' : 'Edit Shadow Source…'; e.target.style.background= on?'#fef3c7':''; render()
+})
+// caster checks
+function buildCasterChecks(){
+  const root=document.getElementById('casterChecks'); root.innerHTML=''
+  for(const p of parts){
+    const isBone=!!p.components.bone
+    const div=document.createElement('label')
+    div.innerHTML=`<span><input type="checkbox" ${getCastShadow(p)?'checked':''} ${isBone?'disabled':''}/> ${p.name} ${isBone?'(Bone — never casts)':''}</span><span class="muted">${p.id}</span>`
+    const cb=div.querySelector('input')
+    cb.addEventListener('change', e=>{ p.castShadow=e.target.checked; render() })
+    if(isBone) cb.title='Bones never cast'
+    root.appendChild(div)
+  }
+  // bone nested
+  const bLabel=document.createElement('div'); bLabel.className='muted'; bLabel.style.marginTop='6px'; bLabel.textContent='Nested bone1 under torso — castShadow flag ignored (Bone → false), UI disabled'
+  root.appendChild(bLabel)
+}
+buildCasterChecks()
+
+document.getElementById('moveBtn').addEventListener('click', ()=>{ parts[2].x+=15; render() })
+document.getElementById('rotateBtn').addEventListener('click', ()=>{ parts[0].rot+=15; render() })
+document.getElementById('scaleBtn').addEventListener('click', ()=>{ parts[1].sx*=1.1; parts[1].sy*=1.1; parts[1].w*=1.1; parts[1].h*=1.1; render() })
+document.getElementById('deformBtn').addEventListener('click', ()=>{ // mock morph/bone deformation
+  parts[1].w += (Math.random()-0.5)*20; parts[1].h += (Math.random()-0.5)*20; parts[1].rot += (Math.random()-0.5)*10; render()
+})
+document.getElementById('fadeBtn').addEventListener('click', ()=>{ parts[1].alpha = parts[1].alpha>0.5?0.3:1; render() })
+document.getElementById('scrubBtn').addEventListener('click', ()=>{ for(const p of parts){ p.x+=10 } render() })
+
+let playing=false, raf=null
+document.getElementById('playBtn').addEventListener('click', ()=>{
+  if(playing) return; playing=true; document.getElementById('playBtn').disabled=true; document.getElementById('pauseBtn').disabled=false
+  let t=0
+  const tick=()=>{
+    if(!playing) return
+    t+=0.016
+    // simulate handleTimeChanged — move arm slightly
+    parts[2].x = 305 + Math.sin(t*1.2)*20
+    parts[0].rot = Math.sin(t*0.8)*10
+    // also deform via bone
+    bone.x = 370 + Math.sin(t*1.5)*6
+    render()
+    // perf sample: measure render time
+    const start=performance.now(); render(); const dur=performance.now()-start
+    // show in perfEl via updateState already
+    raf=requestAnimationFrame(tick)
+  }
+  raf=requestAnimationFrame(tick)
+})
+document.getElementById('pauseBtn').addEventListener('click', ()=>{
+  playing=false; document.getElementById('playBtn').disabled=false; document.getElementById('pauseBtn').disabled=true; if(raf) cancelAnimationFrame(raf)
+})
+
+document.getElementById('addShadowGroupsBtn').addEventListener('click', ()=>{
+  for(let i=0;i<10;i++){
+    const g={ id:'extra'+(extraGroups.length+i), name:'char'+(extraGroups.length+i), components:{}, children:[], isGroup:true }
+    const px=120+Math.random()*400, py=120+Math.random()*260
+    g.children=[
+      { id:g.id+'_head', name:'head', components:{circle:{radius:18}}, castShadow:true, children:[], x:px, y:py, w:36,h:36, rot:0,sx:1,sy:1,alpha:1,visible:true },
+      { id:g.id+'_body', name:'body', components:{mesh:{}}, castShadow:true, children:[], x:px, y:py+45, w:44,h:50, rot:0,sx:1,sy:1,alpha:1,visible:true },
+    ]
+    extraGroups.push(g)
+  }
+  render()
+})
+document.getElementById('add20Btn').addEventListener('click', ()=>{
+  for(let i=0;i<20;i++){
+    const g={ id:'extra'+(extraGroups.length+i), name:'char'+(extraGroups.length+i), components:{}, children:[], isGroup:true }
+    const px=120+Math.random()*400, py=120+Math.random()*260
+    g.children=[
+      { id:g.id+'_head', name:'head', components:{circle:{radius:18}}, castShadow:true, children:[], x:px, y:py, w:36,h:36, rot:0,sx:1,sy:1,alpha:1,visible:true },
+      { id:g.id+'_body', name:'body', components:{mesh:{}}, castShadow:true, children:[], x:px, y:py+45, w:44,h:50, rot:0,sx:1,sy:1,alpha:1,visible:true },
+    ]
+    extraGroups.push(g)
+  }
+  render()
+})
+
+// Tabs
+document.querySelectorAll('.tabs button').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tabs button').forEach(b=> b.setAttribute('aria-selected','false'))
+    btn.setAttribute('aria-selected','true')
+    document.querySelectorAll('.tab').forEach(t=> t.classList.remove('active'))
+    document.getElementById(btn.dataset.tab).classList.add('active')
+  })
+})
+document.getElementById('downloadStateBtn').addEventListener('click', ()=>{
+  const blob=new Blob([stateEl.textContent],{type:'application/json'}); const url=URL.createObjectURL(blob)
+  const a=document.createElement('a'); a.href=url; a.download='shadow-prototype-state.json'; a.click(); URL.revokeObjectURL(url)
+})
+document.getElementById('copyLinkBtn').addEventListener('click', ()=>{
+  const hash=btoa(encodeURIComponent(JSON.stringify(shadowEffect))); const url=location.href.split('#')[0]+'#shadow='+hash
+  navigator.clipboard.writeText(url).then(()=> alert('Copied '+url))
+})
+
+// click on stage to toggle cast shadow when in edit mode
+canvas.addEventListener('click', e=>{
+  if(document.getElementById('editSourceBtn').dataset.editing!=='1') return
+  const rect=canvas.getBoundingClientRect(), x=(e.clientX-rect.left)*(canvas.width/rect.width), y=(e.clientY-rect.top)*(canvas.height/rect.height)
+  for(const p of parts){
+    if(Math.abs(x-p.x)<p.w/2 && Math.abs(y-p.y)<p.h/2){
+      if(p.components.bone) return
+      p.castShadow=!getCastShadow(p); buildCasterChecks(); render(); break
+    }
+  }
+})
+
+render()
+</script>
+</body>
+</html>
