@@ -5,7 +5,12 @@ import type { ClipDefinition } from '../../engine/clipDefinition'
 import type { ClipParam } from '../../engine/clipDefinition'
 import { animatablePropertiesOf } from '../../app/keyframeActions'
 import { CIRCLE_ANIMATABLE_PROPERTIES } from '../../engine/animationProperties'
-import { SHADOW_PROPERTIES, SHADOW_LABELS } from '../../engine/shadowEffect'
+import {
+  SHADOW_LIGHT_PROPERTIES,
+  SHADOW_SHARED_PROPERTIES,
+  SHADOW_BASE_PROPERTIES,
+  SHADOW_LABELS,
+} from '../../engine/shadowEffect'
 import type { ShadowProperty } from '../../engine/shadowEffect'
 import { isGroupNode } from '../../engine/sceneNode'
 
@@ -206,14 +211,35 @@ export function timelineRows(
       }
       // Shadow subtracks: flat under expanded Group at parent.depth+1, no intermediate header
       // Only for groups that have shadowEffect — hidden until ☑ Shadow checked
+      // Spec 305: auto mode hides 7 raw lanes, shows 3 light lanes + blur/opacity/color (6 total). Manual shows 10 raw.
       if (isGroupNode(entry.node) && entry.node.shadowEffect) {
-        for (const property of SHADOW_PROPERTIES) {
-          rows.push({
-            kind: 'shadowSubtrack',
-            node: entry.node,
-            property,
-            depth: entry.depth + 1,
-          })
+        const isAuto = !!entry.node.shadowEffect.auto
+        if (isAuto) {
+          for (const property of SHADOW_LIGHT_PROPERTIES) {
+            rows.push({
+              kind: 'shadowSubtrack',
+              node: entry.node,
+              property: property as ShadowProperty,
+              depth: entry.depth + 1,
+            })
+          }
+          for (const property of SHADOW_SHARED_PROPERTIES) {
+            rows.push({
+              kind: 'shadowSubtrack',
+              node: entry.node,
+              property: property as ShadowProperty,
+              depth: entry.depth + 1,
+            })
+          }
+        } else {
+          for (const property of SHADOW_BASE_PROPERTIES) {
+            rows.push({
+              kind: 'shadowSubtrack',
+              node: entry.node,
+              property: property as ShadowProperty,
+              depth: entry.depth + 1,
+            })
+          }
         }
       }
     }

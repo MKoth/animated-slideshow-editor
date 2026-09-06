@@ -48,7 +48,7 @@ import type { CreateProjectInput, EmbeddedDataSourceUnion, Project } from './pro
 import type { Scene } from './scene'
 import type { SceneNode } from './sceneNode'
 import { isGroupNode, walkPreOrder } from './sceneNode'
-import { clampShadowEffect, shadowEffectFromJSON } from './shadowEffect'
+import { clampShadowEffect, shadowEffectFromJSON, normalizeAzimuth } from './shadowEffect'
 import type { ShadowEffect } from './shadowEffect'
 import type { Slide } from './slide'
 import type { SlideDurationChange } from './slideManager'
@@ -2121,6 +2121,32 @@ export class Engine {
           `[shadow] Node "${nodeId}" shadowEffect degenerate scale 0 — renders collapsed`,
         )
       }
+    } else if (property === 'lightAzimuth') {
+      const raw = value as number
+      if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+        throw new Error(`Shadow ${property} must be a finite number`)
+      }
+      nextEffect[property] = normalizeAzimuth(raw)
+    } else if (property === 'lightElevation') {
+      const raw = value as number
+      if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+        throw new Error(`Shadow ${property} must be a finite number`)
+      }
+      if (raw < 0 || raw > 90)
+        console.warn(
+          `[shadow] Node "${nodeId}" shadowEffect bad lightElevation ${String(raw)} clamped to 0..90`,
+        )
+      nextEffect[property] = Math.max(0, Math.min(90, raw))
+    } else if (property === 'lightDistance') {
+      const raw = value as number
+      if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+        throw new Error(`Shadow ${property} must be a finite number`)
+      }
+      if (raw < 0 || raw > 400)
+        console.warn(
+          `[shadow] Node "${nodeId}" shadowEffect bad lightDistance ${String(raw)} clamped to 0..400`,
+        )
+      nextEffect[property] = Math.max(0, Math.min(400, raw))
     } else {
       const raw = value as number
       if (typeof raw !== 'number' || !Number.isFinite(raw)) {

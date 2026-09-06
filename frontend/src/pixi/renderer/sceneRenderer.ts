@@ -1864,7 +1864,11 @@ export class SceneRenderer {
 
   #computeParamHash(evaluated: import('../../engine/shadowEffect').ShadowEffect): string {
     const e = clampShadowEffect(evaluated)
-    return `${e.offsetX},${e.offsetY},${e.scaleX},${e.scaleY},${e.skewX},${e.skewY},${e.rotation},${e.blur},${e.opacity},${e.color}`
+    // Spec 305: include light/anchor/auto when auto
+    const autoPart = e.auto
+      ? `,${e.anchor ?? ''},${e.lightAzimuth ?? ''},${e.lightElevation ?? ''},${e.lightDistance ?? ''},${e.auto}`
+      : ''
+    return `${e.offsetX},${e.offsetY},${e.scaleX},${e.scaleY},${e.skewX},${e.skewY},${e.rotation},${e.blur},${e.opacity},${e.color}${autoPart}`
   }
 
   #updateShadowIfNeeded(groupId: string, time: number): boolean {

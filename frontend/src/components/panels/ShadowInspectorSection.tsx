@@ -8,6 +8,10 @@ import {
   isCasterRenderable,
   type ShadowEffect,
   type ShadowProperty,
+  type ShadowAnchor,
+  SHADOW_ANCHORS,
+  normalizeAzimuth,
+  deriveShadowProjection,
 } from '../../engine/shadowEffect'
 import {
   SetCastShadowCommand,
@@ -42,6 +46,11 @@ const LABELS: Record<keyof ShadowEffect, string> = {
   blur: 'Blur',
   opacity: 'Opacity',
   color: 'Color',
+  anchor: 'Anchor',
+  lightAzimuth: 'Azimuth',
+  lightElevation: 'Elevation',
+  lightDistance: 'Distance',
+  auto: 'Auto',
 }
 
 function parseNumber(raw: string, fallback: number): number {
@@ -61,23 +70,39 @@ export function ShadowInspectorSection({
   const [draft, setDraft] = useState<Partial<ShadowEffect>>({})
   const [isEditingSource, setIsEditingSource] = useState(false)
   const [showSilhouette, setShowSilhouette] = useState(false)
-  // drag state for coalescing sliders
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const dragRef = useRef<{ property: ShadowProperty; startValue: number } | null>(null)
-  // Subscribe to playhead/timeline changes so indicators update — must be before early return per hooks rules
-
   const playheadTick = usePlaybackController((s) => s.currentTimes[target.id] ?? 0)
   void playheadTick
 
   if (!isGroupNode(target)) return null
   const effect = target.shadowEffect
   const enabled = !!effect
+  const isAuto = !!effect?.auto
 
   const current: ShadowEffect = effect
     ? { ...effect, ...draft }
     : { ...DEFAULT_SHADOW_EFFECT, ...draft }
 
-  // Shadow inspector animation state — mirrors transform lanes: ● animated / ◆ onKeyframe via shadowPropertyStateOf
-  // Disabled while playing or (!animationMode && animated)
+  // For display when auto, show derived values for raw fields (read-only)
+  const evaluatedForDisplay: ShadowEffect | null = (() => {
+    if (!effect || !isAuto || !enginePublic) return null
+    try {
+      const time = playheadTimeOf(enginePublic as unknown as EnginePublic, target.id) ?? 0
+      // Try to get bounds estimate? Use 0 for now, inspector snapshot will use derived directly
+      const ev = enginePublic.evaluateShadow(target.id, time) as unknown as ShadowEffect | null
+      return ev ?? null
+    } catch {
+      return null
+    }
+  })()
+
+  const displayRaw: ShadowEffect = (() => {
+    if (isAuto && evaluatedForDisplay)
+      return { ...current, ...evaluatedForDisplay, ...draft } as ShadowEffect
+    return current
+  })()
+
   const playheadTime = enginePublic
     ? (playheadTimeOf(enginePublic as unknown as EnginePublic, target.id) ?? 0)
     : 0
@@ -113,8 +138,12 @@ export function ShadowInspectorSection({
         if (prop === 'color') value = '#000000'
         else if (prop === 'opacity') value = 0.35
         else if (prop === 'blur') value = 8
-        else if (prop.startsWith('scale')) value = 1
-        else value = 0
+        else if ((prop as string).startsWith('scale')) value = 1
+        else if ((prop as string).startsWith('light')) {
+          if (prop === 'lightAzimuth') value = 135
+          else if (prop === 'lightElevation') value = 45
+          else value = 28
+        } else value = 0
       }
       const result = dispatch(
         new AddKeyframeCommand({
@@ -135,7 +164,16 @@ export function ShadowInspectorSection({
       return
     }
     try {
-      const next = enabled ? null : { ...DEFAULT_SHADOW_EFFECT }
+      const next = enabled
+        ? null
+        : {
+            ...DEFAULT_SHADOW_EFFECT,
+            auto: true,
+            anchor: 'bottom' as ShadowAnchor,
+            lightAzimuth: 135,
+            lightElevation: 45,
+            lightDistance: 28,
+          }
       const result = dispatch(new SetShadowEffectCommand({ nodeId: target.id, shadowEffect: next }))
       if (result && !result.ok) throw result.error
       setDraft({})
@@ -144,46 +182,188 @@ export function ShadowInspectorSection({
     }
   }
 
+  const toggleAuto = () => {
+    if (!effect) return
+    if (playing) {
+      notify('Cannot edit shadow while playing')
+      return
+    }
+    try {
+      const currentlyAuto = !!effect.auto
+      if (currentlyAuto) {
+        // Auto -> manual: snapshot derived into raw so pose doesn't jump
+        let derived: ShadowEffect | null = null
+        try {
+          if (enginePublic) {
+            const time = playheadTimeOf(enginePublic as unknown as EnginePublic, target.id) ?? 0
+            derived = enginePublic.evaluateShadow(target.id, time) as unknown as ShadowEffect | null
+          }
+        } catch (_e) {
+          void _e
+        }
+        // Also try pure derive with defaults for bounds 100x100 if no engine
+        let fallbackDerived: ShadowEffect | null = derived
+        if (!derived) {
+          const anchor = (effect.anchor ?? 'bottom') as ShadowAnchor
+          const az = effect.lightAzimuth ?? 135
+          const el = effect.lightElevation ?? 45
+          const dist = effect.lightDistance ?? 28
+          const d = deriveShadowProjection({ w: 100, h: 100 }, anchor, az, el, dist)
+          fallbackDerived = { ...effect, ...d } as ShadowEffect
+        } else {
+          fallbackDerived = derived
+        }
+        const next: ShadowEffect = {
+          ...effect,
+          auto: false,
+          offsetX: fallbackDerived.offsetX,
+          offsetY: fallbackDerived.offsetY,
+          scaleX: fallbackDerived.scaleX,
+          scaleY: fallbackDerived.scaleY,
+          skewX: fallbackDerived.skewX,
+          skewY: fallbackDerived.skewY,
+          rotation: fallbackDerived.rotation,
+        }
+        const result = dispatch(
+          new SetShadowEffectCommand({ nodeId: target.id, shadowEffect: next }),
+        )
+        if (result && !result.ok) throw result.error
+        setDraft({})
+        notify('Auto off — snapshot derived → raw')
+      } else {
+        // Manual -> auto: keep pose via defaults (reverse-derive not implemented, keep defaults)
+        const next: ShadowEffect = {
+          ...effect,
+          auto: true,
+          anchor: (effect.anchor as ShadowAnchor) ?? 'bottom',
+          lightAzimuth: effect.lightAzimuth ?? 135,
+          lightElevation: effect.lightElevation ?? 45,
+          lightDistance: effect.lightDistance ?? 28,
+        }
+        // Ensure anchor valid
+        if (!SHADOW_ANCHORS.includes(next.anchor as ShadowAnchor)) next.anchor = 'bottom'
+        const result = dispatch(
+          new SetShadowEffectCommand({ nodeId: target.id, shadowEffect: next }),
+        )
+        if (result && !result.ok) throw result.error
+        setDraft({})
+        notify('Auto on — using light defaults')
+      }
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   const commitParam = (property: ShadowProperty, rawValue: string | number) => {
     if (!effect) return
+    // If editing raw while auto, snap auto off first
+    const isRawProp =
+      property === 'offsetX' ||
+      property === 'offsetY' ||
+      property === 'scaleX' ||
+      property === 'scaleY' ||
+      property === 'skewX' ||
+      property === 'skewY' ||
+      property === 'rotation'
+    if (isAuto && isRawProp) {
+      // Snap off then set
+      try {
+        let derived: ShadowEffect | null = null
+        try {
+          if (enginePublic) {
+            const time = playheadTimeOf(enginePublic as unknown as EnginePublic, target.id) ?? 0
+            derived = enginePublic.evaluateShadow(target.id, time) as unknown as ShadowEffect | null
+          }
+        } catch (_e) {
+          void _e
+        }
+        const d = derived
+          ? derived
+          : (() => {
+              const anchor = (effect.anchor ?? 'bottom') as ShadowAnchor
+              const az = effect.lightAzimuth ?? 135
+              const el = effect.lightElevation ?? 45
+              const dist = effect.lightDistance ?? 28
+              return {
+                ...effect,
+                ...deriveShadowProjection({ w: 100, h: 100 }, anchor, az, el, dist),
+              } as ShadowEffect
+            })()
+        // Prepare next with auto false and derived snapshot plus edited value
+        // isRawProp guarantees numeric raw prop, not color
+        const nRaw = typeof rawValue === 'number' ? rawValue : Number(String(rawValue).trim())
+        const val: number = nRaw
+        const next: ShadowEffect = {
+          ...effect,
+          auto: false,
+          offsetX: (d as ShadowEffect).offsetX,
+          offsetY: (d as ShadowEffect).offsetY,
+          scaleX: (d as ShadowEffect).scaleX,
+          scaleY: (d as ShadowEffect).scaleY,
+          skewX: (d as ShadowEffect).skewX,
+          skewY: (d as ShadowEffect).skewY,
+          rotation: (d as ShadowEffect).rotation,
+          [property]: val,
+        } as ShadowEffect
+        const res = dispatch(new SetShadowEffectCommand({ nodeId: target.id, shadowEffect: next }))
+        if (res && !res.ok) throw res.error
+        setDraft({})
+        notify('Auto off — snapshot derived → raw')
+        return
+      } catch (e) {
+        notify(e instanceof Error ? e.message : String(e))
+        return
+      }
+    }
     try {
       let value: number | string
       if (property === 'color') {
         value = String(rawValue).trim().toLowerCase()
       } else if (property === 'opacity') {
-        // UI percent 0..100 -> fraction 0..1; NaN handled by command
         const rawNum = typeof rawValue === 'number' ? rawValue : Number(String(rawValue).trim())
         if (!Number.isFinite(rawNum)) {
           value = rawNum
         } else if (typeof rawValue === 'string') {
-          // String from number input: treat as percent 0..100
           const p = Number(String(rawValue).trim())
           value = Number.isFinite(p) ? Math.max(0, Math.min(100, p)) / 100 : p
         } else {
-          // Number from range/slider: already percent 0..100, but could be direct fraction from code
-          // If value >1, treat as percent; else fraction (to support programmatic calls)
           value = rawNum > 1 ? rawNum / 100 : rawNum
         }
       } else if (property === 'blur') {
         const n = typeof rawValue === 'number' ? rawValue : Number(String(rawValue).trim())
         value = n
+      } else if (
+        property === 'lightAzimuth' ||
+        property === 'lightElevation' ||
+        property === 'lightDistance'
+      ) {
+        const n = typeof rawValue === 'number' ? rawValue : Number(String(rawValue).trim())
+        if (!Number.isFinite(n)) {
+          notify(
+            `Shadow ${LABELS[property as keyof typeof LABELS] ?? property} must be a finite number`,
+          )
+          return
+        }
+        if (property === 'lightAzimuth') value = normalizeAzimuth(n)
+        else if (property === 'lightElevation') value = Math.max(0, Math.min(90, n))
+        else value = Math.max(0, Math.min(400, n))
       } else {
         const n = typeof rawValue === 'number' ? rawValue : Number(String(rawValue).trim())
         if (!Number.isFinite(n)) {
-          notify(`Shadow ${LABELS[property]} must be a finite number`)
+          notify(
+            `Shadow ${LABELS[property as keyof typeof LABELS] ?? property} must be a finite number`,
+          )
           return
         }
         value = n
       }
       if (animationMode && enginePublic) {
-        // Route via autoKeyEdit — creates/updates keyframe at playhead instead of direct param write
         const res = autoKeyEdit(enginePublic as unknown as EnginePublic, dispatch, [
           {
             target: { kind: 'shadow', nodeId: target.id, property },
             value: value as unknown as import('../../engine/keyframe').KeyframeValue,
           },
         ])
-        // autoKeyEdit returns null if evaluated value equals edit value (no-op); still clear draft
         void res
         setDraft({})
         return
@@ -196,21 +376,40 @@ export function ShadowInspectorSection({
     }
   }
 
-  // For drag coalescing: NumericField-like behavior where pointerMove updates draft but only pointerUp commits as one Transaction
   const commitParamAsTransaction = (property: ShadowProperty, value: number | string) => {
     if (!effect) return
+    // Same auto snap logic for raw
+    const isRawProp =
+      property === 'offsetX' ||
+      property === 'offsetY' ||
+      property === 'scaleX' ||
+      property === 'scaleY' ||
+      property === 'skewX' ||
+      property === 'skewY' ||
+      property === 'rotation'
+    if (isAuto && isRawProp) {
+      // Delegate to commitParam which handles snap
+      commitParam(property, value)
+      return
+    }
     try {
       let v: number | string = value
       if (property === 'opacity') {
-        // value is percent 0..100 from slider drag
         const num = typeof value === 'number' ? value : Number(String(value).trim())
-        if (!Number.isFinite(num)) {
-          v = num
-        } else {
-          v = num > 1 ? num / 100 : num
-        }
+        if (!Number.isFinite(num)) v = num
+        else v = num > 1 ? num / 100 : num
       }
       if (property === 'color' && typeof v === 'string') v = v.toLowerCase()
+      if (
+        property === 'lightAzimuth' ||
+        property === 'lightElevation' ||
+        property === 'lightDistance'
+      ) {
+        const num = typeof v === 'number' ? v : Number(String(v).trim())
+        if (property === 'lightAzimuth') v = normalizeAzimuth(num)
+        else if (property === 'lightElevation') v = Math.max(0, Math.min(90, num))
+        else v = Math.max(0, Math.min(400, num))
+      }
       if (animationMode && enginePublic) {
         const res = autoKeyEdit(enginePublic as unknown as EnginePublic, dispatch, [
           {
@@ -232,29 +431,75 @@ export function ShadowInspectorSection({
     }
   }
 
+  const commitAnchor = (anchor: ShadowAnchor) => {
+    if (!effect) return
+    if (playing) {
+      notify('Cannot edit shadow while playing')
+      return
+    }
+    try {
+      const next: ShadowEffect = { ...effect, anchor }
+      const result = dispatch(new SetShadowEffectCommand({ nodeId: target.id, shadowEffect: next }))
+      if (result && !result.ok) throw result.error
+      setDraft({})
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e))
+    }
+  }
+
   const applyGroundPreset = () => {
     if (!effect) return
     if (playing) {
       notify('Cannot edit shadow while playing')
       return
     }
+    // Spec 305 Ground becomes light preset: auto=true, anchor=bottom, azimuth=135, elevation=30, distance=22, blur=11, opacity=0.25
     if (animationMode && enginePublic) {
       try {
+        // Try to set anchor/auto via direct effect, then keyframe light/blur/opacity
+        const nextEffect: ShadowEffect = {
+          ...effect,
+          auto: true,
+          anchor: 'bottom',
+          lightAzimuth: 135,
+          lightElevation: 30,
+          lightDistance: 22,
+          blur: 11,
+          opacity: 0.25,
+        }
+        // Apply anchor/auto directly as one command (will be separate history from keyframes, but we try to keep one transaction via direct SetShadowEffect for those)
+        // For simplicity, dispatch SetShadowEffect for anchor/auto then autoKeyEdit for keyframes
+        const res1 = dispatch(
+          new SetShadowEffectCommand({ nodeId: target.id, shadowEffect: nextEffect }),
+        )
+        if (res1 && !res1.ok) throw res1.error
         const edits: {
           target: { kind: 'shadow'; nodeId: string; property: ShadowProperty }
           value: import('../../engine/keyframe').KeyframeValue
         }[] = [
           {
-            target: { kind: 'shadow', nodeId: target.id, property: 'scaleX' },
-            value: 1.1 as unknown as import('../../engine/keyframe').KeyframeValue,
+            target: {
+              kind: 'shadow',
+              nodeId: target.id,
+              property: 'lightAzimuth' as ShadowProperty,
+            },
+            value: 135 as unknown as import('../../engine/keyframe').KeyframeValue,
           },
           {
-            target: { kind: 'shadow', nodeId: target.id, property: 'scaleY' },
-            value: 0.2 as unknown as import('../../engine/keyframe').KeyframeValue,
+            target: {
+              kind: 'shadow',
+              nodeId: target.id,
+              property: 'lightElevation' as ShadowProperty,
+            },
+            value: 30 as unknown as import('../../engine/keyframe').KeyframeValue,
           },
           {
-            target: { kind: 'shadow', nodeId: target.id, property: 'skewX' },
-            value: -12 as unknown as import('../../engine/keyframe').KeyframeValue,
+            target: {
+              kind: 'shadow',
+              nodeId: target.id,
+              property: 'lightDistance' as ShadowProperty,
+            },
+            value: 22 as unknown as import('../../engine/keyframe').KeyframeValue,
           },
           {
             target: { kind: 'shadow', nodeId: target.id, property: 'blur' },
@@ -263,10 +508,6 @@ export function ShadowInspectorSection({
           {
             target: { kind: 'shadow', nodeId: target.id, property: 'opacity' },
             value: 0.25 as unknown as import('../../engine/keyframe').KeyframeValue,
-          },
-          {
-            target: { kind: 'shadow', nodeId: target.id, property: 'offsetY' },
-            value: 8 as unknown as import('../../engine/keyframe').KeyframeValue,
           },
         ]
         const res = autoKeyEdit(enginePublic as unknown as EnginePublic, dispatch, edits)
@@ -278,15 +519,17 @@ export function ShadowInspectorSection({
       }
     }
     try {
-      const cmds = [
-        new SetShadowParamCommand({ nodeId: target.id, property: 'scaleX', value: 1.1 }),
-        new SetShadowParamCommand({ nodeId: target.id, property: 'scaleY', value: 0.2 }),
-        new SetShadowParamCommand({ nodeId: target.id, property: 'skewX', value: -12 }),
-        new SetShadowParamCommand({ nodeId: target.id, property: 'blur', value: 11 }),
-        new SetShadowParamCommand({ nodeId: target.id, property: 'opacity', value: 0.25 }),
-        new SetShadowParamCommand({ nodeId: target.id, property: 'offsetY', value: 8 }),
-      ]
-      const result = dispatch(new TransactionCommand(cmds))
+      const next: ShadowEffect = {
+        ...effect,
+        auto: true,
+        anchor: 'bottom',
+        lightAzimuth: 135,
+        lightElevation: 30,
+        lightDistance: 22,
+        blur: 11,
+        opacity: 0.25,
+      }
+      const result = dispatch(new SetShadowEffectCommand({ nodeId: target.id, shadowEffect: next }))
       if (result && !result.ok) throw result.error
     } catch (e) {
       notify(e instanceof Error ? e.message : String(e))
@@ -331,8 +574,6 @@ export function ShadowInspectorSection({
     }
   }
 
-  const pad = effect ? Math.ceil(effect.blur * 2 + 4) : 4
-
   const titleId = `shadow-section-${target.id}`
 
   return (
@@ -361,538 +602,303 @@ export function ShadowInspectorSection({
           Shadow
         </label>
         {enabled && (
-          <button
-            type="button"
-            onClick={applyGroundPreset}
-            disabled={playing}
-            title={playing ? 'Cannot edit while playing' : 'Apply Ground preset (one undo)'}
-            aria-label="Ground preset"
-            style={{ marginLeft: 'auto', fontSize: 12, padding: '2px 6px' }}
-          >
-            ↘ Ground
-          </button>
+          <>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+              <input
+                type="checkbox"
+                checked={isAuto}
+                onChange={toggleAuto}
+                disabled={playing}
+                title={playing ? 'Cannot edit while playing' : 'Auto derive transform'}
+                aria-label="Auto"
+              />
+              Auto
+            </label>
+            <button
+              type="button"
+              onClick={applyGroundPreset}
+              disabled={playing}
+              title={playing ? 'Cannot edit while playing' : 'Apply Ground preset (one undo)'}
+              aria-label="Ground preset"
+              style={{ marginLeft: 'auto', fontSize: 12, padding: '2px 6px' }}
+            >
+              ↘ Ground
+            </button>
+          </>
         )}
       </h3>
       {enabled && effect && (
         <div className="inspector-shadow-fields" style={{ display: 'grid', gap: 8 }}>
-          {/* Offset X */}
-          <label className="inspector-field">
-            <span className="inspector-field__label">{LABELS.offsetX}</span>
-            {(() => {
-              const s = shadowStateOf('offsetX')
-              return s && s !== 'static' ? (
-                <span
-                  className="inspector-field__indicator"
-                  data-state={s}
-                  title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
+          {/* Anchor pills — only when auto */}
+          {isAuto && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, color: '#aaa' }}>Anchor:</span>
+              {(['top', 'bottom', 'left', 'right', 'center'] as ShadowAnchor[]).map((a) => (
+                <button
+                  key={a}
+                  type="button"
+                  onClick={() => commitAnchor(a)}
+                  disabled={playing}
+                  aria-pressed={current.anchor === a}
+                  style={{
+                    fontSize: 11,
+                    padding: '2px 6px',
+                    borderRadius: 4,
+                    border: current.anchor === a ? '1px solid #60a5fa' : '1px solid #555',
+                    background: current.anchor === a ? 'rgba(96,165,250,0.2)' : 'transparent',
+                    color: current.anchor === a ? '#bfdbfe' : '#ccc',
+                    cursor: playing ? 'not-allowed' : 'pointer',
+                    textTransform: 'capitalize',
+                  }}
                 >
-                  {s === 'animated' ? '●' : '◆'}
-                </span>
-              ) : null
-            })()}
-            <input
-              type="number"
-              step={1}
-              value={String(current.offsetX)}
-              disabled={isFieldDisabled('offsetX')}
-              title={
-                isFieldDisabled('offsetX')
-                  ? playing
-                    ? 'Cannot edit while playing'
-                    : 'Enter animation mode to edit animated property'
-                  : undefined
-              }
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, offsetX: parseNumber(e.target.value, current.offsetX) }))
-              }
-              onBlur={(e) => commitParam('offsetX', e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitParam('offsetX', (e.target as HTMLInputElement).value)
-              }}
-              onPointerDown={(e) => {
-                if (isFieldDisabled('offsetX')) return
-                const startX = e.clientX
-                const startValue = current.offsetX
-                let lastValue = startValue
-                let dragging = false
-                const onMove = (ev: PointerEvent) => {
-                  const delta = ev.clientX - startX
-                  if (!dragging && Math.abs(delta) < 3) return
-                  dragging = true
-                  ev.preventDefault()
-                  const next = Math.round(startValue + delta * 1)
-                  lastValue = next
-                  setDraft((d) => ({ ...d, offsetX: next }))
-                }
-                const onUp = () => {
-                  window.removeEventListener('pointermove', onMove)
-                  window.removeEventListener('pointerup', onUp)
-                  if (dragging && lastValue !== startValue) {
-                    commitParamAsTransaction('offsetX', lastValue)
+                  {a}
+                </button>
+              ))}
+            </div>
+          )}
+          {/* Light controls — only when auto */}
+          {isAuto && (
+            <>
+              {/* Azimuth */}
+              <label className="inspector-field">
+                <span className="inspector-field__label">Azimuth</span>
+                {(() => {
+                  const s = shadowStateOf('lightAzimuth' as ShadowProperty)
+                  return s && s !== 'static' ? (
+                    <span
+                      className="inspector-field__indicator"
+                      data-state={s}
+                      title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
+                    >
+                      {s === 'animated' ? '●' : '◆'}
+                    </span>
+                  ) : null
+                })()}
+                <input
+                  type="range"
+                  min={0}
+                  max={360}
+                  step={1}
+                  value={String(current.lightAzimuth ?? 135)}
+                  disabled={isFieldDisabled('lightAzimuth' as ShadowProperty)}
+                  onChange={(e) =>
+                    setDraft((d) => ({
+                      ...d,
+                      lightAzimuth: normalizeAzimuth(
+                        parseNumber(e.target.value, current.lightAzimuth ?? 135),
+                      ),
+                    }))
                   }
-                }
-                window.addEventListener('pointermove', onMove)
-                window.addEventListener('pointerup', onUp)
-              }}
-              aria-label={LABELS.offsetX}
-            />
-            {animationMode && !playing && (
-              <button
-                type="button"
-                className="inspector-field__add"
-                aria-label={`Add Keyframe to ${LABELS.offsetX}`}
-                title="Add keyframe at playhead"
-                onClick={() => handleAddShadowKeyframe('offsetX')}
-                style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
-              >
-                +
-              </button>
-            )}
-          </label>
-          <label className="inspector-field">
-            <span className="inspector-field__label">{LABELS.offsetY}</span>
-            {(() => {
-              const s = shadowStateOf('offsetY')
-              return s && s !== 'static' ? (
-                <span
-                  className="inspector-field__indicator"
-                  data-state={s}
-                  title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
-                >
-                  {s === 'animated' ? '●' : '◆'}
-                </span>
-              ) : null
-            })()}
-            <input
-              type="number"
-              step={1}
-              value={String(current.offsetY)}
-              disabled={isFieldDisabled('offsetY')}
-              title={
-                isFieldDisabled('offsetY')
-                  ? playing
-                    ? 'Cannot edit while playing'
-                    : 'Enter animation mode to edit animated property'
-                  : undefined
-              }
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, offsetY: parseNumber(e.target.value, current.offsetY) }))
-              }
-              onBlur={(e) => commitParam('offsetY', e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitParam('offsetY', (e.target as HTMLInputElement).value)
-              }}
-              onPointerDown={(e) => {
-                if (isFieldDisabled('offsetY')) return
-                const startX = e.clientX
-                const startValue = current.offsetY
-                let lastValue = startValue
-                let dragging = false
-                const onMove = (ev: PointerEvent) => {
-                  const delta = ev.clientX - startX
-                  if (!dragging && Math.abs(delta) < 3) return
-                  dragging = true
-                  ev.preventDefault()
-                  const next = Math.round(startValue + delta * 1)
-                  lastValue = next
-                  setDraft((d) => ({ ...d, offsetY: next }))
-                }
-                const onUp = () => {
-                  window.removeEventListener('pointermove', onMove)
-                  window.removeEventListener('pointerup', onUp)
-                  if (dragging && lastValue !== startValue) {
-                    commitParamAsTransaction('offsetY', lastValue)
+                  onPointerUp={(e) => {
+                    const v = normalizeAzimuth(
+                      parseNumber(
+                        (e.target as HTMLInputElement).value,
+                        current.lightAzimuth ?? 135,
+                      ),
+                    )
+                    commitParamAsTransaction('lightAzimuth' as ShadowProperty, v)
+                  }}
+                  aria-label="Azimuth"
+                />
+                <input
+                  type="number"
+                  step={1}
+                  min={0}
+                  max={360}
+                  value={String(current.lightAzimuth ?? 135)}
+                  disabled={isFieldDisabled('lightAzimuth' as ShadowProperty)}
+                  onChange={(e) =>
+                    setDraft((d) => ({
+                      ...d,
+                      lightAzimuth: normalizeAzimuth(
+                        parseNumber(e.target.value, current.lightAzimuth ?? 135),
+                      ),
+                    }))
                   }
-                }
-                window.addEventListener('pointermove', onMove)
-                window.addEventListener('pointerup', onUp)
-              }}
-              aria-label={LABELS.offsetY}
-            />
-            {animationMode && !playing && (
-              <button
-                type="button"
-                className="inspector-field__add"
-                aria-label={`Add Keyframe to ${LABELS.offsetY}`}
-                title="Add keyframe at playhead"
-                onClick={() => handleAddShadowKeyframe('offsetY')}
-                style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
-              >
-                +
-              </button>
-            )}
-          </label>
-          <label className="inspector-field">
-            <span className="inspector-field__label">{LABELS.scaleX}</span>
-            {(() => {
-              const s = shadowStateOf('scaleX')
-              return s && s !== 'static' ? (
-                <span
-                  className="inspector-field__indicator"
-                  data-state={s}
-                  title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
-                >
-                  {s === 'animated' ? '●' : '◆'}
-                </span>
-              ) : null
-            })()}
-            <input
-              type="number"
-              step={0.05}
-              value={String(current.scaleX)}
-              disabled={isFieldDisabled('scaleX')}
-              title={
-                isFieldDisabled('scaleX')
-                  ? playing
-                    ? 'Cannot edit while playing'
-                    : 'Enter animation mode to edit animated property'
-                  : undefined
-              }
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, scaleX: parseNumber(e.target.value, current.scaleX) }))
-              }
-              onBlur={(e) => commitParam('scaleX', e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitParam('scaleX', (e.target as HTMLInputElement).value)
-              }}
-              onPointerDown={(e) => {
-                if (isFieldDisabled('scaleX')) return
-                const startX = e.clientX
-                const startValue = current.scaleX
-                let lastValue = startValue
-                let dragging = false
-                const onMove = (ev: PointerEvent) => {
-                  const delta = ev.clientX - startX
-                  if (!dragging && Math.abs(delta) < 3) return
-                  dragging = true
-                  ev.preventDefault()
-                  const step = 0.05
-                  const next = Number(
-                    (Math.round((startValue + delta * step) / step) * step).toFixed(4),
-                  )
-                  lastValue = next
-                  setDraft((d) => ({ ...d, scaleX: next }))
-                }
-                const onUp = () => {
-                  window.removeEventListener('pointermove', onMove)
-                  window.removeEventListener('pointerup', onUp)
-                  if (dragging && lastValue !== startValue) {
-                    commitParamAsTransaction('scaleX', lastValue)
+                  onBlur={(e) => commitParam('lightAzimuth' as ShadowProperty, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter')
+                      commitParam(
+                        'lightAzimuth' as ShadowProperty,
+                        (e.target as HTMLInputElement).value,
+                      )
+                  }}
+                  aria-label="Azimuth value"
+                  style={{ width: 60 }}
+                />
+                <span style={{ fontSize: 11 }}>°</span>
+                {animationMode && !playing && (
+                  <button
+                    type="button"
+                    className="inspector-field__add"
+                    aria-label="Add Keyframe to Azimuth"
+                    title="Add keyframe at playhead"
+                    onClick={() => handleAddShadowKeyframe('lightAzimuth' as ShadowProperty)}
+                    style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
+                  >
+                    +
+                  </button>
+                )}
+              </label>
+              {/* Elevation */}
+              <label className="inspector-field">
+                <span className="inspector-field__label">Elevation</span>
+                {(() => {
+                  const s = shadowStateOf('lightElevation' as ShadowProperty)
+                  return s && s !== 'static' ? (
+                    <span
+                      className="inspector-field__indicator"
+                      data-state={s}
+                      title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
+                    >
+                      {s === 'animated' ? '●' : '◆'}
+                    </span>
+                  ) : null
+                })()}
+                <input
+                  type="range"
+                  min={0}
+                  max={90}
+                  step={1}
+                  value={String(current.lightElevation ?? 45)}
+                  disabled={isFieldDisabled('lightElevation' as ShadowProperty)}
+                  onChange={(e) =>
+                    setDraft((d) => ({
+                      ...d,
+                      lightElevation: parseNumber(e.target.value, current.lightElevation ?? 45),
+                    }))
                   }
-                }
-                window.addEventListener('pointermove', onMove)
-                window.addEventListener('pointerup', onUp)
-              }}
-              aria-label={LABELS.scaleX}
-            />
-            {animationMode && !playing && (
-              <button
-                type="button"
-                className="inspector-field__add"
-                aria-label={`Add Keyframe to ${LABELS.scaleX}`}
-                title="Add keyframe at playhead"
-                onClick={() => handleAddShadowKeyframe('scaleX')}
-                style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
-              >
-                +
-              </button>
-            )}
-          </label>
-          <label className="inspector-field">
-            <span className="inspector-field__label">{LABELS.scaleY}</span>
-            {(() => {
-              const s = shadowStateOf('scaleY')
-              return s && s !== 'static' ? (
-                <span
-                  className="inspector-field__indicator"
-                  data-state={s}
-                  title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
-                >
-                  {s === 'animated' ? '●' : '◆'}
-                </span>
-              ) : null
-            })()}
-            <input
-              type="number"
-              step={0.01}
-              value={String(current.scaleY)}
-              disabled={isFieldDisabled('scaleY')}
-              title={
-                isFieldDisabled('scaleY')
-                  ? playing
-                    ? 'Cannot edit while playing'
-                    : 'Enter animation mode to edit animated property'
-                  : undefined
-              }
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, scaleY: parseNumber(e.target.value, current.scaleY) }))
-              }
-              onBlur={(e) => commitParam('scaleY', e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitParam('scaleY', (e.target as HTMLInputElement).value)
-              }}
-              onPointerDown={(e) => {
-                if (isFieldDisabled('scaleY')) return
-                const startX = e.clientX
-                const startValue = current.scaleY
-                let lastValue = startValue
-                let dragging = false
-                const onMove = (ev: PointerEvent) => {
-                  const delta = ev.clientX - startX
-                  if (!dragging && Math.abs(delta) < 3) return
-                  dragging = true
-                  ev.preventDefault()
-                  const step = 0.01
-                  const next = Number(
-                    (Math.round((startValue + delta * step) / step) * step).toFixed(4),
-                  )
-                  lastValue = next
-                  setDraft((d) => ({ ...d, scaleY: next }))
-                }
-                const onUp = () => {
-                  window.removeEventListener('pointermove', onMove)
-                  window.removeEventListener('pointerup', onUp)
-                  if (dragging && lastValue !== startValue) {
-                    commitParamAsTransaction('scaleY', lastValue)
+                  onPointerUp={(e) => {
+                    const v = parseNumber(
+                      (e.target as HTMLInputElement).value,
+                      current.lightElevation ?? 45,
+                    )
+                    commitParamAsTransaction(
+                      'lightElevation' as ShadowProperty,
+                      Math.max(0, Math.min(90, v)),
+                    )
+                  }}
+                  aria-label="Elevation"
+                />
+                <input
+                  type="number"
+                  step={1}
+                  min={0}
+                  max={90}
+                  value={String(current.lightElevation ?? 45)}
+                  disabled={isFieldDisabled('lightElevation' as ShadowProperty)}
+                  onChange={(e) =>
+                    setDraft((d) => ({
+                      ...d,
+                      lightElevation: parseNumber(e.target.value, current.lightElevation ?? 45),
+                    }))
                   }
-                }
-                window.addEventListener('pointermove', onMove)
-                window.addEventListener('pointerup', onUp)
-              }}
-              aria-label={LABELS.scaleY}
-            />
-            {animationMode && !playing && (
-              <button
-                type="button"
-                className="inspector-field__add"
-                aria-label={`Add Keyframe to ${LABELS.scaleY}`}
-                title="Add keyframe at playhead"
-                onClick={() => handleAddShadowKeyframe('scaleY')}
-                style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
-              >
-                +
-              </button>
-            )}
-          </label>
-          <label className="inspector-field">
-            <span className="inspector-field__label">{LABELS.skewX}</span>
-            {(() => {
-              const s = shadowStateOf('skewX')
-              return s && s !== 'static' ? (
-                <span
-                  className="inspector-field__indicator"
-                  data-state={s}
-                  title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
-                >
-                  {s === 'animated' ? '●' : '◆'}
-                </span>
-              ) : null
-            })()}
-            <input
-              type="number"
-              step={1}
-              value={String(current.skewX)}
-              disabled={isFieldDisabled('skewX')}
-              title={
-                isFieldDisabled('skewX')
-                  ? playing
-                    ? 'Cannot edit while playing'
-                    : 'Enter animation mode to edit animated property'
-                  : undefined
-              }
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, skewX: parseNumber(e.target.value, current.skewX) }))
-              }
-              onBlur={(e) => commitParam('skewX', e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitParam('skewX', (e.target as HTMLInputElement).value)
-              }}
-              onPointerDown={(e) => {
-                if (isFieldDisabled('skewX')) return
-                const startX = e.clientX
-                const startValue = current.skewX
-                let lastValue = startValue
-                let dragging = false
-                const onMove = (ev: PointerEvent) => {
-                  const delta = ev.clientX - startX
-                  if (!dragging && Math.abs(delta) < 3) return
-                  dragging = true
-                  ev.preventDefault()
-                  const next = Math.round(startValue + delta * 1)
-                  lastValue = next
-                  setDraft((d) => ({ ...d, skewX: next }))
-                }
-                const onUp = () => {
-                  window.removeEventListener('pointermove', onMove)
-                  window.removeEventListener('pointerup', onUp)
-                  if (dragging && lastValue !== startValue) {
-                    commitParamAsTransaction('skewX', lastValue)
+                  onBlur={(e) => commitParam('lightElevation' as ShadowProperty, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter')
+                      commitParam(
+                        'lightElevation' as ShadowProperty,
+                        (e.target as HTMLInputElement).value,
+                      )
+                  }}
+                  aria-label="Elevation value"
+                  style={{ width: 60 }}
+                />
+                <span style={{ fontSize: 11 }}>°</span>
+                {animationMode && !playing && (
+                  <button
+                    type="button"
+                    className="inspector-field__add"
+                    aria-label="Add Keyframe to Elevation"
+                    title="Add keyframe at playhead"
+                    onClick={() => handleAddShadowKeyframe('lightElevation' as ShadowProperty)}
+                    style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
+                  >
+                    +
+                  </button>
+                )}
+              </label>
+              {/* Distance */}
+              <label className="inspector-field">
+                <span className="inspector-field__label">Distance</span>
+                {(() => {
+                  const s = shadowStateOf('lightDistance' as ShadowProperty)
+                  return s && s !== 'static' ? (
+                    <span
+                      className="inspector-field__indicator"
+                      data-state={s}
+                      title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
+                    >
+                      {s === 'animated' ? '●' : '◆'}
+                    </span>
+                  ) : null
+                })()}
+                <input
+                  type="range"
+                  min={0}
+                  max={400}
+                  step={1}
+                  value={String(current.lightDistance ?? 28)}
+                  disabled={isFieldDisabled('lightDistance' as ShadowProperty)}
+                  onChange={(e) =>
+                    setDraft((d) => ({
+                      ...d,
+                      lightDistance: parseNumber(e.target.value, current.lightDistance ?? 28),
+                    }))
                   }
-                }
-                window.addEventListener('pointermove', onMove)
-                window.addEventListener('pointerup', onUp)
-              }}
-              aria-label={LABELS.skewX}
-            />
-            {animationMode && !playing && (
-              <button
-                type="button"
-                className="inspector-field__add"
-                aria-label={`Add Keyframe to ${LABELS.skewX}`}
-                title="Add keyframe at playhead"
-                onClick={() => handleAddShadowKeyframe('skewX')}
-                style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
-              >
-                +
-              </button>
-            )}
-          </label>
-          <label className="inspector-field">
-            <span className="inspector-field__label">{LABELS.skewY}</span>
-            {(() => {
-              const s = shadowStateOf('skewY')
-              return s && s !== 'static' ? (
-                <span
-                  className="inspector-field__indicator"
-                  data-state={s}
-                  title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
-                >
-                  {s === 'animated' ? '●' : '◆'}
-                </span>
-              ) : null
-            })()}
-            <input
-              type="number"
-              step={1}
-              value={String(current.skewY)}
-              disabled={isFieldDisabled('skewY')}
-              title={
-                isFieldDisabled('skewY')
-                  ? playing
-                    ? 'Cannot edit while playing'
-                    : 'Enter animation mode to edit animated property'
-                  : undefined
-              }
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, skewY: parseNumber(e.target.value, current.skewY) }))
-              }
-              onBlur={(e) => commitParam('skewY', e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitParam('skewY', (e.target as HTMLInputElement).value)
-              }}
-              onPointerDown={(e) => {
-                if (isFieldDisabled('skewY')) return
-                const startX = e.clientX
-                const startValue = current.skewY
-                let lastValue = startValue
-                let dragging = false
-                const onMove = (ev: PointerEvent) => {
-                  const delta = ev.clientX - startX
-                  if (!dragging && Math.abs(delta) < 3) return
-                  dragging = true
-                  ev.preventDefault()
-                  const next = Math.round(startValue + delta * 1)
-                  lastValue = next
-                  setDraft((d) => ({ ...d, skewY: next }))
-                }
-                const onUp = () => {
-                  window.removeEventListener('pointermove', onMove)
-                  window.removeEventListener('pointerup', onUp)
-                  if (dragging && lastValue !== startValue) {
-                    commitParamAsTransaction('skewY', lastValue)
+                  onPointerUp={(e) => {
+                    const v = parseNumber(
+                      (e.target as HTMLInputElement).value,
+                      current.lightDistance ?? 28,
+                    )
+                    commitParamAsTransaction(
+                      'lightDistance' as ShadowProperty,
+                      Math.max(0, Math.min(400, v)),
+                    )
+                  }}
+                  aria-label="Distance"
+                />
+                <input
+                  type="number"
+                  step={1}
+                  min={0}
+                  max={400}
+                  value={String(current.lightDistance ?? 28)}
+                  disabled={isFieldDisabled('lightDistance' as ShadowProperty)}
+                  onChange={(e) =>
+                    setDraft((d) => ({
+                      ...d,
+                      lightDistance: parseNumber(e.target.value, current.lightDistance ?? 28),
+                    }))
                   }
-                }
-                window.addEventListener('pointermove', onMove)
-                window.addEventListener('pointerup', onUp)
-              }}
-              aria-label={LABELS.skewY}
-            />
-            {animationMode && !playing && (
-              <button
-                type="button"
-                className="inspector-field__add"
-                aria-label={`Add Keyframe to ${LABELS.skewY}`}
-                title="Add keyframe at playhead"
-                onClick={() => handleAddShadowKeyframe('skewY')}
-                style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
-              >
-                +
-              </button>
-            )}
-          </label>
-          <label className="inspector-field">
-            <span className="inspector-field__label">{LABELS.rotation}</span>
-            {(() => {
-              const s = shadowStateOf('rotation')
-              return s && s !== 'static' ? (
-                <span
-                  className="inspector-field__indicator"
-                  data-state={s}
-                  title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
-                >
-                  {s === 'animated' ? '●' : '◆'}
-                </span>
-              ) : null
-            })()}
-            <input
-              type="number"
-              step={1}
-              value={String(current.rotation)}
-              disabled={isFieldDisabled('rotation')}
-              title={
-                isFieldDisabled('rotation')
-                  ? playing
-                    ? 'Cannot edit while playing'
-                    : 'Enter animation mode to edit animated property'
-                  : undefined
-              }
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, rotation: parseNumber(e.target.value, current.rotation) }))
-              }
-              onBlur={(e) => commitParam('rotation', e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitParam('rotation', (e.target as HTMLInputElement).value)
-              }}
-              onPointerDown={(e) => {
-                if (isFieldDisabled('rotation')) return
-                const startX = e.clientX
-                const startValue = current.rotation
-                let lastValue = startValue
-                let dragging = false
-                const onMove = (ev: PointerEvent) => {
-                  const delta = ev.clientX - startX
-                  if (!dragging && Math.abs(delta) < 3) return
-                  dragging = true
-                  ev.preventDefault()
-                  const next = Math.round(startValue + delta * 1)
-                  lastValue = next
-                  setDraft((d) => ({ ...d, rotation: next }))
-                }
-                const onUp = () => {
-                  window.removeEventListener('pointermove', onMove)
-                  window.removeEventListener('pointerup', onUp)
-                  if (dragging && lastValue !== startValue) {
-                    commitParamAsTransaction('rotation', lastValue)
-                  }
-                }
-                window.addEventListener('pointermove', onMove)
-                window.addEventListener('pointerup', onUp)
-              }}
-              aria-label={LABELS.rotation}
-            />
-            {animationMode && !playing && (
-              <button
-                type="button"
-                className="inspector-field__add"
-                aria-label={`Add Keyframe to ${LABELS.rotation}`}
-                title="Add keyframe at playhead"
-                onClick={() => handleAddShadowKeyframe('rotation')}
-                style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
-              >
-                +
-              </button>
-            )}
-          </label>
+                  onBlur={(e) => commitParam('lightDistance' as ShadowProperty, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter')
+                      commitParam(
+                        'lightDistance' as ShadowProperty,
+                        (e.target as HTMLInputElement).value,
+                      )
+                  }}
+                  aria-label="Distance value"
+                  style={{ width: 60 }}
+                />
+                <span style={{ fontSize: 11 }}>px</span>
+                {animationMode && !playing && (
+                  <button
+                    type="button"
+                    className="inspector-field__add"
+                    aria-label="Add Keyframe to Distance"
+                    title="Add keyframe at playhead"
+                    onClick={() => handleAddShadowKeyframe('lightDistance' as ShadowProperty)}
+                    style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
+                  >
+                    +
+                  </button>
+                )}
+              </label>
+            </>
+          )}
+          {/* Shared: Blur, Opacity, Color — always visible */}
           <label className="inspector-field">
             <span className="inspector-field__label">{LABELS.blur}</span>
             {(() => {
@@ -914,30 +920,21 @@ export function ShadowInspectorSection({
               step={1}
               value={String(current.blur)}
               disabled={isFieldDisabled('blur')}
-              title={
-                isFieldDisabled('blur')
-                  ? playing
-                    ? 'Cannot edit while playing'
-                    : 'Enter animation mode to edit animated property'
-                  : undefined
-              }
               onPointerDown={() => {
-                if (isFieldDisabled('blur')) return
-                dragRef.current = { property: 'blur', startValue: current.blur }
+                if (!isFieldDisabled('blur'))
+                  dragRef.current = { property: 'blur', startValue: current.blur }
               }}
               onPointerUp={(e) => {
                 const drag = dragRef.current
                 dragRef.current = null
                 if (drag && playing) return
                 const v = parseNumber((e.target as HTMLInputElement).value, current.blur)
-                // Commit as transaction (one undo)
                 const clamped = Math.max(0, Math.min(32, Math.round(v)))
                 commitParamAsTransaction('blur', clamped)
               }}
               onChange={(e) => {
                 const v = parseNumber(e.target.value, current.blur)
                 setDraft((d) => ({ ...d, blur: v }))
-                // Don't commit on change during drag; wait for pointerUp
               }}
               aria-label={LABELS.blur}
             />
@@ -954,32 +951,6 @@ export function ShadowInspectorSection({
               onBlur={(e) => commitParam('blur', e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') commitParam('blur', (e.target as HTMLInputElement).value)
-              }}
-              onPointerDown={(e) => {
-                if (isFieldDisabled('blur')) return
-                const startX = e.clientX
-                const startValue = current.blur
-                let lastValue = startValue
-                let dragging = false
-                const onMove = (ev: PointerEvent) => {
-                  const delta = ev.clientX - startX
-                  if (!dragging && Math.abs(delta) < 3) return
-                  dragging = true
-                  ev.preventDefault()
-                  const next = Math.round(startValue + delta * 1)
-                  const clamped = Math.max(0, Math.min(32, next))
-                  lastValue = clamped
-                  setDraft((d) => ({ ...d, blur: clamped }))
-                }
-                const onUp = () => {
-                  window.removeEventListener('pointermove', onMove)
-                  window.removeEventListener('pointerup', onUp)
-                  if (dragging && lastValue !== startValue) {
-                    commitParamAsTransaction('blur', lastValue)
-                  }
-                }
-                window.addEventListener('pointermove', onMove)
-                window.addEventListener('pointerup', onUp)
               }}
               aria-label="Blur value"
             />
@@ -1017,19 +988,12 @@ export function ShadowInspectorSection({
               step={1}
               value={String(Math.round(current.opacity * 100))}
               disabled={isFieldDisabled('opacity')}
-              title={
-                isFieldDisabled('opacity')
-                  ? playing
-                    ? 'Cannot edit while playing'
-                    : 'Enter animation mode to edit animated property'
-                  : undefined
-              }
               onPointerDown={() => {
-                if (isFieldDisabled('opacity')) return
-                dragRef.current = {
-                  property: 'opacity',
-                  startValue: Math.round(current.opacity * 100),
-                }
+                if (!isFieldDisabled('opacity'))
+                  dragRef.current = {
+                    property: 'opacity',
+                    startValue: Math.round(current.opacity * 100),
+                  }
               }}
               onPointerUp={(e) => {
                 const drag = dragRef.current
@@ -1057,32 +1021,6 @@ export function ShadowInspectorSection({
               onBlur={(e) => commitParam('opacity', e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') commitParam('opacity', (e.target as HTMLInputElement).value)
-              }}
-              onPointerDown={(e) => {
-                if (isFieldDisabled('opacity')) return
-                const startX = e.clientX
-                const startValue = Math.round(current.opacity * 100)
-                let lastValue = startValue
-                let dragging = false
-                const onMove = (ev: PointerEvent) => {
-                  const delta = ev.clientX - startX
-                  if (!dragging && Math.abs(delta) < 3) return
-                  dragging = true
-                  ev.preventDefault()
-                  const next = Math.round(startValue + delta * 1)
-                  const clamped = Math.max(0, Math.min(100, next))
-                  lastValue = clamped
-                  setDraft((d) => ({ ...d, opacity: clamped / 100 }))
-                }
-                const onUp = () => {
-                  window.removeEventListener('pointermove', onMove)
-                  window.removeEventListener('pointerup', onUp)
-                  if (dragging && lastValue !== startValue) {
-                    commitParamAsTransaction('opacity', lastValue)
-                  }
-                }
-                window.addEventListener('pointermove', onMove)
-                window.addEventListener('pointerup', onUp)
               }}
               aria-label="Opacity value"
             />
@@ -1117,13 +1055,6 @@ export function ShadowInspectorSection({
               type="color"
               value={current.color}
               disabled={isFieldDisabled('color')}
-              title={
-                isFieldDisabled('color')
-                  ? playing
-                    ? 'Cannot edit while playing'
-                    : 'Enter animation mode to edit animated property'
-                  : undefined
-              }
               onChange={(e) => {
                 setDraft((d) => ({ ...d, color: e.target.value }))
                 commitParam('color', e.target.value)
@@ -1154,6 +1085,91 @@ export function ShadowInspectorSection({
               </button>
             )}
           </label>
+
+          {/* Advanced — collapsed, read-only when Auto */}
+          <details
+            open={showAdvanced}
+            onToggle={(e) => setShowAdvanced((e.target as HTMLDetailsElement).open)}
+            style={{ border: '1px solid #333', borderRadius: 4, padding: 6 }}
+          >
+            <summary style={{ fontSize: 12, cursor: 'pointer', userSelect: 'none' }}>
+              ▸ Advanced (offset/scale/skew/rotation) {isAuto ? '— read-only when Auto' : ''}
+            </summary>
+            <div style={{ display: 'grid', gap: 8, marginTop: 8, opacity: isAuto ? 0.6 : 1 }}>
+              {(
+                [
+                  'offsetX',
+                  'offsetY',
+                  'scaleX',
+                  'scaleY',
+                  'skewX',
+                  'skewY',
+                  'rotation',
+                ] as ShadowProperty[]
+              ).map((prop) => (
+                <label key={prop} className="inspector-field">
+                  <span className="inspector-field__label">
+                    {LABELS[prop as keyof typeof LABELS] ?? prop}
+                  </span>
+                  {(() => {
+                    const s = shadowStateOf(prop)
+                    return s && s !== 'static' ? (
+                      <span
+                        className="inspector-field__indicator"
+                        data-state={s}
+                        title={s === 'animated' ? 'Animated' : 'Playhead on keyframe'}
+                      >
+                        {s === 'animated' ? '●' : '◆'}
+                      </span>
+                    ) : null
+                  })()}
+                  <input
+                    type="number"
+                    step={prop.startsWith('scale') ? 0.05 : 1}
+                    value={String(
+                      (displayRaw as unknown as Record<string, unknown>)[prop] as number,
+                    )}
+                    disabled={isAuto || isFieldDisabled(prop)}
+                    title={
+                      isAuto
+                        ? 'Read-only when Auto — editing snaps Auto off'
+                        : isFieldDisabled(prop)
+                          ? playing
+                            ? 'Cannot edit while playing'
+                            : 'Enter animation mode to edit animated property'
+                          : undefined
+                    }
+                    onChange={(e) =>
+                      setDraft((d) => ({
+                        ...d,
+                        [prop]: parseNumber(
+                          e.target.value,
+                          (displayRaw as unknown as Record<string, number>)[prop],
+                        ),
+                      }))
+                    }
+                    onBlur={(e) => commitParam(prop, e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') commitParam(prop, (e.target as HTMLInputElement).value)
+                    }}
+                    aria-label={LABELS[prop as keyof typeof LABELS] ?? prop}
+                  />
+                  {animationMode && !playing && !isAuto && (
+                    <button
+                      type="button"
+                      className="inspector-field__add"
+                      aria-label={`Add Keyframe to ${LABELS[prop as keyof typeof LABELS] ?? prop}`}
+                      title="Add keyframe at playhead"
+                      onClick={() => handleAddShadowKeyframe(prop)}
+                      style={{ marginLeft: 4, fontSize: 11, padding: '1px 4px' }}
+                    >
+                      +
+                    </button>
+                  )}
+                </label>
+              ))}
+            </div>
+          </details>
         </div>
       )}
       {enabled && (
@@ -1205,9 +1221,6 @@ export function ShadowInspectorSection({
                     )
                       return true
                     cur = cur.parent
-                  }
-                  if (target.id !== node.id) {
-                    // also check direct? Already handled via casterSet? Actually if ancestor false, casterSet won't contain node
                   }
                   return false
                 })()
@@ -1279,19 +1292,13 @@ export function ShadowInspectorSection({
                   style={{
                     fontSize: 11,
                     color: '#aaa',
-                    border: '1px dashed #f59e0b',
+                    border: '1px dashed #555',
                     padding: 4,
                     borderRadius: 3,
                   }}
                 >
-                  Silhouette BBox debug overlay: union world AABB + pad {pad}px
-                  <div>Pad = ceil(blur*2+4) = {pad}</div>
-                  <div>
-                    Casters: {casterSet.size} / Descendants: {allDescendants.length}
-                  </div>
-                  <div style={{ marginTop: 4, fontStyle: 'italic' }}>
-                    Canvas overlay draws amber rect around silhouette bounds when enabled.
-                  </div>
+                  Silhouette preview (untransformed alpha, BBox-sized) — not yet implemented for
+                  auto-derived shadows.
                 </div>
               )}
             </div>

@@ -1,7 +1,7 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
 import type { ShadowProperty } from '../shadowEffect'
-import { SHADOW_PROPERTIES } from '../shadowEffect'
+import { SHADOW_PROPERTIES, normalizeAzimuth } from '../shadowEffect'
 
 export interface SetShadowParamParameters {
   readonly nodeId: string
@@ -84,6 +84,27 @@ export class SetShadowParamCommand implements Command<SetShadowParamInverse> {
       }
       return
     }
+    if (prop === 'lightAzimuth') {
+      if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+        throw new Error(`SetShadowParam: lightAzimuth must be a finite number`)
+      }
+      return
+    }
+    if (prop === 'lightElevation') {
+      if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+        throw new Error(`SetShadowParam: lightElevation must be a finite number`)
+      }
+      return
+    }
+    if (prop === 'lightDistance') {
+      if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+        throw new Error(`SetShadowParam: lightDistance must be a finite number`)
+      }
+      if ((raw as number) < 0) {
+        // will clamp to 0 with warn
+      }
+      return
+    }
     // offsetX, offsetY, skewX, skewY, rotation : any finite
     if (typeof raw !== 'number' || !Number.isFinite(raw)) {
       throw new Error(`SetShadowParam: ${prop} must be a finite number`)
@@ -140,6 +161,37 @@ export class SetShadowParamCommand implements Command<SetShadowParamInverse> {
         console.warn(
           `[shadow] Node "${this.#nodeId}" shadowEffect degenerate scale 0 — renders collapsed`,
         )
+      }
+    } else if (prop === 'lightAzimuth') {
+      const raw = this.#value as number
+      next = normalizeAzimuth(raw)
+    } else if (prop === 'lightElevation') {
+      const raw = this.#value as number
+      if (!Number.isFinite(raw)) {
+        console.warn(
+          `[shadow] Node "${this.#nodeId}" shadowEffect bad lightElevation ${String(raw)} → 45`,
+        )
+        next = 45
+      } else {
+        if (raw < 0 || raw > 90)
+          console.warn(
+            `[shadow] Node "${this.#nodeId}" shadowEffect bad lightElevation ${String(raw)} clamped to 0..90`,
+          )
+        next = Math.max(0, Math.min(90, raw))
+      }
+    } else if (prop === 'lightDistance') {
+      const raw = this.#value as number
+      if (!Number.isFinite(raw)) {
+        console.warn(
+          `[shadow] Node "${this.#nodeId}" shadowEffect bad lightDistance ${String(raw)} → 28`,
+        )
+        next = 28
+      } else {
+        if (raw < 0 || raw > 400)
+          console.warn(
+            `[shadow] Node "${this.#nodeId}" shadowEffect bad lightDistance ${String(raw)} clamped to 0..400`,
+          )
+        next = Math.max(0, Math.min(400, raw))
       }
     } else {
       // offset, skew, rotation – any finite

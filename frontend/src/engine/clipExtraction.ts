@@ -148,6 +148,24 @@ export function normalizeExtractable(
           `Clip shadow keyframe blur must be a non-negative finite number, got ${String(v)}`,
         )
       }
+    } else if (prop === 'lightAzimuth') {
+      if (typeof v !== 'number' || !Number.isFinite(v)) {
+        throw new Error(
+          `Clip shadow keyframe lightAzimuth must be a finite number, got ${String(v)}`,
+        )
+      }
+    } else if (prop === 'lightElevation') {
+      if (typeof v !== 'number' || !Number.isFinite(v) || v < -1e-9 || v > 90 + 1e-9) {
+        throw new Error(
+          `Clip shadow keyframe lightElevation must be within [0,90], got ${String(v)}`,
+        )
+      }
+    } else if (prop === 'lightDistance') {
+      if (typeof v !== 'number' || !Number.isFinite(v) || v < -1e-9 || v > 400 + 1e-9) {
+        throw new Error(
+          `Clip shadow keyframe lightDistance must be within [0,400], got ${String(v)}`,
+        )
+      }
     } else {
       if (typeof v !== 'number' || !Number.isFinite(v)) {
         throw new Error(`Clip shadow keyframe ${prop} must be a finite number, got ${String(v)}`)

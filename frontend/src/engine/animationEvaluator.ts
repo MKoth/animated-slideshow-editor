@@ -17,7 +17,14 @@ import type { Shape } from './shape'
 import { resolveCrossBlendedVertices, resolveMorphedVerticesFromKeyframe } from './shape'
 import type { MorphKeyframeValue, MorphClipKeyframeValue } from './shape'
 import type { ShadowEffect, ShadowProperty } from './shadowEffect'
-import { SHADOW_PROPERTIES, lerpHexColor } from './shadowEffect'
+import {
+  SHADOW_PROPERTIES,
+  SHADOW_LIGHT_PROPERTIES,
+  SHADOW_SHARED_PROPERTIES,
+  lerpHexColor,
+  deriveShadowProjection,
+  isAutoShadowEffect,
+} from './shadowEffect'
 
 export interface EvaluatedNodeState {
   readonly transform: Transform
@@ -191,7 +198,11 @@ export class AnimationEvaluator {
     return last.value as boolean
   }
 
-  evaluateShadow(nodeId: string, time: number): ShadowEffect | null {
+  evaluateShadow(
+    nodeId: string,
+    time: number,
+    bounds?: { w: number; h: number },
+  ): ShadowEffect | null {
     const node = this.#nodeLookup(nodeId)
     const slide = this.#slideLookup(nodeId)
     if (!isGroupNode(node) || !node.shadowEffect) return null
@@ -200,17 +211,63 @@ export class AnimationEvaluator {
     const animation = slide.animation.node(nodeId)
     const base = node.shadowEffect
     const result: ShadowEffect = { ...base }
-    // Evaluate each shadow track after visible (so we can compute shadowAlpha), before clip layering
-    // Nine numerics via evaluateSegment, color via lerpHexColor
-    for (const prop of SHADOW_PROPERTIES) {
-      const keyframes = animation?.shadowKeyframes(prop as ShadowProperty)
-      if (!keyframes || keyframes.length === 0) continue
-      if (prop === 'color') {
-        result.color = this.#evaluateShadowColor(keyframes, clampedTime, base.color)
-      } else {
-        const fallback = base[prop as Exclude<ShadowProperty, 'color'>] as number
-        const evaluated = this.#evaluateShadowNumeric(keyframes, clampedTime, fallback)
+    const isAuto = isAutoShadowEffect(base)
+    const effectiveBounds = bounds ?? { w: 0, h: 0 }
+    // Evaluate shadow tracks after visible (so we can compute shadowAlpha), before clip layering
+    // When auto, evaluate LIGHT + SHARED; when manual, evaluate RAW + SHARED (via SHADOW_PROPERTIES original 10).
+    // Since SHADOW_PROPERTIES now includes LIGHT (13), we filter to maintain behavior.
+    if (isAuto) {
+      for (const prop of SHADOW_LIGHT_PROPERTIES) {
+        const keyframes = animation?.shadowKeyframes(prop as unknown as ShadowProperty)
+        if (!keyframes || keyframes.length === 0) continue
+        const fallback = (base as unknown as Record<string, unknown>)[prop] as number
+        const def = prop === 'lightAzimuth' ? 135 : prop === 'lightElevation' ? 45 : 28
+        const fb = Number.isFinite(fallback) ? fallback : def
+        const evaluated = this.#evaluateShadowNumeric(keyframes, clampedTime, fb)
         ;(result as unknown as Record<string, unknown>)[prop] = evaluated
+      }
+      for (const prop of SHADOW_SHARED_PROPERTIES) {
+        const keyframes = animation?.shadowKeyframes(prop as ShadowProperty)
+        if (!keyframes || keyframes.length === 0) continue
+        if (prop === 'color') {
+          result.color = this.#evaluateShadowColor(keyframes, clampedTime, base.color)
+        } else if (prop === 'opacity') {
+          const fallback = base.opacity
+          const evaluated = this.#evaluateShadowNumeric(keyframes, clampedTime, fallback)
+          ;(result as unknown as Record<string, unknown>)[prop] = evaluated
+        } else {
+          // blur
+          const fallback = base.blur
+          const evaluated = this.#evaluateShadowNumeric(keyframes, clampedTime, fallback)
+          ;(result as unknown as Record<string, unknown>)[prop] = evaluated
+        }
+      }
+      // Derive 7 DOF from anchor+light before opacity & clips
+      const anchor = (result.anchor ?? 'bottom') as import('./shadowEffect').ShadowAnchor
+      const azimuth = result.lightAzimuth ?? 135
+      const elevation = result.lightElevation ?? 45
+      const distance = result.lightDistance ?? 28
+      const derived = deriveShadowProjection(effectiveBounds, anchor, azimuth, elevation, distance)
+      result.offsetX = derived.offsetX
+      result.offsetY = derived.offsetY
+      result.scaleX = derived.scaleX
+      result.scaleY = derived.scaleY
+      result.skewX = derived.skewX
+      result.skewY = derived.skewY
+      result.rotation = derived.rotation
+    } else {
+      for (const prop of SHADOW_PROPERTIES) {
+        // Skip light when manual (they are part of SHADOW_PROPERTIES after extension)
+        if ((SHADOW_LIGHT_PROPERTIES as readonly string[]).includes(prop)) continue
+        const keyframes = animation?.shadowKeyframes(prop as ShadowProperty)
+        if (!keyframes || keyframes.length === 0) continue
+        if (prop === 'color') {
+          result.color = this.#evaluateShadowColor(keyframes, clampedTime, base.color)
+        } else {
+          const fallback = base[prop as Exclude<ShadowProperty, 'color'>] as number
+          const evaluated = this.#evaluateShadowNumeric(keyframes, clampedTime, fallback)
+          ;(result as unknown as Record<string, unknown>)[prop] = evaluated
+        }
       }
     }
     // shadowAlpha = nodeOpacity * shadowOpacity (evaluated)
@@ -224,6 +281,21 @@ export class AnimationEvaluator {
     // Apply clip layering last-wins
     this.#applyClipShadowInstances(node, clampedTime, result)
     this.#evaluateClipShadowColor(node, clampedTime, result)
+    // Spec 305: when auto, light clip params have been layered into result.light*; re-derive so light clips drive projection (last-wins)
+    if (isAuto) {
+      const anchor = (result.anchor ?? 'bottom') as import('./shadowEffect').ShadowAnchor
+      const az = result.lightAzimuth ?? 135
+      const el = result.lightElevation ?? 45
+      const dist = result.lightDistance ?? 28
+      const derived2 = deriveShadowProjection(effectiveBounds, anchor, az, el, dist)
+      result.offsetX = derived2.offsetX
+      result.offsetY = derived2.offsetY
+      result.scaleX = derived2.scaleX
+      result.scaleY = derived2.scaleY
+      result.skewX = derived2.skewX
+      result.skewY = derived2.skewY
+      result.rotation = derived2.rotation
+    }
     // Final clamp for numeric after clip
     if (!Number.isFinite(result.blur) || result.blur < 0) result.blur = 0
     else if (result.blur > 32) result.blur = 32
