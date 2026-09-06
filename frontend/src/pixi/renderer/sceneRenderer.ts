@@ -102,12 +102,14 @@ void main() {
 `
 
 type WorldAabb = { minX: number; minY: number; maxX: number; maxY: number }
+type ShadowRenderBounds = WorldAabb & { pad: number }
 
 function rtSizeForAabb(
   aabb: WorldAabb | null,
   blur: number,
+  padOverride?: number,
 ): { width: number; height: number; pad: number } {
-  const pad = Math.ceil(blur * 2 + 4)
+  const pad = padOverride ?? Math.ceil(blur * 2 + 4)
   if (!aabb) return { width: 4, height: 4, pad }
   const expanded = expandRect(
     aabb as unknown as import('./worldGeometry').WorldRect,
@@ -232,10 +234,11 @@ export class SceneRenderer {
   readonly #shadowDirty: Set<string> = new Set()
   readonly #shadowLastCasterHash = new Map<string, string>()
   readonly #shadowLastParamHash = new Map<string, string>()
+  readonly #shadowRenderBounds = new Map<string, ShadowRenderBounds>()
   readonly #renderToTexture: (options: {
     container: PixiContainer
     target: PixiRenderTexture
-    clearColor?: number
+    clearColor?: readonly [number, number, number, number]
     clear?: boolean
   }) => void
   #scene: Scene | null = null
@@ -256,7 +259,7 @@ export class SceneRenderer {
     renderToTexture: (options: {
       container: PixiContainer
       target: PixiRenderTexture
-      clearColor?: number
+      clearColor?: readonly [number, number, number, number]
       clear?: boolean
     }) => void = () => undefined,
   ) {
@@ -534,6 +537,8 @@ export class SceneRenderer {
   }
 
   applyIKOverrides(rotations: ReadonlyMap<string, number>): void {
+    const changedNodes = new Set<string>(this.#ikOverrides.keys())
+    for (const nodeId of rotations.keys()) changedNodes.add(nodeId)
     this.#ikOverrides.clear()
     for (const [nodeId, rotation] of rotations) {
       this.#ikOverrides.set(nodeId, rotation)
@@ -542,6 +547,8 @@ export class SceneRenderer {
         container.rotation = rotation
       }
     }
+    for (const nodeId of changedNodes) this.#markShadowDirtyForNode(nodeId)
+    this.#flushShadowDirty()
   }
 
   applyConstraintOverrides(): void {
@@ -1607,6 +1614,9 @@ export class SceneRenderer {
         applyPivotWithSize(container, currentNode.transform.localPivot, size)
         this.#onNodeSizeChanged(nodeId)
       }
+      // Asset texture now real — silhouette must update from rect placeholder to textured sprite (or mesh triangulation)
+      this.#markShadowDirtyForNode(nodeId)
+      this.#flushShadowDirty()
     })
   }
 
@@ -1908,6 +1918,7 @@ export class SceneRenderer {
     this.#shadowDirty.clear()
     this.#shadowLastCasterHash.clear()
     this.#shadowLastParamHash.clear()
+    this.#shadowRenderBounds.clear()
   }
 
   #destroyShadowForGroup(groupId: string): void {
@@ -1932,6 +1943,7 @@ export class SceneRenderer {
     this.#shadowContainers.delete(groupId)
     this.#shadowLastCasterHash.delete(groupId)
     this.#shadowLastParamHash.delete(groupId)
+    this.#shadowRenderBounds.delete(groupId)
     this.#shadowDirty.delete(groupId)
     if (container) {
       try {
@@ -2157,6 +2169,65 @@ export class SceneRenderer {
     return alpha
   }
 
+  #stableShadowBounds(groupId: string, union: WorldAabb | null, blur: number): ShadowRenderBounds {
+    const pad = Math.ceil(blur * 2 + 4)
+    const previous = this.#shadowRenderBounds.get(groupId)
+    if (!union) {
+      return previous ?? { minX: 0, minY: 0, maxX: 0, maxY: 0, pad }
+    }
+
+    // Keep a small envelope around the current pose. It prevents RT reallocation
+    // and texel-density changes while an IK handle is being dragged.
+    const margin = 16
+    const required: ShadowRenderBounds = {
+      minX: union.minX - margin,
+      minY: union.minY - margin,
+      maxX: union.maxX + margin,
+      maxY: union.maxY + margin,
+      pad,
+    }
+    const stable = previous
+      ? {
+          minX: Math.min(previous.minX, required.minX),
+          minY: Math.min(previous.minY, required.minY),
+          maxX: Math.max(previous.maxX, required.maxX),
+          maxY: Math.max(previous.maxY, required.maxY),
+          pad: Math.max(previous.pad, required.pad),
+        }
+      : required
+    this.#shadowRenderBounds.set(groupId, stable)
+    return stable
+  }
+
+  #positionShadowAtBoundsOrigin(groupNode: SceneNode, bounds: ShadowRenderBounds): void {
+    const container = this.#shadowContainers.get(groupNode.id)
+    if (!container) return
+    const renderParent = groupNode.components.tableCell
+      ? this.#owningTable(groupNode)
+      : groupNode.parent
+    const parentWorld = renderParent
+      ? this.#engineWorldTransformForShadow(
+          renderParent.id,
+          this.#slideId ? this.#currentTime.getTime(this.#slideId) : 0,
+        )
+      : { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }
+    if (!parentWorld) return
+    const local = relativeTransform(
+      {
+        x: bounds.minX - bounds.pad,
+        y: bounds.minY - bounds.pad,
+        rotation: 0,
+        scaleX: 1,
+        scaleY: 1,
+      },
+      parentWorld,
+    )
+    if (!local) return
+    container.position.set(local.x, local.y)
+    container.rotation = local.rotation
+    container.scale.set(local.scaleX, local.scaleY)
+  }
+
   #doUpdateShadowForGroup(
     groupId: string,
     evaluated: import('../../engine/shadowEffect').ShadowEffect,
@@ -2225,7 +2296,8 @@ export class SceneRenderer {
       const aabb = aabbFromHitTest ?? aabbFallback
       union = union ? (mergeRect(union as never, aabb as never) as unknown as WorldAabb) : aabb
     }
-    const { width, height, pad } = rtSizeForAabb(union, effect.blur)
+    const bounds = this.#stableShadowBounds(groupId, union, effect.blur)
+    const { width, height, pad } = rtSizeForAabb(bounds, effect.blur, bounds.pad)
     const rt = this.#shadowTextures.get(groupId)
     if (!rt) return
     if (rt.width !== width || rt.height !== height) {
@@ -2235,15 +2307,13 @@ export class SceneRenderer {
         void 0
       }
     }
+    this.#positionShadowAtBoundsOrigin(groupNode, bounds)
     // Silhouette generation: temp clone with white-alpha filter
-    // For tracer bullet we render a dummy white container to prove RT usage
     const temp = new this.#pixi.Container()
     temp.label = `shadow-silhouette:${groupId}`
-    // Build simple white graphics for each caster's bbox centered at pad
+    // Build silhouette geometry for each caster centered at pad
     // If union exists, place graphics relative to union.min
     if (union) {
-      const minX = union.minX
-      const minY = union.minY
       for (const caster of casters) {
         const size = this.#sizes.get(caster.id)
         if (!size) continue
@@ -2260,25 +2330,26 @@ export class SceneRenderer {
         if (!visible || worldAlpha <= 0.01) continue
         const world = this.#engineWorldTransformForShadow(caster.id, time)
         if (!world) continue
-        const aabbHit = this.#scene
-          ? worldAabbOf(
-              this.#scene,
-              caster.id,
-              (id) => this.#sizes.get(id) ?? null,
-              (id) => this.#engineWorldTransformForShadow(id, time) as unknown as WorldTransform,
-            )
-          : null
-        const aabbFallback = worldAabbOfNode(size, world)
-        const aabb = aabbHit ?? aabbFallback
-        const rectX = aabb.minX - minX + pad
-        const rectY = aabb.minY - minY + pad
-        const rectW = aabb.maxX - aabb.minX
-        const rectH = aabb.maxY - aabb.minY
-        if (rectW <= 0 || rectH <= 0) continue
-        const g = new this.#pixi.Graphics()
-        // White opaque rect — alpha preserved via filter later, but for now use white
-        g.rect(rectX, rectY, rectW, rectH).fill({ color: 0xffffff, alpha: worldAlpha })
-        temp.addChild(g as unknown as PixiContainer)
+        // Group must never cast (abstract) — Children only (spec #291)
+        if (caster.id === groupId) continue
+        // Build only real alpha silhouettes. A bounding-box fallback creates a
+        // second opaque square when a hierarchy mixes renderable node kinds.
+        const comps = (caster as unknown as { components: Record<string, unknown> }).components
+        const isMesh = Boolean(comps.mesh)
+        const isCircle = Boolean(comps.circle)
+        const isAsset = Boolean(comps.assetInstance)
+        if (isMesh || isCircle || isAsset) {
+          const g = this.#createSilhouetteGraphics(caster, world, bounds, pad, time, worldAlpha)
+          if (g) {
+            temp.addChild(g as unknown as PixiContainer)
+            continue
+          }
+          // Unsupported or not-yet-loaded casters contribute no silhouette.
+          // Never replace alpha with a bounding-box approximation.
+          continue
+        }
+        // Text, tables and charts need their rendered alpha sampled here too;
+        // until that path exists, omitting them is safer than casting a square.
       }
     } else {
       // No casters / hidden — keep temp empty, RT stays clear
@@ -2296,7 +2367,9 @@ export class SceneRenderer {
         container: temp as unknown as PixiContainer,
         target: rt,
         clear: true,
-        clearColor: 0x00000000 as unknown as number,
+        // Pixi v8 expects RGBA components here. Numeric 0 is opaque black,
+        // which leaves a black rectangle behind the tinted silhouette.
+        clearColor: [0, 0, 0, 0],
       })
     } catch {
       // Fallback without clearColor
@@ -2317,6 +2390,219 @@ export class SceneRenderer {
     this.#shadowLastParamHash.set(groupId, paramHash)
   }
 
+  #createSilhouetteGraphics(
+    caster: SceneNode,
+    meshWorld: { x: number; y: number; rotation: number; scaleX: number; scaleY: number },
+    union: WorldAabb,
+    pad: number,
+    time: number,
+    worldAlpha: number,
+  ): PixiContainer | null {
+    try {
+      const comps = (caster as unknown as { components: Record<string, unknown> }).components
+      const isMesh = Boolean(comps.mesh)
+      const isCircle = Boolean(comps.circle)
+      const isAsset = Boolean(comps.assetInstance)
+      // Mesh/circle takes precedence over assetInstance (textured meshes should use triangle silhouette, not sprite)
+      if (isMesh || isCircle) {
+        let meshData: import('../../engine/mesh').MeshData | null = null
+        if (isMesh) {
+          const raw = comps.mesh as {
+            mesh: import('../../engine/mesh').MeshData
+            shapes?: readonly import('../../engine/shape').Shape[]
+          }
+          meshData = raw.mesh
+          // Shape preview (ephemeral sculpt highlight) — use preview shape vertices if active
+          try {
+            const preview = useShapePreviewStore.getState()
+            if (preview.previewNodeId === caster.id && preview.previewShapeId) {
+              const shape = raw.shapes?.find((s) => s.id === preview.previewShapeId)
+              if (shape) {
+                meshData = {
+                  ...meshData,
+                  vertices:
+                    shape.vertices as unknown as import('../../engine/mesh').MeshData['vertices'],
+                }
+              }
+            }
+          } catch {
+            void 0
+          }
+        } else {
+          const circleComp = comps.circle as import('../../engine/circleComponent').CircleComponent
+          let evaluated: import('../../engine/circleComponent').CircleComponent = circleComp
+          try {
+            const state = this.#engine.evaluateCircle(caster.id, time)
+            if (state) {
+              evaluated = {
+                kind: 'circle',
+                radius: state.radius,
+                startAngle: state.startAngle,
+                endAngle: state.endAngle,
+                segments: state.segments,
+              }
+            }
+          } catch {
+            void 0
+          }
+          try {
+            meshData = generateCircleMeshData(evaluated)
+          } catch {
+            meshData = null
+          }
+        }
+        if (
+          !meshData ||
+          !meshData.vertices ||
+          meshData.vertices.length === 0 ||
+          !meshData.faces ||
+          meshData.faces.length === 0
+        ) {
+          return null
+        }
+        // Collect bone transforms for deformed evaluation
+        const boneMap = new Map<string, import('../../engine/worldTransform').WorldTransform>()
+        if (this.#scene) {
+          for (const n of walkPreOrder(this.#scene.root)) {
+            if (!n.components.bone) continue
+            const wt = this.#engineWorldTransformForShadow(n.id, time) as unknown as
+              import('../../engine/worldTransform').WorldTransform | null
+            if (wt) boneMap.set(n.id, wt)
+          }
+        }
+        let deformed: readonly import('../../engine/mesh').MeshVertex[] | null = null
+        let faces: readonly import('../../engine/mesh').MeshFace[] = meshData.faces
+        try {
+          const res = this.#engine.evaluateMeshDeformation(
+            caster.id,
+            time,
+            boneMap,
+            meshWorld as unknown as import('../../engine/worldTransform').WorldTransform,
+          )
+          if (res && res.deformedVertices && res.deformedVertices.length > 0) {
+            deformed = res.deformedVertices as readonly import('../../engine/mesh').MeshVertex[]
+            faces = meshData.faces
+          }
+        } catch {
+          void 0
+        }
+        if (!deformed) {
+          deformed = meshData.vertices as readonly import('../../engine/mesh').MeshVertex[]
+        }
+        if (deformed.length === 0 || faces.length === 0) return null
+        const g = new this.#pixi.Graphics()
+        const cos = Math.cos(meshWorld.rotation)
+        const sin = Math.sin(meshWorld.rotation)
+        const sx = meshWorld.scaleX
+        const sy = meshWorld.scaleY
+        const tx = meshWorld.x
+        const ty = meshWorld.y
+        const minX = union.minX
+        const minY = union.minY
+        let pivotOffsetX = 0
+        let pivotOffsetY = 0
+        try {
+          const pivot = (
+            caster as unknown as { transform: { localPivot?: { x: number; y: number } } }
+          ).transform.localPivot
+          const size = this.#sizes.get(caster.id)
+          if (pivot && size) {
+            pivotOffsetX = pivot.x * size.width
+            pivotOffsetY = pivot.y * size.height
+          }
+        } catch {
+          void 0
+        }
+        for (const f of faces) {
+          const v0 = deformed[f.v0]
+          const v1 = deformed[f.v1]
+          const v2 = deformed[f.v2]
+          if (!v0 || !v1 || !v2) continue
+          const lx0 = v0.x - pivotOffsetX
+          const ly0 = v0.y - pivotOffsetY
+          const lx1 = v1.x - pivotOffsetX
+          const ly1 = v1.y - pivotOffsetY
+          const lx2 = v2.x - pivotOffsetX
+          const ly2 = v2.y - pivotOffsetY
+          const w0x = lx0 * sx * cos - ly0 * sy * sin + tx
+          const w0y = lx0 * sx * sin + ly0 * sy * cos + ty
+          const w1x = lx1 * sx * cos - ly1 * sy * sin + tx
+          const w1y = lx1 * sx * sin + ly1 * sy * cos + ty
+          const w2x = lx2 * sx * cos - ly2 * sy * sin + tx
+          const w2y = lx2 * sx * sin + ly2 * sy * cos + ty
+          const x0 = w0x - minX + pad
+          const y0 = w0y - minY + pad
+          const x1 = w1x - minX + pad
+          const y1 = w1y - minY + pad
+          const x2 = w2x - minX + pad
+          const y2 = w2y - minY + pad
+          g.moveTo(x0, y0).lineTo(x1, y1).lineTo(x2, y2).closePath()
+        }
+        g.fill({ color: 0xffffff, alpha: worldAlpha })
+        return g as unknown as PixiContainer
+      }
+      // AssetInstance: textured sprite silhouette (preserves alpha, not opaque rect)
+      if (isAsset) {
+        const node = caster as unknown as SceneNode & {
+          material: { textureId?: string }
+          components: { assetInstance: { assetDefinitionId: string } }
+        }
+        const textureKey =
+          node.material?.textureId ?? node.components.assetInstance.assetDefinitionId ?? node.id
+        if (this.#isAssetMissing(textureKey)) {
+          return null
+        }
+        const tex = this.#textureCache.get(textureKey)
+        const isPlaceholder =
+          (tex as unknown as { width: number; height: number }).width <= 1 &&
+          (tex as unknown as { height: number }).height <= 1
+        const size = this.#sizes.get(caster.id)
+        if (!size || isPlaceholder) {
+          return null
+        }
+        const sprite = new this.#pixi.Sprite(tex as unknown as import('pixi.js').Texture)
+        sprite.anchor?.set?.(0.5, 0.5)
+        try {
+          sprite.width = size.width
+          sprite.height = size.height
+        } catch {
+          void 0
+        }
+        let pivotOffX = 0
+        let pivotOffY = 0
+        try {
+          const pivot = (
+            caster as unknown as { transform: { localPivot?: { x: number; y: number } } }
+          ).transform.localPivot
+          if (pivot) {
+            pivotOffX = pivot.x * size.width
+            pivotOffY = pivot.y * size.height
+          }
+        } catch {
+          void 0
+        }
+        const cos = Math.cos(meshWorld.rotation)
+        const sin = Math.sin(meshWorld.rotation)
+        const px = pivotOffX * meshWorld.scaleX
+        const py = pivotOffY * meshWorld.scaleY
+        const pivotWorldX = meshWorld.x - (px * cos - py * sin)
+        const pivotWorldY = meshWorld.y - (px * sin + py * cos)
+        sprite.position?.set?.(pivotWorldX - union.minX + pad, pivotWorldY - union.minY + pad)
+        sprite.rotation = meshWorld.rotation
+        try {
+          sprite.scale?.set?.(meshWorld.scaleX, meshWorld.scaleY)
+        } catch {
+          void 0
+        }
+        sprite.alpha = worldAlpha
+        return sprite as unknown as PixiContainer
+      }
+      return null
+    } catch {
+      return null
+    }
+  }
+
   #updateShadowForGroup(groupId: string): void {
     const time = this.#slideId ? this.#currentTime.getTime(this.#slideId) : 0
     this.#updateShadowIfNeeded(groupId, time)
@@ -2334,9 +2620,14 @@ export class SceneRenderer {
       chain.reverse()
       const composed = composeChain(chain, (link) => {
         try {
-          return this.#engine.evaluateNode(link.id, time).transform
+          const transform = this.#engine.evaluateNode(link.id, time).transform
+          const ikRotation = this.#ikOverrides.get(link.id)
+          return ikRotation === undefined ? transform : { ...transform, rotation: ikRotation }
         } catch {
-          return link.transform
+          const ikRotation = this.#ikOverrides.get(link.id)
+          return ikRotation === undefined
+            ? link.transform
+            : { ...link.transform, rotation: ikRotation }
         }
       })
       if (!composed) return null
