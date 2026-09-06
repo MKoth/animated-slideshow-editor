@@ -247,7 +247,18 @@ export class AnimationEvaluator {
       const azimuth = result.lightAzimuth ?? 135
       const elevation = result.lightElevation ?? 45
       const distance = result.lightDistance ?? 28
-      const derived = deriveShadowProjection(effectiveBounds, anchor, azimuth, elevation, distance)
+      const derived = deriveShadowProjection(
+        effectiveBounds,
+        anchor,
+        azimuth,
+        elevation,
+        distance,
+        {
+          x: result.anchorOffsetX,
+          y: result.anchorOffsetY,
+        },
+        result.mirrorX,
+      )
       result.offsetX = derived.offsetX
       result.offsetY = derived.offsetY
       result.scaleX = derived.scaleX
@@ -287,7 +298,18 @@ export class AnimationEvaluator {
       const az = result.lightAzimuth ?? 135
       const el = result.lightElevation ?? 45
       const dist = result.lightDistance ?? 28
-      const derived2 = deriveShadowProjection(effectiveBounds, anchor, az, el, dist)
+      const derived2 = deriveShadowProjection(
+        effectiveBounds,
+        anchor,
+        az,
+        el,
+        dist,
+        {
+          x: result.anchorOffsetX,
+          y: result.anchorOffsetY,
+        },
+        result.mirrorX,
+      )
       result.offsetX = derived2.offsetX
       result.offsetY = derived2.offsetY
       result.scaleX = derived2.scaleX

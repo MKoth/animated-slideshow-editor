@@ -50,6 +50,9 @@ const LABELS: Record<keyof ShadowEffect, string> = {
   lightAzimuth: 'Azimuth',
   lightElevation: 'Elevation',
   lightDistance: 'Distance',
+  anchorOffsetX: 'Anchor Offset X',
+  anchorOffsetY: 'Anchor Offset Y',
+  mirrorX: 'Mirror Shadow',
   auto: 'Auto',
 }
 
@@ -447,6 +450,20 @@ export function ShadowInspectorSection({
     }
   }
 
+  const commitAnchorOffset = (property: 'anchorOffsetX' | 'anchorOffsetY', raw: string) => {
+    if (!effect) return
+    const value = Number(raw.trim())
+    if (!Number.isFinite(value)) return
+    const result = dispatch(
+      new SetShadowEffectCommand({
+        nodeId: target.id,
+        shadowEffect: { ...effect, [property]: value },
+      }),
+    )
+    if (result && !result.ok) notify(result.error.message)
+    setDraft({})
+  }
+
   const applyGroundPreset = () => {
     if (!effect) return
     if (playing) {
@@ -661,7 +678,7 @@ export function ShadowInspectorSection({
             <>
               {/* Azimuth */}
               <label className="inspector-field">
-                <span className="inspector-field__label">Azimuth</span>
+                <span className="inspector-field__label">Light Azimuth</span>
                 {(() => {
                   const s = shadowStateOf('lightAzimuth' as ShadowProperty)
                   return s && s !== 'static' ? (
@@ -895,6 +912,65 @@ export function ShadowInspectorSection({
                     +
                   </button>
                 )}
+              </label>
+              <label className="inspector-field">
+                <span className="inspector-field__label">Anchor Offset X</span>
+                <input
+                  type="number"
+                  step={1}
+                  value={String(current.anchorOffsetX ?? 0)}
+                  disabled={playing}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, anchorOffsetX: parseNumber(e.target.value, 0) }))
+                  }
+                  onBlur={(e) => commitAnchorOffset('anchorOffsetX', e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter')
+                      commitAnchorOffset('anchorOffsetX', (e.target as HTMLInputElement).value)
+                  }}
+                  aria-label="Anchor Offset X"
+                  style={{ width: 60 }}
+                />
+                <span style={{ fontSize: 11 }}>px</span>
+              </label>
+              <label className="inspector-field">
+                <span className="inspector-field__label">Anchor Offset Y</span>
+                <input
+                  type="number"
+                  step={1}
+                  value={String(current.anchorOffsetY ?? 0)}
+                  disabled={playing}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, anchorOffsetY: parseNumber(e.target.value, 0) }))
+                  }
+                  onBlur={(e) => commitAnchorOffset('anchorOffsetY', e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter')
+                      commitAnchorOffset('anchorOffsetY', (e.target as HTMLInputElement).value)
+                  }}
+                  aria-label="Anchor Offset Y"
+                  style={{ width: 60 }}
+                />
+                <span style={{ fontSize: 11 }}>px</span>
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={current.mirrorX ?? false}
+                  disabled={playing}
+                  onChange={(e) => {
+                    const result = dispatch(
+                      new SetShadowEffectCommand({
+                        nodeId: target.id,
+                        shadowEffect: { ...effect, mirrorX: e.target.checked },
+                      }),
+                    )
+                    if (result && !result.ok) notify(result.error.message)
+                    setDraft({})
+                  }}
+                  aria-label="Mirror Shadow"
+                />
+                Mirror shadow horizontally
               </label>
             </>
           )}

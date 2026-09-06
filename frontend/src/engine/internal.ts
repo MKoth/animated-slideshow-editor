@@ -2071,8 +2071,12 @@ export class Engine {
     return node.shadowEffect ? { ...node.shadowEffect } : undefined
   }
 
-  evaluateShadow(nodeId: string, time: number): ShadowEffect | null {
-    return this.#evaluator.evaluateShadow(nodeId, time)
+  evaluateShadow(
+    nodeId: string,
+    time: number,
+    bounds?: { w: number; h: number },
+  ): ShadowEffect | null {
+    return this.#evaluator.evaluateShadow(nodeId, time, bounds)
   }
 
   setShadowParam(
@@ -4701,7 +4705,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     isClipReferenced: (clipId) => engine.isClipReferenced(clipId),
     getClipBlockingNodeNames: (clipId) => engine.getClipBlockingNodeNames(clipId),
     getShadowEffect: (nodeId) => engine.getShadowEffect(nodeId),
-    evaluateShadow: (nodeId, time) => engine.evaluateShadow(nodeId, time),
+    evaluateShadow: (nodeId, time, bounds) => engine.evaluateShadow(nodeId, time, bounds),
     getShadowKeyframes: (nodeId, property) => engine.getShadowKeyframes(nodeId, property),
     hasShadowTrack: (nodeId, property) => engine.hasShadowTrack(nodeId, property),
     getCastShadow: (nodeId) => engine.getCastShadow(nodeId),

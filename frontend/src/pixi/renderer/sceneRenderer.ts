@@ -1880,7 +1880,14 @@ export class SceneRenderer {
     }
     let evaluated: import('../../engine/shadowEffect').ShadowEffect | null = null
     try {
-      evaluated = this.#engine.evaluateShadow(groupId, time)
+      const previousBounds = this.#shadowRenderBounds.get(groupId)
+      const bounds = previousBounds
+        ? {
+            w: previousBounds.maxX - previousBounds.minX,
+            h: previousBounds.maxY - previousBounds.minY,
+          }
+        : undefined
+      evaluated = this.#engine.evaluateShadow(groupId, time, bounds)
     } catch {
       evaluated = clampShadowEffect(groupNode.shadowEffect, groupId)
     }
@@ -2052,7 +2059,14 @@ export class SceneRenderer {
       const slideId = this.#slideId
       const time = slideId ? this.#currentTime.getTime(slideId) : 0
       try {
-        const ev = this.#engine.evaluateShadow(groupId, time)
+        const previousBounds = this.#shadowRenderBounds.get(groupId)
+        const bounds = previousBounds
+          ? {
+              w: previousBounds.maxX - previousBounds.minX,
+              h: previousBounds.maxY - previousBounds.minY,
+            }
+          : undefined
+        const ev = this.#engine.evaluateShadow(groupId, time, bounds)
         effect = ev
           ? clampShadowEffect(ev, groupId)
           : clampShadowEffect(groupNode.shadowEffect, groupId)

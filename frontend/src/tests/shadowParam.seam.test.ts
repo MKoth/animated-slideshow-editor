@@ -51,6 +51,112 @@ function createSystem() {
 }
 
 describe('Shadow Param seam', () => {
+  it('auto anchor changes the corresponding edge position', () => {
+    const { engine, dispatcher, group } = createSystem()
+    dispatcher.dispatch(
+      new SetShadowEffectCommand({
+        nodeId: group.id,
+        shadowEffect: {
+          ...DEFAULT_SHADOW_EFFECT,
+          auto: true,
+          anchor: 'bottom',
+        },
+      }),
+    )
+
+    const setAnchor = (anchor: 'top' | 'bottom' | 'left' | 'right') => {
+      dispatcher.dispatch(
+        new SetShadowEffectCommand({
+          nodeId: group.id,
+          shadowEffect: { ...engine.getNode(group.id).shadowEffect!, anchor },
+        }),
+      )
+      return engine.evaluateShadow(group.id, 0, { w: 100, h: 50 })!
+    }
+
+    const top = setAnchor('top')
+    const bottom = setAnchor('bottom')
+    const left = setAnchor('left')
+    const right = setAnchor('right')
+
+    const assertContact = (
+      projection: NonNullable<ReturnType<typeof setAnchor>>,
+      anchor: 'top' | 'bottom' | 'left' | 'right',
+      expectedX = 14,
+      expectedY = -14,
+    ) => {
+      const pivot =
+        anchor === 'bottom'
+          ? { x: 50, y: 50 }
+          : anchor === 'top'
+            ? { x: 50, y: 0 }
+            : anchor === 'left'
+              ? { x: 0, y: 25 }
+              : { x: 100, y: 25 }
+      const angle = (projection.rotation * Math.PI) / 180
+      const transformed = {
+        x:
+          Math.cos(angle) * projection.scaleX * pivot.x -
+          Math.sin(angle) * projection.scaleY * pivot.y,
+        y:
+          Math.sin(angle) * projection.scaleX * pivot.x +
+          Math.cos(angle) * projection.scaleY * pivot.y,
+      }
+      expect(projection.offsetX + transformed.x - pivot.x).toBeCloseTo(expectedX)
+      expect(projection.offsetY + transformed.y - pivot.y).toBeCloseTo(expectedY)
+    }
+
+    assertContact(top, 'top')
+    assertContact(bottom, 'bottom')
+    assertContact(left, 'left')
+    assertContact(right, 'right')
+
+    dispatcher.dispatch(
+      new SetShadowEffectCommand({
+        nodeId: group.id,
+        shadowEffect: {
+          ...engine.getNode(group.id).shadowEffect!,
+          anchor: 'bottom',
+          lightAzimuth: 135,
+          anchorOffsetX: 7,
+          anchorOffsetY: -5,
+        },
+      }),
+    )
+    const adjusted = engine.evaluateShadow(group.id, 0, { w: 100, h: 50 })!
+    assertContact(adjusted, 'bottom', 21, -19)
+    dispatcher.dispatch(
+      new SetShadowEffectCommand({
+        nodeId: group.id,
+        shadowEffect: { ...engine.getNode(group.id).shadowEffect!, mirrorX: true },
+      }),
+    )
+    const mirrored = engine.evaluateShadow(group.id, 0, { w: 100, h: 50 })!
+    expect(mirrored.scaleX).toBeLessThan(0)
+    assertContact(mirrored, 'bottom', 21, -19)
+
+    dispatcher.dispatch(
+      new SetShadowEffectCommand({
+        nodeId: group.id,
+        shadowEffect: {
+          ...engine.getNode(group.id).shadowEffect!,
+          anchor: 'bottom',
+          lightAzimuth: 180,
+        },
+      }),
+    )
+    const lightFromLeft = engine.evaluateShadow(group.id, 0, { w: 100, h: 50 })!
+    dispatcher.dispatch(
+      new SetShadowEffectCommand({
+        nodeId: group.id,
+        shadowEffect: { ...engine.getNode(group.id).shadowEffect!, lightAzimuth: 0 },
+      }),
+    )
+    const lightFromRight = engine.evaluateShadow(group.id, 0, { w: 100, h: 50 })!
+    expect(lightFromLeft.rotation).toBeCloseTo(-90)
+    expect(lightFromRight.rotation).toBeCloseTo(90)
+  })
+
   it('dispatch SetShadowParam for each property, assert evaluate + JSON round-trip + warnings', () => {
     const { sys, group, engine, dispatcher, undoStack, publicEngine } = createSystem()
     dispatcher.dispatch(

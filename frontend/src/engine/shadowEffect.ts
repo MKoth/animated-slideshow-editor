@@ -34,6 +34,9 @@ export interface ShadowEffect {
   lightAzimuth?: number // any finite → normalized 0–360, default 135
   lightElevation?: number // clamp 0..90, default 45
   lightDistance?: number // clamp 0..400, default 28
+  anchorOffsetX?: number // fine contact adjustment in world px, default 0
+  anchorOffsetY?: number // fine contact adjustment in world px, default 0
+  mirrorX?: boolean // mirror silhouette across its local width, default false
   auto?: boolean // default true for newly-created derivation, undefined = false for legacy
 }
 
@@ -52,6 +55,9 @@ export const DEFAULT_SHADOW_EFFECT: Readonly<ShadowEffect> = {
   lightAzimuth: 135,
   lightElevation: 45,
   lightDistance: 28,
+  anchorOffsetX: 0,
+  anchorOffsetY: 0,
+  mirrorX: false,
   auto: false,
 }
 
@@ -71,6 +77,9 @@ export type ShadowEffectJSON = {
   readonly lightAzimuth?: number
   readonly lightElevation?: number
   readonly lightDistance?: number
+  readonly anchorOffsetX?: number
+  readonly anchorOffsetY?: number
+  readonly mirrorX?: boolean
   readonly auto?: boolean
 }
 
@@ -362,6 +371,8 @@ export function deriveShadowProjection(
   azimuth: number,
   elevation: number,
   distance: number,
+  anchorOffset: { x?: number; y?: number } = {},
+  mirrorX = false,
 ): {
   offsetX: number
   offsetY: number
@@ -378,14 +389,16 @@ export function deriveShadowProjection(
   const elevRad = (elev * Math.PI) / 180
   const cosElev = Math.cos(elevRad)
   const sinElev = Math.sin(elevRad)
-  const dx = Math.cos(rad) * dist * cosElev
-  const dy = Math.sin(rad) * dist * cosElev
+  // Azimuth describes where the light comes from. The shadow projects away
+  // from the light, so its planar displacement uses the opposite vector.
+  const dx = -Math.cos(rad) * dist * cosElev
+  const dy = -Math.sin(rad) * dist * cosElev
   const squash = 0.18 + (1.0 - 0.18) * sinElev // lerp(0.18,1,sin)
   let scaleX = 1
   let scaleY = 1
   let skewX = 0
   let skewY = 0
-  const rotation = 0
+  let rotation = 0
   const w = bounds.w
   const h = bounds.h
   let offsetX = dx
@@ -394,31 +407,19 @@ export function deriveShadowProjection(
   if (anchor === 'bottom') {
     scaleY = squash
     scaleX = 1 + (1 - squash) * 0.15
-    skewX = dx * 0.35
-    skewY = 0
-    offsetX = dx
-    offsetY = h / 2 + dy
+    rotation = (Math.atan2(dy, dx) - Math.PI / 2) * (180 / Math.PI)
   } else if (anchor === 'top') {
     scaleY = squash
     scaleX = 1 + (1 - squash) * 0.15
-    skewX = -dx * 0.35
-    skewY = 0
-    offsetX = dx
-    offsetY = -h / 2 + dy
+    rotation = (Math.atan2(dy, dx) + Math.PI / 2) * (180 / Math.PI)
   } else if (anchor === 'left') {
     scaleX = squash
     scaleY = 1 + (1 - squash) * 0.15
-    skewX = 0
-    skewY = dy * 0.35
-    offsetX = -w / 2 + dx
-    offsetY = dy
+    rotation = Math.atan2(dy, dx) * (180 / Math.PI) - 180
   } else if (anchor === 'right') {
     scaleX = squash
     scaleY = 1 + (1 - squash) * 0.15
-    skewX = 0
-    skewY = -dy * 0.35
-    offsetX = w / 2 + dx
-    offsetY = dy
+    rotation = Math.atan2(dy, dx) * (180 / Math.PI)
   } else {
     // center floating
     const uniform = 1.15 + (1 - 1.15) * sinElev // lerp(1.15,1,sin)
@@ -429,6 +430,37 @@ export function deriveShadowProjection(
     offsetX = dx
     offsetY = dy
   }
+
+  if (mirrorX) scaleX = -scaleX
+
+  if (rotation > 180 || rotation <= -180) {
+    rotation = ((((rotation + 180) % 360) + 360) % 360) - 180
+  }
+
+  if (anchor !== 'center') {
+    const pivot =
+      anchor === 'bottom'
+        ? { x: w / 2, y: h }
+        : anchor === 'top'
+          ? { x: w / 2, y: 0 }
+          : anchor === 'left'
+            ? { x: 0, y: h / 2 }
+            : { x: w, y: h / 2 }
+    const angle = (rotation * Math.PI) / 180
+    const transformedPivot = {
+      x: Math.cos(angle) * scaleX * pivot.x - Math.sin(angle) * scaleY * pivot.y,
+      y: Math.sin(angle) * scaleX * pivot.x + Math.cos(angle) * scaleY * pivot.y,
+    }
+    // Pixi's sprite origin is top-left. Translate so the chosen contact edge
+    // remains attached while the silhouette rotates away from the light.
+    offsetX = pivot.x + dx - transformedPivot.x
+    offsetY = pivot.y + dy - transformedPivot.y
+  }
+
+  // Fine contact adjustment is deliberately applied after projection math so
+  // it moves the pinned edge without changing the light direction.
+  offsetX += Number.isFinite(anchorOffset.x) ? anchorOffset.x! : 0
+  offsetY += Number.isFinite(anchorOffset.y) ? anchorOffset.y! : 0
 
   return { offsetX, offsetY, scaleX, scaleY, skewX, skewY, rotation }
 }
@@ -529,6 +561,16 @@ export function clampShadowEffect(effect: ShadowEffect, nodeId?: string): Shadow
     console.warn(`[shadow] ${prefix} bad auto ${String(out.auto)} → false`)
     out.auto = false
   }
+  for (const key of ['anchorOffsetX', 'anchorOffsetY'] as const) {
+    if (out[key] !== undefined && !Number.isFinite(out[key])) {
+      console.warn(`[shadow] ${prefix} bad ${key} ${String(out[key])} → 0`)
+      out[key] = 0
+    }
+  }
+  if (out.mirrorX !== undefined && typeof out.mirrorX !== 'boolean') {
+    console.warn(`[shadow] ${prefix} bad mirrorX ${String(out.mirrorX)} → false`)
+    out.mirrorX = false
+  }
   return out
 }
 
@@ -626,6 +668,11 @@ export function shadowEffectFromJSON(value: unknown, nodeId: string): ShadowEffe
       candidate.auto = false
     }
   }
+  for (const key of ['anchorOffsetX', 'anchorOffsetY'] as const) {
+    const raw = r[key]
+    if (raw !== undefined) candidate[key] = typeof raw === 'number' ? raw : 0
+  }
+  if (typeof r.mirrorX === 'boolean') candidate.mirrorX = r.mirrorX
 
   // Detect missing fields to warn for required 10 (base, not light)
   for (const k of SHADOW_BASE_PROPERTIES) {
@@ -674,6 +721,9 @@ export function isShadowEffectEqual(a: ShadowEffect, b: ShadowEffect): boolean {
     a.lightAzimuth === b.lightAzimuth &&
     a.lightElevation === b.lightElevation &&
     a.lightDistance === b.lightDistance &&
+    a.anchorOffsetX === b.anchorOffsetX &&
+    a.anchorOffsetY === b.anchorOffsetY &&
+    a.mirrorX === b.mirrorX &&
     a.auto === b.auto
   )
 }

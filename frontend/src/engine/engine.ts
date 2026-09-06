@@ -124,7 +124,11 @@ export interface EnginePublic {
   isClipReferenced(clipId: string): boolean
   getClipBlockingNodeNames(clipId: string): string[]
   getShadowEffect(nodeId: string): import('./shadowEffect').ShadowEffect | undefined
-  evaluateShadow(nodeId: string, time: number): import('./shadowEffect').ShadowEffect | null
+  evaluateShadow(
+    nodeId: string,
+    time: number,
+    bounds?: { w: number; h: number },
+  ): import('./shadowEffect').ShadowEffect | null
   getShadowKeyframes(
     nodeId: string,
     property: import('./shadowEffect').ShadowProperty,
