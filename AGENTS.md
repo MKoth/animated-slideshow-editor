@@ -19,3 +19,7 @@ The 12 phase specs on github.com/MKoth/animated-slideshow-editor are the impleme
 ### Interactive decisions
 
 When presenting design choices or multiple-option decisions to the user, always use the `question` tool instead of listing options as plain text. This gives the user clickable UI to answer and produces structured results.
+
+### Testing
+
+Run only related tests during development (e.g. `npm run test --prefix frontend -- <pattern> --run`). Full suites run automatically via the `husky` pre-commit hook (`frontend/.husky/pre-commit` → `lint-staged` → `vitest run` / `pytest`); avoid running the entire suite locally unless needed.

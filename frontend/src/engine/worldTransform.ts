@@ -94,11 +94,27 @@ export class EvaluatedWorldTransformSource {
     this.#constraintManager = constraintManager
   }
 
+  #worldWithPreview(nodeId: string): WorldTransform | null {
+    let node: SceneNode
+    try {
+      node = this.#engine.getNode(nodeId)
+    } catch {
+      return null
+    }
+    const chain: SceneNode[] = []
+    for (let cursor: SceneNode | null = node; cursor !== null; cursor = cursor.parent) {
+      chain.push(cursor)
+    }
+    chain.reverse()
+    return composeChain(chain, this.#localOf)
+  }
+
   /**
    * Compute IK overrides for all IK chains in the given slide at the given time.
    * Must be called before transformOf to apply IK rotations.
    */
   updateIKOverrides(slideId: string, time: number): void {
+    this.#time = time
     this.#ikOverrides.clear()
     if (!this.#ikManager) {
       return
@@ -106,40 +122,70 @@ export class EvaluatedWorldTransformSource {
     const chains = this.#ikManager.getChainsForSlide(slideId)
     for (const chain of chains) {
       // Resolve target position (if attached to node, evaluate its world position)
+      // Preview-aware: if the ghost has a preview position, its world reflects the live drag.
       let targetWorld = chain.target.position
       if (chain.target.nodeId) {
-        const targetWorldTransform = evaluatedWorldTransformOf(
-          this.#engine,
-          chain.target.nodeId,
-          time,
-        )
-        if (targetWorldTransform) {
-          targetWorld = { x: targetWorldTransform.x, y: targetWorldTransform.y }
+        const nodeId = chain.target.nodeId
+        if (this.#previews.has(nodeId)) {
+          const previewWorld = this.#worldWithPreview(nodeId)
+          if (previewWorld) {
+            targetWorld = { x: previewWorld.x, y: previewWorld.y }
+          } else {
+            const targetWorldTransform = evaluatedWorldTransformOf(this.#engine, nodeId, time)
+            if (targetWorldTransform) {
+              targetWorld = { x: targetWorldTransform.x, y: targetWorldTransform.y }
+            }
+          }
+        } else {
+          const targetWorldTransform = evaluatedWorldTransformOf(this.#engine, nodeId, time)
+          if (targetWorldTransform) {
+            targetWorld = { x: targetWorldTransform.x, y: targetWorldTransform.y }
+          }
         }
       }
       // Resolve pole target position (if attached to node, evaluate its world position)
       let poleWorld: { readonly x: number; readonly y: number } | null =
         chain.poleTarget?.position ?? null
       if (chain.poleTarget?.nodeId) {
-        const poleWorldTransform = evaluatedWorldTransformOf(
-          this.#engine,
-          chain.poleTarget.nodeId,
-          time,
-        )
-        if (poleWorldTransform) {
-          poleWorld = { x: poleWorldTransform.x, y: poleWorldTransform.y }
+        const poleNodeId = chain.poleTarget.nodeId
+        if (this.#previews.has(poleNodeId)) {
+          const previewWorld = this.#worldWithPreview(poleNodeId)
+          if (previewWorld) {
+            poleWorld = { x: previewWorld.x, y: previewWorld.y }
+          } else {
+            const poleWorldTransform = evaluatedWorldTransformOf(this.#engine, poleNodeId, time)
+            if (poleWorldTransform) {
+              poleWorld = { x: poleWorldTransform.x, y: poleWorldTransform.y }
+            }
+          }
+        } else {
+          const poleWorldTransform = evaluatedWorldTransformOf(this.#engine, poleNodeId, time)
+          if (poleWorldTransform) {
+            poleWorld = { x: poleWorldTransform.x, y: poleWorldTransform.y }
+          }
         }
       } else if (chain.poleGhostNodeId) {
         // Legacy: pole ghost stored separately, resolve similarly
-        const poleWorldTransform = evaluatedWorldTransformOf(
-          this.#engine,
-          chain.poleGhostNodeId,
-          time,
-        )
-        if (poleWorldTransform) {
-          poleWorld = { x: poleWorldTransform.x, y: poleWorldTransform.y }
-        } else if (chain.poleTarget?.position) {
-          poleWorld = chain.poleTarget.position
+        const poleGhostId = chain.poleGhostNodeId
+        if (this.#previews.has(poleGhostId)) {
+          const previewWorld = this.#worldWithPreview(poleGhostId)
+          if (previewWorld) {
+            poleWorld = { x: previewWorld.x, y: previewWorld.y }
+          } else {
+            const poleWorldTransform = evaluatedWorldTransformOf(this.#engine, poleGhostId, time)
+            if (poleWorldTransform) {
+              poleWorld = { x: poleWorldTransform.x, y: poleWorldTransform.y }
+            } else if (chain.poleTarget?.position) {
+              poleWorld = chain.poleTarget.position
+            }
+          }
+        } else {
+          const poleWorldTransform = evaluatedWorldTransformOf(this.#engine, poleGhostId, time)
+          if (poleWorldTransform) {
+            poleWorld = { x: poleWorldTransform.x, y: poleWorldTransform.y }
+          } else if (chain.poleTarget?.position) {
+            poleWorld = chain.poleTarget.position
+          }
         }
       }
       // Get bone nodes and their lengths

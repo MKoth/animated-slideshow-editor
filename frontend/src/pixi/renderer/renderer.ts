@@ -457,6 +457,16 @@ export class Renderer {
         dispatch: this.#dispatch,
         ikOverlay: this.#ikOverlay,
         onIKChanged: () => this.#handleTimeChanged(),
+        preview: {
+          setPosition: (nodeId, x, y) => {
+            this.#previewPositions.set(nodeId, { x, y })
+            this.#sceneRenderer?.previewTransform(nodeId, x, y)
+          },
+          clearPosition: (nodeId) => {
+            this.#previewPositions.delete(nodeId)
+            this.#sceneRenderer?.clearPreview(nodeId)
+          },
+        },
       })
       this.#ikInteraction.attach()
 
