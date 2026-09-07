@@ -324,3 +324,40 @@ export function rotateX(x: number, y: number, rotation: number): number {
 export function rotateY(x: number, y: number, rotation: number): number {
   return x * Math.sin(rotation) + y * Math.cos(rotation)
 }
+
+export function worldDeltaToLocal(
+  deltaWorld: { x: number; y: number },
+  worldTransform: {
+    readonly x: number
+    readonly y: number
+    readonly rotation: number
+    readonly scaleX: number
+    readonly scaleY: number
+  },
+): { x: number; y: number } {
+  const cos = Math.cos(worldTransform.rotation)
+  const sin = Math.sin(worldTransform.rotation)
+  const invScaleX = worldTransform.scaleX !== 0 ? 1 / worldTransform.scaleX : 0
+  const invScaleY = worldTransform.scaleY !== 0 ? 1 / worldTransform.scaleY : 0
+  const rx = deltaWorld.x * cos + deltaWorld.y * sin
+  const ry = -deltaWorld.x * sin + deltaWorld.y * cos
+  return { x: rx * invScaleX, y: ry * invScaleY }
+}
+
+export function localDeltaToWorld(
+  deltaLocal: { x: number; y: number },
+  worldTransform: {
+    readonly x: number
+    readonly y: number
+    readonly rotation: number
+    readonly scaleX: number
+    readonly scaleY: number
+  },
+): { x: number; y: number } {
+  const sx = deltaLocal.x * worldTransform.scaleX
+  const sy = deltaLocal.y * worldTransform.scaleY
+  return {
+    x: rotateX(sx, sy, worldTransform.rotation),
+    y: rotateY(sx, sy, worldTransform.rotation),
+  }
+}

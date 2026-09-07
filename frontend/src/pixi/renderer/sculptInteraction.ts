@@ -5,7 +5,7 @@ import { useMeshEditStore } from '../../stores/meshEditStore'
 import { cursorToWorld } from './screenToWorld'
 import { deformedMeshWorldVertices } from './deformedMeshWorld'
 import type { ViewportTransform, WorldTransform } from './worldGeometry'
-import { worldTransformOf } from '../../engine/worldTransform'
+import { worldTransformOf, worldDeltaToLocal } from '../../engine/worldTransform'
 import type { WorldTransformSource } from './hitTest'
 import { computeSculptOffsets, isBrushOverMesh } from '../../engine/sculptBrush'
 import type { MeshOverlay } from './meshOverlay'
@@ -278,6 +278,24 @@ export class SculptInteraction {
       }
     }
 
+    if (offsets.size === 0) return
+
+    // Convert world-space offsets to mesh-local (rest) space via inverse world rotation/scale.
+    // computeSculptOffsets returns dx/dy in world units (dragDeltaWorld * factor); rest vertices are in mesh-local.
+    // Without this inverse, sculpt drifts when parent has rotation/scale (see hierarchy repro).
+    for (const [idx, off] of offsets) {
+      const local = worldDeltaToLocal({ x: off.dx, y: off.dy }, worldTransform)
+      if (Math.hypot(local.x, local.y) < 1e-9) {
+        // Keep near-zero as zero to avoid noise, but preserve factor for grabbed persistence
+        offsets.set(idx, { dx: 0, dy: 0, factor: off.factor })
+      } else {
+        offsets.set(idx, { dx: local.x, dy: local.y, factor: off.factor })
+      }
+    }
+    // Filter out any zeroed offsets that became no-ops after conversion
+    for (const [idx, off] of Array.from(offsets.entries())) {
+      if (Math.hypot(off.dx, off.dy) < 1e-9) offsets.delete(idx)
+    }
     if (offsets.size === 0) return
 
     // Apply offsets to basePositions (accumulating per dab) and update preview
