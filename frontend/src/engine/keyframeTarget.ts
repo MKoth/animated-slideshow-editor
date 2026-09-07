@@ -24,6 +24,7 @@ import {
 import type { KeyframeValue } from './keyframe'
 import { requireMaterialKeyframeValue } from './materialKeyframes'
 import { requireMorphKeyframeValue } from './shape'
+import { requireSymmetryKeyframeValue } from './symmetry'
 import type { ShadowProperty } from './shadowEffect'
 import { requireShadowProperty, requireShadowKeyframeValue } from './shadowEffect'
 
@@ -81,6 +82,12 @@ export interface NodeShadowTarget {
   readonly property: ShadowProperty
 }
 
+/** Symmetry blend track target (factor 0..1 per axis) */
+export interface NodeSymmetryTarget {
+  readonly kind: 'symmetry'
+  readonly nodeId: string
+}
+
 /** A clip channel target (Spec 07 R16/R20). */
 export interface ClipChannelTarget {
   readonly kind: 'clip'
@@ -90,7 +97,7 @@ export interface ClipChannelTarget {
 
 /**
  * A keyframe editing target. The discriminated shape supports node targets,
- * data-label targets, circle targets, visible targets, shadow targets and clip channel targets (Spec 07 R20 + Shadow 04).
+ * data-label targets, circle targets, visible targets, shadow targets, symmetry and clip channel targets (Spec 07 R20 + Shadow 04).
  */
 export type KeyframeTarget =
   | NodePropertyTarget
@@ -101,6 +108,7 @@ export type KeyframeTarget =
   | NodeVisibleTarget
   | NodeMorphTarget
   | NodeShadowTarget
+  | NodeSymmetryTarget
   | ClipChannelTarget
 
 export function isPropertyTarget(target: KeyframeTarget): target is NodePropertyTarget {
@@ -139,7 +147,15 @@ export function isShadowTarget(target: KeyframeTarget): target is NodeShadowTarg
   return target.kind === 'shadow'
 }
 
+export function isSymmetryTarget(target: KeyframeTarget): target is NodeSymmetryTarget {
+  return target.kind === 'symmetry'
+}
+
 export function requireKeyframeTarget(value: unknown): KeyframeTarget {
+  if (isRecord(value) && value.kind === 'symmetry') {
+    const nodeId = requireString(value.nodeId, 'Symmetry target node id')
+    return { kind: 'symmetry', nodeId }
+  }
   if (isRecord(value) && value.kind === 'shadow') {
     const nodeId = requireString(value.nodeId, 'Shadow target node id')
     const property = requireShadowProperty(value.property)
@@ -181,6 +197,10 @@ export function requireKeyframeTarget(value: unknown): KeyframeTarget {
     const nodeId = requireString(value.nodeId, 'Morph target node id')
     return { kind: 'morph', nodeId }
   }
+  if (isRecord(value) && value.kind === 'symmetry') {
+    const nodeId = requireString(value.nodeId, 'Symmetry target node id')
+    return { kind: 'symmetry', nodeId }
+  }
   if (isRecord(value) && value.kind === 'clip') {
     const clipId = requireString(value.clipId, 'Keyframe target clip id')
     const channel = requireAnimationProperty(value.channel)
@@ -205,7 +225,7 @@ export type MaterialParameterKindOf = (node: SceneNode, parameterKey: string) =>
 
 /**
  * The resolved track a target names: a uniform-six property track, a
- * material-parameter track, a data-label track, a circle track, a table track, the visible hold-only track, morph or shadow.
+ * material-parameter track, a data-label track, a circle track, a table track, the visible hold-only track, morph, shadow or symmetry.
  */
 export type KeyframeTrackRef =
   | { readonly kind: 'property'; readonly property: AnimationProperty }
@@ -216,6 +236,7 @@ export type KeyframeTrackRef =
   | { readonly kind: 'visible' }
   | { readonly kind: 'morph' }
   | { readonly kind: 'shadow'; readonly property: ShadowProperty }
+  | { readonly kind: 'symmetry' }
 
 export function resolveKeyframeTrack(
   node: SceneNode,
@@ -225,6 +246,9 @@ export function resolveKeyframeTrack(
 ): KeyframeTrackRef {
   if (isClipChannelTarget(target)) {
     throw new Error('Clip channel targets cannot be resolved through node animation tracks')
+  }
+  if (isSymmetryTarget(target)) {
+    return { kind: 'symmetry' }
   }
   if (isShadowTarget(target)) {
     return { kind: 'shadow', property: requireShadowProperty(target.property) }
@@ -258,12 +282,15 @@ export function resolveKeyframeTrack(
   return { kind: 'parameter', parameter, kindOf: kindOfParameter }
 }
 
-/** Validate a keyframe value for a resolved track (property, material kind, data label, visible, morph or shadow). */
+/** Validate a keyframe value for a resolved track (property, material kind, data label, visible, morph, shadow or symmetry). */
 export function requireTrackKeyframeValue(
   track: KeyframeTrackRef,
   value: unknown,
   what = 'Keyframe value',
 ): KeyframeValue {
+  if (track.kind === 'symmetry') {
+    return requireSymmetryKeyframeValue(value, what) as unknown as KeyframeValue
+  }
   if (track.kind === 'shadow') {
     return requireShadowKeyframeValue(track.property, value, what) as unknown as KeyframeValue
   }
@@ -318,7 +345,8 @@ export function requireNodeTarget(
   | NodeTableTarget
   | NodeVisibleTarget
   | NodeMorphTarget
-  | NodeShadowTarget {
+  | NodeShadowTarget
+  | NodeSymmetryTarget {
   if (
     target.kind !== 'node' &&
     target.kind !== 'dataLabel' &&
@@ -326,7 +354,8 @@ export function requireNodeTarget(
     target.kind !== 'table' &&
     target.kind !== 'visible' &&
     target.kind !== 'morph' &&
-    target.kind !== 'shadow'
+    target.kind !== 'shadow' &&
+    target.kind !== 'symmetry'
   ) {
     throw new Error('This operation only supports node targets')
   }
@@ -339,6 +368,7 @@ export function requireNodeTarget(
     | NodeVisibleTarget
     | NodeMorphTarget
     | NodeShadowTarget
+    | NodeSymmetryTarget
 }
 
 /** Validate a scale factor: a non-negative finite number. */

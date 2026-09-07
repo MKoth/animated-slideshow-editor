@@ -13,6 +13,7 @@ import type {
   VisibleTrackJSON,
   MorphTrackJSON,
   ShadowTrackJSON,
+  SymmetryTrackJSON,
 } from './json'
 import type { MorphBinding } from './shape'
 import { requireMorphKeyframeValue } from './shape'
@@ -31,6 +32,7 @@ import { requireMaterialKeyframeValue } from './materialKeyframes'
 import type { MaterialParameterKindOf } from './keyframeTarget'
 import type { ShadowProperty } from './shadowEffect'
 import { requireShadowProperty, requireShadowKeyframeValue } from './shadowEffect'
+import { requireSymmetryKeyframeValue } from './symmetry'
 
 export type { MaterialParameterKindOf } from './keyframeTarget'
 
@@ -44,6 +46,7 @@ export class NodeAnimation {
   #morphBinding: MorphBinding | null = null
   readonly #morph: Keyframe[] = []
   readonly #shadowTracks = new Map<ShadowProperty, Keyframe[]>()
+  readonly #symmetry: Keyframe[] = []
 
   keyframes(property: AnimationProperty): readonly Keyframe[] {
     return this.#tracks.get(property) ?? []
@@ -169,6 +172,77 @@ export class NodeAnimation {
             tangentOut as import('./keyframe').KeyframeTangent,
           )
           this.addShadow(prop, kf)
+        } catch {
+          continue
+        }
+      }
+    }
+  }
+
+  // --- Symmetry bespoke track (axis+factor 0..1, continuous like morph) ---
+  symmetryKeyframes(): readonly Keyframe[] {
+    return this.#symmetry
+  }
+
+  hasSymmetryTrack(): boolean {
+    return this.#symmetry.length > 0
+  }
+
+  addSymmetry(keyframe: Keyframe): void {
+    const index = this.#symmetry.findIndex((entry) => entry.time > keyframe.time)
+    if (index === -1) {
+      this.#symmetry.push(keyframe)
+    } else {
+      this.#symmetry.splice(index, 0, keyframe)
+    }
+  }
+
+  removeSymmetry(keyframeId: string): Keyframe | undefined {
+    const index = this.#symmetry.findIndex((entry) => entry.id === keyframeId)
+    if (index === -1) return undefined
+    const [removed] = this.#symmetry.splice(index, 1)
+    return removed
+  }
+
+  getSymmetry(keyframeId: string): Keyframe | undefined {
+    return this.#symmetry.find((entry) => entry.id === keyframeId)
+  }
+
+  removeSymmetryTrack(): void {
+    this.#symmetry.length = 0
+  }
+
+  clearSymmetryTracks(): SymmetryTrackJSON[] {
+    const snapshot = this.symmetryTrackJSON()
+    this.#symmetry.length = 0
+    return snapshot ? [snapshot] : []
+  }
+
+  restoreSymmetryTracks(tracks: readonly SymmetryTrackJSON[], duration: number, _nodeId: string): void {
+    void _nodeId
+    this.#symmetry.length = 0
+    for (const track of tracks as unknown as readonly {
+      keyframes: readonly import('./json').KeyframeJSON[]
+    }[]) {
+      if (!track || !Array.isArray(track.keyframes)) continue
+      for (const kfJson of track.keyframes) {
+        try {
+          const id = kfJson.id
+          const time = kfJson.time
+          const value = requireSymmetryKeyframeValue(kfJson.value, 'Symmetry track')
+          const interpolation = kfJson.interpolation ?? 'linear'
+          const tangentIn = kfJson.tangentIn ?? { time: 0, value: 0 }
+          const tangentOut = kfJson.tangentOut ?? { time: 0, value: 0 }
+          if (typeof time !== 'number' || time < 0 || time > duration) continue
+          const kf = new KeyframeModel(
+            id,
+            time,
+            value as unknown as import('./keyframe').KeyframeValue,
+            interpolation as import('./keyframe').InterpolationType,
+            tangentIn as import('./keyframe').KeyframeTangent,
+            tangentOut as import('./keyframe').KeyframeTangent,
+          )
+          this.addSymmetry(kf)
         } catch {
           continue
         }
@@ -363,6 +437,9 @@ export class NodeAnimation {
     for (const keyframe of this.#morph) {
       copy.#morph.push(copyKeyframe(keyframe))
     }
+    for (const keyframe of this.#symmetry) {
+      copy.#symmetry.push(copyKeyframe(keyframe))
+    }
     if (this.#morphBinding) {
       copy.#morphBinding = { ...this.#morphBinding }
     }
@@ -429,6 +506,13 @@ export class NodeAnimation {
       return undefined
     }
     return { keyframes: this.#morph.map((keyframe) => keyframe.toJSON()) }
+  }
+
+  symmetryTrackJSON(): SymmetryTrackJSON | undefined {
+    if (this.#symmetry.length === 0) {
+      return undefined
+    }
+    return { keyframes: this.#symmetry.map((keyframe) => keyframe.toJSON()) }
   }
 
   morphBindingJSON(): import('./json').MorphBindingJSON | null | undefined {
@@ -530,6 +614,10 @@ export class NodeAnimation {
           readShadowTrack(animation, track, duration, node.id)
         }
       }
+    }
+    const symmetryTrack = (json as Record<string, unknown>).symmetryTrack
+    if (symmetryTrack !== undefined) {
+      readSymmetryTrack(animation, symmetryTrack, duration)
     }
     return animation
   }
@@ -789,6 +877,22 @@ function readShadowTrack(
         `[shadow] Node "${nodeId}" shadow track "${property}" bad keyframe — ignoring: ${e instanceof Error ? e.message : String(e)}`,
       )
     }
+  }
+}
+
+function readSymmetryTrack(animation: NodeAnimation, track: unknown, duration: number): void {
+  if (typeof track !== 'object' || track === null) {
+    throw new Error('Symmetry track must be an object')
+  }
+  const record = track as Record<string, unknown>
+  if (!Array.isArray(record.keyframes)) {
+    throw new Error('Symmetry track must have a keyframes array')
+  }
+  const parse = trackKeyframeParser('Symmetry track', duration, (value, what) =>
+    requireSymmetryKeyframeValue(value, what),
+  )
+  for (const keyframeJson of record.keyframes) {
+    animation.addSymmetry(parse(keyframeJson))
   }
 }
 

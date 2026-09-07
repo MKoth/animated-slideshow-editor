@@ -989,6 +989,63 @@ export function applyUndo(
       engine.setMeshData(nodeId, mesh)
       return
     }
+    case 'SymmetrizeSubtree': {
+      const snapshots = (inv.snapshots ?? inv.snapshots) as readonly {
+        nodeId: string
+        oldTransform: import('../transform').Transform
+        oldMesh?: import('../mesh').MeshData
+        oldShapes?: readonly import('../shape').Shape[]
+        oldUVTransform?: import('../uvTransform').UVTransform
+      }[]
+      if (!snapshots) return
+      for (let i = snapshots.length - 1; i >= 0; i--) {
+        const s = snapshots[i] as unknown as {
+          nodeId: string
+          oldTransform: import('../transform').Transform
+          oldMesh?: import('../mesh').MeshData
+          oldShapes?: readonly import('../shape').Shape[]
+          oldUVTransform?: import('../uvTransform').UVTransform
+        }
+        try {
+          engine.setTransform(s.nodeId, s.oldTransform)
+        } catch {
+          void 0
+        }
+        if (s.oldMesh) {
+          try {
+            engine.setMeshData(s.nodeId, s.oldMesh)
+          } catch {
+            void 0
+          }
+          if (s.oldShapes !== undefined) {
+            try {
+              if (s.oldShapes.length > 0) engine.restoreShapes(s.nodeId, s.oldShapes)
+              else engine.restoreShapes(s.nodeId, [])
+            } catch {
+              void 0
+            }
+          }
+        }
+        // Restore uvTransform
+        try {
+          const node = engine.getNode(s.nodeId)
+          const curUV = node.material.uvTransform
+          if (JSON.stringify(curUV) !== JSON.stringify(s.oldUVTransform)) {
+            const mat: Record<string, unknown> = {
+              materialDefinitionId: node.material.materialDefinitionId,
+              overrides: { ...node.material.overrides },
+            }
+            if (node.material.textureId) mat.textureId = node.material.textureId
+            if (s.oldUVTransform) mat.uvTransform = s.oldUVTransform
+            ;(node as unknown as { material: unknown }).material = mat
+            engine.emitMaterialChanged(s.nodeId)
+          }
+        } catch {
+          void 0
+        }
+      }
+      return
+    }
     case 'ExtrudeFaces':
     case 'ExtrudeEdges':
     case 'SubdivideFaces':
@@ -3273,6 +3330,121 @@ export function applyRedo(
     case 'ApplyClipCollection':
       engine.applyClipCollection(params.collectionId as string, params.targetNodeId as string)
       return
+    case 'SymmetrizeSubtree': {
+      const nodeId = params.nodeId as string
+      const axis = params.axis as import('../symmetry').SymmetryAxis
+      // Re-apply symmetrize: mirror again from current state
+      const root = engine.getNode(nodeId)
+      const stack = [root]
+      const order: import('../sceneNode').SceneNode[] = []
+      while (stack.length > 0) {
+        const cur = stack.pop()!
+        order.push(cur)
+        stack.push(...[...cur.children].reverse())
+      }
+      for (const node of order) {
+        const meshComp = node.components.mesh
+        const hasTexture = Boolean(node.material.textureId)
+        if (meshComp) {
+          const newVertices = meshComp.mesh.vertices.map((v) =>
+            axis === 'x' ? { x: -v.x, y: v.y } : { x: v.x, y: -v.y },
+          )
+          const newUvs = meshComp.mesh.uvs.map((uv) =>
+            axis === 'x' ? { u: 1 - uv.u, v: uv.v } : { u: uv.u, v: 1 - uv.v },
+          )
+          const newFaces = meshComp.mesh.faces.map((f) => ({ v0: f.v0, v1: f.v2, v2: f.v1 }))
+          const newMesh = { ...meshComp.mesh, vertices: newVertices, uvs: newUvs, faces: newFaces }
+          const newTransform = {
+            x: axis === 'x' ? -node.transform.x : node.transform.x,
+            y: axis === 'y' ? -node.transform.y : node.transform.y,
+            rotation: -node.transform.rotation,
+            scaleX: node.transform.scaleX,
+            scaleY: node.transform.scaleY,
+            ...(node.transform.localPivot
+              ? {
+                  localPivot: {
+                    x: axis === 'x' ? -node.transform.localPivot.x : node.transform.localPivot.x,
+                    y: axis === 'y' ? -node.transform.localPivot.y : node.transform.localPivot.y,
+                  },
+                }
+              : {}),
+          } as import('../transform').Transform
+          engine.setTransform(node.id, newTransform)
+          engine.setMeshData(node.id, newMesh)
+          const shapes = meshComp.shapes
+          if (shapes && shapes.length > 0) {
+            const newShapes = shapes.map((s) => ({
+              id: s.id,
+              name: s.name,
+              vertices: s.vertices.map((v) =>
+                axis === 'x' ? { x: -v.x, y: v.y } : { x: v.x, y: -v.y },
+              ),
+            }))
+            engine.restoreShapes(node.id, newShapes)
+          }
+          if (hasTexture) {
+            const curUV = node.material.uvTransform
+            const base = curUV ?? { uvScale: { u: 1, v: 1 }, uvOffset: { u: 0, v: 0 }, fitMode: 'stretch' as const }
+            const newUV = {
+              uvScale: { ...base.uvScale },
+              uvOffset: {
+                u: axis === 'x' ? 1 - base.uvScale.u - base.uvOffset.u : base.uvOffset.u,
+                v: axis === 'y' ? 1 - base.uvScale.v - base.uvOffset.v : base.uvOffset.v,
+              },
+              fitMode: base.fitMode,
+            }
+            const mat: Record<string, unknown> = {
+              materialDefinitionId: node.material.materialDefinitionId,
+              overrides: { ...node.material.overrides },
+              textureId: node.material.textureId,
+              uvTransform: newUV,
+            }
+            ;(node as unknown as { material: unknown }).material = mat
+            engine.emitMaterialChanged(node.id)
+          }
+        } else {
+          const newTransform = {
+            x: axis === 'x' ? -node.transform.x : node.transform.x,
+            y: axis === 'y' ? -node.transform.y : node.transform.y,
+            rotation: -node.transform.rotation,
+            scaleX: node.transform.scaleX,
+            scaleY: node.transform.scaleY,
+            ...(node.transform.localPivot
+              ? {
+                  localPivot: {
+                    x: axis === 'x' ? -node.transform.localPivot.x : node.transform.localPivot.x,
+                    y: axis === 'y' ? -node.transform.localPivot.y : node.transform.localPivot.y,
+                  },
+                }
+              : {}),
+          } as import('../transform').Transform
+          engine.setTransform(node.id, newTransform)
+          if (hasTexture || node.components.circle) {
+            const curUV = node.material.uvTransform
+            if (curUV || hasTexture) {
+              const base = curUV ?? { uvScale: { u: 1, v: 1 }, uvOffset: { u: 0, v: 0 }, fitMode: 'stretch' as const }
+              const newUV = {
+                uvScale: { ...base.uvScale },
+                uvOffset: {
+                  u: axis === 'x' ? 1 - base.uvScale.u - base.uvOffset.u : base.uvOffset.u,
+                  v: axis === 'y' ? 1 - base.uvScale.v - base.uvOffset.v : base.uvOffset.v,
+                },
+                fitMode: base.fitMode,
+              }
+              const mat: Record<string, unknown> = {
+                materialDefinitionId: node.material.materialDefinitionId,
+                overrides: { ...node.material.overrides },
+              }
+              if (node.material.textureId) mat.textureId = node.material.textureId
+              mat.uvTransform = newUV
+              ;(node as unknown as { material: unknown }).material = mat
+              engine.emitMaterialChanged(node.id)
+            }
+          }
+        }
+      }
+      return
+    }
     case 'SetMorphBinding':
       engine.setMorphBinding(
         params.nodeId as string,

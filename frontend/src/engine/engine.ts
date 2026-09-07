@@ -134,6 +134,14 @@ export interface EnginePublic {
     property: import('./shadowEffect').ShadowProperty,
   ): readonly import('./keyframe').Keyframe[]
   hasShadowTrack(nodeId: string, property: import('./shadowEffect').ShadowProperty): boolean
+  getSymmetryKeyframes(nodeId: string): readonly import('./keyframe').Keyframe[]
+  hasSymmetryTrack(nodeId: string): boolean
+  evaluateSymmetry(nodeId: string, time: number): import('./symmetry').SymmetryKeyframeValue | null
+  evaluateSymmetryVertices(
+    nodeId: string,
+    time: number,
+    baseVertices: readonly import('./mesh').MeshVertex[],
+  ): readonly import('./mesh').MeshVertex[] | null
   getCastShadow(nodeId: string): boolean
   setCastShadow(nodeId: string, castShadow: boolean | undefined): void
   // ClipCollection

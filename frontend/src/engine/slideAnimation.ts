@@ -59,6 +59,12 @@ export type ClampedKeyframe =
       readonly keyframeId: string
       readonly oldTime: number
     }
+  | {
+      readonly nodeId: string
+      readonly symmetry: true
+      readonly keyframeId: string
+      readonly oldTime: number
+    }
 
 export class SlideAnimation {
   readonly #nodes = new Map<string, NodeAnimation>()
@@ -196,6 +202,17 @@ export class SlideAnimation {
           }
         }
       }
+      for (const keyframe of animation.symmetryKeyframes()) {
+        if (keyframe.time > duration) {
+          clamped.push({
+            nodeId,
+            symmetry: true,
+            keyframeId: keyframe.id,
+            oldTime: keyframe.time,
+          })
+          keyframe.time = duration
+        }
+      }
     }
     return clamped
   }
@@ -212,6 +229,7 @@ export class SlideAnimation {
       const morphTrack = animation.morphTrackJSON()
       const morphBinding = animation.morphBindingJSON()
       const shadowTracks = animation.shadowTracksJSON()
+      const symmetryTrack = animation.symmetryTrackJSON()
       if (
         tracks.length > 0 ||
         materialTracks.length > 0 ||
@@ -221,7 +239,8 @@ export class SlideAnimation {
         visibleTrack !== undefined ||
         morphTrack !== undefined ||
         morphBinding !== undefined ||
-        shadowTracks.length > 0
+        shadowTracks.length > 0 ||
+        symmetryTrack !== undefined
       ) {
         nodes.push({
           nodeId,
@@ -234,6 +253,7 @@ export class SlideAnimation {
           ...(morphTrack !== undefined ? { morphTrack } : {}),
           ...(morphBinding !== undefined ? { morphBinding } : {}),
           ...(shadowTracks.length > 0 ? { shadowTracks } : {}),
+          ...(symmetryTrack !== undefined ? { symmetryTrack } : {}),
         })
       }
     }

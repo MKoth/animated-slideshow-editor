@@ -65,6 +65,12 @@ export interface MorphSubtrackEntry {
   readonly depth: number
 }
 
+export interface SymmetrySubtrackEntry {
+  readonly kind: 'symmetrySubtrack'
+  readonly node: SceneNode
+  readonly depth: number
+}
+
 export interface ShadowSubtrackEntry {
   readonly kind: 'shadowSubtrack'
   readonly node: SceneNode
@@ -89,6 +95,7 @@ export type TimelineRow =
   | CircleSubtrackEntry
   | VisibleSubtrackEntry
   | MorphSubtrackEntry
+  | SymmetrySubtrackEntry
   | ShadowSubtrackEntry
   | BoneTrackEntry
 
@@ -111,6 +118,8 @@ export const CIRCLE_LABELS: Record<CircleAnimationProperty, string> = {
 export const VISIBLE_LABEL = 'Visible'
 
 export const MORPH_LABEL = 'Morph'
+
+export const SYMMETRY_LABEL = 'Symmetry'
 
 export const SHADOW_LABELS_MAP = SHADOW_LABELS
 
@@ -184,6 +193,7 @@ export function timelineRows(
       rows.push({ kind: 'visibleSubtrack', node: entry.node, depth: entry.depth + 1 })
       if (entry.node.components.mesh) {
         rows.push({ kind: 'morphSubtrack', node: entry.node, depth: entry.depth + 1 })
+        rows.push({ kind: 'symmetrySubtrack', node: entry.node, depth: entry.depth + 1 })
       }
       for (const parameter of materialParametersOf(entry.node, materialDefinitions)) {
         rows.push({ kind: 'materialSubtrack', node: entry.node, parameter, depth: entry.depth + 1 })

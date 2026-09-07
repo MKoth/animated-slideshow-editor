@@ -197,6 +197,10 @@ export type ShadowTrackJSON = {
   readonly keyframes: readonly KeyframeJSON[]
 }
 
+export type SymmetryTrackJSON = {
+  readonly keyframes: readonly KeyframeJSON[]
+}
+
 export type NodeAnimationJSON = {
   readonly nodeId: string
   readonly tracks: readonly PropertyTrackJSON[]
@@ -208,6 +212,7 @@ export type NodeAnimationJSON = {
   readonly morphBinding?: MorphBindingJSON | null
   readonly morphTrack?: MorphTrackJSON
   readonly shadowTracks?: readonly ShadowTrackJSON[]
+  readonly symmetryTrack?: SymmetryTrackJSON
 }
 
 export type SlideAnimationJSON = {

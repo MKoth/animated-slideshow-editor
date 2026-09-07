@@ -1648,6 +1648,8 @@ export class Engine {
   #materialParameterKindOf: MaterialParameterKindOf = (node, parameterKey) =>
     this.getMaterialParameterKind(node, parameterKey)
 
+  // Symmetry seam helper for async import fallback already handled inline
+
   createNode(
     sceneId: string,
     parentId: string,
@@ -1775,6 +1777,26 @@ export class Engine {
     )
   }
 
+  getSymmetryKeyframes(nodeId: string): readonly Keyframe[] {
+    return this.#animations.getSymmetryKeyframes(nodeId)
+  }
+
+  hasSymmetryTrack(nodeId: string): boolean {
+    return this.#animations.hasSymmetryTrack(nodeId)
+  }
+
+  evaluateSymmetry(nodeId: string, time: number): import('./symmetry').SymmetryKeyframeValue | null {
+    return this.#evaluator.evaluateSymmetryValue(nodeId, time)
+  }
+
+  evaluateSymmetryVertices(
+    nodeId: string,
+    time: number,
+    baseVertices: readonly import('./mesh').MeshVertex[],
+  ): readonly import('./mesh').MeshVertex[] | null {
+    return this.#evaluator.evaluateSymmetryVertices(nodeId, time, baseVertices)
+  }
+
   evaluateVisible(nodeId: string, time: number): boolean {
     return this.#evaluator.evaluateVisible(nodeId, time)
   }
@@ -1828,6 +1850,9 @@ export class Engine {
     if (resolved.kind === 'table') {
       return animation.tableKeyframes(resolved.property)
     }
+    if (resolved.kind === 'symmetry') {
+      return animation.symmetryKeyframes()
+    }
     return animation.materialKeyframes(resolved.parameter)
   }
 
@@ -1871,37 +1896,82 @@ export class Engine {
     if (node.components.mesh) {
       const mesh = node.components.mesh.mesh
       const shapes = node.components.mesh.shapes
+      let baseVertices: readonly import('./mesh').MeshVertex[] = mesh.vertices
       // New per-keyframe morph: evaluate morphed rest vertices via cross-blend (includes clip layering)
       try {
         const morphed = this.#evaluator.evaluateMorphVertices(nodeId, _time, mesh.vertices, shapes)
         if (morphed && morphed !== mesh.vertices) {
-          const morphedMesh = { ...mesh, vertices: morphed as import('./mesh').MeshVertex[] }
-          return evaluateMeshDeformation(morphedMesh, boneWorldTransforms, meshWorldTransform)
+          baseVertices = morphed as import('./mesh').MeshVertex[]
         }
       } catch {
         // fallback to base
       }
-      // Legacy fallback: try old binding+coefficient path for old files that haven't migrated vertex blend yet
-      let morphBinding: MorphBinding | null = null
-      try {
-        morphBinding = this.getMorphBinding(nodeId)
-      } catch {
-        morphBinding = null
+      // Legacy fallback if morph not via new path but binding exists and morphed == base
+      if (baseVertices === mesh.vertices) {
+        let morphBinding: MorphBinding | null = null
+        try {
+          morphBinding = this.getMorphBinding(nodeId)
+        } catch {
+          morphBinding = null
+        }
+        let coefficient = 0
+        try {
+          coefficient = this.evaluateMorph(nodeId, _time)
+        } catch {
+          coefficient = 0
+        }
+        if (morphBinding && morphBinding.fromShapeId !== null && morphBinding.toShapeId !== null) {
+          const morphedLegacy = evaluateMorphedMeshDeformation(
+            mesh,
+            { binding: morphBinding, coefficient },
+            shapes,
+            boneWorldTransforms,
+            meshWorldTransform,
+          )
+          baseVertices = morphedLegacy.deformedVertices as unknown as readonly import('./mesh').MeshVertex[]
+          // fall through to symmetry + bones handling below with baseVertices
+          try {
+            const sym = this.#evaluator.evaluateSymmetryValue(nodeId, _time)
+            if (sym && sym.factor !== 0) {
+              const mirrored = baseVertices.map((v) =>
+                sym.axis === 'x' ? { x: -v.x, y: v.y } : { x: v.x, y: -v.y },
+              )
+              if (sym.factor === 1) baseVertices = mirrored
+              else {
+                baseVertices = baseVertices.map((v, i) => {
+                  const mv = mirrored[i]
+                  return { x: v.x + (mv.x - v.x) * sym.factor, y: v.y + (mv.y - v.y) * sym.factor }
+                })
+              }
+            }
+          } catch {
+            void 0
+          }
+          const finalMesh = { ...mesh, vertices: baseVertices as import('./mesh').MeshVertex[] }
+          return evaluateMeshDeformation(finalMesh, boneWorldTransforms, meshWorldTransform)
+        }
       }
-      let coefficient = 0
+      // Apply symmetry after morph (so morph targets also get symmetrized)
       try {
-        coefficient = this.evaluateMorph(nodeId, _time)
+        const sym = this.#evaluator.evaluateSymmetryValue(nodeId, _time)
+        if (sym && sym.factor !== 0) {
+          const mirrored = baseVertices.map((v) =>
+            sym.axis === 'x' ? { x: -v.x, y: v.y } : { x: v.x, y: -v.y },
+          )
+          if (sym.factor === 1) baseVertices = mirrored
+          else {
+            baseVertices = baseVertices.map((v, i) => {
+              const mv = mirrored[i]
+              return { x: v.x + (mv.x - v.x) * sym.factor, y: v.y + (mv.y - v.y) * sym.factor }
+            })
+          }
+        }
       } catch {
-        coefficient = 0
+        void 0
       }
-      if (morphBinding && morphBinding.fromShapeId !== null && morphBinding.toShapeId !== null) {
-        return evaluateMorphedMeshDeformation(
-          mesh,
-          { binding: morphBinding, coefficient },
-          shapes,
-          boneWorldTransforms,
-          meshWorldTransform,
-        )
+      if (baseVertices !== mesh.vertices) {
+        const morphedMesh = { ...mesh, vertices: baseVertices as import('./mesh').MeshVertex[] }
+        return evaluateMeshDeformation(morphedMesh, boneWorldTransforms, meshWorldTransform)
       }
       return evaluateMeshDeformation(mesh, boneWorldTransforms, meshWorldTransform)
     }
@@ -4757,6 +4827,10 @@ export function toReadOnly(engine: Engine): EnginePublic {
     evaluateShadow: (nodeId, time, bounds) => engine.evaluateShadow(nodeId, time, bounds),
     getShadowKeyframes: (nodeId, property) => engine.getShadowKeyframes(nodeId, property),
     hasShadowTrack: (nodeId, property) => engine.hasShadowTrack(nodeId, property),
+    getSymmetryKeyframes: (nodeId) => engine.getSymmetryKeyframes(nodeId),
+    hasSymmetryTrack: (nodeId) => engine.hasSymmetryTrack(nodeId),
+    evaluateSymmetry: (nodeId, time) => engine.evaluateSymmetry(nodeId, time),
+    evaluateSymmetryVertices: (nodeId, time, base) => engine.evaluateSymmetryVertices(nodeId, time, base),
     getCastShadow: (nodeId) => engine.getCastShadow(nodeId),
     setCastShadow: (nodeId, castShadow) => engine.setCastShadow(nodeId, castShadow),
     getClipCollection: (collectionId) => engine.getClipCollection(collectionId),

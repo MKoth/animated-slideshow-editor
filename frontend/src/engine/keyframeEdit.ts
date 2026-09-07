@@ -12,6 +12,7 @@ import {
   isParameterTarget,
   isPropertyTarget,
   isShadowTarget,
+  isSymmetryTarget,
 } from './keyframeTarget'
 import { uniformValuesEqual } from './materialResolution'
 import type { KeyframeValue } from './keyframe'
@@ -93,12 +94,14 @@ export function autoKeyCommands(
     if (existing) {
       const equal = isMorphTarget(edit.target)
         ? JSON.stringify(existing.value) === JSON.stringify(edit.value)
-        : isShadowTarget(edit.target)
-          ? existing.value === edit.value
-          : uniformValuesEqual(
-              existing.value as unknown as import('./materialInstance').MaterialOverrideValue,
-              edit.value as unknown as import('./materialInstance').MaterialOverrideValue,
-            )
+        : isSymmetryTarget(edit.target)
+          ? JSON.stringify(existing.value) === JSON.stringify(edit.value)
+          : isShadowTarget(edit.target)
+            ? existing.value === edit.value
+            : uniformValuesEqual(
+                existing.value as unknown as import('./materialInstance').MaterialOverrideValue,
+                edit.value as unknown as import('./materialInstance').MaterialOverrideValue,
+              )
       if (!equal) {
         commands.push(
           new SetKeyframeValueCommand({
@@ -136,6 +139,20 @@ export function autoKeyCommands(
       const cur = evalFn
         ? evalFn.call(engine, edit.target.nodeId, edit.time)
         : engine.evaluateMorph(edit.target.nodeId, edit.time)
+      const isEqual =
+        typeof cur === 'object' &&
+        cur !== null &&
+        typeof edit.value === 'object' &&
+        edit.value !== null
+          ? JSON.stringify(cur) === JSON.stringify(edit.value)
+          : cur === edit.value
+      if (isEqual) continue
+    }
+    if (isSymmetryTarget(edit.target)) {
+      const evalFn = (
+        engine as unknown as { evaluateSymmetry?: (id: string, t: number) => unknown }
+      ).evaluateSymmetry
+      const cur = evalFn ? evalFn.call(engine, edit.target.nodeId, edit.time) : null
       const isEqual =
         typeof cur === 'object' &&
         cur !== null &&
@@ -207,6 +224,15 @@ function targetKeyframes(engine: EnginePublic, target: KeyframeTarget): readonly
   }
   if (isMorphTarget(target)) {
     return engine.getMorphKeyframes(target.nodeId)
+  }
+  if (isSymmetryTarget(target)) {
+    return (
+      (
+        engine as unknown as {
+          getSymmetryKeyframes?: (id: string) => readonly Keyframe[]
+        }
+      ).getSymmetryKeyframes?.(target.nodeId) ?? []
+    )
   }
   if (isShadowTarget(target)) {
     return (

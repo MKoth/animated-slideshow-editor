@@ -26,6 +26,7 @@ export interface TimelineMenuState {
   readonly circleProperty?: import('../../engine/animationProperties').CircleAnimationProperty
   readonly shadowProperty?: import('../../engine/shadowEffect').ShadowProperty
   readonly morph?: boolean
+  readonly symmetry?: boolean
   readonly keyframeId?: string
 }
 

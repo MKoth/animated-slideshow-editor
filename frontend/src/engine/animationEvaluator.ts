@@ -16,6 +16,8 @@ import type { MeshVertex } from './mesh'
 import type { Shape } from './shape'
 import { resolveCrossBlendedVertices, resolveMorphedVerticesFromKeyframe } from './shape'
 import type { MorphKeyframeValue, MorphClipKeyframeValue } from './shape'
+import type { SymmetryKeyframeValue } from './symmetry'
+import { resolveSymmetrizedVertices } from './symmetry'
 import type { ShadowEffect, ShadowProperty } from './shadowEffect'
 import {
   SHADOW_PROPERTIES,
@@ -577,6 +579,64 @@ export class AnimationEvaluator {
       }
     }
     return morphed
+  }
+
+  evaluateSymmetryValue(nodeId: string, time: number): SymmetryKeyframeValue | null {
+    const slide = this.#slideLookup(nodeId)
+    const boundedTime = requireFiniteNumber(time, 'Evaluation time')
+    const clampedTime = Math.min(Math.max(boundedTime, 0), slide.duration)
+    const animation = slide.animation.node(nodeId)
+    const keyframes = animation?.symmetryKeyframes()
+    if (!keyframes || keyframes.length === 0) return null
+    return this.#evaluateSymmetryKeyframes(keyframes, clampedTime)
+  }
+
+  evaluateSymmetryVertices(
+    nodeId: string,
+    time: number,
+    baseVertices: readonly MeshVertex[],
+  ): readonly MeshVertex[] | null {
+    const value = this.evaluateSymmetryValue(nodeId, time)
+    if (!value) return null
+    if (value.factor === 0) return baseVertices
+    return resolveSymmetrizedVertices(baseVertices, value.axis, value.factor)
+  }
+
+  #evaluateSymmetryKeyframes(
+    keyframes: readonly Keyframe[],
+    time: number,
+  ): SymmetryKeyframeValue | null {
+    if (keyframes.length === 0) return null
+    const first = keyframes[0]
+    const last = keyframes[keyframes.length - 1]
+    const firstVal = this.#symmetryValueOf(first)
+    const lastVal = this.#symmetryValueOf(last)
+    if (time <= first.time) return firstVal
+    if (time >= last.time) return lastVal
+    for (let i = 0; i < keyframes.length - 1; i += 1) {
+      const from = keyframes[i]
+      const to = keyframes[i + 1]
+      if (time >= from.time && time < to.time) {
+        if (from.interpolation === 'hold') return this.#symmetryValueOf(from)
+        const fromVal = this.#symmetryValueOf(from)
+        const toVal = this.#symmetryValueOf(to)
+        const ratio = (time - from.time) / (to.time - from.time)
+        const u = this.#easedProgress(from, to, time, ratio)
+        // axis holds from start; factor lerps with eased progress
+        const factor = fromVal.factor + (toVal.factor - fromVal.factor) * u
+        return { axis: fromVal.axis, factor }
+      }
+    }
+    return lastVal
+  }
+
+  #symmetryValueOf(keyframe: Keyframe): SymmetryKeyframeValue {
+    const v = keyframe.value as unknown as SymmetryKeyframeValue
+    if (v && typeof v === 'object' && 'axis' in v && 'factor' in v) {
+      return { axis: v.axis, factor: v.factor }
+    }
+    // fallback
+    return { axis: 'x', factor: 0 }
   }
 
   #evaluateMorphKeyframes(keyframes: readonly Keyframe[], time: number): MorphKeyframeValue | null {

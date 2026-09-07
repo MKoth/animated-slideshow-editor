@@ -38,6 +38,7 @@ import {
   CIRCLE_LABELS,
   VISIBLE_LABEL,
   MORPH_LABEL,
+  SYMMETRY_LABEL,
   materialParameterLabel,
 } from './timelineTracks'
 import { SHADOW_LABELS } from '../../engine/shadowEffect'
@@ -326,6 +327,10 @@ export function TimelineBody({
       for (const keyframe of engine.getMorphKeyframes(row.node.id)) {
         allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
       }
+    } else if (row.kind === 'symmetrySubtrack') {
+      for (const keyframe of engine.getSymmetryKeyframes(row.node.id)) {
+        allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
+      }
     } else if (row.kind === 'shadowSubtrack') {
       for (const keyframe of engine.getShadowKeyframes(
         row.node.id,
@@ -608,6 +613,7 @@ export function TimelineBody({
           | 'dataLabelSubtrack'
           | 'circleSubtrack'
           | 'morphSubtrack'
+          | 'symmetrySubtrack'
           | 'shadowSubtrack'
       }
     >,
@@ -639,6 +645,14 @@ export function TimelineBody({
         morph: true,
         keyframeId: keyframe.id,
       })
+    } else if (row.kind === 'symmetrySubtrack') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        symmetry: true as unknown as Extract<import('./timelineComponents').TimelineMenuState, { nodeId: string }>['symmetry'],
+        keyframeId: keyframe.id,
+      } as unknown as Extract<import('./timelineComponents').TimelineMenuState, { nodeId: string }>)
     } else if (row.kind === 'shadowSubtrack') {
       setMenu({
         x: event.clientX,
@@ -1308,6 +1322,43 @@ export function TimelineBody({
                   +
                 </button>
               </li>
+            ) : row.kind === 'symmetrySubtrack' ? (
+              <li
+                key={`${row.node.id}:symmetry`}
+                className="timeline-subtrack timeline-subtrack--symmetry"
+                data-node-id={row.node.id}
+                data-symmetry="true"
+                data-depth={row.depth}
+                style={{ paddingLeft: 12 + row.depth * 16 }}
+              >
+                <span className="timeline-subtrack__label">{SYMMETRY_LABEL}</span>
+                <button
+                  className="timeline-subtrack__add"
+                  aria-label={`Add Keyframe to ${SYMMETRY_LABEL}`}
+                  title="Add symmetry keyframe at the playhead"
+                  onClick={() => {
+                    const time = usePlaybackController.getState().getTime(slideId)
+                    const cur = (() => {
+                      try {
+                        return (engine as unknown as { evaluateSymmetry?: (id: string, t: number) => unknown }).evaluateSymmetry?.(row.node.id, time) as { axis: 'x' | 'y'; factor: number } | null
+                      } catch {
+                        return null
+                      }
+                    })()
+                    const value = cur ?? { axis: 'x' as const, factor: 0 }
+                    const result = dispatch(
+                      new AddKeyframeCommand({
+                        target: { kind: 'symmetry', nodeId: row.node.id },
+                        time,
+                        value: value as unknown as import('../../engine/keyframe').KeyframeValue,
+                      }),
+                    )
+                    if (result && !result.ok) notify(result.error.message)
+                  }}
+                >
+                  +
+                </button>
+              </li>
             ) : (
               <TrackRow
                 key={row.node.id}
@@ -1596,6 +1647,41 @@ export function TimelineBody({
                             pps={pps}
                             step={step}
                             parameterLabel={MORPH_LABEL}
+                            onPointerDown={(event) =>
+                              handleKeyframePointerDown(event, keyframe, index)
+                            }
+                            onContextMenu={(event) =>
+                              handleKeyframeContextMenu(event, row, keyframe)
+                            }
+                          />
+                        )
+                      })}
+                    </div>
+                  )
+                }
+                if (row.kind === 'symmetrySubtrack') {
+                  const keyframes = engine.getSymmetryKeyframes(row.node.id)
+                  return (
+                    <div
+                      key={`${row.node.id}:symmetry`}
+                      className="timeline-lane-row"
+                      data-symmetry="true"
+                      style={{ top: index * ROW_HEIGHT }}
+                    >
+                      {keyframes.map((keyframe) => {
+                        const previewTime =
+                          scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
+                        const shownTime = previewTime ?? keyframe.time
+                        const selected = selectedKeyframeIds.includes(keyframe.id)
+                        return (
+                          <KeyframeMarker
+                            key={keyframe.id}
+                            keyframeId={keyframe.id}
+                            shownTime={shownTime}
+                            selected={selected}
+                            pps={pps}
+                            step={step}
+                            parameterLabel={SYMMETRY_LABEL}
                             onPointerDown={(event) =>
                               handleKeyframePointerDown(event, keyframe, index)
                             }

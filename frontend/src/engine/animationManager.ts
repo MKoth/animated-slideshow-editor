@@ -132,6 +132,16 @@ export class AnimationManager {
     return slide.animation.node(nodeId)?.shadowTrackKeys() ?? []
   }
 
+  getSymmetryKeyframes(nodeId: string): readonly Keyframe[] {
+    const slide = this.#slideLookup(nodeId)
+    return slide.animation.node(nodeId)?.symmetryKeyframes() ?? []
+  }
+
+  hasSymmetryTrack(nodeId: string): boolean {
+    const slide = this.#slideLookup(nodeId)
+    return slide.animation.node(nodeId)?.hasSymmetryTrack() ?? false
+  }
+
   addKeyframe(target: KeyframeTarget, time: number, value: unknown): Keyframe {
     const resolved = this.#resolve(target)
     const boundedTime = requireKeyframeTime(time, resolved.slide.duration)
@@ -438,6 +448,9 @@ export class AnimationManager {
     if (track.kind === 'morph') {
       return animation.morphKeyframes()
     }
+    if (track.kind === 'symmetry') {
+      return animation.symmetryKeyframes()
+    }
     if (track.kind === 'shadow') {
       return animation.shadowKeyframes(track.property)
     }
@@ -461,6 +474,8 @@ export class AnimationManager {
       animation.addVisible(keyframe)
     } else if (track.kind === 'morph') {
       animation.addMorph(keyframe)
+    } else if (track.kind === 'symmetry') {
+      animation.addSymmetry(keyframe)
     } else if (track.kind === 'shadow') {
       animation.addShadow(track.property, keyframe)
     } else if (track.kind === 'dataLabel') {
@@ -482,6 +497,8 @@ export class AnimationManager {
       animation.removeVisible(keyframeId)
     } else if (track.kind === 'morph') {
       animation.removeMorph(keyframeId)
+    } else if (track.kind === 'symmetry') {
+      animation.removeSymmetry(keyframeId)
     } else if (track.kind === 'shadow') {
       animation.removeShadow(track.property, keyframeId)
     } else if (track.kind === 'dataLabel') {
@@ -504,6 +521,8 @@ export class AnimationManager {
       keyframe = animation.getVisible(keyframeId)
     } else if (track.kind === 'morph') {
       keyframe = animation.getMorph(keyframeId)
+    } else if (track.kind === 'symmetry') {
+      keyframe = animation.getSymmetry(keyframeId)
     } else if (track.kind === 'shadow') {
       keyframe = animation.getShadow(track.property, keyframeId)
     } else if (track.kind === 'dataLabel') {
@@ -523,15 +542,17 @@ export class AnimationManager {
             ? `visible`
             : track.kind === 'morph'
               ? `morph`
-              : track.kind === 'shadow'
-                ? `shadow ${track.property}`
-                : track.kind === 'dataLabel'
-                  ? `data label ${track.label}`
-                  : track.kind === 'circle'
-                    ? `circle ${track.property}`
-                    : track.kind === 'table'
-                      ? `table ${track.property}`
-                      : `parameter ${track.parameter}`
+              : track.kind === 'symmetry'
+                ? `symmetry`
+                : track.kind === 'shadow'
+                  ? `shadow ${track.property}`
+                  : track.kind === 'dataLabel'
+                    ? `data label ${track.label}`
+                    : track.kind === 'circle'
+                      ? `circle ${track.property}`
+                      : track.kind === 'table'
+                        ? `table ${track.property}`
+                        : `parameter ${track.parameter}`
       throw new Error(`Keyframe not found: ${keyframeId} on ${on}`)
     }
     return keyframe
@@ -612,6 +633,9 @@ export class AnimationManager {
     }
     if (track.kind === 'morph') {
       return `morph`
+    }
+    if (track.kind === 'symmetry') {
+      return `symmetry`
     }
     if (track.kind === 'shadow') {
       return `shadow ${track.property}`

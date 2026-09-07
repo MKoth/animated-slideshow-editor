@@ -51,6 +51,7 @@ import { TextInspectorSection, TextMultiInspector } from './TextInspectorSection
 import { CircleInspectorSection } from './CircleInspectorSection'
 import { TextureInspectorSection } from './TextureInspectorSection'
 import { ShadowInspectorSection } from './ShadowInspectorSection'
+import { SymmetryInspectorSection } from './SymmetryInspectorSection'
 import { PROPERTY_LABELS } from './timelineTracks'
 import { isGroupNode } from '../../engine/sceneNode'
 import {
@@ -595,6 +596,8 @@ export function InspectorPanel({ width }: { width: number }) {
             playing={playing}
           />
         )}
+
+        {targets.length > 0 && <SymmetryInspectorSection />}
 
         {targets.length > 0 && targets.every(isRenderableNode) && (
           <MaterialInspectorSection

@@ -5,8 +5,9 @@ import { requireFiniteNumber } from './guards'
 export type InterpolationType = 'hold' | 'linear' | 'bezier' | 'bounce' | 'elastic' | 'spring'
 
 import type { MorphKeyframeValue, MorphClipKeyframeValue } from './shape'
+import type { SymmetryKeyframeValue } from './symmetry'
 
-export type KeyframeValue = string | number | boolean | number[] | MorphKeyframeValue | MorphClipKeyframeValue
+export type KeyframeValue = string | number | boolean | number[] | MorphKeyframeValue | MorphClipKeyframeValue | SymmetryKeyframeValue
 
 export type KeyframeTangent = {
   readonly time: number
