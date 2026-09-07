@@ -205,6 +205,40 @@ _Avoid_: Scale container, multiplier node
 The boolean visibility animation track on a scene node. Interpolates with hold only (no tween); eye icon toggles base value or adds a hold keyframe at playhead in animation mode.
 _Avoid_: Opacity zero, hide track
 
+### Animation Manager
+
+**Animation Manager**:
+The big modal opened by right-clicking a parent node that has animated descendants. It shows only Animated Children and their Animated Params and the Clip Lanes and Collection Lanes placed on that hierarchy; the main Timeline is unchanged. Entry is `Animation Manager…` in the scene-tree and canvas context menus.
+_Avoid_: Clip Manager, hierarchy animator
+
+**Clip Lane**:
+A timeline bar inside the Animation Manager representing one Clip Instance placed on a node. Shows the clip name only, not per-param lanes. Position is the instance's start time, width is its visual duration; dragging moves the instance, dragging an edge Stretches it.
+_Avoid_: Clip Bar, instance lane
+
+**Collection Lane**:
+A timeline bar inside the Animation Manager representing one placed Clip Collection. Shows the collection name only with internals hidden; Stretching the bar scales all member clip timings proportionally. Like a Clip Lane it participates in Priority stacking.
+_Avoid_: Collection Bar, group lane
+
+**Stretch** (also **Condense**):
+The user action of dragging a Clip Lane or Collection Lane edge to change its visual duration, condensing or stretching its keyframes. The engine implements Stretch by adjusting the instance's speed, not by rewriting the clip definition.
+_Avoid_: Scale (conflicts with Transform scale), Speed (engine field, not user verb)
+
+**Priority** (also **Lane Priority**, **Stack Priority**):
+The vertical stacking order of overlapping Clip Lanes and Collection Lanes on the same timeline. Lower lane has higher Priority and wins evaluation when times overlap (last instance wins). Dragging a lane up or down reorders Priority.
+_Avoid_: zIndex, layer (ambiguous with compositing)
+
+**Orphan Keyframe**:
+A node keyframe that is not contained in any Animation Clip. Creating or validating a Clip Collection requires zero Orphans; the Manager surfaces Orphans as a blocking error like the Export Clip Collection flow.
+_Avoid_: Unclipped keyframe (synonym), stray keyframe
+
+**Animated Child**:
+A descendant of the Animation Manager's selected parent that has animation — at least one keyframe or at least one Clip Instance.
+_Avoid_: Animated node (too broad)
+
+**Animated Param**:
+An animatable property or track of an Animated Child that has at least one keyframe (the filtered param list the Manager shows, e.g. x, y, visible, material param, circle angle, morph coefficient, shadow param).
+_Avoid_: Animated property (synonym), track
+
 ### AI
 
 **Conversation**:
