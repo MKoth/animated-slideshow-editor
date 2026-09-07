@@ -5,9 +5,14 @@ import { useNotificationStore } from '../../stores/notificationStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { autoKeyCommands, dispatchKeyframeCommands } from '../../engine/keyframeEdit'
 import type { TimedKeyframeEdit } from '../../engine/keyframeEdit'
-import { evaluatedWorldTransformOf, relativeTransform } from '../../engine/worldTransform'
+import {
+  evaluatedWorldTransformOf,
+  relativeTransform,
+  worldTransformOf as storedWorldTransformOf,
+} from '../../engine/worldTransform'
 import { cursorToWorld } from './screenToWorld'
 import type { ViewportTransform, WorldPoint, WorldTransform } from './worldGeometry'
+import type { WorldTransformSource } from './hitTest'
 
 export const BLOCKED_ANIMATED_MOVE_MESSAGE = 'Animated nodes can only be moved in Animation Mode'
 
@@ -31,6 +36,7 @@ export interface AnimatedMoveGestureContext {
   readonly getScene: () => Scene | null
   readonly getCameraTransform: () => ViewportTransform | null
   readonly dispatch?: DispatchCommand
+  readonly getWorldTransform?: WorldTransformSource
 }
 
 export class AnimatedMoveGesture {
@@ -40,8 +46,10 @@ export class AnimatedMoveGesture {
   readonly #getScene: () => Scene | null
   readonly #getCameraTransform: () => ViewportTransform | null
   readonly #dispatch?: DispatchCommand
+  readonly #getWorldTransform?: WorldTransformSource
   readonly #origins = new Map<string, WorldPoint>()
   readonly #previews = new Map<string, AnimatedPreview>()
+  readonly #bases = new Map<string, AnimatedPreview>()
   #blocked = false
   #blockedNotified = false
 
@@ -52,6 +60,7 @@ export class AnimatedMoveGesture {
     this.#getScene = context.getScene
     this.#getCameraTransform = context.getCameraTransform
     this.#dispatch = context.dispatch
+    this.#getWorldTransform = context.getWorldTransform
   }
 
   get enabled(): boolean {
@@ -65,6 +74,7 @@ export class AnimatedMoveGesture {
   begin(ids: readonly string[]): void {
     this.#origins.clear()
     this.#previews.clear()
+    this.#bases.clear()
     const engine = this.#engine
     this.#blocked = false
     if (!this.enabled && engine) {
@@ -74,8 +84,9 @@ export class AnimatedMoveGesture {
       return
     }
     const time = this.#playheadTime()
+    const scene = this.#getScene()
     for (const id of ids) {
-      const node = this.#getScene()?.getNode(id)
+      const node = scene?.getNode(id)
       if (!node) {
         continue
       }
@@ -91,6 +102,12 @@ export class AnimatedMoveGesture {
         }
       }
       this.#origins.set(id, origin)
+      if (!this.#previews.has(id)) {
+        const base = baseWorldOf(this.#getWorldTransform ?? null, scene, id)
+        if (base) {
+          this.#bases.set(id, base)
+        }
+      }
     }
   }
 
@@ -103,6 +120,10 @@ export class AnimatedMoveGesture {
     if (preview) {
       return previewLocalOf(preview, dx, dy)
     }
+    const base = this.#bases.get(nodeId)
+    if (base) {
+      return previewLocalOf(base, dx, dy)
+    }
     const origin = this.#origins.get(nodeId)
     if (!origin) {
       return null
@@ -114,6 +135,10 @@ export class AnimatedMoveGesture {
     const preview = this.#previews.get(nodeId)
     if (preview) {
       return preview.startWorld
+    }
+    const base = this.#bases.get(nodeId)
+    if (base) {
+      return base.startWorld
     }
     return this.#origins.get(nodeId) ?? null
   }
@@ -163,6 +188,7 @@ export class AnimatedMoveGesture {
   reset(): void {
     this.#origins.clear()
     this.#previews.clear()
+    this.#bases.clear()
     this.#blocked = false
     this.#blockedNotified = false
   }
@@ -211,6 +237,51 @@ function animatedPreviewOf(
     return { startWorld, parentWorld: null }
   }
   const parentWorld = evaluatedWorldTransformOf(engine, parent.id, time)
+  if (!parentWorld || parentWorld.scaleX === 0 || parentWorld.scaleY === 0) {
+    return { startWorld, parentWorld: null }
+  }
+  return { startWorld, parentWorld }
+}
+
+function baseWorldOf(
+  getWorldTransform: WorldTransformSource | null,
+  scene: Scene | null,
+  nodeId: string,
+): AnimatedPreview | null {
+  let startWorld: WorldTransform | null = null
+  if (getWorldTransform) {
+    try {
+      startWorld = getWorldTransform(nodeId)
+    } catch {
+      startWorld = null
+    }
+  }
+  if (!startWorld && scene) {
+    startWorld = storedWorldTransformOf(scene, nodeId)
+  }
+  if (!startWorld) {
+    return null
+  }
+  let parent: SceneNode | null = null
+  try {
+    parent = scene?.getNode(nodeId)?.parent ?? null
+  } catch {
+    return { startWorld, parentWorld: null }
+  }
+  if (!parent) {
+    return { startWorld, parentWorld: null }
+  }
+  let parentWorld: WorldTransform | null = null
+  if (getWorldTransform) {
+    try {
+      parentWorld = getWorldTransform(parent.id)
+    } catch {
+      parentWorld = null
+    }
+  }
+  if (!parentWorld && scene) {
+    parentWorld = storedWorldTransformOf(scene, parent.id)
+  }
   if (!parentWorld || parentWorld.scaleX === 0 || parentWorld.scaleY === 0) {
     return { startWorld, parentWorld: null }
   }
