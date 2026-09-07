@@ -101,6 +101,24 @@ export function symmetryKeyframeCommandsForSubtree(
         }
       }
     }
+
+    // Imported images render as sprites. Their reflection must be represented by
+    // a negative scale; position and rotation alone only move the image.
+    if (node.components.assetInstance) {
+      const property = axis === 'x' ? ('scaleX' as const) : ('scaleY' as const)
+      const mirroredScale = -evalState.transform[property]
+      const target = { kind: 'node' as const, nodeId: node.id, property }
+      const kfAt = keyframeAtTime(engine.getKeyframes(node.id, property), time)
+      if (kfAt) {
+        if (kfAt.value !== mirroredScale) {
+          commands.push(
+            new SetKeyframeValueCommand({ target, keyframeId: kfAt.id, newValue: mirroredScale }),
+          )
+        }
+      } else if (evalState.transform[property] !== mirroredScale) {
+        commands.push(new AddKeyframeCommand({ target, time, value: mirroredScale }))
+      }
+    }
   }
 
   return commands

@@ -4,7 +4,6 @@ import { walkPreOrder } from '../sceneNode'
 import { cloneMeshData } from '../mesh'
 import {
   mirroredTransform,
-  mirroredUV,
   mirroredUVTransform,
   mirroredVertex,
   requireSymmetryAxis,
@@ -82,9 +81,10 @@ export class SymmetrizeSubtreeCommand implements Command<SymmetrizeSubtreeInvers
 
         snapshots.push({ nodeId: node.id, oldTransform, oldMesh, oldShapes, oldUVTransform })
 
-        // Build new mesh with mirrored vertices and UVs; flip winding to preserve orientation
+        // Mirror geometry and flip winding. Keep UVs attached to their vertices:
+        // reflecting the geometry already reflects the sampled image with it.
         const newVertices = meshComp.mesh.vertices.map((v) => mirroredVertex(v, this.#axis))
-        const newUvs = meshComp.mesh.uvs.map((uv) => mirroredUV(uv, this.#axis))
+        const newUvs = meshComp.mesh.uvs.map((uv) => ({ u: uv.u, v: uv.v }))
         const newFaces = meshComp.mesh.faces.map((f) => ({ v0: f.v0, v1: f.v2, v2: f.v1 }))
         const newMesh: MeshData = {
           ...meshComp.mesh,
@@ -104,17 +104,6 @@ export class SymmetrizeSubtreeCommand implements Command<SymmetrizeSubtreeInvers
           }))
           engine.restoreShapes(node.id, newShapes)
         }
-        if (hasTexture) {
-          const newUV = mirroredUVTransform(node.material.uvTransform, this.#axis)
-          const newMaterial: Record<string, unknown> = {
-            materialDefinitionId: node.material.materialDefinitionId,
-            overrides: { ...node.material.overrides },
-            textureId: node.material.textureId,
-          }
-          if (newUV) (newMaterial as unknown as { uvTransform: UVTransform }).uvTransform = newUV
-          ;(node as unknown as { material: unknown }).material = newMaterial
-          engine.emitMaterialChanged(node.id)
-        }
       } else if (circleComp) {
         snapshots.push({ nodeId: node.id, oldTransform, oldUVTransform })
         const newTransform = mirroredTransform(node.transform, this.#axis)
@@ -133,7 +122,16 @@ export class SymmetrizeSubtreeCommand implements Command<SymmetrizeSubtreeInvers
       } else {
         // Group / bone / other: only mirror transform, but also flip texture if somehow present
         snapshots.push({ nodeId: node.id, oldTransform, oldUVTransform })
-        const newTransform = mirroredTransform(node.transform, this.#axis)
+        const mirrored = mirroredTransform(node.transform, this.#axis)
+        // Asset instances render as sprites, so reflect the sprite itself rather
+        // than only moving/rotating its container.
+        const newTransform: Transform = node.components.assetInstance
+          ? {
+              ...mirrored,
+              scaleX: this.#axis === 'x' ? -mirrored.scaleX : mirrored.scaleX,
+              scaleY: this.#axis === 'y' ? -mirrored.scaleY : mirrored.scaleY,
+            }
+          : mirrored
         const needsTransform =
           newTransform.x !== node.transform.x ||
           newTransform.y !== node.transform.y ||

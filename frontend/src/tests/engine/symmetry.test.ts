@@ -69,8 +69,8 @@ describe('Symmetry', () => {
     const afterMesh = afterChild.components.mesh!.mesh
     expect(afterMesh.vertices[1].x).toBe(-originalChildVerts[1].x)
     expect(afterMesh.vertices[1].y).toBe(originalChildVerts[1].y)
-    // UVs flipped
-    expect(afterMesh.uvs[1].u).toBe(1 - originalChildUVs[1].u)
+    // UVs stay attached to the mirrored vertices.
+    expect(afterMesh.uvs[1].u).toBe(originalChildUVs[1].u)
     // Shape vertices mirrored
     const afterShapes = engine.getShapes(child.id)
     expect(afterShapes[0]!.vertices[1].x).toBe(-20)
@@ -201,7 +201,7 @@ describe('Symmetry', () => {
     expect(slideJson.animation!.nodes[0]!.symmetryTrack!.keyframes[0]!.value).toEqual({ axis: 'y', factor: 0.5 })
   })
 
-  it('symmetrize flips texture uvTransform and mesh UVs together', () => {
+  it('symmetrize keeps mesh UVs attached while mirroring geometry', () => {
     const { engine, slide } = setup()
     const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'TexMesh', {
       transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
@@ -237,14 +237,51 @@ describe('Symmetry', () => {
     cmd.validate(engine as any)
     cmd.execute(engine as any)
     const after = engine.getNode(node.id)
-    // mesh UV flipped
-    expect(after.components.mesh!.mesh.uvs[1]!.u).toBe(1 - beforeMeshU)
-    // uvTransform offset mirrored: 1 - scale - offset
-    const expectedOffsetU = 1 - beforeUV.uvScale.u - beforeUV.uvOffset.u // 1 -2 -0.1 = -1.1
-    expect(after.material.uvTransform!.uvOffset.u).toBeCloseTo(expectedOffsetU)
+    // UVs remain attached to their mirrored vertices so the image follows the mesh.
+    expect(after.components.mesh!.mesh.uvs[1]!.u).toBe(beforeMeshU)
+    expect(after.material.uvTransform).toEqual(beforeUV)
     expect(after.material.uvTransform!.uvScale.u).toBe(2)
     const beforeFinal = applyUVTransformToSingle({ u: beforeMeshU, v: 0 }, beforeUV)
     const afterFinal = applyUVTransformToSingle({ u: after.components.mesh!.mesh.uvs[1]!.u, v: 0 }, after.material.uvTransform!)
-    expect(afterFinal.u).toBeCloseTo(1 - beforeFinal.u)
+    expect(afterFinal.u).toBeCloseTo(beforeFinal.u)
+  })
+
+  it('symmetrize flips imported texture instances on the selected axis', () => {
+    const { engine, slide } = setup()
+    const definition = engine.defineAsset('Texture')
+    const node = engine.createAssetInstance(slide.scene.id, slide.scene.root.id, definition.id, 'Texture', {
+      transform: { x: 10, y: 20, rotation: 0.25, scaleX: 2, scaleY: 3 },
+    })
+
+    const xCommand = new SymmetrizeSubtreeCommand({ nodeId: node.id, axis: 'x' })
+    xCommand.validate(engine as any)
+    xCommand.execute(engine as any)
+    expect(node.transform).toMatchObject({ x: -10, y: 20, rotation: -0.25, scaleX: -2, scaleY: 3 })
+
+    const yNode = engine.createAssetInstance(slide.scene.id, slide.scene.root.id, definition.id, 'Texture Y', {
+      transform: { x: 10, y: 20, rotation: 0.25, scaleX: 2, scaleY: 3 },
+    })
+    const yCommand = new SymmetrizeSubtreeCommand({ nodeId: yNode.id, axis: 'y' })
+    yCommand.validate(engine as any)
+    yCommand.execute(engine as any)
+    expect(yNode.transform).toMatchObject({ x: 10, y: -20, rotation: -0.25, scaleX: 2, scaleY: -3 })
+  })
+
+  it('animated symmetrize flips imported texture instances on the selected axis', async () => {
+    const { symmetryKeyframeCommandsForSubtree } = await import('../../engine/symmetryHelpers')
+    const { engine, slide } = setup()
+    engine.setSlideDuration(slide.id, 1)
+    const definition = engine.defineAsset('Texture')
+    const node = engine.createAssetInstance(slide.scene.id, slide.scene.root.id, definition.id, 'Texture', {
+      transform: { x: 10, y: 20, rotation: 0, scaleX: 1, scaleY: 1 },
+    })
+
+    const commands = symmetryKeyframeCommandsForSubtree(engine, node.id, 'y', 0.5)
+    for (const command of commands) {
+      command.validate(engine as any)
+      command.execute(engine as any)
+    }
+
+    expect(engine.getKeyframes(node.id, 'scaleY')[0]?.value).toBe(-1)
   })
 })
