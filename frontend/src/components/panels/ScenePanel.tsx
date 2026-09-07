@@ -19,6 +19,7 @@ import { defaultTextComponent } from '../../engine/defaultText'
 import { createCircleComponent } from '../../engine/circleComponent'
 import { namesInTree, uniqueNodeName } from '../../engine/naming'
 import { useMissingAssetsStore } from '../../stores/missingAssetsStore'
+import { useSceneTreeViewStore } from '../../stores/sceneTreeViewStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { useUiStore } from '../../stores/uiStore'
@@ -66,6 +67,8 @@ function SceneTreeRow({
   const animationMode = useUiStore((state) => state.animationMode)
   const children = visibleChildren(node)
   const missing = missingNodeIds.has(node.id)
+  const hasChildren = children.length > 0
+  const isCollapsed = useSceneTreeViewStore((state) => state.collapsedNodeIds[node.id] === true)
   let affordanceClass = ''
   if (dropOver?.targetId === node.id) {
     affordanceClass = ` scene-tree__row--drop-${dropOver.zone}`
@@ -112,61 +115,80 @@ function SceneTreeRow({
   }
   return (
     <li>
-      <button
-        role="treeitem"
-        aria-selected={selected}
-        draggable={node.parent !== null || undefined}
-        className={`scene-tree__row${selected ? ' scene-tree__row--selected' : ''}${missing ? ' scene-tree__row--missing' : ''}${affordanceClass}`}
-        onClick={(event) => {
-          if (event.ctrlKey || event.metaKey) {
-            useSelectionStore.getState().toggle(node.id)
-          } else if (event.shiftKey) {
-            useSelectionStore.getState().extend(node.id)
-          } else {
-            useSelectionStore.getState().select(node.id)
-          }
-        }}
-        onContextMenu={(event) => onContextMenu(event, node)}
-        onDragStart={(event) => onDragStart(event, node.id)}
-        onDragOver={(event) => onDragOver(event, node.id)}
-        onDragLeave={(event) => onDragLeave(event, node.id)}
-        onDrop={(event) => onDrop(event, node.id)}
-        onDragEnd={onDragEnd}
-      >
-        <span className="scene-tree__icon" data-icon={iconOf(node)}>
-          <NodeIcon node={node} />
-        </span>
-        <span className="scene-tree__name">{node.name}</span>
-        {node.semanticName && (
-          <span className="scene-tree__semantic" title={`Semantic: ${node.semanticName}`}>
-            {node.semanticName}
-          </span>
-        )}
-        <span className="scene-tree__indicators">
+      <div className="scene-tree__row-wrapper">
+        {hasChildren ? (
           <button
-            className="scene-tree__indicator scene-tree__indicator--eye"
-            title={node.visible ? 'Visible' : 'Hidden'}
-            aria-label={node.visible ? 'Hide node' : 'Show node'}
-            onClick={handleEyeClick}
-            onPointerDown={(e) => e.stopPropagation()}
-            onMouseDown={(e) => e.stopPropagation()}
+            className="scene-tree__chevron"
+            aria-label={isCollapsed ? `Expand ${node.name}` : `Collapse ${node.name}`}
+            aria-expanded={!isCollapsed}
+            data-testid={`scene-chevron-${node.id}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              event.preventDefault()
+              useSceneTreeViewStore.getState().toggleCollapsed(node.id)
+            }}
           >
-            <VisibilityIcon visible={node.visible} />
+            {isCollapsed ? '+' : '−'}
           </button>
-          <span className="scene-tree__indicator" title="Locked">
-            <LockIcon />
+        ) : (
+          <span className="scene-tree__chevron scene-tree__chevron--spacer" aria-hidden="true" />
+        )}
+        <button
+          role="treeitem"
+          aria-selected={selected}
+          draggable={node.parent !== null || undefined}
+          className={`scene-tree__row${selected ? ' scene-tree__row--selected' : ''}${missing ? ' scene-tree__row--missing' : ''}${affordanceClass}`}
+          onClick={(event) => {
+            if (event.ctrlKey || event.metaKey) {
+              useSelectionStore.getState().toggle(node.id)
+            } else if (event.shiftKey) {
+              useSelectionStore.getState().extend(node.id)
+            } else {
+              useSelectionStore.getState().select(node.id)
+            }
+          }}
+          onContextMenu={(event) => onContextMenu(event, node)}
+          onDragStart={(event) => onDragStart(event, node.id)}
+          onDragOver={(event) => onDragOver(event, node.id)}
+          onDragLeave={(event) => onDragLeave(event, node.id)}
+          onDrop={(event) => onDrop(event, node.id)}
+          onDragEnd={onDragEnd}
+        >
+          <span className="scene-tree__icon" data-icon={iconOf(node)}>
+            <NodeIcon node={node} />
           </span>
-          {missing && (
-            <span
-              className="scene-tree__indicator scene-tree__indicator--missing"
-              title="Missing asset"
-            >
-              <MissingAssetIcon />
+          <span className="scene-tree__name">{node.name}</span>
+          {node.semanticName && (
+            <span className="scene-tree__semantic" title={`Semantic: ${node.semanticName}`}>
+              {node.semanticName}
             </span>
           )}
-        </span>
-      </button>
-      {children.length > 0 && (
+          <span className="scene-tree__indicators">
+            <button
+              className="scene-tree__indicator scene-tree__indicator--eye"
+              title={node.visible ? 'Visible' : 'Hidden'}
+              aria-label={node.visible ? 'Hide node' : 'Show node'}
+              onClick={handleEyeClick}
+              onPointerDown={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <VisibilityIcon visible={node.visible} />
+            </button>
+            <span className="scene-tree__indicator" title="Locked">
+              <LockIcon />
+            </span>
+            {missing && (
+              <span
+                className="scene-tree__indicator scene-tree__indicator--missing"
+                title="Missing asset"
+              >
+                <MissingAssetIcon />
+              </span>
+            )}
+          </span>
+        </button>
+      </div>
+      {hasChildren && !isCollapsed && (
         <ul role="group">
           {children.map((child) => (
             <SceneTreeRow
@@ -203,7 +225,27 @@ export function ScenePanel() {
     index: number
   } | null>(null)
   const missingNodeIds = useMissingAssetsStore((state) => state.report?.affectedNodeIds)
-  useEngineEvent(() => setTick((tick) => tick + 1))
+  useEngineEvent(() => {
+    setTick((tick) => tick + 1)
+    // Prune collapsed ids that no longer exist in any slide
+    try {
+      const proj = engine.project
+      if (proj) {
+        const valid = new Set<string>()
+        const walk = (node: SceneNode) => {
+          valid.add(node.id)
+          for (const child of node.children) walk(child)
+        }
+        for (const s of proj.slides) {
+          walk(s.scene.root)
+          valid.add(s.scene.camera.id)
+        }
+        useSceneTreeViewStore.getState().prune(valid)
+      }
+    } catch {
+      // engine may be in transient state during command
+    }
+  })
 
   // Close context menu on click or Escape
   useEffect(() => {

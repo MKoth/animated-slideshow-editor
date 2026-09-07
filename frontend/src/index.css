@@ -1477,11 +1477,18 @@ button:disabled {
   padding-left: 14px;
 }
 
+.scene-tree__row-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .scene-tree__row {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   border: none;
   border-radius: 4px;
   background: transparent;
@@ -1572,6 +1579,54 @@ button:disabled {
 
 .scene-tree__indicator--missing {
   color: #c47f17;
+}
+
+.scene-tree__chevron {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  padding: 0;
+}
+
+.scene-tree__chevron:hover {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+.scene-tree__row--selected .scene-tree__chevron {
+  background: rgba(255, 255, 255, 0.18);
+  color: var(--color-accent-text);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.scene-tree__row--selected .scene-tree__chevron:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.scene-tree__chevron--spacer {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: default;
+}
+
+.scene-tree__chevron:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
 }
 
 /* ------------------------------------------------------------------ */
