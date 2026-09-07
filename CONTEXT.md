@@ -239,6 +239,10 @@ _Avoid_: Animated node (too broad)
 An animatable property or track of an Animated Child that has at least one keyframe (the filtered param list the Manager shows, e.g. x, y, visible, material param, circle angle, morph coefficient, shadow param).
 _Avoid_: Animated property (synonym), track
 
+**Reverse and Save** (also **Reversed Clip**, **Reversed Collection**):
+Creating a time-mirrored copy of any Clip or of each clip in a Collection — last seconds become first, as if dragging the timeline from end toward start — with normalized `t' = 1 - t`, value unchanged, bezier tangents swapped and negated (`tangentIn.time = -oldOut.time`, `tangentOut.time = -oldIn.time`), hold/linear preserved and parametric types evaluated at `1 - u`, saved under a new name (default "<original> Reversed") leaving the original untouched. The new instance appears at the same `startTime` (or as library entry) with `speed = 1` and participates in Priority like any lane; entry via Animation Manager Clip Lane / Collection Lane context menu `Reverse and Save As…` and library ellipses. Collection reverse creates reversed copies of each member clip (new ids) and a new `ClipCollection` with the same `semanticName` map, preserving member `startTime` offsets in v1; full offset mirroring within collection duration is deferred. Keeps `ClipInstance.speed >= 0` and reuses the non-destructive copy pattern of Clip Extraction.
+_Avoid_: Negative speed playback (engine `speed < 0`, deferred), in-place reverse (destructive)
+
 ### AI
 
 **Conversation**:
