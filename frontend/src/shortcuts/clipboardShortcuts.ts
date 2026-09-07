@@ -2,7 +2,7 @@ import {
   copySelection,
   deleteSelection,
   duplicateSelection,
-  pasteClipboard,
+  pasteClipboardAsync,
 } from '../app/clipboardActions'
 import {
   deleteSelectedKeyframes,
@@ -65,7 +65,7 @@ export function registerClipboardShortcuts(getDeps: () => ClipboardShortcutDeps)
           pasteKeyframes(engine, dispatch)
         }
       } else {
-        pasteClipboard(dispatch)
+        void pasteClipboardAsync(engine, dispatch)
       }
     }),
     registerShortcut('ctrl+d', () => {

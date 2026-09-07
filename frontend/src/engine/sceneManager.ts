@@ -7,6 +7,7 @@ import type { NodeManager } from './nodeManager'
 import { copyComponents } from './components'
 import { copyMaterialInstance } from './materialInstance'
 import { cloneShadowEffect } from './shadowEffect'
+import { newClipInstanceId } from './clipInstance'
 
 export interface CopiedScene {
   readonly scene: Scene
@@ -99,6 +100,13 @@ function copyNodeDeep(
   }
   if (source.castShadow !== undefined) {
     copy.castShadow = source.castShadow
+  }
+  for (const inst of source.clipInstances) {
+    copy.clipInstances.push({
+      ...inst,
+      id: newClipInstanceId(),
+      paramOverrides: { ...inst.paramOverrides },
+    })
   }
   copy.parent = parent
   if (parent) {

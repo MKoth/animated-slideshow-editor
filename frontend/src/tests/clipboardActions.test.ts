@@ -88,7 +88,7 @@ function walkNames(harness: Harness): string[] {
 
 beforeEach(() => {
   useSelectionStore.setState({ selectedIds: [] })
-  useClipboardStore.setState({ items: [] })
+  useClipboardStore.setState({ items: [], payload: null })
 })
 
 describe('copySelection', () => {
@@ -273,7 +273,7 @@ describe('duplicateSelection', () => {
     expect(walkNames(harness)).toEqual(['Boy', 'Boy (2)', 'Boy (3)', 'Boy (4)'])
   })
 
-  it('skips selected nodes that are not asset instances', () => {
+  it('duplicates selected nodes that are not asset instances (groups, etc.)', () => {
     const harness = mount()
     const a = place(harness, 'Boy', 0, 0)
     const folder = expectOk(
@@ -290,10 +290,17 @@ describe('duplicateSelection', () => {
 
     duplicateSelection(harness.engine, harness.dispatch)
 
-    expect(harness.undoStack.entries).toHaveLength(before + 1)
-    expect(harness.undoStack.entries[0].type).toBe('DuplicateNode')
-    expect(useSelectionStore.getState().selectedIds).toHaveLength(1)
-    expect(walkNames(harness)).toEqual(['Boy', 'Boy (2)'])
+    expect(harness.undoStack.entries).toHaveLength(before + 2)
+    expect(harness.undoStack.entries.slice(0, 2).map((e) => e.type)).toEqual([
+      'DuplicateNode',
+      'DuplicateNode',
+    ])
+    expect(useSelectionStore.getState().selectedIds).toHaveLength(2)
+    const names = harness.engine
+      .project!.slides[0].scene.root.children.filter((n) => !n.components.camera)
+      .map((n) => n.name)
+      .sort()
+    expect(names).toEqual(['Boy', 'Boy (2)', 'Folder', 'Folder (2)'].sort())
   })
 })
 

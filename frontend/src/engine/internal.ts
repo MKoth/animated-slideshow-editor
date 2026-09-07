@@ -136,6 +136,7 @@ import {
 } from './reusableObject'
 import { materialFromJSON } from './materialInstance'
 import { clipInstanceFromJSON } from './clipInstance'
+import { uniqueNodeName } from './naming'
 
 function constraintParamsToJSON(c: Constraint): import('./json').ConstraintParamsJSON {
   switch (c.type) {
@@ -3306,7 +3307,61 @@ export class Engine {
     const targetScene = this.getNodeScene(targetParent.id)
     if (targetScene.id !== activeSlide.scene.id)
       throw new Error('Target parent must belong to the active slide')
+    return this.#importReusableObjectInternal(objectJson, targetParent, activeSlide)
+  }
 
+  importReusableObjectToParent(
+    objectJson: ReusableObjectJSON,
+    targetParentId: string,
+  ): {
+    nodeIdMap: Map<string, string>
+    clipIdMap: Map<string, string>
+    collectionIdMap: Map<string, string>
+    rootNewId: string
+  } {
+    const errors = validateReusableObject(objectJson)
+    if (errors.length > 0) throw new Error(errors.join('; '))
+    const project = this.#projects.current
+    if (!project) throw new Error('No project exists in memory')
+    const targetParent = this.getNode(targetParentId)
+    const targetScene = this.getNodeScene(targetParent.id)
+    const targetSlide = this.getSlideBySceneId(targetScene.id)
+    return this.#importReusableObjectInternal(objectJson, targetParent, targetSlide)
+  }
+
+  duplicateNodeSubtree(nodeId: string): {
+    nodeIdMap: Map<string, string>
+    rootNewId: string
+  } {
+    const node = this.getNode(nodeId)
+    const parent = node.parent
+    if (!parent) throw new Error('Cannot duplicate root node')
+    if (node.components.camera) throw new Error('The camera node cannot be duplicated')
+    const objectJson = this.exportReusableObject(nodeId, node.name)
+    // Apply offset to root transform
+    const rootJson = objectJson.nodes.find((n) => n.id === objectJson.rootId)
+    if (rootJson) {
+      ;(rootJson as unknown as { transform: { x: number; y: number } }).transform.x += 20
+      ;(rootJson as unknown as { transform: { x: number; y: number } }).transform.y += 20
+    }
+    const result = this.importReusableObjectToParent(objectJson, parent.id)
+    return { nodeIdMap: result.nodeIdMap, rootNewId: result.rootNewId }
+  }
+
+  private getSlideBySceneId(sceneId: string): Slide {
+    return this.#slides.getBySceneId(sceneId)
+  }
+
+  #importReusableObjectInternal(
+    objectJson: ReusableObjectJSON,
+    targetParent: SceneNode,
+    targetSlide: Slide,
+  ): {
+    nodeIdMap: Map<string, string>
+    clipIdMap: Map<string, string>
+    collectionIdMap: Map<string, string>
+    rootNewId: string
+  } {
     const nodeIdMap = new Map<string, string>()
     const clipIdMap = new Map<string, string>()
     const collectionIdMap = new Map<string, string>()
@@ -3579,21 +3634,15 @@ export class Engine {
 
     // Ensure unique names
     const existingNames = new Set<string>(
-      [...walkPreOrder(activeSlide.scene.root)].map((n) => n.name),
+      [...walkPreOrder(targetSlide.scene.root)].map((n) => n.name),
     )
     for (const nodeJson of newNodesJson) {
-      let nameVal = nodeJson.name as string
-      if (existingNames.has(nameVal)) {
-        let counter = 1
-        let candidate = `${nameVal} ${counter}`
-        while (existingNames.has(candidate)) {
-          counter += 1
-          candidate = `${nameVal} ${counter}`
-        }
-        ;(nodeJson as unknown as Record<string, unknown>).name = candidate
-        nameVal = candidate
+      const original = nodeJson.name as string
+      const unique = uniqueNodeName(existingNames, original)
+      if (unique !== original) {
+        ;(nodeJson as unknown as Record<string, unknown>).name = unique
       }
-      existingNames.add(nameVal)
+      existingNames.add(unique)
     }
 
     // Create nodes in order ensuring parents exist
@@ -3609,7 +3658,7 @@ export class Engine {
         scaleY: 1,
       }) as import('./transform').Transform
       const semanticName = (nodeJson as unknown as { semanticName?: string }).semanticName
-      const node = this.createNode(activeSlide.scene.id, parentId, nodeJson.name, {
+      const node = this.createNode(targetSlide.scene.id, parentId, nodeJson.name, {
         id: nid,
         transform,
         components,
@@ -3661,7 +3710,7 @@ export class Engine {
         const oldNodeId = nodeAnimJson.nodeId
         const newNodeId = nodeIdMap.get(oldNodeId)
         if (!newNodeId) continue
-        const targetAnim = activeSlide.animation.ensure(newNodeId)
+        const targetAnim = targetSlide.animation.ensure(newNodeId)
         for (const track of nodeAnimJson.tracks) {
           for (const kfJson of track.keyframes) {
             const kf = new KeyframeModel(
@@ -3968,7 +4017,7 @@ export class Engine {
         // To avoid duplicate ghosts, we will create chain then overwrite its ghost ids to point to imported ghosts.
         let created: import('./ikChain').IKChain
         try {
-          created = this.#ik.createChain(activeSlide.id, newBoneIds, newTarget, newPole)
+          created = this.#ik.createChain(targetSlide.id, newBoneIds, newTarget, newPole)
         } catch {
           continue
         }
@@ -4731,6 +4780,9 @@ export function toReadOnly(engine: Engine): EnginePublic {
       engine.exportReusableObject(rootNodeId, name, description),
     importReusableObject: (objectJson, targetParentId) =>
       engine.importReusableObject(objectJson, targetParentId),
+    importReusableObjectToParent: (objectJson, targetParentId) =>
+      engine.importReusableObjectToParent(objectJson, targetParentId),
+    duplicateNodeSubtree: (nodeId) => engine.duplicateNodeSubtree(nodeId),
   }
 }
 

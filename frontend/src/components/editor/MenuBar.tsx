@@ -3,7 +3,7 @@ import {
   copySelection,
   deleteSelection,
   duplicateSelection,
-  pasteClipboard,
+  pasteClipboardAsync,
 } from '../../app/clipboardActions'
 import {
   applyZOrder,
@@ -152,7 +152,9 @@ export function MenuBar() {
   const libraryUnavailable = useAssetLibraryStore((state) => state.unavailable)
   const gridSnap = useUiStore((state) => state.gridSnap)
   const selectedIds = useSelectionStore((state) => state.selectedIds)
-  const clipboardCount = useClipboardStore((state) => state.items.length)
+  const clipboardCount = useClipboardStore(
+    (state) => (state.payload?.entries.length ?? 0) + state.items.length,
+  )
   const checkedItems = new Set(gridSnap ? [SNAP_TO_GRID_ITEM] : [])
   const disabledItems = new Set<string>()
   if (selectedIds.length === 0) {
@@ -181,7 +183,7 @@ export function MenuBar() {
     } else if (item === COPY_ITEM) {
       copySelection(engine)
     } else if (item === PASTE_ITEM) {
-      pasteClipboard(dispatch)
+      void pasteClipboardAsync(engine, dispatch)
     } else if (item === DUPLICATE_ITEM) {
       duplicateSelection(engine, dispatch)
     } else if (item === DELETE_ITEM) {

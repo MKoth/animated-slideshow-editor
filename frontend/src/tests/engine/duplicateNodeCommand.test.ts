@@ -75,7 +75,7 @@ describe('DuplicateNodeCommand', () => {
     expect(copy.name).toBe('Boy (2)')
     expect(copy.parent?.id).toBe(slide.scene.root.id)
     expect(slide.scene.root.children).toContain(engine.getNode(copy.id))
-    expect(events).toEqual([{ type: 'NodeCreated', nodeId: copy.id }])
+    expect(events).toEqual(expect.arrayContaining([{ type: 'NodeCreated', nodeId: copy.id }]))
     expect(undoStack.entries).toHaveLength(before + 1)
     expect(undoStack.entries[0]).toMatchObject({
       type: 'DuplicateNode',
@@ -133,7 +133,7 @@ describe('DuplicateNodeCommand', () => {
     expect(undoStack.entries).toHaveLength(before + 1)
   })
 
-  it('rejects a node without an asset instance, leaving the engine unchanged', () => {
+  it('duplicates a node without an asset instance (group/folder) with full fidelity', () => {
     const { engine, undoStack, dispatcher, slide } = setup()
     const { nodeId } = expectOk(
       dispatcher.dispatch(
@@ -149,12 +149,15 @@ describe('DuplicateNodeCommand', () => {
 
     const result = dispatcher.dispatch(new DuplicateNodeCommand({ nodeId }))
 
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.error.message).toMatch(/asset instance/i)
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      const copy = engine.getNode(result.inverse.nodeId)
+      expect(copy.name).toBe('Folder (2)')
+      expect(copy.parent?.id).toBe(slide.scene.root.id)
+      expect(copy.components.assetInstance).toBeUndefined()
     }
-    expect(undoStack.entries).toHaveLength(before)
-    expect(events).toEqual([])
+    expect(undoStack.entries).toHaveLength(before + 1)
+    expect(events.length).toBeGreaterThan(0)
   })
 
   it('rejects the root node, leaving the engine unchanged', () => {
@@ -166,7 +169,7 @@ describe('DuplicateNodeCommand', () => {
 
     expect(result.ok).toBe(false)
     if (!result.ok) {
-      expect(result.error.message).toMatch(/asset instance/i)
+      expect(result.error.message).toMatch(/root cannot be duplicated/i)
     }
     expect(undoStack.entries).toHaveLength(before)
     expect(events).toEqual([])
@@ -181,7 +184,7 @@ describe('DuplicateNodeCommand', () => {
 
     expect(result.ok).toBe(false)
     if (!result.ok) {
-      expect(result.error.message).toMatch(/asset instance/i)
+      expect(result.error.message).toMatch(/camera.*cannot be duplicated/i)
     }
     expect(engine.getSlide(slide.id).scene.camera.id).toBe(slide.scene.camera.id)
     expect(undoStack.entries).toHaveLength(before)

@@ -1,7 +1,5 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
-import { namesInTree, uniqueNodeName } from '../naming'
-import { copyMaterialInstance } from '../materialInstance'
 
 export const DUPLICATE_OFFSET = { x: 20, y: 20 } as const
 
@@ -25,41 +23,24 @@ export class DuplicateNodeCommand implements Command<DuplicateNodeInverse> {
 
   validate(engine: Engine): void {
     const node = engine.getNode(this.#nodeId)
-    if (!node.components.assetInstance) {
-      throw new Error('Only asset instances can be duplicated')
+    if (!node.parent) {
+      throw new Error('The scene root cannot be duplicated')
+    }
+    if (node.components.camera) {
+      throw new Error('The camera node cannot be duplicated')
     }
   }
 
   execute(engine: Engine): DuplicateNodeInverse {
     const node = engine.getNode(this.#nodeId)
-    const scene = engine.getNodeScene(this.#nodeId)
-    if (!node.components.assetInstance || !node.parent) {
-      throw new Error('Only asset instances can be duplicated')
+    if (!node.parent) {
+      throw new Error('The scene root cannot be duplicated')
     }
-    const name = uniqueNodeName(namesInTree(scene.root), node.name)
-    const copy = engine.createAssetInstance(
-      scene.id,
-      node.parent.id,
-      node.components.assetInstance.assetDefinitionId,
-      name,
-      {
-        transform: {
-          ...node.transform,
-          x: node.transform.x + DUPLICATE_OFFSET.x,
-          y: node.transform.y + DUPLICATE_OFFSET.y,
-        },
-        ...(node.semanticName !== undefined ? { semanticName: node.semanticName } : {}),
-      },
-    )
-    copy.material = copyMaterialInstance(node.material)
-    if (node.castShadow !== undefined) {
-      ;(copy as unknown as { castShadow?: boolean }).castShadow = node.castShadow
+    if (node.components.camera) {
+      throw new Error('The camera node cannot be duplicated')
     }
-    // clipInstances are not copied here (asset instance only); if node had semanticName it's already handled
-    if (node.semanticName !== undefined) {
-      copy.semanticName = node.semanticName
-    }
-    return { nodeId: copy.id }
+    const result = engine.duplicateNodeSubtree(this.#nodeId)
+    return { nodeId: result.rootNewId }
   }
 
   toJSON(): Readonly<Record<string, unknown>> {

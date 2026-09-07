@@ -172,6 +172,19 @@ export interface EnginePublic {
     collectionIdMap: Map<string, string>
     rootNewId: string
   }
+  importReusableObjectToParent(
+    objectJson: import('./reusableObject').ReusableObjectJSON,
+    targetParentId: string,
+  ): {
+    nodeIdMap: Map<string, string>
+    clipIdMap: Map<string, string>
+    collectionIdMap: Map<string, string>
+    rootNewId: string
+  }
+  duplicateNodeSubtree(nodeId: string): {
+    nodeIdMap: Map<string, string>
+    rootNewId: string
+  }
 }
 
 export function createEngine(): EnginePublic {
