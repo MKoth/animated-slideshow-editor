@@ -85,7 +85,13 @@ export function ClipEditBody({
   const duration = clip.duration
   const clipId = clip.id
 
-  const rows = clipChannelRows(clip)
+  // In the main timeline clip edit, we currently support only uniform channels via command infrastructure.
+  // Filter to clipChannel rows to keep existing semantics; manager editor handles broader row types separately.
+  const allRows = clipChannelRows(clip)
+  const rows = allRows.filter((r) => r.kind === 'clipChannel') as Extract<
+    (typeof allRows)[number],
+    { kind: 'clipChannel' }
+  >[]
 
   const selectedNodeId = useSelectionStore((state) => state.selectedIds[0])
   const animatableParams = useMemo(() => {

@@ -273,10 +273,56 @@ export interface ClipChannelRowEntry {
   readonly rowIndex: number
 }
 
-export type ClipTimelineRow = ClipChannelRowEntry
+export interface ClipVisibleRowEntry {
+  readonly kind: 'clipVisible'
+  readonly clipId: string
+  readonly label: string
+  readonly rowIndex: number
+}
 
-export function clipChannelRows(clip: ClipDefinition): ClipChannelRowEntry[] {
-  const rows: ClipChannelRowEntry[] = []
+export interface ClipCircleRowEntry {
+  readonly kind: 'clipCircle'
+  readonly clipId: string
+  readonly property: CircleAnimationProperty
+  readonly label: string
+  readonly rowIndex: number
+}
+
+export interface ClipMorphRowEntry {
+  readonly kind: 'clipMorph'
+  readonly clipId: string
+  readonly label: string
+  readonly rowIndex: number
+}
+
+export interface ClipShadowRowEntry {
+  readonly kind: 'clipShadow'
+  readonly clipId: string
+  readonly property: ShadowProperty
+  readonly label: string
+  readonly rowIndex: number
+}
+
+export interface ClipMaterialRowEntry {
+  readonly kind: 'clipMaterial'
+  readonly clipId: string
+  readonly parameter: string
+  readonly label: string
+  readonly rowIndex: number
+}
+
+export type ClipEditorRow =
+  | ClipChannelRowEntry
+  | ClipVisibleRowEntry
+  | ClipCircleRowEntry
+  | ClipMorphRowEntry
+  | ClipShadowRowEntry
+  | ClipMaterialRowEntry
+
+export type ClipTimelineRow = ClipEditorRow
+
+export function clipChannelRows(clip: ClipDefinition): ClipEditorRow[] {
+  const rows: ClipEditorRow[] = []
   let rowIndex = 0
   for (const channelDef of clip.channels) {
     rows.push({
@@ -284,6 +330,59 @@ export function clipChannelRows(clip: ClipDefinition): ClipChannelRowEntry[] {
       clipId: clip.id,
       channel: channelDef.property,
       label: PROPERTY_LABELS[channelDef.property],
+      rowIndex,
+    })
+    rowIndex++
+  }
+  // visible hold – one lane, visible-pattern
+  if (clip.hasVisibleTrack()) {
+    rows.push({
+      kind: 'clipVisible',
+      clipId: clip.id,
+      label: VISIBLE_LABEL,
+      rowIndex,
+    })
+    rowIndex++
+  }
+  // morph coefficient – one lane
+  if (clip.hasMorphTrack()) {
+    rows.push({
+      kind: 'clipMorph',
+      clipId: clip.id,
+      label: MORPH_LABEL,
+      rowIndex,
+    })
+    rowIndex++
+  }
+  // circle angles/segments
+  for (const prop of clip.circleTrackKeys) {
+    rows.push({
+      kind: 'clipCircle',
+      clipId: clip.id,
+      property: prop,
+      label: CIRCLE_LABELS[prop],
+      rowIndex,
+    })
+    rowIndex++
+  }
+  // shadow params
+  for (const prop of clip.shadowChannelKeys) {
+    rows.push({
+      kind: 'clipShadow',
+      clipId: clip.id,
+      property: prop,
+      label: SHADOW_LABELS[prop] ?? prop,
+      rowIndex,
+    })
+    rowIndex++
+  }
+  // material params
+  for (const key of clip.materialChannelParameterKeys) {
+    rows.push({
+      kind: 'clipMaterial',
+      clipId: clip.id,
+      parameter: key,
+      label: key,
       rowIndex,
     })
     rowIndex++
