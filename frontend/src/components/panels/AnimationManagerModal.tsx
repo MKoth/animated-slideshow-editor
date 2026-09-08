@@ -3081,7 +3081,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 }}
                 onClick={() => {
                   try {
-                    const placement = engine.getCollectionPlacement(collectionPlacementMenu.placementId)
+                    const placement = engine.getCollectionPlacement(
+                      collectionPlacementMenu.placementId,
+                    )
                     const collection = engine.getClipCollection(placement.collectionId)
                     const defaultName = `${collection.name} Reversed`
                     setReverseNameDraft(defaultName)
@@ -3788,9 +3790,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               onClick={(e) => e.stopPropagation()}
             >
               <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Reverse and Save As…</h3>
-              <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
-                Create a time-reversed copy. Original is untouched. New instance at same startTime with
-                speed=1.
+              <p
+                style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}
+              >
+                Create a time-reversed copy. Original is untouched. New instance at same startTime
+                with speed=1.
               </p>
               <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
                 New clip name
@@ -3824,7 +3828,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                       else {
                         notify(`Reversed clip "${name}" created`)
                         // highlight new lane if placement
-                        const newId = (res as { ok: true; inverse: { newClipId: string } }).inverse.newClipId
+                        const newId = (res as { ok: true; inverse: { newClipId: string } }).inverse
+                          .newClipId
                         // Find new instance if any
                         if (reverseClipPrompt.nodeId) {
                           try {
@@ -3849,7 +3854,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                 <button
                   onClick={() => setReverseClipPrompt(null)}
-                  style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--color-border)' }}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                  }}
                   data-testid="reverse-clip-cancel"
                 >
                   Cancel
@@ -3872,7 +3881,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     if (!res.ok) notify(res.error.message)
                     else {
                       notify(`Reversed clip "${name}" created`)
-                      const newId = (res as { ok: true; inverse: { newClipId: string } }).inverse.newClipId
+                      const newId = (res as { ok: true; inverse: { newClipId: string } }).inverse
+                        .newClipId
                       if (reverseClipPrompt.nodeId) {
                         try {
                           const node = engine.getNode(reverseClipPrompt.nodeId)
@@ -3888,7 +3898,13 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     }
                     setReverseClipPrompt(null)
                   }}
-                  style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid transparent', background: '#7c5cff', color: '#fff' }}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid transparent',
+                    background: '#7c5cff',
+                    color: '#fff',
+                  }}
                   data-testid="reverse-clip-confirm"
                 >
                   Save
@@ -3927,7 +3943,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               onClick={(e) => e.stopPropagation()}
             >
               <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Reverse Collection and Save As…</h3>
-              <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
+              <p
+                style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}
+              >
                 Creates reversed copies of each member clip and a new collection with same
                 semanticName map. Offsets preserved (v1).
               </p>
@@ -3971,7 +3989,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                 <button
                   onClick={() => setReverseCollectionPrompt(null)}
-                  style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--color-border)' }}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                  }}
                   data-testid="reverse-collection-cancel"
                 >
                   Cancel
@@ -3995,7 +4017,13 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     else notify(`Reversed collection "${name}" created`)
                     setReverseCollectionPrompt(null)
                   }}
-                  style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid transparent', background: '#7c5cff', color: '#fff' }}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid transparent',
+                    background: '#7c5cff',
+                    color: '#fff',
+                  }}
                   data-testid="reverse-collection-confirm"
                 >
                   Save

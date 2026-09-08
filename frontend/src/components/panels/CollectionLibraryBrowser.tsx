@@ -6,7 +6,13 @@ import { useEngine } from '../../app/useEngine'
 import { ApplyClipCollectionModal } from './ApplyClipCollectionModal'
 import { ReverseCollectionCommand } from '../../engine/commands'
 
-export function CollectionLibraryBrowser({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+export function CollectionLibraryBrowser({
+  visible,
+  onClose,
+}: {
+  visible: boolean
+  onClose: () => void
+}) {
   const definitions = useClipCollectionLibraryStore((s) => s.definitions)
   const loading = useClipCollectionLibraryStore((s) => s.loading)
   const error = useClipCollectionLibraryStore((s) => s.error)
@@ -22,7 +28,10 @@ export function CollectionLibraryBrowser({ visible, onClose }: { visible: boolea
   const [deleteConfirm, setDeleteConfirm] = useState<ClipCollectionLibraryEntry | null>(null)
   const [applyCollectionId, setApplyCollectionId] = useState<string | null>(null)
   const [overflowId, setOverflowId] = useState<string | null>(null)
-  const [reversePrompt, setReversePrompt] = useState<{ entry: ClipCollectionLibraryEntry; defaultName: string } | null>(null)
+  const [reversePrompt, setReversePrompt] = useState<{
+    entry: ClipCollectionLibraryEntry
+    defaultName: string
+  } | null>(null)
   const [reverseNameDraft, setReverseNameDraft] = useState('')
 
   useEffect(() => {
@@ -60,7 +69,12 @@ export function CollectionLibraryBrowser({ visible, onClose }: { visible: boolea
 
   return (
     <div className="projects-overlay">
-      <div className="projects-dialog" role="dialog" aria-label="Browse Collection Library" style={{ maxWidth: 600, width: '100%' }}>
+      <div
+        className="projects-dialog"
+        role="dialog"
+        aria-label="Browse Collection Library"
+        style={{ maxWidth: 600, width: '100%' }}
+      >
         <h2 className="projects-dialog__title">Browse Collection Library</h2>
         {error && (
           <div className="panel-status panel-status--error" role="alert">
@@ -70,7 +84,9 @@ export function CollectionLibraryBrowser({ visible, onClose }: { visible: boolea
             </button>
           </div>
         )}
-        {unavailable && <p className="projects-dialog__message">Backend unavailable. Library cannot be loaded.</p>}
+        {unavailable && (
+          <p className="projects-dialog__message">Backend unavailable. Library cannot be loaded.</p>
+        )}
         {!unavailable && (
           <>
             <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
@@ -113,14 +129,20 @@ export function CollectionLibraryBrowser({ visible, onClose }: { visible: boolea
                   return (
                     <li
                       key={entry.id}
-                      style={{ border: '1px solid var(--color-border)', borderRadius: 6, padding: 8 }}
+                      style={{
+                        border: '1px solid var(--color-border)',
+                        borderRadius: 6,
+                        padding: 8,
+                      }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <strong style={{ flex: 1, fontSize: 12 }}>{entry.name}</strong>
                         <span
                           style={{
                             fontSize: 11,
-                            color: isSelfContained ? 'var(--color-success, green)' : 'var(--color-danger)',
+                            color: isSelfContained
+                              ? 'var(--color-success, green)'
+                              : 'var(--color-danger)',
                           }}
                         >
                           {Object.keys(entry.bindings).length} binding(s){' '}
@@ -130,7 +152,9 @@ export function CollectionLibraryBrowser({ visible, onClose }: { visible: boolea
                       <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>
                         {Object.entries(entry.bindings).map(([sem, clipId]) => {
                           const clipName = (() => {
-                            const clips = (entry as unknown as { clips?: { id: string; name: string }[] }).clips
+                            const clips = (
+                              entry as unknown as { clips?: { id: string; name: string }[] }
+                            ).clips
                             if (Array.isArray(clips)) {
                               const found = clips.find((c) => c.id === clipId)
                               if (found) return found.name
@@ -198,7 +222,16 @@ export function CollectionLibraryBrowser({ visible, onClose }: { visible: boolea
                               <button
                                 role="menuitem"
                                 data-testid={`library-collection-reverse-${entry.id}`}
-                                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 12 }}
+                                style={{
+                                  display: 'block',
+                                  width: '100%',
+                                  textAlign: 'left',
+                                  padding: '6px 10px',
+                                  border: 'none',
+                                  background: 'transparent',
+                                  cursor: 'pointer',
+                                  fontSize: 12,
+                                }}
                                 onClick={() => {
                                   const defaultName = `${entry.name} Reversed`
                                   setReverseNameDraft(defaultName)
@@ -228,7 +261,9 @@ export function CollectionLibraryBrowser({ visible, onClose }: { visible: boolea
       {deleteConfirm && (
         <div className="projects-overlay">
           <div className="projects-dialog" role="dialog" aria-label="Confirm delete">
-            <p className="projects-dialog__message">Delete &ldquo;{deleteConfirm.name}&rdquo; from the shared library?</p>
+            <p className="projects-dialog__message">
+              Delete &ldquo;{deleteConfirm.name}&rdquo; from the shared library?
+            </p>
             <p className="projects-dialog__message" style={{ fontSize: '0.85em', opacity: 0.7 }}>
               Projects that already imported this collection will keep their copy.
             </p>
@@ -245,8 +280,18 @@ export function CollectionLibraryBrowser({ visible, onClose }: { visible: boolea
         onClose={() => setApplyCollectionId(null)}
       />
       {reversePrompt && (
-        <div className="projects-overlay" role="dialog" aria-modal="true" aria-label="Reverse and Save As" data-testid="library-collection-reverse-modal">
-          <div className="projects-dialog" style={{ minWidth: 360 }} onClick={(e) => e.stopPropagation()}>
+        <div
+          className="projects-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Reverse and Save As"
+          data-testid="library-collection-reverse-modal"
+        >
+          <div
+            className="projects-dialog"
+            style={{ minWidth: 360 }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Reverse and Save As…</h3>
             <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
               New collection name
@@ -255,7 +300,14 @@ export function CollectionLibraryBrowser({ visible, onClose }: { visible: boolea
                 onChange={(e) => setReverseNameDraft(e.target.value)}
                 placeholder={reversePrompt.defaultName}
                 autoFocus
-                style={{ display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 4, border: '1px solid var(--color-border)' }}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  marginTop: 4,
+                  padding: '6px 8px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border)',
+                }}
                 data-testid="library-collection-reverse-name-input"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
@@ -268,7 +320,12 @@ export function CollectionLibraryBrowser({ visible, onClose }: { visible: boolea
                       } catch {
                         // Try to find by name
                       }
-                      const res = dispatch(new ReverseCollectionCommand({ sourceCollectionId: sourceId, newName: name }))
+                      const res = dispatch(
+                        new ReverseCollectionCommand({
+                          sourceCollectionId: sourceId,
+                          newName: name,
+                        }),
+                      )
                       if (!res.ok) notify(res.error.message)
                       else notify(`Reversed collection "${name}" created`)
                       setReversePrompt(null)
@@ -278,7 +335,15 @@ export function CollectionLibraryBrowser({ visible, onClose }: { visible: boolea
               />
             </label>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <button onClick={() => setReversePrompt(null)} style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--color-border)' }} data-testid="library-collection-reverse-cancel">
+              <button
+                onClick={() => setReversePrompt(null)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border)',
+                }}
+                data-testid="library-collection-reverse-cancel"
+              >
                 Cancel
               </button>
               <button
@@ -286,12 +351,20 @@ export function CollectionLibraryBrowser({ visible, onClose }: { visible: boolea
                   const name = reverseNameDraft.trim() || reversePrompt.defaultName
                   const importedId = await importCollection(reversePrompt.entry, engine)
                   const sourceId = importedId ?? reversePrompt.entry.id
-                  const res = dispatch(new ReverseCollectionCommand({ sourceCollectionId: sourceId, newName: name }))
+                  const res = dispatch(
+                    new ReverseCollectionCommand({ sourceCollectionId: sourceId, newName: name }),
+                  )
                   if (!res.ok) notify(res.error.message)
                   else notify(`Reversed collection "${name}" created`)
                   setReversePrompt(null)
                 }}
-                style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid transparent', background: '#7c5cff', color: '#fff' }}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid transparent',
+                  background: '#7c5cff',
+                  color: '#fff',
+                }}
                 data-testid="library-collection-reverse-confirm"
               >
                 Save

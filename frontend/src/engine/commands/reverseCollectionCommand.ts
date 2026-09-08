@@ -32,7 +32,8 @@ export class ReverseCollectionCommand implements Command<ReverseCollectionInvers
   constructor(input: ReverseCollectionParameters) {
     requireString(input.sourceCollectionId, 'sourceCollectionId')
     requireString(input.newName, 'newName')
-    if (input.targetParentNodeId !== undefined) requireString(input.targetParentNodeId, 'targetParentNodeId')
+    if (input.targetParentNodeId !== undefined)
+      requireString(input.targetParentNodeId, 'targetParentNodeId')
     if (input.startTime !== undefined) {
       requireFiniteNumber(input.startTime, 'startTime')
       if (input.startTime < 0) throw new Error('startTime must be non-negative')
@@ -44,7 +45,9 @@ export class ReverseCollectionCommand implements Command<ReverseCollectionInvers
     this.parameters = {
       sourceCollectionId: input.sourceCollectionId,
       newName: input.newName,
-      ...(input.targetParentNodeId !== undefined ? { targetParentNodeId: input.targetParentNodeId } : {}),
+      ...(input.targetParentNodeId !== undefined
+        ? { targetParentNodeId: input.targetParentNodeId }
+        : {}),
       ...(input.startTime !== undefined ? { startTime: input.startTime } : {}),
     }
   }
@@ -82,13 +85,18 @@ export class ReverseCollectionCommand implements Command<ReverseCollectionInvers
       const result = engine.placeCollection(collection.id, this.#targetParentNodeId, start)
       placementId = result.placement.id
       placementSnapshot = { ...result.placement }
-      createdInstanceIds = result.created.map((c) => ({ nodeId: c.nodeId, instanceId: c.instanceId }))
+      createdInstanceIds = result.created.map((c) => ({
+        nodeId: c.nodeId,
+        instanceId: c.instanceId,
+      }))
       // Capture instance snapshots for redo
-      instanceSnapshots = result.created.map((c) => {
-        const node = engine.getNode(c.nodeId)
-        const inst = node.clipInstances.find((i) => i.id === c.instanceId)
-        return inst ? { ...inst } : null
-      }).filter(Boolean)
+      instanceSnapshots = result.created
+        .map((c) => {
+          const node = engine.getNode(c.nodeId)
+          const inst = node.clipInstances.find((i) => i.id === c.instanceId)
+          return inst ? { ...inst } : null
+        })
+        .filter(Boolean)
       parentNodeId = this.#targetParentNodeId
     }
     return {
@@ -96,7 +104,9 @@ export class ReverseCollectionCommand implements Command<ReverseCollectionInvers
       snapshot: collection.toJSON(),
       newClipIds,
       clipSnapshots,
-      ...(placementId ? { placementId, placementSnapshot, createdInstanceIds, instanceSnapshots, parentNodeId } : {}),
+      ...(placementId
+        ? { placementId, placementSnapshot, createdInstanceIds, instanceSnapshots, parentNodeId }
+        : {}),
     }
   }
 

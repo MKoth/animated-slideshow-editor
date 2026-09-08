@@ -39,7 +39,10 @@ function effectiveUForClip(
   keyframes: readonly Keyframe[],
   u: number,
 ): number {
-  if ((clip as unknown as { isReversed?: boolean }).isReversed && isParametricKeyframes(keyframes)) {
+  if (
+    (clip as unknown as { isReversed?: boolean }).isReversed &&
+    isParametricKeyframes(keyframes)
+  ) {
     return 1 - u
   }
   return u

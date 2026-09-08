@@ -2948,7 +2948,10 @@ export class Engine {
     for (const [semanticName, clipId] of source.bindings) {
       let newClipId = clipIdMap.get(clipId)
       if (!newClipId) {
-        const reversedClip = this.createReversedClip(clipId, `${this.getClip(clipId).name} Reversed`)
+        const reversedClip = this.createReversedClip(
+          clipId,
+          `${this.getClip(clipId).name} Reversed`,
+        )
         newClipId = reversedClip.id
         clipIdMap.set(clipId, newClipId)
       }

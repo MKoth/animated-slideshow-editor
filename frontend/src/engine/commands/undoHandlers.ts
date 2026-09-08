@@ -1980,8 +1980,7 @@ export function applyUndo(
       const newClipIds = revInv2?.newClipIds as string[] | undefined
       const placementId = revInv2?.placementId as string | undefined
       const createdInstanceIds = revInv2?.createdInstanceIds as
-        | { nodeId: string; instanceId: string }[]
-        | undefined
+        { nodeId: string; instanceId: string }[] | undefined
       if (createdInstanceIds) {
         for (const { nodeId, instanceId } of createdInstanceIds) {
           try {
@@ -3693,11 +3692,20 @@ export function applyRedo(
         try {
           const clipId = (snapshot as Record<string, unknown>)?.id as string
           if (clipId) {
-            const start = (instanceSnapshot as Record<string, unknown>).startTime as number ?? 0
-            const speed = (instanceSnapshot as Record<string, unknown>).speed as number ?? 1
-            const enabled = (instanceSnapshot as Record<string, unknown>).enabled as boolean ?? true
-            const paramOverrides = (instanceSnapshot as Record<string, unknown>).paramOverrides as Record<string, number> | undefined
-            const inst = engine.assignClipInstance(nodeId, clipId, start, speed, enabled, paramOverrides ?? {})
+            const start = ((instanceSnapshot as Record<string, unknown>).startTime as number) ?? 0
+            const speed = ((instanceSnapshot as Record<string, unknown>).speed as number) ?? 1
+            const enabled =
+              ((instanceSnapshot as Record<string, unknown>).enabled as boolean) ?? true
+            const paramOverrides = (instanceSnapshot as Record<string, unknown>).paramOverrides as
+              Record<string, number> | undefined
+            const inst = engine.assignClipInstance(
+              nodeId,
+              clipId,
+              start,
+              speed,
+              enabled,
+              paramOverrides ?? {},
+            )
             // Patch id to original
             if (inst.id !== instanceId) {
               const node = engine.getNode(nodeId)
@@ -3713,7 +3721,7 @@ export function applyRedo(
         try {
           const clipId = (snapshot as Record<string, unknown>)?.id as string
           if (clipId) {
-            const start = (params as Record<string, unknown>).startTime as number ?? 0
+            const start = ((params as Record<string, unknown>).startTime as number) ?? 0
             const inst = engine.assignClipInstance(nodeId, clipId, start, 1, true, {})
             if (inst.id !== instanceId) {
               const node = engine.getNode(nodeId)
@@ -3745,7 +3753,9 @@ export function applyRedo(
       }
       if (snapshot) {
         try {
-          const col = ClipCollection.fromJSON(snapshot as unknown as import('../json').ClipCollectionJSON)
+          const col = ClipCollection.fromJSON(
+            snapshot as unknown as import('../json').ClipCollectionJSON,
+          )
           engine.importClipCollection(col)
         } catch {
           try {
@@ -3758,7 +3768,7 @@ export function applyRedo(
       if (placementSnapshot && parentNodeId) {
         try {
           const colId = (snapshot as Record<string, unknown>)?.id as string
-          const start = (placementSnapshot as Record<string, unknown>)?.startTime as number ?? 0
+          const start = ((placementSnapshot as Record<string, unknown>)?.startTime as number) ?? 0
           if (colId) engine.placeCollection(colId, parentNodeId, start)
         } catch {
           void 0

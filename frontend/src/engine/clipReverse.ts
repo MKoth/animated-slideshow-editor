@@ -1,6 +1,11 @@
 import { ClipDefinition, newClipId } from './clipDefinition'
 import { ClipChannelAnimation } from './clipDefinition'
-import { Keyframe as KeyframeModel, newKeyframeId, ZERO_TANGENT, isParametricInterpolation } from './keyframe'
+import {
+  Keyframe as KeyframeModel,
+  newKeyframeId,
+  ZERO_TANGENT,
+  isParametricInterpolation,
+} from './keyframe'
 
 function isParametricAnimation(anim: ClipChannelAnimation): boolean {
   for (const kf of anim.keyframes()) {
@@ -53,7 +58,14 @@ function reverseAnimation(
       tangentOut = ZERO_TANGENT
     }
     dest.add(
-      new KeyframeModel(newKeyframeId(), newTime, kf.value, kf.interpolation, tangentIn, tangentOut),
+      new KeyframeModel(
+        newKeyframeId(),
+        newTime,
+        kf.value,
+        kf.interpolation,
+        tangentIn,
+        tangentOut,
+      ),
     )
   }
   return dest

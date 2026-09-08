@@ -514,4 +514,7 @@ export type { SetCastShadowInverse, SetCastShadowParameters } from './setCastSha
 export { ReverseClipCommand } from './reverseClipCommand'
 export type { ReverseClipInverse, ReverseClipParameters } from './reverseClipCommand'
 export { ReverseCollectionCommand } from './reverseCollectionCommand'
-export type { ReverseCollectionInverse, ReverseCollectionParameters } from './reverseCollectionCommand'
+export type {
+  ReverseCollectionInverse,
+  ReverseCollectionParameters,
+} from './reverseCollectionCommand'

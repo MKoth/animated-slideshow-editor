@@ -187,8 +187,14 @@ export function AnimationsPanel() {
   const collectionFileInputRef = useRef<HTMLInputElement>(null)
   const [clipOverflowId, setClipOverflowId] = useState<string | null>(null)
   const [collectionOverflowId, setCollectionOverflowId] = useState<string | null>(null)
-  const [reverseClipPrompt, setReverseClipPrompt] = useState<{ clipId: string; defaultName: string } | null>(null)
-  const [reverseCollectionPrompt, setReverseCollectionPrompt] = useState<{ collectionId: string; defaultName: string } | null>(null)
+  const [reverseClipPrompt, setReverseClipPrompt] = useState<{
+    clipId: string
+    defaultName: string
+  } | null>(null)
+  const [reverseCollectionPrompt, setReverseCollectionPrompt] = useState<{
+    collectionId: string
+    defaultName: string
+  } | null>(null)
   const [reverseNameDraft, setReverseNameDraft] = useState('')
 
   const downloadCollectionFile = (collectionId: string) => {
@@ -210,7 +216,8 @@ export function AnimationsPanel() {
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
-    const safeName = collection.name.replace(/[^a-zA-Z0-9-_ ]/g, '').replace(/\s+/g, '_') || 'collection'
+    const safeName =
+      collection.name.replace(/[^a-zA-Z0-9-_ ]/g, '').replace(/\s+/g, '_') || 'collection'
     anchor.href = url
     anchor.download = `${safeName}.clip_collection`
     document.body.appendChild(anchor)
@@ -223,7 +230,8 @@ export function AnimationsPanel() {
   const importCollectionFile = async (file: File) => {
     try {
       const parsed: unknown = JSON.parse(await file.text())
-      if (!parsed || typeof parsed !== 'object') throw new Error('Collection file must contain an object')
+      if (!parsed || typeof parsed !== 'object')
+        throw new Error('Collection file must contain an object')
       const value = parsed as {
         format?: unknown
         version?: unknown
@@ -234,7 +242,8 @@ export function AnimationsPanel() {
       if (value.format !== 'animated-slides-clip-collection' || value.version !== 1) {
         throw new Error('Unsupported clip collection file')
       }
-      if (typeof value.name !== 'string' || !value.name.trim()) throw new Error('Collection name is missing')
+      if (typeof value.name !== 'string' || !value.name.trim())
+        throw new Error('Collection name is missing')
       if (!value.bindings || typeof value.bindings !== 'object' || Array.isArray(value.bindings)) {
         throw new Error('Collection bindings are missing')
       }
@@ -277,7 +286,9 @@ export function AnimationsPanel() {
     const result = dispatch(new RenameClipCollectionCommand({ collectionId, name: trimmed }))
     if (!result.ok) notify(result.error.message)
   }
-  const ensureReferencedClipsInLibrary = async (col: ReturnType<typeof engine.getClipCollection>) => {
+  const ensureReferencedClipsInLibrary = async (
+    col: ReturnType<typeof engine.getClipCollection>,
+  ) => {
     const saveClipToLibrary = useClipLibraryStore.getState().saveToLibrary
     const clipDefs = useClipLibraryStore.getState().definitions
     const clipLibraryLoaded = useClipLibraryStore.getState().loaded
@@ -310,12 +321,20 @@ export function AnimationsPanel() {
     // If this exact collection was already saved (same id), offer to update that entry regardless of name
     const existingById = collectionLibraryDefs.find((e) => e.id === col.id)
     if (existingById) {
-      setCollectionSaveConfirm({ collectionId, collectionName: col.name, existingEntryId: existingById.id })
+      setCollectionSaveConfirm({
+        collectionId,
+        collectionName: col.name,
+        existingEntryId: existingById.id,
+      })
       return
     }
     const existingByName = collectionLibraryDefs.find((e) => e.name === col.name)
     if (existingByName) {
-      setCollectionSaveConfirm({ collectionId, collectionName: col.name, existingEntryId: existingByName.id })
+      setCollectionSaveConfirm({
+        collectionId,
+        collectionName: col.name,
+        existingEntryId: existingByName.id,
+      })
       return
     }
     await ensureReferencedClipsInLibrary(col)
@@ -506,7 +525,9 @@ export function AnimationsPanel() {
                       <button
                         aria-label={`More options for ${clip.name}`}
                         title="More options"
-                        onClick={() => setClipOverflowId(clipOverflowId === clip.id ? null : clip.id)}
+                        onClick={() =>
+                          setClipOverflowId(clipOverflowId === clip.id ? null : clip.id)
+                        }
                         data-testid={`clip-ellipsis-${clip.id}`}
                         style={{ padding: '2px 6px' }}
                       >
@@ -561,27 +582,56 @@ export function AnimationsPanel() {
           })}
         </ul>
       )}
-      <section className="clip-collections" aria-label="Clip Collections" style={{ marginTop: 16, borderTop: '1px solid var(--color-border)', paddingTop: 12 }}>
-        <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+      <section
+        className="clip-collections"
+        aria-label="Clip Collections"
+        style={{ marginTop: 16, borderTop: '1px solid var(--color-border)', paddingTop: 12 }}
+      >
+        <header
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginBottom: 8,
+          }}
+        >
           <h3 style={{ margin: 0, fontSize: 13 }}>Clip Collections</h3>
           <div style={{ display: 'flex', gap: 6 }}>
             <button
               onClick={() => collectionFileInputRef.current?.click()}
-              style={{ fontSize: 11, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'var(--color-bg)' }}
+              style={{
+                fontSize: 11,
+                padding: '4px 8px',
+                borderRadius: 4,
+                border: '1px solid var(--color-border)',
+                background: 'var(--color-bg)',
+              }}
               data-testid="collections-import-file-button"
             >
               Import File
             </button>
             <button
               onClick={() => setBrowseCollectionsOpen(true)}
-              style={{ fontSize: 11, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'var(--color-bg)' }}
+              style={{
+                fontSize: 11,
+                padding: '4px 8px',
+                borderRadius: 4,
+                border: '1px solid var(--color-border)',
+                background: 'var(--color-bg)',
+              }}
               data-testid="collections-browse-button"
             >
               Browse Library
             </button>
             <button
               onClick={() => setExportCollectionOpen(true)}
-              style={{ fontSize: 11, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'var(--color-bg-elevated)' }}
+              style={{
+                fontSize: 11,
+                padding: '4px 8px',
+                borderRadius: 4,
+                border: '1px solid var(--color-border)',
+                background: 'var(--color-bg-elevated)',
+              }}
               data-testid="collections-export-button"
               title="Export collection from Scene hierarchy (right-click a node for context menu)"
             >
@@ -590,10 +640,17 @@ export function AnimationsPanel() {
           </div>
         </header>
         <p style={{ fontSize: 11, color: 'var(--color-text-muted)', margin: '0 0 8px' }}>
-          Map semanticName → clip. Export from Scene tree (right-click parent), then Apply to target hierarchy. Blocking if any clipped node lacks Semantic Name. Saved to <strong>Library</strong> persists across projects — use <em>Save to Library</em> then <em>Browse Library → Import</em> in another project.
+          Map semanticName → clip. Export from Scene tree (right-click parent), then Apply to target
+          hierarchy. Blocking if any clipped node lacks Semantic Name. Saved to{' '}
+          <strong>Library</strong> persists across projects — use <em>Save to Library</em> then{' '}
+          <em>Browse Library → Import</em> in another project.
         </p>
         {collectionLibraryError && (
-          <div className="panel-status panel-status--error" role="alert" style={{ marginBottom: 8 }}>
+          <div
+            className="panel-status panel-status--error"
+            role="alert"
+            style={{ marginBottom: 8 }}
+          >
             <p>{collectionLibraryError}</p>
             <button aria-label="Dismiss error" onClick={clearCollectionLibraryError}>
               Dismiss
@@ -602,20 +659,34 @@ export function AnimationsPanel() {
         )}
         {collections.length === 0 ? (
           <div className="panel-empty-state" style={{ padding: 12 }}>
-            <p style={{ fontSize: 12 }}>No collections in this project. Right-click a parent in Scene → Export Clip Collection…</p>
+            <p style={{ fontSize: 12 }}>
+              No collections in this project. Right-click a parent in Scene → Export Clip
+              Collection…
+            </p>
             {collectionLibraryLoaded && collectionLibraryDefs.length > 0 && (
               <p style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 6 }}>
-                You have {collectionLibraryDefs.length} saved in Library — click <em>Browse Library</em> to import.
+                You have {collectionLibraryDefs.length} saved in Library — click{' '}
+                <em>Browse Library</em> to import.
               </p>
             )}
             {collectionLibraryLoaded && collectionLibraryDefs.length === 0 && (
               <p style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 6 }}>
-                Library is empty. Export a collection then <em>Save to Library</em> to make it available in other projects.
+                Library is empty. Export a collection then <em>Save to Library</em> to make it
+                available in other projects.
               </p>
             )}
           </div>
         ) : (
-          <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <ul
+            style={{
+              listStyle: 'none',
+              padding: 0,
+              margin: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+            }}
+          >
             {collections.map((col) => {
               const bindings = [...col.bindings.entries()]
               const editing = editingCollectionId === col.id
@@ -638,13 +709,20 @@ export function AnimationsPanel() {
                         autoFocus
                         onFocus={(e) => e.target.select()}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter') commitRenameCollection(col.id, e.currentTarget.value)
+                          if (e.key === 'Enter')
+                            commitRenameCollection(col.id, e.currentTarget.value)
                           else if (e.key === 'Escape') setEditingCollectionId(null)
                         }}
                         onBlur={(e) => {
-                          if (editingCollectionId === col.id) commitRenameCollection(col.id, e.target.value)
+                          if (editingCollectionId === col.id)
+                            commitRenameCollection(col.id, e.target.value)
                         }}
-                        style={{ flex: 1, padding: '4px 6px', borderRadius: 4, border: '1px solid var(--color-border)' }}
+                        style={{
+                          flex: 1,
+                          padding: '4px 6px',
+                          borderRadius: 4,
+                          border: '1px solid var(--color-border)',
+                        }}
                         data-testid={`collection-rename-input-${col.id}`}
                       />
                     ) : (
@@ -689,7 +767,8 @@ export function AnimationsPanel() {
                   </div>
                   {col.sourceNodeId && (
                     <div style={{ fontSize: 10, color: 'var(--color-text-muted)', marginTop: 2 }}>
-                      source: {(() => {
+                      source:{' '}
+                      {(() => {
                         try {
                           return engine.getNode(col.sourceNodeId!).name
                         } catch {
@@ -849,12 +928,16 @@ export function AnimationsPanel() {
         </div>
       )}
       <LibraryBrowser />
-      <CollectionLibraryBrowser visible={browseCollectionsOpen} onClose={() => setBrowseCollectionsOpen(false)} />
+      <CollectionLibraryBrowser
+        visible={browseCollectionsOpen}
+        onClose={() => setBrowseCollectionsOpen(false)}
+      />
       {collectionSaveConfirm && (
         <div className="projects-overlay">
           <div className="projects-dialog" role="dialog" aria-label="Save Collection to Library">
             <p className="projects-dialog__message">
-              A collection named &ldquo;{collectionSaveConfirm.collectionName}&rdquo; already exists in the library.
+              A collection named &ldquo;{collectionSaveConfirm.collectionName}&rdquo; already exists
+              in the library.
             </p>
             <div className="projects-dialog__actions">
               <button onClick={() => setCollectionSaveConfirm(null)}>Cancel</button>
@@ -875,7 +958,13 @@ export function AnimationsPanel() {
         onClose={() => setExportCollectionOpen(false)}
       />
       {reverseClipPrompt && (
-        <div className="projects-overlay" role="dialog" aria-modal="true" aria-label="Reverse and Save As" data-testid="reverse-clip-modal">
+        <div
+          className="projects-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Reverse and Save As"
+          data-testid="reverse-clip-modal"
+        >
           <div className="projects-dialog" style={{ minWidth: 360 }}>
             <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Reverse and Save As…</h3>
             <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
@@ -889,12 +978,24 @@ export function AnimationsPanel() {
                 placeholder={reverseClipPrompt.defaultName}
                 autoFocus
                 onFocus={(e) => e.target.select()}
-                style={{ display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 4, border: '1px solid var(--color-border)' }}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  marginTop: 4,
+                  padding: '6px 8px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border)',
+                }}
                 data-testid="reverse-clip-name-input"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     const name = reverseNameDraft.trim() || reverseClipPrompt.defaultName
-                    const res = dispatch(new ReverseClipCommand({ sourceClipId: reverseClipPrompt.clipId, newName: name }))
+                    const res = dispatch(
+                      new ReverseClipCommand({
+                        sourceClipId: reverseClipPrompt.clipId,
+                        newName: name,
+                      }),
+                    )
                     if (!res.ok) notify(res.error.message)
                     else notify(`Reversed clip "${name}" created`)
                     setReverseClipPrompt(null)
@@ -903,19 +1004,41 @@ export function AnimationsPanel() {
               />
             </label>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <button onClick={() => setReverseClipPrompt(null)} style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--color-border)' }} data-testid="reverse-clip-cancel">
+              <button
+                onClick={() => setReverseClipPrompt(null)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border)',
+                }}
+                data-testid="reverse-clip-cancel"
+              >
                 Cancel
               </button>
               <button
                 onClick={() => {
                   const name = reverseNameDraft.trim() || reverseClipPrompt.defaultName
-                  if (!name.trim()) { notify('Name is required'); return }
-                  const res = dispatch(new ReverseClipCommand({ sourceClipId: reverseClipPrompt.clipId, newName: name }))
+                  if (!name.trim()) {
+                    notify('Name is required')
+                    return
+                  }
+                  const res = dispatch(
+                    new ReverseClipCommand({
+                      sourceClipId: reverseClipPrompt.clipId,
+                      newName: name,
+                    }),
+                  )
                   if (!res.ok) notify(res.error.message)
                   else notify(`Reversed clip "${name}" created`)
                   setReverseClipPrompt(null)
                 }}
-                style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid transparent', background: '#7c5cff', color: '#fff' }}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid transparent',
+                  background: '#7c5cff',
+                  color: '#fff',
+                }}
                 data-testid="reverse-clip-confirm"
               >
                 Save
@@ -925,7 +1048,13 @@ export function AnimationsPanel() {
         </div>
       )}
       {reverseCollectionPrompt && (
-        <div className="projects-overlay" role="dialog" aria-modal="true" aria-label="Reverse Collection and Save As" data-testid="reverse-collection-modal">
+        <div
+          className="projects-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Reverse Collection and Save As"
+          data-testid="reverse-collection-modal"
+        >
           <div className="projects-dialog" style={{ minWidth: 360 }}>
             <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Reverse Collection and Save As…</h3>
             <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
@@ -939,12 +1068,24 @@ export function AnimationsPanel() {
                 placeholder={reverseCollectionPrompt.defaultName}
                 autoFocus
                 onFocus={(e) => e.target.select()}
-                style={{ display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 4, border: '1px solid var(--color-border)' }}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  marginTop: 4,
+                  padding: '6px 8px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border)',
+                }}
                 data-testid="reverse-collection-name-input"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     const name = reverseNameDraft.trim() || reverseCollectionPrompt.defaultName
-                    const res = dispatch(new ReverseCollectionCommand({ sourceCollectionId: reverseCollectionPrompt.collectionId, newName: name }))
+                    const res = dispatch(
+                      new ReverseCollectionCommand({
+                        sourceCollectionId: reverseCollectionPrompt.collectionId,
+                        newName: name,
+                      }),
+                    )
                     if (!res.ok) notify(res.error.message)
                     else notify(`Reversed collection "${name}" created`)
                     setReverseCollectionPrompt(null)
@@ -953,19 +1094,41 @@ export function AnimationsPanel() {
               />
             </label>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <button onClick={() => setReverseCollectionPrompt(null)} style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--color-border)' }} data-testid="reverse-collection-cancel">
+              <button
+                onClick={() => setReverseCollectionPrompt(null)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border)',
+                }}
+                data-testid="reverse-collection-cancel"
+              >
                 Cancel
               </button>
               <button
                 onClick={() => {
                   const name = reverseNameDraft.trim() || reverseCollectionPrompt.defaultName
-                  if (!name.trim()) { notify('Name is required'); return }
-                  const res = dispatch(new ReverseCollectionCommand({ sourceCollectionId: reverseCollectionPrompt.collectionId, newName: name }))
+                  if (!name.trim()) {
+                    notify('Name is required')
+                    return
+                  }
+                  const res = dispatch(
+                    new ReverseCollectionCommand({
+                      sourceCollectionId: reverseCollectionPrompt.collectionId,
+                      newName: name,
+                    }),
+                  )
                   if (!res.ok) notify(res.error.message)
                   else notify(`Reversed collection "${name}" created`)
                   setReverseCollectionPrompt(null)
                 }}
-                style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid transparent', background: '#7c5cff', color: '#fff' }}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid transparent',
+                  background: '#7c5cff',
+                  color: '#fff',
+                }}
                 data-testid="reverse-collection-confirm"
               >
                 Save

@@ -28,7 +28,10 @@ export function LibraryBrowser() {
   const [deleteConfirm, setDeleteConfirm] = useState<ClipLibraryEntry | null>(null)
   const { engine, dispatch } = useEngine()
   const [overflowId, setOverflowId] = useState<string | null>(null)
-  const [reversePrompt, setReversePrompt] = useState<{ entry: ClipLibraryEntry; defaultName: string } | null>(null)
+  const [reversePrompt, setReversePrompt] = useState<{
+    entry: ClipLibraryEntry
+    defaultName: string
+  } | null>(null)
   const [reverseNameDraft, setReverseNameDraft] = useState('')
 
   useEffect(() => {
@@ -178,7 +181,16 @@ export function LibraryBrowser() {
                             <button
                               role="menuitem"
                               data-testid={`library-clip-reverse-${entry.id}`}
-                              style={{ display: 'block', width: '100%', textAlign: 'left', padding: '6px 10px', border: 'none', background: 'transparent', cursor: 'pointer', fontSize: 12 }}
+                              style={{
+                                display: 'block',
+                                width: '100%',
+                                textAlign: 'left',
+                                padding: '6px 10px',
+                                border: 'none',
+                                background: 'transparent',
+                                cursor: 'pointer',
+                                fontSize: 12,
+                              }}
                               onClick={() => {
                                 const defaultName = `${entry.name} Reversed`
                                 setReverseNameDraft(defaultName)
@@ -221,8 +233,18 @@ export function LibraryBrowser() {
         </div>
       )}
       {reversePrompt && (
-        <div className="projects-overlay" role="dialog" aria-modal="true" aria-label="Reverse and Save As" data-testid="library-reverse-modal">
-          <div className="projects-dialog" style={{ minWidth: 360 }} onClick={(e) => e.stopPropagation()}>
+        <div
+          className="projects-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Reverse and Save As"
+          data-testid="library-reverse-modal"
+        >
+          <div
+            className="projects-dialog"
+            style={{ minWidth: 360 }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Reverse and Save As…</h3>
             <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
               New clip name
@@ -231,7 +253,14 @@ export function LibraryBrowser() {
                 onChange={(e) => setReverseNameDraft(e.target.value)}
                 placeholder={reversePrompt.defaultName}
                 autoFocus
-                style={{ display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 4, border: '1px solid var(--color-border)' }}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  marginTop: 4,
+                  padding: '6px 8px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border)',
+                }}
                 data-testid="library-reverse-name-input"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
@@ -245,7 +274,9 @@ export function LibraryBrowser() {
                       importClip(reversePrompt.entry)
                       clipId = reversePrompt.entry.id
                     }
-                    const res = dispatch(new ReverseClipCommand({ sourceClipId: clipId, newName: name }))
+                    const res = dispatch(
+                      new ReverseClipCommand({ sourceClipId: clipId, newName: name }),
+                    )
                     if (!res.ok) notify(res.error.message)
                     else notify(`Reversed clip "${name}" created`)
                     setReversePrompt(null)
@@ -254,7 +285,15 @@ export function LibraryBrowser() {
               />
             </label>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              <button onClick={() => setReversePrompt(null)} style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--color-border)' }} data-testid="library-reverse-cancel">
+              <button
+                onClick={() => setReversePrompt(null)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border)',
+                }}
+                data-testid="library-reverse-cancel"
+              >
                 Cancel
               </button>
               <button
@@ -267,12 +306,20 @@ export function LibraryBrowser() {
                     importClip(reversePrompt.entry)
                     clipId = reversePrompt.entry.id
                   }
-                  const res = dispatch(new ReverseClipCommand({ sourceClipId: clipId, newName: name }))
+                  const res = dispatch(
+                    new ReverseClipCommand({ sourceClipId: clipId, newName: name }),
+                  )
                   if (!res.ok) notify(res.error.message)
                   else notify(`Reversed clip "${name}" created`)
                   setReversePrompt(null)
                 }}
-                style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid transparent', background: '#7c5cff', color: '#fff' }}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid transparent',
+                  background: '#7c5cff',
+                  color: '#fff',
+                }}
                 data-testid="library-reverse-confirm"
               >
                 Save
