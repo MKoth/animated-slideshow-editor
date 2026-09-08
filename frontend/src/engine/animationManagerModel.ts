@@ -6,16 +6,24 @@ import { CIRCLE_ANIMATABLE_PROPERTIES } from './animationProperties'
 import { SHADOW_PROPERTIES } from './shadowEffect'
 import type { ShadowProperty } from './shadowEffect'
 import type { ClipDefinition } from './clipDefinition'
+import type { ClipInstance } from './clipInstance'
 import { isGroupNode } from './sceneNode'
-import { PROPERTY_LABELS, CIRCLE_LABELS, VISIBLE_LABEL, MORPH_LABEL } from '../components/panels/timelineTracks'
+import {
+  PROPERTY_LABELS,
+  CIRCLE_LABELS,
+  VISIBLE_LABEL,
+  MORPH_LABEL,
+} from '../components/panels/timelineTracks'
 import { SHADOW_LABELS } from './shadowEffect'
 import type { MaterialParameterDefault } from './materialResolution'
 import { materialParametersOf } from '../components/panels/timelineTracks'
+import { snapKeyframeTime } from './timelineSnapping'
 
 export type ManagerTab = 'collections' | 'clips' | 'orphans'
 
 export interface AnimatedParam {
-  readonly kind: 'property' | 'visible' | 'circle' | 'shadow' | 'material' | 'morph' | 'symmetry' | 'table'
+  readonly kind:
+    'property' | 'visible' | 'circle' | 'shadow' | 'material' | 'morph' | 'symmetry' | 'table'
   readonly key: string
   readonly label: string
 }
@@ -25,8 +33,6 @@ export interface ManagerRow {
   readonly depth: number
   readonly animatedParams: readonly AnimatedParam[]
 }
-
-
 
 function hasClipChannelForProperty(
   propertyKey: string,
@@ -43,7 +49,11 @@ function hasClipChannelForProperty(
     }
     if (!clip) continue
     if (kind === 'property') {
-      if (clip.hasChannel(propertyKey as never) && (clip.channelAnimation(propertyKey as never)?.length ?? 0) > 0) return true
+      if (
+        clip.hasChannel(propertyKey as never) &&
+        (clip.channelAnimation(propertyKey as never)?.length ?? 0) > 0
+      )
+        return true
       // fallback: check channel list existence implies at least one keyframe (since empty channels are removed)
       if (clip.hasChannel(propertyKey as never)) return true
     } else if (kind === 'visible') {
@@ -72,14 +82,29 @@ export function isParamAnimated(
   const nodeAnim = slide.animation.node(node.id)
   const hasNode = (() => {
     if (!nodeAnim) return false
-    if (kind === 'property') return nodeAnim.hasTrack(key as never) && nodeAnim.keyframes(key as never).length > 0
-    if (kind === 'visible') return nodeAnim.hasVisibleTrack() && nodeAnim.visibleKeyframes().length > 0
+    if (kind === 'property')
+      return nodeAnim.hasTrack(key as never) && nodeAnim.keyframes(key as never).length > 0
+    if (kind === 'visible')
+      return nodeAnim.hasVisibleTrack() && nodeAnim.visibleKeyframes().length > 0
     if (kind === 'morph') return nodeAnim.hasMorphTrack() && nodeAnim.morphKeyframes().length > 0
-    if (kind === 'circle') return nodeAnim.hasCircleTrack(key as never) && nodeAnim.circleKeyframes(key as never).length > 0
-    if (kind === 'shadow') return nodeAnim.hasShadowTrack(key as ShadowProperty) && nodeAnim.shadowKeyframes(key as ShadowProperty).length > 0
-    if (kind === 'material') return nodeAnim.hasMaterialTrack(key) && nodeAnim.materialKeyframes(key).length > 0
-    if (kind === 'symmetry') return nodeAnim.hasSymmetryTrack() && nodeAnim.symmetryKeyframes().length > 0
-    if (kind === 'table') return (nodeAnim as unknown as { hasTableTrack: (k:string)=>boolean }).hasTableTrack?.(key) && (nodeAnim.tableKeyframes(key as never).length > 0)
+    if (kind === 'circle')
+      return (
+        nodeAnim.hasCircleTrack(key as never) && nodeAnim.circleKeyframes(key as never).length > 0
+      )
+    if (kind === 'shadow')
+      return (
+        nodeAnim.hasShadowTrack(key as ShadowProperty) &&
+        nodeAnim.shadowKeyframes(key as ShadowProperty).length > 0
+      )
+    if (kind === 'material')
+      return nodeAnim.hasMaterialTrack(key) && nodeAnim.materialKeyframes(key).length > 0
+    if (kind === 'symmetry')
+      return nodeAnim.hasSymmetryTrack() && nodeAnim.symmetryKeyframes().length > 0
+    if (kind === 'table')
+      return (
+        (nodeAnim as unknown as { hasTableTrack: (k: string) => boolean }).hasTableTrack?.(key) &&
+        nodeAnim.tableKeyframes(key as never).length > 0
+      )
     return false
   })()
   if (hasNode) return true
@@ -96,7 +121,11 @@ export function getAnimatedParams(
   // standard six (filtered per node type)
   for (const prop of animatablePropertiesOf(node)) {
     if (isParamAnimated(node, slide, 'property', prop, getClip)) {
-      params.push({ kind: 'property', key: prop, label: (PROPERTY_LABELS as Record<string,string>)[prop] ?? prop })
+      params.push({
+        kind: 'property',
+        key: prop,
+        label: (PROPERTY_LABELS as Record<string, string>)[prop] ?? prop,
+      })
     }
   }
   // visible (hold) – always check, even if not in animatablePropertiesOf
@@ -115,20 +144,32 @@ export function getAnimatedParams(
     params.push({ kind: 'symmetry', key: 'symmetry', label: 'Symmetry' })
   }
   // circle angles – only if node has circle component OR animated via clip
-  const hasCircleAnimated = CIRCLE_ANIMATABLE_PROPERTIES.some((p) => isParamAnimated(node, slide, 'circle', p, getClip))
+  const hasCircleAnimated = CIRCLE_ANIMATABLE_PROPERTIES.some((p) =>
+    isParamAnimated(node, slide, 'circle', p, getClip),
+  )
   if (node.components.circle || hasCircleAnimated) {
     for (const prop of CIRCLE_ANIMATABLE_PROPERTIES) {
       if (isParamAnimated(node, slide, 'circle', prop, getClip)) {
-        params.push({ kind: 'circle', key: prop, label: (CIRCLE_LABELS as Record<string,string>)[prop] ?? prop })
+        params.push({
+          kind: 'circle',
+          key: prop,
+          label: (CIRCLE_LABELS as Record<string, string>)[prop] ?? prop,
+        })
       }
     }
   }
   // shadow params – only for group nodes or if any shadow animated
-  const hasShadowAnimated = (SHADOW_PROPERTIES as readonly string[]).some((p) => isParamAnimated(node, slide, 'shadow', p, getClip))
+  const hasShadowAnimated = (SHADOW_PROPERTIES as readonly string[]).some((p) =>
+    isParamAnimated(node, slide, 'shadow', p, getClip),
+  )
   if (isGroupNode(node) || hasShadowAnimated || !!node.shadowEffect) {
     for (const prop of SHADOW_PROPERTIES as readonly ShadowProperty[]) {
       if (isParamAnimated(node, slide, 'shadow', prop, getClip)) {
-        params.push({ kind: 'shadow', key: prop, label: (SHADOW_LABELS as Record<string,string>)[prop] ?? prop })
+        params.push({
+          kind: 'shadow',
+          key: prop,
+          label: (SHADOW_LABELS as Record<string, string>)[prop] ?? prop,
+        })
       }
     }
   }
@@ -143,9 +184,14 @@ export function getAnimatedParams(
   // Check node's material tracks keys that haven't been covered
   const nodeAnim = slide.animation.node(node.id)
   if (nodeAnim) {
-    const extraKeys = nodeAnim.materialTrackParameterKeys().filter((k) => !materialParams.some((p) => p.key === k))
+    const extraKeys = nodeAnim
+      .materialTrackParameterKeys()
+      .filter((k) => !materialParams.some((p) => p.key === k))
     for (const key of extraKeys) {
-      if (isParamAnimated(node, slide, 'material', key, getClip) && !params.some((p) => p.kind === 'material' && p.key === key)) {
+      if (
+        isParamAnimated(node, slide, 'material', key, getClip) &&
+        !params.some((p) => p.kind === 'material' && p.key === key)
+      ) {
         params.push({ kind: 'material', key, label: key })
       }
     }
@@ -174,16 +220,30 @@ export function getAnimatedParams(
   if (node.components.table || node.components.tableCell || node.components.tableRow) {
     for (const prop of ['borderRadius', 'padding'] as const) {
       if (isParamAnimated(node, slide, 'table', prop, getClip)) {
-        params.push({ kind: 'table', key: prop, label: prop === 'borderRadius' ? 'Border Radius' : 'Padding' })
+        params.push({
+          kind: 'table',
+          key: prop,
+          label: prop === 'borderRadius' ? 'Border Radius' : 'Padding',
+        })
       }
     }
   } else {
     // Even if node doesn't have table component now but has table keyframes (orphan), still surface
-    if (nodeAnim && (nodeAnim.tableTrackKeys().length > 0 || [...node.clipInstances].some(() => true))) {
+    if (
+      nodeAnim &&
+      (nodeAnim.tableTrackKeys().length > 0 || [...node.clipInstances].some(() => true))
+    ) {
       // check each table prop
       for (const prop of ['borderRadius', 'padding'] as const) {
-        if (isParamAnimated(node, slide, 'table', prop, getClip) && !params.some((p) => p.key === prop)) {
-          params.push({ kind: 'table', key: prop, label: prop === 'borderRadius' ? 'Border Radius' : 'Padding' })
+        if (
+          isParamAnimated(node, slide, 'table', prop, getClip) &&
+          !params.some((p) => p.key === prop)
+        ) {
+          params.push({
+            kind: 'table',
+            key: prop,
+            label: prop === 'borderRadius' ? 'Border Radius' : 'Padding',
+          })
         }
       }
     }
@@ -227,10 +287,7 @@ export function isAnimatedChild(node: SceneNode, slide: Slide): boolean {
   return hasAnyKeyframe(node, slide)
 }
 
-export function hasAnimatedDescendant(
-  parent: SceneNode,
-  slide: Slide,
-): boolean {
+export function hasAnimatedDescendant(parent: SceneNode, slide: Slide): boolean {
   for (const descendant of walkPreOrder(parent)) {
     if (descendant.id === parent.id) continue
     if (isAnimatedChild(descendant, slide)) return true
@@ -283,4 +340,166 @@ export function getOrphanKeyframes(
   if (param.kind === 'symmetry') return anim.symmetryKeyframes()
   if (param.kind === 'table') return anim.tableKeyframes(param.key as never)
   return []
+}
+
+// ---------------------------------------------------------------------------
+// Clip Lane geometry, clamping and packing (Spec 15-02)
+// ---------------------------------------------------------------------------
+
+export const MIN_VISUAL_DURATION = 0.25
+export const MIN_CLIP_SPEED = 1e-4
+export const CLIP_HANDLE_WIDTH_PX = 6
+export const CLIP_LANE_HEIGHT_PX = 28
+export const CLIP_LANE_BAR_HEIGHT_PX = 24
+
+export function visualDurationForClip(clip: ClipDefinition, instance: ClipInstance): number {
+  const speed = instance.speed
+  // Guard against zero / sub-epsilon speeds: clamp to MIN_CLIP_SPEED
+  const effectiveSpeed = speed < MIN_CLIP_SPEED ? MIN_CLIP_SPEED : speed
+  const raw = clip.duration / effectiveSpeed
+  return Math.max(raw, MIN_VISUAL_DURATION)
+}
+
+export function clampedSpeedForVisual(clipDuration: number, visualDuration: number): number {
+  const clampedVisual = Math.max(visualDuration, MIN_VISUAL_DURATION)
+  if (clipDuration <= 0) return MIN_CLIP_SPEED
+  let speed = clipDuration / clampedVisual
+  if (!Number.isFinite(speed) || speed < MIN_CLIP_SPEED) speed = MIN_CLIP_SPEED
+  return speed
+}
+
+export function barGeometry(
+  startTime: number,
+  visualDuration: number,
+  pixelsPerSecond: number,
+): { left: number; width: number } {
+  return { left: startTime * pixelsPerSecond, width: visualDuration * pixelsPerSecond }
+}
+
+export interface PackedClipLane {
+  readonly instance: ClipInstance
+  readonly clip: ClipDefinition
+  readonly visualDuration: number
+  readonly start: number
+  readonly end: number
+  readonly track: number
+  readonly zIndex: number
+  readonly left: number
+  readonly width: number
+}
+
+/**
+ * Greedy interval packing for clip instances on a single node.
+ * Overlapping intervals are stacked into vertical tracks; lower track = higher Priority.
+ * `pps` is optional – when provided, left/width are computed.
+ */
+export function packClipLanesForNode(
+  node: SceneNode,
+  getClip: (clipId: string) => ClipDefinition | null,
+  pixelsPerSecond?: number,
+  previewOverrides?: Map<string, { startTime: number; speed: number }>,
+): readonly PackedClipLane[] {
+  const entries: {
+    instance: ClipInstance
+    clip: ClipDefinition
+    visualDuration: number
+    start: number
+    end: number
+    index: number
+  }[] = []
+  for (let index = 0; index < node.clipInstances.length; index++) {
+    const inst = node.clipInstances[index]!
+    const override = previewOverrides?.get(inst.id)
+    const startTime = override ? override.startTime : inst.startTime
+    const speed = override ? override.speed : inst.speed
+    let clip: ClipDefinition | null = null
+    try {
+      clip = getClip(inst.clipId)
+    } catch {
+      continue
+    }
+    if (!clip) continue
+    const effectiveSpeed = speed < MIN_CLIP_SPEED ? MIN_CLIP_SPEED : speed
+    const visual = Math.max(clip.duration / effectiveSpeed, MIN_VISUAL_DURATION)
+    const start = startTime
+    const end = start + visual
+    entries.push({ instance: inst, clip, visualDuration: visual, start, end, index })
+  }
+  // Sort by start asc then original index asc for deterministic minimal tracks
+  const sorted = [...entries].sort((a, b) => a.start - b.start || a.index - b.index)
+  const trackEnds: number[] = []
+  const trackOf = new Map<string, number>()
+  for (const e of sorted) {
+    let placed = false
+    for (let t = 0; t < trackEnds.length; t++) {
+      if (e.start >= trackEnds[t]! - 1e-9) {
+        trackEnds[t] = e.end
+        trackOf.set(e.instance.id, t)
+        placed = true
+        break
+      }
+    }
+    if (!placed) {
+      const t = trackEnds.length
+      trackEnds.push(e.end)
+      trackOf.set(e.instance.id, t)
+    }
+  }
+  // Build result in original instance order for stable rendering, but with computed tracks
+  const pps = pixelsPerSecond ?? 100
+  return entries.map((e) => {
+    const track = trackOf.get(e.instance.id) ?? 0
+    const { left, width } = barGeometry(e.start, e.visualDuration, pps)
+    return {
+      instance: e.instance,
+      clip: e.clip,
+      visualDuration: e.visualDuration,
+      start: e.start,
+      end: e.end,
+      track,
+      zIndex: track,
+      left,
+      width,
+    }
+  })
+}
+
+export function collectBarEdgesForSnap(
+  nodes: readonly SceneNode[],
+  getClip: (clipId: string) => ClipDefinition | null,
+  exclude?: { nodeId: string; instanceId: string },
+): readonly number[] {
+  const edges: number[] = []
+  for (const node of nodes) {
+    for (const inst of node.clipInstances) {
+      if (exclude && node.id === exclude.nodeId && inst.id === exclude.instanceId) continue
+      let clip: ClipDefinition | null = null
+      try {
+        clip = getClip(inst.clipId)
+      } catch {
+        continue
+      }
+      if (!clip) continue
+      const visual = visualDurationForClip(clip, inst)
+      edges.push(inst.startTime)
+      edges.push(inst.startTime + visual)
+    }
+  }
+  return edges
+}
+
+export function snapStartTime(
+  rawStart: number,
+  pps: number,
+  gridSnapEnabled: boolean,
+  candidateTimes: readonly number[],
+): number {
+  if (!gridSnapEnabled) return Math.max(0, rawStart)
+  const snapped = snapKeyframeTime(rawStart, {
+    gridEnabled: true,
+    keyframesEnabled: candidateTimes.length > 0,
+    candidateTimes,
+    pps,
+  })
+  return Math.max(0, snapped)
 }
