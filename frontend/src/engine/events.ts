@@ -352,6 +352,31 @@ export interface ClipCollectionApplied {
   readonly targetNodeId: string
 }
 
+export interface CollectionPlacementCreated {
+  readonly type: 'CollectionPlacementCreated'
+  readonly placementId: string
+}
+
+export interface CollectionPlacementDeleted {
+  readonly type: 'CollectionPlacementDeleted'
+  readonly placementId: string
+}
+
+export interface CollectionPlacementMoved {
+  readonly type: 'CollectionPlacementMoved'
+  readonly placementId: string
+}
+
+export interface CollectionPlacementReordered {
+  readonly type: 'CollectionPlacementReordered'
+  readonly placementId: string
+}
+
+export interface CollectionPlaced {
+  readonly type: 'CollectionPlaced'
+  readonly placementId: string
+}
+
 export type EngineEvent =
   | ProjectCreated
   | ProjectLoaded
@@ -418,6 +443,11 @@ export type EngineEvent =
   | ClipCollectionRenamed
   | ClipCollectionBindingsChanged
   | ClipCollectionApplied
+  | CollectionPlacementCreated
+  | CollectionPlacementDeleted
+  | CollectionPlacementMoved
+  | CollectionPlacementReordered
+  | CollectionPlaced
 
 export type EventListener = (event: EngineEvent) => void
 

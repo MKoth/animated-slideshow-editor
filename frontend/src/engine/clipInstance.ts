@@ -9,6 +9,7 @@ export interface ClipInstance {
   speed: number
   enabled: boolean
   paramOverrides: Record<string, number>
+  placementId?: string
 }
 
 export function createClipInstance(
@@ -17,6 +18,7 @@ export function createClipInstance(
   speed = 1,
   enabled = true,
   paramOverrides: Record<string, number> = {},
+  placementId?: string,
 ): ClipInstance {
   return {
     id: newClipInstanceId(),
@@ -25,6 +27,7 @@ export function createClipInstance(
     speed,
     enabled,
     paramOverrides: { ...paramOverrides },
+    ...(placementId ? { placementId } : {}),
   }
 }
 
@@ -36,6 +39,7 @@ export function cloneClipInstance(instance: ClipInstance): ClipInstance {
     speed: instance.speed,
     enabled: instance.enabled,
     paramOverrides: { ...instance.paramOverrides },
+    ...(instance.placementId ? { placementId: instance.placementId } : {}),
   }
 }
 
@@ -49,6 +53,7 @@ export function clipInstanceToJSON(instance: ClipInstance): ClipInstanceJSON {
     ...(Object.keys(instance.paramOverrides).length > 0
       ? { paramOverrides: { ...instance.paramOverrides } }
       : {}),
+    ...(instance.placementId ? { placementId: instance.placementId } : {}),
   }
 }
 
@@ -76,7 +81,19 @@ export function clipInstanceFromJSON(json: unknown): ClipInstance {
       paramOverrides[key] = requireFiniteNumber(value, `Clip instance paramOverride "${key}"`)
     }
   }
-  return { id, clipId, startTime, speed, enabled, paramOverrides }
+  const placementId =
+    typeof (json as Record<string, unknown>).placementId === 'string'
+      ? ((json as Record<string, unknown>).placementId as string)
+      : undefined
+  return {
+    id,
+    clipId,
+    startTime,
+    speed,
+    enabled,
+    paramOverrides,
+    ...(placementId ? { placementId } : {}),
+  }
 }
 
 export function newClipInstanceId(): string {

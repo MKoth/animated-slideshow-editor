@@ -6,7 +6,6 @@ import {
   type ManagerTab,
   getOrphanKeyframes,
   packClipLanesForNode,
-  collectBarEdgesForSnap,
   MIN_VISUAL_DURATION,
   MIN_CLIP_SPEED,
   CLIP_HANDLE_WIDTH_PX,
@@ -14,6 +13,9 @@ import {
   CLIP_LANE_BAR_HEIGHT_PX,
   clampedSpeedForVisual,
   snapStartTime,
+  packCollectionLanesForParent,
+  visualDurationForCollectionPlacement,
+  collectUnifiedBarEdgesForSnap,
 } from '../../engine/animationManagerModel'
 import { useTimelineViewStore, pixelsPerSecond } from '../../stores/timelineViewStore'
 import { usePlaybackController } from '../../stores/playbackStore'
@@ -40,6 +42,10 @@ import {
   DeleteClipCollectionCommand,
   SetClipCollectionBindingsCommand,
   RenameClipCollectionCommand,
+  PlaceCollectionCommand,
+  SetCollectionPlacementStartTimeCommand,
+  ReorderCollectionPlacementCommand,
+  MoveClipLayerCommand,
 } from '../../engine/commands'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useSelectionStore } from '../../stores/selectionStore'
@@ -100,6 +106,62 @@ type DragState =
       previewStart: number
       previewSpeed: number
       previewVisual: number
+    }
+  | {
+      mode: 'collection-move'
+      placementId: string
+      collectionId: string
+      parentNodeId: string
+      initialStart: number
+      initialVisual: number
+      startX: number
+      previewStart: number
+      startY: number
+      initialIndex: number
+      previewIndex: number
+    }
+  | {
+      mode: 'collection-resize-right'
+      placementId: string
+      collectionId: string
+      parentNodeId: string
+      initialStart: number
+      initialVisual: number
+      startX: number
+      previewVisual: number
+      previewStart: number
+    }
+  | {
+      mode: 'collection-resize-left'
+      placementId: string
+      collectionId: string
+      parentNodeId: string
+      initialStart: number
+      initialVisual: number
+      rightEdge: number
+      startX: number
+      previewVisual: number
+      previewStart: number
+    }
+  | {
+      mode: 'clip-reorder'
+      nodeId: string
+      instanceId: string
+      initialIndex: number
+      startY: number
+      previewIndex: number
+      startX: number
+      initialStart: number
+    }
+  | {
+      mode: 'collection-reorder'
+      placementId: string
+      parentNodeId: string
+      initialIndex: number
+      startY: number
+      previewIndex: number
+      startX: number
+      initialStart: number
     }
 
 function countClipUses(engine: ReturnType<typeof useEngine>['engine'], clipId: string): number {
@@ -193,6 +255,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const [editingBindingsDraft, setEditingBindingsDraft] = useState<Record<string, string>>({})
   const [editingNameDraft, setEditingNameDraft] = useState('')
   const [deleteConfirmCollectionId, setDeleteConfirmCollectionId] = useState<string | null>(null)
+  // Collection Lane placements (15-06)
+  const [selectedPlacementId, setSelectedPlacementId] = useState<string | null>(null)
+  const [placeCollectionId, setPlaceCollectionId] = useState<string>('')
+  const [collectionPlacementMenu, setCollectionPlacementMenu] = useState<{ x: number; y: number; placementId: string } | null>(null)
   const orphansContainerRef = useRef<HTMLDivElement>(null)
   const notify = useNotificationStore((s) => s.notify)
 
@@ -228,6 +294,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       setEditingBindingsDraft({})
       setEditingNameDraft('')
       setDeleteConfirmCollectionId(null)
+      setSelectedPlacementId(null)
+      setPlaceCollectionId('')
+      setCollectionPlacementMenu(null)
     }
   }, [open, parentNodeId])
 
@@ -274,6 +343,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         } else if (orphanMarquee) {
           setOrphanMarquee(null)
           e.stopPropagation()
+        } else if (collectionPlacementMenu) {
+          setCollectionPlacementMenu(null)
+          e.stopPropagation()
         } else {
           onClose()
         }
@@ -293,6 +365,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     collectionCreateOpen,
     editingCollectionId,
     deleteConfirmCollectionId,
+    collectionPlacementMenu,
     onClose,
     restorePpsAndBack,
   ])
@@ -492,9 +565,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     return engine.clipCollections.filter((c) => c.sourceNodeId === parentNodeId)
   }, [engine, parentNodeId, tick])
 
-  // Candidate times for snap – computed from committed state, excluding dragging instance
-  const snapCandidateTimes = useMemo(() => {
-    if (!dragState || dragState.mode !== 'move') return []
+  // Collection placements packing (Spec 15-06) – derived from parentNode.collectionPlacements
+  const packedCollectionLanes = useMemo(() => {
+    void tick
+    if (!parentNode) return []
     const getClip = (clipId: string) => {
       try {
         return engine.getClip(clipId)
@@ -502,19 +576,102 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         return null
       }
     }
-    const nodes = managerRows.map((r) => r.node)
-    const edges = collectBarEdgesForSnap(nodes, getClip, {
-      nodeId: dragState.nodeId,
-      instanceId: dragState.instanceId,
-    })
-    // Add playhead time
-    if (activeSlide) {
-      const playhead = usePlaybackController.getState().getTime(activeSlide.id)
-      // Include playhead as candidate – snapKeyframeTime will apply 5px threshold
-      return [...edges, playhead]
+    const getCollection = (collectionId: string) => {
+      try {
+        return engine.getClipCollection(collectionId)
+      } catch {
+        return null
+      }
     }
-    return [...edges]
-  }, [managerRows, engine, dragState, activeSlide])
+    // Preview overrides for collection drag (move/stretch)
+    let preview: Map<string, { startTime: number; visualDuration?: number }> | undefined
+    if (dragState && dragState.mode.startsWith('collection')) {
+      preview = new Map()
+      if (dragState.mode === 'collection-move') {
+        // preview visual unchanged, only start
+        const vd = visualDurationForCollectionPlacement(
+          { id: dragState.placementId, collectionId: dragState.collectionId, parentNodeId: dragState.parentNodeId, startTime: dragState.initialStart } as import('../../engine/collectionPlacement').CollectionPlacement,
+          parentNode,
+          getClip,
+        )
+        preview.set(dragState.placementId, { startTime: dragState.previewStart, visualDuration: vd })
+      } else if (dragState.mode === 'collection-resize-right' || dragState.mode === 'collection-resize-left') {
+        preview.set(dragState.placementId, { startTime: dragState.previewStart, visualDuration: dragState.previewVisual })
+      } else if (dragState.mode === 'collection-reorder') {
+        // For reorder preview, we need to simulate swapped order in packing – handled via virtual placements array order preview
+        // For now, just use current placements but previewIndex will be used to reorder entries before packing
+        // We'll handle in separate logic below
+      }
+    }
+    // If reorder, we need to reorder parentNode.collectionPlacements virtually for packing preview
+    if (dragState && dragState.mode === 'collection-reorder') {
+      const placements = [...parentNode.collectionPlacements]
+      const fromIdx = dragState.initialIndex
+      const toIdx = dragState.previewIndex
+      if (fromIdx !== toIdx) {
+        const [moved] = placements.splice(fromIdx, 1)
+        placements.splice(toIdx, 0, moved)
+      }
+      // Create a temporary parent node clone with reordered placements for packing
+      const tmpParent = { ...parentNode, collectionPlacements: placements } as typeof parentNode
+      return packCollectionLanesForParent(tmpParent, getClip, getCollection, pps, preview)
+    }
+    return packCollectionLanesForParent(parentNode, getClip, getCollection, pps, preview)
+  }, [parentNode, engine, tick, pps, dragState])
+
+  // Candidate times for snap – computed from committed state, excluding dragging instance/placement
+  const snapCandidateTimes = useMemo(() => {
+    if (!dragState) return []
+    const isClipMove = dragState.mode === 'move'
+    const isCollectionMove = dragState.mode === 'collection-move'
+    if (!isClipMove && !isCollectionMove) return []
+    const getClip = (clipId: string) => {
+      try {
+        return engine.getClip(clipId)
+      } catch {
+        return null
+      }
+    }
+    const getCollection = (collectionId: string) => {
+      try {
+        return engine.getClipCollection(collectionId)
+      } catch {
+        return null
+      }
+    }
+    const nodes = managerRows.map((r) => r.node)
+    if (isClipMove && parentNode) {
+      const edges = collectUnifiedBarEdgesForSnap(
+        parentNode,
+        nodes,
+        getClip,
+        getCollection,
+        { nodeId: dragState.nodeId, instanceId: dragState.instanceId },
+        undefined,
+      )
+      if (activeSlide) {
+        const playhead = usePlaybackController.getState().getTime(activeSlide.id)
+        return [...edges, playhead]
+      }
+      return [...edges]
+    }
+    if (isCollectionMove && parentNode) {
+      const edges = collectUnifiedBarEdgesForSnap(
+        parentNode,
+        nodes,
+        getClip,
+        getCollection,
+        undefined,
+        { placementId: dragState.placementId },
+      )
+      if (activeSlide) {
+        const playhead = usePlaybackController.getState().getTime(activeSlide.id)
+        return [...edges, playhead]
+      }
+      return [...edges]
+    }
+    return []
+  }, [managerRows, parentNode, engine, dragState, activeSlide])
 
   // --- Orphan multi-select helpers ---
   const handleOrphanDiamondClick = useCallback(
@@ -981,6 +1138,85 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               } as DragState)
             : prev,
         )
+      } else if (dragState.mode === 'collection-move') {
+        const deltaY = e.clientY - dragState.startY
+        // Check for vertical dominance -> switch to reorder
+        if (Math.abs(deltaY) > Math.abs(deltaPx) && Math.abs(deltaY) > 8) {
+          const newIndex = Math.max(
+            0,
+            Math.min(
+              (parentNode?.collectionPlacements.length ?? 1) - 1,
+              Math.round(dragState.initialIndex + deltaY / CLIP_LANE_HEIGHT_PX),
+            ),
+          )
+          setDragState((prev) =>
+            prev && prev.mode === 'collection-move'
+              ? ({
+                  mode: 'collection-reorder',
+                  placementId: prev.placementId,
+                  parentNodeId: prev.parentNodeId,
+                  initialIndex: prev.initialIndex,
+                  startY: prev.startY,
+                  previewIndex: newIndex,
+                  startX: prev.startX,
+                  initialStart: prev.initialStart,
+                } as DragState)
+              : prev,
+          )
+          return
+        }
+        const raw = dragState.initialStart + deltaPx / pps
+        const clampedRaw = Math.max(0, raw)
+        const snapped = gridSnapEnabled
+          ? snapStartTime(clampedRaw, pps, true, snapCandidateTimes)
+          : clampedRaw
+        setDragState((prev) => (prev ? ({ ...prev, previewStart: snapped } as DragState) : prev))
+      } else if (dragState.mode === 'collection-resize-right') {
+        const newWidthPx = dragState.initialVisual * pps + deltaPx
+        let newVisual = newWidthPx / pps
+        if (newVisual < MIN_VISUAL_DURATION) newVisual = MIN_VISUAL_DURATION
+        // Clamp to slide duration
+        if (activeSlide) newVisual = Math.min(newVisual, activeSlide.duration - dragState.initialStart)
+        if (newVisual < MIN_VISUAL_DURATION) newVisual = MIN_VISUAL_DURATION
+        setDragState((prev) =>
+          prev ? ({ ...prev, previewVisual: newVisual, previewStart: dragState.initialStart } as DragState) : prev,
+        )
+      } else if (dragState.mode === 'collection-resize-left') {
+        const deltaSec = deltaPx / pps
+        const rawStart = dragState.initialStart + deltaSec
+        const rightEdge = dragState.rightEdge
+        let newVisualRaw = rightEdge - rawStart
+        if (newVisualRaw < MIN_VISUAL_DURATION) newVisualRaw = MIN_VISUAL_DURATION
+        let previewStart = rightEdge - newVisualRaw
+        if (previewStart < 0) {
+          previewStart = 0
+          newVisualRaw = Math.max(rightEdge - previewStart, MIN_VISUAL_DURATION)
+        }
+        // Clamp to slide start
+        if (previewStart < 0) previewStart = 0
+        setDragState((prev) =>
+          prev ? ({ ...prev, previewStart, previewVisual: newVisualRaw } as DragState) : prev,
+        )
+      } else if (dragState.mode === 'clip-reorder') {
+        const deltaY = e.clientY - dragState.startY
+        const newIndex = Math.max(
+          0,
+          Math.min(
+            (managerRows.find((r) => r.node.id === dragState.nodeId)?.node.clipInstances.length ?? 1) - 1,
+            Math.round(dragState.initialIndex + deltaY / CLIP_LANE_HEIGHT_PX),
+          ),
+        )
+        setDragState((prev) => (prev ? ({ ...prev, previewIndex: newIndex } as DragState) : prev))
+      } else if (dragState.mode === 'collection-reorder') {
+        const deltaY = e.clientY - dragState.startY
+        const newIndex = Math.max(
+          0,
+          Math.min(
+            (parentNode?.collectionPlacements.length ?? 1) - 1,
+            Math.round(dragState.initialIndex + deltaY / CLIP_LANE_HEIGHT_PX),
+          ),
+        )
+        setDragState((prev) => (prev ? ({ ...prev, previewIndex: newIndex } as DragState) : prev))
       }
     }
     const onPointerUp = () => {
@@ -1032,6 +1268,120 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             dispatch(tx)
           }
         }
+      } else if (current.mode === 'collection-move') {
+        const delta = current.previewStart - current.initialStart
+        if (Math.abs(delta) > 1e-6) {
+          try {
+            const members = (engine as unknown as { getPlacementMembers: (id: string) => { nodeId: string; instance: import('../../engine/clipInstance').ClipInstance }[] }).getPlacementMembers(current.placementId)
+            const cmds: import('../../engine/commands').Command<unknown>[] = []
+            // Update placement start
+            cmds.push(
+              new SetCollectionPlacementStartTimeCommand({
+                placementId: current.placementId,
+                startTime: current.previewStart,
+              }),
+            )
+            // Move all members by same delta (v1 zero-offset)
+            for (const m of members) {
+              const newStart = m.instance.startTime + delta
+              cmds.push(
+                new SetClipInstanceStartTimeCommand({
+                  nodeId: m.nodeId,
+                  instanceId: m.instance.id,
+                  startTime: Math.max(0, newStart),
+                }),
+              )
+            }
+            const tx = new TransactionCommand(cmds as never)
+            dispatch(tx)
+          } catch (e) {
+            notify(e instanceof Error ? e.message : String(e))
+          }
+        }
+      } else if (current.mode === 'collection-resize-right' || current.mode === 'collection-resize-left') {
+        const oldVisual = current.initialVisual
+        const newVisual = current.previewVisual
+        const factor = oldVisual / newVisual
+        if (Math.abs(factor - 1) > 1e-9 && Number.isFinite(factor) && factor > 0) {
+          try {
+            const members = (engine as unknown as { getPlacementMembers: (id: string) => { nodeId: string; instance: import('../../engine/clipInstance').ClipInstance }[] }).getPlacementMembers(current.placementId)
+            const cmds: import('../../engine/commands').Command<unknown>[] = []
+            // If left handle, placement start changed
+            if (current.mode === 'collection-resize-left' && Math.abs(current.previewStart - current.initialStart) > 1e-6) {
+              cmds.push(
+                new SetCollectionPlacementStartTimeCommand({
+                  placementId: current.placementId,
+                  startTime: Math.max(0, current.previewStart),
+                }),
+              )
+              for (const m of members) {
+                const deltaStart = current.previewStart - current.initialStart
+                const newStart = m.instance.startTime + deltaStart
+                cmds.push(
+                  new SetClipInstanceStartTimeCommand({
+                    nodeId: m.nodeId,
+                    instanceId: m.instance.id,
+                    startTime: Math.max(0, newStart),
+                  }),
+                )
+              }
+            }
+            // Uniform stretch: newSpeed = oldSpeed * oldVisual / newVisual (clamped per member)
+            for (const m of members) {
+              const clip = engine.getClip(m.instance.clipId)
+              const oldSpeed = m.instance.speed
+              let newSpeed = oldSpeed * factor
+              // Clamp per member MIN_VISUAL
+              const maxAllowedSpeed = clip.duration / MIN_VISUAL_DURATION
+              if (newSpeed > maxAllowedSpeed) newSpeed = maxAllowedSpeed
+              if (newSpeed < MIN_CLIP_SPEED) newSpeed = MIN_CLIP_SPEED
+              // Recompute visual to ensure MIN_VISUAL
+              const resultingVisual = clip.duration / newSpeed
+              if (resultingVisual < MIN_VISUAL_DURATION - 1e-9) newSpeed = clip.duration / MIN_VISUAL_DURATION
+              if (Math.abs(newSpeed - oldSpeed) > 1e-9) {
+                cmds.push(
+                  new SetClipInstanceSpeedCommand({
+                    nodeId: m.nodeId,
+                    instanceId: m.instance.id,
+                    speed: newSpeed,
+                  }),
+                )
+              }
+            }
+            if (cmds.length > 0) {
+              const tx = new TransactionCommand(cmds as never)
+              dispatch(tx)
+            }
+          } catch (e) {
+            notify(e instanceof Error ? e.message : String(e))
+          }
+        }
+      } else if (current.mode === 'clip-reorder') {
+        if (current.previewIndex !== current.initialIndex) {
+          try {
+            const cmd = new MoveClipLayerCommand({
+              nodeId: current.nodeId,
+              instanceId: current.instanceId,
+              newIndex: current.previewIndex,
+            })
+            dispatch(cmd)
+          } catch (e) {
+            notify(e instanceof Error ? e.message : String(e))
+          }
+        }
+      } else if (current.mode === 'collection-reorder') {
+        if (current.previewIndex !== current.initialIndex) {
+          try {
+            const cmd = new ReorderCollectionPlacementCommand({
+              parentNodeId: current.parentNodeId,
+              placementId: current.placementId,
+              newIndex: current.previewIndex,
+            })
+            dispatch(cmd)
+          } catch (e) {
+            notify(e instanceof Error ? e.message : String(e))
+          }
+        }
       }
       setDragState(null)
     }
@@ -1041,7 +1391,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       window.removeEventListener('pointermove', onPointerMove as unknown as EventListener)
       window.removeEventListener('pointerup', onPointerUp as unknown as EventListener)
     }
-  }, [dragState, pps, gridSnapEnabled, snapCandidateTimes, dispatch])
+  }, [dragState, pps, gridSnapEnabled, snapCandidateTimes, dispatch, managerRows, parentNode, activeSlide, engine, notify])
 
   if (!open) return null
 
@@ -1076,6 +1426,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     }
     if (clipMenu) {
       setClipMenu(null)
+      return
+    }
+    if (collectionPlacementMenu) {
+      setCollectionPlacementMenu(null)
       return
     }
     if (orphanScopeMessage) {
@@ -1489,6 +1843,257 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           </div>
         )}
 
+        {/* Collection Lanes top section (Spec 15-06) – single bar per placed collection, hidden internals */}
+        {!editing && parentNode && (
+          <div
+            data-testid="collection-lanes-section"
+            style={{ border: '1px solid var(--color-border, #ddd)', borderRadius: 6, padding: 8, background: 'var(--color-bg-panel, #fff)' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <span style={{ fontWeight: 600, fontSize: 13 }}>Collection Lanes</span>
+              <span style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
+                {parentNode.collectionPlacements.length} placed · parent: {parentNode.name}
+              </span>
+              <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
+                <select
+                  value={placeCollectionId}
+                  onChange={(e) => setPlaceCollectionId(e.target.value)}
+                  data-testid="place-collection-select"
+                  style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--color-border, #ddd)', fontSize: 12 }}
+                >
+                  <option value="">Select collection…</option>
+                  {engine.clipCollections.map((col) => (
+                    <option key={col.id} value={col.id}>
+                      {col.name} ({col.bindings.size})
+                    </option>
+                  ))}
+                </select>
+                <button
+                  data-testid="place-collection-button"
+                  disabled={!placeCollectionId}
+                  onClick={() => {
+                    if (!placeCollectionId || !parentNodeId || !activeSlide) return
+                    const playhead = usePlaybackController.getState().getTime(activeSlide.id)
+                    const result = dispatch(
+                      new PlaceCollectionCommand({ collectionId: placeCollectionId, parentNodeId, startTime: playhead }),
+                    )
+                    if (!result.ok) {
+                      notify(result.error.message)
+                    } else {
+                      notify(`Placed collection at ${playhead.toFixed(2)}s`)
+                      setPlaceCollectionId('')
+                    }
+                  }}
+                  title={placeCollectionId ? 'Place collection at playhead (speed=1, broadcast by semanticName)' : 'Select a collection'}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border, #ddd)',
+                    background: placeCollectionId ? 'var(--color-accent, #7c5cff)' : '#eee',
+                    color: placeCollectionId ? '#fff' : '#999',
+                    cursor: placeCollectionId ? 'pointer' : 'default',
+                    fontSize: 12,
+                  }}
+                >
+                  Place at playhead
+                </button>
+              </span>
+            </div>
+            {parentNode.collectionPlacements.length === 0 ? (
+              <div
+                data-testid="collection-lanes-empty"
+                style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', padding: 8, border: '1px dashed var(--color-border, #ddd)', borderRadius: 4, textAlign: 'center' }}
+              >
+                No placed collections. Select a collection above → Place at playhead.
+              </div>
+            ) : (
+              <div
+                data-testid="collection-lanes"
+                style={{
+                  position: 'relative',
+                  height: (() => {
+                    const maxTrack = packedCollectionLanes.length > 0 ? Math.max(...packedCollectionLanes.map((l) => l.track)) : 0
+                    return (maxTrack + 1) * CLIP_LANE_HEIGHT_PX
+                  })(),
+                  minHeight: CLIP_LANE_HEIGHT_PX,
+                  border: '1px solid var(--color-border, #eee)',
+                  borderRadius: 4,
+                  background: 'var(--color-bg, #fafafa)',
+                  overflowX: 'auto',
+                  overflowY: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    position: 'relative',
+                    width: `${(() => {
+                      const maxEnd = packedCollectionLanes.length > 0 ? Math.max(...packedCollectionLanes.map((l) => l.end)) : 0
+                      const slideDuration = activeSlide?.duration ?? 10
+                      return Math.max(slideDuration, maxEnd + 1) * pps
+                    })()}px`,
+                    height: '100%',
+                  }}
+                >
+                  {packedCollectionLanes.map((lane) => {
+                    const isSelected = selectedPlacementId === lane.placement.id
+                    const isDragging = dragState && 'placementId' in dragState && dragState.placementId === lane.placement.id
+                    // Tooltip with collection name and bindings
+                    let tooltip = lane.collection.name
+                    try {
+                      const bindings = [...lane.collection.bindings.entries()].map(([sem, clipId]) => {
+                        try {
+                          return `${sem} → ${engine.getClip(clipId).name}`
+                        } catch {
+                          return `${sem} → ${clipId.slice(0, 6)}`
+                        }
+                      })
+                      if (bindings.length > 0) tooltip += `\n${bindings.join('\n')}`
+                      tooltip += `\nstart ${lane.start.toFixed(2)}s visual ${lane.visualDuration.toFixed(2)}s`
+                    } catch {
+                      tooltip = lane.collection.name
+                    }
+                    const barStyle: React.CSSProperties = {
+                      position: 'absolute',
+                      left: lane.left,
+                      width: lane.width,
+                      top: lane.track * CLIP_LANE_HEIGHT_PX + 2,
+                      height: CLIP_LANE_BAR_HEIGHT_PX,
+                      background: isSelected ? 'var(--color-accent, #7c5cff)' : '#d4c5ff',
+                      border: `1px solid ${isSelected ? '#4c1d95' : '#7c5cff'}`,
+                      borderRadius: 4,
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: '0 8px',
+                      boxSizing: 'border-box',
+                      cursor: isDragging ? 'grabbing' : 'grab',
+                      zIndex: lane.zIndex,
+                      userSelect: 'none',
+                      overflow: 'hidden',
+                    }
+                    const handleStyle = (side: 'left' | 'right'): React.CSSProperties => ({
+                      position: 'absolute',
+                      top: 0,
+                      bottom: 0,
+                      width: CLIP_HANDLE_WIDTH_PX,
+                      ...(side === 'left' ? { left: 0 } : { right: 0 }),
+                      cursor: 'ew-resize',
+                      background: 'rgba(0,0,0,0.06)',
+                      borderLeft: side === 'left' ? '1px solid rgba(0,0,0,0.15)' : undefined,
+                      borderRight: side === 'right' ? '1px solid rgba(0,0,0,0.15)' : undefined,
+                    })
+                    const handlePointerDown = (e: React.PointerEvent, mode: 'collection-resize-left' | 'collection-resize-right') => {
+                      if (e.button !== 0) return
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setSelectedPlacementId(lane.placement.id)
+                      if (mode === 'collection-resize-right') {
+                        setDragState({
+                          mode: 'collection-resize-right',
+                          placementId: lane.placement.id,
+                          collectionId: lane.collection.id,
+                          parentNodeId: parentNode.id,
+                          initialStart: lane.start,
+                          initialVisual: lane.visualDuration,
+                          startX: e.clientX,
+                          previewVisual: lane.visualDuration,
+                          previewStart: lane.start,
+                        } as DragState)
+                      } else {
+                        const rightEdge = lane.start + lane.visualDuration
+                        setDragState({
+                          mode: 'collection-resize-left',
+                          placementId: lane.placement.id,
+                          collectionId: lane.collection.id,
+                          parentNodeId: parentNode.id,
+                          initialStart: lane.start,
+                          initialVisual: lane.visualDuration,
+                          rightEdge,
+                          startX: e.clientX,
+                          previewVisual: lane.visualDuration,
+                          previewStart: lane.start,
+                        } as DragState)
+                      }
+                    }
+                    const barPointerDown = (e: React.PointerEvent) => {
+                      const target = e.target as HTMLElement
+                      if (target.dataset.testid?.startsWith('collection-handle')) return
+                      if (e.button !== 0) return
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setSelectedPlacementId(lane.placement.id)
+                      // Check for multi-axis: record startY for reorder detection
+                      const startY = e.clientY
+                      const parent = parentNode
+                      const initialIndex = parent.collectionPlacements.findIndex((p) => p.id === lane.placement.id)
+                      setDragState({
+                        mode: 'collection-move',
+                        placementId: lane.placement.id,
+                        collectionId: lane.collection.id,
+                        parentNodeId: parent.id,
+                        initialStart: lane.start,
+                        initialVisual: lane.visualDuration,
+                        startX: e.clientX,
+                        previewStart: lane.start,
+                        startY,
+                        initialIndex: initialIndex === -1 ? lane.track : initialIndex,
+                        previewIndex: initialIndex === -1 ? lane.track : initialIndex,
+                      } as DragState)
+                    }
+                    const handleContextMenu = (e: React.MouseEvent) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setCollectionPlacementMenu({ x: e.clientX, y: e.clientY, placementId: lane.placement.id })
+                    }
+                    return (
+                      <div
+                        key={lane.placement.id}
+                        data-testid={`collection-lane-${lane.placement.id}`}
+                        data-placement-id={lane.placement.id}
+                        data-track={String(lane.track)}
+                        data-start={String(lane.start)}
+                        data-visual={String(lane.visualDuration)}
+                        data-selected={String(isSelected)}
+                        title={tooltip}
+                        style={barStyle}
+                        onPointerDown={barPointerDown}
+                        onContextMenu={handleContextMenu}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          const target = e.target as HTMLElement
+                          if (target.dataset.testid?.startsWith('collection-handle')) return
+                          setSelectedPlacementId(lane.placement.id)
+                        }}
+                      >
+                        <span
+                          data-testid={`collection-lane-label-${lane.placement.id}`}
+                          style={{ fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, pointerEvents: 'none', color: isSelected ? '#fff' : '#2e2e2e' }}
+                        >
+                          {lane.collection.name}
+                        </span>
+                        <div
+                          data-testid={`collection-handle-left-${lane.placement.id}`}
+                          data-handle="left"
+                          style={handleStyle('left')}
+                          onPointerDown={(e) => handlePointerDown(e, 'collection-resize-left')}
+                        />
+                        <div
+                          data-testid={`collection-handle-right-${lane.placement.id}`}
+                          data-handle="right"
+                          style={handleStyle('right')}
+                          onPointerDown={(e) => handlePointerDown(e, 'collection-resize-right')}
+                        />
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+            <div style={{ fontSize: 10, color: 'var(--color-text-muted, #888)', marginTop: 4 }}>
+              Drag body to move (horizontal) or reorder (vertical), drag edges to stretch uniformly (speed factor per member). Lower lane wins Priority.
+            </div>
+          </div>
+        )}
+
         {/* Editor sub-view */}
         {editing && editingClip ? (
           <ManagerClipEditor
@@ -1677,11 +2282,16 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 }
               }
               const previewOverrides =
-                dragState && dragState.nodeId === row.node.id
+                dragState &&
+                (dragState.mode === 'move' || dragState.mode === 'resize-right' || dragState.mode === 'resize-left') &&
+                dragState.nodeId === row.node.id
                   ? new Map<string, { startTime: number; speed: number }>([
                       [
-                        dragState.instanceId,
-                        { startTime: dragState.previewStart, speed: dragState.previewSpeed },
+                        (dragState as Extract<DragState, { mode: 'move' | 'resize-right' | 'resize-left' }>).instanceId,
+                        {
+                          startTime: (dragState as Extract<DragState, { mode: 'move' | 'resize-right' | 'resize-left' }>).previewStart,
+                          speed: (dragState as Extract<DragState, { mode: 'move' | 'resize-right' | 'resize-left' }>).previewSpeed,
+                        },
                       ],
                     ])
                   : undefined
@@ -1779,7 +2389,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                               const isSelectedSingle = selectedInstanceId === lane.instance.id
                               const isMultiSelected = selectedClipIds.has(lane.instance.id)
                               const isSelected = isMultiSelected || isSelectedSingle
-                              const isDragging = dragState?.instanceId === lane.instance.id
+                              const isDragging =
+                                !!dragState &&
+                                'instanceId' in dragState &&
+                                (dragState as { instanceId: string }).instanceId === lane.instance.id
                               const isEnabled = lane.instance.enabled
                               const isHighlighted = highlightedClipInstanceId === lane.instance.id
                               const barStyle: React.CSSProperties = {
@@ -2160,6 +2773,65 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 onClick={() => handleEdit(clipMenu.clipId, clipMenu.nodeId)}
               >
                 Edit
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Collection lane context menu */}
+        {collectionPlacementMenu && (
+          <>
+            <div
+              style={{ position: 'fixed', inset: 0, zIndex: 1099 }}
+              onClick={() => setCollectionPlacementMenu(null)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setCollectionPlacementMenu(null)
+              }}
+            />
+            <div
+              role="menu"
+              data-testid="collection-lane-context-menu"
+              style={{
+                position: 'fixed',
+                left: collectionPlacementMenu.x,
+                top: collectionPlacementMenu.y,
+                background: 'var(--color-bg, #fff)',
+                border: '1px solid var(--color-border, #ddd)',
+                borderRadius: 6,
+                padding: 4,
+                zIndex: 1100,
+                boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                minWidth: 160,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                role="menuitem"
+                data-testid="collection-lane-delete"
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  color: 'var(--color-danger, #c00)',
+                }}
+                onClick={() => {
+                  const pid = collectionPlacementMenu.placementId
+                  try {
+                    engine.deleteCollectionPlacement(pid)
+                    notify('Deleted collection placement')
+                  } catch (e) {
+                    notify(e instanceof Error ? e.message : String(e))
+                  }
+                  setCollectionPlacementMenu(null)
+                }}
+              >
+                Delete placement
               </button>
             </div>
           </>

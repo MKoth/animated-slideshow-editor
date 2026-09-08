@@ -23,6 +23,11 @@ import {
 } from './materialInstance'
 import type { ClipInstance } from './clipInstance'
 import { clipInstanceFromJSON, clipInstanceToJSON } from './clipInstance'
+import type { CollectionPlacement } from './collectionPlacement'
+import {
+  collectionPlacementFromJSON,
+  collectionPlacementToJSON,
+} from './collectionPlacement'
 import type { ShadowEffect } from './shadowEffect'
 import { shadowEffectFromJSON, shadowEffectToJSON } from './shadowEffect'
 
@@ -48,6 +53,7 @@ export class SceneNode {
   material: MaterialInstance
   readonly components: NodeComponents
   readonly clipInstances: ClipInstance[]
+  readonly collectionPlacements: CollectionPlacement[]
   shadowEffect?: ShadowEffect
   castShadow?: boolean
   _worldTransformDirty = true
@@ -71,6 +77,7 @@ export class SceneNode {
     this.opacity = 1
     this.material = defaultMaterial()
     this.clipInstances = []
+    this.collectionPlacements = []
   }
 
   markDirty(): void {
@@ -123,6 +130,9 @@ export class SceneNode {
       ...(this.clipInstances.length > 0
         ? { clipInstances: this.clipInstances.map(clipInstanceToJSON) }
         : {}),
+      ...(this.collectionPlacements.length > 0
+        ? { collectionPlacements: this.collectionPlacements.map(collectionPlacementToJSON) }
+        : {}),
       ...(this.shadowEffect !== undefined
         ? { shadowEffect: shadowEffectToJSON(this.shadowEffect) }
         : {}),
@@ -171,6 +181,16 @@ export class SceneNode {
     if (Array.isArray(json.clipInstances)) {
       for (const clipJson of json.clipInstances) {
         node.clipInstances.push(clipInstanceFromJSON(clipJson))
+      }
+    }
+    if (Array.isArray((json as unknown as Record<string, unknown>).collectionPlacements)) {
+      for (const plJson of (json as unknown as Record<string, unknown>)
+        .collectionPlacements as unknown[]) {
+        try {
+          node.collectionPlacements.push(collectionPlacementFromJSON(plJson))
+        } catch {
+          void 0
+        }
       }
     }
     const parsedShadow = shadowEffectFromJSON((json as Record<string, unknown>).shadowEffect, id)

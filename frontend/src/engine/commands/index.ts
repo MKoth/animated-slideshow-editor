@@ -473,6 +473,23 @@ export type {
   ApplyClipCollectionInverse,
   ApplyClipCollectionParameters,
 } from './applyClipCollectionCommand'
+export { PlaceCollectionCommand } from './placeCollectionCommand'
+export type { PlaceCollectionInverse, PlaceCollectionParameters } from './placeCollectionCommand'
+export { SetCollectionPlacementStartTimeCommand } from './setCollectionPlacementStartTimeCommand'
+export type {
+  SetCollectionPlacementStartTimeInverse,
+  SetCollectionPlacementStartTimeParameters,
+} from './setCollectionPlacementStartTimeCommand'
+export { ReorderCollectionPlacementCommand } from './reorderCollectionPlacementCommand'
+export type {
+  ReorderCollectionPlacementInverse,
+  ReorderCollectionPlacementParameters,
+} from './reorderCollectionPlacementCommand'
+export { DeleteCollectionPlacementCommand } from './deleteCollectionPlacementCommand'
+export type {
+  DeleteCollectionPlacementInverse,
+  DeleteCollectionPlacementParameters,
+} from './deleteCollectionPlacementCommand'
 export { ImportReusableObjectCommand } from './importReusableObjectCommand'
 export type {
   ImportReusableObjectInverse,

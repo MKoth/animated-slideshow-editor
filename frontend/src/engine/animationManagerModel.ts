@@ -18,6 +18,8 @@ import { SHADOW_LABELS } from './shadowEffect'
 import type { MaterialParameterDefault } from './materialResolution'
 import { materialParametersOf } from '../components/panels/timelineTracks'
 import { snapKeyframeTime } from './timelineSnapping'
+import type { CollectionPlacement } from './collectionPlacement'
+import type { ClipCollection } from './clipCollection'
 
 export type ManagerTab = 'collections' | 'clips' | 'orphans'
 
@@ -502,4 +504,171 @@ export function snapStartTime(
     pps,
   })
   return Math.max(0, snapped)
+}
+
+// ---------------------------------------------------------------------------
+// Collection Lane geometry, packing and uniform stretch (Spec 15-06)
+// ---------------------------------------------------------------------------
+
+export interface PackedCollectionLane {
+  readonly placement: CollectionPlacement
+  readonly collection: ClipCollection
+  readonly visualDuration: number
+  readonly start: number
+  readonly end: number
+  readonly track: number
+  readonly zIndex: number
+  readonly left: number
+  readonly width: number
+}
+
+/**
+ * Compute derived visual duration for a collection placement as max(member visualDuration)
+ * where members are ClipInstances on descendant nodes linked via placementId.
+ * In v1, members co-start at placement.startTime (zero offsets), so visual = max_i(duration/speed).
+ * Returns MIN_VISUAL_DURATION if no members found.
+ */
+export function visualDurationForCollectionPlacement(
+  placement: CollectionPlacement,
+  parentNode: SceneNode,
+  getClip: (clipId: string) => ClipDefinition | null,
+  previewOverrides?: Map<string, { speed: number }>,
+): number {
+  let maxVisual = 0
+  let hasMember = false
+  for (const node of walkPreOrder(parentNode)) {
+    for (const inst of node.clipInstances) {
+      if (inst.placementId !== placement.id) continue
+      hasMember = true
+      let clip: ClipDefinition | null = null
+      try {
+        clip = getClip(inst.clipId)
+      } catch {
+        continue
+      }
+      if (!clip) continue
+      const speed = previewOverrides?.get(inst.id)?.speed ?? inst.speed
+      const effectiveSpeed = speed < MIN_CLIP_SPEED ? MIN_CLIP_SPEED : speed
+      const visual = Math.max(clip.duration / effectiveSpeed, MIN_VISUAL_DURATION)
+      if (visual > maxVisual) maxVisual = visual
+    }
+  }
+  if (!hasMember) return MIN_VISUAL_DURATION
+  return Math.max(maxVisual, MIN_VISUAL_DURATION)
+}
+
+/**
+ * Greedy interval packing for collection placements on the parent's top collection section.
+ * Each placement interval is [placement.startTime, placement.startTime + maxMemberVisual).
+ * Lower track = higher Priority (higher zIndex, evaluator last-wins via placement order).
+ */
+export function packCollectionLanesForParent(
+  parentNode: SceneNode,
+  getClip: (clipId: string) => ClipDefinition | null,
+  getCollection: (collectionId: string) => ClipCollection | null,
+  pixelsPerSecond?: number,
+  previewOverrides?: Map<string, { startTime: number; visualDuration?: number }>,
+): readonly PackedCollectionLane[] {
+  const pps = pixelsPerSecond ?? 100
+  const entries: {
+    placement: CollectionPlacement
+    collection: ClipCollection
+    visualDuration: number
+    start: number
+    end: number
+    index: number
+  }[] = []
+  for (let index = 0; index < parentNode.collectionPlacements.length; index++) {
+    const placement = parentNode.collectionPlacements[index]!
+    const override = previewOverrides?.get(placement.id)
+    let collection: ClipCollection | null = null
+    try {
+      collection = getCollection(placement.collectionId)
+    } catch {
+      continue
+    }
+    if (!collection) continue
+    const start = override ? override.startTime : placement.startTime
+    let visual: number
+    if (override?.visualDuration !== undefined) {
+      visual = Math.max(override.visualDuration, MIN_VISUAL_DURATION)
+    } else {
+      visual = visualDurationForCollectionPlacement(placement, parentNode, getClip)
+    }
+    const end = start + visual
+    entries.push({ placement, collection, visualDuration: visual, start, end, index })
+  }
+  const sorted = [...entries].sort((a, b) => a.start - b.start || a.index - b.index)
+  const trackEnds: number[] = []
+  const trackOf = new Map<string, number>()
+  for (const e of sorted) {
+    let placed = false
+    for (let t = 0; t < trackEnds.length; t++) {
+      if (e.start >= trackEnds[t]! - 1e-9) {
+        trackEnds[t] = e.end
+        trackOf.set(e.placement.id, t)
+        placed = true
+        break
+      }
+    }
+    if (!placed) {
+      const t = trackEnds.length
+      trackEnds.push(e.end)
+      trackOf.set(e.placement.id, t)
+    }
+  }
+  return entries.map((e) => {
+    const track = trackOf.get(e.placement.id) ?? 0
+    const { left, width } = barGeometry(e.start, e.visualDuration, pps)
+    return {
+      placement: e.placement,
+      collection: e.collection,
+      visualDuration: e.visualDuration,
+      start: e.start,
+      end: e.end,
+      track,
+      zIndex: track,
+      left,
+      width,
+    }
+  })
+}
+
+export function collectCollectionBarEdgesForSnap(
+  parentNode: SceneNode,
+  getClip: (clipId: string) => ClipDefinition | null,
+  getCollection: (collectionId: string) => ClipCollection | null,
+  exclude?: { placementId: string },
+): readonly number[] {
+  const edges: number[] = []
+  for (const placement of parentNode.collectionPlacements) {
+    if (exclude && placement.id === exclude.placementId) continue
+    let collection: ClipCollection | null = null
+    try {
+      collection = getCollection(placement.collectionId)
+    } catch {
+      continue
+    }
+    if (!collection) continue
+    const visual = visualDurationForCollectionPlacement(placement, parentNode, getClip)
+    edges.push(placement.startTime)
+    edges.push(placement.startTime + visual)
+  }
+  return edges
+}
+
+/**
+ * Unified interval edges for snap: combines clip lane edges (descendant nodes) and collection lane edges (parent).
+ */
+export function collectUnifiedBarEdgesForSnap(
+  parentNode: SceneNode,
+  descendantNodes: readonly SceneNode[],
+  getClip: (clipId: string) => ClipDefinition | null,
+  getCollection: (collectionId: string) => ClipCollection | null,
+  excludeClip?: { nodeId: string; instanceId: string },
+  excludeCollection?: { placementId: string },
+): readonly number[] {
+  const clipEdges = collectBarEdgesForSnap(descendantNodes, getClip, excludeClip)
+  const collectionEdges = collectCollectionBarEdgesForSnap(parentNode, getClip, getCollection, excludeCollection)
+  return [...clipEdges, ...collectionEdges]
 }

@@ -136,6 +136,7 @@ export type NodeJSON = {
   readonly material?: MaterialJSON
   readonly components: NodeComponentsJSON
   readonly clipInstances?: readonly ClipInstanceJSON[]
+  readonly collectionPlacements?: readonly CollectionPlacementJSON[]
   readonly shadowEffect?: ShadowEffectJSON
   readonly castShadow?: boolean
 }
@@ -404,6 +405,14 @@ export type ClipInstanceJSON = {
   readonly speed: number
   readonly enabled: boolean
   readonly paramOverrides?: Readonly<Record<string, number>>
+  readonly placementId?: string
+}
+
+export type CollectionPlacementJSON = {
+  readonly id: string
+  readonly collectionId: string
+  readonly parentNodeId: string
+  readonly startTime: number
 }
 
 export type ClipCollectionJSON = {

@@ -2018,6 +2018,76 @@ export function applyUndo(
       }
       return
     }
+    case 'PlaceCollection': {
+      const placementId = (inv as Record<string, unknown>).placementId as string
+      const created = (inv as Record<string, unknown>).createdInstanceIds as readonly {
+        nodeId: string
+        instanceId: string
+      }[] | undefined
+      if (created) {
+        for (const entry of created) {
+          try {
+            engine.removeClipInstance(entry.nodeId, entry.instanceId)
+          } catch {
+            void 0
+          }
+        }
+      }
+      try {
+        engine.deleteCollectionPlacement(placementId)
+      } catch {
+        void 0
+      }
+      return
+    }
+    case 'SetCollectionPlacementStartTime': {
+      const placementId = (inv as Record<string, unknown>).placementId as string
+      const oldStart = (inv as Record<string, unknown>).oldStartTime as number
+      try {
+        engine.setCollectionPlacementStartTime(placementId, oldStart)
+      } catch {
+        void 0
+      }
+      return
+    }
+    case 'ReorderCollectionPlacement': {
+      const parentNodeId = (inv as Record<string, unknown>).parentNodeId as string
+      const placementId = (inv as Record<string, unknown>).placementId as string
+      const oldIndex = (inv as Record<string, unknown>).oldIndex as number
+      try {
+        engine.reorderCollectionPlacement(parentNodeId, placementId, oldIndex)
+      } catch {
+        void 0
+      }
+      return
+    }
+    case 'DeleteCollectionPlacement': {
+      const placement = (inv as Record<string, unknown>).placement as import('../collectionPlacement').CollectionPlacement
+      const index = (inv as Record<string, unknown>).index as number
+      const members = (inv as Record<string, unknown>).memberPlacements as readonly {
+        nodeId: string
+        instanceId: string
+        placementId: string
+      }[] | undefined
+      if (placement) {
+        try {
+          engine.restoreCollectionPlacement(placement, index)
+          if (members) {
+            for (const m of members) {
+              try {
+                const inst = engine.getClipInstance(m.nodeId, m.instanceId)
+                ;(inst as unknown as Record<string, unknown>).placementId = m.placementId
+              } catch {
+                void 0
+              }
+            }
+          }
+        } catch {
+          void 0
+        }
+      }
+      return
+    }
     case 'ImportReusableObject': {
       const createdNodeIds = (inv as Record<string, unknown>).createdNodeIds as
         readonly string[] | undefined
@@ -3341,6 +3411,18 @@ export function applyRedo(
     }
     case 'ApplyClipCollection':
       engine.applyClipCollection(params.collectionId as string, params.targetNodeId as string)
+      return
+    case 'PlaceCollection':
+      engine.placeCollection(params.collectionId as string, params.parentNodeId as string, (params.startTime as number) ?? 0)
+      return
+    case 'SetCollectionPlacementStartTime':
+      engine.setCollectionPlacementStartTime(params.placementId as string, params.startTime as number)
+      return
+    case 'ReorderCollectionPlacement':
+      engine.reorderCollectionPlacement(params.parentNodeId as string, params.placementId as string, params.newIndex as number)
+      return
+    case 'DeleteCollectionPlacement':
+      engine.deleteCollectionPlacement(params.placementId as string)
       return
     case 'SymmetrizeSubtree': {
       const nodeId = params.nodeId as string

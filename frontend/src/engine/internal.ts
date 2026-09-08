@@ -128,6 +128,8 @@ import {
 import { newId } from './ids'
 import { newClipId } from './clipDefinition'
 import { newClipCollectionId } from './clipCollection'
+import { newCollectionPlacementId } from './collectionPlacement'
+import type { CollectionPlacement } from './collectionPlacement'
 import { Keyframe as KeyframeModel, newKeyframeId } from './keyframe'
 import {
   REUSABLE_OBJECT_VERSION,
@@ -2926,7 +2928,47 @@ export class Engine {
   }
 
   deleteClipCollection(collectionId: string): ClipCollection {
-    return this.#clipCollections.deleteCollection(collectionId)
+    const removed = this.#clipCollections.deleteCollection(collectionId)
+    // Spec 15-06/15-05: delete removes only collection definition; already-placed Collection Lanes remain as plain ClipInstances (no cascading delete of instances)
+    // For placements, we keep instances but clear their placementId and remove the placement itself so the lane disappears
+    const toDeletePlacements: string[] = []
+    for (const slide of this.#projects.current?.slides ?? []) {
+      for (const node of walkPreOrder(slide.scene.root)) {
+        for (const p of [...node.collectionPlacements]) {
+          if (p.collectionId === collectionId) toDeletePlacements.push(p.id)
+        }
+      }
+    }
+    for (const pid of toDeletePlacements) {
+      try {
+        // Find placement's parent
+        const placement = (() => {
+          for (const slide of this.#projects.current?.slides ?? []) {
+            for (const node of walkPreOrder(slide.scene.root)) {
+              const f = node.collectionPlacements.find((pl) => pl.id === pid)
+              if (f) return f
+            }
+          }
+          return null
+        })()
+        if (placement) {
+          const parent = this.getNode(placement.parentNodeId)
+          // Clear placementId on members (make plain)
+          for (const n of walkPreOrder(parent)) {
+            for (const inst of n.clipInstances) {
+              if (inst.placementId === pid) delete (inst as unknown as Record<string, unknown>).placementId
+            }
+          }
+          // Remove placement
+          const idx = parent.collectionPlacements.findIndex((pl) => pl.id === pid)
+          if (idx !== -1) parent.collectionPlacements.splice(idx, 1)
+        }
+      } catch {
+        void 0
+      }
+    }
+    this.#bus.emit({ type: 'ClipCollectionRemoved', collectionId } as unknown as import('./events').EngineEvent)
+    return removed
   }
 
   renameClipCollection(collectionId: string, name: string): void {
@@ -3038,6 +3080,180 @@ export class Engine {
         void 0
       }
     }
+  }
+
+  // --- Collection Placement (Spec 15-06) ---
+
+  getCollectionPlacement(placementId: string): CollectionPlacement {
+    for (const slide of this.#projects.current?.slides ?? []) {
+      for (const node of walkPreOrder(slide.scene.root)) {
+        const found = node.collectionPlacements.find((p) => p.id === placementId)
+        if (found) return found
+      }
+    }
+    throw new Error(`Collection placement not found: ${placementId}`)
+  }
+
+  getCollectionPlacements(parentNodeId: string): readonly CollectionPlacement[] {
+    try {
+      const parent = this.getNode(parentNodeId)
+      return parent.collectionPlacements
+    } catch {
+      return []
+    }
+  }
+
+  getPlacementMembers(placementId: string): readonly { nodeId: string; instance: import('./clipInstance').ClipInstance }[] {
+    const placement = this.getCollectionPlacement(placementId)
+    const parent = this.getNode(placement.parentNodeId)
+    const result: { nodeId: string; instance: import('./clipInstance').ClipInstance }[] = []
+    for (const node of walkPreOrder(parent)) {
+      for (const inst of node.clipInstances) {
+        if (inst.placementId === placementId) result.push({ nodeId: node.id, instance: inst })
+      }
+    }
+    return result
+  }
+
+  createCollectionPlacement(
+    collectionId: string,
+    parentNodeId: string,
+    startTime = 0,
+  ): CollectionPlacement {
+    const collection = this.getClipCollection(collectionId)
+    const parent = this.getNode(parentNodeId)
+    if (startTime < 0 || !Number.isFinite(startTime)) throw new Error('startTime must be non-negative finite')
+    const placement: CollectionPlacement = {
+      id: newCollectionPlacementId(),
+      collectionId: collection.id,
+      parentNodeId: parent.id,
+      startTime: Math.max(0, startTime),
+    }
+    parent.collectionPlacements.push(placement)
+    this.#bus.emit({
+      type: 'CollectionPlacementCreated',
+      placementId: placement.id,
+    } as unknown as import('./events').EngineEvent)
+    return placement
+  }
+
+  deleteCollectionPlacement(placementId: string): CollectionPlacement {
+    const placement = this.getCollectionPlacement(placementId)
+    const parent = this.getNode(placement.parentNodeId)
+    const idx = parent.collectionPlacements.findIndex((p) => p.id === placementId)
+    if (idx !== -1) parent.collectionPlacements.splice(idx, 1)
+    // Leave member instances as plain ClipInstances (no cascading delete) – clear placementId
+    for (const node of walkPreOrder(parent)) {
+      for (const inst of node.clipInstances) {
+        if (inst.placementId === placementId) {
+          delete (inst as unknown as Record<string, unknown>).placementId
+        }
+      }
+    }
+    this.#bus.emit({
+      type: 'CollectionPlacementDeleted',
+      placementId,
+    } as unknown as import('./events').EngineEvent)
+    return placement
+  }
+
+  restoreCollectionPlacement(placement: CollectionPlacement, index?: number): void {
+    const parent = this.getNode(placement.parentNodeId)
+    if (index !== undefined && index >= 0 && index <= parent.collectionPlacements.length) {
+      parent.collectionPlacements.splice(index, 0, placement)
+    } else {
+      parent.collectionPlacements.push(placement)
+    }
+    this.#bus.emit({
+      type: 'CollectionPlacementCreated',
+      placementId: placement.id,
+    } as unknown as import('./events').EngineEvent)
+  }
+
+  setCollectionPlacementStartTime(placementId: string, startTime: number): number {
+    if (!Number.isFinite(startTime) || startTime < 0) throw new Error('startTime must be non-negative finite')
+    const placement = this.getCollectionPlacement(placementId)
+    const old = placement.startTime
+    placement.startTime = startTime
+    this.#bus.emit({
+      type: 'CollectionPlacementMoved',
+      placementId,
+    } as unknown as import('./events').EngineEvent)
+    return old
+  }
+
+  reorderCollectionPlacement(parentNodeId: string, placementId: string, newIndex: number): number {
+    const parent = this.getNode(parentNodeId)
+    const oldIndex = parent.collectionPlacements.findIndex((p) => p.id === placementId)
+    if (oldIndex === -1) throw new Error(`Placement not found on parent: ${placementId}`)
+    if (newIndex < 0 || newIndex >= parent.collectionPlacements.length) throw new Error(`newIndex out of bounds: ${newIndex}`)
+    if (oldIndex === newIndex) return oldIndex
+    const [moved] = parent.collectionPlacements.splice(oldIndex, 1)
+    parent.collectionPlacements.splice(newIndex, 0, moved)
+    // Also reorder member ClipInstances on each descendant to reflect placement priority (last wins)
+    // For each node that has instances from multiple placements, sort its instances by placement order
+    // Placement order array defines visual priority: later index = lower = wins, so later placement's instances should be later in node's clipInstances
+    // We will reorder node's clipInstances to match global placement order for that parent
+    const placements = parent.collectionPlacements
+    const placementOrder = new Map<string, number>()
+    placements.forEach((p, i) => placementOrder.set(p.id, i))
+    for (const node of walkPreOrder(parent)) {
+      // collect indices of placement-linked instances
+      const withOrder = node.clipInstances
+        .map((inst, idx) => ({ inst, idx, order: inst.placementId ? (placementOrder.get(inst.placementId) ?? -1) : -1 }))
+        .filter((x) => x.order !== -1)
+      if (withOrder.length < 2) continue
+      // Sort withOrder by placement order asc, stable
+      withOrder.sort((a, b) => a.order - b.order)
+      // Now need to reorder node.clipInstances so that placement-linked instances appear in placementOrder order,
+      // but keep non-placement instances (standalone clips) in place? Simplest: rebuild array with standalone first then placement-ordered
+      // But to preserve relative order of non-placement clips, we will extract placement instances and reinsert sorted at their original positions sorted
+      // Alternative: sort entire node.clipInstances by (isPlacement ? order : -1) but keep -1 at front? That would push standalone clips to front.
+      // For v1, we will simply sort placement-linked instances in place according to placementOrder, keeping others stable.
+      // Approach: get positions of placement instances in original array
+      const positions = withOrder.map((x) => x.idx).sort((a, b) => a - b)
+      const sortedInsts = withOrder.map((x) => x.inst)
+      for (let i = 0; i < positions.length; i++) {
+        node.clipInstances[positions[i]!] = sortedInsts[i]!
+      }
+    }
+    this.#bus.emit({
+      type: 'CollectionPlacementReordered',
+      placementId,
+    } as unknown as import('./events').EngineEvent)
+    return oldIndex
+  }
+
+  placeCollection(
+    collectionId: string,
+    parentNodeId: string,
+    startTime = 0,
+  ): { placement: CollectionPlacement; created: { nodeId: string; instanceId: string; clipId: string }[] } {
+    const collection = this.getClipCollection(collectionId)
+    const parent = this.getNode(parentNodeId)
+    // Create placement first
+    const placement = this.createCollectionPlacement(collectionId, parentNodeId, startTime)
+    const created: { nodeId: string; instanceId: string; clipId: string }[] = []
+    for (const node of walkPreOrder(parent)) {
+      const sem = node.semanticName
+      if (!sem) continue
+      const clipId = collection.getBinding(sem)
+      if (!clipId) continue
+      this.getClip(clipId)
+      const instance = this.assignClipInstance(node.id, clipId, startTime, 1, true, {}, placement.id)
+      created.push({ nodeId: node.id, instanceId: instance.id, clipId })
+    }
+    // If no members created, remove placement and throw?
+    if (created.length === 0) {
+      // rollback placement
+      this.deleteCollectionPlacement(placement.id)
+      throw new Error(`No matching semanticName nodes found for collection "${collection.name}" under "${parent.name}"`)
+    }
+    this.#bus.emit({
+      type: 'CollectionPlaced',
+      placementId: placement.id,
+    } as unknown as import('./events').EngineEvent)
+    return { placement, created }
   }
 
   // --- Reusable Object (Spec 267) ---
@@ -4319,10 +4535,11 @@ export class Engine {
     speed: number,
     enabled: boolean,
     paramOverrides: Record<string, number>,
+    placementId?: string,
   ): ClipInstance {
     this.getClip(clipId)
     const node = this.getNode(nodeId)
-    const instance = createClipInstance(clipId, startTime, speed, enabled, paramOverrides)
+    const instance = createClipInstance(clipId, startTime, speed, enabled, paramOverrides, placementId)
     node.clipInstances.push(instance)
     this.#bus.emit({ type: 'ClipInstanceAdded', nodeId, instanceId: instance.id })
     return instance
@@ -4848,6 +5065,14 @@ export function toReadOnly(engine: Engine): EnginePublic {
     exportClipCollection: (parentNodeId, name) => engine.exportClipCollection(parentNodeId, name),
     applyClipCollection: (collectionId, targetNodeId) =>
       engine.applyClipCollection(collectionId, targetNodeId),
+    getCollectionPlacement: (placementId) => engine.getCollectionPlacement(placementId),
+    getCollectionPlacements: (parentNodeId) => engine.getCollectionPlacements(parentNodeId),
+    getPlacementMembers: (placementId) => engine.getPlacementMembers(placementId),
+    placeCollection: (collectionId, parentNodeId, startTime) => engine.placeCollection(collectionId, parentNodeId, startTime),
+    createCollectionPlacement: (collectionId, parentNodeId, startTime) => engine.createCollectionPlacement(collectionId, parentNodeId, startTime),
+    deleteCollectionPlacement: (placementId) => engine.deleteCollectionPlacement(placementId),
+    setCollectionPlacementStartTime: (placementId, startTime) => engine.setCollectionPlacementStartTime(placementId, startTime),
+    reorderCollectionPlacement: (parentNodeId, placementId, newIndex) => engine.reorderCollectionPlacement(parentNodeId, placementId, newIndex),
     getExportFrameCount: (duration, fps) => engine.getExportFrameCount(duration, fps),
     getExportFrameTimestamps: (duration, fps) => engine.getExportFrameTimestamps(duration, fps),
     getRubberbandTempoForPlaybackRate: (rate) => engine.getRubberbandTempoForPlaybackRate(rate),
