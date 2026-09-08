@@ -35,8 +35,14 @@ import {
   AddClipKeyframeCommand,
   DeleteClipKeyframesCommand,
   MoveClipKeyframesCommand,
+  AssignClipCommand,
 } from '../../engine/commands'
 import { useNotificationStore } from '../../stores/notificationStore'
+import { computeExtractionBounds } from '../../engine/clipExtraction'
+import type { ExtractableKeyframe } from '../../engine/clipExtraction'
+import { ClipExtractionModal } from './ClipExtractionModal'
+import type { AnimatedParam } from '../../engine/animationManagerModel'
+import type { KeyframeTarget } from '../../engine/keyframeTarget'
 
 interface AnimationManagerModalProps {
   open: boolean
@@ -103,8 +109,42 @@ function countClipUses(engine: ReturnType<typeof useEngine>['engine'], clipId: s
   return n
 }
 
+function paramToTarget(param: AnimatedParam, nodeId: string): KeyframeTarget {
+  if (param.kind === 'property') return { kind: 'node', nodeId, property: param.key as never }
+  if (param.kind === 'visible') return { kind: 'visible', nodeId }
+  if (param.kind === 'morph') return { kind: 'morph', nodeId }
+  if (param.kind === 'circle') return { kind: 'circle', nodeId, property: param.key as never }
+  if (param.kind === 'shadow') return { kind: 'shadow', nodeId, property: param.key as never }
+  if (param.kind === 'material')
+    return { kind: 'node', nodeId, parameter: param.key } as KeyframeTarget
+  if (param.kind === 'symmetry') return { kind: 'symmetry', nodeId }
+  if (param.kind === 'table') return { kind: 'table', nodeId, property: param.key as never }
+  return { kind: 'node', nodeId, property: param.key as never }
+}
+
+export interface OrphanEntry {
+  readonly keyframeId: string
+  readonly nodeId: string
+  readonly param: AnimatedParam
+  readonly keyframe: import('../../engine/keyframe').Keyframe
+  readonly target: KeyframeTarget
+}
+
+function nextClipNameForNode(nodeName: string, clips: readonly { name: string }[]): string {
+  const prefix = `${nodeName} Clip `
+  let max = 0
+  for (const c of clips) {
+    if (c.name.startsWith(prefix)) {
+      const suffix = c.name.slice(prefix.length).trim()
+      const n = parseInt(suffix, 10)
+      if (Number.isFinite(n) && n > max) max = n
+    }
+  }
+  return `${prefix}${max + 1}`
+}
+
 export function AnimationManagerModal({ open, parentNodeId, onClose }: AnimationManagerModalProps) {
-  const { engine, dispatch } = useEngine()
+  const { engine, dispatch, undoStack } = useEngine()
   const [, setTick] = useState(0)
   const [activeTab, setActiveTab] = useState<ManagerTab>('clips')
   const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({})
@@ -119,6 +159,27 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     nodeId: string
     instanceId: string
   } | null>(null)
+  // Orphan multi-select (modal-scoped)
+  const [selectedOrphanIds, setSelectedOrphanIds] = useState<Set<string>>(new Set())
+  const [orphanAnchorId, setOrphanAnchorId] = useState<string | null>(null)
+  const [orphanContextMenu, setOrphanContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [orphanMarquee, setOrphanMarquee] = useState<{
+    startX: number
+    startY: number
+    curX: number
+    curY: number
+    active: boolean
+  } | null>(null)
+  const [orphanExtraction, setOrphanExtraction] = useState<{
+    keyframes: ExtractableKeyframe[]
+    nodeId: string
+    nodeName: string
+    semanticName?: string
+  } | null>(null)
+  const [orphanScopeMessage, setOrphanScopeMessage] = useState<string | null>(null)
+  const [highlightedClipInstanceId, setHighlightedClipInstanceId] = useState<string | null>(null)
+  const orphansContainerRef = useRef<HTMLDivElement>(null)
+  const notify = useNotificationStore((s) => s.notify)
 
   const zoomLevel = useTimelineViewStore((s) => s.zoomLevel)
   const gridSnapEnabled = useTimelineViewStore((s) => s.gridSnapEnabled)
@@ -136,6 +197,13 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       setDragState(null)
       setClipMenu(null)
       setSavedZoom(null)
+      setSelectedOrphanIds(new Set())
+      setOrphanAnchorId(null)
+      setOrphanContextMenu(null)
+      setOrphanMarquee(null)
+      setOrphanExtraction(null)
+      setOrphanScopeMessage(null)
+      setHighlightedClipInstanceId(null)
     }
   }, [open, parentNodeId])
 
@@ -152,7 +220,16 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (editing) {
+        if (orphanExtraction) {
+          setOrphanExtraction(null)
+          e.stopPropagation()
+        } else if (orphanContextMenu) {
+          setOrphanContextMenu(null)
+          e.stopPropagation()
+        } else if (orphanScopeMessage) {
+          setOrphanScopeMessage(null)
+          e.stopPropagation()
+        } else if (editing) {
           restorePpsAndBack()
           e.stopPropagation()
         } else if (dragState) {
@@ -161,6 +238,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         } else if (clipMenu) {
           setClipMenu(null)
           e.stopPropagation()
+        } else if (orphanMarquee) {
+          setOrphanMarquee(null)
+          e.stopPropagation()
         } else {
           onClose()
         }
@@ -168,7 +248,18 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [open, editing, dragState, clipMenu, onClose, restorePpsAndBack])
+  }, [
+    open,
+    editing,
+    dragState,
+    clipMenu,
+    orphanContextMenu,
+    orphanExtraction,
+    orphanScopeMessage,
+    orphanMarquee,
+    onClose,
+    restorePpsAndBack,
+  ])
 
   const activeSlide = open ? engine.getActiveSlide() : null
   const parentNode = useMemo(() => {
@@ -194,6 +285,27 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
 
   const overlayLabel = parentNode ? `Animation Manager — ${parentNode.name}` : 'Animation Manager'
 
+  // Flat ordered orphan entries for Shift-range and marquee (display order: rows pre-order, param order, time asc)
+  const flatOrphanEntries = useMemo((): OrphanEntry[] => {
+    if (!activeSlide) return []
+    const entries: OrphanEntry[] = []
+    for (const row of managerRows) {
+      for (const param of row.animatedParams) {
+        const kfs = getOrphanKeyframes(row.node, activeSlide, param)
+        for (const kf of kfs) {
+          entries.push({
+            keyframeId: kf.id,
+            nodeId: row.node.id,
+            param,
+            keyframe: kf,
+            target: paramToTarget(param, row.node.id),
+          })
+        }
+      }
+    }
+    return entries
+  }, [activeSlide, managerRows])
+
   // Candidate times for snap – computed from committed state, excluding dragging instance
   const snapCandidateTimes = useMemo(() => {
     if (!dragState || dragState.mode !== 'move') return []
@@ -217,6 +329,195 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     }
     return [...edges]
   }, [managerRows, engine, dragState, activeSlide])
+
+  // --- Orphan multi-select helpers ---
+  const handleOrphanDiamondClick = useCallback(
+    (e: React.MouseEvent, entry: OrphanEntry) => {
+      e.stopPropagation()
+      setOrphanScopeMessage(null)
+      const isCtrl = e.ctrlKey || e.metaKey
+      const isShift = e.shiftKey
+      const idx = flatOrphanEntries.findIndex((x) => x.keyframeId === entry.keyframeId)
+      if (idx === -1) return
+      if (isShift && orphanAnchorId) {
+        const anchorIdx = flatOrphanEntries.findIndex((x) => x.keyframeId === orphanAnchorId)
+        if (anchorIdx !== -1) {
+          const start = Math.min(anchorIdx, idx)
+          const end = Math.max(anchorIdx, idx)
+          const rangeIds = flatOrphanEntries.slice(start, end + 1).map((x) => x.keyframeId)
+          if (isCtrl) {
+            setSelectedOrphanIds((prev) => {
+              const next = new Set(prev)
+              for (const id of rangeIds) next.add(id)
+              return next
+            })
+          } else {
+            setSelectedOrphanIds(new Set(rangeIds))
+          }
+          return
+        }
+      }
+      if (isCtrl) {
+        setSelectedOrphanIds((prev) => {
+          const next = new Set(prev)
+          if (next.has(entry.keyframeId)) next.delete(entry.keyframeId)
+          else next.add(entry.keyframeId)
+          return next
+        })
+        setOrphanAnchorId(entry.keyframeId)
+      } else {
+        setSelectedOrphanIds(new Set([entry.keyframeId]))
+        setOrphanAnchorId(entry.keyframeId)
+      }
+    },
+    [flatOrphanEntries, orphanAnchorId],
+  )
+
+  const handleOrphanContextMenu = useCallback(
+    (e: React.MouseEvent, entry?: OrphanEntry) => {
+      e.preventDefault()
+      e.stopPropagation()
+      if (entry && !selectedOrphanIds.has(entry.keyframeId)) {
+        setSelectedOrphanIds(new Set([entry.keyframeId]))
+        setOrphanAnchorId(entry.keyframeId)
+      }
+      setOrphanContextMenu({ x: e.clientX, y: e.clientY })
+    },
+    [selectedOrphanIds],
+  )
+
+  const openOrphanExtraction = useCallback(() => {
+    if (selectedOrphanIds.size === 0) {
+      setOrphanScopeMessage('Select at least one orphan keyframe before Add to clip.')
+      notify('Select at least one orphan keyframe')
+      return
+    }
+    const selectedEntries = flatOrphanEntries.filter((e) => selectedOrphanIds.has(e.keyframeId))
+    const distinctNodes = new Set(selectedEntries.map((e) => e.nodeId))
+    if (distinctNodes.size > 1) {
+      const msg =
+        'Multi-object selection is not supported — select keyframes from a single object only.'
+      setOrphanScopeMessage(msg)
+      notify(msg)
+      return
+    }
+    const nodeId = [...distinctNodes][0]!
+    const node = managerRows.find((r) => r.node.id === nodeId)?.node
+    if (!node) {
+      setOrphanScopeMessage('Selected node no longer exists.')
+      return
+    }
+    // Build ExtractableKeyframe array (values copied verbatim)
+    const extractable: ExtractableKeyframe[] = selectedEntries.map((en) => ({
+      target: en.target,
+      time: en.keyframe.time,
+      value: en.keyframe.value as unknown as ExtractableKeyframe['value'],
+      interpolation: en.keyframe.interpolation,
+      tangentIn: { time: en.keyframe.tangentIn.time, value: en.keyframe.tangentIn.value },
+      tangentOut: { time: en.keyframe.tangentOut.time, value: en.keyframe.tangentOut.value },
+      keyframeId: en.keyframe.id,
+    }))
+    // Validate duplicate normalized times upfront via computeExtractionBounds + validate? Let command handle, but we can pre-check
+    try {
+      computeExtractionBounds(extractable)
+    } catch (err) {
+      setOrphanScopeMessage(err instanceof Error ? err.message : String(err))
+      return
+    }
+    setOrphanScopeMessage(null)
+    setOrphanContextMenu(null)
+    setOrphanExtraction({
+      keyframes: extractable,
+      nodeId,
+      nodeName: node.name,
+      semanticName: node.semanticName,
+    })
+  }, [selectedOrphanIds, flatOrphanEntries, managerRows, notify])
+
+  // Marquee drag for orphans – threshold 5px, handle-excluded
+  const handleOrphansPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      if (activeTab !== 'orphans') return
+      const target = e.target as HTMLElement
+      // handle-excluded: if click is on diamond or its handle area, don't start marquee
+      if (target.closest('[data-testid^="orphan-diamond"]')) return
+      if (target.closest('[data-testid="orphan-context-menu"]')) return
+      if (target.closest('[data-testid="clip-extraction-modal"]')) return
+      if (e.button !== 0) return
+      // Only start marquee on background of orphans container
+      if (!orphansContainerRef.current?.contains(target as Node)) return
+      setOrphanMarquee({
+        startX: e.clientX,
+        startY: e.clientY,
+        curX: e.clientX,
+        curY: e.clientY,
+        active: false,
+      })
+      // capture pointer
+      try {
+        ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+      } catch {
+        /* ignore */
+      }
+      e.preventDefault()
+    },
+    [activeTab],
+  )
+
+  useEffect(() => {
+    if (!orphanMarquee) return
+    const onPointerMove = (e: PointerEvent) => {
+      const dx = e.clientX - orphanMarquee.startX
+      const dy = e.clientY - orphanMarquee.startY
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      const shouldActivate = dist >= 5 || orphanMarquee.active
+      setOrphanMarquee((prev) =>
+        prev ? { ...prev, curX: e.clientX, curY: e.clientY, active: shouldActivate } : prev,
+      )
+    }
+    const onPointerUp = () => {
+      if (!orphanMarquee.active) {
+        setOrphanMarquee(null)
+        return
+      }
+      const { startX, startY, curX, curY } = orphanMarquee
+      const left = Math.min(startX, curX)
+      const right = Math.max(startX, curX)
+      const top = Math.min(startY, curY)
+      const bottom = Math.max(startY, curY)
+      const container = orphansContainerRef.current
+      if (!container) {
+        setOrphanMarquee(null)
+        return
+      }
+      const diamonds = container.querySelectorAll<HTMLElement>('[data-testid^="orphan-diamond-"]')
+      const hitIds = new Set<string>()
+      for (const el of diamonds) {
+        const rect = el.getBoundingClientRect()
+        // handle-excluded hit test: shrink hit rect by 6px handle zone? Use full rect but exclude 6px edge? We'll just use center point check
+        const cx = rect.left + rect.width / 2
+        const cy = rect.top + rect.height / 2
+        if (cx >= left && cx <= right && cy >= top && cy <= bottom) {
+          const id = el.getAttribute('data-testid')?.replace('orphan-diamond-', '')
+          if (id) hitIds.add(id)
+        }
+      }
+      if (hitIds.size > 0) {
+        // Marquee replaces selection (or adds if ctrl held? Simplistic: replace)
+        // Check if pointer up had ctrl? We didn't track; assume replace
+        setSelectedOrphanIds(hitIds)
+        const last = [...hitIds][hitIds.size - 1] as string | undefined
+        if (last) setOrphanAnchorId(last)
+      }
+      setOrphanMarquee(null)
+    }
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+    return () => {
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', onPointerUp)
+    }
+  }, [orphanMarquee])
 
   // Window drag listeners
   useEffect(() => {
@@ -349,8 +650,24 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       setDragState(null)
       return
     }
+    if (orphanExtraction) {
+      setOrphanExtraction(null)
+      return
+    }
+    if (orphanContextMenu) {
+      setOrphanContextMenu(null)
+      return
+    }
+    if (orphanMarquee) {
+      setOrphanMarquee(null)
+      return
+    }
     if (clipMenu) {
       setClipMenu(null)
+      return
+    }
+    if (orphanScopeMessage) {
+      setOrphanScopeMessage(null)
       return
     }
     if (editing) {
@@ -493,72 +810,125 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
 
         {/* Tabs – hidden in editor */}
         {!editing && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div
+              role="tablist"
+              aria-label="Manager views"
+              style={{
+                display: 'flex',
+                gap: 4,
+                background: 'var(--color-bg-elevated, #f0f0f0)',
+                borderRadius: 6,
+                padding: 2,
+                width: 'fit-content',
+              }}
+              data-testid="manager-tabs"
+            >
+              <button
+                role="tab"
+                aria-selected={activeTab === 'collections'}
+                data-testid="manager-tab-collections"
+                onClick={() => setActiveTab('collections')}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: 4,
+                  fontSize: 12,
+                  cursor: 'pointer',
+                  border: 'none',
+                  background:
+                    activeTab === 'collections' ? 'var(--color-accent, #7c5cff)' : 'transparent',
+                  color: activeTab === 'collections' ? '#fff' : 'var(--color-text-muted, #666)',
+                }}
+              >
+                Collections
+              </button>
+              <button
+                role="tab"
+                aria-selected={activeTab === 'clips'}
+                data-testid="manager-tab-clips"
+                onClick={() => setActiveTab('clips')}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: 4,
+                  fontSize: 12,
+                  cursor: 'pointer',
+                  border: 'none',
+                  background:
+                    activeTab === 'clips' ? 'var(--color-accent, #7c5cff)' : 'transparent',
+                  color: activeTab === 'clips' ? '#fff' : 'var(--color-text-muted, #666)',
+                }}
+              >
+                Clips
+              </button>
+              <button
+                role="tab"
+                aria-selected={activeTab === 'orphans'}
+                data-testid="manager-tab-orphans"
+                onClick={() => {
+                  setActiveTab('orphans')
+                  setOrphanScopeMessage(null)
+                }}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: 4,
+                  fontSize: 12,
+                  cursor: 'pointer',
+                  border: 'none',
+                  background:
+                    activeTab === 'orphans' ? 'var(--color-accent, #7c5cff)' : 'transparent',
+                  color: activeTab === 'orphans' ? '#fff' : 'var(--color-text-muted, #666)',
+                }}
+              >
+                Orphans
+              </button>
+            </div>
+            {activeTab === 'orphans' && (
+              <button
+                data-testid="orphan-add-to-clip-button"
+                onClick={openOrphanExtraction}
+                disabled={selectedOrphanIds.size === 0}
+                title={
+                  selectedOrphanIds.size === 0
+                    ? 'Select orphan diamonds first'
+                    : 'Add selected orphans to clip'
+                }
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border, #ddd)',
+                  background: selectedOrphanIds.size > 0 ? 'var(--color-accent, #7c5cff)' : '#eee',
+                  color: selectedOrphanIds.size > 0 ? '#fff' : '#999',
+                  cursor: selectedOrphanIds.size > 0 ? 'pointer' : 'default',
+                  fontSize: 12,
+                  opacity: selectedOrphanIds.size > 0 ? 1 : 0.6,
+                }}
+              >
+                Add to clip… {selectedOrphanIds.size > 0 ? `(${selectedOrphanIds.size})` : ''}
+              </button>
+            )}
+            {activeTab === 'orphans' && selectedOrphanIds.size > 0 && (
+              <span
+                data-testid="orphan-selected-count"
+                style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}
+              >
+                {selectedOrphanIds.size} selected
+              </span>
+            )}
+          </div>
+        )}
+        {activeTab === 'orphans' && orphanScopeMessage && (
           <div
-            role="tablist"
-            aria-label="Manager views"
+            data-testid="orphan-scope-message"
             style={{
-              display: 'flex',
-              gap: 4,
-              background: 'var(--color-bg-elevated, #f0f0f0)',
-              borderRadius: 6,
-              padding: 2,
-              width: 'fit-content',
+              fontSize: 12,
+              color: 'var(--color-error, #d00)',
+              background: '#fff0f0',
+              border: '1px solid #ffcccc',
+              padding: '6px 8px',
+              borderRadius: 4,
             }}
-            data-testid="manager-tabs"
           >
-            <button
-              role="tab"
-              aria-selected={activeTab === 'collections'}
-              data-testid="manager-tab-collections"
-              onClick={() => setActiveTab('collections')}
-              style={{
-                padding: '6px 14px',
-                borderRadius: 4,
-                fontSize: 12,
-                cursor: 'pointer',
-                border: 'none',
-                background:
-                  activeTab === 'collections' ? 'var(--color-accent, #7c5cff)' : 'transparent',
-                color: activeTab === 'collections' ? '#fff' : 'var(--color-text-muted, #666)',
-              }}
-            >
-              Collections
-            </button>
-            <button
-              role="tab"
-              aria-selected={activeTab === 'clips'}
-              data-testid="manager-tab-clips"
-              onClick={() => setActiveTab('clips')}
-              style={{
-                padding: '6px 14px',
-                borderRadius: 4,
-                fontSize: 12,
-                cursor: 'pointer',
-                border: 'none',
-                background: activeTab === 'clips' ? 'var(--color-accent, #7c5cff)' : 'transparent',
-                color: activeTab === 'clips' ? '#fff' : 'var(--color-text-muted, #666)',
-              }}
-            >
-              Clips
-            </button>
-            <button
-              role="tab"
-              aria-selected={activeTab === 'orphans'}
-              data-testid="manager-tab-orphans"
-              onClick={() => setActiveTab('orphans')}
-              style={{
-                padding: '6px 14px',
-                borderRadius: 4,
-                fontSize: 12,
-                cursor: 'pointer',
-                border: 'none',
-                background:
-                  activeTab === 'orphans' ? 'var(--color-accent, #7c5cff)' : 'transparent',
-                color: activeTab === 'orphans' ? '#fff' : 'var(--color-text-muted, #666)',
-              }}
-            >
-              Orphans
-            </button>
+            {orphanScopeMessage}
           </div>
         )}
 
@@ -588,6 +958,20 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         ) : (
           <div
             data-testid="manager-rows"
+            ref={orphansContainerRef}
+            onPointerDown={handleOrphansPointerDown}
+            onContextMenu={
+              activeTab === 'orphans'
+                ? (e) => {
+                    const target = e.target as HTMLElement
+                    if (target.closest('[data-testid^="orphan-diamond"]')) return
+                    e.preventDefault()
+                    if (selectedOrphanIds.size > 0) {
+                      setOrphanContextMenu({ x: e.clientX, y: e.clientY })
+                    }
+                  }
+                : undefined
+            }
             style={{
               border: '1px solid var(--color-border, #ddd)',
               borderRadius: 6,
@@ -595,6 +979,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               flex: 1,
               display: 'flex',
               flexDirection: 'column',
+              position: 'relative',
             }}
           >
             {/* Column-like rows: group headers + animated params + clip lanes */}
@@ -712,20 +1097,25 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                               const isSelected = selectedInstanceId === lane.instance.id
                               const isDragging = dragState?.instanceId === lane.instance.id
                               const isEnabled = lane.instance.enabled
+                              const isHighlighted = highlightedClipInstanceId === lane.instance.id
                               const barStyle: React.CSSProperties = {
                                 position: 'absolute',
                                 left: lane.left,
                                 width: lane.width,
                                 top: lane.track * CLIP_LANE_HEIGHT_PX + 2,
                                 height: CLIP_LANE_BAR_HEIGHT_PX,
-                                background: isEnabled
-                                  ? isSelected
-                                    ? 'var(--color-accent, #7c5cff)'
-                                    : '#b8a6ff'
-                                  : '#e5e5e5',
-                                border: isEnabled
-                                  ? `1px solid ${isSelected ? '#4c1d95' : '#7c5cff'}`
-                                  : '1px dashed #888',
+                                background: isHighlighted
+                                  ? '#ffcc00'
+                                  : isEnabled
+                                    ? isSelected
+                                      ? 'var(--color-accent, #7c5cff)'
+                                      : '#b8a6ff'
+                                    : '#e5e5e5',
+                                border: isHighlighted
+                                  ? '2px solid #b38f00'
+                                  : isEnabled
+                                    ? `1px solid ${isSelected ? '#4c1d95' : '#7c5cff'}`
+                                    : '1px dashed #888',
                                 borderRadius: 4,
                                 opacity: isEnabled ? 1 : 0.5,
                                 display: 'flex',
@@ -733,9 +1123,12 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                 padding: '0 8px',
                                 boxSizing: 'border-box',
                                 cursor: isEnabled ? (isDragging ? 'grabbing' : 'grab') : 'default',
-                                zIndex: lane.zIndex,
+                                zIndex: isHighlighted ? 999 : lane.zIndex,
                                 userSelect: 'none',
                                 overflow: 'hidden',
+                                boxShadow: isHighlighted
+                                  ? '0 0 0 3px rgba(255,204,0,0.5)'
+                                  : undefined,
                               }
                               const handleStyle = (
                                 side: 'left' | 'right',
@@ -831,13 +1224,15 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                   data-visual={String(lane.visualDuration)}
                                   data-enabled={String(isEnabled)}
                                   data-selected={String(isSelected)}
-                                  title={`${lane.clip.name} — start ${lane.start.toFixed(2)}s visual ${lane.visualDuration.toFixed(2)}s speed ${lane.instance.speed.toFixed(3)}${isEnabled ? '' : ' (disabled)'}`}
+                                  data-highlighted={String(isHighlighted)}
+                                  title={`${lane.clip.name} — start ${lane.start.toFixed(2)}s visual ${lane.visualDuration.toFixed(2)}s speed ${lane.instance.speed.toFixed(3)}${isEnabled ? '' : ' (disabled)'}${isHighlighted ? ' (new)' : ''}`}
                                   style={barStyle}
                                   onPointerDown={barPointerDown}
                                   onContextMenu={handleContextMenu}
                                   onClick={(e) => {
                                     e.stopPropagation()
                                     setSelectedInstanceId(lane.instance.id)
+                                    if (isHighlighted) setHighlightedClipInstanceId(null)
                                   }}
                                 >
                                   <span
@@ -940,23 +1335,49 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                     style={{ display: 'flex', gap: 4, alignItems: 'center' }}
                                     data-testid={`manager-orphan-diamonds-${row.node.id}-${param.key}`}
                                   >
-                                    {orphanKeyframes.map((kf) => (
-                                      <span
-                                        key={kf.id}
-                                        data-testid={`orphan-diamond-${kf.id}`}
-                                        title={`orphan keyframe at ${kf.time}s`}
-                                        aria-label={`orphan keyframe at ${kf.time}s`}
-                                        style={{
-                                          width: 8,
-                                          height: 8,
-                                          background: 'var(--color-accent, #7c5cff)',
-                                          border: '1px solid #fff',
-                                          transform: 'rotate(45deg)',
-                                          display: 'inline-block',
-                                          flexShrink: 0,
-                                        }}
-                                      />
-                                    ))}
+                                    {orphanKeyframes.map((kf) => {
+                                      const entry = flatOrphanEntries.find(
+                                        (x) => x.keyframeId === kf.id,
+                                      )
+                                      const isSelected = selectedOrphanIds.has(kf.id)
+                                      return (
+                                        <span
+                                          key={kf.id}
+                                          data-testid={`orphan-diamond-${kf.id}`}
+                                          data-keyframe-id={kf.id}
+                                          data-node-id={row.node.id}
+                                          title={`orphan keyframe at ${kf.time}s${isSelected ? ' (selected)' : ''}`}
+                                          aria-label={`orphan keyframe at ${kf.time}s`}
+                                          aria-selected={isSelected}
+                                          onClick={(e) => {
+                                            if (!entry) return
+                                            handleOrphanDiamondClick(e, entry)
+                                          }}
+                                          onContextMenu={(e) => {
+                                            if (!entry) return
+                                            handleOrphanContextMenu(e, entry)
+                                          }}
+                                          style={{
+                                            width: 10,
+                                            height: 10,
+                                            background: isSelected
+                                              ? '#ffcc00'
+                                              : 'var(--color-accent, #7c5cff)',
+                                            border: isSelected
+                                              ? '2px solid #000'
+                                              : '1px solid #fff',
+                                            transform: 'rotate(45deg)',
+                                            display: 'inline-block',
+                                            flexShrink: 0,
+                                            cursor: 'pointer',
+                                            boxShadow: isSelected
+                                              ? '0 0 0 2px rgba(255,204,0,0.4)'
+                                              : undefined,
+                                            outline: isSelected ? '1px solid #000' : undefined,
+                                          }}
+                                        />
+                                      )
+                                    })}
                                     <span
                                       style={{
                                         fontSize: 10,
@@ -1043,6 +1464,132 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           </>
         )}
 
+        {/* Orphan context menu – Add to clip... */}
+        {orphanContextMenu && (
+          <>
+            <div
+              style={{ position: 'fixed', inset: 0, zIndex: 1099 }}
+              onClick={() => setOrphanContextMenu(null)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setOrphanContextMenu(null)
+              }}
+            />
+            <div
+              role="menu"
+              data-testid="orphan-context-menu"
+              style={{
+                position: 'fixed',
+                left: orphanContextMenu.x,
+                top: orphanContextMenu.y,
+                background: 'var(--color-bg, #fff)',
+                border: '1px solid var(--color-border, #ddd)',
+                borderRadius: 6,
+                padding: 4,
+                zIndex: 1100,
+                boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                minWidth: 160,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                role="menuitem"
+                data-testid="orphan-add-to-clip"
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+                onClick={openOrphanExtraction}
+              >
+                Add to clip… {selectedOrphanIds.size > 0 ? `(${selectedOrphanIds.size})` : ''}
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Orphan marquee overlay */}
+        {orphanMarquee?.active && (
+          <div
+            data-testid="orphan-marquee"
+            style={{
+              position: 'fixed',
+              left: Math.min(orphanMarquee.startX, orphanMarquee.curX),
+              top: Math.min(orphanMarquee.startY, orphanMarquee.curY),
+              width: Math.abs(orphanMarquee.curX - orphanMarquee.startX),
+              height: Math.abs(orphanMarquee.curY - orphanMarquee.startY),
+              border: '1px solid var(--color-accent, #7c5cff)',
+              background: 'rgba(124,92,255,0.15)',
+              pointerEvents: 'none',
+              zIndex: 1100,
+            }}
+          />
+        )}
+
+        {/* Filtered ClipExtractionModal for orphans */}
+        {orphanExtraction &&
+          (() => {
+            const nodeId = orphanExtraction.nodeId
+            const node = (() => {
+              try {
+                return engine.getNode(nodeId)
+              } catch {
+                return null
+              }
+            })()
+            const allowedClipIds = node
+              ? [...new Set(node.clipInstances.map((inst) => inst.clipId))]
+              : []
+            const defaultName = nextClipNameForNode(orphanExtraction.nodeName, engine.clips)
+            const defaultDuration = '7'
+            const defaultCategory = orphanExtraction.semanticName?.trim()
+              ? orphanExtraction.semanticName.trim()
+              : 'extracted'
+            return (
+              <ClipExtractionModal
+                keyframes={orphanExtraction.keyframes}
+                allowedClipIds={allowedClipIds}
+                initialName={defaultName}
+                initialDuration={defaultDuration}
+                initialCategory={defaultCategory}
+                onClose={() => setOrphanExtraction(null)}
+                onSuccess={({ mode, clipId, selStart }) => {
+                  if (mode === 'new') {
+                    // Create instance at selStart speed=1, auto-switch to Clips tab and highlight
+                    const assignResult = dispatch(
+                      new AssignClipCommand({ nodeId, clipId, startTime: selStart, speed: 1 }),
+                    )
+                    if (!assignResult.ok) {
+                      notify(assignResult.error.message)
+                      return
+                    }
+                    const instanceId = (assignResult.inverse as { instanceId: string }).instanceId
+                    // Merge ExtractToClip + AssignClip into single undo entry (one gesture)
+                    try {
+                      undoStack.mergeLastAsTransaction(2)
+                    } catch {
+                      /* ignore */
+                    }
+                    setActiveTab('clips')
+                    setHighlightedClipInstanceId(instanceId)
+                    setSelectedInstanceId(instanceId)
+                    setSelectedOrphanIds(new Set())
+                    setOrphanAnchorId(null)
+                  } else {
+                    // Existing path: no new instance, clear selection but stay on orphans
+                    setSelectedOrphanIds(new Set())
+                    setOrphanAnchorId(null)
+                  }
+                }}
+              />
+            )
+          })()}
+
         {/* Footer hint */}
         <div style={{ fontSize: 11, color: 'var(--color-text-muted, #888)' }}>
           Press Esc to close{editing ? ' (Esc drills back first)' : ''} • Click backdrop to close •
@@ -1068,8 +1615,11 @@ function ManagerClipEditor({
   const [tick, setTick] = useState(0)
   useEngineEvent(() => setTick((t) => t + 1))
 
-  const rows = useMemo(() => clipChannelRows(clip), [clip, tick])
   // Force re-evaluation when clip mutates via engine events (tick)
+  const rows = useMemo(() => {
+    void tick
+    return clipChannelRows(clip)
+  }, [clip, tick])
   const clipDuration = clip.duration
   const [pickerOpen, setPickerOpen] = useState(false)
   const [diamondMenu, setDiamondMenu] = useState<{

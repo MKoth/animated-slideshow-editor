@@ -61,7 +61,13 @@ export class UndoStack {
     this.#entries = this.#entries.slice(1)
     try {
       if (top.type === 'Transaction') {
-        const inverse = top.inverse as { children: readonly { type: string; parameters: Readonly<Record<string, unknown>>; inverse: unknown }[] }
+        const inverse = top.inverse as {
+          children: readonly {
+            type: string
+            parameters: Readonly<Record<string, unknown>>
+            inverse: unknown
+          }[]
+        }
         // Apply children in reverse order to correctly revert
         for (let i = inverse.children.length - 1; i >= 0; i--) {
           const child = inverse.children[i]
@@ -88,7 +94,13 @@ export class UndoStack {
     this.#redoEntries = this.#redoEntries.slice(1)
     try {
       if (top.type === 'Transaction') {
-        const inverse = top.inverse as { children: readonly { type: string; parameters: Readonly<Record<string, unknown>>; inverse: unknown }[] }
+        const inverse = top.inverse as {
+          children: readonly {
+            type: string
+            parameters: Readonly<Record<string, unknown>>
+            inverse: unknown
+          }[]
+        }
         for (const child of inverse.children) {
           applyRedo(engine, child.type, child.parameters, child.inverse)
         }
@@ -104,6 +116,36 @@ export class UndoStack {
       listener()
     }
     return top
+  }
+
+  /**
+   * Merge the last `count` entries into a single Transaction entry.
+   * Used to group multiple dispatches (e.g., ExtractToClip + AssignClip) into one undo step.
+   * The merged transaction replays/redoes children in original dispatch order.
+   */
+  mergeLastAsTransaction(count: number): void {
+    if (count <= 1) return
+    if (this.#entries.length < count) return
+    const slice = this.#entries.slice(0, count)
+    const remaining = this.#entries.slice(count)
+    // slice is newest-first [0]=most recent, [count-1]=oldest among merged. For Transaction children we want oldest-first execution order.
+    const children = [...slice]
+      .reverse()
+      .map((e) => ({ type: e.type, parameters: e.parameters, inverse: e.inverse }))
+    const merged: UndoStackEntry = {
+      id: slice[0].id,
+      type: 'Transaction',
+      parameters: { commands: children.map((c) => ({ type: c.type, ...c.parameters })) },
+      inverse: { children },
+      timestamp: slice[0].timestamp,
+      source: slice[0].source,
+    }
+    this.#entries = [merged, ...remaining]
+    // Dropping redo is already handled by record; but merge should also clear redo
+    this.#redoEntries = []
+    for (const listener of this.#listeners) {
+      listener()
+    }
   }
 
   subscribe = (listener: UndoStackListener): (() => void) => {

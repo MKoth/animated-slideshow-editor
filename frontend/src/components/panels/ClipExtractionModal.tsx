@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+/* eslint-disable react-hooks/set-state-in-effect */
+import { useEffect, useMemo, useState } from 'react'
 import { useEngine } from '../../app/useEngine'
 import { ExtractToClipCommand } from '../../engine/commands/extractToClipCommand'
 import { computeExtractionBounds } from '../../engine/clipExtraction'
@@ -9,11 +10,35 @@ import type { ShadowProperty } from '../../engine/shadowEffect'
 interface Props {
   readonly keyframes: readonly ExtractableKeyframe[]
   readonly onClose: () => void
+  /** When provided, only clips with these ids are shown in the Existing picker. Empty array disables Existing option. */
+  readonly allowedClipIds?: readonly string[] | null
+  readonly initialName?: string
+  readonly initialDuration?: string
+  readonly initialCategory?: string
+  /** Called after successful extraction (before onClose) with resulting clipId and selStart for caller to chain instance creation. */
+  readonly onSuccess?: (result: {
+    mode: 'new' | 'existing'
+    clipId: string
+    selStart: number
+  }) => void
 }
 
-export function ClipExtractionModal({ keyframes, onClose }: Props) {
+export function ClipExtractionModal({
+  keyframes,
+  onClose,
+  allowedClipIds,
+  initialName,
+  initialDuration,
+  initialCategory,
+  onSuccess,
+}: Props) {
   const { engine, dispatch } = useEngine()
-  const clips = engine.clips
+  const allClips = engine.clips
+  const clips = useMemo(() => {
+    if (allowedClipIds === undefined || allowedClipIds === null) return allClips
+    const set = new Set(allowedClipIds)
+    return allClips.filter((c) => set.has(c.id))
+  }, [allClips, allowedClipIds])
 
   const bounds = useMemo(() => {
     try {
@@ -23,12 +48,35 @@ export function ClipExtractionModal({ keyframes, onClose }: Props) {
     }
   }, [keyframes])
 
-  const [mode, setMode] = useState<'new' | 'existing'>(clips.length > 0 ? 'existing' : 'new')
+  const hasExisting = clips.length > 0
+  const [mode, setMode] = useState<'new' | 'existing'>(() => {
+    // For filtered orphan flow (initial* provided), default to 'new' even when existing clips exist, so new defaults are visible.
+    if (
+      initialName !== undefined ||
+      initialDuration !== undefined ||
+      initialCategory !== undefined
+    ) {
+      return 'new'
+    }
+    return hasExisting ? 'existing' : 'new'
+  })
   const [selectedClipId, setSelectedClipId] = useState<string>(clips[0]?.id ?? '')
-  const [name, setName] = useState('Extracted Clip')
-  const [duration, setDuration] = useState<string>(bounds ? String(bounds.clipDuration) : '1')
-  const [category, setCategory] = useState('extracted')
+  const [name, setName] = useState(initialName ?? 'Extracted Clip')
+  const [duration, setDuration] = useState<string>(
+    initialDuration ?? (bounds ? String(bounds.clipDuration) : '1'),
+  )
+  const [category, setCategory] = useState(initialCategory ?? 'extracted')
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!hasExisting && mode === 'existing') setMode('new')
+  }, [hasExisting, mode])
+
+  useEffect(() => {
+    if (clips.length > 0 && !clips.some((c) => c.id === selectedClipId)) {
+      setSelectedClipId(clips[0]!.id)
+    }
+  }, [clips, selectedClipId])
 
   // Shadow section: list only animated shadow props (checked by default), normalizing each to shadow:${property}
   const shadowProps = useMemo(() => {
@@ -80,10 +128,13 @@ export function ClipExtractionModal({ keyframes, onClose }: Props) {
       setError('Select at least one shadow property')
       return
     }
-    // Validate normalized extraction will keep [0,1] for shadow channels via normalizeExtractable
-    // Compute bounds from filtered selection to ensure correct duration
     if (!filteredBounds) {
       setError('No keyframes to extract')
+      return
+    }
+    // Enforce filtered Existing disabled case
+    if (mode === 'existing' && !hasExisting) {
+      setError('No existing clips available for this object — use Create new')
       return
     }
     try {
@@ -109,6 +160,8 @@ export function ClipExtractionModal({ keyframes, onClose }: Props) {
           setError(result.error.message)
           return
         }
+        const clipId = (result.inverse as { clipId: string }).clipId
+        onSuccess?.({ mode: 'new', clipId, selStart: filteredBounds.selStart })
       } else {
         if (!selectedClipId) {
           setError('Select a clip')
@@ -124,6 +177,7 @@ export function ClipExtractionModal({ keyframes, onClose }: Props) {
           setError(result.error.message)
           return
         }
+        onSuccess?.({ mode: 'existing', clipId: selectedClipId, selStart: filteredBounds.selStart })
       }
       onClose()
     } catch (e) {
@@ -184,6 +238,7 @@ export function ClipExtractionModal({ keyframes, onClose }: Props) {
             <input
               type="radio"
               name="clip-extraction-mode"
+              data-testid="clip-extraction-mode-new"
               checked={mode === 'new'}
               onChange={() => setMode('new')}
             />
@@ -194,15 +249,17 @@ export function ClipExtractionModal({ keyframes, onClose }: Props) {
               display: 'flex',
               alignItems: 'center',
               gap: 6,
-              opacity: clips.length === 0 ? 0.5 : 1,
+              opacity: hasExisting ? 1 : 0.5,
             }}
+            title={!hasExisting ? 'No existing clips for this object' : undefined}
           >
             <input
               type="radio"
               name="clip-extraction-mode"
+              data-testid="clip-extraction-mode-existing"
               checked={mode === 'existing'}
               onChange={() => setMode('existing')}
-              disabled={clips.length === 0}
+              disabled={!hasExisting}
             />
             Existing clip
           </label>
