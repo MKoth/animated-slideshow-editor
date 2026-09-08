@@ -81,10 +81,20 @@ export class DeleteVerticesCommand implements Command<DeleteVerticesInverse> {
       .map((uv, i) => (deletedSet.has(i) ? null : { u: uv.u, v: uv.v }))
       .filter((uv): uv is { u: number; v: number } => uv !== null)
 
+    // Preserve skinning: filter boneWeights in same order as vertices
+    let newBoneWeights: (readonly import('../mesh').VertexBoneWeight[])[] | undefined
+    if (oldMesh.boneWeights) {
+      newBoneWeights = oldMesh.boneWeights
+        .map((vw, i) => (deletedSet.has(i) ? null : [...vw]))
+        .filter((v): v is import('../mesh').VertexBoneWeight[] => v !== null)
+    }
+
     const newMesh: MeshData = {
       vertices: newVertices,
       faces: newFaces,
       uvs: newUvs.length > 0 ? newUvs : newVertices.map(() => ({ u: 0, v: 0 })),
+      ...(newBoneWeights ? { boneWeights: newBoneWeights } : {}),
+      ...(oldMesh.bindPose ? { bindPose: { ...oldMesh.bindPose } } : {}),
     }
 
     engine.setMeshData(this.#nodeId, newMesh)

@@ -116,10 +116,31 @@ export class MirrorMeshCommand implements Command<MirrorMeshInverse> {
       }
     }
 
+    // Preserve skinning: map boneWeights for mirrored vertices (copy from source)
+    let newBoneWeights: (readonly import('../mesh').VertexBoneWeight[])[] | undefined
+    if (oldMesh.boneWeights) {
+      newBoneWeights = oldMesh.boneWeights.map((vw) => [...vw])
+      // For each new mirrored vertex that was actually created (indexMap.get(mi) === new index), copy weights from its source
+      for (let mi = 0; mi < originalVertexCount; mi++) {
+        const mapped = indexMap.get(mi)!
+        // If mapped is beyond original range, it's a new vertex that was pushed; its source is mi
+        if (mapped >= originalVertexCount) {
+          const srcWeights = oldMesh.boneWeights?.[mi] ?? []
+          // Ensure array long enough
+          while (newBoneWeights.length <= mapped) newBoneWeights.push([])
+          newBoneWeights[mapped] = [...srcWeights]
+        }
+      }
+      // Pad if needed (should already be correct length)
+      while (newBoneWeights.length < newVertices.length) newBoneWeights.push([])
+    }
+
     const newMesh: MeshData = {
       vertices: newVertices,
       faces: newFaces,
       uvs: newUvs,
+      ...(newBoneWeights ? { boneWeights: newBoneWeights } : {}),
+      ...(oldMesh.bindPose ? { bindPose: { ...oldMesh.bindPose } } : {}),
     }
 
     engine.setMeshData(this.#nodeId, newMesh)

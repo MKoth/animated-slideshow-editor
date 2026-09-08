@@ -141,10 +141,24 @@ export class ExtrudeFacesCommand implements Command<ExtrudeFacesInverse> {
       newFaces.push({ v0: face.v2, v1: nv0, v2: nv2 })
     }
 
+    // Preserve skinning: copy boneWeights for duplicated extruded vertices
+    let newBoneWeights: (readonly import('../mesh').VertexBoneWeight[])[] | undefined
+    if (oldMesh.boneWeights) {
+      newBoneWeights = oldMesh.boneWeights.map((vw) => [...vw])
+      for (const [oldIdx, newIdx] of indexMap.entries()) {
+        const srcWeights = oldMesh.boneWeights?.[oldIdx] ?? []
+        while (newBoneWeights.length <= newIdx) newBoneWeights.push([])
+        newBoneWeights[newIdx] = [...srcWeights]
+      }
+      while (newBoneWeights.length < newVertices.length) newBoneWeights.push([])
+    }
+
     const newMesh: MeshData = {
       vertices: newVertices,
       faces: newFaces,
       uvs: newUvs,
+      ...(newBoneWeights ? { boneWeights: newBoneWeights } : {}),
+      ...(oldMesh.bindPose ? { bindPose: { ...oldMesh.bindPose } } : {}),
     }
 
     engine.setMeshData(this.#nodeId, newMesh)

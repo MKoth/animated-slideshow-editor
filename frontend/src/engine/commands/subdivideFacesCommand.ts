@@ -97,10 +97,44 @@ export class SubdivideFacesCommand implements Command<SubdivideFacesInverse> {
       newFaces.push({ v0: m01, v1: m12, v2: m20 })
     }
 
+    // Preserve skinning data: interpolate boneWeights for new midpoint vertices
+    const newBoneWeights: (readonly import('../mesh').VertexBoneWeight[])[] | undefined =
+      oldMesh.boneWeights ? [...oldMesh.boneWeights.map((vw) => [...vw])] : undefined
+    // midpointCache maps edgeKey -> new vertex index; we need to set weights for those new indices
+    // Do a second pass to assign interpolated weights for each new midpoint
+    if (newBoneWeights) {
+      // Ensure array length matches old vertices initially, will push for new mids
+      while (newBoneWeights.length < oldMesh.vertices.length) newBoneWeights.push([])
+      // For each cached midpoint, interpolate from its endpoints
+      for (const [key, newIdx] of midpointCache.entries()) {
+        const [aStr, bStr] = key.split(':')
+        const a = Number(aStr)
+        const b = Number(bStr)
+        const wa = oldMesh.boneWeights?.[a] ?? []
+        const wb = oldMesh.boneWeights?.[b] ?? []
+        // Average weights: collect all boneIds from both, average
+        const allIds = new Set<string>([...wa.map((w) => w.boneId), ...wb.map((w) => w.boneId)])
+        const averaged: import('../mesh').VertexBoneWeight[] = []
+        for (const bid of allIds) {
+          const va = wa.find((w) => w.boneId === bid)?.weight ?? 0
+          const vb = wb.find((w) => w.boneId === bid)?.weight ?? 0
+          const avg = (va + vb) / 2
+          if (avg > 0) averaged.push({ boneId: bid, weight: avg })
+        }
+        // Ensure array is long enough
+        while (newBoneWeights.length <= newIdx) newBoneWeights.push([])
+        newBoneWeights[newIdx] = averaged
+      }
+      // Any remaining new vertices beyond old length already handled via cache; but if there are gaps, pad
+      while (newBoneWeights.length < newVertices.length) newBoneWeights.push([])
+    }
+
     const newMesh: MeshData = {
       vertices: newVertices,
       faces: newFaces,
       uvs: newUvs,
+      ...(newBoneWeights ? { boneWeights: newBoneWeights } : {}),
+      ...(oldMesh.bindPose ? { bindPose: { ...oldMesh.bindPose } } : {}),
     }
 
     engine.setMeshData(this.#nodeId, newMesh)

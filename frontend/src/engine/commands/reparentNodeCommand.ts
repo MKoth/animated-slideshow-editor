@@ -2,7 +2,7 @@ import type { Engine } from '../internal'
 import type { Transform } from '../transform'
 import { relativeTransform, transformsEqual, worldTransformOf } from '../worldTransform'
 import type { Command } from './command'
-import { wouldFormCycle } from '../sceneNode'
+import { walkPreOrder, wouldFormCycle } from '../sceneNode'
 
 export type ParentingMode = 'keepWorld' | 'snapToTail'
 
@@ -104,6 +104,95 @@ export class ReparentNodeCommand implements Command<ReparentNodeInverse> {
       if (adjusted && !transformsEqual(adjusted, current)) {
         engine.setTransform(this.#nodeId, adjusted)
       }
+    }
+
+    // --- Fix: keep skinning stable after reparent ---
+    // If the reparented subtree contains bones, any mesh in the same scene that
+    // references those bones will have a stale mesh-local bindPose (inv(meshWorld0)*boneWorld0)
+    // if it was captured before the hierarchy changed. Even with KeepWorld (world preserved),
+    // the *relative* mesh-local bind would be wrong if the mesh and the bone share a
+    // common ancestor whose world changed (e.g. moving a chain under a Group). Recompute
+    // the affected bindPose entries to the current relative so that subsequent
+    // evaluateMeshDeformation (relativeCurrent * inv(bindLocal) * v) stays identity at rest.
+    try {
+      const scene = engine.getNodeScene(this.#nodeId)
+      const reparentedNode = engine.getNode(this.#nodeId)
+      const affectedBoneIds = new Set<string>()
+      for (const n of walkPreOrder(reparentedNode)) {
+        if (n.components.bone) affectedBoneIds.add(n.id)
+      }
+      // Also include the reparented node itself if it's a bone (walk includes it)
+      // If no bone in subtree, nothing to do
+      if (affectedBoneIds.size > 0) {
+        for (const n of walkPreOrder(scene.root)) {
+          const meshComp = n.components.mesh
+          if (!meshComp) continue
+          const mesh = meshComp.mesh
+          if (!mesh.boneWeights || mesh.boneWeights.length === 0) continue
+          // Check if this mesh references any affected bone
+          let touches = false
+          if (mesh.bindPose) {
+            for (const bid of affectedBoneIds)
+              if (mesh.bindPose[bid]) {
+                touches = true
+                break
+              }
+          }
+          if (!touches) {
+            for (const vw of mesh.boneWeights) {
+              for (const w of vw)
+                if (affectedBoneIds.has(w.boneId)) {
+                  touches = true
+                  break
+                }
+              if (touches) break
+            }
+          }
+          if (!touches) continue
+
+          const meshWorld = worldTransformOf(scene, n.id)
+          if (!meshWorld) continue
+          const newBindPose: Record<string, import('../mesh').BoneBindPose> = mesh.bindPose
+            ? { ...mesh.bindPose }
+            : {}
+          let changed = false
+          for (const bid of affectedBoneIds) {
+            // Only update if the mesh actually uses this bone (or already has a bind entry)
+            const usesBone =
+              (mesh.bindPose && mesh.bindPose[bid]) ||
+              mesh.boneWeights.some((vw) => vw.some((w) => w.boneId === bid))
+            if (!usesBone) continue
+            const boneWorld = worldTransformOf(scene, bid)
+            if (!boneWorld) continue
+            const rel = relativeTransform(boneWorld, meshWorld)
+            if (!rel) continue
+            const existing = newBindPose[bid]
+            if (
+              !existing ||
+              existing.x !== rel.x ||
+              existing.y !== rel.y ||
+              existing.rotation !== rel.rotation ||
+              existing.scaleX !== rel.scaleX ||
+              existing.scaleY !== rel.scaleY
+            ) {
+              newBindPose[bid] = {
+                x: rel.x,
+                y: rel.y,
+                rotation: rel.rotation,
+                scaleX: rel.scaleX,
+                scaleY: rel.scaleY,
+              }
+              changed = true
+            }
+          }
+          if (changed) {
+            const newMesh = { ...mesh, bindPose: newBindPose }
+            engine.setMeshData(n.id, newMesh)
+          }
+        }
+      }
+    } catch {
+      // Best-effort: never let bindPose upkeep break the reparent transaction
     }
     return { nodeId: this.#nodeId, oldParentId, oldTransform }
   }

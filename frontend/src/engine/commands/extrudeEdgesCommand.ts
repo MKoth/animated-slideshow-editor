@@ -106,10 +106,23 @@ export class ExtrudeEdgesCommand implements Command<ExtrudeEdgesInverse> {
       newFaces.push({ v0: edge.v0, v1: nvb, v2: nva })
     }
 
+    let newBoneWeights: (readonly import('../mesh').VertexBoneWeight[])[] | undefined
+    if (oldMesh.boneWeights) {
+      newBoneWeights = oldMesh.boneWeights.map((vw) => [...vw])
+      for (const [oldIdx, newIdx] of indexMap.entries()) {
+        const srcWeights = oldMesh.boneWeights?.[oldIdx] ?? []
+        while (newBoneWeights.length <= newIdx) newBoneWeights.push([])
+        newBoneWeights[newIdx] = [...srcWeights]
+      }
+      while (newBoneWeights.length < newVertices.length) newBoneWeights.push([])
+    }
+
     const newMesh: MeshData = {
       vertices: newVertices,
       faces: newFaces,
       uvs: newUvs,
+      ...(newBoneWeights ? { boneWeights: newBoneWeights } : {}),
+      ...(oldMesh.bindPose ? { bindPose: { ...oldMesh.bindPose } } : {}),
     }
 
     engine.setMeshData(this.#nodeId, newMesh)
