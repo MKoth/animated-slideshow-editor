@@ -54,6 +54,8 @@ import type { ExtractableKeyframe } from '../../engine/clipExtraction'
 import { ClipExtractionModal } from './ClipExtractionModal'
 import type { AnimatedParam } from '../../engine/animationManagerModel'
 import type { KeyframeTarget } from '../../engine/keyframeTarget'
+import { assetsApi } from '../../api'
+import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 
 interface AnimationManagerModalProps {
   open: boolean
@@ -1598,19 +1600,74 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               'Animation Manager'
             )}
           </h3>
-          <button
-            onClick={() => (editing ? restorePpsAndBack() : onClose())}
-            data-testid="animation-manager-close"
-            style={{
-              padding: '6px 12px',
-              borderRadius: 4,
-              border: '1px solid var(--color-border, #ddd)',
-              background: 'var(--color-bg, #fff)',
-              cursor: 'pointer',
-            }}
-          >
-            {editing ? 'Back' : 'Close'}
-          </button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {!editing && parentNode && (
+              <button
+                onClick={async () => {
+                  if (!parentNodeId || !parentNode) return
+                  try {
+                    const json = engine.exportReusableObject(parentNodeId, parentNode.name)
+                    const blob = new Blob([JSON.stringify(json, null, 2)], {
+                      type: 'application/json',
+                    })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a')
+                    const safe =
+                      parentNode.name.replace(/[^a-zA-Z0-9-_ ]/g, '').replace(/\s+/g, '_') ||
+                      'object'
+                    a.href = url
+                    a.download = `${safe}.lesson_object`
+                    document.body.appendChild(a)
+                    a.click()
+                    a.remove()
+                    URL.revokeObjectURL(url)
+                    try {
+                      const file = new File([blob], `${safe}.lesson_object`, {
+                        type: 'application/json',
+                      })
+                      const result = await assetsApi.uploadAssets([file], ['object'])
+                      if (result.errors.length > 0) {
+                        notify(result.errors.map((e) => `${e.filename}: ${e.error}`).join('; '))
+                      }
+                      if (result.created.length > 0) {
+                        await useAssetLibraryStore.getState().loadLibrary()
+                      }
+                    } catch {
+                      // backend down – still allow download
+                    }
+                    notify(`Exported hierarchy "${parentNode.name}"`)
+                  } catch (e) {
+                    notify(e instanceof Error ? e.message : String(e))
+                  }
+                }}
+                data-testid="manager-export-object"
+                title="Export this hierarchy as .lesson_object (self-contained with clips/collections, downloadable + Library entry)"
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border, #ddd)',
+                  background: 'var(--color-bg, #fff)',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+              >
+                Export .lesson_object
+              </button>
+            )}
+            <button
+              onClick={() => (editing ? restorePpsAndBack() : onClose())}
+              data-testid="animation-manager-close"
+              style={{
+                padding: '6px 12px',
+                borderRadius: 4,
+                border: '1px solid var(--color-border, #ddd)',
+                background: 'var(--color-bg, #fff)',
+                cursor: 'pointer',
+              }}
+            >
+              {editing ? 'Back' : 'Close'}
+            </button>
+          </div>
         </div>
 
         {/* Banner for shared clip */}

@@ -128,7 +128,7 @@ import {
 import { newId } from './ids'
 import { newClipId } from './clipDefinition'
 import { newClipCollectionId } from './clipCollection'
-import { newCollectionPlacementId } from './collectionPlacement'
+import { newCollectionPlacementId, collectionPlacementFromJSON } from './collectionPlacement'
 import type { CollectionPlacement } from './collectionPlacement'
 import { Keyframe as KeyframeModel, newKeyframeId } from './keyframe'
 import {
@@ -3833,6 +3833,21 @@ export class Engine {
 
     for (const nodeJson of objectJson.nodes) nodeIdMap.set(nodeJson.id, newId('node'))
 
+    // Placement id remapping: fresh ids per imported placement to avoid collisions,
+    // and remap collectionId / parentNodeId / clipInstance placementId
+    const placementIdMap = new Map<string, string>()
+    for (const nodeJson of objectJson.nodes) {
+      const placements = (nodeJson as unknown as { collectionPlacements?: unknown }).collectionPlacements
+      if (Array.isArray(placements)) {
+        for (const p of placements as unknown[]) {
+          if (typeof p === 'object' && p !== null && typeof (p as Record<string, unknown>).id === 'string') {
+            const oldId = (p as Record<string, unknown>).id as string
+            if (!placementIdMap.has(oldId)) placementIdMap.set(oldId, newCollectionPlacementId())
+          }
+        }
+      }
+    }
+
     // Shape id remapping per Mesh node (ADR 0008): fresh ids per imported Mesh, patch bindings
     const shapeIdMapPerOldNode = new Map<string, Map<string, string>>()
     for (const nodeJson of objectJson.nodes) {
@@ -3885,9 +3900,31 @@ export class Engine {
           )
             return inst
           const oldClipId = (inst as Record<string, unknown>).clipId as string
-          return {
+          const base = {
             ...(inst as Record<string, unknown>),
             clipId: clipIdMap.get(oldClipId) ?? oldClipId,
+          } as Record<string, unknown>
+          const oldPlacementId = base.placementId as string | undefined
+          if (typeof oldPlacementId === 'string' && placementIdMap.has(oldPlacementId)) {
+            base.placementId = placementIdMap.get(oldPlacementId)
+          }
+          return base
+        })
+      }
+      if (Array.isArray((cloned as Record<string, unknown>).collectionPlacements)) {
+        cloned.collectionPlacements = (
+          (cloned as Record<string, unknown>).collectionPlacements as unknown[]
+        ).map((pl) => {
+          if (typeof pl !== 'object' || pl === null) return pl
+          const rec = pl as Record<string, unknown>
+          const oldId = rec.id as string
+          const oldCollectionId = rec.collectionId as string
+          const oldParentId = rec.parentNodeId as string
+          return {
+            ...rec,
+            id: placementIdMap.get(oldId) ?? oldId,
+            collectionId: collectionIdMap.get(oldCollectionId) ?? oldCollectionId,
+            parentNodeId: nodeIdMap.get(oldParentId) ?? oldParentId,
           }
         })
       }
@@ -3998,6 +4035,24 @@ export class Engine {
           try {
             node.clipInstances.push(
               clipInstanceFromJSON(ci as unknown as import('./json').ClipInstanceJSON),
+            )
+          } catch {
+            void 0
+          }
+        }
+      }
+      // collectionPlacements: restore remapped placements owned by this node
+      node.collectionPlacements.length = 0
+      if (
+        Array.isArray(
+          (nodeJson as unknown as { collectionPlacements?: unknown }).collectionPlacements,
+        )
+      ) {
+        for (const pj of (nodeJson as unknown as { collectionPlacements: readonly unknown[] })
+          .collectionPlacements) {
+          try {
+            node.collectionPlacements.push(
+              collectionPlacementFromJSON(pj as unknown as import('./json').CollectionPlacementJSON),
             )
           } catch {
             void 0
