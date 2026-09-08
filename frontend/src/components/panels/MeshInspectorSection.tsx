@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { EnginePublic, SceneNode } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
 import {
+  CopyShapeToMeshCommand,
   CreateShapeCommand,
   DeleteShapeCommand,
   DuplicateShapeCommand,
@@ -22,15 +23,18 @@ interface MeshInspectorSectionProps {
 
 export function MeshInspectorSection({
   target,
-  engine: _engine,
+  engine,
   dispatch,
   notify,
   playing,
 }: MeshInspectorSectionProps) {
-  void _engine
-  const [, setTick] = useState(0)
+  const [tick, setTick] = useState(0)
   const [renameId, setRenameId] = useState<string | null>(null)
   const [renameError, setRenameError] = useState<string | null>(null)
+  const [copyShapeId, setCopyShapeId] = useState<string | null>(null)
+  const [copyTargetId, setCopyTargetId] = useState<string>('')
+  const [copyMirrored, setCopyMirrored] = useState(false)
+  const [copyAxis, setCopyAxis] = useState<'x' | 'y'>('x')
   const previewShapeId = useShapePreviewStore((s) => s.previewShapeId)
   const previewNodeId = useShapePreviewStore((s) => s.previewNodeId)
 
@@ -62,6 +66,29 @@ export function MeshInspectorSection({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shapeIdsKey, previewNodeId, previewShapeId, target.id])
+
+  // Candidates for copy: other mesh nodes with same vertex count (same topology)
+  const copyCandidates = useMemo(() => {
+    void tick
+    const vertexCount = target.components.mesh?.mesh.vertices.length
+    if (!vertexCount || !engine.project) return []
+    const out: { id: string; name: string }[] = []
+    for (const slide of engine.project.slides) {
+      const stack: SceneNode[] = [slide.scene.root]
+      while (stack.length > 0) {
+        const node = stack.pop()!
+        if (node.id !== target.id && node.components.mesh) {
+          if (node.components.mesh.mesh.vertices.length === vertexCount) {
+            out.push({ id: node.id, name: node.name })
+          }
+        }
+        for (let i = node.children.length - 1; i >= 0; i--) {
+          stack.push(node.children[i]!)
+        }
+      }
+    }
+    return out
+  }, [engine.project, target.id, target.components.mesh?.mesh.vertices.length, tick])
 
   if (!target.components.mesh) return null
 
@@ -158,6 +185,41 @@ export function MeshInspectorSection({
     }
   }
 
+  const handleCopyTo = (shapeId: string) => {
+    const shape = shapes.find((s: import('../../engine/shape').Shape) => s.id === shapeId)
+    if (!shape) return
+    if (copyCandidates.length === 0) {
+      notify('No compatible meshes with same topology (same vertex count) found to copy to.')
+      return
+    }
+    setCopyShapeId(shapeId)
+    // Default target to first candidate
+    setCopyTargetId(copyCandidates[0]!.id)
+    setCopyMirrored(false)
+    setCopyAxis('x')
+  }
+
+  const handleCopyConfirm = () => {
+    if (!copyShapeId || !copyTargetId) return
+    const result = dispatch(
+      new CopyShapeToMeshCommand({
+        sourceNodeId: target.id,
+        sourceShapeId: copyShapeId,
+        targetNodeId: copyTargetId,
+        mirrored: copyMirrored,
+        axis: copyAxis,
+      }),
+    )
+    if (!result.ok) {
+      notify(result.error.message)
+    } else {
+      notify(
+        `Copied shape to ${copyCandidates.find((c) => c.id === copyTargetId)?.name ?? 'target'}${copyMirrored ? ` (mirrored ${copyAxis})` : ''}`,
+      )
+      setCopyShapeId(null)
+    }
+  }
+
   return (
     <section className="inspector-section" aria-label="Mesh">
       <h3 className="inspector-section__title">Mesh</h3>
@@ -230,6 +292,7 @@ export function MeshInspectorSection({
                     display: 'flex',
                     alignItems: 'center',
                     gap: 6,
+                    flexWrap: 'wrap',
                     marginBottom: isRenaming ? 6 : 0,
                   }}
                 >
@@ -243,7 +306,8 @@ export function MeshInspectorSection({
                         : 'Preview at coefficient 1 (no keyframe)'
                     }
                     style={{
-                      flex: 1,
+                      flex: '1 1 120px',
+                      minWidth: 80,
                       textAlign: 'left',
                       background: selected ? '#1a73e8' : 'transparent',
                       color: selected ? '#fff' : 'var(--color-text)',
@@ -281,6 +345,16 @@ export function MeshInspectorSection({
                   </button>
                   <button
                     className="inspector-section__link"
+                    aria-label={`Copy shape ${shape.name} to another mesh`}
+                    onClick={() => handleCopyTo(shape.id)}
+                    disabled={playing}
+                    title="Copy shape to another mesh with same topology (explicit mirror toggle)"
+                    style={{ fontSize: 11, padding: '4px 6px' }}
+                  >
+                    Copy to…
+                  </button>
+                  <button
+                    className="inspector-section__link"
                     aria-label={`Delete shape ${shape.name}`}
                     onClick={() => handleDelete(shape.id)}
                     disabled={playing}
@@ -290,6 +364,121 @@ export function MeshInspectorSection({
                     Delete
                   </button>
                 </div>
+                {copyShapeId === shape.id && (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 4,
+                      padding: 8,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6,
+                      background: 'var(--color-bg-elevated)',
+                      color: 'var(--color-text)',
+                    }}
+                  >
+                    <div style={{ fontSize: 11, fontWeight: 600 }}>Copy “{shape.name}” to…</div>
+                    {copyCandidates.length === 0 ? (
+                      <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                        No compatible meshes (same vertex count) found.
+                      </span>
+                    ) : (
+                      <>
+                        <label
+                          style={{ fontSize: 11, display: 'flex', flexDirection: 'column', gap: 4 }}
+                        >
+                          Target mesh
+                          <select
+                            value={copyTargetId}
+                            onChange={(e) => setCopyTargetId(e.target.value)}
+                            style={{
+                              fontSize: 11,
+                              padding: '4px 6px',
+                              borderRadius: 4,
+                              background: 'var(--color-bg-panel)',
+                              color: 'var(--color-text)',
+                              border: '1px solid var(--color-border)',
+                            }}
+                          >
+                            {copyCandidates.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label
+                          style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={copyMirrored}
+                            onChange={(e) => setCopyMirrored(e.target.checked)}
+                          />
+                          Mirrored
+                        </label>
+                        {copyMirrored && (
+                          <label
+                            style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 6 }}
+                          >
+                            Axis
+                            <select
+                              value={copyAxis}
+                              onChange={(e) => setCopyAxis(e.target.value as 'x' | 'y')}
+                              style={{
+                                fontSize: 11,
+                                padding: '2px 6px',
+                                borderRadius: 4,
+                                background: 'var(--color-bg-panel)',
+                                color: 'var(--color-text)',
+                                border: '1px solid var(--color-border)',
+                              }}
+                            >
+                              <option value="x">X (mirror left ↔ right)</option>
+                              <option value="y">Y (mirror top ↔ bottom)</option>
+                            </select>
+                          </label>
+                        )}
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button
+                            onClick={handleCopyConfirm}
+                            disabled={!copyTargetId}
+                            style={{
+                              fontSize: 11,
+                              padding: '4px 8px',
+                              borderRadius: 4,
+                              border: '1px solid var(--color-border)',
+                              background: copyTargetId
+                                ? 'var(--color-accent)'
+                                : 'var(--color-bg-panel)',
+                              color: copyTargetId
+                                ? 'var(--color-accent-text)'
+                                : 'var(--color-text-muted)',
+                              cursor: copyTargetId ? 'pointer' : 'not-allowed',
+                            }}
+                          >
+                            Copy
+                          </button>
+                          <button
+                            onClick={() => setCopyShapeId(null)}
+                            style={{
+                              fontSize: 11,
+                              padding: '4px 8px',
+                              borderRadius: 4,
+                              border: '1px solid var(--color-border)',
+                              background: 'var(--color-bg-panel)',
+                              color: 'var(--color-text)',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
                 {isRenaming && (
                   <div style={{ marginTop: 6 }}>
                     <NameField

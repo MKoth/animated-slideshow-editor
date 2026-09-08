@@ -1076,6 +1076,16 @@ export function applyUndo(
       }
       return
     }
+    case 'CopyShapeToMesh': {
+      const targetNodeId = inv.targetNodeId as string
+      const shapeId = inv.shapeId as string
+      try {
+        engine.deleteShape(targetNodeId, shapeId)
+      } catch {
+        void 0
+      }
+      return
+    }
     case 'RenameShape': {
       const nodeId = inv.nodeId as string
       const shapeId = inv.shapeId as string
@@ -3045,6 +3055,28 @@ export function applyRedo(
         void 0
       }
       return
+    case 'CopyShapeToMesh': {
+      const inv = _inverse as unknown as { shape?: import('../shape').Shape } | null
+      if (inv?.shape) {
+        const existing = engine.getShapes(params.targetNodeId as string)
+        // Restore exact shape if inverse available (preserves id)
+        if (!existing.some((s) => s.id === inv.shape!.id)) {
+          engine.restoreShapes(params.targetNodeId as string, [...existing, inv.shape!])
+          return
+        }
+      }
+      engine.copyShapeToNode(
+        params.sourceNodeId as string,
+        params.sourceShapeId as string,
+        params.targetNodeId as string,
+        {
+          mirrored: (params.mirrored as boolean) ?? false,
+          axis: (params.axis as import('../symmetry').SymmetryAxis) ?? 'x',
+          ...(params.name !== undefined ? { name: params.name as string } : {}),
+        },
+      )
+      return
+    }
     case 'CreatePrompterPart': {
       engine.createPrompterPart(params.slideId as string, {
         id: (params.partId as string | undefined) ?? newId('prompter-part'),

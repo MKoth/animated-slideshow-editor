@@ -30,6 +30,8 @@ import { ShaderDefinition } from './shaderDefinition'
 import { DEFAULT_MATERIAL_DEFINITION_ID, DEFAULT_MATERIAL_NAME } from './materialInstance'
 import { createShape, duplicateShape as duplicateShapeModel, uniqueShapeName } from './shape'
 import type { Shape } from './shape'
+import { mirroredVertex } from './symmetry'
+import type { SymmetryAxis } from './symmetry'
 import type { MaterialOverrideValue, MaterialOverrides } from './materialInstance'
 import { DEFAULT_MATERIAL_PARAMETERS } from './materialResolution'
 import type { MaterialParameterDefault } from './materialResolution'
@@ -2320,6 +2322,54 @@ export class Engine {
     const newShapes = [...existing, duplicated]
     this.#setShapes(nodeId, newShapes)
     return duplicated
+  }
+
+  copyShapeToNode(
+    sourceNodeId: string,
+    sourceShapeId: string,
+    targetNodeId: string,
+    opts?: { readonly mirrored?: boolean; readonly axis?: SymmetryAxis; readonly name?: string },
+  ): Shape {
+    const sourceNode = this.getNode(sourceNodeId)
+    if (!sourceNode.components.mesh) {
+      throw new Error(`Source node "${sourceNodeId}" does not have a mesh component`)
+    }
+    const targetNode = this.getNode(targetNodeId)
+    if (!targetNode.components.mesh) {
+      throw new Error(`Target node "${targetNodeId}" does not have a mesh component`)
+    }
+    const sourceShapes = sourceNode.components.mesh.shapes ?? []
+    const sourceShape = sourceShapes.find((s) => s.id === sourceShapeId)
+    if (!sourceShape) throw new Error(`Source shape not found: ${sourceShapeId}`)
+    const targetMesh = targetNode.components.mesh.mesh
+    const targetShapes = targetNode.components.mesh.shapes ?? []
+    if (sourceShape.vertices.length !== targetMesh.vertices.length) {
+      throw new Error(
+        `Topology mismatch: source shape "${sourceShape.name}" has ${sourceShape.vertices.length} vertices but target mesh has ${targetMesh.vertices.length}. Shapes can only be copied between meshes with the same topology (same vertex count).`,
+      )
+    }
+    const mirrored = opts?.mirrored ?? false
+    const axis: SymmetryAxis = opts?.axis ?? 'x'
+    if (axis !== 'x' && axis !== 'y') {
+      throw new Error(`Axis must be "x" or "y", got "${String(axis)}"`)
+    }
+    let baseName: string
+    if (opts?.name !== undefined) {
+      if (typeof opts.name !== 'string' || opts.name.trim() === '') {
+        throw new Error('Shape name must be a non-empty string')
+      }
+      baseName = opts.name.trim()
+    } else {
+      baseName = sourceShape.name
+    }
+    const finalName = uniqueShapeName(baseName, targetShapes)
+    const newVertices = mirrored
+      ? sourceShape.vertices.map((v) => mirroredVertex(v, axis))
+      : sourceShape.vertices.map((v) => ({ x: v.x, y: v.y }))
+    const newShape = createShape(finalName, newVertices)
+    const newShapes = [...targetShapes, newShape]
+    this.#setShapes(targetNodeId, newShapes)
+    return newShape
   }
 
   renameShape(nodeId: string, shapeId: string, newName: string): void {
