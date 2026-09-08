@@ -39,7 +39,11 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
     // Build hierarchy: parent RigHandle with bone, mesh with shapes, child circle
     const handle = expectOk(
       dispatcher.dispatch(
-        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'RigHandle' }),
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'RigHandle',
+        }),
       ),
     ).nodeId as string
     const bone = expectOk(
@@ -66,7 +70,11 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
         }),
       ),
     ).nodeId as string
-    expectOk(dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: meshNode, semanticName: 'mesh_part' })))
+    expectOk(
+      dispatcher.dispatch(
+        new SetSemanticNameCommand({ nodeId: meshNode, semanticName: 'mesh_part' }),
+      ),
+    )
     engine.createShape(meshNode, 'A')
     const sB = engine.createShape(meshNode, 'B')
     for (let i = 0; i < sB.vertices.length; i++) {
@@ -89,10 +97,24 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
     // Use the AnimationManager via engine.addKeyframe if exists, else via direct slide animation
     const slideAnim = slide.animation.ensure(meshNode)
     slideAnim.addMorph(
-      new Keyframe(newKeyframeId(), 0, { fromShapeId: a.id, toShapeId: b.id, coefficient: 0 } as any, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+      new Keyframe(
+        newKeyframeId(),
+        0,
+        { fromShapeId: a.id, toShapeId: b.id, coefficient: 0 } as any,
+        'linear',
+        { time: 0, value: 0 },
+        { time: 0, value: 0 },
+      ),
     )
     slideAnim.addMorph(
-      new Keyframe(newKeyframeId(), 1, { fromShapeId: a.id, toShapeId: b.id, coefficient: 1 } as any, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+      new Keyframe(
+        newKeyframeId(),
+        1,
+        { fromShapeId: a.id, toShapeId: b.id, coefficient: 1 } as any,
+        'linear',
+        { time: 0, value: 0 },
+        { time: 0, value: 0 },
+      ),
     )
 
     // Clips: one with morphAnimation, one with standard channel
@@ -100,22 +122,48 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
       dispatcher.dispatch(new CreateClipCommand({ name: 'MorphWave', duration: 2, category: '' })),
     ).clipId as string
     const clipObjMorph = engine.getClip(clipMorph)
-    clipObjMorph.addMorphKeyframe(new Keyframe(newKeyframeId(), 0, { fromShapeName: 'A', toShapeName: 'B', coefficient: 0 } as any, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
-    clipObjMorph.addMorphKeyframe(new Keyframe(newKeyframeId(), 1, { fromShapeName: 'A', toShapeName: 'B', coefficient: 1 } as any, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
+    clipObjMorph.addMorphKeyframe(
+      new Keyframe(
+        newKeyframeId(),
+        0,
+        { fromShapeName: 'A', toShapeName: 'B', coefficient: 0 } as any,
+        'linear',
+        { time: 0, value: 0 },
+        { time: 0, value: 0 },
+      ),
+    )
+    clipObjMorph.addMorphKeyframe(
+      new Keyframe(
+        newKeyframeId(),
+        1,
+        { fromShapeName: 'A', toShapeName: 'B', coefficient: 1 } as any,
+        'linear',
+        { time: 0, value: 0 },
+        { time: 0, value: 0 },
+      ),
+    )
 
     const clipStd = expectOk(
       dispatcher.dispatch(new CreateClipCommand({ name: 'Move', duration: 7, category: '' })),
     ).clipId as string
     const clipStdObj = engine.getClip(clipStd)
-    clipStdObj.addChannelKeyframe('positionX', new Keyframe(newKeyframeId(), 0, 0, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
-    clipStdObj.addChannelKeyframe('positionX', new Keyframe(newKeyframeId(), 1, 10, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
+    clipStdObj.addChannelKeyframe(
+      'positionX',
+      new Keyframe(newKeyframeId(), 0, 0, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+    )
+    clipStdObj.addChannelKeyframe(
+      'positionX',
+      new Keyframe(newKeyframeId(), 1, 10, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+    )
 
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: bone, clipId: clipStd })))
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: meshNode, clipId: clipMorph })))
 
     // Create collection
     void (expectOk(
-      dispatcher.dispatch(new ExportClipCollectionCommand({ parentNodeId: handle, name: 'RigAnim' })),
+      dispatcher.dispatch(
+        new ExportClipCollectionCommand({ parentNodeId: handle, name: 'RigAnim' }),
+      ),
     ).collectionId as string)
 
     // Export reusable object
@@ -129,7 +177,10 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
     const meshJson = obj.nodes.find((n) => n.name === 'MeshNode')!
     expect((meshJson.components as any).mesh.shapes).toBeDefined()
     expect((meshJson.components as any).mesh.shapes.length).toBe(2)
-    expect((meshJson.components as any).mesh.shapes.map((s: any) => s.name).sort()).toEqual(['A', 'B'])
+    expect((meshJson.components as any).mesh.shapes.map((s: any) => s.name).sort()).toEqual([
+      'A',
+      'B',
+    ])
     // Filtered animation includes morphBinding/morphTrack per node
     expect(obj.animation).toBeDefined()
     const meshAnim = obj.animation!.nodes.find((n) => n.nodeId === meshNode)!
@@ -165,47 +216,133 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
     const slide = engine.getActiveSlide()!
     slide.duration = 10
     const parent = expectOk(
-      dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'Parent' })),
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'Parent',
+        }),
+      ),
     ).nodeId as string
     const childA = expectOk(
-      dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'Left' })),
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'Left' }),
+      ),
     ).nodeId as string
-    expectOk(dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: childA, semanticName: 'left_hand' })))
+    expectOk(
+      dispatcher.dispatch(
+        new SetSemanticNameCommand({ nodeId: childA, semanticName: 'left_hand' }),
+      ),
+    )
     const childB = expectOk(
-      dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'Right' })),
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'Right' }),
+      ),
     ).nodeId as string
-    expectOk(dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: childB, semanticName: 'right_hand' })))
+    expectOk(
+      dispatcher.dispatch(
+        new SetSemanticNameCommand({ nodeId: childB, semanticName: 'right_hand' }),
+      ),
+    )
 
-    const clip1 = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'Wave', duration: 7, category: '' }))).clipId as string
-    engine.getClip(clip1).addChannelKeyframe('positionX', new Keyframe(newKeyframeId(), 0, 0, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
-    engine.getClip(clip1).addChannelKeyframe('positionX', new Keyframe(newKeyframeId(), 1, 100, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
-    const clip2 = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'Shake', duration: 7, category: '' }))).clipId as string
-    engine.getClip(clip2).addChannelKeyframe('positionX', new Keyframe(newKeyframeId(), 0, 0, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
-    engine.getClip(clip2).addChannelKeyframe('positionX', new Keyframe(newKeyframeId(), 1, -50, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
+    const clip1 = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'Wave', duration: 7, category: '' })),
+    ).clipId as string
+    engine
+      .getClip(clip1)
+      .addChannelKeyframe(
+        'positionX',
+        new Keyframe(newKeyframeId(), 0, 0, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+      )
+    engine
+      .getClip(clip1)
+      .addChannelKeyframe(
+        'positionX',
+        new Keyframe(
+          newKeyframeId(),
+          1,
+          100,
+          'linear',
+          { time: 0, value: 0 },
+          { time: 0, value: 0 },
+        ),
+      )
+    const clip2 = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'Shake', duration: 7, category: '' })),
+    ).clipId as string
+    engine
+      .getClip(clip2)
+      .addChannelKeyframe(
+        'positionX',
+        new Keyframe(newKeyframeId(), 0, 0, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+      )
+    engine
+      .getClip(clip2)
+      .addChannelKeyframe(
+        'positionX',
+        new Keyframe(
+          newKeyframeId(),
+          1,
+          -50,
+          'linear',
+          { time: 0, value: 0 },
+          { time: 0, value: 0 },
+        ),
+      )
 
-    const col = engine.createClipCollection('MyCol', { left_hand: clip1, right_hand: clip2 }, parent)
+    const col = engine.createClipCollection(
+      'MyCol',
+      { left_hand: clip1, right_hand: clip2 },
+      parent,
+    )
     // Simulate manager dropdown listing: engine.clipCollections should contain col
     const available = engine.clipCollections.map((c) => c.id)
     expect(available).toContain(col.id)
 
     // Simulate playhead at 3.5 and Apply via semanticName broadcast speed=1
     const playhead = 3.5
-    void dispatcher.dispatch(new ApplyClipCollectionCommand({ collectionId: col.id, targetNodeId: parent })) as any
+    void dispatcher.dispatch(
+      new ApplyClipCollectionCommand({ collectionId: col.id, targetNodeId: parent }),
+    ) as any
     // Apply uses startTime 0 speed1; for manager dropdown we test Place at playhead
     // Use PlaceCollectionCommand at playhead
     const targetParent = expectOk(
-      dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'TargetParent' })),
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'TargetParent',
+        }),
+      ),
     ).nodeId as string
     const targetL = expectOk(
-      dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: targetParent, name: 'TLeft' })),
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: targetParent, name: 'TLeft' }),
+      ),
     ).nodeId as string
-    expectOk(dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: targetL, semanticName: 'left_hand' })))
+    expectOk(
+      dispatcher.dispatch(
+        new SetSemanticNameCommand({ nodeId: targetL, semanticName: 'left_hand' }),
+      ),
+    )
     const targetR = expectOk(
-      dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: targetParent, name: 'TRight' })),
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: targetParent, name: 'TRight' }),
+      ),
     ).nodeId as string
-    expectOk(dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: targetR, semanticName: 'right_hand' })))
+    expectOk(
+      dispatcher.dispatch(
+        new SetSemanticNameCommand({ nodeId: targetR, semanticName: 'right_hand' }),
+      ),
+    )
 
-    const placeRes = dispatcher.dispatch(new PlaceCollectionCommand({ collectionId: col.id, parentNodeId: targetParent, startTime: playhead })) as any
+    const placeRes = dispatcher.dispatch(
+      new PlaceCollectionCommand({
+        collectionId: col.id,
+        parentNodeId: targetParent,
+        startTime: playhead,
+      }),
+    ) as any
     expect(placeRes.ok).toBe(true)
     const placementId = placeRes.inverse.placementId as string
     const members = engine.getPlacementMembers(placementId)
@@ -236,11 +373,22 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
     const { engine, dispatcher, expectOk } = setupEngine()
     const slide = engine.getActiveSlide()!
     const handle = expectOk(
-      dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'Handle' })),
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'Handle',
+        }),
+      ),
     ).nodeId as string
     const bone = expectOk(
       dispatcher.dispatch(
-        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: handle, name: 'Bone', components: { bone: { kind: 'bone', length: 60 } } }),
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: handle,
+          name: 'Bone',
+          components: { bone: { kind: 'bone', length: 60 } },
+        }),
       ),
     ).nodeId as string
     expectOk(dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: bone, semanticName: 'arm' })))
@@ -254,20 +402,39 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
         }),
       ),
     ).nodeId as string
-    expectOk(dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: meshNode, semanticName: 'mesh' })))
+    expectOk(
+      dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: meshNode, semanticName: 'mesh' })),
+    )
     const _s1 = engine.createShape(meshNode, 'S1')
     void _s1
     const s2 = engine.createShape(meshNode, 'S2')
-    for (let i = 0; i < s2.vertices.length; i++) engine.setShapeVertex(meshNode, s2.id, i, s2.vertices[i].x + 5, s2.vertices[i].y)
+    for (let i = 0; i < s2.vertices.length; i++)
+      engine.setShapeVertex(meshNode, s2.id, i, s2.vertices[i].x + 5, s2.vertices[i].y)
     const shapes = engine.getShapes(meshNode)
     const shapeA = shapes.find((s) => s.name === 'S1')!
     const shapeB = shapes.find((s) => s.name === 'S2')!
     engine.setMorphBinding(meshNode, { fromShapeId: shapeA.id, toShapeId: shapeB.id })
     const anim = slide.animation.ensure(meshNode)
-    anim.addMorph(new Keyframe(newKeyframeId(), 0.2, { fromShapeId: shapeA.id, toShapeId: shapeB.id, coefficient: 0.3 } as any, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
+    anim.addMorph(
+      new Keyframe(
+        newKeyframeId(),
+        0.2,
+        { fromShapeId: shapeA.id, toShapeId: shapeB.id, coefficient: 0.3 } as any,
+        'linear',
+        { time: 0, value: 0 },
+        { time: 0, value: 0 },
+      ),
+    )
 
-    const clip = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' }))).clipId as string
-    engine.getClip(clip).addChannelKeyframe('positionX', new Keyframe(newKeyframeId(), 0, 0, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' })),
+    ).clipId as string
+    engine
+      .getClip(clip)
+      .addChannelKeyframe(
+        'positionX',
+        new Keyframe(newKeyframeId(), 0, 0, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+      )
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: bone, clipId: clip })))
     const col = engine.createClipCollection('Col', { arm: clip }, handle)
     const obj = engine.exportReusableObject(handle, 'Obj')
@@ -292,7 +459,7 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
     }
     for (const [oldId, newId] of res.clipIdMap) {
       expect(oldId).not.toBe(newId)
-      expect(() => engine.getClip(oldId) === engine.getClip(newId) ? null : null).not.toThrow()
+      expect(() => (engine.getClip(oldId) === engine.getClip(newId) ? null : null)).not.toThrow()
       // Old clip still exists, new clip also exists with different id
       expect(engine.getClip(newId)).toBeDefined()
       expect(beforeClipIds.has(newId)).toBe(false) // fresh
@@ -330,18 +497,44 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
     const slide = engine.getActiveSlide()!
     slide.duration = 5
     const handle = expectOk(
-      dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'Handle' })),
-    ).nodeId as string
-    const child = expectOk(
-      dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: handle, name: 'Arm', components: { bone: { kind: 'bone', length: 50 } } }),
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'Handle',
+        }),
       ),
     ).nodeId as string
-    expectOk(dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: child, semanticName: 'arm' })))
-    const clip = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'Slide', duration: 2, category: '' }))).clipId as string
+    const child = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: handle,
+          name: 'Arm',
+          components: { bone: { kind: 'bone', length: 50 } },
+        }),
+      ),
+    ).nodeId as string
+    expectOk(
+      dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: child, semanticName: 'arm' })),
+    )
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'Slide', duration: 2, category: '' })),
+    ).clipId as string
     const c = engine.getClip(clip)
-    c.addChannelKeyframe('positionX', new Keyframe(newKeyframeId(), 0, 0, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
-    c.addChannelKeyframe('positionX', new Keyframe(newKeyframeId(), 1, 200, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
-    expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: child, clipId: clip, startTime: 1, speed: 1 } as any)))
+    c.addChannelKeyframe(
+      'positionX',
+      new Keyframe(newKeyframeId(), 0, 0, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+    )
+    c.addChannelKeyframe(
+      'positionX',
+      new Keyframe(newKeyframeId(), 1, 200, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+    )
+    expectOk(
+      dispatcher.dispatch(
+        new AssignClipCommand({ nodeId: child, clipId: clip, startTime: 1, speed: 1 } as any),
+      ),
+    )
     // Also add a morph shape to test morphBinding preservation through round-trip
     const meshNode = expectOk(
       dispatcher.dispatch(
@@ -355,18 +548,48 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
     ).nodeId as string
     const sA = engine.createShape(meshNode, 'A')
     const sB = engine.createShape(meshNode, 'B')
-    for (let i = 0; i < sB.vertices.length; i++) engine.setShapeVertex(meshNode, sB.id, i, sB.vertices[i].x + 10, sB.vertices[i].y)
+    for (let i = 0; i < sB.vertices.length; i++)
+      engine.setShapeVertex(meshNode, sB.id, i, sB.vertices[i].x + 10, sB.vertices[i].y)
     const shapesOrig = engine.getShapes(meshNode)
     const aOrig = shapesOrig.find((s) => s.id === sA.id)!
     const bOrig = shapesOrig.find((s) => s.id === sB.id)!
     engine.setMorphBinding(meshNode, { fromShapeId: aOrig.id, toShapeId: bOrig.id })
-    slide.animation.ensure(meshNode).addMorph(
-      new Keyframe(newKeyframeId(), 0.5, { fromShapeId: aOrig.id, toShapeId: bOrig.id, coefficient: 0.5 } as any, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
-    )
-    const meshClip = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'MorphClip', duration: 1, category: '' }))).clipId as string
+    slide.animation
+      .ensure(meshNode)
+      .addMorph(
+        new Keyframe(
+          newKeyframeId(),
+          0.5,
+          { fromShapeId: aOrig.id, toShapeId: bOrig.id, coefficient: 0.5 } as any,
+          'linear',
+          { time: 0, value: 0 },
+          { time: 0, value: 0 },
+        ),
+      )
+    const meshClip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'MorphClip', duration: 1, category: '' })),
+    ).clipId as string
     const mc = engine.getClip(meshClip)
-    mc.addMorphKeyframe(new Keyframe(newKeyframeId(), 0, { fromShapeName: 'A', toShapeName: 'B', coefficient: 0 } as any, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
-    mc.addMorphKeyframe(new Keyframe(newKeyframeId(), 1, { fromShapeName: 'A', toShapeName: 'B', coefficient: 1 } as any, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
+    mc.addMorphKeyframe(
+      new Keyframe(
+        newKeyframeId(),
+        0,
+        { fromShapeName: 'A', toShapeName: 'B', coefficient: 0 } as any,
+        'linear',
+        { time: 0, value: 0 },
+        { time: 0, value: 0 },
+      ),
+    )
+    mc.addMorphKeyframe(
+      new Keyframe(
+        newKeyframeId(),
+        1,
+        { fromShapeName: 'A', toShapeName: 'B', coefficient: 1 } as any,
+        'linear',
+        { time: 0, value: 0 },
+        { time: 0, value: 0 },
+      ),
+    )
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: meshNode, clipId: meshClip })))
 
     const col = engine.createClipCollection('ArmCol', { arm: clip }, handle)
@@ -426,16 +649,35 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
     const { engine, dispatcher, expectOk } = setupEngine()
     const slide = engine.getActiveSlide()!
     const handle = expectOk(
-      dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'Handle' })),
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'Handle',
+        }),
+      ),
     ).nodeId as string
     const child = expectOk(
-      dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: handle, name: 'Child' })),
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: handle, name: 'Child' }),
+      ),
     ).nodeId as string
-    expectOk(dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: child, semanticName: 'hand' })))
-    const clip = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 2, category: '' }))).clipId as string
-    engine.getClip(clip).addChannelKeyframe('positionX', new Keyframe(newKeyframeId(), 0, 0, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
+    expectOk(
+      dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: child, semanticName: 'hand' })),
+    )
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 2, category: '' })),
+    ).clipId as string
+    engine
+      .getClip(clip)
+      .addChannelKeyframe(
+        'positionX',
+        new Keyframe(newKeyframeId(), 0, 0, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+      )
     const col = engine.createClipCollection('Col', { hand: clip }, handle)
-    const placeRes = dispatcher.dispatch(new PlaceCollectionCommand({ collectionId: col.id, parentNodeId: handle, startTime: 0 })) as any
+    const placeRes = dispatcher.dispatch(
+      new PlaceCollectionCommand({ collectionId: col.id, parentNodeId: handle, startTime: 0 }),
+    ) as any
     expect(placeRes.ok).toBe(true)
     const placementId = placeRes.inverse.placementId as string
     const obj = engine.exportReusableObject(handle, 'WithPlacement')
@@ -468,14 +710,34 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
     const { engine, dispatcher, expectOk } = setupEngine()
     const slide = engine.getActiveSlide()!
     const handle = expectOk(
-      dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id, name: 'H' })),
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'H',
+        }),
+      ),
     ).nodeId as string
     const bone = expectOk(
-      dispatcher.dispatch(new CreateNodeCommand({ sceneId: slide.scene.id, parentId: handle, name: 'B', components: { bone: { kind: 'bone', length: 10 } } })),
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: handle,
+          name: 'B',
+          components: { bone: { kind: 'bone', length: 10 } },
+        }),
+      ),
     ).nodeId as string
     expectOk(dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: bone, semanticName: 'b' })))
-    const clip = expectOk(dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' }))).clipId as string
-    engine.getClip(clip).addChannelKeyframe('positionX', new Keyframe(newKeyframeId(), 0, 1, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }))
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 1, category: '' })),
+    ).clipId as string
+    engine
+      .getClip(clip)
+      .addChannelKeyframe(
+        'positionX',
+        new Keyframe(newKeyframeId(), 0, 1, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+      )
     expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: bone, clipId: clip })))
     engine.createClipCollection('Cc', { b: clip }, handle)
     const obj = engine.exportReusableObject(handle, 'Obj')

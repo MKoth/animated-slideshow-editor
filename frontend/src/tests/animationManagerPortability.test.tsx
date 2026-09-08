@@ -21,7 +21,11 @@ function renderManager(engine: Engine, undo: UndoStack, parentNodeId: string | n
   }
   return render(
     <EngineContext.Provider value={value}>
-      <AnimationManagerModal open={parentNodeId !== null} parentNodeId={parentNodeId} onClose={() => {}} />
+      <AnimationManagerModal
+        open={parentNodeId !== null}
+        parentNodeId={parentNodeId}
+        onClose={() => {}}
+      />
     </EngineContext.Provider>,
   )
 }
@@ -44,7 +48,9 @@ describe('15-07 Manager portability via dropdown and export', () => {
     engine.setSemanticName(child.id, 'arm')
     const dispatcher = new CommandDispatcher(engine, undo, () => undefined)
     const clip = (
-      dispatcher.dispatch(new CreateClipCommand({ name: 'Wave', duration: 7, category: '' })) as unknown as {
+      dispatcher.dispatch(
+        new CreateClipCommand({ name: 'Wave', duration: 7, category: '' }),
+      ) as unknown as {
         inverse: { clipId: string }
       }
     ).inverse.clipId as string

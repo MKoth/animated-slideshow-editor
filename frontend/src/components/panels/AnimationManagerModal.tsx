@@ -1302,9 +1302,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           try {
             const members = (
               engine as unknown as {
-                getPlacementMembers: (
-                  id: string,
-                ) => {
+                getPlacementMembers: (id: string) => {
                   nodeId: string
                   instance: import('../../engine/clipInstance').ClipInstance
                 }[]
@@ -1346,9 +1344,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           try {
             const members = (
               engine as unknown as {
-                getPlacementMembers: (
-                  id: string,
-                ) => {
+                getPlacementMembers: (id: string) => {
                   nodeId: string
                   instance: import('../../engine/clipInstance').ClipInstance
                 }[]

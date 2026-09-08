@@ -3837,10 +3837,15 @@ export class Engine {
     // and remap collectionId / parentNodeId / clipInstance placementId
     const placementIdMap = new Map<string, string>()
     for (const nodeJson of objectJson.nodes) {
-      const placements = (nodeJson as unknown as { collectionPlacements?: unknown }).collectionPlacements
+      const placements = (nodeJson as unknown as { collectionPlacements?: unknown })
+        .collectionPlacements
       if (Array.isArray(placements)) {
         for (const p of placements as unknown[]) {
-          if (typeof p === 'object' && p !== null && typeof (p as Record<string, unknown>).id === 'string') {
+          if (
+            typeof p === 'object' &&
+            p !== null &&
+            typeof (p as Record<string, unknown>).id === 'string'
+          ) {
             const oldId = (p as Record<string, unknown>).id as string
             if (!placementIdMap.has(oldId)) placementIdMap.set(oldId, newCollectionPlacementId())
           }
@@ -4052,7 +4057,9 @@ export class Engine {
           .collectionPlacements) {
           try {
             node.collectionPlacements.push(
-              collectionPlacementFromJSON(pj as unknown as import('./json').CollectionPlacementJSON),
+              collectionPlacementFromJSON(
+                pj as unknown as import('./json').CollectionPlacementJSON,
+              ),
             )
           } catch {
             void 0
