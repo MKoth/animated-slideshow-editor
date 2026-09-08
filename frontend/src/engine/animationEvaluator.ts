@@ -11,6 +11,7 @@ import { evaluateSegment } from './interpolators'
 import { evaluateMaterialTrackValue } from './materialTrackEvaluation'
 import type { AnimationProperty } from './animationProperties'
 import type { ClipDefinition } from './clipDefinition'
+import { isParametricInterpolation } from './keyframe'
 import { circleSegmentsForArc } from './circleComponent'
 import type { MeshVertex } from './mesh'
 import type { Shape } from './shape'
@@ -27,6 +28,22 @@ import {
   deriveShadowProjection,
   isAutoShadowEffect,
 } from './shadowEffect'
+
+function isParametricKeyframes(keyframes: readonly Keyframe[]): boolean {
+  for (const kf of keyframes) if (isParametricInterpolation(kf.interpolation)) return true
+  return false
+}
+
+function effectiveUForClip(
+  clip: ClipDefinition,
+  keyframes: readonly Keyframe[],
+  u: number,
+): number {
+  if ((clip as unknown as { isReversed?: boolean }).isReversed && isParametricKeyframes(keyframes)) {
+    return 1 - u
+  }
+  return u
+}
 
 export interface EvaluatedNodeState {
   readonly transform: Transform
@@ -402,7 +419,8 @@ export class AnimationEvaluator {
         if (prop === 'color') continue
         const anim = clip.shadowChannelAnimation(prop as ShadowProperty)
         if (!anim || anim.length === 0) continue
-        const kfValue = this.#evaluateClipShadowNumeric(anim.keyframes(), u)
+        const effU = effectiveUForClip(clip, anim.keyframes(), u)
+        const kfValue = this.#evaluateClipShadowNumeric(anim.keyframes(), effU)
         // Opacity clip should not be re-multiplied by nodeOpacity; last-wins directly
         ;(state as unknown as Record<string, unknown>)[prop] = kfValue
       }
@@ -428,7 +446,8 @@ export class AnimationEvaluator {
       )
       const anim = clip.shadowChannelAnimation('color' as ShadowProperty)
       if (!anim || anim.length === 0) continue
-      const kfValue = this.#evaluateClipShadowColorValue(anim.keyframes(), u)
+      const effU = effectiveUForClip(clip, anim.keyframes(), u)
+      const kfValue = this.#evaluateClipShadowColorValue(anim.keyframes(), effU)
       state.color = kfValue
     }
   }
@@ -505,7 +524,8 @@ export class AnimationEvaluator {
         )
         const anim = clip.morphAnimation()
         if (!anim || anim.length === 0) continue
-        let clipValue = this.#evaluateMorphClipKeyframes(anim.keyframes(), u, shapes)
+        const effU = effectiveUForClip(clip, anim.keyframes(), u)
+        let clipValue = this.#evaluateMorphClipKeyframes(anim.keyframes(), effU, shapes)
         if (clipValue) {
           // Legacy clip scalar (null binding) should inherit base binding if present
           if (
@@ -569,9 +589,10 @@ export class AnimationEvaluator {
         )
         const anim = clip.morphAnimation()
         if (!anim || anim.length === 0) continue
+        const effU2 = effectiveUForClip(clip, anim.keyframes(), u)
         const clipMorphed = this.#evaluateMorphClipVertices(
           anim.keyframes(),
-          u,
+          effU2,
           baseVertices,
           shapes,
         )
@@ -1065,7 +1086,8 @@ export class AnimationEvaluator {
           continue
         }
 
-        const kfValue = this.#evaluateClipChannel(channelAnim.keyframes(), u)
+        const effU = effectiveUForClip(clip, channelAnim.keyframes(), u)
+        const kfValue = this.#evaluateClipChannel(channelAnim.keyframes(), effU)
 
         let output: number
         if (channelDef.paramKey) {
@@ -1165,7 +1187,8 @@ export class AnimationEvaluator {
           continue
         }
 
-        const kfValue = this.#evaluateClipChannel(channelAnim.keyframes(), u)
+        const effU = effectiveUForClip(clip, channelAnim.keyframes(), u)
+        const kfValue = this.#evaluateClipChannel(channelAnim.keyframes(), effU)
 
         let output: number
         if (channelDef.paramKey) {

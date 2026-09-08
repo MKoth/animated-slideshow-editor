@@ -46,6 +46,8 @@ import {
   SetCollectionPlacementStartTimeCommand,
   ReorderCollectionPlacementCommand,
   MoveClipLayerCommand,
+  ReverseClipCommand,
+  ReverseCollectionCommand,
 } from '../../engine/commands'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useSelectionStore } from '../../stores/selectionStore'
@@ -265,6 +267,20 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     y: number
     placementId: string
   } | null>(null)
+  const [reverseClipPrompt, setReverseClipPrompt] = useState<{
+    clipId: string
+    nodeId?: string
+    instanceId?: string
+    startTime?: number
+    defaultName: string
+  } | null>(null)
+  const [reverseCollectionPrompt, setReverseCollectionPrompt] = useState<{
+    collectionId: string
+    parentNodeId?: string
+    startTime?: number
+    defaultName: string
+  } | null>(null)
+  const [reverseNameDraft, setReverseNameDraft] = useState('')
   const orphansContainerRef = useRef<HTMLDivElement>(null)
   const notify = useNotificationStore((s) => s.notify)
 
@@ -303,6 +319,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       setSelectedPlacementId(null)
       setPlaceCollectionId('')
       setCollectionPlacementMenu(null)
+      setReverseClipPrompt(null)
+      setReverseCollectionPrompt(null)
+      setReverseNameDraft('')
     }
   }, [open, parentNodeId])
 
@@ -319,7 +338,13 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (collectionCreateOpen) {
+        if (reverseClipPrompt) {
+          setReverseClipPrompt(null)
+          e.stopPropagation()
+        } else if (reverseCollectionPrompt) {
+          setReverseCollectionPrompt(null)
+          e.stopPropagation()
+        } else if (collectionCreateOpen) {
           setCollectionCreateOpen(false)
           e.stopPropagation()
         } else if (editingCollectionId) {
@@ -372,6 +397,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     editingCollectionId,
     deleteConfirmCollectionId,
     collectionPlacementMenu,
+    reverseClipPrompt,
+    reverseCollectionPrompt,
     onClose,
     restorePpsAndBack,
   ])
@@ -1456,6 +1483,14 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   if (!open) return null
 
   const handleBackdropClick = () => {
+    if (reverseClipPrompt) {
+      setReverseClipPrompt(null)
+      return
+    }
+    if (reverseCollectionPrompt) {
+      setReverseCollectionPrompt(null)
+      return
+    }
     if (collectionCreateOpen) {
       setCollectionCreateOpen(false)
       return
@@ -2962,6 +2997,43 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               >
                 Edit
               </button>
+              <button
+                role="menuitem"
+                data-testid="clip-lane-reverse"
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+                onClick={() => {
+                  try {
+                    const clip = engine.getClip(clipMenu.clipId)
+                    const node = engine.getNode(clipMenu.nodeId)
+                    const inst = node.clipInstances.find((i) => i.id === clipMenu.instanceId)
+                    const start = inst ? inst.startTime : 0
+                    const defaultName = `${clip.name} Reversed`
+                    setReverseNameDraft(defaultName)
+                    setReverseClipPrompt({
+                      clipId: clipMenu.clipId,
+                      nodeId: clipMenu.nodeId,
+                      instanceId: clipMenu.instanceId,
+                      startTime: start,
+                      defaultName,
+                    })
+                    setClipMenu(null)
+                  } catch (e) {
+                    notify(e instanceof Error ? e.message : String(e))
+                    setClipMenu(null)
+                  }
+                }}
+              >
+                Reverse and Save As…
+              </button>
             </div>
           </>
         )}
@@ -2994,6 +3066,40 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               }}
               onClick={(e) => e.stopPropagation()}
             >
+              <button
+                role="menuitem"
+                data-testid="collection-lane-reverse"
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+                onClick={() => {
+                  try {
+                    const placement = engine.getCollectionPlacement(collectionPlacementMenu.placementId)
+                    const collection = engine.getClipCollection(placement.collectionId)
+                    const defaultName = `${collection.name} Reversed`
+                    setReverseNameDraft(defaultName)
+                    setReverseCollectionPrompt({
+                      collectionId: placement.collectionId,
+                      parentNodeId: placement.parentNodeId,
+                      startTime: placement.startTime,
+                      defaultName,
+                    })
+                    setCollectionPlacementMenu(null)
+                  } catch (e) {
+                    notify(e instanceof Error ? e.message : String(e))
+                    setCollectionPlacementMenu(null)
+                  }
+                }}
+              >
+                Reverse and Save As…
+              </button>
               <button
                 role="menuitem"
                 data-testid="collection-lane-delete"
@@ -3645,6 +3751,254 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   data-testid="delete-collection-confirm"
                 >
                   Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Reverse and Save As… modals */}
+        {reverseClipPrompt && (
+          <div
+            className="modal-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Reverse and Save As"
+            data-testid="reverse-clip-modal"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1100,
+            }}
+            onClick={() => setReverseClipPrompt(null)}
+          >
+            <div
+              className="modal"
+              style={{
+                background: 'var(--color-bg, #fff)',
+                borderRadius: 8,
+                padding: 16,
+                minWidth: 360,
+                border: '1px solid var(--color-border)',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Reverse and Save As…</h3>
+              <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
+                Create a time-reversed copy. Original is untouched. New instance at same startTime with
+                speed=1.
+              </p>
+              <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
+                New clip name
+                <input
+                  value={reverseNameDraft}
+                  onChange={(e) => setReverseNameDraft(e.target.value)}
+                  placeholder={reverseClipPrompt.defaultName}
+                  autoFocus
+                  onFocus={(e) => e.target.select()}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    marginTop: 4,
+                    padding: '6px 8px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                  }}
+                  data-testid="reverse-clip-name-input"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const name = reverseNameDraft.trim() || reverseClipPrompt.defaultName
+                      const res = dispatch(
+                        new ReverseClipCommand({
+                          sourceClipId: reverseClipPrompt.clipId,
+                          newName: name,
+                          targetNodeId: reverseClipPrompt.nodeId,
+                          startTime: reverseClipPrompt.startTime,
+                        }),
+                      )
+                      if (!res.ok) notify(res.error.message)
+                      else {
+                        notify(`Reversed clip "${name}" created`)
+                        // highlight new lane if placement
+                        const newId = (res as { ok: true; inverse: { newClipId: string } }).inverse.newClipId
+                        // Find new instance if any
+                        if (reverseClipPrompt.nodeId) {
+                          try {
+                            const node = engine.getNode(reverseClipPrompt.nodeId)
+                            const inst = node.clipInstances.find((i) => i.clipId === newId)
+                            if (inst) {
+                              setHighlightedClipInstanceId(inst.id)
+                              setSelectedInstanceId(inst.id)
+                            }
+                          } catch (_e) {
+                            void _e
+                          }
+                        }
+                      }
+                      setReverseClipPrompt(null)
+                    } else if (e.key === 'Escape') {
+                      setReverseClipPrompt(null)
+                    }
+                  }}
+                />
+              </label>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button
+                  onClick={() => setReverseClipPrompt(null)}
+                  style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--color-border)' }}
+                  data-testid="reverse-clip-cancel"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    const name = reverseNameDraft.trim() || reverseClipPrompt.defaultName
+                    if (!name.trim()) {
+                      notify('Name is required')
+                      return
+                    }
+                    const res = dispatch(
+                      new ReverseClipCommand({
+                        sourceClipId: reverseClipPrompt.clipId,
+                        newName: name,
+                        targetNodeId: reverseClipPrompt.nodeId,
+                        startTime: reverseClipPrompt.startTime,
+                      }),
+                    )
+                    if (!res.ok) notify(res.error.message)
+                    else {
+                      notify(`Reversed clip "${name}" created`)
+                      const newId = (res as { ok: true; inverse: { newClipId: string } }).inverse.newClipId
+                      if (reverseClipPrompt.nodeId) {
+                        try {
+                          const node = engine.getNode(reverseClipPrompt.nodeId)
+                          const inst = node.clipInstances.find((i) => i.clipId === newId)
+                          if (inst) {
+                            setHighlightedClipInstanceId(inst.id)
+                            setSelectedInstanceId(inst.id)
+                          }
+                        } catch (_e) {
+                          void _e
+                        }
+                      }
+                    }
+                    setReverseClipPrompt(null)
+                  }}
+                  style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid transparent', background: '#7c5cff', color: '#fff' }}
+                  data-testid="reverse-clip-confirm"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {reverseCollectionPrompt && (
+          <div
+            className="modal-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Reverse Collection and Save As"
+            data-testid="reverse-collection-modal"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1100,
+            }}
+            onClick={() => setReverseCollectionPrompt(null)}
+          >
+            <div
+              className="modal"
+              style={{
+                background: 'var(--color-bg, #fff)',
+                borderRadius: 8,
+                padding: 16,
+                minWidth: 360,
+                border: '1px solid var(--color-border)',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Reverse Collection and Save As…</h3>
+              <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
+                Creates reversed copies of each member clip and a new collection with same
+                semanticName map. Offsets preserved (v1).
+              </p>
+              <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
+                New collection name
+                <input
+                  value={reverseNameDraft}
+                  onChange={(e) => setReverseNameDraft(e.target.value)}
+                  placeholder={reverseCollectionPrompt.defaultName}
+                  autoFocus
+                  onFocus={(e) => e.target.select()}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    marginTop: 4,
+                    padding: '6px 8px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                  }}
+                  data-testid="reverse-collection-name-input"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const name = reverseNameDraft.trim() || reverseCollectionPrompt.defaultName
+                      const res = dispatch(
+                        new ReverseCollectionCommand({
+                          sourceCollectionId: reverseCollectionPrompt.collectionId,
+                          newName: name,
+                          targetParentNodeId: reverseCollectionPrompt.parentNodeId,
+                          startTime: reverseCollectionPrompt.startTime,
+                        }),
+                      )
+                      if (!res.ok) notify(res.error.message)
+                      else notify(`Reversed collection "${name}" created`)
+                      setReverseCollectionPrompt(null)
+                    } else if (e.key === 'Escape') {
+                      setReverseCollectionPrompt(null)
+                    }
+                  }}
+                />
+              </label>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button
+                  onClick={() => setReverseCollectionPrompt(null)}
+                  style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--color-border)' }}
+                  data-testid="reverse-collection-cancel"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    const name = reverseNameDraft.trim() || reverseCollectionPrompt.defaultName
+                    if (!name.trim()) {
+                      notify('Name is required')
+                      return
+                    }
+                    const res = dispatch(
+                      new ReverseCollectionCommand({
+                        sourceCollectionId: reverseCollectionPrompt.collectionId,
+                        newName: name,
+                        targetParentNodeId: reverseCollectionPrompt.parentNodeId,
+                        startTime: reverseCollectionPrompt.startTime,
+                      }),
+                    )
+                    if (!res.ok) notify(res.error.message)
+                    else notify(`Reversed collection "${name}" created`)
+                    setReverseCollectionPrompt(null)
+                  }}
+                  style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid transparent', background: '#7c5cff', color: '#fff' }}
+                  data-testid="reverse-collection-confirm"
+                >
+                  Save
                 </button>
               </div>
             </div>

@@ -128,6 +128,7 @@ import {
 import { newId } from './ids'
 import { newClipId } from './clipDefinition'
 import { newClipCollectionId } from './clipCollection'
+import { createReversedClipDefinition } from './clipReverse'
 import { newCollectionPlacementId, collectionPlacementFromJSON } from './collectionPlacement'
 import type { CollectionPlacement } from './collectionPlacement'
 import { Keyframe as KeyframeModel, newKeyframeId } from './keyframe'
@@ -2728,6 +2729,15 @@ export class Engine {
     return this.#clips.duplicateClip(clipId)
   }
 
+  createReversedClip(sourceClipId: string, newName?: string): ClipDefinition {
+    const source = this.getClip(sourceClipId)
+    const name = newName ?? `${source.name} Reversed`
+    const reversed = createReversedClipDefinition(source, name)
+    this.#clips.importClip(reversed)
+    this.#bus.emit({ type: 'ClipCreated', clipId: reversed.id })
+    return reversed
+  }
+
   setClipDuration(clipId: string, duration: number): void {
     this.#clips.setDuration(clipId, duration)
   }
@@ -2925,6 +2935,27 @@ export class Engine {
       this.getClip(clipId)
     }
     return this.#clipCollections.createCollection(name, bindings, sourceNodeId)
+  }
+
+  createReversedCollection(
+    sourceCollectionId: string,
+    newName?: string,
+  ): { collection: ClipCollection; clipIdMap: Map<string, string> } {
+    const source = this.getClipCollection(sourceCollectionId)
+    const name = newName ?? `${source.name} Reversed`
+    const clipIdMap = new Map<string, string>()
+    const newBindings: Record<string, string> = {}
+    for (const [semanticName, clipId] of source.bindings) {
+      let newClipId = clipIdMap.get(clipId)
+      if (!newClipId) {
+        const reversedClip = this.createReversedClip(clipId, `${this.getClip(clipId).name} Reversed`)
+        newClipId = reversedClip.id
+        clipIdMap.set(clipId, newClipId)
+      }
+      newBindings[semanticName] = newClipId
+    }
+    const collection = this.createClipCollection(name, newBindings, source.sourceNodeId)
+    return { collection, clipIdMap }
   }
 
   deleteClipCollection(collectionId: string): ClipCollection {
@@ -5153,6 +5184,9 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getClipCollection: (collectionId) => engine.getClipCollection(collectionId),
     createClipCollection: (name, bindings, sourceNodeId) =>
       engine.createClipCollection(name, bindings, sourceNodeId),
+    createReversedCollection: (sourceCollectionId, newName) =>
+      engine.createReversedCollection(sourceCollectionId, newName),
+    createReversedClip: (clipId, newName) => engine.createReversedClip(clipId, newName),
     deleteClipCollection: (collectionId) => engine.deleteClipCollection(collectionId),
     renameClipCollection: (collectionId, name) => engine.renameClipCollection(collectionId, name),
     setClipCollectionBindings: (collectionId, bindings) =>

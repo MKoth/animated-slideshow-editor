@@ -14,6 +14,8 @@ import { LibraryBrowser } from './LibraryBrowser'
 import {
   DeleteClipCollectionCommand,
   RenameClipCollectionCommand,
+  ReverseClipCommand,
+  ReverseCollectionCommand,
 } from '../../engine/commands'
 import { ApplyClipCollectionModal } from './ApplyClipCollectionModal'
 import { ExportClipCollectionModal } from './ExportClipCollectionModal'
@@ -183,6 +185,11 @@ export function AnimationsPanel() {
     existingEntryId: string
   } | null>(null)
   const collectionFileInputRef = useRef<HTMLInputElement>(null)
+  const [clipOverflowId, setClipOverflowId] = useState<string | null>(null)
+  const [collectionOverflowId, setCollectionOverflowId] = useState<string | null>(null)
+  const [reverseClipPrompt, setReverseClipPrompt] = useState<{ clipId: string; defaultName: string } | null>(null)
+  const [reverseCollectionPrompt, setReverseCollectionPrompt] = useState<{ collectionId: string; defaultName: string } | null>(null)
+  const [reverseNameDraft, setReverseNameDraft] = useState('')
 
   const downloadCollectionFile = (collectionId: string) => {
     const collection = engine.getClipCollection(collectionId)
@@ -495,6 +502,58 @@ export function AnimationsPanel() {
                     >
                       Edit
                     </button>
+                    <div style={{ position: 'relative', display: 'inline-block' }}>
+                      <button
+                        aria-label={`More options for ${clip.name}`}
+                        title="More options"
+                        onClick={() => setClipOverflowId(clipOverflowId === clip.id ? null : clip.id)}
+                        data-testid={`clip-ellipsis-${clip.id}`}
+                        style={{ padding: '2px 6px' }}
+                      >
+                        ⋯
+                      </button>
+                      {clipOverflowId === clip.id && (
+                        <div
+                          role="menu"
+                          data-testid={`clip-ellipsis-menu-${clip.id}`}
+                          style={{
+                            position: 'absolute',
+                            right: 0,
+                            top: '100%',
+                            background: 'var(--color-bg, #fff)',
+                            border: '1px solid var(--color-border, #ddd)',
+                            borderRadius: 6,
+                            padding: 4,
+                            zIndex: 10,
+                            minWidth: 160,
+                            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                          }}
+                        >
+                          <button
+                            role="menuitem"
+                            data-testid={`clip-reverse-${clip.id}`}
+                            style={{
+                              display: 'block',
+                              width: '100%',
+                              textAlign: 'left',
+                              padding: '6px 10px',
+                              border: 'none',
+                              background: 'transparent',
+                              cursor: 'pointer',
+                              fontSize: 12,
+                            }}
+                            onClick={() => {
+                              const defaultName = `${clip.name} Reversed`
+                              setReverseNameDraft(defaultName)
+                              setReverseClipPrompt({ clipId: clip.id, defaultName })
+                              setClipOverflowId(null)
+                            }}
+                          >
+                            Reverse and Save As…
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </li>
@@ -678,6 +737,59 @@ export function AnimationsPanel() {
                       >
                         Delete
                       </button>
+                      <div style={{ position: 'relative', display: 'inline-block' }}>
+                        <button
+                          aria-label={`More options for ${col.name}`}
+                          onClick={() =>
+                            setCollectionOverflowId(collectionOverflowId === col.id ? null : col.id)
+                          }
+                          data-testid={`collection-ellipsis-${col.id}`}
+                          style={{ fontSize: 11, padding: '2px 6px' }}
+                        >
+                          ⋯
+                        </button>
+                        {collectionOverflowId === col.id && (
+                          <div
+                            role="menu"
+                            data-testid={`collection-ellipsis-menu-${col.id}`}
+                            style={{
+                              position: 'absolute',
+                              right: 0,
+                              top: '100%',
+                              background: 'var(--color-bg, #fff)',
+                              border: '1px solid var(--color-border, #ddd)',
+                              borderRadius: 6,
+                              padding: 4,
+                              zIndex: 10,
+                              minWidth: 160,
+                              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                            }}
+                          >
+                            <button
+                              role="menuitem"
+                              data-testid={`collection-reverse-${col.id}`}
+                              style={{
+                                display: 'block',
+                                width: '100%',
+                                textAlign: 'left',
+                                padding: '6px 10px',
+                                border: 'none',
+                                background: 'transparent',
+                                cursor: 'pointer',
+                                fontSize: 12,
+                              }}
+                              onClick={() => {
+                                const defaultName = `${col.name} Reversed`
+                                setReverseNameDraft(defaultName)
+                                setReverseCollectionPrompt({ collectionId: col.id, defaultName })
+                                setCollectionOverflowId(null)
+                              }}
+                            >
+                              Reverse and Save As…
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </li>
@@ -762,6 +874,106 @@ export function AnimationsPanel() {
         parentNodeId={null}
         onClose={() => setExportCollectionOpen(false)}
       />
+      {reverseClipPrompt && (
+        <div className="projects-overlay" role="dialog" aria-modal="true" aria-label="Reverse and Save As" data-testid="reverse-clip-modal">
+          <div className="projects-dialog" style={{ minWidth: 360 }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Reverse and Save As…</h3>
+            <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
+              Create a time-reversed copy. Original is untouched.
+            </p>
+            <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
+              New clip name
+              <input
+                value={reverseNameDraft}
+                onChange={(e) => setReverseNameDraft(e.target.value)}
+                placeholder={reverseClipPrompt.defaultName}
+                autoFocus
+                onFocus={(e) => e.target.select()}
+                style={{ display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 4, border: '1px solid var(--color-border)' }}
+                data-testid="reverse-clip-name-input"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const name = reverseNameDraft.trim() || reverseClipPrompt.defaultName
+                    const res = dispatch(new ReverseClipCommand({ sourceClipId: reverseClipPrompt.clipId, newName: name }))
+                    if (!res.ok) notify(res.error.message)
+                    else notify(`Reversed clip "${name}" created`)
+                    setReverseClipPrompt(null)
+                  } else if (e.key === 'Escape') setReverseClipPrompt(null)
+                }}
+              />
+            </label>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button onClick={() => setReverseClipPrompt(null)} style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--color-border)' }} data-testid="reverse-clip-cancel">
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const name = reverseNameDraft.trim() || reverseClipPrompt.defaultName
+                  if (!name.trim()) { notify('Name is required'); return }
+                  const res = dispatch(new ReverseClipCommand({ sourceClipId: reverseClipPrompt.clipId, newName: name }))
+                  if (!res.ok) notify(res.error.message)
+                  else notify(`Reversed clip "${name}" created`)
+                  setReverseClipPrompt(null)
+                }}
+                style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid transparent', background: '#7c5cff', color: '#fff' }}
+                data-testid="reverse-clip-confirm"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {reverseCollectionPrompt && (
+        <div className="projects-overlay" role="dialog" aria-modal="true" aria-label="Reverse Collection and Save As" data-testid="reverse-collection-modal">
+          <div className="projects-dialog" style={{ minWidth: 360 }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Reverse Collection and Save As…</h3>
+            <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
+              Creates reversed copies of each member clip and a new collection.
+            </p>
+            <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
+              New collection name
+              <input
+                value={reverseNameDraft}
+                onChange={(e) => setReverseNameDraft(e.target.value)}
+                placeholder={reverseCollectionPrompt.defaultName}
+                autoFocus
+                onFocus={(e) => e.target.select()}
+                style={{ display: 'block', width: '100%', marginTop: 4, padding: '6px 8px', borderRadius: 4, border: '1px solid var(--color-border)' }}
+                data-testid="reverse-collection-name-input"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const name = reverseNameDraft.trim() || reverseCollectionPrompt.defaultName
+                    const res = dispatch(new ReverseCollectionCommand({ sourceCollectionId: reverseCollectionPrompt.collectionId, newName: name }))
+                    if (!res.ok) notify(res.error.message)
+                    else notify(`Reversed collection "${name}" created`)
+                    setReverseCollectionPrompt(null)
+                  } else if (e.key === 'Escape') setReverseCollectionPrompt(null)
+                }}
+              />
+            </label>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button onClick={() => setReverseCollectionPrompt(null)} style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--color-border)' }} data-testid="reverse-collection-cancel">
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const name = reverseNameDraft.trim() || reverseCollectionPrompt.defaultName
+                  if (!name.trim()) { notify('Name is required'); return }
+                  const res = dispatch(new ReverseCollectionCommand({ sourceCollectionId: reverseCollectionPrompt.collectionId, newName: name }))
+                  if (!res.ok) notify(res.error.message)
+                  else notify(`Reversed collection "${name}" created`)
+                  setReverseCollectionPrompt(null)
+                }}
+                style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid transparent', background: '#7c5cff', color: '#fff' }}
+                data-testid="reverse-collection-confirm"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

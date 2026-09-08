@@ -151,6 +151,11 @@ export interface EnginePublic {
     bindings: Record<string, string>,
     sourceNodeId?: string,
   ): ClipCollection
+  createReversedCollection(
+    sourceCollectionId: string,
+    newName?: string,
+  ): { collection: ClipCollection; clipIdMap: Map<string, string> }
+  createReversedClip(clipId: string, newName?: string): ClipDefinition
   deleteClipCollection(collectionId: string): ClipCollection
   renameClipCollection(collectionId: string, name: string): void
   setClipCollectionBindings(collectionId: string, bindings: Record<string, string>): void

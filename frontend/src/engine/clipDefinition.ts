@@ -201,6 +201,7 @@ export class ClipDefinition {
   #category: string
   #params: ClipParam[]
   #channels: ClipChannelDef[]
+  #isReversed = false
   readonly #channelAnimations = new Map<ClipChannel, ClipChannelAnimation>()
   readonly #materialChannelAnimations = new Map<string, ClipChannelAnimation>()
   readonly #visibleAnimation = new ClipChannelAnimation()
@@ -215,6 +216,7 @@ export class ClipDefinition {
     category: string,
     params: ClipParam[],
     channels: ClipChannelDef[],
+    isReversed?: boolean,
   ) {
     this.id = id
     this.#name = name
@@ -222,6 +224,7 @@ export class ClipDefinition {
     this.#category = category
     this.#params = [...params]
     this.#channels = [...channels]
+    this.#isReversed = isReversed ?? false
     for (const channel of channels) {
       if (channel.materialParameter) {
         this.#materialChannelAnimations.set(channel.materialParameter, new ClipChannelAnimation())
@@ -229,6 +232,14 @@ export class ClipDefinition {
         this.#channelAnimations.set(channel.property, new ClipChannelAnimation())
       }
     }
+  }
+
+  get isReversed(): boolean {
+    return this.#isReversed
+  }
+
+  set isReversed(value: boolean) {
+    this.#isReversed = value
   }
 
   get name(): string {
@@ -566,6 +577,7 @@ export class ClipDefinition {
       this.#category,
       this.#params,
       this.#channels,
+      this.#isReversed,
     )
     for (const [channel, anim] of this.#channelAnimations) {
       copy.#channelAnimations.set(channel, anim.copy())
@@ -649,6 +661,9 @@ export class ClipDefinition {
         [...this.#shadowChannelAnimations.entries()].map(([prop, anim]) => [prop, anim.toJSON()]),
       )
     }
+    if (this.#isReversed) {
+      ;(json as Record<string, unknown>).isReversed = true
+    }
     return json as ClipJSON
   }
 
@@ -703,7 +718,8 @@ export class ClipDefinition {
         ...(materialParameter !== undefined ? { materialParameter } : {}),
       }
     })
-    const clip = new ClipDefinition(id, name, duration, category, params, channels)
+    const isReversed = (json as Record<string, unknown>).isReversed === true
+    const clip = new ClipDefinition(id, name, duration, category, params, channels, isReversed)
     if (isRecord(json.channelAnimations) && json.channelAnimations !== null) {
       for (const [channel, animJson] of Object.entries(
         json.channelAnimations as Record<string, unknown>,
