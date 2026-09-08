@@ -1785,7 +1785,10 @@ export class Engine {
     return this.#animations.hasSymmetryTrack(nodeId)
   }
 
-  evaluateSymmetry(nodeId: string, time: number): import('./symmetry').SymmetryKeyframeValue | null {
+  evaluateSymmetry(
+    nodeId: string,
+    time: number,
+  ): import('./symmetry').SymmetryKeyframeValue | null {
     return this.#evaluator.evaluateSymmetryValue(nodeId, time)
   }
 
@@ -1928,7 +1931,8 @@ export class Engine {
             boneWorldTransforms,
             meshWorldTransform,
           )
-          baseVertices = morphedLegacy.deformedVertices as unknown as readonly import('./mesh').MeshVertex[]
+          baseVertices =
+            morphedLegacy.deformedVertices as unknown as readonly import('./mesh').MeshVertex[]
           // fall through to symmetry + bones handling below with baseVertices
           try {
             const sym = this.#evaluator.evaluateSymmetryValue(nodeId, _time)
@@ -4830,7 +4834,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getSymmetryKeyframes: (nodeId) => engine.getSymmetryKeyframes(nodeId),
     hasSymmetryTrack: (nodeId) => engine.hasSymmetryTrack(nodeId),
     evaluateSymmetry: (nodeId, time) => engine.evaluateSymmetry(nodeId, time),
-    evaluateSymmetryVertices: (nodeId, time, base) => engine.evaluateSymmetryVertices(nodeId, time, base),
+    evaluateSymmetryVertices: (nodeId, time, base) =>
+      engine.evaluateSymmetryVertices(nodeId, time, base),
     getCastShadow: (nodeId) => engine.getCastShadow(nodeId),
     setCastShadow: (nodeId, castShadow) => engine.setCastShadow(nodeId, castShadow),
     getClipCollection: (collectionId) => engine.getClipCollection(collectionId),
@@ -4838,6 +4843,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
       engine.createClipCollection(name, bindings, sourceNodeId),
     deleteClipCollection: (collectionId) => engine.deleteClipCollection(collectionId),
     renameClipCollection: (collectionId, name) => engine.renameClipCollection(collectionId, name),
+    setClipCollectionBindings: (collectionId, bindings) =>
+      engine.setClipCollectionBindings(collectionId, bindings),
     exportClipCollection: (parentNodeId, name) => engine.exportClipCollection(parentNodeId, name),
     applyClipCollection: (collectionId, targetNodeId) =>
       engine.applyClipCollection(collectionId, targetNodeId),

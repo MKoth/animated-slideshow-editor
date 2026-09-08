@@ -245,7 +245,10 @@ export type { SubdivideFacesInverse, SubdivideFacesParameters } from './subdivid
 export { MirrorMeshCommand } from './mirrorMeshCommand'
 export type { MirrorMeshInverse, MirrorMeshParameters } from './mirrorMeshCommand'
 export { SymmetrizeSubtreeCommand } from './symmetrizeSubtreeCommand'
-export type { SymmetrizeSubtreeInverse, SymmetrizeSubtreeParameters } from './symmetrizeSubtreeCommand'
+export type {
+  SymmetrizeSubtreeInverse,
+  SymmetrizeSubtreeParameters,
+} from './symmetrizeSubtreeCommand'
 export { SetVertexWeightsCommand } from './setVertexWeightsCommand'
 export type { SetVertexWeightsInverse, SetVertexWeightsParameters } from './setVertexWeightsCommand'
 export { SmoothWeightsCommand } from './smoothWeightsCommand'
@@ -455,6 +458,11 @@ export type {
   RenameClipCollectionInverse,
   RenameClipCollectionParameters,
 } from './renameClipCollectionCommand'
+export { SetClipCollectionBindingsCommand } from './setClipCollectionBindingsCommand'
+export type {
+  SetClipCollectionBindingsInverse,
+  SetClipCollectionBindingsParameters,
+} from './setClipCollectionBindingsCommand'
 export { ExportClipCollectionCommand } from './exportClipCollectionCommand'
 export type {
   ExportClipCollectionInverse,

@@ -36,8 +36,13 @@ import {
   DeleteClipKeyframesCommand,
   MoveClipKeyframesCommand,
   AssignClipCommand,
+  CreateClipCollectionCommand,
+  DeleteClipCollectionCommand,
+  SetClipCollectionBindingsCommand,
+  RenameClipCollectionCommand,
 } from '../../engine/commands'
 import { useNotificationStore } from '../../stores/notificationStore'
+import { useSelectionStore } from '../../stores/selectionStore'
 import { computeExtractionBounds } from '../../engine/clipExtraction'
 import type { ExtractableKeyframe } from '../../engine/clipExtraction'
 import { ClipExtractionModal } from './ClipExtractionModal'
@@ -145,7 +150,7 @@ function nextClipNameForNode(nodeName: string, clips: readonly { name: string }[
 
 export function AnimationManagerModal({ open, parentNodeId, onClose }: AnimationManagerModalProps) {
   const { engine, dispatch, undoStack } = useEngine()
-  const [, setTick] = useState(0)
+  const [tick, setTick] = useState(0)
   const [activeTab, setActiveTab] = useState<ManagerTab>('clips')
   const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({})
   const [editing, setEditing] = useState<{ clipId: string; nodeId: string } | null>(null)
@@ -178,6 +183,16 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   } | null>(null)
   const [orphanScopeMessage, setOrphanScopeMessage] = useState<string | null>(null)
   const [highlightedClipInstanceId, setHighlightedClipInstanceId] = useState<string | null>(null)
+  // Clip Lane multi-select for Collection grouping (15-05)
+  const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
+  const [clipAnchorId, setClipAnchorId] = useState<string | null>(null)
+  const [collectionCreateOpen, setCollectionCreateOpen] = useState(false)
+  const [collectionNameDraft, setCollectionNameDraft] = useState('')
+  const [collectionLocalError, setCollectionLocalError] = useState<string | null>(null)
+  const [editingCollectionId, setEditingCollectionId] = useState<string | null>(null)
+  const [editingBindingsDraft, setEditingBindingsDraft] = useState<Record<string, string>>({})
+  const [editingNameDraft, setEditingNameDraft] = useState('')
+  const [deleteConfirmCollectionId, setDeleteConfirmCollectionId] = useState<string | null>(null)
   const orphansContainerRef = useRef<HTMLDivElement>(null)
   const notify = useNotificationStore((s) => s.notify)
 
@@ -204,6 +219,15 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       setOrphanExtraction(null)
       setOrphanScopeMessage(null)
       setHighlightedClipInstanceId(null)
+      setSelectedClipIds(new Set())
+      setClipAnchorId(null)
+      setCollectionCreateOpen(false)
+      setCollectionNameDraft('')
+      setCollectionLocalError(null)
+      setEditingCollectionId(null)
+      setEditingBindingsDraft({})
+      setEditingNameDraft('')
+      setDeleteConfirmCollectionId(null)
     }
   }, [open, parentNodeId])
 
@@ -220,7 +244,16 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (orphanExtraction) {
+        if (collectionCreateOpen) {
+          setCollectionCreateOpen(false)
+          e.stopPropagation()
+        } else if (editingCollectionId) {
+          setEditingCollectionId(null)
+          e.stopPropagation()
+        } else if (deleteConfirmCollectionId) {
+          setDeleteConfirmCollectionId(null)
+          e.stopPropagation()
+        } else if (orphanExtraction) {
           setOrphanExtraction(null)
           e.stopPropagation()
         } else if (orphanContextMenu) {
@@ -257,6 +290,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     orphanExtraction,
     orphanScopeMessage,
     orphanMarquee,
+    collectionCreateOpen,
+    editingCollectionId,
+    deleteConfirmCollectionId,
     onClose,
     restorePpsAndBack,
   ])
@@ -272,6 +308,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   }, [open, parentNodeId, engine])
 
   const managerRows = useMemo(() => {
+    void tick
     if (!activeSlide || !parentNode) return []
     const getClip = (clipId: string) => {
       try {
@@ -281,12 +318,13 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       }
     }
     return getManagerRows(parentNode, activeSlide, engine.materialDefinitions, getClip)
-  }, [activeSlide, parentNode, engine])
+  }, [activeSlide, parentNode, engine, tick])
 
   const overlayLabel = parentNode ? `Animation Manager — ${parentNode.name}` : 'Animation Manager'
 
   // Flat ordered orphan entries for Shift-range and marquee (display order: rows pre-order, param order, time asc)
   const flatOrphanEntries = useMemo((): OrphanEntry[] => {
+    void tick
     if (!activeSlide) return []
     const entries: OrphanEntry[] = []
     for (const row of managerRows) {
@@ -304,7 +342,155 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       }
     }
     return entries
-  }, [activeSlide, managerRows])
+  }, [activeSlide, managerRows, tick])
+
+  // --- Collection grouping helpers (15-05): flat clip lanes, validation, bindings preview ---
+
+  // Flat clip lane list in display order (for Shift-range selection)
+  const flatClipLanes = useMemo(() => {
+    void tick
+    const lanes: { instanceId: string; nodeId: string; clipId: string; nodeName: string }[] = []
+    for (const row of managerRows) {
+      for (const inst of row.node.clipInstances) {
+        // verify clip exists
+        try {
+          const clip = engine.getClip(inst.clipId)
+          if (!clip) continue
+          lanes.push({
+            instanceId: inst.id,
+            nodeId: row.node.id,
+            clipId: inst.clipId,
+            nodeName: row.node.name,
+          })
+        } catch {
+          continue
+        }
+      }
+    }
+    return lanes
+  }, [managerRows, engine, tick])
+
+  // Map instanceId -> node lookup for validation
+  const instanceToNode = useMemo(() => {
+    void tick
+    const m = new Map<
+      string,
+      { nodeId: string; nodeName: string; semanticName?: string; clipId: string }
+    >()
+    for (const lane of flatClipLanes) {
+      try {
+        const node = engine.getNode(lane.nodeId)
+        m.set(lane.instanceId, {
+          nodeId: lane.nodeId,
+          nodeName: node.name,
+          semanticName: node.semanticName,
+          clipId: lane.clipId,
+        })
+      } catch {
+        // skip
+      }
+    }
+    return m
+  }, [flatClipLanes, engine, tick])
+
+  const collectionMissingSemantic = useMemo(() => {
+    const missing: { instanceId: string; nodeId: string; nodeName: string; clipId: string }[] = []
+    for (const id of selectedClipIds) {
+      const info = instanceToNode.get(id)
+      if (!info) continue
+      if (!info.semanticName || info.semanticName.trim() === '') {
+        missing.push({
+          instanceId: id,
+          nodeId: info.nodeId,
+          nodeName: info.nodeName,
+          clipId: info.clipId,
+        })
+      }
+    }
+    return missing
+  }, [selectedClipIds, instanceToNode])
+
+  const collectionBindingsPreview = useMemo(() => {
+    const bindings: {
+      semanticName: string
+      clipId: string
+      clipName: string
+      nodeId: string
+      nodeName: string
+    }[] = []
+    const seen = new Set<string>()
+    for (const id of selectedClipIds) {
+      const info = instanceToNode.get(id)
+      if (!info) continue
+      const sem = info.semanticName?.trim()
+      if (!sem) continue
+      if (seen.has(sem)) continue
+      try {
+        const clip = engine.getClip(info.clipId)
+        bindings.push({
+          semanticName: sem,
+          clipId: info.clipId,
+          clipName: clip.name,
+          nodeId: info.nodeId,
+          nodeName: info.nodeName,
+        })
+        seen.add(sem)
+      } catch {
+        // skip missing clip
+      }
+    }
+    return bindings
+  }, [selectedClipIds, instanceToNode, engine])
+
+  // Orphan validation for collections: any orphan in parent subtree blocks
+  const hasOrphanInSubtree = flatOrphanEntries.length > 0
+  const distinctOrphanNodes = useMemo(() => {
+    void tick
+    const map = new Map<string, { id: string; name: string }>()
+    for (const e of flatOrphanEntries) {
+      if (!map.has(e.nodeId)) {
+        try {
+          const n = engine.getNode(e.nodeId)
+          map.set(e.nodeId, { id: e.nodeId, name: n.name })
+        } catch {
+          map.set(e.nodeId, { id: e.nodeId, name: e.nodeId.slice(0, 8) })
+        }
+      }
+    }
+    return [...map.values()]
+  }, [flatOrphanEntries, engine, tick])
+
+  const collectionBlockingError = useMemo(() => {
+    if (hasOrphanInSubtree)
+      return `Cannot create: ${flatOrphanEntries.length} orphan keyframe(s) in hierarchy. Fix in Orphans tab before creating a collection.`
+    if (collectionMissingSemantic.length > 0) {
+      const names = collectionMissingSemantic.map((m) => m.nodeName).join(', ')
+      return `Cannot create: ${collectionMissingSemantic.length} selected clip(s) on nodes with no Semantic Name: ${names}. Set Semantic Name in Inspector.`
+    }
+    if (selectedClipIds.size === 0) return null
+    if (collectionBindingsPreview.length === 0)
+      return 'No valid bindings — selected clips have no semanticName or missing clip definitions.'
+    return null
+  }, [
+    hasOrphanInSubtree,
+    flatOrphanEntries,
+    collectionMissingSemantic,
+    selectedClipIds,
+    collectionBindingsPreview,
+  ])
+
+  const canCreateCollection = Boolean(
+    !collectionBlockingError &&
+    selectedClipIds.size > 0 &&
+    collectionNameDraft.trim() &&
+    parentNodeId,
+  )
+
+  const collectionsForParent = useMemo(() => {
+    void tick
+    if (!parentNodeId) return []
+    return engine.clipCollections.filter((c) => c.sourceNodeId === parentNodeId)
+  }, [engine, parentNodeId, tick])
 
   // Candidate times for snap – computed from committed state, excluding dragging instance
   const snapCandidateTimes = useMemo(() => {
@@ -433,6 +619,220 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       semanticName: node.semanticName,
     })
   }, [selectedOrphanIds, flatOrphanEntries, managerRows, notify])
+
+  // --- Collection grouping handlers (15-05) ---
+  const handleClipLaneSelect = useCallback(
+    (e: React.MouseEvent, instanceId: string) => {
+      // Ignore if clicking handle – handle already stopped
+      const target = e.target as HTMLElement
+      if (target.dataset.testid?.startsWith('clip-handle')) return
+      e.stopPropagation()
+      const isCtrl = e.ctrlKey || e.metaKey
+      const isShift = e.shiftKey
+      if (isShift && clipAnchorId) {
+        const anchorIdx = flatClipLanes.findIndex((l) => l.instanceId === clipAnchorId)
+        const idx = flatClipLanes.findIndex((l) => l.instanceId === instanceId)
+        if (anchorIdx !== -1 && idx !== -1) {
+          const start = Math.min(anchorIdx, idx)
+          const end = Math.max(anchorIdx, idx)
+          const rangeIds = flatClipLanes.slice(start, end + 1).map((l) => l.instanceId)
+          if (isCtrl) {
+            setSelectedClipIds((prev) => {
+              const next = new Set(prev)
+              for (const id of rangeIds) next.add(id)
+              return next
+            })
+          } else {
+            setSelectedClipIds(new Set(rangeIds))
+          }
+          return
+        }
+      }
+      if (isCtrl) {
+        setSelectedClipIds((prev) => {
+          const next = new Set(prev)
+          if (next.has(instanceId)) next.delete(instanceId)
+          else next.add(instanceId)
+          return next
+        })
+        setClipAnchorId(instanceId)
+        // also keep single-select for drag compatibility
+        setSelectedInstanceId(instanceId)
+      } else {
+        setSelectedClipIds(new Set([instanceId]))
+        setClipAnchorId(instanceId)
+        setSelectedInstanceId(instanceId)
+      }
+    },
+    [flatClipLanes, clipAnchorId],
+  )
+
+  const handleCreateCollection = useCallback(() => {
+    if (selectedClipIds.size === 0) {
+      notify('Select at least one Clip Lane')
+      return
+    }
+    if (hasOrphanInSubtree) {
+      setCollectionLocalError(
+        `Cannot create: ${flatOrphanEntries.length} orphan keyframe(s) in hierarchy. Fix in Orphans tab.`,
+      )
+      return
+    }
+    if (collectionMissingSemantic.length > 0) {
+      setCollectionLocalError(
+        `Cannot create: ${collectionMissingSemantic.length} selected clip(s) on nodes with no Semantic Name.`,
+      )
+      return
+    }
+    // default name from parent
+    const defaultName = parentNode ? `${parentNode.name} Collection` : 'New Collection'
+    if (!collectionNameDraft.trim()) setCollectionNameDraft(defaultName)
+    setCollectionLocalError(null)
+    setCollectionCreateOpen(true)
+  }, [
+    selectedClipIds,
+    hasOrphanInSubtree,
+    flatOrphanEntries,
+    collectionMissingSemantic,
+    collectionNameDraft,
+    parentNode,
+    notify,
+  ])
+
+  const confirmCreateCollection = useCallback(() => {
+    if (!parentNodeId) {
+      setCollectionLocalError('No parent selected')
+      return
+    }
+    if (hasOrphanInSubtree) {
+      setCollectionLocalError(
+        `Cannot create: ${flatOrphanEntries.length} orphan keyframe(s) in hierarchy.`,
+      )
+      return
+    }
+    if (collectionMissingSemantic.length > 0) {
+      setCollectionLocalError(
+        `Cannot create: ${collectionMissingSemantic.length} selected node(s) have no Semantic Name.`,
+      )
+      return
+    }
+    const name = collectionNameDraft.trim()
+    if (!name) {
+      setCollectionLocalError('Name is required')
+      return
+    }
+    const bindings: Record<string, string> = {}
+    for (const b of collectionBindingsPreview) {
+      bindings[b.semanticName] = b.clipId
+    }
+    if (Object.keys(bindings).length === 0) {
+      setCollectionLocalError('No valid bindings to create collection')
+      return
+    }
+    const result = dispatch(
+      new CreateClipCollectionCommand({ name, bindings, sourceNodeId: parentNodeId }),
+    )
+    if (!result.ok) {
+      setCollectionLocalError(result.error.message)
+      return
+    }
+    notify(`Created ClipCollection "${name}" (${Object.keys(bindings).length} bindings)`)
+    setCollectionCreateOpen(false)
+    setCollectionNameDraft('')
+    setCollectionLocalError(null)
+    // keep selection but maybe clear? Keep for edit
+    // Do not clear selection to allow shared clip test
+  }, [
+    parentNodeId,
+    hasOrphanInSubtree,
+    flatOrphanEntries,
+    collectionMissingSemantic,
+    collectionNameDraft,
+    collectionBindingsPreview,
+    dispatch,
+    notify,
+  ])
+
+  const handleDeleteCollection = useCallback(
+    (collectionId: string) => {
+      const result = dispatch(new DeleteClipCollectionCommand({ collectionId }))
+      if (!result.ok) notify(result.error.message)
+      else notify('Collection deleted — placed lanes remain as plain ClipInstances')
+      setDeleteConfirmCollectionId(null)
+    },
+    [dispatch, notify],
+  )
+
+  const openEditCollection = useCallback(
+    (collectionId: string) => {
+      try {
+        const col = engine.getClipCollection(collectionId)
+        setEditingCollectionId(collectionId)
+        setEditingBindingsDraft({ ...col.getBindingsObject() })
+        setEditingNameDraft(col.name)
+        setCollectionLocalError(null)
+      } catch (e) {
+        notify(e instanceof Error ? e.message : String(e))
+      }
+    },
+    [engine, notify],
+  )
+
+  const confirmEditCollection = useCallback(() => {
+    if (!editingCollectionId) return
+    const bindings = { ...editingBindingsDraft }
+    // Validate bindings non-empty keys and clip existence
+    for (const [k, v] of Object.entries(bindings)) {
+      if (!k.trim() || !v) {
+        setCollectionLocalError('Bindings must have non-empty semanticName and clipId')
+        return
+      }
+      try {
+        engine.getClip(v)
+      } catch {
+        setCollectionLocalError(`Clip not found: ${v.slice(0, 8)}`)
+        return
+      }
+    }
+    // If name changed, need rename? Do bindings update first, then rename if needed
+    try {
+      const col = engine.getClipCollection(editingCollectionId)
+      if (editingNameDraft.trim() && editingNameDraft.trim() !== col.name) {
+        const bindResult = dispatch(
+          new SetClipCollectionBindingsCommand({ collectionId: editingCollectionId, bindings }),
+        )
+        if (!bindResult.ok) {
+          setCollectionLocalError(bindResult.error.message)
+          return
+        }
+        const renameResult = dispatch(
+          new RenameClipCollectionCommand({
+            collectionId: editingCollectionId,
+            name: editingNameDraft.trim(),
+          }),
+        )
+        if (!renameResult.ok) {
+          setCollectionLocalError(renameResult.error.message)
+          return
+        }
+      } else {
+        const bindResult = dispatch(
+          new SetClipCollectionBindingsCommand({ collectionId: editingCollectionId, bindings }),
+        )
+        if (!bindResult.ok) {
+          setCollectionLocalError(bindResult.error.message)
+          return
+        }
+      }
+    } catch (e) {
+      setCollectionLocalError(e instanceof Error ? e.message : String(e))
+      return
+    }
+    notify('Collection updated')
+    setEditingCollectionId(null)
+    setEditingBindingsDraft({})
+    setCollectionLocalError(null)
+  }, [editingCollectionId, editingBindingsDraft, editingNameDraft, engine, dispatch, notify])
 
   // Marquee drag for orphans – threshold 5px, handle-excluded
   const handleOrphansPointerDown = useCallback(
@@ -646,6 +1046,18 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   if (!open) return null
 
   const handleBackdropClick = () => {
+    if (collectionCreateOpen) {
+      setCollectionCreateOpen(false)
+      return
+    }
+    if (editingCollectionId) {
+      setEditingCollectionId(null)
+      return
+    }
+    if (deleteConfirmCollectionId) {
+      setDeleteConfirmCollectionId(null)
+      return
+    }
     if (dragState) {
       setDragState(null)
       return
@@ -914,6 +1326,49 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 {selectedOrphanIds.size} selected
               </span>
             )}
+            {activeTab === 'clips' && (
+              <>
+                <button
+                  data-testid="manager-create-collection"
+                  onClick={handleCreateCollection}
+                  disabled={selectedClipIds.size === 0 || !!collectionBlockingError}
+                  title={
+                    selectedClipIds.size === 0
+                      ? 'Select Clip Lanes first (Ctrl+click multi-select)'
+                      : collectionBlockingError
+                        ? collectionBlockingError
+                        : `Create Collection from ${selectedClipIds.size} lane(s)`
+                  }
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border, #ddd)',
+                    background:
+                      selectedClipIds.size > 0 && !collectionBlockingError
+                        ? 'var(--color-accent, #7c5cff)'
+                        : '#eee',
+                    color: selectedClipIds.size > 0 && !collectionBlockingError ? '#fff' : '#999',
+                    cursor:
+                      selectedClipIds.size > 0 && !collectionBlockingError ? 'pointer' : 'default',
+                    fontSize: 12,
+                    opacity: selectedClipIds.size > 0 ? 1 : 0.6,
+                  }}
+                >
+                  Create Collection{selectedClipIds.size > 0 ? ` (${selectedClipIds.size})` : ''}
+                </button>
+                {selectedClipIds.size > 0 && (
+                  <span
+                    data-testid="clip-selected-count"
+                    style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}
+                  >
+                    {selectedClipIds.size} selected
+                    {collectionMissingSemantic.length > 0
+                      ? ` · ${collectionMissingSemantic.length} missing semantic`
+                      : ''}
+                  </span>
+                )}
+              </>
+            )}
           </div>
         )}
         {activeTab === 'orphans' && orphanScopeMessage && (
@@ -931,6 +1386,108 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             {orphanScopeMessage}
           </div>
         )}
+        {/* Continuous validation banners (15-05): orphan + missing semantic, reusing export pattern */}
+        {!editing && hasOrphanInSubtree && (
+          <div
+            className="panel-status panel-status--error"
+            role="alert"
+            data-testid="collection-orphan-error"
+            style={{ marginBottom: 4, flexDirection: 'column', alignItems: 'stretch' }}
+          >
+            <p style={{ fontSize: 12, margin: 0 }}>
+              {flatOrphanEntries.length} orphan keyframe(s) in hierarchy — fix before creating a
+              collection:
+            </p>
+            <ul style={{ margin: '6px 0 0 16px', fontSize: 12, listStyle: 'disc' }}>
+              {distinctOrphanNodes.map((n) => (
+                <li key={n.id} style={{ marginBottom: 2 }}>
+                  <button
+                    onClick={() => {
+                      useSelectionStore.getState().select(n.id)
+                      setActiveTab('orphans')
+                      notify(
+                        `Selected "${n.name}" — resolve orphan keyframes in Orphans tab or Timeline`,
+                      )
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                      color: 'var(--color-danger)',
+                      textDecoration: 'underline',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                    }}
+                    data-testid={`orphan-node-${n.id}`}
+                    title="Select this node to fix orphan"
+                  >
+                    {n.name}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {!editing && collectionMissingSemantic.length > 0 && (
+          <div
+            className="panel-status panel-status--error"
+            role="alert"
+            data-testid="collection-missing-semantic"
+            style={{ marginBottom: 4, flexDirection: 'column', alignItems: 'stretch' }}
+          >
+            <p style={{ fontSize: 12, margin: 0 }}>
+              {collectionMissingSemantic.length} selected clip(s) on nodes with no Semantic Name —
+              fix before create:
+            </p>
+            <ul style={{ margin: '6px 0 0 16px', fontSize: 12, listStyle: 'disc' }}>
+              {collectionMissingSemantic.map((m) => (
+                <li key={m.instanceId} style={{ marginBottom: 2 }}>
+                  <button
+                    onClick={() => {
+                      useSelectionStore.getState().select(m.nodeId)
+                      notify(`Selected "${m.nodeName}" — set its Semantic Name in Inspector`)
+                    }}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                      color: 'var(--color-danger)',
+                      textDecoration: 'underline',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                    }}
+                    data-testid={`missing-semantic-${m.nodeId}`}
+                    title="Select this node to set Semantic Name"
+                  >
+                    {m.nodeName}
+                  </button>
+                  <span style={{ color: 'var(--color-text-muted)', marginLeft: 6, fontSize: 11 }}>
+                    clip:{' '}
+                    {(() => {
+                      try {
+                        return engine.getClip(m.clipId).name
+                      } catch {
+                        return m.clipId
+                      }
+                    })()}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <span style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 6 }}>
+              Set Semantic Name in Inspector → General → Semantic Name (e.g. left_hand)
+            </span>
+          </div>
+        )}
+        {collectionLocalError && !editingCollectionId && !collectionCreateOpen && (
+          <div
+            data-testid="collection-local-error"
+            role="alert"
+            style={{ color: 'var(--color-danger, red)', fontSize: 12 }}
+          >
+            {collectionLocalError}
+          </div>
+        )}
 
         {/* Editor sub-view */}
         {editing && editingClip ? (
@@ -940,6 +1497,131 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             pps={pps}
             onBack={restorePpsAndBack}
           />
+        ) : activeTab === 'collections' ? (
+          <div
+            data-testid="manager-collections"
+            style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}
+          >
+            {collectionsForParent.length === 0 ? (
+              <div
+                data-testid="manager-collections-empty"
+                style={{
+                  fontSize: 13,
+                  color: 'var(--color-text-muted, #666)',
+                  padding: 12,
+                  border: '1px dashed var(--color-border, #ddd)',
+                  borderRadius: 6,
+                  textAlign: 'center',
+                }}
+              >
+                No Clip Collections for "{parentNode?.name ?? 'parent'}". Select Clip Lanes in Clips
+                tab → Create Collection.
+              </div>
+            ) : (
+              <div
+                style={{
+                  border: '1px solid var(--color-border, #ddd)',
+                  borderRadius: 6,
+                  overflow: 'hidden',
+                }}
+              >
+                {collectionsForParent.map((col) => (
+                  <div
+                    key={col.id}
+                    data-testid={`manager-collection-${col.id}`}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      borderBottom: '1px solid var(--color-border, #eee)',
+                      padding: '8px 12px',
+                      gap: 6,
+                      background: 'var(--color-bg-panel, #fff)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span
+                        style={{ fontWeight: 600, fontSize: 13 }}
+                        data-testid={`collection-name-${col.id}`}
+                      >
+                        {col.name}
+                      </span>
+                      <span style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
+                        {col.bindings.size} binding(s) · source:{' '}
+                        {col.sourceNodeId
+                          ? (() => {
+                              try {
+                                return engine.getNode(col.sourceNodeId!).name
+                              } catch {
+                                return col.sourceNodeId!.slice(0, 8)
+                              }
+                            })()
+                          : '—'}
+                      </span>
+                      <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                        <button
+                          data-testid={`collection-edit-${col.id}`}
+                          onClick={() => openEditCollection(col.id)}
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: 4,
+                            border: '1px solid var(--color-border, #ddd)',
+                            fontSize: 12,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          data-testid={`collection-delete-${col.id}`}
+                          onClick={() => setDeleteConfirmCollectionId(col.id)}
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: 4,
+                            border: '1px solid var(--color-danger, #c00)',
+                            color: 'var(--color-danger, #c00)',
+                            fontSize: 12,
+                            cursor: 'pointer',
+                            background: '#fff',
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </span>
+                    </div>
+                    <div
+                      data-testid={`collection-bindings-${col.id}`}
+                      style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}
+                    >
+                      {[...col.bindings.entries()].map(([sem, clipId]) => {
+                        let clipName: string
+                        try {
+                          clipName = engine.getClip(clipId).name
+                        } catch {
+                          clipName = clipId.slice(0, 8)
+                        }
+                        return (
+                          <span
+                            key={sem}
+                            style={{
+                              fontSize: 11,
+                              fontFamily: 'monospace',
+                              background: 'var(--color-bg, #fafafa)',
+                              border: '1px solid var(--color-border, #ddd)',
+                              borderRadius: 4,
+                              padding: '2px 6px',
+                            }}
+                            data-testid={`collection-binding-${col.id}-${sem}`}
+                          >
+                            {sem} → {clipName}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         ) : managerRows.length === 0 ? (
           <div
             data-testid="manager-empty"
@@ -1094,7 +1776,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                             }}
                           >
                             {packedLanes.map((lane) => {
-                              const isSelected = selectedInstanceId === lane.instance.id
+                              const isSelectedSingle = selectedInstanceId === lane.instance.id
+                              const isMultiSelected = selectedClipIds.has(lane.instance.id)
+                              const isSelected = isMultiSelected || isSelectedSingle
                               const isDragging = dragState?.instanceId === lane.instance.id
                               const isEnabled = lane.instance.enabled
                               const isHighlighted = highlightedClipInstanceId === lane.instance.id
@@ -1123,7 +1807,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                 padding: '0 8px',
                                 boxSizing: 'border-box',
                                 cursor: isEnabled ? (isDragging ? 'grabbing' : 'grab') : 'default',
-                                zIndex: isHighlighted ? 999 : lane.zIndex,
+                                zIndex: isHighlighted ? 999 : isMultiSelected ? 900 : lane.zIndex,
                                 userSelect: 'none',
                                 overflow: 'hidden',
                                 boxShadow: isHighlighted
@@ -1176,16 +1860,26 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                 const target = e.target as HTMLElement
                                 if (target.dataset.testid?.startsWith('clip-handle')) return
                                 if (!isEnabled) {
-                                  // selectable but not draggable
                                   e.stopPropagation()
                                   setSelectedInstanceId(lane.instance.id)
+                                  // still manage multi-select for disabled? keep single
+                                  setSelectedClipIds(new Set([lane.instance.id]))
+                                  setClipAnchorId(lane.instance.id)
                                   return
                                 }
                                 if (e.button !== 0) return
-                                // Check if near edge but we treat handle zones separately; body drag is interior
+                                // Ctrl/Cmd/Shift indicates multi-select intent, not drag
+                                if (e.ctrlKey || e.metaKey || e.shiftKey) return
                                 e.preventDefault()
                                 e.stopPropagation()
-                                setSelectedInstanceId(lane.instance.id)
+                                // Ensure clicked lane is in selection (single if not multi)
+                                if (!selectedClipIds.has(lane.instance.id)) {
+                                  setSelectedInstanceId(lane.instance.id)
+                                  setSelectedClipIds(new Set([lane.instance.id]))
+                                  setClipAnchorId(lane.instance.id)
+                                } else {
+                                  setSelectedInstanceId(lane.instance.id)
+                                }
                                 const rightEdge = lane.start + lane.visualDuration
                                 setDragState({
                                   mode: 'move',
@@ -1224,15 +1918,22 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                   data-visual={String(lane.visualDuration)}
                                   data-enabled={String(isEnabled)}
                                   data-selected={String(isSelected)}
+                                  data-multiselected={String(isMultiSelected)}
                                   data-highlighted={String(isHighlighted)}
-                                  title={`${lane.clip.name} — start ${lane.start.toFixed(2)}s visual ${lane.visualDuration.toFixed(2)}s speed ${lane.instance.speed.toFixed(3)}${isEnabled ? '' : ' (disabled)'}${isHighlighted ? ' (new)' : ''}`}
+                                  title={`${lane.clip.name} — start ${lane.start.toFixed(2)}s visual ${lane.visualDuration.toFixed(2)}s speed ${lane.instance.speed.toFixed(3)}${isEnabled ? '' : ' (disabled)'}${isHighlighted ? ' (new)' : ''}${isMultiSelected ? ' (multi)' : ''}`}
                                   style={barStyle}
                                   onPointerDown={barPointerDown}
                                   onContextMenu={handleContextMenu}
                                   onClick={(e) => {
                                     e.stopPropagation()
-                                    setSelectedInstanceId(lane.instance.id)
                                     if (isHighlighted) setHighlightedClipInstanceId(null)
+                                    // Multi-select handling (Ctrl/Cmd toggle, Shift range)
+                                    const target = e.target as HTMLElement
+                                    if (target.dataset.testid?.startsWith('clip-handle')) return
+                                    handleClipLaneSelect(
+                                      e as unknown as React.MouseEvent,
+                                      lane.instance.id,
+                                    )
                                   }}
                                 >
                                   <span
@@ -1590,12 +2291,581 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             )
           })()}
 
+        {/* Create ClipCollection modal (15-05) – subset-pointed */}
+        {collectionCreateOpen && (
+          <div
+            className="modal-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Create Clip Collection"
+            data-testid="create-collection-modal"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1100,
+            }}
+            onClick={() => setCollectionCreateOpen(false)}
+          >
+            <div
+              className="modal"
+              style={{
+                background: 'var(--color-bg, #fff)',
+                borderRadius: 8,
+                padding: 16,
+                minWidth: 460,
+                maxWidth: 600,
+                maxHeight: '80vh',
+                overflowY: 'auto',
+                border: '1px solid var(--color-border, #ddd)',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 style={{ margin: '0 0 12px' }}>Create Clip Collection</h3>
+              <div
+                style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', marginBottom: 8 }}
+              >
+                Hierarchy: <strong>{parentNode?.name ?? parentNodeId}</strong> ·{' '}
+                {selectedClipIds.size} lane(s) selected
+              </div>
+              <div
+                style={{ fontSize: 11, color: '#666', marginBottom: 8 }}
+                data-testid="create-collection-preview-info"
+              >
+                {collectionBindingsPreview.length} binding(s) preview · {selectedClipIds.size}{' '}
+                selected
+              </div>
+              {/* Orphan blocking */}
+              {hasOrphanInSubtree && (
+                <div
+                  className="panel-status panel-status--error"
+                  role="alert"
+                  data-testid="create-collection-orphan-error"
+                  style={{ marginBottom: 8 }}
+                >
+                  <p style={{ fontSize: 12, margin: 0 }}>
+                    Cannot create: {flatOrphanEntries.length} orphan keyframe(s) in hierarchy.
+                  </p>
+                  <ul style={{ margin: '6px 0 0 16px', fontSize: 12, listStyle: 'disc' }}>
+                    {distinctOrphanNodes.map((n) => (
+                      <li key={n.id}>
+                        <button
+                          onClick={() => {
+                            useSelectionStore.getState().select(n.id)
+                            setActiveTab('orphans')
+                            setCollectionCreateOpen(false)
+                            notify(`Selected "${n.name}" — resolve orphans before creating`)
+                          }}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            padding: 0,
+                            color: 'var(--color-danger)',
+                            textDecoration: 'underline',
+                            cursor: 'pointer',
+                            fontSize: 12,
+                          }}
+                          data-testid={`create-orphan-${n.id}`}
+                        >
+                          {n.name}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {/* Missing semantic blocking */}
+              {collectionMissingSemantic.length > 0 && (
+                <div
+                  className="panel-status panel-status--error"
+                  role="alert"
+                  data-testid="create-collection-missing-semantic"
+                  style={{ marginBottom: 8, flexDirection: 'column', alignItems: 'stretch' }}
+                >
+                  <p style={{ fontSize: 12, margin: 0 }}>
+                    {collectionMissingSemantic.length} selected node(s) with no Semantic Name:
+                  </p>
+                  <ul style={{ margin: '6px 0 0 16px', fontSize: 12, listStyle: 'disc' }}>
+                    {collectionMissingSemantic.map((m) => (
+                      <li key={m.instanceId}>
+                        <button
+                          onClick={() => {
+                            useSelectionStore.getState().select(m.nodeId)
+                            setCollectionCreateOpen(false)
+                            notify(`Selected "${m.nodeName}" — set Semantic Name in Inspector`)
+                          }}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            padding: 0,
+                            color: 'var(--color-danger)',
+                            textDecoration: 'underline',
+                            cursor: 'pointer',
+                            fontSize: 12,
+                          }}
+                          data-testid={`create-missing-${m.nodeId}`}
+                        >
+                          {m.nodeName}
+                        </button>
+                        <span
+                          style={{ color: 'var(--color-text-muted)', marginLeft: 6, fontSize: 11 }}
+                        >
+                          clip:{' '}
+                          {(() => {
+                            try {
+                              return engine.getClip(m.clipId).name
+                            } catch {
+                              return m.clipId
+                            }
+                          })()}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {collectionBindingsPreview.length > 0 &&
+                collectionMissingSemantic.length === 0 &&
+                !hasOrphanInSubtree && (
+                  <div
+                    style={{
+                      maxHeight: 160,
+                      overflowY: 'auto',
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 4,
+                      marginBottom: 8,
+                    }}
+                    data-testid="create-collection-bindings-preview"
+                  >
+                    <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ background: 'var(--color-bg-elevated)', textAlign: 'left' }}>
+                          <th style={{ padding: '6px 8px' }}>Semantic Name</th>
+                          <th style={{ padding: '6px 8px' }}>Clip</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {collectionBindingsPreview.map((b) => (
+                          <tr
+                            key={b.semanticName}
+                            style={{ borderTop: '1px solid var(--color-border)' }}
+                          >
+                            <td style={{ padding: '6px 8px', fontFamily: 'monospace' }}>
+                              {b.semanticName}
+                            </td>
+                            <td style={{ padding: '6px 8px' }}>{b.clipName}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              <label style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>
+                Collection name
+                <input
+                  value={collectionNameDraft}
+                  onChange={(e) => setCollectionNameDraft(e.target.value)}
+                  placeholder="My Collection"
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    marginTop: 4,
+                    padding: '6px 8px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                  }}
+                  data-testid="create-collection-name-input"
+                  autoFocus
+                />
+              </label>
+              {collectionLocalError && (
+                <div
+                  data-testid="create-collection-local-error"
+                  role="alert"
+                  style={{ color: 'var(--color-danger, red)', fontSize: 12, marginBottom: 8 }}
+                >
+                  {collectionLocalError}
+                </div>
+              )}
+              {collectionBlockingError && !collectionLocalError && (
+                <div
+                  data-testid="create-collection-blocking-error"
+                  role="alert"
+                  style={{ color: 'var(--color-danger, red)', fontSize: 12, marginBottom: 8 }}
+                >
+                  {collectionBlockingError}
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button
+                  onClick={() => {
+                    setCollectionCreateOpen(false)
+                    setCollectionLocalError(null)
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg)',
+                  }}
+                  data-testid="create-collection-cancel"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmCreateCollection}
+                  disabled={!canCreateCollection}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid transparent',
+                    background: canCreateCollection ? '#7c5cff' : '#9a9a9a',
+                    color: '#fff',
+                    cursor: canCreateCollection ? 'pointer' : 'not-allowed',
+                  }}
+                  data-testid="create-collection-confirm"
+                  title={
+                    !canCreateCollection && collectionBlockingError
+                      ? collectionBlockingError
+                      : undefined
+                  }
+                >
+                  Create
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Edit ClipCollection modal */}
+        {editingCollectionId && (
+          <div
+            className="modal-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Edit Clip Collection"
+            data-testid="edit-collection-modal"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1100,
+            }}
+            onClick={() => setEditingCollectionId(null)}
+          >
+            <div
+              className="modal"
+              style={{
+                background: 'var(--color-bg, #fff)',
+                borderRadius: 8,
+                padding: 16,
+                minWidth: 520,
+                maxWidth: 640,
+                maxHeight: '80vh',
+                overflowY: 'auto',
+                border: '1px solid var(--color-border, #ddd)',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 style={{ margin: '0 0 12px' }}>Edit Clip Collection</h3>
+              <label style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>
+                Collection name
+                <input
+                  value={editingNameDraft}
+                  onChange={(e) => setEditingNameDraft(e.target.value)}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    marginTop: 4,
+                    padding: '6px 8px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                  }}
+                  data-testid="edit-collection-name-input"
+                />
+              </label>
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                  Bindings (semanticName → clipId)
+                </div>
+                <div
+                  data-testid="edit-collection-bindings"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                    maxHeight: 240,
+                    overflowY: 'auto',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 4,
+                    padding: 8,
+                  }}
+                >
+                  {Object.entries(editingBindingsDraft).length === 0 && (
+                    <div style={{ fontSize: 12, color: '#888' }}>No bindings</div>
+                  )}
+                  {Object.entries(editingBindingsDraft).map(([sem, clipId]) => {
+                    let clipName: string
+                    try {
+                      clipName = engine.getClip(clipId).name
+                    } catch {
+                      clipName = clipId.slice(0, 8)
+                    }
+                    return (
+                      <div
+                        key={sem}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                        data-testid={`edit-binding-${sem}`}
+                      >
+                        <span style={{ fontFamily: 'monospace', fontSize: 12, flex: 1 }}>
+                          {sem} → {clipName} ({clipId.slice(0, 6)})
+                        </span>
+                        <span style={{ fontSize: 11, color: '#666' }}>{clipId.slice(0, 8)}</span>
+                        <button
+                          onClick={() => {
+                            const next = { ...editingBindingsDraft }
+                            delete next[sem]
+                            setEditingBindingsDraft(next)
+                          }}
+                          style={{
+                            padding: '2px 6px',
+                            borderRadius: 4,
+                            border: '1px solid #c00',
+                            color: '#c00',
+                            fontSize: 11,
+                            cursor: 'pointer',
+                            background: '#fff',
+                          }}
+                          data-testid={`edit-binding-remove-${sem}`}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+                <AddBindingRow
+                  clips={engine.clips}
+                  onAdd={(sem, clipId) => {
+                    if (!sem.trim() || !clipId) {
+                      setCollectionLocalError('Semantic and clip required')
+                      return
+                    }
+                    if (editingBindingsDraft[sem.trim()]) {
+                      setCollectionLocalError(`Binding "${sem.trim()}" already exists`)
+                      return
+                    }
+                    try {
+                      engine.getClip(clipId)
+                    } catch {
+                      setCollectionLocalError('Clip not found')
+                      return
+                    }
+                    setEditingBindingsDraft({ ...editingBindingsDraft, [sem.trim()]: clipId })
+                    setCollectionLocalError(null)
+                  }}
+                />
+              </div>
+              {collectionLocalError && (
+                <div
+                  data-testid="edit-collection-local-error"
+                  role="alert"
+                  style={{ color: 'var(--color-danger, red)', fontSize: 12, marginBottom: 8 }}
+                >
+                  {collectionLocalError}
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button
+                  onClick={() => {
+                    setEditingCollectionId(null)
+                    setCollectionLocalError(null)
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg)',
+                  }}
+                  data-testid="edit-collection-cancel"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmEditCollection}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid transparent',
+                    background: '#7c5cff',
+                    color: '#fff',
+                    cursor: 'pointer',
+                  }}
+                  data-testid="edit-collection-confirm"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Delete confirm */}
+        {deleteConfirmCollectionId && (
+          <div
+            className="modal-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Confirm delete collection"
+            data-testid="delete-collection-modal"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1100,
+            }}
+            onClick={() => setDeleteConfirmCollectionId(null)}
+          >
+            <div
+              className="modal"
+              style={{
+                background: 'var(--color-bg, #fff)',
+                borderRadius: 8,
+                padding: 16,
+                minWidth: 360,
+                border: '1px solid var(--color-border)',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p style={{ fontSize: 13, margin: '0 0 12px' }}>
+                Delete collection "
+                {(() => {
+                  try {
+                    return engine.getClipCollection(deleteConfirmCollectionId).name
+                  } catch {
+                    return deleteConfirmCollectionId.slice(0, 8)
+                  }
+                })()}
+                "?
+                <br />
+                <span style={{ fontSize: 11, color: '#666' }}>
+                  Already-placed lanes remain as plain ClipInstances (no cascading delete).
+                </span>
+              </p>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button
+                  onClick={() => setDeleteConfirmCollectionId(null)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                  }}
+                  data-testid="delete-collection-cancel"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => handleDeleteCollection(deleteConfirmCollectionId)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid #c00',
+                    background: '#c00',
+                    color: '#fff',
+                  }}
+                  data-testid="delete-collection-confirm"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Footer hint */}
         <div style={{ fontSize: 11, color: 'var(--color-text-muted, #888)' }}>
           Press Esc to close{editing ? ' (Esc drills back first)' : ''} • Click backdrop to close •
           Filtered to animated descendants only (pre-order)
         </div>
       </div>
+    </div>
+  )
+}
+
+function AddBindingRow({
+  clips,
+  onAdd,
+}: {
+  clips: readonly ClipDefinition[]
+  onAdd: (semanticName: string, clipId: string) => void
+}) {
+  const [sem, setSem] = useState('')
+  const [clipId, setClipId] = useState('')
+  return (
+    <div
+      style={{ marginTop: 8, display: 'flex', gap: 6, alignItems: 'center' }}
+      data-testid="add-binding-row"
+    >
+      <input
+        placeholder="semanticName (e.g. left_hand)"
+        value={sem}
+        onChange={(e) => setSem(e.target.value)}
+        style={{
+          flex: 1,
+          padding: '4px 6px',
+          borderRadius: 4,
+          border: '1px solid var(--color-border)',
+          fontSize: 12,
+        }}
+        data-testid="add-binding-semantic-input"
+      />
+      <select
+        value={clipId}
+        onChange={(e) => setClipId(e.target.value)}
+        style={{
+          flex: 1,
+          padding: '4px 6px',
+          borderRadius: 4,
+          border: '1px solid var(--color-border)',
+          fontSize: 12,
+        }}
+        data-testid="add-binding-clip-select"
+      >
+        <option value="">— select clip —</option>
+        {clips.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name} ({c.id.slice(0, 6)})
+          </option>
+        ))}
+      </select>
+      <button
+        onClick={() => {
+          onAdd(sem, clipId)
+          if (sem.trim() && clipId) {
+            setSem('')
+            setClipId('')
+          }
+        }}
+        style={{
+          padding: '4px 8px',
+          borderRadius: 4,
+          border: '1px solid var(--color-border)',
+          fontSize: 12,
+          cursor: 'pointer',
+        }}
+        data-testid="add-binding-confirm"
+      >
+        Add
+      </button>
     </div>
   )
 }

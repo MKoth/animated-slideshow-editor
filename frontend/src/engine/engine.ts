@@ -153,6 +153,7 @@ export interface EnginePublic {
   ): ClipCollection
   deleteClipCollection(collectionId: string): ClipCollection
   renameClipCollection(collectionId: string, name: string): void
+  setClipCollectionBindings(collectionId: string, bindings: Record<string, string>): void
   exportClipCollection(parentNodeId: string, name: string): ClipCollection
   applyClipCollection(
     collectionId: string,

@@ -1976,6 +1976,12 @@ export function applyUndo(
       engine.renameClipCollection(collectionId, oldName)
       return
     }
+    case 'SetClipCollectionBindings': {
+      const collectionId = (inv as Record<string, unknown>).collectionId as string
+      const oldBindings = (inv as Record<string, unknown>).oldBindings as Record<string, string>
+      engine.setClipCollectionBindings(collectionId, oldBindings)
+      return
+    }
     case 'ExportClipCollection': {
       const collectionId = (inv as Record<string, unknown>).collectionId as string
       try {
@@ -3313,6 +3319,12 @@ export function applyRedo(
     case 'RenameClipCollection':
       engine.renameClipCollection(params.collectionId as string, params.name as string)
       return
+    case 'SetClipCollectionBindings':
+      engine.setClipCollectionBindings(
+        params.collectionId as string,
+        params.bindings as Record<string, string>,
+      )
+      return
     case 'ExportClipCollection': {
       const inv = _inverse as Record<string, unknown> | null
       const snapshot = inv?.snapshot as unknown
@@ -3384,7 +3396,11 @@ export function applyRedo(
           }
           if (hasTexture) {
             const curUV = node.material.uvTransform
-            const base = curUV ?? { uvScale: { u: 1, v: 1 }, uvOffset: { u: 0, v: 0 }, fitMode: 'stretch' as const }
+            const base = curUV ?? {
+              uvScale: { u: 1, v: 1 },
+              uvOffset: { u: 0, v: 0 },
+              fitMode: 'stretch' as const,
+            }
             const newUV = {
               uvScale: { ...base.uvScale },
               uvOffset: {
@@ -3422,7 +3438,11 @@ export function applyRedo(
           if (hasTexture || node.components.circle) {
             const curUV = node.material.uvTransform
             if (curUV || hasTexture) {
-              const base = curUV ?? { uvScale: { u: 1, v: 1 }, uvOffset: { u: 0, v: 0 }, fitMode: 'stretch' as const }
+              const base = curUV ?? {
+                uvScale: { u: 1, v: 1 },
+                uvOffset: { u: 0, v: 0 },
+                fitMode: 'stretch' as const,
+              }
               const newUV = {
                 uvScale: { ...base.uvScale },
                 uvOffset: {
