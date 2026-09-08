@@ -258,7 +258,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   // Collection Lane placements (15-06)
   const [selectedPlacementId, setSelectedPlacementId] = useState<string | null>(null)
   const [placeCollectionId, setPlaceCollectionId] = useState<string>('')
-  const [collectionPlacementMenu, setCollectionPlacementMenu] = useState<{ x: number; y: number; placementId: string } | null>(null)
+  const [collectionPlacementMenu, setCollectionPlacementMenu] = useState<{
+    x: number
+    y: number
+    placementId: string
+  } | null>(null)
   const orphansContainerRef = useRef<HTMLDivElement>(null)
   const notify = useNotificationStore((s) => s.notify)
 
@@ -590,13 +594,27 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       if (dragState.mode === 'collection-move') {
         // preview visual unchanged, only start
         const vd = visualDurationForCollectionPlacement(
-          { id: dragState.placementId, collectionId: dragState.collectionId, parentNodeId: dragState.parentNodeId, startTime: dragState.initialStart } as import('../../engine/collectionPlacement').CollectionPlacement,
+          {
+            id: dragState.placementId,
+            collectionId: dragState.collectionId,
+            parentNodeId: dragState.parentNodeId,
+            startTime: dragState.initialStart,
+          } as import('../../engine/collectionPlacement').CollectionPlacement,
           parentNode,
           getClip,
         )
-        preview.set(dragState.placementId, { startTime: dragState.previewStart, visualDuration: vd })
-      } else if (dragState.mode === 'collection-resize-right' || dragState.mode === 'collection-resize-left') {
-        preview.set(dragState.placementId, { startTime: dragState.previewStart, visualDuration: dragState.previewVisual })
+        preview.set(dragState.placementId, {
+          startTime: dragState.previewStart,
+          visualDuration: vd,
+        })
+      } else if (
+        dragState.mode === 'collection-resize-right' ||
+        dragState.mode === 'collection-resize-left'
+      ) {
+        preview.set(dragState.placementId, {
+          startTime: dragState.previewStart,
+          visualDuration: dragState.previewVisual,
+        })
       } else if (dragState.mode === 'collection-reorder') {
         // For reorder preview, we need to simulate swapped order in packing – handled via virtual placements array order preview
         // For now, just use current placements but previewIndex will be used to reorder entries before packing
@@ -1176,10 +1194,17 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         let newVisual = newWidthPx / pps
         if (newVisual < MIN_VISUAL_DURATION) newVisual = MIN_VISUAL_DURATION
         // Clamp to slide duration
-        if (activeSlide) newVisual = Math.min(newVisual, activeSlide.duration - dragState.initialStart)
+        if (activeSlide)
+          newVisual = Math.min(newVisual, activeSlide.duration - dragState.initialStart)
         if (newVisual < MIN_VISUAL_DURATION) newVisual = MIN_VISUAL_DURATION
         setDragState((prev) =>
-          prev ? ({ ...prev, previewVisual: newVisual, previewStart: dragState.initialStart } as DragState) : prev,
+          prev
+            ? ({
+                ...prev,
+                previewVisual: newVisual,
+                previewStart: dragState.initialStart,
+              } as DragState)
+            : prev,
         )
       } else if (dragState.mode === 'collection-resize-left') {
         const deltaSec = deltaPx / pps
@@ -1202,7 +1227,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         const newIndex = Math.max(
           0,
           Math.min(
-            (managerRows.find((r) => r.node.id === dragState.nodeId)?.node.clipInstances.length ?? 1) - 1,
+            (managerRows.find((r) => r.node.id === dragState.nodeId)?.node.clipInstances.length ??
+              1) - 1,
             Math.round(dragState.initialIndex + deltaY / CLIP_LANE_HEIGHT_PX),
           ),
         )
@@ -1272,7 +1298,16 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         const delta = current.previewStart - current.initialStart
         if (Math.abs(delta) > 1e-6) {
           try {
-            const members = (engine as unknown as { getPlacementMembers: (id: string) => { nodeId: string; instance: import('../../engine/clipInstance').ClipInstance }[] }).getPlacementMembers(current.placementId)
+            const members = (
+              engine as unknown as {
+                getPlacementMembers: (
+                  id: string,
+                ) => {
+                  nodeId: string
+                  instance: import('../../engine/clipInstance').ClipInstance
+                }[]
+              }
+            ).getPlacementMembers(current.placementId)
             const cmds: import('../../engine/commands').Command<unknown>[] = []
             // Update placement start
             cmds.push(
@@ -1298,16 +1333,31 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             notify(e instanceof Error ? e.message : String(e))
           }
         }
-      } else if (current.mode === 'collection-resize-right' || current.mode === 'collection-resize-left') {
+      } else if (
+        current.mode === 'collection-resize-right' ||
+        current.mode === 'collection-resize-left'
+      ) {
         const oldVisual = current.initialVisual
         const newVisual = current.previewVisual
         const factor = oldVisual / newVisual
         if (Math.abs(factor - 1) > 1e-9 && Number.isFinite(factor) && factor > 0) {
           try {
-            const members = (engine as unknown as { getPlacementMembers: (id: string) => { nodeId: string; instance: import('../../engine/clipInstance').ClipInstance }[] }).getPlacementMembers(current.placementId)
+            const members = (
+              engine as unknown as {
+                getPlacementMembers: (
+                  id: string,
+                ) => {
+                  nodeId: string
+                  instance: import('../../engine/clipInstance').ClipInstance
+                }[]
+              }
+            ).getPlacementMembers(current.placementId)
             const cmds: import('../../engine/commands').Command<unknown>[] = []
             // If left handle, placement start changed
-            if (current.mode === 'collection-resize-left' && Math.abs(current.previewStart - current.initialStart) > 1e-6) {
+            if (
+              current.mode === 'collection-resize-left' &&
+              Math.abs(current.previewStart - current.initialStart) > 1e-6
+            ) {
               cmds.push(
                 new SetCollectionPlacementStartTimeCommand({
                   placementId: current.placementId,
@@ -1337,7 +1387,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               if (newSpeed < MIN_CLIP_SPEED) newSpeed = MIN_CLIP_SPEED
               // Recompute visual to ensure MIN_VISUAL
               const resultingVisual = clip.duration / newSpeed
-              if (resultingVisual < MIN_VISUAL_DURATION - 1e-9) newSpeed = clip.duration / MIN_VISUAL_DURATION
+              if (resultingVisual < MIN_VISUAL_DURATION - 1e-9)
+                newSpeed = clip.duration / MIN_VISUAL_DURATION
               if (Math.abs(newSpeed - oldSpeed) > 1e-9) {
                 cmds.push(
                   new SetClipInstanceSpeedCommand({
@@ -1391,7 +1442,18 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       window.removeEventListener('pointermove', onPointerMove as unknown as EventListener)
       window.removeEventListener('pointerup', onPointerUp as unknown as EventListener)
     }
-  }, [dragState, pps, gridSnapEnabled, snapCandidateTimes, dispatch, managerRows, parentNode, activeSlide, engine, notify])
+  }, [
+    dragState,
+    pps,
+    gridSnapEnabled,
+    snapCandidateTimes,
+    dispatch,
+    managerRows,
+    parentNode,
+    activeSlide,
+    engine,
+    notify,
+  ])
 
   if (!open) return null
 
@@ -1847,7 +1909,12 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         {!editing && parentNode && (
           <div
             data-testid="collection-lanes-section"
-            style={{ border: '1px solid var(--color-border, #ddd)', borderRadius: 6, padding: 8, background: 'var(--color-bg-panel, #fff)' }}
+            style={{
+              border: '1px solid var(--color-border, #ddd)',
+              borderRadius: 6,
+              padding: 8,
+              background: 'var(--color-bg-panel, #fff)',
+            }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
               <span style={{ fontWeight: 600, fontSize: 13 }}>Collection Lanes</span>
@@ -1859,7 +1926,12 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   value={placeCollectionId}
                   onChange={(e) => setPlaceCollectionId(e.target.value)}
                   data-testid="place-collection-select"
-                  style={{ padding: '4px 6px', borderRadius: 4, border: '1px solid var(--color-border, #ddd)', fontSize: 12 }}
+                  style={{
+                    padding: '4px 6px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border, #ddd)',
+                    fontSize: 12,
+                  }}
                 >
                   <option value="">Select collection…</option>
                   {engine.clipCollections.map((col) => (
@@ -1875,7 +1947,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     if (!placeCollectionId || !parentNodeId || !activeSlide) return
                     const playhead = usePlaybackController.getState().getTime(activeSlide.id)
                     const result = dispatch(
-                      new PlaceCollectionCommand({ collectionId: placeCollectionId, parentNodeId, startTime: playhead }),
+                      new PlaceCollectionCommand({
+                        collectionId: placeCollectionId,
+                        parentNodeId,
+                        startTime: playhead,
+                      }),
                     )
                     if (!result.ok) {
                       notify(result.error.message)
@@ -1884,7 +1960,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                       setPlaceCollectionId('')
                     }
                   }}
-                  title={placeCollectionId ? 'Place collection at playhead (speed=1, broadcast by semanticName)' : 'Select a collection'}
+                  title={
+                    placeCollectionId
+                      ? 'Place collection at playhead (speed=1, broadcast by semanticName)'
+                      : 'Select a collection'
+                  }
                   style={{
                     padding: '4px 10px',
                     borderRadius: 4,
@@ -1902,7 +1982,14 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             {parentNode.collectionPlacements.length === 0 ? (
               <div
                 data-testid="collection-lanes-empty"
-                style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', padding: 8, border: '1px dashed var(--color-border, #ddd)', borderRadius: 4, textAlign: 'center' }}
+                style={{
+                  fontSize: 12,
+                  color: 'var(--color-text-muted, #666)',
+                  padding: 8,
+                  border: '1px dashed var(--color-border, #ddd)',
+                  borderRadius: 4,
+                  textAlign: 'center',
+                }}
               >
                 No placed collections. Select a collection above → Place at playhead.
               </div>
@@ -1912,7 +1999,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 style={{
                   position: 'relative',
                   height: (() => {
-                    const maxTrack = packedCollectionLanes.length > 0 ? Math.max(...packedCollectionLanes.map((l) => l.track)) : 0
+                    const maxTrack =
+                      packedCollectionLanes.length > 0
+                        ? Math.max(...packedCollectionLanes.map((l) => l.track))
+                        : 0
                     return (maxTrack + 1) * CLIP_LANE_HEIGHT_PX
                   })(),
                   minHeight: CLIP_LANE_HEIGHT_PX,
@@ -1927,7 +2017,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   style={{
                     position: 'relative',
                     width: `${(() => {
-                      const maxEnd = packedCollectionLanes.length > 0 ? Math.max(...packedCollectionLanes.map((l) => l.end)) : 0
+                      const maxEnd =
+                        packedCollectionLanes.length > 0
+                          ? Math.max(...packedCollectionLanes.map((l) => l.end))
+                          : 0
                       const slideDuration = activeSlide?.duration ?? 10
                       return Math.max(slideDuration, maxEnd + 1) * pps
                     })()}px`,
@@ -1936,17 +2029,22 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 >
                   {packedCollectionLanes.map((lane) => {
                     const isSelected = selectedPlacementId === lane.placement.id
-                    const isDragging = dragState && 'placementId' in dragState && dragState.placementId === lane.placement.id
+                    const isDragging =
+                      dragState &&
+                      'placementId' in dragState &&
+                      dragState.placementId === lane.placement.id
                     // Tooltip with collection name and bindings
                     let tooltip = lane.collection.name
                     try {
-                      const bindings = [...lane.collection.bindings.entries()].map(([sem, clipId]) => {
-                        try {
-                          return `${sem} → ${engine.getClip(clipId).name}`
-                        } catch {
-                          return `${sem} → ${clipId.slice(0, 6)}`
-                        }
-                      })
+                      const bindings = [...lane.collection.bindings.entries()].map(
+                        ([sem, clipId]) => {
+                          try {
+                            return `${sem} → ${engine.getClip(clipId).name}`
+                          } catch {
+                            return `${sem} → ${clipId.slice(0, 6)}`
+                          }
+                        },
+                      )
                       if (bindings.length > 0) tooltip += `\n${bindings.join('\n')}`
                       tooltip += `\nstart ${lane.start.toFixed(2)}s visual ${lane.visualDuration.toFixed(2)}s`
                     } catch {
@@ -1981,7 +2079,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                       borderLeft: side === 'left' ? '1px solid rgba(0,0,0,0.15)' : undefined,
                       borderRight: side === 'right' ? '1px solid rgba(0,0,0,0.15)' : undefined,
                     })
-                    const handlePointerDown = (e: React.PointerEvent, mode: 'collection-resize-left' | 'collection-resize-right') => {
+                    const handlePointerDown = (
+                      e: React.PointerEvent,
+                      mode: 'collection-resize-left' | 'collection-resize-right',
+                    ) => {
                       if (e.button !== 0) return
                       e.preventDefault()
                       e.stopPropagation()
@@ -2024,7 +2125,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                       // Check for multi-axis: record startY for reorder detection
                       const startY = e.clientY
                       const parent = parentNode
-                      const initialIndex = parent.collectionPlacements.findIndex((p) => p.id === lane.placement.id)
+                      const initialIndex = parent.collectionPlacements.findIndex(
+                        (p) => p.id === lane.placement.id,
+                      )
                       setDragState({
                         mode: 'collection-move',
                         placementId: lane.placement.id,
@@ -2042,7 +2145,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     const handleContextMenu = (e: React.MouseEvent) => {
                       e.preventDefault()
                       e.stopPropagation()
-                      setCollectionPlacementMenu({ x: e.clientX, y: e.clientY, placementId: lane.placement.id })
+                      setCollectionPlacementMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        placementId: lane.placement.id,
+                      })
                     }
                     return (
                       <div
@@ -2066,7 +2173,16 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                       >
                         <span
                           data-testid={`collection-lane-label-${lane.placement.id}`}
-                          style={{ fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, pointerEvents: 'none', color: isSelected ? '#fff' : '#2e2e2e' }}
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 500,
+                            whiteSpace: 'nowrap',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            flex: 1,
+                            pointerEvents: 'none',
+                            color: isSelected ? '#fff' : '#2e2e2e',
+                          }}
                         >
                           {lane.collection.name}
                         </span>
@@ -2089,7 +2205,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               </div>
             )}
             <div style={{ fontSize: 10, color: 'var(--color-text-muted, #888)', marginTop: 4 }}>
-              Drag body to move (horizontal) or reorder (vertical), drag edges to stretch uniformly (speed factor per member). Lower lane wins Priority.
+              Drag body to move (horizontal) or reorder (vertical), drag edges to stretch uniformly
+              (speed factor per member). Lower lane wins Priority.
             </div>
           </div>
         )}
@@ -2283,14 +2400,31 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               }
               const previewOverrides =
                 dragState &&
-                (dragState.mode === 'move' || dragState.mode === 'resize-right' || dragState.mode === 'resize-left') &&
+                (dragState.mode === 'move' ||
+                  dragState.mode === 'resize-right' ||
+                  dragState.mode === 'resize-left') &&
                 dragState.nodeId === row.node.id
                   ? new Map<string, { startTime: number; speed: number }>([
                       [
-                        (dragState as Extract<DragState, { mode: 'move' | 'resize-right' | 'resize-left' }>).instanceId,
+                        (
+                          dragState as Extract<
+                            DragState,
+                            { mode: 'move' | 'resize-right' | 'resize-left' }
+                          >
+                        ).instanceId,
                         {
-                          startTime: (dragState as Extract<DragState, { mode: 'move' | 'resize-right' | 'resize-left' }>).previewStart,
-                          speed: (dragState as Extract<DragState, { mode: 'move' | 'resize-right' | 'resize-left' }>).previewSpeed,
+                          startTime: (
+                            dragState as Extract<
+                              DragState,
+                              { mode: 'move' | 'resize-right' | 'resize-left' }
+                            >
+                          ).previewStart,
+                          speed: (
+                            dragState as Extract<
+                              DragState,
+                              { mode: 'move' | 'resize-right' | 'resize-left' }
+                            >
+                          ).previewSpeed,
                         },
                       ],
                     ])
@@ -2392,7 +2526,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                               const isDragging =
                                 !!dragState &&
                                 'instanceId' in dragState &&
-                                (dragState as { instanceId: string }).instanceId === lane.instance.id
+                                (dragState as { instanceId: string }).instanceId ===
+                                  lane.instance.id
                               const isEnabled = lane.instance.enabled
                               const isHighlighted = highlightedClipInstanceId === lane.instance.id
                               const barStyle: React.CSSProperties = {

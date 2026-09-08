@@ -161,15 +161,26 @@ export interface EnginePublic {
   ): { nodeId: string; instanceId: string; clipId: string }[]
   // CollectionPlacement (Spec 15-06)
   getCollectionPlacement(placementId: string): import('./collectionPlacement').CollectionPlacement
-  getCollectionPlacements(parentNodeId: string): readonly import('./collectionPlacement').CollectionPlacement[]
+  getCollectionPlacements(
+    parentNodeId: string,
+  ): readonly import('./collectionPlacement').CollectionPlacement[]
   getPlacementMembers(placementId: string): readonly { nodeId: string; instance: ClipInstance }[]
   placeCollection(
     collectionId: string,
     parentNodeId: string,
     startTime?: number,
-  ): { placement: import('./collectionPlacement').CollectionPlacement; created: { nodeId: string; instanceId: string; clipId: string }[] }
-  createCollectionPlacement(collectionId: string, parentNodeId: string, startTime: number): import('./collectionPlacement').CollectionPlacement
-  deleteCollectionPlacement(placementId: string): import('./collectionPlacement').CollectionPlacement
+  ): {
+    placement: import('./collectionPlacement').CollectionPlacement
+    created: { nodeId: string; instanceId: string; clipId: string }[]
+  }
+  createCollectionPlacement(
+    collectionId: string,
+    parentNodeId: string,
+    startTime: number,
+  ): import('./collectionPlacement').CollectionPlacement
+  deleteCollectionPlacement(
+    placementId: string,
+  ): import('./collectionPlacement').CollectionPlacement
   setCollectionPlacementStartTime(placementId: string, startTime: number): number
   reorderCollectionPlacement(parentNodeId: string, placementId: string, newIndex: number): number
   getExportFrameCount(duration: number, fps: number): number

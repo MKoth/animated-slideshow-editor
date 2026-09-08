@@ -2020,10 +2020,12 @@ export function applyUndo(
     }
     case 'PlaceCollection': {
       const placementId = (inv as Record<string, unknown>).placementId as string
-      const created = (inv as Record<string, unknown>).createdInstanceIds as readonly {
-        nodeId: string
-        instanceId: string
-      }[] | undefined
+      const created = (inv as Record<string, unknown>).createdInstanceIds as
+        | readonly {
+            nodeId: string
+            instanceId: string
+          }[]
+        | undefined
       if (created) {
         for (const entry of created) {
           try {
@@ -2062,13 +2064,16 @@ export function applyUndo(
       return
     }
     case 'DeleteCollectionPlacement': {
-      const placement = (inv as Record<string, unknown>).placement as import('../collectionPlacement').CollectionPlacement
+      const placement = (inv as Record<string, unknown>)
+        .placement as import('../collectionPlacement').CollectionPlacement
       const index = (inv as Record<string, unknown>).index as number
-      const members = (inv as Record<string, unknown>).memberPlacements as readonly {
-        nodeId: string
-        instanceId: string
-        placementId: string
-      }[] | undefined
+      const members = (inv as Record<string, unknown>).memberPlacements as
+        | readonly {
+            nodeId: string
+            instanceId: string
+            placementId: string
+          }[]
+        | undefined
       if (placement) {
         try {
           engine.restoreCollectionPlacement(placement, index)
@@ -3413,13 +3418,24 @@ export function applyRedo(
       engine.applyClipCollection(params.collectionId as string, params.targetNodeId as string)
       return
     case 'PlaceCollection':
-      engine.placeCollection(params.collectionId as string, params.parentNodeId as string, (params.startTime as number) ?? 0)
+      engine.placeCollection(
+        params.collectionId as string,
+        params.parentNodeId as string,
+        (params.startTime as number) ?? 0,
+      )
       return
     case 'SetCollectionPlacementStartTime':
-      engine.setCollectionPlacementStartTime(params.placementId as string, params.startTime as number)
+      engine.setCollectionPlacementStartTime(
+        params.placementId as string,
+        params.startTime as number,
+      )
       return
     case 'ReorderCollectionPlacement':
-      engine.reorderCollectionPlacement(params.parentNodeId as string, params.placementId as string, params.newIndex as number)
+      engine.reorderCollectionPlacement(
+        params.parentNodeId as string,
+        params.placementId as string,
+        params.newIndex as number,
+      )
       return
     case 'DeleteCollectionPlacement':
       engine.deleteCollectionPlacement(params.placementId as string)

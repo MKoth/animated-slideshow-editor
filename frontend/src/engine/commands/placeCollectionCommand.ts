@@ -30,7 +30,11 @@ export class PlaceCollectionCommand implements Command<PlaceCollectionInverse> {
     this.#collectionId = input.collectionId
     this.#parentNodeId = input.parentNodeId
     this.#startTime = start
-    this.parameters = { collectionId: input.collectionId, parentNodeId: input.parentNodeId, startTime: start }
+    this.parameters = {
+      collectionId: input.collectionId,
+      parentNodeId: input.parentNodeId,
+      startTime: start,
+    }
   }
 
   validate(engine: Engine): void {
@@ -42,7 +46,10 @@ export class PlaceCollectionCommand implements Command<PlaceCollectionInverse> {
     const result = engine.placeCollection(this.#collectionId, this.#parentNodeId, this.#startTime)
     return {
       placementId: result.placement.id,
-      createdInstanceIds: result.created.map((c) => ({ nodeId: c.nodeId, instanceId: c.instanceId })),
+      createdInstanceIds: result.created.map((c) => ({
+        nodeId: c.nodeId,
+        instanceId: c.instanceId,
+      })),
       parentNodeId: this.#parentNodeId,
     }
   }

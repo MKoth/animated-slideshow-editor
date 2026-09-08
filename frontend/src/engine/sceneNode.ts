@@ -24,10 +24,7 @@ import {
 import type { ClipInstance } from './clipInstance'
 import { clipInstanceFromJSON, clipInstanceToJSON } from './clipInstance'
 import type { CollectionPlacement } from './collectionPlacement'
-import {
-  collectionPlacementFromJSON,
-  collectionPlacementToJSON,
-} from './collectionPlacement'
+import { collectionPlacementFromJSON, collectionPlacementToJSON } from './collectionPlacement'
 import type { ShadowEffect } from './shadowEffect'
 import { shadowEffectFromJSON, shadowEffectToJSON } from './shadowEffect'
 

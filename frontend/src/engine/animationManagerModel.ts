@@ -669,6 +669,11 @@ export function collectUnifiedBarEdgesForSnap(
   excludeCollection?: { placementId: string },
 ): readonly number[] {
   const clipEdges = collectBarEdgesForSnap(descendantNodes, getClip, excludeClip)
-  const collectionEdges = collectCollectionBarEdgesForSnap(parentNode, getClip, getCollection, excludeCollection)
+  const collectionEdges = collectCollectionBarEdgesForSnap(
+    parentNode,
+    getClip,
+    getCollection,
+    excludeCollection,
+  )
   return [...clipEdges, ...collectionEdges]
 }
