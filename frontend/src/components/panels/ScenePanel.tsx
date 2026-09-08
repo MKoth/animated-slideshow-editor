@@ -28,6 +28,7 @@ import { LockIcon, MissingAssetIcon, NodeIcon, VisibilityIcon } from './nodeIcon
 import { ParentingModeDialog } from './ParentingModeDialog'
 import { ExportObjectModal } from './ExportObjectModal'
 import { ExportClipCollectionModal } from './ExportClipCollectionModal'
+import { AnimationManagerModal } from './AnimationManagerModal'
 
 interface ContextMenuState {
   x: number
@@ -535,6 +536,7 @@ export function ScenePanel() {
 
   const [exportOpen, setExportOpen] = useState(false)
   const [exportCollectionParentId, setExportCollectionParentId] = useState<string | null>(null)
+  const [managerParentId, setManagerParentId] = useState<string | null>(null)
 
   const project = engine.project
   const slide = engine.getActiveSlide()
@@ -625,6 +627,17 @@ export function ScenePanel() {
           <button
             className="menu__item"
             role="menuitem"
+            data-testid="scene-animation-manager"
+            onClick={() => {
+              if (contextMenu) setManagerParentId(contextMenu.nodeId)
+              setContextMenu(null)
+            }}
+          >
+            Animation Manager…
+          </button>
+          <button
+            className="menu__item"
+            role="menuitem"
             data-testid="scene-export-clip-collection"
             onClick={() => {
               if (contextMenu) setExportCollectionParentId(contextMenu.nodeId)
@@ -658,6 +671,11 @@ export function ScenePanel() {
         open={exportCollectionParentId !== null}
         parentNodeId={exportCollectionParentId}
         onClose={() => setExportCollectionParentId(null)}
+      />
+      <AnimationManagerModal
+        open={managerParentId !== null}
+        parentNodeId={managerParentId}
+        onClose={() => setManagerParentId(null)}
       />
     </div>
   )
