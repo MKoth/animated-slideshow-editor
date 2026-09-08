@@ -28,6 +28,8 @@ import { LockIcon, MissingAssetIcon, NodeIcon, VisibilityIcon } from './nodeIcon
 import { ParentingModeDialog } from './ParentingModeDialog'
 import { ExportObjectModal } from './ExportObjectModal'
 import { ExportClipCollectionModal } from './ExportClipCollectionModal'
+import { AnimationManagerModal } from './AnimationManagerModal'
+import { hasAnimatedDescendant } from '../../engine/animationManagerModel'
 
 interface ContextMenuState {
   x: number
@@ -535,6 +537,7 @@ export function ScenePanel() {
 
   const [exportOpen, setExportOpen] = useState(false)
   const [exportCollectionParentId, setExportCollectionParentId] = useState<string | null>(null)
+  const [managerParentId, setManagerParentId] = useState<string | null>(null)
 
   const project = engine.project
   const slide = engine.getActiveSlide()
@@ -622,6 +625,32 @@ export function ScenePanel() {
           <button className="menu__item" role="menuitem" onClick={handleCreateGroup}>
             Create Group (Rig Handle)
           </button>
+          {(() => {
+            const nodeId = contextMenu.nodeId
+            let showManager = false
+            try {
+              const activeSlideForMenu = engine.getActiveSlide()
+              const node = engine.getNode(nodeId)
+              if (activeSlideForMenu) {
+                showManager = hasAnimatedDescendant(node, activeSlideForMenu)
+              }
+            } catch {
+              showManager = false
+            }
+            return showManager ? (
+              <button
+                className="menu__item"
+                role="menuitem"
+                data-testid="scene-animation-manager"
+                onClick={() => {
+                  setManagerParentId(nodeId)
+                  setContextMenu(null)
+                }}
+              >
+                Animation Manager…
+              </button>
+            ) : null
+          })()}
           <button
             className="menu__item"
             role="menuitem"
@@ -658,6 +687,11 @@ export function ScenePanel() {
         open={exportCollectionParentId !== null}
         parentNodeId={exportCollectionParentId}
         onClose={() => setExportCollectionParentId(null)}
+      />
+      <AnimationManagerModal
+        open={managerParentId !== null}
+        parentNodeId={managerParentId}
+        onClose={() => setManagerParentId(null)}
       />
     </div>
   )
