@@ -321,6 +321,17 @@ export interface CastShadowChanged {
   readonly nodeId: string
 }
 
+export interface ShapeCategoryChanged {
+  readonly type: 'ShapeCategoryChanged'
+  readonly nodeId: string
+}
+
+export interface ShapeMoved {
+  readonly type: 'ShapeMoved'
+  readonly nodeId: string
+  readonly shapeId: string
+}
+
 export interface PrompterChanged {
   readonly type: 'PrompterChanged'
   readonly slideId: string
@@ -454,6 +465,8 @@ export type EngineEvent =
   | CollectionPlacementMoved
   | CollectionPlacementReordered
   | CollectionPlaced
+  | ShapeCategoryChanged
+  | ShapeMoved
 
 export type EventListener = (event: EngineEvent) => void
 

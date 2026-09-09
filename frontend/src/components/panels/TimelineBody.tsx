@@ -29,8 +29,8 @@ import {
 } from '../../stores/timelineViewStore'
 import { useKeyframeDrag } from './keyframeDrag'
 import { useKeyframeScale, computeSelectionBounds } from './keyframeScale'
-import { useUiStore } from '../../stores/uiStore'
-import { morphAutoKey } from '../../app/keyframeActions'
+import { MorphPickerModal } from './MorphPickerModal'
+import { SymmetryPickerModal } from './SymmetryPickerModal'
 import {
   ROW_HEIGHT,
   TRACK_HEADER_WIDTH,
@@ -71,50 +71,20 @@ function MorphSubtrackHeader({
 }) {
   const { engine, dispatch } = useEngine()
   const notify = useNotificationStore((state) => state.notify)
-  const animationMode = useUiStore((s) => s.animationMode)
-  const currentTime = usePlaybackController((s) => s.currentTimes[slideId] ?? 0)
   let shapes: readonly import('../../engine/shape').Shape[] = []
   try {
     shapes = engine.getShapes(node.id)
   } catch {
     shapes = []
   }
-  // Current evaluated morph value at playhead (per-keyframe pair+coeff)
   let evaluated: import('../../engine/shape').MorphKeyframeValue | null = null
   try {
+    const currentTime = usePlaybackController.getState().getTime(slideId) ?? 0
     evaluated = engine.evaluateMorphValue(node.id, currentTime)
   } catch {
     evaluated = null
   }
-  const fromId = evaluated?.fromShapeId ?? shapes[0]?.id ?? ''
-  const toId = evaluated?.toShapeId ?? shapes[1]?.id ?? shapes[0]?.id ?? ''
   const currentCoeff = evaluated?.coefficient ?? 0
-
-  const commitMorphValue = (next: import('../../engine/shape').MorphKeyframeValue) => {
-    if (!animationMode) {
-      notify('Enter animation mode to keyframe morph')
-      return
-    }
-    const result = morphAutoKey(engine, dispatch, node.id, next)
-    if (result && !result.ok) notify(result.error.message)
-  }
-
-  const handleFromChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newFrom = e.target.value || null
-    commitMorphValue({
-      fromShapeId: newFrom,
-      toShapeId: evaluated?.toShapeId ?? toId ?? null,
-      coefficient: currentCoeff,
-    })
-  }
-  const handleToChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newTo = e.target.value || null
-    commitMorphValue({
-      fromShapeId: evaluated?.fromShapeId ?? fromId ?? null,
-      toShapeId: newTo,
-      coefficient: currentCoeff,
-    })
-  }
   const handleAdd = () => {
     const time = usePlaybackController.getState().getTime(slideId)
     const value: import('../../engine/shape').MorphKeyframeValue = {
@@ -130,15 +100,6 @@ function MorphSubtrackHeader({
       }),
     )
     if (result && !result.ok) notify(result.error.message)
-  }
-  const handleCoeffChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = parseFloat(e.target.value)
-    if (Number.isNaN(v)) return
-    commitMorphValue({
-      fromShapeId: evaluated?.fromShapeId ?? fromId ?? null,
-      toShapeId: evaluated?.toShapeId ?? toId ?? null,
-      coefficient: v,
-    })
   }
   return (
     <li
@@ -156,54 +117,6 @@ function MorphSubtrackHeader({
     >
       <span className="timeline-subtrack__label" style={{ minWidth: 44 }}>
         {MORPH_LABEL}
-      </span>
-      <select
-        aria-label={`Morph From for ${node.name}`}
-        data-testid={`morph-from-${node.id}`}
-        value={fromId}
-        onChange={handleFromChange}
-        style={{ flex: 1, minWidth: 60, fontSize: 11, padding: '2px 4px' }}
-      >
-        <option value="">— None —</option>
-        {shapes.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.name}
-          </option>
-        ))}
-      </select>
-      <span style={{ fontSize: 11, opacity: 0.7 }}>→</span>
-      <select
-        aria-label={`Morph To for ${node.name}`}
-        data-testid={`morph-to-${node.id}`}
-        value={toId}
-        onChange={handleToChange}
-        style={{ flex: 1, minWidth: 60, fontSize: 11, padding: '2px 4px' }}
-      >
-        <option value="">— None —</option>
-        {shapes.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.name}
-          </option>
-        ))}
-      </select>
-      <input
-        type="range"
-        min={0}
-        max={1.5}
-        step={0.01}
-        aria-label={`Morph coefficient for ${node.name}`}
-        data-testid={`morph-coeff-${node.id}`}
-        value={currentCoeff}
-        onChange={handleCoeffChange}
-        style={{ width: 60 }}
-        title={
-          currentCoeff > 1
-            ? 'Preview 1.5 (stored clamps 0..1)'
-            : `Coefficient ${currentCoeff.toFixed(2)}`
-        }
-      />
-      <span style={{ fontSize: 10, minWidth: 28, textAlign: 'right' }}>
-        {currentCoeff.toFixed(2)}
       </span>
       <button
         className="timeline-subtrack__add"
@@ -249,6 +162,13 @@ export function TimelineBody({
   const selectedKeyframeIds = selectedKeyframeIdsOf(timelineSelection)
   const [menu, setMenu] = useState<TimelineMenuState | null>(null)
   const [extraction, setExtraction] = useState<ExtractableKeyframe[] | null>(null)
+  const [morphPicker, setMorphPicker] = useState<{ nodeId: string; keyframeId: string } | null>(
+    null,
+  )
+  const [symmetryPicker, setSymmetryPicker] = useState<{
+    nodeId: string
+    keyframeId: string
+  } | null>(null)
   const [marqueeRect, setMarqueeRect] = useState<{
     readonly x: number
     readonly y: number
@@ -306,7 +226,8 @@ export function TimelineBody({
       }
     }
   }
-  const zIndexKeyframeRefs: { nodeId: string; keyframeId: string; time: number; zIndex: true }[] = []
+  const zIndexKeyframeRefs: { nodeId: string; keyframeId: string; time: number; zIndex: true }[] =
+    []
   for (const trackRow of rows) {
     if (trackRow.kind === 'zIndexSubtrack') {
       for (const kf of engine.getZIndexKeyframes(trackRow.node.id)) {
@@ -319,12 +240,34 @@ export function TimelineBody({
       }
     }
   }
+  const symmetryKeyframeRefs: {
+    nodeId: string
+    keyframeId: string
+    time: number
+    symmetry: true
+  }[] = []
+  for (const trackRow of rows) {
+    if (trackRow.kind === 'symmetrySubtrack') {
+      for (const kf of engine.getSymmetryKeyframes(trackRow.node.id)) {
+        symmetryKeyframeRefs.push({
+          nodeId: trackRow.node.id,
+          keyframeId: kf.id,
+          time: kf.time,
+          symmetry: true as const,
+        })
+      }
+    }
+  }
   const allKeyframeRefs = [...propertyKeyframeRefs, ...materialKeyframeRefs]
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const keyframeRefs = new Map<string, any>(
-    [...allKeyframeRefs, ...morphKeyframeRefs, ...shadowKeyframeRefs, ...zIndexKeyframeRefs].map(
-      (ref) => [ref.keyframeId, ref] as const,
-    ),
+    [
+      ...allKeyframeRefs,
+      ...morphKeyframeRefs,
+      ...shadowKeyframeRefs,
+      ...zIndexKeyframeRefs,
+      ...symmetryKeyframeRefs,
+    ].map((ref) => [ref.keyframeId, ref] as const),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ) as unknown as Map<string, any>
 
@@ -376,7 +319,7 @@ export function TimelineBody({
   useEffect(() => {
     allSelectionItemsRef.current = allSelectionItems
   })
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const { dragPreview, isDraggable, startDrag } = useKeyframeDrag({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     keyframeRefs: keyframeRefs as unknown as ReadonlyMap<string, any>,
@@ -387,7 +330,6 @@ export function TimelineBody({
     notify,
   } as unknown as Parameters<typeof useKeyframeDrag>[0])
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { scalePreview, startScale } = useKeyframeScale({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     keyframeRefs: keyframeRefs as unknown as ReadonlyMap<string, any>,
@@ -399,7 +341,10 @@ export function TimelineBody({
   } as unknown as Parameters<typeof useKeyframeScale>[0])
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const selectionBounds = computeSelectionBounds(selectedKeyframeIds, keyframeRefs as unknown as ReadonlyMap<string, any>)
+  const selectionBounds = computeSelectionBounds(
+    selectedKeyframeIds,
+    keyframeRefs as unknown as ReadonlyMap<string, any>,
+  )
 
   useLayoutEffect(() => {
     const el = scrollerRef.current
@@ -668,7 +613,10 @@ export function TimelineBody({
         x: event.clientX,
         y: event.clientY,
         nodeId: row.node.id,
-        zIndex: true as unknown as Extract<import('./timelineComponents').TimelineMenuState, { nodeId: string }>['zIndex'],
+        zIndex: true as unknown as Extract<
+          import('./timelineComponents').TimelineMenuState,
+          { nodeId: string }
+        >['zIndex'],
         keyframeId: keyframe.id,
       } as unknown as Extract<import('./timelineComponents').TimelineMenuState, { nodeId: string }>)
     } else if (row.kind === 'morphSubtrack') {
@@ -684,7 +632,10 @@ export function TimelineBody({
         x: event.clientX,
         y: event.clientY,
         nodeId: row.node.id,
-        symmetry: true as unknown as Extract<import('./timelineComponents').TimelineMenuState, { nodeId: string }>['symmetry'],
+        symmetry: true as unknown as Extract<
+          import('./timelineComponents').TimelineMenuState,
+          { nodeId: string }
+        >['symmetry'],
         keyframeId: keyframe.id,
       } as unknown as Extract<import('./timelineComponents').TimelineMenuState, { nodeId: string }>)
     } else if (row.kind === 'shadowSubtrack') {
@@ -831,6 +782,26 @@ export function TimelineBody({
       }
       return
     }
+    const symmetrySubtrack = target.closest<HTMLElement>('[data-symmetry]')
+    if (symmetrySubtrack) {
+      const nodeId = symmetrySubtrack.dataset.nodeId
+      if (nodeId) {
+        event.preventDefault()
+        setMenu({
+          x: event.clientX,
+          y: event.clientY,
+          nodeId,
+          symmetry: true as unknown as Extract<
+            import('./timelineComponents').TimelineMenuState,
+            { nodeId: string }
+          >['symmetry'],
+        } as unknown as Extract<
+          import('./timelineComponents').TimelineMenuState,
+          { nodeId: string }
+        >)
+      }
+      return
+    }
     const row = target.closest<HTMLElement>('[data-node-id]')
     if (row) {
       const nodeId = row.dataset.nodeId
@@ -871,6 +842,26 @@ export function TimelineBody({
       result = dispatch(
         new AddKeyframeCommand({
           target: { kind: 'morph', nodeId: target.nodeId },
+          time,
+          value: value as unknown as import('../../engine/keyframe').KeyframeValue,
+        }),
+      )
+    } else if ((target as unknown as { symmetry?: boolean }).symmetry) {
+      const time = usePlaybackController.getState().getTime(slideId)
+      let symmetryValue: { axis: 'x' | 'y'; factor: number } | null = null
+      try {
+        symmetryValue = (
+          engine as unknown as {
+            evaluateSymmetry?: (id: string, t: number) => { axis: 'x' | 'y'; factor: number }
+          }
+        ).evaluateSymmetry?.(target.nodeId, time) as { axis: 'x' | 'y'; factor: number } | null
+      } catch {
+        symmetryValue = null
+      }
+      const value = symmetryValue ?? { axis: 'x' as const, factor: 0 }
+      result = dispatch(
+        new AddKeyframeCommand({
+          target: { kind: 'symmetry', nodeId: target.nodeId },
           time,
           value: value as unknown as import('../../engine/keyframe').KeyframeValue,
         }),
@@ -995,6 +986,8 @@ export function TimelineBody({
     let deleteTarget
     if (target.morph) {
       deleteTarget = { kind: 'morph' as const, nodeId: target.nodeId }
+    } else if ((target as unknown as { symmetry?: boolean }).symmetry) {
+      deleteTarget = { kind: 'symmetry' as const, nodeId: target.nodeId }
     } else if ((target as unknown as { shadowProperty?: string }).shadowProperty) {
       const shadowProperty = (
         target as unknown as { shadowProperty: import('../../engine/shadowEffect').ShadowProperty }
@@ -1432,7 +1425,14 @@ export function TimelineBody({
                     const time = usePlaybackController.getState().getTime(slideId)
                     const cur = (() => {
                       try {
-                        return (engine as unknown as { evaluateSymmetry?: (id: string, t: number) => unknown }).evaluateSymmetry?.(row.node.id, time) as { axis: 'x' | 'y'; factor: number } | null
+                        return (
+                          engine as unknown as {
+                            evaluateSymmetry?: (id: string, t: number) => unknown
+                          }
+                        ).evaluateSymmetry?.(row.node.id, time) as {
+                          axis: 'x' | 'y'
+                          factor: number
+                        } | null
                       } catch {
                         return null
                       }
@@ -2033,9 +2033,88 @@ export function TimelineBody({
           onAdd={addKeyframeFromMenu}
           onDelete={deleteKeyframeFromMenu}
           onAddToClip={addToClipFromMenu}
+          onEditMorph={() => {
+            const m = menu
+            if (m?.keyframeId && (m as unknown as { morph?: boolean }).morph) {
+              setMorphPicker({ nodeId: m.nodeId, keyframeId: m.keyframeId })
+              setMenu(null)
+            }
+          }}
+          onEditSymmetry={() => {
+            const m = menu
+            if (m?.keyframeId && (m as unknown as { symmetry?: boolean }).symmetry) {
+              setSymmetryPicker({ nodeId: m.nodeId, keyframeId: m.keyframeId })
+              setMenu(null)
+            }
+          }}
           onClose={() => setMenu(null)}
         />
       )}
+      {morphPicker &&
+        (() => {
+          try {
+            const kf = engine
+              .getMorphKeyframes(morphPicker.nodeId)
+              .find((k) => k.id === morphPicker.keyframeId)
+            if (!kf) return null
+            const val = kf.value as unknown as import('../../engine/shape').MorphKeyframeValue
+            const morphVal: import('../../engine/shape').MorphKeyframeValue =
+              typeof val === 'object' &&
+              val !== null &&
+              'coefficient' in (val as unknown as Record<string, unknown>)
+                ? (val as unknown as import('../../engine/shape').MorphKeyframeValue)
+                : {
+                    fromShapeId: null,
+                    toShapeId: null,
+                    coefficient: (val as unknown as number) ?? 0,
+                  }
+            return (
+              <MorphPickerModal
+                open={true}
+                nodeId={morphPicker.nodeId}
+                keyframeId={morphPicker.keyframeId}
+                value={morphVal}
+                engine={engine}
+                dispatch={dispatch}
+                notify={notify}
+                onClose={() => setMorphPicker(null)}
+              />
+            )
+          } catch {
+            return null
+          }
+        })()}
+      {symmetryPicker &&
+        (() => {
+          try {
+            const kf = engine
+              .getSymmetryKeyframes(symmetryPicker.nodeId)
+              .find((k) => k.id === symmetryPicker.keyframeId)
+            if (!kf) return null
+            const raw = kf.value as unknown as import('../../engine/symmetry').SymmetryKeyframeValue
+            const symVal: import('../../engine/symmetry').SymmetryKeyframeValue =
+              typeof raw === 'object' &&
+              raw !== null &&
+              'axis' in (raw as unknown as Record<string, unknown>) &&
+              'factor' in (raw as unknown as Record<string, unknown>)
+                ? (raw as import('../../engine/symmetry').SymmetryKeyframeValue)
+                : { axis: 'x', factor: typeof raw === 'number' ? (raw as number) : 0 }
+            return (
+              <SymmetryPickerModal
+                open={true}
+                nodeId={symmetryPicker.nodeId}
+                keyframeId={symmetryPicker.keyframeId}
+                value={symVal}
+                engine={engine}
+                dispatch={dispatch}
+                notify={notify}
+                onClose={() => setSymmetryPicker(null)}
+              />
+            )
+          } catch {
+            return null
+          }
+        })()}
       {extraction && (
         <ClipExtractionModal keyframes={extraction} onClose={() => setExtraction(null)} />
       )}

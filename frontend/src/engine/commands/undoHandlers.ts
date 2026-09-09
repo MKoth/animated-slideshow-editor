@@ -1113,6 +1113,60 @@ export function applyUndo(
       engine.restoreShapes(nodeId, newShapes)
       return
     }
+    case 'CreateShapeCategory': {
+      const nodeId = inv.nodeId as string
+      const categoryId = inv.categoryId as string
+      try {
+        engine.deleteShapeCategory(nodeId, categoryId)
+      } catch {
+        void 0
+      }
+      return
+    }
+    case 'RenameShapeCategory': {
+      const nodeId = inv.nodeId as string
+      const categoryId = inv.categoryId as string
+      const oldName = inv.oldName as string
+      try {
+        engine.renameShapeCategory(nodeId, categoryId, oldName)
+      } catch {
+        void 0
+      }
+      return
+    }
+    case 'DeleteShapeCategory': {
+      const nodeId = inv.nodeId as string
+      const category = inv.category as import('../shapeCategory').ShapeCategory
+      const index = inv.index as number
+      const existing = engine.getShapeCategories(nodeId)
+      const newCats = [...existing]
+      newCats.splice(index, 0, category)
+      engine.restoreShapeCategories(nodeId, newCats)
+      return
+    }
+    case 'ReorderShapeCategory': {
+      const nodeId = inv.nodeId as string
+      const snapshot = inv.categoriesSnapshot as readonly import('../shapeCategory').ShapeCategory[]
+      engine.restoreShapeCategories(nodeId, snapshot)
+      return
+    }
+    case 'MoveShapeToCategory': {
+      const nodeId = inv.nodeId as string
+      const shapeId = inv.shapeId as string
+      const oldCategoryId = inv.oldCategoryId as string | null
+      try {
+        engine.moveShapeToCategory(nodeId, shapeId, oldCategoryId)
+      } catch {
+        void 0
+      }
+      return
+    }
+    case 'ReorderShape': {
+      const nodeId = inv.nodeId as string
+      const snapshot = inv.shapesSnapshot as readonly import('../shape').Shape[]
+      engine.restoreShapes(nodeId, snapshot)
+      return
+    }
     case 'MoveShapeVertex': {
       const nodeId = inv.nodeId as string
       const shapeId = inv.shapeId as string
@@ -3037,7 +3091,11 @@ export function applyRedo(
         engine.restoreShapes(params.nodeId as string, [...existing, inv.shape])
         return
       }
-      engine.createShape(params.nodeId as string, params.name as string)
+      engine.createShape(
+        params.nodeId as string,
+        params.name as string,
+        (params.categoryId as string | null) ?? null,
+      )
       return
     }
     case 'DuplicateShape': {
@@ -3063,6 +3121,52 @@ export function applyRedo(
       } catch {
         void 0
       }
+      return
+    case 'CreateShapeCategory': {
+      void _inverse
+      engine.createShapeCategory(
+        params.nodeId as string,
+        params.name as string,
+        (params.parentId as string | null) ?? null,
+      )
+      return
+    }
+    case 'RenameShapeCategory':
+      engine.renameShapeCategory(
+        params.nodeId as string,
+        params.categoryId as string,
+        params.newName as string,
+      )
+      return
+    case 'DeleteShapeCategory':
+      try {
+        engine.deleteShapeCategory(params.nodeId as string, params.categoryId as string)
+      } catch {
+        void 0
+      }
+      return
+    case 'ReorderShapeCategory':
+      engine.reorderShapeCategory(
+        params.nodeId as string,
+        params.categoryId as string,
+        (params.newParentId as string | null) ?? null,
+        params.newIndex as number,
+      )
+      return
+    case 'MoveShapeToCategory':
+      engine.moveShapeToCategory(
+        params.nodeId as string,
+        params.shapeId as string,
+        (params.targetCategoryId as string | null) ?? null,
+      )
+      return
+    case 'ReorderShape':
+      engine.reorderShape(
+        params.nodeId as string,
+        params.shapeId as string,
+        (params.targetCategoryId as string | null) ?? null,
+        params.newIndex as number,
+      )
       return
     case 'CopyShapeToMesh': {
       const inv = _inverse as unknown as { shape?: import('../shape').Shape } | null
@@ -3590,6 +3694,7 @@ export function applyRedo(
             const newShapes = shapes.map((s) => ({
               id: s.id,
               name: s.name,
+              categoryId: s.categoryId ?? null,
               vertices: s.vertices.map((v) =>
                 axis === 'x' ? { x: -v.x, y: v.y } : { x: v.x, y: -v.y },
               ),

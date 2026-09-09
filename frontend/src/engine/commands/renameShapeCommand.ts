@@ -36,8 +36,16 @@ export class RenameShapeCommand implements Command<RenameShapeInverse> {
     const shapes = engine.getShapes(this.#nodeId)
     const target = shapes.find((s) => s.id === this.#shapeId)
     if (!target) throw new Error(`Shape not found: ${this.#shapeId}`)
-    if (shapes.some((s) => s.id !== this.#shapeId && s.name === this.#newName.trim())) {
-      throw new Error(`A shape with name "${this.#newName.trim()}" already exists on this mesh`)
+    const catId = target.categoryId ?? null
+    if (
+      shapes.some(
+        (s) =>
+          s.id !== this.#shapeId &&
+          (s.categoryId ?? null) === catId &&
+          s.name === this.#newName.trim(),
+      )
+    ) {
+      throw new Error(`A shape with name "${this.#newName.trim()}" already exists in this category`)
     }
   }
 

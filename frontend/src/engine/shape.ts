@@ -6,21 +6,32 @@ import { newId } from './ids'
 export interface Shape {
   readonly id: string
   readonly name: string
+  readonly categoryId: string | null
   readonly vertices: readonly MeshVertex[]
 }
 
 export interface ShapeJSON {
   readonly id: string
   readonly name: string
+  readonly categoryId?: string | null
   readonly vertices: readonly { readonly x: number; readonly y: number }[]
 }
 
-export function createShape(name: string, vertices: readonly MeshVertex[]): Shape {
-  return { id: newId('shape'), name, vertices: vertices.map((v) => ({ x: v.x, y: v.y })) }
+export function createShape(
+  name: string,
+  vertices: readonly MeshVertex[],
+  categoryId: string | null = null,
+): Shape {
+  return {
+    id: newId('shape'),
+    name,
+    categoryId,
+    vertices: vertices.map((v) => ({ x: v.x, y: v.y })),
+  }
 }
 
 export function duplicateShape(shape: Shape, name: string): Shape {
-  return createShape(name, shape.vertices)
+  return createShape(name, shape.vertices, shape.categoryId)
 }
 
 export function shapeFromJSON(json: unknown): Shape {
@@ -29,6 +40,11 @@ export function shapeFromJSON(json: unknown): Shape {
   if (typeof r.id !== 'string' || typeof r.name !== 'string' || !Array.isArray(r.vertices)) {
     throw new Error('Shape JSON missing id/name/vertices')
   }
+  let categoryId: string | null = null
+  if (r.categoryId !== undefined && r.categoryId !== null) {
+    if (typeof r.categoryId !== 'string') throw new Error('Shape categoryId must be string or null')
+    categoryId = r.categoryId as string
+  }
   const vertices: MeshVertex[] = []
   for (const v of r.vertices) {
     const rec = v as Record<string, unknown>
@@ -36,13 +52,14 @@ export function shapeFromJSON(json: unknown): Shape {
       throw new Error('Shape vertex must have x,y numbers')
     vertices.push({ x: rec.x as number, y: rec.y as number })
   }
-  return { id: r.id as string, name: r.name as string, vertices }
+  return { id: r.id as string, name: r.name as string, categoryId, vertices }
 }
 
 export function shapeToJSON(shape: Shape): ShapeJSON {
   return {
     id: shape.id,
     name: shape.name,
+    ...(shape.categoryId ? { categoryId: shape.categoryId } : {}),
     vertices: shape.vertices.map((v) => ({ x: v.x, y: v.y })),
   }
 }
@@ -133,7 +150,22 @@ export function resolveMorphedVertices(
   return out
 }
 
-export function uniqueShapeName(base: string, existing: readonly Shape[]): string {
+export function uniqueShapeName(
+  base: string,
+  existing: readonly Shape[],
+  categoryId: string | null = null,
+): string {
+  // Category-scoped uniqueness when categoryId provided, otherwise global legacy
+  const filtered =
+    categoryId !== undefined ? existing.filter((s) => s.categoryId === categoryId) : existing
+  const names = new Set(filtered.map((s) => s.name))
+  if (!names.has(base)) return base
+  let i = 2
+  while (names.has(`${base} ${i}`)) i += 1
+  return `${base} ${i}`
+}
+
+export function uniqueShapeNameLegacy(base: string, existing: readonly Shape[]): string {
   const names = new Set(existing.map((s) => s.name))
   if (!names.has(base)) return base
   let i = 2
@@ -165,7 +197,12 @@ export function requireMorphKeyframeValue(
   if (toShapeId !== null && typeof toShapeId !== 'string') {
     throw new Error(`${what} toShapeId must be string or null`)
   }
-  if (typeof coefficient !== 'number' || !Number.isFinite(coefficient) || coefficient < 0 || coefficient > 1) {
+  if (
+    typeof coefficient !== 'number' ||
+    !Number.isFinite(coefficient) ||
+    coefficient < 0 ||
+    coefficient > 1
+  ) {
     throw new Error(`${what} coefficient must be a number between 0 and 1`)
   }
   return {
@@ -192,7 +229,12 @@ export function requireMorphClipKeyframeValue(
   if (toShapeName !== null && typeof toShapeName !== 'string') {
     throw new Error(`${what} toShapeName must be string or null`)
   }
-  if (typeof coefficient !== 'number' || !Number.isFinite(coefficient) || coefficient < 0 || coefficient > 1) {
+  if (
+    typeof coefficient !== 'number' ||
+    !Number.isFinite(coefficient) ||
+    coefficient < 0 ||
+    coefficient > 1
+  ) {
     throw new Error(`${what} coefficient must be a number between 0 and 1`)
   }
   return {
@@ -204,14 +246,13 @@ export function requireMorphClipKeyframeValue(
 
 export function morphKeyframeValueEquals(a: MorphKeyframeValue, b: MorphKeyframeValue): boolean {
   return (
-    a.fromShapeId === b.fromShapeId && a.toShapeId === b.toShapeId && a.coefficient === b.coefficient
+    a.fromShapeId === b.fromShapeId &&
+    a.toShapeId === b.toShapeId &&
+    a.coefficient === b.coefficient
   )
 }
 
-export function isMorphBindingEqual(
-  a: MorphBinding | null,
-  b: MorphBinding | null,
-): boolean {
+export function isMorphBindingEqual(a: MorphBinding | null, b: MorphBinding | null): boolean {
   if (a === b) return true
   if (!a || !b) return false
   return a.fromShapeId === b.fromShapeId && a.toShapeId === b.toShapeId

@@ -8,6 +8,7 @@ import type {
   KeyframeRef,
   MaterialKeyframeRef,
   ShadowKeyframeRef,
+  SymmetryKeyframeRef,
 } from '../../app/keyframeSelectionActions'
 import {
   useTimelineSelectionStore,
@@ -23,6 +24,7 @@ interface DragMove {
   readonly parameter?: string
   readonly morph?: boolean
   readonly shadowProperty?: import('../../engine/shadowEffect').ShadowProperty
+  readonly symmetry?: boolean
   readonly originalTime: number
 }
 
@@ -38,10 +40,21 @@ export interface MorphKeyframeRef {
   readonly morph: true
 }
 
+export interface SymmetryKeyframeRefForDrag {
+  readonly nodeId: string
+  readonly keyframeId: string
+  readonly time: number
+  readonly symmetry: true
+}
+
 export interface KeyframeDragOptions {
   readonly keyframeRefs: ReadonlyMap<
     string,
-    KeyframeRef | MaterialKeyframeRef | MorphKeyframeRef | ShadowKeyframeRef
+    | KeyframeRef
+    | MaterialKeyframeRef
+    | MorphKeyframeRef
+    | ShadowKeyframeRef
+    | SymmetryKeyframeRefForDrag
   >
   readonly duration: number
   readonly pps: number
@@ -87,6 +100,13 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
           keyframeId,
           nodeId: ref.nodeId,
           morph: true,
+          originalTime: ref.time,
+        })
+      } else if ('symmetry' in ref && (ref as SymmetryKeyframeRef).symmetry) {
+        moves.push({
+          keyframeId,
+          nodeId: ref.nodeId,
+          symmetry: true,
           originalTime: ref.time,
         })
       } else if ('property' in ref) {
@@ -148,6 +168,9 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
       ): move is MovedDragMove & {
         shadowProperty: import('../../engine/shadowEffect').ShadowProperty
       } => move.shadowProperty !== undefined,
+    )
+    const symmetryMoves = moved.filter(
+      (move): move is MovedDragMove & { symmetry: true } => (move as DragMove).symmetry === true,
     )
     const commands: MoveKeyframesCommand[] = []
     for (const group of groupRefsByTarget(propertyMoves, (move) => ({
@@ -218,6 +241,29 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
         commands.push(
           new MoveKeyframesCommand({
             target: { kind: 'shadow', nodeId: group.nodeId, property: group.property },
+            moves: group.items,
+          }),
+        )
+      }
+    }
+    // symmetry moves grouped by node
+    {
+      const groups = new Map<
+        string,
+        { nodeId: string; items: { keyframeId: string; newTime: number }[] }
+      >()
+      for (const move of symmetryMoves) {
+        let entry = groups.get(move.nodeId)
+        if (!entry) {
+          entry = { nodeId: move.nodeId, items: [] }
+          groups.set(move.nodeId, entry)
+        }
+        entry.items.push({ keyframeId: move.keyframeId, newTime: move.newTime })
+      }
+      for (const group of groups.values()) {
+        commands.push(
+          new MoveKeyframesCommand({
+            target: { kind: 'symmetry', nodeId: group.nodeId },
             moves: group.items,
           }),
         )

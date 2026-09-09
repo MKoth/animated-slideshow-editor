@@ -507,6 +507,33 @@ export { DeleteShapeCommand } from './deleteShapeCommand'
 export type { DeleteShapeInverse, DeleteShapeParameters } from './deleteShapeCommand'
 export { CopyShapeToMeshCommand } from './copyShapeToMeshCommand'
 export type { CopyShapeToMeshInverse, CopyShapeToMeshParameters } from './copyShapeToMeshCommand'
+export { CreateShapeCategoryCommand } from './createShapeCategoryCommand'
+export type {
+  CreateShapeCategoryInverse,
+  CreateShapeCategoryParameters,
+} from './createShapeCategoryCommand'
+export { RenameShapeCategoryCommand } from './renameShapeCategoryCommand'
+export type {
+  RenameShapeCategoryInverse,
+  RenameShapeCategoryParameters,
+} from './renameShapeCategoryCommand'
+export { DeleteShapeCategoryCommand } from './deleteShapeCategoryCommand'
+export type {
+  DeleteShapeCategoryInverse,
+  DeleteShapeCategoryParameters,
+} from './deleteShapeCategoryCommand'
+export { ReorderShapeCategoryCommand } from './reorderShapeCategoryCommand'
+export type {
+  ReorderShapeCategoryInverse,
+  ReorderShapeCategoryParameters,
+} from './reorderShapeCategoryCommand'
+export { MoveShapeToCategoryCommand } from './moveShapeToCategoryCommand'
+export type {
+  MoveShapeToCategoryInverse,
+  MoveShapeToCategoryParameters,
+} from './moveShapeToCategoryCommand'
+export { ReorderShapeCommand } from './reorderShapeCommand'
+export type { ReorderShapeInverse, ReorderShapeParameters } from './reorderShapeCommand'
 export { SetMorphBindingCommand } from './setMorphBindingCommand'
 export type { SetMorphBindingInverse, SetMorphBindingParameters } from './setMorphBindingCommand'
 export { SetShadowEffectCommand } from './setShadowEffectCommand'

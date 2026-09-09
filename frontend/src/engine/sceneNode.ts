@@ -11,6 +11,11 @@ import { validateChartType, DEFAULT_VISUAL_CONFIG } from './chartComponent'
 import { meshDataFromJSON, cloneMeshData } from './mesh'
 import { circleComponentFromJSON, cloneCircleComponent } from './circleComponent'
 import { shapeFromJSON, shapeToJSON } from './shape'
+import {
+  shapeCategoryFromJSON,
+  shapeCategoryToJSON,
+  validateShapeCategories,
+} from './shapeCategory'
 import type { Transform } from './transform'
 import { IDENTITY_PIVOT, validatePivot } from './transform'
 import type { NodeJSON } from './json'
@@ -96,11 +101,16 @@ export class SceneNode {
     const componentsJSON: Record<string, unknown> = { ...this.components }
     if (this.components.mesh) {
       const meshComp = this.components.mesh
-      if (meshComp.shapes && meshComp.shapes.length > 0) {
+      const hasShapes = meshComp.shapes && meshComp.shapes.length > 0
+      const hasCategories = meshComp.shapeCategories && meshComp.shapeCategories.length > 0
+      if (hasShapes || hasCategories) {
         componentsJSON.mesh = {
           kind: 'mesh',
           mesh: meshComp.mesh,
-          shapes: meshComp.shapes.map(shapeToJSON),
+          ...(hasShapes ? { shapes: meshComp.shapes!.map(shapeToJSON) } : {}),
+          ...(hasCategories
+            ? { shapeCategories: meshComp.shapeCategories!.map(shapeCategoryToJSON) }
+            : {}),
         }
       } else {
         componentsJSON.mesh = {
@@ -178,9 +188,7 @@ export class SceneNode {
     node.opacity =
       typeof json.opacity === 'number' ? requireOpacity(json.opacity, `Node "${id}" opacity`) : 1
     node.zIndex =
-      typeof json.zIndex === 'number' && Number.isFinite(json.zIndex)
-        ? Math.trunc(json.zIndex)
-        : 0
+      typeof json.zIndex === 'number' && Number.isFinite(json.zIndex) ? Math.trunc(json.zIndex) : 0
     node.material = materialFromJSON(json.material, id)
     if (Array.isArray(json.clipInstances)) {
       for (const clipJson of json.clipInstances) {
@@ -335,10 +343,53 @@ function componentsFromJSON(json: unknown, nodeId: string): NodeComponents {
       }
       if (parsed.length > 0) shapes = parsed
     }
+    // Parse shapeCategories (additive)
+    const rawCategories = (meshRecord as Record<string, unknown>).shapeCategories
+    let shapeCategories: import('./shapeCategory').ShapeCategory[] | undefined
+    if (rawCategories !== undefined) {
+      if (!Array.isArray(rawCategories)) {
+        throw new Error(`Node "${nodeId}" mesh.shapeCategories must be an array if provided`)
+      }
+      const parsedCats: import('./shapeCategory').ShapeCategory[] = []
+      for (let idx = 0; idx < rawCategories.length; idx += 1) {
+        const raw = rawCategories[idx]
+        try {
+          parsedCats.push(shapeCategoryFromJSON(raw))
+        } catch (err) {
+          console.warn(
+            `[shapeCategory] Dropping invalid category at index ${idx} on node "${nodeId}": ${err instanceof Error ? err.message : String(err)}`,
+          )
+        }
+      }
+      const validation = validateShapeCategories(parsedCats)
+      if (validation) {
+        console.warn(
+          `[shapeCategory] Invalid categories on node "${nodeId}": ${validation} — ignoring all`,
+        )
+      } else if (parsedCats.length > 0) {
+        shapeCategories = parsedCats
+      }
+    }
+    // Migrate shapes with stale categoryId -> null
+    if (shapes && shapeCategories) {
+      const catIds = new Set(shapeCategories.map((c) => c.id))
+      for (let i = 0; i < shapes.length; i++) {
+        const s = shapes[i]!
+        if (s.categoryId !== null && !catIds.has(s.categoryId)) {
+          console.warn(
+            `[shape] Stale categoryId "${s.categoryId}" on shape "${s.name}" — moving to Uncategorized`,
+          )
+          shapes[i] = { ...s, categoryId: null }
+        }
+      }
+    } else if (shapes && !shapeCategories) {
+      // ensure categoryId defaults to null already handled in shapeFromJSON
+    }
     components.mesh = {
       kind: 'mesh',
       mesh,
       ...(shapes !== undefined ? { shapes } : {}),
+      ...(shapeCategories !== undefined ? { shapeCategories } : {}),
     }
   }
   if (record.ghost !== undefined) {
@@ -612,10 +663,20 @@ function freezeComponents(components: NodeComponents): NodeComponents {
                     Object.freeze({
                       id: s.id,
                       name: s.name,
+                      categoryId: s.categoryId ?? null,
                       vertices: Object.freeze(
                         s.vertices.map((v) => Object.freeze({ x: v.x, y: v.y })),
                       ),
                     }),
+                  ),
+                ),
+              }
+            : {}),
+          ...(components.mesh.shapeCategories
+            ? {
+                shapeCategories: Object.freeze(
+                  components.mesh.shapeCategories.map((c) =>
+                    Object.freeze({ id: c.id, name: c.name, parentId: c.parentId }),
                   ),
                 ),
               }

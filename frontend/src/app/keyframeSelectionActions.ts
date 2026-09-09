@@ -74,6 +74,13 @@ export interface ShadowKeyframeRef {
   readonly shadow: true
 }
 
+export interface SymmetryKeyframeRef {
+  readonly nodeId: string
+  readonly keyframeId: string
+  readonly time: number
+  readonly symmetry: true
+}
+
 export function groupShadowRefsByTarget<
   Ref extends { nodeId: string; property: ShadowProperty },
   T,
@@ -203,10 +210,7 @@ export function visibleKeyframeRefsOfScene(
   return refs
 }
 
-export function zIndexKeyframeRefsOfScene(
-  engine: EnginePublic,
-  scene: Scene,
-): ZIndexKeyframeRef[] {
+export function zIndexKeyframeRefsOfScene(engine: EnginePublic, scene: Scene): ZIndexKeyframeRef[] {
   const refs: ZIndexKeyframeRef[] = []
   for (const node of collectNodes(scene)) {
     if (engine.hasZIndexTrack(node.id)) {
@@ -317,6 +321,26 @@ export function shadowKeyframeRefsOfScene(engine: EnginePublic, scene: Scene): S
   return refs
 }
 
+export function symmetryKeyframeRefsOfScene(
+  engine: EnginePublic,
+  scene: Scene,
+): SymmetryKeyframeRef[] {
+  const refs: SymmetryKeyframeRef[] = []
+  for (const node of collectNodes(scene)) {
+    if (engine.hasSymmetryTrack(node.id)) {
+      for (const keyframe of engine.getSymmetryKeyframes(node.id)) {
+        refs.push({
+          nodeId: node.id,
+          keyframeId: keyframe.id,
+          time: keyframe.time,
+          symmetry: true as const,
+        })
+      }
+    }
+  }
+  return refs
+}
+
 function allKeyframeRefs(engine: EnginePublic): KeyframeRef[] {
   const refs: KeyframeRef[] = []
   for (const slide of engine.project?.slides ?? []) {
@@ -373,6 +397,14 @@ function allShadowKeyframeRefs(engine: EnginePublic): ShadowKeyframeRef[] {
   return refs
 }
 
+function allSymmetryKeyframeRefs(engine: EnginePublic): SymmetryKeyframeRef[] {
+  const refs: SymmetryKeyframeRef[] = []
+  for (const slide of engine.project?.slides ?? []) {
+    refs.push(...symmetryKeyframeRefsOfScene(engine, slide.scene))
+  }
+  return refs
+}
+
 export function morphKeyframeRefsOfScene(engine: EnginePublic, scene: Scene): MorphKeyframeRef[] {
   const refs: MorphKeyframeRef[] = []
   for (const node of collectNodes(scene)) {
@@ -397,6 +429,13 @@ export function selectedShadowKeyframeRefs(engine: EnginePublic): ShadowKeyframe
   if (selectedIds.length === 0) return []
   const wanted = new Set(selectedIds)
   return allShadowKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
+}
+
+export function selectedSymmetryKeyframeRefs(engine: EnginePublic): SymmetryKeyframeRef[] {
+  const selectedIds = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+  if (selectedIds.length === 0) return []
+  const wanted = new Set(selectedIds)
+  return allSymmetryKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
 }
 
 export function selectedMorphKeyframeRefs(engine: EnginePublic): MorphKeyframeRef[] {
@@ -469,6 +508,7 @@ type DeleteTarget =
   | { kind: 'zIndex'; nodeId: string; items: string[] }
   | { kind: 'morph'; nodeId: string; items: string[] }
   | { kind: 'shadow'; nodeId: string; property: ShadowProperty; items: string[] }
+  | { kind: 'symmetry'; nodeId: string; items: string[] }
 
 export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: DispatchCommand): boolean {
   const propertyRefs = selectedKeyframeRefs(engine)
@@ -479,6 +519,7 @@ export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: Dispatch
   const zIndexRefs = selectedZIndexKeyframeRefs(engine)
   const morphRefs = selectedMorphKeyframeRefs(engine)
   const shadowRefs = selectedShadowKeyframeRefs(engine)
+  const symmetryRefs = selectedSymmetryKeyframeRefs(engine)
   if (
     propertyRefs.length === 0 &&
     materialRefs.length === 0 &&
@@ -487,7 +528,8 @@ export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: Dispatch
     visibleRefs.length === 0 &&
     zIndexRefs.length === 0 &&
     morphRefs.length === 0 &&
-    shadowRefs.length === 0
+    shadowRefs.length === 0 &&
+    symmetryRefs.length === 0
   ) {
     return false
   }
@@ -567,6 +609,17 @@ export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: Dispatch
       })
     }
   }
+  {
+    const grouped = new Map<string, string[]>()
+    for (const ref of symmetryRefs) {
+      const arr = grouped.get(ref.nodeId) ?? []
+      arr.push(ref.keyframeId)
+      grouped.set(ref.nodeId, arr)
+    }
+    for (const [nodeId, items] of grouped) {
+      targets.push({ kind: 'symmetry', nodeId, items })
+    }
+  }
   const deleteCommands = targets.map((target) => {
     if (target.kind === 'property') {
       return new DeleteKeyframesCommand({
@@ -595,6 +648,12 @@ export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: Dispatch
     if (target.kind === 'shadow') {
       return new DeleteKeyframesCommand({
         target: { kind: 'shadow', nodeId: target.nodeId, property: target.property },
+        keyframeIds: target.items,
+      })
+    }
+    if (target.kind === 'symmetry') {
+      return new DeleteKeyframesCommand({
+        target: { kind: 'symmetry', nodeId: target.nodeId },
         keyframeIds: target.items,
       })
     }
@@ -629,6 +688,7 @@ export function pruneKeyframeSelection(engine: EnginePublic): void {
   const validZIndexKeys = new Set(allZIndexKeyframeRefs(engine).map((ref) => ref.keyframeId))
   const validMorphKeys = new Set(allMorphKeyframeRefs(engine).map((ref) => ref.keyframeId))
   const validShadowKeys = new Set(allShadowKeyframeRefs(engine).map((ref) => ref.keyframeId))
+  const validSymmetryKeys = new Set(allSymmetryKeyframeRefs(engine).map((ref) => ref.keyframeId))
   const valid = new Set([
     ...validPropertyKeys,
     ...validMaterialKeys,
@@ -638,6 +698,7 @@ export function pruneKeyframeSelection(engine: EnginePublic): void {
     ...validZIndexKeys,
     ...validMorphKeys,
     ...validShadowKeys,
+    ...validSymmetryKeys,
   ])
   useTimelineSelectionStore.getState().pruneSelection(valid)
 }

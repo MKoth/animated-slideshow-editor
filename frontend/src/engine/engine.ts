@@ -90,6 +90,47 @@ export interface EnginePublic {
   setZIndex(nodeId: string, zIndex: number): void
   getZIndex(nodeId: string): number
   getShapes(nodeId: string): readonly import('./shape').Shape[]
+  getShapeCategories(nodeId: string): readonly import('./shapeCategory').ShapeCategory[]
+  createShape(nodeId: string, name: string, categoryId?: string | null): import('./shape').Shape
+  duplicateShape(nodeId: string, shapeId: string): import('./shape').Shape
+  copyShapeToNode(
+    sourceNodeId: string,
+    sourceShapeId: string,
+    targetNodeId: string,
+    opts?: {
+      mirrored?: boolean
+      axis?: import('./symmetry').SymmetryAxis
+      name?: string
+      categoryId?: string | null
+    },
+  ): import('./shape').Shape
+  renameShape(nodeId: string, shapeId: string, newName: string): void
+  deleteShape(nodeId: string, shapeId: string): import('./shape').Shape
+  restoreShapes(nodeId: string, shapes: readonly import('./shape').Shape[]): void
+  createShapeCategory(
+    nodeId: string,
+    name: string,
+    parentId: string | null,
+  ): import('./shapeCategory').ShapeCategory
+  renameShapeCategory(nodeId: string, categoryId: string, newName: string): void
+  deleteShapeCategory(nodeId: string, categoryId: string): import('./shapeCategory').ShapeCategory
+  reorderShapeCategory(
+    nodeId: string,
+    categoryId: string,
+    newParentId: string | null,
+    newIndex: number,
+  ): void
+  moveShapeToCategory(nodeId: string, shapeId: string, targetCategoryId: string | null): void
+  reorderShape(
+    nodeId: string,
+    shapeId: string,
+    targetCategoryId: string | null,
+    newIndex: number,
+  ): void
+  restoreShapeCategories(
+    nodeId: string,
+    cats: readonly import('./shapeCategory').ShapeCategory[],
+  ): void
   getMorphKeyframes(nodeId: string): readonly Keyframe[]
   hasMorphTrack(nodeId: string): boolean
   getMorphBinding(nodeId: string): import('./shape').MorphBinding | null

@@ -41,7 +41,13 @@ export type NodeComponentsJSON = {
     readonly shapes?: readonly {
       readonly id: string
       readonly name: string
+      readonly categoryId?: string | null
       readonly vertices: readonly { readonly x: number; readonly y: number }[]
+    }[]
+    readonly shapeCategories?: readonly {
+      readonly id: string
+      readonly name: string
+      readonly parentId: string | null
     }[]
   }
   readonly ghost?: { readonly kind: 'ghost' }

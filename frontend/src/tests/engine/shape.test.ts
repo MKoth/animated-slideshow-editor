@@ -13,6 +13,9 @@ import {
   DuplicateShapeCommand,
   RenameShapeCommand,
   DeleteShapeCommand,
+  ReorderShapeCommand,
+  CreateShapeCategoryCommand,
+  ReorderShapeCategoryCommand,
 } from '../../engine/commands'
 
 function setupEngineWithMesh() {
@@ -62,6 +65,53 @@ describe('Shape storage & JSON round-trip (foundation)', () => {
     const shapes = engine.getShapes(nodeId)
     expect(shapes.map((s) => s.id)).toEqual([s1.id, s2.id, s3.id])
     expect(shapes.map((s) => s.name)).toEqual(['A', 'B', 'C'])
+  })
+
+  it('reorders shapes within a category and can move a category to the root', () => {
+    const { engine, nodeId } = setupEngineWithMesh()
+    const dispatcher = new CommandDispatcher(engine, new UndoStack(), () => {})
+    const categoryResult = dispatcher.dispatch(
+      new CreateShapeCategoryCommand({ nodeId, name: 'Face', parentId: null }),
+    )
+    expect(categoryResult.ok).toBe(true)
+    const categoryId = engine.getShapeCategories(nodeId)[0]!.id
+    engine.createShape(nodeId, 'A', categoryId)
+    const second = engine.createShape(nodeId, 'B', categoryId)
+
+    const reorder = dispatcher.dispatch(
+      new ReorderShapeCommand({
+        nodeId,
+        shapeId: second.id,
+        targetCategoryId: categoryId,
+        newIndex: 0,
+      }),
+    )
+    expect(reorder.ok).toBe(true)
+    expect(engine.getShapes(nodeId).map((shape) => shape.name)).toEqual(['B', 'A'])
+
+    const subcategoryResult = dispatcher.dispatch(
+      new CreateShapeCategoryCommand({
+        nodeId,
+        name: 'Mouth',
+        parentId: categoryId,
+      }),
+    )
+    expect(subcategoryResult.ok).toBe(true)
+    const subcategoryId = engine
+      .getShapeCategories(nodeId)
+      .find((category) => category.name === 'Mouth')!.id
+    const promote = dispatcher.dispatch(
+      new ReorderShapeCategoryCommand({
+        nodeId,
+        categoryId: subcategoryId,
+        newParentId: null,
+        newIndex: 1,
+      }),
+    )
+    expect(promote.ok).toBe(true)
+    expect(
+      engine.getShapeCategories(nodeId).find((category) => category.id === subcategoryId)!.parentId,
+    ).toBeNull()
   })
 
   it('Rename validates per-mesh unique name with block-on-duplicate inline error', () => {
@@ -196,6 +246,7 @@ describe('Shape storage & JSON round-trip (foundation)', () => {
     const shape = {
       id: 'shape-1',
       name: 'S',
+      categoryId: null,
       vertices: mesh.vertices.map((v) => ({ x: v.x, y: v.y })),
     } as import('../../engine/shape').Shape
     const original = {

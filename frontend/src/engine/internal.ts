@@ -30,6 +30,8 @@ import { ShaderDefinition } from './shaderDefinition'
 import { DEFAULT_MATERIAL_DEFINITION_ID, DEFAULT_MATERIAL_NAME } from './materialInstance'
 import { createShape, duplicateShape as duplicateShapeModel, uniqueShapeName } from './shape'
 import type { Shape } from './shape'
+import { createShapeCategory, validateShapeCategories, isDescendantCategory } from './shapeCategory'
+import type { ShapeCategory } from './shapeCategory'
 import { mirroredVertex } from './symmetry'
 import type { SymmetryAxis } from './symmetry'
 import type { MaterialOverrideValue, MaterialOverrides } from './materialInstance'
@@ -2338,17 +2340,27 @@ export class Engine {
     return node.components.mesh.shapes ?? []
   }
 
-  createShape(nodeId: string, name: string): Shape {
+  getShapeCategories(nodeId: string): readonly ShapeCategory[] {
+    const node = this.getNode(nodeId)
+    if (!node.components.mesh) throw new Error(`Node "${nodeId}" does not have a mesh component`)
+    return node.components.mesh.shapeCategories ?? []
+  }
+
+  createShape(nodeId: string, name: string, categoryId: string | null = null): Shape {
     const node = this.getNode(nodeId)
     if (!node.components.mesh) throw new Error(`Node "${nodeId}" does not have a mesh component`)
     if (typeof name !== 'string' || name.trim() === '')
       throw new Error('Shape name must be a non-empty string')
     const trimmed = name.trim()
     const existing = node.components.mesh.shapes ?? []
-    if (existing.some((s) => s.name === trimmed)) {
-      throw new Error(`A shape with name "${trimmed}" already exists on this mesh`)
+    const categories = node.components.mesh.shapeCategories ?? []
+    if (categoryId !== null && !categories.some((c) => c.id === categoryId)) {
+      throw new Error(`Shape category not found: ${categoryId}`)
     }
-    const shape = createShape(trimmed, node.components.mesh.mesh.vertices)
+    if (existing.some((s) => s.categoryId === (categoryId ?? null) && s.name === trimmed)) {
+      throw new Error(`A shape with name "${trimmed}" already exists in this category`)
+    }
+    const shape = createShape(trimmed, node.components.mesh.mesh.vertices, categoryId ?? null)
     const newShapes = [...existing, shape]
     this.#setShapes(nodeId, newShapes)
     return shape
@@ -2360,7 +2372,7 @@ export class Engine {
     const existing = node.components.mesh.shapes ?? []
     const source = existing.find((s) => s.id === shapeId)
     if (!source) throw new Error(`Shape not found: ${shapeId}`)
-    const newName = uniqueShapeName(source.name, existing)
+    const newName = uniqueShapeName(source.name, existing, source.categoryId ?? null)
     const duplicated = duplicateShapeModel(source, newName)
     const newShapes = [...existing, duplicated]
     this.#setShapes(nodeId, newShapes)
@@ -2371,7 +2383,12 @@ export class Engine {
     sourceNodeId: string,
     sourceShapeId: string,
     targetNodeId: string,
-    opts?: { readonly mirrored?: boolean; readonly axis?: SymmetryAxis; readonly name?: string },
+    opts?: {
+      readonly mirrored?: boolean
+      readonly axis?: SymmetryAxis
+      readonly name?: string
+      readonly categoryId?: string | null
+    },
   ): Shape {
     const sourceNode = this.getNode(sourceNodeId)
     if (!sourceNode.components.mesh) {
@@ -2405,11 +2422,16 @@ export class Engine {
     } else {
       baseName = sourceShape.name
     }
-    const finalName = uniqueShapeName(baseName, targetShapes)
+    const targetCategoryId = opts?.categoryId ?? null
+    const targetCategories = targetNode.components.mesh.shapeCategories ?? []
+    if (targetCategoryId !== null && !targetCategories.some((c) => c.id === targetCategoryId)) {
+      throw new Error(`Target category not found: ${targetCategoryId}`)
+    }
+    const finalName = uniqueShapeName(baseName, targetShapes, targetCategoryId)
     const newVertices = mirrored
       ? sourceShape.vertices.map((v) => mirroredVertex(v, axis))
       : sourceShape.vertices.map((v) => ({ x: v.x, y: v.y }))
-    const newShape = createShape(finalName, newVertices)
+    const newShape = createShape(finalName, newVertices, targetCategoryId)
     const newShapes = [...targetShapes, newShape]
     this.#setShapes(targetNodeId, newShapes)
     return newShape
@@ -2424,8 +2446,13 @@ export class Engine {
     const existing = node.components.mesh.shapes ?? []
     const target = existing.find((s) => s.id === shapeId)
     if (!target) throw new Error(`Shape not found: ${shapeId}`)
-    if (existing.some((s) => s.id !== shapeId && s.name === trimmed)) {
-      throw new Error(`A shape with name "${trimmed}" already exists on this mesh`)
+    const targetCategoryId = target.categoryId ?? null
+    if (
+      existing.some(
+        (s) => s.id !== shapeId && s.categoryId === targetCategoryId && s.name === trimmed,
+      )
+    ) {
+      throw new Error(`A shape with name "${trimmed}" already exists in this category`)
     }
     const newShapes = existing.map((s) =>
       s.id === shapeId
@@ -2461,10 +2488,14 @@ export class Engine {
                 ({
                   id: s.id,
                   name: s.name,
+                  categoryId: s.categoryId ?? null,
                   vertices: s.vertices.map((v) => ({ x: v.x, y: v.y })),
                 }) as Shape,
             ),
           }
+        : {}),
+      ...(meshComp.shapeCategories && meshComp.shapeCategories.length > 0
+        ? { shapeCategories: meshComp.shapeCategories.map((c) => ({ ...c })) }
         : {}),
     }
     const newComponents = { ...node.components, mesh: newMeshComp }
@@ -2476,6 +2507,230 @@ export class Engine {
   /** Public restore for undo handlers — replaces shapes array wholesale */
   restoreShapes(nodeId: string, shapes: readonly Shape[]): void {
     this.#setShapes(nodeId, shapes)
+  }
+
+  // --- Shape categories ---
+
+  createShapeCategory(nodeId: string, name: string, parentId: string | null): ShapeCategory {
+    const node = this.getNode(nodeId)
+    if (!node.components.mesh) throw new Error(`Node "${nodeId}" does not have a mesh component`)
+    if (typeof name !== 'string' || name.trim() === '')
+      throw new Error('Category name must be a non-empty string')
+    const trimmed = name.trim()
+    const existing = node.components.mesh.shapeCategories ?? []
+    if (parentId !== null && !existing.some((c) => c.id === parentId)) {
+      throw new Error(`Parent category not found: ${parentId}`)
+    }
+    if (existing.some((c) => c.parentId === parentId && c.name === trimmed)) {
+      throw new Error(`A category with name "${trimmed}" already exists in this folder`)
+    }
+    const cat = createShapeCategory(trimmed, parentId)
+    const newCats = [...existing, cat]
+    const err = validateShapeCategories(newCats)
+    if (err) throw new Error(err)
+    this.#setShapeCategories(nodeId, newCats)
+    return cat
+  }
+
+  renameShapeCategory(nodeId: string, categoryId: string, newName: string): void {
+    const node = this.getNode(nodeId)
+    if (!node.components.mesh) throw new Error(`Node "${nodeId}" does not have a mesh component`)
+    if (typeof newName !== 'string' || newName.trim() === '')
+      throw new Error('Category name must be a non-empty string')
+    const trimmed = newName.trim()
+    const existing = node.components.mesh.shapeCategories ?? []
+    const target = existing.find((c) => c.id === categoryId)
+    if (!target) throw new Error(`Category not found: ${categoryId}`)
+    if (
+      existing.some(
+        (c) => c.id !== categoryId && c.parentId === target.parentId && c.name === trimmed,
+      )
+    ) {
+      throw new Error(`A category with name "${trimmed}" already exists in this folder`)
+    }
+    const newCats = existing.map((c) => (c.id === categoryId ? { ...c, name: trimmed } : c))
+    const err = validateShapeCategories(newCats)
+    if (err) throw new Error(err)
+    this.#setShapeCategories(nodeId, newCats)
+  }
+
+  deleteShapeCategory(nodeId: string, categoryId: string): ShapeCategory {
+    const node = this.getNode(nodeId)
+    if (!node.components.mesh) throw new Error(`Node "${nodeId}" does not have a mesh component`)
+    const existing = node.components.mesh.shapeCategories ?? []
+    const target = existing.find((c) => c.id === categoryId)
+    if (!target) throw new Error(`Category not found: ${categoryId}`)
+    if (existing.some((c) => c.parentId === categoryId)) {
+      throw new Error(`Cannot delete category "${target.name}" — it contains subcategories`)
+    }
+    const shapes = node.components.mesh.shapes ?? []
+    if (shapes.some((s) => s.categoryId === categoryId)) {
+      throw new Error(`Cannot delete category "${target.name}" — it contains shapes`)
+    }
+    const newCats = existing.filter((c) => c.id !== categoryId)
+    this.#setShapeCategories(nodeId, newCats)
+    return target
+  }
+
+  reorderShapeCategory(
+    nodeId: string,
+    categoryId: string,
+    newParentId: string | null,
+    newIndex: number,
+  ): void {
+    const node = this.getNode(nodeId)
+    if (!node.components.mesh) throw new Error(`Node "${nodeId}" does not have a mesh component`)
+    const existing = [...(node.components.mesh.shapeCategories ?? [])]
+    const idx = existing.findIndex((c) => c.id === categoryId)
+    if (idx === -1) throw new Error(`Category not found: ${categoryId}`)
+    const cat = existing[idx]!
+    if (newParentId !== null && !existing.some((c) => c.id === newParentId)) {
+      throw new Error(`Parent category not found: ${newParentId}`)
+    }
+    if (newParentId === categoryId) throw new Error('Cannot parent category to itself')
+    if (newParentId !== null && isDescendantCategory(existing, categoryId, newParentId)) {
+      throw new Error('Cannot move category into its own descendant')
+    }
+    // duplicate name check in target parent
+    if (
+      existing.some((c) => c.id !== categoryId && c.parentId === newParentId && c.name === cat.name)
+    ) {
+      throw new Error(`A category with name "${cat.name}" already exists in the target folder`)
+    }
+    // remove
+    existing.splice(idx, 1)
+    const siblingIds = existing.filter((c) => c.parentId === newParentId).map((c) => c.id)
+    const clamped = Math.max(0, Math.min(newIndex, siblingIds.length))
+    // find insertion position in flat array: after clamped siblings of target parent
+    let insertAt = existing.length
+    if (siblingIds.length === 0) {
+      // append
+      insertAt = existing.length
+    } else if (clamped === 0) {
+      // before first sibling
+      insertAt = existing.findIndex((c) => c.id === siblingIds[0])
+    } else if (clamped >= siblingIds.length) {
+      const lastId = siblingIds[siblingIds.length - 1]!
+      insertAt = existing.findIndex((c) => c.id === lastId) + 1
+    } else {
+      const beforeId = siblingIds[clamped]!
+      insertAt = existing.findIndex((c) => c.id === beforeId)
+    }
+    const updated: ShapeCategory = { ...cat, parentId: newParentId }
+    existing.splice(insertAt, 0, updated)
+    const err = validateShapeCategories(existing)
+    if (err) throw new Error(err)
+    this.#setShapeCategories(nodeId, existing)
+  }
+
+  moveShapeToCategory(nodeId: string, shapeId: string, targetCategoryId: string | null): void {
+    const node = this.getNode(nodeId)
+    if (!node.components.mesh) throw new Error(`Node "${nodeId}" does not have a mesh component`)
+    const shapes = node.components.mesh.shapes ?? []
+    const idx = shapes.findIndex((s) => s.id === shapeId)
+    if (idx === -1) throw new Error(`Shape not found: ${shapeId}`)
+    const categories = node.components.mesh.shapeCategories ?? []
+    if (targetCategoryId !== null && !categories.some((c) => c.id === targetCategoryId)) {
+      throw new Error(`Target category not found: ${targetCategoryId}`)
+    }
+    const shape = shapes[idx]!
+    if (shape.categoryId === targetCategoryId) return
+    if (
+      shapes.some(
+        (s) => s.id !== shapeId && s.categoryId === targetCategoryId && s.name === shape.name,
+      )
+    ) {
+      throw new Error(`A shape with name "${shape.name}" already exists in the target category`)
+    }
+    const newShapes = shapes.map((s) =>
+      s.id === shapeId ? { ...s, categoryId: targetCategoryId } : s,
+    )
+    this.#setShapes(nodeId, newShapes)
+    this.#bus.emit({ type: 'ShapeMoved', nodeId, shapeId } as import('./events').EngineEvent)
+  }
+
+  reorderShape(
+    nodeId: string,
+    shapeId: string,
+    targetCategoryId: string | null,
+    newIndex: number,
+  ): void {
+    const node = this.getNode(nodeId)
+    if (!node.components.mesh) throw new Error(`Node "${nodeId}" does not have a mesh component`)
+    const shapes = [...(node.components.mesh.shapes ?? [])]
+    const idx = shapes.findIndex((s) => s.id === shapeId)
+    if (idx === -1) throw new Error(`Shape not found: ${shapeId}`)
+    const shape = shapes[idx]!
+    const categories = node.components.mesh.shapeCategories ?? []
+    if (targetCategoryId !== null && !categories.some((c) => c.id === targetCategoryId)) {
+      throw new Error(`Target category not found: ${targetCategoryId}`)
+    }
+    // if moving category, check duplicate
+    const targetCat = targetCategoryId ?? null
+    if (shape.categoryId !== targetCat) {
+      if (
+        shapes.some((s) => s.id !== shapeId && s.categoryId === targetCat && s.name === shape.name)
+      ) {
+        throw new Error(`A shape with name "${shape.name}" already exists in the target category`)
+      }
+    }
+    shapes.splice(idx, 1)
+    const updatedShape: Shape =
+      shape.categoryId !== targetCat ? { ...shape, categoryId: targetCat } : shape
+    // find sibling shapes for target category
+    const siblings = shapes.filter((s) => (s.categoryId ?? null) === targetCat)
+    const clamped = Math.max(0, Math.min(newIndex, siblings.length))
+    let insertAt: number
+    if (siblings.length === 0) {
+      insertAt = shapes.length
+    } else if (clamped === 0) {
+      insertAt = shapes.findIndex((s) => s.id === siblings[0]!.id)
+    } else if (clamped >= siblings.length) {
+      const lastId = siblings[siblings.length - 1]!.id
+      insertAt = shapes.findIndex((s) => s.id === lastId) + 1
+    } else {
+      const beforeId = siblings[clamped]!.id
+      insertAt = shapes.findIndex((s) => s.id === beforeId)
+    }
+    shapes.splice(insertAt, 0, updatedShape)
+    this.#setShapes(nodeId, shapes)
+    if (shape.categoryId !== targetCat) {
+      this.#bus.emit({ type: 'ShapeMoved', nodeId, shapeId } as import('./events').EngineEvent)
+    } else {
+      this.#bus.emit({ type: 'MeshChanged', nodeId })
+    }
+  }
+
+  #setShapeCategories(nodeId: string, categories: readonly ShapeCategory[]): void {
+    const node = this.getNode(nodeId)
+    if (!node.components.mesh) throw new Error(`Node "${nodeId}" does not have a mesh component`)
+    const meshComp = node.components.mesh
+    const newMeshComp: import('./components').MeshComponent = {
+      kind: 'mesh' as const,
+      mesh: meshComp.mesh,
+      ...(meshComp.shapes && meshComp.shapes.length > 0
+        ? {
+            shapes: meshComp.shapes.map(
+              (s) =>
+                ({
+                  id: s.id,
+                  name: s.name,
+                  categoryId: s.categoryId ?? null,
+                  vertices: s.vertices.map((v) => ({ x: v.x, y: v.y })),
+                }) as Shape,
+            ),
+          }
+        : {}),
+      ...(categories.length > 0 ? { shapeCategories: categories.map((c) => ({ ...c })) } : {}),
+    }
+    const newComponents = { ...node.components, mesh: newMeshComp }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ;(node as any).components = Object.freeze(newComponents)
+    this.#bus.emit({ type: 'ShapeCategoryChanged', nodeId })
+  }
+
+  restoreShapeCategories(nodeId: string, categories: readonly ShapeCategory[]): void {
+    this.#setShapeCategories(nodeId, categories)
   }
 
   setShapeVertex(nodeId: string, shapeId: string, vertexIndex: number, x: number, y: number): void {
@@ -3982,6 +4237,7 @@ export class Engine {
 
     // Shape id remapping per Mesh node (ADR 0008): fresh ids per imported Mesh, patch bindings
     const shapeIdMapPerOldNode = new Map<string, Map<string, string>>()
+    const categoryIdMapPerOldNode = new Map<string, Map<string, string>>()
     for (const nodeJson of objectJson.nodes) {
       const comp = (nodeJson as unknown as { components?: Record<string, unknown> }).components
       const meshComp = comp?.mesh as Record<string, unknown> | undefined
@@ -3996,6 +4252,18 @@ export class Engine {
           }
         }
         if (m.size > 0) shapeIdMapPerOldNode.set(nodeJson.id, m)
+      }
+      const categories = meshComp?.shapeCategories as unknown[] | undefined
+      if (Array.isArray(categories) && categories.length > 0) {
+        const m = new Map<string, string>()
+        for (const c of categories) {
+          const rec = c as Record<string, unknown>
+          const oldId = rec.id as string
+          if (typeof oldId === 'string' && oldId !== '') {
+            m.set(oldId, newId('shapeCategory'))
+          }
+        }
+        if (m.size > 0) categoryIdMapPerOldNode.set(nodeJson.id, m)
       }
     }
 
@@ -4063,15 +4331,39 @@ export class Engine {
       let components = cloned.components as Record<string, unknown> | undefined
       if (components && typeof components.mesh === 'object' && components.mesh !== null) {
         let meshComp = components.mesh as Record<string, unknown>
+        // Remap category ids
+        if (Array.isArray(meshComp.shapeCategories)) {
+          const catMap = categoryIdMapPerOldNode.get(orig.id)
+          if (catMap) {
+            const newCats = (meshComp.shapeCategories as unknown[]).map((c) => {
+              const rec = c as Record<string, unknown>
+              const oldId = rec.id as string
+              const newIdVal2 = catMap.get(oldId) ?? oldId
+              let newParent = rec.parentId as string | null
+              if (newParent !== null && catMap.has(newParent)) newParent = catMap.get(newParent)!
+              return { ...rec, id: newIdVal2, parentId: newParent }
+            })
+            meshComp = { ...meshComp, shapeCategories: newCats }
+            components = { ...components, mesh: meshComp }
+            cloned.components = components
+          }
+        }
         // Remap shape ids to fresh ids per mesh (referential integrity for bindings)
         if (Array.isArray(meshComp.shapes)) {
           const shapeMap = shapeIdMapPerOldNode.get(orig.id)
-          if (shapeMap) {
+          const catMap = categoryIdMapPerOldNode.get(orig.id)
+          if (shapeMap || catMap) {
             const newShapes = (meshComp.shapes as unknown[]).map((s) => {
               const rec = s as Record<string, unknown>
               const oldId = rec.id as string
-              const newIdVal2 = shapeMap.get(oldId) ?? oldId
-              return { ...rec, id: newIdVal2 }
+              const newIdVal2 = shapeMap?.get(oldId) ?? oldId
+              let newCat = (rec.categoryId as string | null | undefined) ?? null
+              if (newCat !== null && catMap?.has(newCat)) newCat = catMap.get(newCat)!
+              const base: Record<string, unknown> = { ...rec, id: newIdVal2 }
+              if (newCat !== (rec.categoryId ?? null)) base.categoryId = newCat
+              else if (rec.categoryId !== undefined) base.categoryId = newCat
+              if (base.categoryId === null && rec.categoryId === undefined) delete base.categoryId
+              return base
             })
             meshComp = { ...meshComp, shapes: newShapes }
             components = { ...components, mesh: meshComp }
@@ -5241,6 +5533,25 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getTableKeyframes: (nodeId, property) => engine.getTableKeyframes(nodeId, property),
     hasTableTrack: (nodeId, property) => engine.hasTableTrack(nodeId, property),
     getShapes: (nodeId) => engine.getShapes(nodeId),
+    getShapeCategories: (nodeId) => engine.getShapeCategories(nodeId),
+    createShape: (nodeId, name, categoryId) => engine.createShape(nodeId, name, categoryId ?? null),
+    duplicateShape: (nodeId, shapeId) => engine.duplicateShape(nodeId, shapeId),
+    copyShapeToNode: (s, sid, t, opts) => engine.copyShapeToNode(s, sid, t, opts),
+    renameShape: (nodeId, shapeId, newName) => engine.renameShape(nodeId, shapeId, newName),
+    deleteShape: (nodeId, shapeId) => engine.deleteShape(nodeId, shapeId),
+    restoreShapes: (nodeId, shapes) => engine.restoreShapes(nodeId, shapes),
+    createShapeCategory: (nodeId, name, parentId) =>
+      engine.createShapeCategory(nodeId, name, parentId),
+    renameShapeCategory: (nodeId, categoryId, newName) =>
+      engine.renameShapeCategory(nodeId, categoryId, newName),
+    deleteShapeCategory: (nodeId, categoryId) => engine.deleteShapeCategory(nodeId, categoryId),
+    reorderShapeCategory: (nodeId, categoryId, newParentId, newIndex) =>
+      engine.reorderShapeCategory(nodeId, categoryId, newParentId, newIndex),
+    moveShapeToCategory: (nodeId, shapeId, targetCategoryId) =>
+      engine.moveShapeToCategory(nodeId, shapeId, targetCategoryId),
+    reorderShape: (nodeId, shapeId, targetCategoryId, newIndex) =>
+      engine.reorderShape(nodeId, shapeId, targetCategoryId, newIndex),
+    restoreShapeCategories: (nodeId, cats) => engine.restoreShapeCategories(nodeId, cats),
     getVisibleKeyframes: (nodeId) => engine.getVisibleKeyframes(nodeId),
     hasVisibleTrack: (nodeId) => engine.hasVisibleTrack(nodeId),
     evaluateVisible: (nodeId, time) => engine.evaluateVisible(nodeId, time),

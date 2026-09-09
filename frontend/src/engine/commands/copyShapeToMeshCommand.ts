@@ -9,6 +9,7 @@ export interface CopyShapeToMeshParameters {
   readonly mirrored?: boolean
   readonly axis?: SymmetryAxis
   readonly name?: string
+  readonly targetCategoryId?: string | null
 }
 
 export interface CopyShapeToMeshInverse {
@@ -26,6 +27,7 @@ export class CopyShapeToMeshCommand implements Command<CopyShapeToMeshInverse> {
   readonly #mirrored: boolean
   readonly #axis: SymmetryAxis
   readonly #name: string | undefined
+  readonly #targetCategoryId: string | null | undefined
 
   constructor(input: CopyShapeToMeshParameters) {
     this.#sourceNodeId = input.sourceNodeId
@@ -34,6 +36,7 @@ export class CopyShapeToMeshCommand implements Command<CopyShapeToMeshInverse> {
     this.#mirrored = input.mirrored ?? false
     this.#axis = input.axis ?? 'x'
     this.#name = input.name
+    this.#targetCategoryId = input.targetCategoryId
     this.parameters = {
       sourceNodeId: input.sourceNodeId,
       sourceShapeId: input.sourceShapeId,
@@ -41,6 +44,7 @@ export class CopyShapeToMeshCommand implements Command<CopyShapeToMeshInverse> {
       ...(input.mirrored !== undefined ? { mirrored: input.mirrored } : {}),
       ...(input.axis !== undefined ? { axis: input.axis } : {}),
       ...(input.name !== undefined ? { name: input.name } : {}),
+      ...(input.targetCategoryId !== undefined ? { targetCategoryId: input.targetCategoryId } : {}),
     }
   }
 
@@ -62,6 +66,12 @@ export class CopyShapeToMeshCommand implements Command<CopyShapeToMeshInverse> {
     if (this.#name !== undefined && (typeof this.#name !== 'string' || this.#name.trim() === '')) {
       throw new Error('Shape name must be a non-empty string')
     }
+    if (this.#targetCategoryId !== undefined && this.#targetCategoryId !== null) {
+      const cats = engine.getShapeCategories(this.#targetNodeId)
+      if (!cats.some((c) => c.id === this.#targetCategoryId)) {
+        throw new Error(`Target category not found: ${this.#targetCategoryId}`)
+      }
+    }
     const targetMesh = targetNode.components.mesh.mesh
     if (sourceShape.vertices.length !== targetMesh.vertices.length) {
       throw new Error(
@@ -79,6 +89,7 @@ export class CopyShapeToMeshCommand implements Command<CopyShapeToMeshInverse> {
         mirrored: this.#mirrored,
         axis: this.#axis,
         ...(this.#name !== undefined ? { name: this.#name } : {}),
+        ...(this.#targetCategoryId !== undefined ? { categoryId: this.#targetCategoryId } : {}),
       },
     )
     return { targetNodeId: this.#targetNodeId, shapeId: shape.id, shape }

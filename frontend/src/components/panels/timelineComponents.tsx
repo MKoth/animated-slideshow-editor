@@ -281,12 +281,16 @@ export function TimelineContextMenu({
   onAdd,
   onDelete,
   onAddToClip,
+  onEditMorph,
+  onEditSymmetry,
   onClose,
 }: {
   menu: TimelineMenuState
   onAdd: () => void
   onDelete: () => void
   onAddToClip?: () => void
+  onEditMorph?: () => void
+  onEditSymmetry?: () => void
   onClose: () => void
 }) {
   return (
@@ -303,6 +307,24 @@ export function TimelineContextMenu({
       >
         {menu.keyframeId ? (
           <>
+            {onEditMorph && (menu as unknown as { morph?: boolean }).morph && (
+              <button
+                className="timeline-context-menu__item"
+                data-testid="edit-morph-button"
+                onClick={onEditMorph}
+              >
+                Edit Morph…
+              </button>
+            )}
+            {onEditSymmetry && (menu as unknown as { symmetry?: boolean }).symmetry && (
+              <button
+                className="timeline-context-menu__item"
+                data-testid="edit-symmetry-button"
+                onClick={onEditSymmetry}
+              >
+                Edit Symmetry…
+              </button>
+            )}
             <button className="timeline-context-menu__item" onClick={onDelete}>
               Delete Keyframe
             </button>

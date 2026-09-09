@@ -11,6 +11,7 @@ import type {
   KeyframeRef,
   MaterialKeyframeRef,
   ShadowKeyframeRef,
+  SymmetryKeyframeRef,
 } from '../../app/keyframeSelectionActions'
 import {
   useTimelineSelectionStore,
@@ -30,10 +31,21 @@ interface MorphKeyframeRefForScale {
   readonly morph: true
 }
 
+interface SymmetryKeyframeRefForScale {
+  readonly nodeId: string
+  readonly keyframeId: string
+  readonly time: number
+  readonly symmetry: true
+}
+
 interface ScaleSession {
   readonly keyframeRefs: ReadonlyMap<
     string,
-    KeyframeRef | MaterialKeyframeRef | MorphKeyframeRefForScale | ShadowKeyframeRef
+    | KeyframeRef
+    | MaterialKeyframeRef
+    | MorphKeyframeRefForScale
+    | ShadowKeyframeRef
+    | SymmetryKeyframeRefForScale
   >
   readonly isAlt: boolean
   readonly playheadTime: number
@@ -45,7 +57,11 @@ interface ScaleSession {
 export interface KeyframeScaleOptions {
   readonly keyframeRefs: ReadonlyMap<
     string,
-    KeyframeRef | MaterialKeyframeRef | MorphKeyframeRefForScale | ShadowKeyframeRef
+    | KeyframeRef
+    | MaterialKeyframeRef
+    | MorphKeyframeRefForScale
+    | ShadowKeyframeRef
+    | SymmetryKeyframeRefForScale
   >
   readonly duration: number
   readonly pps: number
@@ -70,7 +86,11 @@ export function computeSelectionBounds(
   selectedKeyframeIds: readonly string[],
   keyframeRefs: ReadonlyMap<
     string,
-    KeyframeRef | MaterialKeyframeRef | MorphKeyframeRefForScale | ShadowKeyframeRef
+    | KeyframeRef
+    | MaterialKeyframeRef
+    | MorphKeyframeRefForScale
+    | ShadowKeyframeRef
+    | SymmetryKeyframeRefForScale
   >,
 ): SelectionBounds | null {
   if (selectedKeyframeIds.length === 0) {
@@ -142,6 +162,7 @@ export function useKeyframeScale(options: KeyframeScaleOptions): KeyframeScale {
     const materialRefs: (MaterialKeyframeRef & { keyframeId: string })[] = []
     const morphRefs: (MorphKeyframeRefForScale & { keyframeId: string })[] = []
     const shadowRefs: (ShadowKeyframeRef & { keyframeId: string })[] = []
+    const symmetryRefs: (SymmetryKeyframeRefForScale & { keyframeId: string })[] = []
 
     for (const [id, ref] of session.keyframeRefs) {
       if (!wanted.has(id)) {
@@ -151,6 +172,8 @@ export function useKeyframeScale(options: KeyframeScaleOptions): KeyframeScale {
         shadowRefs.push(ref as ShadowKeyframeRef & { keyframeId: string })
       } else if ('morph' in ref && (ref as MorphKeyframeRefForScale).morph) {
         morphRefs.push(ref as MorphKeyframeRefForScale & { keyframeId: string })
+      } else if ('symmetry' in ref && (ref as SymmetryKeyframeRef).symmetry) {
+        symmetryRefs.push(ref as SymmetryKeyframeRefForScale & { keyframeId: string })
       } else if ('property' in ref) {
         propertyRefs.push(ref as KeyframeRef & { keyframeId: string })
       } else if ('parameter' in ref) {
@@ -246,6 +269,31 @@ export function useKeyframeScale(options: KeyframeScaleOptions): KeyframeScale {
             }),
           )
         }
+      }
+    }
+    // symmetry moves grouped by node
+    {
+      const groups = new Map<
+        string,
+        { nodeId: string; items: { keyframeId: string; newTime: number }[] }
+      >()
+      for (const ref of symmetryRefs) {
+        const previewTime = preview.get(ref.keyframeId)
+        if (previewTime === undefined || previewTime === ref.time) continue
+        let entry = groups.get(ref.nodeId)
+        if (!entry) {
+          entry = { nodeId: ref.nodeId, items: [] }
+          groups.set(ref.nodeId, entry)
+        }
+        entry.items.push({ keyframeId: ref.keyframeId, newTime: previewTime })
+      }
+      for (const group of groups.values()) {
+        commands.push(
+          new MoveKeyframesCommand({
+            target: { kind: 'symmetry', nodeId: group.nodeId },
+            moves: group.items,
+          }),
+        )
       }
     }
 

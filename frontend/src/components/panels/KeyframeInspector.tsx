@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import type { Keyframe } from '../../engine'
 import type { AnimationProperty } from '../../engine'
 import type { InterpolationType, KeyframeTangent } from '../../engine/keyframe'
@@ -15,6 +15,7 @@ import {
 import { dispatchKeyframeCommands } from '../../engine/keyframeEdit'
 import { NumericField } from './inspectorFields'
 import { useEngine } from '../../app/useEngine'
+import { MorphPickerModal } from './MorphPickerModal'
 
 function tangentLabel(kind: 'in' | 'out'): string {
   return kind === 'in' ? 'Tangent In' : 'Tangent Out'
@@ -118,7 +119,17 @@ export function KeyframeInspector({
       return { kind: 'node' as const, nodeId: nodeId!, parameter }
     }
     return { kind: 'node' as const, nodeId: nodeId!, property: property as 'positionX' }
-  }, [nodeId, property, parameter, morphNodeId, zIndexNodeId, clipTarget, isClip, isMorph, isZIndex])
+  }, [
+    nodeId,
+    property,
+    parameter,
+    morphNodeId,
+    zIndexNodeId,
+    clipTarget,
+    isClip,
+    isMorph,
+    isZIndex,
+  ])
 
   const handleInterpolationChange = useCallback(
     (newInterpolation: InterpolationType) => {
@@ -320,7 +331,18 @@ export function KeyframeInspector({
       }
     },
     // morphValue is a fresh object each render — depend on its primitive fields to satisfy react-compiler
-    [dispatch, target, keyframe.id, notify, isClip, clipTarget, isMorph, morphValue?.fromShapeId, morphValue?.toShapeId, morphValue?.coefficient],
+    [
+      dispatch,
+      target,
+      keyframe.id,
+      notify,
+      isClip,
+      clipTarget,
+      isMorph,
+      morphValue?.fromShapeId,
+      morphValue?.toShapeId,
+      morphValue?.coefficient,
+    ],
   )
 
   const handleMorphFromChange = useCallback(
@@ -340,7 +362,15 @@ export function KeyframeInspector({
       )
       if (!result.ok) notify(result.error.message)
     },
-    [dispatch, morphNodeId, keyframe.id, morphValue?.toShapeId, morphValue?.coefficient, notify, isMorph],
+    [
+      dispatch,
+      morphNodeId,
+      keyframe.id,
+      morphValue?.toShapeId,
+      morphValue?.coefficient,
+      notify,
+      isMorph,
+    ],
   )
 
   const handleMorphToChange = useCallback(
@@ -360,14 +390,82 @@ export function KeyframeInspector({
       )
       if (!result.ok) notify(result.error.message)
     },
-    [dispatch, morphNodeId, keyframe.id, morphValue?.fromShapeId, morphValue?.coefficient, notify, isMorph],
+    [
+      dispatch,
+      morphNodeId,
+      keyframe.id,
+      morphValue?.fromShapeId,
+      morphValue?.coefficient,
+      notify,
+      isMorph,
+    ],
   )
+
+  const [pickerOpen, setPickerOpen] = useState(false)
+  // Categories for grouped selects
+  let morphCategories: readonly import('../../engine/shapeCategory').ShapeCategory[] = []
+  try {
+    if (isMorph && morphNodeId) morphCategories = inspectorEngine.getShapeCategories(morphNodeId)
+  } catch {
+    morphCategories = []
+  }
+
+  const morphShapeOptions = useMemo(() => {
+    if (morphCategories.length === 0) return [{ label: 'Uncategorized', shapes: morphShapes }]
+    const byCat = new Map<string | null, typeof morphShapes>()
+    for (const s of morphShapes) {
+      const key = s.categoryId ?? null
+      if (!byCat.has(key)) byCat.set(key, [] as unknown as typeof morphShapes)
+      ;(byCat.get(key) as unknown as import('../../engine/shape').Shape[]).push(s)
+    }
+    const groups: { label: string; shapes: typeof morphShapes }[] = []
+    const uncategorized = byCat.get(null)
+    if (uncategorized && uncategorized.length > 0)
+      groups.push({ label: 'Uncategorized', shapes: uncategorized })
+    for (const cat of morphCategories) {
+      const list = byCat.get(cat.id)
+      if (list && list.length > 0) groups.push({ label: cat.name, shapes: list })
+    }
+    if (groups.length === 0 && morphShapes.length > 0)
+      groups.push({ label: 'All', shapes: morphShapes })
+    return groups
+  }, [morphShapes, morphCategories])
 
   return (
     <section className="inspector-section">
       <h3 className="inspector-section__title">Keyframe</h3>
       {isMorph && morphValue ? (
         <>
+          <div style={{ marginBottom: 8 }}>
+            <button
+              disabled={playing}
+              onClick={() => setPickerOpen(true)}
+              style={{
+                fontSize: 12,
+                padding: '6px 10px',
+                width: '100%',
+                border: '1px solid var(--color-border)',
+                borderRadius: 4,
+                background: 'var(--color-bg-elevated)',
+                cursor: playing ? 'not-allowed' : 'pointer',
+              }}
+            >
+              Open Morph Picker (category → shapes)
+            </button>
+            <p style={{ fontSize: 10, opacity: 0.6, margin: '4px 0 0' }}>
+              Left: categories, Right: shapes + coefficient
+            </p>
+          </div>
+          <MorphPickerModal
+            open={pickerOpen}
+            nodeId={morphNodeId!}
+            keyframeId={keyframe.id}
+            value={morphValue}
+            engine={inspectorEngine}
+            dispatch={dispatch}
+            notify={notify}
+            onClose={() => setPickerOpen(false)}
+          />
           <div className="inspector-field">
             <label className="inspector-field__label">From Shape</label>
             <select
@@ -378,10 +476,14 @@ export function KeyframeInspector({
               onChange={(e) => handleMorphFromChange(e.target.value || null)}
             >
               <option value="">— None —</option>
-              {morphShapes.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
+              {morphShapeOptions.map((g) => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.shapes.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </div>
@@ -395,10 +497,14 @@ export function KeyframeInspector({
               onChange={(e) => handleMorphToChange(e.target.value || null)}
             >
               <option value="">— None —</option>
-              {morphShapes.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
+              {morphShapeOptions.map((g) => (
+                <optgroup key={g.label} label={g.label}>
+                  {g.shapes.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </div>

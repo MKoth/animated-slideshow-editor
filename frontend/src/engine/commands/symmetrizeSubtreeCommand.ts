@@ -61,7 +61,9 @@ export class SymmetrizeSubtreeCommand implements Command<SymmetrizeSubtreeInvers
     for (const node of nodes) {
       const oldTransform: Transform = { ...node.transform }
       if (node.transform.localPivot) {
-        ;(oldTransform as unknown as Record<string, unknown>).localPivot = { ...node.transform.localPivot }
+        ;(oldTransform as unknown as Record<string, unknown>).localPivot = {
+          ...node.transform.localPivot,
+        }
       }
       const oldUVTransform = node.material.uvTransform
         ? cloneUVTransform(node.material.uvTransform)
@@ -75,6 +77,7 @@ export class SymmetrizeSubtreeCommand implements Command<SymmetrizeSubtreeInvers
           ? meshComp.shapes.map((s) => ({
               id: s.id,
               name: s.name,
+              categoryId: s.categoryId ?? null,
               vertices: s.vertices.map((v) => ({ x: v.x, y: v.y })),
             }))
           : undefined
@@ -100,6 +103,7 @@ export class SymmetrizeSubtreeCommand implements Command<SymmetrizeSubtreeInvers
           const newShapes: Shape[] = oldShapes.map((s) => ({
             id: s.id,
             name: s.name,
+            categoryId: s.categoryId ?? null,
             vertices: s.vertices.map((v) => mirroredVertex(v, this.#axis)),
           }))
           engine.restoreShapes(node.id, newShapes)

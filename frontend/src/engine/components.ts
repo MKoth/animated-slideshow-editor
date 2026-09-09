@@ -4,6 +4,7 @@ import type { DataPoint } from './dataSourceDefinition'
 import type { CircleComponent } from './circleComponent'
 import { cloneCircleComponent } from './circleComponent'
 import type { Shape } from './shape'
+import type { ShapeCategory } from './shapeCategory'
 
 export type { DataPoint }
 
@@ -59,6 +60,7 @@ export interface MeshComponent {
   // `mesh` is the base rest; `shapes` are additional snapshots. faces/uvs/boneWeights/bindPose are NOT duplicated per Shape.
   // Invariant: shape.vertices.length === mesh.vertices.length; validated on load, soft-warn fallback.
   readonly shapes?: readonly Shape[]
+  readonly shapeCategories?: readonly ShapeCategory[]
 }
 
 export interface GhostComponent {
@@ -130,7 +132,17 @@ export function copyComponents(components: NodeComponents): NodeComponents {
                 shapes: components.mesh.shapes.map((s) => ({
                   id: s.id,
                   name: s.name,
+                  categoryId: s.categoryId ?? null,
                   vertices: s.vertices.map((v) => ({ x: v.x, y: v.y })),
+                })),
+              }
+            : {}),
+          ...(components.mesh.shapeCategories
+            ? {
+                shapeCategories: components.mesh.shapeCategories.map((c) => ({
+                  id: c.id,
+                  name: c.name,
+                  parentId: c.parentId,
                 })),
               }
             : {}),
