@@ -54,7 +54,20 @@ function getDeformedVertices(
   scene: Scene,
   meshTransform: WorldTransform,
   getWorldTransform?: WorldTransformSource,
+  engine?: EnginePublic,
+  nodeId?: string,
+  time?: number,
 ): { x: number; y: number }[] {
+  // If engine is available and nodeId/time provided, use engine's morph-aware deformation (morph-then-bones)
+  if (engine && nodeId !== undefined && time !== undefined) {
+    try {
+      const boneTransforms = computeBoneWorldTransforms(scene, getWorldTransform)
+      const result = engine.evaluateMeshDeformation(nodeId, time, boneTransforms, meshTransform)
+      if (result) return result.deformedVertices.map((v) => ({ x: v.x, y: v.y }))
+    } catch {
+      // fall through to non-morph path
+    }
+  }
   if (!mesh.boneWeights || mesh.boneWeights.length === 0) {
     return mesh.vertices.map((v) => ({ x: v.x, y: v.y }))
   }
@@ -89,6 +102,7 @@ export interface MeshOverlayContext {
   readonly getScene: () => Scene | null
   readonly getWorldTransform?: WorldTransformSource
   readonly getCameraTransform?: () => ViewportTransform | null
+  readonly getTime?: () => number
 }
 
 function localToWorld(
@@ -152,6 +166,7 @@ export class MeshOverlay {
   readonly #getScene: () => Scene | null
   readonly #getWorldTransform?: WorldTransformSource
   readonly #getCameraTransform?: () => ViewportTransform | null
+  readonly #getTime?: () => number
   #graphics: PixiGraphics | null = null
   #attached = false
   #unsubscribeMeshEdit: (() => void) | null = null
@@ -170,6 +185,18 @@ export class MeshOverlay {
     this.#getScene = context.getScene
     this.#getWorldTransform = context.getWorldTransform
     this.#getCameraTransform = context.getCameraTransform
+    this.#getTime = context.getTime
+  }
+
+  #currentTime(): number {
+    try {
+      const t = this.#getTime?.()
+      if (typeof t === 'number' && Number.isFinite(t)) return t
+    } catch {
+      // ignore
+    }
+    // fallback: try to get from engine active slide time via worldTransform source? Use 0
+    return 0
   }
 
   #cameraScale(): number {
@@ -245,7 +272,16 @@ export class MeshOverlay {
     const mesh = effectiveMeshForPreview(node.components.mesh.mesh, nodeId, this.#engine)
     const transform = this.#resolveTransform(scene, nodeId)
     if (!transform) return null
-    const deformed = getDeformedVertices(mesh, scene, transform, this.#getWorldTransform)
+    const time = this.#currentTime()
+    const deformed = getDeformedVertices(
+      mesh,
+      scene,
+      transform,
+      this.#getWorldTransform,
+      this.#engine,
+      nodeId,
+      time,
+    )
     return deformed.map((v, i) => {
       const p = preview?.get(i)
       return localToWorld(p ? p.x : v.x, p ? p.y : v.y, transform)
@@ -274,7 +310,8 @@ export class MeshOverlay {
     const mesh = effectiveMeshForPreview(node.components.mesh.mesh, nodeId, this.#engine)
     const transform = this.#resolveTransform(scene, nodeId)
     if (!transform) return null
-    return getDeformedVertices(mesh, scene, transform, this.#getWorldTransform)
+    const time = this.#currentTime()
+    return getDeformedVertices(mesh, scene, transform, this.#getWorldTransform, this.#engine, nodeId, time)
   }
 
   redraw(): void {
@@ -302,7 +339,7 @@ export class MeshOverlay {
       if (!transform) {
         return
       }
-      this.#drawMesh(graphics, mesh, transform, scene)
+      this.#drawMesh(graphics, mesh, transform, scene, meshEditNodeId)
     } else {
       for (const node of walkPreOrder(scene.root)) {
         if (!node.components.mesh || !node.visible) {
@@ -314,7 +351,7 @@ export class MeshOverlay {
         }
         const rawMesh = node.components.mesh.mesh
         const mesh = effectiveMeshForPreview(rawMesh, node.id, this.#engine)
-        this.#drawWireframe(graphics, mesh, transform, scene)
+        this.#drawWireframe(graphics, mesh, transform, scene, node.id)
       }
     }
     const { previewMesh, nodeId: previewNodeId } = useMeshPreviewStore.getState()
@@ -334,8 +371,18 @@ export class MeshOverlay {
     mesh: MeshData,
     transform: WorldTransform,
     scene: Scene,
+    nodeId?: string,
   ): void {
-    const deformed = getDeformedVertices(mesh, scene, transform, this.#getWorldTransform)
+    const time = this.#currentTime()
+    const deformed = getDeformedVertices(
+      mesh,
+      scene,
+      transform,
+      this.#getWorldTransform,
+      this.#engine,
+      nodeId,
+      time,
+    )
     const worldVertices = deformed.map((v) => localToWorld(v.x, v.y, transform))
     const scale = this.#cameraScale()
     const wireWidth = WIREFRAME_WIDTH / scale
@@ -364,7 +411,13 @@ export class MeshOverlay {
     }
   }
 
-  #drawMesh(graphics: PixiGraphics, mesh: MeshData, transform: WorldTransform, scene: Scene): void {
+  #drawMesh(
+    graphics: PixiGraphics,
+    mesh: MeshData,
+    transform: WorldTransform,
+    scene: Scene,
+    nodeId?: string,
+  ): void {
     const {
       selectedVertexIndices,
       selectedEdgeIndices,
@@ -377,7 +430,16 @@ export class MeshOverlay {
     const selectedEdgeSet = new Set(selectedEdgeIndices.map((e) => edgeKey(e.v0, e.v1)))
     const selectedFaceSet = new Set(selectedFaceIndices)
     const preview = this.#previewVertices
-    const deformed = getDeformedVertices(mesh, scene, transform, this.#getWorldTransform)
+    const time = this.#currentTime()
+    const deformed = getDeformedVertices(
+      mesh,
+      scene,
+      transform,
+      this.#getWorldTransform,
+      this.#engine,
+      nodeId,
+      time,
+    )
     const worldVertices = deformed.map((v, i) => {
       const p = preview?.get(i)
       return localToWorld(p ? p.x : v.x, p ? p.y : v.y, transform)

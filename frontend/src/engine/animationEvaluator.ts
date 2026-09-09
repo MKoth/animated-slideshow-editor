@@ -189,35 +189,13 @@ export class AnimationEvaluator {
     return state
   }
 
-  evaluateVisible(nodeId: string, time: number): boolean {
+  evaluateVisible(nodeId: string, _time: number): boolean {
+    void _time
     const node = this.#nodeLookup(nodeId)
-    const slide = this.#slideLookup(nodeId)
-    const boundedTime = requireFiniteNumber(time, 'Evaluation time')
-    const clampedTime = Math.min(Math.max(boundedTime, 0), slide.duration)
-    const animation = slide.animation.node(nodeId)
-    const keyframes = animation?.visibleKeyframes()
-    if (!keyframes || keyframes.length === 0) {
-      return node.visible
-    }
-    const first = keyframes[0]
-    if (clampedTime <= first.time) {
-      return first.value as boolean
-    }
-    const last = keyframes[keyframes.length - 1]
-    if (clampedTime >= last.time) {
-      return last.value as boolean
-    }
-    for (let i = 0; i < keyframes.length - 1; i += 1) {
-      const from = keyframes[i]
-      const to = keyframes[i + 1]
-      if (clampedTime >= from.time && clampedTime < to.time) {
-        if (from.interpolation !== 'hold') {
-          throw new Error('Visible track only supports hold interpolation')
-        }
-        return from.value as boolean
-      }
-    }
-    return last.value as boolean
+    // Visible is no longer animatable per user request — always use static node.visible.
+    // Previous visible keyframes are ignored to prevent hidden objects from disappearing
+    // when the UI no longer shows the visible subtrack.
+    return node.visible
   }
 
   evaluateZIndex(nodeId: string, time: number): number {

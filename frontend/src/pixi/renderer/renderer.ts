@@ -271,6 +271,10 @@ export class Renderer {
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
         getWorldTransform: transformOf,
         getCameraTransform: () => this.#cameraTransform(),
+        getTime: () => {
+          const slideId = this.#sceneRenderer?.boundSlideId ?? null
+          return slideId ? this.#currentTime.getTime(slideId) : 0
+        },
       })
       this.#shapeGhostOverlay = new ShapeGhostOverlay({
         pixi: this.#pixi,
@@ -521,6 +525,11 @@ export class Renderer {
         getWorldTransform: transformOf,
         store: useSelectionStore,
         dispatch: this.#dispatch,
+        getAnimationMode: () => useUiStore.getState().animationMode,
+        getTime: () => {
+          const slideId = this.#sceneRenderer?.boundSlideId ?? null
+          return slideId ? this.#currentTime.getTime(slideId) : 0
+        },
         preview: {
           setTransform: (nodeId, transform) => {
             this.#sceneRenderer?.previewFullTransform(nodeId, transform)

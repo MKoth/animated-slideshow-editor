@@ -4,13 +4,7 @@ import { useEngine } from '../../app/useEngine'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { useTimelineViewStore } from '../../stores/timelineViewStore'
 import { tickLabel } from '../../stores/timelineViewStore'
-import { usePlaybackController } from '../../stores/playbackStore'
-import { useUiStore } from '../../stores/uiStore'
-import {
-  AddKeyframeCommand,
-  SetKeyframeValueCommand,
-  SetVisibilityCommand,
-} from '../../engine/commands'
+import { SetVisibilityCommand } from '../../engine/commands'
 import { iconOf } from './nodeIconKinds'
 import { LockIcon, NodeIcon, VisibilityIcon } from './nodeIcons'
 import { PROPERTY_LABELS } from './timelineTracks'
@@ -54,44 +48,11 @@ export const TrackRow = memo(
     expanded,
   }: (TrackRowEntry | BoneTrackEntry) & { expanded: boolean }) {
     const selected = useSelectionStore((state) => state.selectedIds.includes(node.id))
-    const { engine, dispatch } = useEngine()
+    const { dispatch } = useEngine()
     const handleEyeClick = (event: React.MouseEvent) => {
       event.stopPropagation()
       event.preventDefault()
-      const activeSlide = engine.getActiveSlide()
-      if (!activeSlide) return
-      const animationMode = useUiStore.getState().animationMode
-      if (animationMode) {
-        const time = usePlaybackController.getState().getTime(activeSlide.id)
-        const evaluatedVisible = (() => {
-          try {
-            return engine.evaluateVisible(node.id, time)
-          } catch {
-            return node.visible
-          }
-        })()
-        const visibleKeyframes = engine.getVisibleKeyframes(node.id)
-        const existing = visibleKeyframes.find((kf) => kf.time === time)
-        if (existing) {
-          dispatch(
-            new SetKeyframeValueCommand({
-              target: { kind: 'visible', nodeId: node.id },
-              keyframeId: existing.id,
-              newValue: !evaluatedVisible,
-            }),
-          )
-        } else {
-          dispatch(
-            new AddKeyframeCommand({
-              target: { kind: 'visible', nodeId: node.id },
-              time,
-              value: !evaluatedVisible,
-            }),
-          )
-        }
-      } else {
-        dispatch(new SetVisibilityCommand({ nodeId: node.id, visible: !node.visible }))
-      }
+      dispatch(new SetVisibilityCommand({ nodeId: node.id, visible: !node.visible }))
     }
     return (
       <li data-node-id={node.id}>

@@ -28,7 +28,6 @@ import {
   selectedMaterialKeyframeRefs,
   selectedMorphKeyframeRefs,
   selectedZIndexKeyframeRefs,
-  selectedVisibleKeyframeRefs,
 } from '../../app/keyframeSelectionActions'
 import { selectedClipKeyframeRefs } from '../../app/clipKeyframeActions'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
@@ -898,13 +897,8 @@ export function InspectorPanel({ width }: { width: number }) {
           const materialRefs = selectedMaterialKeyframeRefs(engine)
           const morphRefs = selectedMorphKeyframeRefs(engine)
           const zIndexRefs = selectedZIndexKeyframeRefs(engine)
-          const visibleRefs = selectedVisibleKeyframeRefs(engine)
           const totalSelected =
-            propertyRefs.length +
-            materialRefs.length +
-            morphRefs.length +
-            zIndexRefs.length +
-            visibleRefs.length
+            propertyRefs.length + materialRefs.length + morphRefs.length + zIndexRefs.length
           if (totalSelected !== 1) {
             return null
           }
@@ -950,22 +944,6 @@ export function InspectorPanel({ width }: { width: number }) {
               <KeyframeInspector
                 dispatch={dispatch}
                 zIndexNodeId={ref.nodeId}
-                keyframe={keyframe}
-                playing={playing}
-                notify={notify}
-              />
-            )
-          }
-          if (visibleRefs.length === 1) {
-            const ref = visibleRefs[0]
-            const keyframes = engine.getVisibleKeyframes(ref.nodeId)
-            const keyframe = keyframes.find((kf) => kf.id === ref.keyframeId)
-            if (!keyframe) return null
-            return (
-              <KeyframeInspector
-                dispatch={dispatch}
-                nodeId={ref.nodeId}
-                property={'visible' as unknown as AnimationProperty}
                 keyframe={keyframe}
                 playing={playing}
                 notify={notify}

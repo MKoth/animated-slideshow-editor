@@ -6,7 +6,11 @@ import {
   ScaleNodeCommand,
   TransactionCommand,
 } from '../../engine/commands'
-import { relativeTransform, worldTransformOf } from '../../engine/worldTransform'
+import {
+  evaluatedWorldTransformOf,
+  relativeTransform,
+  worldTransformOf,
+} from '../../engine/worldTransform'
 import type { WorldTransform } from '../../engine/worldTransform'
 import type { SelectionStoreApi } from '../../stores/selectionStore'
 import {
@@ -20,8 +24,13 @@ import type { ViewportTransform, WorldPoint } from './worldGeometry'
 import { isPivotKeyPressed } from './pivotInteraction'
 import { useBoneEditStore } from '../../stores/boneEditStore'
 import { useEditingModeStore } from '../../stores/editingModeStore'
+import { useNotificationStore } from '../../stores/notificationStore'
+import { usePlaybackController } from '../../stores/playbackStore'
+import { useUiStore } from '../../stores/uiStore'
 import type { Transform } from '../../engine/transform'
 import { isGroupNode } from '../../engine/sceneNode'
+import { autoKeyCommands, dispatchKeyframeCommands } from '../../engine/keyframeEdit'
+import type { TimedKeyframeEdit } from '../../engine/keyframeEdit'
 
 export interface HandlePreview {
   setTransform(nodeId: string, transform: Transform): void
@@ -38,12 +47,19 @@ export interface HandleInteractionContext {
   readonly store: SelectionStoreApi
   readonly dispatch: DispatchCommand
   readonly preview?: HandlePreview
+  readonly getAnimationMode?: () => boolean
+  readonly getTime?: () => number | null
 }
 
 type HandleKind = 'tl' | 't' | 'tr' | 'l' | 'r' | 'bl' | 'b' | 'br' | 'rotation'
 
 const HANDLE_HIT_RADIUS = 10
 const MIN_SCALE = 0.05
+
+export const BLOCKED_HANDLE_TRANSFORM_MESSAGE =
+  'Animated nodes can only be transformed in Animation Mode'
+
+const MOVE_START_DISTANCE = 2
 
 interface HandleHit {
   kind: HandleKind
@@ -60,6 +76,8 @@ export class HandleInteraction {
   readonly #store: SelectionStoreApi
   readonly #dispatch: DispatchCommand
   readonly #preview?: HandlePreview
+  readonly #getAnimationMode?: () => boolean
+  readonly #getTime?: () => number | null
   #attached = false
   #dragging = false
   #activeHandle: HandleKind | null = null
@@ -77,6 +95,8 @@ export class HandleInteraction {
   #startMouseWorld: WorldPoint | null = null
   #lastPreviewTransform: Transform | null = null
   #startAngle = 0
+  #blocked = false
+  #blockedNotified = false
 
   constructor(context: HandleInteractionContext) {
     this.#canvas = context.canvas
@@ -88,6 +108,12 @@ export class HandleInteraction {
     this.#store = context.store
     this.#dispatch = context.dispatch
     this.#preview = context.preview
+    this.#getAnimationMode = context.getAnimationMode
+    this.#getTime = context.getTime
+  }
+
+  get blocked(): boolean {
+    return this.#blocked
   }
 
   attach(): void {
@@ -123,6 +149,8 @@ export class HandleInteraction {
     this.#handleLocal = null
     this.#startMouseWorld = null
     this.#lastPreviewTransform = null
+    this.#blocked = false
+    this.#blockedNotified = false
   }
 
   readonly #onMouseDown = (event: MouseEvent): void => {
@@ -185,14 +213,40 @@ export class HandleInteraction {
     this.#nodeId = nodeId
     this.#size = { ...size }
     this.#pivot = pivot ? { ...pivot } : null
-    this.#initialLocal = { ...node.transform }
-    this.#initialWorld = { ...world }
-    const parent = node.parent
-    if (parent) {
-      const pw = this.#getWorldTransform(parent.id) ?? worldTransformOf(scene, parent.id)
-      this.#parentWorld = pw ? { ...pw } : null
+    const animationMode = this.#isAnimationMode()
+    const playheadTime = this.#playheadTime()
+    if (animationMode && playheadTime !== null) {
+      try {
+        const evaluated = this.#engine.evaluateNode(nodeId, playheadTime)
+        this.#initialLocal = { ...evaluated.transform }
+      } catch {
+        this.#initialLocal = { ...node.transform }
+      }
+      const evaluatedWorld = evaluatedWorldTransformOf(this.#engine, nodeId, playheadTime)
+      this.#initialWorld = evaluatedWorld ? { ...evaluatedWorld } : { ...world }
+      const parent = node.parent
+      if (parent) {
+        const evaluatedParent =
+          evaluatedWorldTransformOf(this.#engine, parent.id, playheadTime) ??
+          this.#getWorldTransform(parent.id) ??
+          worldTransformOf(scene, parent.id)
+        this.#parentWorld = evaluatedParent ? { ...evaluatedParent } : null
+      } else {
+        this.#parentWorld = null
+      }
     } else {
-      this.#parentWorld = null
+      this.#initialLocal = { ...node.transform }
+      this.#initialWorld = { ...world }
+      const parent = node.parent
+      if (parent) {
+        const pw = this.#getWorldTransform(parent.id) ?? worldTransformOf(scene, parent.id)
+        this.#parentWorld = pw ? { ...pw } : null
+      } else {
+        this.#parentWorld = null
+      }
+      if (!animationMode && this.#hasTransformKeyframes(nodeId)) {
+        this.#blocked = true
+      }
     }
     const cx = (corners[0].x + corners[1].x + corners[2].x + corners[3].x) / 4
     const cy = (corners[0].y + corners[1].y + corners[2].y + corners[3].y) / 4
@@ -253,6 +307,10 @@ export class HandleInteraction {
       !this.#initialLocal
     )
       return
+    if (this.#blocked) {
+      this.#handleBlockedMove(event)
+      return
+    }
     const camera = this.#getCameraTransform()
     if (!camera) return
     const point = cursorToWorld(this.#canvas, camera, event.clientX, event.clientY)
@@ -269,6 +327,18 @@ export class HandleInteraction {
     } else {
       this.#handleScale(point, event)
     }
+  }
+
+  #handleBlockedMove(event: MouseEvent): void {
+    if (this.#blockedNotified) return
+    const camera = this.#getCameraTransform()
+    const start = this.#startMouseWorld
+    if (!camera || !start) return
+    const point = cursorToWorld(this.#canvas, camera, event.clientX, event.clientY)
+    if (!point) return
+    if (Math.hypot(point.x - start.x, point.y - start.y) < MOVE_START_DISTANCE) return
+    this.#blockedNotified = true
+    useNotificationStore.getState().notify(BLOCKED_HANDLE_TRANSFORM_MESSAGE)
   }
 
   #handleRotation(point: WorldPoint): void {
@@ -479,12 +549,16 @@ export class HandleInteraction {
       return
     }
     const wasDragging = this.#dragging
+    const wasBlocked = this.#blocked
+    const isAnimationMode = this.#isAnimationMode()
+    const time = this.#playheadTime()
     const nodeId = this.#nodeId
     const initial = { ...this.#initialLocal }
     const previewTransform = this.#lastPreviewTransform ? { ...this.#lastPreviewTransform } : null
     this.#preview?.clear()
     this.#reset()
     this.#canvas.style.cursor = ''
+    if (wasBlocked) return
     if (!wasDragging || !previewTransform) return
     // If we used engine preview (no HandlePreview), need to restore engine state before dispatch
     const maybeEngine = this.#engine as unknown as {
@@ -513,6 +587,51 @@ export class HandleInteraction {
       }
     }
     const final = previewTransform
+    if (isAnimationMode && time !== null) {
+      const edits: TimedKeyframeEdit[] = []
+      if (final.x !== initial.x) {
+        edits.push({
+          target: { kind: 'node', nodeId, property: 'positionX' },
+          value: final.x,
+          time,
+        })
+      }
+      if (final.y !== initial.y) {
+        edits.push({
+          target: { kind: 'node', nodeId, property: 'positionY' },
+          value: final.y,
+          time,
+        })
+      }
+      if (final.rotation !== initial.rotation) {
+        edits.push({
+          target: { kind: 'node', nodeId, property: 'rotation' },
+          value: final.rotation,
+          time,
+        })
+      }
+      if (final.scaleX !== initial.scaleX) {
+        edits.push({
+          target: { kind: 'node', nodeId, property: 'scaleX' },
+          value: final.scaleX,
+          time,
+        })
+      }
+      if (final.scaleY !== initial.scaleY) {
+        edits.push({
+          target: { kind: 'node', nodeId, property: 'scaleY' },
+          value: final.scaleY,
+          time,
+        })
+      }
+      if (edits.length === 0) return
+      try {
+        dispatchKeyframeCommands(this.#dispatch, autoKeyCommands(this.#engine, edits))
+      } catch {
+        // ignore
+      }
+      return
+    }
     const commands: unknown[] = []
     if (final.x !== initial.x || final.y !== initial.y) {
       commands.push(new MoveNodeCommand({ nodeId, x: final.x, y: final.y }))
@@ -532,6 +651,58 @@ export class HandleInteraction {
       }
     } catch {
       // ignore
+    }
+  }
+
+  #isAnimationMode(): boolean {
+    if (this.#getAnimationMode) {
+      try {
+        return Boolean(this.#getAnimationMode())
+      } catch {
+        // fall through to store
+      }
+    }
+    try {
+      return Boolean(useUiStore.getState().animationMode)
+    } catch {
+      return false
+    }
+  }
+
+  #playheadTime(): number | null {
+    if (this.#getTime) {
+      try {
+        const t = this.#getTime()
+        if (typeof t === 'number' && Number.isFinite(t)) return t
+        if (t === null) return null
+      } catch {
+        // fall through
+      }
+    }
+    const scene = this.#getScene()
+    if (!scene) return null
+    try {
+      const slide = this.#engine.project?.slides.find(
+        (candidate) => candidate.scene.id === scene.id,
+      )
+      if (!slide) return null
+      return usePlaybackController.getState().getTime(slide.id)
+    } catch {
+      return null
+    }
+  }
+
+  #hasTransformKeyframes(nodeId: string): boolean {
+    try {
+      return (
+        this.#engine.getKeyframes(nodeId, 'positionX').length > 0 ||
+        this.#engine.getKeyframes(nodeId, 'positionY').length > 0 ||
+        this.#engine.getKeyframes(nodeId, 'rotation').length > 0 ||
+        this.#engine.getKeyframes(nodeId, 'scaleX').length > 0 ||
+        this.#engine.getKeyframes(nodeId, 'scaleY').length > 0
+      )
+    } catch {
+      return false
     }
   }
 

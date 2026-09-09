@@ -8,12 +8,7 @@ import type { ShadowProperty } from './shadowEffect'
 import type { ClipDefinition } from './clipDefinition'
 import type { ClipInstance } from './clipInstance'
 import { isGroupNode } from './sceneNode'
-import {
-  PROPERTY_LABELS,
-  CIRCLE_LABELS,
-  VISIBLE_LABEL,
-  MORPH_LABEL,
-} from '../components/panels/timelineTracks'
+import { PROPERTY_LABELS, CIRCLE_LABELS, MORPH_LABEL } from '../components/panels/timelineTracks'
 import { SHADOW_LABELS } from './shadowEffect'
 import type { MaterialParameterDefault } from './materialResolution'
 import { materialParametersOf } from '../components/panels/timelineTracks'
@@ -58,8 +53,6 @@ function hasClipChannelForProperty(
         return true
       // fallback: check channel list existence implies at least one keyframe (since empty channels are removed)
       if (clip.hasChannel(propertyKey as never)) return true
-    } else if (kind === 'visible') {
-      if (clip.hasVisibleTrack()) return true
     } else if (kind === 'morph') {
       if (clip.hasMorphTrack()) return true
     } else if (kind === 'circle') {
@@ -86,8 +79,6 @@ export function isParamAnimated(
     if (!nodeAnim) return false
     if (kind === 'property')
       return nodeAnim.hasTrack(key as never) && nodeAnim.keyframes(key as never).length > 0
-    if (kind === 'visible')
-      return nodeAnim.hasVisibleTrack() && nodeAnim.visibleKeyframes().length > 0
     if (kind === 'morph') return nodeAnim.hasMorphTrack() && nodeAnim.morphKeyframes().length > 0
     if (kind === 'circle')
       return (
@@ -129,10 +120,6 @@ export function getAnimatedParams(
         label: (PROPERTY_LABELS as Record<string, string>)[prop] ?? prop,
       })
     }
-  }
-  // visible (hold) – always check, even if not in animatablePropertiesOf
-  if (isParamAnimated(node, slide, 'visible', 'visible', getClip)) {
-    params.push({ kind: 'visible', key: 'visible', label: VISIBLE_LABEL })
   }
   // morph – for mesh nodes or if animated (visible-pattern: one morph lane per clip)
   // We include morph if node has mesh or if either side animates. To avoid omitting, check always.
@@ -263,7 +250,6 @@ export function hasAnyKeyframe(node: SceneNode, slide: Slide): boolean {
   for (const prop of animatablePropertiesOf(node)) {
     if (anim.hasTrack(prop as never) && anim.keyframes(prop as never).length > 0) return true
   }
-  if (anim.hasVisibleTrack() && anim.visibleKeyframes().length > 0) return true
   if (anim.hasMorphTrack() && anim.morphKeyframes().length > 0) return true
   if (anim.hasSymmetryTrack() && anim.symmetryKeyframes().length > 0) return true
   for (const key of anim.materialTrackParameterKeys()) {
@@ -334,7 +320,6 @@ export function getOrphanKeyframes(
   const anim = slide.animation.node(node.id)
   if (!anim) return []
   if (param.kind === 'property') return anim.keyframes(param.key as never)
-  if (param.kind === 'visible') return anim.visibleKeyframes()
   if (param.kind === 'morph') return anim.morphKeyframes()
   if (param.kind === 'circle') return anim.circleKeyframes(param.key as never)
   if (param.kind === 'shadow') return anim.shadowKeyframes(param.key as ShadowProperty)

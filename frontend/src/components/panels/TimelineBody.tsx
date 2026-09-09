@@ -36,7 +36,6 @@ import {
   TRACK_HEADER_WIDTH,
   PROPERTY_LABELS,
   CIRCLE_LABELS,
-  VISIBLE_LABEL,
   ZINDEX_LABEL,
   MORPH_LABEL,
   SYMMETRY_LABEL,
@@ -278,10 +277,6 @@ export function TimelineBody({
       for (const keyframe of engine.getKeyframes(row.node.id, row.property)) {
         allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
       }
-    } else if (row.kind === 'visibleSubtrack') {
-      for (const keyframe of engine.getVisibleKeyframes(row.node.id)) {
-        allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
-      }
     } else if (row.kind === 'zIndexSubtrack') {
       for (const keyframe of engine.getZIndexKeyframes(row.node.id)) {
         allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
@@ -340,9 +335,9 @@ export function TimelineBody({
     notify,
   } as unknown as Parameters<typeof useKeyframeScale>[0])
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const selectionBounds = computeSelectionBounds(
     selectedKeyframeIds,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     keyframeRefs as unknown as ReadonlyMap<string, any>,
   )
 
@@ -578,7 +573,6 @@ export function TimelineBody({
       {
         kind:
           | 'subtrack'
-          | 'visibleSubtrack'
           | 'zIndexSubtrack'
           | 'materialSubtrack'
           | 'dataLabelSubtrack'
@@ -600,14 +594,6 @@ export function TimelineBody({
         property: row.property,
         keyframeId: keyframe.id,
       })
-    } else if (row.kind === 'visibleSubtrack') {
-      setMenu({
-        x: event.clientX,
-        y: event.clientY,
-        nodeId: row.node.id,
-        property: 'visible' as unknown as AnimationProperty,
-        keyframeId: keyframe.id,
-      } as unknown as Extract<import('./timelineComponents').TimelineMenuState, { nodeId: string }>)
     } else if (row.kind === 'zIndexSubtrack') {
       setMenu({
         x: event.clientX,
@@ -675,20 +661,6 @@ export function TimelineBody({
 
   const handleTrackListContextMenu = (event: React.MouseEvent) => {
     const target = event.target as HTMLElement
-    const visibleSubtrack = target.closest<HTMLElement>('[data-visible]')
-    if (visibleSubtrack) {
-      const nodeId = visibleSubtrack.dataset.nodeId
-      if (nodeId) {
-        event.preventDefault()
-        setMenu({
-          x: event.clientX,
-          y: event.clientY,
-          nodeId,
-          property: 'visible' as unknown as AnimationProperty,
-        } as unknown as import('./timelineComponents').TimelineMenuState)
-      }
-      return
-    }
     const zIndexSubtrack = target.closest<HTMLElement>('[data-z-index]')
     if (zIndexSubtrack) {
       const nodeId = zIndexSubtrack.dataset.nodeId
@@ -904,16 +876,6 @@ export function TimelineBody({
           value: shadowValue as unknown as import('../../engine/keyframe').KeyframeValue,
         }),
       )
-    } else if ((target.property as unknown as string) === 'visible') {
-      const time = usePlaybackController.getState().getTime(slideId)
-      const visible = engine.evaluateVisible(target.nodeId, time)
-      result = dispatch(
-        new AddKeyframeCommand({
-          target: { kind: 'visible', nodeId: target.nodeId },
-          time,
-          value: !visible,
-        }),
-      )
     } else if ((target as unknown as { zIndex?: boolean }).zIndex) {
       const time = usePlaybackController.getState().getTime(slideId)
       const z = engine.evaluateZIndex(target.nodeId, time)
@@ -993,8 +955,6 @@ export function TimelineBody({
         target as unknown as { shadowProperty: import('../../engine/shadowEffect').ShadowProperty }
       ).shadowProperty
       deleteTarget = { kind: 'shadow' as const, nodeId: target.nodeId, property: shadowProperty }
-    } else if ((target.property as unknown as string) === 'visible') {
-      deleteTarget = { kind: 'visible' as const, nodeId: target.nodeId }
     } else if ((target as unknown as { zIndex?: boolean }).zIndex) {
       deleteTarget = { kind: 'zIndex' as const, nodeId: target.nodeId }
     } else if (target.property) {
@@ -1046,8 +1006,6 @@ export function TimelineBody({
           }
         ).shadowProperty
         singleTarget = { kind: 'shadow', nodeId: target.nodeId, property: sp }
-      } else if ((target.property as unknown as string) === 'visible') {
-        singleTarget = { kind: 'visible', nodeId: target.nodeId }
       } else if (target.property) {
         singleTarget = { kind: 'node', nodeId: target.nodeId, property: target.property }
       } else if ((target as unknown as { circleProperty?: string }).circleProperty) {
@@ -1069,7 +1027,7 @@ export function TimelineBody({
     }
     if (extractable.length === 0) {
       notify(
-        'No extractable keyframes for Add to clip (only position/rotation/scale/opacity/visible/circle/morph/shadow are supported)',
+        'No extractable keyframes for Add to clip (only position/rotation/scale/opacity/circle/morph/shadow are supported)',
       )
       return
     }
@@ -1135,38 +1093,6 @@ export function TimelineBody({
                       slideId,
                       row.node.id,
                       row.property,
-                    )
-                    if (result && !result.ok) {
-                      notify(result.error.message)
-                    }
-                  }}
-                >
-                  +
-                </button>
-              </li>
-            ) : row.kind === 'visibleSubtrack' ? (
-              <li
-                key={`${row.node.id}:visible`}
-                className="timeline-subtrack timeline-subtrack--visible"
-                data-node-id={row.node.id}
-                data-visible="true"
-                data-depth={row.depth}
-                style={{ paddingLeft: 12 + row.depth * 16 }}
-              >
-                <span className="timeline-subtrack__label">{VISIBLE_LABEL}</span>
-                <button
-                  className="timeline-subtrack__add"
-                  aria-label={`Add Keyframe to ${VISIBLE_LABEL}`}
-                  title="Add hold keyframe at the playhead (toggles visibility)"
-                  onClick={() => {
-                    const time = usePlaybackController.getState().getTime(slideId)
-                    const visible = engine.evaluateVisible(row.node.id, time)
-                    const result = dispatch(
-                      new AddKeyframeCommand({
-                        target: { kind: 'visible', nodeId: row.node.id },
-                        time,
-                        value: !visible,
-                      }),
                     )
                     if (result && !result.ok) {
                       notify(result.error.message)
@@ -1529,80 +1455,6 @@ export function TimelineBody({
                               handleKeyframeContextMenu(event, row, keyframe)
                             }
                           />
-                        )
-                      })}
-                    </div>
-                  )
-                }
-                if (row.kind === 'visibleSubtrack') {
-                  const keyframes = engine.getVisibleKeyframes(row.node.id)
-                  const sorted = [...keyframes].sort((a, b) => a.time - b.time)
-                  return (
-                    <div
-                      key={`${row.node.id}:visible`}
-                      className="timeline-lane-row timeline-lane-row--visible"
-                      data-visible="true"
-                      style={{ top: index * ROW_HEIGHT }}
-                    >
-                      {sorted.map((keyframe, idx) => {
-                        const next = sorted[idx + 1]
-                        const nextTime = next ? next.time : duration
-                        const isVisible = keyframe.value as boolean
-                        const segmentWidth = (nextTime - keyframe.time) * pps
-                        const previewTime =
-                          scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
-                        const shownTime = previewTime ?? keyframe.time
-                        const selected = selectedKeyframeIds.includes(keyframe.id)
-                        return (
-                          <div
-                            key={keyframe.id}
-                            style={{
-                              position: 'absolute',
-                              left: 0,
-                              top: 0,
-                              right: 0,
-                              bottom: 0,
-                              pointerEvents: 'none',
-                            }}
-                          >
-                            <div
-                              className={`timeline-visible-segment${isVisible ? '' : ' timeline-visible-segment--hidden'}`}
-                              data-testid="visible-segment"
-                              style={{
-                                position: 'absolute',
-                                left: keyframe.time * pps,
-                                top: 0,
-                                width: Math.max(0, segmentWidth),
-                                height: '100%',
-                                background: isVisible
-                                  ? 'rgba(76,175,80,0.18)'
-                                  : 'rgba(239,83,80,0.18)',
-                                borderTop: `2px solid ${isVisible ? '#4caf50' : '#ef5350'}`,
-                                pointerEvents: 'none',
-                              }}
-                              title={isVisible ? 'Visible (hold)' : 'Hidden (hold)'}
-                            />
-                            <div
-                              className={`timeline-keyframe timeline-keyframe--visible${selected ? ' timeline-keyframe--selected' : ''}`}
-                              data-testid="keyframe-marker"
-                              data-keyframe-id={keyframe.id}
-                              data-visible="true"
-                              data-time={String(shownTime)}
-                              role="button"
-                              aria-label={`Visible ${isVisible ? 'shown' : 'hidden'} at ${tickLabel(shownTime, step)}`}
-                              style={{
-                                left: shownTime * pps,
-                                position: 'absolute',
-                                pointerEvents: 'auto',
-                              }}
-                              onPointerDown={(event) =>
-                                handleKeyframePointerDown(event, keyframe, index)
-                              }
-                              onContextMenu={(event) =>
-                                handleKeyframeContextMenu(event, row, keyframe)
-                              }
-                            />
-                          </div>
                         )
                       })}
                     </div>

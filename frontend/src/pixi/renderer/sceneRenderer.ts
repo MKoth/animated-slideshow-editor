@@ -599,6 +599,7 @@ export class SceneRenderer {
         }
       }
     }
+    this.refreshDeformedMeshSizes()
     // Shadow: if node was group with shadow that now has material, destroy; if caster, update — material is pre-shader so no silhouette regen needed, but mark for safety
     this.#syncShadowLifecycleForNode(nodeId)
     this.#markShadowDirtyForNode(nodeId)

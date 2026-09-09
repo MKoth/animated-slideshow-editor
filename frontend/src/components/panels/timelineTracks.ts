@@ -199,7 +199,6 @@ export function timelineRows(
       for (const property of animatablePropertiesOf(entry.node)) {
         rows.push({ kind: 'subtrack', node: entry.node, property, depth: entry.depth + 1 })
       }
-      rows.push({ kind: 'visibleSubtrack', node: entry.node, depth: entry.depth + 1 })
       rows.push({ kind: 'zIndexSubtrack', node: entry.node, depth: entry.depth + 1 })
       if (entry.node.components.mesh) {
         rows.push({ kind: 'morphSubtrack', node: entry.node, depth: entry.depth + 1 })
