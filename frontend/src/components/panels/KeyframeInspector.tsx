@@ -60,6 +60,7 @@ export interface KeyframeInspectorProps {
   readonly property?: string
   readonly parameter?: string
   readonly morphNodeId?: string
+  readonly zIndexNodeId?: string
   readonly clipTarget?: { clipId: string; channel: AnimationProperty }
   readonly keyframe: Keyframe
   readonly playing: boolean
@@ -72,6 +73,7 @@ export function KeyframeInspector({
   property,
   parameter,
   morphNodeId,
+  zIndexNodeId,
   clipTarget,
   keyframe,
   playing,
@@ -79,6 +81,7 @@ export function KeyframeInspector({
 }: KeyframeInspectorProps) {
   const isClip = clipTarget !== undefined
   const isMorph = morphNodeId !== undefined
+  const isZIndex = zIndexNodeId !== undefined
   const { engine: inspectorEngine } = useEngine()
   let morphShapes: readonly import('../../engine/shape').Shape[] = []
   let morphValue: import('../../engine/shape').MorphKeyframeValue | null = null
@@ -108,11 +111,14 @@ export function KeyframeInspector({
     if (isMorph && morphNodeId) {
       return { kind: 'morph' as const, nodeId: morphNodeId }
     }
+    if (isZIndex && zIndexNodeId) {
+      return { kind: 'zIndex' as const, nodeId: zIndexNodeId }
+    }
     if (parameter) {
       return { kind: 'node' as const, nodeId: nodeId!, parameter }
     }
     return { kind: 'node' as const, nodeId: nodeId!, property: property as 'positionX' }
-  }, [nodeId, property, parameter, morphNodeId, clipTarget, isClip, isMorph])
+  }, [nodeId, property, parameter, morphNodeId, zIndexNodeId, clipTarget, isClip, isMorph, isZIndex])
 
   const handleInterpolationChange = useCallback(
     (newInterpolation: InterpolationType) => {
@@ -285,6 +291,18 @@ export function KeyframeInspector({
         if (!result.ok) {
           notify(result.error.message)
         }
+      } else if (isZIndex) {
+        const truncated = Math.trunc(num)
+        const result = dispatch(
+          new SetKeyframeValueCommand({
+            target: target as import('../../engine/keyframeTarget').NodeZIndexTarget,
+            keyframeId: keyframe.id,
+            newValue: truncated,
+          }),
+        )
+        if (!result.ok) {
+          notify(result.error.message)
+        }
       } else {
         const result = dispatch(
           new SetKeyframeValueCommand({
@@ -422,14 +440,25 @@ export function KeyframeInspector({
           }}
         >
           <option value="hold">Hold</option>
-          <option value="linear">Linear</option>
-          <option value="bezier">Bezier</option>
+          <option value="linear" disabled={isZIndex}>
+            Linear
+          </option>
+          <option value="bezier" disabled={isZIndex}>
+            Bezier
+          </option>
           <optgroup label="Parametric">
-            <option value="bounce">Bounce</option>
-            <option value="elastic">Elastic</option>
-            <option value="spring">Spring</option>
+            <option value="bounce" disabled={isZIndex}>
+              Bounce
+            </option>
+            <option value="elastic" disabled={isZIndex}>
+              Elastic
+            </option>
+            <option value="spring" disabled={isZIndex}>
+              Spring
+            </option>
           </optgroup>
         </select>
+        {isZIndex && <p className="inspector-field__notice">Hold only — Z-Index is discrete</p>}
       </div>
       {keyframe.interpolation === 'bezier' && (
         <div className="keyframe-presets">

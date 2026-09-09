@@ -37,6 +37,7 @@ import {
   PROPERTY_LABELS,
   CIRCLE_LABELS,
   VISIBLE_LABEL,
+  ZINDEX_LABEL,
   MORPH_LABEL,
   SYMMETRY_LABEL,
   materialParameterLabel,
@@ -305,12 +306,27 @@ export function TimelineBody({
       }
     }
   }
+  const zIndexKeyframeRefs: { nodeId: string; keyframeId: string; time: number; zIndex: true }[] = []
+  for (const trackRow of rows) {
+    if (trackRow.kind === 'zIndexSubtrack') {
+      for (const kf of engine.getZIndexKeyframes(trackRow.node.id)) {
+        zIndexKeyframeRefs.push({
+          nodeId: trackRow.node.id,
+          keyframeId: kf.id,
+          time: kf.time,
+          zIndex: true as const,
+        })
+      }
+    }
+  }
   const allKeyframeRefs = [...propertyKeyframeRefs, ...materialKeyframeRefs]
-  const keyframeRefs = new Map(
-    [...allKeyframeRefs, ...morphKeyframeRefs, ...shadowKeyframeRefs].map(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const keyframeRefs = new Map<string, any>(
+    [...allKeyframeRefs, ...morphKeyframeRefs, ...shadowKeyframeRefs, ...zIndexKeyframeRefs].map(
       (ref) => [ref.keyframeId, ref] as const,
     ),
-  )
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ) as unknown as Map<string, any>
 
   const allSelectionItems: KeyframeSelectionItem[] = []
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
@@ -321,6 +337,10 @@ export function TimelineBody({
       }
     } else if (row.kind === 'visibleSubtrack') {
       for (const keyframe of engine.getVisibleKeyframes(row.node.id)) {
+        allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
+      }
+    } else if (row.kind === 'zIndexSubtrack') {
+      for (const keyframe of engine.getZIndexKeyframes(row.node.id)) {
         allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
       }
     } else if (row.kind === 'morphSubtrack') {
@@ -356,25 +376,30 @@ export function TimelineBody({
   useEffect(() => {
     allSelectionItemsRef.current = allSelectionItems
   })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { dragPreview, isDraggable, startDrag } = useKeyframeDrag({
-    keyframeRefs,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    keyframeRefs: keyframeRefs as unknown as ReadonlyMap<string, any>,
     duration,
     pps,
     timeFromClientX,
     dispatch,
     notify,
-  })
+  } as unknown as Parameters<typeof useKeyframeDrag>[0])
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { scalePreview, startScale } = useKeyframeScale({
-    keyframeRefs,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    keyframeRefs: keyframeRefs as unknown as ReadonlyMap<string, any>,
     duration,
     pps,
     timeFromClientX,
     dispatch,
     notify,
-  })
+  } as unknown as Parameters<typeof useKeyframeScale>[0])
 
-  const selectionBounds = computeSelectionBounds(selectedKeyframeIds, keyframeRefs)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const selectionBounds = computeSelectionBounds(selectedKeyframeIds, keyframeRefs as unknown as ReadonlyMap<string, any>)
 
   useLayoutEffect(() => {
     const el = scrollerRef.current
@@ -609,6 +634,7 @@ export function TimelineBody({
         kind:
           | 'subtrack'
           | 'visibleSubtrack'
+          | 'zIndexSubtrack'
           | 'materialSubtrack'
           | 'dataLabelSubtrack'
           | 'circleSubtrack'
@@ -635,6 +661,14 @@ export function TimelineBody({
         y: event.clientY,
         nodeId: row.node.id,
         property: 'visible' as unknown as AnimationProperty,
+        keyframeId: keyframe.id,
+      } as unknown as Extract<import('./timelineComponents').TimelineMenuState, { nodeId: string }>)
+    } else if (row.kind === 'zIndexSubtrack') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        zIndex: true as unknown as Extract<import('./timelineComponents').TimelineMenuState, { nodeId: string }>['zIndex'],
         keyframeId: keyframe.id,
       } as unknown as Extract<import('./timelineComponents').TimelineMenuState, { nodeId: string }>)
     } else if (row.kind === 'morphSubtrack') {
@@ -700,6 +734,20 @@ export function TimelineBody({
           y: event.clientY,
           nodeId,
           property: 'visible' as unknown as AnimationProperty,
+        } as unknown as import('./timelineComponents').TimelineMenuState)
+      }
+      return
+    }
+    const zIndexSubtrack = target.closest<HTMLElement>('[data-z-index]')
+    if (zIndexSubtrack) {
+      const nodeId = zIndexSubtrack.dataset.nodeId
+      if (nodeId) {
+        event.preventDefault()
+        setMenu({
+          x: event.clientX,
+          y: event.clientY,
+          nodeId,
+          zIndex: true as unknown as import('./timelineComponents').TimelineMenuState['zIndex'],
         } as unknown as import('./timelineComponents').TimelineMenuState)
       }
       return
@@ -875,6 +923,16 @@ export function TimelineBody({
           value: !visible,
         }),
       )
+    } else if ((target as unknown as { zIndex?: boolean }).zIndex) {
+      const time = usePlaybackController.getState().getTime(slideId)
+      const z = engine.evaluateZIndex(target.nodeId, time)
+      result = dispatch(
+        new AddKeyframeCommand({
+          target: { kind: 'zIndex', nodeId: target.nodeId },
+          time,
+          value: z,
+        }),
+      )
     } else if (target.property) {
       result = addKeyframeAtPlayhead(engine, dispatch, slideId, target.nodeId, target.property)
     } else if ((target as unknown as { circleProperty?: string }).circleProperty) {
@@ -944,6 +1002,8 @@ export function TimelineBody({
       deleteTarget = { kind: 'shadow' as const, nodeId: target.nodeId, property: shadowProperty }
     } else if ((target.property as unknown as string) === 'visible') {
       deleteTarget = { kind: 'visible' as const, nodeId: target.nodeId }
+    } else if ((target as unknown as { zIndex?: boolean }).zIndex) {
+      deleteTarget = { kind: 'zIndex' as const, nodeId: target.nodeId }
     } else if (target.property) {
       deleteTarget = { kind: 'node' as const, nodeId: target.nodeId, property: target.property }
     } else if ((target as unknown as { circleProperty?: string }).circleProperty) {
@@ -1113,6 +1173,38 @@ export function TimelineBody({
                         target: { kind: 'visible', nodeId: row.node.id },
                         time,
                         value: !visible,
+                      }),
+                    )
+                    if (result && !result.ok) {
+                      notify(result.error.message)
+                    }
+                  }}
+                >
+                  +
+                </button>
+              </li>
+            ) : row.kind === 'zIndexSubtrack' ? (
+              <li
+                key={`${row.node.id}:zIndex`}
+                className="timeline-subtrack timeline-subtrack--zIndex"
+                data-node-id={row.node.id}
+                data-z-index="true"
+                data-depth={row.depth}
+                style={{ paddingLeft: 12 + row.depth * 16 }}
+              >
+                <span className="timeline-subtrack__label">{ZINDEX_LABEL}</span>
+                <button
+                  className="timeline-subtrack__add"
+                  aria-label={`Add Keyframe to ${ZINDEX_LABEL}`}
+                  title="Add hold keyframe at the playhead (z-index)"
+                  onClick={() => {
+                    const time = usePlaybackController.getState().getTime(slideId)
+                    const z = engine.evaluateZIndex(row.node.id, time)
+                    const result = dispatch(
+                      new AddKeyframeCommand({
+                        target: { kind: 'zIndex', nodeId: row.node.id },
+                        time,
+                        value: z,
                       }),
                     )
                     if (result && !result.ok) {
@@ -1498,6 +1590,85 @@ export function TimelineBody({
                               data-time={String(shownTime)}
                               role="button"
                               aria-label={`Visible ${isVisible ? 'shown' : 'hidden'} at ${tickLabel(shownTime, step)}`}
+                              style={{
+                                left: shownTime * pps,
+                                position: 'absolute',
+                                pointerEvents: 'auto',
+                              }}
+                              onPointerDown={(event) =>
+                                handleKeyframePointerDown(event, keyframe, index)
+                              }
+                              onContextMenu={(event) =>
+                                handleKeyframeContextMenu(event, row, keyframe)
+                              }
+                            />
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                }
+                if (row.kind === 'zIndexSubtrack') {
+                  const keyframes = engine.getZIndexKeyframes(row.node.id)
+                  const sorted = [...keyframes].sort((a, b) => a.time - b.time)
+                  return (
+                    <div
+                      key={`${row.node.id}:zIndex`}
+                      className="timeline-lane-row timeline-lane-row--zIndex"
+                      data-z-index="true"
+                      style={{ top: index * ROW_HEIGHT }}
+                    >
+                      {sorted.map((keyframe, idx) => {
+                        const next = sorted[idx + 1]
+                        const nextTime = next ? next.time : duration
+                        const value = keyframe.value as number
+                        const segmentWidth = (nextTime - keyframe.time) * pps
+                        const previewTime =
+                          scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
+                        const shownTime = previewTime ?? keyframe.time
+                        const selected = selectedKeyframeIds.includes(keyframe.id)
+                        return (
+                          <div
+                            key={keyframe.id}
+                            style={{
+                              position: 'absolute',
+                              left: 0,
+                              top: 0,
+                              right: 0,
+                              bottom: 0,
+                              pointerEvents: 'none',
+                            }}
+                          >
+                            <div
+                              className="timeline-visible-segment"
+                              data-testid="zindex-segment"
+                              style={{
+                                position: 'absolute',
+                                left: keyframe.time * pps,
+                                top: 0,
+                                width: Math.max(0, segmentWidth),
+                                height: '100%',
+                                background: 'rgba(33,150,243,0.12)',
+                                borderTop: '2px solid #2196f3',
+                                pointerEvents: 'none',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: 9,
+                                color: '#1976d2',
+                              }}
+                              title={`Z-Index ${value} (hold)`}
+                            >
+                              {String(value)}
+                            </div>
+                            <div
+                              className={`timeline-keyframe timeline-keyframe--visible${selected ? ' timeline-keyframe--selected' : ''}`}
+                              data-testid="keyframe-marker"
+                              data-keyframe-id={keyframe.id}
+                              data-z-index="true"
+                              data-time={String(shownTime)}
+                              role="button"
+                              aria-label={`Z-Index ${value} at ${tickLabel(shownTime, step)}`}
                               style={{
                                 left: shownTime * pps,
                                 position: 'absolute',

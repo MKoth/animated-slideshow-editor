@@ -14,6 +14,7 @@ import type {
   MorphTrackJSON,
   ShadowTrackJSON,
   SymmetryTrackJSON,
+  ZIndexTrackJSON,
 } from './json'
 import type { MorphBinding } from './shape'
 import { requireMorphKeyframeValue } from './shape'
@@ -47,6 +48,7 @@ export class NodeAnimation {
   readonly #morph: Keyframe[] = []
   readonly #shadowTracks = new Map<ShadowProperty, Keyframe[]>()
   readonly #symmetry: Keyframe[] = []
+  readonly #zIndex: Keyframe[] = []
 
   keyframes(property: AnimationProperty): readonly Keyframe[] {
     return this.#tracks.get(property) ?? []
@@ -280,6 +282,82 @@ export class NodeAnimation {
     return this.#visible.find((entry) => entry.id === keyframeId)
   }
 
+  // --- Z-Index bespoke track (hold-only integer, per-node render ordering) ---
+  zIndexKeyframes(): readonly Keyframe[] {
+    return this.#zIndex
+  }
+
+  hasZIndexTrack(): boolean {
+    return this.#zIndex.length > 0
+  }
+
+  addZIndex(keyframe: Keyframe): void {
+    const index = this.#zIndex.findIndex((entry) => entry.time > keyframe.time)
+    if (index === -1) {
+      this.#zIndex.push(keyframe)
+    } else {
+      this.#zIndex.splice(index, 0, keyframe)
+    }
+  }
+
+  removeZIndex(keyframeId: string): Keyframe | undefined {
+    const index = this.#zIndex.findIndex((entry) => entry.id === keyframeId)
+    if (index === -1) {
+      return undefined
+    }
+    const [removed] = this.#zIndex.splice(index, 1)
+    return removed
+  }
+
+  getZIndex(keyframeId: string): Keyframe | undefined {
+    return this.#zIndex.find((entry) => entry.id === keyframeId)
+  }
+
+  removeZIndexTrack(): void {
+    this.#zIndex.length = 0
+  }
+
+  clearZIndexTracks(): ZIndexTrackJSON[] {
+    const snapshot = this.zIndexTrackJSON()
+    this.#zIndex.length = 0
+    return snapshot ? [snapshot] : []
+  }
+
+  restoreZIndexTracks(tracks: readonly ZIndexTrackJSON[], duration: number, _nodeId: string): void {
+    void _nodeId
+    this.#zIndex.length = 0
+    for (const track of tracks as unknown as readonly {
+      keyframes: readonly import('./json').KeyframeJSON[]
+    }[]) {
+      if (!track || !Array.isArray(track.keyframes)) continue
+      for (const kfJson of track.keyframes) {
+        try {
+          const id = kfJson.id
+          const time = kfJson.time
+          const value = kfJson.value
+          if (typeof value !== 'number' || !Number.isFinite(value)) {
+            continue
+          }
+          const interpolation = kfJson.interpolation ?? 'hold'
+          const tangentIn = kfJson.tangentIn ?? { time: 0, value: 0 }
+          const tangentOut = kfJson.tangentOut ?? { time: 0, value: 0 }
+          if (typeof time !== 'number' || time < 0 || time > duration) continue
+          const kf = new KeyframeModel(
+            id,
+            time,
+            Math.trunc(value as number) as unknown as import('./keyframe').KeyframeValue,
+            interpolation as import('./keyframe').InterpolationType,
+            tangentIn as import('./keyframe').KeyframeTangent,
+            tangentOut as import('./keyframe').KeyframeTangent,
+          )
+          this.addZIndex(kf)
+        } catch {
+          continue
+        }
+      }
+    }
+  }
+
   // --- Morph binding & coefficient track (Spec 281, migrated to per-keyframe pair in morph rework) ---
   /** @deprecated legacy global binding — retained only for JSON migration; new code uses per-keyframe MorphKeyframeValue */
   get morphBinding(): MorphBinding | null {
@@ -440,6 +518,9 @@ export class NodeAnimation {
     for (const keyframe of this.#symmetry) {
       copy.#symmetry.push(copyKeyframe(keyframe))
     }
+    for (const keyframe of this.#zIndex) {
+      copy.#zIndex.push(copyKeyframe(keyframe))
+    }
     if (this.#morphBinding) {
       copy.#morphBinding = { ...this.#morphBinding }
     }
@@ -513,6 +594,13 @@ export class NodeAnimation {
       return undefined
     }
     return { keyframes: this.#symmetry.map((keyframe) => keyframe.toJSON()) }
+  }
+
+  zIndexTrackJSON(): ZIndexTrackJSON | undefined {
+    if (this.#zIndex.length === 0) {
+      return undefined
+    }
+    return { keyframes: this.#zIndex.map((keyframe) => keyframe.toJSON()) }
   }
 
   morphBindingJSON(): import('./json').MorphBindingJSON | null | undefined {
@@ -618,6 +706,10 @@ export class NodeAnimation {
     const symmetryTrack = (json as Record<string, unknown>).symmetryTrack
     if (symmetryTrack !== undefined) {
       readSymmetryTrack(animation, symmetryTrack, duration)
+    }
+    const zIndexTrack = (json as Record<string, unknown>).zIndexTrack
+    if (zIndexTrack !== undefined) {
+      readZIndexTrack(animation, zIndexTrack, duration)
     }
     return animation
   }
@@ -893,6 +985,29 @@ function readSymmetryTrack(animation: NodeAnimation, track: unknown, duration: n
   )
   for (const keyframeJson of record.keyframes) {
     animation.addSymmetry(parse(keyframeJson))
+  }
+}
+
+function readZIndexTrack(animation: NodeAnimation, track: unknown, duration: number): void {
+  if (typeof track !== 'object' || track === null) {
+    throw new Error('Z-Index track must be an object')
+  }
+  const record = track as Record<string, unknown>
+  if (!Array.isArray(record.keyframes)) {
+    throw new Error('Z-Index track must have a keyframes array')
+  }
+  const parse = trackKeyframeParser('Z-Index track', duration, (value, what) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new Error(`${what} must be a finite number`)
+    }
+    return Math.trunc(value)
+  })
+  for (const keyframeJson of record.keyframes) {
+    const keyframe = parse(keyframeJson)
+    if (keyframe.interpolation !== 'hold') {
+      throw new Error(`Z-Index track keyframe "${keyframe.id}" interpolation must be "hold"`)
+    }
+    animation.addZIndex(keyframe)
   }
 }
 

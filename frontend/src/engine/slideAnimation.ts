@@ -65,6 +65,12 @@ export type ClampedKeyframe =
       readonly keyframeId: string
       readonly oldTime: number
     }
+  | {
+      readonly nodeId: string
+      readonly zIndex: true
+      readonly keyframeId: string
+      readonly oldTime: number
+    }
 
 export class SlideAnimation {
   readonly #nodes = new Map<string, NodeAnimation>()
@@ -213,6 +219,17 @@ export class SlideAnimation {
           keyframe.time = duration
         }
       }
+      for (const keyframe of animation.zIndexKeyframes()) {
+        if (keyframe.time > duration) {
+          clamped.push({
+            nodeId,
+            zIndex: true,
+            keyframeId: keyframe.id,
+            oldTime: keyframe.time,
+          })
+          keyframe.time = duration
+        }
+      }
     }
     return clamped
   }
@@ -230,6 +247,7 @@ export class SlideAnimation {
       const morphBinding = animation.morphBindingJSON()
       const shadowTracks = animation.shadowTracksJSON()
       const symmetryTrack = animation.symmetryTrackJSON()
+      const zIndexTrack = animation.zIndexTrackJSON()
       if (
         tracks.length > 0 ||
         materialTracks.length > 0 ||
@@ -240,7 +258,8 @@ export class SlideAnimation {
         morphTrack !== undefined ||
         morphBinding !== undefined ||
         shadowTracks.length > 0 ||
-        symmetryTrack !== undefined
+        symmetryTrack !== undefined ||
+        zIndexTrack !== undefined
       ) {
         nodes.push({
           nodeId,
@@ -254,6 +273,7 @@ export class SlideAnimation {
           ...(morphBinding !== undefined ? { morphBinding } : {}),
           ...(shadowTracks.length > 0 ? { shadowTracks } : {}),
           ...(symmetryTrack !== undefined ? { symmetryTrack } : {}),
+          ...(zIndexTrack !== undefined ? { zIndexTrack } : {}),
         })
       }
     }

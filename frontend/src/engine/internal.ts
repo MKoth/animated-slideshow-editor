@@ -1790,6 +1790,38 @@ export class Engine {
     return this.#animations.hasSymmetryTrack(nodeId)
   }
 
+  getZIndexKeyframes(nodeId: string): readonly Keyframe[] {
+    return this.#animations.getZIndexKeyframes(nodeId)
+  }
+
+  hasZIndexTrack(nodeId: string): boolean {
+    return this.#animations.hasZIndexTrack(nodeId)
+  }
+
+  clearZIndexTracks(nodeId: string): import('./json').ZIndexTrackJSON[] {
+    const slide = this.getSlideOfNode(nodeId)
+    const anim = slide.animation.node(nodeId)
+    if (!anim) return []
+    return anim.clearZIndexTracks()
+  }
+
+  restoreZIndexTracks(
+    nodeId: string,
+    tracks: ReadonlyArray<import('./json').ZIndexTrackJSON>,
+  ): void {
+    const slide = this.getSlideOfNode(nodeId)
+    const anim = slide.animation.ensure(nodeId)
+    anim.restoreZIndexTracks(
+      tracks as unknown as import('./json').ZIndexTrackJSON[],
+      slide.duration,
+      nodeId,
+    )
+  }
+
+  evaluateZIndex(nodeId: string, time: number): number {
+    return this.#evaluator.evaluateZIndex(nodeId, time)
+  }
+
   evaluateSymmetry(
     nodeId: string,
     time: number,
@@ -1807,6 +1839,14 @@ export class Engine {
 
   evaluateVisible(nodeId: string, time: number): boolean {
     return this.#evaluator.evaluateVisible(nodeId, time)
+  }
+
+  setZIndex(nodeId: string, zIndex: number): void {
+    this.#nodes.setZIndex(nodeId, zIndex)
+  }
+
+  getZIndex(nodeId: string): number {
+    return this.#nodes.getZIndex(nodeId)
   }
 
   getAnimatableParameters(nodeId: string): AnimatableParameter[] {
@@ -1842,6 +1882,9 @@ export class Engine {
     }
     if (resolved.kind === 'visible') {
       return animation.visibleKeyframes()
+    }
+    if (resolved.kind === 'zIndex') {
+      return animation.zIndexKeyframes()
     }
     if (resolved.kind === 'morph') {
       return animation.morphKeyframes()
@@ -5201,6 +5244,11 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getVisibleKeyframes: (nodeId) => engine.getVisibleKeyframes(nodeId),
     hasVisibleTrack: (nodeId) => engine.hasVisibleTrack(nodeId),
     evaluateVisible: (nodeId, time) => engine.evaluateVisible(nodeId, time),
+    getZIndexKeyframes: (nodeId) => engine.getZIndexKeyframes(nodeId),
+    hasZIndexTrack: (nodeId) => engine.hasZIndexTrack(nodeId),
+    evaluateZIndex: (nodeId, time) => engine.evaluateZIndex(nodeId, time),
+    setZIndex: (nodeId, zIndex) => engine.setZIndex(nodeId, zIndex),
+    getZIndex: (nodeId) => engine.getZIndex(nodeId),
     getMorphKeyframes: (nodeId) => engine.getMorphKeyframes(nodeId),
     hasMorphTrack: (nodeId) => engine.hasMorphTrack(nodeId),
     getMorphBinding: (nodeId) => engine.getMorphBinding(nodeId),

@@ -54,6 +54,12 @@ export interface VisibleKeyframeRef {
   readonly time: number
 }
 
+export interface ZIndexKeyframeRef {
+  readonly nodeId: string
+  readonly keyframeId: string
+  readonly time: number
+}
+
 export interface MorphKeyframeRef {
   readonly nodeId: string
   readonly keyframeId: string
@@ -190,6 +196,21 @@ export function visibleKeyframeRefsOfScene(
   for (const node of collectNodes(scene)) {
     if (engine.hasVisibleTrack(node.id)) {
       for (const keyframe of engine.getVisibleKeyframes(node.id)) {
+        refs.push({ nodeId: node.id, keyframeId: keyframe.id, time: keyframe.time })
+      }
+    }
+  }
+  return refs
+}
+
+export function zIndexKeyframeRefsOfScene(
+  engine: EnginePublic,
+  scene: Scene,
+): ZIndexKeyframeRef[] {
+  const refs: ZIndexKeyframeRef[] = []
+  for (const node of collectNodes(scene)) {
+    if (engine.hasZIndexTrack(node.id)) {
+      for (const keyframe of engine.getZIndexKeyframes(node.id)) {
         refs.push({ nodeId: node.id, keyframeId: keyframe.id, time: keyframe.time })
       }
     }
@@ -336,6 +357,14 @@ function allVisibleKeyframeRefs(engine: EnginePublic): VisibleKeyframeRef[] {
   return refs
 }
 
+function allZIndexKeyframeRefs(engine: EnginePublic): ZIndexKeyframeRef[] {
+  const refs: ZIndexKeyframeRef[] = []
+  for (const slide of engine.project?.slides ?? []) {
+    refs.push(...zIndexKeyframeRefsOfScene(engine, slide.scene))
+  }
+  return refs
+}
+
 function allShadowKeyframeRefs(engine: EnginePublic): ShadowKeyframeRef[] {
   const refs: ShadowKeyframeRef[] = []
   for (const slide of engine.project?.slides ?? []) {
@@ -422,12 +451,22 @@ export function selectedVisibleKeyframeRefs(engine: EnginePublic): VisibleKeyfra
   return allVisibleKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
 }
 
+export function selectedZIndexKeyframeRefs(engine: EnginePublic): ZIndexKeyframeRef[] {
+  const selectedIds = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+  if (selectedIds.length === 0) {
+    return []
+  }
+  const wanted = new Set(selectedIds)
+  return allZIndexKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
+}
+
 type DeleteTarget =
   | { kind: 'property'; nodeId: string; property: AnimationProperty; items: string[] }
   | { kind: 'parameter'; nodeId: string; parameter: string; items: string[] }
   | { kind: 'dataLabel'; nodeId: string; label: string; items: string[] }
   | { kind: 'circle'; nodeId: string; property: CircleAnimationProperty; items: string[] }
   | { kind: 'visible'; nodeId: string; items: string[] }
+  | { kind: 'zIndex'; nodeId: string; items: string[] }
   | { kind: 'morph'; nodeId: string; items: string[] }
   | { kind: 'shadow'; nodeId: string; property: ShadowProperty; items: string[] }
 
@@ -437,6 +476,7 @@ export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: Dispatch
   const dataLabelRefs = selectedDataLabelKeyframeRefs(engine)
   const circleRefs = selectedCircleKeyframeRefs(engine)
   const visibleRefs = selectedVisibleKeyframeRefs(engine)
+  const zIndexRefs = selectedZIndexKeyframeRefs(engine)
   const morphRefs = selectedMorphKeyframeRefs(engine)
   const shadowRefs = selectedShadowKeyframeRefs(engine)
   if (
@@ -445,6 +485,7 @@ export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: Dispatch
     dataLabelRefs.length === 0 &&
     circleRefs.length === 0 &&
     visibleRefs.length === 0 &&
+    zIndexRefs.length === 0 &&
     morphRefs.length === 0 &&
     shadowRefs.length === 0
   ) {
@@ -496,6 +537,17 @@ export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: Dispatch
   }
   {
     const grouped = new Map<string, string[]>()
+    for (const ref of zIndexRefs) {
+      const arr = grouped.get(ref.nodeId) ?? []
+      arr.push(ref.keyframeId)
+      grouped.set(ref.nodeId, arr)
+    }
+    for (const [nodeId, items] of grouped) {
+      targets.push({ kind: 'zIndex', nodeId, items })
+    }
+  }
+  {
+    const grouped = new Map<string, string[]>()
     for (const ref of morphRefs) {
       const arr = grouped.get(ref.nodeId) ?? []
       arr.push(ref.keyframeId)
@@ -525,6 +577,12 @@ export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: Dispatch
     if (target.kind === 'visible') {
       return new DeleteKeyframesCommand({
         target: { kind: 'visible', nodeId: target.nodeId },
+        keyframeIds: target.items,
+      })
+    }
+    if (target.kind === 'zIndex') {
+      return new DeleteKeyframesCommand({
+        target: { kind: 'zIndex', nodeId: target.nodeId },
         keyframeIds: target.items,
       })
     }
@@ -568,6 +626,7 @@ export function pruneKeyframeSelection(engine: EnginePublic): void {
   const validDataLabelKeys = new Set(allDataLabelKeyframeRefs(engine).map((ref) => ref.keyframeId))
   const validCircleKeys = new Set(allCircleKeyframeRefs(engine).map((ref) => ref.keyframeId))
   const validVisibleKeys = new Set(allVisibleKeyframeRefs(engine).map((ref) => ref.keyframeId))
+  const validZIndexKeys = new Set(allZIndexKeyframeRefs(engine).map((ref) => ref.keyframeId))
   const validMorphKeys = new Set(allMorphKeyframeRefs(engine).map((ref) => ref.keyframeId))
   const validShadowKeys = new Set(allShadowKeyframeRefs(engine).map((ref) => ref.keyframeId))
   const valid = new Set([
@@ -576,6 +635,7 @@ export function pruneKeyframeSelection(engine: EnginePublic): void {
     ...validDataLabelKeys,
     ...validCircleKeys,
     ...validVisibleKeys,
+    ...validZIndexKeys,
     ...validMorphKeys,
     ...validShadowKeys,
   ])

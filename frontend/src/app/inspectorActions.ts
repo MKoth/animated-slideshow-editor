@@ -10,6 +10,7 @@ import {
   ScaleNodeCommand,
   SetOpacityCommand,
   SetSemanticNameCommand,
+  SetZIndexCommand,
   TransactionCommand,
 } from '../engine/commands'
 import type { Command } from '../engine/commands'
@@ -428,6 +429,40 @@ export function applyNodeOpacityAutoKey(
     nodeIds.map((nodeId) => ({
       target: { kind: 'node', nodeId, property: 'opacity' },
       value: clamped,
+    })),
+  )
+}
+
+export function applyNodeZIndex(
+  engine: EnginePublic,
+  dispatch: DispatchCommand,
+  nodeIds: readonly string[],
+  zIndex: number,
+): CommandResult<unknown> | null {
+  const truncated = Math.trunc(zIndex)
+  const children: Command<unknown>[] = []
+  for (const nodeId of nodeIds) {
+    const node = engine.getNode(nodeId)
+    if (node.zIndex !== truncated) {
+      children.push(new SetZIndexCommand({ nodeId, zIndex: truncated }))
+    }
+  }
+  return dispatchCommands(dispatch, children)
+}
+
+export function applyNodeZIndexAutoKey(
+  engine: EnginePublic,
+  dispatch: DispatchCommand,
+  nodeIds: readonly string[],
+  zIndex: number,
+): CommandResult<unknown> | null {
+  const truncated = Math.trunc(zIndex)
+  return autoKeyEdit(
+    engine,
+    dispatch,
+    nodeIds.map((nodeId) => ({
+      target: { kind: 'zIndex', nodeId },
+      value: truncated,
     })),
   )
 }

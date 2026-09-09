@@ -849,6 +849,9 @@ export class Renderer {
       case 'OpacityChanged':
         sceneRenderer.handleOpacityChanged(event.nodeId)
         break
+      case 'ZIndexChanged':
+        sceneRenderer.handleZIndexChanged(event.nodeId)
+        break
       case 'MaterialAssigned':
       case 'MaterialParameterChanged':
         sceneRenderer.handleMaterialChanged(event.nodeId)
@@ -869,6 +872,9 @@ export class Renderer {
           sceneRenderer.handleKeyframeChanged(target.nodeId)
           if ((event.target as { kind?: string }).kind === 'visible') {
             sceneRenderer.handleVisibleTrackChanged(target.nodeId)
+          }
+          if ((event.target as { kind?: string }).kind === 'zIndex') {
+            sceneRenderer.handleZIndexTrackChanged(target.nodeId)
           }
         }
         break

@@ -1057,6 +1057,17 @@ export class SceneRenderer {
     this.#flushShadowDirty()
   }
 
+  handleZIndexChanged(nodeId: string): void {
+    if (!this.#scene?.getNode(nodeId)) {
+      return
+    }
+    this.#evaluateAndApply(nodeId)
+  }
+
+  handleZIndexTrackChanged(nodeId: string): void {
+    this.#evaluateAndApply(nodeId)
+  }
+
   setBonesVisible(visible: boolean): void {
     for (const [nodeId, container] of this.#containers) {
       const node = this.#scene?.getNode(nodeId)
@@ -1166,6 +1177,12 @@ export class SceneRenderer {
     this.#containers.set(node.id, container)
     this.#nodeIds.set(container, node.id)
     this.#attachToParent(container, node)
+    // Initialize zIndex for render ordering and ensure parent sorts by zIndex
+    container.zIndex = node.zIndex ?? 0
+    if (node.parent) {
+      const parentContainer = this.#containers.get(node.parent.id)
+      if (parentContainer) parentContainer.sortableChildren = true
+    }
     this.#recordSize(node, container)
     // Apply size-scaled pivot after size is known (normalized [-0.5,0.5] → pixels)
     const size = this.#sizes.get(node.id)
@@ -1235,6 +1252,18 @@ export class SceneRenderer {
       }
     }
     const time = this.#currentTime.getTime(slideId)
+    // Apply evaluated Z-Index (hold-only) for render ordering — generic per-node track
+    const evaluatedZ = this.#engine.evaluateZIndex(nodeId, time)
+    if (container.zIndex !== evaluatedZ) {
+      container.zIndex = evaluatedZ
+    }
+    const parent = node.parent
+    if (parent) {
+      const parentContainer = this.#containers.get(parent.id)
+      if (parentContainer && !parentContainer.sortableChildren) {
+        parentContainer.sortableChildren = true
+      }
+    }
     if (node.components.circle) {
       const circleState = this.#engine.evaluateCircle(nodeId, time)
       if (circleState) {

@@ -220,6 +220,37 @@ export class AnimationEvaluator {
     return last.value as boolean
   }
 
+  evaluateZIndex(nodeId: string, time: number): number {
+    const node = this.#nodeLookup(nodeId)
+    const slide = this.#slideLookup(nodeId)
+    const boundedTime = requireFiniteNumber(time, 'Evaluation time')
+    const clampedTime = Math.min(Math.max(boundedTime, 0), slide.duration)
+    const animation = slide.animation.node(nodeId)
+    const keyframes = animation?.zIndexKeyframes()
+    if (!keyframes || keyframes.length === 0) {
+      return node.zIndex
+    }
+    const first = keyframes[0]
+    if (clampedTime <= first.time) {
+      return Math.trunc(first.value as number)
+    }
+    const last = keyframes[keyframes.length - 1]
+    if (clampedTime >= last.time) {
+      return Math.trunc(last.value as number)
+    }
+    for (let i = 0; i < keyframes.length - 1; i += 1) {
+      const from = keyframes[i]
+      const to = keyframes[i + 1]
+      if (clampedTime >= from.time && clampedTime < to.time) {
+        if (from.interpolation !== 'hold') {
+          throw new Error('Z-Index track only supports hold interpolation')
+        }
+        return Math.trunc(from.value as number)
+      }
+    }
+    return Math.trunc(last.value as number)
+  }
+
   evaluateShadow(
     nodeId: string,
     time: number,

@@ -19,6 +19,7 @@ import {
   isParameterTarget,
   isPropertyTarget,
   isShadowTarget,
+  isZIndexTarget,
 } from '../engine/keyframeTarget'
 import type { ShadowProperty } from '../engine/shadowEffect'
 
@@ -135,6 +136,23 @@ export function shadowPropertyStateOf(
   return 'animated'
 }
 
+export function zIndexStateOf(
+  engine: EnginePublic,
+  nodeId: string,
+  time: number,
+): PropertyState | null {
+  try {
+    engine.getNode(nodeId)
+  } catch {
+    return null
+  }
+  if (!engine.hasZIndexTrack(nodeId)) return 'static'
+  const kfs = engine.getZIndexKeyframes(nodeId)
+  if (kfs.length === 0) return 'static'
+  if (kfs.some((kf) => kf.time === time)) return 'onKeyframe'
+  return 'animated'
+}
+
 export function autoKeyEdit(
   engine: EnginePublic,
   dispatch: DispatchCommand,
@@ -146,7 +164,8 @@ export function autoKeyEdit(
       !isPropertyTarget(edit.target) &&
       !isParameterTarget(edit.target) &&
       !isMorphTarget(edit.target) &&
-      !isShadowTarget(edit.target)
+      !isShadowTarget(edit.target) &&
+      !isZIndexTarget(edit.target)
     ) {
       continue
     }

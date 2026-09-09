@@ -103,6 +103,12 @@ export function applyUndo(
       engine.setOpacity(nodeId, oldOpacity)
       return
     }
+    case 'SetZIndex': {
+      const nodeId = inv.nodeId as string
+      const oldZIndex = inv.oldZIndex as number
+      engine.setZIndex(nodeId, oldZIndex)
+      return
+    }
     case 'RenameNode': {
       const nodeId = inv.nodeId as string
       const oldName = inv.oldName as string
@@ -2272,6 +2278,9 @@ export function applyRedo(
       return
     case 'SetOpacity':
       engine.setOpacity(params.nodeId as string, params.opacity as number)
+      return
+    case 'SetZIndex':
+      engine.setZIndex(params.nodeId as string, params.zIndex as number)
       return
     case 'RenameNode':
       engine.renameNode(params.nodeId as string, params.name as string)

@@ -94,6 +94,7 @@ function copyNodeDeep(
   )
   copy.visible = source.visible
   copy.opacity = source.opacity
+  copy.zIndex = source.zIndex
   copy.material = copyMaterialInstance(source.material)
   if (source.shadowEffect) {
     copy.shadowEffect = cloneShadowEffect(source.shadowEffect)

@@ -47,6 +47,7 @@ export class SceneNode {
   transform: Transform
   visible: boolean
   opacity: number
+  zIndex: number
   material: MaterialInstance
   readonly components: NodeComponents
   readonly clipInstances: ClipInstance[]
@@ -72,6 +73,7 @@ export class SceneNode {
     this.children = []
     this.visible = true
     this.opacity = 1
+    this.zIndex = 0
     this.material = defaultMaterial()
     this.clipInstances = []
     this.collectionPlacements = []
@@ -122,6 +124,7 @@ export class SceneNode {
       localPivot: hasPivot ? { ...pivot } : undefined,
       visible: this.visible,
       opacity: this.opacity,
+      zIndex: this.zIndex !== 0 ? this.zIndex : undefined,
       ...(material !== undefined ? { material } : {}),
       components: componentsJSON as unknown as import('./json').NodeComponentsJSON,
       ...(this.clipInstances.length > 0
@@ -174,6 +177,10 @@ export class SceneNode {
     node.visible = typeof json.visible === 'boolean' ? json.visible : true
     node.opacity =
       typeof json.opacity === 'number' ? requireOpacity(json.opacity, `Node "${id}" opacity`) : 1
+    node.zIndex =
+      typeof json.zIndex === 'number' && Number.isFinite(json.zIndex)
+        ? Math.trunc(json.zIndex)
+        : 0
     node.material = materialFromJSON(json.material, id)
     if (Array.isArray(json.clipInstances)) {
       for (const clipJson of json.clipInstances) {

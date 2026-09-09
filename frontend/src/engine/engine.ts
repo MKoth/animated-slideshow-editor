@@ -84,6 +84,11 @@ export interface EnginePublic {
   getVisibleKeyframes(nodeId: string): readonly Keyframe[]
   hasVisibleTrack(nodeId: string): boolean
   evaluateVisible(nodeId: string, time: number): boolean
+  getZIndexKeyframes(nodeId: string): readonly Keyframe[]
+  hasZIndexTrack(nodeId: string): boolean
+  evaluateZIndex(nodeId: string, time: number): number
+  setZIndex(nodeId: string, zIndex: number): void
+  getZIndex(nodeId: string): number
   getShapes(nodeId: string): readonly import('./shape').Shape[]
   getMorphKeyframes(nodeId: string): readonly Keyframe[]
   hasMorphTrack(nodeId: string): boolean

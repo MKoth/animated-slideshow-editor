@@ -27,6 +27,7 @@ export interface TimelineMenuState {
   readonly shadowProperty?: import('../../engine/shadowEffect').ShadowProperty
   readonly morph?: boolean
   readonly symmetry?: boolean
+  readonly zIndex?: boolean
   readonly keyframeId?: string
 }
 

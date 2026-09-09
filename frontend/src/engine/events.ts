@@ -80,6 +80,11 @@ export interface OpacityChanged {
   readonly nodeId: string
 }
 
+export interface ZIndexChanged {
+  readonly type: 'ZIndexChanged'
+  readonly nodeId: string
+}
+
 export interface NodeOrderChanged {
   readonly type: 'NodeOrderChanged'
   readonly nodeId: string
@@ -394,6 +399,7 @@ export type EngineEvent =
   | NodeReparented
   | NodeRenamed
   | OpacityChanged
+  | ZIndexChanged
   | NodeOrderChanged
   | TransformChanged
   | VisibilityChanged

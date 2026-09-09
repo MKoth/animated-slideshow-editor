@@ -13,6 +13,7 @@ import {
   isPropertyTarget,
   isShadowTarget,
   isSymmetryTarget,
+  isZIndexTarget,
 } from './keyframeTarget'
 import { uniformValuesEqual } from './materialResolution'
 import type { KeyframeValue } from './keyframe'
@@ -131,6 +132,11 @@ export function autoKeyCommands(
       )
         continue
     }
+    if (isZIndexTarget(edit.target)) {
+      const cur = (engine as unknown as { evaluateZIndex?: (id: string, t: number) => number })
+        .evaluateZIndex?.(edit.target.nodeId, edit.time)
+      if (cur === edit.value) continue
+    }
     if (isMorphTarget(edit.target)) {
       // For morph, compare full object value (pair+coeff) via evaluateMorphValue when available
       const evalFn = (
@@ -232,6 +238,15 @@ function targetKeyframes(engine: EnginePublic, target: KeyframeTarget): readonly
           getSymmetryKeyframes?: (id: string) => readonly Keyframe[]
         }
       ).getSymmetryKeyframes?.(target.nodeId) ?? []
+    )
+  }
+  if (isZIndexTarget(target)) {
+    return (
+      (
+        engine as unknown as {
+          getZIndexKeyframes?: (id: string) => readonly Keyframe[]
+        }
+      ).getZIndexKeyframes?.(target.nodeId) ?? []
     )
   }
   if (isShadowTarget(target)) {

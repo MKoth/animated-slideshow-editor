@@ -7,6 +7,8 @@ import {
   applyNodeName,
   applyNodeOpacity,
   applyNodeOpacityAutoKey,
+  applyNodeZIndex,
+  applyNodeZIndexAutoKey,
   applySemanticName,
   commonValueOf,
   degreesOf,
@@ -20,11 +22,13 @@ import {
 } from '../../app/inspectorActions'
 import type { InspectorFieldKind } from '../../app/inspectorActions'
 import type { PropertyState } from '../../app/keyframeActions'
-import { playheadTimeOf, propertyStateOf } from '../../app/keyframeActions'
+import { playheadTimeOf, propertyStateOf, zIndexStateOf } from '../../app/keyframeActions'
 import {
   selectedKeyframeRefs,
   selectedMaterialKeyframeRefs,
   selectedMorphKeyframeRefs,
+  selectedZIndexKeyframeRefs,
+  selectedVisibleKeyframeRefs,
 } from '../../app/keyframeSelectionActions'
 import { selectedClipKeyframeRefs } from '../../app/clipKeyframeActions'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
@@ -58,6 +62,10 @@ import {
   RenameClipCommand,
   SetClipDurationCommand,
   SetClipCategoryCommand,
+  SetZIndexCommand,
+  AddKeyframeCommand,
+  SetKeyframeValueCommand,
+  TransactionCommand,
 } from '../../engine/commands'
 
 const COMING_SOON_SECTIONS = ['Anchors', 'Physics', 'AI Metadata']
@@ -401,6 +409,26 @@ export function InspectorPanel({ width }: { width: number }) {
   const fieldDisabledOf = (field: InspectorFieldKind): boolean =>
     playing || (!transformAutoKey && animatedPropertyOf(FIELD_PROPERTY[field]))
   const opacityDisabled = playing || (!opacityAutoKey && animatedPropertyOf('opacity'))
+  const zIndexAutoKey = animationMode
+  const hasZIndexTrack = (nodeId: string): boolean => engine.hasZIndexTrack(nodeId)
+  const animatedZIndex = targets.some((node) => hasZIndexTrack(node.id))
+  const zIndexDisabled = playing || (!zIndexAutoKey && animatedZIndex)
+  const zIndexIndicator = evaluatedDisplay
+    ? zIndexStateOf(engine, targets[0].id, indicatorTime)
+    : hasZIndexTrack(targets[0].id)
+      ? 'animated'
+      : 'static'
+  const zIndexRead = (node: SceneNode): number => {
+    if (evaluatedDisplay) {
+      try {
+        return engine.evaluateZIndex(node.id, indicatorTime)
+      } catch {
+        return node.zIndex
+      }
+    }
+    return node.zIndex
+  }
+  const commonZIndex = commonValueOf(targets, zIndexRead)
 
   const commitField = (field: InspectorFieldKind, raw: string) => {
     try {
@@ -471,6 +499,113 @@ export function InspectorPanel({ width }: { width: number }) {
       if (result && !result.ok) {
         throw result.error
       }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const commitZIndex = (raw: string) => {
+    try {
+      const value = parseFiniteNumber(raw, 'Z-Index')
+      const truncated = Math.trunc(value)
+      const result = zIndexAutoKey
+        ? applyNodeZIndexAutoKey(engine, dispatch, targetIds, truncated)
+        : applyNodeZIndex(engine, dispatch, targetIds, truncated)
+      if (result && !result.ok) {
+        throw result.error
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const adjustZIndex = (value: number) => {
+    try {
+      const truncated = Math.trunc(value)
+      const result = zIndexAutoKey
+        ? applyNodeZIndexAutoKey(engine, dispatch, targetIds, truncated)
+        : applyNodeZIndex(engine, dispatch, targetIds, truncated)
+      if (result && !result.ok) {
+        throw result.error
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  const handleAssignChildrenZIndex = () => {
+    if (targets.length !== 1) return
+    const group = targets[0]!
+    if (!isGroupNode(group) || group.children.length === 0) return
+    if (playing) {
+      notify('Cannot assign while playing')
+      return
+    }
+    const time = playheadTimeOf(engine, group.id) ?? 0
+    const children = [...group.children]
+    const ordered = children
+      .map((child, originalIndex) => {
+        let z: number
+        try {
+          z = engine.evaluateZIndex(child.id, time)
+        } catch {
+          z = child.zIndex
+        }
+        return { child, z, originalIndex }
+      })
+      .sort((a, b) => {
+        if (a.z !== b.z) return a.z - b.z
+        return a.originalIndex - b.originalIndex
+      })
+    const commands: import('../../engine/commands').Command<unknown>[] = []
+    ordered.forEach(({ child }, newIndex) => {
+      const newZ = newIndex
+      if (zIndexAutoKey) {
+        const kfs = engine.getZIndexKeyframes(child.id)
+        const existing = kfs.find((kf) => kf.time === time)
+        let cur: number
+        try {
+          cur = engine.evaluateZIndex(child.id, time)
+        } catch {
+          cur = child.zIndex
+        }
+        if (cur === newZ) return
+        if (existing) {
+          if ((existing.value as number) !== newZ) {
+            commands.push(
+              new SetKeyframeValueCommand({
+                target: { kind: 'zIndex', nodeId: child.id },
+                keyframeId: existing.id,
+                newValue: newZ,
+              }),
+            )
+          }
+        } else {
+          commands.push(
+            new AddKeyframeCommand({
+              target: { kind: 'zIndex', nodeId: child.id },
+              time,
+              value: newZ,
+            }),
+          )
+        }
+      } else {
+        if (child.zIndex !== newZ) {
+          commands.push(new SetZIndexCommand({ nodeId: child.id, zIndex: newZ }))
+        }
+      }
+    })
+    if (commands.length === 0) {
+      notify('Children already match render order')
+      return
+    }
+    try {
+      const result =
+        commands.length === 1 ? dispatch(commands[0]) : dispatch(new TransactionCommand(commands))
+      if (!result.ok) throw result.error
+      notify(
+        `Assigned Z-Index 0…${ordered.length - 1} to ${commands.length} child${commands.length === 1 ? '' : 'ren'} by render order`,
+      )
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error))
     }
@@ -573,6 +708,40 @@ export function InspectorPanel({ width }: { width: number }) {
           <button className="inspector-reset" onClick={handleResetTransform} disabled={playing}>
             Reset Transform
           </button>
+        </InspectorSection>
+
+        <InspectorSection title="Ordering">
+          <NumericField
+            label="Z-Index"
+            value={commonZIndex}
+            step={1}
+            disabled={zIndexDisabled}
+            state={zIndexIndicator}
+            onCommit={commitZIndex}
+            onAdjust={adjustZIndex}
+          />
+          {targets.length === 1 && isGroupNode(targets[0]!) && targets[0]!.children.length > 0 && (
+            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <button
+                className="inspector-button"
+                onClick={handleAssignChildrenZIndex}
+                disabled={playing}
+                title={
+                  zIndexAutoKey
+                    ? 'Bake current render stacking into Z-Index keyframes at playhead for each direct child'
+                    : 'Bake current render stacking into static Z-Index for each direct child (0…n-1)'
+                }
+                style={{ padding: '6px 8px', fontSize: 12 }}
+              >
+                Assign Child Z-Index by Render Order
+              </button>
+              <p style={{ margin: 0, fontSize: 11, opacity: 0.7, lineHeight: 1.3 }}>
+                Sets each direct child’s Z-Index to 0…{targets[0]!.children.length - 1} matching current
+                visual stacking (sorted by evaluated Z-Index at playhead, stable by tree order).
+                {zIndexAutoKey ? ' Creates/updates hold keyframes at playhead.' : ' Static — not keyframed.'}
+              </p>
+            </div>
+          )}
         </InspectorSection>
 
         <InspectorSection title="Appearance">
@@ -728,7 +897,14 @@ export function InspectorPanel({ width }: { width: number }) {
           const propertyRefs = selectedKeyframeRefs(engine)
           const materialRefs = selectedMaterialKeyframeRefs(engine)
           const morphRefs = selectedMorphKeyframeRefs(engine)
-          const totalSelected = propertyRefs.length + materialRefs.length + morphRefs.length
+          const zIndexRefs = selectedZIndexKeyframeRefs(engine)
+          const visibleRefs = selectedVisibleKeyframeRefs(engine)
+          const totalSelected =
+            propertyRefs.length +
+            materialRefs.length +
+            morphRefs.length +
+            zIndexRefs.length +
+            visibleRefs.length
           if (totalSelected !== 1) {
             return null
           }
@@ -759,6 +935,37 @@ export function InspectorPanel({ width }: { width: number }) {
               <KeyframeInspector
                 dispatch={dispatch}
                 morphNodeId={ref.nodeId}
+                keyframe={keyframe}
+                playing={playing}
+                notify={notify}
+              />
+            )
+          }
+          if (zIndexRefs.length === 1) {
+            const ref = zIndexRefs[0]
+            const keyframes = engine.getZIndexKeyframes(ref.nodeId)
+            const keyframe = keyframes.find((kf) => kf.id === ref.keyframeId)
+            if (!keyframe) return null
+            return (
+              <KeyframeInspector
+                dispatch={dispatch}
+                zIndexNodeId={ref.nodeId}
+                keyframe={keyframe}
+                playing={playing}
+                notify={notify}
+              />
+            )
+          }
+          if (visibleRefs.length === 1) {
+            const ref = visibleRefs[0]
+            const keyframes = engine.getVisibleKeyframes(ref.nodeId)
+            const keyframe = keyframes.find((kf) => kf.id === ref.keyframeId)
+            if (!keyframe) return null
+            return (
+              <KeyframeInspector
+                dispatch={dispatch}
+                nodeId={ref.nodeId}
+                property={'visible' as unknown as AnimationProperty}
                 keyframe={keyframe}
                 playing={playing}
                 notify={notify}

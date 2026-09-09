@@ -133,6 +133,7 @@ export type NodeJSON = {
   readonly localPivot?: PivotJSON
   readonly visible: boolean
   readonly opacity?: number
+  readonly zIndex?: number
   readonly material?: MaterialJSON
   readonly components: NodeComponentsJSON
   readonly clipInstances?: readonly ClipInstanceJSON[]
@@ -202,6 +203,10 @@ export type SymmetryTrackJSON = {
   readonly keyframes: readonly KeyframeJSON[]
 }
 
+export type ZIndexTrackJSON = {
+  readonly keyframes: readonly KeyframeJSON[]
+}
+
 export type NodeAnimationJSON = {
   readonly nodeId: string
   readonly tracks: readonly PropertyTrackJSON[]
@@ -214,6 +219,7 @@ export type NodeAnimationJSON = {
   readonly morphTrack?: MorphTrackJSON
   readonly shadowTracks?: readonly ShadowTrackJSON[]
   readonly symmetryTrack?: SymmetryTrackJSON
+  readonly zIndexTrack?: ZIndexTrackJSON
 }
 
 export type SlideAnimationJSON = {

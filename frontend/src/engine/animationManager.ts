@@ -142,6 +142,16 @@ export class AnimationManager {
     return slide.animation.node(nodeId)?.hasSymmetryTrack() ?? false
   }
 
+  getZIndexKeyframes(nodeId: string): readonly Keyframe[] {
+    const slide = this.#slideLookup(nodeId)
+    return slide.animation.node(nodeId)?.zIndexKeyframes() ?? []
+  }
+
+  hasZIndexTrack(nodeId: string): boolean {
+    const slide = this.#slideLookup(nodeId)
+    return slide.animation.node(nodeId)?.hasZIndexTrack() ?? false
+  }
+
   addKeyframe(target: KeyframeTarget, time: number, value: unknown): Keyframe {
     const resolved = this.#resolve(target)
     const boundedTime = requireKeyframeTime(time, resolved.slide.duration)
@@ -149,14 +159,14 @@ export class AnimationManager {
     const boundedValue = requireTrackKeyframeValue(resolved.track, normalizedValue)
     this.#assertTimeFree(resolved, boundedTime, [], [])
     let interpolation = previousInterpolation(this.#keyframesOf(resolved), boundedTime)
-    if (resolved.track.kind === 'visible') {
+    if (resolved.track.kind === 'visible' || resolved.track.kind === 'zIndex') {
       interpolation = 'hold'
     }
     if (resolved.track.kind === 'shadow' && resolved.track.property === 'color') {
       if (interpolation !== 'hold' && interpolation !== 'linear') interpolation = 'linear'
     }
     const keyframe = new KeyframeModel(newKeyframeId(), boundedTime, boundedValue, interpolation)
-    if (resolved.track.kind === 'visible') {
+    if (resolved.track.kind === 'visible' || resolved.track.kind === 'zIndex') {
       keyframe.interpolation = 'hold'
     }
     if (resolved.track.kind === 'shadow' && resolved.track.property === 'color') {
@@ -263,6 +273,9 @@ export class AnimationManager {
     if (resolved.track.kind === 'visible' && bounded !== 'hold') {
       throw new Error('Visible track only supports hold interpolation')
     }
+    if (resolved.track.kind === 'zIndex' && bounded !== 'hold') {
+      throw new Error('Z-Index track only supports hold interpolation')
+    }
     if (
       resolved.track.kind === 'shadow' &&
       resolved.track.property === 'color' &&
@@ -285,8 +298,8 @@ export class AnimationManager {
     tangentOut: unknown,
   ): KeyframeTangents {
     const resolved = this.#resolve(target)
-    if (resolved.track.kind === 'visible') {
-      throw new Error('Visible track does not support tangents')
+    if (resolved.track.kind === 'visible' || resolved.track.kind === 'zIndex') {
+      throw new Error(`${resolved.track.kind === 'visible' ? 'Visible' : 'Z-Index'} track does not support tangents`)
     }
     if (resolved.track.kind === 'shadow' && resolved.track.property === 'color') {
       throw new Error('Shadow color track does not support tangents')
@@ -333,7 +346,10 @@ export class AnimationManager {
       if (resolved.track.kind === 'visible' && interpolation !== 'hold') {
         throw new Error('Visible track only supports hold interpolation')
       }
-      if (resolved.track.kind === 'visible') {
+      if (resolved.track.kind === 'zIndex' && interpolation !== 'hold') {
+        throw new Error('Z-Index track only supports hold interpolation')
+      }
+      if (resolved.track.kind === 'visible' || resolved.track.kind === 'zIndex') {
         interpolation = 'hold'
       }
       if (
@@ -360,7 +376,7 @@ export class AnimationManager {
         requireKeyframeTangent(entry.payload.tangentIn, 'Keyframe tangent in'),
         requireKeyframeTangent(entry.payload.tangentOut, 'Keyframe tangent out'),
       )
-      if (resolved.track.kind === 'visible') {
+      if (resolved.track.kind === 'visible' || resolved.track.kind === 'zIndex') {
         keyframe.interpolation = 'hold'
       }
       if (
@@ -445,6 +461,9 @@ export class AnimationManager {
     if (track.kind === 'visible') {
       return animation.visibleKeyframes()
     }
+    if (track.kind === 'zIndex') {
+      return animation.zIndexKeyframes()
+    }
     if (track.kind === 'morph') {
       return animation.morphKeyframes()
     }
@@ -472,6 +491,8 @@ export class AnimationManager {
       animation.add(track.property, keyframe)
     } else if (track.kind === 'visible') {
       animation.addVisible(keyframe)
+    } else if (track.kind === 'zIndex') {
+      animation.addZIndex(keyframe)
     } else if (track.kind === 'morph') {
       animation.addMorph(keyframe)
     } else if (track.kind === 'symmetry') {
@@ -495,6 +516,8 @@ export class AnimationManager {
       animation.remove(track.property, keyframeId)
     } else if (track.kind === 'visible') {
       animation.removeVisible(keyframeId)
+    } else if (track.kind === 'zIndex') {
+      animation.removeZIndex(keyframeId)
     } else if (track.kind === 'morph') {
       animation.removeMorph(keyframeId)
     } else if (track.kind === 'symmetry') {
@@ -519,6 +542,8 @@ export class AnimationManager {
       keyframe = animation.get(track.property, keyframeId)
     } else if (track.kind === 'visible') {
       keyframe = animation.getVisible(keyframeId)
+    } else if (track.kind === 'zIndex') {
+      keyframe = animation.getZIndex(keyframeId)
     } else if (track.kind === 'morph') {
       keyframe = animation.getMorph(keyframeId)
     } else if (track.kind === 'symmetry') {
@@ -540,19 +565,21 @@ export class AnimationManager {
           ? `property ${track.property}`
           : track.kind === 'visible'
             ? `visible`
-            : track.kind === 'morph'
-              ? `morph`
-              : track.kind === 'symmetry'
-                ? `symmetry`
-                : track.kind === 'shadow'
-                  ? `shadow ${track.property}`
-                  : track.kind === 'dataLabel'
-                    ? `data label ${track.label}`
-                    : track.kind === 'circle'
-                      ? `circle ${track.property}`
-                      : track.kind === 'table'
-                        ? `table ${track.property}`
-                        : `parameter ${track.parameter}`
+            : track.kind === 'zIndex'
+              ? `zIndex`
+              : track.kind === 'morph'
+                ? `morph`
+                : track.kind === 'symmetry'
+                  ? `symmetry`
+                  : track.kind === 'shadow'
+                    ? `shadow ${track.property}`
+                    : track.kind === 'dataLabel'
+                      ? `data label ${track.label}`
+                      : track.kind === 'circle'
+                        ? `circle ${track.property}`
+                        : track.kind === 'table'
+                          ? `table ${track.property}`
+                          : `parameter ${track.parameter}`
       throw new Error(`Keyframe not found: ${keyframeId} on ${on}`)
     }
     return keyframe
@@ -630,6 +657,9 @@ export class AnimationManager {
     }
     if (track.kind === 'visible') {
       return `visible`
+    }
+    if (track.kind === 'zIndex') {
+      return `zIndex`
     }
     if (track.kind === 'morph') {
       return `morph`

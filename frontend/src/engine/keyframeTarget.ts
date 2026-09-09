@@ -88,6 +88,12 @@ export interface NodeSymmetryTarget {
   readonly nodeId: string
 }
 
+/** Z-Index ordering track target (hold-only integer) */
+export interface NodeZIndexTarget {
+  readonly kind: 'zIndex'
+  readonly nodeId: string
+}
+
 /** A clip channel target (Spec 07 R16/R20). */
 export interface ClipChannelTarget {
   readonly kind: 'clip'
@@ -109,6 +115,7 @@ export type KeyframeTarget =
   | NodeMorphTarget
   | NodeShadowTarget
   | NodeSymmetryTarget
+  | NodeZIndexTarget
   | ClipChannelTarget
 
 export function isPropertyTarget(target: KeyframeTarget): target is NodePropertyTarget {
@@ -151,7 +158,15 @@ export function isSymmetryTarget(target: KeyframeTarget): target is NodeSymmetry
   return target.kind === 'symmetry'
 }
 
+export function isZIndexTarget(target: KeyframeTarget): target is NodeZIndexTarget {
+  return target.kind === 'zIndex'
+}
+
 export function requireKeyframeTarget(value: unknown): KeyframeTarget {
+  if (isRecord(value) && value.kind === 'zIndex') {
+    const nodeId = requireString(value.nodeId, 'Z-Index target node id')
+    return { kind: 'zIndex', nodeId }
+  }
   if (isRecord(value) && value.kind === 'symmetry') {
     const nodeId = requireString(value.nodeId, 'Symmetry target node id')
     return { kind: 'symmetry', nodeId }
@@ -201,6 +216,10 @@ export function requireKeyframeTarget(value: unknown): KeyframeTarget {
     const nodeId = requireString(value.nodeId, 'Symmetry target node id')
     return { kind: 'symmetry', nodeId }
   }
+  if (isRecord(value) && value.kind === 'zIndex') {
+    const nodeId = requireString(value.nodeId, 'Z-Index target node id')
+    return { kind: 'zIndex', nodeId }
+  }
   if (isRecord(value) && value.kind === 'clip') {
     const clipId = requireString(value.clipId, 'Keyframe target clip id')
     const channel = requireAnimationProperty(value.channel)
@@ -237,6 +256,7 @@ export type KeyframeTrackRef =
   | { readonly kind: 'morph' }
   | { readonly kind: 'shadow'; readonly property: ShadowProperty }
   | { readonly kind: 'symmetry' }
+  | { readonly kind: 'zIndex' }
 
 export function resolveKeyframeTrack(
   node: SceneNode,
@@ -246,6 +266,9 @@ export function resolveKeyframeTrack(
 ): KeyframeTrackRef {
   if (isClipChannelTarget(target)) {
     throw new Error('Clip channel targets cannot be resolved through node animation tracks')
+  }
+  if (isZIndexTarget(target)) {
+    return { kind: 'zIndex' }
   }
   if (isSymmetryTarget(target)) {
     return { kind: 'symmetry' }
@@ -288,6 +311,12 @@ export function requireTrackKeyframeValue(
   value: unknown,
   what = 'Keyframe value',
 ): KeyframeValue {
+  if (track.kind === 'zIndex') {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new Error(`${what} must be a finite number for zIndex`)
+    }
+    return Math.trunc(value) as unknown as KeyframeValue
+  }
   if (track.kind === 'symmetry') {
     return requireSymmetryKeyframeValue(value, what) as unknown as KeyframeValue
   }
@@ -346,7 +375,8 @@ export function requireNodeTarget(
   | NodeVisibleTarget
   | NodeMorphTarget
   | NodeShadowTarget
-  | NodeSymmetryTarget {
+  | NodeSymmetryTarget
+  | NodeZIndexTarget {
   if (
     target.kind !== 'node' &&
     target.kind !== 'dataLabel' &&
@@ -355,7 +385,8 @@ export function requireNodeTarget(
     target.kind !== 'visible' &&
     target.kind !== 'morph' &&
     target.kind !== 'shadow' &&
-    target.kind !== 'symmetry'
+    target.kind !== 'symmetry' &&
+    target.kind !== 'zIndex'
   ) {
     throw new Error('This operation only supports node targets')
   }
@@ -369,6 +400,7 @@ export function requireNodeTarget(
     | NodeMorphTarget
     | NodeShadowTarget
     | NodeSymmetryTarget
+    | NodeZIndexTarget
 }
 
 /** Validate a scale factor: a non-negative finite number. */

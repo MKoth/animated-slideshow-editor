@@ -282,6 +282,19 @@ export class NodeManager {
     this.#bus.emit({ type: 'OpacityChanged', nodeId })
   }
 
+  setZIndex(nodeId: string, zIndex: number): void {
+    const node = this.getById(nodeId)
+    if (typeof zIndex !== 'number' || !Number.isFinite(zIndex)) {
+      throw new Error('zIndex must be a finite number')
+    }
+    node.zIndex = Math.trunc(zIndex)
+    this.#bus.emit({ type: 'ZIndexChanged', nodeId })
+  }
+
+  getZIndex(nodeId: string): number {
+    return this.getById(nodeId).zIndex
+  }
+
   assignMaterial(nodeId: string, materialDefinitionId: string): void {
     const node = this.getById(nodeId)
     const previous = node.material

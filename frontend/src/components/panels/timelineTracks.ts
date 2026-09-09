@@ -59,6 +59,12 @@ export interface VisibleSubtrackEntry {
   readonly depth: number
 }
 
+export interface ZIndexSubtrackEntry {
+  readonly kind: 'zIndexSubtrack'
+  readonly node: SceneNode
+  readonly depth: number
+}
+
 export interface MorphSubtrackEntry {
   readonly kind: 'morphSubtrack'
   readonly node: SceneNode
@@ -94,6 +100,7 @@ export type TimelineRow =
   | DataLabelSubtrackEntry
   | CircleSubtrackEntry
   | VisibleSubtrackEntry
+  | ZIndexSubtrackEntry
   | MorphSubtrackEntry
   | SymmetrySubtrackEntry
   | ShadowSubtrackEntry
@@ -116,6 +123,8 @@ export const CIRCLE_LABELS: Record<CircleAnimationProperty, string> = {
 }
 
 export const VISIBLE_LABEL = 'Visible'
+
+export const ZINDEX_LABEL = 'Z-Index'
 
 export const MORPH_LABEL = 'Morph'
 
@@ -191,6 +200,7 @@ export function timelineRows(
         rows.push({ kind: 'subtrack', node: entry.node, property, depth: entry.depth + 1 })
       }
       rows.push({ kind: 'visibleSubtrack', node: entry.node, depth: entry.depth + 1 })
+      rows.push({ kind: 'zIndexSubtrack', node: entry.node, depth: entry.depth + 1 })
       if (entry.node.components.mesh) {
         rows.push({ kind: 'morphSubtrack', node: entry.node, depth: entry.depth + 1 })
         rows.push({ kind: 'symmetrySubtrack', node: entry.node, depth: entry.depth + 1 })
