@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
 import { useMeshEditStore } from '../../stores/meshEditStore'
+import { useShapeGhostStore } from '../../stores/shapeGhostStore'
 import { useEditingModeStore } from '../../stores/editingModeStore'
 
 export function SculptToolbar() {
@@ -16,6 +17,8 @@ export function SculptToolbar() {
   const setSculptStrength = useMeshEditStore((state) => state.setSculptStrength)
   const setSculptFalloff = useMeshEditStore((state) => state.setSculptFalloff)
   const setActiveShapeId = useMeshEditStore((state) => state.setActiveShapeId)
+  const ghostShapeId = useShapeGhostStore((state) => state.ghostShapeId)
+  const setGhost = useShapeGhostStore((state) => state.setGhost)
   const [, setTick] = useState(0)
 
   useEngineEvent((event) => {
@@ -28,36 +31,56 @@ export function SculptToolbar() {
     }
   })
 
-  if (mode !== 'meshEdit' && (meshEditTool as string) !== 'sculpt') {
-    // Also show when meshEditTool is sculpt even if editingMode is not meshEdit (meshEditNodeId drives)
-    // WeightPaintToolbar checks both mode and meshEditTool; follow same pattern but ensure sculpt visible when tool is sculpt
-    if ((meshEditTool as string) !== 'sculpt') return null
-  }
-  if ((meshEditTool as string) !== 'sculpt') return null
-  if (!meshEditNodeId) return null
-
   const scene = engine.getActiveSlide()?.scene ?? null
-  if (!scene) return null
   const node = (() => {
+    if (!meshEditNodeId || !scene) return null
     try {
       return scene.getNode(meshEditNodeId)
     } catch {
       return null
     }
   })()
-  if (!node?.components.mesh) return null
-
-  const shapes = (node.components.mesh.shapes ?? []) as readonly { id: string; name: string }[]
+  const shapes = useMemo(
+    () => (node?.components.mesh?.shapes ?? []) as readonly { id: string; name: string }[],
+    [node?.components.mesh?.shapes],
+  )
   const hasShapes = shapes.length > 0
 
-  // Auto-select first shape if none active
-  if (hasShapes && !activeShapeId) {
-    const first = shapes[0]
-    if (first) {
-      // Defer to avoid render side-effect
-      queueMicrotask(() => setActiveShapeId(first.id))
+  // Clear stale ghost if its shape was deleted or now equals active
+  useEffect(() => {
+    if (!ghostShapeId) return
+    if (!node) {
+      setGhost(null)
+      return
     }
+    const exists = shapes.some((s) => s.id === ghostShapeId)
+    if (!exists || ghostShapeId === activeShapeId) {
+      setGhost(null)
+    }
+  }, [ghostShapeId, activeShapeId, shapes, setGhost, node])
+
+  // Clear ghost when node changes (per-mesh ghost, same-mesh only)
+  useEffect(() => {
+    if (!meshEditNodeId && ghostShapeId) {
+      setGhost(null)
+    }
+  }, [meshEditNodeId, ghostShapeId, setGhost])
+
+  // Auto-select first shape if none active (deferred)
+  useEffect(() => {
+    if (hasShapes && !activeShapeId) {
+      const first = shapes[0]
+      if (first) setActiveShapeId(first.id)
+    }
+  }, [hasShapes, activeShapeId, shapes, setActiveShapeId])
+
+  if (mode !== 'meshEdit' && (meshEditTool as string) !== 'sculpt') {
+    if ((meshEditTool as string) !== 'sculpt') return null
   }
+  if ((meshEditTool as string) !== 'sculpt') return null
+  if (!meshEditNodeId) return null
+  if (!scene) return null
+  if (!node?.components.mesh) return null
 
   return (
     <div className="weight-paint-toolbar" aria-label="Sculpt toolbar">
@@ -129,6 +152,35 @@ export function SculptToolbar() {
 
       <div className="weight-paint-toolbar__separator" />
       <span className="weight-paint-toolbar__hint">Drag to push • Shift to invert (pull)</span>
+
+      <div className="weight-paint-toolbar__separator" />
+      <div className="weight-paint-toolbar__section">
+        <label className="weight-paint-toolbar__label" htmlFor="sculpt-ghost-select">
+          Ghost
+        </label>
+        <select
+          id="sculpt-ghost-select"
+          className="weight-paint-toolbar__select"
+          value={ghostShapeId ?? ''}
+          onChange={(e) => setGhost(e.target.value || null)}
+          disabled={shapes.length < 2}
+          title={
+            shapes.length < 2
+              ? 'Create at least 2 Shapes to compare'
+              : 'Ghost shape (half-transparent behind)'
+          }
+          aria-label="Ghost shape"
+        >
+          <option value="">Off</option>
+          {shapes
+            .filter((s) => s.id !== activeShapeId)
+            .map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+        </select>
+      </div>
 
       {!hasShapes && (
         <>

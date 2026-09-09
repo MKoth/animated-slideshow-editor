@@ -25,6 +25,7 @@ import { DEFAULT_MAJOR_COLOR, DEFAULT_MINOR_COLOR, GridRenderer } from './gridRe
 import { GuideOverlay } from './guideOverlay'
 import { BrushOverlay } from './brushOverlay'
 import { MeshOverlay } from './meshOverlay'
+import { ShapeGhostOverlay } from './shapeGhostOverlay'
 import { MeshEditInteraction } from './meshEditInteraction'
 import { WeightPaintOverlay } from './weightPaintOverlay'
 import { WeightPaintInteraction } from './weightPaintInteraction'
@@ -89,6 +90,7 @@ export class Renderer {
   #selectionOverlay: SelectionOverlay | null = null
   #guideOverlay: GuideOverlay | null = null
   #meshOverlay: MeshOverlay | null = null
+  #shapeGhostOverlay: ShapeGhostOverlay | null = null
   #meshEditInteraction: MeshEditInteraction | null = null
   #weightPaintOverlay: WeightPaintOverlay | null = null
   #weightPaintInteraction: WeightPaintInteraction | null = null
@@ -223,6 +225,7 @@ export class Renderer {
         this.#sceneRenderer?.setBonesVisible(state.bonesVisible)
         this.#sceneRenderer?.setGhostsVisible(state.ikHandlesVisible, state.poleHandlesVisible)
         this.#meshOverlay?.redraw()
+        this.#shapeGhostOverlay?.redraw()
         this.#boneEditOverlay?.redraw()
       })
       // Initialize visibility
@@ -268,6 +271,16 @@ export class Renderer {
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
         getWorldTransform: transformOf,
       })
+      this.#shapeGhostOverlay = new ShapeGhostOverlay({
+        pixi: this.#pixi,
+        world,
+        engine: this.#engine,
+        getScene: () => this.#sceneRenderer?.boundScene ?? null,
+        getWorldTransform: transformOf,
+      })
+      // Ghost behind live mesh overlay (drawn first, then mesh overlay on top)
+      this.#shapeGhostOverlay.attach()
+      this.#shapeGhostOverlay.bringToFront()
       this.#meshOverlay.attach()
       this.#meshOverlay.bringToFront()
 
@@ -571,6 +584,8 @@ export class Renderer {
     this.#guideOverlay = null
     this.#meshOverlay?.detach()
     this.#meshOverlay = null
+    this.#shapeGhostOverlay?.detach()
+    this.#shapeGhostOverlay = null
     this.#meshEditInteraction?.detach()
     this.#meshEditInteraction = null
     this.#weightPaintOverlay?.detach()
@@ -777,6 +792,7 @@ export class Renderer {
       this.#sceneRenderer?.refreshDeformedMeshSizes()
       this.#sceneRenderer?.applyConstraintOverrides()
       this.#selectionOverlay?.redraw()
+      this.#shapeGhostOverlay?.redraw()
       this.#syncFullscreenShader()
     } catch (error) {
       this.#reportFailure(error)
@@ -934,6 +950,7 @@ export class Renderer {
       this.#thumbnails.setBoundSlideId(slide ? slide.id : null)
       this.#selectionOverlay?.bringToFront()
       this.#guideOverlay?.bringToFront()
+      this.#shapeGhostOverlay?.bringToFront()
       this.#meshOverlay?.bringToFront()
       this.#weightPaintOverlay?.bringToFront()
       this.#brushOverlay?.bringToFront()
