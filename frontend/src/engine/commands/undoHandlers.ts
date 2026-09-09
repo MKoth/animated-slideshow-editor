@@ -420,6 +420,12 @@ export function applyUndo(
       // No engine method to delete project; ignore as CreateProject rarely undone
       return
     }
+    case 'RenameProject': {
+      const oldName = inv.oldName as string
+      const oldUpdatedAt = inv.oldUpdatedAt as string
+      engine.restoreProjectRename(oldName, oldUpdatedAt)
+      return
+    }
     case 'SetShadowEffect': {
       const nodeId = inv.nodeId as string
       const oldShadowEffect = inv.oldShadowEffect as import('../shadowEffect').ShadowEffect | null
@@ -2636,6 +2642,9 @@ export function applyRedo(
       })
       return
     }
+    case 'RenameProject':
+      engine.renameProject(params.name as string)
+      return
     case 'SetShadowEffect': {
       const se = params.shadowEffect as import('../shadowEffect').ShadowEffect | null
       engine.setShadowEffect(params.nodeId as string, se)

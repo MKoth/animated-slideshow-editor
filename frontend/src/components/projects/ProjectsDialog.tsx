@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import type { ProjectSummary } from '../../api'
 import {
@@ -6,8 +6,10 @@ import {
   deleteLibraryProject,
   duplicateLibraryProject,
   formatLastModified,
+  isDuplicateProjectName,
   openLibraryProject,
   refreshProjects,
+  renameLibraryProject,
   requestNewProject,
 } from '../../app/projectBrowser'
 import { downloadLessonCopy, importLessonFile } from '../../app/lessonTransfer'
@@ -28,10 +30,23 @@ export function ProjectsDialog() {
   const error = useProjectBrowserStore((state) => state.error)
   const dirty = usePersistenceStore((state) => state.dirty)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+  const [renameError, setRenameError] = useState<string | null>(null)
+  const [renamingBusy, setRenamingBusy] = useState(false)
 
   useEffect(() => {
     if (visible) {
       void refreshProjects()
+    } else {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset transient UI when dialog closes
+      setRenamingId(null)
+
+      setRenameDraft('')
+
+      setRenameError(null)
+
+      setRenamingBusy(false)
     }
   }, [visible])
 
@@ -110,6 +125,44 @@ export function ProjectsDialog() {
 
   const handleDuplicate = (project: ProjectSummary): void => {
     void duplicateLibraryProject(project.id)
+  }
+
+  const handleStartRename = (project: ProjectSummary): void => {
+    setRenamingId(project.id)
+    setRenameDraft(project.name)
+    setRenameError(null)
+  }
+
+  const handleCancelRename = (): void => {
+    setRenamingId(null)
+    setRenameDraft('')
+    setRenameError(null)
+    setRenamingBusy(false)
+  }
+
+  const handleConfirmRename = async (project: ProjectSummary): Promise<void> => {
+    const trimmed = renameDraft.trim()
+    if (trimmed === '') {
+      setRenameError('Project name must not be empty')
+      return
+    }
+    if (trimmed === project.name) {
+      handleCancelRename()
+      return
+    }
+    const existingNames = projects.filter((p) => p.id !== project.id).map((p) => p.name)
+    if (isDuplicateProjectName(trimmed, existingNames)) {
+      setRenameError('A project with this name already exists')
+      return
+    }
+    setRenamingBusy(true)
+    const ok = await renameLibraryProject(engine, project.id, trimmed)
+    setRenamingBusy(false)
+    if (ok) {
+      handleCancelRename()
+    } else {
+      setRenameError('Could not rename the project')
+    }
   }
 
   if (pendingOpen) {
@@ -236,30 +289,103 @@ export function ProjectsDialog() {
           <p className="projects-dialog__status">No projects yet.</p>
         ) : (
           <ul className="projects-dialog__list" role="list">
-            {projects.map((project) => (
-              <li key={project.id} className="projects-dialog__row">
-                <div className="projects-dialog__meta">
-                  <span className="projects-dialog__name">{project.name}</span>
-                  <span className="projects-dialog__date">
-                    {formatLastModified(project.lastModified)}
-                  </span>
-                </div>
-                <div className="projects-dialog__row-actions">
-                  <button className="projects-dialog__button" onClick={() => handleOpen(project)}>
-                    {`Open ${project.name}`}
-                  </button>
-                  <button
-                    className="projects-dialog__button"
-                    onClick={() => handleDuplicate(project)}
-                  >
-                    {`Duplicate ${project.name}`}
-                  </button>
-                  <button className="projects-dialog__button" onClick={() => handleDelete(project)}>
-                    {`Delete ${project.name}`}
-                  </button>
-                </div>
-              </li>
-            ))}
+            {projects.map((project) => {
+              const isRenaming = renamingId === project.id
+              return (
+                <li
+                  key={project.id}
+                  className={`projects-dialog__row${isRenaming ? ' projects-dialog__row--editing' : ''}`}
+                >
+                  {isRenaming ? (
+                    <>
+                      <div className="projects-dialog__rename">
+                        <input
+                          className="projects-dialog__input projects-dialog__rename-input"
+                          aria-label={`Rename ${project.name}`}
+                          value={renameDraft}
+                          autoFocus
+                          disabled={renamingBusy}
+                          onChange={(event) => {
+                            setRenameDraft(event.target.value)
+                            setRenameError(null)
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              void handleConfirmRename(project)
+                            } else if (event.key === 'Escape') {
+                              handleCancelRename()
+                            }
+                          }}
+                          data-testid={`rename-input-${project.id}`}
+                        />
+                        <div className="projects-dialog__inline-actions">
+                          <button
+                            className="projects-dialog__button"
+                            disabled={renamingBusy || renameDraft.trim() === ''}
+                            onClick={() => void handleConfirmRename(project)}
+                            data-testid={`rename-save-${project.id}`}
+                          >
+                            Save
+                          </button>
+                          <button
+                            className="projects-dialog__button"
+                            disabled={renamingBusy}
+                            onClick={handleCancelRename}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                      {renameError ? (
+                        <p className="projects-dialog__rename-error" role="alert">
+                          {renameError}
+                        </p>
+                      ) : null}
+                    </>
+                  ) : (
+                    <>
+                      <div className="projects-dialog__meta">
+                        <span className="projects-dialog__name">{project.name}</span>
+                        <span className="projects-dialog__date">
+                          {formatLastModified(project.lastModified)}
+                        </span>
+                      </div>
+                      <div className="projects-dialog__row-actions">
+                        <button
+                          className="projects-dialog__button"
+                          aria-label={`Open ${project.name}`}
+                          onClick={() => handleOpen(project)}
+                        >
+                          Open
+                        </button>
+                        <button
+                          className="projects-dialog__button"
+                          aria-label={`Rename ${project.name}`}
+                          onClick={() => handleStartRename(project)}
+                          data-testid={`rename-${project.id}`}
+                        >
+                          Rename
+                        </button>
+                        <button
+                          className="projects-dialog__button"
+                          aria-label={`Duplicate ${project.name}`}
+                          onClick={() => handleDuplicate(project)}
+                        >
+                          Duplicate
+                        </button>
+                        <button
+                          className="projects-dialog__button"
+                          aria-label={`Delete ${project.name}`}
+                          onClick={() => handleDelete(project)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </li>
+              )
+            })}
           </ul>
         )}
         <footer className="projects-dialog__footer">

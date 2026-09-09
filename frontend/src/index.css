@@ -3520,6 +3520,11 @@ button:disabled {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
+.projects-dialog--browser {
+  width: 640px;
+  max-width: min(720px, calc(100vw - 24px));
+}
+
 .projects-dialog__header {
   display: flex;
   align-items: center;
@@ -3562,11 +3567,16 @@ button:disabled {
   border-radius: 6px;
 }
 
+.projects-dialog__row--editing {
+  flex-wrap: wrap;
+}
+
 .projects-dialog__meta {
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1 1 0;
 }
 
 .projects-dialog__name {
@@ -3582,9 +3592,37 @@ button:disabled {
 }
 
 .projects-dialog__row-actions {
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  gap: 6px;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.projects-dialog__rename {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.projects-dialog__rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.projects-dialog__inline-actions {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
+}
+
+.projects-dialog__rename-error {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+  color: var(--color-error, #d14343);
+  font-size: 12px;
 }
 
 .projects-dialog__button {
@@ -3627,6 +3665,8 @@ button:disabled {
 .projects-dialog__footer {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 /* ------------------------------------------------------------------ */

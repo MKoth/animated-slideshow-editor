@@ -10,6 +10,11 @@ export interface ProjectLoaded {
   readonly projectId: string
 }
 
+export interface ProjectRenamed {
+  readonly type: 'ProjectRenamed'
+  readonly projectId: string
+}
+
 export interface SlideCreated {
   readonly type: 'SlideCreated'
   readonly slideId: string
@@ -396,6 +401,7 @@ export interface CollectionPlaced {
 export type EngineEvent =
   | ProjectCreated
   | ProjectLoaded
+  | ProjectRenamed
   | SlideCreated
   | SlideRemoved
   | SlideActivated

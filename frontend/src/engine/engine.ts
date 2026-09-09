@@ -52,6 +52,8 @@ export interface EnginePublic {
     clipCollections?: readonly ClipCollection[],
   ): void
   setActiveSlide(slideId: string): void
+  renameProject(name: string): { oldName: string; oldUpdatedAt: string }
+  restoreProjectRename(oldName: string, oldUpdatedAt: string): void
   getActiveSlide(): Slide | null
   getSlide(slideId: string): Slide
   getNode(nodeId: string): SceneNode

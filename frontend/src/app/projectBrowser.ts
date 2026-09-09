@@ -10,6 +10,7 @@ import { duplicateLessonJSON } from './projectDuplication'
 export const OPEN_FAILED_MESSAGE = 'Could not open the project.'
 export const DELETE_FAILED_MESSAGE = 'Could not delete the project.'
 export const DUPLICATE_FAILED_MESSAGE = 'Could not duplicate the project.'
+export const RENAME_FAILED_MESSAGE = 'Could not rename the project.'
 
 export function openProjectBrowser(): void {
   useProjectBrowserStore.getState().show()
@@ -80,6 +81,53 @@ export async function duplicateLibraryProject(sourceId: string): Promise<boolean
     return true
   } catch {
     useNotificationStore.getState().notify(DUPLICATE_FAILED_MESSAGE)
+    return false
+  }
+}
+
+export function isDuplicateProjectName(name: string, existingNames: readonly string[]): boolean {
+  const trimmed = name.trim()
+  return existingNames.some((n) => n.trim() === trimmed)
+}
+
+export async function renameLibraryProject(
+  engine: EnginePublic,
+  id: string,
+  newName: string,
+): Promise<boolean> {
+  const trimmed = newName.trim()
+  if (trimmed === '') {
+    useNotificationStore.getState().notify(RENAME_FAILED_MESSAGE)
+    return false
+  }
+  try {
+    // When renaming the currently open project, mutate in-memory first
+    // and persist the live blob (preserves dirty unsaved changes).
+    if (engine.project?.id === id) {
+      try {
+        engine.renameProject(trimmed)
+      } catch {
+        useNotificationStore.getState().notify(RENAME_FAILED_MESSAGE)
+        return false
+      }
+      const blob2 = JSON.stringify(engine.toJSON())
+      await projectsApi.upsert(blob2)
+      await refreshProjects()
+      return true
+    }
+    const blob = await projectsApi.get(id)
+    const json = JSON.parse(blob) as LessonJSON
+    if (typeof json.project !== 'object' || json.project === null) {
+      throw new Error('Invalid lesson JSON: missing project')
+    }
+    ;(json.project as { name: string }).name = trimmed
+    ;(json.project as { modifiedAt: string }).modifiedAt = new Date().toISOString()
+    const blob2 = JSON.stringify(json)
+    await projectsApi.upsert(blob2)
+    await refreshProjects()
+    return true
+  } catch {
+    useNotificationStore.getState().notify(RENAME_FAILED_MESSAGE)
     return false
   }
 }

@@ -27,11 +27,11 @@ export interface CreateProjectInput {
 
 export class Project {
   readonly id: string
-  readonly name: string
+  #name: string
   readonly description: string
   readonly author: string
   readonly createdAt: string
-  readonly updatedAt: string
+  #updatedAt: string
   readonly slides: Slide[]
   readonly settings: Readonly<Record<string, unknown>>
   readonly #embeddedAssets: EmbeddedAsset[]
@@ -49,17 +49,38 @@ export class Project {
     embeddedDataSources: readonly EmbeddedDataSourceUnion[] = [],
   ) {
     this.id = metadata.id
-    this.name = metadata.name
+    this.#name = metadata.name
     this.description = metadata.description
     this.author = metadata.author
     this.createdAt = metadata.createdAt
-    this.updatedAt = metadata.updatedAt
+    this.#updatedAt = metadata.updatedAt
     this.slides = slides
     this.settings = settings
     this.#embeddedAssets = [...embeddedAssets]
     this.#embeddedMaterials = [...embeddedMaterials]
     this.#embeddedShaders = [...embeddedShaders]
     this.#embeddedDataSources = [...embeddedDataSources]
+  }
+
+  get name(): string {
+    return this.#name
+  }
+
+  get updatedAt(): string {
+    return this.#updatedAt
+  }
+
+  rename(name: string): { oldName: string; oldUpdatedAt: string } {
+    const oldName = this.#name
+    const oldUpdatedAt = this.#updatedAt
+    this.#name = name
+    this.#updatedAt = new Date().toISOString()
+    return { oldName, oldUpdatedAt }
+  }
+
+  restoreRename(oldName: string, oldUpdatedAt: string): void {
+    this.#name = oldName
+    this.#updatedAt = oldUpdatedAt
   }
 
   get embeddedAssets(): readonly EmbeddedAsset[] {

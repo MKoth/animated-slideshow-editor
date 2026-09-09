@@ -309,6 +309,14 @@ export class Engine {
     this.#slides.rename(slideId, name)
   }
 
+  renameProject(name: string): { oldName: string; oldUpdatedAt: string } {
+    return this.#projects.rename(name)
+  }
+
+  restoreProjectRename(oldName: string, oldUpdatedAt: string): void {
+    this.#projects.restoreRename(oldName, oldUpdatedAt)
+  }
+
   duplicateSlide(slideId: string): Slide {
     const slide = this.#slides.duplicate(slideId)
     this.setActiveSlide(slide.id)
@@ -5551,6 +5559,9 @@ export function toReadOnly(engine: Engine): EnginePublic {
     openProject: (project, clips, clipCollections) =>
       engine.openProject(project, clips, clipCollections),
     setActiveSlide: (slideId) => engine.setActiveSlide(slideId),
+    renameProject: (name) => engine.renameProject(name),
+    restoreProjectRename: (oldName, oldUpdatedAt) =>
+      engine.restoreProjectRename(oldName, oldUpdatedAt),
     getActiveSlide: () => engine.getActiveSlide(),
     getSlide: (slideId) => engine.getSlide(slideId),
     getNode: (nodeId) => engine.getNode(nodeId),

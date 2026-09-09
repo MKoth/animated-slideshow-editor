@@ -41,6 +41,28 @@ export class ProjectManager {
     return project
   }
 
+  rename(name: string): { oldName: string; oldUpdatedAt: string } {
+    const project = this.#project
+    if (!project) {
+      throw new Error('No project is currently open')
+    }
+    requireNonEmpty(name, 'Project name')
+    const trimmed = name.trim()
+    requireNonEmpty(trimmed, 'Project name')
+    const result = project.rename(trimmed)
+    this.#bus.emit({ type: 'ProjectRenamed', projectId: project.id })
+    return result
+  }
+
+  restoreRename(oldName: string, oldUpdatedAt: string): void {
+    const project = this.#project
+    if (!project) {
+      throw new Error('No project is currently open')
+    }
+    project.restoreRename(oldName, oldUpdatedAt)
+    this.#bus.emit({ type: 'ProjectRenamed', projectId: project.id })
+  }
+
   clear(): void {
     this.#project = null
   }
