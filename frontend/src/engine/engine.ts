@@ -92,6 +92,13 @@ export interface EnginePublic {
   getShapes(nodeId: string): readonly import('./shape').Shape[]
   getShapeCategories(nodeId: string): readonly import('./shapeCategory').ShapeCategory[]
   createShape(nodeId: string, name: string, categoryId?: string | null): import('./shape').Shape
+  createBakedShape(
+    nodeId: string,
+    name: string,
+    categoryId?: string | null,
+    time?: number,
+  ): import('./shape').Shape
+  getBakedVertices(nodeId: string, time?: number): readonly import('./mesh').MeshVertex[] | null
   duplicateShape(nodeId: string, shapeId: string): import('./shape').Shape
   copyShapeToNode(
     sourceNodeId: string,

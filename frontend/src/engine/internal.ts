@@ -87,6 +87,7 @@ import type { MorphBinding } from './shape'
 import type { DeformedMeshResult } from './meshDeformationEvaluator'
 import type { WorldTransform } from './worldTransform'
 import { relativeTransform, worldTransformOf } from './worldTransform'
+import { computeBakedVertices } from './bakedShape'
 import {
   clampAudioFade,
   createAudioClip,
@@ -2364,6 +2365,53 @@ export class Engine {
     const newShapes = [...existing, shape]
     this.#setShapes(nodeId, newShapes)
     return shape
+  }
+
+  createBakedShape(
+    nodeId: string,
+    name: string,
+    categoryId: string | null = null,
+    time = 0,
+  ): Shape {
+    const node = this.getNode(nodeId)
+    if (!node.components.mesh) throw new Error(`Node "${nodeId}" does not have a mesh component`)
+    if (typeof name !== 'string' || name.trim() === '')
+      throw new Error('Shape name must be a non-empty string')
+    const trimmed = name.trim()
+    const existing = node.components.mesh.shapes ?? []
+    const categories = node.components.mesh.shapeCategories ?? []
+    if (categoryId !== null && !categories.some((c) => c.id === categoryId)) {
+      throw new Error(`Shape category not found: ${categoryId}`)
+    }
+    if (existing.some((s) => s.categoryId === (categoryId ?? null) && s.name === trimmed)) {
+      throw new Error(`A shape with name "${trimmed}" already exists in this category`)
+    }
+    if (typeof time !== 'number' || !Number.isFinite(time)) {
+      throw new Error('Time must be a finite number')
+    }
+    const baked = computeBakedVertices(
+      this as unknown as import('./engine').EnginePublic,
+      nodeId,
+      time,
+    )
+    if (!baked) throw new Error(`Cannot bake shape for node "${nodeId}": no mesh or scene`)
+    if (baked.length !== node.components.mesh.mesh.vertices.length) {
+      throw new Error(
+        `Baked vertices length ${baked.length} != mesh vertices ${node.components.mesh.mesh.vertices.length}`,
+      )
+    }
+    const shape = createShape(
+      trimmed,
+      baked as readonly import('./mesh').MeshVertex[],
+      categoryId ?? null,
+    )
+    const newShapes = [...existing, shape]
+    this.#setShapes(nodeId, newShapes)
+    return shape
+  }
+
+  getBakedVertices(nodeId: string, time = 0): readonly import('./mesh').MeshVertex[] | null {
+    return computeBakedVertices(this as unknown as import('./engine').EnginePublic, nodeId, time)
   }
 
   duplicateShape(nodeId: string, shapeId: string): Shape {
@@ -5535,6 +5583,9 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getShapes: (nodeId) => engine.getShapes(nodeId),
     getShapeCategories: (nodeId) => engine.getShapeCategories(nodeId),
     createShape: (nodeId, name, categoryId) => engine.createShape(nodeId, name, categoryId ?? null),
+    createBakedShape: (nodeId, name, categoryId, time) =>
+      engine.createBakedShape(nodeId, name, categoryId ?? null, time ?? 0),
+    getBakedVertices: (nodeId, time) => engine.getBakedVertices(nodeId, time ?? 0),
     duplicateShape: (nodeId, shapeId) => engine.duplicateShape(nodeId, shapeId),
     copyShapeToNode: (s, sid, t, opts) => engine.copyShapeToNode(s, sid, t, opts),
     renameShape: (nodeId, shapeId, newName) => engine.renameShape(nodeId, shapeId, newName),

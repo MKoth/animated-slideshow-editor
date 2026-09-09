@@ -3,6 +3,7 @@ import type { EnginePublic, SceneNode } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
 import {
   CopyShapeToMeshCommand,
+  CreateBakedShapeCommand,
   CreateShapeCommand,
   CreateShapeCategoryCommand,
   DeleteShapeCommand,
@@ -15,6 +16,7 @@ import {
   ReorderShapeCategoryCommand,
 } from '../../engine/commands'
 import { useEngineEvent } from '../../app/useEngine'
+import { playheadTimeOf } from '../../app/keyframeActions'
 import { useShapePreviewStore } from '../../stores/shapePreviewStore'
 import { useMeshEditStore } from '../../stores/meshEditStore'
 import { useShapeCategoryViewStore } from '../../stores/shapeCategoryViewStore'
@@ -147,6 +149,29 @@ export function MeshInspectorSection({
     else {
       const shapeId = (result.inverse as { shapeId?: string })?.shapeId
       if (shapeId) useMeshEditStore.getState().setActiveShapeId(shapeId)
+    }
+  }
+
+  const handleBakePose = () => {
+    const existingInCat = shapes.filter((s) => (s.categoryId ?? null) === null)
+    const base = 'Baked Pose'
+    let name = base
+    let i = 2
+    const set = new Set(existingInCat.map((s) => s.name))
+    while (set.has(name)) {
+      name = `${base} ${i}`
+      i++
+    }
+    const time = playheadTimeOf(engine, target.id) ?? 0
+    const result = dispatch(
+      new CreateBakedShapeCommand({ nodeId: target.id, name, categoryId: null, time }),
+    )
+    if (!result.ok) notify(result.error.message)
+    else {
+      const shapeId = (result.inverse as { shapeId?: string })?.shapeId
+      if (shapeId) useMeshEditStore.getState().setActiveShapeId(shapeId)
+      // feedback includes baked time for morph/bone evaluation context
+      notify(`Baked pose as "${name}" at ${time.toFixed(2)}s`)
     }
   }
 
@@ -1201,6 +1226,16 @@ export function MeshInspectorSection({
           aria-label="Create Shape"
         >
           Create Shape
+        </button>
+        <button
+          className="inspector-reset"
+          onClick={handleBakePose}
+          disabled={playing}
+          aria-label="Bake Pose as Shape"
+          title="Create a new Shape from the current deformed pose (morph · symmetry · bones at playhead) — snapshot of what you see on canvas"
+          data-testid="bake-pose-shape"
+        >
+          Bake Pose as Shape
         </button>
         <span className="inspector-section__notice" style={{ fontSize: 11 }}>
           {shapes.length} {shapes.length === 1 ? 'Shape' : 'Shapes'} · {categories.length}{' '}

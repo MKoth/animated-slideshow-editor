@@ -499,6 +499,8 @@ export type {
 } from './importReusableObjectCommand'
 export { CreateShapeCommand } from './createShapeCommand'
 export type { CreateShapeInverse, CreateShapeParameters } from './createShapeCommand'
+export { CreateBakedShapeCommand } from './createBakedShapeCommand'
+export type { CreateBakedShapeInverse, CreateBakedShapeParameters } from './createBakedShapeCommand'
 export { DuplicateShapeCommand } from './duplicateShapeCommand'
 export type { DuplicateShapeInverse, DuplicateShapeParameters } from './duplicateShapeCommand'
 export { RenameShapeCommand } from './renameShapeCommand'

@@ -1072,7 +1072,8 @@ export function applyUndo(
       return
     }
     case 'CreateShape':
-    case 'DuplicateShape': {
+    case 'DuplicateShape':
+    case 'CreateBakedShape': {
       const nodeId = inv.nodeId as string
       const shapeId = inv.shapeId as string
       try {
@@ -3095,6 +3096,24 @@ export function applyRedo(
         params.nodeId as string,
         params.name as string,
         (params.categoryId as string | null) ?? null,
+      )
+      return
+    }
+    case 'CreateBakedShape': {
+      const inv = _inverse as unknown as {
+        shape?: import('../shape').Shape
+        shapeId?: string
+      } | null
+      if (inv?.shape) {
+        const existing = engine.getShapes(params.nodeId as string)
+        engine.restoreShapes(params.nodeId as string, [...existing, inv.shape])
+        return
+      }
+      engine.createBakedShape(
+        params.nodeId as string,
+        params.name as string,
+        (params.categoryId as string | null) ?? null,
+        (params.time as number) ?? 0,
       )
       return
     }
