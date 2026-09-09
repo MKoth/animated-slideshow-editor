@@ -494,12 +494,19 @@ export class SceneRenderer {
         const maxX = Math.max(...xs)
         const minY = Math.min(...ys)
         const maxY = Math.max(...ys)
-        this.#sizes.set(node.id, {
+        const meshSize = {
           width: maxX - minX,
           height: maxY - minY,
           offsetX: (minX + maxX) / 2,
           offsetY: (minY + maxY) / 2,
-        })
+        }
+        this.#sizes.set(node.id, meshSize)
+        if (container) {
+          // Keep pivot in sync with deformed size — otherwise a non-zero
+          // localPivot stays bound to the previous frame's size and the
+          // texture drifts from the selection bounds when playback stops.
+          applyPivotWithSize(container, node.transform.localPivot, meshSize)
+        }
         continue
       }
       const circle = node.components.circle
@@ -527,12 +534,17 @@ export class SceneRenderer {
       const maxX = Math.max(...xs)
       const minY = Math.min(...ys)
       const maxY = Math.max(...ys)
-      this.#sizes.set(node.id, {
+      const circleSize = {
         width: maxX - minX,
         height: maxY - minY,
         offsetX: (minX + maxX) / 2,
         offsetY: (minY + maxY) / 2,
-      })
+      }
+      this.#sizes.set(node.id, circleSize)
+      const circleContainer = this.#containers.get(node.id)
+      if (circleContainer) {
+        applyPivotWithSize(circleContainer, node.transform.localPivot, circleSize)
+      }
     }
   }
 

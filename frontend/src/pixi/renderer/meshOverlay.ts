@@ -109,15 +109,41 @@ function localToWorld(
   localX: number,
   localY: number,
   transform: WorldTransform,
+  pivotOffset?: { x: number; y: number } | null,
 ): { x: number; y: number } {
   const cos = Math.cos(transform.rotation)
   const sin = Math.sin(transform.rotation)
-  const scaledX = localX * transform.scaleX
-  const scaledY = localY * transform.scaleY
+  const dx = pivotOffset ? localX - pivotOffset.x : localX
+  const dy = pivotOffset ? localY - pivotOffset.y : localY
+  const scaledX = dx * transform.scaleX
+  const scaledY = dy * transform.scaleY
   return {
     x: scaledX * cos - scaledY * sin + transform.x,
     y: scaledX * sin + scaledY * cos + transform.y,
   }
+}
+
+function pivotOffsetAndSizeFor(
+  deformed: readonly { x: number; y: number }[],
+  node: import('../../engine/sceneNode').SceneNode | null,
+): { x: number; y: number } | null {
+  if (!node?.transform.localPivot) return null
+  if (deformed.length === 0) return null
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  for (const v of deformed) {
+    if (v.x < minX) minX = v.x
+    if (v.x > maxX) maxX = v.x
+    if (v.y < minY) minY = v.y
+    if (v.y > maxY) maxY = v.y
+  }
+  const w = maxX - minX
+  const h = maxY - minY
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null
+  const p = node.transform.localPivot
+  return { x: p.x * w, y: p.y * h }
 }
 
 function pointToSegmentDistanceSq(
@@ -282,9 +308,17 @@ export class MeshOverlay {
       nodeId,
       time,
     )
+    const pivotOffset = pivotOffsetAndSizeFor(deformed, node)
+    // When a preview drag is active, the preview positions are in mesh-local
+    // but the pivot offset must still be derived from the base deformed bbox,
+    // otherwise the wireframe drifts from the rendered mesh when pivot != 0.
     return deformed.map((v, i) => {
       const p = preview?.get(i)
-      return localToWorld(p ? p.x : v.x, p ? p.y : v.y, transform)
+      const lx = p ? p.x : v.x
+      const ly = p ? p.y : v.y
+      // For preview points, use the same pivotOffset (from base deformed) so
+      // the dragged vertex stays correctly offset from the pivot.
+      return localToWorld(lx, ly, transform, pivotOffset)
     })
   }
 
@@ -311,7 +345,15 @@ export class MeshOverlay {
     const transform = this.#resolveTransform(scene, nodeId)
     if (!transform) return null
     const time = this.#currentTime()
-    return getDeformedVertices(mesh, scene, transform, this.#getWorldTransform, this.#engine, nodeId, time)
+    return getDeformedVertices(
+      mesh,
+      scene,
+      transform,
+      this.#getWorldTransform,
+      this.#engine,
+      nodeId,
+      time,
+    )
   }
 
   redraw(): void {
@@ -360,7 +402,7 @@ export class MeshOverlay {
       if (node) {
         const transform = this.#resolveTransform(scene, previewNodeId)
         if (transform) {
-          this.#drawPreview(graphics, previewMesh, transform)
+          this.#drawPreview(graphics, previewMesh, transform, previewNodeId)
         }
       }
     }
@@ -383,7 +425,10 @@ export class MeshOverlay {
       nodeId,
       time,
     )
-    const worldVertices = deformed.map((v) => localToWorld(v.x, v.y, transform))
+    const pivotOffset = nodeId
+      ? pivotOffsetAndSizeFor(deformed, scene.getNode(nodeId) ?? null)
+      : null
+    const worldVertices = deformed.map((v) => localToWorld(v.x, v.y, transform, pivotOffset))
     const scale = this.#cameraScale()
     const wireWidth = WIREFRAME_WIDTH / scale
     for (const face of mesh.faces) {
@@ -440,9 +485,12 @@ export class MeshOverlay {
       nodeId,
       time,
     )
+    const pivotOffset = nodeId
+      ? pivotOffsetAndSizeFor(deformed, scene.getNode(nodeId) ?? null)
+      : null
     const worldVertices = deformed.map((v, i) => {
       const p = preview?.get(i)
-      return localToWorld(p ? p.x : v.x, p ? p.y : v.y, transform)
+      return localToWorld(p ? p.x : v.x, p ? p.y : v.y, transform, pivotOffset)
     })
 
     if (!isWeightPaint) {
@@ -510,10 +558,22 @@ export class MeshOverlay {
     }
   }
 
-  #drawPreview(graphics: PixiGraphics, mesh: MeshData, transform: WorldTransform): void {
+  #drawPreview(
+    graphics: PixiGraphics,
+    mesh: MeshData,
+    transform: WorldTransform,
+    nodeId?: string,
+  ): void {
     const scale = this.#cameraScale()
     const previewWireWidth = PREVIEW_WIREFRAME_WIDTH / scale
-    const worldVertices = mesh.vertices.map((v) => localToWorld(v.x, v.y, transform))
+    const pivotOffset =
+      nodeId && this.#getScene()?.getNode(nodeId)
+        ? pivotOffsetAndSizeFor(
+            mesh.vertices as unknown as { x: number; y: number }[],
+            this.#getScene()!.getNode(nodeId)!,
+          )
+        : null
+    const worldVertices = mesh.vertices.map((v) => localToWorld(v.x, v.y, transform, pivotOffset))
     for (const face of mesh.faces) {
       const v0 = worldVertices[face.v0]
       const v1 = worldVertices[face.v1]

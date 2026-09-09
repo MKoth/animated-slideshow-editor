@@ -98,6 +98,8 @@ export function aabbOf(
     }
   }
   const pivotOffset = { x: pivot.x * size.width, y: pivot.y * size.height }
+  const offsetX = size.offsetX ?? 0
+  const offsetY = size.offsetY ?? 0
   const halfW = size.width / 2
   const halfH = size.height / 2
   const cornersLocal = [
@@ -107,8 +109,8 @@ export function aabbOf(
     { x: -halfW, y: halfH },
   ]
   const corners = cornersLocal.map((corner) => {
-    const dx = (corner.x - pivotOffset.x) * transform.scaleX
-    const dy = (corner.y - pivotOffset.y) * transform.scaleY
+    const dx = (corner.x - pivotOffset.x + offsetX) * transform.scaleX
+    const dy = (corner.y - pivotOffset.y + offsetY) * transform.scaleY
     return {
       x: transform.x + rotateX(dx, dy, transform.rotation),
       y: transform.y + rotateY(dx, dy, transform.rotation),
