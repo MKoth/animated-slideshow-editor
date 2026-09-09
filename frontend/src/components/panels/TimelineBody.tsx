@@ -39,6 +39,7 @@ import {
   ZINDEX_LABEL,
   MORPH_LABEL,
   SYMMETRY_LABEL,
+  VISIBLE_LABEL,
   materialParameterLabel,
 } from './timelineTracks'
 import { SHADOW_LABELS } from '../../engine/shadowEffect'
@@ -1102,6 +1103,39 @@ export function TimelineBody({
                   +
                 </button>
               </li>
+            ) : row.kind === 'visibleSubtrack' ? (
+              <li
+                key={`${row.node.id}:visible`}
+                className="timeline-subtrack timeline-subtrack--visible"
+                data-node-id={row.node.id}
+                data-visible="true"
+                data-depth={row.depth}
+                style={{ paddingLeft: 12 + row.depth * 16 }}
+              >
+                <span className="timeline-subtrack__label">{VISIBLE_LABEL}</span>
+                <button
+                  className="timeline-subtrack__add"
+                  aria-label={`Add Keyframe to ${VISIBLE_LABEL}`}
+                  title="Add hold keyframe at the playhead (visible)"
+                  onClick={() => {
+                    const time = usePlaybackController.getState().getTime(slideId)
+                    const node = engine.getNode(row.node.id)
+                    const value = node.visible
+                    const result = dispatch(
+                      new AddKeyframeCommand({
+                        target: { kind: 'visible', nodeId: row.node.id },
+                        time,
+                        value,
+                      }),
+                    )
+                    if (result && !result.ok) {
+                      notify(result.error.message)
+                    }
+                  }}
+                >
+                  +
+                </button>
+              </li>
             ) : row.kind === 'zIndexSubtrack' ? (
               <li
                 key={`${row.node.id}:zIndex`}
@@ -1377,13 +1411,13 @@ export function TimelineBody({
                   +
                 </button>
               </li>
-            ) : (
+            ) : row.kind === 'node' || row.kind === 'bone' ? (
               <TrackRow
                 key={row.node.id}
                 {...row}
                 expanded={expandedNodeIds[row.node.id] === true}
               />
-            ),
+            ) : null,
           )}
         </ul>
       </div>

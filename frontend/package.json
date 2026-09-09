@@ -55,7 +55,7 @@
       "eslint --fix",
       "prettier --write",
       "sh -c 'tsc -b'",
-      "sh -c 'vitest run'"
+      "vitest run --reporter=verbose --slowTestThreshold=300 --passWithNoTests --run"
     ],
     "*.{js,json,css,md,html}": [
       "prettier --write"

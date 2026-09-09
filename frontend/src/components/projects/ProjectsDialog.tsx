@@ -4,6 +4,7 @@ import type { ProjectSummary } from '../../api'
 import {
   createAndOpenFreshProject,
   deleteLibraryProject,
+  duplicateLibraryProject,
   formatLastModified,
   openLibraryProject,
   refreshProjects,
@@ -105,6 +106,10 @@ export function ProjectsDialog() {
 
   const handleDelete = (project: ProjectSummary): void => {
     void deleteLibraryProject(project.id)
+  }
+
+  const handleDuplicate = (project: ProjectSummary): void => {
+    void duplicateLibraryProject(project.id)
   }
 
   if (pendingOpen) {
@@ -242,6 +247,12 @@ export function ProjectsDialog() {
                 <div className="projects-dialog__row-actions">
                   <button className="projects-dialog__button" onClick={() => handleOpen(project)}>
                     {`Open ${project.name}`}
+                  </button>
+                  <button
+                    className="projects-dialog__button"
+                    onClick={() => handleDuplicate(project)}
+                  >
+                    {`Duplicate ${project.name}`}
                   </button>
                   <button className="projects-dialog__button" onClick={() => handleDelete(project)}>
                     {`Delete ${project.name}`}

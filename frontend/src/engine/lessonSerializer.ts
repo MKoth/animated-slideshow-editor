@@ -107,7 +107,7 @@ export function toLessonJSON(
       author: project.author,
       createdAt: project.createdAt,
       modifiedAt: project.updatedAt,
-      settings: { ...project.settings },
+      settings: JSON.parse(JSON.stringify(project.settings)) as Record<string, unknown>,
     },
     slides: project.slides.map((slide) => slide.toJSON()),
     ...(clips !== undefined && clips.length > 0

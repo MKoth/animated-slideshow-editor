@@ -5,9 +5,11 @@ import { useNotificationStore } from '../stores/notificationStore'
 import { usePersistenceStore } from '../stores/persistenceStore'
 import { useProjectBrowserStore } from '../stores/projectBrowserStore'
 import { openProjectInEditor, restoreProjectInEditor } from './openProjectActions'
+import { duplicateLessonJSON } from './projectDuplication'
 
 export const OPEN_FAILED_MESSAGE = 'Could not open the project.'
 export const DELETE_FAILED_MESSAGE = 'Could not delete the project.'
+export const DUPLICATE_FAILED_MESSAGE = 'Could not duplicate the project.'
 
 export function openProjectBrowser(): void {
   useProjectBrowserStore.getState().show()
@@ -64,6 +66,22 @@ export async function deleteLibraryProject(id: string): Promise<boolean> {
   }
   useProjectBrowserStore.getState().removeProject(id)
   return true
+}
+
+export async function duplicateLibraryProject(sourceId: string): Promise<boolean> {
+  try {
+    const blob = await projectsApi.get(sourceId)
+    const json = JSON.parse(blob) as LessonJSON
+    const existingNames = useProjectBrowserStore.getState().projects.map((p) => p.name)
+    const duplicated = duplicateLessonJSON(json, existingNames)
+    const blob2 = JSON.stringify(duplicated)
+    await projectsApi.upsert(blob2)
+    await refreshProjects()
+    return true
+  } catch {
+    useNotificationStore.getState().notify(DUPLICATE_FAILED_MESSAGE)
+    return false
+  }
 }
 
 export function createAndOpenFreshProject(engine: EnginePublic, name: string): boolean {

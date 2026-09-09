@@ -199,10 +199,12 @@ export function MenuBar() {
     return true
   }
 
+  const projectName = engine.project?.name ?? 'AI Slideshow Editor'
+
   return (
     <>
       <header className="menu-bar">
-        <span className="menu-bar__title">AI Slideshow Editor</span>
+        <span className="menu-bar__title">{projectName}</span>
         <nav className="menu-bar__menus">
           {MENUS.map((menu) => (
             <Menu
