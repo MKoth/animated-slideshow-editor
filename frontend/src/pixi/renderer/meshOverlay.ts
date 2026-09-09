@@ -8,14 +8,13 @@ import { useSelectionStore } from '../../stores/selectionStore'
 import { useOverlayVisibilityStore } from '../../stores/overlayVisibilityStore'
 import { useShapePreviewStore } from '../../stores/shapePreviewStore'
 import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
-import type { WorldTransform, WorldRect } from './worldGeometry'
+import type { ViewportTransform, WorldTransform, WorldRect } from './worldGeometry'
 import { worldTransformOf } from '../../engine/worldTransform'
 import type { WorldTransformSource } from './hitTest'
 import { evaluateMeshDeformation } from '../../engine/meshDeformationEvaluator'
 
 const WIREFRAME_COLOR = 0x1a73e8
 const WIREFRAME_WIDTH = 1.5
-const VERTEX_RADIUS = 4
 const VERTEX_FILL = 0x1a73e8
 const VERTEX_SELECTED_FILL = 0xff0000
 const VERTEX_STROKE_COLOR = 0x1a73e8
@@ -89,6 +88,7 @@ export interface MeshOverlayContext {
   readonly engine: EnginePublic
   readonly getScene: () => Scene | null
   readonly getWorldTransform?: WorldTransformSource
+  readonly getCameraTransform?: () => ViewportTransform | null
 }
 
 function localToWorld(
@@ -151,6 +151,7 @@ export class MeshOverlay {
   readonly #engine: EnginePublic
   readonly #getScene: () => Scene | null
   readonly #getWorldTransform?: WorldTransformSource
+  readonly #getCameraTransform?: () => ViewportTransform | null
   #graphics: PixiGraphics | null = null
   #attached = false
   #unsubscribeMeshEdit: (() => void) | null = null
@@ -160,6 +161,7 @@ export class MeshOverlay {
   #unsubscribePreview: (() => void) | null = null
   #unsubscribeShapePreview: (() => void) | null = null
   #unsubscribeVisibility: (() => void) | null = null
+  #lastCameraScale: number | null = null
 
   constructor(context: MeshOverlayContext) {
     this.#pixi = context.pixi
@@ -167,6 +169,13 @@ export class MeshOverlay {
     this.#engine = context.engine
     this.#getScene = context.getScene
     this.#getWorldTransform = context.getWorldTransform
+    this.#getCameraTransform = context.getCameraTransform
+  }
+
+  #cameraScale(): number {
+    const cam = this.#getCameraTransform?.()
+    if (!cam) return 1
+    return Math.max(Math.abs(cam.scaleX), Math.abs(cam.scaleY), 0.1)
   }
 
   attach(): void {
@@ -328,6 +337,8 @@ export class MeshOverlay {
   ): void {
     const deformed = getDeformedVertices(mesh, scene, transform, this.#getWorldTransform)
     const worldVertices = deformed.map((v) => localToWorld(v.x, v.y, transform))
+    const scale = this.#cameraScale()
+    const wireWidth = WIREFRAME_WIDTH / scale
     for (const face of mesh.faces) {
       const v0 = worldVertices[face.v0]
       const v1 = worldVertices[face.v1]
@@ -336,19 +347,19 @@ export class MeshOverlay {
         graphics
           .moveTo(v0.x, v0.y)
           .lineTo(v1.x, v1.y)
-          .stroke({ width: WIREFRAME_WIDTH, color: WIREFRAME_COLOR })
+          .stroke({ width: wireWidth, color: WIREFRAME_COLOR })
       }
       if (v1 && v2) {
         graphics
           .moveTo(v1.x, v1.y)
           .lineTo(v2.x, v2.y)
-          .stroke({ width: WIREFRAME_WIDTH, color: WIREFRAME_COLOR })
+          .stroke({ width: wireWidth, color: WIREFRAME_COLOR })
       }
       if (v2 && v0) {
         graphics
           .moveTo(v2.x, v2.y)
           .lineTo(v0.x, v0.y)
-          .stroke({ width: WIREFRAME_WIDTH, color: WIREFRAME_COLOR })
+          .stroke({ width: wireWidth, color: WIREFRAME_COLOR })
       }
     }
   }
@@ -393,7 +404,10 @@ export class MeshOverlay {
       }
     }
 
-    // Draw wireframe edges
+    // Draw wireframe edges (zoom-invariant)
+    const scale = this.#cameraScale()
+    const wireWidth = WIREFRAME_WIDTH / scale
+    const edgeSelectedWidth = EDGE_SELECTED_WIDTH / scale
     for (const face of mesh.faces) {
       const edges: { va: number; vb: number; ax: number; ay: number; bx: number; by: number }[] = []
       const v0 = worldVertices[face.v0]
@@ -410,28 +424,33 @@ export class MeshOverlay {
           .moveTo(edge.ax, edge.ay)
           .lineTo(edge.bx, edge.by)
           .stroke({
-            width: isEdgeSelected ? EDGE_SELECTED_WIDTH : WIREFRAME_WIDTH,
+            width: isEdgeSelected ? edgeSelectedWidth : wireWidth,
             color: isEdgeSelected ? EDGE_SELECTED_COLOR : WIREFRAME_COLOR,
           })
       }
     }
 
     if (!isWeightPaint) {
-      // Draw vertices (only in vertex mode)
+      // Draw vertices (only in vertex mode) — radius is screen pixels
       if (selectMode === 'vertex') {
+        const vertexSize = useOverlayVisibilityStore.getState().vertexSize
+        const radiusWorld = vertexSize / scale
+        const strokeWorld = VERTEX_STROKE_WIDTH / scale
         for (let i = 0; i < worldVertices.length; i++) {
           const v = worldVertices[i]
           const isSelected = selectedVertexSet.has(i)
           graphics
-            .circle(v.x, v.y, VERTEX_RADIUS)
+            .circle(v.x, v.y, radiusWorld)
             .fill({ color: isSelected ? VERTEX_SELECTED_FILL : VERTEX_FILL })
-            .stroke({ width: VERTEX_STROKE_WIDTH, color: VERTEX_STROKE_COLOR })
+            .stroke({ width: strokeWorld, color: VERTEX_STROKE_COLOR })
         }
       }
     }
   }
 
   #drawPreview(graphics: PixiGraphics, mesh: MeshData, transform: WorldTransform): void {
+    const scale = this.#cameraScale()
+    const previewWireWidth = PREVIEW_WIREFRAME_WIDTH / scale
     const worldVertices = mesh.vertices.map((v) => localToWorld(v.x, v.y, transform))
     for (const face of mesh.faces) {
       const v0 = worldVertices[face.v0]
@@ -452,25 +471,34 @@ export class MeshOverlay {
       const v2 = worldVertices[face.v2]
       if (v0 && v1) {
         graphics.moveTo(v0.x, v0.y).lineTo(v1.x, v1.y).stroke({
-          width: PREVIEW_WIREFRAME_WIDTH,
+          width: previewWireWidth,
           color: PREVIEW_WIREFRAME_COLOR,
           alpha: PREVIEW_WIREFRAME_ALPHA,
         })
       }
       if (v1 && v2) {
         graphics.moveTo(v1.x, v1.y).lineTo(v2.x, v2.y).stroke({
-          width: PREVIEW_WIREFRAME_WIDTH,
+          width: previewWireWidth,
           color: PREVIEW_WIREFRAME_COLOR,
           alpha: PREVIEW_WIREFRAME_ALPHA,
         })
       }
       if (v2 && v0) {
         graphics.moveTo(v2.x, v2.y).lineTo(v0.x, v0.y).stroke({
-          width: PREVIEW_WIREFRAME_WIDTH,
+          width: previewWireWidth,
           color: PREVIEW_WIREFRAME_COLOR,
           alpha: PREVIEW_WIREFRAME_ALPHA,
         })
       }
+    }
+  }
+
+  handleTick(): void {
+    if (!this.#attached) return
+    const scale = this.#cameraScale()
+    if (this.#lastCameraScale === null || Math.abs(scale - this.#lastCameraScale) > 1e-6) {
+      this.#lastCameraScale = scale
+      this.redraw()
     }
   }
 
@@ -484,12 +512,10 @@ export class MeshOverlay {
     if (!node || !node.components.mesh) {
       return null
     }
-    const transform = this.#resolveTransform(scene, meshEditNodeId)
-    if (!transform) {
-      return null
-    }
-    // Slightly larger screen-constant radius (was 4/scale+2 -> 8/scale+3) for reliable edge picking
-    const hitRadius = 8 / Math.max(Math.abs(transform.scaleX), Math.abs(transform.scaleY), 0.1) + 3
+    // screen-constant picking based on camera zoom + vertexSize
+    const scale = this.#cameraScale()
+    const vertexSize = useOverlayVisibilityStore.getState().vertexSize
+    const hitRadius = (vertexSize + 2) / scale + 3 / scale
     const worldVertices = this.#worldVerticesFor(scene, meshEditNodeId, this.#previewVertices)
     if (!worldVertices) return null
     // Return nearest within radius, not first in array order (fixes edge vs interior snap)
@@ -517,14 +543,10 @@ export class MeshOverlay {
       return null
     }
     const mesh = node.components.mesh.mesh
-    const transform = this.#resolveTransform(scene, meshEditNodeId)
-    if (!transform) {
-      return null
-    }
     const worldVertices = this.#worldVerticesFor(scene, meshEditNodeId, this.#previewVertices)
     if (!worldVertices) return null
-    const threshold =
-      EDGE_HIT_THRESHOLD / Math.max(Math.abs(transform.scaleX), Math.abs(transform.scaleY), 0.1)
+    const scale = this.#cameraScale()
+    const threshold = EDGE_HIT_THRESHOLD / scale
     const thresholdSq = threshold * threshold
 
     const edges = extractEdges(mesh)

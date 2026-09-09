@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
 import { useMeshEditStore } from '../../stores/meshEditStore'
 import { useShapeGhostStore } from '../../stores/shapeGhostStore'
+import { useOverlayVisibilityStore } from '../../stores/overlayVisibilityStore'
 import { useEditingModeStore } from '../../stores/editingModeStore'
 
 export function SculptToolbar() {
@@ -19,6 +20,8 @@ export function SculptToolbar() {
   const setActiveShapeId = useMeshEditStore((state) => state.setActiveShapeId)
   const ghostShapeId = useShapeGhostStore((state) => state.ghostShapeId)
   const setGhost = useShapeGhostStore((state) => state.setGhost)
+  const vertexSize = useOverlayVisibilityStore((state) => state.vertexSize)
+  const setVertexSize = useOverlayVisibilityStore((state) => state.setVertexSize)
   const [, setTick] = useState(0)
 
   useEngineEvent((event) => {
@@ -152,6 +155,24 @@ export function SculptToolbar() {
 
       <div className="weight-paint-toolbar__separator" />
       <span className="weight-paint-toolbar__hint">Drag to push • Shift to invert (pull)</span>
+
+      <div className="weight-paint-toolbar__separator" />
+      <div className="weight-paint-toolbar__section">
+        <label className="weight-paint-toolbar__label" htmlFor="sculpt-vertex-size">
+          Vertex Size: {vertexSize}px
+        </label>
+        <input
+          id="sculpt-vertex-size"
+          className="weight-paint-toolbar__slider"
+          type="range"
+          min={2}
+          max={12}
+          step={1}
+          value={vertexSize}
+          onChange={(e) => setVertexSize(parseFloat(e.target.value))}
+          aria-label="Vertex size"
+        />
+      </div>
 
       <div className="weight-paint-toolbar__separator" />
       <div className="weight-paint-toolbar__section">

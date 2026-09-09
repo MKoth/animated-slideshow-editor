@@ -270,6 +270,7 @@ export class Renderer {
         engine: this.#engine,
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
         getWorldTransform: transformOf,
+        getCameraTransform: () => this.#cameraTransform(),
       })
       this.#shapeGhostOverlay = new ShapeGhostOverlay({
         pixi: this.#pixi,
@@ -683,6 +684,7 @@ export class Renderer {
       })
     }
     this.#brushOverlay?.handleTick()
+    this.#meshOverlay?.handleTick()
   }
 
   #cameraTransform(): ViewportTransform | null {
@@ -792,6 +794,7 @@ export class Renderer {
       this.#sceneRenderer?.refreshDeformedMeshSizes()
       this.#sceneRenderer?.applyConstraintOverrides()
       this.#selectionOverlay?.redraw()
+      this.#meshOverlay?.redraw()
       this.#shapeGhostOverlay?.redraw()
       this.#syncFullscreenShader()
     } catch (error) {
