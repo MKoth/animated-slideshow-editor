@@ -78,6 +78,8 @@ import type { ResolveAssetUrl, TextureCache } from './textureCache'
 import { evaluateMeshDeformation } from '../../engine/meshDeformationEvaluator'
 import { generateCircleMeshData } from '../../engine/circleComponent'
 import { useShapePreviewStore } from '../../stores/shapePreviewStore'
+import { useMeshEditStore } from '../../stores/meshEditStore'
+import type { MeshData, MeshVertex } from '../../engine/mesh'
 
 export interface CurrentTimeSource {
   getTime(slideId: string): number
@@ -224,6 +226,7 @@ export class SceneRenderer {
   readonly #shaderScratch: EffectiveShaderScratch = effectiveShaderScratch()
   readonly #materialOverridesScratch: EvaluatedMaterialOverridesScratch =
     evaluatedMaterialOverridesScratch()
+  readonly #meshTopologyHashes = new Map<string, string>()
   readonly #onNodeSizeChanged: (nodeId: string) => void
   // ── Shadow Effect state (per-group) ──────────────────────────────────────
   readonly #shadowContainers = new Map<string, PixiContainer>()
@@ -241,6 +244,7 @@ export class SceneRenderer {
     clearColor?: readonly [number, number, number, number]
     clear?: boolean
   }) => void
+  readonly #sculptPreviews = new Map<string, Map<number, { x: number; y: number }>>()
   #scene: Scene | null = null
   #slideId: string | null = null
 
@@ -283,6 +287,9 @@ export class SceneRenderer {
         }
       }
     })
+    void useMeshEditStore.subscribe(() => {
+      this.refreshDeformedMeshSizes()
+    })
   }
 
   nodeSize(nodeId: string): WorldSize | null {
@@ -318,6 +325,7 @@ export class SceneRenderer {
   bind(scene: Scene | null, slideId: string | null = null): void {
     // Destroy existing shadows (RT lifecycle: bind(null) destroys)
     this.#destroyAllShadows()
+    this.#sculptPreviews.clear()
     for (const container of this.#containers.values()) {
       container.destroy({ children: true })
     }
@@ -332,6 +340,7 @@ export class SceneRenderer {
     this.#textComponentHashes.clear()
     this.#circleHashes.clear()
     this.#tableHashes.clear()
+    this.#meshTopologyHashes.clear()
     this.#scene = scene
     this.#slideId = slideId
     if (!scene) {
@@ -367,6 +376,8 @@ export class SceneRenderer {
   }
 
   handleNodeRemoved(nodeId: string): void {
+    this.#sculptPreviews.delete(nodeId)
+    this.#meshTopologyHashes.delete(nodeId)
     const container = this.#containers.get(nodeId)
     if (!container) {
       // Still need to destroy shadow if group removed but container missing (e.g., root)
@@ -391,6 +402,8 @@ export class SceneRenderer {
         this.#missingNodes.delete(descendantId)
         this.#circleHashes.delete(descendantId)
         this.#tableHashes.delete(descendantId)
+        this.#sculptPreviews.delete(descendantId)
+        this.#meshTopologyHashes.delete(descendantId)
       }
       this.#nodeIds.delete(descendant)
     }
@@ -455,6 +468,56 @@ export class SceneRenderer {
     }
   }
 
+  // --- Sculpt live preview & active-shape fallback helpers ---
+  #baseRestForNode(node: SceneNode): readonly MeshVertex[] | null {
+    const meshComp = node.components.mesh
+    if (!meshComp?.shapes || meshComp.shapes.length === 0) return null
+    const state = useMeshEditStore.getState()
+    if (state.meshEditNodeId !== node.id) return null
+    if (!state.activeShapeId) return null
+    const shape = meshComp.shapes.find((s) => s.id === state.activeShapeId)
+    if (!shape) return null
+    // Don't override when morph binding is active — morph should win
+    try {
+      const binding = this.#engine.getMorphBinding(node.id)
+      if (binding && binding.fromShapeId && binding.toShapeId) return null
+    } catch {
+      // ignore
+    }
+    return shape.vertices as unknown as readonly MeshVertex[]
+  }
+
+  #verticesEqual(
+    a: readonly { x: number; y: number }[],
+    b: readonly { x: number; y: number }[],
+  ): boolean {
+    if (a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) {
+      if (Math.abs(a[i].x - b[i].x) > 1e-6 || Math.abs(a[i].y - b[i].y) > 1e-6) return false
+    }
+    return true
+  }
+
+  setSculptPreview(nodeId: string, preview: Map<number, { x: number; y: number }>): void {
+    if (preview.size === 0) {
+      if (this.#sculptPreviews.delete(nodeId)) {
+        this.refreshDeformedMeshSizes()
+        this.#onNodeSizeChanged(nodeId)
+      }
+      return
+    }
+    this.#sculptPreviews.set(nodeId, new Map(preview))
+    this.refreshDeformedMeshSizes()
+    this.#onNodeSizeChanged(nodeId)
+  }
+
+  clearSculptPreview(nodeId: string): void {
+    if (this.#sculptPreviews.delete(nodeId)) {
+      this.refreshDeformedMeshSizes()
+      this.#onNodeSizeChanged(nodeId)
+    }
+  }
+
   refreshDeformedMeshSizes(): void {
     const scene = this.#scene
     const slideId = this.#slideId
@@ -477,19 +540,84 @@ export class SceneRenderer {
         const hasShapePreview = preview.previewNodeId === node.id && preview.previewShapeId
         const meshTransform = this.#engineWorldTransform(node.id, time)
         if (!meshTransform) continue
-        let vertices: readonly import('../../engine/mesh').MeshVertex[]
-        if (hasShapePreview) {
+        let vertices: readonly MeshVertex[]
+        const sculptPreview = this.#sculptPreviews.get(node.id)
+        if (sculptPreview && sculptPreview.size > 0) {
+          // Live sculpt preview: both wireframe and textured mesh follow the brush
+          const baseRest =
+            this.#baseRestForNode(node) ?? (rawMesh.vertices as unknown as readonly MeshVertex[])
+          const fullRest: MeshVertex[] = []
+          for (let i = 0; i < baseRest.length; i++) {
+            const p = sculptPreview.get(i)
+            if (p) fullRest.push({ x: p.x, y: p.y })
+            else {
+              const v = baseRest[i]
+              fullRest.push(v ? { x: v.x, y: v.y } : { x: 0, y: 0 })
+            }
+          }
+          const previewMesh: MeshData = { ...rawMesh, vertices: fullRest }
+          vertices = evaluateMeshDeformation(previewMesh, bones, meshTransform).deformedVertices
+          // If baseRest had fewer verts than rawMesh (should not happen via invariant), fill remaining from rawMesh
+          if (fullRest.length < rawMesh.vertices.length) {
+            const filler = rawMesh.vertices.slice(fullRest.length) as unknown as MeshVertex[]
+            const fillerDeformed = evaluateMeshDeformation(
+              { ...rawMesh, vertices: filler },
+              bones,
+              meshTransform,
+            ).deformedVertices
+            vertices = [...vertices, ...fillerDeformed] as unknown as readonly MeshVertex[]
+          }
+        } else if (hasShapePreview) {
           const mesh = effectiveMeshForPreview(rawMesh, node.id, this.#engine)
           vertices = evaluateMeshDeformation(mesh, bones, meshTransform).deformedVertices
         } else {
           const deformed = this.#engine.evaluateMeshDeformation(node.id, time, bones, meshTransform)
-          vertices = deformed ? deformed.deformedVertices : []
+          let baseVertices: readonly MeshVertex[] = deformed
+            ? (deformed.deformedVertices as unknown as readonly MeshVertex[])
+            : []
+          // Fallback: show activeShape immediately without morph binding (visible without coeff)
+          if (baseVertices.length > 0) {
+            const baseRest = this.#baseRestForNode(node)
+            if (baseRest) {
+              // Check if engine returned unmorphed base (i.e., equals rawMesh deformed)
+              const rawDeformed = evaluateMeshDeformation(rawMesh as MeshData, bones, meshTransform)
+                .deformedVertices as unknown as readonly MeshVertex[]
+              const isUnmorphed = this.#verticesEqual(baseVertices, rawDeformed)
+              if (isUnmorphed) {
+                const fallbackMesh: MeshData = {
+                  ...rawMesh,
+                  vertices: baseRest as unknown as MeshData['vertices'],
+                }
+                const fallbackDeformed = evaluateMeshDeformation(fallbackMesh, bones, meshTransform)
+                  .deformedVertices as unknown as readonly MeshVertex[]
+                if (!this.#verticesEqual(fallbackDeformed, baseVertices)) {
+                  baseVertices = fallbackDeformed
+                }
+              }
+            }
+          }
+          vertices = baseVertices
         }
         const container = this.#containers.get(node.id)
         if (container) applyMeshVertices(container, vertices)
         if (vertices.length === 0) continue
-        const xs = vertices.map((vertex) => vertex.x)
-        const ys = vertices.map((vertex) => vertex.y)
+        // Keep the container pivot stable while sculpting. The overlay uses the
+        // selected shape's pre-stroke bounds; deriving it from the live preview
+        // makes large strokes move the textured mesh independently of the wireframe.
+        const sizeVertices =
+          sculptPreview && sculptPreview.size > 0
+            ? evaluateMeshDeformation(
+                {
+                  ...rawMesh,
+                  vertices: (this.#baseRestForNode(node) ??
+                    rawMesh.vertices) as MeshData['vertices'],
+                },
+                bones,
+                meshTransform,
+              ).deformedVertices
+            : vertices
+        const xs = sizeVertices.map((vertex) => vertex.x)
+        const ys = sizeVertices.map((vertex) => vertex.y)
         const minX = Math.min(...xs)
         const maxX = Math.max(...xs)
         const minY = Math.min(...ys)
@@ -631,6 +759,11 @@ export class SceneRenderer {
     }
     const mesh = node.components.mesh.mesh
     const container = this.#containers.get(nodeId)
+    // Optimize shape-only changes: if topology unchanged (shape edit), skip recreate
+    const topologyHash = `${mesh.vertices.length}:${mesh.faces.length}:${mesh.uvs.length}:${mesh.boneWeights?.length ?? 0}:${mesh.bindPose ? Object.keys(mesh.bindPose).length : 0}`
+    const prevHash = this.#meshTopologyHashes.get(nodeId)
+    const isTopologySame = prevHash !== undefined && prevHash === topologyHash
+    this.#meshTopologyHashes.set(nodeId, topologyHash)
     if (container && !placeholderOf(container)?.children[0]?.label?.startsWith('mesh')) {
       const parent = container.parent
       const index = parent ? parent.children.indexOf(container) : -1
@@ -648,8 +781,13 @@ export class SceneRenderer {
         this.#loadAssetTexture(instance.assetDefinitionId, nodeId, replacement)
       }
     } else if (container) {
-      applyMeshDataWithUV(this.#pixi, container, node, mesh)
-      applyUVTransformToContainer(this.#pixi, container, node)
+      if (isTopologySame) {
+        // Shape-only: no need to recreate mesh, just refresh deformed which now shows activeShape
+        // Still need to reapply UV if needed? No topology change so UV unchanged.
+      } else {
+        applyMeshDataWithUV(this.#pixi, container, node, mesh)
+        applyUVTransformToContainer(this.#pixi, container, node)
+      }
     }
     if (mesh.vertices.length === 0) {
       return
@@ -1189,6 +1327,13 @@ export class SceneRenderer {
     const container = createNodeContainer(this.#pixi, node, this.#textureCache)
     this.#containers.set(node.id, container)
     this.#nodeIds.set(container, node.id)
+    if (node.components.mesh) {
+      const m = node.components.mesh.mesh
+      this.#meshTopologyHashes.set(
+        node.id,
+        `${m.vertices.length}:${m.faces.length}:${m.uvs.length}:${m.boneWeights?.length ?? 0}:${m.bindPose ? Object.keys(m.bindPose).length : 0}`,
+      )
+    }
     this.#attachToParent(container, node)
     // Initialize zIndex for render ordering and ensure parent sorts by zIndex
     container.zIndex = node.zIndex ?? 0

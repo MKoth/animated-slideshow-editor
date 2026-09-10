@@ -1,4 +1,4 @@
-import type { Scene } from '../../engine'
+import type { EnginePublic, Scene } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
 import { MoveShapeVertexCommand, TransactionCommand } from '../../engine/commands'
 import { useMeshEditStore } from '../../stores/meshEditStore'
@@ -17,6 +17,13 @@ export interface SculptContext {
   readonly dispatch: DispatchCommand
   readonly meshOverlay: MeshOverlay
   readonly getWorldTransform?: WorldTransformSource
+  readonly engine?: EnginePublic
+  readonly getTime?: () => number
+  readonly setSculptPreview?: (
+    nodeId: string,
+    preview: Map<number, { x: number; y: number }>,
+  ) => void
+  readonly clearSculptPreview?: (nodeId: string) => void
 }
 
 export class SculptInteraction {
@@ -26,6 +33,13 @@ export class SculptInteraction {
   readonly #dispatch: DispatchCommand
   readonly #meshOverlay: MeshOverlay
   readonly #getWorldTransform?: WorldTransformSource
+  readonly #engine?: EnginePublic
+  readonly #getTime?: () => number
+  readonly #setSculptPreview?: (
+    nodeId: string,
+    preview: Map<number, { x: number; y: number }>,
+  ) => void
+  readonly #clearSculptPreview?: (nodeId: string) => void
   #attached = false
   #pressed = false
   #lastWorldX = 0
@@ -40,6 +54,7 @@ export class SculptInteraction {
   #basePositions = new Map<number, { x: number; y: number }>()
   // vertices grabbed at first contact — keep moving them for the whole stroke so an edge vert follows the mouse beyond brush diameter
   #grabbedFactors = new Map<number, number>()
+  #activeNodeId: string | null = null
 
   constructor(ctx: SculptContext) {
     this.#canvas = ctx.canvas
@@ -48,6 +63,12 @@ export class SculptInteraction {
     this.#dispatch = ctx.dispatch
     this.#meshOverlay = ctx.meshOverlay
     this.#getWorldTransform = ctx.getWorldTransform
+    this.#engine = ctx.engine
+    this.#getTime = ctx.getTime
+    this.#setSculptPreview = ctx.setSculptPreview
+    this.#clearSculptPreview = ctx.clearSculptPreview
+    void this.#engine
+    void this.#getTime
   }
 
   attach(): void {
@@ -102,6 +123,7 @@ export class SculptInteraction {
     this.#lastWorldX = pt.x
     this.#lastWorldY = pt.y
 
+    this.#activeNodeId = meshEditNodeId
     // Seed base/original positions from shape rest vertices
     this.#originalRestPositions.clear()
     this.#basePositions.clear()
@@ -191,6 +213,9 @@ export class SculptInteraction {
       scene,
       worldTransform,
       this.#getWorldTransform,
+      undefined,
+      nodeId,
+      this.#getTime?.() ?? 0,
     )
 
     // Face guard — allow sculpt at silhouette edges. Original strict check `isBrushOverMesh`
@@ -312,6 +337,10 @@ export class SculptInteraction {
     // (basePositions already has all indices, but previewPositions only those touched)
     this.#meshOverlay.setPreviewVertices(this.#previewPositions)
     this.#meshOverlay.redraw()
+    // Live textured mesh + bbox: push to scene renderer so it follows both wireframe and texture
+    if (this.#setSculptPreview && this.#activeNodeId) {
+      this.#setSculptPreview(this.#activeNodeId, this.#previewPositions)
+    }
   }
 
   #commit(): void {
@@ -347,5 +376,9 @@ export class SculptInteraction {
     this.#grabbedFactors.clear()
     this.#meshOverlay.clearPreviewVertices()
     this.#meshOverlay.redraw()
+    if (this.#clearSculptPreview && this.#activeNodeId) {
+      this.#clearSculptPreview(this.#activeNodeId)
+    }
+    this.#activeNodeId = null
   }
 }

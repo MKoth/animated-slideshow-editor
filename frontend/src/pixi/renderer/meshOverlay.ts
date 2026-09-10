@@ -9,7 +9,11 @@ import { useOverlayVisibilityStore } from '../../stores/overlayVisibilityStore'
 import { useShapePreviewStore } from '../../stores/shapePreviewStore'
 import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
 import type { ViewportTransform, WorldTransform, WorldRect } from './worldGeometry'
-import { worldTransformOf } from '../../engine/worldTransform'
+import {
+  worldTransformOf,
+  pivotOffsetAndSizeFor,
+  localToWorldWithPivot,
+} from '../../engine/worldTransform'
 import type { WorldTransformSource } from './hitTest'
 import { evaluateMeshDeformation } from '../../engine/meshDeformationEvaluator'
 
@@ -49,6 +53,31 @@ function computeBoneWorldTransforms(
   return transforms
 }
 
+function activeShapeFallback(
+  mesh: MeshData,
+  nodeId: string,
+  engine: EnginePublic,
+): MeshData | null {
+  try {
+    const state = useMeshEditStore.getState()
+    if (state.meshEditNodeId !== nodeId || !state.activeShapeId) return null
+    const node = engine.getNode(nodeId)
+    try {
+      const binding = (
+        engine as unknown as { getMorphBinding?: (id: string) => unknown }
+      ).getMorphBinding?.(nodeId) as { fromShapeId: string | null; toShapeId: string | null } | null
+      if (binding && binding.fromShapeId && binding.toShapeId) return null
+    } catch {
+      // ignore
+    }
+    const shape = node.components.mesh?.shapes?.find((s) => s.id === state.activeShapeId)
+    if (shape) return { ...mesh, vertices: shape.vertices as unknown as MeshData['vertices'] }
+  } catch {
+    // ignore
+  }
+  return null
+}
+
 function getDeformedVertices(
   mesh: MeshData,
   scene: Scene,
@@ -58,14 +87,94 @@ function getDeformedVertices(
   nodeId?: string,
   time?: number,
 ): { x: number; y: number }[] {
+  // Shape preview (inspector) has highest priority — bypass morph
+  if (engine && nodeId) {
+    const previewMesh = effectiveMeshForPreview(mesh, nodeId, engine)
+    if (previewMesh !== mesh) {
+      const boneTransforms = computeBoneWorldTransforms(scene, getWorldTransform)
+      if (
+        !previewMesh.boneWeights ||
+        previewMesh.boneWeights.length === 0 ||
+        boneTransforms.size === 0
+      ) {
+        return previewMesh.vertices.map((v) => ({ x: v.x, y: v.y }))
+      }
+      const result = evaluateMeshDeformation(previewMesh, boneTransforms, meshTransform)
+      return result.deformedVertices.map((v) => ({ x: v.x, y: v.y }))
+    }
+  }
   // If engine is available and nodeId/time provided, use engine's morph-aware deformation (morph-then-bones)
   if (engine && nodeId !== undefined && time !== undefined) {
     try {
       const boneTransforms = computeBoneWorldTransforms(scene, getWorldTransform)
       const result = engine.evaluateMeshDeformation(nodeId, time, boneTransforms, meshTransform)
-      if (result) return result.deformedVertices.map((v) => ({ x: v.x, y: v.y }))
+      if (result) {
+        const deformed = result.deformedVertices.map((v) => ({ x: v.x, y: v.y }))
+        // Fallback: show activeShape immediately without morph binding (visible without coeff)
+        if (engine && nodeId) {
+          const fallbackMesh = activeShapeFallback(mesh, nodeId, engine)
+          if (fallbackMesh) {
+            const rawDeformed = (() => {
+              if (!mesh.boneWeights || mesh.boneWeights.length === 0)
+                return mesh.vertices.map((v) => ({ x: v.x, y: v.y }))
+              const bt = computeBoneWorldTransforms(scene, getWorldTransform)
+              if (bt.size === 0) return mesh.vertices.map((v) => ({ x: v.x, y: v.y }))
+              return evaluateMeshDeformation(mesh, bt, meshTransform).deformedVertices.map((v) => ({
+                x: v.x,
+                y: v.y,
+              }))
+            })()
+            let isUnmorphed = deformed.length === rawDeformed.length
+            if (isUnmorphed) {
+              for (let i = 0; i < deformed.length; i++) {
+                if (
+                  Math.abs(deformed[i].x - rawDeformed[i].x) > 1e-6 ||
+                  Math.abs(deformed[i].y - rawDeformed[i].y) > 1e-6
+                ) {
+                  isUnmorphed = false
+                  break
+                }
+              }
+            }
+            if (isUnmorphed) {
+              const bt2 = computeBoneWorldTransforms(scene, getWorldTransform)
+              const fb = evaluateMeshDeformation(
+                fallbackMesh,
+                bt2,
+                meshTransform,
+              ).deformedVertices.map((v) => ({ x: v.x, y: v.y }))
+              let differs = fb.length !== deformed.length
+              if (!differs) {
+                for (let i = 0; i < fb.length; i++) {
+                  if (
+                    Math.abs(fb[i].x - deformed[i].x) > 1e-6 ||
+                    Math.abs(fb[i].y - deformed[i].y) > 1e-6
+                  ) {
+                    differs = true
+                    break
+                  }
+                }
+              }
+              if (differs) return fb
+            }
+          }
+        }
+        return deformed
+      }
     } catch {
       // fall through to non-morph path
+    }
+  }
+  // Non-engine path but still apply fallback for activeShape when no preview
+  if (engine && nodeId) {
+    const fallback = activeShapeFallback(mesh, nodeId, engine)
+    if (fallback) {
+      const bt = computeBoneWorldTransforms(scene, getWorldTransform)
+      if (!fallback.boneWeights || fallback.boneWeights.length === 0 || bt.size === 0) {
+        return fallback.vertices.map((v) => ({ x: v.x, y: v.y }))
+      }
+      const r = evaluateMeshDeformation(fallback, bt, meshTransform)
+      return r.deformedVertices.map((v) => ({ x: v.x, y: v.y }))
     }
   }
   if (!mesh.boneWeights || mesh.boneWeights.length === 0) {
@@ -105,46 +214,7 @@ export interface MeshOverlayContext {
   readonly getTime?: () => number
 }
 
-function localToWorld(
-  localX: number,
-  localY: number,
-  transform: WorldTransform,
-  pivotOffset?: { x: number; y: number } | null,
-): { x: number; y: number } {
-  const cos = Math.cos(transform.rotation)
-  const sin = Math.sin(transform.rotation)
-  const dx = pivotOffset ? localX - pivotOffset.x : localX
-  const dy = pivotOffset ? localY - pivotOffset.y : localY
-  const scaledX = dx * transform.scaleX
-  const scaledY = dy * transform.scaleY
-  return {
-    x: scaledX * cos - scaledY * sin + transform.x,
-    y: scaledX * sin + scaledY * cos + transform.y,
-  }
-}
-
-function pivotOffsetAndSizeFor(
-  deformed: readonly { x: number; y: number }[],
-  node: import('../../engine/sceneNode').SceneNode | null,
-): { x: number; y: number } | null {
-  if (!node?.transform.localPivot) return null
-  if (deformed.length === 0) return null
-  let minX = Infinity
-  let maxX = -Infinity
-  let minY = Infinity
-  let maxY = -Infinity
-  for (const v of deformed) {
-    if (v.x < minX) minX = v.x
-    if (v.x > maxX) maxX = v.x
-    if (v.y < minY) minY = v.y
-    if (v.y > maxY) maxY = v.y
-  }
-  const w = maxX - minX
-  const h = maxY - minY
-  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null
-  const p = node.transform.localPivot
-  return { x: p.x * w, y: p.y * h }
-}
+const localToWorld = localToWorldWithPivot
 
 function pointToSegmentDistanceSq(
   px: number,

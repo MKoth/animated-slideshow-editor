@@ -10,6 +10,7 @@ import {
   RotateNodeCommand,
   ScaleNodeCommand,
   CreateShapeCommand,
+  MoveShapeVertexCommand,
   createCommandSystem,
 } from '../../engine/commands'
 import type { CommandResult } from '../../engine/commands'
@@ -193,5 +194,56 @@ describe('worldDeltaToLocal fix', () => {
     const observed = { x: worldAfter.x - worldVerts[0].x, y: worldAfter.y - worldVerts[0].y }
     expect(observed.x).toBeCloseTo(drag.x, 4)
     expect(observed.y).toBeCloseTo(drag.y, 4)
+  })
+
+  it('uses the selected shape pivot when hit-testing a switched shape', () => {
+    const system = createCommandSystem()
+    expectOk(system.dispatcher.dispatch(new CreateProjectCommand({ name: 'P' })))
+    expectOk(system.dispatcher.dispatch(new CreateSlideCommand({ name: 'S' })))
+    const scene = system.engine.project!.slides[0].scene
+    const mesh = createDefaultRectangleMesh(10, 10)
+    const { nodeId } = expectOk(
+      system.dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: scene.id,
+          parentId: scene.root.id,
+          name: 'Mesh',
+          transform: {
+            x: 100,
+            y: 0,
+            rotation: 0,
+            scaleX: 1,
+            scaleY: 1,
+            localPivot: { x: 0.5, y: 0 },
+          },
+          components: { mesh: { kind: 'mesh', mesh } },
+        }),
+      ),
+    )
+    const { shapeId } = expectOk(
+      system.dispatcher.dispatch(new CreateShapeCommand({ nodeId, name: 'Switched' })),
+    )
+    expectOk(
+      system.dispatcher.dispatch(
+        new MoveShapeVertexCommand({ nodeId, shapeId, vertexIndex: 0, x: 20, y: -5 }),
+      ),
+    )
+
+    const shape = system.engine.getShapes(nodeId).find((candidate) => candidate.id === shapeId)!
+    const transform = worldTransformOf(scene, nodeId)!
+    const switchedMesh = { ...mesh, vertices: shape.vertices as unknown as MeshVertex[] }
+    const withNodeContext = deformedMeshWorldVertices(
+      switchedMesh,
+      scene,
+      transform,
+      undefined,
+      undefined,
+      nodeId,
+      0,
+    )
+    const withoutNodeContext = deformedMeshWorldVertices(switchedMesh, scene, transform)
+
+    expect(withNodeContext[0].x).toBeCloseTo(110)
+    expect(withoutNodeContext[0].x).toBeCloseTo(120)
   })
 })

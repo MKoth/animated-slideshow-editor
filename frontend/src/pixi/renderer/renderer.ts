@@ -406,6 +406,14 @@ export class Renderer {
         dispatch: this.#dispatch,
         meshOverlay: this.#meshOverlay,
         getWorldTransform: transformOf,
+        engine: this.#engine,
+        getTime: () => {
+          const slideId = this.#sceneRenderer?.boundSlideId ?? null
+          return slideId ? this.#currentTime.getTime(slideId) : 0
+        },
+        setSculptPreview: (nodeId, preview) =>
+          this.#sceneRenderer?.setSculptPreview(nodeId, preview),
+        clearSculptPreview: (nodeId) => this.#sceneRenderer?.clearSculptPreview(nodeId),
       })
       this.#sculptInteraction.attach()
 

@@ -325,6 +325,47 @@ export function rotateY(x: number, y: number, rotation: number): number {
   return x * Math.sin(rotation) + y * Math.cos(rotation)
 }
 
+export function pivotOffsetAndSizeFor(
+  deformed: readonly { x: number; y: number }[],
+  node: { transform: { localPivot?: { x: number; y: number } | undefined } } | null,
+): { x: number; y: number } | null {
+  if (!node?.transform.localPivot) return null
+  if (deformed.length === 0) return null
+  let minX = Infinity
+  let maxX = -Infinity
+  let minY = Infinity
+  let maxY = -Infinity
+  for (const v of deformed) {
+    if (v.x < minX) minX = v.x
+    if (v.x > maxX) maxX = v.x
+    if (v.y < minY) minY = v.y
+    if (v.y > maxY) maxY = v.y
+  }
+  const w = maxX - minX
+  const h = maxY - minY
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null
+  const p = node.transform.localPivot
+  return { x: p.x * w, y: p.y * h }
+}
+
+export function localToWorldWithPivot(
+  localX: number,
+  localY: number,
+  transform: WorldTransform,
+  pivotOffset?: { x: number; y: number } | null,
+): { x: number; y: number } {
+  const cos = Math.cos(transform.rotation)
+  const sin = Math.sin(transform.rotation)
+  const dx = pivotOffset ? localX - pivotOffset.x : localX
+  const dy = pivotOffset ? localY - pivotOffset.y : localY
+  const scaledX = dx * transform.scaleX
+  const scaledY = dy * transform.scaleY
+  return {
+    x: scaledX * cos - scaledY * sin + transform.x,
+    y: scaledX * sin + scaledY * cos + transform.y,
+  }
+}
+
 export function worldDeltaToLocal(
   deltaWorld: { x: number; y: number },
   worldTransform: {
