@@ -160,8 +160,8 @@ describe('custom parameter channel evaluation', () => {
     expect(evaluateMaterial(s, 0.5).uGlow).toBeCloseTo(0.5)
     // t=1: u=1 -> kf=1
     expect(evaluateMaterial(s, 1).uGlow).toBe(1)
-    // After clip ends, holds at last kf
-    expect(evaluateMaterial(s, 5).uGlow).toBe(1)
+    // After clip ends, falls back to undefined (no base)
+    expect(evaluateMaterial(s, 5).uGlow).toBeUndefined()
   })
 
   it('linked material channel with gain: base * (gain * kf(u))', () => {
@@ -194,8 +194,9 @@ describe('custom parameter channel evaluation', () => {
 
     // t=0: u=0 -> kf=1, base=10, gain=1 -> 10 * (1*1) = 10
     expect(evaluateMaterial(s, 0).uGlow).toBe(10)
-    // t=5: u=1 -> kf=2, base=10, gain=1 -> 10 * (1*2) = 20
-    expect(evaluateMaterial(s, 5).uGlow).toBe(20)
+    // t=1: u=1 -> kf=2 -> 20; t=5 after end falls back to base 10
+    expect(evaluateMaterial(s, 1).uGlow).toBe(20)
+    expect(evaluateMaterial(s, 5).uGlow).toBe(10)
   })
 
   it('linked material channel with offset: base + (offset * kf(u))', () => {
@@ -228,8 +229,9 @@ describe('custom parameter channel evaluation', () => {
 
     // t=0: u=0 -> kf=1, base=5, offset=1 -> 5 + (1*1) = 6
     expect(evaluateMaterial(s, 0).uGlow).toBe(6)
-    // t=5: u=1 -> kf=3, base=5, offset=1 -> 5 + (1*3) = 8
-    expect(evaluateMaterial(s, 5).uGlow).toBe(8)
+    // t=1: u=1 -> kf=3 -> 8; t=5 after end falls back to base 5
+    expect(evaluateMaterial(s, 1).uGlow).toBe(8)
+    expect(evaluateMaterial(s, 5).uGlow).toBe(5)
   })
 
   it('param override on instance modifies gain/offset composition', () => {
@@ -264,7 +266,8 @@ describe('custom parameter channel evaluation', () => {
 
     // t=0: u=0 -> kf=1, base=10, gain=0.5 -> 10 * (0.5*1) = 5
     expect(evaluateMaterial(s, 0).uGlow).toBe(5)
-    // t=5: u=1 -> kf=2, base=10, gain=0.5 -> 10 * (0.5*2) = 10
+    // t=1: u=1 -> kf=2 -> 10; t=5 after end falls back to base 10
+    expect(evaluateMaterial(s, 1).uGlow).toBe(10)
     expect(evaluateMaterial(s, 5).uGlow).toBe(10)
 
     // Override gain to 2
@@ -370,8 +373,8 @@ describe('custom parameter channel evaluation', () => {
     expect(evaluateMaterial(s, 5.5).uGlow).toBe(50)
     // At clip end: u=1 -> 100
     expect(evaluateMaterial(s, 6).uGlow).toBe(100)
-    // After clip end: holds at 100
-    expect(evaluateMaterial(s, 10).uGlow).toBe(100)
+    // After clip end: falls back to undefined
+    expect(evaluateMaterial(s, 10).uGlow).toBeUndefined()
   })
 
   it('speed affects material channel clip-local time', () => {
@@ -397,8 +400,8 @@ describe('custom parameter channel evaluation', () => {
     expect(evaluateMaterial(s, 0.25).uGlow).toBe(50)
     // u=clamp((0.5-0)*2/1, 0, 1)=1 -> 100 (clip finished at t=0.5)
     expect(evaluateMaterial(s, 0.5).uGlow).toBe(100)
-    // After clip: holds at 100
-    expect(evaluateMaterial(s, 5).uGlow).toBe(100)
+    // After clip: falls back to undefined
+    expect(evaluateMaterial(s, 5).uGlow).toBeUndefined()
   })
 
   it('end-to-end: clip with custom material param channel changes material param during evaluation', () => {
@@ -432,8 +435,8 @@ describe('custom parameter channel evaluation', () => {
     expect(evaluateMaterial(s, 1).uGlow).toBe(1) // u=0.5 → 1
     expect(evaluateMaterial(s, 1.5).uGlow).toBe(0.5) // u=0.75 → 0.5 (linear interp between 1→0)
     expect(evaluateMaterial(s, 2).uGlow).toBe(0) // u=1 → 0
-    // After clip ends, holds at 0
-    expect(evaluateMaterial(s, 5).uGlow).toBe(0)
+    // After clip ends, falls back to undefined
+    expect(evaluateMaterial(s, 5).uGlow).toBeUndefined()
   })
 
   it('material channel with default param value (no override)', () => {
@@ -462,8 +465,9 @@ describe('custom parameter channel evaluation', () => {
 
     // t=0: u=0 -> kf=1, base=0, gain=2 (default) -> 0 * (2*1) = 0
     expect(evaluateMaterial(s, 0).uGlow).toBe(0)
-    // t=5: u=1 -> kf=3, base=0, gain=2 (default) -> 0 * (2*3) = 0
-    expect(evaluateMaterial(s, 5).uGlow).toBe(0)
+    // t=1 at end -> 0; t=5 after end falls back to undefined (no base)
+    expect(evaluateMaterial(s, 1).uGlow).toBe(0)
+    expect(evaluateMaterial(s, 5).uGlow).toBeUndefined()
   })
 
   it('material channel with base override and default param value', () => {
@@ -496,8 +500,9 @@ describe('custom parameter channel evaluation', () => {
 
     // t=0: u=0 -> kf=1, base=5, gain=2 -> 5 * (2*1) = 10
     expect(evaluateMaterial(s, 0).uGlow).toBe(10)
-    // t=5: u=1 -> kf=3, base=5, gain=2 -> 5 * (2*3) = 30
-    expect(evaluateMaterial(s, 5).uGlow).toBe(30)
+    // t=1 at end -> 30; t=5 after end falls back to base 5
+    expect(evaluateMaterial(s, 1).uGlow).toBe(30)
+    expect(evaluateMaterial(s, 5).uGlow).toBe(5)
   })
 
   it('material channel target scratch reuse — same object returned', () => {

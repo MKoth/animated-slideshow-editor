@@ -123,8 +123,9 @@ describe('clip composition', () => {
     // Clip duration is 1s, speed=1, startTime=0
     // t=0: u=0 -> 10
     expect(evaluate(system, nodeId, 0).transform.x).toBe(10)
-    // t=5: u=clamp(5/1, 0, 1)=1 -> 20 (clamped at end)
-    expect(evaluate(system, nodeId, 5).transform.x).toBe(20)
+    // t=1: at end still active -> 20; after end (t=5) falls back to base 0
+    expect(evaluate(system, nodeId, 1).transform.x).toBe(20)
+    expect(evaluate(system, nodeId, 5).transform.x).toBe(0)
   })
 
   it('opacity channel writes to state.opacity, not state.transform.opacity', () => {
@@ -139,7 +140,7 @@ describe('clip composition', () => {
     expect(evaluate(system, nodeId, 0).opacity).toBe(0)
     expect(evaluate(system, nodeId, 0.5).opacity).toBeCloseTo(0.5)
     expect(evaluate(system, nodeId, 1).opacity).toBe(1)
-    // After clip ends, holds at last keyframe value
+    // After clip ends, falls back to base opacity 1
     expect(evaluate(system, nodeId, 5).opacity).toBe(1)
   })
 
@@ -157,8 +158,8 @@ describe('clip composition', () => {
     expect(evaluate(system, nodeId, 0.5).opacity).toBeCloseTo(0.5)
     expect(evaluate(system, nodeId, 0.75).opacity).toBeCloseTo(0.25)
     expect(evaluate(system, nodeId, 1).opacity).toBe(0)
-    // After clip ends, holds at 0
-    expect(evaluate(system, nodeId, 5).opacity).toBe(0)
+    // After clip ends, falls back to base opacity 1
+    expect(evaluate(system, nodeId, 5).opacity).toBe(1)
   })
 
   it('single linked channel (gain): base * (gain * kf(u))', () => {
@@ -190,8 +191,9 @@ describe('clip composition', () => {
     // Clip duration is 1s, speed=1, startTime=0
     // t=0: u=0 -> kf=1, base=10, gain=1 -> 10 * (1*1) = 10
     expect(evaluate(system, nodeB.id, 0).transform.x).toBe(10)
-    // t=5: u=clamp(5/1, 0, 1)=1 -> kf=2, base=10, gain=1 -> 10 * (1*2) = 20
-    expect(evaluate(system, nodeB.id, 5).transform.x).toBe(20)
+    // t=1 at end -> 20; t=5 after end falls back to base 10
+    expect(evaluate(system, nodeB.id, 1).transform.x).toBe(20)
+    expect(evaluate(system, nodeB.id, 5).transform.x).toBe(10)
   })
 
   it('linked channel with param override: base * (override * kf(u))', () => {
@@ -223,7 +225,8 @@ describe('clip composition', () => {
     // Clip duration is 1s, speed=1, startTime=0
     // t=0: u=0 -> kf=1, base=10, gain=0.5 -> 10 * (0.5*1) = 5
     expect(evaluate(system, nodeB.id, 0).transform.x).toBe(5)
-    // t=5: u=clamp(5/1, 0, 1)=1 -> kf=2, base=10, gain=0.5 -> 10 * (0.5*2) = 10
+    // t=1 at end -> 10; t=5 after end falls back to base 10
+    expect(evaluate(system, nodeB.id, 1).transform.x).toBe(10)
     expect(evaluate(system, nodeB.id, 5).transform.x).toBe(10)
   })
 
@@ -254,7 +257,7 @@ describe('clip composition', () => {
     // Clip duration is 1s, starts at t=5 in slide time
     assignClip(system, nodeId, clipId, { startTime: 5 })
 
-    // Before clip starts: u=clamp((0-5)*1/1, 0, 1)=0 -> 0
+    // Before clip starts: falls back to base 0
     expect(evaluate(system, nodeId, 0).transform.x).toBe(0)
     // At clip start: u=0 -> 0
     expect(evaluate(system, nodeId, 5).transform.x).toBe(0)
@@ -262,8 +265,8 @@ describe('clip composition', () => {
     expect(evaluate(system, nodeId, 5.5).transform.x).toBe(50)
     // At clip end: u=clamp((6-5)*1/1, 0, 1)=1 -> 100
     expect(evaluate(system, nodeId, 6).transform.x).toBe(100)
-    // After clip end: u=1 -> 100 (holds)
-    expect(evaluate(system, nodeId, 10).transform.x).toBe(100)
+    // After clip end: falls back to base 0
+    expect(evaluate(system, nodeId, 10).transform.x).toBe(0)
   })
 
   it('speed affects clip-local time', () => {
@@ -282,11 +285,11 @@ describe('clip composition', () => {
     expect(evaluate(system, nodeId, 0.25).transform.x).toBe(50)
     // u=clamp((0.5-0)*2/1, 0, 1)=1 -> 100 (clip finished at t=0.5)
     expect(evaluate(system, nodeId, 0.5).transform.x).toBe(100)
-    // After clip: holds at 100
-    expect(evaluate(system, nodeId, 5).transform.x).toBe(100)
+    // After clip: falls back to base 0
+    expect(evaluate(system, nodeId, 5).transform.x).toBe(0)
   })
 
-  it('u clamps to [0,1] — holds at end', () => {
+  it('u clamps to [0,1] — falls back after end', () => {
     const { system, nodeId } = setup()
     const clipId = createClipWithChannel(system, 'positionX', [
       { time: 0, value: 0 },
@@ -294,8 +297,12 @@ describe('clip composition', () => {
     ])
     assignClip(system, nodeId, clipId)
 
-    expect(evaluate(system, nodeId, 3).transform.x).toBe(50)
-    expect(evaluate(system, nodeId, 10).transform.x).toBe(50)
+    // within clip
+    expect(evaluate(system, nodeId, 0.5).transform.x).toBe(50)
+    expect(evaluate(system, nodeId, 1).transform.x).toBe(50)
+    // after end falls back to base 0
+    expect(evaluate(system, nodeId, 3).transform.x).toBe(0)
+    expect(evaluate(system, nodeId, 10).transform.x).toBe(0)
   })
 
   it('camera rotation contributes nothing', () => {
@@ -497,11 +504,13 @@ describe('cross-slide clip assignment', () => {
     // Assign the same clip to node on slide 2
     assignClip(system, node2Inverse.nodeId, clipId)
 
-    // Both nodes evaluate to the same clip values
+    // Both nodes evaluate to the same clip values within duration; after end fall back to base 0
     expect(evaluate(system, nodeId, 0).transform.x).toBe(100)
     expect(evaluate(system, node2Inverse.nodeId, 0).transform.x).toBe(100)
-    expect(evaluate(system, nodeId, 5).transform.x).toBe(200)
-    expect(evaluate(system, node2Inverse.nodeId, 5).transform.x).toBe(200)
+    expect(evaluate(system, nodeId, 1).transform.x).toBe(200)
+    expect(evaluate(system, node2Inverse.nodeId, 1).transform.x).toBe(200)
+    expect(evaluate(system, nodeId, 5).transform.x).toBe(0)
+    expect(evaluate(system, node2Inverse.nodeId, 5).transform.x).toBe(0)
   })
 })
 

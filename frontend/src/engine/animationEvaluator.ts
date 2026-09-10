@@ -48,6 +48,21 @@ function effectiveUForClip(
   return u
 }
 
+const CLIP_EPS = 1e-9
+const MIN_ACTIVE_SPEED = 1e-9
+
+function isClipInstanceActive(
+  instance: { startTime: number; speed: number },
+  clip: { duration: number },
+  time: number,
+): boolean {
+  if (clip.duration <= 0) return false
+  if (time < instance.startTime - CLIP_EPS) return false
+  if (instance.speed <= MIN_ACTIVE_SPEED) return true
+  const end = instance.startTime + clip.duration / instance.speed
+  return time <= end + CLIP_EPS
+}
+
 export interface EvaluatedNodeState {
   readonly transform: Transform
   readonly opacity: number
@@ -421,8 +436,7 @@ export class AnimationEvaluator {
       } catch {
         continue
       }
-      if (clip.duration <= 0) continue
-      if (time < instance.startTime) continue
+      if (!isClipInstanceActive(instance, clip, time)) continue
       const u = Math.min(
         Math.max(((time - instance.startTime) * instance.speed) / clip.duration, 0),
         1,
@@ -450,8 +464,7 @@ export class AnimationEvaluator {
       } catch {
         continue
       }
-      if (clip.duration <= 0) continue
-      if (time < instance.startTime) continue
+      if (!isClipInstanceActive(instance, clip, time)) continue
       const u = Math.min(
         Math.max(((time - instance.startTime) * instance.speed) / clip.duration, 0),
         1,
@@ -528,8 +541,7 @@ export class AnimationEvaluator {
         } catch {
           continue
         }
-        if (clip.duration <= 0) continue
-        if (clampedTime < instance.startTime) continue
+        if (!isClipInstanceActive(instance, clip, clampedTime)) continue
         const u = Math.min(
           Math.max(((clampedTime - instance.startTime) * instance.speed) / clip.duration, 0),
           1,
@@ -593,8 +605,7 @@ export class AnimationEvaluator {
         } catch {
           continue
         }
-        if (clip.duration <= 0) continue
-        if (clampedTime < instance.startTime) continue
+        if (!isClipInstanceActive(instance, clip, clampedTime)) continue
         const u = Math.min(
           Math.max(((clampedTime - instance.startTime) * instance.speed) / clip.duration, 0),
           1,
@@ -1070,13 +1081,7 @@ export class AnimationEvaluator {
         continue
       }
 
-      if (clip.duration <= 0) {
-        continue
-      }
-
-      // Clips that haven't started yet must not contribute — otherwise their
-      // first-keyframe value overrides earlier clips on the same channel.
-      if (time < instance.startTime) {
+      if (!isClipInstanceActive(instance, clip, time)) {
         continue
       }
 
@@ -1170,11 +1175,7 @@ export class AnimationEvaluator {
         continue
       }
 
-      if (clip.duration <= 0) {
-        continue
-      }
-
-      if (time < instance.startTime) {
+      if (!isClipInstanceActive(instance, clip, time)) {
         continue
       }
 
