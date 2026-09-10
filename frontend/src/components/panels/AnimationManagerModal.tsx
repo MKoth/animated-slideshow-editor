@@ -1047,6 +1047,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       if (target.closest('[data-testid^="orphan-diamond"]')) return
       if (target.closest('[data-testid="orphan-context-menu"]')) return
       if (target.closest('[data-testid="clip-extraction-modal"]')) return
+      if (target.closest('[data-testid^="manager-toggle-"]')) return
       if (e.button !== 0) return
       // Only start marquee on background of orphans container
       if (!orphansContainerRef.current?.contains(target as Node)) return
