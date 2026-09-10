@@ -148,12 +148,16 @@ export function ClipEditBody({
     return refs
   }, [rows, engine, clipId])
 
-  // Selection items for marquee
+  // Selection items for marquee — time in seconds for timeline display (norm * duration)
   const allSelectionItems: KeyframeSelectionItem[] = []
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
     const row = rows[rowIndex]
     for (const keyframe of engine.getClipChannelKeyframes(clipId, row.channel)) {
-      allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
+      allSelectionItems.push({
+        keyframeId: keyframe.id,
+        time: keyframe.time * (duration || 1),
+        rowIndex,
+      })
     }
   }
   const allSelectionItemsRef = useRef<KeyframeSelectionItem[]>([])
@@ -417,14 +421,15 @@ export function ClipEditBody({
       return
     }
     try {
-      const time = scrubTime
+      const normTime = duration > 0 ? scrubTime / duration : 0
+      const clampedNorm = Math.max(0, Math.min(1, normTime))
       const existing = engine.getClipChannelKeyframes(clipId, target.channel)
-      const alreadyExists = existing.some((kf) => kf.time === time)
+      const alreadyExists = existing.some((kf) => Math.abs(kf.time - clampedNorm) < 1e-9)
       if (!alreadyExists) {
         const result = dispatch(
           new AddClipKeyframeCommand({
             target: { kind: 'clip', clipId, channel: target.channel },
-            time,
+            time: clampedNorm,
             value: 0,
           }),
         )
@@ -465,25 +470,35 @@ export function ClipEditBody({
   const ticks = rulerTickTimes(scrollTime, visibleEnd, step)
   const contentWidth = Math.max(viewportWidth, duration * pps + TRAILING_SCROLL_PADDING_PX)
 
-  const effectiveSelectionBounds = selectionBounds
+  // selectionBounds are in normalized 0..1, convert to seconds for pixel math
+  const effectiveSelectionBoundsSec = selectionBounds
     ? (() => {
-        if (!scalePreview || scalePreview.size === 0) return selectionBounds
-        let minTime = Infinity
-        let maxTime = -Infinity
-        for (const id of selectedKeyframeIds) {
-          const previewTime = scalePreview.get(id)
-          const ref = keyframeRefsMap.get(id)
-          const time = previewTime ?? ref?.time ?? 0
-          if (time < minTime) minTime = time
-          if (time > maxTime) maxTime = time
+        const dur = duration || 1
+        if (!scalePreview || scalePreview.size === 0) {
+          return {
+            minTime: selectionBounds.minTime * dur,
+            maxTime: selectionBounds.maxTime * dur,
+          }
         }
-        return minTime === Infinity
-          ? selectionBounds
-          : {
-              ...selectionBounds,
-              minTime,
-              maxTime,
-            }
+        let minNorm = Infinity
+        let maxNorm = -Infinity
+        for (const id of selectedKeyframeIds) {
+          const previewNorm = scalePreview.get(id)
+          const ref = keyframeRefsMap.get(id)
+          const timeNorm = previewNorm ?? ref?.time ?? 0
+          if (timeNorm < minNorm) minNorm = timeNorm
+          if (timeNorm > maxNorm) maxNorm = timeNorm
+        }
+        if (minNorm === Infinity) {
+          return {
+            minTime: selectionBounds.minTime * dur,
+            maxTime: selectionBounds.maxTime * dur,
+          }
+        }
+        return {
+          minTime: minNorm * dur,
+          maxTime: maxNorm * dur,
+        }
       })()
     : null
 
@@ -516,13 +531,17 @@ export function ClipEditBody({
                 title="Add keyframe at the playhead"
                 onClick={() => {
                   try {
+                    const normTime = duration > 0 ? scrubTime / duration : 0
+                    const clampedNorm = Math.max(0, Math.min(1, normTime))
                     const existing = engine.getClipChannelKeyframes(clipId, row.channel)
-                    const alreadyExists = existing.some((kf) => kf.time === scrubTime)
+                    const alreadyExists = existing.some(
+                      (kf) => Math.abs(kf.time - clampedNorm) < 1e-9,
+                    )
                     if (!alreadyExists) {
                       const result = dispatch(
                         new AddClipKeyframeCommand({
                           target: { kind: 'clip', clipId, channel: row.channel },
-                          time: scrubTime,
+                          time: clampedNorm,
                           value: 0,
                         }),
                       )
@@ -610,9 +629,10 @@ export function ClipEditBody({
                     style={{ top: index * ROW_HEIGHT }}
                   >
                     {keyframes.map((keyframe) => {
-                      const previewTime =
+                      const previewNorm =
                         scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
-                      const shownTime = previewTime ?? keyframe.time
+                      const shownNorm = previewNorm ?? keyframe.time
+                      const shownTime = shownNorm * (duration || 1)
                       const selected = selectedKeyframeIds.includes(keyframe.id)
                       return (
                         <KeyframeMarker
@@ -656,16 +676,17 @@ export function ClipEditBody({
                 }}
               />
             )}
-            {effectiveSelectionBounds && selectedKeyframeIds.length >= 2 && (
+            {effectiveSelectionBoundsSec && selectedKeyframeIds.length >= 2 && (
               <SelectionScaleBox
                 bounds={{
-                  minX: effectiveSelectionBounds.minTime * pps,
-                  maxX: effectiveSelectionBounds.maxTime * pps,
+                  minX: effectiveSelectionBoundsSec.minTime * pps,
+                  maxX: effectiveSelectionBoundsSec.maxTime * pps,
                   minY: 0,
                   maxY: rows.length * ROW_HEIGHT,
                 }}
                 onScaleStart={(edge, clientX, isAlt) => {
-                  startScale(edge, clientX, isAlt, scrubTime)
+                  const playheadNorm = duration > 0 ? scrubTime / duration : 0
+                  startScale(edge, clientX, isAlt, playheadNorm)
                 }}
               />
             )}

@@ -15,6 +15,11 @@ import {
 import { NumericField } from './inspectorFields'
 import { parseFiniteNumber } from '../../app/inspectorActions'
 import { useEngineEvent } from '../../app/useEngine'
+import {
+  visualDurationForClip,
+  clampedSpeedForVisual,
+  MIN_VISUAL_DURATION,
+} from '../../engine/animationManagerModel'
 
 function InstanceRow({
   instance,
@@ -57,6 +62,30 @@ function InstanceRow({
     try {
       const value = parseFiniteNumber(raw, 'Speed')
       dispatch(new SetClipInstanceSpeedCommand({ nodeId, instanceId: instance.id, speed: value }))
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  // Effective duration = original / speed (clamped). Bidirectional with speed.
+  const originalDuration = clip?.duration ?? 0
+  const effectiveDuration = clip ? visualDurationForClip(clip, instance) : 0
+
+  const commitEffective = (raw: string) => {
+    if (!clip) {
+      notify('No clip definition found')
+      return
+    }
+    try {
+      const value = parseFiniteNumber(raw, 'Effective')
+      const clampedEff = Math.max(value, MIN_VISUAL_DURATION)
+      if (clip.duration <= 0) {
+        // Zero-duration clips have no meaningful speed mapping
+        dispatch(new SetClipInstanceSpeedCommand({ nodeId, instanceId: instance.id, speed: 1 }))
+        return
+      }
+      const newSpeed = clampedSpeedForVisual(clip.duration, clampedEff)
+      dispatch(new SetClipInstanceSpeedCommand({ nodeId, instanceId: instance.id, speed: newSpeed }))
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error))
     }
@@ -122,6 +151,28 @@ function InstanceRow({
           onAdjust={(v) => commitSpeed(String(v))}
         />
       </div>
+      {clip && (
+        <div className="clip-instance-row__fields" style={{ marginTop: 6 }}>
+          <div className="inspector-field">
+            <label className="inspector-field__label">Original</label>
+            <span
+              className="inspector-field__value"
+              title={`Original clip duration ${originalDuration.toFixed(2)}s`}
+              style={{ fontSize: 12, flex: 1, minWidth: 0 }}
+            >
+              {originalDuration.toFixed(2)}s
+            </span>
+          </div>
+          <NumericField
+            label="Effective"
+            value={effectiveDuration}
+            step={0.1}
+            disabled={playing || !clip || clip.duration <= 0}
+            onCommit={commitEffective}
+            onAdjust={(v) => commitEffective(String(v))}
+          />
+        </div>
+      )}
       {clip && clip.params.length > 0 && (
         <div className="clip-instance-row__params">
           {clip.params.map((param) => {

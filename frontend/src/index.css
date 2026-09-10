@@ -2711,12 +2711,13 @@ button:disabled {
 }
 
 .clip-instance-row__fields {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 6px;
 }
 
 .clip-instance-row__fields .inspector-field {
-  flex: 1;
+  min-width: 0;
   margin-bottom: 0;
 }
 

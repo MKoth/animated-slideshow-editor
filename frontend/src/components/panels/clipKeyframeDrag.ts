@@ -129,29 +129,33 @@ export function useClipKeyframeDrag(options: ClipKeyframeDragOptions): ClipKeyfr
       if (!session) {
         return
       }
-      const delta = timeFromClientX(event.clientX) - session.pointerStartTime
+      const deltaSec = timeFromClientX(event.clientX) - session.pointerStartTime
       const viewState = useTimelineViewStore.getState()
       const gridEnabled = viewState.gridSnapEnabled
       const keyframesEnabled = viewState.snapToKeyframesEnabled
       const draggedIds = new Set(session.moves.map((m) => m.keyframeId))
-      const candidateTimes: number[] = []
+      const dur = duration || 1
+      const candidateTimesSec: number[] = []
       if (keyframesEnabled) {
         for (const [id, ref] of keyframeRefs) {
           if (!draggedIds.has(id)) {
-            candidateTimes.push(ref.time)
+            candidateTimesSec.push(ref.time * dur)
           }
         }
       }
       const next = new Map<string, number>()
       for (const move of session.moves) {
-        const raw = move.originalTime + delta
-        const snapped = snapKeyframeTime(raw, {
+        const origSec = move.originalTime * dur
+        const rawSec = origSec + deltaSec
+        const snappedSec = snapKeyframeTime(rawSec, {
           gridEnabled,
           keyframesEnabled,
-          candidateTimes,
+          candidateTimes: candidateTimesSec,
           pps,
         })
-        next.set(move.keyframeId, clamp(snapped, 0, duration))
+        const clampedSec = clamp(snappedSec, 0, duration)
+        const nextNorm = dur > 0 ? clampedSec / dur : 0
+        next.set(move.keyframeId, clamp(nextNorm, 0, 1))
       }
       applyDragPreview(next)
     }

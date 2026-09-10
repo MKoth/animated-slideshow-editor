@@ -161,29 +161,34 @@ export function useClipKeyframeScale(options: ClipKeyframeScaleOptions): ClipKey
       if (!s) {
         return
       }
-      const raw = timeFromClientX(event.clientX)
+      const rawSec = timeFromClientX(event.clientX)
       const viewState = useTimelineViewStore.getState()
       const gridEnabled = viewState.gridSnapEnabled
       const keyframesEnabled = viewState.snapToKeyframesEnabled
       const draggedIds = new Set(selectedIds)
-      const candidateTimes: number[] = []
+      const dur = duration || 1
+      const candidateTimesSec: number[] = []
       if (keyframesEnabled) {
         for (const [id, ref] of keyframeRefs) {
           if (!draggedIds.has(id)) {
-            candidateTimes.push(ref.time)
+            candidateTimesSec.push(ref.time * dur)
           }
         }
       }
 
-      const pivot = isAlt ? playheadTime : edge === 'left' ? s.maxTime : s.minTime
-      const originalEdgeTime = edge === 'left' ? s.minTime : s.maxTime
-      const denom = originalEdgeTime - pivot
-      if (Math.abs(denom) < 1e-9) {
+      // Convert session normalized bounds to seconds for factor calculation
+      const minSec = s.minTime * dur
+      const maxSec = s.maxTime * dur
+      const playheadSec = s.playheadTime * dur
+      const pivotSec = s.isAlt ? playheadSec : edge === 'left' ? maxSec : minSec
+      const originalEdgeSec = edge === 'left' ? minSec : maxSec
+      const denomSec = originalEdgeSec - pivotSec
+      if (Math.abs(denomSec) < 1e-9) {
         return
       }
 
-      const newEdgeTime = clamp(raw, 0, duration)
-      const factor = (newEdgeTime - pivot) / denom
+      const newEdgeSec = clamp(rawSec, 0, duration)
+      const factor = (newEdgeSec - pivotSec) / denomSec
       if (factor <= 0) {
         return
       }
@@ -194,14 +199,17 @@ export function useClipKeyframeScale(options: ClipKeyframeScaleOptions): ClipKey
         if (!ref) {
           continue
         }
-        const rawTime = pivot + (ref.time - pivot) * factor
-        const snapped = snapKeyframeTime(rawTime, {
+        const refSec = ref.time * dur
+        const rawTimeSec = pivotSec + (refSec - pivotSec) * factor
+        const snappedSec = snapKeyframeTime(rawTimeSec, {
           gridEnabled,
           keyframesEnabled,
-          candidateTimes,
+          candidateTimes: candidateTimesSec,
           pps,
         })
-        next.set(id, clamp(snapped, 0, duration))
+        const clampedSec = clamp(snappedSec, 0, duration)
+        const nextNorm = dur > 0 ? clampedSec / dur : 0
+        next.set(id, clamp(nextNorm, 0, 1))
       }
       applyPreview(next)
     }

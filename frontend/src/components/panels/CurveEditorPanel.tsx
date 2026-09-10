@@ -223,17 +223,26 @@ function buildClipCurves(
   filter: string,
 ): CurveData[] {
   const curves: CurveData[] = []
+  const dur = clip.duration > 0 ? clip.duration : 1
 
   for (const channelDef of clip.channels) {
     const prop = channelDef.property
     if (!matchesFilter(prop, filter)) continue
     const keyframes = engine.getClipChannelKeyframes(clip.id, prop)
     if (keyframes.length > 0) {
+      // Map normalized 0..1 to seconds 0..duration for display
+      const scaledKeyframes = keyframes.map((kf) => ({
+        ...kf,
+        time: kf.time * dur,
+        // tangents time is also in time units; scale proportionally for visual fidelity
+        tangentIn: { time: kf.tangentIn.time * dur, value: kf.tangentIn.value },
+        tangentOut: { time: kf.tangentOut.time * dur, value: kf.tangentOut.value },
+      })) as unknown as typeof keyframes
       curves.push({
         nodeId: clip.id,
         property: prop,
         label: PROPERTY_LABELS[prop] ?? prop,
-        keyframes,
+        keyframes: scaledKeyframes,
         color: PROPERTY_COLORS[prop] ?? '#ffffff',
       })
     }
@@ -242,10 +251,11 @@ function buildClipCurves(
   return curves
 }
 
-const CLIP_TIME_MAX = 1
-
 function effectiveDuration(clip: ClipDefinition | undefined, duration: number): number {
-  return clip ? CLIP_TIME_MAX : duration
+  if (clip) {
+    return clip.duration > 0 ? clip.duration : 1
+  }
+  return duration
 }
 
 function isCircleProperty(prop: string): boolean {
@@ -632,7 +642,16 @@ export function CurveEditorPanel({
       const kf = keyframes.find((k) => k.id === keyframeId)
       if (!kf) return
 
-      const dt = clampedTime - kf.time
+      // For clip, clampedTime is seconds; convert to normalized for validation/dispatch
+      let dispatchTime = clampedTime
+      let dt = clampedTime - (kf.time as number)
+      if (clip) {
+        const dur = clip.duration > 0 ? clip.duration : 1
+        const kfNorm = kf.time as number
+        const clampedNorm = clampedTime / dur
+        dispatchTime = clampedNorm
+        dt = clampedNorm - kfNorm
+      }
       const dv = newValue - (kf.value as number)
 
       if (Math.abs(dt) < 1e-9 && Math.abs(dv) < 1e-9) return
@@ -641,7 +660,7 @@ export function CurveEditorPanel({
         dispatch,
         buildTarget(clip, nodeId, property),
         keyframeId,
-        clampedTime,
+        dispatchTime,
         newValue,
         dt,
         dv,
@@ -717,6 +736,27 @@ export function CurveEditorPanel({
         if (!broken) {
           tangentIn = { time: -newTangent.time, value: -newTangent.value }
         }
+      }
+
+      // For clip, tangent time is in seconds on canvas; convert back to normalized 0..1
+      if (clip) {
+        const dur = clip.duration > 0 ? clip.duration : 1
+        const scaleT = (t: KeyframeTangent): KeyframeTangent => ({
+          time: t.time / dur,
+          value: t.value,
+        })
+        // kf.tangent is normalized, new tangents are in seconds - convert for comparison + dispatch
+        const scaledIn = scaleT(tangentIn)
+        const scaledOut = scaleT(tangentOut)
+        const sameIn =
+          Math.abs(scaledIn.time - kf.tangentIn.time) < 1e-9 &&
+          Math.abs(scaledIn.value - kf.tangentIn.value) < 1e-9
+        const sameOut =
+          Math.abs(scaledOut.time - kf.tangentOut.time) < 1e-9 &&
+          Math.abs(scaledOut.value - kf.tangentOut.value) < 1e-9
+        if (sameIn && sameOut) return
+        dispatchTangents(dispatch, buildTarget(clip, nodeId, property), keyframeId, scaledIn, scaledOut)
+        return
       }
 
       const sameIn =
