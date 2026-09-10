@@ -178,16 +178,22 @@ button:disabled {
 
 .sidebar-tabs {
   display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 4px;
   border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
 }
 
 .sidebar-tab {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 68px;
   border: none;
-  border-radius: 0;
+  border-radius: 4px;
   background: transparent;
-  padding: 8px 0;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.2;
   color: var(--color-text-muted);
   border-bottom: 2px solid transparent;
 }
@@ -195,6 +201,7 @@ button:disabled {
 .sidebar-tab--active {
   color: var(--color-accent);
   border-bottom-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
 }
 
 .sidebar-content {
@@ -805,13 +812,18 @@ button:disabled {
 
 .animation-cell__actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
+  justify-content: center;
 }
 
 .animation-cell__actions button {
-  flex: 1;
-  font-size: 11px;
-  padding: 2px 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 9px;
+  line-height: 1.2;
+  padding: 1px 4px;
+  white-space: nowrap;
 }
 
 .clip-detail {
