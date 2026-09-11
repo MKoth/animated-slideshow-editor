@@ -51,6 +51,9 @@ import {
   MoveClipLayerCommand,
   ReverseClipCommand,
   ReverseCollectionCommand,
+  RemoveClipCommand,
+  DeleteCollectionPlacementCommand,
+  DeleteClipCommand,
 } from '../../engine/commands'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useSelectionStore } from '../../stores/selectionStore'
@@ -62,6 +65,8 @@ import type { AnimatedParam } from '../../engine/animationManagerModel'
 import type { KeyframeTarget } from '../../engine/keyframeTarget'
 import { assetsApi } from '../../api'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
+import { ManagerRuler, OrphanRuler } from './ManagerRuler'
+import { snapKeyframeTime } from '../../engine/timelineSnapping'
 
 interface AnimationManagerModalProps {
   open: boolean
@@ -750,6 +755,165 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     return []
   }, [managerRows, parentNode, engine, dragState, activeSlide])
 
+  // Delete/Backspace scoped handling – deletes only selected manager items, not whole object (capture to preempt global)
+  useEffect(() => {
+    if (!open) return
+    const isEditableTarget = (target: EventTarget | null) => {
+      if (!(target instanceof HTMLElement)) return false
+      return (
+        target.isContentEditable ||
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT'
+      )
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return
+      const isDelete = e.key === 'Delete' || e.key === 'Backspace'
+      if (!isDelete) return
+      if (
+        reverseClipPrompt ||
+        reverseCollectionPrompt ||
+        collectionCreateOpen ||
+        editingCollectionId ||
+        deleteConfirmCollectionId ||
+        deleteOrphansConfirm ||
+        orphanExtraction
+      ) {
+        return
+      }
+      if (editing) return
+      if (selectedPlacementId) {
+        e.preventDefault()
+        e.stopPropagation()
+        try {
+          ;(e as unknown as { stopImmediatePropagation?: () => void }).stopImmediatePropagation?.()
+        } catch {
+          void 0
+        }
+        const pid = selectedPlacementId
+        const result = dispatch(new DeleteCollectionPlacementCommand({ placementId: pid }))
+        if (!result.ok) notify(result.error.message)
+        else notify('Deleted collection placement')
+        setSelectedPlacementId(null)
+        return
+      }
+      if (activeTab === 'orphans' && selectedOrphanIds.size > 0) {
+        e.preventDefault()
+        e.stopPropagation()
+        try {
+          ;(e as unknown as { stopImmediatePropagation?: () => void }).stopImmediatePropagation?.()
+        } catch {
+          void 0
+        }
+        const entries = flatOrphanEntries.filter((en) => selectedOrphanIds.has(en.keyframeId))
+        if (entries.length === 0) return
+        const groups = new Map<string, { target: KeyframeTarget; ids: string[] }>()
+        for (const en of entries) {
+          const t = en.target as KeyframeTarget
+          let key: string
+          if (t.kind === 'node' && 'property' in t)
+            key = `node:${(t as { nodeId: string }).nodeId}:${(t as { property: string }).property}`
+          else if (t.kind === 'node' && 'parameter' in t)
+            key = `node-param:${(t as { nodeId: string }).nodeId}:${(t as { parameter: string }).parameter}`
+          else if (t.kind === 'visible') key = `visible:${(t as { nodeId: string }).nodeId}`
+          else if (t.kind === 'morph') key = `morph:${(t as { nodeId: string }).nodeId}`
+          else if (t.kind === 'circle')
+            key = `circle:${(t as { nodeId: string }).nodeId}:${(t as { property: string }).property}`
+          else if (t.kind === 'shadow')
+            key = `shadow:${(t as { nodeId: string }).nodeId}:${(t as { property: string }).property}`
+          else if (t.kind === 'dataLabel')
+            key = `dataLabel:${(t as { nodeId: string }).nodeId}:${(t as { label: string }).label}`
+          else if (t.kind === 'table')
+            key = `table:${(t as { nodeId: string }).nodeId}:${(t as { property: string }).property}`
+          else if (t.kind === 'symmetry') key = `symmetry:${(t as { nodeId: string }).nodeId}`
+          else if (t.kind === 'zIndex') key = `zIndex:${(t as { nodeId: string }).nodeId}`
+          else key = `${t as { kind: string }}:${(t as { nodeId?: string }).nodeId ?? ''}`
+          const entry = groups.get(key)
+          if (entry) entry.ids.push(en.keyframeId)
+          else groups.set(key, { target: t, ids: [en.keyframeId] })
+        }
+        const cmds = [...groups.values()].map(
+          (g) => new DeleteKeyframesCommand({ target: g.target, keyframeIds: g.ids }),
+        )
+        if (cmds.length > 0) {
+          const tx =
+            cmds.length === 1 ? cmds[0] : new TransactionCommand(cmds as unknown as never[])
+          const result = dispatch(tx as never)
+          if (!result.ok) notify(result.error.message)
+          else notify(`Deleted ${entries.length} orphan keyframe(s)`)
+        }
+        setSelectedOrphanIds(new Set())
+        setOrphanAnchorId(null)
+        return
+      }
+      if (activeTab === 'clips' && selectedClipIds.size > 0) {
+        e.preventDefault()
+        e.stopPropagation()
+        try {
+          ;(e as unknown as { stopImmediatePropagation?: () => void }).stopImmediatePropagation?.()
+        } catch {
+          void 0
+        }
+        const cmds: import('../../engine/commands').Command<unknown>[] = []
+        for (const instId of selectedClipIds) {
+          const info = instanceToNode.get(instId)
+          if (!info) continue
+          cmds.push(
+            new RemoveClipCommand({
+              nodeId: info.nodeId,
+              instanceId: instId,
+            }) as unknown as import('../../engine/commands').Command<unknown>,
+          )
+        }
+        if (cmds.length > 0) {
+          const tx =
+            cmds.length === 1 ? cmds[0] : new TransactionCommand(cmds as unknown as never[])
+          const result = dispatch(tx as never)
+          if (!result.ok) notify(result.error.message)
+          else notify(`Removed ${cmds.length} clip lane(s)`)
+        }
+        setSelectedClipIds(new Set())
+        setClipAnchorId(null)
+        setSelectedInstanceId(null)
+        return
+      }
+      if (selectedClipIds.size > 0 || selectedOrphanIds.size > 0 || selectedPlacementId) {
+        e.preventDefault()
+        e.stopPropagation()
+        try {
+          ;(e as unknown as { stopImmediatePropagation?: () => void }).stopImmediatePropagation?.()
+        } catch {
+          void 0
+        }
+      }
+    }
+    document.addEventListener('keydown', onKey, true)
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      document.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('keydown', onKey, true)
+    }
+  }, [
+    open,
+    editing,
+    activeTab,
+    selectedPlacementId,
+    selectedOrphanIds,
+    selectedClipIds,
+    flatOrphanEntries,
+    instanceToNode,
+    dispatch,
+    notify,
+    reverseClipPrompt,
+    reverseCollectionPrompt,
+    collectionCreateOpen,
+    editingCollectionId,
+    deleteConfirmCollectionId,
+    deleteOrphansConfirm,
+    orphanExtraction,
+  ])
+
   // --- Orphan multi-select helpers ---
   const handleOrphanDiamondClick = useCallback(
     (e: React.MouseEvent, entry: OrphanEntry) => {
@@ -989,12 +1153,85 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
 
   const handleDeleteCollection = useCallback(
     (collectionId: string) => {
-      const result = dispatch(new DeleteClipCollectionCommand({ collectionId }))
-      if (!result.ok) notify(result.error.message)
-      else notify('Collection deleted — placed lanes remain as plain ClipInstances')
-      setDeleteConfirmCollectionId(null)
+      try {
+        const col = engine.getClipCollection(collectionId)
+        const allCols = engine.clipCollections
+        const clipIds = [...col.bindings.values()]
+        // Only delete clips exclusively owned by this collection (not shared)
+        const exclusiveClipIds = clipIds.filter(
+          (cid) =>
+            !allCols.some((c) => c.id !== collectionId && [...c.bindings.values()].includes(cid)),
+        )
+        // Collect all ClipInstances referencing exclusive clips
+        const instancesToRemove: { nodeId: string; instanceId: string }[] = []
+        if (exclusiveClipIds.length > 0 && engine.project) {
+          for (const slide of engine.project.slides) {
+            for (const node of walkPreOrder(slide.scene.root)) {
+              for (const inst of node.clipInstances) {
+                if (exclusiveClipIds.includes(inst.clipId)) {
+                  instancesToRemove.push({ nodeId: node.id, instanceId: inst.id })
+                }
+              }
+            }
+          }
+        }
+        let mergeCount = 0
+        if (instancesToRemove.length > 0) {
+          const cmds = instancesToRemove.map(
+            ({ nodeId, instanceId }) => new RemoveClipCommand({ nodeId, instanceId }),
+          )
+          const tx = new TransactionCommand(cmds as unknown as never[])
+          const res = dispatch(tx as never)
+          if (!res.ok) {
+            notify(res.error.message)
+            return
+          }
+          mergeCount++
+        }
+        const existingExclusive = exclusiveClipIds.filter((cid) => {
+          try {
+            engine.getClip(cid)
+            return true
+          } catch {
+            return false
+          }
+        })
+        if (existingExclusive.length > 0) {
+          const cmds = existingExclusive.map((cid) => new DeleteClipCommand({ clipId: cid }))
+          const tx = new TransactionCommand(cmds as unknown as never[])
+          const res = dispatch(tx as never)
+          if (!res.ok) {
+            notify(res.error.message)
+            return
+          }
+          mergeCount++
+        }
+        const resCol = dispatch(new DeleteClipCollectionCommand({ collectionId }))
+        if (!resCol.ok) {
+          notify(resCol.error.message)
+          return
+        }
+        mergeCount++
+        if (mergeCount > 1) {
+          try {
+            undoStack.mergeLastAsTransaction(mergeCount)
+          } catch {
+            /* ignore */
+          }
+        }
+        if (existingExclusive.length > 0) {
+          notify(`Collection deleted — ${existingExclusive.length} clip(s) also deleted`)
+        } else if (clipIds.length > 0 && exclusiveClipIds.length === 0) {
+          notify('Collection deleted — clips kept (shared with other collections)')
+        } else {
+          notify('Collection deleted')
+        }
+        setDeleteConfirmCollectionId(null)
+      } catch (e) {
+        notify(e instanceof Error ? e.message : String(e))
+      }
     },
-    [dispatch, notify],
+    [dispatch, notify, engine, undoStack],
   )
 
   const openEditCollection = useCallback(
@@ -2117,215 +2354,231 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 No placed collections. Select a collection above → Place at playhead.
               </div>
             ) : (
-              <div
-                data-testid="collection-lanes"
-                style={{
-                  position: 'relative',
-                  height: (() => {
-                    const maxTrack =
-                      packedCollectionLanes.length > 0
-                        ? Math.max(...packedCollectionLanes.map((l) => l.track))
-                        : 0
-                    return (maxTrack + 1) * CLIP_LANE_HEIGHT_PX
-                  })(),
-                  minHeight: CLIP_LANE_HEIGHT_PX,
-                  border: '1px solid var(--color-border, #eee)',
-                  borderRadius: 4,
-                  background: 'var(--color-bg, #fafafa)',
-                  overflowX: 'auto',
-                  overflowY: 'hidden',
-                }}
-              >
-                <div
-                  style={{
-                    position: 'relative',
-                    width: `${(() => {
-                      const maxEnd =
-                        packedCollectionLanes.length > 0
-                          ? Math.max(...packedCollectionLanes.map((l) => l.end))
-                          : 0
-                      const slideDuration = activeSlide?.duration ?? 10
-                      return Math.max(slideDuration, maxEnd + 1) * pps
-                    })()}px`,
-                    height: '100%',
-                  }}
-                >
-                  {packedCollectionLanes.map((lane) => {
-                    const isSelected = selectedPlacementId === lane.placement.id
-                    const isDragging =
-                      dragState &&
-                      'placementId' in dragState &&
-                      dragState.placementId === lane.placement.id
-                    // Tooltip with collection name and bindings
-                    let tooltip = lane.collection.name
-                    try {
-                      const bindings = [...lane.collection.bindings.entries()].map(
-                        ([sem, clipId]) => {
-                          try {
-                            return `${sem} → ${engine.getClip(clipId).name}`
-                          } catch {
-                            return `${sem} → ${clipId.slice(0, 6)}`
-                          }
-                        },
-                      )
-                      if (bindings.length > 0) tooltip += `\n${bindings.join('\n')}`
-                      tooltip += `\nstart ${lane.start.toFixed(2)}s visual ${lane.visualDuration.toFixed(2)}s`
-                    } catch {
-                      tooltip = lane.collection.name
-                    }
-                    const barStyle: React.CSSProperties = {
-                      position: 'absolute',
-                      left: lane.left,
-                      width: lane.width,
-                      top: lane.track * CLIP_LANE_HEIGHT_PX + 2,
-                      height: CLIP_LANE_BAR_HEIGHT_PX,
-                      background: isSelected ? 'var(--color-accent, #7c5cff)' : '#d4c5ff',
-                      border: `1px solid ${isSelected ? '#4c1d95' : '#7c5cff'}`,
+              (() => {
+                const collectionSlideDuration = activeSlide?.duration ?? 10
+                const collectionMaxEnd =
+                  packedCollectionLanes.length > 0
+                    ? Math.max(...packedCollectionLanes.map((l) => l.end))
+                    : 0
+                const collectionTimelineWidth =
+                  Math.max(collectionSlideDuration, collectionMaxEnd + 1) * pps
+                return (
+                  <div
+                    data-testid="collection-lanes"
+                    style={{
+                      position: 'relative',
+                      border: '1px solid var(--color-border, #eee)',
                       borderRadius: 4,
-                      display: 'flex',
-                      alignItems: 'center',
-                      padding: '0 8px',
-                      boxSizing: 'border-box',
-                      cursor: isDragging ? 'grabbing' : 'grab',
-                      zIndex: lane.zIndex,
-                      userSelect: 'none',
-                      overflow: 'hidden',
-                    }
-                    const handleStyle = (side: 'left' | 'right'): React.CSSProperties => ({
-                      position: 'absolute',
-                      top: 0,
-                      bottom: 0,
-                      width: CLIP_HANDLE_WIDTH_PX,
-                      ...(side === 'left' ? { left: 0 } : { right: 0 }),
-                      cursor: 'ew-resize',
-                      background: 'rgba(0,0,0,0.06)',
-                      borderLeft: side === 'left' ? '1px solid rgba(0,0,0,0.15)' : undefined,
-                      borderRight: side === 'right' ? '1px solid rgba(0,0,0,0.15)' : undefined,
-                    })
-                    const handlePointerDown = (
-                      e: React.PointerEvent,
-                      mode: 'collection-resize-left' | 'collection-resize-right',
-                    ) => {
-                      if (e.button !== 0) return
-                      e.preventDefault()
-                      e.stopPropagation()
-                      setSelectedPlacementId(lane.placement.id)
-                      if (mode === 'collection-resize-right') {
-                        setDragState({
-                          mode: 'collection-resize-right',
-                          placementId: lane.placement.id,
-                          collectionId: lane.collection.id,
-                          parentNodeId: parentNode.id,
-                          initialStart: lane.start,
-                          initialVisual: lane.visualDuration,
-                          startX: e.clientX,
-                          previewVisual: lane.visualDuration,
-                          previewStart: lane.start,
-                        } as DragState)
-                      } else {
-                        const rightEdge = lane.start + lane.visualDuration
-                        setDragState({
-                          mode: 'collection-resize-left',
-                          placementId: lane.placement.id,
-                          collectionId: lane.collection.id,
-                          parentNodeId: parentNode.id,
-                          initialStart: lane.start,
-                          initialVisual: lane.visualDuration,
-                          rightEdge,
-                          startX: e.clientX,
-                          previewVisual: lane.visualDuration,
-                          previewStart: lane.start,
-                        } as DragState)
-                      }
-                    }
-                    const barPointerDown = (e: React.PointerEvent) => {
-                      const target = e.target as HTMLElement
-                      if (target.dataset.testid?.startsWith('collection-handle')) return
-                      if (e.button !== 0) return
-                      e.preventDefault()
-                      e.stopPropagation()
-                      setSelectedPlacementId(lane.placement.id)
-                      // Check for multi-axis: record startY for reorder detection
-                      const startY = e.clientY
-                      const parent = parentNode
-                      const initialIndex = parent.collectionPlacements.findIndex(
-                        (p) => p.id === lane.placement.id,
-                      )
-                      setDragState({
-                        mode: 'collection-move',
-                        placementId: lane.placement.id,
-                        collectionId: lane.collection.id,
-                        parentNodeId: parent.id,
-                        initialStart: lane.start,
-                        initialVisual: lane.visualDuration,
-                        startX: e.clientX,
-                        previewStart: lane.start,
-                        startY,
-                        initialIndex: initialIndex === -1 ? lane.track : initialIndex,
-                        previewIndex: initialIndex === -1 ? lane.track : initialIndex,
-                      } as DragState)
-                    }
-                    const handleContextMenu = (e: React.MouseEvent) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      setCollectionPlacementMenu({
-                        x: e.clientX,
-                        y: e.clientY,
-                        placementId: lane.placement.id,
-                      })
-                    }
-                    return (
+                      background: 'var(--color-bg, #fafafa)',
+                      overflowX: 'auto',
+                      overflowY: 'hidden',
+                    }}
+                  >
+                    <div style={{ width: `${collectionTimelineWidth}px` }}>
+                      <ManagerRuler
+                        durationSec={collectionSlideDuration}
+                        pps={pps}
+                        widthPx={collectionTimelineWidth}
+                        testId="collection-ruler"
+                      />
                       <div
-                        key={lane.placement.id}
-                        data-testid={`collection-lane-${lane.placement.id}`}
-                        data-placement-id={lane.placement.id}
-                        data-track={String(lane.track)}
-                        data-start={String(lane.start)}
-                        data-visual={String(lane.visualDuration)}
-                        data-selected={String(isSelected)}
-                        title={tooltip}
-                        style={barStyle}
-                        onPointerDown={barPointerDown}
-                        onContextMenu={handleContextMenu}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          const target = e.target as HTMLElement
-                          if (target.dataset.testid?.startsWith('collection-handle')) return
-                          setSelectedPlacementId(lane.placement.id)
+                        style={{
+                          position: 'relative',
+                          width: `${collectionTimelineWidth}px`,
+                          height: (() => {
+                            const maxTrack =
+                              packedCollectionLanes.length > 0
+                                ? Math.max(...packedCollectionLanes.map((l) => l.track))
+                                : 0
+                            return (maxTrack + 1) * CLIP_LANE_HEIGHT_PX
+                          })(),
+                          minHeight: CLIP_LANE_HEIGHT_PX,
                         }}
                       >
-                        <span
-                          data-testid={`collection-lane-label-${lane.placement.id}`}
-                          style={{
-                            fontSize: 11,
-                            fontWeight: 500,
-                            whiteSpace: 'nowrap',
+                        {packedCollectionLanes.map((lane) => {
+                          const isSelected = selectedPlacementId === lane.placement.id
+                          const isDragging =
+                            dragState &&
+                            'placementId' in dragState &&
+                            dragState.placementId === lane.placement.id
+                          // Tooltip with collection name and bindings
+                          let tooltip = lane.collection.name
+                          try {
+                            const bindings = [...lane.collection.bindings.entries()].map(
+                              ([sem, clipId]) => {
+                                try {
+                                  return `${sem} → ${engine.getClip(clipId).name}`
+                                } catch {
+                                  return `${sem} → ${clipId.slice(0, 6)}`
+                                }
+                              },
+                            )
+                            if (bindings.length > 0) tooltip += `\n${bindings.join('\n')}`
+                            tooltip += `\nstart ${lane.start.toFixed(2)}s visual ${lane.visualDuration.toFixed(2)}s`
+                          } catch {
+                            tooltip = lane.collection.name
+                          }
+                          const barStyle: React.CSSProperties = {
+                            position: 'absolute',
+                            left: lane.left,
+                            width: lane.width,
+                            top: lane.track * CLIP_LANE_HEIGHT_PX + 2,
+                            height: CLIP_LANE_BAR_HEIGHT_PX,
+                            background: isSelected ? 'var(--color-accent, #7c5cff)' : '#d4c5ff',
+                            border: `1px solid ${isSelected ? '#4c1d95' : '#7c5cff'}`,
+                            borderRadius: 4,
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: '0 8px',
+                            boxSizing: 'border-box',
+                            cursor: isDragging ? 'grabbing' : 'grab',
+                            zIndex: lane.zIndex,
+                            userSelect: 'none',
                             overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            flex: 1,
-                            pointerEvents: 'none',
-                            color: isSelected ? '#fff' : '#2e2e2e',
-                          }}
-                        >
-                          {lane.collection.name}
-                        </span>
-                        <div
-                          data-testid={`collection-handle-left-${lane.placement.id}`}
-                          data-handle="left"
-                          style={handleStyle('left')}
-                          onPointerDown={(e) => handlePointerDown(e, 'collection-resize-left')}
-                        />
-                        <div
-                          data-testid={`collection-handle-right-${lane.placement.id}`}
-                          data-handle="right"
-                          style={handleStyle('right')}
-                          onPointerDown={(e) => handlePointerDown(e, 'collection-resize-right')}
-                        />
+                          }
+                          const handleStyle = (side: 'left' | 'right'): React.CSSProperties => ({
+                            position: 'absolute',
+                            top: 0,
+                            bottom: 0,
+                            width: CLIP_HANDLE_WIDTH_PX,
+                            ...(side === 'left' ? { left: 0 } : { right: 0 }),
+                            cursor: 'ew-resize',
+                            background: 'rgba(0,0,0,0.06)',
+                            borderLeft: side === 'left' ? '1px solid rgba(0,0,0,0.15)' : undefined,
+                            borderRight:
+                              side === 'right' ? '1px solid rgba(0,0,0,0.15)' : undefined,
+                          })
+                          const handlePointerDown = (
+                            e: React.PointerEvent,
+                            mode: 'collection-resize-left' | 'collection-resize-right',
+                          ) => {
+                            if (e.button !== 0) return
+                            e.preventDefault()
+                            e.stopPropagation()
+                            setSelectedPlacementId(lane.placement.id)
+                            if (mode === 'collection-resize-right') {
+                              setDragState({
+                                mode: 'collection-resize-right',
+                                placementId: lane.placement.id,
+                                collectionId: lane.collection.id,
+                                parentNodeId: parentNode.id,
+                                initialStart: lane.start,
+                                initialVisual: lane.visualDuration,
+                                startX: e.clientX,
+                                previewVisual: lane.visualDuration,
+                                previewStart: lane.start,
+                              } as DragState)
+                            } else {
+                              const rightEdge = lane.start + lane.visualDuration
+                              setDragState({
+                                mode: 'collection-resize-left',
+                                placementId: lane.placement.id,
+                                collectionId: lane.collection.id,
+                                parentNodeId: parentNode.id,
+                                initialStart: lane.start,
+                                initialVisual: lane.visualDuration,
+                                rightEdge,
+                                startX: e.clientX,
+                                previewVisual: lane.visualDuration,
+                                previewStart: lane.start,
+                              } as DragState)
+                            }
+                          }
+                          const barPointerDown = (e: React.PointerEvent) => {
+                            const target = e.target as HTMLElement
+                            if (target.dataset.testid?.startsWith('collection-handle')) return
+                            if (e.button !== 0) return
+                            e.preventDefault()
+                            e.stopPropagation()
+                            setSelectedPlacementId(lane.placement.id)
+                            // Check for multi-axis: record startY for reorder detection
+                            const startY = e.clientY
+                            const parent = parentNode
+                            const initialIndex = parent.collectionPlacements.findIndex(
+                              (p) => p.id === lane.placement.id,
+                            )
+                            setDragState({
+                              mode: 'collection-move',
+                              placementId: lane.placement.id,
+                              collectionId: lane.collection.id,
+                              parentNodeId: parent.id,
+                              initialStart: lane.start,
+                              initialVisual: lane.visualDuration,
+                              startX: e.clientX,
+                              previewStart: lane.start,
+                              startY,
+                              initialIndex: initialIndex === -1 ? lane.track : initialIndex,
+                              previewIndex: initialIndex === -1 ? lane.track : initialIndex,
+                            } as DragState)
+                          }
+                          const handleContextMenu = (e: React.MouseEvent) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            setCollectionPlacementMenu({
+                              x: e.clientX,
+                              y: e.clientY,
+                              placementId: lane.placement.id,
+                            })
+                          }
+                          return (
+                            <div
+                              key={lane.placement.id}
+                              data-testid={`collection-lane-${lane.placement.id}`}
+                              data-placement-id={lane.placement.id}
+                              data-track={String(lane.track)}
+                              data-start={String(lane.start)}
+                              data-visual={String(lane.visualDuration)}
+                              data-selected={String(isSelected)}
+                              title={tooltip}
+                              style={barStyle}
+                              onPointerDown={barPointerDown}
+                              onContextMenu={handleContextMenu}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                const target = e.target as HTMLElement
+                                if (target.dataset.testid?.startsWith('collection-handle')) return
+                                setSelectedPlacementId(lane.placement.id)
+                              }}
+                            >
+                              <span
+                                data-testid={`collection-lane-label-${lane.placement.id}`}
+                                style={{
+                                  fontSize: 11,
+                                  fontWeight: 500,
+                                  whiteSpace: 'nowrap',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  flex: 1,
+                                  pointerEvents: 'none',
+                                  color: isSelected ? '#fff' : '#2e2e2e',
+                                }}
+                              >
+                                {lane.collection.name}
+                              </span>
+                              <div
+                                data-testid={`collection-handle-left-${lane.placement.id}`}
+                                data-handle="left"
+                                style={handleStyle('left')}
+                                onPointerDown={(e) =>
+                                  handlePointerDown(e, 'collection-resize-left')
+                                }
+                              />
+                              <div
+                                data-testid={`collection-handle-right-${lane.placement.id}`}
+                                data-handle="right"
+                                style={handleStyle('right')}
+                                onPointerDown={(e) =>
+                                  handlePointerDown(e, 'collection-resize-right')
+                                }
+                              />
+                            </div>
+                          )
+                        })}
                       </div>
-                    )
-                  })}
-                </div>
-              </div>
+                    </div>
+                  </div>
+                )
+              })()
             )}
             <div style={{ fontSize: 10, color: 'var(--color-text-muted, #888)', marginTop: 4 }}>
               Drag body to move (horizontal) or reorder (vertical), drag edges to stretch uniformly
@@ -2510,6 +2763,45 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               position: 'relative',
             }}
           >
+            {/* Time ruler – orphan proportional (keep diamond distribution, same pps/step as slide) */}
+            {activeTab === 'orphans' && orphanTimelineBounds && (
+              <div
+                style={{
+                  overflowX: 'hidden',
+                  flexShrink: 0,
+                  borderBottom: '1px solid var(--color-border, #ddd)',
+                }}
+              >
+                <div style={{ width: `${orphanTimelineBounds.width}px`, marginLeft: 32 }}>
+                  <OrphanRuler
+                    min={orphanTimelineBounds.min}
+                    max={orphanTimelineBounds.max}
+                    pps={pps}
+                    widthPx={orphanTimelineBounds.width}
+                    testId="orphan-ruler"
+                  />
+                </div>
+              </div>
+            )}
+            {/* Time ruler – clips tab global slide ruler (above rows, sticky) */}
+            {activeTab === 'clips' && activeSlide && (
+              <div
+                style={{
+                  overflowX: 'hidden',
+                  flexShrink: 0,
+                  borderBottom: '1px solid var(--color-border, #ddd)',
+                }}
+              >
+                <div style={{ width: `${(activeSlide.duration ?? 10) * pps}px`, marginLeft: 32 }}>
+                  <ManagerRuler
+                    durationSec={activeSlide.duration}
+                    pps={pps}
+                    widthPx={(activeSlide.duration ?? 10) * pps}
+                    testId="clips-global-ruler"
+                  />
+                </div>
+              </div>
+            )}
             {/* Column-like rows: group headers + animated params + clip lanes */}
             {managerRows.map((row) => {
               const isExpanded = expandedMap[row.node.id] ?? true
@@ -2621,13 +2913,12 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   </div>
                   {isExpanded && (
                     <div style={{ background: 'var(--color-bg-panel, #fff)' }}>
-                      {/* Clip Lanes section – only when tab is clips */}
+                      {/* Clip Lanes section – only when tab is clips, with slide-duration ruler */}
                       {activeTab === 'clips' && packedLanes.length > 0 && (
                         <div
                           data-testid={`manager-clip-lanes-${row.node.id}`}
                           style={{
                             position: 'relative',
-                            height: lanesHeight > 0 ? lanesHeight : CLIP_LANE_HEIGHT_PX,
                             margin: '6px 12px 6px 32px',
                             border: '1px solid var(--color-border, #eee)',
                             borderRadius: 4,
@@ -2636,212 +2927,230 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                             overflowY: 'hidden',
                           }}
                         >
-                          <div
-                            style={{
-                              position: 'relative',
-                              width: `${timelineWidth}px`,
-                              height: '100%',
-                            }}
-                          >
-                            {packedLanes.map((lane) => {
-                              const isSelectedSingle = selectedInstanceId === lane.instance.id
-                              const isMultiSelected = selectedClipIds.has(lane.instance.id)
-                              const isSelected = isMultiSelected || isSelectedSingle
-                              const isDragging =
-                                !!dragState &&
-                                'instanceId' in dragState &&
-                                (dragState as { instanceId: string }).instanceId ===
-                                  lane.instance.id
-                              const isEnabled = lane.instance.enabled
-                              const isHighlighted = highlightedClipInstanceId === lane.instance.id
-                              const barStyle: React.CSSProperties = {
-                                position: 'absolute',
-                                left: lane.left,
-                                width: lane.width,
-                                top: lane.track * CLIP_LANE_HEIGHT_PX + 2,
-                                height: CLIP_LANE_BAR_HEIGHT_PX,
-                                background: isHighlighted
-                                  ? '#ffcc00'
-                                  : isEnabled
-                                    ? isSelected
-                                      ? 'var(--color-accent, #7c5cff)'
-                                      : '#b8a6ff'
-                                    : '#e5e5e5',
-                                border: isHighlighted
-                                  ? '2px solid #b38f00'
-                                  : isEnabled
-                                    ? `1px solid ${isSelected ? '#4c1d95' : '#7c5cff'}`
-                                    : '1px dashed #888',
-                                borderRadius: 4,
-                                opacity: isEnabled ? 1 : 0.5,
-                                display: 'flex',
-                                alignItems: 'center',
-                                padding: '0 8px',
-                                boxSizing: 'border-box',
-                                cursor: isEnabled ? (isDragging ? 'grabbing' : 'grab') : 'default',
-                                zIndex: isHighlighted ? 999 : isMultiSelected ? 900 : lane.zIndex,
-                                userSelect: 'none',
-                                overflow: 'hidden',
-                                boxShadow: isHighlighted
-                                  ? '0 0 0 3px rgba(255,204,0,0.5)'
-                                  : undefined,
-                              }
-                              const handleStyle = (
-                                side: 'left' | 'right',
-                              ): React.CSSProperties => ({
-                                position: 'absolute',
-                                top: 0,
-                                bottom: 0,
-                                width: CLIP_HANDLE_WIDTH_PX,
-                                ...(side === 'left' ? { left: 0 } : { right: 0 }),
-                                cursor: 'ew-resize',
-                                background: 'rgba(0,0,0,0.06)',
-                                borderLeft:
-                                  side === 'left' ? '1px solid rgba(0,0,0,0.15)' : undefined,
-                                borderRight:
-                                  side === 'right' ? '1px solid rgba(0,0,0,0.15)' : undefined,
-                              })
-                              const handlePointerDown = (
-                                e: React.PointerEvent,
-                                mode: 'resize-left' | 'resize-right',
-                              ) => {
-                                if (!isEnabled) return
-                                if (e.button !== 0) return
-                                e.preventDefault()
-                                e.stopPropagation()
-                                setSelectedInstanceId(lane.instance.id)
-                                const rightEdge = lane.start + lane.visualDuration
-                                setDragState({
-                                  mode,
-                                  nodeId: row.node.id,
-                                  instanceId: lane.instance.id,
-                                  clipId: lane.clip.id,
-                                  clipDuration: lane.clip.duration,
-                                  initialStart: lane.start,
-                                  initialSpeed: lane.instance.speed,
-                                  initialVisual: lane.visualDuration,
-                                  rightEdge,
-                                  startX: e.clientX,
-                                  previewStart: lane.start,
-                                  previewSpeed: lane.instance.speed,
-                                  previewVisual: lane.visualDuration,
-                                } as DragState)
-                              }
-                              const barPointerDown = (e: React.PointerEvent) => {
-                                // If clicking on handle, ignore (handle already handled)
-                                const target = e.target as HTMLElement
-                                if (target.dataset.testid?.startsWith('clip-handle')) return
-                                if (!isEnabled) {
+                          <div style={{ width: `${timelineWidth}px` }}>
+                            <ManagerRuler
+                              durationSec={activeSlide?.duration ?? 10}
+                              pps={pps}
+                              widthPx={timelineWidth}
+                              testId={`clip-ruler-${row.node.id}`}
+                            />
+                            <div
+                              style={{
+                                position: 'relative',
+                                width: `${timelineWidth}px`,
+                                height: lanesHeight > 0 ? lanesHeight : CLIP_LANE_HEIGHT_PX,
+                              }}
+                            >
+                              {packedLanes.map((lane) => {
+                                const isSelectedSingle = selectedInstanceId === lane.instance.id
+                                const isMultiSelected = selectedClipIds.has(lane.instance.id)
+                                const isSelected = isMultiSelected || isSelectedSingle
+                                const isDragging =
+                                  !!dragState &&
+                                  'instanceId' in dragState &&
+                                  (dragState as { instanceId: string }).instanceId ===
+                                    lane.instance.id
+                                const isEnabled = lane.instance.enabled
+                                const isHighlighted = highlightedClipInstanceId === lane.instance.id
+                                const barStyle: React.CSSProperties = {
+                                  position: 'absolute',
+                                  left: lane.left,
+                                  width: lane.width,
+                                  top: lane.track * CLIP_LANE_HEIGHT_PX + 2,
+                                  height: CLIP_LANE_BAR_HEIGHT_PX,
+                                  background: isHighlighted
+                                    ? '#ffcc00'
+                                    : isEnabled
+                                      ? isSelected
+                                        ? 'var(--color-accent, #7c5cff)'
+                                        : '#b8a6ff'
+                                      : '#e5e5e5',
+                                  border: isHighlighted
+                                    ? '2px solid #b38f00'
+                                    : isEnabled
+                                      ? `1px solid ${isSelected ? '#4c1d95' : '#7c5cff'}`
+                                      : '1px dashed #888',
+                                  borderRadius: 4,
+                                  opacity: isEnabled ? 1 : 0.5,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  padding: '0 8px',
+                                  boxSizing: 'border-box',
+                                  cursor: isEnabled
+                                    ? isDragging
+                                      ? 'grabbing'
+                                      : 'grab'
+                                    : 'default',
+                                  zIndex: isHighlighted ? 999 : isMultiSelected ? 900 : lane.zIndex,
+                                  userSelect: 'none',
+                                  overflow: 'hidden',
+                                  boxShadow: isHighlighted
+                                    ? '0 0 0 3px rgba(255,204,0,0.5)'
+                                    : undefined,
+                                }
+                                const handleStyle = (
+                                  side: 'left' | 'right',
+                                ): React.CSSProperties => ({
+                                  position: 'absolute',
+                                  top: 0,
+                                  bottom: 0,
+                                  width: CLIP_HANDLE_WIDTH_PX,
+                                  ...(side === 'left' ? { left: 0 } : { right: 0 }),
+                                  cursor: 'ew-resize',
+                                  background: 'rgba(0,0,0,0.06)',
+                                  borderLeft:
+                                    side === 'left' ? '1px solid rgba(0,0,0,0.15)' : undefined,
+                                  borderRight:
+                                    side === 'right' ? '1px solid rgba(0,0,0,0.15)' : undefined,
+                                })
+                                const handlePointerDown = (
+                                  e: React.PointerEvent,
+                                  mode: 'resize-left' | 'resize-right',
+                                ) => {
+                                  if (!isEnabled) return
+                                  if (e.button !== 0) return
+                                  e.preventDefault()
                                   e.stopPropagation()
                                   setSelectedInstanceId(lane.instance.id)
-                                  // still manage multi-select for disabled? keep single
-                                  setSelectedClipIds(new Set([lane.instance.id]))
-                                  setClipAnchorId(lane.instance.id)
-                                  return
+                                  const rightEdge = lane.start + lane.visualDuration
+                                  setDragState({
+                                    mode,
+                                    nodeId: row.node.id,
+                                    instanceId: lane.instance.id,
+                                    clipId: lane.clip.id,
+                                    clipDuration: lane.clip.duration,
+                                    initialStart: lane.start,
+                                    initialSpeed: lane.instance.speed,
+                                    initialVisual: lane.visualDuration,
+                                    rightEdge,
+                                    startX: e.clientX,
+                                    previewStart: lane.start,
+                                    previewSpeed: lane.instance.speed,
+                                    previewVisual: lane.visualDuration,
+                                  } as DragState)
                                 }
-                                if (e.button !== 0) return
-                                // Ctrl/Cmd/Shift indicates multi-select intent, not drag
-                                if (e.ctrlKey || e.metaKey || e.shiftKey) return
-                                e.preventDefault()
-                                e.stopPropagation()
-                                // Ensure clicked lane is in selection (single if not multi)
-                                if (!selectedClipIds.has(lane.instance.id)) {
-                                  setSelectedInstanceId(lane.instance.id)
-                                  setSelectedClipIds(new Set([lane.instance.id]))
-                                  setClipAnchorId(lane.instance.id)
-                                } else {
-                                  setSelectedInstanceId(lane.instance.id)
-                                }
-                                const rightEdge = lane.start + lane.visualDuration
-                                setDragState({
-                                  mode: 'move',
-                                  nodeId: row.node.id,
-                                  instanceId: lane.instance.id,
-                                  clipId: lane.clip.id,
-                                  clipDuration: lane.clip.duration,
-                                  initialStart: lane.start,
-                                  initialSpeed: lane.instance.speed,
-                                  initialVisual: lane.visualDuration,
-                                  rightEdge,
-                                  startX: e.clientX,
-                                  previewStart: lane.start,
-                                  previewSpeed: lane.instance.speed,
-                                  previewVisual: lane.visualDuration,
-                                } as DragState)
-                              }
-                              const handleContextMenu = (e: React.MouseEvent) => {
-                                e.preventDefault()
-                                e.stopPropagation()
-                                setClipMenu({
-                                  x: e.clientX,
-                                  y: e.clientY,
-                                  clipId: lane.clip.id,
-                                  nodeId: row.node.id,
-                                  instanceId: lane.instance.id,
-                                })
-                              }
-                              return (
-                                <div
-                                  key={lane.instance.id}
-                                  data-testid={`clip-lane-${row.node.id}-${lane.instance.id}`}
-                                  data-clip-instance-id={lane.instance.id}
-                                  data-track={String(lane.track)}
-                                  data-start={String(lane.start)}
-                                  data-visual={String(lane.visualDuration)}
-                                  data-enabled={String(isEnabled)}
-                                  data-selected={String(isSelected)}
-                                  data-multiselected={String(isMultiSelected)}
-                                  data-highlighted={String(isHighlighted)}
-                                  title={`${lane.clip.name} — start ${lane.start.toFixed(2)}s visual ${lane.visualDuration.toFixed(2)}s speed ${lane.instance.speed.toFixed(3)}${isEnabled ? '' : ' (disabled)'}${isHighlighted ? ' (new)' : ''}${isMultiSelected ? ' (multi)' : ''}`}
-                                  style={barStyle}
-                                  onPointerDown={barPointerDown}
-                                  onContextMenu={handleContextMenu}
-                                  onClick={(e) => {
+                                const barPointerDown = (e: React.PointerEvent) => {
+                                  // If clicking on handle, ignore (handle already handled)
+                                  const target = e.target as HTMLElement
+                                  if (target.dataset.testid?.startsWith('clip-handle')) return
+                                  if (!isEnabled) {
                                     e.stopPropagation()
-                                    if (isHighlighted) setHighlightedClipInstanceId(null)
-                                    // Multi-select handling (Ctrl/Cmd toggle, Shift range)
-                                    const target = e.target as HTMLElement
-                                    if (target.dataset.testid?.startsWith('clip-handle')) return
-                                    handleClipLaneSelect(
-                                      e as unknown as React.MouseEvent,
-                                      lane.instance.id,
-                                    )
-                                  }}
-                                >
-                                  <span
-                                    data-testid={`clip-lane-label-${lane.instance.id}`}
-                                    style={{
-                                      fontSize: 11,
-                                      fontWeight: 500,
-                                      whiteSpace: 'nowrap',
-                                      overflow: 'hidden',
-                                      textOverflow: 'ellipsis',
-                                      flex: 1,
-                                      pointerEvents: 'none',
-                                      color: isEnabled ? (isSelected ? '#fff' : '#2e2e2e') : '#666',
+                                    setSelectedInstanceId(lane.instance.id)
+                                    // still manage multi-select for disabled? keep single
+                                    setSelectedClipIds(new Set([lane.instance.id]))
+                                    setClipAnchorId(lane.instance.id)
+                                    return
+                                  }
+                                  if (e.button !== 0) return
+                                  // Ctrl/Cmd/Shift indicates multi-select intent, not drag
+                                  if (e.ctrlKey || e.metaKey || e.shiftKey) return
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  // Ensure clicked lane is in selection (single if not multi)
+                                  if (!selectedClipIds.has(lane.instance.id)) {
+                                    setSelectedInstanceId(lane.instance.id)
+                                    setSelectedClipIds(new Set([lane.instance.id]))
+                                    setClipAnchorId(lane.instance.id)
+                                  } else {
+                                    setSelectedInstanceId(lane.instance.id)
+                                  }
+                                  const rightEdge = lane.start + lane.visualDuration
+                                  setDragState({
+                                    mode: 'move',
+                                    nodeId: row.node.id,
+                                    instanceId: lane.instance.id,
+                                    clipId: lane.clip.id,
+                                    clipDuration: lane.clip.duration,
+                                    initialStart: lane.start,
+                                    initialSpeed: lane.instance.speed,
+                                    initialVisual: lane.visualDuration,
+                                    rightEdge,
+                                    startX: e.clientX,
+                                    previewStart: lane.start,
+                                    previewSpeed: lane.instance.speed,
+                                    previewVisual: lane.visualDuration,
+                                  } as DragState)
+                                }
+                                const handleContextMenu = (e: React.MouseEvent) => {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  setClipMenu({
+                                    x: e.clientX,
+                                    y: e.clientY,
+                                    clipId: lane.clip.id,
+                                    nodeId: row.node.id,
+                                    instanceId: lane.instance.id,
+                                  })
+                                }
+                                return (
+                                  <div
+                                    key={lane.instance.id}
+                                    data-testid={`clip-lane-${row.node.id}-${lane.instance.id}`}
+                                    data-clip-instance-id={lane.instance.id}
+                                    data-track={String(lane.track)}
+                                    data-start={String(lane.start)}
+                                    data-visual={String(lane.visualDuration)}
+                                    data-enabled={String(isEnabled)}
+                                    data-selected={String(isSelected)}
+                                    data-multiselected={String(isMultiSelected)}
+                                    data-highlighted={String(isHighlighted)}
+                                    title={`${lane.clip.name} — start ${lane.start.toFixed(2)}s visual ${lane.visualDuration.toFixed(2)}s speed ${lane.instance.speed.toFixed(3)}${isEnabled ? '' : ' (disabled)'}${isHighlighted ? ' (new)' : ''}${isMultiSelected ? ' (multi)' : ''}`}
+                                    style={barStyle}
+                                    onPointerDown={barPointerDown}
+                                    onContextMenu={handleContextMenu}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      if (isHighlighted) setHighlightedClipInstanceId(null)
+                                      // Multi-select handling (Ctrl/Cmd toggle, Shift range)
+                                      const target = e.target as HTMLElement
+                                      if (target.dataset.testid?.startsWith('clip-handle')) return
+                                      handleClipLaneSelect(
+                                        e as unknown as React.MouseEvent,
+                                        lane.instance.id,
+                                      )
                                     }}
                                   >
-                                    {lane.clip.name}
-                                  </span>
-                                  {isEnabled && (
-                                    <>
-                                      <div
-                                        data-testid={`clip-handle-left-${lane.instance.id}`}
-                                        data-handle="left"
-                                        style={handleStyle('left')}
-                                        onPointerDown={(e) => handlePointerDown(e, 'resize-left')}
-                                      />
-                                      <div
-                                        data-testid={`clip-handle-right-${lane.instance.id}`}
-                                        data-handle="right"
-                                        style={handleStyle('right')}
-                                        onPointerDown={(e) => handlePointerDown(e, 'resize-right')}
-                                      />
-                                    </>
-                                  )}
-                                </div>
-                              )
-                            })}
+                                    <span
+                                      data-testid={`clip-lane-label-${lane.instance.id}`}
+                                      style={{
+                                        fontSize: 11,
+                                        fontWeight: 500,
+                                        whiteSpace: 'nowrap',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        flex: 1,
+                                        pointerEvents: 'none',
+                                        color: isEnabled
+                                          ? isSelected
+                                            ? '#fff'
+                                            : '#2e2e2e'
+                                          : '#666',
+                                      }}
+                                    >
+                                      {lane.clip.name}
+                                    </span>
+                                    {isEnabled && (
+                                      <>
+                                        <div
+                                          data-testid={`clip-handle-left-${lane.instance.id}`}
+                                          data-handle="left"
+                                          style={handleStyle('left')}
+                                          onPointerDown={(e) => handlePointerDown(e, 'resize-left')}
+                                        />
+                                        <div
+                                          data-testid={`clip-handle-right-${lane.instance.id}`}
+                                          data-handle="right"
+                                          style={handleStyle('right')}
+                                          onPointerDown={(e) =>
+                                            handlePointerDown(e, 'resize-right')
+                                          }
+                                        />
+                                      </>
+                                    )}
+                                  </div>
+                                )
+                              })}
+                            </div>
                           </div>
                         </div>
                       )}
@@ -2859,161 +3168,166 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                             No clip lanes (missing clip definition)
                           </div>
                         )}
-                      {/* Animated params list – always rendered when expanded (for compatibility), scrollable */}
-                      <div
-                        data-testid={`manager-params-${row.node.id}`}
-                        style={{ background: 'var(--color-bg-panel, #fff)' }}
-                      >
-                        {row.animatedParams.length === 0 ? (
-                          <div
-                            style={{
-                              padding: '6px 12px 6px 32px',
-                              fontSize: 12,
-                              color: 'var(--color-text-muted, #666)',
-                            }}
-                          >
-                            No animated params (clip without channels)
-                          </div>
-                        ) : (
-                          row.animatedParams.map((param) => {
-                            const orphanKeyframes = activeSlide
-                              ? getOrphanKeyframes(row.node, activeSlide, param)
-                              : []
-                            const showDiamonds =
-                              activeTab === 'orphans' && orphanKeyframes.length > 0
-                            const hasOrphanTimeline = !!orphanTimelineBounds
-                            return (
-                              <div
-                                key={`${row.node.id}-${param.kind}-${param.key}`}
-                                data-testid={`manager-param-${row.node.id}-${param.key}`}
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 12,
-                                  padding: '6px 12px 6px 32px',
-                                  borderTop: '1px solid var(--color-border, #eee)',
-                                  fontSize: 12,
-                                }}
-                              >
-                                <span
+                      {/* Animated params list – hidden on clips tab when clip lanes present (reduces clutter; details visible in clip editor). Keep for orphan/keyframe-only rows. */}
+                      {(activeTab !== 'clips' || packedLanes.length === 0) && (
+                        <div
+                          data-testid={`manager-params-${row.node.id}`}
+                          style={{ background: 'var(--color-bg-panel, #fff)' }}
+                        >
+                          {row.animatedParams.length === 0 ? (
+                            <div
+                              style={{
+                                padding: '6px 12px 6px 32px',
+                                fontSize: 12,
+                                color: 'var(--color-text-muted, #666)',
+                              }}
+                            >
+                              No animated params (clip without channels)
+                            </div>
+                          ) : (
+                            row.animatedParams.map((param) => {
+                              const orphanKeyframes = activeSlide
+                                ? getOrphanKeyframes(row.node, activeSlide, param)
+                                : []
+                              const showDiamonds =
+                                activeTab === 'orphans' && orphanKeyframes.length > 0
+                              const hasOrphanTimeline = !!orphanTimelineBounds
+                              return (
+                                <div
+                                  key={`${row.node.id}-${param.kind}-${param.key}`}
+                                  data-testid={`manager-param-${row.node.id}-${param.key}`}
                                   style={{
-                                    flex: hasOrphanTimeline && showDiamonds ? '0 0 140px' : 1,
-                                    minWidth: 0,
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                    ...(hasOrphanTimeline && showDiamonds
-                                      ? {
-                                          position: 'sticky',
-                                          left: 32,
-                                          background: 'var(--color-bg-panel, #fff)',
-                                          zIndex: 1,
-                                          paddingRight: 8,
-                                        }
-                                      : {}),
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: 12,
+                                    padding: '6px 12px 6px 32px',
+                                    borderTop: '1px solid var(--color-border, #eee)',
+                                    fontSize: 12,
                                   }}
                                 >
-                                  {param.label}
-                                </span>
-                                {activeTab !== 'orphans' && (
                                   <span
-                                    style={{ fontSize: 10, color: 'var(--color-text-muted, #888)' }}
-                                    data-testid={`manager-param-kind-${row.node.id}-${param.key}`}
+                                    style={{
+                                      flex: hasOrphanTimeline && showDiamonds ? '0 0 140px' : 1,
+                                      minWidth: 0,
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap',
+                                      ...(hasOrphanTimeline && showDiamonds
+                                        ? {
+                                            position: 'sticky',
+                                            left: 32,
+                                            background: 'var(--color-bg-panel, #fff)',
+                                            zIndex: 1,
+                                            paddingRight: 8,
+                                          }
+                                        : {}),
+                                    }}
                                   >
-                                    {param.kind}
+                                    {param.label}
                                   </span>
-                                )}
-                                {showDiamonds && orphanTimelineBounds && (
-                                  <>
-                                    <div
-                                      data-testid={`manager-orphan-diamonds-${row.node.id}-${param.key}`}
-                                      style={{
-                                        position: 'relative',
-                                        flexShrink: 0,
-                                        width: `${orphanTimelineBounds.width}px`,
-                                        height: 16,
-                                        background: 'rgba(124,92,255,0.04)',
-                                        border: '1px solid rgba(124,92,255,0.12)',
-                                        borderRadius: 4,
-                                      }}
-                                    >
-                                      {orphanKeyframes.map((kf) => {
-                                        const entry = flatOrphanEntries.find(
-                                          (x) => x.keyframeId === kf.id,
-                                        )
-                                        const isSelected = selectedOrphanIds.has(kf.id)
-                                        const left = orphanLeftPx(kf.time, orphanTimelineBounds)
-                                        return (
-                                          <span
-                                            key={kf.id}
-                                            data-testid={`orphan-diamond-${kf.id}`}
-                                            data-keyframe-id={kf.id}
-                                            data-node-id={row.node.id}
-                                            title={`orphan keyframe at ${kf.time}s${isSelected ? ' (selected)' : ''}`}
-                                            aria-label={`orphan keyframe at ${kf.time}s`}
-                                            aria-selected={isSelected}
-                                            onClick={(e) => {
-                                              if (!entry) return
-                                              handleOrphanDiamondClick(e, entry)
-                                            }}
-                                            onContextMenu={(e) => {
-                                              if (!entry) return
-                                              handleOrphanContextMenu(e, entry)
-                                            }}
-                                            style={{
-                                              position: 'absolute',
-                                              left,
-                                              top: '50%',
-                                              width: 10,
-                                              height: 10,
-                                              background: isSelected
-                                                ? '#ffcc00'
-                                                : 'var(--color-accent, #7c5cff)',
-                                              border: isSelected
-                                                ? '2px solid #000'
-                                                : '1px solid #fff',
-                                              transform: 'translate(-50%, -50%) rotate(45deg)',
-                                              display: 'inline-block',
-                                              flexShrink: 0,
-                                              cursor: 'pointer',
-                                              boxShadow: isSelected
-                                                ? '0 0 0 2px rgba(255,204,0,0.4)'
-                                                : undefined,
-                                              outline: isSelected ? '1px solid #000' : undefined,
-                                            }}
-                                          />
-                                        )
-                                      })}
-                                    </div>
+                                  {activeTab !== 'orphans' && (
                                     <span
                                       style={{
                                         fontSize: 10,
-                                        color: 'var(--color-text-muted, #666)',
-                                        flexShrink: 0,
+                                        color: 'var(--color-text-muted, #888)',
                                       }}
+                                      data-testid={`manager-param-kind-${row.node.id}-${param.key}`}
                                     >
-                                      {orphanKeyframes.length} orphan
-                                    </span>
-                                  </>
-                                )}
-                                {activeTab === 'orphans' &&
-                                  !showDiamonds &&
-                                  orphanKeyframes.length === 0 && (
-                                    <span
-                                      style={{
-                                        fontSize: 10,
-                                        color: 'var(--color-text-muted, #999)',
-                                      }}
-                                      data-testid={`manager-no-orphan-${row.node.id}-${param.key}`}
-                                    >
-                                      no orphan
+                                      {param.kind}
                                     </span>
                                   )}
-                              </div>
-                            )
-                          })
-                        )}
-                      </div>
+                                  {showDiamonds && orphanTimelineBounds && (
+                                    <>
+                                      <div
+                                        data-testid={`manager-orphan-diamonds-${row.node.id}-${param.key}`}
+                                        style={{
+                                          position: 'relative',
+                                          flexShrink: 0,
+                                          width: `${orphanTimelineBounds.width}px`,
+                                          height: 16,
+                                          background: 'rgba(124,92,255,0.04)',
+                                          border: '1px solid rgba(124,92,255,0.12)',
+                                          borderRadius: 4,
+                                        }}
+                                      >
+                                        {orphanKeyframes.map((kf) => {
+                                          const entry = flatOrphanEntries.find(
+                                            (x) => x.keyframeId === kf.id,
+                                          )
+                                          const isSelected = selectedOrphanIds.has(kf.id)
+                                          const left = orphanLeftPx(kf.time, orphanTimelineBounds)
+                                          return (
+                                            <span
+                                              key={kf.id}
+                                              data-testid={`orphan-diamond-${kf.id}`}
+                                              data-keyframe-id={kf.id}
+                                              data-node-id={row.node.id}
+                                              title={`orphan keyframe at ${kf.time}s${isSelected ? ' (selected)' : ''}`}
+                                              aria-label={`orphan keyframe at ${kf.time}s`}
+                                              aria-selected={isSelected}
+                                              onClick={(e) => {
+                                                if (!entry) return
+                                                handleOrphanDiamondClick(e, entry)
+                                              }}
+                                              onContextMenu={(e) => {
+                                                if (!entry) return
+                                                handleOrphanContextMenu(e, entry)
+                                              }}
+                                              style={{
+                                                position: 'absolute',
+                                                left,
+                                                top: '50%',
+                                                width: 10,
+                                                height: 10,
+                                                background: isSelected
+                                                  ? '#ffcc00'
+                                                  : 'var(--color-accent, #7c5cff)',
+                                                border: isSelected
+                                                  ? '2px solid #000'
+                                                  : '1px solid #fff',
+                                                transform: 'translate(-50%, -50%) rotate(45deg)',
+                                                display: 'inline-block',
+                                                flexShrink: 0,
+                                                cursor: 'pointer',
+                                                boxShadow: isSelected
+                                                  ? '0 0 0 2px rgba(255,204,0,0.4)'
+                                                  : undefined,
+                                                outline: isSelected ? '1px solid #000' : undefined,
+                                              }}
+                                            />
+                                          )
+                                        })}
+                                      </div>
+                                      <span
+                                        style={{
+                                          fontSize: 10,
+                                          color: 'var(--color-text-muted, #666)',
+                                          flexShrink: 0,
+                                        }}
+                                      >
+                                        {orphanKeyframes.length} orphan
+                                      </span>
+                                    </>
+                                  )}
+                                  {activeTab === 'orphans' &&
+                                    !showDiamonds &&
+                                    orphanKeyframes.length === 0 && (
+                                      <span
+                                        style={{
+                                          fontSize: 10,
+                                          color: 'var(--color-text-muted, #999)',
+                                        }}
+                                        data-testid={`manager-no-orphan-${row.node.id}-${param.key}`}
+                                      >
+                                        no orphan
+                                      </span>
+                                    )}
+                                </div>
+                              )
+                            })
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -3418,7 +3732,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               setSelectedOrphanIds(new Set())
               setOrphanAnchorId(null)
               setDeleteOrphansConfirm(null)
-              notify(`Deleted ${deletedCount} orphan keyframe(s) — collection creation unblocked where resolved`)
+              notify(
+                `Deleted ${deletedCount} orphan keyframe(s) — collection creation unblocked where resolved`,
+              )
             }}
           />
         )}
@@ -3889,9 +4205,34 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 })()}
                 "?
                 <br />
-                <span style={{ fontSize: 11, color: '#666' }}>
-                  Already-placed lanes remain as plain ClipInstances (no cascading delete).
-                </span>
+                {(() => {
+                  try {
+                    const col = engine.getClipCollection(deleteConfirmCollectionId)
+                    const all = engine.clipCollections
+                    const ids = [...col.bindings.values()]
+                    const exclusive = ids.filter(
+                      (cid) =>
+                        !all.some((c) => c.id !== col.id && [...c.bindings.values()].includes(cid)),
+                    )
+                    const shared = ids.length - exclusive.length
+                    if (ids.length === 0)
+                      return <span style={{ fontSize: 11, color: '#666' }}>No clips bound.</span>
+                    return (
+                      <span style={{ fontSize: 11, color: '#b45309' }}>
+                        This will also delete {exclusive.length} clip(s) bound to this collection
+                        {shared > 0 ? ` (${shared} shared clip(s) will be kept)` : ''}.
+                        <br />
+                        All lanes using those clips will be removed.
+                      </span>
+                    )
+                  } catch {
+                    return (
+                      <span style={{ fontSize: 11, color: '#666' }}>
+                        Collection clips will be deleted.
+                      </span>
+                    )
+                  }
+                })()}
               </p>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                 <button
@@ -4197,10 +4538,30 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           </div>
         )}
 
+        {/* Drag time feedback for lane moves */}
+        {dragState && (dragState.mode === 'move' || dragState.mode === 'collection-move') && (
+          <div
+            data-testid="lane-drag-tooltip"
+            style={{
+              fontSize: 11,
+              fontFamily: 'monospace',
+              background: 'rgba(0,0,0,0.85)',
+              color: '#fff',
+              padding: '4px 8px',
+              borderRadius: 4,
+              alignSelf: 'flex-start',
+            }}
+          >
+            Drag: {dragState.previewStart.toFixed(2)}s
+            {dragState.mode === 'move' ? ` speed ${dragState.previewSpeed.toFixed(3)}` : ''}{' '}
+            {gridSnapEnabled ? '· snap' : ''}
+          </div>
+        )}
         {/* Footer hint */}
         <div style={{ fontSize: 11, color: 'var(--color-text-muted, #888)' }}>
           Press Esc to close{editing ? ' (Esc drills back first)' : ''} • Click backdrop to close •
-          Filtered to animated descendants only (pre-order)
+          Filtered to animated descendants only (pre-order) • Del: remove selected
+          lane/keyframe/placement (not object)
         </div>
       </div>
     </div>
@@ -4311,6 +4672,9 @@ function ManagerClipEditor({
     originalNormalized: number
     originalLocal: number
   } | null>(null)
+  const [snapEnabled, setSnapEnabled] = useState(false)
+  const [dragPreviewSec, setDragPreviewSec] = useState<number | null>(null)
+  const [dragPreviewPos, setDragPreviewPos] = useState<{ x: number; y: number } | null>(null)
   const timeAreaRef = useRef<HTMLDivElement>(null)
   const scrollerRef = useRef<HTMLDivElement>(null)
 
@@ -4374,7 +4738,25 @@ function ManagerClipEditor({
     if (!result.ok) notify(result.error.message)
   }
 
-  // Diamond drag handling – move only for uniform channels
+  // Helper to get keyframes for a row
+  const getKeyframesForRow = (
+    row: ClipEditorRow,
+  ): readonly import('../../engine/keyframe').Keyframe[] => {
+    try {
+      const c = engine.getClip(clip.id)
+      if (row.kind === 'clipChannel') return c.getChannelKeyframes(row.channel)
+      if (row.kind === 'clipVisible') return c.getVisibleKeyframes()
+      if (row.kind === 'clipMorph') return c.getMorphKeyframes()
+      if (row.kind === 'clipCircle') return c.getCircleKeyframes(row.property)
+      if (row.kind === 'clipShadow') return c.getShadowChannelKeyframes(row.property)
+      if (row.kind === 'clipMaterial') return c.getMaterialChannelKeyframes(row.parameter)
+      return []
+    } catch {
+      return []
+    }
+  }
+
+  // Diamond drag handling – move only for uniform channels, with opt-in snap + live feedback
   useEffect(() => {
     if (!dragInfo) return
     const onMove = (e: PointerEvent) => {
@@ -4382,22 +4764,45 @@ function ManagerClipEditor({
       if (!cur || cur.row.kind !== 'clipChannel') return
       const deltaPx = e.clientX - cur.startX
       const deltaLocal = deltaPx / editorPps
-      const newLocal = cur.originalLocal + deltaLocal
-      const clampedLocal = Math.max(0, Math.min(newLocal, clipDuration))
+      const rawLocal = cur.originalLocal + deltaLocal
+      // candidate times for keyframe snap (other keyframes in seconds)
+      let snappedLocal = rawLocal
+      if (snapEnabled) {
+        const candidateTimesSec: number[] = []
+        for (const r of rows) {
+          for (const kf of getKeyframesForRow(r)) {
+            if (kf.id === cur.keyframeId) continue
+            candidateTimesSec.push(kf.time * clipDuration)
+          }
+        }
+        snappedLocal = snapKeyframeTime(rawLocal, {
+          gridEnabled: true,
+          keyframesEnabled: candidateTimesSec.length > 0,
+          candidateTimes: candidateTimesSec,
+          pps: editorPps,
+        })
+      }
+      const clampedLocal = Math.max(0, Math.min(snappedLocal, clipDuration))
       const newNormalized = clipDuration > 0 ? clampedLocal / clipDuration : 0
       // preview via DOM direct mutation
       const el = document.querySelector(
         `[data-keyframe-id="${cur.keyframeId}"]`,
       ) as HTMLElement | null
       if (el) {
+        // left is centered at kf, original uses left-5 offset; keep consistent with rendering left-5
         el.style.left = `${clampedLocal * editorPps}px`
       }
+      // live feedback
+      setDragPreviewSec(clampedLocal)
+      setDragPreviewPos({ x: e.clientX, y: e.clientY })
       // store preview in state for commit (attach to ref)
       ;(cur as unknown as { previewNormalized: number }).previewNormalized = newNormalized
     }
     const onUp = () => {
       const cur = dragInfo
       setDragInfo(null)
+      setDragPreviewSec(null)
+      setDragPreviewPos(null)
       if (!cur || cur.row.kind !== 'clipChannel') return
       const preview = (cur as unknown as { previewNormalized?: number }).previewNormalized
       if (preview === undefined || Math.abs(preview - cur.originalNormalized) < 1e-6) return
@@ -4421,25 +4826,17 @@ function ManagerClipEditor({
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
     }
-  }, [dragInfo, editorPps, clipDuration, clip.id, dispatch, notify])
-
-  // Helper to get keyframes for a row
-  const getKeyframesForRow = (
-    row: ClipEditorRow,
-  ): readonly import('../../engine/keyframe').Keyframe[] => {
-    try {
-      const c = engine.getClip(clip.id)
-      if (row.kind === 'clipChannel') return c.getChannelKeyframes(row.channel)
-      if (row.kind === 'clipVisible') return c.getVisibleKeyframes()
-      if (row.kind === 'clipMorph') return c.getMorphKeyframes()
-      if (row.kind === 'clipCircle') return c.getCircleKeyframes(row.property)
-      if (row.kind === 'clipShadow') return c.getShadowChannelKeyframes(row.property)
-      if (row.kind === 'clipMaterial') return c.getMaterialChannelKeyframes(row.parameter)
-      return []
-    } catch {
-      return []
-    }
-  }
+  }, [
+    dragInfo,
+    editorPps,
+    clipDuration,
+    clip.id,
+    dispatch,
+    notify,
+    snapEnabled,
+    rows,
+    getKeyframesForRow,
+  ])
 
   const handleDiamondPointerDown = (
     e: React.PointerEvent,
@@ -4572,8 +4969,22 @@ function ManagerClipEditor({
           />
           <span style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>seconds</span>
         </label>
+        <label
+          style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, marginLeft: 8 }}
+          title="When enabled, dragging snaps to 0.5s grid and nearby keyframes (5px threshold)"
+        >
+          <input
+            type="checkbox"
+            checked={snapEnabled}
+            onChange={(e) => setSnapEnabled(e.target.checked)}
+            data-testid="clip-editor-snap-toggle"
+          />
+          Snap (0.5s + keyframes)
+        </label>
         <span style={{ fontSize: 11, color: 'var(--color-text-muted, #888)', marginLeft: 'auto' }}>
-          Clip-local time 0..{clipDuration.toFixed(2)}s • diamonds = normalized × duration
+          {dragPreviewSec !== null
+            ? `Dragging: ${dragPreviewSec.toFixed(2)}s (${clipDuration > 0 ? (dragPreviewSec / clipDuration).toFixed(3) : '0.000'} norm)`
+            : `Clip-local time 0..${clipDuration.toFixed(2)}s • diamonds = normalized × duration`}
         </span>
       </div>
 
@@ -4716,37 +5127,13 @@ function ManagerClipEditor({
           data-testid="clip-editor-scroller"
         >
           <div style={{ width: contentWidth, position: 'relative' }}>
-            <div
-              ref={timeAreaRef}
-              style={{
-                position: 'relative',
-                height: 28,
-                borderBottom: '1px solid var(--color-border, #ddd)',
-                background: 'var(--color-bg, #fff)',
-                userSelect: 'none',
-              }}
-              data-testid="clip-editor-ruler"
-            >
-              {/* simple ticks 0..duration */}
-              {Array.from({ length: Math.ceil(clipDuration) + 1 }).map((_, i) => (
-                <div
-                  key={i}
-                  style={{
-                    position: 'absolute',
-                    left: i * editorPps,
-                    top: 0,
-                    bottom: 0,
-                    borderLeft: '1px solid var(--color-border, #ddd)',
-                    fontSize: 10,
-                    color: 'var(--color-text-muted, #666)',
-                    paddingLeft: 4,
-                    display: 'flex',
-                    alignItems: 'center',
-                  }}
-                >
-                  {i}s
-                </div>
-              ))}
+            <div ref={timeAreaRef} data-testid="clip-editor-ruler">
+              <ManagerRuler
+                durationSec={clipDuration}
+                pps={editorPps}
+                widthPx={contentWidth}
+                testId="clip-editor-ruler"
+              />
             </div>
             <div
               style={{
@@ -4806,6 +5193,31 @@ function ManagerClipEditor({
           </div>
         </div>
       </div>
+
+      {/* Live drag feedback tooltip */}
+      {dragPreviewSec !== null && dragPreviewPos && (
+        <div
+          data-testid="clip-drag-tooltip"
+          style={{
+            position: 'fixed',
+            left: dragPreviewPos.x + 12,
+            top: dragPreviewPos.y - 28,
+            background: 'rgba(0,0,0,0.85)',
+            color: '#fff',
+            padding: '4px 8px',
+            borderRadius: 4,
+            fontSize: 11,
+            fontFamily: 'monospace',
+            pointerEvents: 'none',
+            zIndex: 1100,
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {dragPreviewSec.toFixed(2)}s
+          {clipDuration > 0 ? ` (${(dragPreviewSec / clipDuration).toFixed(3)})` : ''}{' '}
+          {snapEnabled ? '· snap' : ''}
+        </div>
+      )}
 
       {diamondMenu && (
         <>

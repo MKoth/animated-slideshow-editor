@@ -30,6 +30,13 @@ export interface ClipboardShortcutDeps {
 
 export function registerClipboardShortcuts(getDeps: () => ClipboardShortcutDeps): () => void {
   const deleteHandler = () => {
+    // If Animation Manager modal is open, let its scoped handler deal with Delete – don't delete whole object
+    if (
+      typeof document !== 'undefined' &&
+      document.querySelector('[data-testid="animation-manager-overlay"]')
+    ) {
+      return
+    }
     const { engine, dispatch } = getDeps()
     const ctx = useTimelineSelectionStore.getState().editingContext
     if (ctx === 'clip-edit') {

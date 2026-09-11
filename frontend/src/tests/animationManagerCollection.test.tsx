@@ -400,7 +400,7 @@ describe('Animation Manager 15-05 – Clip Collection grouping', () => {
     expect(col.getBinding('c_sem')).toBe(clip3)
   })
 
-  it('delete removes only collection definition; already-placed Collection Lanes remain as plain ClipInstances', async () => {
+  it('delete removes collection and its exclusive clips and lanes (cascade)', async () => {
     const engine = createEngineInternal()
     const undo = new UndoStack()
     engine.createProject({ name: 'P' })
@@ -433,7 +433,7 @@ describe('Animation Manager 15-05 – Clip Collection grouping', () => {
     )
     expect(targetChild.clipInstances).toHaveLength(1)
     expect(targetChild.clipInstances[0]!.clipId).toBe(clipId)
-    // Render manager and delete via UI
+    // Render manager and delete via UI (cascade)
     const user = userEvent.setup()
     renderManager(engine, undo, parent.id)
     const modal = await screen.findByTestId('animation-manager-modal')
@@ -444,14 +444,13 @@ describe('Animation Manager 15-05 – Clip Collection grouping', () => {
     await user.click(within(confirmModal).getByTestId('delete-collection-confirm'))
     // Collection should be gone
     expect(() => engine.getClipCollection(colId)).toThrow()
-    // But placed lane remains as plain ClipInstance
-    expect(targetChild.clipInstances).toHaveLength(1)
-    expect(targetChild.clipInstances[0]!.clipId).toBe(clipId)
-    // Manager still shows child1 lane (since clipInstances still there)
+    // Exclusive clip should be deleted and all its lanes removed
+    expect(() => engine.getClip(clipId)).toThrow()
+    expect(targetChild.clipInstances).toHaveLength(0)
+    expect(child1.clipInstances).toHaveLength(0)
+    // Manager no longer shows lanes
     await user.click(within(modal).getByTestId('manager-tab-clips'))
-    expect(
-      within(modal).getByTestId(`clip-lane-${child1.id}-${child1.clipInstances[0]!.id}`),
-    ).toBeInTheDocument()
+    expect(within(modal).queryByTestId(`clip-lane-${child1.id}-`)).not.toBeInTheDocument()
     // Also collections empty
     await user.click(within(modal).getByTestId('manager-tab-collections'))
     expect(screen.queryByTestId(`manager-collection-${colId}`)).not.toBeInTheDocument()
