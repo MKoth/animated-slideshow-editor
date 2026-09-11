@@ -3216,7 +3216,14 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               ? [...new Set(node.clipInstances.map((inst) => inst.clipId))]
               : []
             const defaultName = nextClipNameForNode(orphanExtraction.nodeName, engine.clips)
-            const defaultDuration = '7'
+            let defaultDuration: string
+            try {
+              defaultDuration = String(
+                computeExtractionBounds(orphanExtraction.keyframes).clipDuration,
+              )
+            } catch {
+              defaultDuration = '1'
+            }
             const defaultCategory = orphanExtraction.semanticName?.trim()
               ? orphanExtraction.semanticName.trim()
               : 'extracted'
