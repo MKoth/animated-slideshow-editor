@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useEngine } from '../../app/useEngine'
 import { ExtractToClipCommand } from '../../engine/commands/extractToClipCommand'
-import { computeExtractionBounds } from '../../engine/clipExtraction'
+import { collectBakingKeyframes, computeExtractionBounds } from '../../engine/clipExtraction'
 import type { ExtractableKeyframe } from '../../engine/clipExtraction'
 import { SHADOW_LABELS } from '../../engine/shadowEffect'
 import type { ShadowProperty } from '../../engine/shadowEffect'
@@ -68,6 +68,7 @@ export function ClipExtractionModal({
   )
   const [category, setCategory] = useState(initialCategory ?? 'extracted')
   const [error, setError] = useState<string | null>(null)
+  const [bakeStartingPose, setBakeStartingPose] = useState(false)
 
   useEffect(() => {
     if (!hasExisting && mode === 'existing') setMode('new')
@@ -119,6 +120,22 @@ export function ClipExtractionModal({
     }
   }, [filteredKeyframes])
 
+  const bakingPreviewCount = useMemo(() => {
+    if (!bakeStartingPose || !filteredBounds) return 0
+    try {
+      const evaluator = {
+        getNode: (id: string) => engine.getNode(id),
+        evaluateNode: (id: string, time: number) => engine.evaluateNode(id, time),
+        evaluateCircle: (id: string, time: number) => engine.evaluateCircle(id, time),
+        evaluateTable: (id: string, time: number) => engine.evaluateTable(id, time),
+        evaluateShadow: (id: string, time: number) => engine.evaluateShadow(id, time),
+      }
+      return collectBakingKeyframes(filteredBounds, filteredKeyframes, evaluator).length
+    } catch {
+      return 0
+    }
+  }, [bakeStartingPose, filteredBounds, filteredKeyframes, engine])
+
   const handleConfirm = () => {
     setError(null)
     if (filteredKeyframes.length === 0) {
@@ -155,6 +172,7 @@ export function ClipExtractionModal({
             name: name.trim(),
             duration: dur,
             category: category.trim(),
+            bakeStartingPose,
           }),
         )
         if (!result.ok) {
@@ -177,6 +195,7 @@ export function ClipExtractionModal({
           new ExtractToClipCommand({
             keyframes: [...filteredKeyframes],
             clipId: selectedClipId,
+            bakeStartingPose,
           }),
         )
         if (!result.ok) {
@@ -325,6 +344,37 @@ export function ClipExtractionModal({
             </div>
           </div>
         )}
+
+        <div
+          data-testid="bake-starting-pose-section"
+          style={{
+            border: '1px solid var(--color-border)',
+            borderRadius: 4,
+            padding: 8,
+            marginBottom: 12,
+            background: 'var(--color-bg-elevated, #f7f7f7)',
+          }}
+        >
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600 }}>
+            <input
+              type="checkbox"
+              data-testid="bake-starting-pose"
+              checked={bakeStartingPose}
+              onChange={(e) => setBakeStartingPose(e.target.checked)}
+            />
+            Bake starting pose
+          </label>
+          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>
+            Add missing numeric channels at t=0 with the source object&apos;s pose at{' '}
+            {filteredBounds ? `${filteredBounds.selStart.toFixed(2)}s` : 'start'} — scale, position,
+            rotation, opacity, circle, shadow (numeric). Excludes morph.
+            {bakeStartingPose && (
+              <span style={{ marginLeft: 6, fontWeight: 600 }}>
+                +{bakingPreviewCount} synthetic keyframe{bakingPreviewCount === 1 ? '' : 's'} will be added
+              </span>
+            )}
+          </div>
+        </div>
 
         {mode === 'new' ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

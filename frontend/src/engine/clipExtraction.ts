@@ -1,7 +1,11 @@
 import type { AnimationProperty, CircleAnimationProperty } from './animationProperties'
+import { ANIMATABLE_PROPERTIES, CIRCLE_ANIMATABLE_PROPERTIES } from './animationProperties'
 import type { Keyframe, KeyframeTangent, InterpolationType, KeyframeValue } from './keyframe'
-import { Keyframe as KeyframeModel, newKeyframeId } from './keyframe'
+import { Keyframe as KeyframeModel, newKeyframeId, ZERO_TANGENT } from './keyframe'
 import type { KeyframeTarget } from './keyframeTarget'
+import { SHADOW_PROPERTIES } from './shadowEffect'
+import type { ShadowProperty } from './shadowEffect'
+import type { SceneNode } from './sceneNode'
 
 export interface ExtractableKeyframe {
   readonly target: KeyframeTarget
@@ -319,4 +323,183 @@ export function toClipKeyframes(normalized: readonly NormalizedKeyframe[]): Keyf
         { time: nk.tangentOut.time, value: nk.tangentOut.value },
       ),
   )
+}
+
+// ── Bake starting pose ───────────────────────────────────────────────
+
+export const BAKING_SHADOW_EXCLUDED: readonly ShadowProperty[] = ['color'] as const
+
+/**
+ * Numeric channels eligible for baking.
+ * Uniform-six are all numeric; circle/table/shadow numeric filtered.
+ * Morph excluded per spec, visible/zIndex/discrete excluded.
+ */
+export function isBakableChannelKey(key: string): boolean {
+  // Allow all numeric-derived keys; morph/visible are not bakable
+  if (key === 'morph' || key === 'visible') return false
+  if (key.startsWith('dataLabel:')) return false
+  return true
+}
+
+export interface BakingEvaluator {
+  getNode(nodeId: string): SceneNode
+  evaluateNode(nodeId: string, time: number): { transform: { x:number; y:number; rotation:number; scaleX:number; scaleY:number }; opacity: number }
+  evaluateCircle(nodeId: string, time: number): { radius:number; startAngle:number; endAngle:number; segments:number } | null
+  evaluateTable(nodeId: string, time: number): { borderRadius:number; padding:number } | null
+  evaluateShadow(nodeId: string, time: number): import('./shadowEffect').ShadowEffect | null
+}
+
+/**
+ * Collect synthetic keyframes for "Bake starting pose".
+ * For every numeric channel not already present in `selected`, inject a keyframe at bounds.selStart
+ * with value evaluated at that time for a representative source node.
+ * Returns extrastack to be merged with selected before normalization.
+ */
+export function collectBakingKeyframes(
+  bounds: ExtractionBounds,
+  selected: readonly ExtractableKeyframe[],
+  evaluator: BakingEvaluator,
+): ExtractableKeyframe[] {
+  if (selected.length === 0) return []
+  const existingKeys = new Set<string>()
+  for (const kf of selected) {
+    existingKeys.add(channelKeyOf(kf.target))
+  }
+
+  // Source node ids in selection order
+  const sourceNodeIds: string[] = []
+  const seenNode = new Set<string>()
+  for (const kf of selected) {
+    const nid = (kf.target as unknown as { nodeId?: string }).nodeId
+    if (typeof nid === 'string' && !seenNode.has(nid)) {
+      seenNode.add(nid)
+      sourceNodeIds.push(nid)
+    }
+  }
+  if (sourceNodeIds.length === 0) return []
+  const primaryId = sourceNodeIds[0]!
+  let primaryNode: SceneNode | null = null
+  try {
+    primaryNode = evaluator.getNode(primaryId)
+  } catch {
+    return []
+  }
+  if (!primaryNode) return []
+
+  const selStart = bounds.selStart
+  const result: ExtractableKeyframe[] = []
+  const makeSynthetic = (target: KeyframeTarget, value: KeyframeValue): ExtractableKeyframe => ({
+    target,
+    time: selStart,
+    value,
+    interpolation: 'linear' as InterpolationType,
+    tangentIn: { ...ZERO_TANGENT },
+    tangentOut: { ...ZERO_TANGENT },
+    keyframeId: `bake:${channelKeyOf(target)}@${primaryId}`,
+  })
+
+  const tryPush = (key: string, target: KeyframeTarget, value: KeyframeValue | undefined): void => {
+    if (existingKeys.has(key)) return
+    if (value === undefined || value === null) return
+    // Validate numeric finite for numeric channels
+    if (typeof value === 'number' && !Number.isFinite(value)) return
+    // Do not bake if duplicate within synthetic set already
+    if (result.some((r) => channelKeyOf(r.target) === key)) return
+    result.push(makeSynthetic(target, value as KeyframeValue))
+    existingKeys.add(key)
+  }
+
+  // Uniform-six via evaluateNode
+  let evaluatedNode: ReturnType<BakingEvaluator['evaluateNode']> | null = null
+  try {
+    evaluatedNode = evaluator.evaluateNode(primaryId, selStart)
+  } catch {
+    evaluatedNode = null
+  }
+  if (evaluatedNode) {
+    const map: Record<AnimationProperty, number> = {
+      positionX: evaluatedNode.transform.x,
+      positionY: evaluatedNode.transform.y,
+      rotation: evaluatedNode.transform.rotation,
+      scaleX: evaluatedNode.transform.scaleX,
+      scaleY: evaluatedNode.transform.scaleY,
+      opacity: evaluatedNode.opacity,
+    }
+    for (const prop of ANIMATABLE_PROPERTIES) {
+      // Skip if node cannot animate this prop (camera/bone) — try to validate via node check
+      // For now, allow all; requireAnimatable check deferred to command via node type
+      // Bones cannot have opacity, camera cannot have rotation — skip those
+      if (primaryNode.components.bone && prop === 'opacity') continue
+      if (primaryNode.components.camera && prop === 'rotation') continue
+      const key = `property:${prop}`
+      const val = map[prop]
+      tryPush(key, { kind: 'node', nodeId: primaryId, property: prop } as KeyframeTarget, val)
+    }
+  }
+
+  // Circle — only if primary has circle
+  if (primaryNode.components.circle) {
+    let circleState: ReturnType<BakingEvaluator['evaluateCircle']> | null = null
+    try {
+      circleState = evaluator.evaluateCircle(primaryId, selStart)
+    } catch {
+      circleState = null
+    }
+    const fallback = primaryNode.components.circle
+    const circleVals: Record<CircleAnimationProperty, number> = {
+      radius: circleState?.radius ?? fallback.radius,
+      startAngle: circleState?.startAngle ?? fallback.startAngle,
+      endAngle: circleState?.endAngle ?? fallback.endAngle,
+      segments: circleState?.segments ?? fallback.segments ?? 32,
+    }
+    for (const prop of CIRCLE_ANIMATABLE_PROPERTIES) {
+      const key = `circle:${prop}`
+      tryPush(key, { kind: 'circle', nodeId: primaryId, property: prop } as unknown as KeyframeTarget, circleVals[prop])
+    }
+  }
+
+  // Table not bakable in clips yet — skip (ClipDefinition has no table channels)
+
+  // Shadow numeric — only if group with shadowEffect (clip supports shadow)
+  {
+    const isGroup = primaryNode.children.length > 0 && Object.values(primaryNode.components).every((v) => v === undefined)
+    const hasShadow = !!primaryNode.shadowEffect
+    if (isGroup && hasShadow) {
+      let shadowEff: import('./shadowEffect').ShadowEffect | null = null
+      try {
+        shadowEff = evaluator.evaluateShadow(primaryId, selStart)
+      } catch {
+        shadowEff = null
+      }
+      const eff = shadowEff ?? primaryNode.shadowEffect!
+      for (const prop of SHADOW_PROPERTIES) {
+        if ((BAKING_SHADOW_EXCLUDED as readonly string[]).includes(prop)) continue
+        const key = `shadow:${prop}`
+        const val = (eff as unknown as Record<string, unknown>)[prop]
+        if (typeof val === 'number') {
+          tryPush(key, { kind: 'shadow', nodeId: primaryId, property: prop as ShadowProperty } as unknown as KeyframeTarget, val)
+        }
+      }
+    }
+  }
+
+  // Material numeric not handled in MVP — skip to keep scope as requested
+
+  return result
+}
+
+/**
+ * Preview count helper for UI without mutating.
+ */
+export function previewBakingCount(
+  bounds: ExtractionBounds | null,
+  selected: readonly ExtractableKeyframe[],
+  evaluator: BakingEvaluator | null,
+): number {
+  if (!bounds || !evaluator || selected.length === 0) return 0
+  try {
+    return collectBakingKeyframes(bounds, selected, evaluator).length
+  } catch {
+    return 0
+  }
 }
