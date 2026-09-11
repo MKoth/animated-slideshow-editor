@@ -38,6 +38,7 @@ import {
   RemoveClipChannelCommand,
   AddClipKeyframeCommand,
   DeleteClipKeyframesCommand,
+  DeleteKeyframesCommand,
   MoveClipKeyframesCommand,
   AssignClipCommand,
   CreateClipCollectionCommand,
@@ -56,6 +57,7 @@ import { useSelectionStore } from '../../stores/selectionStore'
 import { computeExtractionBounds } from '../../engine/clipExtraction'
 import type { ExtractableKeyframe } from '../../engine/clipExtraction'
 import { ClipExtractionModal } from './ClipExtractionModal'
+import { DeleteOrphansConfirmModal } from './DeleteOrphansConfirmModal'
 import type { AnimatedParam } from '../../engine/animationManagerModel'
 import type { KeyframeTarget } from '../../engine/keyframeTarget'
 import { assetsApi } from '../../api'
@@ -283,6 +285,13 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     defaultName: string
   } | null>(null)
   const [reverseNameDraft, setReverseNameDraft] = useState('')
+  const [deleteOrphansConfirm, setDeleteOrphansConfirm] = useState<{
+    keyframes: readonly ExtractableKeyframe[]
+    clipId: string
+    selStart: number
+    mode: 'new' | 'existing'
+    nodeId: string
+  } | null>(null)
   const orphansContainerRef = useRef<HTMLDivElement>(null)
   const notify = useNotificationStore((s) => s.notify)
 
@@ -324,6 +333,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       setReverseClipPrompt(null)
       setReverseCollectionPrompt(null)
       setReverseNameDraft('')
+      setDeleteOrphansConfirm(null)
     }
   }, [open, parentNodeId])
 
@@ -355,6 +365,15 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         } else if (deleteConfirmCollectionId) {
           setDeleteConfirmCollectionId(null)
           e.stopPropagation()
+        } else if (deleteOrphansConfirm) {
+          // let DeleteOrphansConfirmModal's own Esc handler call onKeep (with notify)
+          // keep in stack to prevent closing parent, but delegate
+          e.stopPropagation()
+          // trigger Keep semantics via the modal's onKeep (we simulate by clearing with notify)
+          // The modal's own listener will also fire, but this ensures parent doesn't close.
+          // We directly call the Keep path here to avoid double-notify from modal:
+          // Clear without notify here; modal's listener will notify. So just stop propagation.
+          return
         } else if (orphanExtraction) {
           setOrphanExtraction(null)
           e.stopPropagation()
@@ -393,6 +412,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     clipMenu,
     orphanContextMenu,
     orphanExtraction,
+    deleteOrphansConfirm,
     orphanScopeMessage,
     orphanMarquee,
     collectionCreateOpen,
@@ -1516,6 +1536,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     }
     if (dragState) {
       setDragState(null)
+      return
+    }
+    if (deleteOrphansConfirm) {
+      setDeleteOrphansConfirm(null)
       return
     }
     if (orphanExtraction) {
@@ -3280,7 +3304,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 initialDuration={defaultDuration}
                 initialCategory={defaultCategory}
                 onClose={() => setOrphanExtraction(null)}
-                onSuccess={({ mode, clipId, selStart }) => {
+                onSuccess={({ mode, clipId, selStart, keyframes: filteredKeyframes }) => {
+                  let didAssign = false
+                  let assignedInstanceId: string | null = null
                   if (mode === 'new') {
                     // Create instance at selStart speed=1, auto-switch to Clips tab and highlight
                     const assignResult = dispatch(
@@ -3290,7 +3316,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                       notify(assignResult.error.message)
                       return
                     }
-                    const instanceId = (assignResult.inverse as { instanceId: string }).instanceId
+                    assignedInstanceId = (assignResult.inverse as { instanceId: string }).instanceId
+                    didAssign = true
                     // Merge ExtractToClip + AssignClip into single undo entry (one gesture)
                     try {
                       undoStack.mergeLastAsTransaction(2)
@@ -3298,19 +3325,103 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                       /* ignore */
                     }
                     setActiveTab('clips')
-                    setHighlightedClipInstanceId(instanceId)
-                    setSelectedInstanceId(instanceId)
-                    setSelectedOrphanIds(new Set())
-                    setOrphanAnchorId(null)
+                    setHighlightedClipInstanceId(assignedInstanceId)
+                    setSelectedInstanceId(assignedInstanceId)
+                  }
+                  const kfs = filteredKeyframes ?? orphanExtraction.keyframes
+                  if (kfs.length > 0) {
+                    setDeleteOrphansConfirm({
+                      keyframes: kfs,
+                      clipId,
+                      selStart,
+                      mode,
+                      nodeId,
+                    })
+                    // Keep selection until confirm/keep decides; the modal will handle clearing
+                    // Store assign info for potential later? already highlighted
+                    void didAssign
+                    void assignedInstanceId
                   } else {
-                    // Existing path: no new instance, clear selection but stay on orphans
                     setSelectedOrphanIds(new Set())
                     setOrphanAnchorId(null)
+                    if (mode === 'existing') {
+                      // stay on orphans
+                    }
                   }
                 }}
               />
             )
           })()}
+
+        {deleteOrphansConfirm && (
+          <DeleteOrphansConfirmModal
+            open={!!deleteOrphansConfirm}
+            keyframes={deleteOrphansConfirm.keyframes}
+            clipName={(() => {
+              try {
+                return engine.getClip(deleteOrphansConfirm.clipId).name
+              } catch {
+                return deleteOrphansConfirm.clipId.slice(0, 8)
+              }
+            })()}
+            onKeep={() => {
+              setSelectedOrphanIds(new Set())
+              setOrphanAnchorId(null)
+              setDeleteOrphansConfirm(null)
+              notify(
+                `Kept ${deleteOrphansConfirm.keyframes.length} orphan keyframe(s) — still blocked for collections until deleted in Orphans tab`,
+              )
+            }}
+            onConfirmDelete={() => {
+              const kfs = deleteOrphansConfirm.keyframes
+              const groups = new Map<string, { target: KeyframeTarget; ids: string[] }>()
+              for (const kf of kfs) {
+                const t = kf.target
+                let key: string
+                if (t.kind === 'node' && 'property' in t) key = `node:${t.nodeId}:${t.property}`
+                else if (t.kind === 'node' && 'parameter' in t)
+                  key = `node-param:${t.nodeId}:${t.parameter}`
+                else if (t.kind === 'visible') key = `visible:${t.nodeId}`
+                else if (t.kind === 'morph') key = `morph:${t.nodeId}`
+                else if (t.kind === 'circle') key = `circle:${t.nodeId}:${t.property}`
+                else if (t.kind === 'shadow') key = `shadow:${t.nodeId}:${t.property}`
+                else if (t.kind === 'dataLabel') key = `dataLabel:${t.nodeId}:${t.label}`
+                else if (t.kind === 'table') key = `table:${t.nodeId}:${t.property}`
+                else if (t.kind === 'symmetry') key = `symmetry:${t.nodeId}`
+                else if (t.kind === 'zIndex') key = `zIndex:${t.nodeId}`
+                else key = `${t.kind}:${(t as { nodeId?: string }).nodeId ?? ''}`
+                const entry = groups.get(key)
+                if (entry) entry.ids.push(kf.keyframeId)
+                else groups.set(key, { target: t as KeyframeTarget, ids: [kf.keyframeId] })
+              }
+              const cmds = [...groups.values()].map(
+                (g) => new DeleteKeyframesCommand({ target: g.target, keyframeIds: g.ids }),
+              )
+              if (cmds.length === 0) {
+                setDeleteOrphansConfirm(null)
+                return
+              }
+              const tx =
+                cmds.length === 1 ? cmds[0] : new TransactionCommand(cmds as unknown as never[])
+              const result = dispatch(tx as never)
+              if (!result.ok) {
+                notify(result.error.message)
+                return
+              }
+              // Merge Extract (+ Assign if new) + Delete into one undo step
+              try {
+                undoStack.mergeLastAsTransaction(2)
+              } catch {
+                /* ignore */
+              }
+              const deletedCount = kfs.length
+              setSelectedOrphanIds(new Set())
+              setOrphanAnchorId(null)
+              setDeleteOrphansConfirm(null)
+              notify(`Deleted ${deletedCount} orphan keyframe(s) — collection creation unblocked where resolved`)
+            }}
+          />
+        )}
 
         {/* Create ClipCollection modal (15-05) – subset-pointed */}
         {collectionCreateOpen && (

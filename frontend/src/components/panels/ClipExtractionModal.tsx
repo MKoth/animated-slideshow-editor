@@ -20,6 +20,7 @@ interface Props {
     mode: 'new' | 'existing'
     clipId: string
     selStart: number
+    keyframes: readonly ExtractableKeyframe[]
   }) => void
 }
 
@@ -161,7 +162,12 @@ export function ClipExtractionModal({
           return
         }
         const clipId = (result.inverse as { clipId: string }).clipId
-        onSuccess?.({ mode: 'new', clipId, selStart: filteredBounds.selStart })
+        onSuccess?.({
+          mode: 'new',
+          clipId,
+          selStart: filteredBounds.selStart,
+          keyframes: [...filteredKeyframes],
+        })
       } else {
         if (!selectedClipId) {
           setError('Select a clip')
@@ -177,7 +183,12 @@ export function ClipExtractionModal({
           setError(result.error.message)
           return
         }
-        onSuccess?.({ mode: 'existing', clipId: selectedClipId, selStart: filteredBounds.selStart })
+        onSuccess?.({
+          mode: 'existing',
+          clipId: selectedClipId,
+          selStart: filteredBounds.selStart,
+          keyframes: [...filteredKeyframes],
+        })
       }
       onClose()
     } catch (e) {

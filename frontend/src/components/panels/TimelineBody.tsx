@@ -12,7 +12,11 @@ import {
   setSingleKeyframeDisabled,
 } from '../../app/keyframeSelectionActions'
 import { useEngine } from '../../app/useEngine'
-import { AddKeyframeCommand, DeleteKeyframesCommand } from '../../engine/commands'
+import {
+  AddKeyframeCommand,
+  DeleteKeyframesCommand,
+  TransactionCommand,
+} from '../../engine/commands'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { useSelectionStore } from '../../stores/selectionStore'
@@ -56,6 +60,7 @@ import {
 } from './timelineComponents'
 import type { TimelineMenuState } from './timelineComponents'
 import { ClipExtractionModal } from './ClipExtractionModal'
+import { DeleteOrphansConfirmModal } from './DeleteOrphansConfirmModal'
 import {
   collectSelectedExtractableKeyframes,
   collectExtractableForSingle,
@@ -156,7 +161,7 @@ export function TimelineBody({
   viewportWidth: number
   lastPointerTimeRef: RefObject<number | null>
 }) {
-  const { engine, dispatch } = useEngine()
+  const { engine, dispatch, undoStack } = useEngine()
   const notify = useNotificationStore((state) => state.notify)
   const zoomLevel = useTimelineViewStore((state) => state.zoomLevel)
   const scrollTime = useTimelineViewStore((state) => state.scrollTime)
@@ -167,6 +172,10 @@ export function TimelineBody({
   const selectedKeyframeIds = selectedKeyframeIdsOf(timelineSelection)
   const [menu, setMenu] = useState<TimelineMenuState | null>(null)
   const [extraction, setExtraction] = useState<ExtractableKeyframe[] | null>(null)
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    keyframes: readonly ExtractableKeyframe[]
+    clipId: string
+  } | null>(null)
   const [morphPicker, setMorphPicker] = useState<{ nodeId: string; keyframeId: string } | null>(
     null,
   )
@@ -2213,7 +2222,83 @@ export function TimelineBody({
           }
         })()}
       {extraction && (
-        <ClipExtractionModal keyframes={extraction} onClose={() => setExtraction(null)} />
+        <ClipExtractionModal
+          keyframes={extraction}
+          onClose={() => setExtraction(null)}
+          onSuccess={({ clipId, keyframes: filtered }) => {
+            const kfs = filtered ?? extraction
+            if (kfs.length > 0) setDeleteConfirm({ keyframes: kfs, clipId })
+          }}
+        />
+      )}
+      {deleteConfirm && (
+        <DeleteOrphansConfirmModal
+          open={!!deleteConfirm}
+          keyframes={deleteConfirm.keyframes}
+          clipName={(() => {
+            try {
+              return engine.getClip(deleteConfirm.clipId).name
+            } catch {
+              return deleteConfirm.clipId.slice(0, 8)
+            }
+          })()}
+          onKeep={() => {
+            setDeleteConfirm(null)
+            notify(
+              `Kept ${deleteConfirm.keyframes.length} source keyframe(s) as orphans — delete manually if they block collections`,
+            )
+          }}
+          onConfirmDelete={() => {
+            const kfs = deleteConfirm.keyframes
+            const groups = new Map<string, { target: import('../../engine/keyframeTarget').KeyframeTarget; ids: string[] }>()
+            for (const kf of kfs) {
+              const t = kf.target
+              let key: string
+              if (t.kind === 'node' && 'property' in t) key = `node:${t.nodeId}:${t.property}`
+              else if (t.kind === 'node' && 'parameter' in t)
+                key = `node-param:${t.nodeId}:${t.parameter}`
+              else if (t.kind === 'visible') key = `visible:${t.nodeId}`
+              else if (t.kind === 'morph') key = `morph:${t.nodeId}`
+              else if (t.kind === 'circle') key = `circle:${t.nodeId}:${t.property}`
+              else if (t.kind === 'shadow') key = `shadow:${t.nodeId}:${t.property}`
+              else if (t.kind === 'dataLabel') key = `dataLabel:${t.nodeId}:${t.label}`
+              else if (t.kind === 'table') key = `table:${t.nodeId}:${t.property}`
+              else if (t.kind === 'symmetry') key = `symmetry:${t.nodeId}`
+              else if (t.kind === 'zIndex') key = `zIndex:${t.nodeId}`
+              else key = `${t.kind}:${(t as { nodeId?: string }).nodeId ?? ''}`
+              const entry = groups.get(key)
+              if (entry) entry.ids.push(kf.keyframeId)
+              else groups.set(key, { target: t as import('../../engine/keyframeTarget').KeyframeTarget, ids: [kf.keyframeId] })
+            }
+            const cmds = [...groups.values()].map(
+              (g) => new DeleteKeyframesCommand({ target: g.target, keyframeIds: g.ids }),
+            )
+            if (cmds.length === 0) {
+              setDeleteConfirm(null)
+              return
+            }
+            const tx = cmds.length === 1 ? cmds[0] : new TransactionCommand(cmds as unknown as never[])
+            const result = dispatch(tx as never)
+            if (!result.ok) {
+              notify(result.error.message)
+              return
+            }
+            try {
+              undoStack.mergeLastAsTransaction(2)
+            } catch {
+              /* ignore - undo will be 2 steps */
+            }
+            const count = kfs.length
+            setDeleteConfirm(null)
+            // Clear timeline selection so deleted ids don't linger as ghost selection
+            try {
+              useTimelineSelectionStore.getState().clearSelection()
+            } catch {
+              /* ignore */
+            }
+            notify(`Deleted ${count} source keyframe(s) — orphans removed`)
+          }}
+        />
       )}
     </div>
   )
