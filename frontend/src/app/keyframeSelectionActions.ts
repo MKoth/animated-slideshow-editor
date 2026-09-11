@@ -19,6 +19,12 @@ import { snapToFrameGrid } from '../engine/timelineSnapping'
 import { animatablePropertiesOf } from './keyframeActions'
 import { SHADOW_PROPERTIES } from '../engine/shadowEffect'
 import type { ShadowProperty } from '../engine/shadowEffect'
+import type { MorphClipboardMeta, MorphClipboardShapeInfo } from '../stores/keyframeClipboardStore'
+import { useNotificationStore } from '../stores/notificationStore'
+import { useSelectionStore } from '../stores/selectionStore'
+import { evaluatedPropertyValue } from '../engine/keyframeEdit'
+import { normalizeRotation } from '../engine/transform'
+import { requestPasteDeltaChoices, type PasteDeltaItem } from '../stores/pasteDeltaStore'
 
 export interface KeyframeRef {
   readonly nodeId: string
@@ -710,13 +716,14 @@ export function pruneKeyframeSelection(engine: EnginePublic): void {
 /**
  * Copy the selected keyframes to the keyframe clipboard. Captures relative
  * times, values, interpolation, and tangents against the earliest selected
- * keyframe as origin. Supports both node property and material parameter
- * keyframes.
+ * keyframe as origin. Supports node property, material parameter, and morph
+ * keyframes (morph carries extra shape/category/topology meta for cross-object validation).
  */
 export function copyKeyframes(engine: EnginePublic): void {
   const propertyRefs = selectedKeyframeRefs(engine)
   const materialRefs = selectedMaterialKeyframeRefs(engine)
-  if (propertyRefs.length === 0 && materialRefs.length === 0) {
+  const morphRefs = selectedMorphKeyframeRefs(engine)
+  if (propertyRefs.length === 0 && materialRefs.length === 0 && morphRefs.length === 0) {
     return
   }
 
@@ -753,6 +760,7 @@ export function copyKeyframes(engine: EnginePublic): void {
     targets.push({
       target: { kind: 'node', nodeId: group.nodeId, property: group.property },
       payload: { keyframes },
+      originTime: groupOriginTime,
     })
   }
 
@@ -786,7 +794,45 @@ export function copyKeyframes(engine: EnginePublic): void {
     targets.push({
       target: { kind: 'node', nodeId: group.nodeId, parameter: group.parameter },
       payload: { keyframes },
+      originTime: groupOriginTime,
     })
+  }
+
+  // Morph — one track per mesh node, grouped by nodeId
+  {
+    const grouped = new Map<string, MorphKeyframeRef[]>()
+    for (const ref of morphRefs) {
+      const arr = grouped.get(ref.nodeId) ?? []
+      arr.push(ref)
+      grouped.set(ref.nodeId, arr)
+    }
+    for (const [nodeId, refs] of grouped) {
+      const sorted = [...refs].sort((a, b) => a.time - b.time)
+      const groupOriginTime = sorted[0].time
+      if (groupOriginTime < globalEarliest) {
+        globalEarliest = groupOriginTime
+      }
+      const allKeyframes = engine.getMorphKeyframes(nodeId)
+      const kfById = new Map(allKeyframes.map((kf) => [kf.id, kf]))
+      const keyframes: PastePayloadKeyframe[] = sorted.map((ref) => {
+        const kf = kfById.get(ref.keyframeId)
+        if (!kf) throw new Error(`Keyframe not found: ${ref.keyframeId}`)
+        return {
+          time: kf.time - groupOriginTime,
+          value: snapshotOf(kf).value,
+          interpolation: kf.interpolation,
+          tangentIn: { time: kf.tangentIn.time, value: kf.tangentIn.value },
+          tangentOut: { time: kf.tangentOut.time, value: kf.tangentOut.value },
+        }
+      })
+      const meta = buildMorphClipboardMeta(engine, nodeId)
+      targets.push({
+        target: { kind: 'morph', nodeId },
+        payload: { keyframes },
+        morphMeta: meta,
+        originTime: groupOriginTime,
+      })
+    }
   }
 
   useKeyframeClipboardStore.getState().copy(targets, globalEarliest)
@@ -797,8 +843,16 @@ export function copyKeyframes(engine: EnginePublic): void {
  * the source target; if exactly one different property/parameter is
  * currently selected, pastes onto that instead. Issues PasteKeyframesCommand
  * per target, wrapped in a TransactionCommand when multiple targets exist.
+ * For morph, validates shape names, category, and topology before dispatch.
+ * When pasting numeric keyframes cross-node with a non-zero evaluated delta,
+ * shows a modal asking per-track Absolute vs Relative (include delta); scale
+ * uses ratio (×) with zero guard → additive fallback, opacity clamped 0..1,
+ * rotation normalized. Non-numeric tracks always absolute (checkbox disabled).
  */
-export function pasteKeyframes(engine: EnginePublic, dispatch: DispatchCommand): void {
+export async function pasteKeyframes(
+  engine: EnginePublic,
+  dispatch: DispatchCommand,
+): Promise<void> {
   const { targets } = useKeyframeClipboardStore.getState()
   if (targets.length === 0) {
     return
@@ -808,14 +862,395 @@ export function pasteKeyframes(engine: EnginePublic, dispatch: DispatchCommand):
   const gridEnabled = useTimelineViewStore.getState().gridSnapEnabled
   const atTime = snapToFrameGrid(rawAtTime, gridEnabled)
   const overrideTarget = resolvePasteTargetOverride(engine)
+  const selectedNodeIds = useSelectionStore.getState().selectedIds
 
-  const commands = targets.map((clipTarget) => {
-    const target = overrideTarget ?? clipTarget.target
-    return new PasteKeyframesCommand({ target, payload: clipTarget.payload, atTime })
-  })
+  // For Ctrl+V cross-object paste: if no keyframe override but a single node is selected, retarget all clipboard entries to that node
+  let retargetNodeId: string | null = null
+  if (!overrideTarget && selectedNodeIds.length === 1) {
+    const candidate = selectedNodeIds[0]
+    const anyDifferent = targets.some((t) => (t.target as { nodeId?: string }).nodeId !== candidate)
+    const allNodeKind = targets.every(
+      (t) => 'nodeId' in (t.target as unknown as Record<string, unknown>),
+    )
+    if (anyDifferent && allNodeKind) {
+      retargetNodeId = candidate
+    }
+  }
 
-  dispatchKeyframeCommands(dispatch, commands)
+  // Build resolved targets + validate compatibility before delta prompt
+  const resolvedTargets: import('../engine/keyframeTarget').KeyframeTarget[] = []
+  for (const clipTarget of targets) {
+    let target: import('../engine/keyframeTarget').KeyframeTarget
+    if (overrideTarget) {
+      target = overrideTarget
+    } else if (retargetNodeId) {
+      const src = clipTarget.target as unknown as Record<string, unknown>
+      if (src.kind === 'morph') {
+        target = { kind: 'morph', nodeId: retargetNodeId }
+      } else if (src.kind === 'node' && 'property' in src) {
+        target = {
+          kind: 'node',
+          nodeId: retargetNodeId,
+          property: src.property as import('../engine').AnimationProperty,
+        }
+      } else if (src.kind === 'node' && 'parameter' in src) {
+        target = { kind: 'node', nodeId: retargetNodeId, parameter: src.parameter as string }
+      } else if (src.kind === 'circle') {
+        target = {
+          kind: 'circle',
+          nodeId: retargetNodeId,
+          property: src.property as import('../engine').CircleAnimationProperty,
+        }
+      } else if (src.kind === 'shadow') {
+        target = {
+          kind: 'shadow',
+          nodeId: retargetNodeId,
+          property: src.property as import('../engine/shadowEffect').ShadowProperty,
+        }
+      } else if (src.kind === 'dataLabel') {
+        target = { kind: 'dataLabel', nodeId: retargetNodeId, label: src.label as string }
+      } else if (src.kind === 'visible') {
+        target = { kind: 'visible', nodeId: retargetNodeId }
+      } else if (src.kind === 'zIndex') {
+        target = { kind: 'zIndex', nodeId: retargetNodeId }
+      } else if (src.kind === 'symmetry') {
+        target = { kind: 'symmetry', nodeId: retargetNodeId }
+      } else if (src.kind === 'table') {
+        target = {
+          kind: 'table',
+          nodeId: retargetNodeId,
+          property: src.property as import('../engine/animationProperties').TableAnimationProperty,
+        }
+      } else {
+        target = clipTarget.target
+      }
+    } else {
+      target = clipTarget.target
+    }
+
+    if (overrideTarget || retargetNodeId) {
+      const compat = validatePasteCompatibility(clipTarget.target, target)
+      if (!compat.ok) {
+        useNotificationStore.getState().notify(compat.error)
+        return
+      }
+      try {
+        engine.resolveAnimationTarget(target)
+      } catch (e) {
+        useNotificationStore.getState().notify(e instanceof Error ? e.message : String(e))
+        return
+      }
+    }
+    resolvedTargets.push(target)
+  }
+
+  // Delta-aware prompt (only on cross-node && any numeric delta≠0)
+  const deltaItems = computeDeltaItems(engine, targets, resolvedTargets, atTime)
+  let deltaChoices: readonly boolean[] | null = null
+  if (needsDeltaPrompt(deltaItems)) {
+    const choices = await requestPasteDeltaChoices(deltaItems)
+    if (choices === null) {
+      // Cancelled → abort paste
+      return
+    }
+    deltaChoices = choices
+  }
+
+  const commands: import('../engine/commands').PasteKeyframesCommand[] = []
+  for (let i = 0; i < targets.length; i += 1) {
+    const clipTarget = targets[i]
+    const target = resolvedTargets[i]
+    const useDelta = deltaChoices ? (deltaChoices[i] ?? false) : false
+    const item = deltaItems[i]
+    const propName = propertyNameOf(target)
+    // Apply delta to payload if requested (ratio for scale)
+    const basePayload = clipTarget.payload
+    const transformedPayload =
+      item.isNumeric && useDelta
+        ? applyDeltaToPayload(basePayload, item.delta, item.ratio, propName, true)
+        : basePayload
+
+    if (target.kind === 'morph' && clipTarget.target.kind === 'morph') {
+      const validation = validateMorphPaste(
+        { ...clipTarget, payload: transformedPayload },
+        engine,
+        target as import('../engine/keyframeTarget').NodeMorphTarget,
+      )
+      if (!validation.ok) {
+        useNotificationStore.getState().notify(validation.error!)
+        return
+      }
+      commands.push(
+        new PasteKeyframesCommand({
+          target,
+          payload: validation.remappedPayload!,
+          atTime,
+        }),
+      )
+    } else if (target.kind === 'morph' || clipTarget.target.kind === 'morph') {
+      if (clipTarget.target.kind === 'morph' && target.kind === 'morph') {
+        // handled above
+      } else {
+        useNotificationStore
+          .getState()
+          .notify('Cannot paste morph keyframes onto a non-morph track or vice versa')
+        return
+      }
+    } else {
+      commands.push(new PasteKeyframesCommand({ target, payload: transformedPayload, atTime }))
+    }
+  }
+
+  try {
+    dispatchKeyframeCommands(dispatch, commands)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    useNotificationStore.getState().notify(msg)
+    return
+  }
   useTimelineSelectionStore.getState().clearSelection()
+}
+
+/**
+ * Paste clipboard contents onto an explicit lane target at a specific time.
+ * Used for lane-click paste ("click on lane and paste if was copied").
+ * Supports both single and multiple tracks: if clipboard has multiple targets,
+ * each is retargeted to the lane's node (same parameter). Validates morph
+ * names/category/topology and that each parameter is present on target node.
+ * Returns true if paste was dispatched.
+ */
+export async function pasteKeyframesAtTarget(
+  engine: EnginePublic,
+  dispatch: DispatchCommand,
+  target: import('../engine/keyframeTarget').KeyframeTarget,
+  rawAtTime: number,
+): Promise<boolean> {
+  const { targets } = useKeyframeClipboardStore.getState()
+  if (targets.length === 0) {
+    return false
+  }
+  const gridEnabled = useTimelineViewStore.getState().gridSnapEnabled
+  const atTime = snapToFrameGrid(rawAtTime, gridEnabled)
+
+  const laneNodeId = (target as { nodeId?: string }).nodeId
+  if (!laneNodeId) {
+    useNotificationStore.getState().notify('Cannot determine paste target node')
+    return false
+  }
+
+  // Build resolved targets (single-track fast path and multi-track unified)
+  let resolvedTargets: import('../engine/keyframeTarget').KeyframeTarget[] = []
+  const errors: string[] = []
+
+  if (targets.length === 1) {
+    const clipTarget = targets[0]
+    const compat = validatePasteCompatibility(clipTarget.target, target)
+    if (!compat.ok) {
+      useNotificationStore.getState().notify(compat.error)
+      return false
+    }
+    try {
+      engine.resolveAnimationTarget(target)
+    } catch (e) {
+      useNotificationStore.getState().notify(e instanceof Error ? e.message : String(e))
+      return false
+    }
+    resolvedTargets = [target]
+  } else {
+    // Multi-track: retarget each clipboard entry to lane's node
+    for (const clipTarget of targets) {
+      const src = clipTarget.target
+      let newTarget: import('../engine/keyframeTarget').KeyframeTarget | null = null
+      if (src.kind === 'morph') {
+        newTarget = { kind: 'morph', nodeId: laneNodeId }
+      } else if (src.kind === 'node' && 'property' in src) {
+        newTarget = {
+          kind: 'node',
+          nodeId: laneNodeId,
+          property: (src as { property: import('../engine').AnimationProperty }).property,
+        }
+      } else if (src.kind === 'node' && 'parameter' in src) {
+        newTarget = {
+          kind: 'node',
+          nodeId: laneNodeId,
+          parameter: (src as { parameter: string }).parameter,
+        }
+      } else if (src.kind === 'circle') {
+        newTarget = {
+          kind: 'circle',
+          nodeId: laneNodeId,
+          property: (src as { property: import('../engine').CircleAnimationProperty }).property,
+        }
+      } else if (src.kind === 'shadow') {
+        newTarget = {
+          kind: 'shadow',
+          nodeId: laneNodeId,
+          property: (src as { property: import('../engine/shadowEffect').ShadowProperty }).property,
+        }
+      } else if (src.kind === 'dataLabel') {
+        newTarget = {
+          kind: 'dataLabel',
+          nodeId: laneNodeId,
+          label: (src as { label: string }).label,
+        }
+      } else if (src.kind === 'visible') {
+        newTarget = { kind: 'visible', nodeId: laneNodeId }
+      } else if (src.kind === 'zIndex') {
+        newTarget = { kind: 'zIndex', nodeId: laneNodeId }
+      } else if (src.kind === 'symmetry') {
+        newTarget = { kind: 'symmetry', nodeId: laneNodeId }
+      } else if (src.kind === 'table') {
+        newTarget = {
+          kind: 'table',
+          nodeId: laneNodeId,
+          property: (
+            src as { property: import('../engine/animationProperties').TableAnimationProperty }
+          ).property,
+        }
+      } else {
+        errors.push(
+          `Unsupported track type "${describeTarget(src as unknown as import('../engine/keyframeTarget').KeyframeTarget)}"`,
+        )
+        continue
+      }
+      try {
+        engine.resolveAnimationTarget(newTarget)
+      } catch (e) {
+        errors.push(
+          `Target node does not have "${describeTarget(src as unknown as import('../engine/keyframeTarget').KeyframeTarget)}" — ${e instanceof Error ? e.message : String(e)}`,
+        )
+        continue
+      }
+      resolvedTargets.push(newTarget)
+    }
+
+    if (errors.length > 0) {
+      useNotificationStore.getState().notify(errors.join('\n'))
+      if (resolvedTargets.length === 0) return false
+      if (errors.length > 0 && resolvedTargets.length !== targets.length) {
+        return false
+      }
+    }
+    if (resolvedTargets.length === 0) return false
+  }
+
+  // Delta-aware prompt (only cross-node && any numeric delta≠0)
+  // For single-track case resolvedTargets length 1, for multi-track matches clip count when successful
+  // Align delta items with original targets (when single, resolvedTargets is [target]; when multi, we filtered errors earlier so lengths match if we passed)
+  // For delta prompt we need items aligned with clipTargets that succeeded; if multi-track had errors we already returned false above.
+  // So safe to compute with targets and resolvedTargets when lengths equal.
+  let deltaChoices: readonly boolean[] | null = null
+  if (targets.length === resolvedTargets.length) {
+    const deltaItems = computeDeltaItems(engine, targets, resolvedTargets, atTime)
+    if (needsDeltaPrompt(deltaItems)) {
+      const choices = await requestPasteDeltaChoices(deltaItems)
+      if (choices === null) {
+        return false
+      }
+      deltaChoices = choices
+    }
+  }
+
+  // Build commands with optional delta transformation
+  if (targets.length === 1) {
+    const clipTarget = targets[0]
+    const dst = resolvedTargets[0]
+    const idx = 0
+    const useDelta = deltaChoices ? (deltaChoices[idx] ?? false) : false
+    const deltaItem = (() => {
+      // Recompute item for single to apply; avoid needing to store earlier
+      const items = computeDeltaItems(engine, targets, resolvedTargets, atTime)
+      return items[0]
+    })()
+    const propName = propertyNameOf(dst)
+    const transformedPayload =
+      deltaItem?.isNumeric && useDelta
+        ? applyDeltaToPayload(clipTarget.payload, deltaItem.delta, deltaItem.ratio, propName, true)
+        : clipTarget.payload
+
+    if (dst.kind === 'morph') {
+      const validation = validateMorphPaste(
+        { ...clipTarget, payload: transformedPayload },
+        engine,
+        dst as import('../engine/keyframeTarget').NodeMorphTarget,
+      )
+      if (!validation.ok) {
+        useNotificationStore.getState().notify(validation.error!)
+        return false
+      }
+      try {
+        dispatchKeyframeCommands(dispatch, [
+          new PasteKeyframesCommand({ target: dst, payload: validation.remappedPayload!, atTime }),
+        ])
+      } catch (e) {
+        useNotificationStore.getState().notify(e instanceof Error ? e.message : String(e))
+        return false
+      }
+      useTimelineSelectionStore.getState().clearSelection()
+      return true
+    }
+    try {
+      dispatchKeyframeCommands(dispatch, [
+        new PasteKeyframesCommand({ target: dst, payload: transformedPayload, atTime }),
+      ])
+    } catch (e) {
+      useNotificationStore.getState().notify(e instanceof Error ? e.message : String(e))
+      return false
+    }
+    useTimelineSelectionStore.getState().clearSelection()
+    return true
+  }
+
+  // Multi-track
+  const commands: import('../engine/commands').PasteKeyframesCommand[] = []
+  const multiDeltaItems = computeDeltaItems(engine, targets, resolvedTargets, atTime)
+  for (let i = 0; i < targets.length; i += 1) {
+    const clipTarget = targets[i]
+    const newTarget = resolvedTargets[i]
+    if (!newTarget) continue
+    const item = multiDeltaItems[i]
+    const useDelta = deltaChoices ? (deltaChoices[i] ?? false) : false
+    const propName = propertyNameOf(newTarget)
+    const transformedPayload =
+      item?.isNumeric && useDelta
+        ? applyDeltaToPayload(clipTarget.payload, item.delta, item.ratio, propName, true)
+        : clipTarget.payload
+
+    if (newTarget.kind === 'morph') {
+      const validation = validateMorphPaste(
+        { ...clipTarget, payload: transformedPayload },
+        engine,
+        newTarget as import('../engine/keyframeTarget').NodeMorphTarget,
+      )
+      if (!validation.ok) {
+        // Should have been caught earlier; but if fails due to delta? treat as error
+        useNotificationStore.getState().notify(validation.error!)
+        return false
+      }
+      commands.push(
+        new PasteKeyframesCommand({
+          target: newTarget,
+          payload: validation.remappedPayload!,
+          atTime,
+        }),
+      )
+    } else {
+      commands.push(
+        new PasteKeyframesCommand({ target: newTarget, payload: transformedPayload, atTime }),
+      )
+    }
+  }
+
+  if (commands.length === 0) return false
+
+  try {
+    dispatchKeyframeCommands(dispatch, commands)
+  } catch (e) {
+    useNotificationStore.getState().notify(e instanceof Error ? e.message : String(e))
+    return false
+  }
+  useTimelineSelectionStore.getState().clearSelection()
+  return true
 }
 
 /**
@@ -896,5 +1331,546 @@ function resolvePasteTargetOverride(engine: EnginePublic): KeyframeTarget | null
     }
   }
 
+  const morphRefs = allMorphKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
+  if (morphRefs.length === 1) {
+    return { kind: 'morph', nodeId: morphRefs[0].nodeId }
+  }
+
+  const circleRefs = allCircleKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
+  if (circleRefs.length === 1) {
+    return { kind: 'circle', nodeId: circleRefs[0].nodeId, property: circleRefs[0].property }
+  }
+
+  const dataLabelRefs = allDataLabelKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
+  if (dataLabelRefs.length === 1) {
+    return { kind: 'dataLabel', nodeId: dataLabelRefs[0].nodeId, label: dataLabelRefs[0].label }
+  }
+
+  const shadowRefs = allShadowKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
+  if (shadowRefs.length === 1) {
+    return {
+      kind: 'shadow',
+      nodeId: shadowRefs[0].nodeId,
+      property: shadowRefs[0].property,
+    }
+  }
+
+  const symmetryRefs = allSymmetryKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
+  if (symmetryRefs.length === 1) {
+    return { kind: 'symmetry', nodeId: symmetryRefs[0].nodeId }
+  }
+
+  const visibleRefs = allVisibleKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
+  if (visibleRefs.length === 1) {
+    return { kind: 'visible', nodeId: visibleRefs[0].nodeId }
+  }
+
+  const zIndexRefs = allZIndexKeyframeRefs(engine).filter((ref) => wanted.has(ref.keyframeId))
+  if (zIndexRefs.length === 1) {
+    return { kind: 'zIndex', nodeId: zIndexRefs[0].nodeId }
+  }
+
   return null
+}
+
+// ---------------------------------------------------------------------------
+// Morph cross-object helpers
+// ---------------------------------------------------------------------------
+
+function categoryPathFor(
+  categories: readonly import('../engine/shapeCategory').ShapeCategory[],
+  categoryId: string | null,
+): string | null {
+  if (categoryId === null) return null
+  const byId = new Map(categories.map((c) => [c.id, c] as const))
+  const cat = byId.get(categoryId)
+  if (!cat) return null
+  const parts: string[] = []
+  let cur: import('../engine/shapeCategory').ShapeCategory | undefined = cat
+  while (cur) {
+    parts.unshift(cur.name)
+    if (cur.parentId === null) break
+    cur = byId.get(cur.parentId)
+  }
+  return parts.join('/')
+}
+
+function buildMorphClipboardMeta(engine: EnginePublic, nodeId: string): MorphClipboardMeta {
+  const shapes = engine.getShapes(nodeId)
+  const categories = (() => {
+    try {
+      return engine.getShapeCategories(nodeId)
+    } catch {
+      return [] as readonly import('../engine/shapeCategory').ShapeCategory[]
+    }
+  })()
+  let vertexCount = 0
+  try {
+    const node = engine.getNode(nodeId)
+    vertexCount = node.components.mesh?.mesh.vertices.length ?? 0
+  } catch {
+    vertexCount = shapes[0]?.vertices.length ?? 0
+  }
+  const shapesById: Record<string, MorphClipboardShapeInfo> = {}
+  for (const s of shapes) {
+    const categoryPath = categoryPathFor(categories, s.categoryId ?? null)
+    // For "exact category name" we use full path; fallback to name alone would hide hierarchy mismatch,
+    // path is stricter and matches the spec "same category if categorized"
+    shapesById[s.id] = {
+      name: s.name,
+      categoryName: categoryPath ? (categoryPath.split('/').pop() ?? null) : null,
+      categoryPath,
+    }
+  }
+  return { vertexCount, shapesById }
+}
+
+function describeTarget(target: import('../engine/keyframeTarget').KeyframeTarget): string {
+  if (target.kind === 'morph') return 'Morph'
+  if (target.kind === 'node' && 'property' in target)
+    return String((target as { property: string }).property)
+  if (target.kind === 'node' && 'parameter' in target)
+    return String((target as { parameter: string }).parameter)
+  if (target.kind === 'circle') return String((target as { property: string }).property)
+  if (target.kind === 'shadow') return String((target as { property: string }).property)
+  if (target.kind === 'symmetry') return 'Symmetry'
+  if (target.kind === 'visible') return 'Visible'
+  if (target.kind === 'zIndex') return 'Z-Index'
+  if (target.kind === 'dataLabel') return String((target as { label: string }).label)
+  if (target.kind === 'table') return String((target as { property: string }).property)
+  return target.kind
+}
+
+function validatePasteCompatibility(
+  source: import('../engine/keyframeTarget').KeyframeTarget,
+  target: import('../engine/keyframeTarget').KeyframeTarget,
+): { ok: true } | { ok: false; error: string } {
+  if (source.kind !== target.kind) {
+    return {
+      ok: false,
+      error: `Cannot paste "${describeTarget(source)}" onto "${describeTarget(target)}": track types do not match. Copy and paste must use the same parameter.`,
+    }
+  }
+  // same kind — check parameter identity where applicable
+  if (source.kind === 'node' && target.kind === 'node') {
+    const sHasProp = 'property' in source
+    const tHasProp = 'property' in target
+    const sHasParam = 'parameter' in source
+    const tHasParam = 'parameter' in target
+    if (sHasProp !== tHasProp || sHasParam !== tHasParam) {
+      return {
+        ok: false,
+        error: `Cannot paste "${describeTarget(source)}" onto "${describeTarget(target)}": track types do not match.`,
+      }
+    }
+    // Both have same sub-kind (both property or both parameter) — allow different names (e.g. positionX -> positionY) per existing behavior
+    return { ok: true }
+  }
+  // For other kinds, same kind is sufficient — allow cross-property paste within same track type
+  // e.g. circle radius <-> segments, shadow blur <-> offsetX etc. are allowed at paste level; engine will validate value types
+  return { ok: true }
+}
+
+function validateMorphPaste(
+  clipTarget: import('../stores/keyframeClipboardStore').KeyframeClipboardTarget,
+  engine: EnginePublic,
+  target: import('../engine/keyframeTarget').NodeMorphTarget,
+):
+  | { ok: true; remappedPayload: import('../engine/animationManager').PastePayload }
+  | { ok: false; error: string } {
+  const payload = clipTarget.payload
+  const meta = clipTarget.morphMeta
+  if (!meta) {
+    // No meta — legacy clipboard: allow same-node paste without extra checks, but cross-node will be best-effort via IDs
+    // For safety, try to build meta from source node if still alive; otherwise fallback to no validation
+    return { ok: true, remappedPayload: payload }
+  }
+  let targetNode: import('../engine').SceneNode
+  try {
+    targetNode = engine.getNode(target.nodeId)
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+  if (!targetNode.components.mesh) {
+    return {
+      ok: false,
+      error: `Target node "${targetNode.name}" does not have a mesh — cannot paste morph keyframes.`,
+    }
+  }
+  const targetVertexCount = targetNode.components.mesh.mesh.vertices.length
+  if (meta.vertexCount !== targetVertexCount) {
+    return {
+      ok: false,
+      error: `Cannot paste morph keyframes: topology mismatch — source mesh has ${meta.vertexCount} vertices, target mesh "${targetNode.name}" has ${targetVertexCount} vertices. Shapes can only be copied between meshes with the same topology (same vertex count).`,
+    }
+  }
+  let targetShapes: readonly import('../engine/shape').Shape[] = []
+  let targetCategories: readonly import('../engine/shapeCategory').ShapeCategory[] = []
+  try {
+    targetShapes = engine.getShapes(target.nodeId)
+  } catch {
+    targetShapes = []
+  }
+  try {
+    targetCategories = engine.getShapeCategories(target.nodeId)
+  } catch {
+    targetCategories = []
+  }
+  const missingNames: string[] = []
+  const categoryMismatches: string[] = []
+  // Build lookup from name+categoryPath to target shape id
+  const targetShapeByKey = new Map<string, import('../engine/shape').Shape>()
+  for (const s of targetShapes) {
+    const path = categoryPathFor(targetCategories, s.categoryId ?? null)
+    const key = `${s.name}::${path ?? '__none'}`
+    targetShapeByKey.set(key, s)
+    // also add name-only fallback for error messaging
+  }
+  const targetNameSet = new Set(targetShapes.map((s) => s.name))
+  const targetShapeByName = new Map<string, import('../engine/shape').Shape[]>()
+  for (const s of targetShapes) {
+    const arr = targetShapeByName.get(s.name) ?? []
+    arr.push(s)
+    targetShapeByName.set(s.name, arr)
+  }
+
+  const remappedKeyframes: import('../engine/animationManager').PastePayloadKeyframe[] = []
+  for (const kf of payload.keyframes) {
+    const val = kf.value as unknown as {
+      fromShapeId: string | null
+      toShapeId: string | null
+      coefficient: number
+    } | null
+    if (!val || typeof val !== 'object' || !('coefficient' in (val as Record<string, unknown>))) {
+      // scalar legacy — no shape mapping needed
+      remappedKeyframes.push(kf)
+      continue
+    }
+    const fromId = (val as { fromShapeId: string | null }).fromShapeId
+    const toId = (val as { toShapeId: string | null }).toShapeId
+    const coeff = (val as { coefficient: number }).coefficient
+
+    const resolveId = (sourceId: string | null): string | null => {
+      if (sourceId === null) return null
+      const sourceInfo = meta.shapesById[sourceId]
+      if (!sourceInfo) {
+        // source shape id not in meta — treat as missing
+        missingNames.push(`(unknown shape id ${sourceId})`)
+        return null
+      }
+      const sourceName = sourceInfo.name
+      const sourcePath = sourceInfo.categoryPath
+      // Check existence by name
+      if (!targetNameSet.has(sourceName)) {
+        const catSuffix = sourcePath ? ` (category "${sourcePath}")` : ''
+        const msg = `"${sourceName}"${catSuffix}`
+        if (!missingNames.includes(msg)) missingNames.push(msg)
+        return null
+      }
+      // Find target shape with same name and matching category path
+      const key = `${sourceName}::${sourcePath ?? '__none'}`
+      const exact = targetShapeByKey.get(key)
+      if (exact) return exact.id
+      // Name exists but category mismatch — find any with same name
+      const candidates = targetShapeByName.get(sourceName) ?? []
+      if (candidates.length > 0) {
+        const cand = candidates[0]
+        const candPath = categoryPathFor(targetCategories, cand.categoryId ?? null)
+        const sourceCatDisp = sourcePath ?? 'none'
+        const targetCatDisp = candPath ?? 'none'
+        const msg = `shape "${sourceName}" category mismatch: source category "${sourceCatDisp}" vs target category "${targetCatDisp}"`
+        if (!categoryMismatches.includes(msg)) categoryMismatches.push(msg)
+        return null
+      }
+      const catSuffix = sourcePath ? ` (category "${sourcePath}")` : ''
+      const msg = `"${sourceName}"${catSuffix}`
+      if (!missingNames.includes(msg)) missingNames.push(msg)
+      return null
+    }
+
+    const newFromId = resolveId(fromId)
+    const newToId = resolveId(toId)
+
+    // If we collected missing/category errors, we will abort after loop; still need to know if this kf requires valid ids
+    // If source had non-null but we couldn't resolve, mark error; else use remapped ids (could be null if source was null)
+    // For error reporting, we already pushed; continue to next kf to collect all errors
+    if ((fromId !== null && newFromId === null) || (toId !== null && newToId === null)) {
+      // will be reported via missingNames/categoryMismatches; push placeholder to keep shape but will not be used if error
+      remappedKeyframes.push({
+        ...kf,
+        value: {
+          fromShapeId: newFromId,
+          toShapeId: newToId,
+          coefficient: coeff,
+        } as unknown as import('../engine/keyframe').KeyframeValue,
+      })
+      continue
+    }
+    remappedKeyframes.push({
+      ...kf,
+      value: {
+        fromShapeId: newFromId,
+        toShapeId: newToId,
+        coefficient: coeff,
+      } as unknown as import('../engine/keyframe').KeyframeValue,
+    })
+  }
+
+  if (missingNames.length > 0 || categoryMismatches.length > 0) {
+    const parts: string[] = []
+    if (missingNames.length > 0) {
+      parts.push(`missing shapes: ${missingNames.join(', ')}`)
+    }
+    if (categoryMismatches.length > 0) {
+      parts.push(`category mismatches: ${categoryMismatches.join('; ')}`)
+    }
+    const detail = parts.join(' — ')
+    return {
+      ok: false,
+      error: `Cannot paste morph keyframes: morph names do not match — ${detail}. Shapes must have the same names and, if categorized, be in the same category.`,
+    }
+  }
+
+  return { ok: true, remappedPayload: { keyframes: remappedKeyframes } }
+}
+
+// ---------------------------------------------------------------------------
+// Delta-aware paste helpers (Spec delta-aware numeric paste)
+// ---------------------------------------------------------------------------
+
+function isScalePropertyTarget(target: import('../engine/keyframeTarget').KeyframeTarget): boolean {
+  if (target.kind === 'node' && 'property' in target) {
+    const prop = (target as { property: import('../engine').AnimationProperty }).property
+    return prop === 'scaleX' || prop === 'scaleY'
+  }
+  return false
+}
+
+function evaluatedNumericForTarget(
+  engine: EnginePublic,
+  target: import('../engine/keyframeTarget').KeyframeTarget,
+  time: number,
+): number | null {
+  try {
+    if (target.kind === 'node' && 'property' in target) {
+      const prop = (target as { property: import('../engine').AnimationProperty }).property
+      return evaluatedPropertyValue(engine, target.nodeId, prop, time)
+    }
+    if (target.kind === 'node' && 'parameter' in target) {
+      const param = (target as { parameter: string }).parameter
+      const overrides = engine.evaluateMaterialOverrides(target.nodeId, time)
+      const v = (overrides as Record<string, unknown>)[param]
+      return typeof v === 'number' && Number.isFinite(v) ? (v as number) : null
+    }
+    if (target.kind === 'circle') {
+      const circle = engine.evaluateCircle(target.nodeId, time)
+      if (!circle) return null
+      const prop = (
+        target as { property: import('../engine/animationProperties').CircleAnimationProperty }
+      ).property
+      const v = (circle as unknown as Record<string, unknown>)[prop]
+      return typeof v === 'number' && Number.isFinite(v) ? (v as number) : null
+    }
+    if (target.kind === 'shadow') {
+      const shadow = engine.evaluateShadow(target.nodeId, time)
+      if (!shadow) return null
+      const prop = (target as { property: import('../engine/shadowEffect').ShadowProperty })
+        .property
+      if (prop === 'color') return null
+      const v = (shadow as unknown as Record<string, unknown>)[prop]
+      return typeof v === 'number' && Number.isFinite(v) ? (v as number) : null
+    }
+    if (target.kind === 'zIndex') {
+      return engine.evaluateZIndex(target.nodeId, time)
+    }
+    if (target.kind === 'visible') return null
+    if (target.kind === 'morph') return null
+    if (target.kind === 'symmetry') return null
+    if (target.kind === 'dataLabel') {
+      const map = engine.evaluateDataLabels(target.nodeId, time)
+      const v = map.get((target as { label: string }).label)
+      return typeof v === 'number' && Number.isFinite(v) ? v : null
+    }
+    if (target.kind === 'table') {
+      const table = engine.evaluateTable(target.nodeId, time)
+      if (!table) return null
+      const prop = (
+        target as { property: import('../engine/animationProperties').TableAnimationProperty }
+      ).property
+      const v = (table as unknown as Record<string, unknown>)[prop]
+      return typeof v === 'number' && Number.isFinite(v) ? (v as number) : null
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
+function payloadIsNumeric(payload: import('../engine/animationManager').PastePayload): boolean {
+  if (payload.keyframes.length === 0) return false
+  const first = payload.keyframes[0].value
+  return typeof first === 'number' && Number.isFinite(first as number)
+}
+
+export function computeDeltaItems(
+  engine: EnginePublic,
+  clipTargets: readonly KeyframeClipboardTarget[],
+  resolvedTargets: readonly import('../engine/keyframeTarget').KeyframeTarget[],
+  atTime: number,
+): PasteDeltaItem[] {
+  const items: PasteDeltaItem[] = []
+  for (let i = 0; i < clipTargets.length; i += 1) {
+    const clip = clipTargets[i]
+    const dst = resolvedTargets[i]
+    const src = clip.target
+    const srcNodeId = (src as { nodeId?: string }).nodeId ?? ''
+    const dstNodeId = (dst as { nodeId?: string }).nodeId ?? ''
+    const label = describeTarget(
+      src as unknown as import('../engine/keyframeTarget').KeyframeTarget,
+    )
+    const trackLabel = label
+    const isNumeric = payloadIsNumeric(clip.payload)
+    if (!isNumeric) {
+      items.push({
+        index: i,
+        label,
+        trackLabel,
+        sourceNodeId: srcNodeId,
+        targetNodeId: dstNodeId,
+        isNumeric: false,
+        delta: null,
+        ratio: null,
+        sourceValue: null,
+        targetValue: null,
+        disabledReason: 'Non-numeric track — always absolute',
+      })
+      continue
+    }
+    // If same node, no delta context -> disabled relative? We show but delta=0 handled earlier as no prompt.
+    // Still compute for display. Fallback to global originTime for legacy clipboard.
+    const originTime = clip.originTime ?? useKeyframeClipboardStore.getState().originTime ?? 0
+    const srcVal = evaluatedNumericForTarget(
+      engine,
+      src as unknown as import('../engine/keyframeTarget').KeyframeTarget,
+      originTime,
+    )
+    const dstVal = evaluatedNumericForTarget(engine, dst, atTime)
+    if (srcVal === null || dstVal === null) {
+      items.push({
+        index: i,
+        label,
+        trackLabel,
+        sourceNodeId: srcNodeId,
+        targetNodeId: dstNodeId,
+        isNumeric: false,
+        delta: null,
+        ratio: null,
+        sourceValue: srcVal,
+        targetValue: dstVal,
+        disabledReason: 'Cannot evaluate numeric value — absolute only',
+      })
+      continue
+    }
+    const delta = dstVal - srcVal
+    const isScale =
+      isScalePropertyTarget(dst) ||
+      isScalePropertyTarget(src as unknown as import('../engine/keyframeTarget').KeyframeTarget)
+    let ratio: number | null = null
+    if (isScale) {
+      if (Math.abs(srcVal) > 1e-9) {
+        ratio = dstVal / srcVal
+      } else {
+        ratio = null // guard zero → fallback additive
+      }
+    }
+    items.push({
+      index: i,
+      label,
+      trackLabel,
+      sourceNodeId: srcNodeId,
+      targetNodeId: dstNodeId,
+      isNumeric: true,
+      delta,
+      ratio,
+      sourceValue: srcVal,
+      targetValue: dstVal,
+      disabledReason: srcNodeId === dstNodeId ? 'Same object — delta is 0' : undefined,
+    })
+  }
+  return items
+}
+
+export function needsDeltaPrompt(items: readonly PasteDeltaItem[]): boolean {
+  const EPS = 1e-9
+  for (const it of items) {
+    if (!it.isNumeric) continue
+    if (it.sourceNodeId === it.targetNodeId) continue
+    if (it.delta === null) continue
+    // For scale with ratio, consider delta not zero or ratio not 1
+    const isScaleWithRatio = it.ratio !== null
+    if (isScaleWithRatio) {
+      if (Math.abs(it.ratio! - 1) > EPS) return true
+      if (Math.abs(it.delta) > EPS) return true
+    } else {
+      if (Math.abs(it.delta) > EPS) return true
+    }
+  }
+  return false
+}
+
+export function applyDeltaToPayload(
+  payload: import('../engine/animationManager').PastePayload,
+  delta: number | null,
+  ratio: number | null,
+  property: string | undefined,
+  useDelta: boolean,
+): import('../engine/animationManager').PastePayload {
+  if (!useDelta || (delta === null && ratio === null)) return payload
+  const isScale = property === 'scaleX' || property === 'scaleY'
+  const useRatio = isScale && ratio !== null
+  const keyframes = payload.keyframes.map((kf) => {
+    const origVal = kf.value
+    if (typeof origVal !== 'number' || !Number.isFinite(origVal as number)) {
+      return kf
+    }
+    let newVal: number
+    if (useRatio) {
+      newVal = (origVal as number) * ratio!
+    } else {
+      newVal = (origVal as number) + (delta ?? 0)
+    }
+    if (property === 'opacity') {
+      newVal = Math.max(0, Math.min(1, newVal))
+    } else if (property === 'rotation') {
+      newVal = normalizeRotation(newVal)
+    }
+    // Tangents: for ratio scale tangent values, for additive keep
+    let newTangentIn = kf.tangentIn
+    let newTangentOut = kf.tangentOut
+    if (useRatio) {
+      newTangentIn = { time: kf.tangentIn.time, value: kf.tangentIn.value * ratio! }
+      newTangentOut = { time: kf.tangentOut.time, value: kf.tangentOut.value * ratio! }
+    }
+    return {
+      ...kf,
+      value: newVal as unknown as import('../engine/keyframe').KeyframeValue,
+      tangentIn: newTangentIn,
+      tangentOut: newTangentOut,
+    }
+  })
+  return { keyframes }
+}
+
+function propertyNameOf(
+  target: import('../engine/keyframeTarget').KeyframeTarget,
+): string | undefined {
+  if (target.kind === 'node' && 'property' in target)
+    return (target as { property: string }).property
+  if (target.kind === 'node' && 'parameter' in target)
+    return (target as { parameter: string }).parameter
+  if (target.kind === 'circle') return (target as { property: string }).property
+  if (target.kind === 'shadow') return (target as { property: string }).property
+  if (target.kind === 'table') return (target as { property: string }).property
+  if (target.kind === 'dataLabel') return (target as { label: string }).label
+  return undefined
 }

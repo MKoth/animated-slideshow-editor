@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { Route, Routes } from 'react-router-dom'
 import { ErrorBoundary } from '../components/errors/ErrorBoundary'
 import { Notifications } from '../components/notifications/Notifications'
+import { PasteDeltaModal } from '../components/panels/PasteDeltaModal'
 import { EditorPage } from '../pages/EditorPage'
 import { useUiStore } from '../stores/uiStore'
 import { EngineProvider } from './EngineProvider'
@@ -23,6 +24,7 @@ export default function App() {
         </EngineProvider>
       </ErrorBoundary>
       <Notifications />
+      <PasteDeltaModal />
     </>
   )
 }

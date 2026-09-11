@@ -5696,6 +5696,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     importReusableObjectToParent: (objectJson, targetParentId) =>
       engine.importReusableObjectToParent(objectJson, targetParentId),
     duplicateNodeSubtree: (nodeId) => engine.duplicateNodeSubtree(nodeId),
+    resolveAnimationTarget: (target) => engine.resolveAnimationTarget(target),
   }
 }
 

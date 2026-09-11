@@ -62,7 +62,7 @@ export function registerClipboardShortcuts(getDeps: () => ClipboardShortcutDeps)
             pasteClipKeyframes(engine, dispatch, clipId, 0)
           }
         } else {
-          pasteKeyframes(engine, dispatch)
+          void pasteKeyframes(engine, dispatch)
         }
       } else {
         void pasteClipboardAsync(engine, dispatch)

@@ -32,6 +32,7 @@ import type { ConstraintManager } from './constraintManager'
 import type { DeformedMeshResult } from './meshDeformationEvaluator'
 import type { WorldTransform } from './worldTransform'
 import type { ExportJobDescriptor, ExportPerSlideDescriptor, ExportSettings } from './export'
+import type { KeyframeTarget, KeyframeTrackRef } from './keyframeTarget'
 
 export interface EnginePublic {
   readonly project: Project | null
@@ -278,6 +279,7 @@ export interface EnginePublic {
     nodeIdMap: Map<string, string>
     rootNewId: string
   }
+  resolveAnimationTarget(target: KeyframeTarget): KeyframeTrackRef
 }
 
 export function createEngine(): EnginePublic {

@@ -23,6 +23,7 @@ export interface TimelineMenuState {
   readonly symmetry?: boolean
   readonly zIndex?: boolean
   readonly keyframeId?: string
+  readonly atTime?: number
 }
 
 function ChevronIcon({ expanded }: { expanded: boolean }) {
@@ -245,6 +246,8 @@ export function TimelineContextMenu({
   onEditMorph,
   onEditSymmetry,
   onClose,
+  onPaste,
+  canPaste,
 }: {
   menu: TimelineMenuState
   onAdd: () => void
@@ -253,6 +256,8 @@ export function TimelineContextMenu({
   onEditMorph?: () => void
   onEditSymmetry?: () => void
   onClose: () => void
+  onPaste?: () => void
+  canPaste?: boolean
 }) {
   return (
     <>
@@ -300,9 +305,20 @@ export function TimelineContextMenu({
             )}
           </>
         ) : (
-          <button className="timeline-context-menu__item" onClick={onAdd}>
-            Add Keyframe
-          </button>
+          <>
+            <button className="timeline-context-menu__item" onClick={onAdd}>
+              Add Keyframe
+            </button>
+            {canPaste && onPaste && (
+              <button
+                className="timeline-context-menu__item"
+                data-testid="paste-keyframes-button"
+                onClick={onPaste}
+              >
+                Paste
+              </button>
+            )}
+          </>
         )}
       </div>
     </>

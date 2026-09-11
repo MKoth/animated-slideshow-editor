@@ -6,6 +6,7 @@ import {
   deleteSelectedKeyframes,
   keyframeRefsOfScene,
   materialKeyframeRefsOfScene,
+  pasteKeyframesAtTarget,
 } from '../../app/keyframeSelectionActions'
 import { useEngine } from '../../app/useEngine'
 import { AddKeyframeCommand, DeleteKeyframesCommand } from '../../engine/commands'
@@ -57,6 +58,7 @@ import {
   collectExtractableForSingle,
 } from '../../app/clipExtractionActions'
 import type { ExtractableKeyframe } from '../../engine/clipExtraction'
+import { useKeyframeClipboardStore } from '../../stores/keyframeClipboardStore'
 
 const MARQUEE_START_DISTANCE = 4
 
@@ -662,6 +664,7 @@ export function TimelineBody({
 
   const handleTrackListContextMenu = (event: React.MouseEvent) => {
     const target = event.target as HTMLElement
+    const atTime = timeFromClientX(event.clientX)
     const zIndexSubtrack = target.closest<HTMLElement>('[data-z-index]')
     if (zIndexSubtrack) {
       const nodeId = zIndexSubtrack.dataset.nodeId
@@ -671,6 +674,7 @@ export function TimelineBody({
           x: event.clientX,
           y: event.clientY,
           nodeId,
+          atTime,
           zIndex: true as unknown as import('./timelineComponents').TimelineMenuState['zIndex'],
         } as unknown as import('./timelineComponents').TimelineMenuState)
       }
@@ -686,6 +690,7 @@ export function TimelineBody({
           x: event.clientX,
           y: event.clientY,
           nodeId,
+          atTime,
           shadowProperty: shadowProperty as import('../../engine/shadowEffect').ShadowProperty,
         })
         return
@@ -705,6 +710,7 @@ export function TimelineBody({
           x: event.clientX,
           y: event.clientY,
           nodeId,
+          atTime,
           property: property as AnimationProperty,
         })
       }
@@ -720,6 +726,7 @@ export function TimelineBody({
           x: event.clientX,
           y: event.clientY,
           nodeId,
+          atTime,
           circleProperty:
             circleProperty as import('../../engine/animationProperties').CircleAnimationProperty,
         } as unknown as import('./timelineComponents').TimelineMenuState)
@@ -736,6 +743,7 @@ export function TimelineBody({
           x: event.clientX,
           y: event.clientY,
           nodeId,
+          atTime,
           parameter,
         })
       }
@@ -750,6 +758,7 @@ export function TimelineBody({
           x: event.clientX,
           y: event.clientY,
           nodeId,
+          atTime,
           morph: true,
         })
       }
@@ -764,6 +773,7 @@ export function TimelineBody({
           x: event.clientX,
           y: event.clientY,
           nodeId,
+          atTime,
           symmetry: true as unknown as Extract<
             import('./timelineComponents').TimelineMenuState,
             { nodeId: string }
@@ -780,8 +790,83 @@ export function TimelineBody({
       const nodeId = row.dataset.nodeId
       if (nodeId) {
         event.preventDefault()
-        setMenu({ x: event.clientX, y: event.clientY, nodeId })
+        setMenu({ x: event.clientX, y: event.clientY, nodeId, atTime })
       }
+    }
+  }
+
+  const handleLaneContextMenu = (event: React.MouseEvent, row: TimelineRow) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const atTime = timeFromClientX(event.clientX)
+    if (row.kind === 'subtrack') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        property: row.property,
+        atTime,
+      })
+    } else if (row.kind === 'materialSubtrack') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        parameter: row.parameter.key,
+        atTime,
+      })
+    } else if (row.kind === 'morphSubtrack') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        morph: true,
+        atTime,
+      })
+    } else if (row.kind === 'circleSubtrack') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        circleProperty:
+          row.property as import('../../engine/animationProperties').CircleAnimationProperty,
+        atTime,
+      } as unknown as import('./timelineComponents').TimelineMenuState)
+    } else if (row.kind === 'shadowSubtrack') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        shadowProperty: row.property as import('../../engine/shadowEffect').ShadowProperty,
+        atTime,
+      })
+    } else if (row.kind === 'zIndexSubtrack') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        zIndex: true as unknown as import('./timelineComponents').TimelineMenuState['zIndex'],
+        atTime,
+      } as unknown as import('./timelineComponents').TimelineMenuState)
+    } else if (row.kind === 'symmetrySubtrack') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        symmetry: true as unknown as Extract<
+          import('./timelineComponents').TimelineMenuState,
+          { nodeId: string }
+        >['symmetry'],
+        atTime,
+      } as unknown as Extract<import('./timelineComponents').TimelineMenuState, { nodeId: string }>)
+    } else if (row.kind === 'dataLabelSubtrack') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        label: row.label,
+        atTime,
+      })
     }
   }
 
@@ -1033,6 +1118,50 @@ export function TimelineBody({
       return
     }
     setExtraction(extractable)
+  }
+
+  const targetFromMenu = (
+    m: TimelineMenuState | null,
+  ): import('../../engine/keyframeTarget').KeyframeTarget | null => {
+    if (!m) return null
+    if ((m as unknown as { morph?: boolean }).morph) return { kind: 'morph', nodeId: m.nodeId }
+    if ((m as unknown as { symmetry?: boolean }).symmetry)
+      return { kind: 'symmetry', nodeId: m.nodeId }
+    if ((m as unknown as { zIndex?: boolean }).zIndex) return { kind: 'zIndex', nodeId: m.nodeId }
+    if ((m as unknown as { shadowProperty?: string }).shadowProperty) {
+      const sp = (
+        m as unknown as { shadowProperty: import('../../engine/shadowEffect').ShadowProperty }
+      ).shadowProperty
+      return { kind: 'shadow', nodeId: m.nodeId, property: sp }
+    }
+    if (m.property) return { kind: 'node', nodeId: m.nodeId, property: m.property }
+    if ((m as unknown as { circleProperty?: string }).circleProperty) {
+      const cp = (
+        m as unknown as {
+          circleProperty: import('../../engine/animationProperties').CircleAnimationProperty
+        }
+      ).circleProperty
+      return { kind: 'circle', nodeId: m.nodeId, property: cp }
+    }
+    if (m.parameter) return { kind: 'node', nodeId: m.nodeId, parameter: m.parameter }
+    if (m.label) return { kind: 'dataLabel', nodeId: m.nodeId, label: m.label }
+    return null
+  }
+
+  const pasteFromMenu = () => {
+    const m = menu
+    const t = targetFromMenu(m)
+    setMenu(null)
+    if (!m || !t) {
+      notify('Cannot determine paste target')
+      return
+    }
+    const rawTime = m.atTime ?? usePlaybackController.getState().getTime(slideId)
+    void pasteKeyframesAtTarget(engine, dispatch, t, rawTime).then((ok) => {
+      if (!ok) {
+        // errors already notified inside pasteKeyframesAtTarget
+      }
+    })
   }
 
   const step = rulerTickStep(pps)
@@ -1467,6 +1596,7 @@ export function TimelineBody({
                       className="timeline-lane-row"
                       data-property={row.property}
                       style={{ top: index * ROW_HEIGHT }}
+                      onContextMenu={(event) => handleLaneContextMenu(event, row)}
                     >
                       {keyframes.map((keyframe) => {
                         const previewTime =
@@ -1503,6 +1633,7 @@ export function TimelineBody({
                       className="timeline-lane-row timeline-lane-row--zIndex"
                       data-z-index="true"
                       style={{ top: index * ROW_HEIGHT }}
+                      onContextMenu={(event) => handleLaneContextMenu(event, row)}
                     >
                       {sorted.map((keyframe, idx) => {
                         const next = sorted[idx + 1]
@@ -1582,6 +1713,7 @@ export function TimelineBody({
                       className="timeline-lane-row"
                       data-parameter={row.parameter.key}
                       style={{ top: index * ROW_HEIGHT }}
+                      onContextMenu={(event) => handleLaneContextMenu(event, row)}
                     >
                       {keyframes.map((keyframe) => {
                         const previewTime =
@@ -1618,6 +1750,7 @@ export function TimelineBody({
                       className="timeline-lane-row"
                       data-label={row.label}
                       style={{ top: index * ROW_HEIGHT }}
+                      onContextMenu={(event) => handleLaneContextMenu(event, row)}
                     >
                       {keyframes.map((keyframe) => {
                         const previewTime =
@@ -1654,6 +1787,7 @@ export function TimelineBody({
                       className="timeline-lane-row"
                       data-circle-property={row.property}
                       style={{ top: index * ROW_HEIGHT }}
+                      onContextMenu={(event) => handleLaneContextMenu(event, row)}
                     >
                       {keyframes.map((keyframe) => {
                         const previewTime =
@@ -1689,6 +1823,7 @@ export function TimelineBody({
                       className="timeline-lane-row"
                       data-morph="true"
                       style={{ top: index * ROW_HEIGHT }}
+                      onContextMenu={(event) => handleLaneContextMenu(event, row)}
                     >
                       {keyframes.map((keyframe) => {
                         const previewTime =
@@ -1724,6 +1859,7 @@ export function TimelineBody({
                       className="timeline-lane-row"
                       data-symmetry="true"
                       style={{ top: index * ROW_HEIGHT }}
+                      onContextMenu={(event) => handleLaneContextMenu(event, row)}
                     >
                       {keyframes.map((keyframe) => {
                         const previewTime =
@@ -1765,6 +1901,7 @@ export function TimelineBody({
                         className="timeline-lane-row timeline-lane-row--shadow timeline-lane-row--shadow-color"
                         data-shadow-property={row.property}
                         style={{ top: index * ROW_HEIGHT }}
+                        onContextMenu={(event) => handleLaneContextMenu(event, row)}
                       >
                         {sorted.map((keyframe, idx) => {
                           const next = sorted[idx + 1]
@@ -1841,6 +1978,7 @@ export function TimelineBody({
                       className="timeline-lane-row timeline-lane-row--shadow"
                       data-shadow-property={row.property}
                       style={{ top: index * ROW_HEIGHT }}
+                      onContextMenu={(event) => handleLaneContextMenu(event, row)}
                     >
                       {keyframes.map((keyframe) => {
                         const previewTime =
@@ -1934,6 +2072,12 @@ export function TimelineBody({
             }
           }}
           onClose={() => setMenu(null)}
+          onPaste={pasteFromMenu}
+          canPaste={
+            !menu.keyframeId &&
+            useKeyframeClipboardStore.getState().targets.length > 0 &&
+            targetFromMenu(menu) !== null
+          }
         />
       )}
       {morphPicker &&

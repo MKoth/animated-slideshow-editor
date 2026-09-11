@@ -2,9 +2,23 @@ import { create } from 'zustand'
 import type { KeyframeTarget } from '../engine'
 import type { PastePayload } from '../engine/animationManager'
 
+export interface MorphClipboardShapeInfo {
+  readonly name: string
+  readonly categoryName: string | null
+  readonly categoryPath: string | null
+}
+
+export interface MorphClipboardMeta {
+  readonly vertexCount: number
+  readonly shapesById: Readonly<Record<string, MorphClipboardShapeInfo>>
+}
+
 export interface KeyframeClipboardTarget {
   readonly target: KeyframeTarget
   readonly payload: PastePayload
+  readonly morphMeta?: MorphClipboardMeta
+  /** Per-target origin time (earliest keyframe time of this target group) for evaluated delta computation. */
+  readonly originTime?: number
 }
 
 export interface KeyframeClipboardState {
