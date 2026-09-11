@@ -5,6 +5,7 @@ import {
   DeleteKeyframesCommand,
   PasteKeyframesCommand,
   DuplicateKeyframesCommand,
+  SetKeyframeDisabledCommand,
 } from '../engine/commands'
 import type { DispatchCommand } from '../engine/commands'
 import { snapshotOf } from '../engine/keyframe'
@@ -682,6 +683,303 @@ export function deleteSelectedKeyframes(engine: EnginePublic, dispatch: Dispatch
   })
   dispatchKeyframeCommands(dispatch, deleteCommands)
   useTimelineSelectionStore.getState().clearSelection()
+  return true
+}
+
+/**
+ * Return true if the keyframe with the given id is currently disabled (session-only).
+ * Searches all track types; returns false if not found (treat as enabled).
+ */
+export function isKeyframeDisabled(engine: EnginePublic, keyframeId: string): boolean {
+  // Brute-force search across all tracks — cheap for < few hundred keyframes and only on context menu open
+  for (const slide of engine.project?.slides ?? []) {
+    for (const node of collectNodes(slide.scene)) {
+      for (const prop of animatablePropertiesOf(node)) {
+        for (const kf of engine.getKeyframes(node.id, prop))
+          if (kf.id === keyframeId) return !!kf.disabled
+      }
+      const definition = engine.getMaterialDefinition(node.material.materialDefinitionId)
+      for (const param of definition.parameters) {
+        for (const kf of engine.getMaterialKeyframes(node.id, param.key))
+          if (kf.id === keyframeId) return !!kf.disabled
+      }
+      const chart = node.components.chart
+      if (chart) {
+        for (const label of chart.dataLabels) {
+          for (const kf of engine.getDataLabelKeyframes(node.id, label))
+            if (kf.id === keyframeId) return !!kf.disabled
+        }
+      }
+      if (node.components.circle) {
+        for (const prop of ['radius', 'startAngle', 'endAngle', 'segments'] as const) {
+          for (const kf of engine.getCircleKeyframes(node.id, prop))
+            if (kf.id === keyframeId) return !!kf.disabled
+        }
+      }
+      if (engine.hasVisibleTrack(node.id)) {
+        for (const kf of engine.getVisibleKeyframes(node.id))
+          if (kf.id === keyframeId) return !!kf.disabled
+      }
+      if (engine.hasZIndexTrack(node.id)) {
+        for (const kf of engine.getZIndexKeyframes(node.id))
+          if (kf.id === keyframeId) return !!kf.disabled
+      }
+      if (node.components.mesh) {
+        for (const kf of engine.getMorphKeyframes(node.id))
+          if (kf.id === keyframeId) return !!kf.disabled
+      }
+      for (const prop of SHADOW_PROPERTIES) {
+        if (engine.hasShadowTrack(node.id, prop as ShadowProperty)) {
+          for (const kf of engine.getShadowKeyframes(node.id, prop as ShadowProperty))
+            if (kf.id === keyframeId) return !!kf.disabled
+        }
+      }
+      if (engine.hasSymmetryTrack(node.id)) {
+        for (const kf of engine.getSymmetryKeyframes(node.id))
+          if (kf.id === keyframeId) return !!kf.disabled
+      }
+    }
+  }
+  return false
+}
+
+export function areAllSelectedDisabled(engine: EnginePublic): boolean {
+  const ids = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+  if (ids.length === 0) return false
+  return ids.every((id) => isKeyframeDisabled(engine, id))
+}
+
+export function isSelectionMixedDisabled(engine: EnginePublic): boolean {
+  const ids = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+  if (ids.length === 0) return false
+  const first = isKeyframeDisabled(engine, ids[0])
+  return ids.some((id) => isKeyframeDisabled(engine, id) !== first)
+}
+
+/**
+ * Set disabled flag for a single keyframe id (resolves its target). Used for single right-click without multi-select.
+ */
+export function setSingleKeyframeDisabled(
+  engine: EnginePublic,
+  dispatch: DispatchCommand,
+  keyframeId: string,
+  disabled: boolean,
+): boolean {
+  // Find target for this keyframeId
+  const allRefs = [
+    ...allKeyframeRefs(engine).map((r) => ({
+      ...r,
+      kind: 'property' as const,
+      target: { kind: 'node' as const, nodeId: r.nodeId, property: r.property },
+    })),
+    ...allMaterialKeyframeRefs(engine).map((r) => ({
+      ...r,
+      kind: 'parameter' as const,
+      target: { kind: 'node' as const, nodeId: r.nodeId, parameter: r.parameter },
+    })),
+    ...allDataLabelKeyframeRefs(engine).map((r) => ({
+      ...r,
+      kind: 'dataLabel' as const,
+      target: { kind: 'dataLabel' as const, nodeId: r.nodeId, label: r.label },
+    })),
+    ...allCircleKeyframeRefs(engine).map((r) => ({
+      ...r,
+      kind: 'circle' as const,
+      target: { kind: 'circle' as const, nodeId: r.nodeId, property: r.property },
+    })),
+    ...allVisibleKeyframeRefs(engine).map((r) => ({
+      ...r,
+      kind: 'visible' as const,
+      target: { kind: 'visible' as const, nodeId: r.nodeId },
+    })),
+    ...allZIndexKeyframeRefs(engine).map((r) => ({
+      ...r,
+      kind: 'zIndex' as const,
+      target: { kind: 'zIndex' as const, nodeId: r.nodeId },
+    })),
+    ...allMorphKeyframeRefs(engine).map((r) => ({
+      ...r,
+      kind: 'morph' as const,
+      target: { kind: 'morph' as const, nodeId: r.nodeId },
+    })),
+    ...allShadowKeyframeRefs(engine).map((r) => ({
+      ...r,
+      kind: 'shadow' as const,
+      target: { kind: 'shadow' as const, nodeId: r.nodeId, property: r.property },
+    })),
+    ...allSymmetryKeyframeRefs(engine).map((r) => ({
+      ...r,
+      kind: 'symmetry' as const,
+      target: { kind: 'symmetry' as const, nodeId: r.nodeId },
+    })),
+  ] as unknown as { keyframeId: string; target: import('../engine').KeyframeTarget }[]
+  const entry = allRefs.find((r) => r.keyframeId === keyframeId)
+  if (!entry) return false
+  dispatch(new SetKeyframeDisabledCommand({ target: entry.target, keyframeId, disabled }))
+  return true
+}
+
+/**
+ * Set disabled for the current keyframe selection. Implements "Disable all" rule:
+ * if any selected is enabled, disable entire selection; caller should compute desired flag.
+ * Returns false if nothing selected.
+ */
+export function setSelectedKeyframesDisabled(
+  engine: EnginePublic,
+  dispatch: DispatchCommand,
+  disabled: boolean,
+): boolean {
+  const propertyRefs = selectedKeyframeRefs(engine)
+  const materialRefs = selectedMaterialKeyframeRefs(engine)
+  const dataLabelRefs = selectedDataLabelKeyframeRefs(engine)
+  const circleRefs = selectedCircleKeyframeRefs(engine)
+  const visibleRefs = selectedVisibleKeyframeRefs(engine)
+  const zIndexRefs = selectedZIndexKeyframeRefs(engine)
+  const morphRefs = selectedMorphKeyframeRefs(engine)
+  const shadowRefs = selectedShadowKeyframeRefs(engine)
+  const symmetryRefs = selectedSymmetryKeyframeRefs(engine)
+  if (
+    propertyRefs.length === 0 &&
+    materialRefs.length === 0 &&
+    dataLabelRefs.length === 0 &&
+    circleRefs.length === 0 &&
+    visibleRefs.length === 0 &&
+    zIndexRefs.length === 0 &&
+    morphRefs.length === 0 &&
+    shadowRefs.length === 0 &&
+    symmetryRefs.length === 0
+  ) {
+    return false
+  }
+  const commands: import('../engine/commands').SetKeyframeDisabledCommand[] = []
+  for (const group of groupRefsByTarget(propertyRefs, (ref) => ref.keyframeId)) {
+    for (const id of group.items) {
+      commands.push(
+        new SetKeyframeDisabledCommand({
+          target: { kind: 'node', nodeId: group.nodeId, property: group.property },
+          keyframeId: id,
+          disabled,
+        }),
+      )
+    }
+  }
+  for (const group of groupMaterialRefsByTarget(materialRefs, (ref) => ref.keyframeId)) {
+    for (const id of group.items) {
+      commands.push(
+        new SetKeyframeDisabledCommand({
+          target: { kind: 'node', nodeId: group.nodeId, parameter: group.parameter },
+          keyframeId: id,
+          disabled,
+        }),
+      )
+    }
+  }
+  for (const group of groupDataLabelRefsByTarget(dataLabelRefs, (ref) => ref.keyframeId)) {
+    for (const id of group.items) {
+      commands.push(
+        new SetKeyframeDisabledCommand({
+          target: { kind: 'dataLabel', nodeId: group.nodeId, label: group.label },
+          keyframeId: id,
+          disabled,
+        }),
+      )
+    }
+  }
+  for (const group of groupCircleRefsByTarget(circleRefs, (ref) => ref.keyframeId)) {
+    for (const id of group.items) {
+      commands.push(
+        new SetKeyframeDisabledCommand({
+          target: { kind: 'circle', nodeId: group.nodeId, property: group.property },
+          keyframeId: id,
+          disabled,
+        }),
+      )
+    }
+  }
+  {
+    const grouped = new Map<string, string[]>()
+    for (const ref of visibleRefs) {
+      const arr = grouped.get(ref.nodeId) ?? []
+      arr.push(ref.keyframeId)
+      grouped.set(ref.nodeId, arr)
+    }
+    for (const [nodeId, items] of grouped) {
+      for (const id of items)
+        commands.push(
+          new SetKeyframeDisabledCommand({
+            target: { kind: 'visible', nodeId },
+            keyframeId: id,
+            disabled,
+          }),
+        )
+    }
+  }
+  {
+    const grouped = new Map<string, string[]>()
+    for (const ref of zIndexRefs) {
+      const arr = grouped.get(ref.nodeId) ?? []
+      arr.push(ref.keyframeId)
+      grouped.set(ref.nodeId, arr)
+    }
+    for (const [nodeId, items] of grouped) {
+      for (const id of items)
+        commands.push(
+          new SetKeyframeDisabledCommand({
+            target: { kind: 'zIndex', nodeId },
+            keyframeId: id,
+            disabled,
+          }),
+        )
+    }
+  }
+  {
+    const grouped = new Map<string, string[]>()
+    for (const ref of morphRefs) {
+      const arr = grouped.get(ref.nodeId) ?? []
+      arr.push(ref.keyframeId)
+      grouped.set(ref.nodeId, arr)
+    }
+    for (const [nodeId, items] of grouped) {
+      for (const id of items)
+        commands.push(
+          new SetKeyframeDisabledCommand({
+            target: { kind: 'morph', nodeId },
+            keyframeId: id,
+            disabled,
+          }),
+        )
+    }
+  }
+  for (const group of groupShadowRefsByTarget(shadowRefs, (ref) => ref.keyframeId)) {
+    for (const id of group.items) {
+      commands.push(
+        new SetKeyframeDisabledCommand({
+          target: { kind: 'shadow', nodeId: group.nodeId, property: group.property },
+          keyframeId: id,
+          disabled,
+        }),
+      )
+    }
+  }
+  {
+    const grouped = new Map<string, string[]>()
+    for (const ref of symmetryRefs) {
+      const arr = grouped.get(ref.nodeId) ?? []
+      arr.push(ref.keyframeId)
+      grouped.set(ref.nodeId, arr)
+    }
+    for (const [nodeId, items] of grouped) {
+      for (const id of items)
+        commands.push(
+          new SetKeyframeDisabledCommand({
+            target: { kind: 'symmetry', nodeId },
+            keyframeId: id,
+            disabled,
+          }),
+        )
+    }
+  }
+  dispatchKeyframeCommands(dispatch, commands)
   return true
 }
 

@@ -3140,6 +3140,23 @@ button:disabled {
   filter: none;
 }
 
+.timeline-keyframe--disabled {
+  background: var(--color-text-muted, #6b7280);
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+
+.timeline-keyframe--disabled.timeline-keyframe--selected {
+  background: var(--color-bg);
+  outline: 2px solid var(--color-text-muted, #6b7280);
+  outline-offset: 1px;
+}
+
+.timeline-keyframe--shadow.timeline-keyframe--disabled {
+  opacity: 0.35;
+  filter: grayscale(1) brightness(0.9);
+}
+
 .timeline-context-menu {
   position: fixed;
   z-index: 1000;

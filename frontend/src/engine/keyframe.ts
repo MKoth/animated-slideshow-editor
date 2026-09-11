@@ -7,7 +7,14 @@ export type InterpolationType = 'hold' | 'linear' | 'bezier' | 'bounce' | 'elast
 import type { MorphKeyframeValue, MorphClipKeyframeValue } from './shape'
 import type { SymmetryKeyframeValue } from './symmetry'
 
-export type KeyframeValue = string | number | boolean | number[] | MorphKeyframeValue | MorphClipKeyframeValue | SymmetryKeyframeValue
+export type KeyframeValue =
+  | string
+  | number
+  | boolean
+  | number[]
+  | MorphKeyframeValue
+  | MorphClipKeyframeValue
+  | SymmetryKeyframeValue
 
 export type KeyframeTangent = {
   readonly time: number
@@ -57,6 +64,8 @@ export class Keyframe {
   interpolation: InterpolationType
   tangentIn: KeyframeTangent
   tangentOut: KeyframeTangent
+  /** Session-only preview toggle — not serialized to LessonJSON */
+  disabled: boolean
 
   constructor(
     id: string,
@@ -65,6 +74,7 @@ export class Keyframe {
     interpolation: InterpolationType = 'linear',
     tangentIn: KeyframeTangent = ZERO_TANGENT,
     tangentOut: KeyframeTangent = ZERO_TANGENT,
+    disabled = false,
   ) {
     this.id = id
     this.time = time
@@ -72,6 +82,7 @@ export class Keyframe {
     this.interpolation = interpolation
     this.tangentIn = tangentIn
     this.tangentOut = tangentOut
+    this.disabled = disabled
   }
 
   toJSON(): KeyframeJSON {
@@ -98,6 +109,7 @@ export interface KeyframeSnapshot {
   readonly interpolation: InterpolationType
   readonly tangentIn: KeyframeTangent
   readonly tangentOut: KeyframeTangent
+  readonly disabled?: boolean
 }
 
 export function snapshotOf(keyframe: Keyframe): KeyframeSnapshot {
@@ -108,5 +120,6 @@ export function snapshotOf(keyframe: Keyframe): KeyframeSnapshot {
     interpolation: keyframe.interpolation,
     tangentIn: { time: keyframe.tangentIn.time, value: keyframe.tangentIn.value },
     tangentOut: { time: keyframe.tangentOut.time, value: keyframe.tangentOut.value },
+    ...(keyframe.disabled ? { disabled: true } : {}),
   }
 }

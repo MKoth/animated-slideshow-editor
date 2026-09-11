@@ -280,6 +280,7 @@ export interface EnginePublic {
     rootNewId: string
   }
   resolveAnimationTarget(target: KeyframeTarget): KeyframeTrackRef
+  setKeyframeDisabled(target: KeyframeTarget, keyframeId: string, disabled: boolean): boolean
 }
 
 export function createEngine(): EnginePublic {

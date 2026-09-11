@@ -299,7 +299,9 @@ export class AnimationManager {
   ): KeyframeTangents {
     const resolved = this.#resolve(target)
     if (resolved.track.kind === 'visible' || resolved.track.kind === 'zIndex') {
-      throw new Error(`${resolved.track.kind === 'visible' ? 'Visible' : 'Z-Index'} track does not support tangents`)
+      throw new Error(
+        `${resolved.track.kind === 'visible' ? 'Visible' : 'Z-Index'} track does not support tangents`,
+      )
     }
     if (resolved.track.kind === 'shadow' && resolved.track.property === 'color') {
       throw new Error('Shadow color track does not support tangents')
@@ -314,6 +316,18 @@ export class AnimationManager {
     keyframe.tangentIn = boundedIn
     keyframe.tangentOut = boundedOut
     this.#bus.emit({ type: 'KeyframeTangentsChanged', target, keyframeId })
+    return old
+  }
+
+  setKeyframeDisabled(target: KeyframeTarget, keyframeId: string, disabled: boolean): boolean {
+    if (typeof disabled !== 'boolean') {
+      throw new Error('Keyframe disabled must be a boolean')
+    }
+    const resolved = this.#resolve(target)
+    const keyframe = this.#requireKeyframe(resolved, keyframeId)
+    const old = !!keyframe.disabled
+    keyframe.disabled = disabled
+    this.#bus.emit({ type: 'KeyframeDisabledChanged', target, keyframeId })
     return old
   }
 
@@ -427,6 +441,7 @@ export class AnimationManager {
         source.interpolation,
         { time: source.tangentIn.time, value: source.tangentIn.value },
         { time: source.tangentOut.time, value: source.tangentOut.value },
+        !!source.disabled,
       )
       this.#addToTrack(resolved, keyframe)
       created.push(keyframe)

@@ -4,9 +4,12 @@ import type { AnimationProperty, Scene } from '../../engine'
 import { addKeyframeAtPlayhead, addPoseKeyframesAtPlayhead } from '../../app/keyframeActions'
 import {
   deleteSelectedKeyframes,
+  isKeyframeDisabled,
   keyframeRefsOfScene,
   materialKeyframeRefsOfScene,
   pasteKeyframesAtTarget,
+  setSelectedKeyframesDisabled,
+  setSingleKeyframeDisabled,
 } from '../../app/keyframeSelectionActions'
 import { useEngine } from '../../app/useEngine'
 import { AddKeyframeCommand, DeleteKeyframesCommand } from '../../engine/commands'
@@ -318,6 +321,8 @@ export function TimelineBody({
     allSelectionItemsRef.current = allSelectionItems
   })
 
+  const isKeyframeDisabledForUi = (id: string) => isKeyframeDisabled(engine, id)
+
   const { dragPreview, isDraggable, startDrag } = useKeyframeDrag({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     keyframeRefs: keyframeRefs as unknown as ReadonlyMap<string, any>,
@@ -326,6 +331,7 @@ export function TimelineBody({
     timeFromClientX,
     dispatch,
     notify,
+    isDisabled: isKeyframeDisabledForUi,
   } as unknown as Parameters<typeof useKeyframeDrag>[0])
 
   const { scalePreview, startScale } = useKeyframeScale({
@@ -336,10 +342,11 @@ export function TimelineBody({
     timeFromClientX,
     dispatch,
     notify,
+    isDisabled: isKeyframeDisabledForUi,
   } as unknown as Parameters<typeof useKeyframeScale>[0])
 
   const selectionBounds = computeSelectionBounds(
-    selectedKeyframeIds,
+    selectedKeyframeIds.filter((id) => !isKeyframeDisabledForUi(id)),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     keyframeRefs as unknown as ReadonlyMap<string, any>,
   )
@@ -536,7 +543,7 @@ export function TimelineBody({
 
   const handleKeyframePointerDown = (
     event: React.PointerEvent,
-    keyframe: { id: string },
+    keyframe: { id: string; disabled?: boolean },
     rowIndex: number,
   ) => {
     if (event.button !== 0) {
@@ -564,6 +571,8 @@ export function TimelineBody({
       }
     }
 
+    const isDisabled = !!(keyframe as unknown as { disabled?: boolean }).disabled
+    if (isDisabled) return
     if (isDraggable()) {
       startDrag(event.clientX)
     }
@@ -1164,6 +1173,27 @@ export function TimelineBody({
     })
   }
 
+  const toggleDisabledFromMenu = () => {
+    const m = menu
+    setMenu(null)
+    if (!m?.keyframeId) return
+    const selectedIds = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+    const isInSelection = selectedIds.includes(m.keyframeId)
+    if (isInSelection && selectedIds.length > 1) {
+      const anyEnabled = selectedIds.some((id) => !isKeyframeDisabled(engine, id))
+      // Disable all if any enabled, else enable all
+      setSelectedKeyframesDisabled(engine, dispatch, anyEnabled)
+    } else {
+      const currentlyDisabled = isKeyframeDisabled(engine, m.keyframeId)
+      if (selectedIds.includes(m.keyframeId)) {
+        // single in selection but selection size 1 → treat as toggle single via bulk
+        setSelectedKeyframesDisabled(engine, dispatch, !currentlyDisabled)
+      } else {
+        setSingleKeyframeDisabled(engine, dispatch, m.keyframeId, !currentlyDisabled)
+      }
+    }
+  }
+
   const step = rulerTickStep(pps)
   const visibleEnd = scrollTime + viewportWidth / pps
   const ticks = rulerTickTimes(scrollTime, visibleEnd, step)
@@ -1603,6 +1633,7 @@ export function TimelineBody({
                           scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
                         const shownTime = previewTime ?? keyframe.time
                         const selected = selectedKeyframeIds.includes(keyframe.id)
+                        const disabled = !!(keyframe as unknown as { disabled?: boolean }).disabled
                         return (
                           <KeyframeMarker
                             key={keyframe.id}
@@ -1610,6 +1641,7 @@ export function TimelineBody({
                             shownTime={shownTime}
                             property={row.property}
                             selected={selected}
+                            disabled={disabled}
                             pps={pps}
                             step={step}
                             onPointerDown={(event) =>
@@ -1679,7 +1711,7 @@ export function TimelineBody({
                               {String(value)}
                             </div>
                             <div
-                              className={`timeline-keyframe timeline-keyframe--visible${selected ? ' timeline-keyframe--selected' : ''}`}
+                              className={`timeline-keyframe timeline-keyframe--visible${selected ? ' timeline-keyframe--selected' : ''}${(keyframe as unknown as { disabled?: boolean }).disabled ? ' timeline-keyframe--disabled' : ''}`}
                               data-testid="keyframe-marker"
                               data-keyframe-id={keyframe.id}
                               data-z-index="true"
@@ -1720,12 +1752,14 @@ export function TimelineBody({
                           scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
                         const shownTime = previewTime ?? keyframe.time
                         const selected = selectedKeyframeIds.includes(keyframe.id)
+                        const disabled = !!(keyframe as unknown as { disabled?: boolean }).disabled
                         return (
                           <KeyframeMarker
                             key={keyframe.id}
                             keyframeId={keyframe.id}
                             shownTime={shownTime}
                             selected={selected}
+                            disabled={disabled}
                             pps={pps}
                             step={step}
                             parameterLabel={materialParameterLabel(row.parameter)}
@@ -1757,12 +1791,14 @@ export function TimelineBody({
                           scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
                         const shownTime = previewTime ?? keyframe.time
                         const selected = selectedKeyframeIds.includes(keyframe.id)
+                        const disabled = !!(keyframe as unknown as { disabled?: boolean }).disabled
                         return (
                           <KeyframeMarker
                             key={keyframe.id}
                             keyframeId={keyframe.id}
                             shownTime={shownTime}
                             selected={selected}
+                            disabled={disabled}
                             pps={pps}
                             step={step}
                             parameterLabel={row.label}
@@ -1794,12 +1830,14 @@ export function TimelineBody({
                           scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
                         const shownTime = previewTime ?? keyframe.time
                         const selected = selectedKeyframeIds.includes(keyframe.id)
+                        const disabled = !!(keyframe as unknown as { disabled?: boolean }).disabled
                         return (
                           <KeyframeMarker
                             key={keyframe.id}
                             keyframeId={keyframe.id}
                             shownTime={shownTime}
                             selected={selected}
+                            disabled={disabled}
                             pps={pps}
                             step={step}
                             parameterLabel={CIRCLE_LABELS[row.property]}
@@ -1830,12 +1868,14 @@ export function TimelineBody({
                           scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
                         const shownTime = previewTime ?? keyframe.time
                         const selected = selectedKeyframeIds.includes(keyframe.id)
+                        const disabled = !!(keyframe as unknown as { disabled?: boolean }).disabled
                         return (
                           <KeyframeMarker
                             key={keyframe.id}
                             keyframeId={keyframe.id}
                             shownTime={shownTime}
                             selected={selected}
+                            disabled={disabled}
                             pps={pps}
                             step={step}
                             parameterLabel={MORPH_LABEL}
@@ -1866,12 +1906,14 @@ export function TimelineBody({
                           scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
                         const shownTime = previewTime ?? keyframe.time
                         const selected = selectedKeyframeIds.includes(keyframe.id)
+                        const disabled = !!(keyframe as unknown as { disabled?: boolean }).disabled
                         return (
                           <KeyframeMarker
                             key={keyframe.id}
                             keyframeId={keyframe.id}
                             shownTime={shownTime}
                             selected={selected}
+                            disabled={disabled}
                             pps={pps}
                             step={step}
                             parameterLabel={SYMMETRY_LABEL}
@@ -1945,7 +1987,7 @@ export function TimelineBody({
                                 title={`${color} ${keyframe.interpolation}`}
                               />
                               <div
-                                className={`timeline-keyframe timeline-keyframe--shadow${selected ? ' timeline-keyframe--selected' : ''}`}
+                                className={`timeline-keyframe timeline-keyframe--shadow${selected ? ' timeline-keyframe--selected' : ''}${(keyframe as unknown as { disabled?: boolean }).disabled ? ' timeline-keyframe--disabled' : ''}`}
                                 data-testid="keyframe-marker"
                                 data-keyframe-id={keyframe.id}
                                 data-shadow-property={row.property}
@@ -1985,12 +2027,14 @@ export function TimelineBody({
                           scalePreview?.get(keyframe.id) ?? dragPreview?.get(keyframe.id)
                         const shownTime = previewTime ?? keyframe.time
                         const selected = selectedKeyframeIds.includes(keyframe.id)
+                        const disabled = !!(keyframe as unknown as { disabled?: boolean }).disabled
                         return (
                           <KeyframeMarker
                             key={keyframe.id}
                             keyframeId={keyframe.id}
                             shownTime={shownTime}
                             selected={selected}
+                            disabled={disabled}
                             pps={pps}
                             step={step}
                             parameterLabel={
@@ -2077,6 +2121,29 @@ export function TimelineBody({
             !menu.keyframeId &&
             useKeyframeClipboardStore.getState().targets.length > 0 &&
             targetFromMenu(menu) !== null
+          }
+          onToggleDisabled={menu.keyframeId ? toggleDisabledFromMenu : undefined}
+          isDisabled={
+            menu.keyframeId
+              ? (() => {
+                  const ids = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+                  const targetId = menu.keyframeId!
+                  const relevant = ids.includes(targetId) ? ids : [targetId]
+                  return (
+                    relevant.length > 0 && relevant.every((id) => isKeyframeDisabled(engine, id))
+                  )
+                })()
+              : undefined
+          }
+          disabledCount={
+            menu.keyframeId
+              ? (() => {
+                  const ids = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+                  const targetId = menu.keyframeId!
+                  const relevant = ids.includes(targetId) ? ids : [targetId]
+                  return relevant.length
+                })()
+              : undefined
           }
         />
       )}

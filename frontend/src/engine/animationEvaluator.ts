@@ -34,6 +34,19 @@ function isParametricKeyframes(keyframes: readonly Keyframe[]): boolean {
   return false
 }
 
+function enabledKeyframes(keyframes: readonly Keyframe[]): readonly Keyframe[] {
+  // Session-only disabled keyframes are skipped for evaluation (grey preview)
+  // Keep sorted order; caller handles empty fallback.
+  let hasDisabled = false
+  for (const kf of keyframes)
+    if ((kf as unknown as { disabled?: boolean }).disabled) {
+      hasDisabled = true
+      break
+    }
+  if (!hasDisabled) return keyframes
+  return keyframes.filter((kf) => !(kf as unknown as { disabled?: boolean }).disabled)
+}
+
 function effectiveUForClip(
   clip: ClipDefinition,
   keyframes: readonly Keyframe[],
@@ -219,7 +232,8 @@ export class AnimationEvaluator {
     const boundedTime = requireFiniteNumber(time, 'Evaluation time')
     const clampedTime = Math.min(Math.max(boundedTime, 0), slide.duration)
     const animation = slide.animation.node(nodeId)
-    const keyframes = animation?.zIndexKeyframes()
+    const raw = animation?.zIndexKeyframes()
+    const keyframes = raw ? enabledKeyframes(raw) : undefined
     if (!keyframes || keyframes.length === 0) {
       return node.zIndex
     }
@@ -393,13 +407,15 @@ export class AnimationEvaluator {
 
   #evaluateShadowNumeric(keyframes: readonly Keyframe[], time: number, fallback: number): number {
     if (!keyframes || keyframes.length === 0) return fallback
-    const first = keyframes[0]
+    const enabled = enabledKeyframes(keyframes)
+    if (enabled.length === 0) return fallback
+    const first = enabled[0]
     if (time <= first.time) return first.value as number
-    const last = keyframes[keyframes.length - 1]
+    const last = enabled[enabled.length - 1]
     if (time >= last.time) return last.value as number
-    for (let i = 0; i < keyframes.length - 1; i += 1) {
-      const from = keyframes[i]
-      const to = keyframes[i + 1]
+    for (let i = 0; i < enabled.length - 1; i += 1) {
+      const from = enabled[i]
+      const to = enabled[i + 1]
       if (to.time > from.time && time >= from.time && time < to.time) {
         return evaluateSegment(from, to, time)
       }
@@ -409,13 +425,15 @@ export class AnimationEvaluator {
 
   #evaluateShadowColor(keyframes: readonly Keyframe[], time: number, fallback: string): string {
     if (!keyframes || keyframes.length === 0) return fallback
-    const first = keyframes[0]
+    const enabled = enabledKeyframes(keyframes)
+    if (enabled.length === 0) return fallback
+    const first = enabled[0]
     if (time <= first.time) return (first.value as string).toLowerCase()
-    const last = keyframes[keyframes.length - 1]
+    const last = enabled[enabled.length - 1]
     if (time >= last.time) return (last.value as string).toLowerCase()
-    for (let i = 0; i < keyframes.length - 1; i += 1) {
-      const from = keyframes[i]
-      const to = keyframes[i + 1]
+    for (let i = 0; i < enabled.length - 1; i += 1) {
+      const from = enabled[i]
+      const to = enabled[i + 1]
       if (time >= from.time && time < to.time) {
         if (from.interpolation === 'hold') return (from.value as string).toLowerCase()
         const ratio = (time - from.time) / (to.time - from.time)
@@ -650,16 +668,17 @@ export class AnimationEvaluator {
     keyframes: readonly Keyframe[],
     time: number,
   ): SymmetryKeyframeValue | null {
-    if (keyframes.length === 0) return null
-    const first = keyframes[0]
-    const last = keyframes[keyframes.length - 1]
+    const enabled = enabledKeyframes(keyframes)
+    if (enabled.length === 0) return null
+    const first = enabled[0]
+    const last = enabled[enabled.length - 1]
     const firstVal = this.#symmetryValueOf(first)
     const lastVal = this.#symmetryValueOf(last)
     if (time <= first.time) return firstVal
     if (time >= last.time) return lastVal
-    for (let i = 0; i < keyframes.length - 1; i += 1) {
-      const from = keyframes[i]
-      const to = keyframes[i + 1]
+    for (let i = 0; i < enabled.length - 1; i += 1) {
+      const from = enabled[i]
+      const to = enabled[i + 1]
       if (time >= from.time && time < to.time) {
         if (from.interpolation === 'hold') return this.#symmetryValueOf(from)
         const fromVal = this.#symmetryValueOf(from)
@@ -684,16 +703,17 @@ export class AnimationEvaluator {
   }
 
   #evaluateMorphKeyframes(keyframes: readonly Keyframe[], time: number): MorphKeyframeValue | null {
-    if (keyframes.length === 0) return null
-    const first = keyframes[0]
-    const last = keyframes[keyframes.length - 1]
+    const enabled = enabledKeyframes(keyframes)
+    if (enabled.length === 0) return null
+    const first = enabled[0]
+    const last = enabled[enabled.length - 1]
     const firstVal = this.#morphValueOf(first)
     const lastVal = this.#morphValueOf(last)
     if (time <= first.time) return firstVal
     if (time >= last.time) return lastVal
-    for (let i = 0; i < keyframes.length - 1; i += 1) {
-      const from = keyframes[i]
-      const to = keyframes[i + 1]
+    for (let i = 0; i < enabled.length - 1; i += 1) {
+      const from = enabled[i]
+      const to = enabled[i + 1]
       if (time >= from.time && time < to.time) {
         if (from.interpolation === 'hold') {
           return this.#morphValueOf(from)
@@ -723,19 +743,20 @@ export class AnimationEvaluator {
     baseVertices: readonly MeshVertex[],
     shapes: readonly Shape[] | undefined,
   ): readonly MeshVertex[] | null {
-    if (keyframes.length === 0) return null
+    const enabled = enabledKeyframes(keyframes)
+    if (enabled.length === 0) return null
     if (!shapes || shapes.length === 0) return baseVertices
-    const first = keyframes[0]
-    const last = keyframes[keyframes.length - 1]
+    const first = enabled[0]
+    const last = enabled[enabled.length - 1]
     if (time <= first.time) {
       return resolveMorphedVerticesFromKeyframe(baseVertices, shapes, this.#morphValueOf(first))
     }
     if (time >= last.time) {
       return resolveMorphedVerticesFromKeyframe(baseVertices, shapes, this.#morphValueOf(last))
     }
-    for (let i = 0; i < keyframes.length - 1; i += 1) {
-      const from = keyframes[i]
-      const to = keyframes[i + 1]
+    for (let i = 0; i < enabled.length - 1; i += 1) {
+      const from = enabled[i]
+      const to = enabled[i + 1]
       if (time >= from.time && time < to.time) {
         if (from.interpolation === 'hold') {
           return resolveMorphedVerticesFromKeyframe(baseVertices, shapes, this.#morphValueOf(from))
@@ -937,15 +958,13 @@ export class AnimationEvaluator {
         if (kind === undefined) {
           continue
         }
+        const rawKfs = animation.materialKeyframes(parameter)
+        const enabled = enabledKeyframes(rawKfs)
+        if (enabled.length === 0) continue
         if (!Object.prototype.hasOwnProperty.call(values, parameter)) {
           keys.push(parameter)
         }
-        values[parameter] = evaluateMaterialTrackValue(
-          kind,
-          parameter,
-          animation.materialKeyframes(parameter),
-          clampedTime,
-        )
+        values[parameter] = evaluateMaterialTrackValue(kind, parameter, enabled, clampedTime)
       }
     }
 
@@ -1256,17 +1275,19 @@ export class AnimationEvaluator {
     if (!keyframes || keyframes.length === 0) {
       return fallback
     }
-    const first = keyframes[0]
+    const enabled = enabledKeyframes(keyframes)
+    if (enabled.length === 0) return fallback
+    const first = enabled[0]
     if (time <= first.time) {
       return first.value as number
     }
-    const last = keyframes[keyframes.length - 1]
+    const last = enabled[enabled.length - 1]
     if (time >= last.time) {
       return last.value as number
     }
-    for (let i = 0; i < keyframes.length - 1; i += 1) {
-      const from = keyframes[i]
-      const to = keyframes[i + 1]
+    for (let i = 0; i < enabled.length - 1; i += 1) {
+      const from = enabled[i]
+      const to = enabled[i + 1]
       if (to.time > from.time && time >= from.time && time < to.time) {
         return evaluateSegment(from, to, time)
       }

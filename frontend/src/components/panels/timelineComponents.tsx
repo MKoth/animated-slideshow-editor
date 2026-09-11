@@ -122,6 +122,7 @@ export function KeyframeMarker({
   shownTime,
   property,
   selected,
+  disabled,
   pps,
   step,
   parameterLabel,
@@ -132,6 +133,7 @@ export function KeyframeMarker({
   shownTime: number
   property?: AnimationProperty
   selected: boolean
+  disabled?: boolean
   pps: number
   step: number
   parameterLabel?: string
@@ -141,14 +143,16 @@ export function KeyframeMarker({
   const label = parameterLabel ?? (property ? PROPERTY_LABELS[property] : 'Unknown')
   return (
     <div
-      className={`timeline-keyframe${selected ? ' timeline-keyframe--selected' : ''}`}
+      className={`timeline-keyframe${selected ? ' timeline-keyframe--selected' : ''}${disabled ? ' timeline-keyframe--disabled' : ''}`}
       data-testid="keyframe-marker"
       data-keyframe-id={keyframeId}
       data-property={property}
       data-parameter={parameterLabel}
       data-time={String(shownTime)}
+      data-disabled={disabled ? 'true' : undefined}
       role="button"
-      aria-label={`Keyframe at ${tickLabel(shownTime, step)} on ${label}`}
+      aria-label={`Keyframe at ${tickLabel(shownTime, step)} on ${label}${disabled ? ' (disabled)' : ''}`}
+      aria-disabled={disabled ? true : undefined}
       style={{ left: shownTime * pps }}
       onPointerDown={onPointerDown}
       onContextMenu={onContextMenu}
@@ -248,6 +252,9 @@ export function TimelineContextMenu({
   onClose,
   onPaste,
   canPaste,
+  onToggleDisabled,
+  isDisabled,
+  disabledCount,
 }: {
   menu: TimelineMenuState
   onAdd: () => void
@@ -258,6 +265,9 @@ export function TimelineContextMenu({
   onClose: () => void
   onPaste?: () => void
   canPaste?: boolean
+  onToggleDisabled?: () => void
+  isDisabled?: boolean
+  disabledCount?: number
 }) {
   return (
     <>
@@ -294,6 +304,16 @@ export function TimelineContextMenu({
             <button className="timeline-context-menu__item" onClick={onDelete}>
               Delete Keyframe
             </button>
+            {onToggleDisabled && (
+              <button
+                className="timeline-context-menu__item"
+                data-testid="toggle-keyframe-disabled-button"
+                onClick={onToggleDisabled}
+              >
+                {isDisabled ? 'Activate' : 'Deactivate'}
+                {disabledCount && disabledCount > 1 ? ` (${disabledCount})` : ''}
+              </button>
+            )}
             {onAddToClip && (
               <button
                 className="timeline-context-menu__item"

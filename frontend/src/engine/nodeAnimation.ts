@@ -220,7 +220,11 @@ export class NodeAnimation {
     return snapshot ? [snapshot] : []
   }
 
-  restoreSymmetryTracks(tracks: readonly SymmetryTrackJSON[], duration: number, _nodeId: string): void {
+  restoreSymmetryTracks(
+    tracks: readonly SymmetryTrackJSON[],
+    duration: number,
+    _nodeId: string,
+  ): void {
     void _nodeId
     this.#symmetry.length = 0
     for (const track of tracks as unknown as readonly {
@@ -1061,6 +1065,7 @@ function copyKeyframe(keyframe: Keyframe): Keyframe {
     keyframe.interpolation,
     { time: keyframe.tangentIn.time, value: keyframe.tangentIn.value },
     { time: keyframe.tangentOut.time, value: keyframe.tangentOut.value },
+    !!keyframe.disabled,
   )
 }
 

@@ -68,6 +68,7 @@ export interface KeyframeScaleOptions {
   readonly timeFromClientX: (clientX: number) => number
   readonly dispatch: DispatchCommand
   readonly notify: (message: string) => void
+  readonly isDisabled?: (keyframeId: string) => boolean
 }
 
 export interface KeyframeScale {
@@ -133,7 +134,7 @@ export function computeSelectionBounds(
 }
 
 export function useKeyframeScale(options: KeyframeScaleOptions): KeyframeScale {
-  const { keyframeRefs, duration, pps, timeFromClientX, dispatch, notify } = options
+  const { keyframeRefs, duration, pps, timeFromClientX, dispatch, notify, isDisabled } = options
   const [scalePreview, setScalePreview] = useState<ReadonlyMap<string, number> | null>(null)
   const scalePreviewRef = useRef<ReadonlyMap<string, number> | null>(null)
   const sessionRef = useRef<ScaleSession | null>(null)
@@ -309,7 +310,8 @@ export function useKeyframeScale(options: KeyframeScaleOptions): KeyframeScale {
     isAlt: boolean,
     playheadTime: number,
   ): void => {
-    const selectedIds = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+    const rawIds = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+    const selectedIds = isDisabled ? rawIds.filter((id) => !isDisabled(id)) : rawIds
     if (selectedIds.length < 2) {
       return
     }
@@ -342,7 +344,7 @@ export function useKeyframeScale(options: KeyframeScaleOptions): KeyframeScale {
       const candidateTimes: number[] = []
       if (keyframesEnabled) {
         for (const [id, ref] of keyframeRefs) {
-          if (!draggedIds.has(id)) {
+          if (!draggedIds.has(id) && !isDisabled?.(id)) {
             candidateTimes.push(ref.time)
           }
         }

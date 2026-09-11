@@ -16,18 +16,25 @@ export function evaluateMaterialTrackValue(
   keyframes: readonly Keyframe[],
   time: number,
 ): MaterialOverrideValue {
-  const first = keyframes[0]
+  const enabled = keyframes.filter((k) => !(k as unknown as { disabled?: boolean }).disabled)
+  const src = enabled.length > 0 ? enabled : null
+  if (!src || src.length === 0) {
+    // Fallback to first if all disabled? No enabled → use first original clamped (preserves old behavior fallback)
+    const firstOrig = keyframes[0]
+    return clampMaterialValue(kind, key, firstOrig.value as MaterialOverrideValue)
+  }
+  const first = src[0]
   if (time <= first.time) {
     return clampMaterialValue(kind, key, first.value as MaterialOverrideValue)
   }
-  const last = keyframes[keyframes.length - 1]
+  const last = src[src.length - 1]
   if (time >= last.time) {
     return clampMaterialValue(kind, key, last.value as MaterialOverrideValue)
   }
   if (isContinuousMaterialKind(kind)) {
-    for (let i = 0; i < keyframes.length - 1; i += 1) {
-      const from = keyframes[i]
-      const to = keyframes[i + 1]
+    for (let i = 0; i < src.length - 1; i += 1) {
+      const from = src[i]
+      const to = src[i + 1]
       if (to.time > from.time && time >= from.time && time < to.time) {
         const ratio = (time - from.time) / (to.time - from.time)
         return clampMaterialValue(
@@ -43,9 +50,9 @@ export function evaluateMaterialTrackValue(
       }
     }
   }
-  for (let i = keyframes.length - 1; i >= 0; i -= 1) {
-    if (keyframes[i].time <= time) {
-      return clampMaterialValue(kind, key, keyframes[i].value as MaterialOverrideValue)
+  for (let i = src.length - 1; i >= 0; i -= 1) {
+    if (src[i].time <= time) {
+      return clampMaterialValue(kind, key, src[i].value as MaterialOverrideValue)
     }
   }
   return clampMaterialValue(kind, key, first.value as MaterialOverrideValue)

@@ -2105,6 +2105,10 @@ export class Engine {
     return this.#animations.setKeyframeTangents(target, keyframeId, tangentIn, tangentOut)
   }
 
+  setKeyframeDisabled(target: KeyframeTarget, keyframeId: string, disabled: boolean): boolean {
+    return this.#animations.setKeyframeDisabled(target, keyframeId, disabled)
+  }
+
   pasteKeyframes(target: KeyframeTarget, payload: PastePayload, atTime: number): Keyframe[] {
     return this.#animations.pasteKeyframes(target, payload, atTime)
   }
@@ -5697,6 +5701,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
       engine.importReusableObjectToParent(objectJson, targetParentId),
     duplicateNodeSubtree: (nodeId) => engine.duplicateNodeSubtree(nodeId),
     resolveAnimationTarget: (target) => engine.resolveAnimationTarget(target),
+    setKeyframeDisabled: (target, keyframeId, disabled) =>
+      engine.setKeyframeDisabled(target, keyframeId, disabled),
   }
 }
 

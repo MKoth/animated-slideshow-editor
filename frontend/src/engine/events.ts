@@ -151,6 +151,12 @@ export interface KeyframeTangentsChanged {
   readonly keyframeId: string
 }
 
+export interface KeyframeDisabledChanged {
+  readonly type: 'KeyframeDisabledChanged'
+  readonly target: KeyframeTarget
+  readonly keyframeId: string
+}
+
 export interface ClipCreated {
   readonly type: 'ClipCreated'
   readonly clipId: string
@@ -428,6 +434,7 @@ export type EngineEvent =
   | KeyframeValueChanged
   | KeyframeInterpolationChanged
   | KeyframeTangentsChanged
+  | KeyframeDisabledChanged
   | ClipCreated
   | ClipRemoved
   | ClipRenamed

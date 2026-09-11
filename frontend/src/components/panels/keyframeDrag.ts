@@ -61,6 +61,7 @@ export interface KeyframeDragOptions {
   readonly timeFromClientX: (clientX: number) => number
   readonly dispatch: DispatchCommand
   readonly notify: (message: string) => void
+  readonly isDisabled?: (keyframeId: string) => boolean
 }
 
 export interface KeyframeDrag {
@@ -74,18 +75,25 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
-  const { keyframeRefs, duration, pps, timeFromClientX, dispatch, notify } = options
+  const { keyframeRefs, duration, pps, timeFromClientX, dispatch, notify, isDisabled } = options
   const [dragPreview, setDragPreview] = useState<ReadonlyMap<string, number> | null>(null)
   const dragPreviewRef = useRef<ReadonlyMap<string, number> | null>(null)
   const dragSessionRef = useRef<DragSession | null>(null)
 
   const isDraggable = (): boolean => {
-    return selectedKeyframeIdsOf(useTimelineSelectionStore.getState()).length > 0
+    const ids = selectedKeyframeIdsOf(useTimelineSelectionStore.getState())
+    if (ids.length === 0) return false
+    if (isDisabled) {
+      const anyEnabled = ids.some((id) => !isDisabled(id))
+      return anyEnabled
+    }
+    return true
   }
 
   const buildMoves = (): DragMove[] => {
     const moves: DragMove[] = []
     for (const keyframeId of selectedKeyframeIdsOf(useTimelineSelectionStore.getState())) {
+      if (isDisabled?.(keyframeId)) continue
       const ref = keyframeRefs.get(keyframeId)
       if (!ref) continue
       if ('shadow' in ref && (ref as ShadowKeyframeRef).shadow) {
@@ -300,7 +308,7 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
       const candidateTimes: number[] = []
       if (keyframesEnabled) {
         for (const [id, ref] of keyframeRefs) {
-          if (!draggedIds.has(id)) {
+          if (!draggedIds.has(id) && !isDisabled?.(id)) {
             candidateTimes.push(ref.time)
           }
         }

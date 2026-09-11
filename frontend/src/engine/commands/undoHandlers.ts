@@ -536,7 +536,7 @@ export function applyUndo(
       const keyframes = inv.keyframes as import('../keyframe').KeyframeSnapshot[]
       for (const kf of keyframes) {
         engine.addKeyframe(target, kf.time, kf.value)
-        // Try to restore id/interpolation/tangents via direct manipulation
+        // Try to restore id/interpolation/tangents/disabled via direct manipulation
         try {
           const added = engine
             .getKeyframesOf(target)
@@ -547,6 +547,9 @@ export function applyUndo(
           }
           engine.setKeyframeInterpolation(target, kf.keyframeId, kf.interpolation)
           engine.setKeyframeTangents(target, kf.keyframeId, kf.tangentIn, kf.tangentOut)
+          if (typeof kf.disabled === 'boolean') {
+            engine.setKeyframeDisabled(target, kf.keyframeId, kf.disabled)
+          }
         } catch {
           void 0
         }
@@ -609,6 +612,13 @@ export function applyUndo(
       const oldIn = inv.oldTangentIn as import('../keyframe').KeyframeTangent
       const oldOut = inv.oldTangentOut as import('../keyframe').KeyframeTangent
       engine.setKeyframeTangents(target, keyframeId, oldIn, oldOut)
+      return
+    }
+    case 'SetKeyframeDisabled': {
+      const target = inv.target as import('../keyframeTarget').KeyframeTarget
+      const keyframeId = inv.keyframeId as string
+      const oldDisabled = inv.oldDisabled as boolean
+      engine.setKeyframeDisabled(target, keyframeId, oldDisabled)
       return
     }
     case 'CreateClip': {

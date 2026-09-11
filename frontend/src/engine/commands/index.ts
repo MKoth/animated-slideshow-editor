@@ -115,6 +115,11 @@ export type {
   SetKeyframeTangentsInverse,
   SetKeyframeTangentsParameters,
 } from './setKeyframeTangentsCommand'
+export { SetKeyframeDisabledCommand } from './setKeyframeDisabledCommand'
+export type {
+  SetKeyframeDisabledInverse,
+  SetKeyframeDisabledParameters,
+} from './setKeyframeDisabledCommand'
 export { CreateClipCommand } from './createClipCommand'
 export type { CreateClipInverse, CreateClipParameters } from './createClipCommand'
 export { DeleteClipCommand } from './deleteClipCommand'
