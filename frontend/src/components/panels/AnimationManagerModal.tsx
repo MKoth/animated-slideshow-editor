@@ -16,6 +16,8 @@ import {
   packCollectionLanesForParent,
   visualDurationForCollectionPlacement,
   collectUnifiedBarEdgesForSnap,
+  orphanBounds,
+  orphanLeftPx,
 } from '../../engine/animationManagerModel'
 import { useTimelineViewStore, pixelsPerSecond } from '../../stores/timelineViewStore'
 import { usePlaybackController } from '../../stores/playbackStore'
@@ -449,6 +451,14 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     }
     return entries
   }, [activeSlide, managerRows, tick])
+
+  // Global orphan timeline bounds – shared across all lanes so same time aligns vertically
+  const orphanTimelineBounds = useMemo(() => {
+    if (activeTab !== 'orphans') return null
+    if (flatOrphanEntries.length === 0) return null
+    const times = flatOrphanEntries.map((e) => e.keyframe.time)
+    return orphanBounds(times, pps)
+  }, [activeTab, flatOrphanEntries, pps])
 
   // --- Collection grouping helpers (15-05): flat clip lanes, validation, bindings preview ---
 
@@ -2468,7 +2478,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             style={{
               border: '1px solid var(--color-border, #ddd)',
               borderRadius: 6,
-              overflow: 'hidden',
+              overflow: orphanTimelineBounds ? 'auto' : 'hidden',
+              overflowX: orphanTimelineBounds ? 'auto' : 'hidden',
               flex: 1,
               display: 'flex',
               flexDirection: 'column',
@@ -2846,6 +2857,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                               : []
                             const showDiamonds =
                               activeTab === 'orphans' && orphanKeyframes.length > 0
+                            const hasOrphanTimeline = !!orphanTimelineBounds
                             return (
                               <div
                                 key={`${row.node.id}-${param.kind}-${param.key}`}
@@ -2859,7 +2871,26 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                   fontSize: 12,
                                 }}
                               >
-                                <span style={{ flex: 1 }}>{param.label}</span>
+                                <span
+                                  style={{
+                                    flex: hasOrphanTimeline && showDiamonds ? '0 0 140px' : 1,
+                                    minWidth: 0,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    ...(hasOrphanTimeline && showDiamonds
+                                      ? {
+                                          position: 'sticky',
+                                          left: 32,
+                                          background: 'var(--color-bg-panel, #fff)',
+                                          zIndex: 1,
+                                          paddingRight: 8,
+                                        }
+                                      : {}),
+                                  }}
+                                >
+                                  {param.label}
+                                </span>
                                 {activeTab !== 'orphans' && (
                                   <span
                                     style={{ fontSize: 10, color: 'var(--color-text-muted, #888)' }}
@@ -2868,64 +2899,78 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                     {param.kind}
                                   </span>
                                 )}
-                                {showDiamonds && (
-                                  <span
-                                    style={{ display: 'flex', gap: 4, alignItems: 'center' }}
-                                    data-testid={`manager-orphan-diamonds-${row.node.id}-${param.key}`}
-                                  >
-                                    {orphanKeyframes.map((kf) => {
-                                      const entry = flatOrphanEntries.find(
-                                        (x) => x.keyframeId === kf.id,
-                                      )
-                                      const isSelected = selectedOrphanIds.has(kf.id)
-                                      return (
-                                        <span
-                                          key={kf.id}
-                                          data-testid={`orphan-diamond-${kf.id}`}
-                                          data-keyframe-id={kf.id}
-                                          data-node-id={row.node.id}
-                                          title={`orphan keyframe at ${kf.time}s${isSelected ? ' (selected)' : ''}`}
-                                          aria-label={`orphan keyframe at ${kf.time}s`}
-                                          aria-selected={isSelected}
-                                          onClick={(e) => {
-                                            if (!entry) return
-                                            handleOrphanDiamondClick(e, entry)
-                                          }}
-                                          onContextMenu={(e) => {
-                                            if (!entry) return
-                                            handleOrphanContextMenu(e, entry)
-                                          }}
-                                          style={{
-                                            width: 10,
-                                            height: 10,
-                                            background: isSelected
-                                              ? '#ffcc00'
-                                              : 'var(--color-accent, #7c5cff)',
-                                            border: isSelected
-                                              ? '2px solid #000'
-                                              : '1px solid #fff',
-                                            transform: 'rotate(45deg)',
-                                            display: 'inline-block',
-                                            flexShrink: 0,
-                                            cursor: 'pointer',
-                                            boxShadow: isSelected
-                                              ? '0 0 0 2px rgba(255,204,0,0.4)'
-                                              : undefined,
-                                            outline: isSelected ? '1px solid #000' : undefined,
-                                          }}
-                                        />
-                                      )
-                                    })}
+                                {showDiamonds && orphanTimelineBounds && (
+                                  <>
+                                    <div
+                                      data-testid={`manager-orphan-diamonds-${row.node.id}-${param.key}`}
+                                      style={{
+                                        position: 'relative',
+                                        flexShrink: 0,
+                                        width: `${orphanTimelineBounds.width}px`,
+                                        height: 16,
+                                        background: 'rgba(124,92,255,0.04)',
+                                        border: '1px solid rgba(124,92,255,0.12)',
+                                        borderRadius: 4,
+                                      }}
+                                    >
+                                      {orphanKeyframes.map((kf) => {
+                                        const entry = flatOrphanEntries.find(
+                                          (x) => x.keyframeId === kf.id,
+                                        )
+                                        const isSelected = selectedOrphanIds.has(kf.id)
+                                        const left = orphanLeftPx(kf.time, orphanTimelineBounds)
+                                        return (
+                                          <span
+                                            key={kf.id}
+                                            data-testid={`orphan-diamond-${kf.id}`}
+                                            data-keyframe-id={kf.id}
+                                            data-node-id={row.node.id}
+                                            title={`orphan keyframe at ${kf.time}s${isSelected ? ' (selected)' : ''}`}
+                                            aria-label={`orphan keyframe at ${kf.time}s`}
+                                            aria-selected={isSelected}
+                                            onClick={(e) => {
+                                              if (!entry) return
+                                              handleOrphanDiamondClick(e, entry)
+                                            }}
+                                            onContextMenu={(e) => {
+                                              if (!entry) return
+                                              handleOrphanContextMenu(e, entry)
+                                            }}
+                                            style={{
+                                              position: 'absolute',
+                                              left,
+                                              top: '50%',
+                                              width: 10,
+                                              height: 10,
+                                              background: isSelected
+                                                ? '#ffcc00'
+                                                : 'var(--color-accent, #7c5cff)',
+                                              border: isSelected
+                                                ? '2px solid #000'
+                                                : '1px solid #fff',
+                                              transform: 'translate(-50%, -50%) rotate(45deg)',
+                                              display: 'inline-block',
+                                              flexShrink: 0,
+                                              cursor: 'pointer',
+                                              boxShadow: isSelected
+                                                ? '0 0 0 2px rgba(255,204,0,0.4)'
+                                                : undefined,
+                                              outline: isSelected ? '1px solid #000' : undefined,
+                                            }}
+                                          />
+                                        )
+                                      })}
+                                    </div>
                                     <span
                                       style={{
                                         fontSize: 10,
                                         color: 'var(--color-text-muted, #666)',
-                                        marginLeft: 4,
+                                        flexShrink: 0,
                                       }}
                                     >
                                       {orphanKeyframes.length} orphan
                                     </span>
-                                  </span>
+                                  </>
                                 )}
                                 {activeTab === 'orphans' &&
                                   !showDiamonds &&

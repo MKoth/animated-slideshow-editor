@@ -642,6 +642,42 @@ export function collectCollectionBarEdgesForSnap(
   return edges
 }
 
+// ---------------------------------------------------------------------------
+// Orphan timeline geometry (Spec 15 / orphan proportional distribution)
+// ---------------------------------------------------------------------------
+
+export const MIN_ORPHAN_SPAN = 1 // seconds – ensures single-point or tight clusters remain zoom-legible
+
+export interface OrphanBounds {
+  readonly min: number
+  readonly max: number
+  readonly span: number
+  readonly width: number // span * pps
+}
+
+export function orphanBounds(
+  times: readonly number[],
+  pixelsPerSecond: number,
+): OrphanBounds | null {
+  if (times.length === 0) return null
+  let min = Infinity
+  let max = -Infinity
+  for (const t of times) {
+    if (!Number.isFinite(t)) continue
+    if (t < min) min = t
+    if (t > max) max = t
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null
+  const rawSpan = max - min
+  const span = rawSpan < 1e-9 ? MIN_ORPHAN_SPAN : Math.max(rawSpan, MIN_ORPHAN_SPAN)
+  // Even when rawSpan is tiny we still allocate MIN_ORPHAN_SPAN width so the diamond sits at left edge and remains visible under zoom
+  return { min, max, span, width: span * pixelsPerSecond }
+}
+
+export function orphanLeftPx(time: number, bounds: OrphanBounds): number {
+  return (time - bounds.min) * (bounds.width / bounds.span)
+}
+
 /**
  * Unified interval edges for snap: combines clip lane edges (descendant nodes) and collection lane edges (parent).
  */
