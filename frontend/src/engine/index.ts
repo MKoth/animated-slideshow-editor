@@ -88,7 +88,12 @@ export type {
   ClipParamJSON,
   ClipChannelJSON,
   ClipChannelDefJSON,
+  ControlJSON,
+  ControlSetJSON,
+  ControlTrackJSON,
 } from './json'
+export type { Control, ControlSet } from './control'
+export { createControl, createControlSet, validateControlKey, validateControls } from './control'
 export {
   LESSON_VERSION,
   deserialize,

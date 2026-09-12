@@ -32,6 +32,8 @@ import type { CollectionPlacement } from './collectionPlacement'
 import { collectionPlacementFromJSON, collectionPlacementToJSON } from './collectionPlacement'
 import type { ShadowEffect } from './shadowEffect'
 import { shadowEffectFromJSON, shadowEffectToJSON } from './shadowEffect'
+import type { ControlSet } from './control'
+import { controlSetFromJSON, controlSetToJSON } from './control'
 
 const TEXT_ALIGNMENTS: readonly TextAlignment[] = ['left', 'center', 'right']
 
@@ -59,6 +61,7 @@ export class SceneNode {
   readonly collectionPlacements: CollectionPlacement[]
   shadowEffect?: ShadowEffect
   castShadow?: boolean
+  controlSet?: ControlSet
   _worldTransformDirty = true
   _cachedWorldTransform: CachedWorldTransform | null = null
 
@@ -147,6 +150,7 @@ export class SceneNode {
         ? { shadowEffect: shadowEffectToJSON(this.shadowEffect) }
         : {}),
       ...(this.castShadow !== undefined ? { castShadow: this.castShadow } : {}),
+      ...(this.controlSet !== undefined ? { controlSet: controlSetToJSON(this.controlSet) } : {}),
     }
   }
 
@@ -215,6 +219,7 @@ export class SceneNode {
     } else if (rawCastShadow !== undefined) {
       console.warn(`[shadow] Node "${id}" castShadow must be a boolean — ignoring`)
     }
+    node.controlSet = controlSetFromJSON(json.controlSet, id)
     return node
   }
 }

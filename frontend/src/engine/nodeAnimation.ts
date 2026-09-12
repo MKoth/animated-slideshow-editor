@@ -15,6 +15,7 @@ import type {
   ShadowTrackJSON,
   SymmetryTrackJSON,
   ZIndexTrackJSON,
+  ControlTrackJSON,
 } from './json'
 import type { MorphBinding } from './shape'
 import { requireMorphKeyframeValue } from './shape'
@@ -34,6 +35,7 @@ import type { MaterialParameterKindOf } from './keyframeTarget'
 import type { ShadowProperty } from './shadowEffect'
 import { requireShadowProperty, requireShadowKeyframeValue } from './shadowEffect'
 import { requireSymmetryKeyframeValue } from './symmetry'
+import { controlTrackKeyframeFromJSON } from './control'
 
 export type { MaterialParameterKindOf } from './keyframeTarget'
 
@@ -49,6 +51,34 @@ export class NodeAnimation {
   readonly #shadowTracks = new Map<ShadowProperty, Keyframe[]>()
   readonly #symmetry: Keyframe[] = []
   readonly #zIndex: Keyframe[] = []
+  readonly #controlTracks = new Map<string, Keyframe[]>()
+
+  controlKeyframes(key: string): readonly Keyframe[] {
+    return this.#controlTracks.get(key) ?? []
+  }
+
+  controlTrackKeys(): string[] {
+    return [...this.#controlTracks.keys()]
+  }
+
+  hasControlTrack(key: string): boolean {
+    return this.#controlTracks.has(key)
+  }
+
+  addControl(key: string, keyframe: Keyframe): void {
+    insertSorted(this.#controlTracks, key, keyframe)
+  }
+
+  removeControl(key: string, keyframeId: string): Keyframe | undefined {
+    return removeById(this.#controlTracks, key, keyframeId)
+  }
+
+  controlTracksJSON(): ControlTrackJSON[] {
+    return [...this.#controlTracks.entries()].map(([key, keyframes]) => ({
+      key,
+      keyframes: keyframes.map((keyframe) => keyframe.toJSON()),
+    }))
+  }
 
   keyframes(property: AnimationProperty): readonly Keyframe[] {
     return this.#tracks.get(property) ?? []
@@ -513,6 +543,12 @@ export class NodeAnimation {
         keyframes.map((keyframe) => copyKeyframe(keyframe)),
       )
     }
+    for (const [key, keyframes] of this.#controlTracks) {
+      copy.#controlTracks.set(
+        key,
+        keyframes.map((keyframe) => copyKeyframe(keyframe)),
+      )
+    }
     for (const keyframe of this.#visible) {
       copy.#visible.push(copyKeyframe(keyframe))
     }
@@ -714,6 +750,38 @@ export class NodeAnimation {
     const zIndexTrack = (json as Record<string, unknown>).zIndexTrack
     if (zIndexTrack !== undefined) {
       readZIndexTrack(animation, zIndexTrack, duration)
+    }
+    const controlTracks = (json as Record<string, unknown>).controlTracks
+    if (Array.isArray(controlTracks)) {
+      for (const rawTrack of controlTracks) {
+        if (
+          !isRecord(rawTrack) ||
+          typeof rawTrack.key !== 'string' ||
+          !Array.isArray(rawTrack.keyframes) ||
+          !node.controlSet?.controls.some((control) => control.key === rawTrack.key)
+        ) {
+          if (isRecord(rawTrack) && typeof rawTrack.key === 'string') {
+            console.warn(
+              `[control] Node "${node.id}" unknown control track "${rawTrack.key}" — ignoring`,
+            )
+          }
+          continue
+        }
+        const ids = new Set<string>()
+        const times = new Set<number>()
+        for (const rawKeyframe of rawTrack.keyframes) {
+          const keyframe = controlTrackKeyframeFromJSON(rawKeyframe, duration)
+          if (
+            !keyframe ||
+            ids.has(keyframe.id) ||
+            (times.has(keyframe.time) && keyframe.time !== duration)
+          )
+            continue
+          ids.add(keyframe.id)
+          times.add(keyframe.time)
+          animation.addControl(rawTrack.key, keyframe)
+        }
+      }
     }
     return animation
   }

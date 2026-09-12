@@ -19,6 +19,7 @@ import { resolveCrossBlendedVertices, resolveMorphedVerticesFromKeyframe } from 
 import type { MorphKeyframeValue, MorphClipKeyframeValue } from './shape'
 import type { SymmetryKeyframeValue } from './symmetry'
 import { resolveSymmetrizedVertices } from './symmetry'
+import { evaluateControlTrack } from './control'
 import type { ShadowEffect, ShadowProperty } from './shadowEffect'
 import {
   SHADOW_PROPERTIES,
@@ -213,6 +214,7 @@ export class AnimationEvaluator {
     state.visible = this.evaluateVisible(nodeId, clampedTime)
 
     this.#applyClipInstances(node, clampedTime, state)
+    this.#applyControls(node, clampedTime, state)
 
     return state
   }
@@ -1142,6 +1144,54 @@ export class AnimationEvaluator {
         }
 
         this.#setChannelValue(state, channel, output)
+      }
+    }
+  }
+
+  /** Controls are evaluated after time clips. Nearest hosts run first so ancestors win. */
+  #applyControls(node: SceneNode, time: number, state: EvaluatedNodeScratch): void {
+    const hosts: SceneNode[] = []
+    for (let host = node.parent; host; host = host.parent) {
+      if (host.controlSet) hosts.push(host)
+    }
+    for (const host of hosts) {
+      const controlSet = host.controlSet
+      if (!controlSet || node.semanticName === undefined) continue
+      const animation = this.#slideLookup(node.id).animation.node(host.id)
+      for (const control of controlSet.controls) {
+        const clipId = control.bindings[node.semanticName]
+        if (!clipId) continue
+        let clip: ClipDefinition
+        try {
+          clip = this.#clipLookup(clipId)
+        } catch {
+          continue
+        }
+        if (clip.duration !== 1) continue
+        const track = animation?.controlKeyframes(control.key) ?? []
+        const value = Math.min(
+          Math.max(evaluateControlTrack(track, time, control.default), control.min),
+          control.max,
+        )
+        const u = Math.min(Math.max((value - control.min) / (control.max - control.min), 0), 1)
+        for (const channelDef of clip.channels) {
+          const channelAnimation = clip.channelAnimation(channelDef.property)
+          if (!channelAnimation || channelAnimation.length === 0) continue
+          const enabled = channelAnimation.keyframes().filter((keyframe) => !keyframe.disabled)
+          if (enabled.length === 0) continue
+          const effectiveU = effectiveUForClip(clip, enabled, u)
+          const keyframeValue = this.#evaluateClipChannel(enabled, effectiveU)
+          let output = keyframeValue
+          if (channelDef.paramKey) {
+            const parameter = clip.getParam(channelDef.paramKey)?.default ?? 1
+            const base = this.#getChannelValue(state.transform, state.opacity, channelDef.property)
+            output =
+              channelDef.linkMode === 'offset'
+                ? base + parameter * keyframeValue
+                : base * (parameter * keyframeValue)
+          }
+          this.#setChannelValue(state, channelDef.property, output)
+        }
       }
     }
   }

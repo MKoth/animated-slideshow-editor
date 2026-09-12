@@ -146,6 +146,24 @@ export type NodeJSON = {
   readonly collectionPlacements?: readonly CollectionPlacementJSON[]
   readonly shadowEffect?: ShadowEffectJSON
   readonly castShadow?: boolean
+  readonly controlSet?: ControlSetJSON
+}
+
+export type ControlJSON = {
+  readonly id: string
+  readonly key: string
+  readonly label: string
+  readonly min: number
+  readonly max: number
+  readonly default: number
+  readonly exposed: boolean
+  readonly bindings: Readonly<Record<string, string>>
+}
+
+export type ControlSetJSON = {
+  readonly id: string
+  readonly hostNodeId: string
+  readonly controls: readonly ControlJSON[]
 }
 
 export type SceneJSON = {
@@ -160,6 +178,12 @@ export type KeyframeJSON = {
   readonly interpolation?: InterpolationType
   readonly tangentIn?: KeyframeTangent
   readonly tangentOut?: KeyframeTangent
+  readonly disabled?: boolean
+}
+
+export type ControlTrackJSON = {
+  readonly key: string
+  readonly keyframes: readonly KeyframeJSON[]
 }
 
 export type PropertyTrackJSON = {
@@ -226,6 +250,7 @@ export type NodeAnimationJSON = {
   readonly shadowTracks?: readonly ShadowTrackJSON[]
   readonly symmetryTrack?: SymmetryTrackJSON
   readonly zIndexTrack?: ZIndexTrackJSON
+  readonly controlTracks?: readonly ControlTrackJSON[]
 }
 
 export type SlideAnimationJSON = {
