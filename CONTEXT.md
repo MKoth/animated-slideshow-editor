@@ -222,9 +222,9 @@ _Avoid_: Collection Bar, group lane
 **Stretch** (also **Condense**):
 The user action of dragging a Clip Lane or Collection Lane edge to change its visual duration, condensing or stretching its keyframes. The engine implements Stretch by adjusting the instance's speed, not by rewriting the clip definition.
 _Avoid_: Scale (conflicts with Transform scale), Speed (engine field, not user verb)
-
 **Priority** (also **Lane Priority**, **Stack Priority**):
-The vertical stacking order of overlapping Clip Lanes and Collection Lanes on the same timeline. Lower lane has higher Priority and wins evaluation when times overlap (last instance wins). Dragging a lane up or down reorders Priority.
+
+The vertical stacking order of overlapping Clip Lanes and Collection Lanes on the same timeline. Lower lane has higher Priority and wins evaluation when times overlap (last instance wins). Dragging a lane up or down reorders Priority. Controls extend Priority: within a `ControlSet`, later Controls win over earlier on the same property, and Controls as a phase win over all time `ClipInstance`s; nested ControlSets are evaluated parent-after-children (deepest first) so an ancestor Control wins over a descendant's own Control on the same leaf property — still last-wins, now across the tree.
 _Avoid_: zIndex, layer (ambiguous with compositing)
 
 **Orphan Keyframe**:
@@ -242,6 +242,28 @@ _Avoid_: Animated property (synonym), track
 **Reverse and Save** (also **Reversed Clip**, **Reversed Collection**):
 Creating a time-mirrored copy of any Clip or of each clip in a Collection — last seconds become first, as if dragging the timeline from end toward start — with normalized `t' = 1 - t`, value unchanged, bezier tangents swapped and negated (`tangentIn.time = -oldOut.time`, `tangentOut.time = -oldIn.time`), hold/linear preserved and parametric types evaluated at `1 - u`, saved under a new name (default "<original> Reversed") leaving the original untouched. The new instance appears at the same `startTime` (or as library entry) with `speed = 1` and participates in Priority like any lane; entry via Animation Manager Clip Lane / Collection Lane context menu `Reverse and Save As…` and library ellipses. Collection reverse creates reversed copies of each member clip (new ids) and a new `ClipCollection` with the same `semanticName` map, preserving member `startTime` offsets in v1; full offset mirroring within collection duration is deferred. Keeps `ClipInstance.speed >= 0` and reuses the non-destructive copy pattern of Clip Extraction.
 _Avoid_: Negative speed playback (engine `speed < 0`, deferred), in-place reverse (destructive)
+
+### Controls
+
+**Control**:
+A generic 0…1 scalar parameter owned by a parent Scene Node (typically a group node / Scale Group / Rig Handle) that drives a set of normalized-clip fragments across its descendants by mapping value → `t ∈ [0,1]` → `evaluateClip`; its value over global time is authored as a Control Track on the host node, not as a clip instance.
+_Avoid_: Param, driver, slider
+
+**Control Set**:
+The ordered collection of Controls owned by one parent node. The host node's Control Set is its public rig API: after export/import only exposed Controls appear in the consumer's timeline, while bindings stay hidden unless Authoring Mode is entered.
+_Avoid_: Control group, rig controls set
+
+**Control Binding**:
+The link from one Control to one descendant's normalized clip: `semanticName → clipId` inside `Control.bindings`. One Control may have N bindings (one per descendant), each clip carrying whatever channels (transform, morphCoefficient, shadow, circle, material) that descendant needs.
+_Avoid_: Mapping, control link, driver binding
+
+**Normalized Clip**:
+An ordinary `ClipDefinition` with `duration = 1` whose keyframe times are constrained to `[0,1]` and which is evaluated at `u = Control value` rather than at global time. No new channel type or `isControlClip` flag; direct linear mappings lower to a 2-keyframe normalized clip.
+_Avoid_: Control clip, value clip, param clip
+
+**Control Track**:
+The seconds-based keyframe track on the host node's `NodeAnimation` that animates a Control's value over `Slide.duration`. Time is in seconds (like any `NodeAnimation` track), value is in `[min,max]` (0…1 in v1), with hold/linear/bezier interpolation and `disabled` support; evaluator precedence is `base NodeAnimation keyframes → ClipInstance layers (clipInstances order) → Control layers (ControlSet order)`, evaluated at `u = clamp(value,0,1)` (always active, no `isClipInstanceActive` or `speed`/`Stretch`), reusing `effectiveUForClip` for `isReversed`/parametric and `enabledKeyframes` for disabled, with `gain`/`offset` `linkMode` preserved per channel and last-wins across Controls; nested ControlSets compose parent-after-children so Controls win over time clips unconditionally.
+_Avoid_: Control lane, driver track
 
 ### AI
 

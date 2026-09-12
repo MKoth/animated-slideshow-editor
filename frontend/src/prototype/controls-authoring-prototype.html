@@ -1,0 +1,1297 @@
+<!doctype html>
+<!-- PROTOTYPE — THROWAWAY — prototype/controls-authoring — not production -->
+<!-- Wayfinder #328 Map: Parametric Controls for Reusable Rigs — ticket #333 -->
+<!-- See CONTEXT.md § Controls, ADR 0010 (data model), ADR 0011 (eval order), ADR 0012 (controlTracks) -->
+<!-- Run: open this file directly in a browser (double-click) — no build. No persistence, state in memory. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>PROTOTYPE — Controls Tab + Drill-in Normalized Timeline (wayfinder #333)</title>
+    <style>
+      :root {
+        --bg: #0f1419;
+        --panel: #1a2332;
+        --panel2: #1e2e42;
+        --border: #2a3a4d;
+        --accent: #1a73e8;
+        --accent2: #34a853;
+        --accent3: #fbbc05;
+        --danger: #ea4335;
+        --text: #e8eaed;
+        --muted: #9aa0a6;
+        --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+        --radius: 8px;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: Inter, system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      header {
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--border);
+        background: #121a26;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+      }
+      header h1 {
+        margin: 0;
+        font-size: 15px;
+        letter-spacing: 0.02em;
+      }
+      header p {
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+        max-width: 1100px;
+      }
+      .badge {
+        display: inline-block;
+        background: var(--danger);
+        color: #fff;
+        font-size: 10px;
+        padding: 2px 6px;
+        border-radius: 999px;
+        vertical-align: middle;
+        margin-left: 8px;
+        letter-spacing: 0.08em;
+      }
+      .badge-blue {
+        background: var(--accent);
+        margin-left: 4px;
+      }
+      .meta {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 6px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .meta span {
+        background: #0f1419;
+        border: 1px solid var(--border);
+        padding: 2px 6px;
+        border-radius: 999px;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 460px 1fr 360px;
+        min-height: calc(100vh - 110px);
+      }
+      .col {
+        border-right: 1px solid var(--border);
+        background: var(--panel);
+        overflow: auto;
+      }
+      .col:last-child {
+        border-right: none;
+      }
+      .section {
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border);
+      }
+      .section h3 {
+        margin: 0 0 8px;
+        font-size: 12px;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .hint {
+        font-size: 11px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .hint b {
+        color: var(--text);
+      }
+      .pill {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 999px;
+        background: #0f1419;
+        border: 1px solid var(--border);
+        font-size: 11px;
+        font-family: var(--mono);
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin: 6px 0;
+      }
+      label {
+        font-size: 12px;
+        color: var(--muted);
+        min-width: 92px;
+      }
+      button {
+        background: var(--accent);
+        border: none;
+        color: #fff;
+        padding: 7px 10px;
+        border-radius: 6px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #2a3a4d;
+      }
+      button.ghost {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--text);
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      select,
+      input[type='range'],
+      input[type='text'],
+      input[type='number'] {
+        flex: 1;
+        background: #0f1419;
+        border: 1px solid var(--border);
+        color: var(--text);
+        padding: 6px 8px;
+        border-radius: 6px;
+        font-size: 12px;
+      }
+      input[type='range'] {
+        padding: 0;
+      }
+      /* Manager modal mock */
+      .manager-shell {
+        background: #0f1419;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+        margin: 8px 0;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+      }
+      .manager-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 12px;
+        background: #121a26;
+        border-bottom: 1px solid var(--border);
+        font-size: 12px;
+      }
+      .manager-tabs {
+        display: flex;
+        gap: 4px;
+        padding: 8px 10px;
+        background: var(--panel2);
+        border-bottom: 1px solid var(--border);
+      }
+      .manager-tab {
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        border: 1px solid var(--border);
+        background: #0f1419;
+        color: var(--muted);
+        cursor: pointer;
+      }
+      .manager-tab.active {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+      }
+      .manager-tab small {
+        opacity: 0.7;
+        margin-left: 4px;
+      }
+      .manager-body {
+        padding: 10px;
+        min-height: 260px;
+        background: var(--panel);
+      }
+      .control-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+        padding: 10px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #0f1419;
+        margin-bottom: 8px;
+      }
+      .control-main {
+        min-width: 0;
+      }
+      .control-title {
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .control-sub {
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 2px;
+        font-family: var(--mono);
+      }
+      .control-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: flex-end;
+      }
+      .bindings {
+        margin-top: 8px;
+      }
+      .binding {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 4px 6px;
+        background: #121a26;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        margin-bottom: 4px;
+        font-size: 11px;
+      }
+      .binding-left {
+        font-family: var(--mono);
+      }
+      .binding-right {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .slider-wrap {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 6px;
+      }
+      .slider-wrap input[type='range'] {
+        flex: 1;
+      }
+      .exposed {
+        font-size: 11px;
+        padding: 2px 6px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: #0f1419;
+      }
+      .exposed.on {
+        background: rgba(52, 168, 83, 0.15);
+        border-color: var(--accent2);
+        color: var(--accent2);
+      }
+      .drill-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 10px;
+        background: #121a26;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        margin-bottom: 8px;
+      }
+      .drill-title {
+        font-size: 13px;
+        font-weight: 700;
+      }
+      .drill-axis {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .lane {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+        margin-bottom: 6px;
+        background: #0f1419;
+      }
+      .lane-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 6px 8px;
+        background: #121a26;
+        font-size: 12px;
+        border-bottom: 1px solid var(--border);
+      }
+      .lane-canvas {
+        position: relative;
+        height: 34px;
+        background: #0a0f16;
+      }
+      .ruler {
+        display: flex;
+        justify-content: space-between;
+        padding: 2px 8px;
+        font-size: 10px;
+        font-family: var(--mono);
+        color: var(--muted);
+        background: #0f1419;
+        border-bottom: 1px solid var(--border);
+      }
+      .kf {
+        position: absolute;
+        top: 8px;
+        width: 10px;
+        height: 10px;
+        transform: rotate(45deg);
+        border: 1px solid #fff;
+        cursor: pointer;
+      }
+      .kf.hold {
+        background: #fbbc05;
+      }
+      .kf.linear {
+        background: var(--accent);
+      }
+      .kf.bezier {
+        background: var(--accent2);
+        border-radius: 0;
+      }
+      .kf.selected {
+        outline: 2px solid #fff;
+      }
+      /* Variant B */
+      .graph-card {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: #0f1419;
+        padding: 8px;
+        margin-bottom: 8px;
+      }
+      .graph-title {
+        font-size: 12px;
+        font-weight: 600;
+      }
+      .weight-slider {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 6px;
+      }
+      .mini-curve {
+        height: 40px;
+        background: #0a0f16;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        margin-top: 6px;
+        position: relative;
+        overflow: hidden;
+      }
+      .mini-curve svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      /* state */
+      .state-pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: #0f1419;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px;
+        font-family: var(--mono);
+        font-size: 11px;
+        line-height: 1.5;
+        max-height: 360px;
+        overflow: auto;
+      }
+      .walkthrough {
+        background: #0f1419;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin: 8px 0;
+        font-size: 12px;
+        line-height: 1.6;
+      }
+      .walkthrough b {
+        color: #8ab4f8;
+      }
+      .banner {
+        background: #3c2a00;
+        border: 1px solid #8a6d00;
+        color: #ffed8a;
+        padding: 8px 10px;
+        border-radius: 6px;
+        font-size: 11px;
+        line-height: 1.4;
+        margin: 8px 0;
+      }
+      .banner.blue {
+        background: #0a2540;
+        border-color: #1a73e8;
+        color: #8ab4f8;
+      }
+      /* switcher */
+      #prototype-switcher {
+        position: fixed;
+        bottom: 18px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: #0f1419;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 6px 10px;
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+        z-index: 50;
+      }
+      #prototype-switcher button {
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: #2a3a4d;
+      }
+      #prototype-switcher .label {
+        font-size: 12px;
+        font-family: var(--mono);
+        color: var(--text);
+        min-width: 220px;
+        text-align: center;
+      }
+      .tabs-inline {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin: 8px 0;
+      }
+      .tab {
+        padding: 6px 10px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: #0f1419;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 12px;
+      }
+      .tab.active {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      @media (max-width: 1150px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+        .col {
+          border-right: none;
+          border-bottom: 1px solid var(--border);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>
+        PROTOTYPE — Controls Tab + Drill-in Normalized Timeline
+        <span class="badge">THROWAWAY — prototype/controls-authoring</span
+        ><span class="badge badge-blue">WAYFINDER #333</span>
+      </h1>
+      <p>
+        Destination: Generic parametric <b>Controls</b> subsystem — one Control (0…1) drives N
+        normalized-clip fragments across a parent's descendants, reusing
+        <code>ClipDefinition duration=1, time∈[0,1]</code> and
+        <code>controlValue → t → evaluateClip</code> (<code
+          >animationEvaluator.ts:50 effectiveUForClip, :1252 #evaluateClipChannel</code
+        >), with <b>Controls winning over time clips</b> (base → ClipInstances → Controls
+        last-wins). Authoring via
+        <b>Animation Manager → Controls tab + drill-in timeline</b> (Editing Control:
+        <i>Mouth.Openness 0…1</i> shows per-descendant lanes with normalized axis). This artifact
+        tests the UI the spec will lock, contrasted with the lightweight graph alternative the
+        ticket says to reject. Standing prefs: generic Controls, normalized-clip primary, 1→N via
+        <code>Record&lt;semanticName, clipId&gt;</code> (like <code>ClipCollection</code>), parent
+        <code>SceneNode.controlSet</code> embedded, Controls win, single-input, authoring via
+        Manager Controls tab.
+      </p>
+      <div class="meta">
+        <span>Map #328</span><span>Ticket #333 wayfinder:prototype HITL</span
+        ><span>CONTEXT § Controls</span><span>ADR 0010 / 0011 / 0012</span
+        ><span>engine/clipDefinition.ts:164</span><span>animationEvaluator.ts:1107</span
+        ><span>animationManagerModel.ts</span>
+      </div>
+    </header>
+
+    <div class="layout">
+      <!-- LEFT: Host / Manager mock host -->
+      <div class="col" id="left">
+        <div class="section">
+          <h3>Host — Parent node (mock)</h3>
+          <div class="row">
+            <label>Selected parent</label
+            ><span class="pill">MouthRig (Group) — <code>isGroupNode</code></span>
+          </div>
+          <div class="row">
+            <label>Host</label
+            ><span class="pill"
+              >SceneNode <code>node-mouthRig</code> — <code>controlSet</code> embedded</span
+            >
+          </div>
+          <div class="hint">
+            Per ADR 0010:
+            <code>SceneNode.controlSet?: ControlSet {id, hostNodeId, controls: Control[]}</code>
+            embedded like <code>Shadow Effect</code>.
+            <code
+              >Control {id, key, label, min=0,max=1,default,exposed, bindings:
+              Record&lt;semanticName, clipId&gt;}</code
+            >. Clip reuse: ordinary <code>ClipDefinition duration=1</code> with
+            <code>[0,1]</code> validation at
+            <code>clipDefinition.ts:164</code> (<code>ClipManager:601</code>). Host value lives as
+            <code>NodeAnimation.controlTracks Map&lt;controlKey, Keyframe[]&gt;</code> seconds-based
+            (ADR 0012), evaluated at <code>u=clamp(value,0,1)</code> always-active (skips
+            <code>isClipInstanceActive:67</code> / speed/Stretch) but keeps
+            <code>disabled</code>/<code>isReversed</code>/parametric via
+            <code>effectiveUForClip:50</code> and <code>gain/offset linkMode</code>.
+          </div>
+          <div class="banner">
+            Plan only — no production code lands in this map. Prototype state in memory (no
+            <code>.lesson</code> persistence).
+          </div>
+          <div class="row" style="gap: 6px">
+            <button id="btnAddControl">+ Add Control</button>
+            <button id="btnReset" class="ghost">Reset demo data</button>
+          </div>
+          <div class="hint">
+            Buttons mirror spec table: <code>+ Add Control</code> / <code>Edit Animation</code> per
+            control / <code>Expose</code> toggle. Adding a Control prompts for key/label and creates
+            an empty <code>bindings</code> map; bindings are added via
+            <code>Edit Animation</code> drill-in editing of normalized clip lanes (Variant A) or via
+            graph cards (Variant B contrast).
+          </div>
+        </div>
+        <div class="section">
+          <h3>Evaluation trace (live)</h3>
+          <div
+            id="evalTrace"
+            class="hint"
+            style="
+              font-family: var(--mono);
+              background: #0f1419;
+              border: 1px solid var(--border);
+              padding: 8px;
+              border-radius: 6px;
+            "
+          ></div>
+          <div class="hint" style="margin-top: 6px">
+            Order:
+            <code
+              >base NodeAnimation (seconds) → ClipInstances (clipInstances order) → Controls
+              (ControlSet order, later wins)</code
+            >
+            per ADR 0011. Nested ControlSets: <code>parent-after-children</code> (ancestor wins).
+            Try dragging preview sliders — evaluation preview below recomputes
+            <code>effectiveUForClip</code> + <code>#evaluateClipChannel</code> sharing.
+          </div>
+        </div>
+        <div class="section">
+          <h3>What to judge (for #334 / #335 / #336)</h3>
+          <div class="walkthrough">
+            <b>Variant A (recommended)</b> — 4-tab Manager + drill-in timeline is the spec's
+            standing pref. Does the normalized axis + per-descendant lanes reuse the existing
+            timeline/tangent UI cleanly? Is <code>Back to Controls</code> discoverable?<br />
+            <b>Variant B (rejected alt)</b> — single slider + per-target weight curves looks lean
+            for <code>Tail.Curl → rotation 0→60°</code> but explodes for 5 targets: one slider + N
+            tiny curves is not a timeline. Spec will explicitly reject it with
+            <i>direct mapping is sugar lowered to 2-keyframe clip; only one evaluator path</i> (see
+            #336).<br />
+            <b>Also:</b> Normal Mode shows only exposed Controls as keyframeable lanes on host
+            <code>controlTracks</code> (seconds, <code>hold|linear|bezier</code>), Authoring Mode
+            reveals hidden raw lanes — validated later in #334. Export (#335) hides internals;
+            direct mapping (#336) stays sugar.
+          </div>
+        </div>
+      </div>
+
+      <!-- CENTER: Prototype variants -->
+      <div class="col" style="display: flex; flex-direction: column">
+        <div class="section" style="flex: 1">
+          <h3>Prototype — switch variants via floating bar (←/→) or <code>?variant=</code></h3>
+          <div id="variantContainer"></div>
+        </div>
+      </div>
+
+      <!-- RIGHT: Walkthrough + live state -->
+      <div class="col">
+        <div class="section" id="walkthroughPanel">
+          <h3>Guided walkthrough</h3>
+          <div id="walkthroughContent"></div>
+          <div class="tabs-inline" id="stepTabs" style="display: none"></div>
+        </div>
+        <div class="section">
+          <h3>Live state — after every action</h3>
+          <div id="liveState" class="state-pre"></div>
+          <div class="row" style="margin-top: 8px; gap: 6px">
+            <button id="btnCopyState" class="ghost">Copy state JSON</button
+            ><span id="copyResult" class="pill">—</span>
+          </div>
+          <div class="hint">
+            State is <code>ControlSet</code> (definition on host),
+            <code>ClipDefinitions duration=1</code> with normalized keyframes,
+            <code>controlTracks</code> mocked as host sliders (seconds-based tracks in real engine,
+            ADR 0012), preview <code>u</code> and per-target evaluated values.
+          </div>
+        </div>
+        <div class="section">
+          <h3>Spec anchors</h3>
+          <div class="hint">
+            Reuses <code>clipDefinition.ts:197</code>, <code>animationEvaluator.ts:1083</code>,
+            <code>animationManagerModel.ts</code>, <code>clipCollection.ts</code>,
+            <code>reusableObject.ts</code>, <code>animationManager.ts</code>. Normalized-clip
+            keyframes via <code>ClipManager:601 [0,1]</code>, host <code>controlTracks</code> via
+            NodeAnimation. <code>controls win</code> uses <code>effectiveUForClip:50</code> +
+            <code>#evaluateClipChannel:1252</code> for all channels (incl. morph name-resolution at
+            <code>:817</code>). Direct linear mapping (ticket #336) is not a second driver — lowered
+            to 2-keyframe clip.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Floating variant switcher (UI.md) -->
+    <div id="prototype-switcher" aria-label="Variant switcher">
+      <button id="switcherPrev" title="Previous variant (←)">‹</button>
+      <div class="label" id="switcherLabel">A — Controls Tab</div>
+      <button id="switcherNext" title="Next variant (→)">›</button>
+    </div>
+
+    <script>
+      // ---------- Mock data model (mirrors ADR 0010 + 0011 + 0012) ----------
+      const newId = (p) =>
+        `${p}-${Math.random().toString(36).slice(2, 6)}-${Date.now().toString(36).slice(-4)}`
+      const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
+      // ClipDefinitions — ordinary clips duration=1, time ∈ [0,1] (clipDefinition.ts:164), validated via ClipChannelAnimation
+      const clipStore = {
+        'clip-head-morph': {
+          id: 'clip-head-morph',
+          name: 'Mouth_Openness.Head.morph',
+          duration: 1,
+          channel: 'morphCoefficient',
+          from: 'Smile',
+          to: 'Open',
+          keyframes: [
+            { t: 0, value: 0, interp: 'hold' },
+            { t: 0.5, value: 0.8, interp: 'linear' },
+            { t: 0.85, value: 1, interp: 'bezier' },
+          ],
+        },
+        'clip-upper-morph': {
+          id: 'clip-upper-morph',
+          name: 'Mouth_Openness.UpperLip.morph',
+          duration: 1,
+          channel: 'morphCoefficient',
+          keyframes: [
+            { t: 0, value: 0, interp: 'linear' },
+            { t: 1, value: 1, interp: 'linear' },
+          ],
+        },
+        'clip-lower-posy': {
+          id: 'clip-lower-posy',
+          name: 'Mouth_Openness.LowerLip.positionY',
+          duration: 1,
+          channel: 'positionY',
+          keyframes: [
+            { t: 0, value: 0, interp: 'linear' },
+            { t: 1, value: 18, interp: 'linear' },
+          ],
+        },
+        'clip-teeth-opacity': {
+          id: 'clip-teeth-opacity',
+          name: 'Mouth_Openness.Teeth.opacity',
+          duration: 1,
+          channel: 'opacity',
+          keyframes: [
+            { t: 0, value: 0, interp: 'hold' },
+            { t: 0.25, value: 0, interp: 'hold' },
+            { t: 0.3, value: 1, interp: 'linear' },
+            { t: 1, value: 1, interp: 'hold' },
+          ],
+        },
+        'clip-tongue-y': {
+          id: 'clip-tongue-y',
+          name: 'Mouth_Openness.Tongue.positionY',
+          duration: 1,
+          channel: 'positionY',
+          keyframes: [
+            { t: 0, value: 0, interp: 'hold' },
+            { t: 0.6, value: 0, interp: 'hold' },
+            { t: 0.65, value: 9, interp: 'linear' },
+            { t: 1, value: 9, interp: 'linear' },
+          ],
+        },
+        'clip-smile-morph': {
+          id: 'clip-smile-morph',
+          name: 'Mouth_Smile.morph',
+          duration: 1,
+          channel: 'morphCoefficient',
+          keyframes: [
+            { t: 0, value: 0, interp: 'linear' },
+            { t: 1, value: 0.6, interp: 'linear' },
+          ],
+        },
+      }
+      const clipLookup = (id) => clipStore[id] || null
+
+      let controlSet = {
+        id: newId('cs'),
+        hostNodeId: 'node-mouthRig',
+        hostNodeName: 'MouthRig (Group)',
+        controls: [
+          {
+            id: newId('ctrl'),
+            key: 'Mouth.Openness',
+            label: 'Mouth Openness',
+            min: 0,
+            max: 1,
+            default: 0,
+            exposed: true,
+            bindings: {
+              Head: 'clip-head-morph',
+              UpperLip: 'clip-upper-morph',
+              LowerLip: 'clip-lower-posy',
+              Teeth: 'clip-teeth-opacity',
+              Tongue: 'clip-tongue-y',
+            },
+          },
+          {
+            id: newId('ctrl'),
+            key: 'Mouth.Roundness',
+            label: 'Roundness',
+            min: 0,
+            max: 1,
+            default: 0.5,
+            exposed: true,
+            bindings: { UpperLip: 'clip-upper-morph', LowerLip: 'clip-lower-posy' },
+          },
+          {
+            id: newId('ctrl'),
+            key: 'Mouth.Smile',
+            label: 'Smile',
+            min: 0,
+            max: 1,
+            default: 0,
+            exposed: false,
+            bindings: { Head: 'clip-smile-morph' },
+          },
+        ],
+      }
+      const initialControlSetJSON = JSON.parse(JSON.stringify(controlSet))
+
+      // controlTracks mimic: host node controlTracks Map<controlKey, Keyframe[]> seconds-based, hold/linear/bezier (ADR 0012). For prototype we keep preview values 0..1 via sliders + mock keyframes array.
+      let controlPreviewValues = { 'Mouth.Openness': 0.0, 'Mouth.Roundness': 0.5, 'Mouth.Smile': 0 }
+      let controlTracksMock = {
+        'Mouth.Openness': [
+          { id: newId('kf'), time: 0, value: 0, interpolation: 'hold' },
+          { id: newId('kf'), time: 1.2, value: 0.85, interpolation: 'linear' },
+          {
+            id: newId('kf'),
+            time: 2.0,
+            value: 1,
+            interpolation: 'bezier',
+            tangentIn: { time: -0.2, value: 0 },
+            tangentOut: { time: 0.2, value: 0 },
+          },
+        ],
+        'Mouth.Roundness': [{ id: newId('kf'), time: 0, value: 0.5, interpolation: 'linear' }],
+      }
+      let selectedControlKey = 'Mouth.Openness'
+      let drillEditingKey = null // when not null, we are in drill-in state editing that control
+
+      // helpers: evaluate normalized clip at u (mirrors effectiveUForClip + evaluateSegment for prototype — simplified)
+      function evaluateClipAtU(clip, u) {
+        const clamped = clamp(u, 0, 1)
+        // effectiveUForClip: if isReversed or parametric bounce/elastic/spring → 1-u (simplified: we support reversed flag if present)
+        const isReversed = !!clip.isReversed
+        const eu = isReversed ? 1 - clamped : clamped
+        // filter disabled? clip keyframes disabled not in this mock — skip
+        const kfs = [...clip.keyframes].sort((a, b) => a.t - b.t)
+        if (kfs.length === 0) return null
+        if (eu <= kfs[0].t) return kfs[0].value
+        if (eu >= kfs[kfs.length - 1].t) return kfs[kfs.length - 1].value
+        for (let i = 0; i < kfs.length - 1; i++) {
+          const a = kfs[i],
+            b = kfs[i + 1]
+          if (eu >= a.t && eu < b.t) {
+            if (a.interp === 'hold') return a.value
+            const segU = (eu - a.t) / (b.t - a.t)
+            if (a.interp === 'linear') return a.value + (b.value - a.value) * segU
+            if (a.interp === 'bezier') {
+              // cubic hermite simplified
+              const u2 = segU * segU,
+                u3 = u2 * segU
+              return a.value * (2 * u3 - 3 * u2 + 1) + b.value * (-2 * u3 + 3 * u2)
+            }
+            return a.value + (b.value - a.value) * segU
+          }
+        }
+        return kfs[kfs.length - 1].value
+      }
+
+      // ---------- Variant routing (UI.md ?variant=) ----------
+      const VARIANTS = [
+        { key: 'A', label: 'A — Controls Tab (Animation Manager 4th tab)' },
+        {
+          key: 'Adrill',
+          label: 'A-drill — Editing Control: Mouth.Openness (0…1) Normalized Timeline',
+        },
+        { key: 'B', label: 'B — Inline Binding Graph (lightweight alt — to reject)' },
+      ]
+      function getVariantFromURL() {
+        const v = new URLSearchParams(location.search).get('variant')
+        if (VARIANTS.some((x) => x.key === v)) return v
+        return 'A'
+      }
+      let currentVariant = getVariantFromURL()
+      function setVariant(k, push = true) {
+        currentVariant = k
+        const url = new URL(location.href)
+        url.searchParams.set('variant', k)
+        if (push) history.replaceState(null, '', url.toString())
+        renderAll()
+      }
+
+      // ---------- Renderers ----------
+      const container = document.getElementById('variantContainer')
+
+      function renderManagerTabs(active) {
+        const tabs = [
+          { id: 'orphans', label: 'Orphaned', count: 0 },
+          { id: 'clips', label: 'Clips' },
+          { id: 'controls', label: 'Controls', active: active === 'controls' },
+          { id: 'collections', label: 'Collections' },
+        ]
+        return `<div class="manager-tabs">${tabs.map((t) => `<div class="manager-tab ${t.active ? 'active' : ''}">${t.label}${t.count !== undefined ? ` <small>${t.count}</small>` : ''}</div>`).join('')}</div>`
+      }
+
+      function renderControlsTab() {
+        const rows = controlSet.controls
+          .map((ctrl) => {
+            const preview = controlPreviewValues[ctrl.key] ?? ctrl.default
+            const clipCount = Object.keys(ctrl.bindings).length
+            const bindingsHTML = Object.entries(ctrl.bindings)
+              .map(([semanticName, clipId]) => {
+                const clip = clipLookup(clipId)
+                return `<div class="binding"><span class="binding-left">${semanticName} → <code>${clip ? clip.name : clipId.slice(0, 8)}</code></span><span class="binding-right">${clip ? `${clip.duration.toFixed(1)}s • ${clip.channel}` : 'missing'}</span></div>`
+              })
+              .join('')
+            const exposedClass = ctrl.exposed ? 'exposed on' : 'exposed'
+            const exposedLabel = ctrl.exposed ? '● Exposed' : '○ Hidden'
+            return `<div class="control-row" data-key="${ctrl.key}">
+            <div class="control-main">
+              <div class="control-title">${ctrl.label} <span class="pill">${ctrl.key}</span> <span class="pill">default ${ctrl.default}</span> <span class="pill">${clipCount} bindings</span></div>
+              <div class="control-sub">Control ${ctrl.id.slice(0, 8)} • range [${ctrl.min}…${ctrl.max}] • <code>bindings: Record&lt;semanticName, clipId&gt;</code></div>
+              <div class="slider-wrap"><label>Preview 0…1</label><input type="range" min="0" max="1" step="0.01" value="${preview}" data-preview="${ctrl.key}"><span class="pill">${Number(preview).toFixed(2)}</span></div>
+              <div class="bindings">${bindingsHTML || '<div class="hint">No bindings yet — use <b>Edit Animation</b> to add normalized clips per descendant.</div>'}</div>
+            </div>
+            <div class="control-actions">
+              <button class="ghost" data-edit="${ctrl.key}">Edit Animation</button>
+              <button class="${ctrl.exposed ? 'secondary' : 'ghost'} ${exposedClass}" data-expose="${ctrl.key}">${exposedLabel}</button>
+              <button class="ghost" data-remove="${ctrl.key}" style="color:var(--danger); border-color:var(--danger)">Remove</button>
+            </div>
+          </div>`
+          })
+          .join('')
+        return `<div class="manager-shell">
+          <div class="manager-header"><span><b>Animation Manager</b> — ${controlSet.hostNodeName}</span><span class="pill">${controlSet.controls.length} Controls • host ${controlSet.hostNodeId}</span></div>
+          ${renderManagerTabs('controls')}
+          <div class="manager-body">
+            <div class="banner blue">Normal Mode shows only exposed Controls as lanes on <code>controlTracks</code> (host <code>NodeAnimation</code> seconds-based). Authoring Mode (this Manager) reveals bindings. Controls win over time ClipInstances — see eval trace left.</div>
+            <div style="display:flex; gap:6px; margin:8px 0;">
+              <button data-add-control>+ Add Control</button>
+              <button class="secondary" onclick="setVariant('Adrill')">▸ Drill into ${selectedControlKey} (demo)</button>
+              <span class="hint" style="align-self:center;">Tabs: <code>Orphaned | Clips | Controls | Collections</code> — 4th tab is new. Existing Clips/Collections/Orphans unchanged.</span>
+            </div>
+            ${rows}
+            <div class="hint" style="margin-top:10px;">Per-Control bindings mirror <code>ClipCollection</code> broadcast: one Control → N per-descendant normalized clips, each <code>ClipDefinition duration=1, time∈[0,1]</code> evaluated at <code>u=controlValue</code> (ADR 0010). Reuses <code>clipDefinition.ts:164</code>, <code>animationEvaluator.ts:1107</code>, <code>clipCollection.ts</code>. <code>ControlTrack</code> values are seconds-based keyframes on host <code>controlTracks Map&lt;key, Keyframe[]&gt;</code> (ADR 0012) — this prototype previews them as sliders; real editor uses orange diamond keyframes like morph.</div>
+          </div>
+        </div>
+        <div class="walkthrough"><b>Variant A — Controls Tab (recommended).</b> One host row per Control with <code>key/label/default/exposed</code> + preview slider. Bindings enumerate <code>semanticName → clipId (clip name/duration)</code>. <code>Edit Animation</code> drills into the normalized timeline (next variant). <code>Expose</code> toggles public API (#335). Lower Controls win within <code>ControlSet</code> order (drag to reorder — not in this prototype, shown as list order).</div>`
+      }
+
+      function renderDrillIn() {
+        const ctrl =
+          controlSet.controls.find((c) => c.key === selectedControlKey) || controlSet.controls[0]
+        if (!ctrl) return `<div class="hint">No controls</div>`
+        const u = controlPreviewValues[ctrl.key] ?? ctrl.default
+        // Build lanes: each binding -> clip
+        const lanes = Object.entries(ctrl.bindings).map(([semanticName, clipId]) => {
+          const clip = clipLookup(clipId)
+          if (!clip) return { semanticName, clipId, clip: null }
+          return { semanticName, clipId, clip }
+        })
+        const laneHTML = lanes
+          .map(({ semanticName, clip }) => {
+            if (!clip)
+              return `<div class="lane"><div class="lane-head"><span>${semanticName} — missing clip</span></div></div>`
+            const evalVal = evaluateClipAtU(clip, u)
+            const headerRight = `${clip.channel} • ${clip.keyframes.length} keys • at u=${u.toFixed(2)} → ${evalVal !== null ? evalVal.toFixed(2) : '—'}`
+            // Render lane timeline 0..1 with keyframe diamonds
+            const kfHTML = clip.keyframes
+              .map((kf) => {
+                const left = kf.t * 100
+                const cls = kf.interp
+                return `<div class="kf ${cls}" style="left: calc(${left}% - 5px);" title="t=${kf.t} value=${kf.value} ${kf.interp}"></div>`
+              })
+              .join('')
+            const playhead = `<div style="position:absolute; left: calc(${u * 100}% - 1px); top:2px; bottom:2px; width:2px; background:var(--accent3); opacity:0.9;"></div>`
+            return `<div class="lane">
+            <div class="lane-head"><span>${semanticName} <span class="pill">${clip.name}</span> <span class="pill">${clip.duration}s</span></span><span class="hint" style="color:var(--muted)">${headerRight}</span></div>
+            <div class="ruler"><span>0 CLOSED</span><span>0.25</span><span>0.5</span><span>0.75</span><span>1 OPEN</span></div>
+            <div class="lane-canvas">${kfHTML}${playhead}</div>
+          </div>`
+          })
+          .join('')
+
+        return `<div class="manager-shell">
+          <div class="manager-header"><span><b>Animation Manager</b> — ${controlSet.hostNodeName} • <span class="pill" style="background:var(--accent); color:#fff;">Editing Control: ${ctrl.key} (0…1)</span></span><button class="ghost" data-back>← Back to Controls</button></div>
+          <div class="manager-body" style="background: var(--panel);">
+            <div class="drill-header"><div><div class="drill-title">Editing Control: ${ctrl.label} (${ctrl.key}) — normalized timeline</div><div class="drill-axis">Header: 0 CLOSED — 1 OPEN • axis is normalized <code>t ∈ [0,1]</code> (<code>duration=1</code> guardrails, not seconds) • reuses same timeline editor (keyframes/tangents, hold/linear/bezier)</div></div><span class="pill">preview u=${u.toFixed(2)}</span></div>
+            <div class="slider-wrap" style="margin:10px 0; background:#0f1419; padding:8px; border:1px solid var(--border); border-radius:8px;"><label>Control preview</label><input type="range" min="0" max="1" step="0.01" value="${u}" data-drill-preview="${ctrl.key}"><span class="pill">${u.toFixed(2)}</span><span class="pill" style="background:rgba(251,188,5,0.15); border-color:#fbbc05; color:#ffed8a;">0→1 slider drives all lanes</span></div>
+            ${laneHTML}
+            <div class="hint" style="margin-top:8px;"><b>Guardrails:</b> x-axis is <code>t ∈ [0,1]</code> not <code>[0, slide.duration]</code>; ClipManager validates <code>time∈[0,1]</code> (<code>clipDefinition.ts:164, :601</code>). Keyframe time clamped to [0,1], value domain is channel domain (e.g. opacity 0…1, positionY — pixels, morphCoefficient 0…1). Same gizmos as main timeline (diamonds, tangents for bezier) but time is normalized. Demonstrated authored keyframes per spec: <code>Teeth opacity — t 0→0.25 hold 0 →0.30 linear 1</code> (stays hidden until 30% open), <code>Tongue positionY — 0→0.60 hold →0.65 linear 9px</code> (pops at 65%). Evaluate via <code>u=clamp(value,0,1) → effectiveUForClip:50 → #evaluateClipChannel:1252</code> shared with morph name-resolve :817 and gain/offset linkMode.</div>
+            <div class="banner">This drill-in reuses the same timeline editor code (keyframe/tangent UI) with <code>duration=1</code> clamped axis and per-descendant lane packing. In real editor, editing a Control's bindings would call <code>ClipManager.addKeyframe(clipId, {time,value,interp,tangents})</code> on normalized clips and <code>AnimationManager.setControlBinding</code> for map updates — not new managers.</div>
+          </div>
+        </div>
+        <div class="walkthrough"><b>Variant A-drill — Normalized-axis timeline.</b> Header shows <code>0 CLOSED — 1 OPEN</code> replacing the seconds ruler. Lanes are per-descendant (<code>Head/Morph, UpperLip/Morph, LowerLip/PositionY, Teeth/Opacity, Tongue/PositionY</code>) with the same diamond UI as the main Dope Sheet but with <code>t∈[0,1]</code> and <code>duration=1</code> guardrails. Yellow playhead tracks control preview <code>u</code>; lane header shows evaluated value at <code>u</code> (hold/linear/bezier). <code>Back to Controls</code> returns to the tab.</div>`
+      }
+
+      function renderVariantB() {
+        const ctrl =
+          controlSet.controls.find((c) => c.key === selectedControlKey) || controlSet.controls[0]
+        const u = controlPreviewValues[ctrl.key] ?? ctrl.default
+        // per-target weight cards (alternative that ticket says to reject: one slider + per-target weight curves)
+        const cards = Object.entries(ctrl.bindings)
+          .map(([semanticName, clipId]) => {
+            const clip = clipLookup(clipId)
+            if (!clip) return ''
+            const weight = 1 // B alternative would have per-target weight scaling
+            const evalVal = evaluateClipAtU(clip, u)
+            const curve = clip.keyframes.map((k) => k.interp).join('→')
+            // mini curve SVG: plot value vs t
+            const w = 200,
+              h = 40,
+              pad = 4
+            const tToX = (t) => pad + t * (w - 2 * pad)
+            // value domain -> y: normalize per clip (0..max) for preview
+            const vals = clip.keyframes.map((k) => k.value)
+            const minV = Math.min(...vals, 0),
+              maxV = Math.max(...vals, 1)
+            const span = maxV - minV || 1
+            const vToY = (v) => h - pad - ((v - minV) / span) * (h - 2 * pad)
+            let path = ''
+            for (let i = 0; i < clip.keyframes.length; i++) {
+              const kf = clip.keyframes[i]
+              const x = tToX(kf.t),
+                y = vToY(kf.value)
+              if (i === 0) path += `M ${x} ${y}`
+              else {
+                const prev = clip.keyframes[i - 1]
+                if (prev.interp === 'hold') path += ` L ${x} ${vToY(prev.value)} L ${x} ${y}`
+                else path += ` L ${x} ${y}`
+              }
+            }
+            return `<div class="graph-card">
+            <div class="graph-title">${semanticName} — <code>${clip.name}</code> <span class="pill">${clip.channel}</span></div>
+            <div class="weight-slider"><label>Weight</label><input type="range" min="0" max="1" step="0.05" value="${weight}" disabled><span class="pill">${weight.toFixed(2)}×</span><span class="hint">lerp weight (additive idea — deferred)</span></div>
+            <div class="mini-curve"><svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><path d="${path}" fill="none" stroke="#1a73e8" stroke-width="1.8"/><circle cx="${tToX(u)}" cy="${vToY(evalVal ?? 0)}" r="3.5" fill="#fbbc05" stroke="#fff" stroke-width="1"/></svg></div>
+            <div class="hint">Curve: ${curve} • at slider ${u.toFixed(2)} → ${evalVal !== null ? evalVal.toFixed(2) : '—'} (value ∈ curve domain). Weight × curve is the rejected “per-target curve” that would be second evaluator path — spec lowers direct mapping to 2-keyframe clip instead.</div>
+          </div>`
+          })
+          .join('')
+        return `<div class="manager-shell">
+          <div class="manager-header"><span><b>Binding Graph Editor</b> — lightweight alternative (contrast)</span><span class="pill" style="background:var(--danger); color:#fff;">REJECT • compare vs drill-in</span></div>
+          <div class="manager-body">
+            <div class="banner">Variant B shows the <b>lightweight alternative the spec will explicitly reject</b>: one slider + per-target weight curves. Contrast with drill-in timeline above: weight curves don't express multi-keyframe timing (teeth hold→jump at 0.30, tongue pop at 0.65) nor tangent editing nor channel diversity (morph + opacity + positionY). Spec decision (#336): keep one evaluator path — direct mapping is sugar lowered to a 2-keyframe normalized clip at creation time, not a second driver.</div>
+            <div class="slider-wrap" style="background:#0f1419; padding:10px; border:1px solid var(--border); border-radius:8px; margin-bottom:10px;"><label>Control</label><input type="range" min="0" max="1" step="0.01" value="${u}" data-variantb-preview="${ctrl.key}"><span class="pill">${u.toFixed(2)}</span><span class="pill">${ctrl.label}</span><select disabled style="max-width:140px;"><option>linear</option><option>bezier</option><option>hold</option></select></div>
+            ${cards}
+            <div class="hint">Per-target weight (0…1) would be additive vs last-wins ambiguity; spec locks <b>last-wins</b> across Controls on same property (ADR 0011) and defers weight painting. Graph editor card duplicates what a 2-keyframe normalized clip already expresses as a timeline lane — keeping two editors doubles Spec, review, and tests for no gain.</div>
+          </div>
+        </div>
+        <div class="walkthrough"><b>Variant B — Inline Binding Graph (to reject, keeping one code path).</b> One slider + N cards with weight + per-target curve mini-chart. Looks lean for <code>Tail.Curl → rotation 0→60°</code> but cannot author <code>Teeth hold→jump</code> or mixed channels without becoming a timeline. Verdict for spec: <b>reject Variant B, keep Variant A drill-in normalized timeline as the single authoring surface</b> — direct cases materialize a 2-keyframe normalized clip via <code>Add Control → Create from Direct</code> helper (ticket #336).</div>`
+      }
+
+      function render() {
+        if (currentVariant === 'A') container.innerHTML = renderControlsTab()
+        else if (currentVariant === 'Adrill') container.innerHTML = renderDrillIn()
+        else if (currentVariant === 'B') container.innerHTML = renderVariantB()
+        attachHandlers()
+        updateWalkthrough()
+        updateLiveState()
+        updateEvalTrace()
+        updateSwitcherLabel()
+      }
+
+      function updateSwitcherLabel() {
+        const v = VARIANTS.find((x) => x.key === currentVariant)
+        document.getElementById('switcherLabel').textContent = v
+          ? `${v.key} — ${v.label}`
+          : currentVariant
+      }
+      function attachHandlers() {
+        // Add control (both variants)
+        container
+          .querySelectorAll('[data-add-control], #btnAddControl')
+          .forEach((el) => el.addEventListener('click', onAddControl))
+        document.getElementById('btnAddControl')?.addEventListener('click', onAddControl)
+        // preview sliders
+        container.querySelectorAll('[data-preview]').forEach((inp) =>
+          inp.addEventListener('input', (e) => {
+            const key = e.target.getAttribute('data-preview')
+            controlPreviewValues[key] = parseFloat(e.target.value)
+            render()
+          }),
+        )
+        container.querySelectorAll('[data-drill-preview]').forEach((inp) =>
+          inp.addEventListener('input', (e) => {
+            const key = e.target.getAttribute('data-drill-preview')
+            controlPreviewValues[key] = parseFloat(e.target.value)
+            render()
+          }),
+        )
+        container.querySelectorAll('[data-variantb-preview]').forEach((inp) =>
+          inp.addEventListener('input', (e) => {
+            const key = e.target.getAttribute('data-variantb-preview')
+            controlPreviewValues[key] = parseFloat(e.target.value)
+            render()
+          }),
+        )
+        // edit / back / expose / remove
+        container.querySelectorAll('[data-edit]').forEach((btn) =>
+          btn.addEventListener('click', (e) => {
+            selectedControlKey = e.currentTarget.getAttribute('data-edit')
+            setVariant('Adrill')
+          }),
+        )
+        const back = container.querySelector('[data-back]')
+        if (back) back.addEventListener('click', () => setVariant('A'))
+        container.querySelectorAll('[data-expose]').forEach((btn) =>
+          btn.addEventListener('click', (e) => {
+            const key = e.currentTarget.getAttribute('data-expose')
+            const c = controlSet.controls.find((x) => x.key === key)
+            if (c) c.exposed = !c.exposed
+            render()
+          }),
+        )
+        container.querySelectorAll('[data-remove]').forEach((btn) =>
+          btn.addEventListener('click', (e) => {
+            const key = e.currentTarget.getAttribute('data-remove')
+            if (!confirm(`Remove Control "${key}"?`)) return
+            controlSet.controls = controlSet.controls.filter((c) => c.key !== key)
+            delete controlPreviewValues[key]
+            if (selectedControlKey === key) selectedControlKey = controlSet.controls[0]?.key || ''
+            render()
+          }),
+        )
+        // also manager-body Add button
+        const addBtn = container.querySelector('button[data-add-control]')
+        if (addBtn) addBtn.addEventListener('click', onAddControl)
+        // variant switch buttons inside body that navigate
+      }
+
+      function onAddControl() {
+        const key = prompt(
+          'New Control key (e.g. Mouth.Pucker) — must match ^[A-Za-z][A-Za-z0-9_.]*$ and be unique per ControlSet:',
+          'Mouth.Pucker',
+        )
+        if (!key) return
+        if (!/^[A-Za-z][A-Za-z0-9_.]*$/.test(key)) {
+          alert('Key must match ^[A-Za-z][A-Za-z0-9_.]*$')
+          return
+        }
+        if (controlSet.controls.some((c) => c.key === key)) {
+          alert('Key already exists in this ControlSet')
+          return
+        }
+        const label = prompt('Display label:', key.split('.').pop() || key) || key
+        controlSet.controls.push({
+          id: newId('ctrl'),
+          key,
+          label,
+          min: 0,
+          max: 1,
+          default: 0,
+          exposed: false,
+          bindings: {},
+        })
+        controlPreviewValues[key] = 0
+        selectedControlKey = key
+        render()
+      }
+
+      function updateWalkthrough() {
+        const el = document.getElementById('walkthroughContent')
+        let html = ''
+        if (currentVariant === 'A') {
+          html = `<div class="walkthrough"><b>Free play — Controls Tab</b><br>1. Check 4th tab <code>Controls</code> alongside <code>Orphaned | Clips | Collections</code> — existing Manager (managerModel.ts) unchanged, new tab added.<br>2. Drag Preview sliders per Control (0…1) — they map <code>value → u=clamp(value,0,1) → evaluateClip</code> (holds for teeth until 0.30).<br>3. Toggle <b>Expose</b> — marks public API for export (#335); hidden Controls stay internal.<br>4. Click <b>Edit Animation</b> on Mouth.Openness to enter normalized drill-in.<br>5. Try <b>+ Add Control</b> → key unique per ControlSet (block-on-duplicate like Unique Name).<br><b>Check:</b> per-Control <code>bindings</code> show <code>semanticName → clipId (name/duration)</code>; order = Priority (later wins).</div>`
+        } else if (currentVariant === 'Adrill') {
+          html = `<div class="walkthrough"><b>Step — Drill-in Normalized Timeline</b><br>Header shows <code>0 CLOSED — 1 OPEN</code> (normalized axis, not seconds). Lanes: 5 descendants each with normalized keyframes (duration=1 guardrails at <code>clipDefinition.ts:164</code>).<br>• <b>Teeth opacity</b>: <code>0→0.25 hold 0 →0.30 linear 1</code> — teeth stay hidden until 30% open then pop visible (yellow hold diamonds vs blue linear).<br>• <b>Tongue Y</b>: <code>0→0.60 hold 0 →0.65 linear 9</code> — tongue pops at 65%. Check yellow playhead tracks control slider <code>u</code>; lane headers show evaluated value at <code>u</code>.<br>• Keyframe UI is the same dispatcher as main timeline (diamond + tangents for bezier, <code>hold|linear|bezier</code>), but time is clamped to [0,1] and channel value domain stays per-property.<br><b>Reject-to-keep boundary:</b> if this surface feels heavy for <code>Tail.Curl 0→60°</code>, that's #336's sugar: <code>Add Control → Create from Direct</code> materializes a 2-keyframe normalized clip — no second driver, one evaluator path.</div>`
+        } else if (currentVariant === 'B') {
+          html = `<div class="walkthrough"><b>Contrast — Inline Graph (to reject).</b><br>One slider + per-target weight cards looks spare for 1→1 trivial bindings but for 1→5 (Head/Morph, lips, teeth, tongue) it fragments where a timeline unifies: you get 5 mini weight curves instead of 5 lanes on one ruler. No hold-vs-linear clarity at 0.30/0.65, no tangent handles, no channel labels. The spec will note this variant and lock <b>drill-in timeline as the single authoring surface</b>, with the <code>direct linear mapping</code> shortcut lowered to a 2-keyframe clip.</div>`
+        }
+        html += `<div class="banner blue">Question for review (to lock spec § UI): Pick the header/binding affordance you want — keep controls tab order = Priority and drill-in header <code>0 CLOSED — 1 OPEN</code> with <code>Back to Controls</code>? Or tweak? This prototype's state JSON right panel is the truth for the decision.</div>`
+        el.innerHTML = html
+      }
+
+      function updateLiveState() {
+        const preview = {}
+        for (const ctrl of controlSet.controls) {
+          const u = controlPreviewValues[ctrl.key] ?? ctrl.default
+          const perTarget = {}
+          for (const [semanticName, clipId] of Object.entries(ctrl.bindings)) {
+            const clip = clipLookup(clipId)
+            if (!clip) perTarget[semanticName] = { clipId, missing: true }
+            else
+              perTarget[semanticName] = {
+                clip: clip.name,
+                channel: clip.channel,
+                u,
+                eval: evaluateClipAtU(clip, u),
+                keyframes: clip.keyframes,
+              }
+          }
+          preview[ctrl.key] = perTarget
+        }
+        const json = {
+          controlSet: {
+            id: controlSet.id.slice(0, 8),
+            hostNodeId: controlSet.hostNodeId,
+            hostNodeName: controlSet.hostNodeName,
+            controls: controlSet.controls.map((c) => ({
+              id: c.id.slice(0, 8),
+              key: c.key,
+              label: c.label,
+              min: c.min,
+              max: c.max,
+              default: c.default,
+              exposed: c.exposed,
+              bindings: c.bindings,
+            })),
+          },
+          clips_duration1: Object.values(clipStore).map((c) => ({
+            id: c.id,
+            name: c.name,
+            duration: c.duration,
+            channel: c.channel,
+            keyframes: c.keyframes,
+          })),
+          controlPreviewValues,
+          controlTracksMock: {
+            note: "Real engine: NodeAnimation.controlTracks Map<controlKey, Keyframe[]> seconds-based in SlideAnimation (ADR 0012). This prototype's sliders mock evaluateControlTrack(value) → u.",
+            tracks: controlTracksMock,
+          },
+          evaluationExample: {
+            phaseOrder:
+              'base → ClipInstances (existing last-wins clipInstances order) → Controls (ControlSet order, later wins, always-active u=clamp(value,0,1) → effectiveUForClip:50 → #evaluateClipChannel:1252 including morph :817, linkMode gain/offset preserved, disabled respected, speed/Stretch skipped, ancestor-wins nesting parent-after-children)',
+            preview,
+          },
+          jsonShapes: {
+            controlSetEmbeddedOn: 'SceneNode.controlSet (NodeJSON.controlSet)',
+            controlTracksPerSlideOn:
+              'NodeAnimation.controlTracks in SlideAnimationJSON.nodes[].controlTracks: {key, keyframes}[] (array-of-objects like materialTracks)',
+          },
+          switcher: {
+            currentVariant,
+            urlParam: `?variant=${currentVariant}`,
+            keyboard: '← / → cycles variants; not intercepting when input focused',
+          },
+        }
+        document.getElementById('liveState').textContent = JSON.stringify(json, null, 2)
+      }
+
+      function updateEvalTrace() {
+        const ctrl =
+          controlSet.controls.find((c) => c.key === selectedControlKey) || controlSet.controls[0]
+        if (!ctrl) {
+          document.getElementById('evalTrace').textContent = '—'
+          return
+        }
+        const u = controlPreviewValues[ctrl.key] ?? ctrl.default
+        const teeth = clipLookup(ctrl.bindings.Teeth)
+        const tongue = clipLookup(ctrl.bindings.Tongue)
+        const teethVal = teeth ? evaluateClipAtU(teeth, u) : '—'
+        const tongueVal = tongue ? evaluateClipAtU(tongue, u) : '—'
+        const lines = [
+          `host ${controlSet.hostNodeId} Control ${ctrl.key} preview value=${u.toFixed(2)} → u=clamp(value,0,1)=${clamp(u, 0, 1).toFixed(2)} → effectiveU (isReversed→1-u, parametric→1-u) = ${clamp(u, 0, 1).toFixed(2)} (no reverse)`,
+          `evaluateClip(Teeth, u) → ${teethVal}  (hold until 0.30 → jump; #333 spec example)`,
+          `evaluateClip(Tongue, u) → ${tongueVal} (hold until 0.65 → linear 9)`,
+          `phase: base NodeAnimation @ t (seconds) → clipInstances (animationEvaluator.ts:1083) → controls (this pass) — if time clip also animates same property, control wins (last-wins). #evaluateClipChannel:1252 shared.`,
+          `whitelist check: uniform-six + morphCoefficient + shadow + circle + table + materialParameter allowed; visible/zIndex excluded by validator.`,
+        ]
+        document.getElementById('evalTrace').innerHTML = lines.map((l) => `• ${l}`).join('<br>')
+      }
+
+      // ---------- switcher wiring ----------
+      document.getElementById('switcherPrev').addEventListener('click', () => {
+        const idx = VARIANTS.findIndex((v) => v.key === currentVariant)
+        const prev = VARIANTS[(idx - 1 + VARIANTS.length) % VARIANTS.length]
+        setVariant(prev.key)
+      })
+      document.getElementById('switcherNext').addEventListener('click', () => {
+        const idx = VARIANTS.findIndex((v) => v.key === currentVariant)
+        const next = VARIANTS[(idx + 1) % VARIANTS.length]
+        setVariant(next.key)
+      })
+      window.addEventListener('keydown', (e) => {
+        if (
+          e.target instanceof HTMLInputElement ||
+          e.target instanceof HTMLTextAreaElement ||
+          e.target.isContentEditable
+        )
+          return
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault()
+          document.getElementById('switcherPrev').click()
+        }
+        if (e.key === 'ArrowRight') {
+          e.preventDefault()
+          document.getElementById('switcherNext').click()
+        }
+      })
+
+      document.getElementById('btnReset')?.addEventListener('click', () => {
+        controlSet = JSON.parse(JSON.stringify(initialControlSetJSON))
+        controlSet.controls.forEach((c) => {
+          if (!controlPreviewValues[c.key]) controlPreviewValues[c.key] = c.default
+        })
+        // restore ids (initial copy lost id uniqueness but ok)
+        render()
+      })
+      document.getElementById('btnCopyState').addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(document.getElementById('liveState').textContent)
+          document.getElementById('copyResult').textContent = '✓ copied'
+        } catch {
+          document.getElementById('copyResult').textContent = 'copy failed — select manually'
+        }
+        setTimeout(() => (document.getElementById('copyResult').textContent = '—'), 1500)
+      })
+
+      // Handle ?variant changes via back/forward
+      window.addEventListener('popstate', () => {
+        currentVariant = getVariantFromURL()
+        render()
+      })
+
+      // init
+      render()
+      console.log(
+        '[prototype] controls-authoring loaded — prototype/controls-authoring branch; variant',
+        currentVariant,
+      )
+    </script>
+  </body>
+</html>
