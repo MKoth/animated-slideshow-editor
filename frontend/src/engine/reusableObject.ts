@@ -1,4 +1,5 @@
 import { isRecord } from './guards'
+import { CONTROL_KEY_PATTERN } from './control'
 
 export const REUSABLE_OBJECT_VERSION = 1
 
@@ -98,6 +99,37 @@ export function validateReusableObject(json: unknown): string[] {
         }
       }
     }
+    if (nodeJson.controlSet !== undefined) {
+      if (!isRecord(nodeJson.controlSet)) {
+        errors.push(`Node "${String(id)}" controlSet must be an object`)
+      } else {
+        const controlSet = nodeJson.controlSet
+        if (!Array.isArray(controlSet.controls)) {
+          errors.push(`Node "${String(id)}" controlSet.controls must be an array`)
+        } else {
+          const controlKeys = new Set<string>()
+          for (const control of controlSet.controls as unknown[]) {
+            if (!isRecord(control)) {
+              errors.push(`Node "${String(id)}" control must be an object`)
+              continue
+            }
+            if (typeof control.key !== 'string' || !CONTROL_KEY_PATTERN.test(control.key)) {
+              errors.push(`Node "${String(id)}" has an invalid control key`)
+            } else if (controlKeys.has(control.key)) {
+              errors.push(`Node "${String(id)}" has duplicate control key "${control.key}"`)
+            } else {
+              controlKeys.add(control.key)
+            }
+            if (control.min !== 0 || control.max !== 1) {
+              errors.push(`Control "${String(control.key)}" must use the v1 range [0, 1]`)
+            }
+            if (typeof control.bindings !== 'object' || control.bindings === null) {
+              errors.push(`Control "${String(control.key)}" bindings must be an object`)
+            }
+          }
+        }
+      }
+    }
   }
   const rootId = json.rootId as string | undefined
   if (rootId && !nodeIds.has(rootId)) {
@@ -115,10 +147,19 @@ export function validateReusableObject(json: unknown): string[] {
     }
   }
   for (const nodeJson of nodes) {
-    if (!isRecord(nodeJson) || typeof nodeJson.id !== 'string' || typeof nodeJson.parentId !== 'string') continue
+    if (
+      !isRecord(nodeJson) ||
+      typeof nodeJson.id !== 'string' ||
+      typeof nodeJson.parentId !== 'string'
+    )
+      continue
     let cursor: Record<string, unknown> | undefined = nodeJson
     let steps = 0
-    while (cursor !== undefined && typeof cursor.parentId === 'string' && cursor.parentId !== cursor.id) {
+    while (
+      cursor !== undefined &&
+      typeof cursor.parentId === 'string' &&
+      cursor.parentId !== cursor.id
+    ) {
       if (steps > nodes.length) {
         errors.push('A node cannot become a descendant of itself')
         break
@@ -138,7 +179,14 @@ export function validateReusableObject(json: unknown): string[] {
       errors.push('Reusable object library must be an object')
     } else {
       const library = json.library as Record<string, unknown>
-      for (const key of ['assets', 'materials', 'shaders', 'data_sources', 'clips', 'clipCollections'] as const) {
+      for (const key of [
+        'assets',
+        'materials',
+        'shaders',
+        'data_sources',
+        'clips',
+        'clipCollections',
+      ] as const) {
         if (library[key] !== undefined && !Array.isArray(library[key])) {
           errors.push(`Reusable object library.${key} must be an array`)
         }
@@ -152,10 +200,18 @@ export function validateReusableObject(json: unknown): string[] {
           }
           if (seen.has(clip.id)) errors.push(`A library clip with id "${clip.id}" already exists`)
           else seen.add(clip.id)
-          if (typeof clip.name !== 'string' || clip.name === '') errors.push(`Library clip "${clip.id}" name must be non-empty`)
-          if (typeof clip.duration !== 'number' || !Number.isFinite(clip.duration) || clip.duration < 0) errors.push(`Library clip "${clip.id}" duration must be non-negative`)
-          if (!Array.isArray(clip.params)) errors.push(`Library clip "${clip.id}" params must be array`)
-          if (!Array.isArray(clip.channels)) errors.push(`Library clip "${clip.id}" channels must be array`)
+          if (typeof clip.name !== 'string' || clip.name === '')
+            errors.push(`Library clip "${clip.id}" name must be non-empty`)
+          if (
+            typeof clip.duration !== 'number' ||
+            !Number.isFinite(clip.duration) ||
+            clip.duration < 0
+          )
+            errors.push(`Library clip "${clip.id}" duration must be non-negative`)
+          if (!Array.isArray(clip.params))
+            errors.push(`Library clip "${clip.id}" params must be array`)
+          if (!Array.isArray(clip.channels))
+            errors.push(`Library clip "${clip.id}" channels must be array`)
         }
       }
       if (Array.isArray(library.clipCollections)) {
@@ -165,18 +221,24 @@ export function validateReusableObject(json: unknown): string[] {
             errors.push('Library clipCollection must be an object')
             continue
           }
-          if (typeof col.id !== 'string' || col.id === '') errors.push('Library clipCollection id must be non-empty')
-          else if (seen.has(col.id)) errors.push(`A library clipCollection with id "${col.id}" already exists`)
+          if (typeof col.id !== 'string' || col.id === '')
+            errors.push('Library clipCollection id must be non-empty')
+          else if (seen.has(col.id))
+            errors.push(`A library clipCollection with id "${col.id}" already exists`)
           else seen.add(col.id)
-          if (typeof col.name !== 'string' || col.name === '') errors.push(`Library clipCollection "${String(col.id)}" name must be non-empty`)
-          if (!isRecord(col.bindings)) errors.push(`Library clipCollection "${String(col.id)}" bindings must be object`)
+          if (typeof col.name !== 'string' || col.name === '')
+            errors.push(`Library clipCollection "${String(col.id)}" name must be non-empty`)
+          if (!isRecord(col.bindings))
+            errors.push(`Library clipCollection "${String(col.id)}" bindings must be object`)
         }
       }
     }
   }
   if (isRecord(json.library) && Array.isArray((json.library as Record<string, unknown>).clips)) {
     const clipIds = new Set<string>(
-      ((json.library as unknown as import('./json').LessonLibraryJSON).clips ?? []).map((c) => (c as { id: string }).id),
+      ((json.library as unknown as import('./json').LessonLibraryJSON).clips ?? []).map(
+        (c) => (c as { id: string }).id,
+      ),
     )
     for (const nodeJson of nodes) {
       if (!isRecord(nodeJson) || !Array.isArray(nodeJson.clipInstances)) continue
@@ -194,7 +256,24 @@ export function validateReusableObject(json: unknown): string[] {
       if (!bindings || typeof bindings !== 'object') continue
       for (const clipId of Object.values(bindings)) {
         if (typeof clipId === 'string' && !clipIds.has(clipId)) {
-          errors.push(`ClipCollection "${(col as { id: string }).id}" binding references unknown clip id: ${clipId}`)
+          errors.push(
+            `ClipCollection "${(col as { id: string }).id}" binding references unknown clip id: ${clipId}`,
+          )
+        }
+      }
+    }
+    for (const nodeJson of nodes) {
+      if (!isRecord(nodeJson) || !isRecord(nodeJson.controlSet)) continue
+      const controls = nodeJson.controlSet.controls
+      if (!Array.isArray(controls)) continue
+      for (const control of controls) {
+        if (!isRecord(control) || !isRecord(control.bindings)) continue
+        for (const clipId of Object.values(control.bindings)) {
+          if (typeof clipId === 'string' && !clipIds.has(clipId)) {
+            errors.push(
+              `Control "${String(control.key)}" binding references unknown clip id: ${clipId}`,
+            )
+          }
         }
       }
     }
@@ -210,9 +289,12 @@ export function validateReusableObject(json: unknown): string[] {
             errors.push('IK chain must be an object')
             continue
           }
-          if (typeof chain.id !== 'string' || chain.id === '') errors.push('IK chain id must be non-empty')
-          if (!Array.isArray(chain.boneIds)) errors.push(`IK chain "${String(chain.id)}" boneIds must be array`)
-          else if ((chain.boneIds as unknown[]).length < 2) errors.push(`IK chain "${String(chain.id)}" must have at least 2 bones`)
+          if (typeof chain.id !== 'string' || chain.id === '')
+            errors.push('IK chain id must be non-empty')
+          if (!Array.isArray(chain.boneIds))
+            errors.push(`IK chain "${String(chain.id)}" boneIds must be array`)
+          else if ((chain.boneIds as unknown[]).length < 2)
+            errors.push(`IK chain "${String(chain.id)}" must have at least 2 bones`)
         }
       }
     }

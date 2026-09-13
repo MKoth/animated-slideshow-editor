@@ -20,7 +20,15 @@ export type ManagerTab = 'collections' | 'clips' | 'controls' | 'orphans'
 
 export interface AnimatedParam {
   readonly kind:
-    'property' | 'visible' | 'circle' | 'shadow' | 'material' | 'morph' | 'symmetry' | 'table'
+    | 'property'
+    | 'visible'
+    | 'circle'
+    | 'shadow'
+    | 'material'
+    | 'morph'
+    | 'symmetry'
+    | 'table'
+    | 'control'
   readonly key: string
   readonly label: string
 }
@@ -102,6 +110,9 @@ export function isParamAnimated(
         (nodeAnim as unknown as { hasTableTrack: (k: string) => boolean }).hasTableTrack?.(key) &&
         nodeAnim.tableKeyframes(key as never).length > 0
       )
+    if (kind === 'control') {
+      return nodeAnim.controlKeyframes(key).length > 0
+    }
     return false
   })()
   if (hasNode) return true
@@ -115,6 +126,11 @@ export function getAnimatedParams(
   getClip: (clipId: string) => ClipDefinition | null,
 ): readonly AnimatedParam[] {
   const params: AnimatedParam[] = []
+  for (const control of node.controlSet?.controls ?? []) {
+    if (isParamAnimated(node, slide, 'control', control.key, getClip)) {
+      params.push({ kind: 'control', key: control.key, label: control.label })
+    }
+  }
   // standard six (filtered per node type)
   for (const prop of animatablePropertiesOf(node)) {
     if (isParamAnimated(node, slide, 'property', prop, getClip)) {
@@ -276,6 +292,9 @@ export function hasAnyKeyframe(node: SceneNode, slide: Slide): boolean {
   for (const key of anim.tableTrackKeys()) {
     if (anim.tableKeyframes(key as never).length > 0) return true
   }
+  for (const key of anim.controlTrackKeys()) {
+    if (anim.controlKeyframes(key).length > 0) return true
+  }
   return false
 }
 
@@ -336,6 +355,7 @@ export function getOrphanKeyframes(
   if (param.kind === 'material') return anim.materialKeyframes(param.key)
   if (param.kind === 'symmetry') return anim.symmetryKeyframes()
   if (param.kind === 'table') return anim.tableKeyframes(param.key as never)
+  if (param.kind === 'control') return []
   return []
 }
 

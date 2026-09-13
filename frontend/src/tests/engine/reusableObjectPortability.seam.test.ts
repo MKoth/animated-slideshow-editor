@@ -18,6 +18,7 @@ import { ExportClipCollectionCommand } from '../../engine/commands'
 import { validateReusableObject, REUSABLE_OBJECT_VERSION } from '../../engine/reusableObject'
 import { walkPreOrder } from '../../engine/sceneNode'
 import { Keyframe, newKeyframeId } from '../../engine/keyframe'
+import { createControl, createControlSet } from '../../engine/control'
 
 function setupEngine() {
   const engine = createEngineInternal()
@@ -751,5 +752,76 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
     const dispatcher2 = new CommandDispatcher(engine, new UndoStack(), () => {})
     const res = dispatcher2.dispatch(new ImportReusableObjectCommand({ objectJson: obj }) as any)
     expect(res.ok).toBe(true)
+  })
+
+  it('exports and imports Control definitions while leaving instance tracks behind', () => {
+    const { engine, dispatcher, expectOk } = setupEngine()
+    const slide = engine.getActiveSlide()!
+    slide.duration = 5
+    const host = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'Rig',
+        }),
+      ),
+    ).nodeId as string
+    const target = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: host, name: 'Target' }),
+      ),
+    ).nodeId as string
+    expectOk(
+      dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: target, semanticName: 'jaw' })),
+    )
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'Jaw', duration: 1, category: 'control' })),
+    ).clipId as string
+    engine
+      .getClip(clip)
+      .addChannelKeyframe(
+        'positionX',
+        new Keyframe(newKeyframeId(), 0, 0, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+      )
+    engine
+      .getClip(clip)
+      .addChannelKeyframe(
+        'positionX',
+        new Keyframe(
+          newKeyframeId(),
+          1,
+          10,
+          'linear',
+          { time: 0, value: 0 },
+          { time: 0, value: 0 },
+        ),
+      )
+    const hostNode = engine.getNode(host)
+    hostNode.controlSet = createControlSet(host, [
+      createControl({ key: 'Jaw.Open', label: 'Jaw Open', exposed: true, bindings: { jaw: clip } }),
+    ])
+    slide.animation
+      .ensure(host)
+      .addControl(
+        'Jaw.Open',
+        new Keyframe(newKeyframeId(), 0, 1, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+      )
+
+    const objectJson = engine.exportReusableObject(host, 'Rig')
+    expect(objectJson.library?.clips?.some((entry) => entry.id === clip)).toBe(true)
+    expect(objectJson.animation?.nodes.some((entry) => entry.controlTracks?.length)).toBe(false)
+
+    const imported = engine.importReusableObject(objectJson)
+    const importedHost = engine.getNode(imported.nodeIdMap.get(host)!)
+    expect(importedHost.controlSet?.controls[0]?.key).toBe('Jaw.Open')
+    expect(importedHost.controlSet?.controls[0]?.id).not.toBe(hostNode.controlSet?.controls[0]?.id)
+    expect(importedHost.controlSet?.controls[0]?.bindings.jaw).toBe(imported.clipIdMap.get(clip))
+    expect(
+      engine
+        .getSlide(engine.getActiveSlide()!.id)
+        .animation.node(importedHost.id)
+        ?.controlKeyframes('Jaw.Open'),
+    ).toEqual([])
   })
 })

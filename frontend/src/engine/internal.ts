@@ -3822,7 +3822,16 @@ export class Engine {
       const fullAnim = (
         slide.animation as unknown as { toJSON: () => import('./json').SlideAnimationJSON }
       ).toJSON()
-      const filtered = fullAnim.nodes.filter((entry) => nodeIds.has(entry.nodeId))
+      const filtered = fullAnim.nodes
+        .filter((entry) => nodeIds.has(entry.nodeId))
+        // Control tracks are per-slide instance data, not part of a reusable object
+        // definition. Imported objects therefore start from each Control's default.
+        .map((entry) => {
+          if (!entry.controlTracks || entry.controlTracks.length === 0) return entry
+          const withoutControlTracks = { ...entry }
+          delete withoutControlTracks.controlTracks
+          return withoutControlTracks
+        })
       if (filtered.length > 0) animation = { nodes: filtered }
     } catch {
       animation = undefined
@@ -3842,6 +3851,9 @@ export class Engine {
       if (typeof tex === 'string' && tex !== '') referencedAssetIds.add(tex)
       referencedMaterialIds.add(node.material.materialDefinitionId)
       for (const inst of node.clipInstances) referencedClipIds.add(inst.clipId)
+      for (const control of node.controlSet?.controls ?? []) {
+        for (const clipId of Object.values(control.bindings)) referencedClipIds.add(clipId)
+      }
       const chart = node.components.chart
       if (chart) referencedDataSourceIds.add(chart.dataSourceId)
     }
@@ -4354,6 +4366,25 @@ export class Engine {
         id: newIdVal,
         parentId: newParentId,
       }
+      const controlSet = (orig as unknown as { controlSet?: import('./json').ControlSetJSON })
+        .controlSet
+      if (controlSet) {
+        cloned.controlSet = {
+          ...controlSet,
+          id: newId('control-set'),
+          hostNodeId: newIdVal,
+          controls: controlSet.controls.map((control) => ({
+            ...control,
+            id: newId('control'),
+            bindings: Object.fromEntries(
+              Object.entries(control.bindings).map(([semanticName, oldClipId]) => [
+                semanticName,
+                clipIdMap.get(oldClipId) ?? oldClipId,
+              ]),
+            ),
+          })),
+        }
+      }
       if (Array.isArray(cloned.clipInstances)) {
         cloned.clipInstances = (cloned.clipInstances as unknown[]).map((inst) => {
           if (
@@ -4560,6 +4591,24 @@ export class Engine {
       const castShadowRaw = (nodeJson as unknown as { castShadow?: unknown }).castShadow
       if (typeof castShadowRaw === 'boolean') {
         ;(node as unknown as { castShadow?: boolean }).castShadow = castShadowRaw
+      }
+      const controlSetJson = (nodeJson as unknown as { controlSet?: unknown }).controlSet
+      if (controlSetJson && typeof controlSetJson === 'object') {
+        try {
+          const controlSet = controlSetJson as import('./json').ControlSetJSON
+          node.controlSet = {
+            id: controlSet.id,
+            hostNodeId: nid,
+            controls: controlSet.controls.map((control) => ({
+              ...control,
+              min: 0 as const,
+              max: 1 as const,
+              bindings: { ...control.bindings },
+            })),
+          }
+        } catch {
+          void 0
+        }
       }
       // localPivot already handled via transform
     }
