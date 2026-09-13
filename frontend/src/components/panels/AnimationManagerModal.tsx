@@ -231,6 +231,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const [controlValues, setControlValues] = useState<Record<string, number>>({})
   const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({})
   const [editing, setEditing] = useState<{ clipId: string; nodeId: string } | null>(null)
+  const [editingControl, setEditingControl] = useState<{ key: string; clipId: string } | null>(null)
   const [savedZoom, setSavedZoom] = useState<number | null>(null)
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null)
   const [dragState, setDragState] = useState<DragState | null>(null)
@@ -319,6 +320,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       setControlValues({})
       setExpandedMap({})
       setEditing(null)
+      setEditingControl(null)
       setSelectedInstanceId(null)
       setDragState(null)
       setClipMenu(null)
@@ -355,6 +357,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       setSavedZoom(null)
     }
     setEditing(null)
+    setEditingControl(null)
   }, [savedZoom])
 
   // Esc handling: drills back from editor (restoring pps), second Esc closes
@@ -395,7 +398,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         } else if (orphanScopeMessage) {
           setOrphanScopeMessage(null)
           e.stopPropagation()
-        } else if (editing) {
+        } else if (editing || editingControl) {
           restorePpsAndBack()
           e.stopPropagation()
         } else if (dragState) {
@@ -420,6 +423,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   }, [
     open,
     editing,
+    editingControl,
     dragState,
     clipMenu,
     orphanContextMenu,
@@ -1843,6 +1847,18 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     }
   })()
 
+  const editingControlClip: ClipDefinition | null = (() => {
+    if (!editingControl) return null
+    const control = controls.find((entry) => entry.key === editingControl.key)
+    const clipId = editingControl.clipId || Object.values(control?.bindings ?? {})[0]
+    if (!clipId) return null
+    try {
+      return engine.getClip(clipId)
+    } catch {
+      return null
+    }
+  })()
+
   const editingNodeName = (() => {
     if (!editing) return ''
     try {
@@ -1858,6 +1874,17 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     setSavedZoom(currentZoom)
     setEditing({ clipId, nodeId })
     setClipMenu(null)
+  }
+
+  const handleEditControl = (controlKey: string) => {
+    const control = controls.find((entry) => entry.key === controlKey)
+    const clipId = Object.values(control?.bindings ?? {})[0]
+    if (!clipId) {
+      notify('This Control has no normalized clip binding.')
+      return
+    }
+    setSavedZoom(useTimelineViewStore.getState().zoomLevel)
+    setEditingControl({ key: controlKey, clipId })
   }
 
   return (
@@ -1919,6 +1946,19 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 </button>
                 <span data-testid="manager-editing-header">
                   Editing {editingClip.name} — {editingNodeName}
+                </span>
+              </>
+            ) : editingControl ? (
+              <>
+                <button
+                  onClick={restorePpsAndBack}
+                  data-testid="manager-control-back-button"
+                  style={{ marginRight: 8, padding: '2px 8px', borderRadius: 4 }}
+                >
+                  ← Back
+                </button>
+                <span data-testid="manager-control-editing-header">
+                  Editing Control: {editingControl.key} (0…1)
                 </span>
               </>
             ) : parentNode ? (
@@ -2654,6 +2694,27 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             pps={pps}
             onBack={restorePpsAndBack}
           />
+        ) : editingControl && editingControlClip ? (
+          <div data-testid="manager-control-editor" style={{ flex: 1, minHeight: 260 }}>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                padding: '8px 0',
+                fontSize: 12,
+                color: 'var(--color-text-muted, #666)',
+              }}
+            >
+              <span>0 CLOSED — 1 OPEN</span>
+              <span>t ∈ [0, 1] · duration=1</span>
+            </div>
+            <ManagerClipEditor
+              clip={editingControlClip}
+              nodeId={parentNodeId!}
+              pps={pps}
+              onBack={restorePpsAndBack}
+            />
+          </div>
         ) : activeTab === 'controls' ? (
           <div
             data-testid="manager-controls"
@@ -2705,6 +2766,19 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     }
                     style={{ flex: 1 }}
                   />
+                  <button
+                    data-testid={`manager-control-edit-${control.key}`}
+                    onClick={() => handleEditControl(control.key)}
+                    style={{
+                      padding: '5px 9px',
+                      borderRadius: 4,
+                      border: '1px solid var(--color-border, #ddd)',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                    }}
+                  >
+                    Edit Animation
+                  </button>
                   <button
                     data-testid={`manager-control-keyframe-${control.key}`}
                     onClick={() =>

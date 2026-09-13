@@ -354,6 +354,7 @@ export class AnimationEvaluator {
     // Apply clip layering last-wins
     this.#applyClipShadowInstances(node, clampedTime, result)
     this.#evaluateClipShadowColor(node, clampedTime, result)
+    this.#applyControlShadowLayers(node, clampedTime, result)
     // Spec 305: when auto, light clip params have been layered into result.light*; re-derive so light clips drive projection (last-wins)
     if (isAuto) {
       const anchor = (result.anchor ?? 'bottom') as import('./shadowEffect').ShadowAnchor
@@ -589,6 +590,17 @@ export class AnimationEvaluator {
         }
       }
     }
+    this.#forEachControlClip(node, clampedTime, (clip, u) => {
+      const animation = clip.morphAnimation()
+      const enabled = enabledKeyframes(animation.keyframes())
+      if (enabled.length === 0) return
+      const value = this.#evaluateMorphClipKeyframes(
+        enabled,
+        effectiveUForClip(clip, enabled, u),
+        shapes,
+      )
+      if (value) baseValue = value
+    })
     return baseValue
   }
 
@@ -642,6 +654,18 @@ export class AnimationEvaluator {
         if (clipMorphed) morphed = clipMorphed
       }
     }
+    this.#forEachControlClip(node, clampedTime, (clip, u) => {
+      const animation = clip.morphAnimation()
+      const enabled = enabledKeyframes(animation.keyframes())
+      if (enabled.length === 0) return
+      const controlMorphed = this.#evaluateMorphClipVertices(
+        enabled,
+        effectiveUForClip(clip, enabled, u),
+        baseVertices,
+        shapes,
+      )
+      if (controlMorphed) morphed = controlMorphed
+    })
     return morphed
   }
 
@@ -973,6 +997,7 @@ export class AnimationEvaluator {
     // Apply clip-driven material parameter overrides (after standard channels,
     // per Spec 07 R29 material parameter channels)
     this.#applyClipMaterialOverrides(node, clampedTime, target)
+    this.#applyControlMaterialOverrides(node, clampedTime, target)
 
     return values
   }
@@ -1030,8 +1055,23 @@ export class AnimationEvaluator {
       clampedTime,
       segmentsFallback,
     )
-    const segments = Math.max(3, Math.min(256, Math.round(segmentsRaw)))
-    return { radius, startAngle, endAngle, segments }
+    let segments = Math.max(3, Math.min(256, Math.round(segmentsRaw)))
+    const values = { radius, startAngle, endAngle, segments }
+    this.#forEachControlClip(node, clampedTime, (clip, u) => {
+      for (const property of clip.circleTrackKeys) {
+        const keyframes = enabledKeyframes(clip.getCircleKeyframes(property))
+        if (keyframes.length === 0) continue
+        const value = this.#evaluateClipChannel(keyframes, effectiveUForClip(clip, keyframes, u))
+        values[property] = value
+      }
+    })
+    segments = Math.max(3, Math.min(256, Math.round(values.segments)))
+    return {
+      radius: values.radius,
+      startAngle: values.startAngle,
+      endAngle: values.endAngle,
+      segments,
+    }
   }
 
   evaluateTable(nodeId: string, time: number): EvaluatedTableState | null {
@@ -1150,15 +1190,41 @@ export class AnimationEvaluator {
 
   /** Controls are evaluated after time clips. Nearest hosts run first so ancestors win. */
   #applyControls(node: SceneNode, time: number, state: EvaluatedNodeScratch): void {
+    this.#forEachControlClip(node, time, (clip, u) => {
+      for (const channelDef of clip.channels) {
+        if (channelDef.materialParameter) continue
+        const channelAnimation = clip.channelAnimation(channelDef.property)
+        if (!channelAnimation || channelAnimation.length === 0) continue
+        const enabled = enabledKeyframes(channelAnimation.keyframes())
+        if (enabled.length === 0) continue
+        const keyframeValue = this.#evaluateClipChannel(
+          enabled,
+          effectiveUForClip(clip, enabled, u),
+        )
+        const base = this.#getChannelValue(state.transform, state.opacity, channelDef.property)
+        const output = channelDef.paramKey
+          ? channelDef.linkMode === 'offset'
+            ? base + (clip.getParam(channelDef.paramKey)?.default ?? 1) * keyframeValue
+            : base * ((clip.getParam(channelDef.paramKey)?.default ?? 1) * keyframeValue)
+          : keyframeValue
+        this.#setChannelValue(state, channelDef.property, output)
+      }
+    })
+  }
+
+  #forEachControlClip(
+    node: SceneNode,
+    time: number,
+    callback: (clip: ClipDefinition, u: number) => void,
+  ): void {
+    if (node.semanticName === undefined) return
     const hosts: SceneNode[] = []
     for (let host = node.parent; host; host = host.parent) {
       if (host.controlSet) hosts.push(host)
     }
     for (const host of hosts) {
-      const controlSet = host.controlSet
-      if (!controlSet || node.semanticName === undefined) continue
       const animation = this.#slideLookup(node.id).animation.node(host.id)
-      for (const control of controlSet.controls) {
+      for (const control of host.controlSet?.controls ?? []) {
         const clipId = control.bindings[node.semanticName]
         if (!clipId) continue
         let clip: ClipDefinition
@@ -1173,27 +1239,62 @@ export class AnimationEvaluator {
           Math.max(evaluateControlTrack(track, time, control.default), control.min),
           control.max,
         )
-        const u = Math.min(Math.max((value - control.min) / (control.max - control.min), 0), 1)
-        for (const channelDef of clip.channels) {
-          const channelAnimation = clip.channelAnimation(channelDef.property)
-          if (!channelAnimation || channelAnimation.length === 0) continue
-          const enabled = channelAnimation.keyframes().filter((keyframe) => !keyframe.disabled)
-          if (enabled.length === 0) continue
-          const effectiveU = effectiveUForClip(clip, enabled, u)
-          const keyframeValue = this.#evaluateClipChannel(enabled, effectiveU)
-          let output = keyframeValue
-          if (channelDef.paramKey) {
-            const parameter = clip.getParam(channelDef.paramKey)?.default ?? 1
-            const base = this.#getChannelValue(state.transform, state.opacity, channelDef.property)
-            output =
-              channelDef.linkMode === 'offset'
-                ? base + parameter * keyframeValue
-                : base * (parameter * keyframeValue)
-          }
-          this.#setChannelValue(state, channelDef.property, output)
-        }
+        const range = control.max - control.min
+        callback(clip, range === 0 ? 0 : Math.min(Math.max((value - control.min) / range, 0), 1))
       }
     }
+  }
+
+  #applyControlMaterialOverrides(
+    node: SceneNode,
+    time: number,
+    target: EvaluatedMaterialOverridesScratch,
+  ): void {
+    this.#forEachControlClip(node, time, (clip, u) => {
+      for (const channel of clip.channels) {
+        if (!channel.materialParameter) continue
+        const keyframes = enabledKeyframes(
+          clip.getMaterialChannelKeyframes(channel.materialParameter),
+        )
+        if (
+          keyframes.length === 0 ||
+          this.#parameterKindOf(node, channel.materialParameter) === undefined
+        )
+          continue
+        const value = this.#evaluateClipChannel(keyframes, effectiveUForClip(clip, keyframes, u))
+        const base =
+          typeof target.values[channel.materialParameter] === 'number'
+            ? (target.values[channel.materialParameter] as number)
+            : 0
+        const parameter = channel.paramKey
+          ? (clip.getParam(channel.paramKey)?.default ?? 1)
+          : undefined
+        const output =
+          parameter === undefined
+            ? value
+            : channel.linkMode === 'offset'
+              ? base + parameter * value
+              : base * parameter * value
+        if (!Object.prototype.hasOwnProperty.call(target.values, channel.materialParameter)) {
+          target.keys.push(channel.materialParameter)
+        }
+        target.values[channel.materialParameter] = output
+      }
+    })
+  }
+
+  #applyControlShadowLayers(node: SceneNode, time: number, state: ShadowEffect): void {
+    this.#forEachControlClip(node, time, (clip, u) => {
+      for (const property of clip.shadowChannelKeys) {
+        const keyframes = enabledKeyframes(clip.getShadowChannelKeyframes(property))
+        if (keyframes.length === 0) continue
+        const effectiveU = effectiveUForClip(clip, keyframes, u)
+        ;(state as unknown as Record<string, unknown>)[property] =
+          property === 'color'
+            ? this.#evaluateClipShadowColorValue(keyframes, effectiveU)
+            : this.#evaluateClipShadowNumeric(keyframes, effectiveU)
+      }
+    })
   }
 
   #getChannelValue(

@@ -127,7 +127,7 @@ export function getAnimatedParams(
 ): readonly AnimatedParam[] {
   const params: AnimatedParam[] = []
   for (const control of node.controlSet?.controls ?? []) {
-    if (isParamAnimated(node, slide, 'control', control.key, getClip)) {
+    if (control.exposed || isParamAnimated(node, slide, 'control', control.key, getClip)) {
       params.push({ kind: 'control', key: control.key, label: control.label })
     }
   }
@@ -300,6 +300,7 @@ export function hasAnyKeyframe(node: SceneNode, slide: Slide): boolean {
 
 export function isAnimatedChild(node: SceneNode, slide: Slide): boolean {
   if (node.clipInstances.length > 0) return true
+  if ((node.controlSet?.controls.length ?? 0) > 0) return true
   return hasAnyKeyframe(node, slide)
 }
 

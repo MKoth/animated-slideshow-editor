@@ -1279,6 +1279,24 @@ export function TimelineBody({
                   +
                 </button>
               </li>
+            ) : row.kind === 'hiddenSubtrack' ? (
+              <li
+                key={`${row.node.id}:hidden:${row.property}`}
+                className="timeline-subtrack timeline-subtrack--hidden"
+                data-node-id={row.node.id}
+                data-property={row.property}
+                data-depth={row.depth}
+                title="Controlled by an exposed rig Control"
+                style={{
+                  paddingLeft: 12 + row.depth * 16,
+                  color: 'var(--color-text-muted, #999)',
+                  fontStyle: 'italic',
+                }}
+              >
+                <span className="timeline-subtrack__label">
+                  {PROPERTY_LABELS[row.property]} (hidden)
+                </span>
+              </li>
             ) : row.kind === 'subtrack' ? (
               <li
                 key={`${row.node.id}:${row.property}`}
@@ -1687,6 +1705,16 @@ export function TimelineBody({
                         />
                       ))}
                     </div>
+                  )
+                }
+                if (row.kind === 'hiddenSubtrack') {
+                  return (
+                    <div
+                      key={`${row.node.id}:hidden:${row.property}`}
+                      className="timeline-lane-row timeline-lane-row--hidden"
+                      data-property={row.property}
+                      style={{ top: index * ROW_HEIGHT, opacity: 0.35 }}
+                    />
                   )
                 }
                 if (row.kind === 'subtrack') {

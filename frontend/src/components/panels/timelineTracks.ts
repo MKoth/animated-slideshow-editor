@@ -85,6 +85,14 @@ export interface ControlSubtrackEntry {
   readonly depth: number
 }
 
+export interface HiddenSubtrackEntry {
+  readonly kind: 'hiddenSubtrack'
+  readonly node: SceneNode
+  readonly property: AnimationProperty
+  readonly ownerKey: string
+  readonly depth: number
+}
+
 export interface ShadowSubtrackEntry {
   readonly kind: 'shadowSubtrack'
   readonly node: SceneNode
@@ -112,6 +120,7 @@ export type TimelineRow =
   | MorphSubtrackEntry
   | SymmetrySubtrackEntry
   | ControlSubtrackEntry
+  | HiddenSubtrackEntry
   | ShadowSubtrackEntry
   | BoneTrackEntry
 
@@ -191,6 +200,7 @@ export function timelineRows(
     parameters: readonly MaterialParameterDefault[]
   }[] = [],
   authoringModeByHost: Readonly<Record<string, boolean>> = {},
+  getClip: ((clipId: string) => ClipDefinition | null) | undefined = undefined,
 ): TimelineRow[] {
   const rows: TimelineRow[] = []
   for (const entry of trackRows(scene)) {
@@ -218,7 +228,18 @@ export function timelineRows(
         }
       }
       for (const property of animatablePropertiesOf(entry.node)) {
-        rows.push({ kind: 'subtrack', node: entry.node, property, depth: entry.depth + 1 })
+        const ownerKey = getExposedControlOwner(entry.node, property, getClip)
+        if (ownerKey && authoringModeByHost[ownerKey.split(':', 1)[0]!] !== true) {
+          rows.push({
+            kind: 'hiddenSubtrack',
+            node: entry.node,
+            property,
+            ownerKey,
+            depth: entry.depth + 1,
+          })
+        } else {
+          rows.push({ kind: 'subtrack', node: entry.node, property, depth: entry.depth + 1 })
+        }
       }
       rows.push({ kind: 'zIndexSubtrack', node: entry.node, depth: entry.depth + 1 })
       if (entry.node.components.mesh) {
@@ -285,6 +306,29 @@ export function timelineRows(
     }
   }
   return rows
+}
+
+function getExposedControlOwner(
+  node: SceneNode,
+  property: AnimationProperty,
+  getClip?: (clipId: string) => ClipDefinition | null,
+): string | null {
+  if (!getClip || !node.semanticName) return null
+  for (let host = node.parent; host; host = host.parent) {
+    for (const control of host.controlSet?.controls ?? []) {
+      if (!control.exposed) continue
+      const clipId = control.bindings[node.semanticName]
+      if (!clipId) continue
+      let clip: ClipDefinition | null
+      try {
+        clip = getClip(clipId)
+      } catch {
+        continue
+      }
+      if (clip?.hasChannel(property)) return `${host.id}:${control.key}`
+    }
+  }
+  return null
 }
 
 export function sceneHasObjects(scene: Scene): boolean {

@@ -87,7 +87,13 @@ export function TimelinePanel({ height }: { height: number }) {
 
   const materialDefinitions = engine.materialDefinitions
   const rows = scene
-    ? timelineRows(scene, expandedNodeIds, materialDefinitions, authoringModeByHost)
+    ? timelineRows(
+        scene,
+        expandedNodeIds,
+        materialDefinitions,
+        authoringModeByHost,
+        (clipId) => engine.clips.find((clip) => clip.id === clipId) ?? null,
+      )
     : []
 
   const isClipEdit = editingContext === 'clip-edit' && clipEditDefinition !== null
