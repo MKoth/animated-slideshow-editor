@@ -121,6 +121,11 @@ export function applyUndo(
       engine.setSemanticName(nodeId, oldSemanticName)
       return
     }
+    case 'SetControlSet': {
+      const nodeId = inv.nodeId as string
+      engine.setControlSet(nodeId, inv.oldControlSet as import('../control').ControlSet | undefined)
+      return
+    }
     case 'ReorderNode': {
       const nodeId = inv.nodeId as string
       const oldIndex = inv.oldIndex as number

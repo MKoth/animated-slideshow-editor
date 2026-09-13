@@ -166,6 +166,7 @@ export function TimelineBody({
   const zoomLevel = useTimelineViewStore((state) => state.zoomLevel)
   const scrollTime = useTimelineViewStore((state) => state.scrollTime)
   const expandedNodeIds = useTimelineViewStore((state) => state.expandedNodeIds)
+  const toggleAuthoringMode = useTimelineViewStore((state) => state.toggleAuthoringMode)
   const currentTime = usePlaybackController((state) => state.currentTimes[slideId] ?? 0)
   const playbackStatus = usePlaybackController((state) => state.status)
   const timelineSelection = useTimelineSelectionStore()
@@ -272,6 +273,29 @@ export function TimelineBody({
       }
     }
   }
+  const controlKeyframeRefs: {
+    nodeId: string
+    controlKey: string
+    keyframeId: string
+    time: number
+    control: true
+  }[] = []
+  for (const trackRow of rows) {
+    if (trackRow.kind === 'controlSubtrack') {
+      for (const kf of engine
+        .getSlide(slideId)
+        .animation.node(trackRow.node.id)
+        ?.controlKeyframes(trackRow.controlKey) ?? []) {
+        controlKeyframeRefs.push({
+          nodeId: trackRow.node.id,
+          controlKey: trackRow.controlKey,
+          keyframeId: kf.id,
+          time: kf.time,
+          control: true,
+        })
+      }
+    }
+  }
   const allKeyframeRefs = [...propertyKeyframeRefs, ...materialKeyframeRefs]
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const keyframeRefs = new Map<string, any>(
@@ -281,6 +305,7 @@ export function TimelineBody({
       ...shadowKeyframeRefs,
       ...zIndexKeyframeRefs,
       ...symmetryKeyframeRefs,
+      ...controlKeyframeRefs,
     ].map((ref) => [ref.keyframeId, ref] as const),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ) as unknown as Map<string, any>
@@ -321,6 +346,13 @@ export function TimelineBody({
       }
     } else if (row.kind === 'circleSubtrack') {
       for (const keyframe of engine.getCircleKeyframes(row.node.id, row.property)) {
+        allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
+      }
+    } else if (row.kind === 'controlSubtrack') {
+      for (const keyframe of engine
+        .getSlide(slideId)
+        .animation.node(row.node.id)
+        ?.controlKeyframes(row.controlKey) ?? []) {
         allSelectionItems.push({ keyframeId: keyframe.id, time: keyframe.time, rowIndex })
       }
     }
@@ -1287,6 +1319,9 @@ export function TimelineBody({
                 data-property={row.property}
                 data-depth={row.depth}
                 title={`Controlled by exposed Control ${row.ownerKey.split(':')[1] ?? ''}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => toggleAuthoringMode(row.ownerKey.split(':')[0]!)}
                 style={{
                   paddingLeft: 12 + row.depth * 16,
                   color: 'var(--color-text-muted, #999)',
@@ -1294,8 +1329,9 @@ export function TimelineBody({
                 }}
               >
                 <span className="timeline-subtrack__label">
-                  {PROPERTY_LABELS[row.property]} (hidden, controlled)
+                  [locked] {PROPERTY_LABELS[row.property]} (hidden, controlled)
                 </span>
+                <span aria-label="Hidden lane">N hidden</span>
               </li>
             ) : row.kind === 'subtrack' ? (
               <li
@@ -1720,6 +1756,7 @@ export function TimelineBody({
                                   rowIndex: index,
                                 })
                               }
+                              if (isDraggable()) startDrag(event.clientX)
                             }}
                             onContextMenu={(event) => {
                               event.preventDefault()

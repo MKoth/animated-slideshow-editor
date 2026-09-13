@@ -33,6 +33,7 @@ import type { DeformedMeshResult } from './meshDeformationEvaluator'
 import type { WorldTransform } from './worldTransform'
 import type { ExportJobDescriptor, ExportPerSlideDescriptor, ExportSettings } from './export'
 import type { KeyframeTarget, KeyframeTrackRef } from './keyframeTarget'
+import type { ControlSet } from './control'
 
 export interface EnginePublic {
   readonly project: Project | null
@@ -91,6 +92,7 @@ export interface EnginePublic {
   hasZIndexTrack(nodeId: string): boolean
   evaluateZIndex(nodeId: string, time: number): number
   setZIndex(nodeId: string, zIndex: number): void
+  setControlSet(nodeId: string, controlSet: ControlSet | undefined): void
   getZIndex(nodeId: string): number
   getShapes(nodeId: string): readonly import('./shape').Shape[]
   getShapeCategories(nodeId: string): readonly import('./shapeCategory').ShapeCategory[]

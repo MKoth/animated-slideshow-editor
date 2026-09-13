@@ -25,6 +25,7 @@ interface DragMove {
   readonly morph?: boolean
   readonly shadowProperty?: import('../../engine/shadowEffect').ShadowProperty
   readonly symmetry?: boolean
+  readonly controlKey?: string
   readonly originalTime: number
 }
 
@@ -55,6 +56,12 @@ export interface KeyframeDragOptions {
     | MorphKeyframeRef
     | ShadowKeyframeRef
     | SymmetryKeyframeRefForDrag
+    | {
+        readonly nodeId: string
+        readonly controlKey: string
+        readonly keyframeId: string
+        readonly time: number
+      }
   >
   readonly duration: number
   readonly pps: number
@@ -131,6 +138,13 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
           parameter: (ref as MaterialKeyframeRef).parameter,
           originalTime: ref.time,
         })
+      } else if ('controlKey' in ref) {
+        moves.push({
+          keyframeId,
+          nodeId: ref.nodeId,
+          controlKey: ref.controlKey,
+          originalTime: ref.time,
+        })
       }
     }
     return moves
@@ -180,6 +194,9 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
     const symmetryMoves = moved.filter(
       (move): move is MovedDragMove & { symmetry: true } => (move as DragMove).symmetry === true,
     )
+    const controlMoves = moved.filter(
+      (move): move is MovedDragMove & { controlKey: string } => move.controlKey !== undefined,
+    )
     const commands: MoveKeyframesCommand[] = []
     for (const group of groupRefsByTarget(propertyMoves, (move) => ({
       keyframeId: move.keyframeId,
@@ -191,6 +208,30 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
           moves: group.items,
         }),
       )
+    }
+    {
+      const groups = new Map<
+        string,
+        { nodeId: string; controlKey: string; items: { keyframeId: string; newTime: number }[] }
+      >()
+      for (const move of controlMoves) {
+        const key = `${move.nodeId}\u0000${move.controlKey}`
+        const group = groups.get(key) ?? {
+          nodeId: move.nodeId,
+          controlKey: move.controlKey,
+          items: [],
+        }
+        group.items.push({ keyframeId: move.keyframeId, newTime: move.newTime })
+        groups.set(key, group)
+      }
+      for (const group of groups.values()) {
+        commands.push(
+          new MoveKeyframesCommand({
+            target: { kind: 'control', nodeId: group.nodeId, controlKey: group.controlKey },
+            moves: group.items,
+          }),
+        )
+      }
     }
     for (const group of groupMaterialRefsByTarget(materialMoves, (move) => ({
       keyframeId: move.keyframeId,

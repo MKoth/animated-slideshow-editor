@@ -2179,6 +2179,12 @@ export class Engine {
     this.#nodes.setSemanticName(nodeId, semanticName)
   }
 
+  setControlSet(nodeId: string, controlSet: import('./control').ControlSet | undefined): void {
+    const node = this.#nodes.getById(nodeId)
+    node.controlSet = controlSet
+    this.#bus.emit({ type: 'NodeChanged', nodeId })
+  }
+
   setOpacity(nodeId: string, opacity: number): void {
     this.#nodes.setOpacity(nodeId, opacity)
   }
@@ -5677,6 +5683,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     hasZIndexTrack: (nodeId) => engine.hasZIndexTrack(nodeId),
     evaluateZIndex: (nodeId, time) => engine.evaluateZIndex(nodeId, time),
     setZIndex: (nodeId, zIndex) => engine.setZIndex(nodeId, zIndex),
+    setControlSet: (nodeId, controlSet) => engine.setControlSet(nodeId, controlSet),
     getZIndex: (nodeId) => engine.getZIndex(nodeId),
     getMorphKeyframes: (nodeId) => engine.getMorphKeyframes(nodeId),
     hasMorphTrack: (nodeId) => engine.hasMorphTrack(nodeId),

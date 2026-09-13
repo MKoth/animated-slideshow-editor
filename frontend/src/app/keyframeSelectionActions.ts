@@ -738,6 +738,11 @@ export function isKeyframeDisabled(engine: EnginePublic, keyframeId: string): bo
         for (const kf of engine.getSymmetryKeyframes(node.id))
           if (kf.id === keyframeId) return !!kf.disabled
       }
+      for (const control of node.controlSet?.controls ?? []) {
+        for (const slide of engine.project?.slides ?? [])
+          for (const kf of slide.animation.node(node.id)?.controlKeyframes(control.key) ?? [])
+            if (kf.id === keyframeId) return !!kf.disabled
+      }
     }
   }
   return false
@@ -812,6 +817,16 @@ export function setSingleKeyframeDisabled(
       kind: 'symmetry' as const,
       target: { kind: 'symmetry' as const, nodeId: r.nodeId },
     })),
+    ...(engine.project?.slides ?? []).flatMap((slide) =>
+      collectNodes(slide.scene).flatMap((node) =>
+        (node.controlSet?.controls ?? []).flatMap((control) =>
+          (slide.animation.node(node.id)?.controlKeyframes(control.key) ?? []).map((keyframe) => ({
+            keyframeId: keyframe.id,
+            target: { kind: 'control' as const, nodeId: node.id, controlKey: control.key },
+          })),
+        ),
+      ),
+    ),
   ] as unknown as { keyframeId: string; target: import('../engine').KeyframeTarget }[]
   const entry = allRefs.find((r) => r.keyframeId === keyframeId)
   if (!entry) return false

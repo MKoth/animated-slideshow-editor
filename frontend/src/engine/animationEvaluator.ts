@@ -30,6 +30,8 @@ import {
   isAutoShadowEffect,
 } from './shadowEffect'
 
+const warnedControlNodes = new Set<string>()
+
 function isParametricKeyframes(keyframes: readonly Keyframe[]): boolean {
   for (const kf of keyframes) if (isParametricInterpolation(kf.interpolation)) return true
   return false
@@ -1237,7 +1239,13 @@ export class AnimationEvaluator {
     time: number,
     callback: (clip: ClipDefinition, u: number) => void,
   ): void {
-    if (node.semanticName === undefined) return
+    if (node.semanticName === undefined) {
+      if (!warnedControlNodes.has(node.id)) {
+        warnedControlNodes.add(node.id)
+        console.warn(`[control] Node "${node.id}" has no semanticName; skipping Control bindings`)
+      }
+      return
+    }
     const hosts: SceneNode[] = []
     for (let host = node.parent; host; host = host.parent) {
       if (host.controlSet) hosts.push(host)

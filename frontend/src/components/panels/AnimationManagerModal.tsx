@@ -55,6 +55,7 @@ import {
   RemoveClipCommand,
   DeleteCollectionPlacementCommand,
   DeleteClipCommand,
+  SetControlSetCommand,
 } from '../../engine/commands'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useSelectionStore } from '../../stores/selectionStore'
@@ -478,27 +479,34 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       label: `Control ${index}`,
       exposed: true,
     })
-    // Control definitions are embedded on SceneNode and currently have no command API.
-    // eslint-disable-next-line react-hooks/immutability
-    parentNode.controlSet = parentNode.controlSet
-      ? { ...parentNode.controlSet, controls: [...parentNode.controlSet.controls, control] }
-      : createControlSet(parentNode.id, [control])
+    dispatch(
+      new SetControlSetCommand({
+        nodeId: parentNode.id,
+        controlSet: parentNode.controlSet
+          ? { ...parentNode.controlSet, controls: [...parentNode.controlSet.controls, control] }
+          : createControlSet(parentNode.id, [control]),
+      }),
+    )
     setTick((value) => value + 1)
-  }, [parentNode])
+  }, [dispatch, parentNode])
 
   const toggleControlExposure = useCallback(
     (controlKey: string) => {
       if (!parentNode?.controlSet) return
-      // eslint-disable-next-line react-hooks/immutability
-      parentNode.controlSet = {
-        ...parentNode.controlSet,
-        controls: parentNode.controlSet.controls.map((control) =>
-          control.key === controlKey ? { ...control, exposed: !control.exposed } : control,
-        ),
-      }
+      dispatch(
+        new SetControlSetCommand({
+          nodeId: parentNode.id,
+          controlSet: {
+            ...parentNode.controlSet,
+            controls: parentNode.controlSet.controls.map((control) =>
+              control.key === controlKey ? { ...control, exposed: !control.exposed } : control,
+            ),
+          },
+        }),
+      )
       setTick((value) => value + 1)
     },
-    [parentNode],
+    [dispatch, parentNode],
   )
   const addControlKeyframe = useCallback(
     (controlKey: string, value: number) => {
@@ -1892,6 +1900,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     }
   })()
 
+  const editingControlBindings = editingControl
+    ? (controls.find((control) => control.key === editingControl.key)?.bindings ?? {})
+    : {}
+
   const editingNodeName = (() => {
     if (!editing) return ''
     try {
@@ -2750,12 +2762,30 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               <span>0 CLOSED — 1 OPEN</span>
               <span>t ∈ [0, 1] · duration=1</span>
             </div>
-            <ManagerClipEditor
-              clip={editingControlClip}
-              nodeId={parentNodeId!}
-              pps={pps}
-              onBack={restorePpsAndBack}
-            />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {Object.entries(editingControlBindings).map(([semanticName, clipId]) => {
+                let clip: ClipDefinition | null = null
+                try {
+                  clip = engine.getClip(clipId)
+                } catch {
+                  clip = null
+                }
+                if (!clip) return null
+                return (
+                  <div key={`${semanticName}:${clipId}`}>
+                    <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                      {semanticName} · {clip.name}
+                    </div>
+                    <ManagerClipEditor
+                      clip={clip}
+                      nodeId={parentNodeId!}
+                      pps={pps}
+                      onBack={restorePpsAndBack}
+                    />
+                  </div>
+                )
+              })}
+            </div>
           </div>
         ) : activeTab === 'controls' ? (
           <div

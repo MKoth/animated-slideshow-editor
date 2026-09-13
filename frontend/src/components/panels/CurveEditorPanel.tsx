@@ -135,6 +135,19 @@ function buildCurves(
         })
       }
     }
+    for (const control of node.controlSet?.controls ?? []) {
+      const keyframes =
+        engine.getActiveSlide()?.animation.node(node.id)?.controlKeyframes(control.key) ?? []
+      if (keyframes.length > 0) {
+        curves.push({
+          nodeId: node.id,
+          property: `control:${control.key}`,
+          label: `Control: ${control.label}`,
+          keyframes,
+          color: '#80cbc4',
+        })
+      }
+    }
     if (node.components.circle) {
       for (const prop of CIRCLE_ANIMATABLE_PROPERTIES) {
         // show circle curves under 'all' or dedicated 'circle' filter; hide under position/rotation etc
@@ -268,6 +281,10 @@ function isMorphProperty(prop: string): boolean {
   return prop === 'morph'
 }
 
+function isControlProperty(prop: string): boolean {
+  return prop.startsWith('control:')
+}
+
 function isShadowProperty(prop: string): boolean {
   return (SHADOW_PROPERTIES as readonly string[]).includes(prop)
 }
@@ -278,6 +295,14 @@ function resolveKeyframes(
   nodeId: string,
   property: string,
 ) {
+  if (isControlProperty(property) && !clip) {
+    return (
+      engine
+        .getActiveSlide()
+        ?.animation.node(nodeId)
+        ?.controlKeyframes(property.slice('control:'.length)) ?? []
+    )
+  }
   if (isShadowProperty(property) && !clip) {
     return engine.getShadowKeyframes(nodeId, property as ShadowProperty)
   }
@@ -301,7 +326,11 @@ function buildTarget(
   | { kind: 'node'; nodeId: string; property: AnimationProperty }
   | { kind: 'circle'; nodeId: string; property: CircleAnimationProperty }
   | { kind: 'morph'; nodeId: string }
+  | { kind: 'control'; nodeId: string; controlKey: string }
   | { kind: 'shadow'; nodeId: string; property: ShadowProperty } {
+  if (isControlProperty(property) && !clip) {
+    return { kind: 'control' as const, nodeId, controlKey: property.slice('control:'.length) }
+  }
   if (isShadowProperty(property) && !clip) {
     return { kind: 'shadow' as const, nodeId, property: property as ShadowProperty }
   }
@@ -762,7 +791,13 @@ export function CurveEditorPanel({
           Math.abs(scaledOut.time - kf.tangentOut.time) < 1e-9 &&
           Math.abs(scaledOut.value - kf.tangentOut.value) < 1e-9
         if (sameIn && sameOut) return
-        dispatchTangents(dispatch, buildTarget(clip, nodeId, property), keyframeId, scaledIn, scaledOut)
+        dispatchTangents(
+          dispatch,
+          buildTarget(clip, nodeId, property),
+          keyframeId,
+          scaledIn,
+          scaledOut,
+        )
         return
       }
 
@@ -893,7 +928,10 @@ export function CurveEditorPanel({
           }}
           onConfirmDelete={() => {
             const kfs = deleteConfirm.keyframes
-            const groups = new Map<string, { target: import('../../engine/keyframeTarget').KeyframeTarget; ids: string[] }>()
+            const groups = new Map<
+              string,
+              { target: import('../../engine/keyframeTarget').KeyframeTarget; ids: string[] }
+            >()
             for (const kf of kfs) {
               const t = kf.target
               let key: string
@@ -911,7 +949,11 @@ export function CurveEditorPanel({
               else key = `${t.kind}:${(t as { nodeId?: string }).nodeId ?? ''}`
               const entry = groups.get(key)
               if (entry) entry.ids.push(kf.keyframeId)
-              else groups.set(key, { target: t as import('../../engine/keyframeTarget').KeyframeTarget, ids: [kf.keyframeId] })
+              else
+                groups.set(key, {
+                  target: t as import('../../engine/keyframeTarget').KeyframeTarget,
+                  ids: [kf.keyframeId],
+                })
             }
             const cmds = [...groups.values()].map(
               (g) => new DeleteKeyframesCommand({ target: g.target, keyframeIds: g.ids }),
@@ -920,7 +962,8 @@ export function CurveEditorPanel({
               setDeleteConfirm(null)
               return
             }
-            const tx = cmds.length === 1 ? cmds[0] : new TransactionCommand(cmds as unknown as never[])
+            const tx =
+              cmds.length === 1 ? cmds[0] : new TransactionCommand(cmds as unknown as never[])
             const result = dispatch(tx as never)
             if (!result.ok) {
               notify(result.error.message)

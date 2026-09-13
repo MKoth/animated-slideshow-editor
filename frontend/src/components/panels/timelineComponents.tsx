@@ -50,6 +50,7 @@ export const TrackRow = memo(
   }: (TrackRowEntry | BoneTrackEntry) & { expanded: boolean }) {
     const selected = useSelectionStore((state) => state.selectedIds.includes(node.id))
     const { dispatch } = useEngine()
+    const authoring = useTimelineViewStore((state) => state.authoringModeByHost[node.id] === true)
     const handleEyeClick = (event: React.MouseEvent) => {
       event.stopPropagation()
       event.preventDefault()
@@ -83,6 +84,11 @@ export const TrackRow = memo(
                 useSelectionStore.getState().select(node.id)
               }
             }}
+            onContextMenu={(event) => {
+              if (!node.controlSet) return
+              event.preventDefault()
+              useTimelineViewStore.getState().toggleAuthoringMode(node.id)
+            }}
           >
             <span className="timeline-track__icon" data-icon={iconOf(node)}>
               <NodeIcon node={node} />
@@ -102,6 +108,21 @@ export const TrackRow = memo(
               <span className="timeline-track__indicator" title="Locked">
                 <LockIcon />
               </span>
+              {node.controlSet && (
+                <button
+                  className="timeline-track__indicator"
+                  title={authoring ? 'Hide internal rig lanes' : 'Show internal rig lanes'}
+                  aria-label={authoring ? 'Exit rig authoring mode' : 'Enter rig authoring mode'}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    useTimelineViewStore.getState().toggleAuthoringMode(node.id)
+                  }}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  {authoring ? 'A' : 'R'}
+                </button>
+              )}
             </span>
           </button>
         </div>
