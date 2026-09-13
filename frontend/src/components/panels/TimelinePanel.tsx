@@ -73,6 +73,7 @@ export function TimelinePanel({ height }: { height: number }) {
   const scene = slide?.scene ?? null
   const hasObjects = scene ? sceneHasObjects(scene) : false
   const expandedNodeIds = useTimelineViewStore((state) => state.expandedNodeIds)
+  const authoringModeByHost = useTimelineViewStore((state) => state.authoringModeByHost)
   const [activeTab, setActiveTab] = useState<'animation' | 'audio'>('animation')
   const viewportWidth = useViewportWidth(scrollerRef, [
     slide?.id ?? null,
@@ -85,7 +86,9 @@ export function TimelinePanel({ height }: { height: number }) {
   useSyncedAudio()
 
   const materialDefinitions = engine.materialDefinitions
-  const rows = scene ? timelineRows(scene, expandedNodeIds, materialDefinitions) : []
+  const rows = scene
+    ? timelineRows(scene, expandedNodeIds, materialDefinitions, authoringModeByHost)
+    : []
 
   const isClipEdit = editingContext === 'clip-edit' && clipEditDefinition !== null
 

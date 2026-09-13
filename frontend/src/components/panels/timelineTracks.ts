@@ -77,6 +77,14 @@ export interface SymmetrySubtrackEntry {
   readonly depth: number
 }
 
+export interface ControlSubtrackEntry {
+  readonly kind: 'controlSubtrack'
+  readonly node: SceneNode
+  readonly controlKey: string
+  readonly label: string
+  readonly depth: number
+}
+
 export interface ShadowSubtrackEntry {
   readonly kind: 'shadowSubtrack'
   readonly node: SceneNode
@@ -103,6 +111,7 @@ export type TimelineRow =
   | ZIndexSubtrackEntry
   | MorphSubtrackEntry
   | SymmetrySubtrackEntry
+  | ControlSubtrackEntry
   | ShadowSubtrackEntry
   | BoneTrackEntry
 
@@ -181,6 +190,7 @@ export function timelineRows(
     id: string
     parameters: readonly MaterialParameterDefault[]
   }[] = [],
+  authoringModeByHost: Readonly<Record<string, boolean>> = {},
 ): TimelineRow[] {
   const rows: TimelineRow[] = []
   for (const entry of trackRows(scene)) {
@@ -196,6 +206,17 @@ export function timelineRows(
       rows.push(entry)
     }
     if (expandedNodeIds[entry.node.id] === true) {
+      for (const control of entry.node.controlSet?.controls ?? []) {
+        if (control.exposed || authoringModeByHost[entry.node.id] === true) {
+          rows.push({
+            kind: 'controlSubtrack',
+            node: entry.node,
+            controlKey: control.key,
+            label: control.label,
+            depth: entry.depth + 1,
+          })
+        }
+      }
       for (const property of animatablePropertiesOf(entry.node)) {
         rows.push({ kind: 'subtrack', node: entry.node, property, depth: entry.depth + 1 })
       }

@@ -1241,7 +1241,45 @@ export function TimelineBody({
         <ul className="timeline-tracks__list" onContextMenu={handleTrackListContextMenu}>
           <li className="timeline-tracks__ruler-spacer" aria-hidden="true" />
           {rows.map((row) =>
-            row.kind === 'subtrack' ? (
+            row.kind === 'controlSubtrack' ? (
+              <li
+                key={`${row.node.id}:control:${row.controlKey}`}
+                className="timeline-subtrack timeline-subtrack--control"
+                data-node-id={row.node.id}
+                data-control-key={row.controlKey}
+                data-depth={row.depth}
+                style={{ paddingLeft: 12 + row.depth * 16 }}
+              >
+                <span className="timeline-subtrack__label">{row.label}</span>
+                <button
+                  className="timeline-subtrack__add"
+                  aria-label={`Add Keyframe to ${row.label}`}
+                  title="Add control keyframe at the playhead"
+                  onClick={() => {
+                    const time = usePlaybackController.getState().getTime(slideId)
+                    const control = row.node.controlSet?.controls.find(
+                      (entry) => entry.key === row.controlKey,
+                    )
+                    const result = control
+                      ? dispatch(
+                          new AddKeyframeCommand({
+                            target: {
+                              kind: 'control',
+                              nodeId: row.node.id,
+                              controlKey: row.controlKey,
+                            },
+                            time,
+                            value: control.default,
+                          }),
+                        )
+                      : null
+                    if (result && !result.ok) notify(result.error.message)
+                  }}
+                >
+                  +
+                </button>
+              </li>
+            ) : row.kind === 'subtrack' ? (
               <li
                 key={`${row.node.id}:${row.property}`}
                 className="timeline-subtrack"
@@ -1626,6 +1664,31 @@ export function TimelineBody({
               style={{ height: rows.length * ROW_HEIGHT, width: contentWidth }}
             >
               {rows.map((row, index) => {
+                if (row.kind === 'controlSubtrack') {
+                  const keyframes =
+                    engine
+                      .getSlide(slideId)
+                      .animation.node(row.node.id)
+                      ?.controlKeyframes(row.controlKey) ?? []
+                  return (
+                    <div
+                      key={`${row.node.id}:control:${row.controlKey}`}
+                      className="timeline-lane-row timeline-lane-row--control"
+                      data-control-key={row.controlKey}
+                      style={{ top: index * ROW_HEIGHT }}
+                    >
+                      {keyframes.map((keyframe) => (
+                        <span
+                          key={keyframe.id}
+                          className="timeline-keyframe-marker"
+                          data-keyframe-id={keyframe.id}
+                          title={`${row.label}: ${String(keyframe.value)}`}
+                          style={{ left: keyframe.time * pps }}
+                        />
+                      ))}
+                    </div>
+                  )
+                }
                 if (row.kind === 'subtrack') {
                   const keyframes = engine.getKeyframes(row.node.id, row.property)
 
@@ -2250,7 +2313,10 @@ export function TimelineBody({
           }}
           onConfirmDelete={() => {
             const kfs = deleteConfirm.keyframes
-            const groups = new Map<string, { target: import('../../engine/keyframeTarget').KeyframeTarget; ids: string[] }>()
+            const groups = new Map<
+              string,
+              { target: import('../../engine/keyframeTarget').KeyframeTarget; ids: string[] }
+            >()
             for (const kf of kfs) {
               const t = kf.target
               let key: string
@@ -2268,7 +2334,11 @@ export function TimelineBody({
               else key = `${t.kind}:${(t as { nodeId?: string }).nodeId ?? ''}`
               const entry = groups.get(key)
               if (entry) entry.ids.push(kf.keyframeId)
-              else groups.set(key, { target: t as import('../../engine/keyframeTarget').KeyframeTarget, ids: [kf.keyframeId] })
+              else
+                groups.set(key, {
+                  target: t as import('../../engine/keyframeTarget').KeyframeTarget,
+                  ids: [kf.keyframeId],
+                })
             }
             const cmds = [...groups.values()].map(
               (g) => new DeleteKeyframesCommand({ target: g.target, keyframeIds: g.ids }),
@@ -2277,7 +2347,8 @@ export function TimelineBody({
               setDeleteConfirm(null)
               return
             }
-            const tx = cmds.length === 1 ? cmds[0] : new TransactionCommand(cmds as unknown as never[])
+            const tx =
+              cmds.length === 1 ? cmds[0] : new TransactionCommand(cmds as unknown as never[])
             const result = dispatch(tx as never)
             if (!result.ok) {
               notify(result.error.message)

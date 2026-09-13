@@ -78,6 +78,7 @@ export interface TimelineViewState {
   readonly expandedNodeIds: Readonly<Record<string, boolean>>
   readonly gridSnapEnabled: boolean
   readonly snapToKeyframesEnabled: boolean
+  readonly authoringModeByHost: Readonly<Record<string, boolean>>
   toggleExpanded(nodeId: string): void
   setZoom(zoomLevel: number, anchorTime: number, viewportWidth: number, duration: number): void
   zoomIn(anchorTime: number, viewportWidth: number, duration: number): void
@@ -89,6 +90,8 @@ export interface TimelineViewState {
   setGridSnapEnabled(enabled: boolean): void
   toggleSnapToKeyframes(): void
   setSnapToKeyframesEnabled(enabled: boolean): void
+  toggleAuthoringMode(hostNodeId: string): void
+  setAuthoringMode(hostNodeId: string, enabled: boolean): void
 }
 
 export const useTimelineViewStore = create<TimelineViewState>()(
@@ -100,6 +103,7 @@ export const useTimelineViewStore = create<TimelineViewState>()(
       expandedNodeIds: {},
       gridSnapEnabled: true,
       snapToKeyframesEnabled: false,
+      authoringModeByHost: {},
 
       toggleExpanded: (nodeId) =>
         set((state) => ({
@@ -120,6 +124,19 @@ export const useTimelineViewStore = create<TimelineViewState>()(
         set((state) => ({ snapToKeyframesEnabled: !state.snapToKeyframesEnabled })),
 
       setSnapToKeyframesEnabled: (enabled) => set({ snapToKeyframesEnabled: enabled }),
+
+      toggleAuthoringMode: (hostNodeId) =>
+        set((state) => ({
+          authoringModeByHost: {
+            ...state.authoringModeByHost,
+            [hostNodeId]: state.authoringModeByHost[hostNodeId] !== true,
+          },
+        })),
+
+      setAuthoringMode: (hostNodeId, enabled) =>
+        set((state) => ({
+          authoringModeByHost: { ...state.authoringModeByHost, [hostNodeId]: enabled },
+        })),
 
       setScrollTime: (time, viewportWidth, duration) =>
         set({
@@ -176,6 +193,7 @@ export const useTimelineViewStore = create<TimelineViewState>()(
         height: state.height,
         gridSnapEnabled: state.gridSnapEnabled,
         snapToKeyframesEnabled: state.snapToKeyframesEnabled,
+        authoringModeByHost: state.authoringModeByHost,
       }),
     },
   ),

@@ -94,6 +94,13 @@ export interface NodeZIndexTarget {
   readonly nodeId: string
 }
 
+/** A scalar Control Track owned by a host node. */
+export interface ControlTarget {
+  readonly kind: 'control'
+  readonly nodeId: string
+  readonly controlKey: string
+}
+
 /** A clip channel target (Spec 07 R16/R20). */
 export interface ClipChannelTarget {
   readonly kind: 'clip'
@@ -116,6 +123,7 @@ export type KeyframeTarget =
   | NodeShadowTarget
   | NodeSymmetryTarget
   | NodeZIndexTarget
+  | ControlTarget
   | ClipChannelTarget
 
 export function isPropertyTarget(target: KeyframeTarget): target is NodePropertyTarget {
@@ -163,6 +171,13 @@ export function isZIndexTarget(target: KeyframeTarget): target is NodeZIndexTarg
 }
 
 export function requireKeyframeTarget(value: unknown): KeyframeTarget {
+  if (isRecord(value) && value.kind === 'control') {
+    return {
+      kind: 'control',
+      nodeId: requireString(value.nodeId, 'Control target node id'),
+      controlKey: requireString(value.controlKey, 'Control target key'),
+    }
+  }
   if (isRecord(value) && value.kind === 'zIndex') {
     const nodeId = requireString(value.nodeId, 'Z-Index target node id')
     return { kind: 'zIndex', nodeId }
@@ -257,6 +272,12 @@ export type KeyframeTrackRef =
   | { readonly kind: 'shadow'; readonly property: ShadowProperty }
   | { readonly kind: 'symmetry' }
   | { readonly kind: 'zIndex' }
+  | {
+      readonly kind: 'control'
+      readonly controlKey: string
+      readonly min: number
+      readonly max: number
+    }
 
 export function resolveKeyframeTrack(
   node: SceneNode,
@@ -266,6 +287,11 @@ export function resolveKeyframeTrack(
 ): KeyframeTrackRef {
   if (isClipChannelTarget(target)) {
     throw new Error('Clip channel targets cannot be resolved through node animation tracks')
+  }
+  if (target.kind === 'control') {
+    const control = node.controlSet?.controls.find((entry) => entry.key === target.controlKey)
+    if (!control) throw new Error(`Unknown control "${target.controlKey}" on node "${node.name}"`)
+    return { kind: 'control', controlKey: control.key, min: control.min, max: control.max }
   }
   if (isZIndexTarget(target)) {
     return { kind: 'zIndex' }
@@ -311,6 +337,17 @@ export function requireTrackKeyframeValue(
   value: unknown,
   what = 'Keyframe value',
 ): KeyframeValue {
+  if (track.kind === 'control') {
+    if (
+      typeof value !== 'number' ||
+      !Number.isFinite(value) ||
+      value < track.min ||
+      value > track.max
+    ) {
+      throw new Error(`${what} must be a finite number between ${track.min} and ${track.max}`)
+    }
+    return value
+  }
   if (track.kind === 'zIndex') {
     if (typeof value !== 'number' || !Number.isFinite(value)) {
       throw new Error(`${what} must be a finite number for zIndex`)
@@ -376,7 +413,8 @@ export function requireNodeTarget(
   | NodeMorphTarget
   | NodeShadowTarget
   | NodeSymmetryTarget
-  | NodeZIndexTarget {
+  | NodeZIndexTarget
+  | ControlTarget {
   if (
     target.kind !== 'node' &&
     target.kind !== 'dataLabel' &&
@@ -386,7 +424,8 @@ export function requireNodeTarget(
     target.kind !== 'morph' &&
     target.kind !== 'shadow' &&
     target.kind !== 'symmetry' &&
-    target.kind !== 'zIndex'
+    target.kind !== 'zIndex' &&
+    target.kind !== 'control'
   ) {
     throw new Error('This operation only supports node targets')
   }
@@ -401,6 +440,7 @@ export function requireNodeTarget(
     | NodeShadowTarget
     | NodeSymmetryTarget
     | NodeZIndexTarget
+    | ControlTarget
 }
 
 /** Validate a scale factor: a non-negative finite number. */

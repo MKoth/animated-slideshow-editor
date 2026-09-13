@@ -6,6 +6,7 @@ import {
   CreateSlideCommand,
   CreateClipCommand,
   AddClipKeyframeCommand,
+  AddKeyframeCommand,
 } from '../../engine/commands'
 import { createControl, createControlSet } from '../../engine/control'
 import { Keyframe } from '../../engine/keyframe'
@@ -73,7 +74,16 @@ describe('parametric controls', () => {
     ])
     const track = slide.animation.ensure(rig.id)
     track.addControl('Mouth.Openness', new Keyframe('control-start', 0, 0))
-    track.addControl('Mouth.Openness', new Keyframe('control-end', slide.duration, 1))
+    const added = ok(
+      system.dispatcher.dispatch(
+        new AddKeyframeCommand({
+          target: { kind: 'control', nodeId: rig.id, controlKey: 'Mouth.Openness' },
+          time: slide.duration,
+          value: 1,
+        }),
+      ),
+    )
+    expect(added.keyframe.keyframeId).toBeTruthy()
 
     expect(system.engine.evaluateNode(target.id, slide.duration / 2).transform.x).toBe(20)
     const json = slide.toJSON()

@@ -133,8 +133,9 @@ export function autoKeyCommands(
         continue
     }
     if (isZIndexTarget(edit.target)) {
-      const cur = (engine as unknown as { evaluateZIndex?: (id: string, t: number) => number })
-        .evaluateZIndex?.(edit.target.nodeId, edit.time)
+      const cur = (
+        engine as unknown as { evaluateZIndex?: (id: string, t: number) => number }
+      ).evaluateZIndex?.(edit.target.nodeId, edit.time)
       if (cur === edit.value) continue
     }
     if (isMorphTarget(edit.target)) {
@@ -222,6 +223,13 @@ export function dispatchKeyframeCommands(
 }
 
 function targetKeyframes(engine: EnginePublic, target: KeyframeTarget): readonly Keyframe[] {
+  if (target.kind === 'control') {
+    return (
+      engine as unknown as {
+        getKeyframesOf: (keyframeTarget: KeyframeTarget) => readonly Keyframe[]
+      }
+    ).getKeyframesOf(target)
+  }
   if (isParameterTarget(target)) {
     return engine.getMaterialKeyframes(target.nodeId, target.parameter)
   }

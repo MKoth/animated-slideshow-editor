@@ -1915,6 +1915,9 @@ export class Engine {
     if (resolved.kind === 'symmetry') {
       return animation.symmetryKeyframes()
     }
+    if (resolved.kind === 'control') {
+      return animation.controlKeyframes(resolved.controlKey)
+    }
     return animation.materialKeyframes(resolved.parameter)
   }
 

@@ -37,6 +37,7 @@ import {
   AddClipChannelCommand,
   RemoveClipChannelCommand,
   AddClipKeyframeCommand,
+  AddKeyframeCommand,
   DeleteClipKeyframesCommand,
   DeleteKeyframesCommand,
   MoveClipKeyframesCommand,
@@ -227,6 +228,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const { engine, dispatch, undoStack } = useEngine()
   const [tick, setTick] = useState(0)
   const [activeTab, setActiveTab] = useState<ManagerTab>('clips')
+  const [controlValues, setControlValues] = useState<Record<string, number>>({})
   const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({})
   const [editing, setEditing] = useState<{ clipId: string; nodeId: string } | null>(null)
   const [savedZoom, setSavedZoom] = useState<number | null>(null)
@@ -299,6 +301,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   } | null>(null)
   const orphansContainerRef = useRef<HTMLDivElement>(null)
   const notify = useNotificationStore((s) => s.notify)
+  const authoringMode = useTimelineViewStore((s) =>
+    parentNodeId ? s.authoringModeByHost[parentNodeId] === true : false,
+  )
+  const toggleAuthoringMode = useTimelineViewStore((s) => s.toggleAuthoringMode)
 
   const zoomLevel = useTimelineViewStore((s) => s.zoomLevel)
   const gridSnapEnabled = useTimelineViewStore((s) => s.gridSnapEnabled)
@@ -310,6 +316,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   useEffect(() => {
     if (open) {
       setActiveTab('clips')
+      setControlValues({})
       setExpandedMap({})
       setEditing(null)
       setSelectedInstanceId(null)
@@ -454,6 +461,23 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   }, [activeSlide, parentNode, engine, tick])
 
   const overlayLabel = parentNode ? `Animation Manager — ${parentNode.name}` : 'Animation Manager'
+
+  const controls = parentNode?.controlSet?.controls ?? []
+  const addControlKeyframe = useCallback(
+    (controlKey: string, value: number) => {
+      if (!parentNodeId || !activeSlide) return
+      const time = usePlaybackController.getState().getTime(activeSlide.id)
+      const result = dispatch(
+        new AddKeyframeCommand({
+          target: { kind: 'control', nodeId: parentNodeId, controlKey },
+          time,
+          value: controlValues[controlKey] ?? value,
+        }),
+      )
+      if (!result.ok) notify(result.error.message)
+    },
+    [parentNodeId, activeSlide, controlValues, dispatch, notify],
+  )
 
   // Flat ordered orphan entries for Shift-range and marquee (display order: rows pre-order, param order, time asc)
   const flatOrphanEntries = useMemo((): OrphanEntry[] => {
@@ -2050,6 +2074,24 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               </button>
               <button
                 role="tab"
+                aria-selected={activeTab === 'controls'}
+                data-testid="manager-tab-controls"
+                onClick={() => setActiveTab('controls')}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: 4,
+                  fontSize: 12,
+                  cursor: 'pointer',
+                  border: 'none',
+                  background:
+                    activeTab === 'controls' ? 'var(--color-accent, #7c5cff)' : 'transparent',
+                  color: activeTab === 'controls' ? '#fff' : 'var(--color-text-muted, #666)',
+                }}
+              >
+                Controls
+              </button>
+              <button
+                role="tab"
                 aria-selected={activeTab === 'orphans'}
                 data-testid="manager-tab-orphans"
                 onClick={() => {
@@ -2070,6 +2112,23 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 Orphans
               </button>
             </div>
+            {activeTab === 'controls' && parentNodeId && (
+              <button
+                data-testid="manager-toggle-authoring"
+                onClick={() => toggleAuthoringMode(parentNodeId)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border, #ddd)',
+                  background: authoringMode ? 'var(--color-accent, #7c5cff)' : '#fff',
+                  color: authoringMode ? '#fff' : 'var(--color-text-muted, #666)',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                {authoringMode ? 'Hide internal lanes' : 'Show internal lanes'}
+              </button>
+            )}
             {activeTab === 'orphans' && (
               <button
                 data-testid="orphan-add-to-clip-button"
@@ -2595,6 +2654,88 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             pps={pps}
             onBack={restorePpsAndBack}
           />
+        ) : activeTab === 'controls' ? (
+          <div
+            data-testid="manager-controls"
+            style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}
+          >
+            <div style={{ fontSize: 12, color: 'var(--color-text-muted, #666)' }}>
+              {controls.length === 0
+                ? `No Controls are defined on "${parentNode?.name ?? 'this rig'}".`
+                : `${controls.length} Control${controls.length === 1 ? '' : 's'} · ${
+                    controls.filter((control) => control.exposed).length
+                  } exposed`}
+            </div>
+            {controls.map((control) => {
+              const keyframes = activeSlide
+                ? (activeSlide.animation.node(parentNodeId!)?.controlKeyframes(control.key) ?? [])
+                : []
+              return (
+                <div
+                  key={control.key}
+                  data-testid={`manager-control-${control.key}`}
+                  style={{
+                    border: '1px solid var(--color-border, #ddd)',
+                    borderRadius: 6,
+                    padding: '10px 12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                  }}
+                >
+                  <div style={{ minWidth: 180 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{control.label}</div>
+                    <div style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
+                      {control.key} · {control.exposed ? 'Exposed' : 'Internal'} ·{' '}
+                      {keyframes.length} keyframe{keyframes.length === 1 ? '' : 's'}
+                    </div>
+                  </div>
+                  <input
+                    aria-label={`${control.label} value`}
+                    type="range"
+                    min={control.min}
+                    max={control.max}
+                    step={0.01}
+                    value={controlValues[control.key] ?? control.default}
+                    onChange={(event) =>
+                      setControlValues((previous) => ({
+                        ...previous,
+                        [control.key]: Number(event.target.value),
+                      }))
+                    }
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    data-testid={`manager-control-keyframe-${control.key}`}
+                    onClick={() =>
+                      addControlKeyframe(control.key, controlValues[control.key] ?? control.default)
+                    }
+                    style={{
+                      padding: '5px 9px',
+                      borderRadius: 4,
+                      border: '1px solid var(--color-border, #ddd)',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                    }}
+                  >
+                    Add keyframe
+                  </button>
+                </div>
+              )
+            })}
+            <div
+              style={{
+                fontSize: 11,
+                color: 'var(--color-text-muted, #888)',
+                padding: 8,
+                border: '1px dashed var(--color-border, #ddd)',
+                borderRadius: 6,
+              }}
+            >
+              Control values are keyframeable on the host node. Authoring mode reveals the rig's
+              internal animation lanes without deleting them.
+            </div>
+          </div>
         ) : activeTab === 'collections' ? (
           <div
             data-testid="manager-collections"

@@ -497,6 +497,9 @@ export class AnimationManager {
     if (track.kind === 'table') {
       return animation.tableKeyframes(track.property)
     }
+    if (track.kind === 'control') {
+      return animation.controlKeyframes(track.controlKey)
+    }
     return animation.materialKeyframes(track.parameter)
   }
 
@@ -520,6 +523,8 @@ export class AnimationManager {
       animation.addCircle(track.property, keyframe)
     } else if (track.kind === 'table') {
       animation.addTable(track.property, keyframe)
+    } else if (track.kind === 'control') {
+      animation.addControl(track.controlKey, keyframe)
     } else {
       animation.addMaterial(track.parameter, keyframe)
     }
@@ -545,6 +550,8 @@ export class AnimationManager {
       animation.removeCircle(track.property, keyframeId)
     } else if (track.kind === 'table') {
       animation.removeTable(track.property, keyframeId)
+    } else if (track.kind === 'control') {
+      animation.removeControl(track.controlKey, keyframeId)
     } else {
       animation.removeMaterial(track.parameter, keyframeId)
     }
@@ -571,6 +578,10 @@ export class AnimationManager {
       keyframe = animation.getCircle(track.property, keyframeId)
     } else if (track.kind === 'table') {
       keyframe = animation.getTable(track.property, keyframeId)
+    } else if (track.kind === 'control') {
+      keyframe = animation
+        .controlKeyframes(track.controlKey)
+        .find((entry) => entry.id === keyframeId)
     } else {
       keyframe = animation.getMaterial(track.parameter, keyframeId)
     }
@@ -594,7 +605,9 @@ export class AnimationManager {
                         ? `circle ${track.property}`
                         : track.kind === 'table'
                           ? `table ${track.property}`
-                          : `parameter ${track.parameter}`
+                          : track.kind === 'control'
+                            ? `control ${track.controlKey}`
+                            : `parameter ${track.parameter}`
       throw new Error(`Keyframe not found: ${keyframeId} on ${on}`)
     }
     return keyframe
@@ -693,6 +706,9 @@ export class AnimationManager {
     }
     if (track.kind === 'table') {
       return `table ${track.property}`
+    }
+    if (track.kind === 'control') {
+      return `control ${track.controlKey}`
     }
     return `parameter ${track.parameter}`
   }

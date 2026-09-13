@@ -16,7 +16,7 @@ import { snapKeyframeTime } from './timelineSnapping'
 import type { CollectionPlacement } from './collectionPlacement'
 import type { ClipCollection } from './clipCollection'
 
-export type ManagerTab = 'collections' | 'clips' | 'orphans'
+export type ManagerTab = 'collections' | 'clips' | 'controls' | 'orphans'
 
 export interface AnimatedParam {
   readonly kind:
