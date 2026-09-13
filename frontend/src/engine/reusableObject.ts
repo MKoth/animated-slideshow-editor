@@ -193,6 +193,18 @@ export function validateReusableObject(json: unknown): string[] {
       }
       if (Array.isArray(library.clips)) {
         const seen = new Set<string>()
+        const controlClipIds = new Set<string>()
+        for (const nodeJson of nodes) {
+          if (!isRecord(nodeJson) || !isRecord(nodeJson.controlSet)) continue
+          const controls = nodeJson.controlSet.controls
+          if (!Array.isArray(controls)) continue
+          for (const control of controls) {
+            if (!isRecord(control) || !isRecord(control.bindings)) continue
+            for (const clipId of Object.values(control.bindings)) {
+              if (typeof clipId === 'string' && clipId !== '') controlClipIds.add(clipId)
+            }
+          }
+        }
         for (const clip of library.clips as unknown[]) {
           if (!isRecord(clip) || typeof clip.id !== 'string' || clip.id === '') {
             errors.push('Library clip must have non-empty id')
@@ -212,6 +224,12 @@ export function validateReusableObject(json: unknown): string[] {
             errors.push(`Library clip "${clip.id}" params must be array`)
           if (!Array.isArray(clip.channels))
             errors.push(`Library clip "${clip.id}" channels must be array`)
+          if (controlClipIds.has(clip.id) && clip.duration !== 1) {
+            errors.push(`Control clip "${clip.id}" must have duration 1`)
+          }
+          if (controlClipIds.has(clip.id) && clip.visibleAnimation !== undefined) {
+            errors.push(`Control clip "${clip.id}" cannot animate visible`)
+          }
         }
       }
       if (Array.isArray(library.clipCollections)) {

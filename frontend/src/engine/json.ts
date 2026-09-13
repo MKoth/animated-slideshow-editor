@@ -431,6 +431,8 @@ export type ClipJSON = {
   readonly materialChannelAnimations?: Readonly<Record<string, ClipChannelJSON>>
   readonly visibleAnimation?: ClipChannelJSON
   readonly circleChannelAnimations?: Readonly<Record<string, ClipChannelJSON>>
+  readonly tableChannelAnimations?: Readonly<Record<string, ClipChannelJSON>>
+  readonly symmetryAnimation?: ClipChannelJSON
   readonly morphAnimation?: ClipChannelJSON
   readonly shadowChannelAnimations?: Readonly<Record<string, ClipChannelJSON>>
 }

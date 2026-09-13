@@ -1,4 +1,9 @@
-import type { AnimationProperty, CircleAnimationProperty } from './animationProperties'
+import type {
+  AnimationProperty,
+  CircleAnimationProperty,
+  TableAnimationProperty,
+} from './animationProperties'
+import { TABLE_ANIMATABLE_PROPERTIES } from './animationProperties'
 import type { Keyframe, KeyframeValue } from './keyframe'
 import type { ClipChannelJSON, ClipJSON } from './json'
 import { newId } from './ids'
@@ -8,6 +13,7 @@ import { isRecord, requireFiniteNumber, requireString } from './guards'
 import { requireAnimationProperty } from './animationProperties'
 import type { ShadowProperty } from './shadowEffect'
 import { SHADOW_PROPERTIES, requireShadowKeyframeValue } from './shadowEffect'
+import { requireSymmetryKeyframeValue } from './symmetry'
 
 /** The recognised kind values for clip parameters. */
 export const CLIP_PARAM_KINDS = ['number', 'color', 'vec2'] as const
@@ -206,6 +212,8 @@ export class ClipDefinition {
   readonly #materialChannelAnimations = new Map<string, ClipChannelAnimation>()
   readonly #visibleAnimation = new ClipChannelAnimation()
   readonly #circleAnimations = new Map<CircleAnimationProperty, ClipChannelAnimation>()
+  readonly #tableAnimations = new Map<TableAnimationProperty, ClipChannelAnimation>()
+  readonly #symmetryAnimation = new ClipChannelAnimation()
   readonly #morphAnimation = new ClipChannelAnimation()
   readonly #shadowChannelAnimations = new Map<ShadowProperty, ClipChannelAnimation>()
 
@@ -354,6 +362,18 @@ export class ClipDefinition {
     return [...this.#circleAnimations.keys()]
   }
 
+  getTableKeyframes(property: TableAnimationProperty): readonly Keyframe[] {
+    return this.#tableAnimations.get(property)?.keyframes() ?? []
+  }
+
+  get tableTrackKeys(): readonly TableAnimationProperty[] {
+    return [...this.#tableAnimations.keys()]
+  }
+
+  getSymmetryKeyframes(): readonly Keyframe[] {
+    return this.#symmetryAnimation.keyframes()
+  }
+
   getMorphKeyframes(): readonly Keyframe[] {
     return this.#morphAnimation.keyframes()
   }
@@ -368,6 +388,14 @@ export class ClipDefinition {
 
   circleAnimation(property: CircleAnimationProperty): ClipChannelAnimation | undefined {
     return this.#circleAnimations.get(property)
+  }
+
+  tableAnimation(property: TableAnimationProperty): ClipChannelAnimation | undefined {
+    return this.#tableAnimations.get(property)
+  }
+
+  symmetryAnimation(): ClipChannelAnimation {
+    return this.#symmetryAnimation
   }
 
   morphAnimation(): ClipChannelAnimation {
@@ -443,6 +471,19 @@ export class ClipDefinition {
       this.#circleAnimations.set(property, anim)
     }
     anim.add(keyframe)
+  }
+
+  addTableKeyframe(property: TableAnimationProperty, keyframe: Keyframe): void {
+    let anim = this.#tableAnimations.get(property)
+    if (!anim) {
+      anim = new ClipChannelAnimation()
+      this.#tableAnimations.set(property, anim)
+    }
+    anim.add(keyframe)
+  }
+
+  addSymmetryKeyframe(keyframe: Keyframe): void {
+    this.#symmetryAnimation.add(keyframe)
   }
 
   addMorphKeyframe(keyframe: Keyframe): void {
@@ -601,6 +642,22 @@ export class ClipDefinition {
     for (const [prop, anim] of this.#circleAnimations) {
       copy.#circleAnimations.set(prop, anim.copy())
     }
+    for (const [prop, anim] of this.#tableAnimations) {
+      copy.#tableAnimations.set(prop, anim.copy())
+    }
+    for (const kf of this.#symmetryAnimation.keyframes()) {
+      copy.#symmetryAnimation.add(
+        new KeyframeModel(
+          kf.id,
+          kf.time,
+          kf.value,
+          kf.interpolation,
+          { time: kf.tangentIn.time, value: kf.tangentIn.value },
+          { time: kf.tangentOut.time, value: kf.tangentOut.value },
+          kf.disabled,
+        ),
+      )
+    }
     for (const kf of this.#morphAnimation.keyframes()) {
       copy.#morphAnimation.add(
         new KeyframeModel(
@@ -652,6 +709,14 @@ export class ClipDefinition {
       ;(json as Record<string, unknown>).circleChannelAnimations = Object.fromEntries(
         [...this.#circleAnimations.entries()].map(([prop, anim]) => [prop, anim.toJSON()]),
       )
+    }
+    if (this.#tableAnimations.size > 0) {
+      ;(json as Record<string, unknown>).tableChannelAnimations = Object.fromEntries(
+        [...this.#tableAnimations.entries()].map(([prop, anim]) => [prop, anim.toJSON()]),
+      )
+    }
+    if (this.#symmetryAnimation.length > 0) {
+      ;(json as Record<string, unknown>).symmetryAnimation = this.#symmetryAnimation.toJSON()
     }
     if (this.#morphAnimation.length > 0) {
       ;(json as Record<string, unknown>).morphAnimation = this.#morphAnimation.toJSON()
@@ -770,6 +835,24 @@ export class ClipDefinition {
           )
         }
       }
+    }
+    const tableAnims = (json as Record<string, unknown>).tableChannelAnimations
+    if (isRecord(tableAnims)) {
+      for (const [prop, animJson] of Object.entries(tableAnims)) {
+        if ((TABLE_ANIMATABLE_PROPERTIES as readonly string[]).includes(prop)) {
+          clip.#tableAnimations.set(
+            prop as TableAnimationProperty,
+            ClipChannelAnimation.fromJSON(animJson),
+          )
+        }
+      }
+    }
+    const symmetryAnim = (json as Record<string, unknown>).symmetryAnimation
+    if (isRecord(symmetryAnim)) {
+      const anim = ClipChannelAnimation.fromJSONWithKind(symmetryAnim, (value, id) => {
+        return requireSymmetryKeyframeValue(value, `Clip symmetry keyframe "${id}" value`)
+      })
+      for (const keyframe of anim.keyframes()) clip.#symmetryAnimation.add(keyframe)
     }
     const morphAnim = (json as Record<string, unknown>).morphAnimation
     if (isRecord(morphAnim) && morphAnim !== null) {

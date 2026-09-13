@@ -68,6 +68,7 @@ import { assetsApi } from '../../api'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { ManagerRuler, OrphanRuler } from './ManagerRuler'
 import { snapKeyframeTime } from '../../engine/timelineSnapping'
+import { createControl, createControlSet } from '../../engine/control'
 
 interface AnimationManagerModalProps {
   open: boolean
@@ -467,6 +468,38 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const overlayLabel = parentNode ? `Animation Manager — ${parentNode.name}` : 'Animation Manager'
 
   const controls = parentNode?.controlSet?.controls ?? []
+  const addControl = useCallback(() => {
+    if (!parentNode) return
+    const existing = new Set(parentNode.controlSet?.controls.map((control) => control.key) ?? [])
+    let index = 1
+    while (existing.has(`Control${index}`)) index += 1
+    const control = createControl({
+      key: `Control${index}`,
+      label: `Control ${index}`,
+      exposed: true,
+    })
+    // Control definitions are embedded on SceneNode and currently have no command API.
+    // eslint-disable-next-line react-hooks/immutability
+    parentNode.controlSet = parentNode.controlSet
+      ? { ...parentNode.controlSet, controls: [...parentNode.controlSet.controls, control] }
+      : createControlSet(parentNode.id, [control])
+    setTick((value) => value + 1)
+  }, [parentNode])
+
+  const toggleControlExposure = useCallback(
+    (controlKey: string) => {
+      if (!parentNode?.controlSet) return
+      // eslint-disable-next-line react-hooks/immutability
+      parentNode.controlSet = {
+        ...parentNode.controlSet,
+        controls: parentNode.controlSet.controls.map((control) =>
+          control.key === controlKey ? { ...control, exposed: !control.exposed } : control,
+        ),
+      }
+      setTick((value) => value + 1)
+    },
+    [parentNode],
+  )
   const addControlKeyframe = useCallback(
     (controlKey: string, value: number) => {
       if (!parentNodeId || !activeSlide) return
@@ -2153,21 +2186,30 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               </button>
             </div>
             {activeTab === 'controls' && parentNodeId && (
-              <button
-                data-testid="manager-toggle-authoring"
-                onClick={() => toggleAuthoringMode(parentNodeId)}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: 4,
-                  border: '1px solid var(--color-border, #ddd)',
-                  background: authoringMode ? 'var(--color-accent, #7c5cff)' : '#fff',
-                  color: authoringMode ? '#fff' : 'var(--color-text-muted, #666)',
-                  fontSize: 12,
-                  cursor: 'pointer',
-                }}
-              >
-                {authoringMode ? 'Hide internal lanes' : 'Show internal lanes'}
-              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  data-testid="manager-add-control"
+                  onClick={addControl}
+                  style={{ padding: '6px 12px', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+                >
+                  Add Control
+                </button>
+                <button
+                  data-testid="manager-toggle-authoring"
+                  onClick={() => toggleAuthoringMode(parentNodeId)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border, #ddd)',
+                    background: authoringMode ? 'var(--color-accent, #7c5cff)' : '#fff',
+                    color: authoringMode ? '#fff' : 'var(--color-text-muted, #666)',
+                    fontSize: 12,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {authoringMode ? 'Hide internal lanes' : 'Show internal lanes'}
+                </button>
+              </div>
             )}
             {activeTab === 'orphans' && (
               <button
@@ -2766,6 +2808,19 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     }
                     style={{ flex: 1 }}
                   />
+                  <button
+                    data-testid={`manager-control-expose-${control.key}`}
+                    onClick={() => toggleControlExposure(control.key)}
+                    style={{
+                      padding: '5px 9px',
+                      borderRadius: 4,
+                      border: '1px solid var(--color-border, #ddd)',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                    }}
+                  >
+                    {control.exposed ? 'Hide' : 'Expose'}
+                  </button>
                   <button
                     data-testid={`manager-control-edit-${control.key}`}
                     onClick={() => handleEditControl(control.key)}

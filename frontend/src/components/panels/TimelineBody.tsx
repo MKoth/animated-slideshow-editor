@@ -1250,7 +1250,7 @@ export function TimelineBody({
                 data-depth={row.depth}
                 style={{ paddingLeft: 12 + row.depth * 16 }}
               >
-                <span className="timeline-subtrack__label">{row.label}</span>
+                <span className="timeline-subtrack__label">{row.label} (0…1)</span>
                 <button
                   className="timeline-subtrack__add"
                   aria-label={`Add Keyframe to ${row.label}`}
@@ -1286,7 +1286,7 @@ export function TimelineBody({
                 data-node-id={row.node.id}
                 data-property={row.property}
                 data-depth={row.depth}
-                title="Controlled by an exposed rig Control"
+                title={`Controlled by exposed Control ${row.ownerKey.split(':')[1] ?? ''}`}
                 style={{
                   paddingLeft: 12 + row.depth * 16,
                   color: 'var(--color-text-muted, #999)',
@@ -1294,7 +1294,7 @@ export function TimelineBody({
                 }}
               >
                 <span className="timeline-subtrack__label">
-                  {PROPERTY_LABELS[row.property]} (hidden)
+                  {PROPERTY_LABELS[row.property]} (hidden, controlled)
                 </span>
               </li>
             ) : row.kind === 'subtrack' ? (
@@ -1695,15 +1695,39 @@ export function TimelineBody({
                       data-control-key={row.controlKey}
                       style={{ top: index * ROW_HEIGHT }}
                     >
-                      {keyframes.map((keyframe) => (
-                        <span
-                          key={keyframe.id}
-                          className="timeline-keyframe-marker"
-                          data-keyframe-id={keyframe.id}
-                          title={`${row.label}: ${String(keyframe.value)}`}
-                          style={{ left: keyframe.time * pps }}
-                        />
-                      ))}
+                      {keyframes.map((keyframe) => {
+                        const selected = selectedKeyframeIds.includes(keyframe.id)
+                        return (
+                          <KeyframeMarker
+                            key={keyframe.id}
+                            keyframeId={keyframe.id}
+                            shownTime={keyframe.time}
+                            selected={selected}
+                            disabled={keyframe.disabled}
+                            pps={pps}
+                            step={step}
+                            parameterLabel={`${row.label} (0…1)`}
+                            onPointerDown={(event) => {
+                              event.stopPropagation()
+                              if (event.metaKey || event.ctrlKey) {
+                                timelineSelection.toggleKeyframe(keyframe.id, {
+                                  time: keyframe.time,
+                                  rowIndex: index,
+                                })
+                              } else {
+                                timelineSelection.selectKeyframe(keyframe.id, {
+                                  time: keyframe.time,
+                                  rowIndex: index,
+                                })
+                              }
+                            }}
+                            onContextMenu={(event) => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                            }}
+                          />
+                        )
+                      })}
                     </div>
                   )
                 }

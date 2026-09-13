@@ -675,8 +675,17 @@ export class AnimationEvaluator {
     const clampedTime = Math.min(Math.max(boundedTime, 0), slide.duration)
     const animation = slide.animation.node(nodeId)
     const keyframes = animation?.symmetryKeyframes()
-    if (!keyframes || keyframes.length === 0) return null
-    return this.#evaluateSymmetryKeyframes(keyframes, clampedTime)
+    let value =
+      keyframes && keyframes.length > 0
+        ? this.#evaluateSymmetryKeyframes(keyframes, clampedTime)
+        : null
+    const node = this.#nodeLookup(nodeId)
+    this.#forEachControlClip(node, clampedTime, (clip, u) => {
+      const enabled = enabledKeyframes(clip.getSymmetryKeyframes())
+      if (enabled.length === 0) return
+      value = this.#evaluateSymmetryKeyframes(enabled, effectiveUForClip(clip, enabled, u))
+    })
+    return value
   }
 
   evaluateSymmetryVertices(
@@ -1112,7 +1121,18 @@ export class AnimationEvaluator {
       baseBorderRadius,
     )
     const padding = this.#evaluate(animation?.tableKeyframes('padding'), clampedTime, basePadding)
-    return { borderRadius: Math.max(0, borderRadius), padding: Math.max(0, padding) }
+    const values = { borderRadius, padding }
+    this.#forEachControlClip(node, clampedTime, (clip, u) => {
+      for (const property of clip.tableTrackKeys) {
+        const enabled = enabledKeyframes(clip.getTableKeyframes(property))
+        if (enabled.length === 0) continue
+        values[property] = this.#evaluateClipChannel(enabled, effectiveUForClip(clip, enabled, u))
+      }
+    })
+    return {
+      borderRadius: Math.max(0, values.borderRadius),
+      padding: Math.max(0, values.padding),
+    }
   }
 
   #findOwningTable(node: SceneNode): SceneNode | null {
