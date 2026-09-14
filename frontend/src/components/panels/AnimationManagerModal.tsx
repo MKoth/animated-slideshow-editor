@@ -17,10 +17,14 @@ import {
   packCollectionLanesForParent,
   visualDurationForCollectionPlacement,
   collectUnifiedBarEdgesForSnap,
-  orphanBounds,
-  orphanLeftPx,
 } from '../../engine/animationManagerModel'
-import { useTimelineViewStore, pixelsPerSecond } from '../../stores/timelineViewStore'
+import {
+  useTimelineViewStore,
+  pixelsPerSecond,
+  rulerTickStep,
+  rulerTickTimes,
+  tickLabel,
+} from '../../stores/timelineViewStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { walkPreOrder } from '../../engine/sceneNode'
 import type { SceneNode } from '../../engine/sceneNode'
@@ -69,7 +73,7 @@ import type { AnimatedParam } from '../../engine/animationManagerModel'
 import type { KeyframeTarget } from '../../engine/keyframeTarget'
 import { assetsApi } from '../../api'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
-import { ManagerRuler, OrphanRuler } from './ManagerRuler'
+import { ManagerRuler } from './ManagerRuler'
 import { snapKeyframeTime } from '../../engine/timelineSnapping'
 import { createControl, createControlSet } from '../../engine/control'
 
@@ -310,6 +314,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     nodeId: string
   } | null>(null)
   const orphansContainerRef = useRef<HTMLDivElement>(null)
+  const collectionScrollRef = useRef<HTMLDivElement>(null)
+  const controlsScrollRef = useRef<HTMLDivElement>(null)
   const notify = useNotificationStore((s) => s.notify)
   const authoringMode = useTimelineViewStore((s) =>
     parentNodeId ? s.authoringModeByHost[parentNodeId] === true : false,
@@ -462,6 +468,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   ])
 
   const activeSlide = open ? engine.getActiveSlide() : null
+  const currentPlayheadTime = usePlaybackController((s) =>
+    activeSlide ? (s.currentTimes[activeSlide.id] ?? 0) : 0,
+  )
   const parentNode = useMemo(() => {
     if (!open || !parentNodeId) return null
     try {
@@ -712,13 +721,15 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     return entries
   }, [activeSlide, managerRows, tick])
 
-  // Global orphan timeline bounds – shared across all lanes so same time aligns vertically
+  // Global orphan timeline bounds – unified across all tabs to slide duration (same as main timeline slider)
   const orphanTimelineBounds = useMemo(() => {
     if (activeTab !== 'orphans') return null
     if (flatOrphanEntries.length === 0) return null
-    const times = flatOrphanEntries.map((e) => e.keyframe.time)
-    return orphanBounds(times, pps)
-  }, [activeTab, flatOrphanEntries, pps])
+    const slideDuration = activeSlide?.duration ?? 10
+    const span = slideDuration
+    const width = span * pps
+    return { min: 0, max: slideDuration, span, width }
+  }, [activeTab, flatOrphanEntries, pps, activeSlide?.duration])
 
   // --- Collection grouping helpers (15-05): flat clip lanes, validation, bindings preview ---
 
@@ -2715,6 +2726,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               borderRadius: 6,
               padding: 8,
               background: 'var(--color-bg-panel, #fff)',
+              width: '100%',
+              boxSizing: 'border-box',
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -2797,14 +2810,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             ) : (
               (() => {
                 const collectionSlideDuration = activeSlide?.duration ?? 10
-                const collectionMaxEnd =
-                  packedCollectionLanes.length > 0
-                    ? Math.max(...packedCollectionLanes.map((l) => l.end))
-                    : 0
-                const collectionTimelineWidth =
-                  Math.max(collectionSlideDuration, collectionMaxEnd + 1) * pps
+                void collectionSlideDuration
+                void pps
                 return (
                   <div
+                    ref={collectionScrollRef}
                     data-testid="collection-lanes"
                     style={{
                       position: 'relative',
@@ -2813,19 +2823,76 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                       background: 'var(--color-bg, #fafafa)',
                       overflowX: 'auto',
                       overflowY: 'hidden',
+                      width: '100%',
+                      boxSizing: 'border-box',
+                    }}
+                    onScroll={(e) => {
+                      const target = e.currentTarget as HTMLDivElement
+                      const p = pixelsPerSecond(useTimelineViewStore.getState().zoomLevel)
+                      const viewport = target.clientWidth > 0 ? target.clientWidth : 800
+                      const duration = activeSlide?.duration ?? 10
+                      useTimelineViewStore
+                        .getState()
+                        .setScrollTime(target.scrollLeft / p, viewport, duration)
                     }}
                   >
-                    <div style={{ width: `${collectionTimelineWidth}px` }}>
-                      <ManagerRuler
-                        durationSec={collectionSlideDuration}
-                        pps={pps}
-                        widthPx={collectionTimelineWidth}
-                        testId="collection-ruler"
-                      />
+                    <div style={{ width: '100%' }}>
                       <div
                         style={{
                           position: 'relative',
-                          width: `${collectionTimelineWidth}px`,
+                          width: '100%',
+                          height: 22,
+                          borderBottom: '1px solid var(--color-border, #ddd)',
+                          background: 'var(--color-bg, #fff)',
+                          overflow: 'hidden',
+                        }}
+                        data-testid="collection-ruler"
+                      >
+                        {(() => {
+                          const span = collectionSlideDuration
+                          const step = rulerTickStep(pps)
+                          const ticks = rulerTickTimes(0, span, step)
+                          return ticks.map((time) => (
+                            <div
+                              key={time}
+                              data-testid={`collection-ruler-tick-${time}`}
+                              style={{
+                                position: 'absolute',
+                                left: `${(time / span) * 100}%`,
+                                top: 0,
+                                bottom: 0,
+                                borderLeft: '1px solid var(--color-border, #ddd)',
+                                fontSize: 9,
+                                color: 'var(--color-text-muted, #666)',
+                                paddingLeft: 3,
+                                display: 'flex',
+                                alignItems: 'center',
+                                pointerEvents: 'none',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {tickLabel(time, step)}s
+                            </div>
+                          ))
+                        })()}
+                        <div
+                          data-testid="manager-collection-ruler-playhead"
+                          style={{
+                            position: 'absolute',
+                            left: `${(currentPlayheadTime / collectionSlideDuration) * 100}%`,
+                            top: 0,
+                            bottom: 0,
+                            width: 1,
+                            background: 'var(--color-accent, #ff3b30)',
+                            pointerEvents: 'none',
+                            zIndex: 20,
+                          }}
+                        />
+                      </div>
+                      <div
+                        style={{
+                          position: 'relative',
+                          width: '100%',
                           height: (() => {
                             const maxTrack =
                               packedCollectionLanes.length > 0
@@ -2836,6 +2903,19 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                           minHeight: CLIP_LANE_HEIGHT_PX,
                         }}
                       >
+                        <div
+                          data-testid="manager-collection-playhead"
+                          style={{
+                            position: 'absolute',
+                            left: `${(currentPlayheadTime / collectionSlideDuration) * 100}%`,
+                            top: 0,
+                            bottom: 0,
+                            width: 1,
+                            background: 'var(--color-accent, #ff3b30)',
+                            pointerEvents: 'none',
+                            zIndex: 500,
+                          }}
+                        />
                         {packedCollectionLanes.map((lane) => {
                           const isSelected = selectedPlacementId === lane.placement.id
                           const isDragging =
@@ -2861,8 +2941,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                           }
                           const barStyle: React.CSSProperties = {
                             position: 'absolute',
-                            left: lane.left,
-                            width: lane.width,
+                            left: `${(lane.start / collectionSlideDuration) * 100}%`,
+                            width: `${(lane.visualDuration / collectionSlideDuration) * 100}%`,
                             top: lane.track * CLIP_LANE_HEIGHT_PX + 2,
                             height: CLIP_LANE_BAR_HEIGHT_PX,
                             background: isSelected ? 'var(--color-accent, #7c5cff)' : '#d4c5ff',
@@ -3086,6 +3166,83 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 : `${controls.length} Control${controls.length === 1 ? '' : 's'} · ${
                     controls.filter((control) => control.exposed).length
                   } exposed`}
+            </div>
+            <div
+              ref={controlsScrollRef}
+              data-testid="manager-controls-ruler"
+              style={{
+                position: 'relative',
+                border: '1px solid var(--color-border, #eee)',
+                borderRadius: 4,
+                background: 'var(--color-bg, #fafafa)',
+                overflowX: 'auto',
+                overflowY: 'hidden',
+                width: '100%',
+                boxSizing: 'border-box',
+              }}
+              onScroll={(e) => {
+                const target = e.currentTarget as HTMLDivElement
+                const p = pixelsPerSecond(useTimelineViewStore.getState().zoomLevel)
+                const viewport = target.clientWidth > 0 ? target.clientWidth : 800
+                const duration = activeSlide?.duration ?? 10
+                const next = target.scrollLeft / p
+                if (Math.abs(useTimelineViewStore.getState().scrollTime - next) > 0.01) {
+                  useTimelineViewStore.getState().setScrollTime(next, viewport, duration)
+                }
+              }}
+            >
+              <div
+                style={{
+                  position: 'relative',
+                  width: '100%',
+                  height: 22,
+                  borderBottom: '1px solid var(--color-border, #ddd)',
+                  background: 'var(--color-bg, #fff)',
+                  overflow: 'hidden',
+                }}
+                data-testid="controls-ruler"
+              >
+                {(() => {
+                  const span = activeSlide?.duration ?? 10
+                  const step = rulerTickStep(pps)
+                  const ticks = rulerTickTimes(0, span, step)
+                  return ticks.map((time) => (
+                    <div
+                      key={time}
+                      data-testid={`controls-ruler-tick-${time}`}
+                      style={{
+                        position: 'absolute',
+                        left: `${(time / span) * 100}%`,
+                        top: 0,
+                        bottom: 0,
+                        borderLeft: '1px solid var(--color-border, #ddd)',
+                        fontSize: 9,
+                        color: 'var(--color-text-muted, #666)',
+                        paddingLeft: 3,
+                        display: 'flex',
+                        alignItems: 'center',
+                        pointerEvents: 'none',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {tickLabel(time, step)}s
+                    </div>
+                  ))
+                })()}
+                <div
+                  data-testid="manager-controls-ruler-playhead"
+                  style={{
+                    position: 'absolute',
+                    left: `${(currentPlayheadTime / (activeSlide?.duration ?? 10)) * 100}%`,
+                    top: 0,
+                    bottom: 0,
+                    width: 1,
+                    background: 'var(--color-accent, #ff3b30)',
+                    pointerEvents: 'none',
+                    zIndex: 20,
+                  }}
+                />
+              </div>
             </div>
             {controls.map((control) => {
               const keyframes = activeSlide
@@ -3678,15 +3835,28 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   }
                 : undefined
             }
+            onScroll={(e) => {
+              const target = e.currentTarget as HTMLDivElement
+              const p = pixelsPerSecond(useTimelineViewStore.getState().zoomLevel)
+              const viewport = target.clientWidth > 0 ? target.clientWidth : 800
+              const duration = activeSlide?.duration ?? 10
+              const current = useTimelineViewStore.getState().scrollTime
+              const next = target.scrollLeft / p
+              if (Math.abs(current - next) > 0.01) {
+                useTimelineViewStore.getState().setScrollTime(next, viewport, duration)
+              }
+            }}
             style={{
               border: '1px solid var(--color-border, #ddd)',
               borderRadius: 6,
-              overflow: orphanTimelineBounds ? 'auto' : 'hidden',
-              overflowX: orphanTimelineBounds ? 'auto' : 'hidden',
+              overflow: 'auto',
+              overflowX: 'auto',
               flex: 1,
               display: 'flex',
               flexDirection: 'column',
               position: 'relative',
+              width: '100%',
+              boxSizing: 'border-box',
             }}
           >
             {/* Time ruler – orphan proportional (keep diamond distribution, same pps/step as slide) */}
@@ -3696,16 +3866,64 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   overflowX: 'hidden',
                   flexShrink: 0,
                   borderBottom: '1px solid var(--color-border, #ddd)',
+                  width: '100%',
                 }}
               >
-                <div style={{ width: `${orphanTimelineBounds.width}px`, marginLeft: 32 }}>
-                  <OrphanRuler
-                    min={orphanTimelineBounds.min}
-                    max={orphanTimelineBounds.max}
-                    pps={pps}
-                    widthPx={orphanTimelineBounds.width}
-                    testId="orphan-ruler"
-                  />
+                <div style={{ width: '100%', marginLeft: 0, boxSizing: 'border-box' }}>
+                  <div
+                    style={{
+                      position: 'relative',
+                      width: '100%',
+                      height: 22,
+                      borderBottom: '1px solid var(--color-border, #ddd)',
+                      background: 'var(--color-bg, #fff)',
+                      overflow: 'hidden',
+                    }}
+                    data-testid="orphan-ruler"
+                  >
+                    {(() => {
+                      const span = orphanTimelineBounds
+                        ? orphanTimelineBounds.span
+                        : (activeSlide?.duration ?? 10)
+                      const step = rulerTickStep(pps)
+                      const ticks = rulerTickTimes(0, span, step)
+                      return ticks.map((time) => (
+                        <div
+                          key={time}
+                          data-testid={`orphan-ruler-tick-${time}`}
+                          style={{
+                            position: 'absolute',
+                            left: `${(time / span) * 100}%`,
+                            top: 0,
+                            bottom: 0,
+                            borderLeft: '1px solid var(--color-border, #ddd)',
+                            fontSize: 9,
+                            color: 'var(--color-text-muted, #666)',
+                            paddingLeft: 3,
+                            display: 'flex',
+                            alignItems: 'center',
+                            pointerEvents: 'none',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {tickLabel(time, step)}s
+                        </div>
+                      ))
+                    })()}
+                    <div
+                      data-testid="manager-orphan-ruler-playhead"
+                      style={{
+                        position: 'absolute',
+                        left: `${orphanTimelineBounds ? (currentPlayheadTime / orphanTimelineBounds.span) * 100 : 0}%`,
+                        top: 0,
+                        bottom: 0,
+                        width: 1,
+                        background: 'var(--color-accent, #ff3b30)',
+                        pointerEvents: 'none',
+                        zIndex: 20,
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
             )}
@@ -3716,15 +3934,62 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   overflowX: 'hidden',
                   flexShrink: 0,
                   borderBottom: '1px solid var(--color-border, #ddd)',
+                  width: '100%',
                 }}
               >
-                <div style={{ width: `${(activeSlide.duration ?? 10) * pps}px`, marginLeft: 32 }}>
-                  <ManagerRuler
-                    durationSec={activeSlide.duration}
-                    pps={pps}
-                    widthPx={(activeSlide.duration ?? 10) * pps}
-                    testId="clips-global-ruler"
-                  />
+                <div style={{ width: '100%', marginLeft: 0, boxSizing: 'border-box' }}>
+                  <div
+                    style={{
+                      position: 'relative',
+                      width: '100%',
+                      height: 22,
+                      borderBottom: '1px solid var(--color-border, #ddd)',
+                      background: 'var(--color-bg, #fff)',
+                      overflow: 'hidden',
+                    }}
+                    data-testid="clips-global-ruler"
+                  >
+                    {(() => {
+                      const span = activeSlide.duration
+                      const step = rulerTickStep(pps)
+                      const ticks = rulerTickTimes(0, span, step)
+                      return ticks.map((time) => (
+                        <div
+                          key={time}
+                          data-testid={`clips-global-ruler-tick-${time}`}
+                          style={{
+                            position: 'absolute',
+                            left: `${(time / span) * 100}%`,
+                            top: 0,
+                            bottom: 0,
+                            borderLeft: '1px solid var(--color-border, #ddd)',
+                            fontSize: 9,
+                            color: 'var(--color-text-muted, #666)',
+                            paddingLeft: 3,
+                            display: 'flex',
+                            alignItems: 'center',
+                            pointerEvents: 'none',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {tickLabel(time, step)}s
+                        </div>
+                      ))
+                    })()}
+                    <div
+                      data-testid="manager-clips-ruler-playhead"
+                      style={{
+                        position: 'absolute',
+                        left: `${(currentPlayheadTime / (activeSlide.duration ?? 10)) * 100}%`,
+                        top: 0,
+                        bottom: 0,
+                        width: 1,
+                        background: 'var(--color-accent, #ff3b30)',
+                        pointerEvents: 'none',
+                        zIndex: 20,
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
             )}
@@ -3776,9 +4041,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 packedLanes.length > 0 ? Math.max(...packedLanes.map((l) => l.track)) + 1 : 0
               const lanesHeight = trackCount * CLIP_LANE_HEIGHT_PX
               // Container width: based on slide duration and max lane end
-              const maxEnd = packedLanes.length > 0 ? Math.max(...packedLanes.map((l) => l.end)) : 0
               const slideDuration = activeSlide?.duration ?? 10
-              const timelineWidth = Math.max(slideDuration, maxEnd + 1) * pps
+              void slideDuration
+              void pps
               return (
                 <div
                   key={row.node.id}
@@ -3845,28 +4110,89 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                           data-testid={`manager-clip-lanes-${row.node.id}`}
                           style={{
                             position: 'relative',
-                            margin: '6px 12px 6px 32px',
+                            margin: '6px 0',
                             border: '1px solid var(--color-border, #eee)',
                             borderRadius: 4,
                             background: 'var(--color-bg, #fafafa)',
-                            overflowX: 'auto',
+                            overflowX: 'hidden',
                             overflowY: 'hidden',
+                            width: '100%',
+                            boxSizing: 'border-box',
                           }}
                         >
-                          <div style={{ width: `${timelineWidth}px` }}>
-                            <ManagerRuler
-                              durationSec={activeSlide?.duration ?? 10}
-                              pps={pps}
-                              widthPx={timelineWidth}
-                              testId={`clip-ruler-${row.node.id}`}
-                            />
+                          <div style={{ width: '100%' }}>
                             <div
                               style={{
                                 position: 'relative',
-                                width: `${timelineWidth}px`,
+                                width: '100%',
+                                height: 22,
+                                borderBottom: '1px solid var(--color-border, #ddd)',
+                                background: 'var(--color-bg, #fff)',
+                                overflow: 'hidden',
+                              }}
+                              data-testid={`clip-ruler-${row.node.id}`}
+                            >
+                              {(() => {
+                                const span = slideDuration
+                                const step = rulerTickStep(pps)
+                                const ticks = rulerTickTimes(0, span, step)
+                                return ticks.map((time) => (
+                                  <div
+                                    key={time}
+                                    data-testid={`clip-ruler-${row.node.id}-tick-${time}`}
+                                    style={{
+                                      position: 'absolute',
+                                      left: `${(time / span) * 100}%`,
+                                      top: 0,
+                                      bottom: 0,
+                                      borderLeft: '1px solid var(--color-border, #ddd)',
+                                      fontSize: 9,
+                                      color: 'var(--color-text-muted, #666)',
+                                      paddingLeft: 3,
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      pointerEvents: 'none',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    {tickLabel(time, step)}s
+                                  </div>
+                                ))
+                              })()}
+                              <div
+                                data-testid={`manager-perrow-ruler-playhead-${row.node.id}`}
+                                style={{
+                                  position: 'absolute',
+                                  left: `${(currentPlayheadTime / slideDuration) * 100}%`,
+                                  top: 0,
+                                  bottom: 0,
+                                  width: 1,
+                                  background: 'var(--color-accent, #ff3b30)',
+                                  pointerEvents: 'none',
+                                  zIndex: 20,
+                                }}
+                              />
+                            </div>
+                            <div
+                              style={{
+                                position: 'relative',
+                                width: '100%',
                                 height: lanesHeight > 0 ? lanesHeight : CLIP_LANE_HEIGHT_PX,
                               }}
                             >
+                              <div
+                                data-testid={`manager-clip-playhead-${row.node.id}`}
+                                style={{
+                                  position: 'absolute',
+                                  left: `${(currentPlayheadTime / slideDuration) * 100}%`,
+                                  top: 0,
+                                  bottom: 0,
+                                  width: 1,
+                                  background: 'var(--color-accent, #ff3b30)',
+                                  pointerEvents: 'none',
+                                  zIndex: 500,
+                                }}
+                              />
                               {packedLanes.map((lane) => {
                                 const isSelectedSingle = selectedInstanceId === lane.instance.id
                                 const isMultiSelected = selectedClipIds.has(lane.instance.id)
@@ -3880,8 +4206,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                 const isHighlighted = highlightedClipInstanceId === lane.instance.id
                                 const barStyle: React.CSSProperties = {
                                   position: 'absolute',
-                                  left: lane.left,
-                                  width: lane.width,
+                                  left: `${(lane.start / slideDuration) * 100}%`,
+                                  width: `${(lane.visualDuration / slideDuration) * 100}%`,
                                   top: lane.track * CLIP_LANE_HEIGHT_PX + 2,
                                   height: CLIP_LANE_BAR_HEIGHT_PX,
                                   background: isHighlighted
@@ -4141,7 +4467,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                       ...(hasOrphanTimeline && showDiamonds
                                         ? {
                                             position: 'sticky',
-                                            left: 32,
+                                            left: 0,
                                             background: 'var(--color-bg-panel, #fff)',
                                             zIndex: 1,
                                             paddingRight: 8,
@@ -4169,7 +4495,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                         style={{
                                           position: 'relative',
                                           flexShrink: 0,
-                                          width: `${orphanTimelineBounds.width}px`,
+                                          width: '100%',
                                           height: 16,
                                           background: 'rgba(124,92,255,0.04)',
                                           border: '1px solid rgba(124,92,255,0.12)',
@@ -4181,7 +4507,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                             (x) => x.keyframeId === kf.id,
                                           )
                                           const isSelected = selectedOrphanIds.has(kf.id)
-                                          const left = orphanLeftPx(kf.time, orphanTimelineBounds)
+                                          const left = `${(kf.time / (orphanTimelineBounds?.span ?? activeSlide?.duration ?? 10)) * 100}%`
                                           return (
                                             <span
                                               key={kf.id}
