@@ -1,4 +1,5 @@
 /* eslint-disable react-hooks/set-state-in-effect */
+/* eslint-disable react-hooks/refs -- hover highlight stores previous selection in ref */
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
 import {
@@ -22,6 +23,7 @@ import {
 import { useTimelineViewStore, pixelsPerSecond } from '../../stores/timelineViewStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { walkPreOrder } from '../../engine/sceneNode'
+import type { SceneNode } from '../../engine/sceneNode'
 import {
   clipChannelRows,
   type ClipEditorRow,
@@ -234,6 +236,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({})
   const [editing, setEditing] = useState<{ clipId: string; nodeId: string } | null>(null)
   const [editingControl, setEditingControl] = useState<{ key: string; clipId: string } | null>(null)
+  const [editingControlMeta, setEditingControlMeta] = useState<{
+    key: string
+    draftLabel: string
+  } | null>(null)
+  const [deleteControlConfirmKey, setDeleteControlConfirmKey] = useState<string | null>(null)
   const [savedZoom, setSavedZoom] = useState<number | null>(null)
   const [selectedInstanceId, setSelectedInstanceId] = useState<string | null>(null)
   const [dragState, setDragState] = useState<DragState | null>(null)
@@ -323,6 +330,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       setExpandedMap({})
       setEditing(null)
       setEditingControl(null)
+      setEditingControlMeta(null)
+      setDeleteControlConfirmKey(null)
       setSelectedInstanceId(null)
       setDragState(null)
       setClipMenu(null)
@@ -360,6 +369,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     }
     setEditing(null)
     setEditingControl(null)
+    setEditingControlMeta(null)
   }, [savedZoom])
 
   // Esc handling: drills back from editor (restoring pps), second Esc closes
@@ -381,6 +391,12 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           e.stopPropagation()
         } else if (deleteConfirmCollectionId) {
           setDeleteConfirmCollectionId(null)
+          e.stopPropagation()
+        } else if (deleteControlConfirmKey) {
+          setDeleteControlConfirmKey(null)
+          e.stopPropagation()
+        } else if (editingControlMeta) {
+          setEditingControlMeta(null)
           e.stopPropagation()
         } else if (deleteOrphansConfirm) {
           // let DeleteOrphansConfirmModal's own Esc handler call onKeep (with notify)
@@ -426,6 +442,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     open,
     editing,
     editingControl,
+    editingControlMeta,
+    deleteControlConfirmKey,
     dragState,
     clipMenu,
     orphanContextMenu,
@@ -469,6 +487,50 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const overlayLabel = parentNode ? `Animation Manager — ${parentNode.name}` : 'Animation Manager'
 
   const controls = parentNode?.controlSet?.controls ?? []
+  const availableClipsForBinding = useMemo(() => {
+    void tick
+    try {
+      return [...engine.clips]
+    } catch {
+      return []
+    }
+  }, [engine, tick])
+  const [hoveredBindingSemantic, setHoveredBindingSemantic] = useState<string | null>(null)
+  const previousSelectionRef = useRef<string[] | null>(null)
+  const descendantSemanticMap = useMemo(() => {
+    void tick
+    const map = new Map<string, SceneNode[]>()
+    if (!parentNode) return map
+    for (const node of walkPreOrder(parentNode)) {
+      if (node.id === parentNode.id) continue
+      const sem = node.semanticName?.trim()
+      if (!sem) continue
+      const arr = map.get(sem) ?? []
+      arr.push(node)
+      map.set(sem, arr)
+    }
+    return map
+  }, [parentNode, tick])
+  const handleBindingHoverEnter = useCallback(
+    (semantic: string) => {
+      setHoveredBindingSemantic(semantic)
+      const nodes = descendantSemanticMap.get(semantic) ?? []
+      if (nodes.length > 0) {
+        previousSelectionRef.current = [...useSelectionStore.getState().selectedIds]
+        useSelectionStore.getState().selectMany(nodes.map((n) => n.id))
+      }
+    },
+    [descendantSemanticMap],
+  )
+  const handleBindingHoverLeave = useCallback(() => {
+    setHoveredBindingSemantic(null)
+    if (previousSelectionRef.current) {
+      const prev = previousSelectionRef.current
+      previousSelectionRef.current = null
+      if (prev.length === 0) useSelectionStore.getState().clear()
+      else useSelectionStore.getState().selectMany(prev)
+    }
+  }, [])
   const addControl = useCallback(() => {
     if (!parentNode) return
     const existing = new Set(parentNode.controlSet?.controls.map((control) => control.key) ?? [])
@@ -489,6 +551,110 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     )
     setTick((value) => value + 1)
   }, [dispatch, parentNode])
+
+  const setControlBindings = useCallback(
+    (controlKey: string, bindings: Record<string, string>) => {
+      if (!parentNode?.controlSet) return
+      dispatch(
+        new SetControlSetCommand({
+          nodeId: parentNode.id,
+          controlSet: {
+            ...parentNode.controlSet,
+            controls: parentNode.controlSet.controls.map((control) =>
+              control.key === controlKey ? { ...control, bindings } : control,
+            ),
+          },
+        }),
+      )
+      setTick((value) => value + 1)
+    },
+    [dispatch, parentNode],
+  )
+
+  const removeControlBinding = useCallback(
+    (controlKey: string, semanticName: string) => {
+      const existing =
+        parentNode?.controlSet?.controls.find((c) => c.key === controlKey)?.bindings ?? {}
+      const next = { ...existing }
+      delete next[semanticName]
+      setControlBindings(controlKey, next)
+    },
+    [parentNode, setControlBindings],
+  )
+
+  const handleEditControlMeta = useCallback(
+    (key: string) => {
+      const control = parentNode?.controlSet?.controls.find((c) => c.key === key)
+      if (!control) return
+      setEditingControlMeta({ key, draftLabel: control.label })
+    },
+    [parentNode],
+  )
+
+  const handleSaveControlMeta = useCallback(() => {
+    if (!editingControlMeta || !parentNode?.controlSet) return
+    const label = editingControlMeta.draftLabel.trim()
+    if (!label) {
+      notify('Control label must be non-empty')
+      return
+    }
+    const updated = {
+      ...parentNode.controlSet,
+      controls: parentNode.controlSet.controls.map((control) =>
+        control.key === editingControlMeta.key ? { ...control, label } : control,
+      ),
+    }
+    dispatch(new SetControlSetCommand({ nodeId: parentNode.id, controlSet: updated }))
+    setEditingControlMeta(null)
+    setTick((value) => value + 1)
+    notify(`Renamed ${editingControlMeta.key} → "${label}"`)
+  }, [editingControlMeta, parentNode, dispatch, notify])
+
+  const handleDeleteControl = useCallback(
+    (key: string) => {
+      if (!parentNode?.controlSet) return
+      const control = parentNode.controlSet.controls.find((c) => c.key === key)
+      if (!control) return
+      const nextControls = parentNode.controlSet.controls.filter((c) => c.key !== key)
+      const nextSet =
+        nextControls.length === 0 ? undefined : { ...parentNode.controlSet, controls: nextControls }
+      const commands: import('../../engine/commands').Command<unknown>[] = []
+      // Delete control keyframes on all slides where host has track
+      if (engine.project) {
+        for (const slide of engine.project.slides) {
+          const kfs = slide.animation.node(parentNode.id)?.controlKeyframes(key) ?? []
+          if (kfs.length > 0) {
+            commands.push(
+              new DeleteKeyframesCommand({
+                target: { kind: 'control', nodeId: parentNode.id, controlKey: key },
+                keyframeIds: kfs.map((kf) => kf.id),
+              }) as unknown as import('../../engine/commands').Command<unknown>,
+            )
+          }
+        }
+      }
+      commands.push(
+        new SetControlSetCommand({
+          nodeId: parentNode.id,
+          controlSet: nextSet,
+        }) as unknown as import('../../engine/commands').Command<unknown>,
+      )
+      if (commands.length === 1) {
+        dispatch(commands[0] as never)
+      } else {
+        const tx = new TransactionCommand(commands as never)
+        const result = dispatch(tx as never)
+        if (!result.ok) {
+          notify(result.error.message)
+          return
+        }
+      }
+      setDeleteControlConfirmKey(null)
+      setTick((value) => value + 1)
+      notify(`Deleted Control ${key}`)
+    },
+    [parentNode, engine, dispatch, notify],
+  )
 
   const toggleControlExposure = useCallback(
     (controlKey: string) => {
@@ -694,6 +860,105 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     selectedClipIds.size > 0 &&
     collectionNameDraft.trim() &&
     parentNodeId,
+  )
+
+  const addControlFromSelection = useCallback(() => {
+    if (!parentNode) return
+    if (selectedClipIds.size === 0) {
+      notify('Select clip lanes in Clips tab first (Ctrl+click)')
+      return
+    }
+    const seen = new Set<string>()
+    const bindings: Record<string, string> = {}
+    const rejected: string[] = []
+    for (const id of selectedClipIds) {
+      const info = instanceToNode.get(id)
+      if (!info?.semanticName?.trim()) continue
+      const sem = info.semanticName.trim()
+      if (seen.has(sem)) continue
+      seen.add(sem)
+      const count = descendantSemanticMap.get(sem)?.length ?? 0
+      if (count === 0) {
+        rejected.push(sem)
+        continue
+      }
+      bindings[sem] = info.clipId
+    }
+    if (rejected.length > 0)
+      notify(
+        `Skipped ${rejected.join(', ')} — no descendant with that semanticName under ${parentNode.name}`,
+      )
+    if (Object.keys(bindings).length === 0) {
+      notify(
+        'No bindable clips — selected nodes need Semantic Name and at least one matching descendant',
+      )
+      return
+    }
+    const existing = new Set(parentNode.controlSet?.controls.map((control) => control.key) ?? [])
+    let index = 1
+    while (existing.has(`Control${index}`)) index += 1
+    const control = createControl({
+      key: `Control${index}`,
+      label: `Control ${index}`,
+      exposed: true,
+      bindings,
+    })
+    dispatch(
+      new SetControlSetCommand({
+        nodeId: parentNode.id,
+        controlSet: parentNode.controlSet
+          ? { ...parentNode.controlSet, controls: [...parentNode.controlSet.controls, control] }
+          : createControlSet(parentNode.id, [control]),
+      }),
+    )
+    notify(`Control ${control.key} bound to ${Object.keys(bindings).length} semantic(s)`)
+    setTick((value) => value + 1)
+  }, [dispatch, parentNode, selectedClipIds, instanceToNode, descendantSemanticMap, notify])
+
+  const attachSelectedToControl = useCallback(
+    (controlKey: string) => {
+      if (selectedClipIds.size === 0) {
+        notify('Select clip lanes in Clips tab first (Ctrl+click)')
+        return
+      }
+      const preview: Record<string, string> = {}
+      const seen = new Set<string>()
+      const rejected: string[] = []
+      for (const id of selectedClipIds) {
+        const info = instanceToNode.get(id)
+        if (!info?.semanticName?.trim()) continue
+        const sem = info.semanticName.trim()
+        if (seen.has(sem)) continue
+        seen.add(sem)
+        const count = descendantSemanticMap.get(sem)?.length ?? 0
+        if (count === 0) {
+          rejected.push(sem)
+          continue
+        }
+        preview[sem] = info.clipId
+      }
+      if (rejected.length > 0)
+        notify(
+          `Skipped ${rejected.join(', ')} — no descendant with that semanticName under ${parentNode?.name ?? 'host'}`,
+        )
+      if (Object.keys(preview).length === 0) {
+        notify('No bindable clips — selected nodes need Semantic Name and matching descendant')
+        return
+      }
+      const existing =
+        parentNode?.controlSet?.controls.find((c) => c.key === controlKey)?.bindings ?? {}
+      const merged = { ...existing, ...preview }
+      setControlBindings(controlKey, merged)
+      notify(`Attached ${Object.keys(preview).length} binding(s) to ${controlKey}`)
+    },
+    [
+      selectedClipIds,
+      instanceToNode,
+      parentNode,
+      setControlBindings,
+      descendantSemanticMap,
+      notify,
+    ],
   )
 
   const collectionsForParent = useMemo(() => {
@@ -1925,7 +2190,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     const control = controls.find((entry) => entry.key === controlKey)
     const clipId = Object.values(control?.bindings ?? {})[0]
     if (!clipId) {
-      notify('This Control has no normalized clip binding.')
+      notify('This Control has no clip binding — attach a clip in Controls tab first.')
       return
     }
     setSavedZoom(useTimelineViewStore.getState().zoomLevel)
@@ -2198,13 +2463,36 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               </button>
             </div>
             {activeTab === 'controls' && parentNodeId && (
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                 <button
                   data-testid="manager-add-control"
-                  onClick={addControl}
+                  onClick={() => addControl()}
                   style={{ padding: '6px 12px', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
                 >
                   Add Control
+                </button>
+                <button
+                  data-testid="manager-add-control-from-selection"
+                  onClick={() => addControlFromSelection()}
+                  disabled={selectedClipIds.size === 0}
+                  title={
+                    selectedClipIds.size === 0
+                      ? 'Select clip lanes in Clips tab first'
+                      : `Create Control bound to ${selectedClipIds.size} selected lane(s)`
+                  }
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    cursor: selectedClipIds.size > 0 ? 'pointer' : 'default',
+                    fontSize: 12,
+                    opacity: selectedClipIds.size > 0 ? 1 : 0.6,
+                    border: '1px solid var(--color-border, #ddd)',
+                    background: selectedClipIds.size > 0 ? 'var(--color-accent, #7c5cff)' : '#eee',
+                    color: selectedClipIds.size > 0 ? '#fff' : '#999',
+                  }}
+                >
+                  Add Control from selection
+                  {selectedClipIds.size > 0 ? ` (${selectedClipIds.size})` : ''}
                 </button>
                 <button
                   data-testid="manager-toggle-authoring"
@@ -2760,7 +3048,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               }}
             >
               <span>0 CLOSED — 1 OPEN</span>
-              <span>t ∈ [0, 1] · duration=1</span>
+              <span>t ∈ [0, 1] · normalized (any duration)</span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {Object.entries(editingControlBindings).map(([semanticName, clipId]) => {
@@ -2803,6 +3091,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               const keyframes = activeSlide
                 ? (activeSlide.animation.node(parentNodeId!)?.controlKeyframes(control.key) ?? [])
                 : []
+              const bindings = control.bindings ?? {}
+              const bindingEntries = Object.entries(bindings)
               return (
                 <div
                   key={control.key}
@@ -2812,73 +3102,409 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     borderRadius: 6,
                     padding: '10px 12px',
                     display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
+                    flexDirection: 'column',
+                    gap: 8,
                   }}
                 >
-                  <div style={{ minWidth: 180 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>{control.label}</div>
-                    <div style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
-                      {control.key} · {control.exposed ? 'Exposed' : 'Internal'} ·{' '}
-                      {keyframes.length} keyframe{keyframes.length === 1 ? '' : 's'}
+                  {editingControlMeta?.key === control.key ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input
+                        data-testid={`manager-control-rename-input-${control.key}`}
+                        value={editingControlMeta.draftLabel}
+                        onChange={(e) =>
+                          setEditingControlMeta({ key: control.key, draftLabel: e.target.value })
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleSaveControlMeta()
+                          if (e.key === 'Escape') setEditingControlMeta(null)
+                        }}
+                        placeholder="Control label"
+                        style={{
+                          flex: 1,
+                          padding: '6px 8px',
+                          borderRadius: 4,
+                          border: '1px solid var(--color-border, #ddd)',
+                          fontSize: 13,
+                        }}
+                        autoFocus
+                      />
+                      <span style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
+                        {control.key}
+                      </span>
+                      <button
+                        data-testid={`manager-control-rename-save-${control.key}`}
+                        onClick={handleSaveControlMeta}
+                        style={{
+                          padding: '5px 10px',
+                          borderRadius: 4,
+                          background: 'var(--color-accent, #7c5cff)',
+                          color: '#fff',
+                          border: 'none',
+                          cursor: 'pointer',
+                          fontSize: 12,
+                        }}
+                      >
+                        Save
+                      </button>
+                      <button
+                        data-testid={`manager-control-rename-cancel-${control.key}`}
+                        onClick={() => setEditingControlMeta(null)}
+                        style={{
+                          padding: '5px 10px',
+                          borderRadius: 4,
+                          border: '1px solid var(--color-border, #ddd)',
+                          cursor: 'pointer',
+                          fontSize: 12,
+                        }}
+                      >
+                        Cancel
+                      </button>
                     </div>
+                  ) : (
+                    <div
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}
+                    >
+                      <div style={{ minWidth: 160, flex: '0 0 auto' }}>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{control.label}</div>
+                        <div style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
+                          {control.key} · {control.exposed ? 'Exposed' : 'Internal'} ·{' '}
+                          {keyframes.length} keyframe{keyframes.length === 1 ? '' : 's'} ·{' '}
+                          {bindingEntries.length} binding{bindingEntries.length === 1 ? '' : 's'}
+                        </div>
+                      </div>
+                      <input
+                        aria-label={`${control.label} value`}
+                        type="range"
+                        min={control.min}
+                        max={control.max}
+                        step={0.01}
+                        value={controlValues[control.key] ?? control.default}
+                        onChange={(event) =>
+                          setControlValues((previous) => ({
+                            ...previous,
+                            [control.key]: Number(event.target.value),
+                          }))
+                        }
+                        style={{ flex: 1, minWidth: 80 }}
+                      />
+                      <button
+                        data-testid={`manager-control-rename-${control.key}`}
+                        onClick={() => handleEditControlMeta(control.key)}
+                        title="Rename control label"
+                        style={{
+                          padding: '5px 8px',
+                          borderRadius: 4,
+                          border: '1px solid var(--color-border, #ddd)',
+                          cursor: 'pointer',
+                          fontSize: 12,
+                        }}
+                      >
+                        Rename
+                      </button>
+                      <button
+                        data-testid={`manager-control-delete-${control.key}`}
+                        onClick={() => setDeleteControlConfirmKey(control.key)}
+                        title="Delete control and its keyframes"
+                        style={{
+                          padding: '5px 8px',
+                          borderRadius: 4,
+                          border: '1px solid var(--color-danger, #c00)',
+                          color: 'var(--color-danger, #c00)',
+                          cursor: 'pointer',
+                          fontSize: 12,
+                          background: '#fff',
+                        }}
+                      >
+                        Delete
+                      </button>
+                      <button
+                        data-testid={`manager-control-expose-${control.key}`}
+                        onClick={() => toggleControlExposure(control.key)}
+                        style={{
+                          padding: '5px 8px',
+                          borderRadius: 4,
+                          border: '1px solid var(--color-border, #ddd)',
+                          cursor: 'pointer',
+                          fontSize: 12,
+                        }}
+                      >
+                        {control.exposed ? 'Hide' : 'Expose'}
+                      </button>
+                      <button
+                        data-testid={`manager-control-edit-${control.key}`}
+                        onClick={() => handleEditControl(control.key)}
+                        disabled={bindingEntries.length === 0}
+                        title={
+                          bindingEntries.length === 0
+                            ? 'No bindings — attach a clip first'
+                            : 'Edit clip animation'
+                        }
+                        style={{
+                          padding: '5px 8px',
+                          borderRadius: 4,
+                          border: '1px solid var(--color-border, #ddd)',
+                          cursor: bindingEntries.length === 0 ? 'default' : 'pointer',
+                          fontSize: 12,
+                          opacity: bindingEntries.length === 0 ? 0.6 : 1,
+                        }}
+                      >
+                        Edit Animation
+                      </button>
+                      <button
+                        data-testid={`manager-control-keyframe-${control.key}`}
+                        onClick={() =>
+                          addControlKeyframe(
+                            control.key,
+                            controlValues[control.key] ?? control.default,
+                          )
+                        }
+                        style={{
+                          padding: '5px 8px',
+                          borderRadius: 4,
+                          border: '1px solid var(--color-border, #ddd)',
+                          cursor: 'pointer',
+                          fontSize: 12,
+                        }}
+                      >
+                        Add keyframe
+                      </button>
+                    </div>
+                  )}
+                  {deleteControlConfirmKey === control.key && (
+                    <div
+                      data-testid={`manager-control-delete-confirm-${control.key}`}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '6px 8px',
+                        background: '#fff0f0',
+                        border: '1px solid #ffcccc',
+                        borderRadius: 4,
+                        fontSize: 12,
+                      }}
+                    >
+                      <span>
+                        Delete Control "{control.label}" ({control.key}) and its {keyframes.length}{' '}
+                        keyframe(s)?
+                      </span>
+                      <button
+                        data-testid={`manager-control-delete-confirm-yes-${control.key}`}
+                        onClick={() => handleDeleteControl(control.key)}
+                        style={{
+                          padding: '4px 10px',
+                          borderRadius: 4,
+                          background: '#c00',
+                          color: '#fff',
+                          border: 'none',
+                          cursor: 'pointer',
+                          fontSize: 12,
+                        }}
+                      >
+                        Delete
+                      </button>
+                      <button
+                        data-testid={`manager-control-delete-confirm-no-${control.key}`}
+                        onClick={() => setDeleteControlConfirmKey(null)}
+                        style={{
+                          padding: '4px 10px',
+                          borderRadius: 4,
+                          border: '1px solid var(--color-border, #ddd)',
+                          cursor: 'pointer',
+                          fontSize: 12,
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                  <div
+                    data-testid={`manager-control-bindings-${control.key}`}
+                    style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}
+                  >
+                    {bindingEntries.length === 0 ? (
+                      <span
+                        style={{
+                          fontSize: 11,
+                          color: 'var(--color-text-muted, #888)',
+                          fontStyle: 'italic',
+                        }}
+                      >
+                        No bindings — select clip lanes in Clips tab then Attach
+                      </span>
+                    ) : (
+                      bindingEntries.map(([sem, clipId]) => {
+                        let clipName: string
+                        try {
+                          clipName = engine.getClip(clipId).name
+                        } catch {
+                          clipName = clipId.slice(0, 8)
+                        }
+                        const nodes = descendantSemanticMap.get(sem) ?? []
+                        const count = nodes.length
+                        const names = nodes.map((n) => n.name).join(', ')
+                        const isZero = count === 0
+                        const isHovered = hoveredBindingSemantic === sem
+                        return (
+                          <span
+                            key={sem}
+                            data-testid={`manager-control-binding-${control.key}-${sem}`}
+                            onMouseEnter={() => handleBindingHoverEnter(sem)}
+                            onMouseLeave={handleBindingHoverLeave}
+                            title={
+                              isZero
+                                ? `No descendant with semanticName "${sem}" under ${parentNode?.name ?? 'host'} — binding does nothing`
+                                : `${count} node${count === 1 ? '' : 's'}: ${names} — click to highlight`
+                            }
+                            style={{
+                              fontSize: 11,
+                              fontFamily: 'monospace',
+                              background: isZero
+                                ? '#ffe0e0'
+                                : isHovered
+                                  ? '#e0e7ff'
+                                  : 'var(--color-bg, #fafafa)',
+                              border: `1px solid ${isZero ? '#ff9999' : isHovered ? '#7c5cff' : 'var(--color-border, #ddd)'}`,
+                              borderRadius: 4,
+                              padding: '2px 6px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 6,
+                              color: isZero ? '#900' : 'inherit',
+                            }}
+                          >
+                            <span style={{ fontWeight: isHovered ? 600 : 400 }}>
+                              {sem} → {clipName}
+                            </span>
+                            <span
+                              data-testid={`manager-control-binding-count-${control.key}-${sem}`}
+                              style={{
+                                fontSize: 10,
+                                background: isZero ? '#c00' : 'var(--color-accent, #7c5cff)',
+                                color: '#fff',
+                                borderRadius: 10,
+                                padding: '1px 5px',
+                              }}
+                            >
+                              {isZero
+                                ? '0 — no match!'
+                                : `${count} ${count === 1 ? 'node' : 'nodes'}: ${names}`}
+                            </span>
+                            <button
+                              data-testid={`manager-control-unbind-${control.key}-${sem}`}
+                              onClick={() => removeControlBinding(control.key, sem)}
+                              title={`Remove ${sem} binding`}
+                              style={{
+                                border: 'none',
+                                background: 'transparent',
+                                cursor: 'pointer',
+                                padding: 0,
+                                fontSize: 12,
+                                lineHeight: 1,
+                              }}
+                            >
+                              ×
+                            </button>
+                          </span>
+                        )
+                      })
+                    )}
                   </div>
-                  <input
-                    aria-label={`${control.label} value`}
-                    type="range"
-                    min={control.min}
-                    max={control.max}
-                    step={0.01}
-                    value={controlValues[control.key] ?? control.default}
-                    onChange={(event) =>
-                      setControlValues((previous) => ({
-                        ...previous,
-                        [control.key]: Number(event.target.value),
-                      }))
-                    }
-                    style={{ flex: 1 }}
-                  />
-                  <button
-                    data-testid={`manager-control-expose-${control.key}`}
-                    onClick={() => toggleControlExposure(control.key)}
-                    style={{
-                      padding: '5px 9px',
-                      borderRadius: 4,
-                      border: '1px solid var(--color-border, #ddd)',
-                      cursor: 'pointer',
-                      fontSize: 12,
-                    }}
-                  >
-                    {control.exposed ? 'Hide' : 'Expose'}
-                  </button>
-                  <button
-                    data-testid={`manager-control-edit-${control.key}`}
-                    onClick={() => handleEditControl(control.key)}
-                    style={{
-                      padding: '5px 9px',
-                      borderRadius: 4,
-                      border: '1px solid var(--color-border, #ddd)',
-                      cursor: 'pointer',
-                      fontSize: 12,
-                    }}
-                  >
-                    Edit Animation
-                  </button>
-                  <button
-                    data-testid={`manager-control-keyframe-${control.key}`}
-                    onClick={() =>
-                      addControlKeyframe(control.key, controlValues[control.key] ?? control.default)
-                    }
-                    style={{
-                      padding: '5px 9px',
-                      borderRadius: 4,
-                      border: '1px solid var(--color-border, #ddd)',
-                      cursor: 'pointer',
-                      fontSize: 12,
-                    }}
-                  >
-                    Add keyframe
-                  </button>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <button
+                      data-testid={`manager-control-attach-${control.key}`}
+                      onClick={() => attachSelectedToControl(control.key)}
+                      disabled={selectedClipIds.size === 0}
+                      title={
+                        selectedClipIds.size === 0
+                          ? 'Select clip lanes in Clips tab (Ctrl+click)'
+                          : `Attach ${selectedClipIds.size} selected lane(s) as bindings`
+                      }
+                      style={{
+                        padding: '4px 8px',
+                        borderRadius: 4,
+                        border: '1px solid var(--color-border, #ddd)',
+                        cursor: selectedClipIds.size > 0 ? 'pointer' : 'default',
+                        fontSize: 11,
+                        background:
+                          selectedClipIds.size > 0 ? 'var(--color-accent, #7c5cff)' : '#eee',
+                        color: selectedClipIds.size > 0 ? '#fff' : '#999',
+                        opacity: selectedClipIds.size > 0 ? 1 : 0.6,
+                      }}
+                    >
+                      Attach selected clips
+                      {selectedClipIds.size > 0 ? ` (${selectedClipIds.size})` : ''}
+                    </button>
+                    {bindingEntries.length > 0 && (
+                      <button
+                        data-testid={`manager-control-clear-${control.key}`}
+                        onClick={() => setControlBindings(control.key, {})}
+                        style={{
+                          padding: '4px 8px',
+                          borderRadius: 4,
+                          border: '1px solid var(--color-border, #ddd)',
+                          cursor: 'pointer',
+                          fontSize: 11,
+                        }}
+                      >
+                        Clear bindings
+                      </button>
+                    )}
+                    <select
+                      data-testid={`manager-control-clip-select-${control.key}`}
+                      defaultValue=""
+                      onChange={(e) => {
+                        const clipId = e.target.value
+                        if (!clipId) return
+                        const clip = availableClipsForBinding.find((c) => c.id === clipId)
+                        if (!clip) return
+                        const existingSem = Object.keys(bindings).find(
+                          (k) => bindings[k] === clipId,
+                        )
+                        let sem = existingSem
+                        if (!sem) {
+                          const guess = (() => {
+                            for (const id of selectedClipIds) {
+                              const info = instanceToNode.get(id)
+                              if (info?.clipId === clipId && info.semanticName)
+                                return info.semanticName
+                            }
+                            return ''
+                          })()
+                          sem = guess || clip.name.replace(/\s+/g, '_')
+                          if (!sem || sem.trim() === '')
+                            sem = `binding_${Object.keys(bindings).length + 1}`
+                        }
+                        const count = descendantSemanticMap.get(sem)?.length ?? 0
+                        if (count === 0) {
+                          notify(
+                            `Cannot bind "${sem}" — no descendant with semanticName "${sem}" under ${parentNode?.name ?? 'host'}. Set Semantic Name in Inspector first.`,
+                          )
+                          e.target.value = ''
+                          return
+                        }
+                        const next = { ...bindings, [sem]: clipId }
+                        setControlBindings(control.key, next)
+                        notify(
+                          `Bound ${sem} → ${clip.name} (${count} node${count === 1 ? '' : 's'})`,
+                        )
+                        e.target.value = ''
+                      }}
+                      style={{ padding: '4px 6px', borderRadius: 4, fontSize: 11, minWidth: 160 }}
+                    >
+                      <option value="">Bind clip…</option>
+                      {availableClipsForBinding.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name} ({c.duration}s) — {c.id.slice(0, 6)}
+                        </option>
+                      ))}
+                    </select>
+                    {bindingEntries.length === 0 && (
+                      <span style={{ fontSize: 11, color: '#b45309' }}>
+                        Control does nothing until bound to a clip
+                      </span>
+                    )}
+                  </div>
                 </div>
               )
             })}

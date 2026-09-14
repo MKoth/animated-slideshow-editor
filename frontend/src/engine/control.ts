@@ -1,6 +1,11 @@
 import { newId } from './ids'
 import type { Keyframe } from './keyframe'
-import { requireKeyframeInterpolation, requireKeyframeTangent, ZERO_TANGENT } from './keyframe'
+import {
+  Keyframe as KeyframeModel,
+  requireKeyframeInterpolation,
+  requireKeyframeTangent,
+  ZERO_TANGENT,
+} from './keyframe'
 import { evaluateSegment } from './interpolators'
 import type { ControlSetJSON } from './json'
 import { requireFiniteNumber, requireString } from './guards'
@@ -165,20 +170,17 @@ export function controlTrackKeyframeFromJSON(
     const time = requireFiniteNumber(record.time, 'Control keyframe time')
     const numberValue = requireFiniteNumber(record.value, 'Control keyframe value')
     if (time < 0 || time > duration || numberValue < 0 || numberValue > 1) return undefined
-    return {
-      id: requireString(record.id, 'Control keyframe id'),
+    return new KeyframeModel(
+      requireString(record.id, 'Control keyframe id'),
       time,
-      value: numberValue,
-      interpolation:
-        record.interpolation === undefined
-          ? 'linear'
-          : requireKeyframeInterpolation(record.interpolation),
-      tangentIn:
-        record.tangentIn === undefined ? ZERO_TANGENT : requireKeyframeTangent(record.tangentIn),
-      tangentOut:
-        record.tangentOut === undefined ? ZERO_TANGENT : requireKeyframeTangent(record.tangentOut),
-      disabled: record.disabled === true,
-    } as Keyframe
+      numberValue,
+      record.interpolation === undefined
+        ? 'linear'
+        : requireKeyframeInterpolation(record.interpolation),
+      record.tangentIn === undefined ? ZERO_TANGENT : requireKeyframeTangent(record.tangentIn),
+      record.tangentOut === undefined ? ZERO_TANGENT : requireKeyframeTangent(record.tangentOut),
+      record.disabled === true,
+    )
   } catch {
     return undefined
   }

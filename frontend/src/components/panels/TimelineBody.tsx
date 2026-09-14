@@ -15,6 +15,7 @@ import { useEngine } from '../../app/useEngine'
 import {
   AddKeyframeCommand,
   DeleteKeyframesCommand,
+  SetKeyframeValueCommand,
   TransactionCommand,
 } from '../../engine/commands'
 import { useNotificationStore } from '../../stores/notificationStore'
@@ -39,6 +40,7 @@ import { useKeyframeDrag } from './keyframeDrag'
 import { useKeyframeScale, computeSelectionBounds } from './keyframeScale'
 import { MorphPickerModal } from './MorphPickerModal'
 import { SymmetryPickerModal } from './SymmetryPickerModal'
+import { ControlValuePickerModal } from './ControlValuePickerModal'
 import {
   ROW_HEIGHT,
   TRACK_HEADER_WIDTH,
@@ -182,6 +184,11 @@ export function TimelineBody({
   )
   const [symmetryPicker, setSymmetryPicker] = useState<{
     nodeId: string
+    keyframeId: string
+  } | null>(null)
+  const [controlValuePicker, setControlValuePicker] = useState<{
+    nodeId: string
+    controlKey: string
     keyframeId: string
   } | null>(null)
   const [marqueeRect, setMarqueeRect] = useState<{
@@ -633,13 +640,22 @@ export function TimelineBody({
           | 'morphSubtrack'
           | 'symmetrySubtrack'
           | 'shadowSubtrack'
+          | 'controlSubtrack'
       }
     >,
     keyframe: { id: string },
   ) => {
     event.preventDefault()
     event.stopPropagation()
-    if (row.kind === 'subtrack') {
+    if (row.kind === 'controlSubtrack') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        controlKey: row.controlKey,
+        keyframeId: keyframe.id,
+      })
+    } else if (row.kind === 'subtrack') {
       setMenu({
         x: event.clientX,
         y: event.clientY,
@@ -835,6 +851,22 @@ export function TimelineBody({
       }
       return
     }
+    const controlSubtrack = target.closest<HTMLElement>('[data-control-key]')
+    if (controlSubtrack) {
+      const nodeId = controlSubtrack.dataset.nodeId
+      const controlKey = controlSubtrack.dataset.controlKey
+      if (nodeId && controlKey) {
+        event.preventDefault()
+        setMenu({
+          x: event.clientX,
+          y: event.clientY,
+          nodeId,
+          atTime,
+          controlKey,
+        })
+      }
+      return
+    }
     const row = target.closest<HTMLElement>('[data-node-id]')
     if (row) {
       const nodeId = row.dataset.nodeId
@@ -915,6 +947,14 @@ export function TimelineBody({
         y: event.clientY,
         nodeId: row.node.id,
         label: row.label,
+        atTime,
+      })
+    } else if (row.kind === 'controlSubtrack') {
+      setMenu({
+        x: event.clientX,
+        y: event.clientY,
+        nodeId: row.node.id,
+        controlKey: row.controlKey,
         atTime,
       })
     }
@@ -1022,6 +1062,20 @@ export function TimelineBody({
           value: z,
         }),
       )
+    } else if ((target as unknown as { controlKey?: string }).controlKey) {
+      const controlKey = (target as unknown as { controlKey: string }).controlKey
+      const time = target.atTime ?? usePlaybackController.getState().getTime(slideId)
+      const control = engine
+        .getNode(target.nodeId)
+        .controlSet?.controls.find((c) => c.key === controlKey)
+      const value = control?.default ?? 0
+      result = dispatch(
+        new AddKeyframeCommand({
+          target: { kind: 'control', nodeId: target.nodeId, controlKey },
+          time,
+          value,
+        }),
+      )
     } else if (target.property) {
       result = addKeyframeAtPlayhead(engine, dispatch, slideId, target.nodeId, target.property)
     } else if ((target as unknown as { circleProperty?: string }).circleProperty) {
@@ -1093,6 +1147,9 @@ export function TimelineBody({
       deleteTarget = { kind: 'shadow' as const, nodeId: target.nodeId, property: shadowProperty }
     } else if ((target as unknown as { zIndex?: boolean }).zIndex) {
       deleteTarget = { kind: 'zIndex' as const, nodeId: target.nodeId }
+    } else if ((target as unknown as { controlKey?: string }).controlKey) {
+      const controlKey = (target as unknown as { controlKey: string }).controlKey
+      deleteTarget = { kind: 'control' as const, nodeId: target.nodeId, controlKey }
     } else if (target.property) {
       deleteTarget = { kind: 'node' as const, nodeId: target.nodeId, property: target.property }
     } else if ((target as unknown as { circleProperty?: string }).circleProperty) {
@@ -1178,6 +1235,10 @@ export function TimelineBody({
     if ((m as unknown as { symmetry?: boolean }).symmetry)
       return { kind: 'symmetry', nodeId: m.nodeId }
     if ((m as unknown as { zIndex?: boolean }).zIndex) return { kind: 'zIndex', nodeId: m.nodeId }
+    if ((m as unknown as { controlKey?: string }).controlKey) {
+      const ck = (m as unknown as { controlKey: string }).controlKey
+      return { kind: 'control', nodeId: m.nodeId, controlKey: ck }
+    }
     if ((m as unknown as { shadowProperty?: string }).shadowProperty) {
       const sp = (
         m as unknown as { shadowProperty: import('../../engine/shadowEffect').ShadowProperty }
@@ -1233,6 +1294,98 @@ export function TimelineBody({
         setSingleKeyframeDisabled(engine, dispatch, m.keyframeId, !currentlyDisabled)
       }
     }
+  }
+
+  const editValueFromMenu = () => {
+    const m = menu
+    setMenu(null)
+    if (!m?.keyframeId) return
+    if ((m as unknown as { controlKey?: string }).controlKey) {
+      const ck = (m as unknown as { controlKey: string }).controlKey
+      setControlValuePicker({ nodeId: m.nodeId, controlKey: ck, keyframeId: m.keyframeId })
+      return
+    }
+    let currentValue: unknown
+    let target: import('../../engine/keyframeTarget').KeyframeTarget | null = null
+    if (m.property) {
+      target = { kind: 'node', nodeId: m.nodeId, property: m.property }
+      currentValue = engine
+        .getKeyframes(m.nodeId, m.property)
+        .find((k) => k.id === m.keyframeId)?.value
+    } else if ((m as unknown as { parameter?: string }).parameter) {
+      const param = (m as unknown as { parameter: string }).parameter
+      target = { kind: 'node', nodeId: m.nodeId, parameter: param }
+      currentValue = engine
+        .getMaterialKeyframes(m.nodeId, param)
+        .find((k) => k.id === m.keyframeId)?.value
+    } else if ((m as unknown as { circleProperty?: string }).circleProperty) {
+      const cp = (
+        m as unknown as {
+          circleProperty: import('../../engine/animationProperties').CircleAnimationProperty
+        }
+      ).circleProperty
+      target = { kind: 'circle', nodeId: m.nodeId, property: cp }
+      currentValue = engine
+        .getCircleKeyframes(m.nodeId, cp)
+        .find((k) => k.id === m.keyframeId)?.value
+    } else if ((m as unknown as { shadowProperty?: string }).shadowProperty) {
+      const sp = (
+        m as unknown as { shadowProperty: import('../../engine/shadowEffect').ShadowProperty }
+      ).shadowProperty
+      target = { kind: 'shadow', nodeId: m.nodeId, property: sp }
+      currentValue = engine
+        .getShadowKeyframes(m.nodeId, sp)
+        .find((k) => k.id === m.keyframeId)?.value
+    } else if ((m as unknown as { morph?: boolean }).morph) {
+      target = { kind: 'morph', nodeId: m.nodeId }
+      currentValue = engine.getMorphKeyframes(m.nodeId).find((k) => k.id === m.keyframeId)?.value
+    } else if ((m as unknown as { zIndex?: boolean }).zIndex) {
+      target = { kind: 'zIndex', nodeId: m.nodeId }
+      currentValue = engine.getZIndexKeyframes(m.nodeId).find((k) => k.id === m.keyframeId)?.value
+    } else {
+      return
+    }
+    if (target === null || currentValue === undefined) {
+      notify('Cannot find keyframe value')
+      return
+    }
+    const isControl = (target as unknown as { controlKey?: string }).controlKey !== undefined
+    const promptText = isControl
+      ? `Edit control value (0…1) — current ${String(currentValue)}`
+      : `Edit value — current ${typeof currentValue === 'object' ? JSON.stringify(currentValue) : String(currentValue)}`
+    const raw = window.prompt(promptText, String(currentValue))
+    if (raw === null) return
+    let nextValue: unknown = raw
+    if (isControl || typeof currentValue === 'number') {
+      const num = Number(raw)
+      if (!Number.isFinite(num)) {
+        notify('Value must be a number')
+        return
+      }
+      if (isControl && (num < 0 || num > 1)) {
+        notify('Control value must be in [0, 1]')
+        return
+      }
+      nextValue = num
+    } else if (typeof currentValue === 'boolean') {
+      if (raw === 'true') nextValue = true
+      else if (raw === 'false') nextValue = false
+      else {
+        notify('Enter true or false')
+        return
+      }
+    } else if (typeof currentValue === 'object' && currentValue !== null) {
+      try {
+        nextValue = JSON.parse(raw)
+      } catch {
+        notify('Invalid JSON value')
+        return
+      }
+    }
+    const result = dispatch(
+      new SetKeyframeValueCommand({ target, keyframeId: m.keyframeId, newValue: nextValue }),
+    )
+    if (!result.ok) notify(result.error.message)
   }
 
   const step = rulerTickStep(pps)
@@ -1728,8 +1881,10 @@ export function TimelineBody({
                     <div
                       key={`${row.node.id}:control:${row.controlKey}`}
                       className="timeline-lane-row timeline-lane-row--control"
+                      data-node-id={row.node.id}
                       data-control-key={row.controlKey}
                       style={{ top: index * ROW_HEIGHT }}
+                      onContextMenu={(event) => handleLaneContextMenu(event, row)}
                     >
                       {keyframes.map((keyframe) => {
                         const selected = selectedKeyframeIds.includes(keyframe.id)
@@ -1758,10 +1913,9 @@ export function TimelineBody({
                               }
                               if (isDraggable()) startDrag(event.clientX)
                             }}
-                            onContextMenu={(event) => {
-                              event.preventDefault()
-                              event.stopPropagation()
-                            }}
+                            onContextMenu={(event) =>
+                              handleKeyframeContextMenu(event, row, keyframe)
+                            }
                           />
                         )
                       })}
@@ -2276,6 +2430,7 @@ export function TimelineBody({
               setMenu(null)
             }
           }}
+          onEditValue={menu.keyframeId ? editValueFromMenu : undefined}
           onClose={() => setMenu(null)}
           onPaste={pasteFromMenu}
           canPaste={
@@ -2367,6 +2522,32 @@ export function TimelineBody({
                 dispatch={dispatch}
                 notify={notify}
                 onClose={() => setSymmetryPicker(null)}
+              />
+            )
+          } catch {
+            return null
+          }
+        })()}
+      {controlValuePicker &&
+        (() => {
+          try {
+            const kf = engine
+              .getSlide(slideId)
+              .animation.node(controlValuePicker.nodeId)
+              ?.controlKeyframes(controlValuePicker.controlKey)
+              .find((k) => k.id === controlValuePicker.keyframeId)
+            if (!kf) return null
+            return (
+              <ControlValuePickerModal
+                open={true}
+                nodeId={controlValuePicker.nodeId}
+                controlKey={controlValuePicker.controlKey}
+                keyframeId={controlValuePicker.keyframeId}
+                value={kf.value as number}
+                engine={engine}
+                dispatch={dispatch}
+                notify={notify}
+                onClose={() => setControlValuePicker(null)}
               />
             )
           } catch {

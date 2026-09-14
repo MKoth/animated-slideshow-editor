@@ -224,9 +224,6 @@ export function validateReusableObject(json: unknown): string[] {
             errors.push(`Library clip "${clip.id}" params must be array`)
           if (!Array.isArray(clip.channels))
             errors.push(`Library clip "${clip.id}" channels must be array`)
-          if (controlClipIds.has(clip.id) && clip.duration !== 1) {
-            errors.push(`Control clip "${clip.id}" must have duration 1`)
-          }
           if (controlClipIds.has(clip.id) && clip.visibleAnimation !== undefined) {
             errors.push(`Control clip "${clip.id}" cannot animate visible`)
           }

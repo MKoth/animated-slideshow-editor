@@ -76,7 +76,19 @@ export class NodeAnimation {
   controlTracksJSON(): ControlTrackJSON[] {
     return [...this.#controlTracks.entries()].map(([key, keyframes]) => ({
       key,
-      keyframes: keyframes.map((keyframe) => keyframe.toJSON()),
+      keyframes: keyframes.map((keyframe) =>
+        typeof (keyframe as unknown as { toJSON?: () => unknown }).toJSON === 'function'
+          ? keyframe.toJSON()
+          : {
+              id: keyframe.id,
+              time: keyframe.time,
+              value: keyframe.value,
+              interpolation: keyframe.interpolation,
+              tangentIn: { time: keyframe.tangentIn.time, value: keyframe.tangentIn.value },
+              tangentOut: { time: keyframe.tangentOut.time, value: keyframe.tangentOut.value },
+              ...(keyframe.disabled ? { disabled: true } : {}),
+            },
+      ),
     }))
   }
 

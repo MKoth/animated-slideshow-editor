@@ -103,7 +103,7 @@ describe('parametric controls', () => {
     ).toThrow()
   })
 
-  it('rejects non-normalized clips referenced by Controls', () => {
+  it('allows any duration clips referenced by Controls (e.g. 9s timeline clips)', () => {
     const errors = validateReusableObject({
       version: 1,
       name: 'Rig',
@@ -138,15 +138,16 @@ describe('parametric controls', () => {
         clips: [
           {
             id: 'clip',
-            name: 'Wrong duration',
-            duration: 2,
+            name: 'Nine second clip',
+            duration: 9,
             params: [],
             channels: [],
           },
         ],
       },
     })
-    expect(errors).toContain('Control clip "clip" must have duration 1')
+    expect(errors).not.toContain('Control clip "clip" must have duration 1')
+    expect(errors.length).toBe(0)
   })
 
   it('evaluates table and symmetry channels from a Control clip', () => {
@@ -238,5 +239,71 @@ describe('parametric controls', () => {
 
     expect(system.engine.evaluateTable(table.nodeId, 0)?.borderRadius).toBe(20)
     expect(system.engine.evaluateSymmetry(mesh.nodeId, 0)?.factor).toBe(1)
+  })
+
+  it('drives a 9s timeline clip via Control value 0..1', () => {
+    const system = createCommandSystem()
+    system.dispatcher.dispatch(new CreateProjectCommand({ name: 'Controls9s' }))
+    system.dispatcher.dispatch(new CreateSlideCommand({ name: 'Slide' }))
+    const slide = system.engine.project!.slides[0]
+    const host = (
+      system.dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'Rig',
+        }),
+      ) as { ok: true; inverse: { nodeId: string } }
+    ).inverse
+    const child = (
+      system.dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: host.nodeId, name: 'Target' }),
+      ) as { ok: true; inverse: { nodeId: string } }
+    ).inverse
+    const clip = (
+      system.dispatcher.dispatch(
+        new CreateClipCommand({
+          name: 'Nine Sec Clip',
+          duration: 9,
+          category: 'control',
+          params: [],
+          channels: [{ property: 'positionX' }],
+        }),
+      ) as { ok: true; inverse: { clipId: string } }
+    ).inverse
+    system.dispatcher.dispatch(
+      new AddClipKeyframeCommand({
+        target: { kind: 'clip', clipId: clip.clipId, channel: 'positionX' },
+        time: 0,
+        value: 0,
+      }),
+    )
+    system.dispatcher.dispatch(
+      new AddClipKeyframeCommand({
+        target: { kind: 'clip', clipId: clip.clipId, channel: 'positionX' },
+        time: 1,
+        value: 100,
+      }),
+    )
+    slide.scene.getNode(child.nodeId)!.semanticName = 'target'
+    const rig = slide.scene.getNode(host.nodeId)!
+    rig.controlSet = createControlSet(rig.id, [
+      createControl({ key: 'Drive', bindings: { target: clip.clipId }, exposed: true }),
+    ])
+    const track = slide.animation.ensure(rig.id)
+    track.addControl('Drive', new Keyframe('a', 0, 0))
+    track.addControl('Drive', new Keyframe('b', 10, 1))
+    // mid time 5 -> control value 0.5 -> clip u 0.5 -> position 50
+    expect(system.engine.evaluateNode(child.nodeId, 5).transform.x).toBe(50)
+    expect(system.engine.evaluateNode(child.nodeId, 0).transform.x).toBe(0)
+    expect(system.engine.evaluateNode(child.nodeId, 10).transform.x).toBe(100)
+    // shared semanticName: second child shares same semantic and clip
+    const child2 = (
+      system.dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: host.nodeId, name: 'Target2' }),
+      ) as { ok: true; inverse: { nodeId: string } }
+    ).inverse
+    slide.scene.getNode(child2.nodeId)!.semanticName = 'target'
+    expect(system.engine.evaluateNode(child2.nodeId, 5).transform.x).toBe(50)
   })
 })

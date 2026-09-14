@@ -22,6 +22,7 @@ export interface TimelineMenuState {
   readonly morph?: boolean
   readonly symmetry?: boolean
   readonly zIndex?: boolean
+  readonly controlKey?: string
   readonly keyframeId?: string
   readonly atTime?: number
 }
@@ -270,6 +271,7 @@ export function TimelineContextMenu({
   onAddToClip,
   onEditMorph,
   onEditSymmetry,
+  onEditValue,
   onClose,
   onPaste,
   canPaste,
@@ -283,6 +285,7 @@ export function TimelineContextMenu({
   onAddToClip?: () => void
   onEditMorph?: () => void
   onEditSymmetry?: () => void
+  onEditValue?: () => void
   onClose: () => void
   onPaste?: () => void
   canPaste?: boolean
@@ -320,6 +323,15 @@ export function TimelineContextMenu({
                 onClick={onEditSymmetry}
               >
                 Edit Symmetry…
+              </button>
+            )}
+            {onEditValue && (
+              <button
+                className="timeline-context-menu__item"
+                data-testid="edit-value-button"
+                onClick={onEditValue}
+              >
+                Edit Value…
               </button>
             )}
             <button className="timeline-context-menu__item" onClick={onDelete}>
