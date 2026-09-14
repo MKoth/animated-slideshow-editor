@@ -15,6 +15,8 @@ import { materialParametersOf } from '../components/panels/timelineTracks'
 import { snapKeyframeTime } from './timelineSnapping'
 import type { CollectionPlacement } from './collectionPlacement'
 import type { ClipCollection } from './clipCollection'
+import type { Control } from './control'
+import { CONTROL_INTERVAL_MIN_SPAN } from './control'
 
 export type ManagerTab = 'collections' | 'clips' | 'controls' | 'orphans'
 
@@ -478,6 +480,98 @@ export function packClipLanesForNode(
       zIndex: track,
       left,
       width,
+    }
+  })
+}
+
+export interface PackedControlBlock {
+  readonly semanticName: string
+  readonly clipId: string
+  readonly clip: ClipDefinition | null
+  readonly start: number
+  readonly end: number
+  readonly span: number
+  readonly track: number
+  readonly zIndex: number
+  readonly left: number
+  readonly width: number
+  readonly priority: number
+}
+
+/**
+ * Pack Control Interval Clip Blocks for a Control on the normalized [0,1] range.
+ * Uses same greedy interval packing as packClipLanesForNode: overlapping intervals
+ * stack into vertical tracks, lower track = higher Priority (later wins).
+ * `pps` maps normalized units to pixels: left=start*pps, width=(end-start)*pps.
+ * Overlap via Priority stacking mirrors clip Lane packing.
+ */
+export function packControlIntervalBlocks(
+  control: Control,
+  getClip: (clipId: string) => ClipDefinition | null,
+  pixelsPerSecond: number,
+  previewOverrides?: Map<string, { start: number; end: number }>,
+): readonly PackedControlBlock[] {
+  const entries: {
+    semanticName: string
+    clipId: string
+    clip: ClipDefinition | null
+    start: number
+    end: number
+    index: number
+  }[] = []
+  const bindings = Object.entries(control.bindings)
+  for (let index = 0; index < bindings.length; index++) {
+    const [semanticName, raw] = bindings[index]!
+    const interval = typeof raw === 'string' ? { clipId: raw, start: 0, end: 1 } : raw
+    const override = previewOverrides?.get(semanticName)
+    const start = override ? override.start : interval.start
+    const end = override ? override.end : interval.end
+    // Guard span
+    if (end - start < CONTROL_INTERVAL_MIN_SPAN - 1e-9) continue
+    let clip: ClipDefinition | null = null
+    try {
+      clip = getClip(interval.clipId)
+    } catch {
+      clip = null
+    }
+    entries.push({ semanticName, clipId: interval.clipId, clip, start, end, index })
+  }
+  const sorted = [...entries].sort((a, b) => a.start - b.start || a.index - b.index)
+  const trackEnds: number[] = []
+  const trackOf = new Map<string, number>()
+  for (const e of sorted) {
+    let placed = false
+    for (let t = 0; t < trackEnds.length; t++) {
+      if (e.start >= trackEnds[t]! - 1e-9) {
+        trackEnds[t] = e.end
+        trackOf.set(e.semanticName, t)
+        placed = true
+        break
+      }
+    }
+    if (!placed) {
+      const t = trackEnds.length
+      trackEnds.push(e.end)
+      trackOf.set(e.semanticName, t)
+    }
+  }
+  const pps = pixelsPerSecond
+  return entries.map((e) => {
+    const track = trackOf.get(e.semanticName) ?? 0
+    const left = e.start * pps
+    const width = (e.end - e.start) * pps
+    return {
+      semanticName: e.semanticName,
+      clipId: e.clipId,
+      clip: e.clip,
+      start: e.start,
+      end: e.end,
+      span: e.end - e.start,
+      track,
+      zIndex: track,
+      left,
+      width,
+      priority: e.index,
     }
   })
 }

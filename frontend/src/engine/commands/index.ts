@@ -63,6 +63,21 @@ export { SetSemanticNameCommand } from './setSemanticNameCommand'
 export type { SetSemanticNameInverse, SetSemanticNameParameters } from './setSemanticNameCommand'
 export { SetControlSetCommand } from './setControlSetCommand'
 export type { SetControlSetInverse, SetControlSetParameters } from './setControlSetCommand'
+export { UpdateControlIntervalCommand } from './updateControlIntervalCommand'
+export type {
+  UpdateControlIntervalInverse,
+  UpdateControlIntervalParameters,
+} from './updateControlIntervalCommand'
+export { ReorderControlBindingCommand } from './reorderControlBindingCommand'
+export type {
+  ReorderControlBindingInverse,
+  ReorderControlBindingParameters,
+} from './reorderControlBindingCommand'
+export { MoveBindingBetweenGroupsCommand } from './moveBindingBetweenGroupsCommand'
+export type {
+  MoveBindingBetweenGroupsInverse,
+  MoveBindingBetweenGroupsParameters,
+} from './moveBindingBetweenGroupsCommand'
 export { SetOpacityCommand } from './setOpacityCommand'
 export type { SetOpacityInverse, SetOpacityParameters } from './setOpacityCommand'
 export { SetZIndexCommand } from './setZIndexCommand'

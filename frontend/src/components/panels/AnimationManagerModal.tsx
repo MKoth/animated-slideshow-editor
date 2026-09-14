@@ -7,6 +7,7 @@ import {
   type ManagerTab,
   getOrphanKeyframes,
   packClipLanesForNode,
+  packControlIntervalBlocks,
   MIN_VISUAL_DURATION,
   MIN_CLIP_SPEED,
   CLIP_HANDLE_WIDTH_PX,
@@ -62,6 +63,9 @@ import {
   DeleteCollectionPlacementCommand,
   DeleteClipCommand,
   SetControlSetCommand,
+  UpdateControlIntervalCommand,
+  ReorderControlBindingCommand,
+  MoveBindingBetweenGroupsCommand,
 } from '../../engine/commands'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useSelectionStore } from '../../stores/selectionStore'
@@ -75,7 +79,7 @@ import { assetsApi } from '../../api'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { ManagerRuler } from './ManagerRuler'
 import { snapKeyframeTime } from '../../engine/timelineSnapping'
-import { createControl, createControlSet } from '../../engine/control'
+import { createControl, createControlSet, CONTROL_INTERVAL_MIN_SPAN } from '../../engine/control'
 
 interface AnimationManagerModalProps {
   open: boolean
@@ -184,6 +188,51 @@ type DragState =
       previewIndex: number
       startX: number
       initialStart: number
+    }
+  | {
+      mode: 'interval-move'
+      nodeId: string
+      controlKey: string
+      semanticName: string
+      initialStart: number
+      initialEnd: number
+      span: number
+      startX: number
+      startY: number
+      previewStart: number
+      previewEnd: number
+    }
+  | {
+      mode: 'interval-resize-left'
+      nodeId: string
+      controlKey: string
+      semanticName: string
+      initialStart: number
+      initialEnd: number
+      startX: number
+      previewStart: number
+      previewEnd: number
+    }
+  | {
+      mode: 'interval-resize-right'
+      nodeId: string
+      controlKey: string
+      semanticName: string
+      initialStart: number
+      initialEnd: number
+      startX: number
+      previewStart: number
+      previewEnd: number
+    }
+  | {
+      mode: 'interval-reorder'
+      nodeId: string
+      controlKey: string
+      semanticName: string
+      initialIndex: number
+      previewIndex: number
+      startY: number
+      startX: number
     }
 
 function countClipUses(engine: ReturnType<typeof useEngine>['engine'], clipId: string): number {
@@ -316,6 +365,12 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const orphansContainerRef = useRef<HTMLDivElement>(null)
   const collectionScrollRef = useRef<HTMLDivElement>(null)
   const controlsScrollRef = useRef<HTMLDivElement>(null)
+  const [addBlockDialog, setAddBlockDialog] = useState<{
+    controlKey: string
+    draftSemantic: string
+    draftClipId: string
+    error: string | null
+  } | null>(null)
   const notify = useNotificationStore((s) => s.notify)
   const authoringMode = useTimelineViewStore((s) =>
     parentNodeId ? s.authoringModeByHost[parentNodeId] === true : false,
@@ -365,6 +420,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       setReverseCollectionPrompt(null)
       setReverseNameDraft('')
       setDeleteOrphansConfirm(null)
+      setAddBlockDialog(null)
     }
   }, [open, parentNodeId])
 
@@ -419,6 +475,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         } else if (orphanContextMenu) {
           setOrphanContextMenu(null)
           e.stopPropagation()
+        } else if (addBlockDialog) {
+          setAddBlockDialog(null)
+          e.stopPropagation()
         } else if (orphanScopeMessage) {
           setOrphanScopeMessage(null)
           e.stopPropagation()
@@ -463,6 +522,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     collectionPlacementMenu,
     reverseClipPrompt,
     reverseCollectionPrompt,
+    addBlockDialog,
     onClose,
     restorePpsAndBack,
   ])
@@ -592,6 +652,128 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       setControlBindings(controlKey, next)
     },
     [parentNode, setControlBindings],
+  )
+
+  const handleUpdateControlInterval = useCallback(
+    (controlKey: string, semanticName: string, start: number, end: number) => {
+      if (!parentNodeId) return
+      const cmd = new UpdateControlIntervalCommand({
+        nodeId: parentNodeId,
+        controlKey,
+        semanticName,
+        start,
+        end,
+      })
+      const tx = new TransactionCommand([
+        cmd as unknown as import('../../engine/commands').Command<unknown>,
+      ])
+      const res = dispatch(tx as never)
+      if (!res.ok) notify(res.error.message)
+      else setTick((v) => v + 1)
+    },
+    [parentNodeId, dispatch, notify],
+  )
+
+  const handleReorderControlBinding = useCallback(
+    (controlKey: string, semanticName: string, newIndex: number) => {
+      if (!parentNodeId) return
+      const cmd = new ReorderControlBindingCommand({
+        nodeId: parentNodeId,
+        controlKey,
+        semanticName,
+        newIndex,
+      })
+      const tx = new TransactionCommand([
+        cmd as unknown as import('../../engine/commands').Command<unknown>,
+      ])
+      const res = dispatch(tx as never)
+      if (!res.ok) notify(res.error.message)
+      else setTick((v) => v + 1)
+    },
+    [parentNodeId, dispatch, notify],
+  )
+
+  const handleMoveBindingBetweenGroups = useCallback(
+    (semanticName: string, fromControlKey: string, toControlKey: string, toIndex?: number) => {
+      if (!parentNodeId) return
+      const cmd = new MoveBindingBetweenGroupsCommand({
+        nodeId: parentNodeId,
+        semanticName,
+        fromControlKey,
+        toControlKey,
+        toIndex,
+      })
+      const tx = new TransactionCommand([
+        cmd as unknown as import('../../engine/commands').Command<unknown>,
+      ])
+      const res = dispatch(tx as never)
+      if (!res.ok) notify(res.error.message)
+      else setTick((v) => v + 1)
+    },
+    [parentNodeId, dispatch, notify],
+  )
+
+  const handleAddBlock = useCallback(
+    (controlKey: string) => {
+      if (!addBlockDialog || addBlockDialog.controlKey !== controlKey) return
+      const semantic = addBlockDialog.draftSemantic.trim()
+      const clipId = addBlockDialog.draftClipId.trim()
+      if (!semantic) {
+        setAddBlockDialog((prev) => (prev ? { ...prev, error: 'Semantic name required' } : prev))
+        return
+      }
+      if (!clipId) {
+        setAddBlockDialog((prev) => (prev ? { ...prev, error: 'Clip selection required' } : prev))
+        return
+      }
+      if (!parentNode?.controlSet) return
+      const control = parentNode.controlSet.controls.find((c) => c.key === controlKey)
+      if (!control) return
+      if (control.bindings[semantic]) {
+        setAddBlockDialog((prev) =>
+          prev ? { ...prev, error: `Binding "${semantic}" already exists` } : prev,
+        )
+        return
+      }
+      // Check clip exists
+      try {
+        engine.getClip(clipId)
+      } catch {
+        setAddBlockDialog((prev) => (prev ? { ...prev, error: 'Clip not found' } : prev))
+        return
+      }
+      const count = descendantSemanticMap.get(semantic)?.length ?? 0
+      if (count === 0) {
+        setAddBlockDialog((prev) =>
+          prev ? { ...prev, error: `No descendant with semanticName "${semantic}"` } : prev,
+        )
+        return
+      }
+      // Default interval [0,1] then user can resize
+      const nextBindings: Record<string, import('../../engine/control').ControlBinding> = {
+        ...control.bindings,
+        [semantic]: { clipId, start: 0, end: 1 },
+      }
+      const nextSet: import('../../engine/control').ControlSet = {
+        ...parentNode.controlSet,
+        controls: parentNode.controlSet.controls.map((c) =>
+          c.key === controlKey ? { ...c, bindings: nextBindings } : c,
+        ),
+      }
+      const cmd = new SetControlSetCommand({ nodeId: parentNode.id, controlSet: nextSet })
+      const tx = new TransactionCommand([
+        cmd as unknown as import('../../engine/commands').Command<unknown>,
+      ])
+      const res = dispatch(tx as never)
+      if (!res.ok) {
+        setAddBlockDialog((prev) => (prev ? { ...prev, error: res.error.message } : prev))
+        return
+      }
+      setAddBlockDialog(null)
+      setTick((v) => v + 1)
+      notify(`Added Clip Block ${semantic} → ${clipId} [0,1]`)
+    },
+    [addBlockDialog, parentNode, engine, descendantSemanticMap, dispatch, notify],
   )
 
   const handleEditControlMeta = useCallback(
@@ -1888,6 +2070,87 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           ),
         )
         setDragState((prev) => (prev ? ({ ...prev, previewIndex: newIndex } as DragState) : prev))
+      } else if (dragState.mode === 'interval-move') {
+        const deltaY = e.clientY - dragState.startY
+        if (Math.abs(deltaY) > Math.abs(deltaPx) && Math.abs(deltaY) > 8) {
+          // Switch to reorder if vertical dominant
+          const control = parentNode?.controlSet?.controls.find(
+            (c) => c.key === dragState.controlKey,
+          )
+          const initialIdx = control
+            ? Object.keys(control.bindings).indexOf(dragState.semanticName)
+            : 0
+          const count = control ? Object.keys(control.bindings).length : 1
+          setDragState({
+            mode: 'interval-reorder',
+            nodeId: dragState.nodeId,
+            controlKey: dragState.controlKey,
+            semanticName: dragState.semanticName,
+            initialIndex: initialIdx >= 0 ? initialIdx : 0,
+            previewIndex: Math.max(
+              0,
+              Math.min(
+                count - 1,
+                Math.round((initialIdx >= 0 ? initialIdx : 0) + deltaY / CLIP_LANE_HEIGHT_PX),
+              ),
+            ),
+            startY: dragState.startY,
+            startX: dragState.startX,
+          } as DragState)
+          return
+        }
+        const deltaU = deltaPx / pps
+        const span = dragState.span
+        let newStart = dragState.initialStart + deltaU
+        let newEnd = newStart + span
+        // Clamp to [0,1]
+        if (newStart < 0) {
+          newStart = 0
+          newEnd = span
+        }
+        if (newEnd > 1) {
+          newEnd = 1
+          newStart = 1 - span
+        }
+        if (newEnd - newStart < CONTROL_INTERVAL_MIN_SPAN) {
+          // Preserve span guard
+          if (deltaU > 0) newEnd = newStart + CONTROL_INTERVAL_MIN_SPAN
+          else newStart = newEnd - CONTROL_INTERVAL_MIN_SPAN
+        }
+        setDragState((prev) =>
+          prev ? ({ ...prev, previewStart: newStart, previewEnd: newEnd } as DragState) : prev,
+        )
+      } else if (dragState.mode === 'interval-resize-left') {
+        const deltaU = deltaPx / pps
+        let newStart = dragState.initialStart + deltaU
+        newStart = Math.max(0, Math.min(newStart, dragState.initialEnd - CONTROL_INTERVAL_MIN_SPAN))
+        if (dragState.initialEnd - newStart < CONTROL_INTERVAL_MIN_SPAN)
+          newStart = dragState.initialEnd - CONTROL_INTERVAL_MIN_SPAN
+        setDragState((prev) =>
+          prev
+            ? ({ ...prev, previewStart: newStart, previewEnd: dragState.initialEnd } as DragState)
+            : prev,
+        )
+      } else if (dragState.mode === 'interval-resize-right') {
+        const deltaU = deltaPx / pps
+        let newEnd = dragState.initialEnd + deltaU
+        newEnd = Math.min(1, Math.max(newEnd, dragState.initialStart + CONTROL_INTERVAL_MIN_SPAN))
+        if (newEnd - dragState.initialStart < CONTROL_INTERVAL_MIN_SPAN)
+          newEnd = dragState.initialStart + CONTROL_INTERVAL_MIN_SPAN
+        setDragState((prev) =>
+          prev
+            ? ({ ...prev, previewStart: dragState.initialStart, previewEnd: newEnd } as DragState)
+            : prev,
+        )
+      } else if (dragState.mode === 'interval-reorder') {
+        const deltaY = e.clientY - dragState.startY
+        const control = parentNode?.controlSet?.controls.find((c) => c.key === dragState.controlKey)
+        const count = control ? Object.keys(control.bindings).length : 1
+        const newIndex = Math.max(
+          0,
+          Math.min(count - 1, Math.round(dragState.initialIndex + deltaY / CLIP_LANE_HEIGHT_PX)),
+        )
+        setDragState((prev) => (prev ? ({ ...prev, previewIndex: newIndex } as DragState) : prev))
       }
     }
     const onPointerUp = () => {
@@ -2074,6 +2337,72 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             notify(e instanceof Error ? e.message : String(e))
           }
         }
+      } else if (current.mode === 'interval-move') {
+        const moved =
+          Math.abs(current.previewStart - current.initialStart) > 1e-9 ||
+          Math.abs(current.previewEnd - current.initialEnd) > 1e-9
+        if (moved) {
+          try {
+            const cmd = new UpdateControlIntervalCommand({
+              nodeId: current.nodeId,
+              controlKey: current.controlKey,
+              semanticName: current.semanticName,
+              start: current.previewStart,
+              end: current.previewEnd,
+            })
+            const tx = new TransactionCommand([
+              cmd as unknown as import('../../engine/commands').Command<unknown>,
+            ])
+            const res = dispatch(tx as never)
+            if (!res.ok) notify(res.error.message)
+          } catch (e) {
+            notify(e instanceof Error ? e.message : String(e))
+          }
+        }
+      } else if (
+        current.mode === 'interval-resize-left' ||
+        current.mode === 'interval-resize-right'
+      ) {
+        const moved =
+          Math.abs(current.previewStart - current.initialStart) > 1e-9 ||
+          Math.abs(current.previewEnd - current.initialEnd) > 1e-9
+        if (moved) {
+          try {
+            const cmd = new UpdateControlIntervalCommand({
+              nodeId: current.nodeId,
+              controlKey: current.controlKey,
+              semanticName: current.semanticName,
+              start: current.previewStart,
+              end: current.previewEnd,
+            })
+            const tx = new TransactionCommand([
+              cmd as unknown as import('../../engine/commands').Command<unknown>,
+            ])
+            const res = dispatch(tx as never)
+            if (!res.ok) notify(res.error.message)
+          } catch (e) {
+            notify(e instanceof Error ? e.message : String(e))
+          }
+        }
+      } else if (current.mode === 'interval-reorder') {
+        if (current.previewIndex !== current.initialIndex) {
+          try {
+            const cmd = new ReorderControlBindingCommand({
+              nodeId: current.nodeId,
+              controlKey: current.controlKey,
+              semanticName: current.semanticName,
+              newIndex: current.previewIndex,
+            })
+            const tx = new TransactionCommand([
+              cmd as unknown as import('../../engine/commands').Command<unknown>,
+            ])
+            const res = dispatch(tx as never)
+            if (!res.ok) notify(res.error.message)
+            else setTick((v) => v + 1)
+          } catch (e) {
+            notify(e instanceof Error ? e.message : String(e))
+          }
+        }
       }
       setDragState(null)
     }
@@ -2179,10 +2508,6 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       return null
     }
   })()
-
-  const editingControlBindings = editingControl
-    ? (controls.find((control) => control.key === editingControl.key)?.bindings ?? {})
-    : {}
 
   const editingNodeName = (() => {
     if (!editing) return ''
@@ -3122,47 +3447,364 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             onBack={restorePpsAndBack}
           />
         ) : editingControl && editingControlClip ? (
-          <div data-testid="manager-control-editor" style={{ flex: 1, minHeight: 260 }}>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                padding: '8px 0',
-                fontSize: 12,
-                color: 'var(--color-text-muted, #666)',
-              }}
-            >
-              <span>0 CLOSED — 1 OPEN</span>
-              <span>t ∈ [0, 1] · normalized (any duration)</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {Object.entries(
-                editingControlBindings as Record<string, string | { clipId: string }>,
-              ).map(([semanticName, rawId]) => {
-                const clipId = typeof rawId === 'string' ? rawId : rawId.clipId
-                let clip: ClipDefinition | null = null
+          (() => {
+            const ctrl = controls.find((c) => c.key === editingControl.key)
+            if (!ctrl) {
+              return (
+                <div data-testid="manager-control-editor" style={{ flex: 1, minHeight: 260 }}>
+                  <div>Control not found</div>
+                  <button onClick={restorePpsAndBack}>Back</button>
+                </div>
+              )
+            }
+            // Build preview overrides for drill-in Clip Blocks
+            const previewOverrides = new Map<string, { start: number; end: number }>()
+            if (
+              dragState &&
+              (dragState.mode === 'interval-move' ||
+                dragState.mode === 'interval-resize-left' ||
+                dragState.mode === 'interval-resize-right') &&
+              dragState.controlKey === ctrl.key
+            ) {
+              previewOverrides.set(dragState.semanticName, {
+                start: dragState.previewStart,
+                end: dragState.previewEnd,
+              })
+            }
+            // Also include reorder preview? Reorder doesn't affect geometry, just order
+            const packed = packControlIntervalBlocks(
+              ctrl,
+              (id: string) => {
                 try {
-                  clip = engine.getClip(clipId)
+                  return engine.getClip(id)
                 } catch {
-                  clip = null
+                  return null
                 }
-                if (!clip) return null
-                return (
-                  <div key={`${semanticName}:${clipId}`}>
-                    <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
-                      {semanticName} · {clip.name}
+              },
+              pps,
+              previewOverrides,
+            )
+            const maxTrack = packed.length > 0 ? Math.max(...packed.map((b) => b.track)) : 0
+            const laneHeight = (maxTrack + 1) * CLIP_LANE_HEIGHT_PX
+            const normalizedWidth = 1 * pps
+            const step = rulerTickStep(pps)
+            const ticks = rulerTickTimes(0, 1, step)
+            // Determine header text for group-aware future: Editing Control: Name 0…1 / Editing Group: Face — Group 1 0…1
+            // For now, handle control header; if ctrl has groups, show group variant when editingControl specifies group (future)
+            const isGroupDrill =
+              (editingControl as unknown as { groupId?: string }).groupId !== undefined
+            const headerLabel = isGroupDrill
+              ? `Editing Group: ${parentNode?.name ?? 'Host'} — ${ctrl.label} 0…1`
+              : `Editing Control: ${ctrl.label} 0…1`
+            return (
+              <div
+                data-testid="manager-control-editor"
+                style={{
+                  flex: 1,
+                  minHeight: 260,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                }}
+              >
+                <div
+                  style={{ fontSize: 12, fontWeight: 600 }}
+                  data-testid="manager-control-editing-header"
+                >
+                  {headerLabel}
+                </div>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    padding: '4px 0',
+                    fontSize: 11,
+                    color: 'var(--color-text-muted, #666)',
+                    borderBottom: '1px solid var(--color-border, #ddd)',
+                  }}
+                >
+                  <span>0 CLOSED — 1 OPEN</span>
+                  <span>
+                    Control Interval → Clip Block · t ∈ [0, 1] · normalized (any duration)
+                  </span>
+                </div>
+                {/* Normalized ruler 0…1 */}
+                <div
+                  data-testid="control-interval-ruler"
+                  style={{
+                    position: 'relative',
+                    height: 22,
+                    border: '1px solid var(--color-border, #ddd)',
+                    borderRadius: 4,
+                    background: 'var(--color-bg, #fafafa)',
+                    overflow: 'hidden',
+                    width: '100%',
+                  }}
+                >
+                  {ticks.map((t) => (
+                    <div
+                      key={t}
+                      data-testid={`control-interval-ruler-tick-${t}`}
+                      style={{
+                        position: 'absolute',
+                        left: `${(t / 1) * 100}%`,
+                        top: 0,
+                        bottom: 0,
+                        borderLeft: '1px solid var(--color-border, #ddd)',
+                        fontSize: 9,
+                        color: 'var(--color-text-muted, #666)',
+                        paddingLeft: 3,
+                        display: 'flex',
+                        alignItems: 'center',
+                        pointerEvents: 'none',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {tickLabel(t, step)}
                     </div>
-                    <ManagerClipEditor
-                      clip={clip}
-                      nodeId={parentNodeId!}
-                      pps={pps}
-                      onBack={restorePpsAndBack}
-                    />
+                  ))}
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      right: 0,
+                      top: 0,
+                      bottom: 0,
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      padding: '0 6px',
+                      alignItems: 'center',
+                      fontSize: 9,
+                      color: 'var(--color-text-muted, #999)',
+                      pointerEvents: 'none',
+                    }}
+                  >
+                    <span>0</span>
+                    <span>1</span>
                   </div>
-                )
-              })}
-            </div>
-          </div>
+                </div>
+                {/* Clip Blocks lane */}
+                <div
+                  data-testid="control-interval-lane"
+                  style={{
+                    position: 'relative',
+                    width: '100%',
+                    height: Math.max(laneHeight, CLIP_LANE_HEIGHT_PX),
+                    minHeight: CLIP_LANE_HEIGHT_PX,
+                    border: '1px solid var(--color-border, #eee)',
+                    borderRadius: 4,
+                    background: 'var(--color-bg, #fafafa)',
+                    overflowX: 'auto',
+                    overflowY: 'hidden',
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'relative',
+                      width: normalizedWidth,
+                      height: '100%',
+                      minWidth: '100%',
+                    }}
+                  >
+                    {packed.map((block) => {
+                      const isDragging =
+                        dragState !== null &&
+                        (dragState.mode === 'interval-move' ||
+                          dragState.mode === 'interval-resize-left' ||
+                          dragState.mode === 'interval-resize-right' ||
+                          dragState.mode === 'interval-reorder') &&
+                        dragState.controlKey === ctrl.key &&
+                        dragState.semanticName === block.semanticName
+                      const left = block.left
+                      const width = block.width
+                      const clipName = block.clip?.name ?? block.clipId.slice(0, 8)
+                      const duration = block.clip?.duration ?? 1
+                      return (
+                        <div
+                          key={block.semanticName}
+                          data-testid={`clip-block-${ctrl.key}-${block.semanticName}`}
+                          data-semantic={block.semanticName}
+                          data-start={String(block.start)}
+                          data-end={String(block.end)}
+                          data-track={String(block.track)}
+                          title={`${block.semanticName}: ${clipName} [${block.start.toFixed(3)}, ${block.end.toFixed(3)}] Priority ${block.priority} — drag body=move preserving width, edges=resize (span≥${CONTROL_INTERVAL_MIN_SPAN})`}
+                          style={{
+                            position: 'absolute',
+                            left,
+                            width: Math.max(width, 8),
+                            top: block.track * CLIP_LANE_HEIGHT_PX + 2,
+                            height: CLIP_LANE_BAR_HEIGHT_PX,
+                            background: isDragging ? '#7c5cff' : '#b8a6ff',
+                            border: `1px solid ${isDragging ? '#4c1d95' : '#7c5cff'}`,
+                            borderRadius: 4,
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: '0 8px',
+                            boxSizing: 'border-box',
+                            cursor: isDragging ? 'grabbing' : 'grab',
+                            zIndex: block.zIndex,
+                            userSelect: 'none',
+                            overflow: 'hidden',
+                            opacity: isDragging ? 0.95 : 1,
+                          }}
+                          onPointerDown={(e) => {
+                            const target = e.target as HTMLElement
+                            if (
+                              target.dataset.handle === 'left' ||
+                              target.dataset.handle === 'right'
+                            )
+                              return
+                            if (e.button !== 0) return
+                            // Check for vertical reorder intent via shift? Use vertical dominance already in move handler
+                            e.preventDefault()
+                            e.stopPropagation()
+                            const span = block.end - block.start
+                            setDragState({
+                              mode: 'interval-move',
+                              nodeId: parentNode!.id,
+                              controlKey: ctrl.key,
+                              semanticName: block.semanticName,
+                              initialStart: block.start,
+                              initialEnd: block.end,
+                              span,
+                              startX: e.clientX,
+                              startY: e.clientY,
+                              previewStart: block.start,
+                              previewEnd: block.end,
+                            } as DragState)
+                          }}
+                        >
+                          <span
+                            data-testid={`clip-block-label-${ctrl.key}-${block.semanticName}`}
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 600,
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              flex: 1,
+                              pointerEvents: 'none',
+                              color: '#2e1a6d',
+                            }}
+                          >
+                            {block.semanticName} · {clipName} ({duration}s)
+                          </span>
+                          <span
+                            data-testid={`clip-block-interval-${ctrl.key}-${block.semanticName}`}
+                            style={{
+                              fontSize: 9,
+                              fontFamily: 'monospace',
+                              marginLeft: 6,
+                              pointerEvents: 'none',
+                              color: '#4c1d95',
+                            }}
+                          >
+                            [{block.start.toFixed(2)},{block.end.toFixed(2)}]
+                          </span>
+                          {/* Resize handles */}
+                          <div
+                            data-testid={`clip-block-handle-left-${ctrl.key}-${block.semanticName}`}
+                            data-handle="left"
+                            style={{
+                              position: 'absolute',
+                              left: 0,
+                              top: 0,
+                              bottom: 0,
+                              width: CLIP_HANDLE_WIDTH_PX,
+                              cursor: 'ew-resize',
+                              background: 'rgba(0,0,0,0.08)',
+                              borderRight: '1px solid rgba(0,0,0,0.15)',
+                            }}
+                            onPointerDown={(e) => {
+                              if (e.button !== 0) return
+                              e.preventDefault()
+                              e.stopPropagation()
+                              setDragState({
+                                mode: 'interval-resize-left',
+                                nodeId: parentNode!.id,
+                                controlKey: ctrl.key,
+                                semanticName: block.semanticName,
+                                initialStart: block.start,
+                                initialEnd: block.end,
+                                startX: e.clientX,
+                                previewStart: block.start,
+                                previewEnd: block.end,
+                              } as DragState)
+                            }}
+                          />
+                          <div
+                            data-testid={`clip-block-handle-right-${ctrl.key}-${block.semanticName}`}
+                            data-handle="right"
+                            style={{
+                              position: 'absolute',
+                              right: 0,
+                              top: 0,
+                              bottom: 0,
+                              width: CLIP_HANDLE_WIDTH_PX,
+                              cursor: 'ew-resize',
+                              background: 'rgba(0,0,0,0.08)',
+                              borderLeft: '1px solid rgba(0,0,0,0.15)',
+                            }}
+                            onPointerDown={(e) => {
+                              if (e.button !== 0) return
+                              e.preventDefault()
+                              e.stopPropagation()
+                              setDragState({
+                                mode: 'interval-resize-right',
+                                nodeId: parentNode!.id,
+                                controlKey: ctrl.key,
+                                semanticName: block.semanticName,
+                                initialStart: block.start,
+                                initialEnd: block.end,
+                                startX: e.clientX,
+                                previewStart: block.start,
+                                previewEnd: block.end,
+                              } as DragState)
+                            }}
+                          />
+                        </div>
+                      )
+                    })}
+                    {/* Priority stacking hint */}
+                    {packed.length === 0 && (
+                      <div
+                        style={{ padding: 12, fontSize: 11, color: '#888', fontStyle: 'italic' }}
+                      >
+                        No Clip Blocks — Add Block [0,1] then resize
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--color-text-muted, #888)' }}>
+                  Drag body to move (preserve width), drag edges to resize (span ≥{' '}
+                  {CONTROL_INTERVAL_MIN_SPAN}, overlap allowed). Vertical drag or ↑↓ reorders
+                  Priority (insertion order, later wins, matches evaluator). Overlap via Priority
+                  stacking as in clip lanes.
+                </div>
+                <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                  <button
+                    data-testid="control-interval-done"
+                    onClick={restorePpsAndBack}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: 4,
+                      border: '1px solid #ddd',
+                      cursor: 'pointer',
+                      fontSize: 12,
+                    }}
+                  >
+                    Done
+                  </button>
+                  <span
+                    style={{ fontSize: 11, color: '#666', display: 'flex', alignItems: 'center' }}
+                  >
+                    Edits dispatch definition commands (Control Interval) grouped as Transactions
+                    with undo/redo — no new KeyframeTarget kinds
+                  </span>
+                </div>
+              </div>
+            )
+          })()
         ) : activeTab === 'controls' ? (
           <div
             data-testid="manager-controls"
@@ -3174,6 +3816,12 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 : `${controls.length} Control${controls.length === 1 ? '' : 's'} · ${
                     controls.filter((control) => control.exposed).length
                   } exposed`}
+            </div>
+            <div
+              style={{ fontSize: 11, color: 'var(--color-text-muted, #666)', fontStyle: 'italic' }}
+            >
+              Control Interval (model) / Clip Block (view) — intervals are definition data (on
+              Control), not keyframed
             </div>
             <div
               ref={controlsScrollRef}
@@ -3577,6 +4225,427 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                       })
                     )}
                   </div>
+                  {/* Control Interval Bindings table: semanticName, clip name/duration, [start,end], Priority with up/down reorder */}
+                  {bindingEntries.length > 0 && (
+                    <table
+                      data-testid={`control-interval-table-${control.key}`}
+                      style={{
+                        width: '100%',
+                        borderCollapse: 'collapse',
+                        fontSize: 11,
+                        marginTop: 8,
+                        border: '1px solid var(--color-border, #ddd)',
+                      }}
+                    >
+                      <thead>
+                        <tr
+                          style={{
+                            background: 'var(--color-bg-elevated, #fafafa)',
+                            textAlign: 'left',
+                          }}
+                        >
+                          <th
+                            style={{
+                              padding: '6px 8px',
+                              borderBottom: '1px solid var(--color-border, #ddd)',
+                            }}
+                          >
+                            semanticName
+                          </th>
+                          <th
+                            style={{
+                              padding: '6px 8px',
+                              borderBottom: '1px solid var(--color-border, #ddd)',
+                            }}
+                          >
+                            Clip / Duration
+                          </th>
+                          <th
+                            style={{
+                              padding: '6px 8px',
+                              borderBottom: '1px solid var(--color-border, #ddd)',
+                            }}
+                          >
+                            [start, end]
+                          </th>
+                          <th
+                            style={{
+                              padding: '6px 8px',
+                              borderBottom: '1px solid var(--color-border, #ddd)',
+                            }}
+                          >
+                            Priority
+                          </th>
+                          <th
+                            style={{
+                              padding: '6px 8px',
+                              borderBottom: '1px solid var(--color-border, #ddd)',
+                            }}
+                          ></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {bindingEntries.map(([sem, raw], idx) => {
+                          const interval =
+                            typeof raw === 'string' ? { clipId: raw, start: 0, end: 1 } : raw
+                          let clipName = interval.clipId.slice(0, 8)
+                          let duration = 1
+                          try {
+                            const c = engine.getClip(interval.clipId)
+                            clipName = c.name
+                            duration = c.duration
+                          } catch (_e) {
+                            void _e
+                          }
+                          const isDragPreview =
+                            dragState &&
+                            (dragState.mode === 'interval-move' ||
+                              dragState.mode === 'interval-resize-left' ||
+                              dragState.mode === 'interval-resize-right') &&
+                            dragState.controlKey === control.key &&
+                            dragState.semanticName === sem
+                          const previewStart = isDragPreview
+                            ? (dragState as unknown as { previewStart: number }).previewStart
+                            : interval.start
+                          const previewEnd = isDragPreview
+                            ? (dragState as unknown as { previewEnd: number }).previewEnd
+                            : interval.end
+                          return (
+                            <tr
+                              key={sem}
+                              data-testid={`control-interval-row-${control.key}-${sem}`}
+                              draggable
+                              onDragStart={(e) => {
+                                e.dataTransfer.setData(
+                                  'text/plain',
+                                  JSON.stringify({ controlKey: control.key, semanticName: sem }),
+                                )
+                                e.dataTransfer.effectAllowed = 'move'
+                              }}
+                              onDragOver={(e) => {
+                                e.preventDefault()
+                                e.dataTransfer.dropEffect = 'move'
+                              }}
+                              onDrop={(e) => {
+                                e.preventDefault()
+                                try {
+                                  const data = JSON.parse(e.dataTransfer.getData('text/plain')) as {
+                                    controlKey: string
+                                    semanticName: string
+                                  }
+                                  if (!data.semanticName || data.controlKey === control.key) return
+                                  // Move between groups (controls) when groups exist
+                                  handleMoveBindingBetweenGroups(
+                                    data.semanticName,
+                                    data.controlKey,
+                                    control.key,
+                                  )
+                                } catch (_e) {
+                                  void _e
+                                }
+                              }}
+                              style={{
+                                background:
+                                  hoveredBindingSemantic === sem ? '#eef2ff' : 'transparent',
+                              }}
+                              onMouseEnter={() => handleBindingHoverEnter(sem)}
+                              onMouseLeave={handleBindingHoverLeave}
+                            >
+                              <td
+                                style={{
+                                  padding: '6px 8px',
+                                  borderBottom: '1px solid #eee',
+                                  fontFamily: 'monospace',
+                                }}
+                              >
+                                {sem}
+                              </td>
+                              <td style={{ padding: '6px 8px', borderBottom: '1px solid #eee' }}>
+                                {clipName} ({duration}s)
+                              </td>
+                              <td
+                                style={{
+                                  padding: '6px 8px',
+                                  borderBottom: '1px solid #eee',
+                                  fontFamily: 'monospace',
+                                }}
+                              >
+                                <span data-testid={`control-interval-start-${control.key}-${sem}`}>
+                                  {previewStart.toFixed(3)}
+                                </span>
+                                {' , '}
+                                <span data-testid={`control-interval-end-${control.key}-${sem}`}>
+                                  {previewEnd.toFixed(3)}
+                                </span>
+                                <span style={{ marginLeft: 6, display: 'inline-flex', gap: 2 }}>
+                                  <input
+                                    type="number"
+                                    step={0.01}
+                                    min={0}
+                                    max={1}
+                                    value={interval.start}
+                                    aria-label={`Control Interval start for ${sem}`}
+                                    data-testid={`control-interval-start-input-${control.key}-${sem}`}
+                                    onChange={(e) => {
+                                      const v = Number(e.target.value)
+                                      if (!Number.isFinite(v)) return
+                                      if (
+                                        v < 0 ||
+                                        v >= interval.end ||
+                                        interval.end - v < CONTROL_INTERVAL_MIN_SPAN
+                                      ) {
+                                        notify(
+                                          `Control Interval start must be ≥0 and < end with span ≥ ${CONTROL_INTERVAL_MIN_SPAN}`,
+                                        )
+                                        return
+                                      }
+                                      handleUpdateControlInterval(control.key, sem, v, interval.end)
+                                    }}
+                                    style={{ width: 60, padding: '2px 4px', fontSize: 11 }}
+                                  />
+                                  <input
+                                    type="number"
+                                    step={0.01}
+                                    min={0}
+                                    max={1}
+                                    value={interval.end}
+                                    aria-label={`Control Interval end for ${sem}`}
+                                    data-testid={`control-interval-end-input-${control.key}-${sem}`}
+                                    onChange={(e) => {
+                                      const v = Number(e.target.value)
+                                      if (!Number.isFinite(v)) return
+                                      if (
+                                        v > 1 ||
+                                        v <= interval.start ||
+                                        v - interval.start < CONTROL_INTERVAL_MIN_SPAN
+                                      ) {
+                                        notify(
+                                          `Control Interval end must be ≤1 and > start with span ≥ ${CONTROL_INTERVAL_MIN_SPAN}`,
+                                        )
+                                        return
+                                      }
+                                      handleUpdateControlInterval(
+                                        control.key,
+                                        sem,
+                                        interval.start,
+                                        v,
+                                      )
+                                    }}
+                                    style={{ width: 60, padding: '2px 4px', fontSize: 11 }}
+                                  />
+                                </span>
+                              </td>
+                              <td style={{ padding: '6px 8px', borderBottom: '1px solid #eee' }}>
+                                <span
+                                  data-testid={`control-interval-priority-${control.key}-${sem}`}
+                                >
+                                  {idx}
+                                </span>
+                                {idx === bindingEntries.length - 1 ? ' (wins)' : ''}
+                              </td>
+                              <td
+                                style={{
+                                  padding: '6px 8px',
+                                  borderBottom: '1px solid #eee',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                <button
+                                  data-testid={`control-interval-up-${control.key}-${sem}`}
+                                  disabled={idx === 0}
+                                  onClick={() =>
+                                    handleReorderControlBinding(control.key, sem, idx - 1)
+                                  }
+                                  title="Move up (higher priority wins later, last-wins)"
+                                  style={{
+                                    padding: '2px 6px',
+                                    marginRight: 4,
+                                    cursor: idx === 0 ? 'default' : 'pointer',
+                                    fontSize: 11,
+                                  }}
+                                >
+                                  ↑
+                                </button>
+                                <button
+                                  data-testid={`control-interval-down-${control.key}-${sem}`}
+                                  disabled={idx === bindingEntries.length - 1}
+                                  onClick={() =>
+                                    handleReorderControlBinding(control.key, sem, idx + 1)
+                                  }
+                                  title="Move down (lower = higher priority, later wins)"
+                                  style={{
+                                    padding: '2px 6px',
+                                    marginRight: 4,
+                                    cursor:
+                                      idx === bindingEntries.length - 1 ? 'default' : 'pointer',
+                                    fontSize: 11,
+                                  }}
+                                >
+                                  ↓
+                                </button>
+                                <button
+                                  data-testid={`control-interval-drag-${control.key}-${sem}`}
+                                  draggable
+                                  onPointerDown={(e) => {
+                                    // Priority drag via vertical pointer
+                                    e.preventDefault()
+                                    const startY = e.clientY
+                                    const startX = e.clientX
+                                    const initIdx = idx
+                                    setDragState({
+                                      mode: 'interval-reorder',
+                                      nodeId: parentNode!.id,
+                                      controlKey: control.key,
+                                      semanticName: sem,
+                                      initialIndex: initIdx,
+                                      previewIndex: initIdx,
+                                      startY,
+                                      startX,
+                                    } as DragState)
+                                  }}
+                                  title="Drag to reorder Priority (insertion order, later wins)"
+                                  style={{ padding: '2px 6px', cursor: 'grab', fontSize: 11 }}
+                                >
+                                  ≡
+                                </button>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                  {/* Add Block flow */}
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
+                    <button
+                      data-testid={`control-add-block-${control.key}`}
+                      onClick={() =>
+                        setAddBlockDialog({
+                          controlKey: control.key,
+                          draftSemantic: '',
+                          draftClipId: availableClipsForBinding[0]?.id ?? '',
+                          error: null,
+                        })
+                      }
+                      style={{
+                        padding: '4px 10px',
+                        borderRadius: 4,
+                        border: '1px solid var(--color-accent, #7c5cff)',
+                        background: 'var(--color-accent, #7c5cff)',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        fontSize: 11,
+                      }}
+                    >
+                      Add Block
+                    </button>
+                    <span style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
+                      Pick clipId+semanticName, default [0,1] then resize
+                    </span>
+                  </div>
+                  {addBlockDialog && addBlockDialog.controlKey === control.key && (
+                    <div
+                      data-testid={`control-add-block-dialog-${control.key}`}
+                      style={{
+                        marginTop: 6,
+                        padding: 8,
+                        border: '1px solid var(--color-accent, #7c5cff)',
+                        borderRadius: 6,
+                        background: '#f8f7ff',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 6,
+                      }}
+                    >
+                      <div style={{ fontSize: 11, fontWeight: 600 }}>
+                        Add Clip Block — Control Interval [0,1]
+                      </div>
+                      <div
+                        style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}
+                      >
+                        <label style={{ fontSize: 11, minWidth: 80 }}>Semantic</label>
+                        <input
+                          data-testid={`control-add-block-semantic-${control.key}`}
+                          value={addBlockDialog.draftSemantic}
+                          onChange={(e) =>
+                            setAddBlockDialog((prev) =>
+                              prev ? { ...prev, draftSemantic: e.target.value } : prev,
+                            )
+                          }
+                          placeholder="e.g. smile"
+                          style={{
+                            flex: 1,
+                            padding: '4px 6px',
+                            fontSize: 11,
+                            borderRadius: 4,
+                            border: '1px solid #ddd',
+                          }}
+                        />
+                        <label style={{ fontSize: 11, minWidth: 40 }}>Clip</label>
+                        <select
+                          data-testid={`control-add-block-clip-${control.key}`}
+                          value={addBlockDialog.draftClipId}
+                          onChange={(e) =>
+                            setAddBlockDialog((prev) =>
+                              prev ? { ...prev, draftClipId: e.target.value } : prev,
+                            )
+                          }
+                          style={{
+                            flex: 1,
+                            padding: '4px 6px',
+                            fontSize: 11,
+                            borderRadius: 4,
+                            border: '1px solid #ddd',
+                          }}
+                        >
+                          <option value="">Select clip…</option>
+                          {availableClipsForBinding.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name} ({c.duration}s)
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      {addBlockDialog.error && (
+                        <div
+                          data-testid={`control-add-block-error-${control.key}`}
+                          style={{ fontSize: 11, color: '#c00' }}
+                        >
+                          {addBlockDialog.error}
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                        <button
+                          data-testid={`control-add-block-cancel-${control.key}`}
+                          onClick={() => setAddBlockDialog(null)}
+                          style={{
+                            padding: '4px 8px',
+                            fontSize: 11,
+                            borderRadius: 4,
+                            border: '1px solid #ddd',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          data-testid={`control-add-block-confirm-${control.key}`}
+                          onClick={() => handleAddBlock(control.key)}
+                          style={{
+                            padding: '4px 10px',
+                            fontSize: 11,
+                            borderRadius: 4,
+                            background: 'var(--color-accent, #7c5cff)',
+                            color: '#fff',
+                            border: 'none',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Add [0,1]
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
                     <button
                       data-testid={`manager-control-attach-${control.key}`}

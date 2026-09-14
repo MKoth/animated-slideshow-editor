@@ -126,6 +126,21 @@ export function applyUndo(
       engine.setControlSet(nodeId, inv.oldControlSet as import('../control').ControlSet | undefined)
       return
     }
+    case 'UpdateControlInterval': {
+      const nodeId = inv.nodeId as string
+      engine.setControlSet(nodeId, inv.oldControlSet as import('../control').ControlSet | undefined)
+      return
+    }
+    case 'ReorderControlBinding': {
+      const nodeId = inv.nodeId as string
+      engine.setControlSet(nodeId, inv.oldControlSet as import('../control').ControlSet | undefined)
+      return
+    }
+    case 'MoveBindingBetweenGroups': {
+      const nodeId = inv.nodeId as string
+      engine.setControlSet(nodeId, inv.oldControlSet as import('../control').ControlSet | undefined)
+      return
+    }
     case 'ReorderNode': {
       const nodeId = inv.nodeId as string
       const oldIndex = inv.oldIndex as number
