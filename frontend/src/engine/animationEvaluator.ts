@@ -19,7 +19,7 @@ import { resolveCrossBlendedVertices, resolveMorphedVerticesFromKeyframe } from 
 import type { MorphKeyframeValue, MorphClipKeyframeValue } from './shape'
 import type { SymmetryKeyframeValue } from './symmetry'
 import { resolveSymmetrizedVertices } from './symmetry'
-import { evaluateControlTrack } from './control'
+import { CONTROL_INTERVAL_EPSILON, evaluateControlTrack } from './control'
 import type { ShadowEffect, ShadowProperty } from './shadowEffect'
 import {
   SHADOW_PROPERTIES,
@@ -1249,7 +1249,9 @@ export class AnimationEvaluator {
       for (const control of host.controlSet?.controls ?? []) {
         const binding = control.bindings[node.semanticName]
         if (!binding) continue
-        const clipId = typeof binding === 'string' ? binding : binding.clipId
+        const normalized =
+          typeof binding === 'string' ? { clipId: binding, start: 0, end: 1 } : binding
+        const clipId = normalized.clipId
         if (!clipId) continue
         let clip: ClipDefinition
         try {
@@ -1272,12 +1274,27 @@ export class AnimationEvaluator {
         )
         const range = control.max - control.min
         const rawU = range === 0 ? 0 : Math.min(Math.max((value - control.min) / range, 0), 1)
-        // Interval evaluation (remap/skip) is implemented in ticket #347; for #346 we preserve full-range behavior.
-        // If interval is present, validate containment via epsilon-aware check when evaluator is extended.
-        // For now, emit full rawU for both string and interval bindings to keep backward compat.
-        callback(clip, rawU)
+        const start = (normalized as { start: number }).start
+        const end = (normalized as { end: number }).end
+        if (!this.#isRawUInInterval(rawU, start, end)) continue
+        const span = end - start
+        if (span < 1e-9) continue
+        const uPrime = Math.min(Math.max((rawU - start) / span, 0), 1)
+        callback(clip, uPrime)
       }
     }
+  }
+
+  #isRawUInInterval(rawU: number, start: number, end: number): boolean {
+    const EPS = CONTROL_INTERVAL_EPSILON
+    if (rawU + EPS < start) return false
+    const endIsOne = Math.abs(end - 1) < EPS
+    if (endIsOne) {
+      if (rawU > 1 + EPS) return false
+      return true
+    }
+    if (rawU + EPS >= end) return false
+    return true
   }
 
   #applyControlMaterialOverrides(
