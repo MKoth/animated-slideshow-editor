@@ -1247,7 +1247,9 @@ export class AnimationEvaluator {
     for (const host of hosts) {
       const animation = this.#slideLookup(node.id).animation.node(host.id)
       for (const control of host.controlSet?.controls ?? []) {
-        const clipId = control.bindings[node.semanticName]
+        const binding = control.bindings[node.semanticName]
+        if (!binding) continue
+        const clipId = typeof binding === 'string' ? binding : binding.clipId
         if (!clipId) continue
         let clip: ClipDefinition
         try {
@@ -1256,13 +1258,24 @@ export class AnimationEvaluator {
           continue
         }
         if (clip.duration < 0) continue
+        // Hold-only channels remain rejected even when referenced via an interval
+        if (clip.hasVisibleTrack()) {
+          console.warn(
+            `[control] Skipping binding "${node.semanticName}" on "${control.key}" — clip "${clipId}" contains visible (hold-only)`,
+          )
+          continue
+        }
         const track = animation?.controlKeyframes(control.key) ?? []
         const value = Math.min(
           Math.max(evaluateControlTrack(track, time, control.default), control.min),
           control.max,
         )
         const range = control.max - control.min
-        callback(clip, range === 0 ? 0 : Math.min(Math.max((value - control.min) / range, 0), 1))
+        const rawU = range === 0 ? 0 : Math.min(Math.max((value - control.min) / range, 0), 1)
+        // Interval evaluation (remap/skip) is implemented in ticket #347; for #346 we preserve full-range behavior.
+        // If interval is present, validate containment via epsilon-aware check when evaluator is extended.
+        // For now, emit full rawU for both string and interval bindings to keep backward compat.
+        callback(clip, rawU)
       }
     }
   }

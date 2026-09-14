@@ -3858,7 +3858,10 @@ export class Engine {
       referencedMaterialIds.add(node.material.materialDefinitionId)
       for (const inst of node.clipInstances) referencedClipIds.add(inst.clipId)
       for (const control of node.controlSet?.controls ?? []) {
-        for (const clipId of Object.values(control.bindings)) referencedClipIds.add(clipId)
+        for (const binding of Object.values(control.bindings)) {
+          const clipId = typeof binding === 'string' ? binding : binding.clipId
+          if (clipId) referencedClipIds.add(clipId)
+        }
       }
       const chart = node.components.chart
       if (chart) referencedDataSourceIds.add(chart.dataSourceId)
@@ -4383,10 +4386,15 @@ export class Engine {
             ...control,
             id: newId('control'),
             bindings: Object.fromEntries(
-              Object.entries(control.bindings).map(([semanticName, oldClipId]) => [
-                semanticName,
-                clipIdMap.get(oldClipId) ?? oldClipId,
-              ]),
+              Object.entries(control.bindings).map(([semanticName, rawBinding]) => {
+                if (typeof rawBinding === 'string') {
+                  const mapped = clipIdMap.get(rawBinding) ?? rawBinding
+                  return [semanticName, mapped]
+                }
+                const obj = rawBinding as { clipId: string; start: number; end: number }
+                const mappedId = clipIdMap.get(obj.clipId) ?? obj.clipId
+                return [semanticName, { clipId: mappedId, start: obj.start, end: obj.end }]
+              }),
             ),
           })),
         }
@@ -4609,7 +4617,23 @@ export class Engine {
               ...control,
               min: 0 as const,
               max: 1 as const,
-              bindings: { ...control.bindings },
+              bindings: Object.fromEntries(
+                Object.entries(control.bindings as Record<string, unknown>).map(([k, v]) => {
+                  if (typeof v === 'string') return [k, v] as const
+                  if (v && typeof v === 'object') {
+                    const obj = v as Record<string, unknown>
+                    return [
+                      k,
+                      {
+                        clipId: obj.clipId as string,
+                        start: obj.start as number,
+                        end: obj.end as number,
+                      },
+                    ] as const
+                  }
+                  return [k, v as string] as const
+                }),
+              ) as Record<string, import('./control').ControlBinding>,
             })),
           }
         } catch {

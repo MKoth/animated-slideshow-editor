@@ -317,7 +317,9 @@ function getExposedControlOwner(
   for (let host = node.parent; host; host = host.parent) {
     for (const control of host.controlSet?.controls ?? []) {
       if (!control.exposed) continue
-      const clipId = control.bindings[node.semanticName]
+      const binding = control.bindings[node.semanticName]
+      if (!binding) continue
+      const clipId = typeof binding === 'string' ? binding : binding.clipId
       if (!clipId) continue
       let clip: ClipDefinition | null
       try {

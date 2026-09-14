@@ -816,7 +816,11 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
     const importedHost = engine.getNode(imported.nodeIdMap.get(host)!)
     expect(importedHost.controlSet?.controls[0]?.key).toBe('Jaw.Open')
     expect(importedHost.controlSet?.controls[0]?.id).not.toBe(hostNode.controlSet?.controls[0]?.id)
-    expect(importedHost.controlSet?.controls[0]?.bindings.jaw).toBe(imported.clipIdMap.get(clip))
+    const importedBinding = importedHost.controlSet?.controls[0]?.bindings.jaw as
+      string | { clipId: string }
+    const importedClipId =
+      typeof importedBinding === 'string' ? importedBinding : importedBinding.clipId
+    expect(importedClipId).toBe(imported.clipIdMap.get(clip))
     expect(
       engine
         .getSlide(engine.getActiveSlide()!.id)

@@ -19,6 +19,7 @@ import {
 import { ANIMATABLE_PROPERTIES } from './animationProperties'
 import type { AnimationProperty } from './animationProperties'
 import { isOverrideValue, isRecord, requireString, requireStringAllowEmpty } from './guards'
+import { CONTROL_INTERVAL_MIN_SPAN, CONTROL_KEY_PATTERN } from './control'
 import { fullscreenShaderFromJSON } from './fullscreenShader'
 import {
   validateFullscreenShader,
@@ -198,6 +199,7 @@ export function validate(json: unknown): string[] {
   // also validate library clipCollections if present in library but already covered by validateLibrary
   validateClipReferencesInJSON(errors, json as LessonJSON)
   validateClipCollectionReferencesInJSON(errors, json as LessonJSON)
+  validateControlClipsInJSON(errors, json as LessonJSON)
   const slideIds = new Set<string>()
   const sceneIds = new Set<string>()
   const nodeIds = new Set<string>()
@@ -544,6 +546,92 @@ function validateNode(errors: string[], nodeJson: unknown, nodeIds: Set<string>)
           errors.push(
             `Node "${String(nodeJson.id)}" circle segments must be an integer between 3 and 256`,
           )
+        }
+      }
+    }
+  }
+  // ControlSet validation (additive, tolerant)
+  const rawControlSet = (nodeJson as Record<string, unknown>).controlSet
+  if (rawControlSet !== undefined) {
+    if (!isRecord(rawControlSet)) {
+      errors.push(`Node "${String(nodeJson.id)}" controlSet must be an object`)
+    } else {
+      const controls = rawControlSet.controls
+      if (!Array.isArray(controls)) {
+        errors.push(`Node "${String(nodeJson.id)}" controlSet.controls must be an array`)
+      } else {
+        const seenKeys = new Set<string>()
+        for (const rawControl of controls) {
+          if (!isRecord(rawControl)) {
+            errors.push(`Node "${String(nodeJson.id)}" control must be an object`)
+            continue
+          }
+          const key = rawControl.key
+          if (typeof key !== 'string' || !CONTROL_KEY_PATTERN.test(key)) {
+            errors.push(`Node "${String(nodeJson.id)}" has an invalid control key`)
+            continue
+          }
+          if (seenKeys.has(key)) {
+            errors.push(`Node "${String(nodeJson.id)}" has duplicate control key "${key}"`)
+          } else {
+            seenKeys.add(key)
+          }
+          if (rawControl.min !== 0 || rawControl.max !== 1) {
+            errors.push(`Control "${String(key)}" must use the v1 range [0, 1]`)
+          }
+          const bindings = rawControl.bindings
+          if (typeof bindings !== 'object' || bindings === null) {
+            errors.push(`Control "${String(key)}" bindings must be an object`)
+            continue
+          }
+          for (const [semantic, rawBinding] of Object.entries(
+            bindings as Record<string, unknown>,
+          )) {
+            if (typeof rawBinding === 'string') {
+              if (rawBinding === '')
+                errors.push(
+                  `Control "${String(key)}" binding "${semantic}" clipId must be non-empty`,
+                )
+              continue
+            }
+            if (isRecord(rawBinding)) {
+              const clipId = rawBinding.clipId
+              const start = rawBinding.start
+              const end = rawBinding.end
+              if (typeof clipId !== 'string' || clipId === '') {
+                errors.push(
+                  `Control "${String(key)}" binding "${semantic}" clipId must be non-empty`,
+                )
+                continue
+              }
+              if (typeof start !== 'number' || !Number.isFinite(start)) {
+                errors.push(
+                  `Control "${String(key)}" binding "${semantic}" start must be a finite number`,
+                )
+                continue
+              }
+              if (typeof end !== 'number' || !Number.isFinite(end)) {
+                errors.push(
+                  `Control "${String(key)}" binding "${semantic}" end must be a finite number`,
+                )
+                continue
+              }
+              if (start < 0)
+                errors.push(`Control "${String(key)}" binding "${semantic}" start must be >= 0`)
+              if (end > 1)
+                errors.push(`Control "${String(key)}" binding "${semantic}" end must be <= 1`)
+              if (start >= end)
+                errors.push(`Control "${String(key)}" binding "${semantic}" start must be < end`)
+              else if (end - (start as number) < CONTROL_INTERVAL_MIN_SPAN)
+                errors.push(
+                  `Control "${String(key)}" binding "${semantic}" span must be >= ${CONTROL_INTERVAL_MIN_SPAN}`,
+                )
+            } else {
+              errors.push(
+                `Control "${String(key)}" binding "${semantic}" must be a string or interval object`,
+              )
+            }
+          }
         }
       }
     }
@@ -1073,6 +1161,83 @@ function validateClipCollectionReferencesInJSON(errors: string[], json: LessonJS
       if (!isRecord(raw.bindings)) {
         errors.push(`ClipCollection "${String(id)}" bindings must be an object`)
       }
+    }
+  }
+}
+
+function validateControlClipsInJSON(errors: string[], json: LessonJSON): void {
+  const clips = parseClipsFromLessonJSON(json)
+  const clipIds = new Set(clips.map((c) => c.id))
+  const clipById = new Map(clips.map((c) => [c.id, c] as const))
+  // Collect control clip ids across all slides/nodes
+  const controlClipIds = new Set<string>()
+  for (const slideJson of json.slides) {
+    if (!isRecord(slideJson) || !isRecord(slideJson.scene)) continue
+    const nodes = slideJson.scene.nodes
+    if (!Array.isArray(nodes)) continue
+    for (const nodeJson of nodes) {
+      if (!isRecord(nodeJson) || !isRecord(nodeJson.controlSet)) continue
+      const controls = nodeJson.controlSet.controls
+      if (!Array.isArray(controls)) continue
+      for (const control of controls) {
+        if (!isRecord(control) || !isRecord(control.bindings)) continue
+        for (const rawBinding of Object.values(control.bindings as Record<string, unknown>)) {
+          let clipId: string | undefined
+          if (typeof rawBinding === 'string') clipId = rawBinding
+          else if (isRecord(rawBinding) && typeof rawBinding.clipId === 'string')
+            clipId = rawBinding.clipId
+          if (clipId !== undefined && clipId !== '') controlClipIds.add(clipId)
+        }
+      }
+    }
+  }
+  // Unknown clip id references
+  for (const slideJson of json.slides) {
+    if (!isRecord(slideJson) || !isRecord(slideJson.scene)) continue
+    const nodes = slideJson.scene.nodes
+    if (!Array.isArray(nodes)) continue
+    for (const nodeJson of nodes) {
+      if (!isRecord(nodeJson) || !isRecord(nodeJson.controlSet)) continue
+      const controls = nodeJson.controlSet.controls
+      if (!Array.isArray(controls)) continue
+      for (const control of controls) {
+        if (!isRecord(control) || !isRecord(control.bindings)) continue
+        for (const [semantic, rawBinding] of Object.entries(
+          control.bindings as Record<string, unknown>,
+        )) {
+          let clipId: string | undefined
+          if (typeof rawBinding === 'string') clipId = rawBinding
+          else if (isRecord(rawBinding) && typeof rawBinding.clipId === 'string')
+            clipId = rawBinding.clipId
+          if (clipId !== undefined && clipId !== '' && !clipIds.has(clipId)) {
+            errors.push(
+              `Control "${String(control.key)}" binding "${semantic}" references unknown clip id: ${clipId}`,
+            )
+          }
+        }
+      }
+    }
+  }
+  // Hold-only channels rejected
+  const rawClips =
+    (json as unknown as { clips?: unknown; library?: { clips?: unknown } }).clips ??
+    (json as unknown as { library?: { clips?: unknown } }).library?.clips
+  if (Array.isArray(rawClips)) {
+    for (const raw of rawClips as unknown[]) {
+      if (!isRecord(raw) || typeof raw.id !== 'string') continue
+      if (!controlClipIds.has(raw.id)) continue
+      if (raw.visibleAnimation !== undefined)
+        errors.push(`Control clip "${raw.id}" cannot animate visible`)
+      if ((raw as Record<string, unknown>).zIndexAnimation !== undefined)
+        errors.push(`Control clip "${raw.id}" cannot animate zIndex`)
+    }
+  }
+  // Also check parsed clips for visible track (defense in depth)
+  for (const clipId of controlClipIds) {
+    const clip = clipById.get(clipId)
+    if (clip && clip.hasVisibleTrack()) {
+      if (!errors.some((e) => e.includes(`Control clip "${clipId}" cannot animate visible`)))
+        errors.push(`Control clip "${clipId}" cannot animate visible`)
     }
   }
 }

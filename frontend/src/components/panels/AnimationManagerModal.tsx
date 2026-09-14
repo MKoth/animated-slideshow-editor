@@ -562,7 +562,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   }, [dispatch, parentNode])
 
   const setControlBindings = useCallback(
-    (controlKey: string, bindings: Record<string, string>) => {
+    (
+      controlKey: string,
+      bindings: Record<string, string | { clipId: string; start: number; end: number }>,
+    ) => {
       if (!parentNode?.controlSet) return
       dispatch(
         new SetControlSetCommand({
@@ -2167,7 +2170,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const editingControlClip: ClipDefinition | null = (() => {
     if (!editingControl) return null
     const control = controls.find((entry) => entry.key === editingControl.key)
-    const clipId = editingControl.clipId || Object.values(control?.bindings ?? {})[0]
+    const raw = editingControl.clipId || Object.values(control?.bindings ?? {})[0]
+    const clipId = typeof raw === 'string' ? raw : (raw as { clipId?: string } | undefined)?.clipId
     if (!clipId) return null
     try {
       return engine.getClip(clipId)
@@ -2199,7 +2203,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
 
   const handleEditControl = (controlKey: string) => {
     const control = controls.find((entry) => entry.key === controlKey)
-    const clipId = Object.values(control?.bindings ?? {})[0]
+    const raw = Object.values(control?.bindings ?? {})[0]
+    const clipId = typeof raw === 'string' ? raw : (raw as { clipId?: string } | undefined)?.clipId
     if (!clipId) {
       notify('This Control has no clip binding — attach a clip in Controls tab first.')
       return
@@ -3131,7 +3136,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               <span>t ∈ [0, 1] · normalized (any duration)</span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {Object.entries(editingControlBindings).map(([semanticName, clipId]) => {
+              {Object.entries(
+                editingControlBindings as Record<string, string | { clipId: string }>,
+              ).map(([semanticName, rawId]) => {
+                const clipId = typeof rawId === 'string' ? rawId : rawId.clipId
                 let clip: ClipDefinition | null = null
                 try {
                   clip = engine.getClip(clipId)
@@ -3490,7 +3498,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         No bindings — select clip lanes in Clips tab then Attach
                       </span>
                     ) : (
-                      bindingEntries.map(([sem, clipId]) => {
+                      bindingEntries.map(([sem, rawId]) => {
+                        const clipId =
+                          typeof rawId === 'string' ? rawId : (rawId as { clipId: string }).clipId
                         let clipName: string
                         try {
                           clipName = engine.getClip(clipId).name
@@ -3615,9 +3625,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         if (!clipId) return
                         const clip = availableClipsForBinding.find((c) => c.id === clipId)
                         if (!clip) return
-                        const existingSem = Object.keys(bindings).find(
-                          (k) => bindings[k] === clipId,
-                        )
+                        const existingSem = Object.keys(bindings).find((k) => {
+                          const v = (bindings as Record<string, string | { clipId: string }>)[k]
+                          const id = typeof v === 'string' ? v : v.clipId
+                          return id === clipId
+                        })
                         let sem = existingSem
                         if (!sem) {
                           const guess = (() => {

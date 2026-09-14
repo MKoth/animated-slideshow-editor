@@ -12,6 +12,20 @@ import { requireFiniteNumber, requireString } from './guards'
 
 export const CONTROL_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_.]*$/
 
+export const CONTROL_INTERVAL_MIN_SPAN = 1e-6
+export const CONTROL_INTERVAL_EPSILON = 1e-9
+
+export interface ControlBindingInterval {
+  readonly clipId: string
+  readonly start: number
+  readonly end: number
+}
+
+export type ControlBinding = string | ControlBindingInterval
+
+export type ControlBindingJSON =
+  string | { readonly clipId: string; readonly start: number; readonly end: number }
+
 export interface Control {
   readonly id: string
   readonly key: string
@@ -20,7 +34,7 @@ export interface Control {
   readonly max: 1
   readonly default: number
   readonly exposed: boolean
-  readonly bindings: Readonly<Record<string, string>>
+  readonly bindings: Readonly<Record<string, ControlBinding>>
 }
 
 export interface ControlSet {
@@ -29,17 +43,75 @@ export interface ControlSet {
   readonly controls: readonly Control[]
 }
 
+export function normalizeControlBinding(binding: ControlBinding): ControlBindingInterval {
+  if (typeof binding === 'string') return { clipId: binding, start: 0, end: 1 }
+  return binding
+}
+
+export function isControlBindingInterval(
+  binding: ControlBinding,
+): binding is ControlBindingInterval {
+  return typeof binding === 'object' && binding !== null
+}
+
+export function controlBindingClipId(binding: ControlBinding): string {
+  return typeof binding === 'string' ? binding : binding.clipId
+}
+
+export function validateControlBinding(
+  binding: ControlBinding,
+  semantic: string,
+  controlKey: string,
+): void {
+  if (typeof binding === 'string') {
+    if (binding.length === 0)
+      throw new Error(`Control "${controlKey}" binding "${semantic}" clipId must be non-empty`)
+    return
+  }
+  if (!binding || typeof binding !== 'object')
+    throw new Error(
+      `Control "${controlKey}" binding "${semantic}" must be a string or interval object`,
+    )
+  const interval = binding as unknown as Record<string, unknown>
+  const clipId = interval.clipId
+  if (typeof clipId !== 'string' || clipId.length === 0)
+    throw new Error(
+      `Control "${controlKey}" binding "${semantic}" clipId must be a non-empty string`,
+    )
+  const start = requireFiniteNumber(
+    interval.start,
+    `Control "${controlKey}" binding "${semantic}" start`,
+  )
+  const end = requireFiniteNumber(interval.end, `Control "${controlKey}" binding "${semantic}" end`)
+  if (start < 0) throw new Error(`Control "${controlKey}" binding "${semantic}" start must be >= 0`)
+  if (end > 1) throw new Error(`Control "${controlKey}" binding "${semantic}" end must be <= 1`)
+  if (start >= end)
+    throw new Error(`Control "${controlKey}" binding "${semantic}" start must be < end`)
+  const span = end - start
+  if (span < CONTROL_INTERVAL_MIN_SPAN)
+    throw new Error(
+      `Control "${controlKey}" binding "${semantic}" span must be >= ${CONTROL_INTERVAL_MIN_SPAN}`,
+    )
+}
+
 export function createControl(input: {
   key: string
   label?: string
   default?: number
   exposed?: boolean
-  bindings?: Readonly<Record<string, string>>
+  bindings?: Readonly<Record<string, ControlBinding>>
 }): Control {
   validateControlKey(input.key)
   const value = input.default ?? 0
   if (!Number.isFinite(value) || value < 0 || value > 1) {
     throw new Error('Control default must be within [0, 1]')
+  }
+  const bindings: Record<string, ControlBinding> = {}
+  if (input.bindings) {
+    for (const [semantic, binding] of Object.entries(input.bindings)) {
+      validateControlBinding(binding, semantic, input.key)
+      bindings[semantic] = typeof binding === 'string' ? binding : { ...binding }
+    }
   }
   return {
     id: newId('control'),
@@ -49,7 +121,7 @@ export function createControl(input: {
     max: 1,
     default: value,
     exposed: input.exposed ?? false,
-    bindings: { ...(input.bindings ?? {}) },
+    bindings,
   }
 }
 
@@ -76,6 +148,11 @@ export function validateControls(controls: readonly Control[]): void {
     if (control.min !== 0 || control.max !== 1 || control.default < 0 || control.default > 1) {
       throw new Error(`Control "${control.key}" must use the v1 range [0, 1]`)
     }
+    if (control.bindings && typeof control.bindings === 'object') {
+      for (const [semantic, binding] of Object.entries(control.bindings)) {
+        validateControlBinding(binding as ControlBinding, semantic, control.key)
+      }
+    }
   }
 }
 
@@ -83,16 +160,26 @@ export function controlSetToJSON(controlSet: ControlSet): ControlSetJSON {
   return {
     id: controlSet.id,
     hostNodeId: controlSet.hostNodeId,
-    controls: controlSet.controls.map((control) => ({
-      id: control.id,
-      key: control.key,
-      label: control.label,
-      min: control.min,
-      max: control.max,
-      default: control.default,
-      exposed: control.exposed,
-      bindings: { ...control.bindings },
-    })),
+    controls: controlSet.controls.map((control) => {
+      const bindings: Record<string, ControlBindingJSON> = {}
+      for (const [semantic, binding] of Object.entries(control.bindings)) {
+        if (typeof binding === 'string') {
+          bindings[semantic] = { clipId: binding, start: 0, end: 1 }
+        } else {
+          bindings[semantic] = { clipId: binding.clipId, start: binding.start, end: binding.end }
+        }
+      }
+      return {
+        id: control.id,
+        key: control.key,
+        label: control.label,
+        min: control.min,
+        max: control.max,
+        default: control.default,
+        exposed: control.exposed,
+        bindings,
+      }
+    }),
   }
 }
 
@@ -110,10 +197,45 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
     try {
       const key = requireString(item.key, 'Control key')
       validateControlKey(key)
-      const bindings: Record<string, string> = {}
+      const bindings: Record<string, ControlBinding> = {}
       if (item.bindings && typeof item.bindings === 'object') {
-        for (const [semantic, clipId] of Object.entries(item.bindings)) {
-          if (typeof clipId === 'string' && clipId.length > 0) bindings[semantic] = clipId
+        for (const [semantic, rawBinding] of Object.entries(
+          item.bindings as Record<string, unknown>,
+        )) {
+          if (typeof rawBinding === 'string') {
+            if (rawBinding.length > 0) bindings[semantic] = { clipId: rawBinding, start: 0, end: 1 }
+            continue
+          }
+          if (rawBinding && typeof rawBinding === 'object') {
+            const obj = rawBinding as Record<string, unknown>
+            try {
+              const clipId = requireString(
+                obj.clipId,
+                `Control "${key}" binding "${semantic}" clipId`,
+              )
+              const start = requireFiniteNumber(
+                obj.start,
+                `Control "${key}" binding "${semantic}" start`,
+              )
+              const end = requireFiniteNumber(obj.end, `Control "${key}" binding "${semantic}" end`)
+              if (start < 0 || end > 1 || start >= end || end - start < CONTROL_INTERVAL_MIN_SPAN) {
+                console.warn(
+                  `[control] Dropping invalid interval binding "${semantic}" on "${key}": start=${start} end=${end}`,
+                )
+                continue
+              }
+              bindings[semantic] = { clipId, start, end }
+            } catch (e) {
+              console.warn(
+                `[control] Dropping invalid binding "${semantic}" on "${key}": ${e instanceof Error ? e.message : String(e)}`,
+              )
+              continue
+            }
+          } else {
+            console.warn(
+              `[control] Dropping invalid binding "${semantic}" on "${key}": unsupported value`,
+            )
+          }
         }
       }
       const control = {

@@ -1,5 +1,5 @@
 import { isRecord } from './guards'
-import { CONTROL_KEY_PATTERN } from './control'
+import { CONTROL_KEY_PATTERN, CONTROL_INTERVAL_MIN_SPAN } from './control'
 
 export const REUSABLE_OBJECT_VERSION = 1
 
@@ -125,6 +125,61 @@ export function validateReusableObject(json: unknown): string[] {
             }
             if (typeof control.bindings !== 'object' || control.bindings === null) {
               errors.push(`Control "${String(control.key)}" bindings must be an object`)
+            } else {
+              for (const [semantic, rawBinding] of Object.entries(
+                control.bindings as Record<string, unknown>,
+              )) {
+                if (typeof rawBinding === 'string') {
+                  if (rawBinding === '')
+                    errors.push(
+                      `Control "${String(control.key)}" binding "${semantic}" clipId must be non-empty`,
+                    )
+                  continue
+                }
+                if (isRecord(rawBinding)) {
+                  const clipId = rawBinding.clipId
+                  const start = rawBinding.start
+                  const end = rawBinding.end
+                  if (typeof clipId !== 'string' || clipId === '') {
+                    errors.push(
+                      `Control "${String(control.key)}" binding "${semantic}" clipId must be non-empty`,
+                    )
+                    continue
+                  }
+                  if (typeof start !== 'number' || !Number.isFinite(start)) {
+                    errors.push(
+                      `Control "${String(control.key)}" binding "${semantic}" start must be a finite number`,
+                    )
+                    continue
+                  }
+                  if (typeof end !== 'number' || !Number.isFinite(end)) {
+                    errors.push(
+                      `Control "${String(control.key)}" binding "${semantic}" end must be a finite number`,
+                    )
+                    continue
+                  }
+                  if (start < 0)
+                    errors.push(
+                      `Control "${String(control.key)}" binding "${semantic}" start must be >= 0`,
+                    )
+                  if (end > 1)
+                    errors.push(
+                      `Control "${String(control.key)}" binding "${semantic}" end must be <= 1`,
+                    )
+                  if (start >= end)
+                    errors.push(
+                      `Control "${String(control.key)}" binding "${semantic}" start must be < end`,
+                    )
+                  else if (end - (start as number) < CONTROL_INTERVAL_MIN_SPAN)
+                    errors.push(
+                      `Control "${String(control.key)}" binding "${semantic}" span must be >= ${CONTROL_INTERVAL_MIN_SPAN}`,
+                    )
+                } else {
+                  errors.push(
+                    `Control "${String(control.key)}" binding "${semantic}" must be a string or interval object`,
+                  )
+                }
+              }
             }
           }
         }
@@ -200,8 +255,15 @@ export function validateReusableObject(json: unknown): string[] {
           if (!Array.isArray(controls)) continue
           for (const control of controls) {
             if (!isRecord(control) || !isRecord(control.bindings)) continue
-            for (const clipId of Object.values(control.bindings)) {
-              if (typeof clipId === 'string' && clipId !== '') controlClipIds.add(clipId)
+            for (const rawBinding of Object.values(control.bindings as Record<string, unknown>)) {
+              if (typeof rawBinding === 'string' && rawBinding !== '')
+                controlClipIds.add(rawBinding)
+              else if (
+                isRecord(rawBinding) &&
+                typeof rawBinding.clipId === 'string' &&
+                rawBinding.clipId !== ''
+              )
+                controlClipIds.add(rawBinding.clipId)
             }
           }
         }
@@ -224,8 +286,14 @@ export function validateReusableObject(json: unknown): string[] {
             errors.push(`Library clip "${clip.id}" params must be array`)
           if (!Array.isArray(clip.channels))
             errors.push(`Library clip "${clip.id}" channels must be array`)
-          if (controlClipIds.has(clip.id) && clip.visibleAnimation !== undefined) {
-            errors.push(`Control clip "${clip.id}" cannot animate visible`)
+          if (controlClipIds.has(clip.id)) {
+            if (clip.visibleAnimation !== undefined) {
+              errors.push(`Control clip "${clip.id}" cannot animate visible`)
+            }
+            // Hold-only zIndex (if present as clip animation) also rejected
+            if ((clip as Record<string, unknown>).zIndexAnimation !== undefined) {
+              errors.push(`Control clip "${clip.id}" cannot animate zIndex`)
+            }
           }
         }
       }
@@ -283,8 +351,12 @@ export function validateReusableObject(json: unknown): string[] {
       if (!Array.isArray(controls)) continue
       for (const control of controls) {
         if (!isRecord(control) || !isRecord(control.bindings)) continue
-        for (const clipId of Object.values(control.bindings)) {
-          if (typeof clipId === 'string' && !clipIds.has(clipId)) {
+        for (const rawBinding of Object.values(control.bindings as Record<string, unknown>)) {
+          let clipId: string | undefined
+          if (typeof rawBinding === 'string') clipId = rawBinding
+          else if (isRecord(rawBinding) && typeof rawBinding.clipId === 'string')
+            clipId = rawBinding.clipId
+          if (clipId !== undefined && clipId !== '' && !clipIds.has(clipId)) {
             errors.push(
               `Control "${String(control.key)}" binding references unknown clip id: ${clipId}`,
             )
