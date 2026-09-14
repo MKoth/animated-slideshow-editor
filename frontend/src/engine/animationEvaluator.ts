@@ -20,7 +20,9 @@ import type { MorphKeyframeValue, MorphClipKeyframeValue } from './shape'
 import type { SymmetryKeyframeValue } from './symmetry'
 import { resolveSymmetrizedVertices } from './symmetry'
 import { CONTROL_INTERVAL_EPSILON, evaluateControlTrack } from './control'
+import type { Control, ControlGroup, ControlBinding } from './control'
 import type { ShadowEffect, ShadowProperty } from './shadowEffect'
+import type { NodeAnimation } from './nodeAnimation'
 import {
   SHADOW_PROPERTIES,
   SHADOW_LIGHT_PROPERTIES,
@@ -590,23 +592,59 @@ export class AnimationEvaluator {
         }
       }
     }
-    this.#forEachControlClip(node, clampedTime, (clip, u) => {
-      const animation = clip.morphAnimation()
-      const enabled = enabledKeyframes(animation.keyframes())
-      if (enabled.length === 0) return
-      const value = this.#evaluateMorphClipKeyframes(
-        enabled,
-        effectiveUForClip(clip, enabled, u),
-        shapes,
-      )
-      if (value) baseValue = value
-    })
+    // Blend-aware control layering with per-property absent pass-through and per-vertex morph semantics.
+    // For scalar morph value we blend coefficient numeric and hold shape ids with threshold.
+    if (node.semanticName !== undefined) {
+      const hosts: SceneNode[] = []
+      for (let host = node.parent; host; host = host.parent) if (host.controlSet) hosts.push(host)
+      for (const host of hosts) {
+        const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
+        for (const control of host.controlSet?.controls ?? []) {
+          const rawU = this.#evaluateRawU(control, hostAnim, clampedTime)
+          const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, clampedTime)
+          const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
+          if (groupClips.length === 0) continue
+          let blended: MorphKeyframeValue | null = null
+          let hasBlended = false
+          for (let gi = 0; gi < groupClips.length; gi++) {
+            const entry = groupClips[gi]
+            let cur: MorphKeyframeValue | null = null
+            if (entry) {
+              const anim = entry.clip.morphAnimation()
+              const enabled = enabledKeyframes(anim.keyframes())
+              if (enabled.length > 0) {
+                const effU = effectiveUForClip(entry.clip, enabled, entry.uPrime)
+                cur = this.#evaluateMorphClipKeyframes(enabled, effU, shapes)
+              }
+            }
+            if (!hasBlended && cur === null) {
+              // gap
+            } else if (!hasBlended) {
+              blended = cur
+              hasBlended = cur !== null
+            } else if (cur === null) {
+              // keep blended verbatim
+            } else {
+              const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
+              // numeric lerp coefficient, discrete hold for ids
+              const coeff = blended!.coefficient + (cur.coefficient - blended!.coefficient) * blend
+              // For shape ids, threshold pick
+              const fromId = blend < 0.5 ? blended!.fromShapeId : cur.fromShapeId
+              const toId = blend < 0.5 ? blended!.toShapeId : cur.toShapeId
+              blended = { fromShapeId: fromId, toShapeId: toId, coefficient: coeff }
+            }
+          }
+          if (hasBlended && blended) baseValue = blended
+        }
+      }
+    }
     return baseValue
   }
 
   /**
    * Evaluate morphed rest vertices for a mesh node at given time, with cross-blend
-   * between differing shape pairs and name-based clip layering (last-wins).
+   * between differing shape pairs and name-based clip layering (last-wins), plus blend-aware
+   * per-vertex absolute lerpVertex folding.
    * Returns null if node has no mesh.
    */
   evaluateMorphVertices(
@@ -654,18 +692,69 @@ export class AnimationEvaluator {
         if (clipMorphed) morphed = clipMorphed
       }
     }
-    this.#forEachControlClip(node, clampedTime, (clip, u) => {
-      const animation = clip.morphAnimation()
-      const enabled = enabledKeyframes(animation.keyframes())
-      if (enabled.length === 0) return
-      const controlMorphed = this.#evaluateMorphClipVertices(
-        enabled,
-        effectiveUForClip(clip, enabled, u),
-        baseVertices,
-        shapes,
-      )
-      if (controlMorphed) morphed = controlMorphed
-    })
+    // Blend-aware per-vertex absolute folding via lerpVertex on rest vertices before mesh deformation.
+    if (node.semanticName !== undefined) {
+      const hosts: SceneNode[] = []
+      for (let host = node.parent; host; host = host.parent) if (host.controlSet) hosts.push(host)
+      for (const host of hosts) {
+        const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
+        for (const control of host.controlSet?.controls ?? []) {
+          const rawU = this.#evaluateRawU(control, hostAnim, clampedTime)
+          const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, clampedTime)
+          const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
+          if (groupClips.length === 0) continue
+          // Compute per-group vertices (null if no morph in group)
+          const groupVerts: (readonly MeshVertex[] | null)[] = []
+          for (const entry of groupClips) {
+            if (!entry) {
+              groupVerts.push(null)
+              continue
+            }
+            const anim = entry.clip.morphAnimation()
+            const enabled = enabledKeyframes(anim.keyframes())
+            if (enabled.length === 0) {
+              groupVerts.push(null)
+              continue
+            }
+            const effU = effectiveUForClip(entry.clip, enabled, entry.uPrime)
+            const verts = this.#evaluateMorphClipVertices(enabled, effU, baseVertices, shapes)
+            // verts may be baseVertices fallback; treat as contribution (not null) per spec's soft-warn fallback
+            // If entry had no morph track, we already pushed null; otherwise verts is at least base.
+            groupVerts.push(verts)
+          }
+          // Fold with per-vertex lerpVertex, absent pass-through
+          let acc: readonly MeshVertex[] | null = null
+          for (let gi = 0; gi < groupVerts.length; gi++) {
+            const cur = groupVerts[gi]
+            if (acc === null && cur === null) {
+              // gap
+            } else if (acc === null) {
+              acc = cur
+            } else if (cur === null) {
+              // keep acc verbatim
+            } else {
+              const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
+              if (blend <= 0) {
+                // keep acc
+              } else if (blend >= 1) {
+                acc = cur
+              } else {
+                const out: MeshVertex[] = []
+                for (let i = 0; i < baseVertices.length; i++) {
+                  const a = acc[i] ?? baseVertices[i]
+                  const b = cur[i] ?? baseVertices[i]
+                  const v = a.x + (b.x - a.x) * blend
+                  const w = a.y + (b.y - a.y) * blend
+                  out.push({ x: v, y: w })
+                }
+                acc = out
+              }
+            }
+          }
+          if (acc !== null) morphed = acc
+        }
+      }
+    }
     return morphed
   }
 
@@ -680,11 +769,54 @@ export class AnimationEvaluator {
         ? this.#evaluateSymmetryKeyframes(keyframes, clampedTime)
         : null
     const node = this.#nodeLookup(nodeId)
-    this.#forEachControlClip(node, clampedTime, (clip, u) => {
-      const enabled = enabledKeyframes(clip.getSymmetryKeyframes())
-      if (enabled.length === 0) return
-      value = this.#evaluateSymmetryKeyframes(enabled, effectiveUForClip(clip, enabled, u))
-    })
+    if (node.semanticName !== undefined) {
+      const hosts: SceneNode[] = []
+      for (let host = node.parent; host; host = host.parent) if (host.controlSet) hosts.push(host)
+      for (const host of hosts) {
+        const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
+        for (const control of host.controlSet?.controls ?? []) {
+          const rawU = this.#evaluateRawU(control, hostAnim, clampedTime)
+          const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, clampedTime)
+          const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
+          if (groupClips.length === 0) continue
+          let blended: SymmetryKeyframeValue | null = null
+          let hasBlended = false
+          for (let gi = 0; gi < groupClips.length; gi++) {
+            const entry = groupClips[gi]
+            let cur: SymmetryKeyframeValue | null = null
+            if (entry) {
+              const enabled = enabledKeyframes(entry.clip.getSymmetryKeyframes())
+              if (enabled.length > 0)
+                cur = this.#evaluateSymmetryKeyframes(
+                  enabled,
+                  effectiveUForClip(entry.clip, enabled, entry.uPrime),
+                )
+            }
+            if (!hasBlended && cur === null) {
+              // gap
+            } else if (!hasBlended) {
+              blended = cur
+              hasBlended = cur !== null
+            } else if (cur === null) {
+              // keep blended verbatim
+            } else {
+              const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
+              if (blend <= 0) {
+                // keep blended
+              } else if (blend >= 1) {
+                blended = cur
+              } else {
+                // numeric lerp factor, discrete hold for axis
+                const axis = blend < 0.5 ? blended!.axis : cur.axis
+                const factor = blended!.factor + (cur.factor - blended!.factor) * blend
+                blended = { axis, factor }
+              }
+            }
+          }
+          if (hasBlended && blended) value = blended
+        }
+      }
+    }
     return value
   }
 
@@ -1065,15 +1197,54 @@ export class AnimationEvaluator {
       segmentsFallback,
     )
     let segments = Math.max(3, Math.min(256, Math.round(segmentsRaw)))
-    const values = { radius, startAngle, endAngle, segments }
-    this.#forEachControlClip(node, clampedTime, (clip, u) => {
-      for (const property of clip.circleTrackKeys) {
-        const keyframes = enabledKeyframes(clip.getCircleKeyframes(property))
-        if (keyframes.length === 0) continue
-        const value = this.#evaluateClipChannel(keyframes, effectiveUForClip(clip, keyframes, u))
-        values[property] = value
+    const values = { radius, startAngle, endAngle, segments } as Record<string, number>
+    if (node.semanticName !== undefined) {
+      const hosts: SceneNode[] = []
+      for (let host = node.parent; host; host = host.parent) if (host.controlSet) hosts.push(host)
+      for (const host of hosts) {
+        const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
+        for (const control of host.controlSet?.controls ?? []) {
+          const rawU = this.#evaluateRawU(control, hostAnim, clampedTime)
+          const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, clampedTime)
+          const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
+          if (groupClips.length === 0) continue
+          const propSet = new Set<string>()
+          for (const entry of groupClips)
+            if (entry) for (const p of entry.clip.circleTrackKeys) propSet.add(p)
+          if (propSet.size === 0) continue
+          const baseMap = new Map<string, number>()
+          for (const p of propSet) baseMap.set(p, values[p] ?? 0)
+          for (const property of propSet) {
+            let blended: number | undefined = undefined
+            for (let gi = 0; gi < groupClips.length; gi++) {
+              const entry = groupClips[gi]
+              let cur: number | undefined = undefined
+              if (entry && entry.clip.circleTrackKeys.includes(property as never)) {
+                const kf = enabledKeyframes(entry.clip.getCircleKeyframes(property as never))
+                if (kf.length > 0)
+                  cur = this.#evaluateClipChannel(
+                    kf,
+                    effectiveUForClip(entry.clip, kf, entry.uPrime),
+                  )
+                // linkMode not used for circle but handle if present?
+                // For circle channels, gain/offset not defined; just use cur directly
+              }
+              if (blended === undefined && cur === undefined) {
+                // gap
+              } else if (blended === undefined) {
+                blended = cur
+              } else if (cur === undefined) {
+                // keep blended
+              } else {
+                const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
+                blended = blended + (cur - blended) * blend
+              }
+            }
+            if (blended !== undefined) values[property] = blended
+          }
+        }
       }
-    })
+    }
     segments = Math.max(3, Math.min(256, Math.round(values.segments)))
     return {
       radius: values.radius,
@@ -1121,14 +1292,52 @@ export class AnimationEvaluator {
       baseBorderRadius,
     )
     const padding = this.#evaluate(animation?.tableKeyframes('padding'), clampedTime, basePadding)
-    const values = { borderRadius, padding }
-    this.#forEachControlClip(node, clampedTime, (clip, u) => {
-      for (const property of clip.tableTrackKeys) {
-        const enabled = enabledKeyframes(clip.getTableKeyframes(property))
-        if (enabled.length === 0) continue
-        values[property] = this.#evaluateClipChannel(enabled, effectiveUForClip(clip, enabled, u))
+    const values = { borderRadius, padding } as Record<string, number>
+    if (node.semanticName !== undefined) {
+      const hosts: SceneNode[] = []
+      for (let host = node.parent; host; host = host.parent) if (host.controlSet) hosts.push(host)
+      for (const host of hosts) {
+        const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
+        for (const control of host.controlSet?.controls ?? []) {
+          const rawU = this.#evaluateRawU(control, hostAnim, clampedTime)
+          const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, clampedTime)
+          const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
+          if (groupClips.length === 0) continue
+          const propSet = new Set<string>()
+          for (const entry of groupClips)
+            if (entry) for (const p of entry.clip.tableTrackKeys) propSet.add(p)
+          if (propSet.size === 0) continue
+          const baseMap = new Map<string, number>()
+          for (const p of propSet) baseMap.set(p, values[p] ?? 0)
+          for (const property of propSet) {
+            let blended: number | undefined = undefined
+            for (let gi = 0; gi < groupClips.length; gi++) {
+              const entry = groupClips[gi]
+              let cur: number | undefined = undefined
+              if (entry && entry.clip.tableTrackKeys.includes(property as never)) {
+                const kf = enabledKeyframes(entry.clip.getTableKeyframes(property as never))
+                if (kf.length > 0)
+                  cur = this.#evaluateClipChannel(
+                    kf,
+                    effectiveUForClip(entry.clip, kf, entry.uPrime),
+                  )
+              }
+              if (blended === undefined && cur === undefined) {
+                void 0
+              } else if (blended === undefined) {
+                blended = cur
+              } else if (cur === undefined) {
+                void 0
+              } else {
+                const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
+                blended = blended! + (cur - blended!) * blend
+              }
+            }
+            if (blended !== undefined) values[property] = blended
+          }
+        }
       }
-    })
+    }
     return {
       borderRadius: Math.max(0, values.borderRadius),
       padding: Math.max(0, values.padding),
@@ -1208,28 +1417,81 @@ export class AnimationEvaluator {
     }
   }
 
-  /** Controls are evaluated after time clips. Nearest hosts run first so ancestors win. */
+  /** Controls are evaluated after time clips. Nearest hosts run first so ancestors win. Blended groups fold with per-property absent pass-through. */
   #applyControls(node: SceneNode, time: number, state: EvaluatedNodeScratch): void {
-    this.#forEachControlClip(node, time, (clip, u) => {
-      for (const channelDef of clip.channels) {
-        if (channelDef.materialParameter) continue
-        const channelAnimation = clip.channelAnimation(channelDef.property)
-        if (!channelAnimation || channelAnimation.length === 0) continue
-        const enabled = enabledKeyframes(channelAnimation.keyframes())
-        if (enabled.length === 0) continue
-        const keyframeValue = this.#evaluateClipChannel(
-          enabled,
-          effectiveUForClip(clip, enabled, u),
-        )
-        const base = this.#getChannelValue(state.transform, state.opacity, channelDef.property)
-        const output = channelDef.paramKey
-          ? channelDef.linkMode === 'offset'
-            ? base + (clip.getParam(channelDef.paramKey)?.default ?? 1) * keyframeValue
-            : base * ((clip.getParam(channelDef.paramKey)?.default ?? 1) * keyframeValue)
-          : keyframeValue
-        this.#setChannelValue(state, channelDef.property, output)
+    void this.#forEachControlClip // keep for backward compat
+    if (node.semanticName === undefined) return
+    const hosts: SceneNode[] = []
+    for (let host = node.parent; host; host = host.parent) {
+      if (host.controlSet) hosts.push(host)
+    }
+    for (const host of hosts) {
+      const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
+      for (const control of host.controlSet?.controls ?? []) {
+        const rawU = this.#evaluateRawU(control, hostAnim, time)
+        const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, time)
+        const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
+        if (groupClips.length === 0) continue
+        // Collect distinct channels present in any group's clip (including linkMode channels)
+        const channelsSet = new Set<AnimationProperty>()
+        for (const entry of groupClips) {
+          if (!entry) continue
+          for (const ch of entry.clip.channels) {
+            if (ch.materialParameter) continue
+            const anim = entry.clip.channelAnimation(ch.property)
+            if (!anim || anim.length === 0) continue
+            channelsSet.add(ch.property)
+          }
+        }
+        if (channelsSet.size === 0) continue
+        const baseValues = new Map<AnimationProperty, number>()
+        for (const ch of channelsSet)
+          baseValues.set(ch, this.#getChannelValue(state.transform, state.opacity, ch))
+        for (const channel of channelsSet) {
+          let blended: number | undefined = undefined
+          for (let gi = 0; gi < groupClips.length; gi++) {
+            const entry = groupClips[gi]
+            let cur: number | undefined = undefined
+            if (entry) {
+              const channelDef = entry.clip.channels.find(
+                (c) => c.property === channel && !c.materialParameter,
+              )
+              if (channelDef) {
+                const anim = entry.clip.channelAnimation(channel)
+                if (anim && anim.length > 0) {
+                  const enabled = enabledKeyframes(anim.keyframes())
+                  if (enabled.length > 0) {
+                    const effU = effectiveUForClip(entry.clip, enabled, entry.uPrime)
+                    const kfVal = this.#evaluateClipChannel(enabled, effU)
+                    if (channelDef.paramKey) {
+                      const paramVal = entry.clip.getParam(channelDef.paramKey)?.default ?? 1
+                      const base = baseValues.get(channel) ?? 0
+                      cur =
+                        channelDef.linkMode === 'offset'
+                          ? base + paramVal * kfVal
+                          : base * (paramVal * kfVal)
+                    } else {
+                      cur = kfVal
+                    }
+                  }
+                }
+              }
+            }
+            if (blended === undefined && cur === undefined) {
+              // both absent → gap
+            } else if (blended === undefined) {
+              blended = cur
+            } else if (cur === undefined) {
+              // keep blended verbatim
+            } else {
+              const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
+              blended = blended + (cur - blended) * blend
+            }
+          }
+          if (blended !== undefined) this.#setChannelValue(state, channel, blended)
+        }
       }
-    })
+    }
   }
 
   #forEachControlClip(
@@ -1297,56 +1559,276 @@ export class AnimationEvaluator {
     return true
   }
 
+  #evaluateRawU(control: Control, hostAnim: NodeAnimation | undefined, time: number): number {
+    const track = hostAnim?.controlKeyframes(control.key) ?? []
+    const value = Math.min(
+      Math.max(evaluateControlTrack(track, time, control.default), control.min),
+      control.max,
+    )
+    const range = control.max - control.min
+    return range === 0 ? 0 : Math.min(Math.max((value - control.min) / range, 0), 1)
+  }
+
+  #evaluateBlendFactors(
+    control: Control,
+    host: SceneNode,
+    hostAnim: NodeAnimation | undefined,
+    time: number,
+  ): number[] {
+    const blendKeys = (control.blendKeys ?? []) as readonly string[]
+    const factors: number[] = []
+    for (const bk of blendKeys) {
+      const track = hostAnim?.controlKeyframes(bk) ?? []
+      const blendCtrl = host.controlSet?.controls.find((c) => c.key === bk)
+      const fallback = blendCtrl?.default ?? 0
+      const raw = evaluateControlTrack(track, time, fallback)
+      factors.push(Math.min(Math.max(raw, 0), 1))
+    }
+    return factors
+  }
+
+  #getGroupClips(
+    nodeSemantic: string,
+    control: Control,
+    rawU: number,
+  ): ({ clip: ClipDefinition; uPrime: number } | null)[] {
+    const groups: readonly ControlGroup[] =
+      (control.groups as readonly ControlGroup[]) ??
+      ([
+        {
+          id: 'g1',
+          name: 'Group 1',
+          bindings: control.bindings as unknown as Record<string, ControlBinding>,
+        },
+      ] as readonly ControlGroup[])
+    const result: ({ clip: ClipDefinition; uPrime: number } | null)[] = []
+    for (const group of groups) {
+      const binding = (group.bindings as Record<string, ControlBinding>)[nodeSemantic]
+      if (!binding) {
+        result.push(null)
+        continue
+      }
+      const normalized =
+        typeof binding === 'string' ? { clipId: binding, start: 0, end: 1 } : binding
+      const clipId = (normalized as { clipId: string }).clipId
+      const start = (normalized as { start: number }).start ?? 0
+      const end = (normalized as { end: number }).end ?? 1
+      if (!this.#isRawUInInterval(rawU, start, end)) {
+        result.push(null)
+        continue
+      }
+      const span = end - start
+      if (span < 1e-9) {
+        result.push(null)
+        continue
+      }
+      const uPrime = Math.min(Math.max((rawU - start) / span, 0), 1)
+      let clip: ClipDefinition
+      try {
+        clip = this.#clipLookup(clipId)
+      } catch {
+        result.push(null)
+        continue
+      }
+      if (clip.hasVisibleTrack()) {
+        console.warn(
+          `[control] Skipping binding "${nodeSemantic}" on "${control.key}" group "${group.name}" — clip "${clipId}" contains visible (hold-only)`,
+        )
+        result.push(null)
+        continue
+      }
+      // zIndex rejection (defence) — check raw JSON marker if present
+      const rawZ = (clip as unknown as { hasZIndexTrack?: () => boolean }).hasZIndexTrack?.()
+      if (rawZ) {
+        console.warn(
+          `[control] Skipping binding "${nodeSemantic}" on "${control.key}" group "${group.name}" — clip "${clipId}" contains zIndex (hold-only)`,
+        )
+        result.push(null)
+        continue
+      }
+      // Also check for zIndex animation via generic
+      // ClipDefinition has no zIndex, but keep guard for future
+      result.push({ clip, uPrime })
+    }
+    return result
+  }
+
   #applyControlMaterialOverrides(
     node: SceneNode,
     time: number,
     target: EvaluatedMaterialOverridesScratch,
   ): void {
-    this.#forEachControlClip(node, time, (clip, u) => {
-      for (const channel of clip.channels) {
-        if (!channel.materialParameter) continue
-        const keyframes = enabledKeyframes(
-          clip.getMaterialChannelKeyframes(channel.materialParameter),
-        )
-        if (
-          keyframes.length === 0 ||
-          this.#parameterKindOf(node, channel.materialParameter) === undefined
-        )
-          continue
-        const value = this.#evaluateClipChannel(keyframes, effectiveUForClip(clip, keyframes, u))
-        const base =
-          typeof target.values[channel.materialParameter] === 'number'
-            ? (target.values[channel.materialParameter] as number)
-            : 0
-        const parameter = channel.paramKey
-          ? (clip.getParam(channel.paramKey)?.default ?? 1)
-          : undefined
-        const output =
-          parameter === undefined
-            ? value
-            : channel.linkMode === 'offset'
-              ? base + parameter * value
-              : base * parameter * value
-        if (!Object.prototype.hasOwnProperty.call(target.values, channel.materialParameter)) {
-          target.keys.push(channel.materialParameter)
+    if (node.semanticName === undefined) return
+    const hosts: SceneNode[] = []
+    for (let host = node.parent; host; host = host.parent) if (host.controlSet) hosts.push(host)
+    for (const host of hosts) {
+      const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
+      for (const control of host.controlSet?.controls ?? []) {
+        const rawU = this.#evaluateRawU(control, hostAnim, time)
+        const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, time)
+        const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
+        if (groupClips.length === 0) continue
+        const paramSet = new Set<string>()
+        for (const entry of groupClips) {
+          if (!entry) continue
+          for (const ch of entry.clip.channels) {
+            if (!ch.materialParameter) continue
+            const kf = entry.clip.getMaterialChannelKeyframes(ch.materialParameter)
+            if (!kf || kf.length === 0) continue
+            if (this.#parameterKindOf(node, ch.materialParameter) === undefined) continue
+            paramSet.add(ch.materialParameter)
+          }
         }
-        target.values[channel.materialParameter] = output
+        if (paramSet.size === 0) continue
+        // Capture base values before this control for gain/offset
+        const baseMap = new Map<string, MaterialOverrideValue>()
+        for (const param of paramSet) {
+          const v = target.values[param]
+          if (v !== undefined) baseMap.set(param, v as MaterialOverrideValue)
+        }
+        for (const param of paramSet) {
+          const kind = this.#parameterKindOf(node, param)
+          if (kind === undefined) continue
+          let blended: MaterialOverrideValue | undefined = undefined
+          for (let gi = 0; gi < groupClips.length; gi++) {
+            const entry = groupClips[gi]
+            let cur: MaterialOverrideValue | undefined = undefined
+            if (entry) {
+              const chDef = entry.clip.channels.find((c) => c.materialParameter === param)
+              if (chDef) {
+                const kf = enabledKeyframes(entry.clip.getMaterialChannelKeyframes(param))
+                if (kf.length > 0) {
+                  const effU = effectiveUForClip(entry.clip, kf, entry.uPrime)
+                  const kfVal = this.#evaluateClipChannel(
+                    kf,
+                    effU,
+                  ) as unknown as MaterialOverrideValue
+                  const paramVal = chDef.paramKey
+                    ? (entry.clip.getParam(chDef.paramKey)?.default ?? 1)
+                    : undefined
+                  if (paramVal === undefined) cur = kfVal
+                  else {
+                    const baseEntry = baseMap.get(param)
+                    const baseNum = typeof baseEntry === 'number' ? baseEntry : 0
+                    if (typeof kfVal === 'number') {
+                      cur =
+                        chDef.linkMode === 'offset'
+                          ? (baseNum as number) + paramVal * (kfVal as number)
+                          : (baseNum as number) * paramVal * (kfVal as number)
+                    } else {
+                      // For non-numeric material values, ignore gain/offset and use kfVal directly
+                      cur = kfVal
+                    }
+                  }
+                }
+              }
+            }
+            if (blended === undefined && cur === undefined) {
+              // gap
+            } else if (blended === undefined) {
+              blended = cur
+            } else if (cur === undefined) {
+              // keep blended
+            } else {
+              const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
+              blended = this.#lerpMaterialValue(kind, blended, cur, blend)
+            }
+          }
+          if (blended !== undefined) {
+            if (!Object.prototype.hasOwnProperty.call(target.values, param)) target.keys.push(param)
+            target.values[param] = blended
+          }
+        }
       }
-    })
+    }
+  }
+
+  #lerpMaterialValue(
+    kind: string,
+    from: MaterialOverrideValue,
+    to: MaterialOverrideValue,
+    t: number,
+  ): MaterialOverrideValue {
+    if (kind === 'number' || kind === 'float') {
+      return (from as number) + ((to as number) - (from as number)) * t
+    }
+    if (kind === 'color' && typeof from === 'string' && typeof to === 'string') {
+      return lerpHexColor(from, to, t)
+    }
+    if (
+      (kind === 'vec2' || kind === 'vec3' || kind === 'vec4') &&
+      Array.isArray(from) &&
+      Array.isArray(to)
+    ) {
+      const a = from as readonly number[]
+      const b = to as readonly number[]
+      const out = new Array<number>(a.length)
+      for (let i = 0; i < a.length; i++) out[i] = a[i] + (b[i] - a[i]) * t
+      return out
+    }
+    // Discrete kinds hold
+    return t < 0.5 ? from : to
   }
 
   #applyControlShadowLayers(node: SceneNode, time: number, state: ShadowEffect): void {
-    this.#forEachControlClip(node, time, (clip, u) => {
-      for (const property of clip.shadowChannelKeys) {
-        const keyframes = enabledKeyframes(clip.getShadowChannelKeyframes(property))
-        if (keyframes.length === 0) continue
-        const effectiveU = effectiveUForClip(clip, keyframes, u)
-        ;(state as unknown as Record<string, unknown>)[property] =
-          property === 'color'
-            ? this.#evaluateClipShadowColorValue(keyframes, effectiveU)
-            : this.#evaluateClipShadowNumeric(keyframes, effectiveU)
+    if (node.semanticName === undefined) return
+    const hosts: SceneNode[] = []
+    for (let host = node.parent; host; host = host.parent) if (host.controlSet) hosts.push(host)
+    for (const host of hosts) {
+      const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
+      for (const control of host.controlSet?.controls ?? []) {
+        const rawU = this.#evaluateRawU(control, hostAnim, time)
+        const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, time)
+        const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
+        if (groupClips.length === 0) continue
+        const propSet = new Set<ShadowProperty>()
+        for (const entry of groupClips) {
+          if (!entry) continue
+          for (const p of entry.clip.shadowChannelKeys) propSet.add(p)
+        }
+        if (propSet.size === 0) continue
+        const baseMap = new Map<ShadowProperty, unknown>()
+        for (const p of propSet) baseMap.set(p, (state as unknown as Record<string, unknown>)[p])
+        for (const property of propSet) {
+          let blended: unknown = undefined
+          let hasBlended = false
+          for (let gi = 0; gi < groupClips.length; gi++) {
+            const entry = groupClips[gi]
+            let cur: unknown = undefined
+            let hasCur = false
+            if (entry) {
+              if (entry.clip.shadowChannelKeys.includes(property)) {
+                const kf = enabledKeyframes(entry.clip.getShadowChannelKeyframes(property))
+                if (kf.length > 0) {
+                  const effU = effectiveUForClip(entry.clip, kf, entry.uPrime)
+                  cur =
+                    property === 'color'
+                      ? this.#evaluateClipShadowColorValue(kf, effU)
+                      : this.#evaluateClipShadowNumeric(kf, effU)
+                  hasCur = true
+                }
+              }
+            }
+            if (!hasBlended && !hasCur) {
+              // gap
+            } else if (!hasBlended) {
+              blended = cur
+              hasBlended = hasCur
+            } else if (!hasCur) {
+              // keep blended
+            } else {
+              const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
+              if (property === 'color') {
+                blended = lerpHexColor(blended as string, cur as string, blend)
+              } else {
+                blended = (blended as number) + ((cur as number) - (blended as number)) * blend
+              }
+            }
+          }
+          if (hasBlended) (state as unknown as Record<string, unknown>)[property] = blended as never
+        }
       }
-    })
+    }
   }
 
   #getChannelValue(
