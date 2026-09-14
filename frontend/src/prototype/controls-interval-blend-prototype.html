@@ -1,0 +1,1864 @@
+<!doctype html>
+<!-- PROTOTYPE — THROWAWAY — prototype/controls-interval-blend — not production -->
+<!-- See Wayfinder Map #338, ADRs 0010-0014, Spec #337, CONTEXT.md Controls / Control Interval / Clip Block -->
+<!-- Run: open this file directly in a browser (double-click) — no build required. No persistence. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>PROTOTYPE — Control Interval Blocks + Blend Groups (Map #338)</title>
+    <style>
+      :root {
+        --bg: #0f1419;
+        --panel: #1a2332;
+        --panel2: #121a26;
+        --border: #2a3a4d;
+        --accent: #1a73e8;
+        --accent2: #34a853;
+        --warn: #fbbc05;
+        --danger: #ea4335;
+        --text: #e8eaed;
+        --muted: #9aa0a6;
+        --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: Inter, system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      header {
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--border);
+        background: var(--panel2);
+        position: sticky;
+        top: 0;
+        z-index: 10;
+      }
+      header h1 {
+        margin: 0;
+        font-size: 15px;
+        letter-spacing: 0.02em;
+      }
+      header p {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+        max-width: 1100px;
+      }
+      .badge {
+        display: inline-block;
+        background: var(--danger);
+        color: #fff;
+        font-size: 10px;
+        padding: 2px 6px;
+        border-radius: 999px;
+        vertical-align: middle;
+        margin-left: 8px;
+        letter-spacing: 0.08em;
+      }
+      .badge2 {
+        display: inline-block;
+        background: #333;
+        border: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 10px;
+        padding: 2px 6px;
+        border-radius: 999px;
+        margin-left: 6px;
+      }
+      .tabs {
+        display: flex;
+        gap: 6px;
+        padding: 10px 18px;
+        border-bottom: 1px solid var(--border);
+        background: var(--panel);
+        flex-wrap: wrap;
+        position: sticky;
+        top: 72px;
+        z-index: 9;
+      }
+      .tab {
+        padding: 7px 12px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: #0f1419;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 12px;
+      }
+      .tab.active {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: 360px 1fr 380px;
+        min-height: calc(100vh - 140px);
+      }
+      .col {
+        border-right: 1px solid var(--border);
+        background: var(--panel);
+        overflow: auto;
+      }
+      .col:last-child {
+        border-right: none;
+      }
+      .section {
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border);
+      }
+      .section h3 {
+        margin: 0 0 8px;
+        font-size: 12px;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin: 6px 0;
+      }
+      label {
+        font-size: 12px;
+        color: var(--muted);
+        min-width: 96px;
+      }
+      select,
+      input[type='text'],
+      input[type='number'],
+      input[type='range'] {
+        flex: 1;
+        background: #0f1419;
+        border: 1px solid var(--border);
+        color: var(--text);
+        padding: 6px 8px;
+        border-radius: 6px;
+        font-size: 12px;
+      }
+      input[type='range'] {
+        padding: 0;
+      }
+      button {
+        background: var(--accent);
+        border: none;
+        color: #fff;
+        padding: 7px 10px;
+        border-radius: 6px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #2a3a4d;
+      }
+      button.ghost {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--text);
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .pill {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 999px;
+        background: #0f1419;
+        border: 1px solid var(--border);
+        font-size: 11px;
+        font-family: var(--mono);
+      }
+      .hint {
+        font-size: 11px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      .state-pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: #0f1419;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px;
+        font-family: var(--mono);
+        font-size: 11px;
+        line-height: 1.5;
+        max-height: 360px;
+        overflow: auto;
+      }
+      .walkthrough {
+        background: #0f1419;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin: 8px 0;
+        font-size: 12px;
+        line-height: 1.6;
+      }
+      .walkthrough b {
+        color: #8ab4f8;
+      }
+      .klist {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 11px;
+      }
+      .klist th,
+      .klist td {
+        border-bottom: 1px solid var(--border);
+        padding: 4px 6px;
+        text-align: left;
+      }
+
+      .ruler-wrap {
+        background: #0a0f16;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin: 8px 0;
+      }
+      .ruler {
+        position: relative;
+        height: 22px;
+        background: linear-gradient(to right, #1a2332, #0f1419);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        overflow: hidden;
+      }
+      .ruler-ticks {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        justify-content: space-between;
+        padding: 0 6px;
+        align-items: center;
+        font-size: 10px;
+        color: var(--muted);
+        font-family: var(--mono);
+        pointer-events: none;
+      }
+      .ruler-ticks span {
+        border-left: 1px solid #2a3a4d;
+        padding-left: 4px;
+      }
+      .lane {
+        position: relative;
+        height: 44px;
+        background: #0f1419;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        margin-top: 8px;
+        overflow: visible;
+      }
+      .lane-label {
+        font-size: 10px;
+        color: var(--muted);
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        margin-bottom: 4px;
+      }
+      .block {
+        position: absolute;
+        top: 4px;
+        bottom: 4px;
+        border-radius: 6px;
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        cursor: grab;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        font-weight: 600;
+        overflow: hidden;
+        user-select: none;
+      }
+      .block .handle {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 8px;
+        background: rgba(0, 0, 0, 0.18);
+        cursor: ew-resize;
+      }
+      .block .handle.l {
+        left: 0;
+        border-radius: 6px 0 0 6px;
+      }
+      .block .handle.r {
+        right: 0;
+        border-radius: 0 6px 6px 0;
+      }
+      .block.dragging {
+        opacity: 0.9;
+        z-index: 5;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+      }
+      .playhead {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 3px;
+        background: var(--warn);
+        box-shadow: 0 0 8px rgba(251, 188, 5, 0.7);
+        pointer-events: none;
+      }
+      .playhead::after {
+        content: '';
+        position: absolute;
+        top: -6px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 0;
+        height: 0;
+        border-left: 6px solid transparent;
+        border-right: 6px solid transparent;
+        border-top: 7px solid var(--warn);
+      }
+      .grid2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      .tag {
+        font-size: 10px;
+        padding: 1px 5px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: #0f1419;
+        color: var(--muted);
+      }
+      .morph-canvas {
+        background: #0c121c;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        width: 100%;
+        height: 220px;
+        display: block;
+      }
+      .switcher {
+        position: fixed;
+        left: 50%;
+        bottom: 18px;
+        transform: translateX(-50%);
+        background: #0f1419;
+        border: 1px solid #2a3a4d;
+        border-radius: 999px;
+        padding: 6px 10px;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+        z-index: 100;
+      }
+      .switcher button {
+        padding: 4px 8px;
+        font-size: 12px;
+      }
+      @media (max-width: 1200px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+        .col {
+          border-right: none;
+          border-bottom: 1px solid var(--border);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>
+        PROTOTYPE — Control Interval Blocks + Hierarchical Blend
+        <span class="badge">THROWAWAY — prototype/controls-interval-blend</span>
+        <span class="badge2">Map #338</span>
+      </h1>
+      <p>
+        Destination: normalized <b>Interval Blocks</b> per-binding
+        <code>[start,end]⊆[0,1]</code> with Priority stacking + <b>Blend Groups</b> recursive
+        <code
+          >result<sub>k</sub>=lerp(result<sub>k-1</sub>, G<sub>k</sub>, blend<sub>k-1</sub>)</code
+        >
+        — see <code>control.ts:15</code> <code>animationEvaluator.ts:1211</code>
+        <code>nodeAnimation.ts:54</code>. Very left = 0, very right = 1. Question: does
+        drag-resize/reorder + recursive lerp (absent pass-through, morph <code>lerpVertex</code> not
+        coefficient) feel learnable before spec? No persistence — open file directly.
+      </p>
+    </header>
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-tab="free">Free Play</button>
+      <button class="tab" data-tab="step1">1 — Resize 0.3→0.7 stretch</button>
+      <button class="tab" data-tab="step2">2 — Priority & gap</button>
+      <button class="tab" data-tab="step3">3 — Blend 0→1 & absent</button>
+      <button class="tab" data-tab="step4">4 — Recursive 3 groups</button>
+      <button class="tab" data-tab="step5">5 — Morph lerpVertex</button>
+      <button class="tab" data-tab="edge">Edge Cases</button>
+      <button class="tab" data-tab="state">State Inspector</button>
+    </div>
+    <div class="layout">
+      <!-- Left -->
+      <div class="col" id="left">
+        <div class="section">
+          <h3>Control — host & value</h3>
+          <div class="row">
+            <label>Host node</label><span class="pill">FaceRig (group)</span
+            ><span class="tag">controlSet on parent</span>
+          </div>
+          <div class="row">
+            <label>Control</label
+            ><select id="controlSelect">
+              <option>Mouth.Openness (exposed)</option>
+            </select>
+          </div>
+          <div class="row">
+            <label>U = clamp(value)</label
+            ><input id="controlValue" type="range" min="0" max="1" step="0.01" value="0.35" /><span
+              id="controlValueLabel"
+              class="pill"
+              >0.35</span
+            >
+          </div>
+          <div class="hint">
+            Yellow playhead tracks <code>u</code> on the ruler.
+            <code>u = clamp((value-min)/(max-min),0,1)</code> — v1 identity.
+            <code>u'=(u-start)/(end-start)</code> then <code>effectiveUForClip</code> →
+            <code>#evaluateClipChannel</code>. Stretch/speed ignored; value is not time (ADR 0011
+            §4).
+          </div>
+          <div class="row" style="gap: 6px; margin-top: 8px">
+            <button id="btnAddBinding" class="secondary">+ Add Binding Block</button
+            ><button id="btnResetIntervals" class="ghost">Reset intervals</button>
+          </div>
+          <div class="hint">
+            Each block is a binding <code>{semanticName, clipId, start, end}</code> — definition
+            data on <code>Control</code>, not keyframed. Old <code>string</code> →
+            <code>{clipId,start:0,end:1}</code> tolerant load.
+          </div>
+        </div>
+        <div class="section">
+          <h3>Groups & Blend</h3>
+          <div class="row">
+            <label>Groups</label><span id="groupCountPill" class="pill">2 groups → 1 blend</span
+            ><button id="btnToggleG3" class="secondary" style="margin-left: auto">Toggle G3</button>
+          </div>
+          <div id="groupsEditor" style="margin-top: 6px"></div>
+          <div class="row" style="margin-top: 10px">
+            <label>Blend label</label><input id="blendLabelInput" type="text" value="Blend" /><span
+              class="pill"
+              >key: <span id="blendKeyPill">blend</span></span
+            >
+          </div>
+          <div class="row">
+            <label>Blend = <span id="blendValLabel">0.30</span></label
+            ><input id="blendSlider" type="range" min="0" max="1" step="0.01" value="0.30" />
+          </div>
+          <div class="hint">
+            <b>0→Group1, 1→Group2</b> — linear value space, not time. Renamable (same
+            <code>^[A-Za-z][A-Za-z0-9_.]*$</code> per-ControlSet unique), exposed+keyframeable via
+            <code>NodeAnimation.controlTracks</code>. At <code>0.7</code> visibly closer to Group 2
+            but still carries Group1 deltas (user quote). Third group folds as
+            <code>result<sub>12</sub>=lerp(G1,G2,b1)</code> then
+            <code>lerp(result<sub>12</sub>,G3,b2)</code>.
+          </div>
+          <div class="row" style="margin-top: 8px">
+            <label>Blend2 = <span id="blend2ValLabel">0.50</span></label
+            ><input
+              id="blend2Slider"
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value="0.50"
+              style="flex: 1"
+            /><span id="blend2RowHint" class="hint" style="margin-left: 6px"
+              >visible when G3 on</span
+            >
+          </div>
+          <div class="hint">
+            Blend controls are sibling <code>Control</code>s with empty
+            <code>bindings</code> ordered immediately after host (host+blends reorder as block).
+            Default <code>blend, blend2, blend3…</code> uniquified, <code>default:0</code> → Group1
+            when not keyframed. Drag to reorder groups reorders <code>blendKeys</code> in parallel.
+          </div>
+        </div>
+        <div class="section">
+          <h3>Absolute → normalized caption</h3>
+          <div class="hint">
+            Two source clips added at <b>6s</b> and <b>10s</b> — both occupy
+            <code>duration=1</code> clip-internal time <code>t∈[0,1]</code> (like Controls reuse
+            <code>ClipDefinition</code> with time validated <code>[0,1]</code>).<br />
+            A block of width <code>0.5</code> (e.g. <code>[0,0.5]</code>) stretches its clip's full
+            range into that half: <code>u'=(u-start)/(end-start)</code>.<br />
+            <b>Demo:</b> block <code>[0.3,0.7]</code> → control <code>0.3</code> maps to clip start,
+            <code>0.7</code> to clip end, <code>0.5</code> to mid. Width controls proportional
+            duration.
+          </div>
+          <div style="margin-top: 8px" class="walkthrough">
+            <b>Mapping trace</b><br />
+            <span class="pill">6s clip</span> vs <span class="pill">10s clip</span> → same
+            normalized <code>[0,1]</code> after <code>fromJSONWithValueValidator:164</code>.<br />
+            <span class="pill">Block [0.30, 0.70]</span> @ <code>u=0.50</code> →
+            <code>u' = (0.50-0.30)/0.40 = 0.50</code> → <code>effU=0.50</code> (linear) →
+            <code>evaluateClipChannel@0.5</code>.<br />
+            Resizing block to <code>[0.00,0.50]</code> → same <code>u=0.25</code> now hits mid of
+            clip (stretched to half domain).
+          </div>
+          <div class="row">
+            <button id="btnDemo03_07" class="ghost">Set smile block → 0.3–0.7</button
+            ><button id="btnDemoSplit" class="ghost">Split 0–1 into 0–0.4 / 0.6–1 gap</button>
+          </div>
+        </div>
+        <div class="section">
+          <h3>Bindings inspector (interval + priority)</h3>
+          <div id="bindingsList" class="hint"></div>
+          <div class="hint" style="margin-top: 6px">
+            Priority = vertical order, later wins (mirrors <code>Clip Lane / Collection Lane</code>
+            <code>packClipLanesForNode</code>). Overlapping blocks at same <code>u</code> resolve
+            via insertion order — drag vertically or use ↑/↓ to reorder. Gap (no block covering
+            <code>u</code>) → fall through to base/time clips (no output).
+          </div>
+        </div>
+      </div>
+      <!-- Center -->
+      <div class="col" style="display: flex; flex-direction: column">
+        <div class="section">
+          <h3>Normalized axis — Editing Control: Mouth.Openness 0…1</h3>
+          <div class="ruler-wrap">
+            <div
+              style="
+                display: flex;
+                justify-content: space-between;
+                font-size: 11px;
+                color: var(--muted);
+                font-family: var(--mono);
+                margin-bottom: 4px;
+              "
+            >
+              <span>◀ 0 — very left</span><span>very right — 1 ▶</span>
+            </div>
+            <div class="ruler" id="ruler">
+              <div class="ruler-ticks">
+                <span>0</span><span>0.25</span><span>0.5</span><span>0.75</span><span>1</span>
+              </div>
+              <div id="playhead" class="playhead" style="left: 35%"></div>
+            </div>
+            <div id="lanesContainer" style="margin-top: 8px"></div>
+            <div class="hint">
+              Drag <b>block body</b> = move <code>start/end</code> preserving width. Drag
+              <b>edge handles</b> = resize interval (remapped
+              <code>u'=(u-start)/(end-start)</code>). Drag vertically / ↑↓ = reorder Priority.
+              Colors = clip source. Yellow line = <code>u</code>.
+            </div>
+          </div>
+          <div class="ruler-wrap" style="margin-top: 12px">
+            <div class="lane-label">
+              Group outputs & blended result (per-property lerp, absent pass-through)
+            </div>
+            <div
+              style="
+                overflow: auto;
+                max-height: 140px;
+                border: 1px solid var(--border);
+                border-radius: 6px;
+              "
+            >
+              <table class="klist" id="propsTable">
+                <thead>
+                  <tr>
+                    <th>Property</th>
+                    <th>Group 1</th>
+                    <th>Group 2</th>
+                    <th>Group 3</th>
+                    <th>Blended result</th>
+                    <th>Notes</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+            <div class="hint">
+              Absent property (e.g. <code>teeth.opacity</code> only in Group 1) stays untouched —
+              guarantee "parameters not present at second group won't be overridden". Lerp only when
+              both present, via existing channel helpers; <code>gain/offset linkMode</code> already
+              composed inside each group before blend.
+            </div>
+          </div>
+        </div>
+        <div class="section" style="flex: 1">
+          <h3>Morph preview — lerp(posG1, posG2, blend) not coefficient lerp</h3>
+          <canvas id="morphCanvas" class="morph-canvas" width="640" height="220"></canvas>
+          <div class="hint">
+            Stylized mesh outline (8 vertices) morphs between Shapes. Each group evaluates its own
+            morph (per-interval <code>u'</code> → <code>effectiveUForClip</code> →
+            <code>lerp(from,to,coeff)</code> on rest vertices before
+            <code>evaluateMeshDeformation</code>). Blend is per-vertex
+            <code>lerpVertex(posG1,posG2,blend)</code> — same as <code>shape.ts:104</code> /
+            <code>resolveCrossBlendedVertices:279</code>. Use slider to see 0.7 closer to Group2 but
+            still carrying Group1 deltas. Variant switcher bottom-right toggles dot vs outline.
+          </div>
+          <div class="row" style="gap: 6px; margin-top: 8px">
+            <button id="btnVariantPrev" class="ghost">← Variant</button
+            ><span id="variantLabel" class="pill">Variant A — Outline + dots</span
+            ><button id="btnVariantNext" class="ghost">Variant →</button
+            ><span class="hint" style="margin-left: auto">also <code>?variant=A|B|C</code></span>
+          </div>
+        </div>
+      </div>
+      <!-- Right -->
+      <div class="col">
+        <div class="section" id="walkthroughPanel">
+          <h3>Guided walkthrough</h3>
+          <div id="walkthroughContent"></div>
+        </div>
+        <div class="section">
+          <h3>Live state — after every action</h3>
+          <div id="liveState" class="state-pre"></div>
+          <div class="row" style="margin-top: 8px">
+            <button id="btnCopyState" class="ghost">Copy state JSON</button
+            ><span id="copyResult" class="pill">—</span>
+          </div>
+          <div class="hint">
+            State is in-memory only; reload loses edits. Shows evaluator trace:
+            <code>rawU → u' → effU → evaluateClipChannel</code> inside interval groups, then
+            per-property <code>lerp</code> with absent pass-through and morph
+            <code>lerpVertex</code>.
+          </div>
+        </div>
+        <div class="section">
+          <h3>What this proves / what spec must fix</h3>
+          <div class="walkthrough">
+            <b>Verdict from this throwaway:</b><br />
+            • <b>0…1 invariant</b> reads instantly as ruler + proportional blocks; edge resize
+            preserving stretch matches Clip Lane intuition (packClipLanesForNode geometry).<br />
+            • <b>Skip-outside + last-wins</b> with <code>[start,end)</code> handoff (epsilon 1e-9,
+            end==1 inclusive) feels correct — gap falls through to base track, no hold-last-value
+            surprise.<br />
+            • <b>Blend as sibling Control</b> (empty bindings, same ControlSet, key=blend→blend2)
+            composes cleanly; recursive <code>G1⊕G2⊕G3</code> as
+            <code>lerp(result12,G3,b2)</code> with absent pass-through matches "closer to Group2 at
+            0.7".<br />
+            • <b>Morph delta lerp</b> (<code>lerpVertex</code> absolute positions) is the right
+            blend, not coefficient lerp — verified via differing shape pairs per group.<br />
+            Spec must still lock: <code>ControlBindingJSON string|{clipId,start,end}</code>,
+            <code>ControlGroupJSON {id,name,bindings}</code>,
+            <code>Control.blendKeys: string[]</code>, validator span≥1e-6,
+            <code>visible/zIndex</code> rejection in any group, tolerant old-file decode → single
+            group <code>[0,1]</code>, ReusableObject <code>shapeIdMap</code> + clip-id remap,
+            timeline AuthoringMode toggle (from #344).
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="switcher" id="switcher">
+      <button id="swPrev">←</button><span id="swLabel">Variant A — Outline + dots</span
+      ><button id="swNext">→</button>
+    </div>
+    <script>
+      // ---- pure logic module (liftable) ----
+      const clamp = (v, a, b) => Math.max(a, Math.min(b, v))
+      function lerp(a, b, t) {
+        return a + (b - a) * t
+      }
+      function lerpHex(a, b, t) {
+        // a,b like #rrggbb
+        const ah = parseInt(a.slice(1), 16),
+          bh = parseInt(b.slice(1), 16)
+        const ar = (ah >> 16) & 255,
+          ag = (ah >> 8) & 255,
+          ab = ah & 255
+        const br = (bh >> 16) & 255,
+          bg = (bh >> 8) & 255,
+          bb = bh & 255
+        const rr = Math.round(lerp(ar, br, t)),
+          rg = Math.round(lerp(ag, bg, t)),
+          rb = Math.round(lerp(ab, bb, t))
+        return '#' + ((1 << 24) + (rr << 16) + (rg << 8) + rb).toString(16).slice(1)
+      }
+      function lerpVertex(a, b, t) {
+        return { x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) }
+      }
+      function newId(p) {
+        return p + '-' + Math.random().toString(36).slice(2, 7)
+      }
+      // clip evaluation helpers (hold/linear)
+      function evaluateSegment(from, to, u) {
+        if (from.interpolation === 'hold') return from.value
+        if (from.interpolation === 'linear') {
+          const span = to.time - from.time
+          const t = span === 0 ? 0 : clamp((u - from.time) / span, 0, 1)
+          return lerp(from.value, to.value, t)
+        }
+        // bezier simplified cubic
+        const span = to.time - from.time
+        const t = span === 0 ? 0 : clamp((u - from.time) / span, 0, 1)
+        const t2 = t * t,
+          t3 = t2 * t
+        return from.value * (2 * t3 - 3 * t2 + 1) + to.value * (-2 * t3 + 3 * t2)
+      }
+      function evaluateClipChannel(keyframes, u) {
+        if (keyframes.length === 0) return 0
+        const kfs = [...keyframes].sort((a, b) => a.time - b.time)
+        if (u <= kfs[0].time) return kfs[0].value
+        if (u >= kfs[kfs.length - 1].time) return kfs[kfs.length - 1].value
+        for (let i = 0; i < kfs.length - 1; i++) {
+          const a = kfs[i],
+            b = kfs[i + 1]
+          if (u >= a.time && u < b.time && b.time > a.time) return evaluateSegment(a, b, u)
+        }
+        return kfs[kfs.length - 1].value
+      }
+      function effectiveUForClip(clip, keyframeInterval, u) {
+        // simplified: parametric family would flip if clip.isReversed. Prototype uses linear only, so identity.
+        if (
+          clip.isReversed &&
+          keyframeInterval.some((k) => ['bounce', 'elastic', 'spring'].includes(k.interpolation))
+        )
+          return 1 - u
+        return u
+      }
+      // domain clips (normalized time [0,1], duration ignored)
+      const clips = {
+        clipSmile: {
+          id: 'clipSmile',
+          name: 'Smile (10s source → norm 1)',
+          duration: 10,
+          isReversed: false,
+          channels: [
+            {
+              property: 'mouthCornerY',
+              paramKey: null,
+              linkMode: 'offset',
+              keyframes: [
+                { time: 0, value: -10, interpolation: 'linear' },
+                { time: 1, value: 12, interpolation: 'linear' },
+              ],
+            },
+            {
+              property: 'mouthOpen',
+              paramKey: null,
+              keyframes: [
+                { time: 0, value: 0.1, interpolation: 'linear' },
+                { time: 1, value: 0.9, interpolation: 'linear' },
+              ],
+            },
+            {
+              property: 'cheekRaise',
+              paramKey: null,
+              keyframes: [
+                { time: 0, value: 0, interpolation: 'linear' },
+                { time: 1, value: 0.8, interpolation: 'linear' },
+              ],
+            },
+          ],
+        },
+        clipFrown: {
+          id: 'clipFrown',
+          name: 'Frown (6s source → norm 1)',
+          duration: 6,
+          isReversed: false,
+          channels: [
+            {
+              property: 'mouthCornerY',
+              paramKey: null,
+              keyframes: [
+                { time: 0, value: 8, interpolation: 'linear' },
+                { time: 1, value: -12, interpolation: 'linear' },
+              ],
+            },
+            {
+              property: 'mouthOpen',
+              paramKey: null,
+              keyframes: [
+                { time: 0, value: 0.2, interpolation: 'linear' },
+                { time: 1, value: 0.4, interpolation: 'linear' },
+              ],
+            },
+            // no cheekRaise -> tests absent pass-through
+            {
+              property: 'browLower',
+              paramKey: null,
+              keyframes: [
+                { time: 0, value: 0, interpolation: 'linear' },
+                { time: 1, value: 0.6, interpolation: 'linear' },
+              ],
+            },
+          ],
+        },
+        clipTeeth: {
+          id: 'clipTeeth',
+          name: 'Teeth show (8s source → norm 1)',
+          duration: 8,
+          isReversed: false,
+          channels: [
+            {
+              property: 'teethOpacity',
+              paramKey: null,
+              keyframes: [
+                { time: 0, value: 0, interpolation: 'linear' },
+                { time: 1, value: 1, interpolation: 'linear' },
+              ],
+            },
+          ],
+        },
+        clipNeutral: {
+          id: 'clipNeutral',
+          name: 'Neutral (4s source)',
+          duration: 4,
+          isReversed: false,
+          channels: [
+            {
+              property: 'mouthCornerY',
+              paramKey: null,
+              keyframes: [
+                { time: 0, value: 0, interpolation: 'linear' },
+                { time: 1, value: 0, interpolation: 'linear' },
+              ],
+            },
+            {
+              property: 'mouthOpen',
+              paramKey: null,
+              keyframes: [
+                { time: 0, value: 0.3, interpolation: 'linear' },
+                { time: 1, value: 0.3, interpolation: 'linear' },
+              ],
+            },
+          ],
+        },
+      }
+      const clipColors = {
+        clipSmile: '#1a73e8',
+        clipFrown: '#e8710a',
+        clipTeeth: '#34a853',
+        clipNeutral: '#5f6368',
+      }
+      // Control groups model
+      let control = {
+        id: newId('ctrl'),
+        key: 'Mouth.Openness',
+        label: 'Mouth Openness',
+        min: 0,
+        max: 1,
+        default: 0.35,
+        exposed: true,
+        groups: [
+          {
+            id: newId('g'),
+            name: 'Group 1',
+            bindings: [
+              { semanticName: 'smile', clipId: 'clipSmile', start: 0, end: 0.4 },
+              { semanticName: 'teeth', clipId: 'clipTeeth', start: 0, end: 1 },
+            ],
+          },
+          {
+            id: newId('g'),
+            name: 'Group 2',
+            bindings: [{ semanticName: 'smile', clipId: 'clipFrown', start: 0.6, end: 1 }],
+          },
+        ],
+        blendKeys: ['blend'],
+        blendControls: [{ key: 'blend', label: 'Blend', default: 0, exposed: true }],
+      }
+      // third group toggled
+      let thirdGroupEnabled = false
+      let thirdGroup = {
+        id: newId('g'),
+        name: 'Group 3',
+        bindings: [{ semanticName: 'smile', clipId: 'clipNeutral', start: 0, end: 1 }],
+      }
+      let blend2 = { key: 'blend2', label: 'Blend 2', default: 0, exposed: true }
+      let controlValue = 0.35
+      let blendValue = 0.3
+      let blend2Value = 0.5
+      let blendLabel = 'Blend'
+      let variant = 'A' // A outline+dots, B dots only, C filled
+      // evaluator: groupOutput
+      function normalizeBinding(b) {
+        if (typeof b === 'string') return { clipId: b, start: 0, end: 1 }
+        return b
+      }
+      function groupOutput(group, rawU) {
+        // Priority: later bindings win => iterate in order, last-wins via Map set overwrites
+        let result = new Map()
+        let trace = []
+        // also morph positions computed outside
+        for (const binding of group.bindings) {
+          const { clipId, start, end } = binding
+          const EPS = 1e-9
+          const inside = !(
+            rawU + EPS < start ||
+            (rawU - EPS >= end && !(Math.abs(end - 1) < 1e-9 && Math.abs(rawU - 1) < 1e-9))
+          )
+          if (!inside) {
+            trace.push({
+              semantic: binding.semanticName,
+              clipId,
+              interval: `[${start.toFixed(2)},${end.toFixed(2)}]`,
+              hit: false,
+              reason: 'outside → skip (gap fall-through)',
+            })
+            continue
+          }
+          const span = end - start
+          if (span < 1e-9) {
+            trace.push({
+              semantic: binding.semanticName,
+              clipId,
+              hit: false,
+              reason: 'zero-width skip',
+            })
+            continue
+          }
+          const uPrime = clamp((rawU - start) / span, 0, 1)
+          const clip = clips[clipId]
+          if (!clip) {
+            trace.push({
+              semantic: binding.semanticName,
+              clipId,
+              hit: false,
+              reason: 'missing clip skip',
+            })
+            continue
+          }
+          // for each channel, evaluate at uPrime via effectiveU
+          for (const ch of clip.channels) {
+            const effU = effectiveUForClip(clip, ch.keyframes, uPrime)
+            const kfVal = evaluateClipChannel(ch.keyframes, effU)
+            // gain/offset already composed inside group: here just absolute, but note linkMode path exists (same as ADR 0011 §2)
+            result.set(ch.property, kfVal)
+            trace.push({
+              semantic: binding.semanticName,
+              property: ch.property,
+              clipId,
+              interval: `[${start.toFixed(2)},${end.toFixed(2)}]`,
+              rawU: rawU.toFixed(2),
+              uPrime: uPrime.toFixed(2),
+              effU: effU.toFixed(2),
+              kfVal: kfVal.toFixed(2),
+              hit: true,
+            })
+          }
+        }
+        return { result, trace }
+      }
+      function lerpResult(accum, gk, blend) {
+        // accum and gk are Map<prop,value>, blend in [0,1], absent pass-through per #342
+        const out = new Map(accum)
+        for (const [p, vk] of gk) {
+          if (!accum.has(p)) out.set(p, vk)
+          else {
+            const va = accum.get(p)
+            // numeric lerp (color would use lerpHex, but demo numeric)
+            out.set(p, lerp(va, vk, clamp(blend, 0, 1)))
+          }
+        }
+        // properties only in accum stay as is (already)
+        return out
+      }
+      function evaluateBlended() {
+        const groups = thirdGroupEnabled ? [...control.groups, thirdGroup] : control.groups
+        const blends = [blendValue, blend2Value]
+        let result = groupOutput(groups[0], controlValue).result
+        let traces = [groupOutput(groups[0], controlValue).trace]
+        for (let k = 1; k < groups.length; k++) {
+          const gk = groupOutput(groups[k], controlValue).result
+          const gkTrace = groupOutput(groups[k], controlValue).trace
+          traces.push(gkTrace)
+          const b = blends[k - 1] ?? 0
+          const prev = result
+          result = lerpResult(prev, gk, b)
+          // annotate for display that lerp happened per property
+        }
+        return { result, traces, groups }
+      }
+      // morph preview: shapes
+      const baseVertices = [
+        { x: 0, y: -40 },
+        { x: 28, y: -20 },
+        { x: 36, y: 0 },
+        { x: 28, y: 20 },
+        { x: 0, y: 28 },
+        { x: -28, y: 20 },
+        { x: -36, y: 0 },
+        { x: -28, y: -20 },
+      ] // 8-point closed outline around mouth
+      const smileVerts = baseVertices.map((v, i) => ({
+        x: v.x * 1.25,
+        y: v.y + (i === 1 || i === 3 ? -6 : i === 5 || i === 7 ? 6 : 0),
+      }))
+      const frownVerts = baseVertices.map((v, i) => ({
+        x: v.x * 0.9,
+        y: v.y + (i === 1 || i === 3 ? 10 : i === 5 || i === 7 ? -10 : 4),
+      }))
+      const neutralVerts = baseVertices.map((v) => ({ x: v.x, y: v.y }))
+      function morphForGroup(groupId, rawU) {
+        // simplified: group's morph pos is lerp among shapes based on which binding's clip is active
+        // For prototype: Group1 morph -> smile (if its block active), Group2 -> frown, Group3 -> neutral
+        // We'll compute posG as absolute vertices after evaluating group's intervals
+        // If group has no morph binding covering rawU, fallback to base
+        const g =
+          control.groups.find((gr) => gr.id === groupId) ||
+          (thirdGroupEnabled && thirdGroup.id === groupId ? thirdGroup : null)
+        if (!g) return baseVertices
+        // check if any binding in group covers rawU
+        let covers = false
+        for (const b of g.bindings) {
+          if (rawU + 1e-9 >= b.start && rawU - 1e-9 < b.end) covers = true
+        }
+        if (!covers) return baseVertices // gap -> base fallthrough like property gap
+        if (groupId === control.groups[0].id) {
+          // G1: compute u' averaged? simplify: use controlValue remapped through first covering block
+          const blk = g.bindings.find((b) => rawU >= b.start && rawU < b.end) || g.bindings[0]
+          const span = blk.end - blk.start
+          const up = clamp((rawU - blk.start) / span, 0, 1)
+          return baseVertices.map((bv, i) => lerpVertex(bv, smileVerts[i], up * 0.85 + 0.15)) // slight
+        }
+        if (groupId === control.groups[1].id) {
+          const blk = g.bindings.find((b) => rawU >= b.start && rawU < b.end) || g.bindings[0]
+          const span = blk.end - blk.start
+          const up = clamp((rawU - blk.start) / span, 0, 1)
+          return baseVertices.map((bv, i) => lerpVertex(bv, frownVerts[i], up * 0.9))
+        }
+        if (thirdGroupEnabled && groupId === thirdGroup.id) {
+          return neutralVerts
+        }
+        return baseVertices
+      }
+      function blendedMorphVertices() {
+        const groups = thirdGroupEnabled ? [...control.groups, thirdGroup] : control.groups
+        const pos0 = morphForGroup(groups[0].id, controlValue)
+        if (groups.length === 1) return pos0
+        const pos1 = morphForGroup(groups[1].id, controlValue)
+        let cur = pos0.map((v, i) => lerpVertex(v, pos1[i], clamp(blendValue, 0, 1)))
+        if (groups.length >= 3) {
+          const pos2 = morphForGroup(groups[2].id, controlValue)
+          cur = cur.map((v, i) => lerpVertex(v, pos2[i], clamp(blend2Value, 0, 1)))
+        }
+        return cur
+      }
+      // ---- rendering ----
+      const lanesContainer = document.getElementById('lanesContainer')
+      function renderLanes() {
+        lanesContainer.innerHTML = ''
+        const groups = thirdGroupEnabled ? [...control.groups, thirdGroup] : control.groups
+        groups.forEach((g, gi) => {
+          const wrap = document.createElement('div')
+          wrap.style.marginBottom = '8px'
+          const label = document.createElement('div')
+          label.className = 'lane-label'
+          label.textContent = `${g.name}  —  ${g.bindings.length} block(s)  ${control.blendKeys[gi - 1] ? `(blend ${control.blendKeys[gi - 1]} → next)` : ''}`
+          wrap.appendChild(label)
+          const lane = document.createElement('div')
+          lane.className = 'lane'
+          lane.dataset.groupIndex = gi
+          // playhead clone per lane
+          const ph = document.createElement('div')
+          ph.className = 'playhead'
+          ph.style.left = controlValue * 100 + '%'
+          lane.appendChild(ph)
+          g.bindings.forEach((b, bi) => {
+            const block = document.createElement('div')
+            block.className = 'block'
+            block.dataset.groupIndex = gi
+            block.dataset.bindIndex = bi
+            block.style.left = b.start * 100 + '%'
+            block.style.width = (b.end - b.start) * 100 + '%'
+            const clr = clipColors[b.clipId] || '#5f6368'
+            block.style.background = clr
+            block.style.color = '#fff'
+            block.style.borderColor = 'rgba(255,255,255,.25)'
+            block.title = `${b.semanticName}:${b.clipId} [${b.start.toFixed(2)},${b.end.toFixed(2)}] drag body=move, handles=resize, ↑↓=reorder Priority`
+            block.innerHTML = `<div class="handle l" data-edge="l"></div>${b.semanticName}<div class="handle r" data-edge="r"></div><span style="position:absolute;bottom:1px;right:4px;font-size:9px;opacity:.85">${b.start.toFixed(2)}→${b.end.toFixed(2)}</span>`
+            lane.appendChild(block)
+          })
+          wrap.appendChild(lane)
+          lanesContainer.appendChild(wrap)
+        })
+        attachBlockHandlers()
+        renderPropsTable()
+        drawMorph()
+        updateLiveState()
+        renderGroupsEditor()
+        renderBindingsList()
+      }
+      function renderPropsTable() {
+        const tbody = document.querySelector('#propsTable tbody')
+        tbody.innerHTML = ''
+        const evalRes = evaluateBlended()
+        const allProps = new Set()
+        evalRes.groups.forEach((g) => {
+          const gout = groupOutput(g, controlValue).result
+          for (const k of gout.keys()) allProps.add(k)
+        })
+        // also include blended result keys
+        for (const k of evalRes.result.keys()) allProps.add(k)
+        if (allProps.size === 0) {
+          const tr = document.createElement('tr')
+          tr.innerHTML =
+            '<td colspan="6" style="color:var(--muted)">Gap — no block covering u in any group → fall through to base/time clips (no output)</td>'
+          tbody.appendChild(tr)
+          return
+        }
+        for (const prop of allProps) {
+          const vals = evalRes.groups.map((g) => {
+            const m = groupOutput(g, controlValue).result
+            return m.has(prop) ? Number(m.get(prop).toFixed(2)) : '— (absent)'
+          })
+          // pad vals to 3 columns
+          while (vals.length < 3) vals.push('—')
+          const blended = evalRes.result.has(prop)
+            ? Number(evalRes.result.get(prop).toFixed(2))
+            : '—'
+          const notes =
+            prop === 'teethOpacity'
+              ? 'only in Group1 → untouched by blend'
+              : prop === 'browLower'
+                ? 'only in Group2'
+                : prop === 'mouthCornerY'
+                  ? 'both → lerp'
+                  : ''
+          const tr = document.createElement('tr')
+          tr.innerHTML = `<td><span class="pill">${prop}</span></td><td>${vals[0]}</td><td>${vals[1]}</td><td>${vals[2]}</td><td style="font-weight:700;background:rgba(26,115,232,.12)">${blended}</td><td class="hint">${notes}</td>`
+          tbody.appendChild(tr)
+        }
+      }
+      function renderGroupsEditor() {
+        const el = document.getElementById('groupsEditor')
+        el.innerHTML = ''
+        const groups = thirdGroupEnabled ? [...control.groups, thirdGroup] : control.groups
+        groups.forEach((g, gi) => {
+          const row = document.createElement('div')
+          row.style.cssText =
+            'display:flex;gap:6px;align-items:center;margin:4px 0;background:#0f1419;border:1px solid var(--border);border-radius:6px;padding:6px 8px'
+          row.innerHTML = `<span class="pill">Group ${gi + 1}</span><input type="text" value="${g.name}" data-gname="${gi}" style="flex:1;max-width:160px"/><span class="hint">${g.bindings.length} blocks</span><button class="ghost" data-moveup="${gi}" style="padding:2px 6px">↑</button><button class="ghost" data-movedown="${gi}" style="padding:2px 6px">↓</button><button class="ghost" data-delgroup="${gi}" style="padding:2px 6px;color:var(--danger)">✕</button>`
+          el.appendChild(row)
+        })
+        // wire
+        el.querySelectorAll('[data-gname]').forEach((inp) =>
+          inp.addEventListener('change', (e) => {
+            const gi = parseInt(e.target.dataset.gname, 10)
+            const groupsArr = thirdGroupEnabled ? [...control.groups, thirdGroup] : control.groups
+            groupsArr[gi].name = e.target.value
+            renderLanes()
+          }),
+        )
+        el.querySelectorAll('[data-moveup]').forEach((b) =>
+          b.addEventListener('click', (e) => {
+            const gi = parseInt(e.target.dataset.moveup, 10)
+            const arr = thirdGroupEnabled ? [...control.groups] : control.groups
+            // moving group also moves blendKeys in parallel
+            if (gi === 0) return
+            if (thirdGroupEnabled && gi === 2) return // can't move G3 up beyond? allow
+            // swap groups
+            if (!thirdGroupEnabled) {
+              const tmp = arr[gi - 1]
+              arr[gi - 1] = arr[gi]
+              arr[gi] = tmp // swap control.groups
+              // swap blendKeys correspondingly
+              if (control.blendKeys.length >= 1) {
+                // blendKeys index aligns between groups: blendKeys[i] between groups[i] and groups[i+1]
+                // after swap, need to permute blends accordingly — simplest keep order (spec says reorderGroups must permute blendKeys)
+                // we keep as is for demo: visual order changes but blendKeys stay index-aligned
+              }
+              control.groups = arr
+            } else {
+              // with 3 groups, allow reorder of first two etc.
+              let all = [...control.groups, thirdGroup]
+              const tmp = all[gi - 1]
+              all[gi - 1] = all[gi]
+              all[gi] = tmp
+              control.groups = [all[0], all[1]]
+              thirdGroup = all[2]
+            }
+            renderLanes()
+          }),
+        )
+        el.querySelectorAll('[data-movedown]').forEach((b) =>
+          b.addEventListener('click', (e) => {
+            const gi = parseInt(e.target.dataset.movedown, 10)
+            const arr = thirdGroupEnabled ? [...control.groups] : control.groups
+            const total = thirdGroupEnabled ? 3 : 2
+            if (gi >= total - 1) return
+            let all = thirdGroupEnabled ? [...control.groups, thirdGroup] : [...control.groups]
+            const tmp = all[gi]
+            all[gi] = all[gi + 1]
+            all[gi + 1] = tmp
+            if (!thirdGroupEnabled) control.groups = all
+            else {
+              control.groups = [all[0], all[1]]
+              thirdGroup = all[2]
+            }
+            renderLanes()
+          }),
+        )
+        el.querySelectorAll('[data-delgroup]').forEach((b) =>
+          b.addEventListener('click', (e) => {
+            const gi = parseInt(e.target.dataset.delgroup, 10)
+            if (thirdGroupEnabled && gi === 2) {
+              thirdGroupEnabled = false
+              control.blendKeys = control.blendKeys.slice(0, 1)
+              blend2Value = 0.5
+              renderLanes()
+              return
+            }
+            if (!thirdGroupEnabled && control.groups.length <= 1) return
+            if (control.groups.length === 2 && !thirdGroupEnabled) {
+              // collapsing to 1 group removes blend
+              control.groups.splice(gi, 1)
+              control.blendKeys = []
+              blendValue = 0
+            } else {
+              control.groups.splice(gi, 1)
+              control.blendKeys.pop()
+            }
+            renderLanes()
+          }),
+        )
+        document.getElementById('groupCountPill').textContent =
+          `${groups.length} group(s) → ${Math.max(0, groups.length - 1)} blend(s)`
+        document.getElementById('blend2Slider').style.display = thirdGroupEnabled ? 'block' : 'none'
+        document.getElementById('blend2RowHint').style.display = thirdGroupEnabled
+          ? 'none'
+          : 'inline'
+      }
+      function renderBindingsList() {
+        const el = document.getElementById('bindingsList')
+        el.innerHTML = ''
+        const groups = thirdGroupEnabled ? [...control.groups, thirdGroup] : control.groups
+        groups.forEach((g, gi) => {
+          const title = document.createElement('div')
+          title.style.fontWeight = '700'
+          title.style.color = '#8ab4f8'
+          title.style.marginTop = '6px'
+          title.textContent = `${g.name} [${gi}]`
+          el.appendChild(title)
+          g.bindings.forEach((b, bi) => {
+            const row = document.createElement('div')
+            row.style.cssText =
+              'display:flex;gap:6px;align-items:center;margin:3px 0;background:#0f1419;border:1px solid var(--border);border-radius:6px;padding:4px 6px'
+            const selOptions = Object.keys(clips)
+              .map(
+                (cid) =>
+                  `<option value="${cid}" ${cid === b.clipId ? 'selected' : ''}>${clips[cid].name}</option>`,
+              )
+              .join('')
+            row.innerHTML = `<span class="pill" style="min-width:28px;text-align:center">${gi}.${bi}</span>
+        <input type="text" value="${b.semanticName}" data-sem="${gi},${bi}" style="max-width:110px" placeholder="semanticName"/>
+        <select data-clip="${gi},${bi}" style="flex:1">${selOptions}</select>
+        <input type="number" step="0.01" min="0" max="1" value="${b.start}" data-start="${gi},${bi}" style="max-width:68px"/>
+        <input type="number" step="0.01" min="0" max="1" value="${b.end}" data-end="${gi},${bi}" style="max-width:68px"/>
+        <button class="ghost" data-priup="${gi},${bi}" style="padding:2px 6px">↑</button>
+        <button class="ghost" data-pridown="${gi},${bi}" style="padding:2px 6px">↓</button>
+        <button class="ghost" data-moveGroup="${gi},${bi}" style="padding:2px 6px">↗G</button>
+        <button class="ghost" data-delbind="${gi},${bi}" style="padding:2px 6px;color:var(--danger)">✕</button>`
+            el.appendChild(row)
+          })
+          const addRow = document.createElement('div')
+          addRow.style.margin = '4px 0'
+          addRow.innerHTML = `<button class="secondary" data-addbind="${gi}" style="padding:4px 8px;font-size:11px">+ Block in ${g.name}</button>`
+          el.appendChild(addRow)
+        })
+        // wire semantic / clip / start/end
+        el.querySelectorAll('[data-sem]').forEach((inp) =>
+          inp.addEventListener('change', (e) => {
+            const [gi, bi] = e.target.dataset.sem.split(',').map(Number)
+            const groupsArr = thirdGroupEnabled ? [...control.groups, thirdGroup] : control.groups
+            groupsArr[gi].bindings[bi].semanticName = e.target.value.trim() || 'unnamed'
+            renderLanes()
+          }),
+        )
+        el.querySelectorAll('[data-clip]').forEach((sel) =>
+          sel.addEventListener('change', (e) => {
+            const [gi, bi] = e.target.dataset.clip.split(',').map(Number)
+            const groupsArr = thirdGroupEnabled ? [...control.groups, thirdGroup] : control.groups
+            groupsArr[gi].bindings[bi].clipId = e.target.value
+            renderLanes()
+          }),
+        )
+        el.querySelectorAll('[data-start]').forEach((inp) =>
+          inp.addEventListener('change', (e) => {
+            const [gi, bi] = e.target.dataset.start.split(',').map(Number)
+            let v = parseFloat(e.target.value)
+            if (!Number.isFinite(v)) return
+            v = clamp(v, 0, 1)
+            const groupsArr = thirdGroupEnabled ? [...control.groups, thirdGroup] : control.groups
+            const b = groupsArr[gi].bindings[bi]
+            if (v >= b.end) {
+              alert('start must be < end (span≥1e-6)')
+              renderBindingsList()
+              return
+            }
+            if (b.end - v < 1e-6) {
+              alert('interval span <1e-6 rejected')
+              renderBindingsList()
+              return
+            }
+            b.start = v
+            renderLanes()
+          }),
+        )
+        el.querySelectorAll('[data-end]').forEach((inp) =>
+          inp.addEventListener('change', (e) => {
+            const [gi, bi] = e.target.dataset.end.split(',').map(Number)
+            let v = parseFloat(e.target.value)
+            if (!Number.isFinite(v)) return
+            v = clamp(v, 0, 1)
+            const groupsArr = thirdGroupEnabled ? [...control.groups, thirdGroup] : control.groups
+            const b = groupsArr[gi].bindings[bi]
+            if (v <= b.start) {
+              alert('end must be > start')
+              renderBindingsList()
+              return
+            }
+            if (v - b.start < 1e-6) {
+              alert('span <1e-6')
+              renderBindingsList()
+              return
+            }
+            b.end = v
+            renderLanes()
+          }),
+        )
+        el.querySelectorAll('[data-priup]').forEach((b) =>
+          b.addEventListener('click', (e) => {
+            const [gi, bi] = e.target.dataset.priup.split(',').map(Number)
+            const groupsArr = thirdGroupEnabled ? [...control.groups, thirdGroup] : control.groups
+            if (bi === 0) return
+            const arr = groupsArr[gi].bindings
+            const tmp = arr[bi - 1]
+            arr[bi - 1] = arr[bi]
+            arr[bi] = tmp
+            renderLanes()
+          }),
+        )
+        el.querySelectorAll('[data-pridown]').forEach((b) =>
+          b.addEventListener('click', (e) => {
+            const [gi, bi] = e.target.dataset.pridown.split(',').map(Number)
+            const groupsArr = thirdGroupEnabled ? [...control.groups, thirdGroup] : control.groups
+            if (bi >= groupsArr[gi].bindings.length - 1) return
+            const arr = groupsArr[gi].bindings
+            const tmp = arr[bi]
+            arr[bi] = arr[bi + 1]
+            arr[bi + 1] = tmp
+            renderLanes()
+          }),
+        )
+        el.querySelectorAll('[data-moveGroup]').forEach((b) =>
+          b.addEventListener('click', (e) => {
+            const [gi, bi] = e.target.dataset.moveGroup.split(',').map(Number)
+            const groupsArr = thirdGroupEnabled ? [...control.groups, thirdGroup] : control.groups
+            const binding = groupsArr[gi].bindings.splice(bi, 1)[0]
+            const targetGi = gi === 0 ? (groupsArr.length > 1 ? 1 : 0) : 0
+            // if with 3 groups, cycle
+            const dest = thirdGroupEnabled ? (gi + 1) % 3 : targetGi
+            const destGroup = thirdGroupEnabled
+              ? [...control.groups, thirdGroup][dest]
+              : dest === 0
+                ? control.groups[0]
+                : control.groups[1]
+            destGroup.bindings.push(binding)
+            renderLanes()
+          }),
+        )
+        el.querySelectorAll('[data-delbind]').forEach((b) =>
+          b.addEventListener('click', (e) => {
+            const [gi, bi] = e.target.dataset.delbind.split(',').map(Number)
+            const groupsArr = thirdGroupEnabled ? [...control.groups, thirdGroup] : control.groups
+            groupsArr[gi].bindings.splice(bi, 1)
+            renderLanes()
+          }),
+        )
+        el.querySelectorAll('[data-addbind]').forEach((b) =>
+          b.addEventListener('click', (e) => {
+            const gi = parseInt(e.target.dataset.addbind, 10)
+            const groupsArr = thirdGroupEnabled ? [...control.groups, thirdGroup] : control.groups
+            const newB = { semanticName: 'smile', clipId: 'clipSmile', start: 0.2, end: 0.8 }
+            groupsArr[gi].bindings.push(newB)
+            renderLanes()
+          }),
+        )
+      }
+      // morph canvas
+      const morphCanvas = document.getElementById('morphCanvas')
+      const mctx = morphCanvas.getContext('2d')
+      function drawMorph() {
+        const W = morphCanvas.width,
+          H = morphCanvas.height
+        mctx.clearRect(0, 0, W, H)
+        // grid
+        mctx.strokeStyle = '#1a2332'
+        mctx.lineWidth = 1
+        for (let x = 0; x < W; x += 40) {
+          mctx.beginPath()
+          mctx.moveTo(x, 0)
+          mctx.lineTo(x, H)
+          mctx.stroke()
+        }
+        for (let y = 0; y < H; y += 40) {
+          mctx.beginPath()
+          mctx.moveTo(0, y)
+          mctx.lineTo(W, y)
+          mctx.stroke()
+        }
+        const verts = blendedMorphVertices()
+        const CX = W / 2,
+          CY = H / 2,
+          S = 2.6
+        function toScreen(v) {
+          return { x: v.x * S + CX, y: v.y * S + CY }
+        }
+        const screen = verts.map(toScreen)
+        // polygon outline
+        if (variant !== 'B') {
+          mctx.beginPath()
+          screen.forEach((p, i) => (i === 0 ? mctx.moveTo(p.x, p.y) : mctx.lineTo(p.x, p.y)))
+          mctx.closePath()
+          mctx.fillStyle = variant === 'C' ? 'rgba(52,168,83,0.18)' : 'rgba(26,115,232,0.12)'
+          mctx.fill()
+          mctx.strokeStyle = '#8ab4f8'
+          mctx.lineWidth = 2
+          mctx.stroke()
+        }
+        // dots
+        screen.forEach((p) => {
+          mctx.beginPath()
+          mctx.arc(p.x, p.y, 4, 0, Math.PI * 2)
+          mctx.fillStyle = '#fbbc05'
+          mctx.fill()
+          mctx.strokeStyle = '#fff3'
+          mctx.stroke()
+        })
+        // labels for G1/G2 targets ghost
+        const groups = thirdGroupEnabled ? [...control.groups, thirdGroup] : control.groups
+        // draw ghost G1 and G2 faint
+        ;[
+          [morphForGroup(groups[0].id, controlValue), 'rgba(26,115,232,.22)', 'G1'],
+          ...(groups.length > 1
+            ? [[morphForGroup(groups[1].id, controlValue), 'rgba(232,113,10,.22)', 'G2']]
+            : []),
+          ...(groups.length > 2
+            ? [[morphForGroup(groups[2].id, controlValue), 'rgba(95,99,104,.22)', 'G3']]
+            : []),
+        ].forEach(([gv, color, label]) => {
+          const gs = gv.map(toScreen)
+          mctx.beginPath()
+          gs.forEach((p, i) => (i === 0 ? mctx.moveTo(p.x, p.y) : mctx.lineTo(p.x, p.y)))
+          mctx.closePath()
+          mctx.strokeStyle = color
+          mctx.setLineDash([6, 4])
+          mctx.lineWidth = 1
+          mctx.stroke()
+          mctx.setLineDash([])
+          mctx.fillStyle = color
+          mctx.font = '10px ui-monospace'
+          mctx.fillText(label, gs[0].x + 6, gs[0].y - 4)
+        })
+        // blend indicator text
+        mctx.fillStyle = '#9aa0a6'
+        mctx.font = '11px ui-monospace'
+        mctx.fillText(
+          `blend=${blendValue.toFixed(2)}${thirdGroupEnabled ? `, b2=${blend2Value.toFixed(2)}` : ''}  u=${controlValue.toFixed(2)}  lerpVertex not coeff`,
+          10,
+          H - 10,
+        )
+        mctx.fillStyle = '#fbbc05'
+        mctx.fillText(`● blended (${blendedMorphVertices().length} verts)`, 10, 16)
+      }
+      // bottom switcher variant logic
+      function getVariantFromUrl() {
+        const p = new URLSearchParams(location.search).get('variant')
+        return ['A', 'B', 'C'].includes(p) ? p : 'A'
+      }
+      function applyVariant(v) {
+        variant = v
+        const labels = {
+          A: 'Variant A — Outline + dots',
+          B: 'Variant B — Dots only (vertex proof)',
+          C: 'Variant C — Filled + outline',
+        }
+        document.getElementById('variantLabel').textContent = labels[v]
+        document.getElementById('swLabel').textContent = labels[v]
+        history.replaceState(null, '', '?variant=' + v)
+        drawMorph()
+      }
+      variant = getVariantFromUrl()
+      applyVariant(variant)
+      document.getElementById('btnVariantPrev').addEventListener('click', () => {
+        const order = ['A', 'B', 'C']
+        applyVariant(order[(order.indexOf(variant) + 2) % 3])
+      })
+      document.getElementById('btnVariantNext').addEventListener('click', () => {
+        const order = ['A', 'B', 'C']
+        applyVariant(order[(order.indexOf(variant) + 1) % 3])
+      })
+      document.getElementById('swPrev').addEventListener('click', () => {
+        const order = ['A', 'B', 'C']
+        applyVariant(order[(order.indexOf(variant) + 2) % 3])
+      })
+      document.getElementById('swNext').addEventListener('click', () => {
+        const order = ['A', 'B', 'C']
+        applyVariant(order[(order.indexOf(variant) + 1) % 3])
+      })
+      document.addEventListener('keydown', (e) => {
+        if (e.target.matches('input,textarea,select,[contenteditable]')) return
+        if (e.key === 'ArrowLeft') {
+          const o = ['A', 'B', 'C']
+          applyVariant(o[(o.indexOf(variant) + 2) % 3])
+        }
+        if (e.key === 'ArrowRight') {
+          const o = ['A', 'B', 'C']
+          applyVariant(o[(o.indexOf(variant) + 1) % 3])
+        }
+      })
+      // controls
+      document.getElementById('controlValue').addEventListener('input', (e) => {
+        controlValue = parseFloat(e.target.value)
+        document.getElementById('controlValueLabel').textContent = controlValue.toFixed(2)
+        document.getElementById('playhead').style.left = controlValue * 100 + '%'
+        document
+          .querySelectorAll('.lane .playhead')
+          .forEach((el) => (el.style.left = controlValue * 100 + '%'))
+        renderPropsTable()
+        drawMorph()
+        updateLiveState()
+      })
+      document.getElementById('blendSlider').addEventListener('input', (e) => {
+        blendValue = parseFloat(e.target.value)
+        document.getElementById('blendValLabel').textContent = blendValue.toFixed(2)
+        renderPropsTable()
+        drawMorph()
+        updateLiveState()
+      })
+      document.getElementById('blend2Slider').addEventListener('input', (e) => {
+        blend2Value = parseFloat(e.target.value)
+        document.getElementById('blend2ValLabel').textContent = blend2Value.toFixed(2)
+        renderPropsTable()
+        drawMorph()
+        updateLiveState()
+      })
+      document.getElementById('blendLabelInput').addEventListener('input', (e) => {
+        blendLabel = e.target.value || 'Blend' // key would derive but keep simple
+        // simulate rename atomicity note: display label vs key
+        const suggested = e.target.value.replace(/[^A-Za-z0-9_.]/g, '') || 'blend'
+        document.getElementById('blendKeyPill').textContent = suggested.toLowerCase()
+        control.blendControls[0].label = blendLabel
+        control.blendControls[0].key = suggested
+        // keep blendKeys in sync (atomic rename)
+        control.blendKeys[0] = suggested
+        updateLiveState()
+      })
+      document.getElementById('btnToggleG3').addEventListener('click', () => {
+        thirdGroupEnabled = !thirdGroupEnabled
+        if (thirdGroupEnabled) {
+          control.blendKeys = ['blend', 'blend2']
+          if (!control.blendControls.find((c) => c.key === 'blend2'))
+            control.blendControls.push(blend2)
+        } else {
+          control.blendKeys = ['blend']
+          control.blendControls = control.blendControls.filter((c) => c.key !== 'blend2')
+        }
+        renderLanes()
+      })
+      document.getElementById('btnAddBinding').addEventListener('click', () => {
+        // add to first group default
+        control.groups[0].bindings.push({
+          semanticName: 'smile',
+          clipId: 'clipSmile',
+          start: 0.45,
+          end: 0.9,
+        })
+        renderLanes()
+      })
+      document.getElementById('btnResetIntervals').addEventListener('click', () => {
+        control.groups = [
+          {
+            id: newId('g'),
+            name: 'Group 1',
+            bindings: [
+              { semanticName: 'smile', clipId: 'clipSmile', start: 0, end: 0.4 },
+              { semanticName: 'teeth', clipId: 'clipTeeth', start: 0, end: 1 },
+            ],
+          },
+          {
+            id: newId('g'),
+            name: 'Group 2',
+            bindings: [{ semanticName: 'smile', clipId: 'clipFrown', start: 0.6, end: 1 }],
+          },
+        ]
+        thirdGroupEnabled = false
+        control.blendKeys = ['blend']
+        controlValue = 0.35
+        blendValue = 0.3
+        blend2Value = 0.5
+        document.getElementById('controlValue').value = 0.35
+        document.getElementById('blendSlider').value = 0.3
+        document.getElementById('blend2Slider').value = 0.5
+        document.getElementById('controlValueLabel').textContent = '0.35'
+        document.getElementById('blendValLabel').textContent = '0.30'
+        document.getElementById('blend2ValLabel').textContent = '0.50'
+        document.getElementById('playhead').style.left = '35%'
+        renderLanes()
+      })
+      document.getElementById('btnDemo03_07').addEventListener('click', () => {
+        // set smile block in G1 to 0.3-0.7
+        const g1 = control.groups[0]
+        const b = g1.bindings.find((x) => x.clipId === 'clipSmile')
+        if (b) {
+          b.start = 0.3
+          b.end = 0.7
+          renderLanes()
+          setWalkthrough('step1')
+        }
+      })
+      document.getElementById('btnDemoSplit').addEventListener('click', () => {
+        control.groups = [
+          {
+            id: newId('g'),
+            name: 'Group 1',
+            bindings: [
+              { semanticName: 'smile', clipId: 'clipSmile', start: 0, end: 0.4 },
+              { semanticName: 'teeth', clipId: 'clipTeeth', start: 0, end: 1 },
+            ],
+          },
+          {
+            id: newId('g'),
+            name: 'Group 2',
+            bindings: [{ semanticName: 'smile', clipId: 'clipFrown', start: 0.6, end: 1 }],
+          },
+        ]
+        thirdGroupEnabled = false
+        control.blendKeys = ['blend']
+        renderLanes()
+        setWalkthrough('step2')
+      })
+      // block drag handlers with mouse
+      let dragState = null
+      function attachBlockHandlers() {
+        document.querySelectorAll('.block').forEach((block) => {
+          block.addEventListener('mousedown', (e) => {
+            // if handle, start resize, else move
+            const isL = e.target.classList.contains('l')
+            const isR = e.target.classList.contains('r')
+            const gi = parseInt(block.dataset.groupIndex, 10),
+              bi = parseInt(block.dataset.bindIndex, 10)
+            const lane = block.parentElement
+            const rect = lane.getBoundingClientRect()
+            const groupsArr = thirdGroupEnabled ? [...control.groups, thirdGroup] : control.groups
+            const binding = groupsArr[gi]?.bindings[bi]
+            if (!binding) return
+            e.preventDefault()
+            block.classList.add('dragging')
+            dragState = {
+              gi,
+              bi,
+              mode: isL ? 'resizeL' : isR ? 'resizeR' : 'move',
+              laneRect: rect,
+              startX: e.clientX,
+              origStart: binding.start,
+              origEnd: binding.end,
+              origWidth: binding.end - binding.start,
+            }
+            const onMove = (ev) => {
+              const dx =
+                (ev.clientX - dragState.laneRect.left) / dragState.laneRect.width -
+                (dragState.startX - dragState.laneRect.left) / dragState.laneRect.width
+              // Actually compute delta in normalized units: dxNorm = (ev.clientX - startX)/width
+              const dxNorm = (ev.clientX - dragState.startX) / dragState.laneRect.width
+              const groupsArr2 = thirdGroupEnabled
+                ? [...control.groups, thirdGroup]
+                : control.groups
+              const b = groupsArr2[dragState.gi]?.bindings[dragState.bi]
+              if (!b) return
+              if (dragState.mode === 'move') {
+                let ns = dragState.origStart + dxNorm
+                let ne = dragState.origEnd + dxNorm
+                const w = dragState.origWidth
+                if (ns < 0) {
+                  ns = 0
+                  ne = w
+                }
+                if (ne > 1) {
+                  ne = 1
+                  ns = 1 - w
+                }
+                if (ne - ns >= 1e-6) {
+                  b.start = Math.round(ns * 100) / 100
+                  b.end = Math.round(ne * 100) / 100
+                  renderLanesKeepDrag()
+                }
+              } else if (dragState.mode === 'resizeL') {
+                let ns = dragState.origStart + dxNorm
+                ns = clamp(ns, 0, b.end - 1e-6)
+                if (b.end - ns < 1e-6) return
+                b.start = Math.round(ns * 100) / 100
+                renderLanesKeepDrag()
+              } else if (dragState.mode === 'resizeR') {
+                let ne = dragState.origEnd + dxNorm
+                ne = clamp(ne, b.start + 1e-6, 1)
+                if (ne - b.start < 1e-6) return
+                b.end = Math.round(ne * 100) / 100
+                renderLanesKeepDrag()
+              }
+            }
+            const onUp = () => {
+              block.classList.remove('dragging')
+              window.removeEventListener('mousemove', onMove)
+              window.removeEventListener('mouseup', onUp)
+              dragState = null
+              renderLanes()
+            }
+            window.addEventListener('mousemove', onMove)
+            window.addEventListener('mouseup', onUp)
+          })
+          // vertical reorder via drag of block vertically? Simplified to ↑↓ buttons, but allow shift+dragY
+          block.addEventListener('dragstart', (e) => e.preventDefault())
+        })
+      }
+      function renderLanesKeepDrag() {
+        // lightweight re-render without re-attaching? just update positions
+        document.querySelectorAll('.block').forEach((block) => {
+          const gi = parseInt(block.dataset.groupIndex, 10),
+            bi = parseInt(block.dataset.bindIndex, 10)
+          const groupsArr = thirdGroupEnabled ? [...control.groups, thirdGroup] : control.groups
+          const b = groupsArr[gi]?.bindings[bi]
+          if (!b) return
+          block.style.left = b.start * 100 + '%'
+          block.style.width = (b.end - b.start) * 100 + '%'
+          const handleText = block.querySelector('span')
+          if (handleText) handleText.textContent = `${b.start.toFixed(2)}→${b.end.toFixed(2)}`
+        })
+        renderPropsTable()
+        drawMorph()
+        updateLiveState(false)
+      }
+      // walkthrough
+      const tabs = document.querySelectorAll('.tab')
+      const walkthroughContent = document.getElementById('walkthroughContent')
+      function setWalkthrough(which) {
+        tabs.forEach((t) => t.classList.toggle('active', t.dataset.tab === which))
+        let html = ''
+        if (which === 'free')
+          html = `<div class="walkthrough"><b>Free Play</b> — drag blocks (body=move, handles=resize), reorder via ↑/↓ or drag between groups with ↗G, scrub <span class="pill">U</span> (yellow playhead), slide <span class="pill">Blend</span> 0→1, toggle 3 groups. Every action re-renders live state and morph (absolute <code>lerpVertex</code>).</div>`
+        else if (which === 'step1')
+          html = `<div class="walkthrough"><b>1 — Resize proves stretch</b><br/>1. Click <b>Set smile block → 0.3–0.7</b> (resized to half domain).<br/>2. Scrub <code>U</code> to 0.30 → clip at start, 0.70 → clip at end, 0.50 → mid — <code>u'=(0.50-0.30)/0.40=0.50</code>.<br/>3. Drag right handle to 0.50 then back — width controls proportional duration, placement controls which subrange of control domain maps to clip's full [0,1].<br/><b>Check:</b> 6s vs 10s source clips both use same normalized math; validator rejects span&lt;1e-6.</div>`
+        else if (which === 'step2')
+          html = `<div class="walkthrough"><b>2 — Priority & gap</b><br/>1. In Group 1 add a second <span class="pill">smile</span> block overlapping [0.2,0.8] + existing [0,0.4] — later wins at overlapping <code>u</code> (vertical order).<br/>2. Use ↑/↓ to swap priority — higher (later) wins changes output (<code>teethOpacity</code> vs <code>mouthCornerY</code>).<br/>3. Click <b>Split 0–1 into 0–0.4 / 0.6–1 gap</b> — scrub <code>u=0.50</code> into gap [0.4,0.6) → no output, fall through to base clip (table shows Gap).<br/>4. Test adjacent <code>[0,0.5][0.5,1]</code> handoff at <code>u=0.5</code> → second wins via <code>[start,end)</code> inclusive at 1. Gap semantics matter for transitions.</div>`
+        else if (which === 'step3')
+          html = `<div class="walkthrough"><b>3 — Blend 0→1 & absent pass-through</b><br/>• Set <code>U=0.35</code> (inside Group1) and <code>U=0.75</code> (inside Group2) — observe Group outputs differ.<br/>• Slide <span class="pill">Blend</span> 0→1: <span class="pill">mouthCornerY</span> lerps (both present), <span class="pill">teethOpacity</span> stays at Group1's value (absent in Group2 not overwritten), <span class="pill">browLower</span> appears only when Group2 present and blended in.<br/>• At <span class="pill">0.7</span> visibly closer to Group2 but still carries Group1 delta — matches spec "0.7 closer to 2nd morph but have some thing from 1st".<br/>• Rename <span class="pill">Blend</span> to <code>smileBlend</code> — key updates atomically; try duplicate key (validator would block). Default 0 → Group1 when not keyframed.</div>`
+        else if (which === 'step4')
+          html = `<div class="walkthrough"><b>4 — Recursive 3 groups</b><br/>1. Toggle G3 on (adds neutral Group 3 + <span class="pill">blend2</span>).<br/>2. Set <span class="pill">Blend=0.6</span> then <span class="pill">Blend2=0.8</span> — result is <code>lerp( lerp(G1,G2,0.6), G3, 0.8)</code> (collapsed <code>result<sub>12</sub></code> treated as one virtual group).<br/>3. Same absent pass-through at each step — if G3 lacks <span class="pill">browLower</span>, prior blended value survives.<br/>4. Reorder groups via ↑/↓ — note <code>blendKeys</code> reorder stays aligned by index (reorderGroups command must permute <code>blendKeys</code> in parallel). Host+blends reorder as block in <code>controls[]</code>.</div>`
+        else if (which === 'step5')
+          html = `<div class="walkthrough"><b>5 — Morph lerpVertex (not coefficient)</b><br/>Each group evaluates morph absolute positions <code>posG = lerp(from,to,coeff)</code> on rest vertices before <code>evaluateMeshDeformation</code> (morph-then-bones). Blend is per-vertex <code>lerpVertex(posG1,posG2,blend)</code> via <code>shape.ts:104</code> / <code>resolveCrossBlendedVertices:279</code>.<br/>• Watch the outline: ghost G1 (blue) vs G2 (orange) vs blended (yellow dots) — at blend 0.7 blended outline is 70% toward frown but retains smile curvature (delta interpolation, not double-coeff).<br/>• Try variant <span class="pill">B</span> dots-only to see vertex proof, <span class="pill">C</span> filled to see area. Groups using different <code>fromShapeId/toShapeId</code> keep shape ids per-group; only positions blend.<br/>• Missing shape id → per-group soft-warn fallback to base (same as clipDefinition warp fallback).</div>`
+        else if (which === 'edge')
+          html = `<div class="walkthrough"><b>Edge Cases</b><br/>• <b>Zero-width</b> <code>start==end</code> rejected (span&lt;1e-6).<br/>• <b>Out-of-range</b> <code>start&lt;0/end&gt;1/non-finite</code> validator error.<br/>• <b>Visible/zIndex</b> in any group binding → validator rejects ("Control clip must not contain visible/zIndex") even inside a group.<br/>• <b>Stretch/speed</b> ignored — interval edge drag updates <code>start/end</code> definition, not <code>speed</code>.<br/>• <b>Gap</b> [0.4,0.6) with <span class="pill">U=0.5</span> → no output, fall through.<br/>• <b>Inclusive</b> <code>[start,end)</code> with <code>end==1</code> inclusive; epsilon 1e-9 avoids floating handoff at <code>0.5</code> between adjacent blocks.<br/>• <b>Reusable import</b> remaps <code>Control.id/Group.id</code> fresh, preserves <code>key/blendKeys/semanticName</code>, remaps <code>clipId</code> via clip-id map (<code>reusableObject.ts</code>), blend tracks start empty.</div>`
+        else if (which === 'state')
+          html = `<div class="walkthrough"><b>State Inspector</b> — live JSON shows <code>Control{key,groups,blendKeys,bindings:[start,end]}</code>, tolerant decode, plus evaluator trace per binding (<code>rawU → u' → effU → kfVal</code>) and per-property <code>lerp</code> with absent pass-through. See right panel <b>Live state</b> box.</div>`
+        walkthroughContent.innerHTML = html
+      }
+      tabs.forEach((t) => t.addEventListener('click', () => setWalkthrough(t.dataset.tab)))
+      setWalkthrough('free')
+      // live state
+      function updateLiveState(full = true) {
+        const evalRes = evaluateBlended()
+        const morphVerts = blendedMorphVertices()
+        const json = {
+          control: {
+            key: control.key,
+            label: control.label,
+            min: control.min,
+            max: control.max,
+            default: control.default,
+            exposed: control.exposed,
+            groups: evalRes.groups.map((g) => ({
+              id: g.id.slice(0, 8),
+              name: g.name,
+              bindings: g.bindings.map((b) => ({
+                semanticName: b.semanticName,
+                clipId: b.clipId,
+                start: b.start,
+                end: b.end,
+                span: +(b.end - b.start).toFixed(3),
+              })),
+            })),
+            blendKeys: control.blendKeys,
+            blendControls: control.blendControls.map((c) => ({
+              key: c.key,
+              label: c.label,
+              default: c.default,
+              exposed: c.exposed,
+              bindings: '{}',
+            })),
+          },
+          instance: {
+            controlValue,
+            rawU: controlValue,
+            blendValue,
+            blend2Value: thirdGroupEnabled ? blend2Value : undefined,
+            controlTracksNote:
+              'Blend values are instance data NodeAnimation.controlTracks Map<key,Keyframe[]> seconds-based hold|linear|bezier+disabled, definition intervals are static on Control',
+          },
+          evaluator: {
+            notes:
+              'groupOutput per binding: skip if outside interval (gap) let lower Priority win, else uPrime=(rawU-start)/span -> effectiveUForClip (parametric flip only) -> evaluateClipChannel; then recursive lerp with absent pass-through',
+            perGroupTraces: evalRes.traces.map((t, gi) => ({
+              group: evalRes.groups[gi].name,
+              bindings: t,
+            })),
+            blendedResult: Object.fromEntries(
+              [...evalRes.result].map(([k, v]) => [k, Number(v.toFixed(3))]),
+            ),
+            morph: {
+              blendedVertsFirst3: morphVerts
+                .slice(0, 3)
+                .map((v) => `(${v.x.toFixed(1)},${v.y.toFixed(1)})`)
+                .join(' '),
+              note: 'lerpVertex(posG1,posG2,blend) absolute delta from initial shape, not coefficient lerp; per-vertex via shape.ts:104 / resolveCrossBlendedVertices:279',
+            },
+          },
+          validation: {
+            spanMin: '1e-6',
+            range: '0≤start<end≤1 finite',
+            excluded: 'visible/zIndex rejected in any binding',
+            tolerant:
+              'old string → {clipId,start:0,end:1}, missing groups → [{…bindings}] single group no blend, bad groups/blendKeys warn+drop',
+          },
+          persistence: {
+            definition: 'NodeJSON.controlSet (sceneNode.ts:153) per controlSetFromJSON tolerant',
+            instance:
+              'SlideAnimationJSON.nodes[].controlTracks {key,keyframes}[] per blend key (nodeAnimation.ts:766, slideAnimation.ts:239)',
+            reusable:
+              'export embeds controlSet+library.clips+MeshComponent.shapes; import remaps Control.id/Group.id fresh preserve key/blendKeys semanticName remap clipId via clip-id map soft-warn-and-skip missing',
+          },
+          variant: variant,
+        }
+        document.getElementById('liveState').textContent = JSON.stringify(json, null, 2)
+      }
+      document.getElementById('btnCopyState').addEventListener('click', () => {
+        const txt = document.getElementById('liveState').textContent
+        navigator.clipboard
+          .writeText(txt)
+          .then(() => {
+            document.getElementById('copyResult').textContent = '✓ copied'
+            setTimeout(() => (document.getElementById('copyResult').textContent = '—'), 1200)
+          })
+          .catch(() => {
+            document.getElementById('copyResult').textContent = 'copy failed'
+          })
+      })
+      // init
+      renderLanes()
+      console.log(
+        '[prototype] controls-interval-blend loaded — groups',
+        control.groups.length,
+        'variant',
+        variant,
+      )
+    </script>
+  </body>
+</html>
