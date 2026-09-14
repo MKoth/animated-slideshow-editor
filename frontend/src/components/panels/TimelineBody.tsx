@@ -12,6 +12,7 @@ import {
   setSingleKeyframeDisabled,
 } from '../../app/keyframeSelectionActions'
 import { useEngine } from '../../app/useEngine'
+import { useAnimationManagerNavStore } from '../../stores/animationManagerNavStore'
 import {
   AddKeyframeCommand,
   DeleteKeyframesCommand,
@@ -168,7 +169,7 @@ export function TimelineBody({
   const zoomLevel = useTimelineViewStore((state) => state.zoomLevel)
   const scrollTime = useTimelineViewStore((state) => state.scrollTime)
   const expandedNodeIds = useTimelineViewStore((state) => state.expandedNodeIds)
-  const toggleAuthoringMode = useTimelineViewStore((state) => state.toggleAuthoringMode)
+  void useTimelineViewStore((state) => state.toggleAuthoringMode)
   const currentTime = usePlaybackController((state) => state.currentTimes[slideId] ?? 0)
   const playbackStatus = usePlaybackController((state) => state.status)
   const timelineSelection = useTimelineSelectionStore()
@@ -1471,20 +1472,55 @@ export function TimelineBody({
                 data-node-id={row.node.id}
                 data-property={row.property}
                 data-depth={row.depth}
-                title={`Controlled by exposed Control ${row.ownerKey.split(':')[1] ?? ''}`}
+                title={`Controlled via ${(row as unknown as { ownerLabel?: string }).ownerLabel ?? row.ownerKey.split(':')[1] ?? ''}`}
                 role="button"
                 tabIndex={0}
-                onClick={() => toggleAuthoringMode(row.ownerKey.split(':')[0]!)}
+                onClick={() => {
+                  const keys = (row as unknown as { ownerKeys?: readonly string[] }).ownerKeys ?? [
+                    row.ownerKey,
+                  ]
+                  const first = keys[0] ?? row.ownerKey
+                  const hostId = first.split(':')[0]!
+                  const controlKey = first.split(':')[1]
+                  useAnimationManagerNavStore.getState().requestHighlight(hostId, controlKey)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    const keys = (row as unknown as { ownerKeys?: readonly string[] })
+                      .ownerKeys ?? [row.ownerKey]
+                    const first = keys[0] ?? row.ownerKey
+                    const hostId = first.split(':')[0]!
+                    const controlKey = first.split(':')[1]
+                    useAnimationManagerNavStore.getState().requestHighlight(hostId, controlKey)
+                  }
+                }}
                 style={{
                   paddingLeft: 12 + row.depth * 16,
                   color: 'var(--color-text-muted, #999)',
                   fontStyle: 'italic',
+                  background: 'rgba(0,0,0,0.02)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  opacity: 0.85,
                 }}
               >
-                <span className="timeline-subtrack__label">
-                  [locked] {PROPERTY_LABELS[row.property]} (hidden, controlled)
+                <span aria-hidden="true" style={{ fontSize: 12 }}>
+                  🔒
                 </span>
-                <span aria-label="Hidden lane">N hidden</span>
+                <span className="timeline-subtrack__label" style={{ fontStyle: 'italic' }}>
+                  {PROPERTY_LABELS[row.property]}
+                </span>
+                <span
+                  style={{ fontSize: 10, color: '#999' }}
+                  title={`Controlled via ${(row as unknown as { ownerLabel?: string }).ownerLabel ?? ''}`}
+                >
+                  Controlled via{' '}
+                  {(row as unknown as { ownerLabel?: string }).ownerLabel ??
+                    row.ownerKey.split(':')[1] ??
+                    ''}
+                </span>
               </li>
             ) : row.kind === 'subtrack' ? (
               <li

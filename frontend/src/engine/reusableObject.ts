@@ -198,21 +198,29 @@ export function validateReusableObject(json: unknown): string[] {
                   }
                   const gid = rawGroup.id
                   if (typeof gid !== 'string' || gid === '')
-                    errors.push(`Control "${String(control.key)}" group id must be non-empty string`)
+                    errors.push(
+                      `Control "${String(control.key)}" group id must be non-empty string`,
+                    )
                   else if (gIds.has(gid))
                     errors.push(`Control "${String(control.key)}" has duplicate group id "${gid}"`)
                   else gIds.add(gid)
-                  if (typeof rawGroup.name !== 'string')
-                    errors.push(`Control "${String(control.key)}" group name must be a string`)
+                  if (typeof rawGroup.name !== 'string' || rawGroup.name.trim() === '')
+                    errors.push(
+                      `Control "${String(control.key)}" group name must be a non-empty string`,
+                    )
                   const gb = rawGroup.bindings
                   if (typeof gb !== 'object' || gb === null) {
                     errors.push(`Control "${String(control.key)}" group bindings must be an object`)
                     continue
                   }
-                  for (const [semantic, rawBinding] of Object.entries(gb as Record<string, unknown>)) {
+                  for (const [semantic, rawBinding] of Object.entries(
+                    gb as Record<string, unknown>,
+                  )) {
                     if (typeof rawBinding === 'string') {
                       if (rawBinding === '')
-                        errors.push(`Control "${String(control.key)}" group binding "${semantic}" clipId must be non-empty`)
+                        errors.push(
+                          `Control "${String(control.key)}" group binding "${semantic}" clipId must be non-empty`,
+                        )
                       continue
                     }
                     if (isRecord(rawBinding)) {
@@ -220,41 +228,70 @@ export function validateReusableObject(json: unknown): string[] {
                       const start = rawBinding.start
                       const end = rawBinding.end
                       if (typeof clipId !== 'string' || clipId === '') {
-                        errors.push(`Control "${String(control.key)}" group binding "${semantic}" clipId must be non-empty`)
+                        errors.push(
+                          `Control "${String(control.key)}" group binding "${semantic}" clipId must be non-empty`,
+                        )
                         continue
                       }
                       if (typeof start !== 'number' || !Number.isFinite(start))
-                        errors.push(`Control "${String(control.key)}" group binding "${semantic}" start must be a finite number`)
+                        errors.push(
+                          `Control "${String(control.key)}" group binding "${semantic}" start must be a finite number`,
+                        )
                       if (typeof end !== 'number' || !Number.isFinite(end))
-                        errors.push(`Control "${String(control.key)}" group binding "${semantic}" end must be a finite number`)
+                        errors.push(
+                          `Control "${String(control.key)}" group binding "${semantic}" end must be a finite number`,
+                        )
                       if (typeof start === 'number' && typeof end === 'number') {
-                        if (start < 0) errors.push(`Control "${String(control.key)}" group binding "${semantic}" start must be >= 0`)
-                        if (end > 1) errors.push(`Control "${String(control.key)}" group binding "${semantic}" end must be <= 1`)
-                        if (start >= end) errors.push(`Control "${String(control.key)}" group binding "${semantic}" start must be < end`)
+                        if (start < 0)
+                          errors.push(
+                            `Control "${String(control.key)}" group binding "${semantic}" start must be >= 0`,
+                          )
+                        if (end > 1)
+                          errors.push(
+                            `Control "${String(control.key)}" group binding "${semantic}" end must be <= 1`,
+                          )
+                        if (start >= end)
+                          errors.push(
+                            `Control "${String(control.key)}" group binding "${semantic}" start must be < end`,
+                          )
                         else if (end - (start as number) < CONTROL_INTERVAL_MIN_SPAN)
-                          errors.push(`Control "${String(control.key)}" group binding "${semantic}" span must be >= ${CONTROL_INTERVAL_MIN_SPAN}`)
+                          errors.push(
+                            `Control "${String(control.key)}" group binding "${semantic}" span must be >= ${CONTROL_INTERVAL_MIN_SPAN}`,
+                          )
                       }
                     } else {
-                      errors.push(`Control "${String(control.key)}" group binding "${semantic}" must be a string or interval object`)
+                      errors.push(
+                        `Control "${String(control.key)}" group binding "${semantic}" must be a string or interval object`,
+                      )
                     }
                   }
                 }
                 if (blendKeys !== undefined) {
-                  if (!Array.isArray(blendKeys)) errors.push(`Control "${String(control.key)}" blendKeys must be an array`)
+                  if (!Array.isArray(blendKeys))
+                    errors.push(`Control "${String(control.key)}" blendKeys must be an array`)
                   else {
                     const expected = Math.max(0, groups.length - 1)
                     if (blendKeys.length !== expected)
-                      errors.push(`Control "${String(control.key)}" blendKeys length must be max(0, groups.length-1) (expected ${expected}, got ${blendKeys.length})`)
+                      errors.push(
+                        `Control "${String(control.key)}" blendKeys length must be max(0, groups.length-1) (expected ${expected}, got ${blendKeys.length})`,
+                      )
                     for (const bk of blendKeys) {
                       if (typeof bk !== 'string' || !CONTROL_KEY_PATTERN.test(bk))
-                        errors.push(`Control "${String(control.key)}" has invalid blend key "${String(bk)}"`)
+                        errors.push(
+                          `Control "${String(control.key)}" has invalid blend key "${String(bk)}"`,
+                        )
                     }
                     if (blendKeys.includes(control.key as string))
-                      errors.push(`Control "${String(control.key)}" blendKeys must not contain its own key`)
+                      errors.push(
+                        `Control "${String(control.key)}" blendKeys must not contain its own key`,
+                      )
                   }
                 } else {
                   const expected = Math.max(0, groups.length - 1)
-                  if (expected !== 0) errors.push(`Control "${String(control.key)}" missing blendKeys (expected length ${expected})`)
+                  if (expected !== 0)
+                    errors.push(
+                      `Control "${String(control.key)}" missing blendKeys (expected length ${expected})`,
+                    )
                 }
               }
             } else if (blendKeys !== undefined) {
@@ -277,7 +314,8 @@ export function validateReusableObject(json: unknown): string[] {
             for (const [, info] of hostMap) {
               for (let i = 0; i <= info.blendKeys.length; i++) {
                 const pos = info.idx + i
-                if (occupied.has(pos)) errors.push(`blend sibling order violated — overlapping host blocks at ${pos}`)
+                if (occupied.has(pos))
+                  errors.push(`blend sibling order violated — overlapping host blocks at ${pos}`)
                 else occupied.add(pos)
               }
             }
@@ -291,17 +329,47 @@ export function validateReusableObject(json: unknown): string[] {
                 }
                 const actualKey = (controlsArr[expectedIdx] as Record<string, unknown>).key
                 if (actualKey !== bk)
-                  errors.push(`blend sibling order violated for "${hk}" — expected "${bk}" at ${expectedIdx}, got "${String(actualKey)}"`)
+                  errors.push(
+                    `blend sibling order violated for "${hk}" — expected "${bk}" at ${expectedIdx}, got "${String(actualKey)}"`,
+                  )
                 const blendCtrl = controlsArr[expectedIdx]
                 if (isRecord(blendCtrl)) {
                   const bks2 = (blendCtrl as Record<string, unknown>).blendKeys as unknown
                   if (Array.isArray(bks2) && bks2.length > 0)
                     errors.push(`Blend control "${String(bk)}" must not have its own blendKeys`)
+                  const blendBindings = (blendCtrl as Record<string, unknown>).bindings as unknown
+                  const hasBindings =
+                    blendBindings &&
+                    typeof blendBindings === 'object' &&
+                    Object.keys(blendBindings as Record<string, unknown>).length > 0
+                  if (hasBindings)
+                    errors.push(`Blend control "${String(bk)}" must have empty bindings`)
+                  else {
+                    const gb2 = (blendCtrl as Record<string, unknown>).groups as unknown
+                    if (Array.isArray(gb2) && gb2.length === 1) {
+                      const gbind = (gb2[0] as Record<string, unknown>).bindings as unknown
+                      if (
+                        gbind &&
+                        typeof gbind === 'object' &&
+                        Object.keys(gbind as Record<string, unknown>).length > 0
+                      )
+                        errors.push(`Blend control "${String(bk)}" must have empty bindings`)
+                    } else if (Array.isArray(gb2) && gb2.length !== 0) {
+                      errors.push(`Blend control "${String(bk)}" must have empty bindings`)
+                    }
+                  }
+                  const exposedVal = (blendCtrl as Record<string, unknown>).exposed
+                  if (exposedVal !== true)
+                    errors.push(`Blend control "${String(bk)}" must be exposed:true`)
+                  const defaultVal = (blendCtrl as Record<string, unknown>).default
+                  if (defaultVal !== 0)
+                    errors.push(`Blend control "${String(bk)}" must have default:0`)
                 }
               }
             }
             const blendKeyToHost = new Map<string, string>()
-            for (const [hk, info] of hostMap) for (const bk of info.blendKeys) blendKeyToHost.set(bk, hk)
+            for (const [hk, info] of hostMap)
+              for (const bk of info.blendKeys) blendKeyToHost.set(bk, hk)
             for (let idx = 0; idx < controlsArr.length; idx++) {
               const rc = controlsArr[idx]
               if (!isRecord(rc) || typeof rc.key !== 'string') continue
@@ -311,7 +379,9 @@ export function validateReusableObject(json: unknown): string[] {
                 const hInfo = hostMap.get(hk)!
                 const pos = hInfo.blendKeys.indexOf(k)
                 if (hInfo.idx + 1 + pos !== idx)
-                  errors.push(`blend sibling order violated for "${hk}" — blend "${k}" at wrong index ${idx}`)
+                  errors.push(
+                    `blend sibling order violated for "${hk}" — blend "${k}" at wrong index ${idx}`,
+                  )
               }
             }
           }
@@ -387,16 +457,33 @@ export function validateReusableObject(json: unknown): string[] {
           const controls = nodeJson.controlSet.controls
           if (!Array.isArray(controls)) continue
           for (const control of controls) {
-            if (!isRecord(control) || !isRecord(control.bindings)) continue
-            for (const rawBinding of Object.values(control.bindings as Record<string, unknown>)) {
-              if (typeof rawBinding === 'string' && rawBinding !== '')
-                controlClipIds.add(rawBinding)
-              else if (
-                isRecord(rawBinding) &&
-                typeof rawBinding.clipId === 'string' &&
-                rawBinding.clipId !== ''
-              )
-                controlClipIds.add(rawBinding.clipId)
+            if (isRecord(control.bindings)) {
+              for (const rawBinding of Object.values(control.bindings as Record<string, unknown>)) {
+                if (typeof rawBinding === 'string' && rawBinding !== '')
+                  controlClipIds.add(rawBinding)
+                else if (
+                  isRecord(rawBinding) &&
+                  typeof rawBinding.clipId === 'string' &&
+                  rawBinding.clipId !== ''
+                )
+                  controlClipIds.add(rawBinding.clipId)
+              }
+            }
+            const groups = (control as Record<string, unknown>).groups as unknown
+            if (Array.isArray(groups)) {
+              for (const g of groups as Record<string, unknown>[]) {
+                if (!isRecord(g) || !isRecord(g.bindings)) continue
+                for (const rawBinding of Object.values(g.bindings as Record<string, unknown>)) {
+                  if (typeof rawBinding === 'string' && rawBinding !== '')
+                    controlClipIds.add(rawBinding)
+                  else if (
+                    isRecord(rawBinding) &&
+                    typeof rawBinding.clipId === 'string' &&
+                    rawBinding.clipId !== ''
+                  )
+                    controlClipIds.add(rawBinding.clipId)
+                }
+              }
             }
           }
         }
@@ -483,18 +570,20 @@ export function validateReusableObject(json: unknown): string[] {
       const controls = nodeJson.controlSet.controls
       if (!Array.isArray(controls)) continue
       for (const control of controls) {
-        if (!isRecord(control) || !isRecord(control.bindings)) continue
-        for (const rawBinding of Object.values(control.bindings as Record<string, unknown>)) {
-          let clipId: string | undefined
-          if (typeof rawBinding === 'string') clipId = rawBinding
-          else if (isRecord(rawBinding) && typeof rawBinding.clipId === 'string')
-            clipId = rawBinding.clipId
-          if (clipId !== undefined && clipId !== '' && !clipIds.has(clipId)) {
-            errors.push(
-              `Control "${String(control.key)}" binding references unknown clip id: ${clipId}`,
-            )
+        if (isRecord(control.bindings)) {
+          for (const rawBinding of Object.values(control.bindings as Record<string, unknown>)) {
+            let clipId: string | undefined
+            if (typeof rawBinding === 'string') clipId = rawBinding
+            else if (isRecord(rawBinding) && typeof rawBinding.clipId === 'string')
+              clipId = rawBinding.clipId
+            if (clipId !== undefined && clipId !== '' && !clipIds.has(clipId)) {
+              errors.push(
+                `Control "${String(control.key)}" binding references unknown clip id: ${clipId}`,
+              )
+            }
           }
         }
+        // Groups are tolerant: missing clipIds are soft-warned on import, not file-fatal validation error
       }
     }
   }

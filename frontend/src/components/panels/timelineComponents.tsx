@@ -48,7 +48,8 @@ export const TrackRow = memo(
     name,
     visible,
     expanded,
-  }: (TrackRowEntry | BoneTrackEntry) & { expanded: boolean }) {
+    hiddenCount,
+  }: (TrackRowEntry | BoneTrackEntry) & { expanded: boolean; hiddenCount?: number }) {
     const selected = useSelectionStore((state) => state.selectedIds.includes(node.id))
     const { dispatch } = useEngine()
     const authoring = useTimelineViewStore((state) => state.authoringModeByHost[node.id] === true)
@@ -57,6 +58,7 @@ export const TrackRow = memo(
       event.preventDefault()
       dispatch(new SetVisibilityCommand({ nodeId: node.id, visible: !node.visible }))
     }
+    const badge = !authoring && typeof hiddenCount === 'number' && hiddenCount > 0 ? hiddenCount : 0
     return (
       <li data-node-id={node.id}>
         <div className="timeline-track-row">
@@ -95,6 +97,24 @@ export const TrackRow = memo(
               <NodeIcon node={node} />
             </span>
             <span className="timeline-track__name">{name}</span>
+            {badge > 0 && (
+              <span
+                className="timeline-track__badge"
+                data-testid="hidden-badge"
+                title={`${badge} hidden lane${badge === 1 ? '' : 's'} — Controlled via rig`}
+                style={{
+                  marginLeft: 6,
+                  padding: '1px 6px',
+                  borderRadius: 10,
+                  background: 'var(--color-bg-elevated, #eee)',
+                  border: '1px solid var(--color-border, #ddd)',
+                  fontSize: 10,
+                  color: 'var(--color-text-muted, #666)',
+                }}
+              >
+                {badge} hidden
+              </span>
+            )}
             <span className="timeline-track__indicators">
               <button
                 className="timeline-track__indicator timeline-track__indicator--eye"
@@ -111,7 +131,8 @@ export const TrackRow = memo(
               </span>
               {node.controlSet && (
                 <button
-                  className="timeline-track__indicator"
+                  className="timeline-track__indicator timeline-track__indicator--authoring"
+                  data-testid="authoring-toggle"
                   title={authoring ? 'Hide internal rig lanes' : 'Show internal rig lanes'}
                   aria-label={authoring ? 'Exit rig authoring mode' : 'Enter rig authoring mode'}
                   onClick={(event) => {
@@ -121,7 +142,9 @@ export const TrackRow = memo(
                   onMouseDown={(event) => event.stopPropagation()}
                   onPointerDown={(event) => event.stopPropagation()}
                 >
-                  {authoring ? 'A' : 'R'}
+                  <span aria-hidden="true" style={{ fontSize: 12 }}>
+                    {authoring ? '👁️‍🗨️' : '👁️'}
+                  </span>
                 </button>
               )}
             </span>
@@ -136,7 +159,8 @@ export const TrackRow = memo(
     prev.name === next.name &&
     prev.visible === next.visible &&
     prev.expanded === next.expanded &&
-    prev.kind === next.kind,
+    prev.kind === next.kind &&
+    (prev as TrackRowEntry).hiddenCount === (next as TrackRowEntry).hiddenCount,
 )
 
 export function KeyframeMarker({

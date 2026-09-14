@@ -25,6 +25,7 @@ import { ParentingModeDialog } from './ParentingModeDialog'
 import { ExportObjectModal } from './ExportObjectModal'
 import { ExportClipCollectionModal } from './ExportClipCollectionModal'
 import { AnimationManagerModal } from './AnimationManagerModal'
+import { useAnimationManagerNavStore } from '../../stores/animationManagerNavStore'
 import { hasAnimatedDescendant } from '../../engine/animationManagerModel'
 
 interface ContextMenuState {
@@ -499,6 +500,13 @@ export function ScenePanel() {
   const [exportOpen, setExportOpen] = useState(false)
   const [exportCollectionParentId, setExportCollectionParentId] = useState<string | null>(null)
   const [managerParentId, setManagerParentId] = useState<string | null>(null)
+  const navPending = useAnimationManagerNavStore((s) => s.pending)
+  useEffect(() => {
+    if (navPending) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- opening manager from nav store is intentional sync
+      setManagerParentId(navPending.hostNodeId)
+    }
+  }, [navPending])
 
   const project = engine.project
   const slide = engine.getActiveSlide()

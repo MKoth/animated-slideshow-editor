@@ -131,7 +131,9 @@ export function createControlGroup(input: {
   return { id, name, bindings }
 }
 
-export function mergeGroupBindings(groups: readonly ControlGroup[]): Record<string, ControlBinding> {
+export function mergeGroupBindings(
+  groups: readonly ControlGroup[],
+): Record<string, ControlBinding> {
   const merged: Record<string, ControlBinding> = {}
   for (const group of groups) {
     for (const [semantic, binding] of Object.entries(group.bindings)) {
@@ -148,6 +150,7 @@ export function uniquifyBlendKey(existingKeys: Set<string>, base = 'blend'): str
   return `${base}${idx}`
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function isBlendControl(_control: Control): boolean {
   // Blend controls are empty bindings with no groups? Actually they are ordinary controls with single empty group.
   // We detect via being referenced as blendKey elsewhere, but for standalone check we consider empty bindings and exposed true default0
@@ -205,10 +208,12 @@ export function validateControls(controls: readonly Control[]): void {
         if (groupIds.has(group.id))
           throw new Error(`Control "${control.key}" has duplicate group id "${group.id}"`)
         groupIds.add(group.id)
-        if (typeof group.name !== 'string')
-          throw new Error(`Control "${control.key}" group name must be a string`)
+        if (typeof group.name !== 'string' || group.name.trim() === '')
+          throw new Error(`Control "${control.key}" group name must be a non-empty string`)
         if (group.bindings && typeof group.bindings === 'object') {
-          for (const [semantic, binding] of Object.entries(group.bindings as Record<string, ControlBinding>)) {
+          for (const [semantic, binding] of Object.entries(
+            group.bindings as Record<string, ControlBinding>,
+          )) {
             validateControlBinding(binding as ControlBinding, semantic, control.key)
           }
         } else if (group.bindings !== undefined) {
@@ -256,31 +261,35 @@ export function validateControls(controls: readonly Control[]): void {
   for (let idx = 0; idx < controls.length; idx++) {
     const control = controls[idx]
     // Determine if this control is a host with blends
-    const blendCount = (control.blendKeys?.length ?? 0)
+    const blendCount = control.blendKeys?.length ?? 0
     if (blendCount > 0) {
       hostIndices.set(control.key, idx)
       // check contiguous siblings
       for (let i = 0; i < blendCount; i++) {
         const blendKey = control.blendKeys[i]
-        if (allBlendKeys.has(blendKey))
-          throw new Error(`Duplicate blend key: ${blendKey}`)
+        if (allBlendKeys.has(blendKey)) throw new Error(`Duplicate blend key: ${blendKey}`)
         allBlendKeys.add(blendKey)
         const siblingIdx = idx + 1 + i
         if (siblingIdx >= controls.length)
-          throw new Error(`blend sibling order violated for "${control.key}" — missing blend "${blendKey}" at ${siblingIdx}`)
+          throw new Error(
+            `blend sibling order violated for "${control.key}" — missing blend "${blendKey}" at ${siblingIdx}`,
+          )
         const sibling = controls[siblingIdx]
         if (sibling.key !== blendKey)
-          throw new Error(`blend sibling order violated for "${control.key}" — expected "${blendKey}" at ${siblingIdx}, got "${sibling.key}"`)
+          throw new Error(
+            `blend sibling order violated for "${control.key}" — expected "${blendKey}" at ${siblingIdx}, got "${sibling.key}"`,
+          )
         // sibling should be a blend control: empty bindings, no blends of its own?
         // We enforce that blend controls have no blendKeys (single group) and empty bindings (or empty groups)
-        const siblingBlendCount = (sibling.blendKeys?.length ?? 0)
+        const siblingBlendCount = sibling.blendKeys?.length ?? 0
         if (siblingBlendCount !== 0)
           throw new Error(`Blend control "${blendKey}" must not have its own blendKeys`)
         // check sibling bindings empty? Allow empty groups as well
         const isEmptyBindings = Object.keys(sibling.bindings ?? {}).length === 0
         const isEmptyGroups =
           sibling.groups !== undefined
-            ? sibling.groups.length === 1 && Object.keys(sibling.groups[0].bindings ?? {}).length === 0
+            ? sibling.groups.length === 1 &&
+              Object.keys(sibling.groups[0].bindings ?? {}).length === 0
             : true // legacy without groups but empty bindings
         if (!isEmptyBindings && !isEmptyGroups)
           throw new Error(`Blend control "${blendKey}" must have empty bindings`)
@@ -307,7 +316,9 @@ export function validateControls(controls: readonly Control[]): void {
       const host = controls[hostIdx]
       const pos = host.blendKeys.indexOf(control.key)
       if (hostIdx + 1 + pos !== idx)
-        throw new Error(`blend sibling order violated for "${hostKey}" — blend "${control.key}" at wrong index ${idx}`)
+        throw new Error(
+          `blend sibling order violated for "${hostKey}" — blend "${control.key}" at wrong index ${idx}`,
+        )
     }
   }
   // Also ensure no overlapping blocks: hosts' blocks must not overlap
@@ -316,7 +327,8 @@ export function validateControls(controls: readonly Control[]): void {
     const host = controls[hostIdx]
     for (let i = 0; i <= host.blendKeys.length; i++) {
       const idx = hostIdx + i
-      if (occupied.has(idx)) throw new Error(`blend sibling order violated — overlapping host blocks at ${idx}`)
+      if (occupied.has(idx))
+        throw new Error(`blend sibling order violated — overlapping host blocks at ${idx}`)
       occupied.add(idx)
     }
   }
@@ -356,7 +368,8 @@ export function createControl(input: {
     // validate duplicate group ids
     const gidSet = new Set<string>()
     for (const g of groups) {
-      if (gidSet.has(g.id)) throw new Error(`Control "${input.key}" has duplicate group id "${g.id}"`)
+      if (gidSet.has(g.id))
+        throw new Error(`Control "${input.key}" has duplicate group id "${g.id}"`)
       gidSet.add(g.id)
     }
     // validate each binding
@@ -424,7 +437,9 @@ export function ensureControlGroups(control: Control): Control {
   }
   // Legacy: synthesize groups from flat bindings
   const flat = control.bindings ?? {}
-  const groups: ControlGroup[] = [{ id: newId('control-group'), name: 'Group 1', bindings: { ...flat } }]
+  const groups: ControlGroup[] = [
+    { id: newId('control-group'), name: 'Group 1', bindings: { ...flat } },
+  ]
   const blendKeys: string[] = []
   return {
     ...control,
@@ -498,7 +513,8 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
           item.bindings as Record<string, unknown>,
         )) {
           if (typeof rawBinding === 'string') {
-            if (rawBinding.length > 0) topBindings[semantic] = { clipId: rawBinding, start: 0, end: 1 }
+            if (rawBinding.length > 0)
+              topBindings[semantic] = { clipId: rawBinding, start: 0, end: 1 }
             continue
           }
           if (rawBinding && typeof rawBinding === 'object') {
@@ -536,6 +552,8 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
       // Parse groups if present (additive tolerant)
       let groups: ControlGroup[] | undefined
       let blendKeys: string[] | undefined
+      const hasGroupsField = Object.prototype.hasOwnProperty.call(item, 'groups')
+      const hasBlendKeysField = Object.prototype.hasOwnProperty.call(item, 'blendKeys')
       if (Array.isArray(item.groups)) {
         groups = []
         for (const rawGroup of item.groups) {
@@ -544,13 +562,35 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
             continue
           }
           const g = rawGroup as Record<string, unknown>
-          const gid = typeof g.id === 'string' && g.id !== '' ? g.id : newId('control-group')
-          const gname = typeof g.name === 'string' ? g.name : 'Group 1'
+          let gid: string
+          if (typeof g.id === 'string' && g.id !== '') gid = g.id
+          else {
+            console.warn(`[control] Group on "${key}" missing id — generating fresh`)
+            gid = newId('control-group')
+          }
+          let gname: string
+          if (typeof g.name === 'string' && g.name.trim() !== '') gname = g.name
+          else {
+            console.warn(
+              `[control] Group "${String(g.id)}" on "${key}" has empty name — using "Group 1"`,
+            )
+            gname = typeof g.name === 'string' && g.name !== '' ? g.name : 'Group 1'
+            if (typeof g.name !== 'string' || g.name.trim() === '') {
+              console.warn(`[control] Dropping invalid group name on "${key}" — using fallback`)
+            }
+          }
           const gbindings: Record<string, ControlBinding> = {}
           if (g.bindings && typeof g.bindings === 'object') {
-            for (const [semantic, rawBinding] of Object.entries(g.bindings as Record<string, unknown>)) {
+            for (const [semantic, rawBinding] of Object.entries(
+              g.bindings as Record<string, unknown>,
+            )) {
               if (typeof rawBinding === 'string') {
-                if (rawBinding.length > 0) gbindings[semantic] = { clipId: rawBinding, start: 0, end: 1 }
+                if (rawBinding.length > 0)
+                  gbindings[semantic] = { clipId: rawBinding, start: 0, end: 1 }
+                else
+                  console.warn(
+                    `[control] Dropping empty string binding "${semantic}" on "${key}" group "${gname}"`,
+                  )
                 continue
               }
               if (rawBinding && typeof rawBinding === 'object') {
@@ -568,7 +608,12 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
                     obj.end,
                     `Control "${key}" group "${gname}" binding "${semantic}" end`,
                   )
-                  if (start < 0 || end > 1 || start >= end || end - start < CONTROL_INTERVAL_MIN_SPAN) {
+                  if (
+                    start < 0 ||
+                    end > 1 ||
+                    start >= end ||
+                    end - start < CONTROL_INTERVAL_MIN_SPAN
+                  ) {
                     console.warn(
                       `[control] Dropping invalid group interval binding "${semantic}" on "${key}" group "${gname}": start=${start} end=${end}`,
                     )
@@ -587,18 +632,46 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
                 )
               }
             }
+          } else if (g.bindings !== undefined) {
+            console.warn(
+              `[control] Dropping invalid group bindings on "${key}" group "${gname}": must be object`,
+            )
           }
-          groups.push({ id: gid, name: gname, bindings: gbindings })
+          // Validate group name non-empty (tolerant: already warned, but keep)
+          if (typeof gname !== 'string' || gname.trim() === '') {
+            console.warn(
+              `[control] Group "${gid}" on "${key}" has empty name — falling back to "Group 1"`,
+            )
+            groups.push({ id: gid, name: 'Group 1', bindings: gbindings })
+          } else {
+            groups.push({ id: gid, name: gname, bindings: gbindings })
+          }
+        }
+        // Check duplicate group ids (tolerant: warn and keep, but dedupe by generating fresh for duplicates)
+        const seenIds = new Set<string>()
+        for (let gi = 0; gi < groups.length; gi++) {
+          const g = groups[gi]!
+          if (seenIds.has(g.id)) {
+            console.warn(`[control] Duplicate group id "${g.id}" on "${key}" — generating fresh`)
+            const fresh = newId('control-group')
+            groups[gi] = { ...g, id: fresh }
+            seenIds.add(fresh)
+          } else seenIds.add(g.id)
         }
         // blendKeys
         if (Array.isArray(item.blendKeys)) {
           blendKeys = []
           for (const bk of item.blendKeys) {
             if (typeof bk === 'string' && CONTROL_KEY_PATTERN.test(bk)) blendKeys.push(bk)
-            else console.warn(`[control] Dropping invalid blendKey "${String(bk)}" on "${key}"`)
+            else
+              console.warn(
+                `[control] Dropping invalid blendKey "${String(bk)}" on "${key}" (non-string/pattern fail)`,
+              )
           }
         } else if (item.blendKeys !== undefined) {
-          console.warn(`[control] Ignoring invalid blendKeys on "${key}"`)
+          console.warn(
+            `[control] Ignoring invalid blendKeys on "${key}" (non-array) — warn-and-fallback to []`,
+          )
           blendKeys = []
         } else {
           blendKeys = []
@@ -607,21 +680,12 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
         const expected = Math.max(0, groups.length - 1)
         if (blendKeys.length !== expected) {
           console.warn(
-            `[control] Fixing blendKeys length for "${key}": expected ${expected}, got ${blendKeys.length}`,
+            `[control] Fixing blendKeys length for "${key}": expected ${expected}, got ${blendKeys.length} — warn-and-fallback`,
           )
           // tolerant: truncate or pad with uniquified?
           if (blendKeys.length > expected) blendKeys = blendKeys.slice(0, expected)
           else {
-            // pad not needed? leave as is and validation will catch later, but we will not throw here, let validateControls handle
-            // For tolerant load, we will allow mismatch and adjust groups? Instead we drop extra? We'll just keep as is and let validation warn.
-            // To keep tolerant, we will synthesize missing? But we warn and keep mismatch; validateControls will throw later, but we are in tolerant path that drops invalid controls via try/catch? Actually we push control and then validateControls at end will throw. We need to make it tolerant: adjust to expected.
-            // We'll pad with empty? No, we should just set to expected by truncating or leaving shorter? Let's pad with placeholder blend keys that will be uniquified later? For now just truncate/pad with generated? We'll pad with uniquified temp keys that don't collide.
-            // For tolerant load we will generate missing blendKeys as "blend" series but they may collide; we will generate but note they may be missing sibling controls — validation will fix? For now just pad with generated keys that are not validated until later.
-            // Simpler: set blendKeys to length expected by truncating or keeping what we have and letting validation fail? But we want file stays readable, so we should fix to expected by adjusting.
             if (groups.length === 1) blendKeys = []
-            // else we leave as is, but we need to ensure length matches expected for validation; we will synthesize missing with dummy keys that we will later remap? Instead we will set blendKeys to expected length by slicing or generating placeholder.
-            // For tolerant, we will if mismatch, set blendKeys to empty and let addGroup logic recreate? But we want to preserve what we can.
-            // We'll just if mismatch, we will adjust: if too short, pad with generated keys using existing keys set.
             if (blendKeys.length < expected) {
               // generate placeholders - but we don't know existing ControlSet keys yet. Use simple blendN
               const existing = new Set<string>()
@@ -631,23 +695,69 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
               existing.add(key)
               while (blendKeys.length < expected) {
                 const next = uniquifyBlendKey(existing, 'blend')
+                console.warn(
+                  `[control] Synthesizing missing blendKey "${next}" for "${key}" to satisfy length`,
+                )
                 blendKeys.push(next)
                 existing.add(next)
               }
             }
           }
         }
-        // If groups is empty, synthesize one empty group
+        // If groups is empty, synthesize one empty group (warn-and-fallback)
         if (groups.length === 0) {
-          groups = [{ id: newId('control-group'), name: 'Group 1', bindings: { ...topBindings } }]
+          console.warn(
+            `[control] Control "${key}" groups empty/malformed — warn-and-fallback to single group [0,1]`,
+          )
+          groups = [
+            {
+              id: newId('control-group'),
+              name:
+                typeof item.label === 'string' && item.label.trim() !== ''
+                  ? (item.label as string)
+                  : 'Group 1',
+              bindings: { ...topBindings },
+            },
+          ]
           blendKeys = []
         }
         // Ensure merged bindings matches groups union for backward compat field
         // Use groups as source of truth; topBindings is ignored if groups present (but we have it for old readers)
+      } else if (hasGroupsField) {
+        // Bad groups field (non-array) → warn-and-fallback to single group
+        console.warn(
+          `[control] Control "${key}" has invalid groups field (non-array) — warn-and-fallback to single group`,
+        )
+        groups = [
+          {
+            id: newId('control-group'),
+            name:
+              typeof item.label === 'string' && item.label.trim() !== ''
+                ? (item.label as string)
+                : 'Group 1',
+            bindings: { ...topBindings },
+          },
+        ]
+        blendKeys = []
+        if (hasBlendKeysField) {
+          console.warn(
+            `[control] Ignoring blendKeys on "${key}" because groups invalid — warn-and-drop`,
+          )
+        }
       } else {
         // No groups field: legacy file -> synthesize single group from topBindings
-        groups = [{ id: newId('control-group'), name: 'Group 1', bindings: { ...topBindings } }]
+        const labelName =
+          typeof item.label === 'string' && item.label.trim() !== ''
+            ? (item.label as string)
+            : 'Group 1'
+        groups = [{ id: newId('control-group'), name: labelName, bindings: { ...topBindings } }]
         blendKeys = []
+        if (hasBlendKeysField) {
+          console.warn(
+            `[control] Control "${key}" has blendKeys without groups — warn-and-drop, using []`,
+          )
+          blendKeys = []
+        }
       }
 
       const defaultVal = typeof item.default === 'number' ? item.default : 0
@@ -674,10 +784,108 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
   // For now we will attempt to validate; if fails due to blend sibling order, we will try to repair by removing offending blendKeys? Instead we will just warn and return controls without validation if it fails? But spec says validators should catch blend sibling order violated. For tolerant load, we should warn and keep controls as is, but validate in strict validator path (lessonSerializer) will error.
   // Here in controlSetFromJSON we are tolerant: we will try to validate, and if fails, we will console.warn and attempt to repair by ensuring contiguous order: if blend sibling order violated, we will drop those blendKeys that have missing siblings and keep groups with reduced blendKeys.
   // Simple repair: iterate hosts and if their blend siblings not found at expected positions, truncate blendKeys to what is actually present contiguously.
+  // Before strict validation, perform tolerant clean-up for blendKeys referencing non-empty or missing siblings (warn-and-drop)
+  // This handles bad blendKeys entry (non-string/pattern fail/missing sibling/non-empty bindings) → warn-and-drop per spec
+  {
+    const keyToControl = new Map<string, Control>()
+    for (const c of controls) keyToControl.set(c.key, c)
+    const needsRepair = controls.some((ctrl) => {
+      for (let i = 0; i < ctrl.blendKeys.length; i++) {
+        const bk = ctrl.blendKeys[i]
+        const hostIdx = controls.findIndex((c) => c.key === ctrl.key)
+        const sibling = controls[hostIdx + 1 + i]
+        if (!sibling || sibling.key !== bk) return true
+        const isEmptyBindings = Object.keys(sibling.bindings ?? {}).length === 0
+        const isEmptyGroups =
+          sibling.groups !== undefined
+            ? sibling.groups.length === 1 &&
+              Object.keys(sibling.groups[0].bindings ?? {}).length === 0
+            : true
+        if (!isEmptyBindings && !isEmptyGroups) return true
+      }
+      return false
+    })
+    if (needsRepair) {
+      const filteredControls: Control[] = [...controls]
+      // Iterate hosts and drop invalid blendKeys entries one by one (warn-and-drop)
+      for (let hostIdx = 0; hostIdx < filteredControls.length; hostIdx++) {
+        const host = filteredControls[hostIdx]!
+        if (host.blendKeys.length === 0) continue
+        let validCount = 0
+        for (let k = 0; k < host.blendKeys.length; k++) {
+          const bk = host.blendKeys[k]!
+          // Find actual sibling at expected position
+          const expectedSibling = filteredControls[hostIdx + 1 + k]
+          if (!expectedSibling || expectedSibling.key !== bk) {
+            console.warn(
+              `[control] Dropping blendKey "${bk}" on "${host.key}" — missing sibling at ${hostIdx + 1 + k} (warn-and-drop)`,
+            )
+            continue
+          }
+          const isEmptyBindings = Object.keys(expectedSibling.bindings ?? {}).length === 0
+          const isEmptyGroups =
+            expectedSibling.groups !== undefined
+              ? expectedSibling.groups.length === 1 &&
+                Object.keys(expectedSibling.groups[0].bindings ?? {}).length === 0
+              : true
+          if (!isEmptyBindings && !isEmptyGroups) {
+            console.warn(
+              `[control] Dropping blendKey "${bk}" on "${host.key}" — blend control must reference empty Control (non-empty bindings)`,
+            )
+            continue
+          }
+          if (!CONTROL_KEY_PATTERN.test(bk)) {
+            console.warn(`[control] Dropping blendKey "${bk}" on "${host.key}" — pattern fail`)
+            continue
+          }
+          validCount++
+        }
+        if (validCount !== host.blendKeys.length) {
+          const newBlendKeys = host.blendKeys.slice(0, validCount)
+          const newGroups = host.groups.slice(0, validCount + 1)
+          if (newGroups.length === 0) {
+            // fallback to single group if all dropped
+            filteredControls[hostIdx] = {
+              ...host,
+              blendKeys: [],
+              groups: [{ id: newId('control-group'), name: 'Group 1', bindings: {} }],
+            } as Control
+          } else {
+            filteredControls[hostIdx] = {
+              ...host,
+              blendKeys: newBlendKeys,
+              groups: newGroups,
+              bindings: mergeGroupBindings(newGroups),
+            } as Control
+          }
+          // Remove invalid blend siblings that were dropped (those beyond validCount)
+          const toRemoveKeys = host.blendKeys.slice(validCount)
+          for (const badKey of toRemoveKeys) {
+            const idxToRemove = filteredControls.findIndex(
+              (c, idx) => idx > hostIdx && c.key === badKey,
+            )
+            if (idxToRemove !== -1) {
+              console.warn(
+                `[control] Removing blend sibling control "${badKey}" due to invalid blendKey`,
+              )
+              filteredControls.splice(idxToRemove, 1)
+              // Adjust hostIdx iteration if needed
+              if (idxToRemove < hostIdx) hostIdx--
+            }
+          }
+        }
+      }
+      // Replace controls with filtered
+      controls.length = 0
+      for (const c of filteredControls) controls.push(c)
+    }
+  }
   try {
     validateControls(controls)
   } catch (e) {
-    console.warn(`[control] ControlSet validation warning for node "${nodeId}": ${e instanceof Error ? e.message : String(e)} — attempting tolerant repair`)
+    console.warn(
+      `[control] ControlSet validation warning for node "${nodeId}": ${e instanceof Error ? e.message : String(e)} — attempting tolerant repair`,
+    )
     // Attempt repair: for each host, check contiguous availability and truncate blendKeys accordingly
     const keyToIdx = new Map<string, number>()
     controls.forEach((c, idx) => keyToIdx.set(c.key, idx))
@@ -696,8 +904,14 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
           else break
         }
         if (available !== ctrl.blendKeys.length) {
-          console.warn(`[control] Truncating blendKeys for "${ctrl.key}" from ${ctrl.blendKeys.length} to ${available} due to order violation`)
-          repaired.push({ ...ctrl, blendKeys: ctrl.blendKeys.slice(0, available), groups: ctrl.groups.slice(0, available + 1) } as Control)
+          console.warn(
+            `[control] Truncating blendKeys for "${ctrl.key}" from ${ctrl.blendKeys.length} to ${available} due to order violation`,
+          )
+          repaired.push({
+            ...ctrl,
+            blendKeys: ctrl.blendKeys.slice(0, available),
+            groups: ctrl.groups.slice(0, available + 1),
+          } as Control)
           continue
         }
       }
@@ -712,7 +926,9 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
         controls: repaired,
       }
     } catch (e2) {
-      console.warn(`[control] Still invalid after repair: ${e2 instanceof Error ? e2.message : String(e2)} — returning best effort`)
+      console.warn(
+        `[control] Still invalid after repair: ${e2 instanceof Error ? e2.message : String(e2)} — returning best effort`,
+      )
       return {
         id: typeof record.id === 'string' ? record.id : newId('control-set'),
         hostNodeId: nodeId,
@@ -908,7 +1124,9 @@ export function removeGroupFromControlSet(
     validateControls(newControls)
   } catch (e) {
     // If validation still fails due to overlapping, we will keep as is but warn
-    console.warn(`[control] removeGroup validation warning: ${e instanceof Error ? e.message : String(e)}`)
+    console.warn(
+      `[control] removeGroup validation warning: ${e instanceof Error ? e.message : String(e)}`,
+    )
   }
   return { ...controlSet, controls: newControls }
 }
@@ -921,9 +1139,11 @@ export function reorderGroupsInControlSet(
   const hostIdx = controlSet.controls.findIndex((c) => c.key === hostKey)
   if (hostIdx === -1) throw new Error(`Host "${hostKey}" not found`)
   const host = controlSet.controls[hostIdx]
-  if (newOrder.length !== host.groups.length) throw new Error(`newOrder length must match groups length`)
+  if (newOrder.length !== host.groups.length)
+    throw new Error(`newOrder length must match groups length`)
   const sorted = [...newOrder].sort((a, b) => a - b)
-  for (let i = 0; i < sorted.length; i++) if (sorted[i] !== i) throw new Error(`newOrder must be a permutation`)
+  for (let i = 0; i < sorted.length; i++)
+    if (sorted[i] !== i) throw new Error(`newOrder must be a permutation`)
   const newGroups = newOrder.map((idx) => host.groups[idx])
   // Permute blendKeys accordingly: mapping based on associated groups
   const oldBlendKeys = host.blendKeys
@@ -963,10 +1183,16 @@ export function reorderGroupsInControlSet(
     }
     // If we still have wrong length due to duplicates, pad with remaining old keys
     if (uniq.length < n - 1) {
-      for (const k of oldBlendKeys) if (!seen.has(k)) { uniq.push(k); seen.add(k); if (uniq.length===n-1) break }
+      for (const k of oldBlendKeys)
+        if (!seen.has(k)) {
+          uniq.push(k)
+          seen.add(k)
+          if (uniq.length === n - 1) break
+        }
     }
     // If still short, generate? Should not happen
-    while (uniq.length < n - 1) uniq.push(uniquifyBlendKey(new Set([...uniq, ...oldBlendKeys]), 'blend'))
+    while (uniq.length < n - 1)
+      uniq.push(uniquifyBlendKey(new Set([...uniq, ...oldBlendKeys]), 'blend'))
     // Truncate to n-1
     newBlendKeys.length = 0
     newBlendKeys.push(...uniq.slice(0, n - 1))
@@ -1021,20 +1247,25 @@ export function moveBindingBetweenGroups(
   const fromGroup = host.groups[fromIdx]
   const toGroup = host.groups[toIdx]
   const binding = fromGroup.bindings[semanticName]
-  if (binding === undefined) throw new Error(`Binding "${semanticName}" not found in group "${fromGroupId}"`)
+  if (binding === undefined)
+    throw new Error(`Binding "${semanticName}" not found in group "${fromGroupId}"`)
   // Remove from source
   const newFromBindings: Record<string, ControlBinding> = { ...fromGroup.bindings }
   delete newFromBindings[semanticName]
   // Insert into target
   const targetEntries = Object.entries(toGroup.bindings) as [string, ControlBinding][]
-  const insertAt = toIndex !== undefined ? Math.min(Math.max(toIndex, 0), targetEntries.length) : targetEntries.length
+  const insertAt =
+    toIndex !== undefined
+      ? Math.min(Math.max(toIndex, 0), targetEntries.length)
+      : targetEntries.length
   // If moving within same group, handle reorder
   let newTargetEntries: [string, ControlBinding][]
   if (fromGroupId === toGroupId) {
     const entries = Object.entries(fromGroup.bindings) as [string, ControlBinding][]
     const fromPos = entries.findIndex(([k]) => k === semanticName)
     const filtered = entries.filter(([k]) => k !== semanticName)
-    const dest = toIndex !== undefined ? Math.min(Math.max(toIndex, 0), filtered.length) : filtered.length
+    const dest =
+      toIndex !== undefined ? Math.min(Math.max(toIndex, 0), filtered.length) : filtered.length
     // adjust for removal shift if dest > fromPos
     const actualDest = fromPos !== -1 && dest > fromPos ? dest : dest
     filtered.splice(actualDest, 0, [semanticName, binding])
@@ -1089,7 +1320,9 @@ export function reorderBindingWithinGroup(
   entries.splice(dest, 0, moved)
   const newBindings: Record<string, ControlBinding> = {}
   for (const [k, v] of entries) newBindings[k] = v
-  const newGroups = host.groups.map((g, idx) => (idx === groupIdx ? { ...g, bindings: newBindings } : g))
+  const newGroups = host.groups.map((g, idx) =>
+    idx === groupIdx ? { ...g, bindings: newBindings } : g,
+  )
   const newHost: Control = { ...host, groups: newGroups, bindings: mergeGroupBindings(newGroups) }
   const newControls = [...controlSet.controls]
   newControls[hostIdx] = newHost
@@ -1104,13 +1337,19 @@ export function renameControlInSet(
 ): ControlSet {
   validateControlKey(newKey)
   if (oldKey === newKey) return controlSet
-  if (!controlSet.controls.some((c) => c.key === oldKey)) throw new Error(`Control "${oldKey}" not found`)
-  if (controlSet.controls.some((c) => c.key === newKey)) throw new Error(`Duplicate control key: ${newKey}`)
+  if (!controlSet.controls.some((c) => c.key === oldKey))
+    throw new Error(`Control "${oldKey}" not found`)
+  if (controlSet.controls.some((c) => c.key === newKey))
+    throw new Error(`Duplicate control key: ${newKey}`)
   // Also check blendKeys uniqueness will be handled
   const newControls = controlSet.controls.map((control) => {
     let nextControl = control
     if (control.key === oldKey) {
-      nextControl = { ...control, key: newKey, label: control.label === oldKey ? newKey : control.label }
+      nextControl = {
+        ...control,
+        key: newKey,
+        label: control.label === oldKey ? newKey : control.label,
+      }
     }
     if (control.blendKeys.includes(oldKey)) {
       const newBlendKeys = control.blendKeys.map((bk) => (bk === oldKey ? newKey : bk))
@@ -1136,7 +1375,8 @@ export function reorderControlBlock(
   const block = controlSet.controls.slice(hostIdx, hostIdx + blockSize)
   // Check block integrity
   const expectedKeys = [hostKey, ...host.blendKeys]
-  for (let i = 0; i < blockSize; i++) if (block[i].key !== expectedKeys[i]) throw new Error(`Block integrity violated at ${i}`)
+  for (let i = 0; i < blockSize; i++)
+    if (block[i].key !== expectedKeys[i]) throw new Error(`Block integrity violated at ${i}`)
   const withoutBlock = [...controlSet.controls]
   withoutBlock.splice(hostIdx, blockSize)
   // Compute insertion index in withoutBlock space
@@ -1149,7 +1389,7 @@ export function reorderControlBlock(
   // Check for overlapping with existing host blocks: we will ensure target is not inside any existing host block in withoutBlock
   // Find host blocks in withoutBlock
   const hostBlocks: { start: number; end: number }[] = []
-  for (let i = 0; i < withoutBlock.length; ) {
+  for (let i = 0; i < withoutBlock.length;) {
     const ctrl = withoutBlock[i]
     const bCount = ctrl.blendKeys.length
     hostBlocks.push({ start: i, end: i + bCount })
@@ -1175,7 +1415,10 @@ export function canDeleteControl(controlSet: ControlSet, key: string): boolean {
 }
 
 export function deleteControlFromSet(controlSet: ControlSet, key: string): ControlSet {
-  if (!canDeleteControl(controlSet, key)) throw new Error(`Control "${key}" cannot be deleted directly (blend siblings collapsed by removing groups)`)
+  if (!canDeleteControl(controlSet, key))
+    throw new Error(
+      `Control "${key}" cannot be deleted directly (blend siblings collapsed by removing groups)`,
+    )
   const idx = controlSet.controls.findIndex((c) => c.key === key)
   if (idx === -1) throw new Error(`Control "${key}" not found`)
   const ctrl = controlSet.controls[idx]
@@ -1186,4 +1429,3 @@ export function deleteControlFromSet(controlSet: ControlSet, key: string): Contr
   validateControls(newControls)
   return { ...controlSet, controls: newControls }
 }
-

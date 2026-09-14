@@ -23,6 +23,7 @@ export interface TrackRowEntry {
   readonly depth: number
   readonly name: string
   readonly visible: boolean
+  readonly hiddenCount?: number
 }
 
 export interface SubtrackEntry {
@@ -90,6 +91,8 @@ export interface HiddenSubtrackEntry {
   readonly node: SceneNode
   readonly property: AnimationProperty
   readonly ownerKey: string
+  readonly ownerKeys: readonly string[]
+  readonly ownerLabel: string
   readonly depth: number
 }
 
@@ -204,6 +207,26 @@ export function timelineRows(
 ): TimelineRow[] {
   const rows: TimelineRow[] = []
   for (const entry of trackRows(scene)) {
+    // compute hiddenCount for badge ( Normal mode, when not authoring for this node's hosts)
+    let hiddenCountForEntry = 0
+    let shouldShowHiddenBadge = false
+    if (expandedNodeIds[entry.node.id] === true) {
+      // count hidden subtracks that would be hidden in Normal
+      for (const property of animatablePropertiesOf(entry.node)) {
+        const owners = getExposedControlOwners(entry.node, property, getClip)
+        if (owners.length > 0) {
+          const anyAuthoring = owners.some((o) => authoringModeByHost[o.split(':')[0]!] === true)
+          if (!anyAuthoring) hiddenCountForEntry += 1
+        }
+      }
+      // also include other lane types if they are controlled? For now only count subtrack hidden; material/circle etc. could be added
+      shouldShowHiddenBadge = hiddenCountForEntry > 0 && authoringModeByHost[entry.node.id] !== true
+    }
+    const entryWithBadge: TrackRowEntry = {
+      ...entry,
+      hiddenCount: shouldShowHiddenBadge ? hiddenCountForEntry : 0,
+    }
+    // also need to handle bone vs node with hiddenCount? For bone entries we don't badge
     if (entry.node.components.bone) {
       rows.push({
         kind: 'bone',
@@ -213,33 +236,66 @@ export function timelineRows(
         visible: entry.visible,
       })
     } else {
-      rows.push(entry)
+      rows.push(entryWithBadge)
     }
     if (expandedNodeIds[entry.node.id] === true) {
-      for (const control of entry.node.controlSet?.controls ?? []) {
-        if (control.exposed || authoringModeByHost[entry.node.id] === true) {
-          rows.push({
-            kind: 'controlSubtrack',
-            node: entry.node,
-            controlKey: control.key,
-            label: control.label,
-            depth: entry.depth + 1,
-          })
+      // Control lane visibility: Normal shows only exposed host+Blend (blendKey∈host.blendKeys && exposed===true), Authoring shows all
+      const isAuthoringForHost = authoringModeByHost[entry.node.id] === true
+      if (entry.node.controlSet) {
+        const controls = entry.node.controlSet
+          .controls as readonly import('../../engine/control').Control[]
+        // Build blend ownership map
+        const allBlendKeys = new Set<string>()
+        const blendKeyToHostKey = new Map<string, string>()
+        for (const c of controls) {
+          for (const bk of (c as unknown as { blendKeys?: readonly string[] }).blendKeys ?? []) {
+            allBlendKeys.add(bk)
+            blendKeyToHostKey.set(bk, c.key)
+          }
+        }
+        for (const control of controls) {
+          const isBlend = allBlendKeys.has(control.key)
+          let visible = false
+          if (isAuthoringForHost) visible = true
+          else if (isBlend) {
+            const hostKey = blendKeyToHostKey.get(control.key)
+            const hostControl = controls.find((h) => h.key === hostKey)
+            // Blend visible only if its host is exposed and blend itself exposed true
+            if (control.exposed === true && hostControl?.exposed === true) visible = true
+          } else {
+            // Host or regular control
+            if (control.exposed === true) visible = true
+          }
+          if (visible) {
+            rows.push({
+              kind: 'controlSubtrack',
+              node: entry.node,
+              controlKey: control.key,
+              label: control.label,
+              depth: entry.depth + 1,
+            })
+          }
         }
       }
       for (const property of animatablePropertiesOf(entry.node)) {
-        const ownerKey = getExposedControlOwner(entry.node, property, getClip)
-        if (ownerKey && authoringModeByHost[ownerKey.split(':', 1)[0]!] !== true) {
-          rows.push({
-            kind: 'hiddenSubtrack',
-            node: entry.node,
-            property,
-            ownerKey,
-            depth: entry.depth + 1,
-          })
-        } else {
-          rows.push({ kind: 'subtrack', node: entry.node, property, depth: entry.depth + 1 })
+        const owners = getExposedControlOwners(entry.node, property, getClip)
+        if (owners.length > 0) {
+          const anyAuthoring = owners.some((o) => authoringModeByHost[o.split(':')[0]!] === true)
+          if (!anyAuthoring) {
+            const ownerLabel = owners.map((o) => o.split(':')[1] ?? o).join(', ')
+            rows.push({
+              kind: 'hiddenSubtrack',
+              node: entry.node,
+              property,
+              ownerKey: owners[0]!,
+              ownerKeys: owners,
+              ownerLabel,
+              depth: entry.depth + 1,
+            })
+            continue
+          }
         }
+        rows.push({ kind: 'subtrack', node: entry.node, property, depth: entry.depth + 1 })
       }
       rows.push({ kind: 'zIndexSubtrack', node: entry.node, depth: entry.depth + 1 })
       if (entry.node.components.mesh) {
@@ -308,18 +364,35 @@ export function timelineRows(
   return rows
 }
 
-function getExposedControlOwner(
+export function getExposedControlOwner(
   node: SceneNode,
   property: AnimationProperty,
   getClip?: (clipId: string) => ClipDefinition | null,
 ): string | null {
-  if (!getClip || !node.semanticName) return null
+  const owners = getExposedControlOwners(node, property, getClip)
+  return owners[0] ?? null
+}
+// keep exported for test compatibility
+void getExposedControlOwner
+
+export function getExposedControlOwners(
+  node: SceneNode,
+  property: AnimationProperty,
+  getClip?: (clipId: string) => ClipDefinition | null,
+): string[] {
+  if (!getClip || !node.semanticName) return []
+  const owners: string[] = []
   for (let host = node.parent; host; host = host.parent) {
-    for (const control of host.controlSet?.controls ?? []) {
+    const controls = host.controlSet?.controls ?? []
+    for (const control of controls as readonly import('../../engine/control').Control[]) {
       if (!control.exposed) continue
-      const binding = control.bindings[node.semanticName]
+      // Check union across all groups: use merged bindings (control.bindings) which is union of groups
+      // For legacy without groups, bindings is the source; for groups, merged is union
+      const binding = (control.bindings as Record<string, unknown>)[
+        node.semanticName
+      ] as unknown as { clipId?: string } | string | undefined
       if (!binding) continue
-      const clipId = typeof binding === 'string' ? binding : binding.clipId
+      const clipId = typeof binding === 'string' ? binding : (binding as { clipId: string }).clipId
       if (!clipId) continue
       let clip: ClipDefinition | null
       try {
@@ -327,10 +400,40 @@ function getExposedControlOwner(
       } catch {
         continue
       }
-      if (clip?.hasChannel(property)) return `${host.id}:${control.key}`
+      if (clip?.hasChannel(property as never)) owners.push(`${host.id}:${control.key}`)
+      else {
+        // also check if any group individually has channel even if merged doesn't? Merged already unions, but for completeness check groups
+        const groups = (
+          control as unknown as { groups?: readonly { bindings: Record<string, unknown> }[] }
+        ).groups
+        if (Array.isArray(groups)) {
+          for (const g of groups) {
+            const gb = (g.bindings as Record<string, unknown>)[node.semanticName] as unknown as
+              { clipId?: string } | string | undefined
+            if (!gb) continue
+            const gid = typeof gb === 'string' ? gb : (gb as { clipId: string }).clipId
+            if (!gid || gid !== clipId) continue
+            // clip already checked
+          }
+        }
+      }
     }
   }
-  return null
+  return owners
+}
+
+export function getHiddenCountForNode(
+  node: SceneNode,
+  authoringModeByHost: Readonly<Record<string, boolean>>,
+  getClip?: (clipId: string) => ClipDefinition | null,
+): number {
+  let count = 0
+  for (const property of animatablePropertiesOf(node)) {
+    const owners = getExposedControlOwners(node, property, getClip)
+    if (owners.length > 0 && !owners.some((o) => authoringModeByHost[o.split(':')[0]!] === true))
+      count++
+  }
+  return count
 }
 
 export function sceneHasObjects(scene: Scene): boolean {

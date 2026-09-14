@@ -80,6 +80,7 @@ import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { ManagerRuler } from './ManagerRuler'
 import { snapKeyframeTime } from '../../engine/timelineSnapping'
 import { createControl, createControlSet, CONTROL_INTERVAL_MIN_SPAN } from '../../engine/control'
+import { useAnimationManagerNavStore } from '../../stores/animationManagerNavStore'
 
 interface AnimationManagerModalProps {
   open: boolean
@@ -376,6 +377,19 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     parentNodeId ? s.authoringModeByHost[parentNodeId] === true : false,
   )
   const toggleAuthoringMode = useTimelineViewStore((s) => s.toggleAuthoringMode)
+  const navPending = useAnimationManagerNavStore((s) => s.pending)
+  const [highlightKey, setHighlightKey] = useState<string | null>(null)
+  useEffect(() => {
+    if (open && navPending && parentNodeId === navPending.hostNodeId) {
+      setActiveTab('controls')
+      if (navPending.controlKey) setHighlightKey(navPending.controlKey)
+      // clear after handling so next jump works
+      useAnimationManagerNavStore.getState().clear()
+    }
+  }, [open, navPending, parentNodeId])
+  useEffect(() => {
+    if (!open) setHighlightKey(null)
+  }, [open])
 
   const zoomLevel = useTimelineViewStore((s) => s.zoomLevel)
   const gridSnapEnabled = useTimelineViewStore((s) => s.gridSnapEnabled)
@@ -3911,12 +3925,16 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   key={control.key}
                   data-testid={`manager-control-${control.key}`}
                   style={{
-                    border: '1px solid var(--color-border, #ddd)',
+                    border:
+                      highlightKey === control.key
+                        ? '2px solid var(--color-accent, #7c5cff)'
+                        : '1px solid var(--color-border, #ddd)',
                     borderRadius: 6,
                     padding: '10px 12px',
                     display: 'flex',
                     flexDirection: 'column',
                     gap: 8,
+                    background: highlightKey === control.key ? 'rgba(124,92,255,0.06)' : undefined,
                   }}
                 >
                   {editingControlMeta?.key === control.key ? (
