@@ -141,6 +141,13 @@ export function applyUndo(
       engine.setControlSet(nodeId, inv.oldControlSet as import('../control').ControlSet | undefined)
       return
     }
+    case 'RenameControl': {
+      const hostNodeId = inv.hostNodeId as string
+      const oldKey = inv.oldKey as string
+      const newKey = inv.newKey as string
+      engine.renameControl(hostNodeId, newKey, oldKey)
+      return
+    }
     case 'ReorderNode': {
       const nodeId = inv.nodeId as string
       const oldIndex = inv.oldIndex as number

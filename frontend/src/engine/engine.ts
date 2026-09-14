@@ -93,6 +93,7 @@ export interface EnginePublic {
   evaluateZIndex(nodeId: string, time: number): number
   setZIndex(nodeId: string, zIndex: number): void
   setControlSet(nodeId: string, controlSet: ControlSet | undefined): void
+  renameControl(hostNodeId: string, oldKey: string, newKey: string): void
   getZIndex(nodeId: string): number
   getShapes(nodeId: string): readonly import('./shape').Shape[]
   getShapeCategories(nodeId: string): readonly import('./shapeCategory').ShapeCategory[]

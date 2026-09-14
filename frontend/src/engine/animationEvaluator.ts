@@ -600,6 +600,7 @@ export class AnimationEvaluator {
       for (const host of hosts) {
         const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
         for (const control of host.controlSet?.controls ?? []) {
+          if (this.#isBlendControl(host, control.key)) continue
           const rawU = this.#evaluateRawU(control, hostAnim, clampedTime)
           const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, clampedTime)
           const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
@@ -699,6 +700,7 @@ export class AnimationEvaluator {
       for (const host of hosts) {
         const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
         for (const control of host.controlSet?.controls ?? []) {
+          if (this.#isBlendControl(host, control.key)) continue
           const rawU = this.#evaluateRawU(control, hostAnim, clampedTime)
           const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, clampedTime)
           const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
@@ -775,6 +777,7 @@ export class AnimationEvaluator {
       for (const host of hosts) {
         const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
         for (const control of host.controlSet?.controls ?? []) {
+          if (this.#isBlendControl(host, control.key)) continue
           const rawU = this.#evaluateRawU(control, hostAnim, clampedTime)
           const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, clampedTime)
           const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
@@ -1204,6 +1207,7 @@ export class AnimationEvaluator {
       for (const host of hosts) {
         const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
         for (const control of host.controlSet?.controls ?? []) {
+          if (this.#isBlendControl(host, control.key)) continue
           const rawU = this.#evaluateRawU(control, hostAnim, clampedTime)
           const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, clampedTime)
           const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
@@ -1299,6 +1303,7 @@ export class AnimationEvaluator {
       for (const host of hosts) {
         const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
         for (const control of host.controlSet?.controls ?? []) {
+          if (this.#isBlendControl(host, control.key)) continue
           const rawU = this.#evaluateRawU(control, hostAnim, clampedTime)
           const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, clampedTime)
           const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
@@ -1428,6 +1433,7 @@ export class AnimationEvaluator {
     for (const host of hosts) {
       const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
       for (const control of host.controlSet?.controls ?? []) {
+        if (this.#isBlendControl(host, control.key)) continue
         const rawU = this.#evaluateRawU(control, hostAnim, time)
         const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, time)
         const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
@@ -1587,6 +1593,12 @@ export class AnimationEvaluator {
     return factors
   }
 
+  #isBlendControl(host: SceneNode, controlKey: string): boolean {
+    for (const c of host.controlSet?.controls ?? [])
+      if (c.blendKeys.includes(controlKey)) return true
+    return false
+  }
+
   #getGroupClips(
     nodeSemantic: string,
     control: Control,
@@ -1664,6 +1676,7 @@ export class AnimationEvaluator {
     for (const host of hosts) {
       const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
       for (const control of host.controlSet?.controls ?? []) {
+        if (this.#isBlendControl(host, control.key)) continue
         const rawU = this.#evaluateRawU(control, hostAnim, time)
         const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, time)
         const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
@@ -1777,6 +1790,7 @@ export class AnimationEvaluator {
     for (const host of hosts) {
       const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
       for (const control of host.controlSet?.controls ?? []) {
+        if (this.#isBlendControl(host, control.key)) continue
         const rawU = this.#evaluateRawU(control, hostAnim, time)
         const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, time)
         const groupClips = this.#getGroupClips(node.semanticName, control, rawU)

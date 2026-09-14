@@ -73,6 +73,17 @@ export class NodeAnimation {
     return removeById(this.#controlTracks, key, keyframeId)
   }
 
+  renameControl(oldKey: string, newKey: string): void {
+    if (oldKey === newKey) return
+    if (this.#controlTracks.has(newKey)) {
+      throw new Error(`Control track "${newKey}" already exists`)
+    }
+    const existing = this.#controlTracks.get(oldKey)
+    if (!existing) return
+    this.#controlTracks.delete(oldKey)
+    this.#controlTracks.set(newKey, existing)
+  }
+
   controlTracksJSON(): ControlTrackJSON[] {
     return [...this.#controlTracks.entries()].map(([key, keyframes]) => ({
       key,

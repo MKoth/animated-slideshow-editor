@@ -145,7 +145,7 @@ import {
 import { materialFromJSON } from './materialInstance'
 import { clipInstanceFromJSON } from './clipInstance'
 import { uniqueNodeName } from './naming'
-import { ensureControlGroups } from './control'
+import { ensureControlGroups, renameControlInSet, CONTROL_KEY_PATTERN } from './control'
 
 function constraintParamsToJSON(c: Constraint): import('./json').ConstraintParamsJSON {
   switch (c.type) {
@@ -2186,6 +2186,38 @@ export class Engine {
     this.#bus.emit({ type: 'NodeChanged', nodeId })
   }
 
+  renameControl(hostNodeId: string, oldKey: string, newKey: string): void {
+    if (!CONTROL_KEY_PATTERN.test(newKey)) throw new Error(`Invalid control key "${newKey}"`)
+    const hostNode = this.#nodes.getById(hostNodeId)
+    const controlSet = hostNode.controlSet
+    if (!controlSet) throw new Error(`Node "${hostNodeId}" has no controlSet`)
+    if (oldKey === newKey) return
+    if (!controlSet.controls.some((c) => c.key === oldKey))
+      throw new Error(`Control "${oldKey}" not found on node "${hostNodeId}"`)
+    if (controlSet.controls.some((c) => c.key === newKey))
+      throw new Error(`Duplicate control key: ${newKey}`)
+    const nextControlSet = renameControlInSet(controlSet, oldKey, newKey)
+    hostNode.controlSet = nextControlSet
+    // Move controlTracks across all slides (instance data, not definition) in same mutation
+    const project = this.#projects.current
+    if (project) {
+      for (const slide of project.slides) {
+        const anim = slide.animation.node(hostNodeId)
+        if (!anim) continue
+        if (anim.hasControlTrack(newKey)) {
+          throw new Error(`Control track "${newKey}" already exists on slide "${slide.id}"`)
+        }
+        anim.renameControl(oldKey, newKey)
+      }
+    }
+    this.#bus.emit({ type: 'NodeChanged', nodeId: hostNodeId })
+    // Also emit animation changed so timeline/curve updates
+    this.#bus.emit({
+      type: 'SlideAnimationChanged',
+      slideId: this.getActiveSlide()?.id ?? '',
+    } as unknown as import('./events').EngineEvent)
+  }
+
   setOpacity(nodeId: string, opacity: number): void {
     this.#nodes.setOpacity(nodeId, opacity)
   }
@@ -3863,9 +3895,14 @@ export class Engine {
           const clipId = typeof binding === 'string' ? binding : binding.clipId
           if (clipId) referencedClipIds.add(clipId)
         }
-        for (const group of (control as unknown as { groups?: readonly import('./control').ControlGroup[] }).groups ?? []) {
+        for (const group of (
+          control as unknown as { groups?: readonly import('./control').ControlGroup[] }
+        ).groups ?? []) {
           for (const binding of Object.values(group.bindings)) {
-            const clipId = typeof binding === 'string' ? (binding as string) : (binding as { clipId: string }).clipId
+            const clipId =
+              typeof binding === 'string'
+                ? (binding as string)
+                : (binding as { clipId: string }).clipId
             if (clipId) referencedClipIds.add(clipId)
           }
         }
@@ -4418,7 +4455,9 @@ export class Engine {
             }
             // Remap groups
             if (Array.isArray((control as unknown as { groups?: unknown }).groups)) {
-              const groups = (control as unknown as { groups: readonly import('./json').ControlGroupJSON[] }).groups
+              const groups = (
+                control as unknown as { groups: readonly import('./json').ControlGroupJSON[] }
+              ).groups
               const newGroups = groups.map((group) => {
                 const newGroupBindings: Record<string, unknown> = {}
                 for (const [semanticName, rawBinding] of Object.entries(
@@ -4481,7 +4520,9 @@ export class Engine {
         // Re-insert Blend siblings contiguously: ensure host+blends are contiguous by stable sort
         // The exported order is already contiguous; but if not, we will reorder to make hosts and blends contiguous
         // Build map key->control for quick lookup
-        const clonedSet = cloned.controlSet as unknown as { controls: import('./json').ControlJSON[] }
+        const clonedSet = cloned.controlSet as unknown as {
+          controls: import('./json').ControlJSON[]
+        }
         const controlsArr = clonedSet.controls as unknown as import('./json').ControlJSON[]
         // Validate and fix order: iterate hosts in order, collect their blends and ensure they are immediately after host
         const keyToControl = new Map<string, import('./json').ControlJSON>()
@@ -4493,7 +4534,11 @@ export class Engine {
           // If this control is a blend of a previous host already handled, skip (it will have been placed)
           const isBlendOfSeen = [...seen].some((seenKey) => {
             const seenCtrl = keyToControl.get(seenKey)
-            return seenCtrl && Array.isArray((seenCtrl as unknown as { blendKeys?: string[] }).blendKeys) && (seenCtrl as unknown as { blendKeys: string[] }).blendKeys.includes(c.key)
+            return (
+              seenCtrl &&
+              Array.isArray((seenCtrl as unknown as { blendKeys?: string[] }).blendKeys) &&
+              (seenCtrl as unknown as { blendKeys: string[] }).blendKeys.includes(c.key)
+            )
           })
           if (isBlendOfSeen) continue
           reordered.push(c)
@@ -4508,7 +4553,11 @@ export class Engine {
           }
         }
         // Append any remaining controls not yet seen (orphan blends without host? keep original order)
-        for (const c of controlsArr) if (!seen.has(c.key)) { reordered.push(c); seen.add(c.key) }
+        for (const c of controlsArr)
+          if (!seen.has(c.key)) {
+            reordered.push(c)
+            seen.add(c.key)
+          }
         clonedSet.controls = reordered
       }
       if (Array.isArray(cloned.clipInstances)) {
@@ -4743,7 +4792,9 @@ export class Engine {
                   return [k, v as string] as const
                 }),
               ) as Record<string, import('./control').ControlBinding>
-              const groups = (control as unknown as { groups?: readonly import('./json').ControlGroupJSON[] }).groups
+              const groups = (
+                control as unknown as { groups?: readonly import('./json').ControlGroupJSON[] }
+              ).groups
               const parsedGroups = Array.isArray(groups)
                 ? groups.map((g) => ({
                     id: g.id,
@@ -4773,7 +4824,8 @@ export class Engine {
                 min: 0 as const,
                 max: 1 as const,
                 bindings,
-                groups: parsedGroups as unknown as readonly import('./control').ControlGroup[] | undefined,
+                groups: parsedGroups as unknown as
+                  readonly import('./control').ControlGroup[] | undefined,
                 blendKeys: blendKeys ? [...blendKeys] : undefined,
               } as unknown as import('./control').Control
               if ((baseControl as unknown as { groups?: unknown }).groups === undefined) {
@@ -5854,6 +5906,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     evaluateZIndex: (nodeId, time) => engine.evaluateZIndex(nodeId, time),
     setZIndex: (nodeId, zIndex) => engine.setZIndex(nodeId, zIndex),
     setControlSet: (nodeId, controlSet) => engine.setControlSet(nodeId, controlSet),
+    renameControl: (hostNodeId, oldKey, newKey) => engine.renameControl(hostNodeId, oldKey, newKey),
     getZIndex: (nodeId) => engine.getZIndex(nodeId),
     getMorphKeyframes: (nodeId) => engine.getMorphKeyframes(nodeId),
     hasMorphTrack: (nodeId) => engine.hasMorphTrack(nodeId),
