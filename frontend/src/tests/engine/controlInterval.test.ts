@@ -71,12 +71,23 @@ describe('Control Interval binding — additive type, tolerant JSON & validator'
     // ToJSON emits object form even for full-range
     expect(json.controls[0].bindings.a).toEqual({ clipId: 'clip1', start: 0.2, end: 0.8 })
     expect(json.controls[0].bindings.b).toEqual({ clipId: 'clip2', start: 0, end: 1 })
-    // string form still accepted on read
+    // string form still accepted on read (legacy file without groups)
     const fromString = controlSetFromJSON(
       {
         id: json.id,
         hostNodeId: json.hostNodeId,
-        controls: [{ ...json.controls[0], bindings: { a: 'clip1' } }],
+        controls: [
+          {
+            id: json.controls[0].id,
+            key: json.controls[0].key,
+            label: json.controls[0].label,
+            min: 0,
+            max: 1,
+            default: 0,
+            exposed: true,
+            bindings: { a: 'clip1' },
+          },
+        ],
       },
       'host',
     )!

@@ -145,6 +145,7 @@ import {
 import { materialFromJSON } from './materialInstance'
 import { clipInstanceFromJSON } from './clipInstance'
 import { uniqueNodeName } from './naming'
+import { ensureControlGroups } from './control'
 
 function constraintParamsToJSON(c: Constraint): import('./json').ConstraintParamsJSON {
   switch (c.type) {
@@ -3862,6 +3863,12 @@ export class Engine {
           const clipId = typeof binding === 'string' ? binding : binding.clipId
           if (clipId) referencedClipIds.add(clipId)
         }
+        for (const group of (control as unknown as { groups?: readonly import('./control').ControlGroup[] }).groups ?? []) {
+          for (const binding of Object.values(group.bindings)) {
+            const clipId = typeof binding === 'string' ? (binding as string) : (binding as { clipId: string }).clipId
+            if (clipId) referencedClipIds.add(clipId)
+          }
+        }
       }
       const chart = node.components.chart
       if (chart) referencedDataSourceIds.add(chart.dataSourceId)
@@ -4378,26 +4385,131 @@ export class Engine {
       const controlSet = (orig as unknown as { controlSet?: import('./json').ControlSetJSON })
         .controlSet
       if (controlSet) {
+        // Build semanticName set for descendant check (for soft-warn per group)
+        const descendantSemanticNames = new Set<string>()
+        for (const n of objectJson.nodes) {
+          const sem = (n as unknown as { semanticName?: string }).semanticName
+          if (typeof sem === 'string' && sem.trim() !== '') descendantSemanticNames.add(sem.trim())
+        }
         cloned.controlSet = {
           ...controlSet,
           id: newId('control-set'),
           hostNodeId: newIdVal,
-          controls: controlSet.controls.map((control) => ({
-            ...control,
-            id: newId('control'),
-            bindings: Object.fromEntries(
-              Object.entries(control.bindings).map(([semanticName, rawBinding]) => {
-                if (typeof rawBinding === 'string') {
-                  const mapped = clipIdMap.get(rawBinding) ?? rawBinding
-                  return [semanticName, mapped]
+          controls: controlSet.controls.map((control) => {
+            const newControl: Record<string, unknown> = {
+              ...control,
+              id: newId('control'),
+            }
+            // Remap bindings (flat merged union) if present
+            if (control.bindings) {
+              newControl.bindings = Object.fromEntries(
+                Object.entries(control.bindings as Record<string, unknown>).map(
+                  ([semanticName, rawBinding]) => {
+                    if (typeof rawBinding === 'string') {
+                      const mapped = clipIdMap.get(rawBinding) ?? rawBinding
+                      return [semanticName, mapped]
+                    }
+                    const obj = rawBinding as { clipId: string; start: number; end: number }
+                    const mappedId = clipIdMap.get(obj.clipId) ?? obj.clipId
+                    return [semanticName, { clipId: mappedId, start: obj.start, end: obj.end }]
+                  },
+                ),
+              )
+            }
+            // Remap groups
+            if (Array.isArray((control as unknown as { groups?: unknown }).groups)) {
+              const groups = (control as unknown as { groups: readonly import('./json').ControlGroupJSON[] }).groups
+              const newGroups = groups.map((group) => {
+                const newGroupBindings: Record<string, unknown> = {}
+                for (const [semanticName, rawBinding] of Object.entries(
+                  group.bindings as Record<string, unknown>,
+                )) {
+                  let mapped: unknown
+                  if (typeof rawBinding === 'string') {
+                    const mid = clipIdMap.get(rawBinding) ?? rawBinding
+                    // Actually clipIdMap has old->new, so if old not in map, it was not in library.clips → missing
+                    if (!clipIdMap.has(rawBinding as string)) {
+                      console.warn(
+                        `[control] Skipping group "${group.name}" binding "${semanticName}" — clip "${rawBinding}" missing in import`,
+                      )
+                      continue
+                    }
+                    if (!descendantSemanticNames.has(semanticName)) {
+                      console.warn(
+                        `[control] Skipping group "${group.name}" binding "${semanticName}" — semanticName has no descendant match`,
+                      )
+                      continue
+                    }
+                    mapped = mid
+                  } else if (rawBinding && typeof rawBinding === 'object') {
+                    const obj = rawBinding as { clipId: string; start: number; end: number }
+                    const mid = clipIdMap.get(obj.clipId) ?? obj.clipId
+                    if (!clipIdMap.has(obj.clipId)) {
+                      console.warn(
+                        `[control] Skipping group "${group.name}" binding "${semanticName}" — clip "${obj.clipId}" missing`,
+                      )
+                      continue
+                    }
+                    if (!descendantSemanticNames.has(semanticName)) {
+                      console.warn(
+                        `[control] Skipping group "${group.name}" binding "${semanticName}" — semanticName has no descendant match`,
+                      )
+                      continue
+                    }
+                    mapped = { clipId: mid, start: obj.start, end: obj.end }
+                  } else {
+                    continue
+                  }
+                  newGroupBindings[semanticName] = mapped
                 }
-                const obj = rawBinding as { clipId: string; start: number; end: number }
-                const mappedId = clipIdMap.get(obj.clipId) ?? obj.clipId
-                return [semanticName, { clipId: mappedId, start: obj.start, end: obj.end }]
-              }),
-            ),
-          })),
+                return {
+                  ...group,
+                  id: newId('control-group'),
+                  name: group.name,
+                  bindings: newGroupBindings,
+                }
+              })
+              newControl.groups = newGroups
+            }
+            // blendKeys preserved as is (keys will be uniquified later if collision? But spec says preserve)
+            if (Array.isArray((control as unknown as { blendKeys?: unknown }).blendKeys)) {
+              newControl.blendKeys = [...(control as unknown as { blendKeys: string[] }).blendKeys]
+            }
+            return newControl as unknown as import('./json').ControlJSON
+          }),
         }
+        // Re-insert Blend siblings contiguously: ensure host+blends are contiguous by stable sort
+        // The exported order is already contiguous; but if not, we will reorder to make hosts and blends contiguous
+        // Build map key->control for quick lookup
+        const clonedSet = cloned.controlSet as unknown as { controls: import('./json').ControlJSON[] }
+        const controlsArr = clonedSet.controls as unknown as import('./json').ControlJSON[]
+        // Validate and fix order: iterate hosts in order, collect their blends and ensure they are immediately after host
+        const keyToControl = new Map<string, import('./json').ControlJSON>()
+        for (const c of controlsArr) keyToControl.set(c.key, c)
+        const seen = new Set<string>()
+        const reordered: import('./json').ControlJSON[] = []
+        for (const c of controlsArr) {
+          if (seen.has(c.key)) continue
+          // If this control is a blend of a previous host already handled, skip (it will have been placed)
+          const isBlendOfSeen = [...seen].some((seenKey) => {
+            const seenCtrl = keyToControl.get(seenKey)
+            return seenCtrl && Array.isArray((seenCtrl as unknown as { blendKeys?: string[] }).blendKeys) && (seenCtrl as unknown as { blendKeys: string[] }).blendKeys.includes(c.key)
+          })
+          if (isBlendOfSeen) continue
+          reordered.push(c)
+          seen.add(c.key)
+          const blendKeys = (c as unknown as { blendKeys?: string[] }).blendKeys ?? []
+          for (const bk of blendKeys) {
+            const blendCtrl = keyToControl.get(bk)
+            if (blendCtrl && !seen.has(bk)) {
+              reordered.push(blendCtrl)
+              seen.add(bk)
+            }
+          }
+        }
+        // Append any remaining controls not yet seen (orphan blends without host? keep original order)
+        for (const c of controlsArr) if (!seen.has(c.key)) { reordered.push(c); seen.add(c.key) }
+        clonedSet.controls = reordered
       }
       if (Array.isArray(cloned.clipInstances)) {
         cloned.clipInstances = (cloned.clipInstances as unknown[]).map((inst) => {
@@ -4613,11 +4725,8 @@ export class Engine {
           node.controlSet = {
             id: controlSet.id,
             hostNodeId: nid,
-            controls: controlSet.controls.map((control) => ({
-              ...control,
-              min: 0 as const,
-              max: 1 as const,
-              bindings: Object.fromEntries(
+            controls: controlSet.controls.map((control) => {
+              const bindings = Object.fromEntries(
                 Object.entries(control.bindings as Record<string, unknown>).map(([k, v]) => {
                   if (typeof v === 'string') return [k, v] as const
                   if (v && typeof v === 'object') {
@@ -4633,9 +4742,46 @@ export class Engine {
                   }
                   return [k, v as string] as const
                 }),
-              ) as Record<string, import('./control').ControlBinding>,
-            })),
-          }
+              ) as Record<string, import('./control').ControlBinding>
+              const groups = (control as unknown as { groups?: readonly import('./json').ControlGroupJSON[] }).groups
+              const parsedGroups = Array.isArray(groups)
+                ? groups.map((g) => ({
+                    id: g.id,
+                    name: g.name,
+                    bindings: Object.fromEntries(
+                      Object.entries(g.bindings as Record<string, unknown>).map(([k, v]) => {
+                        if (typeof v === 'string') return [k, v] as const
+                        if (v && typeof v === 'object') {
+                          const obj = v as Record<string, unknown>
+                          return [
+                            k,
+                            {
+                              clipId: obj.clipId as string,
+                              start: obj.start as number,
+                              end: obj.end as number,
+                            },
+                          ] as const
+                        }
+                        return [k, v as string] as const
+                      }),
+                    ) as Record<string, import('./control').ControlBinding>,
+                  }))
+                : undefined
+              const blendKeys = (control as unknown as { blendKeys?: readonly string[] }).blendKeys
+              const baseControl = {
+                ...control,
+                min: 0 as const,
+                max: 1 as const,
+                bindings,
+                groups: parsedGroups as unknown as readonly import('./control').ControlGroup[] | undefined,
+                blendKeys: blendKeys ? [...blendKeys] : undefined,
+              } as unknown as import('./control').Control
+              if ((baseControl as unknown as { groups?: unknown }).groups === undefined) {
+                return ensureControlGroups(baseControl)
+              }
+              return baseControl
+            }),
+          } as import('./control').ControlSet
         } catch {
           void 0
         }

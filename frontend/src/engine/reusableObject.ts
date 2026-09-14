@@ -181,6 +181,139 @@ export function validateReusableObject(json: unknown): string[] {
                 }
               }
             }
+            // Groups & blendKeys validation (additive)
+            const groups = (control as Record<string, unknown>).groups
+            const blendKeys = (control as Record<string, unknown>).blendKeys
+            if (groups !== undefined) {
+              if (!Array.isArray(groups)) {
+                errors.push(`Control "${String(control.key)}" groups must be an array`)
+              } else {
+                if (groups.length === 0)
+                  errors.push(`Control "${String(control.key)}" must have at least one group`)
+                const gIds = new Set<string>()
+                for (const rawGroup of groups) {
+                  if (!isRecord(rawGroup)) {
+                    errors.push(`Control "${String(control.key)}" group must be an object`)
+                    continue
+                  }
+                  const gid = rawGroup.id
+                  if (typeof gid !== 'string' || gid === '')
+                    errors.push(`Control "${String(control.key)}" group id must be non-empty string`)
+                  else if (gIds.has(gid))
+                    errors.push(`Control "${String(control.key)}" has duplicate group id "${gid}"`)
+                  else gIds.add(gid)
+                  if (typeof rawGroup.name !== 'string')
+                    errors.push(`Control "${String(control.key)}" group name must be a string`)
+                  const gb = rawGroup.bindings
+                  if (typeof gb !== 'object' || gb === null) {
+                    errors.push(`Control "${String(control.key)}" group bindings must be an object`)
+                    continue
+                  }
+                  for (const [semantic, rawBinding] of Object.entries(gb as Record<string, unknown>)) {
+                    if (typeof rawBinding === 'string') {
+                      if (rawBinding === '')
+                        errors.push(`Control "${String(control.key)}" group binding "${semantic}" clipId must be non-empty`)
+                      continue
+                    }
+                    if (isRecord(rawBinding)) {
+                      const clipId = rawBinding.clipId
+                      const start = rawBinding.start
+                      const end = rawBinding.end
+                      if (typeof clipId !== 'string' || clipId === '') {
+                        errors.push(`Control "${String(control.key)}" group binding "${semantic}" clipId must be non-empty`)
+                        continue
+                      }
+                      if (typeof start !== 'number' || !Number.isFinite(start))
+                        errors.push(`Control "${String(control.key)}" group binding "${semantic}" start must be a finite number`)
+                      if (typeof end !== 'number' || !Number.isFinite(end))
+                        errors.push(`Control "${String(control.key)}" group binding "${semantic}" end must be a finite number`)
+                      if (typeof start === 'number' && typeof end === 'number') {
+                        if (start < 0) errors.push(`Control "${String(control.key)}" group binding "${semantic}" start must be >= 0`)
+                        if (end > 1) errors.push(`Control "${String(control.key)}" group binding "${semantic}" end must be <= 1`)
+                        if (start >= end) errors.push(`Control "${String(control.key)}" group binding "${semantic}" start must be < end`)
+                        else if (end - (start as number) < CONTROL_INTERVAL_MIN_SPAN)
+                          errors.push(`Control "${String(control.key)}" group binding "${semantic}" span must be >= ${CONTROL_INTERVAL_MIN_SPAN}`)
+                      }
+                    } else {
+                      errors.push(`Control "${String(control.key)}" group binding "${semantic}" must be a string or interval object`)
+                    }
+                  }
+                }
+                if (blendKeys !== undefined) {
+                  if (!Array.isArray(blendKeys)) errors.push(`Control "${String(control.key)}" blendKeys must be an array`)
+                  else {
+                    const expected = Math.max(0, groups.length - 1)
+                    if (blendKeys.length !== expected)
+                      errors.push(`Control "${String(control.key)}" blendKeys length must be max(0, groups.length-1) (expected ${expected}, got ${blendKeys.length})`)
+                    for (const bk of blendKeys) {
+                      if (typeof bk !== 'string' || !CONTROL_KEY_PATTERN.test(bk))
+                        errors.push(`Control "${String(control.key)}" has invalid blend key "${String(bk)}"`)
+                    }
+                    if (blendKeys.includes(control.key as string))
+                      errors.push(`Control "${String(control.key)}" blendKeys must not contain its own key`)
+                  }
+                } else {
+                  const expected = Math.max(0, groups.length - 1)
+                  if (expected !== 0) errors.push(`Control "${String(control.key)}" missing blendKeys (expected length ${expected})`)
+                }
+              }
+            } else if (blendKeys !== undefined) {
+              errors.push(`Control "${String(control.key)}" has blendKeys without groups`)
+            }
+          }
+          // Validate blend sibling order per node (once per controlSet)
+          {
+            const controlsArr = controlSet.controls as unknown as Record<string, unknown>[]
+            const hostMap = new Map<string, { idx: number; blendKeys: string[] }>()
+            for (let idx = 0; idx < controlsArr.length; idx++) {
+              const rc = controlsArr[idx]
+              if (!isRecord(rc)) continue
+              const bks = rc.blendKeys as unknown
+              if (Array.isArray(bks) && bks.length > 0) {
+                hostMap.set(rc.key as string, { idx, blendKeys: bks as string[] })
+              }
+            }
+            const occupied = new Set<number>()
+            for (const [, info] of hostMap) {
+              for (let i = 0; i <= info.blendKeys.length; i++) {
+                const pos = info.idx + i
+                if (occupied.has(pos)) errors.push(`blend sibling order violated — overlapping host blocks at ${pos}`)
+                else occupied.add(pos)
+              }
+            }
+            for (const [hk, info] of hostMap) {
+              for (let i = 0; i < info.blendKeys.length; i++) {
+                const bk = info.blendKeys[i]
+                const expectedIdx = info.idx + 1 + i
+                if (expectedIdx >= controlsArr.length) {
+                  errors.push(`blend sibling order violated for "${hk}" — missing blend "${bk}"`)
+                  continue
+                }
+                const actualKey = (controlsArr[expectedIdx] as Record<string, unknown>).key
+                if (actualKey !== bk)
+                  errors.push(`blend sibling order violated for "${hk}" — expected "${bk}" at ${expectedIdx}, got "${String(actualKey)}"`)
+                const blendCtrl = controlsArr[expectedIdx]
+                if (isRecord(blendCtrl)) {
+                  const bks2 = (blendCtrl as Record<string, unknown>).blendKeys as unknown
+                  if (Array.isArray(bks2) && bks2.length > 0)
+                    errors.push(`Blend control "${String(bk)}" must not have its own blendKeys`)
+                }
+              }
+            }
+            const blendKeyToHost = new Map<string, string>()
+            for (const [hk, info] of hostMap) for (const bk of info.blendKeys) blendKeyToHost.set(bk, hk)
+            for (let idx = 0; idx < controlsArr.length; idx++) {
+              const rc = controlsArr[idx]
+              if (!isRecord(rc) || typeof rc.key !== 'string') continue
+              const k = rc.key as string
+              if (blendKeyToHost.has(k)) {
+                const hk = blendKeyToHost.get(k)!
+                const hInfo = hostMap.get(hk)!
+                const pos = hInfo.blendKeys.indexOf(k)
+                if (hInfo.idx + 1 + pos !== idx)
+                  errors.push(`blend sibling order violated for "${hk}" — blend "${k}" at wrong index ${idx}`)
+              }
+            }
           }
         }
       }
