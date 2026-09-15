@@ -66,6 +66,12 @@ export class Keyframe {
   tangentOut: KeyframeTangent
   /** Session-only preview toggle — not serialized to LessonJSON */
   disabled: boolean
+  /**
+   * Per-host-keyframe blend factors for Controls with N timelines.
+   * Length is N-1 (one per gap between timelines). Missing = [] (=0s).
+   * Only meaningful on host Control tracks; ignored elsewhere.
+   */
+  blend: readonly number[]
 
   constructor(
     id: string,
@@ -75,6 +81,7 @@ export class Keyframe {
     tangentIn: KeyframeTangent = ZERO_TANGENT,
     tangentOut: KeyframeTangent = ZERO_TANGENT,
     disabled = false,
+    blend?: readonly number[],
   ) {
     this.id = id
     this.time = time
@@ -83,6 +90,7 @@ export class Keyframe {
     this.tangentIn = tangentIn
     this.tangentOut = tangentOut
     this.disabled = disabled
+    this.blend = blend ? [...blend] : []
   }
 
   toJSON(): KeyframeJSON {
@@ -93,6 +101,7 @@ export class Keyframe {
       interpolation: this.interpolation,
       tangentIn: { time: this.tangentIn.time, value: this.tangentIn.value },
       tangentOut: { time: this.tangentOut.time, value: this.tangentOut.value },
+      ...(this.blend.length > 0 ? { blend: [...this.blend] } : {}),
     }
   }
 }
@@ -110,6 +119,7 @@ export interface KeyframeSnapshot {
   readonly tangentIn: KeyframeTangent
   readonly tangentOut: KeyframeTangent
   readonly disabled?: boolean
+  readonly blend?: readonly number[]
 }
 
 export function snapshotOf(keyframe: Keyframe): KeyframeSnapshot {
@@ -121,5 +131,17 @@ export function snapshotOf(keyframe: Keyframe): KeyframeSnapshot {
     tangentIn: { time: keyframe.tangentIn.time, value: keyframe.tangentIn.value },
     tangentOut: { time: keyframe.tangentOut.time, value: keyframe.tangentOut.value },
     ...(keyframe.disabled ? { disabled: true } : {}),
+    ...(keyframe.blend.length > 0 ? { blend: [...keyframe.blend] } : {}),
   }
+}
+
+export function requireKeyframeBlend(value: unknown): readonly number[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value)) throw new Error('Keyframe blend must be an array')
+  return (value as unknown[]).map((entry, idx) => {
+    if (typeof entry !== 'number' || !Number.isFinite(entry)) {
+      throw new Error(`Keyframe blend[${idx}] must be a finite number`)
+    }
+    return Math.min(Math.max(entry, 0), 1)
+  })
 }

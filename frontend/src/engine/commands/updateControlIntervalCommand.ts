@@ -1,6 +1,7 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
-import { CONTROL_INTERVAL_MIN_SPAN, validateControlBinding } from '../control'
+import { CONTROL_INTERVAL_MIN_SPAN, mergeGroupBindings, validateControlBinding } from '../control'
+import type { ControlBinding, ControlBindingValue } from '../control'
 
 export interface UpdateControlIntervalParameters {
   readonly nodeId: string
@@ -72,31 +73,30 @@ export class UpdateControlIntervalCommand implements Command<UpdateControlInterv
     if (!oldControlSet) throw new Error('No controlSet')
     const controls = oldControlSet.controls.map((control) => {
       if (control.key !== this.#controlKey) return control
-      const raw = (control.bindings as Record<string, unknown>)[this.#semanticName]
-      if (!raw) return control
-      if (Array.isArray(raw)) {
-        const arr = raw as (string | { clipId: string; start: number; end: number })[]
-        if (arr.length === 0) return control
-        const last = arr[arr.length - 1]!
-        const clipId = typeof last === 'string' ? last : last.clipId
-        const newLast = { clipId, start: this.#start, end: this.#end }
-        const newArr = [...arr.slice(0, -1), newLast]
-        const nextBindings: Record<string, import('../control').ControlBindingValue> = {
-          ...control.bindings,
+      const updated = updateFlatBinding(
+        control.bindings,
+        this.#semanticName,
+        this.#start,
+        this.#end,
+      )
+      if (control.groups.length <= 1) return { ...control, bindings: updated }
+      // Multi-timeline: groups are the source of truth (flat edits are discarded
+      // by normalization), so mirror the interval change into every timeline
+      // containing the semantic and recompute the merged view.
+      const nextGroups = control.groups.map((g) => {
+        const raw = (g.bindings as Record<string, ControlBindingValue | undefined>)[
+          this.#semanticName
+        ]
+        if (raw === undefined) return g
+        return {
+          ...g,
+          bindings: {
+            ...g.bindings,
+            [this.#semanticName]: updateOneBinding(raw, this.#start, this.#end),
+          },
         }
-        nextBindings[this.#semanticName] =
-          newArr.length === 1
-            ? newArr[0]!
-            : (newArr as unknown as import('../control').ControlBinding[])
-        return { ...control, bindings: nextBindings }
-      }
-      const existing = raw as string | { clipId: string; start: number; end: number }
-      const clipId = typeof existing === 'string' ? existing : existing.clipId
-      const nextBindings: Record<string, import('../control').ControlBindingValue> = {
-        ...control.bindings,
-      }
-      nextBindings[this.#semanticName] = { clipId, start: this.#start, end: this.#end }
-      return { ...control, bindings: nextBindings }
+      })
+      return { ...control, groups: nextGroups, bindings: mergeGroupBindings(nextGroups) }
     })
     const nextSet: import('../control').ControlSet = { ...oldControlSet, controls }
     engine.setControlSet(this.#nodeId, nextSet)
@@ -106,4 +106,33 @@ export class UpdateControlIntervalCommand implements Command<UpdateControlInterv
   toJSON(): Readonly<Record<string, unknown>> {
     return { type: this.type, ...this.parameters }
   }
+}
+
+function updateOneBinding(
+  raw: ControlBindingValue,
+  start: number,
+  end: number,
+): ControlBindingValue {
+  if (Array.isArray(raw)) {
+    const arr = raw as ControlBinding[]
+    if (arr.length === 0) return raw
+    const last = arr[arr.length - 1]!
+    const clipId = typeof last === 'string' ? last : last.clipId
+    const newArr = [...arr.slice(0, -1), { clipId, start, end }]
+    return (newArr.length === 1 ? newArr[0]! : newArr) as ControlBindingValue
+  }
+  const existing = raw as ControlBinding
+  const clipId = typeof existing === 'string' ? existing : existing.clipId
+  return { clipId, start, end }
+}
+
+function updateFlatBinding(
+  bindings: Readonly<Record<string, ControlBindingValue>>,
+  semanticName: string,
+  start: number,
+  end: number,
+): Record<string, ControlBindingValue> {
+  const raw = (bindings as Record<string, ControlBindingValue>)[semanticName]
+  if (raw === undefined) return { ...bindings }
+  return { ...bindings, [semanticName]: updateOneBinding(raw, start, end) }
 }

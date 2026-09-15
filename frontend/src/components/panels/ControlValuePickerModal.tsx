@@ -1,8 +1,12 @@
 /* eslint-disable react-hooks/set-state-in-effect -- sync picker state when modal opens */
 import { useEffect, useState } from 'react'
 import type { EnginePublic } from '../../engine'
-import type { DispatchCommand } from '../../engine/commands'
-import { SetKeyframeValueCommand } from '../../engine/commands'
+import type { Command, DispatchCommand } from '../../engine/commands'
+import {
+  SetKeyframeValueCommand,
+  SetControlBlendCommand,
+  TransactionCommand,
+} from '../../engine/commands'
 
 interface ControlValuePickerModalProps {
   open: boolean
@@ -10,6 +14,8 @@ interface ControlValuePickerModalProps {
   controlKey: string
   keyframeId: string
   value: number
+  /** Per-gap blend factors (length N-1 for N timelines). Missing = 0s. */
+  blend?: readonly number[]
   engine: EnginePublic
   dispatch: DispatchCommand
   notify: (msg: string) => void
@@ -22,6 +28,7 @@ export function ControlValuePickerModal({
   controlKey,
   keyframeId,
   value,
+  blend = [],
   engine,
   dispatch,
   notify,
@@ -36,11 +43,29 @@ export function ControlValuePickerModal({
     }
   })()
 
+  const blendCount = Math.max(0, (control?.groups.length ?? 1) - 1)
+  const groupNames: readonly string[] = control?.groups.map((g) => g.name) ?? []
+  const normalizeBlend = (src: readonly number[]): number[] => {
+    const out = new Array<number>(blendCount).fill(0)
+    for (let i = 0; i < out.length && i < src.length; i++) {
+      const v = Number(src[i])
+      out[i] = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0
+    }
+    return out
+  }
+  const initialBlend = normalizeBlend(blend)
+
   const [draft, setDraft] = useState<number>(value)
+  const [blendDrafts, setBlendDrafts] = useState<number[]>(initialBlend)
 
   useEffect(() => {
-    if (open) setDraft(value)
-  }, [open, value])
+    if (open) {
+      setDraft(value)
+      setBlendDrafts(normalizeBlend(blend))
+    }
+    // blend is a fresh array each render from TimelineBody — compare by content
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, value, controlKey, keyframeId, blendCount, JSON.stringify(blend)])
 
   const handleSave = () => {
     const clamped = Math.max(0, Math.min(1, Number(draft)))
@@ -48,13 +73,44 @@ export function ControlValuePickerModal({
       notify('Value must be a number in [0, 1]')
       return
     }
-    const result = dispatch(
-      new SetKeyframeValueCommand({
-        target: { kind: 'control', nodeId, controlKey },
-        keyframeId,
-        newValue: clamped,
-      }),
-    )
+    for (let i = 0; i < blendDrafts.length; i++) {
+      const b = blendDrafts[i]!
+      if (!Number.isFinite(b) || b < 0 || b > 1) {
+        notify(`Blend ${i + 1} must be a number in [0, 1]`)
+        return
+      }
+    }
+    const commands: Command<unknown>[] = []
+    if (Math.abs(clamped - value) > 1e-9) {
+      commands.push(
+        new SetKeyframeValueCommand({
+          target: { kind: 'control', nodeId, controlKey },
+          keyframeId,
+          newValue: clamped,
+        }),
+      )
+    }
+    for (let i = 0; i < blendCount; i++) {
+      const prev = initialBlend[i] ?? 0
+      const next = blendDrafts[i] ?? 0
+      if (Math.abs(next - prev) > 1e-9) {
+        commands.push(
+          new SetControlBlendCommand({
+            hostNodeId: nodeId,
+            controlKey,
+            keyframeId,
+            blendIndex: i,
+            value: next,
+          }),
+        )
+      }
+    }
+    if (commands.length === 0) {
+      onClose()
+      return
+    }
+    const result =
+      commands.length === 1 ? dispatch(commands[0]!) : dispatch(new TransactionCommand(commands))
     if (!result.ok) notify(result.error.message)
     else onClose()
   }
@@ -148,6 +204,77 @@ export function ControlValuePickerModal({
               </span>
             </div>
           </label>
+          {blendCount > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 4 }}>
+              <div style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
+                Blend mixes timelines at this keyframe: 0 = Timeline i only, 1 = Timeline i+1. Same
+                values as Animation Manager → Timelines.
+              </div>
+              {Array.from({ length: blendCount }, (_, i) => {
+                const fromName = groupNames[i] ?? `T${i + 1}`
+                const toName = groupNames[i + 1] ?? `T${i + 2}`
+                const draftBlend = blendDrafts[i] ?? 0
+                return (
+                  <label
+                    key={i}
+                    style={{ fontSize: 12, display: 'flex', flexDirection: 'column', gap: 8 }}
+                  >
+                    <span style={{ fontWeight: 600 }}>
+                      Blend T{i + 1}→T{i + 2} ({fromName} → {toName}) —{' '}
+                      {Number.isFinite(draftBlend) ? draftBlend.toFixed(2) : '—'}
+                    </span>
+                    <input
+                      aria-label={`Blend T${i + 1} to T${i + 2}`}
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={Number.isFinite(draftBlend) ? draftBlend : 0}
+                      onChange={(e) => {
+                        const v = Number(e.target.value)
+                        setBlendDrafts((prev) => {
+                          const next = [...prev]
+                          while (next.length < blendCount) next.push(0)
+                          next[i] = v
+                          return next
+                        })
+                      }}
+                      style={{ width: '100%' }}
+                      data-testid={`control-blend-slider-${i}`}
+                    />
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={Number.isFinite(draftBlend) ? draftBlend : 0}
+                        onChange={(e) => {
+                          const v = Number(e.target.value)
+                          setBlendDrafts((prev) => {
+                            const next = [...prev]
+                            while (next.length < blendCount) next.push(0)
+                            next[i] = v
+                            return next
+                          })
+                        }}
+                        style={{
+                          padding: '6px 8px',
+                          borderRadius: 4,
+                          border: '1px solid var(--color-border, #ddd)',
+                          width: 100,
+                        }}
+                        data-testid={`control-blend-input-${i}`}
+                      />
+                      <span style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
+                        0 = {fromName}, 1 = {toName}
+                      </span>
+                    </div>
+                  </label>
+                )
+              })}
+            </div>
+          )}
         </div>
         <div
           style={{

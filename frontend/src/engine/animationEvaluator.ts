@@ -19,7 +19,7 @@ import { resolveCrossBlendedVertices, resolveMorphedVerticesFromKeyframe } from 
 import type { MorphKeyframeValue, MorphClipKeyframeValue } from './shape'
 import type { SymmetryKeyframeValue } from './symmetry'
 import { resolveSymmetrizedVertices } from './symmetry'
-import { CONTROL_INTERVAL_EPSILON, evaluateControlTrack } from './control'
+import { CONTROL_INTERVAL_EPSILON, evaluateControlTrack, evaluateHostWithBlends } from './control'
 import type { Control, ControlGroup, ControlBinding } from './control'
 import type { ShadowEffect, ShadowProperty } from './shadowEffect'
 import type { NodeAnimation } from './nodeAnimation'
@@ -600,14 +600,19 @@ export class AnimationEvaluator {
       for (const host of hosts) {
         const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
         for (const control of host.controlSet?.controls ?? []) {
-          if (this.#isBlendControl(host, control.key)) continue
-          const rawU = this.#evaluateRawU(control, hostAnim, clampedTime)
-          const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, clampedTime)
+          const { u: rawU, blends: blendFactors } = this.#evaluateHostWithBlends(
+            control,
+            hostAnim,
+            clampedTime,
+          )
           const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
           if (groupClips.length === 0) continue
+          const controlBaseMorph = baseValue
           let blended: MorphKeyframeValue | null = null
           let hasBlended = false
           for (let gi = 0; gi < groupClips.length; gi++) {
+            const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
+            if (gi > 0 && blend === 0) continue
             const entry = groupClips[gi]
             let cur: MorphKeyframeValue | null = null
             if (entry) {
@@ -621,12 +626,23 @@ export class AnimationEvaluator {
             if (!hasBlended && cur === null) {
               // gap
             } else if (!hasBlended) {
-              blended = cur
-              hasBlended = cur !== null
+              if (gi === 0) {
+                blended = cur
+                hasBlended = cur !== null
+              } else if (cur !== null) {
+                if (controlBaseMorph) {
+                  const coeff =
+                    controlBaseMorph.coefficient +
+                    (cur.coefficient - controlBaseMorph.coefficient) * blend
+                  const fromId = blend < 0.5 ? controlBaseMorph.fromShapeId : cur.fromShapeId
+                  const toId = blend < 0.5 ? controlBaseMorph.toShapeId : cur.toShapeId
+                  blended = { fromShapeId: fromId, toShapeId: toId, coefficient: coeff }
+                } else blended = cur
+                hasBlended = true
+              }
             } else if (cur === null) {
               // keep blended verbatim
             } else {
-              const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
               // numeric lerp coefficient, discrete hold for ids
               const coeff = blended!.coefficient + (cur.coefficient - blended!.coefficient) * blend
               // For shape ids, threshold pick
@@ -700,9 +716,11 @@ export class AnimationEvaluator {
       for (const host of hosts) {
         const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
         for (const control of host.controlSet?.controls ?? []) {
-          if (this.#isBlendControl(host, control.key)) continue
-          const rawU = this.#evaluateRawU(control, hostAnim, clampedTime)
-          const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, clampedTime)
+          const { u: rawU, blends: blendFactors } = this.#evaluateHostWithBlends(
+            control,
+            hostAnim,
+            clampedTime,
+          )
           const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
           if (groupClips.length === 0) continue
           // Compute per-group vertices (null if no morph in group)
@@ -724,18 +742,29 @@ export class AnimationEvaluator {
             // If entry had no morph track, we already pushed null; otherwise verts is at least base.
             groupVerts.push(verts)
           }
-          // Fold with per-vertex lerpVertex, absent pass-through
+          // Fold with per-vertex lerpVertex, strict isolate + lerp from base
           let acc: readonly MeshVertex[] | null = null
           for (let gi = 0; gi < groupVerts.length; gi++) {
+            const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
+            if (gi > 0 && blend === 0) continue
             const cur = groupVerts[gi]
             if (acc === null && cur === null) {
               // gap
             } else if (acc === null) {
-              acc = cur
+              if (gi === 0) acc = cur
+              else if (cur !== null) {
+                const out: MeshVertex[] = []
+                for (let i = 0; i < baseVertices.length; i++) {
+                  const a = baseVertices[i]!
+                  const b = cur[i] ?? baseVertices[i]!
+                  out.push({ x: a.x + (b.x - a.x) * blend, y: a.y + (b.y - a.y) * blend })
+                }
+                acc = out
+              }
             } else if (cur === null) {
               // keep acc verbatim
             } else {
-              const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
+              // blend already computed above
               if (blend <= 0) {
                 // keep acc
               } else if (blend >= 1) {
@@ -777,14 +806,19 @@ export class AnimationEvaluator {
       for (const host of hosts) {
         const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
         for (const control of host.controlSet?.controls ?? []) {
-          if (this.#isBlendControl(host, control.key)) continue
-          const rawU = this.#evaluateRawU(control, hostAnim, clampedTime)
-          const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, clampedTime)
+          const { u: rawU, blends: blendFactors } = this.#evaluateHostWithBlends(
+            control,
+            hostAnim,
+            clampedTime,
+          )
           const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
           if (groupClips.length === 0) continue
+          const controlBaseSym = value
           let blended: SymmetryKeyframeValue | null = null
           let hasBlended = false
           for (let gi = 0; gi < groupClips.length; gi++) {
+            const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
+            if (gi > 0 && blend === 0) continue
             const entry = groupClips[gi]
             let cur: SymmetryKeyframeValue | null = null
             if (entry) {
@@ -798,12 +832,21 @@ export class AnimationEvaluator {
             if (!hasBlended && cur === null) {
               // gap
             } else if (!hasBlended) {
-              blended = cur
-              hasBlended = cur !== null
+              if (gi === 0) {
+                blended = cur
+                hasBlended = cur !== null
+              } else if (cur !== null) {
+                if (controlBaseSym) {
+                  const axis = blend < 0.5 ? controlBaseSym.axis : cur.axis
+                  const factor =
+                    controlBaseSym.factor + (cur.factor - controlBaseSym.factor) * blend
+                  blended = { axis, factor }
+                } else blended = cur
+                hasBlended = true
+              }
             } else if (cur === null) {
               // keep blended verbatim
             } else {
-              const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
               if (blend <= 0) {
                 // keep blended
               } else if (blend >= 1) {
@@ -1207,9 +1250,11 @@ export class AnimationEvaluator {
       for (const host of hosts) {
         const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
         for (const control of host.controlSet?.controls ?? []) {
-          if (this.#isBlendControl(host, control.key)) continue
-          const rawU = this.#evaluateRawU(control, hostAnim, clampedTime)
-          const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, clampedTime)
+          const { u: rawU, blends: blendFactors } = this.#evaluateHostWithBlends(
+            control,
+            hostAnim,
+            clampedTime,
+          )
           const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
           if (groupClips.length === 0) continue
           const propSet = new Set<string>()
@@ -1221,6 +1266,8 @@ export class AnimationEvaluator {
           for (const property of propSet) {
             let blended: number | undefined = undefined
             for (let gi = 0; gi < groupClips.length; gi++) {
+              const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
+              if (gi > 0 && blend === 0) continue
               const entry = groupClips[gi]
               let cur: number | undefined = undefined
               if (entry && entry.clip.circleTrackKeys.includes(property as never)) {
@@ -1230,17 +1277,18 @@ export class AnimationEvaluator {
                     kf,
                     effectiveUForClip(entry.clip, kf, entry.uPrime),
                   )
-                // linkMode not used for circle but handle if present?
-                // For circle channels, gain/offset not defined; just use cur directly
               }
               if (blended === undefined && cur === undefined) {
                 // gap
               } else if (blended === undefined) {
-                blended = cur
+                if (gi === 0) blended = cur
+                else {
+                  const base = baseMap.get(property) ?? 0
+                  blended = base + ((cur as number) - base) * blend
+                }
               } else if (cur === undefined) {
                 // keep blended
               } else {
-                const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
                 blended = blended + (cur - blended) * blend
               }
             }
@@ -1303,9 +1351,11 @@ export class AnimationEvaluator {
       for (const host of hosts) {
         const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
         for (const control of host.controlSet?.controls ?? []) {
-          if (this.#isBlendControl(host, control.key)) continue
-          const rawU = this.#evaluateRawU(control, hostAnim, clampedTime)
-          const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, clampedTime)
+          const { u: rawU, blends: blendFactors } = this.#evaluateHostWithBlends(
+            control,
+            hostAnim,
+            clampedTime,
+          )
           const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
           if (groupClips.length === 0) continue
           const propSet = new Set<string>()
@@ -1317,6 +1367,8 @@ export class AnimationEvaluator {
           for (const property of propSet) {
             let blended: number | undefined = undefined
             for (let gi = 0; gi < groupClips.length; gi++) {
+              const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
+              if (gi > 0 && blend === 0) continue
               const entry = groupClips[gi]
               let cur: number | undefined = undefined
               if (entry && entry.clip.tableTrackKeys.includes(property as never)) {
@@ -1330,11 +1382,14 @@ export class AnimationEvaluator {
               if (blended === undefined && cur === undefined) {
                 void 0
               } else if (blended === undefined) {
-                blended = cur
+                if (gi === 0) blended = cur
+                else {
+                  const base = baseMap.get(property) ?? 0
+                  blended = base + ((cur as number) - base) * blend
+                }
               } else if (cur === undefined) {
                 void 0
               } else {
-                const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
                 blended = blended! + (cur - blended!) * blend
               }
             }
@@ -1433,9 +1488,11 @@ export class AnimationEvaluator {
     for (const host of hosts) {
       const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
       for (const control of host.controlSet?.controls ?? []) {
-        if (this.#isBlendControl(host, control.key)) continue
-        const rawU = this.#evaluateRawU(control, hostAnim, time)
-        const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, time)
+        const { u: rawU, blends: blendFactors } = this.#evaluateHostWithBlends(
+          control,
+          hostAnim,
+          time,
+        )
         const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
         if (groupClips.length === 0) continue
         // Collect distinct channels present in any group's clip (including linkMode channels)
@@ -1456,6 +1513,8 @@ export class AnimationEvaluator {
         for (const channel of channelsSet) {
           let blended: number | undefined = undefined
           for (let gi = 0; gi < groupClips.length; gi++) {
+            const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
+            if (gi > 0 && blend === 0) continue
             const entry = groupClips[gi]
             let cur: number | undefined = undefined
             if (entry) {
@@ -1486,11 +1545,14 @@ export class AnimationEvaluator {
             if (blended === undefined && cur === undefined) {
               // both absent → gap
             } else if (blended === undefined) {
-              blended = cur
+              if (gi === 0) blended = cur
+              else {
+                const base = baseValues.get(channel) ?? 0
+                blended = base + ((cur as number) - base) * blend
+              }
             } else if (cur === undefined) {
               // keep blended verbatim
             } else {
-              const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
               blended = blended + (cur - blended) * blend
             }
           }
@@ -1589,28 +1651,21 @@ export class AnimationEvaluator {
     return range === 0 ? 0 : Math.min(Math.max((value - control.min) / range, 0), 1)
   }
 
-  #evaluateBlendFactors(
+  /**
+   * Shared-U + local blend: one host segment gives {u, blends}.
+   * U and blends share the host segment interpolation (hold/linear/bezier).
+   * Missing blend = [] (=0s).
+   */
+  #evaluateHostWithBlends(
     control: Control,
-    host: SceneNode,
     hostAnim: NodeAnimation | undefined,
     time: number,
-  ): number[] {
-    const blendKeys = (control.blendKeys ?? []) as readonly string[]
-    const factors: number[] = []
-    for (const bk of blendKeys) {
-      const track = hostAnim?.controlKeyframes(bk) ?? []
-      const blendCtrl = host.controlSet?.controls.find((c) => c.key === bk)
-      const fallback = blendCtrl?.default ?? 0
-      const raw = evaluateControlTrack(track, time, fallback)
-      factors.push(Math.min(Math.max(raw, 0), 1))
-    }
-    return factors
-  }
-
-  #isBlendControl(host: SceneNode, controlKey: string): boolean {
-    for (const c of host.controlSet?.controls ?? [])
-      if (c.blendKeys.includes(controlKey)) return true
-    return false
+  ): { u: number; blends: number[] } {
+    const u = this.#evaluateRawU(control, hostAnim, time)
+    const track = hostAnim?.controlKeyframes(control.key) ?? []
+    const blendCount = Math.max(0, control.groups.length - 1)
+    const raw = evaluateHostWithBlends(track, time, control.default, blendCount)
+    return { u, blends: raw.blends }
   }
 
   #getGroupClips(
@@ -1705,9 +1760,11 @@ export class AnimationEvaluator {
     for (const host of hosts) {
       const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
       for (const control of host.controlSet?.controls ?? []) {
-        if (this.#isBlendControl(host, control.key)) continue
-        const rawU = this.#evaluateRawU(control, hostAnim, time)
-        const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, time)
+        const { u: rawU, blends: blendFactors } = this.#evaluateHostWithBlends(
+          control,
+          hostAnim,
+          time,
+        )
         const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
         if (groupClips.length === 0) continue
         const paramSet = new Set<string>()
@@ -1733,6 +1790,8 @@ export class AnimationEvaluator {
           if (kind === undefined) continue
           let blended: MaterialOverrideValue | undefined = undefined
           for (let gi = 0; gi < groupClips.length; gi++) {
+            const blendEarly = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
+            if (gi > 0 && blendEarly === 0) continue
             const entry = groupClips[gi]
             let cur: MaterialOverrideValue | undefined = undefined
             if (entry) {
@@ -1768,12 +1827,22 @@ export class AnimationEvaluator {
             if (blended === undefined && cur === undefined) {
               // gap
             } else if (blended === undefined) {
-              blended = cur
+              if (gi === 0) blended = cur
+              else {
+                const base = baseMap.get(param)
+                if (base !== undefined)
+                  blended = this.#lerpMaterialValue(
+                    kind,
+                    base as MaterialOverrideValue,
+                    cur as MaterialOverrideValue,
+                    blendEarly,
+                  )
+                else blended = cur
+              }
             } else if (cur === undefined) {
               // keep blended
             } else {
-              const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
-              blended = this.#lerpMaterialValue(kind, blended, cur, blend)
+              blended = this.#lerpMaterialValue(kind, blended, cur, blendEarly)
             }
           }
           if (blended !== undefined) {
@@ -1819,9 +1888,11 @@ export class AnimationEvaluator {
     for (const host of hosts) {
       const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
       for (const control of host.controlSet?.controls ?? []) {
-        if (this.#isBlendControl(host, control.key)) continue
-        const rawU = this.#evaluateRawU(control, hostAnim, time)
-        const blendFactors = this.#evaluateBlendFactors(control, host, hostAnim, time)
+        const { u: rawU, blends: blendFactors } = this.#evaluateHostWithBlends(
+          control,
+          hostAnim,
+          time,
+        )
         const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
         if (groupClips.length === 0) continue
         const propSet = new Set<ShadowProperty>()
@@ -1836,6 +1907,8 @@ export class AnimationEvaluator {
           let blended: unknown = undefined
           let hasBlended = false
           for (let gi = 0; gi < groupClips.length; gi++) {
+            const blendEarly = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
+            if (gi > 0 && blendEarly === 0) continue
             const entry = groupClips[gi]
             let cur: unknown = undefined
             let hasCur = false
@@ -1855,16 +1928,25 @@ export class AnimationEvaluator {
             if (!hasBlended && !hasCur) {
               // gap
             } else if (!hasBlended) {
-              blended = cur
-              hasBlended = hasCur
+              if (gi === 0) {
+                blended = cur
+                hasBlended = hasCur
+              } else {
+                const base = baseMap.get(property)
+                if (property === 'color') {
+                  blended = lerpHexColor(base as string, cur as string, blendEarly)
+                } else {
+                  blended = (base as number) + ((cur as number) - (base as number)) * blendEarly
+                }
+                hasBlended = hasCur
+              }
             } else if (!hasCur) {
               // keep blended
             } else {
-              const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
               if (property === 'color') {
-                blended = lerpHexColor(blended as string, cur as string, blend)
+                blended = lerpHexColor(blended as string, cur as string, blendEarly)
               } else {
-                blended = (blended as number) + ((cur as number) - (blended as number)) * blend
+                blended = (blended as number) + ((cur as number) - (blended as number)) * blendEarly
               }
             }
           }

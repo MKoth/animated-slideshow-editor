@@ -739,124 +739,14 @@ function validateNode(errors: string[], nodeJson: unknown, nodeIds: Set<string>)
                   }
                 }
               }
-              // blendKeys validation
-              if (blendKeys !== undefined) {
-                if (!Array.isArray(blendKeys))
-                  errors.push(`Control "${String(key)}" blendKeys must be an array`)
-                else {
-                  const expected = Math.max(0, groups.length - 1)
-                  if (blendKeys.length !== expected)
-                    errors.push(
-                      `Control "${String(key)}" blendKeys length must be max(0, groups.length-1) (expected ${expected}, got ${blendKeys.length})`,
-                    )
-                  for (const bk of blendKeys) {
-                    if (typeof bk !== 'string' || !CONTROL_KEY_PATTERN.test(bk))
-                      errors.push(`Control "${String(key)}" has invalid blend key "${String(bk)}"`)
-                  }
-                  if (blendKeys.includes(key as string))
-                    errors.push(`Control "${String(key)}" blendKeys must not contain its own key`)
-                }
-              } else {
-                const expected = Math.max(0, groups.length - 1)
-                if (expected !== 0)
-                  errors.push(
-                    `Control "${String(key)}" missing blendKeys (expected length ${expected})`,
-                  )
-              }
+              // legacy blendKeys ignored — blend lives in host keyframes
+              void blendKeys
             }
           } else if (blendKeys !== undefined) {
-            errors.push(`Control "${String(key)}" has blendKeys without groups`)
+            void blendKeys
           }
         }
-        // Validate blend sibling order violated (per-ControlSet contiguous)
-        {
-          const controlKeys = controls.map((c) => (c as Record<string, unknown>).key as string)
-          const keyToIdx = new Map<string, number>()
-          controlKeys.forEach((k, idx) => keyToIdx.set(k, idx))
-          const hostMap = new Map<string, { idx: number; blendKeys: string[] }>()
-          for (let idx = 0; idx < controls.length; idx++) {
-            const rc = controls[idx] as Record<string, unknown>
-            const bks = rc.blendKeys as unknown
-            if (Array.isArray(bks) && bks.length > 0) {
-              const key = rc.key as string
-              hostMap.set(key, { idx, blendKeys: bks as string[] })
-            }
-          }
-          const occupied = new Set<number>()
-          for (const [, info] of hostMap) {
-            for (let i = 0; i <= info.blendKeys.length; i++) {
-              const pos = info.idx + i
-              if (occupied.has(pos))
-                errors.push(`blend sibling order violated — overlapping host blocks at ${pos}`)
-              else occupied.add(pos)
-            }
-          }
-          for (const [hostKey, info] of hostMap) {
-            for (let i = 0; i < info.blendKeys.length; i++) {
-              const bk = info.blendKeys[i]
-              const expectedIdx = info.idx + 1 + i
-              if (expectedIdx >= controls.length) {
-                errors.push(`blend sibling order violated for "${hostKey}" — missing blend "${bk}"`)
-                continue
-              }
-              const actualKey = (controls[expectedIdx] as Record<string, unknown>).key
-              if (actualKey !== bk)
-                errors.push(
-                  `blend sibling order violated for "${hostKey}" — expected "${bk}" at ${expectedIdx}, got "${String(actualKey)}"`,
-                )
-              // also check blend control is not itself a host with blends and must be empty
-              const blendCtrl = controls[expectedIdx] as Record<string, unknown>
-              const bks2 = blendCtrl.blendKeys as unknown
-              if (Array.isArray(bks2) && bks2.length > 0)
-                errors.push(`Blend control "${String(bk)}" must not have its own blendKeys`)
-              const blendBindings = blendCtrl.bindings as unknown
-              const hasBindings =
-                blendBindings &&
-                typeof blendBindings === 'object' &&
-                Object.keys(blendBindings as Record<string, unknown>).length > 0
-              if (hasBindings) errors.push(`Blend control "${String(bk)}" must have empty bindings`)
-              else {
-                // also check groups if present
-                const gb2 = (blendCtrl as Record<string, unknown>).groups as unknown
-                if (Array.isArray(gb2) && gb2.length === 1) {
-                  const gbind = (gb2[0] as Record<string, unknown>).bindings as unknown
-                  if (
-                    gbind &&
-                    typeof gbind === 'object' &&
-                    Object.keys(gbind as Record<string, unknown>).length > 0
-                  )
-                    errors.push(`Blend control "${String(bk)}" must have empty bindings`)
-                } else if (Array.isArray(gb2) && gb2.length !== 0) {
-                  // blend controls should have single empty group
-                  errors.push(`Blend control "${String(bk)}" must have empty bindings`)
-                }
-              }
-              const exposedVal = blendCtrl.exposed
-              if (exposedVal !== true)
-                errors.push(`Blend control "${String(bk)}" must be exposed:true`)
-              const defaultVal = blendCtrl.default
-              if (defaultVal !== 0) errors.push(`Blend control "${String(bk)}" must have default:0`)
-            }
-          }
-          // check blend orphan order
-          const allBlendKeys = new Set<string>()
-          for (const [, info] of hostMap) for (const bk of info.blendKeys) allBlendKeys.add(bk)
-          const blendKeyToHost = new Map<string, string>()
-          for (const [hk, info] of hostMap)
-            for (const bk of info.blendKeys) blendKeyToHost.set(bk, hk)
-          for (let idx = 0; idx < controls.length; idx++) {
-            const k = (controls[idx] as Record<string, unknown>).key as string
-            if (blendKeyToHost.has(k)) {
-              const hk = blendKeyToHost.get(k)!
-              const hInfo = hostMap.get(hk)!
-              const pos = hInfo.blendKeys.indexOf(k)
-              if (hInfo.idx + 1 + pos !== idx)
-                errors.push(
-                  `blend sibling order violated for "${hk}" — blend "${k}" at wrong index ${idx}`,
-                )
-            }
-          }
-        }
+        // No sibling validation — blend lives in host keyframes
       }
     }
   }

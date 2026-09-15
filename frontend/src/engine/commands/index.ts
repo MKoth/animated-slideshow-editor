@@ -80,6 +80,8 @@ export type {
 } from './moveBindingBetweenGroupsCommand'
 export { RenameControlCommand } from './renameControlCommand'
 export type { RenameControlInverse, RenameControlParameters } from './renameControlCommand'
+export { SetControlBlendCommand } from './setControlBlendCommand'
+export type { SetControlBlendInverse, SetControlBlendParameters } from './setControlBlendCommand'
 export { SetOpacityCommand } from './setOpacityCommand'
 export type { SetOpacityInverse, SetOpacityParameters } from './setOpacityCommand'
 export { SetZIndexCommand } from './setZIndexCommand'

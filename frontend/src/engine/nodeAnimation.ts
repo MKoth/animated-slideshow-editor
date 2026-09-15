@@ -35,7 +35,7 @@ import type { MaterialParameterKindOf } from './keyframeTarget'
 import type { ShadowProperty } from './shadowEffect'
 import { requireShadowProperty, requireShadowKeyframeValue } from './shadowEffect'
 import { requireSymmetryKeyframeValue } from './symmetry'
-import { controlTrackKeyframeFromJSON } from './control'
+import { controlTrackKeyframeFromJSON, evaluateControlTrack } from './control'
 
 export type { MaterialParameterKindOf } from './keyframeTarget'
 
@@ -98,6 +98,7 @@ export class NodeAnimation {
               tangentIn: { time: keyframe.tangentIn.time, value: keyframe.tangentIn.value },
               tangentOut: { time: keyframe.tangentOut.time, value: keyframe.tangentOut.value },
               ...(keyframe.disabled ? { disabled: true } : {}),
+              ...(keyframe.blend.length > 0 ? { blend: [...keyframe.blend] } : {}),
             },
       ),
     }))
@@ -776,6 +777,7 @@ export class NodeAnimation {
     }
     const controlTracks = (json as Record<string, unknown>).controlTracks
     if (Array.isArray(controlTracks)) {
+      const legacyCandidates = new Map<string, import('./keyframe').Keyframe[]>()
       for (const rawTrack of controlTracks) {
         if (
           !isRecord(rawTrack) ||
@@ -783,7 +785,27 @@ export class NodeAnimation {
           !Array.isArray(rawTrack.keyframes) ||
           !node.controlSet?.controls.some((control) => control.key === rawTrack.key)
         ) {
-          if (isRecord(rawTrack) && typeof rawTrack.key === 'string') {
+          if (
+            isRecord(rawTrack) &&
+            typeof rawTrack.key === 'string' &&
+            Array.isArray(rawTrack.keyframes)
+          ) {
+            // Collect legacy blend sibling tracks for migration (old blendKeys model)
+            const parsed: import('./keyframe').Keyframe[] = []
+            const ids = new Set<string>()
+            for (const rawKeyframe of rawTrack.keyframes as unknown[]) {
+              const kf = controlTrackKeyframeFromJSON(rawKeyframe, duration)
+              if (!kf || ids.has(kf.id)) continue
+              ids.add(kf.id)
+              parsed.push(kf)
+            }
+            if (parsed.length > 0) legacyCandidates.set(rawTrack.key, parsed)
+            else {
+              console.warn(
+                `[control] Node "${node.id}" unknown control track "${rawTrack.key}" — ignoring`,
+              )
+            }
+          } else if (isRecord(rawTrack) && typeof rawTrack.key === 'string') {
             console.warn(
               `[control] Node "${node.id}" unknown control track "${rawTrack.key}" — ignoring`,
             )
@@ -803,6 +825,52 @@ export class NodeAnimation {
           ids.add(keyframe.id)
           times.add(keyframe.time)
           animation.addControl(rawTrack.key, keyframe)
+        }
+      }
+      // Migration: convert old separate blend tracks into host kf blend[N-1].
+      // Sample old blend track at each host kf time via evaluateControlTrack, drop siblings/tracks.
+      if (legacyCandidates.size > 0 && node.controlSet) {
+        const sortedLegacy = [...legacyCandidates.entries()].sort(([a], [b]) => {
+          const rank = (k: string): number => {
+            if (k === 'blend') return 0
+            const m = /^blend(\d+)$/.exec(k)
+            if (m) return Number.parseInt(m[1]!, 10) - 1
+            return 1_000_000
+          }
+          return rank(a) - rank(b)
+        })
+        let cursor = 0
+        for (const control of node.controlSet.controls) {
+          const blendCount = Math.max(0, control.groups.length - 1)
+          if (blendCount === 0) continue
+          const hostKfs = animation.controlKeyframes(control.key)
+          if (hostKfs.length === 0) continue
+          // Assign next blendCount legacy tracks to this host
+          const assigned = sortedLegacy.slice(cursor, cursor + blendCount)
+          if (assigned.length === 0) continue
+          cursor += assigned.length
+          for (const kf of hostKfs) {
+            const next = new Array<number>(blendCount).fill(0)
+            // Preserve any new-style blend already present
+            for (let i = 0; i < blendCount && i < kf.blend.length; i++) next[i] = kf.blend[i]!
+            for (let i = 0; i < assigned.length; i++) {
+              const [, track] = assigned[i]!
+              // Only fill if host kf had no explicit blend (tolerant: missing = sample legacy)
+              if (kf.blend.length <= i) {
+                next[i] = evaluateControlTrack(track, kf.time, 0)
+              }
+            }
+            ;(kf as { blend: readonly number[] }).blend = next
+          }
+          console.warn(
+            `[control] Migrated ${assigned.length} legacy blend track(s) into "${control.key}" host keyframes`,
+          )
+        }
+        // Drop remaining legacy tracks (warn)
+        for (const [key] of sortedLegacy) {
+          console.warn(
+            `[control] Node "${node.id}" dropping legacy blend track "${key}" after migration`,
+          )
         }
       }
     }
@@ -1157,6 +1225,7 @@ function copyKeyframe(keyframe: Keyframe): Keyframe {
     { time: keyframe.tangentIn.time, value: keyframe.tangentIn.value },
     { time: keyframe.tangentOut.time, value: keyframe.tangentOut.value },
     !!keyframe.disabled,
+    keyframe.blend.length > 0 ? [...keyframe.blend] : [],
   )
 }
 

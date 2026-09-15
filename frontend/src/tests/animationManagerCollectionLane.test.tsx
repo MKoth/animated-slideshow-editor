@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { EngineContext } from '../app/engineContext'
 import type { EngineContextValue } from '../app/engineContext'
@@ -101,7 +101,8 @@ describe('Animation Manager 15-06 – Collection Lane single bar, uniform stretc
 
     renderManager(engine, undo, parent.id)
     const modal = await screen.findByTestId('animation-manager-modal')
-    // Collection lanes section should exist
+    // Collection lanes section lives on the collections tab only
+    fireEvent.click(within(modal).getByTestId('manager-tab-collections'))
     const section = await within(modal).findByTestId('collection-lanes-section')
     expect(section).toBeInTheDocument()
     const lane = await within(section).findByTestId(`collection-lane-${placementId}`)
@@ -113,6 +114,8 @@ describe('Animation Manager 15-06 – Collection Lane single bar, uniform stretc
     // Hidden internals: lane should show collection name only, not per-channel breakdown
     const label = within(lane).getByTestId(`collection-lane-label-${placementId}`)
     expect(label.textContent).toBe('MyCollection')
+    // Back to clips tab for row assertions below
+    fireEvent.click(within(modal).getByTestId('manager-tab-clips'))
     // Per-object Clip Lanes for child1/child2 should still exist in clips tab? But collection lane is single bar, not per child
     // Ensure collection lane lives on parent top section, not on child rows
     expect(within(modal).queryByTestId(`manager-row-${parent.id}`)).not.toBeInTheDocument() // parent itself not a row, only children

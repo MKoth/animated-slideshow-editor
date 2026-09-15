@@ -1,5 +1,6 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
+import { mergeGroupBindings } from '../control'
 
 export interface ReorderControlBindingParameters {
   readonly nodeId: string
@@ -59,7 +60,23 @@ export class ReorderControlBindingCommand implements Command<ReorderControlBindi
       entries.splice(this.#newIndex, 0, moved!)
       const nextBindings: Record<string, import('../control').ControlBindingValue> = {}
       for (const [k, v] of entries) nextBindings[k] = v
-      return { ...control, bindings: nextBindings }
+      if (control.groups.length <= 1) return { ...control, bindings: nextBindings }
+      // Multi-timeline: mirror the key reorder inside every timeline containing
+      // the semantic (display/priority order), then recompute the merged view.
+      const nextGroups = control.groups.map((g) => {
+        const gEntries = Object.entries(g.bindings) as [
+          string,
+          import('../control').ControlBindingValue,
+        ][]
+        const gFrom = gEntries.findIndex(([k]) => k === this.#semanticName)
+        if (gFrom === -1) return g
+        const [gMoved] = gEntries.splice(gFrom, 1)
+        gEntries.splice(Math.min(this.#newIndex, gEntries.length), 0, gMoved!)
+        const nb: Record<string, import('../control').ControlBindingValue> = {}
+        for (const [k, v] of gEntries) nb[k] = v
+        return { ...g, bindings: nb }
+      })
+      return { ...control, groups: nextGroups, bindings: mergeGroupBindings(nextGroups) }
     })
     const nextSet: import('../control').ControlSet = { ...oldControlSet, controls }
     engine.setControlSet(this.#nodeId, nextSet)

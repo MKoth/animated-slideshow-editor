@@ -1,5 +1,6 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
+import { addBindingToRecord } from '../control'
 
 export interface MoveBindingBetweenGroupsParameters {
   readonly nodeId: string
@@ -86,19 +87,29 @@ export class MoveBindingBetweenGroupsCommand implements Command<MoveBindingBetwe
         return { ...control, bindings: nextBindings }
       }
       if (control.key === this.#toControlKey) {
-        const entries = Object.entries(control.bindings) as [
-          string,
-          import('../control').ControlBindingValue,
-        ][]
-        const nextEntries: [string, import('../control').ControlBindingValue][] = [...entries]
-        // Insert at toIndex if provided, otherwise append (later wins)
-        const insertAt =
-          this.#toIndex !== undefined
-            ? Math.min(this.#toIndex, nextEntries.length)
-            : nextEntries.length
-        nextEntries.splice(insertAt, 0, [this.#semanticName, binding])
-        const nextBindings: Record<string, import('../control').ControlBindingValue> = {}
-        for (const [k, v] of nextEntries) nextBindings[k] = v
+        // Merge (not overwrite) when the target already holds the same semantic.
+        const nextBindings: Record<string, import('../control').ControlBindingValue> = {
+          ...control.bindings,
+        }
+        const existing = nextBindings[this.#semanticName]
+        if (existing === undefined) {
+          const entries = Object.entries(control.bindings) as [
+            string,
+            import('../control').ControlBindingValue,
+          ][]
+          const nextEntries: [string, import('../control').ControlBindingValue][] = [...entries]
+          // Insert at toIndex if provided, otherwise append (later wins)
+          const insertAt =
+            this.#toIndex !== undefined
+              ? Math.min(this.#toIndex, nextEntries.length)
+              : nextEntries.length
+          nextEntries.splice(insertAt, 0, [this.#semanticName, binding])
+          for (const [k, v] of nextEntries) nextBindings[k] = v
+          return { ...control, bindings: nextBindings }
+        }
+        const movedEntries = Array.isArray(binding) ? [...binding] : [binding]
+        for (const b of movedEntries as import('../control').ControlBinding[])
+          addBindingToRecord(nextBindings, this.#semanticName, b)
         return { ...control, bindings: nextBindings }
       }
       return control

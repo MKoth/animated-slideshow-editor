@@ -148,6 +148,15 @@ export function applyUndo(
       engine.renameControl(hostNodeId, newKey, oldKey)
       return
     }
+    case 'SetControlBlend': {
+      const hostNodeId = inv.hostNodeId as string
+      const controlKey = inv.controlKey as string
+      const keyframeId = inv.keyframeId as string
+      const blendIndex = inv.blendIndex as number
+      const oldValue = inv.oldValue as number
+      engine.setControlBlend(hostNodeId, controlKey, keyframeId, blendIndex, oldValue)
+      return
+    }
     case 'ReorderNode': {
       const nodeId = inv.nodeId as string
       const oldIndex = inv.oldIndex as number

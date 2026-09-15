@@ -86,7 +86,12 @@ import {
   CONTROL_INTERVAL_MIN_SPAN,
   flattenControlBindings,
   addBindingToRecord,
+  addGroupToControlSet,
+  removeGroupFromControlSet,
+  mergeGroupBindings,
+  moveBindingBetweenGroups,
 } from '../../engine/control'
+import { SetControlBlendCommand } from '../../engine/commands/setControlBlendCommand'
 import { useAnimationManagerNavStore } from '../../stores/animationManagerNavStore'
 
 interface AnimationManagerModalProps {
@@ -201,6 +206,8 @@ type DragState =
       mode: 'interval-move'
       nodeId: string
       controlKey: string
+      /** Owning timeline for per-group lanes; absent = legacy merged/drill-in drag */
+      groupId?: string
       semanticName: string
       clipId?: string
       initialStart: number
@@ -217,6 +224,8 @@ type DragState =
       mode: 'interval-resize-left'
       nodeId: string
       controlKey: string
+      /** Owning timeline for per-group lanes; absent = legacy merged/drill-in drag */
+      groupId?: string
       semanticName: string
       clipId?: string
       initialStart: number
@@ -231,6 +240,8 @@ type DragState =
       mode: 'interval-resize-right'
       nodeId: string
       controlKey: string
+      /** Owning timeline for per-group lanes; absent = legacy merged/drill-in drag */
+      groupId?: string
       semanticName: string
       clipId?: string
       initialStart: number
@@ -245,6 +256,8 @@ type DragState =
       mode: 'interval-reorder'
       nodeId: string
       controlKey: string
+      /** Owning timeline for per-group lanes; absent = legacy merged/drill-in drag */
+      groupId?: string
       semanticName: string
       initialIndex: number
       previewIndex: number
@@ -362,6 +375,17 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     y: number
     placementId: string
   } | null>(null)
+  // Control timeline Clip Block context menu (Controls tab per-timeline lanes)
+  const [controlBlockMenu, setControlBlockMenu] = useState<{
+    x: number
+    y: number
+    controlKey: string
+    groupId: string
+    semanticName: string
+    clipId: string
+    start: number
+    end: number
+  } | null>(null)
   const [reverseClipPrompt, setReverseClipPrompt] = useState<{
     clipId: string
     nodeId?: string
@@ -388,6 +412,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const controlsScrollRef = useRef<HTMLDivElement>(null)
   const [addBlockDialog, setAddBlockDialog] = useState<{
     controlKey: string
+    draftGroupId: string
     draftSemantic: string
     draftClipId: string
     error: string | null
@@ -450,6 +475,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       setSelectedPlacementId(null)
       setPlaceCollectionId('')
       setCollectionPlacementMenu(null)
+      setControlBlockMenu(null)
       setReverseClipPrompt(null)
       setReverseCollectionPrompt(null)
       setReverseNameDraft('')
@@ -530,6 +556,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         } else if (collectionPlacementMenu) {
           setCollectionPlacementMenu(null)
           e.stopPropagation()
+        } else if (controlBlockMenu) {
+          setControlBlockMenu(null)
+          e.stopPropagation()
         } else {
           onClose()
         }
@@ -554,6 +583,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     editingCollectionId,
     deleteConfirmCollectionId,
     collectionPlacementMenu,
+    controlBlockMenu,
     reverseClipPrompt,
     reverseCollectionPrompt,
     addBlockDialog,
@@ -677,6 +707,90 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     [dispatch, parentNode],
   )
 
+  /**
+   * Group-aware write: replace one timeline's bindings and recompute the merged
+   * view. Groups are the source of truth for multi-timeline controls — writing
+   * flat `bindings` alone is discarded by normalization, so all edits go here.
+   */
+  const writeControlGroupBindings = useCallback(
+    (
+      controlKey: string,
+      groupId: string,
+      nextGroupBindings: Record<string, import('../../engine/control').ControlBindingValue>,
+    ) => {
+      if (!parentNode?.controlSet) return
+      const control = parentNode.controlSet.controls.find((c) => c.key === controlKey)
+      if (!control) return
+      const nextGroups = control.groups.map((g) =>
+        g.id === groupId ? { ...g, bindings: nextGroupBindings } : g,
+      )
+      dispatch(
+        new SetControlSetCommand({
+          nodeId: parentNode.id,
+          controlSet: {
+            ...parentNode.controlSet,
+            controls: parentNode.controlSet.controls.map((c) =>
+              c.key === controlKey
+                ? { ...c, groups: nextGroups, bindings: mergeGroupBindings(nextGroups) }
+                : c,
+            ),
+          },
+        }),
+      )
+      setTick((value) => value + 1)
+    },
+    [dispatch, parentNode],
+  )
+
+  /**
+   * Remove one Clip Block from a specific timeline, matched by
+   * (semantic, clip, interval). Groups are the source of truth.
+   * Returns false when the block wasn't found.
+   */
+  const removeControlBlock = useCallback(
+    (args: {
+      controlKey: string
+      groupId: string
+      semanticName: string
+      clipId: string
+      start: number
+      end: number
+    }): boolean => {
+      if (!parentNode?.controlSet) return false
+      const control = parentNode.controlSet.controls.find((c) => c.key === args.controlKey)
+      const group = control?.groups.find((g) => g.id === args.groupId)
+      if (!control || !group) return false
+      const EPS = 1e-9
+      const cur = (
+        group.bindings as Record<string, import('../../engine/control').ControlBindingValue>
+      )[args.semanticName]
+      if (cur === undefined) return false
+      const matches = (b: import('../../engine/control').ControlBinding): boolean => {
+        const cid = typeof b === 'string' ? b : b.clipId
+        if (cid !== args.clipId) return false
+        const s = typeof b === 'string' ? 0 : b.start
+        const e = typeof b === 'string' ? 1 : b.end
+        return Math.abs(s - args.start) < EPS && Math.abs(e - args.end) < EPS
+      }
+      const next: Record<string, import('../../engine/control').ControlBindingValue> = {
+        ...group.bindings,
+      }
+      if (Array.isArray(cur)) {
+        const arr = cur as import('../../engine/control').ControlBinding[]
+        const filtered = arr.filter((b) => !matches(b))
+        if (filtered.length === arr.length) return false
+        if (filtered.length === 0) delete next[args.semanticName]
+        else if (filtered.length === 1) next[args.semanticName] = filtered[0]!
+        else next[args.semanticName] = filtered
+      } else if (matches(cur as import('../../engine/control').ControlBinding)) {
+        delete next[args.semanticName]
+      } else return false
+      writeControlGroupBindings(args.controlKey, args.groupId, next)
+      return true
+    },
+    [parentNode, writeControlGroupBindings],
+  )
+
   const removeControlBinding = useCallback(
     (controlKey: string, semanticName: string) => {
       const existing =
@@ -688,6 +802,102 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     [parentNode, setControlBindings],
   )
   void removeControlBinding
+
+  /**
+   * Commit a drag move/resize for one block inside a specific timeline.
+   * Finds the block in that timeline's bindings by (semantic, clip, interval)
+   * and rewrites the interval there; merged bindings are recomputed.
+   * Returns false when the block wasn't found (caller falls back to legacy).
+   */
+  const commitGroupIntervalEdit = useCallback(
+    (args: {
+      controlKey: string
+      groupId: string
+      semanticName: string
+      clipId: string | undefined
+      initialStart: number
+      initialEnd: number
+      previewStart: number
+      previewEnd: number
+    }): boolean => {
+      if (!parentNode?.controlSet) return false
+      const control = parentNode.controlSet.controls.find((c) => c.key === args.controlKey)
+      const group = control?.groups.find((g) => g.id === args.groupId)
+      if (!control || !group) return false
+      const flat = flattenControlBindings(
+        group.bindings as unknown as Record<
+          string,
+          import('../../engine/control').ControlBindingValue
+        >,
+      )
+      const EPS = 1e-9
+      const idx = flat.findIndex((f) => {
+        if (f.semantic !== args.semanticName) return false
+        const cid =
+          typeof f.binding === 'string'
+            ? (f.binding as string)
+            : (f.binding as { clipId: string }).clipId
+        if (args.clipId !== undefined && cid !== args.clipId) return false
+        const s = typeof f.binding === 'string' ? 0 : (f.binding as { start: number }).start
+        const e = typeof f.binding === 'string' ? 1 : (f.binding as { end: number }).end
+        return Math.abs(s - args.initialStart) < EPS && Math.abs(e - args.initialEnd) < EPS
+      })
+      if (idx === -1) return false
+      const target = flat[idx]!
+      const resolvedClipId =
+        args.clipId ??
+        (typeof target.binding === 'string'
+          ? (target.binding as string)
+          : (target.binding as { clipId: string }).clipId)
+      flat[idx] = {
+        semantic: target.semantic,
+        binding: { clipId: resolvedClipId, start: args.previewStart, end: args.previewEnd },
+        index: target.index,
+      }
+      const rebuilt: Record<string, import('../../engine/control').ControlBindingValue> = {}
+      for (const { semantic: s, binding: b } of flat) {
+        addBindingToRecord(rebuilt, s, b as import('../../engine/control').ControlBinding)
+      }
+      writeControlGroupBindings(args.controlKey, args.groupId, rebuilt)
+      return true
+    },
+    [parentNode, writeControlGroupBindings],
+  )
+
+  /**
+   * Reorder one entry inside a specific timeline's bindings (Priority stacking).
+   * Returns false when out of range (caller falls back to legacy).
+   */
+  const reorderGroupBinding = useCallback(
+    (args: {
+      controlKey: string
+      groupId: string
+      fromIndex: number
+      toIndex: number
+    }): boolean => {
+      if (!parentNode?.controlSet) return false
+      const control = parentNode.controlSet.controls.find((c) => c.key === args.controlKey)
+      const group = control?.groups.find((g) => g.id === args.groupId)
+      if (!control || !group) return false
+      const flat = flattenControlBindings(
+        group.bindings as unknown as Record<
+          string,
+          import('../../engine/control').ControlBindingValue
+        >,
+      )
+      if (args.fromIndex < 0 || args.fromIndex >= flat.length) return false
+      const dest = Math.max(0, Math.min(args.toIndex, flat.length - 1))
+      const [moved] = flat.splice(args.fromIndex, 1)
+      flat.splice(dest, 0, moved!)
+      const rebuilt: Record<string, import('../../engine/control').ControlBindingValue> = {}
+      for (const { semantic: s, binding: b } of flat) {
+        addBindingToRecord(rebuilt, s, b as import('../../engine/control').ControlBinding)
+      }
+      writeControlGroupBindings(args.controlKey, args.groupId, rebuilt)
+      return true
+    },
+    [parentNode, writeControlGroupBindings],
+  )
   const handleUpdateControlInterval = useCallback(
     (controlKey: string, semanticName: string, start: number, end: number) => {
       if (!parentNodeId) return
@@ -747,6 +957,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     },
     [parentNodeId, dispatch, notify],
   )
+  // Cross-control HTML5 drop was removed with the merged bindings table; moves
+  // between timelines use the per-block ⇄ select (moveBindingBetweenGroups).
+  void handleMoveBindingBetweenGroups
 
   const handleAddBlock = useCallback(
     (controlKey: string) => {
@@ -764,6 +977,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       if (!parentNode?.controlSet) return
       const control = parentNode.controlSet.controls.find((c) => c.key === controlKey)
       if (!control) return
+      // Resolve target timeline (group); default to first group
+      const targetGroup =
+        control.groups.find((g) => g.id === addBlockDialog.draftGroupId) ?? control.groups[0]
+      if (!targetGroup) return
       // Allow multiple clips per same semantic – no duplicate check (array per semantic)
       // Check clip exists
       try {
@@ -779,15 +996,20 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         )
         return
       }
-      // Default interval [0,1] then user can resize – use helper to append to array per semantic
-      const nextBindings: Record<string, import('../../engine/control').ControlBindingValue> = {
-        ...control.bindings,
-      }
-      addBindingToRecord(nextBindings, semantic, { clipId, start: 0, end: 1 })
+      // Default interval [0,1] then user can resize – append to the TARGET GROUP's
+      // bindings (groups are the source of truth; merged bindings are derived).
+      const nextGroupBindings: Record<string, import('../../engine/control').ControlBindingValue> =
+        { ...targetGroup.bindings }
+      addBindingToRecord(nextGroupBindings, semantic, { clipId, start: 0, end: 1 })
+      const nextGroups = control.groups.map((g) =>
+        g.id === targetGroup.id ? { ...g, bindings: nextGroupBindings } : g,
+      )
       const nextSet: import('../../engine/control').ControlSet = {
         ...parentNode.controlSet,
         controls: parentNode.controlSet.controls.map((c) =>
-          c.key === controlKey ? { ...c, bindings: nextBindings } : c,
+          c.key === controlKey
+            ? { ...c, groups: nextGroups, bindings: mergeGroupBindings(nextGroups) }
+            : c,
         ),
       }
       const cmd = new SetControlSetCommand({ nodeId: parentNode.id, controlSet: nextSet })
@@ -801,7 +1023,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       }
       setAddBlockDialog(null)
       setTick((v) => v + 1)
-      notify(`Added Clip Block ${semantic} → ${clipId} [0,1]`)
+      notify(`Added Clip Block ${semantic} → ${clipId} [0,1] on ${targetGroup.name}`)
     },
     [addBlockDialog, parentNode, engine, descendantSemanticMap, dispatch, notify],
   )
@@ -912,6 +1134,74 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       if (!result.ok) notify(result.error.message)
     },
     [parentNodeId, activeSlide, controlValues, dispatch, notify],
+  )
+
+  const handleAddTimeline = useCallback(
+    (controlKey: string) => {
+      if (!parentNode?.controlSet) return
+      try {
+        const nextSet = addGroupToControlSet(parentNode.controlSet, controlKey)
+        const res = dispatch(
+          new SetControlSetCommand({ nodeId: parentNode.id, controlSet: nextSet }),
+        )
+        if (!res.ok) notify(res.error.message)
+        else {
+          // Pad existing host kfs with 0 for the new timeline gap
+          const slide = engine.getActiveSlide()
+          const anim = slide?.animation.node(parentNode.id)
+          const kfs = anim?.controlKeyframes(controlKey) ?? []
+          const expected = Math.max(
+            0,
+            nextSet.controls.find((c) => c.key === controlKey)!.groups.length - 1,
+          )
+          for (const kf of kfs) {
+            while (kf.blend.length < expected) {
+              ;(kf as { blend: readonly number[] }).blend = [...kf.blend, 0]
+            }
+          }
+          setTick((v) => v + 1)
+          notify(`Added Timeline to ${controlKey}`)
+        }
+      } catch (e) {
+        notify(e instanceof Error ? e.message : String(e))
+      }
+    },
+    [parentNode, dispatch, notify, engine],
+  )
+
+  const handleRemoveTimeline = useCallback(
+    (controlKey: string, groupId: string) => {
+      if (!parentNode?.controlSet) return
+      try {
+        const control = parentNode.controlSet.controls.find((c) => c.key === controlKey)
+        if (!control) return
+        const groupIdx = control.groups.findIndex((g) => g.id === groupId)
+        const nextSet = removeGroupFromControlSet(parentNode.controlSet, controlKey, groupId)
+        const res = dispatch(
+          new SetControlSetCommand({ nodeId: parentNode.id, controlSet: nextSet }),
+        )
+        if (!res.ok) notify(res.error.message)
+        else {
+          // Splice blend index from host kfs (removed gap = groupIdx>0 ? groupIdx-1 : 0)
+          const slide = engine.getActiveSlide()
+          const anim = slide?.animation.node(parentNode.id)
+          const kfs = anim?.controlKeyframes(controlKey) ?? []
+          const spliceIdx = groupIdx <= 0 ? 0 : groupIdx - 1
+          for (const kf of kfs) {
+            if (kf.blend.length > spliceIdx) {
+              const next = [...kf.blend]
+              next.splice(spliceIdx, 1)
+              ;(kf as { blend: readonly number[] }).blend = next
+            }
+          }
+          setTick((v) => v + 1)
+          notify(`Removed Timeline from ${controlKey}`)
+        }
+      } catch (e) {
+        notify(e instanceof Error ? e.message : String(e))
+      }
+    },
+    [parentNode, dispatch, notify, engine],
   )
 
   // Flat ordered orphan entries for Shift-range and marquee (display order: rows pre-order, param order, time asc)
@@ -1181,10 +1471,13 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         notify('No bindable clips — selected nodes need Semantic Name and matching descendant')
         return
       }
-      const existing =
-        parentNode?.controlSet?.controls.find((c) => c.key === controlKey)?.bindings ?? {}
+      // Attach into Timeline 1 (groups are the source of truth; flat merges are
+      // recomputed, so writing flat bindings alone would be discarded).
+      const control = parentNode?.controlSet?.controls.find((c) => c.key === controlKey)
+      const targetGroup = control?.groups[0]
+      if (!control || !targetGroup || !parentNode?.controlSet) return
       const merged: Record<string, import('../../engine/control').ControlBindingValue> = {
-        ...existing,
+        ...targetGroup.bindings,
       }
       for (const [sem, val] of Object.entries(preview)) {
         if (Array.isArray(val)) {
@@ -1195,14 +1488,16 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           addBindingToRecord(merged, sem, val as import('../../engine/control').ControlBinding)
         }
       }
-      setControlBindings(controlKey, merged)
-      notify(`Attached ${Object.keys(preview).length} binding(s) to ${controlKey}`)
+      writeControlGroupBindings(controlKey, targetGroup.id, merged)
+      notify(
+        `Attached ${Object.keys(preview).length} binding(s) to ${controlKey} → ${targetGroup.name}`,
+      )
     },
     [
       selectedClipIds,
       instanceToNode,
       parentNode,
-      setControlBindings,
+      writeControlGroupBindings,
       descendantSemanticMap,
       notify,
     ],
@@ -2124,15 +2419,21 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       } else if (dragState.mode === 'interval-move') {
         const deltaY = e.clientY - dragState.startY
         if (Math.abs(deltaY) > Math.abs(deltaPx) && Math.abs(deltaY) > 8) {
-          // Switch to reorder if vertical dominant — use flat index for array-per-semantic
+          // Switch to reorder if vertical dominant — use flat index for array-per-semantic.
+          // Per-timeline lane drags reorder within their own timeline.
           const control = parentNode?.controlSet?.controls.find(
             (c) => c.key === dragState.controlKey,
           )
+          const reorderGroupId = (dragState as unknown as { groupId?: string }).groupId
+          const reorderScope =
+            reorderGroupId !== undefined
+              ? control?.groups.find((g) => g.id === reorderGroupId)?.bindings
+              : control?.bindings
           let initialIdx = 0
           let count = 1
-          if (control) {
+          if (control && reorderScope) {
             const flat = flattenControlBindings(
-              control.bindings as unknown as Record<
+              reorderScope as unknown as Record<
                 string,
                 import('../../engine/control').ControlBindingValue
               >,
@@ -2176,6 +2477,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             mode: 'interval-reorder',
             nodeId: dragState.nodeId,
             controlKey: dragState.controlKey,
+            ...(reorderGroupId !== undefined ? { groupId: reorderGroupId } : {}),
             semanticName: dragState.semanticName,
             initialIndex: initialIdx >= 0 ? initialIdx : 0,
             previewIndex: Math.max(
@@ -2468,71 +2770,110 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           Math.abs(current.previewEnd - current.initialEnd) > 1e-9
         if (moved) {
           try {
-            const ctrl = parentNode?.controlSet?.controls.find((c) => c.key === current.controlKey)
-            const flatLen = ctrl
-              ? flattenControlBindings(
+            // Per-timeline lane drags commit into their own timeline.
+            const groupDrag = current as unknown as { groupId?: string; clipId?: string }
+            if (groupDrag.groupId) {
+              const ok = commitGroupIntervalEdit({
+                controlKey: current.controlKey,
+                groupId: groupDrag.groupId,
+                semanticName: current.semanticName,
+                clipId: groupDrag.clipId,
+                initialStart: current.initialStart,
+                initialEnd: current.initialEnd,
+                previewStart: current.previewStart,
+                previewEnd: current.previewEnd,
+              })
+              if (!ok) notify('Block not found in its timeline — no change applied')
+            } else {
+              const ctrl = parentNode?.controlSet?.controls.find(
+                (c) => c.key === current.controlKey,
+              )
+              const flatLen = ctrl
+                ? flattenControlBindings(
+                    ctrl.bindings as unknown as Record<
+                      string,
+                      import('../../engine/control').ControlBindingValue
+                    >,
+                  ).length
+                : 0
+              const keyLen = ctrl ? Object.keys(ctrl.bindings).length : 0
+              const dragWithClip = current as unknown as {
+                clipId?: string
+                initialStart: number
+                initialEnd: number
+              }
+              if (ctrl && flatLen !== keyLen && dragWithClip.clipId) {
+                // flat-aware update for duplicate semantics — epsilon tolerant
+                const flat = flattenControlBindings(
                   ctrl.bindings as unknown as Record<
                     string,
                     import('../../engine/control').ControlBindingValue
                   >,
-                ).length
-              : 0
-            const keyLen = ctrl ? Object.keys(ctrl.bindings).length : 0
-            const dragWithClip = current as unknown as {
-              clipId?: string
-              initialStart: number
-              initialEnd: number
-            }
-            if (ctrl && flatLen !== keyLen && dragWithClip.clipId) {
-              // flat-aware update for duplicate semantics — epsilon tolerant
-              const flat = flattenControlBindings(
-                ctrl.bindings as unknown as Record<
-                  string,
-                  import('../../engine/control').ControlBindingValue
-                >,
-              )
-              const EPS = 1e-9
-              const idx = flat.findIndex((f) => {
-                if (f.semantic !== current.semanticName) return false
-                const cid =
-                  typeof f.binding === 'string'
-                    ? (f.binding as string)
-                    : (f.binding as { clipId: string }).clipId
-                if (cid !== dragWithClip.clipId) return false
-                const s = typeof f.binding === 'string' ? 0 : (f.binding as { start: number }).start
-                const e = typeof f.binding === 'string' ? 1 : (f.binding as { end: number }).end
-                return (
-                  Math.abs(s - dragWithClip.initialStart) < EPS &&
-                  Math.abs(e - dragWithClip.initialEnd) < EPS
                 )
-              })
-              if (idx !== -1) {
-                const target = flat[idx]!
-                const updated = {
-                  clipId: dragWithClip.clipId!,
-                  start: current.previewStart,
-                  end: current.previewEnd,
-                }
-                flat[idx] = { semantic: target.semantic, binding: updated, index: target.index }
-                const rebuilt: Record<string, import('../../engine/control').ControlBindingValue> =
-                  {}
-                for (const { semantic: s, binding: b } of flat) {
-                  addBindingToRecord(rebuilt, s, b as import('../../engine/control').ControlBinding)
-                }
-                const nextSet: import('../../engine/control').ControlSet = {
-                  ...parentNode!.controlSet!,
-                  controls: parentNode!.controlSet!.controls.map((c) =>
-                    c.key === current.controlKey ? { ...c, bindings: rebuilt } : c,
-                  ),
-                }
-                const res = dispatch(
-                  new SetControlSetCommand({
+                const EPS = 1e-9
+                const idx = flat.findIndex((f) => {
+                  if (f.semantic !== current.semanticName) return false
+                  const cid =
+                    typeof f.binding === 'string'
+                      ? (f.binding as string)
+                      : (f.binding as { clipId: string }).clipId
+                  if (cid !== dragWithClip.clipId) return false
+                  const s =
+                    typeof f.binding === 'string' ? 0 : (f.binding as { start: number }).start
+                  const e = typeof f.binding === 'string' ? 1 : (f.binding as { end: number }).end
+                  return (
+                    Math.abs(s - dragWithClip.initialStart) < EPS &&
+                    Math.abs(e - dragWithClip.initialEnd) < EPS
+                  )
+                })
+                if (idx !== -1) {
+                  const target = flat[idx]!
+                  const updated = {
+                    clipId: dragWithClip.clipId!,
+                    start: current.previewStart,
+                    end: current.previewEnd,
+                  }
+                  flat[idx] = { semantic: target.semantic, binding: updated, index: target.index }
+                  const rebuilt: Record<
+                    string,
+                    import('../../engine/control').ControlBindingValue
+                  > = {}
+                  for (const { semantic: s, binding: b } of flat) {
+                    addBindingToRecord(
+                      rebuilt,
+                      s,
+                      b as import('../../engine/control').ControlBinding,
+                    )
+                  }
+                  const nextSet: import('../../engine/control').ControlSet = {
+                    ...parentNode!.controlSet!,
+                    controls: parentNode!.controlSet!.controls.map((c) =>
+                      c.key === current.controlKey ? { ...c, bindings: rebuilt } : c,
+                    ),
+                  }
+                  const res = dispatch(
+                    new SetControlSetCommand({
+                      nodeId: current.nodeId,
+                      controlSet: nextSet,
+                    }) as never,
+                  )
+                  if (!res.ok) notify(res.error.message)
+                  else setTick((v) => v + 1)
+                } else {
+                  const cmd = new UpdateControlIntervalCommand({
                     nodeId: current.nodeId,
-                    controlSet: nextSet,
-                  }) as never,
-                )
-                if (!res.ok) notify(res.error.message)
-                else setTick((v) => v + 1)
+                    controlKey: current.controlKey,
+                    semanticName: current.semanticName,
+                    start: current.previewStart,
+                    end: current.previewEnd,
+                  })
+                  const tx = new TransactionCommand([
+                    cmd as unknown as import('../../engine/commands').Command<unknown>,
+                  ])
+                  const res = dispatch(tx as never)
+                  if (!res.ok) notify(res.error.message)
+                  else setTick((v) => v + 1)
+                }
               } else {
                 const cmd = new UpdateControlIntervalCommand({
                   nodeId: current.nodeId,
@@ -2548,21 +2889,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 if (!res.ok) notify(res.error.message)
                 else setTick((v) => v + 1)
               }
-            } else {
-              const cmd = new UpdateControlIntervalCommand({
-                nodeId: current.nodeId,
-                controlKey: current.controlKey,
-                semanticName: current.semanticName,
-                start: current.previewStart,
-                end: current.previewEnd,
-              })
-              const tx = new TransactionCommand([
-                cmd as unknown as import('../../engine/commands').Command<unknown>,
-              ])
-              const res = dispatch(tx as never)
-              if (!res.ok) notify(res.error.message)
-              else setTick((v) => v + 1)
-            }
+            } // end legacy (non-group) interval-move path
           } catch (e) {
             notify(e instanceof Error ? e.message : String(e))
           }
@@ -2576,51 +2903,165 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           Math.abs(current.previewEnd - current.initialEnd) > 1e-9
         if (moved) {
           try {
-            const ctrl = parentNode?.controlSet?.controls.find((c) => c.key === current.controlKey)
-            const flatLen = ctrl
-              ? flattenControlBindings(
+            // Per-timeline lane drags commit into their own timeline.
+            const groupResize = current as unknown as { groupId?: string; clipId?: string }
+            if (groupResize.groupId) {
+              const ok = commitGroupIntervalEdit({
+                controlKey: current.controlKey,
+                groupId: groupResize.groupId,
+                semanticName: current.semanticName,
+                clipId: groupResize.clipId,
+                initialStart: current.initialStart,
+                initialEnd: current.initialEnd,
+                previewStart: current.previewStart,
+                previewEnd: current.previewEnd,
+              })
+              if (!ok) notify('Block not found in its timeline — no change applied')
+            } else {
+              const ctrl = parentNode?.controlSet?.controls.find(
+                (c) => c.key === current.controlKey,
+              )
+              const flatLen = ctrl
+                ? flattenControlBindings(
+                    ctrl.bindings as unknown as Record<
+                      string,
+                      import('../../engine/control').ControlBindingValue
+                    >,
+                  ).length
+                : 0
+              const keyLen = ctrl ? Object.keys(ctrl.bindings).length : 0
+              const dragWithClip = current as unknown as {
+                clipId?: string
+                initialStart: number
+                initialEnd: number
+              }
+              if (ctrl && flatLen !== keyLen && dragWithClip.clipId) {
+                const flat = flattenControlBindings(
                   ctrl.bindings as unknown as Record<
                     string,
                     import('../../engine/control').ControlBindingValue
                   >,
-                ).length
-              : 0
-            const keyLen = ctrl ? Object.keys(ctrl.bindings).length : 0
-            const dragWithClip = current as unknown as {
-              clipId?: string
-              initialStart: number
-              initialEnd: number
-            }
-            if (ctrl && flatLen !== keyLen && dragWithClip.clipId) {
-              const flat = flattenControlBindings(
-                ctrl.bindings as unknown as Record<
-                  string,
-                  import('../../engine/control').ControlBindingValue
-                >,
-              )
-              const EPS = 1e-9
-              const idx = flat.findIndex((f) => {
-                if (f.semantic !== current.semanticName) return false
-                const cid =
-                  typeof f.binding === 'string'
-                    ? (f.binding as string)
-                    : (f.binding as { clipId: string }).clipId
-                if (cid !== dragWithClip.clipId) return false
-                const s = typeof f.binding === 'string' ? 0 : (f.binding as { start: number }).start
-                const e = typeof f.binding === 'string' ? 1 : (f.binding as { end: number }).end
-                return (
-                  Math.abs(s - dragWithClip.initialStart) < EPS &&
-                  Math.abs(e - dragWithClip.initialEnd) < EPS
                 )
-              })
-              if (idx !== -1) {
-                const target = flat[idx]!
-                const updated = {
-                  clipId: dragWithClip.clipId!,
+                const EPS = 1e-9
+                const idx = flat.findIndex((f) => {
+                  if (f.semantic !== current.semanticName) return false
+                  const cid =
+                    typeof f.binding === 'string'
+                      ? (f.binding as string)
+                      : (f.binding as { clipId: string }).clipId
+                  if (cid !== dragWithClip.clipId) return false
+                  const s =
+                    typeof f.binding === 'string' ? 0 : (f.binding as { start: number }).start
+                  const e = typeof f.binding === 'string' ? 1 : (f.binding as { end: number }).end
+                  return (
+                    Math.abs(s - dragWithClip.initialStart) < EPS &&
+                    Math.abs(e - dragWithClip.initialEnd) < EPS
+                  )
+                })
+                if (idx !== -1) {
+                  const target = flat[idx]!
+                  const updated = {
+                    clipId: dragWithClip.clipId!,
+                    start: current.previewStart,
+                    end: current.previewEnd,
+                  }
+                  flat[idx] = { semantic: target.semantic, binding: updated, index: target.index }
+                  const rebuilt: Record<
+                    string,
+                    import('../../engine/control').ControlBindingValue
+                  > = {}
+                  for (const { semantic: s, binding: b } of flat) {
+                    addBindingToRecord(
+                      rebuilt,
+                      s,
+                      b as import('../../engine/control').ControlBinding,
+                    )
+                  }
+                  const nextSet: import('../../engine/control').ControlSet = {
+                    ...parentNode!.controlSet!,
+                    controls: parentNode!.controlSet!.controls.map((c) =>
+                      c.key === current.controlKey ? { ...c, bindings: rebuilt } : c,
+                    ),
+                  }
+                  const res = dispatch(
+                    new SetControlSetCommand({
+                      nodeId: current.nodeId,
+                      controlSet: nextSet,
+                    }) as never,
+                  )
+                  if (!res.ok) notify(res.error.message)
+                  else setTick((v) => v + 1)
+                } else {
+                  const cmd = new UpdateControlIntervalCommand({
+                    nodeId: current.nodeId,
+                    controlKey: current.controlKey,
+                    semanticName: current.semanticName,
+                    start: current.previewStart,
+                    end: current.previewEnd,
+                  })
+                  const tx = new TransactionCommand([
+                    cmd as unknown as import('../../engine/commands').Command<unknown>,
+                  ])
+                  const res = dispatch(tx as never)
+                  if (!res.ok) notify(res.error.message)
+                  else setTick((v) => v + 1)
+                }
+              } else {
+                const cmd = new UpdateControlIntervalCommand({
+                  nodeId: current.nodeId,
+                  controlKey: current.controlKey,
+                  semanticName: current.semanticName,
                   start: current.previewStart,
                   end: current.previewEnd,
-                }
-                flat[idx] = { semantic: target.semantic, binding: updated, index: target.index }
+                })
+                const tx = new TransactionCommand([
+                  cmd as unknown as import('../../engine/commands').Command<unknown>,
+                ])
+                const res = dispatch(tx as never)
+                if (!res.ok) notify(res.error.message)
+                else setTick((v) => v + 1)
+              }
+            } // end legacy (non-group) interval-resize path
+          } catch (e) {
+            notify(e instanceof Error ? e.message : String(e))
+          }
+        }
+      } else if (current.mode === 'interval-reorder') {
+        if (current.previewIndex !== current.initialIndex) {
+          try {
+            // Per-timeline lane reorder commits into its own timeline.
+            const groupReorder = current as unknown as { groupId?: string }
+            if (groupReorder.groupId) {
+              const ok = reorderGroupBinding({
+                controlKey: current.controlKey,
+                groupId: groupReorder.groupId,
+                fromIndex: current.initialIndex,
+                toIndex: current.previewIndex,
+              })
+              if (!ok) notify('Block not found in its timeline — no change applied')
+            } else {
+              const ctrl = parentNode?.controlSet?.controls.find(
+                (c) => c.key === current.controlKey,
+              )
+              const flatLen = ctrl
+                ? flattenControlBindings(
+                    ctrl.bindings as unknown as Record<
+                      string,
+                      import('../../engine/control').ControlBindingValue
+                    >,
+                  ).length
+                : 0
+              const keyLen = ctrl ? Object.keys(ctrl.bindings).length : 0
+              if (ctrl && flatLen !== keyLen) {
+                // flat-aware reorder for duplicate semantics (array per semantic)
+                const flat = flattenControlBindings(
+                  ctrl.bindings as unknown as Record<
+                    string,
+                    import('../../engine/control').ControlBindingValue
+                  >,
+                )
+                const [moved] = flat.splice(current.initialIndex, 1)
+                flat.splice(current.previewIndex, 0, moved!)
                 const rebuilt: Record<string, import('../../engine/control').ControlBindingValue> =
                   {}
                 for (const { semantic: s, binding: b } of flat) {
@@ -2641,12 +3082,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 if (!res.ok) notify(res.error.message)
                 else setTick((v) => v + 1)
               } else {
-                const cmd = new UpdateControlIntervalCommand({
+                const cmd = new ReorderControlBindingCommand({
                   nodeId: current.nodeId,
                   controlKey: current.controlKey,
                   semanticName: current.semanticName,
-                  start: current.previewStart,
-                  end: current.previewEnd,
+                  newIndex: current.previewIndex,
                 })
                 const tx = new TransactionCommand([
                   cmd as unknown as import('../../engine/commands').Command<unknown>,
@@ -2655,77 +3095,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 if (!res.ok) notify(res.error.message)
                 else setTick((v) => v + 1)
               }
-            } else {
-              const cmd = new UpdateControlIntervalCommand({
-                nodeId: current.nodeId,
-                controlKey: current.controlKey,
-                semanticName: current.semanticName,
-                start: current.previewStart,
-                end: current.previewEnd,
-              })
-              const tx = new TransactionCommand([
-                cmd as unknown as import('../../engine/commands').Command<unknown>,
-              ])
-              const res = dispatch(tx as never)
-              if (!res.ok) notify(res.error.message)
-              else setTick((v) => v + 1)
-            }
-          } catch (e) {
-            notify(e instanceof Error ? e.message : String(e))
-          }
-        }
-      } else if (current.mode === 'interval-reorder') {
-        if (current.previewIndex !== current.initialIndex) {
-          try {
-            const ctrl = parentNode?.controlSet?.controls.find((c) => c.key === current.controlKey)
-            const flatLen = ctrl
-              ? flattenControlBindings(
-                  ctrl.bindings as unknown as Record<
-                    string,
-                    import('../../engine/control').ControlBindingValue
-                  >,
-                ).length
-              : 0
-            const keyLen = ctrl ? Object.keys(ctrl.bindings).length : 0
-            if (ctrl && flatLen !== keyLen) {
-              // flat-aware reorder for duplicate semantics (array per semantic)
-              const flat = flattenControlBindings(
-                ctrl.bindings as unknown as Record<
-                  string,
-                  import('../../engine/control').ControlBindingValue
-                >,
-              )
-              const [moved] = flat.splice(current.initialIndex, 1)
-              flat.splice(current.previewIndex, 0, moved!)
-              const rebuilt: Record<string, import('../../engine/control').ControlBindingValue> = {}
-              for (const { semantic: s, binding: b } of flat) {
-                addBindingToRecord(rebuilt, s, b as import('../../engine/control').ControlBinding)
-              }
-              const nextSet: import('../../engine/control').ControlSet = {
-                ...parentNode!.controlSet!,
-                controls: parentNode!.controlSet!.controls.map((c) =>
-                  c.key === current.controlKey ? { ...c, bindings: rebuilt } : c,
-                ),
-              }
-              const res = dispatch(
-                new SetControlSetCommand({ nodeId: current.nodeId, controlSet: nextSet }) as never,
-              )
-              if (!res.ok) notify(res.error.message)
-              else setTick((v) => v + 1)
-            } else {
-              const cmd = new ReorderControlBindingCommand({
-                nodeId: current.nodeId,
-                controlKey: current.controlKey,
-                semanticName: current.semanticName,
-                newIndex: current.previewIndex,
-              })
-              const tx = new TransactionCommand([
-                cmd as unknown as import('../../engine/commands').Command<unknown>,
-              ])
-              const res = dispatch(tx as never)
-              if (!res.ok) notify(res.error.message)
-              else setTick((v) => v + 1)
-            }
+            } // end legacy (non-group) interval-reorder path
           } catch (e) {
             notify(e instanceof Error ? e.message : String(e))
           }
@@ -2750,6 +3120,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     activeSlide,
     engine,
     notify,
+    commitGroupIntervalEdit,
+    reorderGroupBinding,
   ])
 
   if (!open) return null
@@ -2801,6 +3173,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     }
     if (collectionPlacementMenu) {
       setCollectionPlacementMenu(null)
+      return
+    }
+    if (controlBlockMenu) {
+      setControlBlockMenu(null)
       return
     }
     if (orphanScopeMessage) {
@@ -3405,8 +3781,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           </div>
         )}
 
-        {/* Collection Lanes top section (Spec 15-06) – single bar per placed collection, hidden internals */}
-        {!editing && parentNode && (
+        {/* Collection Lanes top section (Spec 15-06) – single bar per placed collection, hidden internals.
+            Collections tab only – no need to show it on clips/controls/orphans tabs. */}
+        {!editing && parentNode && activeTab === 'collections' && (
           <div
             data-testid="collection-lanes-section"
             style={{
@@ -4582,1075 +4959,709 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                       </button>
                     </div>
                   )}
+                  {/* N timelines + blend-inside-host-kf: per-group lanes + Add/Remove Timeline + blend sliders */}
                   <div
-                    data-testid={`manager-control-bindings-${control.key}`}
-                    style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}
+                    data-testid={`manager-control-timelines-${control.key}`}
+                    style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}
                   >
-                    {flatBindings.length === 0 ? (
-                      <span
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 11, fontWeight: 600 }}>
+                        {control.groups.length} Timeline{control.groups.length === 1 ? '' : 's'}
+                      </span>
+                      <button
+                        data-testid={`manager-control-add-timeline-${control.key}`}
+                        onClick={() => handleAddTimeline(control.key)}
                         style={{
+                          padding: '4px 8px',
+                          borderRadius: 4,
+                          border: '1px solid var(--color-border, #ddd)',
+                          cursor: 'pointer',
                           fontSize: 11,
-                          color: 'var(--color-text-muted, #888)',
-                          fontStyle: 'italic',
                         }}
                       >
-                        No bindings — select clip lanes in Clips tab then Attach
-                      </span>
-                    ) : (
-                      flatBindings.map(({ semantic: sem, binding: rawId, index }) => {
-                        const clipId =
-                          typeof rawId === 'string' ? rawId : (rawId as { clipId: string }).clipId
-                        const interval =
-                          typeof rawId === 'string'
-                            ? { start: 0, end: 1 }
-                            : (rawId as { start: number; end: number })
-                        let clipName: string
-                        try {
-                          clipName = engine.getClip(clipId).name
-                        } catch {
-                          clipName = clipId.slice(0, 8)
-                        }
-                        const nodes = descendantSemanticMap.get(sem) ?? []
-                        const count = nodes.length
-                        const names = nodes.map((n) => n.name).join(', ')
-                        const isZero = count === 0
-                        const isHovered = hoveredBindingSemantic === sem
-                        const uniqueKey = `${sem}::${clipId}::${index}`
-                        return (
-                          <span
-                            key={uniqueKey}
-                            data-testid={`manager-control-binding-${control.key}-${sem}-${index}`}
-                            onMouseEnter={() => handleBindingHoverEnter(sem)}
-                            onMouseLeave={handleBindingHoverLeave}
-                            title={
-                              isZero
-                                ? `No descendant with semanticName "${sem}" under ${parentNode?.name ?? 'host'} — binding does nothing`
-                                : `${count} node${count === 1 ? '' : 's'}: ${names} — click to highlight — [${interval.start.toFixed(2)},${interval.end.toFixed(2)}]`
-                            }
-                            style={{
-                              fontSize: 11,
-                              fontFamily: 'monospace',
-                              background: isZero
-                                ? 'color-mix(in srgb, var(--color-danger) 12%, var(--color-bg-panel))'
-                                : isHovered
-                                  ? 'color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-panel))'
-                                  : 'var(--color-bg-elevated, #eceef1)',
-                              border: `1px solid ${isZero ? 'var(--color-danger, #c00)' : isHovered ? 'var(--color-accent, #7c5cff)' : 'var(--color-border, #ddd)'}`,
-                              borderRadius: 4,
-                              padding: '2px 6px',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 6,
-                              color: isZero
-                                ? 'var(--color-danger, #900)'
-                                : 'var(--color-text, #1c1e21)',
-                            }}
-                          >
-                            <span style={{ fontWeight: isHovered ? 600 : 400 }}>
-                              {sem} → {clipName} [{interval.start.toFixed(2)},
-                              {interval.end.toFixed(2)}]
-                            </span>
-                            <span
-                              data-testid={`manager-control-binding-count-${control.key}-${sem}-${index}`}
-                              style={{
-                                fontSize: 10,
-                                background: isZero
-                                  ? 'var(--color-danger, #c00)'
-                                  : 'var(--color-accent, #7c5cff)',
-                                color: 'var(--color-accent-text, #fff)',
-                                borderRadius: 10,
-                                padding: '1px 5px',
-                              }}
-                            >
-                              {isZero
-                                ? '0 — no match!'
-                                : `${count} ${count === 1 ? 'node' : 'nodes'}: ${names}`}
-                            </span>
-                            <button
-                              data-testid={`manager-control-unbind-${control.key}-${sem}-${index}`}
-                              onClick={() => {
-                                const ctrl = parentNode?.controlSet?.controls.find(
-                                  (c) => c.key === control.key,
-                                )
-                                if (!ctrl) return
-                                const nextBindings: Record<
-                                  string,
-                                  import('../../engine/control').ControlBindingValue
-                                > = { ...ctrl.bindings }
-                                const existing = nextBindings[sem]
-                                if (Array.isArray(existing)) {
-                                  const arr =
-                                    existing as import('../../engine/control').ControlBinding[]
-                                  const EPS = 1e-9
-                                  const filtered = arr.filter((b) => {
-                                    const cid =
-                                      typeof b === 'string' ? b : (b as { clipId: string }).clipId
-                                    if (cid !== clipId) return true
-                                    const iv =
-                                      typeof b === 'string'
-                                        ? { start: 0, end: 1 }
-                                        : (b as { start: number; end: number })
-                                    return !(
-                                      Math.abs(iv.start - interval.start) < EPS &&
-                                      Math.abs(iv.end - interval.end) < EPS
-                                    )
-                                  })
-                                  if (filtered.length === 0) delete nextBindings[sem]
-                                  else if (filtered.length === 1) nextBindings[sem] = filtered[0]!
-                                  else nextBindings[sem] = filtered
-                                } else {
-                                  delete nextBindings[sem]
-                                }
-                                setControlBindings(control.key, nextBindings)
-                              }}
-                              title={`Remove ${sem} binding`}
-                              style={{
-                                border: 'none',
-                                background: 'transparent',
-                                cursor: 'pointer',
-                                padding: 0,
-                                fontSize: 12,
-                                lineHeight: 1,
-                              }}
-                            >
-                              ×
-                            </button>
+                        Add Timeline
+                      </button>
+                    </div>
+                    {control.groups.map((group, gi) => (
+                      <div
+                        key={group.id}
+                        data-testid={`manager-control-timeline-${control.key}-${gi}`}
+                        style={{
+                          border: '1px solid var(--color-border, #eee)',
+                          borderRadius: 4,
+                          padding: '6px 8px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 6,
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontSize: 11, fontWeight: 600, minWidth: 90 }}>
+                            T{gi + 1}: {group.name}
                           </span>
-                        )
-                      })
-                    )}
-                  </div>
-                  {/* Control Interval Bindings table: semanticName, clip name/duration, [start,end], Priority with up/down reorder */}
-                  {flatBindings.length > 0 && (
-                    <table
-                      data-testid={`control-interval-table-${control.key}`}
-                      style={{
-                        width: '100%',
-                        borderCollapse: 'collapse',
-                        fontSize: 11,
-                        marginTop: 8,
-                        border: '1px solid var(--color-border, #ddd)',
-                      }}
-                    >
-                      <thead>
-                        <tr
-                          style={{
-                            background: 'var(--color-bg-elevated, #fafafa)',
-                            textAlign: 'left',
-                          }}
-                        >
-                          <th
-                            style={{
-                              padding: '6px 8px',
-                              borderBottom: '1px solid var(--color-border, #ddd)',
-                            }}
-                          >
-                            semanticName
-                          </th>
-                          <th
-                            style={{
-                              padding: '6px 8px',
-                              borderBottom: '1px solid var(--color-border, #ddd)',
-                            }}
-                          >
-                            Clip / Duration
-                          </th>
-                          <th
-                            style={{
-                              padding: '6px 8px',
-                              borderBottom: '1px solid var(--color-border, #ddd)',
-                            }}
-                          >
-                            [start, end]
-                          </th>
-                          <th
-                            style={{
-                              padding: '6px 8px',
-                              borderBottom: '1px solid var(--color-border, #ddd)',
-                            }}
-                          >
-                            Priority
-                          </th>
-                          <th
-                            style={{
-                              padding: '6px 8px',
-                              borderBottom: '1px solid var(--color-border, #ddd)',
-                            }}
-                          ></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {flatBindings.map(
-                          ({ semantic: sem, binding: raw, index: flatIdx }, idx) => {
-                            const interval =
-                              typeof raw === 'string'
-                                ? { clipId: raw, start: 0, end: 1 }
-                                : (raw as { clipId: string; start: number; end: number })
-                            let clipName = interval.clipId.slice(0, 8)
-                            let duration = 1
-                            try {
-                              const c = engine.getClip(interval.clipId)
-                              clipName = c.name
-                              duration = c.duration
-                            } catch (_e) {
-                              void _e
+                          <span style={{ fontSize: 10, color: 'var(--color-text-muted, #666)' }}>
+                            {Object.keys(group.bindings).length} block
+                            {Object.keys(group.bindings).length === 1 ? '' : 's'}
+                          </span>
+                          <button
+                            data-testid={`manager-control-add-block-here-${control.key}-${gi}`}
+                            onClick={() =>
+                              setAddBlockDialog({
+                                controlKey: control.key,
+                                draftGroupId: group.id,
+                                draftSemantic: '',
+                                draftClipId: availableClipsForBinding[0]?.id ?? '',
+                                error: null,
+                              })
                             }
-                            const isDragPreview =
-                              dragState &&
-                              (dragState.mode === 'interval-move' ||
-                                dragState.mode === 'interval-resize-left' ||
-                                dragState.mode === 'interval-resize-right') &&
-                              dragState.controlKey === control.key &&
-                              dragState.semanticName === sem &&
-                              // for duplicate semantics, also match clipId if present in dragState
-                              ((dragState as unknown as { clipId?: string }).clipId === undefined ||
-                                (dragState as unknown as { clipId?: string }).clipId ===
-                                  interval.clipId)
-                            const previewStart = isDragPreview
-                              ? (dragState as unknown as { previewStart: number }).previewStart
-                              : interval.start
-                            const previewEnd = isDragPreview
-                              ? (dragState as unknown as { previewEnd: number }).previewEnd
-                              : interval.end
-                            const rowKey = `${sem}::${interval.clipId}::${flatIdx}`
-                            return (
-                              <tr
-                                key={rowKey}
-                                data-testid={`control-interval-row-${control.key}-${sem}`}
-                                draggable
-                                onDragStart={(e) => {
-                                  e.dataTransfer.setData(
-                                    'text/plain',
-                                    JSON.stringify({ controlKey: control.key, semanticName: sem }),
-                                  )
-                                  e.dataTransfer.effectAllowed = 'move'
-                                }}
-                                onDragOver={(e) => {
-                                  e.preventDefault()
-                                  e.dataTransfer.dropEffect = 'move'
-                                }}
-                                onDrop={(e) => {
-                                  e.preventDefault()
-                                  try {
-                                    const data = JSON.parse(
-                                      e.dataTransfer.getData('text/plain'),
-                                    ) as {
-                                      controlKey: string
-                                      semanticName: string
-                                    }
-                                    if (!data.semanticName || data.controlKey === control.key)
-                                      return
-                                    // Move between groups (controls) when groups exist
-                                    handleMoveBindingBetweenGroups(
-                                      data.semanticName,
-                                      data.controlKey,
-                                      control.key,
-                                    )
-                                  } catch (_e) {
-                                    void _e
-                                  }
-                                }}
-                                style={{
-                                  background:
-                                    hoveredBindingSemantic === sem
-                                      ? 'color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-panel))'
-                                      : 'transparent',
-                                }}
-                                onMouseEnter={() => handleBindingHoverEnter(sem)}
-                                onMouseLeave={handleBindingHoverLeave}
-                              >
-                                <td
-                                  style={{
-                                    padding: '6px 8px',
-                                    borderBottom: '1px solid var(--color-border, #eee)',
-                                    fontFamily: 'monospace',
-                                  }}
-                                >
-                                  {sem}
-                                </td>
-                                <td
-                                  style={{
-                                    padding: '6px 8px',
-                                    borderBottom: '1px solid var(--color-border, #eee)',
-                                  }}
-                                >
-                                  {clipName} ({duration}s)
-                                </td>
-                                <td
-                                  style={{
-                                    padding: '6px 8px',
-                                    borderBottom: '1px solid var(--color-border, #eee)',
-                                    fontFamily: 'monospace',
-                                  }}
-                                >
-                                  <span
-                                    data-testid={`control-interval-start-${control.key}-${sem}`}
-                                  >
-                                    {previewStart.toFixed(3)}
-                                  </span>
-                                  {' , '}
-                                  <span data-testid={`control-interval-end-${control.key}-${sem}`}>
-                                    {previewEnd.toFixed(3)}
-                                  </span>
-                                  <span style={{ marginLeft: 6, display: 'inline-flex', gap: 2 }}>
-                                    <input
-                                      type="number"
-                                      step={0.01}
-                                      min={0}
-                                      max={1}
-                                      value={interval.start}
-                                      aria-label={`Control Interval start for ${sem}`}
-                                      data-testid={`control-interval-start-input-${control.key}-${sem}`}
-                                      style={{
-                                        width: 60,
-                                        padding: '2px 4px',
-                                        fontSize: 11,
-                                        border: '1px solid var(--color-border, #ddd)',
-                                        borderRadius: 4,
-                                        background: 'var(--color-bg, #fff)',
-                                        color: 'var(--color-text, #1c1e21)',
-                                      }}
-                                      onChange={(e) => {
-                                        const v = Number(e.target.value)
-                                        if (!Number.isFinite(v)) return
-                                        if (
-                                          v < 0 ||
-                                          v >= interval.end ||
-                                          interval.end - v < CONTROL_INTERVAL_MIN_SPAN
-                                        ) {
-                                          notify(
-                                            `Control Interval start must be ≥0 and < end with span ≥ ${CONTROL_INTERVAL_MIN_SPAN}`,
-                                          )
-                                          return
-                                        }
-                                        // flat-aware update: replace specific entry in array
-                                        const ctrl = parentNode?.controlSet?.controls.find(
-                                          (c) => c.key === control.key,
-                                        )
-                                        if (!ctrl) return
-                                        const nextBindings: Record<
-                                          string,
-                                          import('../../engine/control').ControlBindingValue
-                                        > = { ...ctrl.bindings }
-                                        const existing = nextBindings[sem]
-                                        if (Array.isArray(existing)) {
-                                          const arr =
-                                            existing as import('../../engine/control').ControlBinding[]
-                                          const EPS = 1e-9
-                                          const newArr = arr.map((b) => {
-                                            const cid =
-                                              typeof b === 'string'
-                                                ? b
-                                                : (b as { clipId: string }).clipId
-                                            const iv =
-                                              typeof b === 'string'
-                                                ? { start: 0, end: 1 }
-                                                : (b as { start: number; end: number })
-                                            if (
-                                              cid === interval.clipId &&
-                                              Math.abs(iv.start - interval.start) < EPS &&
-                                              Math.abs(iv.end - interval.end) < EPS
-                                            ) {
-                                              return {
-                                                clipId: interval.clipId,
-                                                start: v,
-                                                end: interval.end,
-                                              }
-                                            }
-                                            return b
-                                          })
-                                          nextBindings[sem] =
-                                            newArr.length === 1 ? newArr[0]! : newArr
-                                        } else {
-                                          nextBindings[sem] = {
-                                            clipId: interval.clipId,
-                                            start: v,
-                                            end: interval.end,
-                                          }
-                                        }
-                                        const nextSet: import('../../engine/control').ControlSet = {
-                                          ...parentNode!.controlSet!,
-                                          controls: parentNode!.controlSet!.controls.map((c) =>
-                                            c.key === control.key
-                                              ? { ...c, bindings: nextBindings }
-                                              : c,
-                                          ),
-                                        }
-                                        const res = dispatch(
-                                          new SetControlSetCommand({
-                                            nodeId: parentNode!.id,
-                                            controlSet: nextSet,
-                                          }) as never,
-                                        )
-                                        if (!res.ok) notify(res.error.message)
-                                        else setTick((t) => t + 1)
-                                      }}
-                                    />
-                                    <input
-                                      type="number"
-                                      step={0.01}
-                                      min={0}
-                                      max={1}
-                                      value={interval.end}
-                                      aria-label={`Control Interval end for ${sem}`}
-                                      data-testid={`control-interval-end-input-${control.key}-${sem}`}
-                                      onChange={(e) => {
-                                        const v = Number(e.target.value)
-                                        if (!Number.isFinite(v)) return
-                                        if (
-                                          v > 1 ||
-                                          v <= interval.start ||
-                                          v - interval.start < CONTROL_INTERVAL_MIN_SPAN
-                                        ) {
-                                          notify(
-                                            `Control Interval end must be ≤1 and > start with span ≥ ${CONTROL_INTERVAL_MIN_SPAN}`,
-                                          )
-                                          return
-                                        }
-                                        const ctrl = parentNode?.controlSet?.controls.find(
-                                          (c) => c.key === control.key,
-                                        )
-                                        if (!ctrl) return
-                                        const nextBindings: Record<
-                                          string,
-                                          import('../../engine/control').ControlBindingValue
-                                        > = { ...ctrl.bindings }
-                                        const existing = nextBindings[sem]
-                                        if (Array.isArray(existing)) {
-                                          const arr =
-                                            existing as import('../../engine/control').ControlBinding[]
-                                          const EPS2 = 1e-9
-                                          const newArr = arr.map((b) => {
-                                            const cid =
-                                              typeof b === 'string'
-                                                ? b
-                                                : (b as { clipId: string }).clipId
-                                            const iv =
-                                              typeof b === 'string'
-                                                ? { start: 0, end: 1 }
-                                                : (b as { start: number; end: number })
-                                            if (
-                                              cid === interval.clipId &&
-                                              Math.abs(iv.start - interval.start) < EPS2 &&
-                                              Math.abs(iv.end - interval.end) < EPS2
-                                            ) {
-                                              return {
-                                                clipId: interval.clipId,
-                                                start: interval.start,
-                                                end: v,
-                                              }
-                                            }
-                                            return b
-                                          })
-                                          nextBindings[sem] =
-                                            newArr.length === 1 ? newArr[0]! : newArr
-                                        } else {
-                                          nextBindings[sem] = {
-                                            clipId: interval.clipId,
-                                            start: interval.start,
-                                            end: v,
-                                          }
-                                        }
-                                        const nextSet: import('../../engine/control').ControlSet = {
-                                          ...parentNode!.controlSet!,
-                                          controls: parentNode!.controlSet!.controls.map((c) =>
-                                            c.key === control.key
-                                              ? { ...c, bindings: nextBindings }
-                                              : c,
-                                          ),
-                                        }
-                                        const res = dispatch(
-                                          new SetControlSetCommand({
-                                            nodeId: parentNode!.id,
-                                            controlSet: nextSet,
-                                          }) as never,
-                                        )
-                                        if (!res.ok) notify(res.error.message)
-                                        else setTick((t) => t + 1)
-                                      }}
-                                      style={{
-                                        width: 60,
-                                        padding: '2px 4px',
-                                        fontSize: 11,
-                                        border: '1px solid var(--color-border, #ddd)',
-                                        borderRadius: 4,
-                                        background: 'var(--color-bg, #fff)',
-                                        color: 'var(--color-text, #1c1e21)',
-                                      }}
-                                    />
-                                  </span>
-                                </td>
-                                <td
-                                  style={{
-                                    padding: '6px 8px',
-                                    borderBottom: '1px solid var(--color-border, #eee)',
-                                  }}
-                                >
-                                  <span
-                                    data-testid={`control-interval-priority-${control.key}-${sem}`}
-                                  >
-                                    {idx}
-                                  </span>
-                                  {idx === flatBindings.length - 1 ? ' (wins)' : ''}
-                                </td>
-                                <td
-                                  style={{
-                                    padding: '6px 8px',
-                                    borderBottom: '1px solid var(--color-border, #eee)',
-                                    whiteSpace: 'nowrap',
-                                  }}
-                                >
-                                  <button
-                                    data-testid={`control-interval-up-${control.key}-${sem}`}
-                                    disabled={idx === 0}
-                                    onClick={() => {
-                                      // flat-aware reorder: move this flat entry to idx-1 in flat list
-                                      const flat = [...flatBindings]
-                                      if (idx <= 0 || idx >= flat.length) return
-                                      const [moved] = flat.splice(idx, 1)
-                                      flat.splice(idx - 1, 0, moved!)
-                                      // rebuild bindings from flat in new order
-                                      const rebuilt: Record<
-                                        string,
-                                        import('../../engine/control').ControlBindingValue
-                                      > = {}
-                                      for (const { semantic: s, binding: b } of flat) {
-                                        addBindingToRecord(
-                                          rebuilt,
-                                          s,
-                                          b as import('../../engine/control').ControlBinding,
-                                        )
-                                      }
-                                      const nextSet: import('../../engine/control').ControlSet = {
-                                        ...parentNode!.controlSet!,
-                                        controls: parentNode!.controlSet!.controls.map((c) =>
-                                          c.key === control.key ? { ...c, bindings: rebuilt } : c,
-                                        ),
-                                      }
-                                      const res = dispatch(
-                                        new SetControlSetCommand({
-                                          nodeId: parentNode!.id,
-                                          controlSet: nextSet,
-                                        }) as never,
-                                      )
-                                      if (!res.ok) notify(res.error.message)
-                                      else setTick((t) => t + 1)
-                                    }}
-                                    title="Move up (higher priority wins later, last-wins)"
-                                    style={{
-                                      padding: '2px 6px',
-                                      marginRight: 4,
-                                      cursor: idx === 0 ? 'default' : 'pointer',
-                                      fontSize: 11,
-                                    }}
-                                  >
-                                    ↑
-                                  </button>
-                                  <button
-                                    data-testid={`control-interval-down-${control.key}-${sem}`}
-                                    disabled={idx === flatBindings.length - 1}
-                                    onClick={() => {
-                                      const flat = [...flatBindings]
-                                      if (idx < 0 || idx >= flat.length - 1) return
-                                      const [moved] = flat.splice(idx, 1)
-                                      flat.splice(idx + 1, 0, moved!)
-                                      const rebuilt: Record<
-                                        string,
-                                        import('../../engine/control').ControlBindingValue
-                                      > = {}
-                                      for (const { semantic: s, binding: b } of flat) {
-                                        addBindingToRecord(
-                                          rebuilt,
-                                          s,
-                                          b as import('../../engine/control').ControlBinding,
-                                        )
-                                      }
-                                      const nextSet: import('../../engine/control').ControlSet = {
-                                        ...parentNode!.controlSet!,
-                                        controls: parentNode!.controlSet!.controls.map((c) =>
-                                          c.key === control.key ? { ...c, bindings: rebuilt } : c,
-                                        ),
-                                      }
-                                      const res = dispatch(
-                                        new SetControlSetCommand({
-                                          nodeId: parentNode!.id,
-                                          controlSet: nextSet,
-                                        }) as never,
-                                      )
-                                      if (!res.ok) notify(res.error.message)
-                                      else setTick((t) => t + 1)
-                                    }}
-                                    title="Move down (lower = higher priority, later wins)"
-                                    style={{
-                                      padding: '2px 6px',
-                                      marginRight: 4,
-                                      cursor:
-                                        idx === flatBindings.length - 1 ? 'default' : 'pointer',
-                                      fontSize: 11,
-                                    }}
-                                  >
-                                    ↓
-                                  </button>
-                                  <button
-                                    data-testid={`control-interval-drag-${control.key}-${sem}`}
-                                    draggable
-                                    onPointerDown={(e) => {
-                                      // Priority drag via vertical pointer
-                                      e.preventDefault()
-                                      const startY = e.clientY
-                                      const startX = e.clientX
-                                      const initIdx = idx
-                                      setDragState({
-                                        mode: 'interval-reorder',
-                                        nodeId: parentNode!.id,
-                                        controlKey: control.key,
-                                        semanticName: sem,
-                                        initialIndex: initIdx,
-                                        previewIndex: initIdx,
-                                        startY,
-                                        startX,
-                                      } as DragState)
-                                    }}
-                                    title="Drag to reorder Priority (insertion order, later wins)"
-                                    style={{ padding: '2px 6px', cursor: 'grab', fontSize: 11 }}
-                                  >
-                                    ≡
-                                  </button>
-                                </td>
-                              </tr>
-                            )
-                          },
-                        )}
-                      </tbody>
-                    </table>
-                  )}
-                  {/* Per-control visual lane: Clip Blocks as blocks on 0…1 timeline, like Clips tab */}
-                  {flatBindings.length > 0 &&
-                    (() => {
-                      const previewOverrides = new Map<string, { start: number; end: number }>()
-                      if (
-                        dragState &&
-                        (dragState.mode === 'interval-move' ||
-                          dragState.mode === 'interval-resize-left' ||
-                          dragState.mode === 'interval-resize-right') &&
-                        dragState.controlKey === control.key
-                      ) {
-                        const dragWithClip = dragState as unknown as {
-                          clipId?: string
-                          initialStart?: number
-                          initialEnd?: number
-                        }
-                        const EPS = 1e-9
-                        const targetBlk = flatBindings.find((f) => {
-                          if (f.semantic !== dragState.semanticName) return false
-                          const raw = f.binding as unknown as {
-                            clipId?: string
-                            start?: number
-                            end?: number
-                          }
-                          const cid =
-                            typeof f.binding === 'string'
-                              ? (f.binding as string)
-                              : (raw.clipId ?? '')
-                          if (dragWithClip.clipId && cid !== dragWithClip.clipId) return false
-                          const bStart =
-                            typeof (f.binding as { start?: number }).start === 'number'
-                              ? (f.binding as { start?: number }).start!
-                              : 0
-                          const bEnd =
-                            typeof (f.binding as { end?: number }).end === 'number'
-                              ? (f.binding as { end?: number }).end!
-                              : 1
-                          if (
-                            dragWithClip.initialStart !== undefined &&
-                            Math.abs(bStart - dragWithClip.initialStart) > EPS
-                          )
-                            return false
-                          if (
-                            dragWithClip.initialEnd !== undefined &&
-                            Math.abs(bEnd - dragWithClip.initialEnd) > EPS
-                          )
-                            return false
-                          return true
-                        })
-                        const blk =
-                          targetBlk ??
-                          flatBindings.find((f) => f.semantic === dragState.semanticName)
-                        if (blk) {
-                          const raw = blk.binding as unknown as { clipId?: string }
-                          const cid =
-                            typeof blk.binding === 'string'
-                              ? (blk.binding as string)
-                              : (raw.clipId ?? '')
-                          previewOverrides.set(`${dragState.semanticName}::${cid}::${blk.index}`, {
-                            start: dragState.previewStart,
-                            end: dragState.previewEnd,
-                          })
-                        }
-                      }
-                      const lanePps = Math.max(pps, 600)
-                      // For inline lane, use flat order directly so vertical order matches table Priority (later wins = lower lane)
-                      const laneHeight = flatBindings.length * CLIP_LANE_HEIGHT_PX
-                      const step = rulerTickStep(lanePps)
-                      const ticks = rulerTickTimes(0, 1, step)
-                      return (
-                        <div
-                          style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}
-                        >
-                          <div
-                            data-testid={`control-interval-ruler-inline-${control.key}`}
+                            title={`Add a Clip Block to T${gi + 1} (${group.name})`}
                             style={{
-                              position: 'relative',
-                              height: 18,
-                              border: '1px solid var(--color-border, #ddd)',
+                              padding: '3px 8px',
                               borderRadius: 4,
-                              background: 'var(--color-bg, #fafafa)',
-                              overflow: 'hidden',
-                              width: '100%',
+                              border: '1px solid var(--color-accent, #7c5cff)',
+                              background: 'var(--color-accent, #7c5cff)',
+                              color: 'var(--color-accent-text, #fff)',
+                              cursor: 'pointer',
+                              fontSize: 11,
                             }}
                           >
-                            {ticks.map((t) => (
-                              <div
-                                key={t}
-                                style={{
-                                  position: 'absolute',
-                                  left: `${(t / 1) * 100}%`,
-                                  top: 0,
-                                  bottom: 0,
-                                  borderLeft: '1px solid var(--color-border, #ddd)',
-                                  fontSize: 9,
-                                  color: 'var(--color-text-muted, #666)',
-                                  paddingLeft: 3,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  pointerEvents: 'none',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                {tickLabel(t, step)}
-                              </div>
-                            ))}
-                            <div
-                              style={{
-                                position: 'absolute',
-                                right: 6,
-                                top: 0,
-                                bottom: 0,
-                                display: 'flex',
-                                alignItems: 'center',
-                                fontSize: 9,
-                                color: 'var(--color-text-muted, #999)',
-                                pointerEvents: 'none',
-                              }}
-                            >
-                              0…1
-                            </div>
-                          </div>
-                          <div
-                            data-testid={`control-interval-lane-inline-${control.key}`}
-                            style={{
-                              position: 'relative',
-                              width: '100%',
-                              height: Math.max(laneHeight, CLIP_LANE_HEIGHT_PX),
-                              minHeight: CLIP_LANE_HEIGHT_PX,
-                              border: '1px solid var(--color-border, #eee)',
-                              borderRadius: 4,
-                              background: 'var(--color-bg, #fafafa)',
-                              overflowX: 'auto',
-                              overflowY: 'hidden',
-                            }}
-                          >
-                            <div
-                              style={{
-                                position: 'relative',
-                                width: '100%',
-                                height: '100%',
-                              }}
-                            >
-                              {flatBindings.map(
-                                ({ semantic, binding: rawFlat, index: flatIdx }, idx) => {
-                                  const intervalFlat =
-                                    typeof rawFlat === 'string'
-                                      ? { clipId: rawFlat as string, start: 0, end: 1 }
-                                      : (rawFlat as { clipId: string; start: number; end: number })
-                                  const clipForLane = (() => {
-                                    try {
-                                      return engine.getClip(intervalFlat.clipId)
-                                    } catch {
-                                      return null
-                                    }
-                                  })()
-                                  const isDraggingMoveResize =
-                                    !!dragState &&
-                                    (dragState.mode === 'interval-move' ||
-                                      dragState.mode === 'interval-resize-left' ||
-                                      dragState.mode === 'interval-resize-right') &&
-                                    (dragState as unknown as { controlKey: string }).controlKey ===
-                                      control.key &&
-                                    (dragState as unknown as { semanticName: string })
-                                      .semanticName === semantic &&
-                                    (() => {
-                                      const ds = dragState as unknown as {
-                                        clipId?: string
-                                        initialStart?: number
-                                        initialEnd?: number
-                                      }
-                                      const EPS = 1e-9
-                                      return (
-                                        ds.clipId === intervalFlat.clipId &&
-                                        ds.initialStart !== undefined &&
-                                        ds.initialEnd !== undefined &&
-                                        Math.abs(ds.initialStart - intervalFlat.start) < EPS &&
-                                        Math.abs(ds.initialEnd - intervalFlat.end) < EPS
-                                      )
-                                    })()
-                                  const isDraggingReorder =
-                                    !!dragState &&
-                                    dragState.mode === 'interval-reorder' &&
-                                    (dragState as unknown as { controlKey: string }).controlKey ===
-                                      control.key &&
-                                    (dragState as unknown as { initialIndex: number })
-                                      .initialIndex === idx
-                                  const isDragging = isDraggingMoveResize || isDraggingReorder
-                                  const startForBlock = isDraggingMoveResize
-                                    ? (dragState as unknown as { previewStart: number })
-                                        .previewStart
-                                    : intervalFlat.start
-                                  const endForBlock = isDraggingMoveResize
-                                    ? (dragState as unknown as { previewEnd: number }).previewEnd
-                                    : intervalFlat.end
-                                  const spanForBlock = endForBlock - startForBlock
-                                  const left = `${startForBlock * 100}%`
-                                  const width = `${spanForBlock * 100}%`
-                                  const clipName =
-                                    clipForLane?.name ?? intervalFlat.clipId.slice(0, 8)
-                                  const duration = clipForLane?.duration ?? 1
-                                  const block = {
-                                    semanticName: semantic,
-                                    clipId: intervalFlat.clipId,
-                                    start: startForBlock,
-                                    end: endForBlock,
-                                    span: spanForBlock,
-                                    priority: flatIdx,
-                                    track: idx,
-                                    zIndex: idx,
-                                    clip: clipForLane,
-                                  }
-                                  return (
-                                    <div
-                                      key={`${block.semanticName}::${block.clipId}::${block.priority}`}
-                                      data-testid={`clip-block-inline-${control.key}-${block.semanticName}-${block.priority}`}
-                                      data-semantic={block.semanticName}
-                                      data-start={String(block.start)}
-                                      data-end={String(block.end)}
-                                      data-track={String(block.track)}
-                                      title={`${block.semanticName}: ${clipName} [${block.start.toFixed(3)}, ${block.end.toFixed(3)}] Priority ${block.priority} — drag body=move, edges=resize`}
-                                      style={{
-                                        position: 'absolute',
-                                        left,
-                                        width,
-                                        minWidth: 8,
-                                        top: block.track * CLIP_LANE_HEIGHT_PX + 2,
-                                        height: CLIP_LANE_BAR_HEIGHT_PX,
-                                        background: isDragging ? '#7c5cff' : '#b8a6ff',
-                                        border: `1px solid ${isDragging ? '#4c1d95' : '#7c5cff'}`,
-                                        borderRadius: 4,
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        padding: '0 8px',
-                                        boxSizing: 'border-box',
-                                        cursor: isDragging ? 'grabbing' : 'grab',
-                                        zIndex: block.zIndex,
-                                        userSelect: 'none',
-                                        overflow: 'hidden',
-                                        opacity: isDragging ? 0.95 : 1,
-                                      }}
-                                      onPointerDown={(e) => {
-                                        const target = e.target as HTMLElement
-                                        if (
-                                          target.dataset.handle === 'left' ||
-                                          target.dataset.handle === 'right'
-                                        )
-                                          return
-                                        if (e.button !== 0) return
-                                        e.preventDefault()
-                                        e.stopPropagation()
-                                        const span = block.end - block.start
-                                        const laneEl = (e.currentTarget as HTMLElement).closest(
-                                          '[data-testid^="control-interval-lane-inline"]',
-                                        ) as HTMLElement | null
-                                        const laneWidth =
-                                          laneEl?.getBoundingClientRect().width ?? lanePps
-                                        setDragState({
-                                          mode: 'interval-move',
-                                          nodeId: parentNode!.id,
-                                          controlKey: control.key,
-                                          semanticName: block.semanticName,
-                                          clipId: block.clipId,
-                                          initialStart: block.start,
-                                          initialEnd: block.end,
-                                          span,
-                                          startX: e.clientX,
-                                          startY: e.clientY,
-                                          previewStart: block.start,
-                                          previewEnd: block.end,
-                                          effectivePps: lanePps,
-                                          laneWidth,
-                                        } as unknown as DragState)
-                                      }}
-                                    >
-                                      <span
-                                        style={{
-                                          fontSize: 10,
-                                          fontWeight: 600,
-                                          whiteSpace: 'nowrap',
-                                          overflow: 'hidden',
-                                          textOverflow: 'ellipsis',
-                                          flex: 1,
-                                          pointerEvents: 'none',
-                                          color: '#2e1a6d',
-                                        }}
-                                      >
-                                        {block.semanticName} · {clipName} ({duration}s)
-                                      </span>
-                                      <span
-                                        style={{
-                                          fontSize: 9,
-                                          fontFamily: 'monospace',
-                                          marginLeft: 6,
-                                          pointerEvents: 'none',
-                                          color: '#4c1d95',
-                                        }}
-                                      >
-                                        [{block.start.toFixed(2)},{block.end.toFixed(2)}]
-                                      </span>
-                                      <div
-                                        data-handle="left"
-                                        style={{
-                                          position: 'absolute',
-                                          left: 0,
-                                          top: 0,
-                                          bottom: 0,
-                                          width: CLIP_HANDLE_WIDTH_PX,
-                                          cursor: 'ew-resize',
-                                          background: 'rgba(0,0,0,0.08)',
-                                          borderRight: '1px solid rgba(0,0,0,0.15)',
-                                        }}
-                                        onPointerDown={(e) => {
-                                          if (e.button !== 0) return
-                                          e.preventDefault()
-                                          e.stopPropagation()
-                                          const laneEl = (e.currentTarget as HTMLElement).closest(
-                                            '[data-testid^="control-interval-lane-inline"]',
-                                          ) as HTMLElement | null
-                                          const laneWidth =
-                                            laneEl?.getBoundingClientRect().width ?? lanePps
-                                          setDragState({
-                                            mode: 'interval-resize-left',
-                                            nodeId: parentNode!.id,
-                                            controlKey: control.key,
-                                            semanticName: block.semanticName,
-                                            clipId: block.clipId,
-                                            initialStart: block.start,
-                                            initialEnd: block.end,
-                                            startX: e.clientX,
-                                            previewStart: block.start,
-                                            previewEnd: block.end,
-                                            effectivePps: lanePps,
-                                            laneWidth,
-                                          } as unknown as DragState)
-                                        }}
-                                      />
-                                      <div
-                                        data-handle="right"
-                                        style={{
-                                          position: 'absolute',
-                                          right: 0,
-                                          top: 0,
-                                          bottom: 0,
-                                          width: CLIP_HANDLE_WIDTH_PX,
-                                          cursor: 'ew-resize',
-                                          background: 'rgba(0,0,0,0.08)',
-                                          borderLeft: '1px solid rgba(0,0,0,0.15)',
-                                        }}
-                                        onPointerDown={(e) => {
-                                          if (e.button !== 0) return
-                                          e.preventDefault()
-                                          e.stopPropagation()
-                                          const laneEl = (e.currentTarget as HTMLElement).closest(
-                                            '[data-testid^="control-interval-lane-inline"]',
-                                          ) as HTMLElement | null
-                                          const laneWidth =
-                                            laneEl?.getBoundingClientRect().width ?? lanePps
-                                          setDragState({
-                                            mode: 'interval-resize-right',
-                                            nodeId: parentNode!.id,
-                                            controlKey: control.key,
-                                            semanticName: block.semanticName,
-                                            clipId: block.clipId,
-                                            initialStart: block.start,
-                                            initialEnd: block.end,
-                                            startX: e.clientX,
-                                            previewStart: block.start,
-                                            previewEnd: block.end,
-                                            effectivePps: lanePps,
-                                            laneWidth,
-                                          } as unknown as DragState)
-                                        }}
-                                      />
-                                    </div>
-                                  )
+                            Add Block here
+                          </button>
+                        </div>
+                        {/* Per-control visual lane: Clip Blocks as blocks on 0…1 timeline, like Clips tab */}
+                        {(() => {
+                          const groupFlat = flattenControlBindings(
+                            group.bindings as unknown as Record<
+                              string,
+                              import('../../engine/control').ControlBindingValue
+                            >,
+                          )
+                          const previewOverrides = new Map<string, { start: number; end: number }>()
+                          if (
+                            dragState &&
+                            (dragState.mode === 'interval-move' ||
+                              dragState.mode === 'interval-resize-left' ||
+                              dragState.mode === 'interval-resize-right') &&
+                            dragState.controlKey === control.key &&
+                            (dragState as unknown as { groupId?: string }).groupId === group.id
+                          ) {
+                            const dragWithClip = dragState as unknown as {
+                              clipId?: string
+                              initialStart?: number
+                              initialEnd?: number
+                            }
+                            const EPS = 1e-9
+                            const targetBlk = groupFlat.find((f) => {
+                              if (f.semantic !== dragState.semanticName) return false
+                              const raw = f.binding as unknown as {
+                                clipId?: string
+                                start?: number
+                                end?: number
+                              }
+                              const cid =
+                                typeof f.binding === 'string'
+                                  ? (f.binding as string)
+                                  : (raw.clipId ?? '')
+                              if (dragWithClip.clipId && cid !== dragWithClip.clipId) return false
+                              const bStart =
+                                typeof (f.binding as { start?: number }).start === 'number'
+                                  ? (f.binding as { start?: number }).start!
+                                  : 0
+                              const bEnd =
+                                typeof (f.binding as { end?: number }).end === 'number'
+                                  ? (f.binding as { end?: number }).end!
+                                  : 1
+                              if (
+                                dragWithClip.initialStart !== undefined &&
+                                Math.abs(bStart - dragWithClip.initialStart) > EPS
+                              )
+                                return false
+                              if (
+                                dragWithClip.initialEnd !== undefined &&
+                                Math.abs(bEnd - dragWithClip.initialEnd) > EPS
+                              )
+                                return false
+                              return true
+                            })
+                            const blk =
+                              targetBlk ??
+                              groupFlat.find((f) => f.semantic === dragState.semanticName)
+                            if (blk) {
+                              const raw = blk.binding as unknown as { clipId?: string }
+                              const cid =
+                                typeof blk.binding === 'string'
+                                  ? (blk.binding as string)
+                                  : (raw.clipId ?? '')
+                              previewOverrides.set(
+                                `${dragState.semanticName}::${cid}::${blk.index}`,
+                                {
+                                  start: dragState.previewStart,
+                                  end: dragState.previewEnd,
                                 },
-                              )}
-                              {flatBindings.length === 0 && (
+                              )
+                            }
+                          }
+                          const lanePps = Math.max(pps, 600)
+                          // Per-timeline lane: group-local order drives vertical stacking (later wins = lower lane)
+                          const laneHeight = groupFlat.length * CLIP_LANE_HEIGHT_PX
+                          const step = rulerTickStep(lanePps)
+                          const ticks = rulerTickTimes(0, 1, step)
+                          return (
+                            <div
+                              style={{
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 4,
+                                marginTop: 8,
+                              }}
+                            >
+                              <div
+                                data-testid={`control-interval-ruler-inline-${control.key}-g${gi}`}
+                                style={{
+                                  position: 'relative',
+                                  height: 18,
+                                  border: '1px solid var(--color-border, #ddd)',
+                                  borderRadius: 4,
+                                  background: 'var(--color-bg, #fafafa)',
+                                  overflow: 'hidden',
+                                  width: '100%',
+                                }}
+                              >
+                                {ticks.map((t) => (
+                                  <div
+                                    key={t}
+                                    style={{
+                                      position: 'absolute',
+                                      left: `${(t / 1) * 100}%`,
+                                      top: 0,
+                                      bottom: 0,
+                                      borderLeft: '1px solid var(--color-border, #ddd)',
+                                      fontSize: 9,
+                                      color: 'var(--color-text-muted, #666)',
+                                      paddingLeft: 3,
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      pointerEvents: 'none',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    {tickLabel(t, step)}
+                                  </div>
+                                ))}
                                 <div
                                   style={{
-                                    padding: 12,
-                                    fontSize: 11,
-                                    color: 'var(--color-text-muted, #888)',
-                                    fontStyle: 'italic',
+                                    position: 'absolute',
+                                    right: 6,
+                                    top: 0,
+                                    bottom: 0,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    fontSize: 9,
+                                    color: 'var(--color-text-muted, #999)',
+                                    pointerEvents: 'none',
                                   }}
                                 >
-                                  No Clip Blocks — Add Block [0,1] then drag/resize
+                                  0…1
                                 </div>
-                              )}
+                              </div>
+                              <div
+                                data-testid={`control-interval-lane-inline-${control.key}-g${gi}`}
+                                style={{
+                                  position: 'relative',
+                                  width: '100%',
+                                  height: Math.max(laneHeight, CLIP_LANE_HEIGHT_PX),
+                                  minHeight: CLIP_LANE_HEIGHT_PX,
+                                  border: '1px solid var(--color-border, #eee)',
+                                  borderRadius: 4,
+                                  background: 'var(--color-bg, #fafafa)',
+                                  overflowX: 'auto',
+                                  overflowY: 'hidden',
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    position: 'relative',
+                                    width: '100%',
+                                    height: '100%',
+                                  }}
+                                >
+                                  {groupFlat.map(({ semantic, binding: rawFlat }, idx) => {
+                                    const intervalFlat =
+                                      typeof rawFlat === 'string'
+                                        ? { clipId: rawFlat as string, start: 0, end: 1 }
+                                        : (rawFlat as {
+                                            clipId: string
+                                            start: number
+                                            end: number
+                                          })
+                                    const clipForLane = (() => {
+                                      try {
+                                        return engine.getClip(intervalFlat.clipId)
+                                      } catch {
+                                        return null
+                                      }
+                                    })()
+                                    const isDraggingMoveResize =
+                                      !!dragState &&
+                                      (dragState.mode === 'interval-move' ||
+                                        dragState.mode === 'interval-resize-left' ||
+                                        dragState.mode === 'interval-resize-right') &&
+                                      (dragState as unknown as { controlKey: string })
+                                        .controlKey === control.key &&
+                                      (dragState as unknown as { groupId?: string }).groupId ===
+                                        group.id &&
+                                      (dragState as unknown as { semanticName: string })
+                                        .semanticName === semantic &&
+                                      (() => {
+                                        const ds = dragState as unknown as {
+                                          clipId?: string
+                                          initialStart?: number
+                                          initialEnd?: number
+                                        }
+                                        const EPS = 1e-9
+                                        return (
+                                          ds.clipId === intervalFlat.clipId &&
+                                          ds.initialStart !== undefined &&
+                                          ds.initialEnd !== undefined &&
+                                          Math.abs(ds.initialStart - intervalFlat.start) < EPS &&
+                                          Math.abs(ds.initialEnd - intervalFlat.end) < EPS
+                                        )
+                                      })()
+                                    const isDraggingReorder =
+                                      !!dragState &&
+                                      dragState.mode === 'interval-reorder' &&
+                                      (dragState as unknown as { controlKey: string })
+                                        .controlKey === control.key &&
+                                      (dragState as unknown as { groupId?: string }).groupId ===
+                                        group.id &&
+                                      (dragState as unknown as { initialIndex: number })
+                                        .initialIndex === idx
+                                    const isDragging = isDraggingMoveResize || isDraggingReorder
+                                    const startForBlock = isDraggingMoveResize
+                                      ? (dragState as unknown as { previewStart: number })
+                                          .previewStart
+                                      : intervalFlat.start
+                                    const endForBlock = isDraggingMoveResize
+                                      ? (dragState as unknown as { previewEnd: number }).previewEnd
+                                      : intervalFlat.end
+                                    const spanForBlock = endForBlock - startForBlock
+                                    const left = `${startForBlock * 100}%`
+                                    const width = `${spanForBlock * 100}%`
+                                    const clipName =
+                                      clipForLane?.name ?? intervalFlat.clipId.slice(0, 8)
+                                    const duration = clipForLane?.duration ?? 1
+                                    const matchNodes = descendantSemanticMap.get(semantic) ?? []
+                                    const matchCount = matchNodes.length
+                                    const block = {
+                                      semanticName: semantic,
+                                      clipId: intervalFlat.clipId,
+                                      start: startForBlock,
+                                      end: endForBlock,
+                                      span: spanForBlock,
+                                      priority: idx,
+                                      track: idx,
+                                      zIndex: idx,
+                                      clip: clipForLane,
+                                    }
+                                    return (
+                                      <div
+                                        key={`${block.semanticName}::${block.clipId}::${block.priority}`}
+                                        data-testid={`clip-block-inline-${control.key}-g${gi}-${block.semanticName}-${idx}`}
+                                        data-semantic={block.semanticName}
+                                        data-start={String(block.start)}
+                                        data-end={String(block.end)}
+                                        data-track={String(block.track)}
+                                        title={`T${gi + 1} · ${block.semanticName}: ${clipName} [${block.start.toFixed(3)}, ${block.end.toFixed(3)}]${matchCount === 0 ? ' — NO descendant match (does nothing)' : ` — ${matchCount} node${matchCount === 1 ? '' : 's'}: ${matchNodes.map((n) => n.name).join(', ')}`} — drag body=move, edges=resize, drag vertically=reorder`}
+                                        onContextMenu={(e) => {
+                                          e.preventDefault()
+                                          e.stopPropagation()
+                                          setControlBlockMenu({
+                                            x: e.clientX,
+                                            y: e.clientY,
+                                            controlKey: control.key,
+                                            groupId: group.id,
+                                            semanticName: block.semanticName,
+                                            clipId: block.clipId,
+                                            start: intervalFlat.start,
+                                            end: intervalFlat.end,
+                                          })
+                                        }}
+                                        onMouseEnter={() =>
+                                          handleBindingHoverEnter(block.semanticName)
+                                        }
+                                        onMouseLeave={handleBindingHoverLeave}
+                                        style={{
+                                          position: 'absolute',
+                                          left,
+                                          width,
+                                          minWidth: 8,
+                                          top: block.track * CLIP_LANE_HEIGHT_PX + 2,
+                                          height: CLIP_LANE_BAR_HEIGHT_PX,
+                                          background:
+                                            isDragging || hoveredBindingSemantic === semantic
+                                              ? '#7c5cff'
+                                              : '#b8a6ff',
+                                          border: `1px solid ${isDragging ? '#4c1d95' : matchCount === 0 ? '#c00' : '#7c5cff'}`,
+                                          borderRadius: 4,
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          padding: '0 8px',
+                                          boxSizing: 'border-box',
+                                          cursor: isDragging ? 'grabbing' : 'grab',
+                                          zIndex: block.zIndex,
+                                          userSelect: 'none',
+                                          overflow: 'hidden',
+                                          opacity: isDragging ? 0.95 : 1,
+                                        }}
+                                        onPointerDown={(e) => {
+                                          const target = e.target as HTMLElement
+                                          if (
+                                            target.dataset.handle === 'left' ||
+                                            target.dataset.handle === 'right'
+                                          )
+                                            return
+                                          if (e.button !== 0) return
+                                          e.preventDefault()
+                                          e.stopPropagation()
+                                          const span = block.end - block.start
+                                          const laneEl = (e.currentTarget as HTMLElement).closest(
+                                            '[data-testid^="control-interval-lane-inline"]',
+                                          ) as HTMLElement | null
+                                          const laneWidth =
+                                            laneEl?.getBoundingClientRect().width ?? lanePps
+                                          setDragState({
+                                            mode: 'interval-move',
+                                            nodeId: parentNode!.id,
+                                            controlKey: control.key,
+                                            groupId: group.id,
+                                            semanticName: block.semanticName,
+                                            clipId: block.clipId,
+                                            initialStart: block.start,
+                                            initialEnd: block.end,
+                                            span,
+                                            startX: e.clientX,
+                                            startY: e.clientY,
+                                            previewStart: block.start,
+                                            previewEnd: block.end,
+                                            effectivePps: lanePps,
+                                            laneWidth,
+                                          } as unknown as DragState)
+                                        }}
+                                      >
+                                        <span
+                                          style={{
+                                            fontSize: 10,
+                                            fontWeight: 600,
+                                            whiteSpace: 'nowrap',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                            flex: 1,
+                                            pointerEvents: 'none',
+                                            color: '#2e1a6d',
+                                          }}
+                                        >
+                                          {matchCount === 0 ? '⚠ ' : ''}
+                                          {block.semanticName} · {clipName} ({duration}s)
+                                        </span>
+                                        <span
+                                          style={{
+                                            fontSize: 9,
+                                            fontFamily: 'monospace',
+                                            marginLeft: 6,
+                                            pointerEvents: 'none',
+                                            color: '#4c1d95',
+                                          }}
+                                        >
+                                          [{block.start.toFixed(2)},{block.end.toFixed(2)}]
+                                        </span>
+                                        <button
+                                          data-testid={`clip-block-unbind-inline-${control.key}-g${gi}-${block.semanticName}-${idx}`}
+                                          onPointerDown={(e) => e.stopPropagation()}
+                                          onClick={() => {
+                                            removeControlBlock({
+                                              controlKey: control.key,
+                                              groupId: group.id,
+                                              semanticName: block.semanticName,
+                                              clipId: block.clipId,
+                                              start: intervalFlat.start,
+                                              end: intervalFlat.end,
+                                            })
+                                          }}
+                                          title={`Remove ${block.semanticName} from T${gi + 1}`}
+                                          style={{
+                                            border: 'none',
+                                            background: 'transparent',
+                                            cursor: 'pointer',
+                                            padding: '0 2px',
+                                            fontSize: 11,
+                                            lineHeight: 1,
+                                            color: '#4c1d95',
+                                            pointerEvents: 'auto',
+                                            flexShrink: 0,
+                                          }}
+                                        >
+                                          ×
+                                        </button>
+                                        {control.groups.length > 1 && (
+                                          <select
+                                            data-testid={`clip-block-move-inline-${control.key}-g${gi}-${block.semanticName}-${idx}`}
+                                            value=""
+                                            onPointerDown={(e) => e.stopPropagation()}
+                                            onClick={(e) => e.stopPropagation()}
+                                            onChange={(e) => {
+                                              const toGroupId = e.target.value
+                                              e.target.value = ''
+                                              if (!toGroupId || !parentNode?.controlSet) return
+                                              try {
+                                                const nextSet = moveBindingBetweenGroups(
+                                                  parentNode.controlSet,
+                                                  control.key,
+                                                  block.semanticName,
+                                                  group.id,
+                                                  toGroupId,
+                                                  undefined,
+                                                  {
+                                                    clipId: block.clipId,
+                                                    start: intervalFlat.start,
+                                                    end: intervalFlat.end,
+                                                  },
+                                                )
+                                                const res = dispatch(
+                                                  new SetControlSetCommand({
+                                                    nodeId: parentNode.id,
+                                                    controlSet: nextSet,
+                                                  }),
+                                                )
+                                                if (!res.ok) notify(res.error.message)
+                                                else {
+                                                  setTick((v) => v + 1)
+                                                  notify(
+                                                    `Moved ${block.semanticName} to another timeline`,
+                                                  )
+                                                }
+                                              } catch (err) {
+                                                notify(
+                                                  err instanceof Error ? err.message : String(err),
+                                                )
+                                              }
+                                            }}
+                                            title={`Move ${block.semanticName} to another timeline`}
+                                            style={{
+                                              fontSize: 9,
+                                              padding: 0,
+                                              maxWidth: 40,
+                                              flexShrink: 0,
+                                            }}
+                                          >
+                                            <option value="">⇄</option>
+                                            {control.groups
+                                              .filter((g) => g.id !== group.id)
+                                              .map((g) => (
+                                                <option key={g.id} value={g.id}>
+                                                  T
+                                                  {control.groups.findIndex(
+                                                    (gg) => gg.id === g.id,
+                                                  ) + 1}
+                                                </option>
+                                              ))}
+                                          </select>
+                                        )}
+                                        <div
+                                          data-handle="left"
+                                          style={{
+                                            position: 'absolute',
+                                            left: 0,
+                                            top: 0,
+                                            bottom: 0,
+                                            width: CLIP_HANDLE_WIDTH_PX,
+                                            cursor: 'ew-resize',
+                                            background: 'rgba(0,0,0,0.08)',
+                                            borderRight: '1px solid rgba(0,0,0,0.15)',
+                                          }}
+                                          onPointerDown={(e) => {
+                                            if (e.button !== 0) return
+                                            e.preventDefault()
+                                            e.stopPropagation()
+                                            const laneEl = (e.currentTarget as HTMLElement).closest(
+                                              '[data-testid^="control-interval-lane-inline"]',
+                                            ) as HTMLElement | null
+                                            const laneWidth =
+                                              laneEl?.getBoundingClientRect().width ?? lanePps
+                                            setDragState({
+                                              mode: 'interval-resize-left',
+                                              nodeId: parentNode!.id,
+                                              controlKey: control.key,
+                                              groupId: group.id,
+                                              semanticName: block.semanticName,
+                                              clipId: block.clipId,
+                                              initialStart: block.start,
+                                              initialEnd: block.end,
+                                              startX: e.clientX,
+                                              previewStart: block.start,
+                                              previewEnd: block.end,
+                                              effectivePps: lanePps,
+                                              laneWidth,
+                                            } as unknown as DragState)
+                                          }}
+                                        />
+                                        <div
+                                          data-handle="right"
+                                          style={{
+                                            position: 'absolute',
+                                            right: 0,
+                                            top: 0,
+                                            bottom: 0,
+                                            width: CLIP_HANDLE_WIDTH_PX,
+                                            cursor: 'ew-resize',
+                                            background: 'rgba(0,0,0,0.08)',
+                                            borderLeft: '1px solid rgba(0,0,0,0.15)',
+                                          }}
+                                          onPointerDown={(e) => {
+                                            if (e.button !== 0) return
+                                            e.preventDefault()
+                                            e.stopPropagation()
+                                            const laneEl = (e.currentTarget as HTMLElement).closest(
+                                              '[data-testid^="control-interval-lane-inline"]',
+                                            ) as HTMLElement | null
+                                            const laneWidth =
+                                              laneEl?.getBoundingClientRect().width ?? lanePps
+                                            setDragState({
+                                              mode: 'interval-resize-right',
+                                              nodeId: parentNode!.id,
+                                              controlKey: control.key,
+                                              groupId: group.id,
+                                              semanticName: block.semanticName,
+                                              clipId: block.clipId,
+                                              initialStart: block.start,
+                                              initialEnd: block.end,
+                                              startX: e.clientX,
+                                              previewStart: block.start,
+                                              previewEnd: block.end,
+                                              effectivePps: lanePps,
+                                              laneWidth,
+                                            } as unknown as DragState)
+                                          }}
+                                        />
+                                      </div>
+                                    )
+                                  })}
+                                  {groupFlat.length === 0 && (
+                                    <div
+                                      style={{
+                                        padding: 12,
+                                        fontSize: 11,
+                                        color: 'var(--color-text-muted, #888)',
+                                        fontStyle: 'italic',
+                                      }}
+                                    >
+                                      No Clip Blocks in T${gi + 1} — use Add Block here, default
+                                      [0,1]
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              <div style={{ fontSize: 10, color: 'var(--color-text-muted, #888)' }}>
+                                Drag body to move (preserve width), edges to resize (span ≥{' '}
+                                {CONTROL_INTERVAL_MIN_SPAN}), overlap via Priority stacking (lower
+                                lane wins). Drag vertically to reorder Priority.
+                              </div>
                             </div>
-                          </div>
-                          <div style={{ fontSize: 10, color: 'var(--color-text-muted, #888)' }}>
-                            Drag body to move (preserve width), edges to resize (span ≥{' '}
-                            {CONTROL_INTERVAL_MIN_SPAN}), overlap via Priority stacking (lower lane
-                            wins). Table still controls numeric [start,end] & Priority.
-                          </div>
-                        </div>
-                      )
-                    })()}
-                  {/* Add Block flow */}
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
-                    <button
-                      data-testid={`control-add-block-${control.key}`}
-                      onClick={() =>
-                        setAddBlockDialog({
-                          controlKey: control.key,
-                          draftSemantic: '',
-                          draftClipId: availableClipsForBinding[0]?.id ?? '',
-                          error: null,
-                        })
-                      }
-                      style={{
-                        padding: '4px 10px',
-                        borderRadius: 4,
-                        border: '1px solid var(--color-accent, #7c5cff)',
-                        background: 'var(--color-accent, #7c5cff)',
-                        color: 'var(--color-accent-text, #fff)',
-                        cursor: 'pointer',
-                        fontSize: 11,
-                      }}
-                    >
-                      Add Block
-                    </button>
-                    <span style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
-                      Pick clipId+semanticName, default [0,1] then resize
-                    </span>
+                          )
+                        })()}
+
+                        {control.groups.length > 1 && (
+                          <button
+                            data-testid={`manager-control-remove-timeline-${control.key}-${gi}`}
+                            onClick={() => handleRemoveTimeline(control.key, group.id)}
+                            title={
+                              gi === 0
+                                ? 'Remove Timeline 1 (blends re-index)'
+                                : 'Remove this Timeline'
+                            }
+                            style={{
+                              padding: '3px 8px',
+                              borderRadius: 4,
+                              border: '1px solid var(--color-border, #ddd)',
+                              cursor: 'pointer',
+                              fontSize: 11,
+                            }}
+                          >
+                            Remove Timeline
+                          </button>
+                        )}
+                        {gi > 0 &&
+                          (() => {
+                            const kfAtPlayhead = (() => {
+                              const all = activeSlide
+                                ? (activeSlide.animation
+                                    .node(parentNodeId!)
+                                    ?.controlKeyframes(control.key) ?? [])
+                                : []
+                              if (all.length === 0) return undefined
+                              let best = all[0]!
+                              for (const kf of all) {
+                                if (
+                                  Math.abs(kf.time - currentPlayheadTime) <
+                                  Math.abs(best.time - currentPlayheadTime)
+                                )
+                                  best = kf
+                              }
+                              return Math.abs(best.time - currentPlayheadTime) < 1e-6
+                                ? best
+                                : undefined
+                            })()
+                            const blendVal = kfAtPlayhead ? (kfAtPlayhead.blend[gi - 1] ?? 0) : 0
+                            return (
+                              <label
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 6,
+                                  fontSize: 11,
+                                  flex: 1,
+                                }}
+                              >
+                                <span style={{ minWidth: 70 }}>
+                                  Blend T{gi}→T{gi + 1}
+                                </span>
+                                <input
+                                  data-testid={`manager-control-blend-${control.key}-${gi - 1}`}
+                                  type="range"
+                                  min={0}
+                                  max={1}
+                                  step={0.01}
+                                  value={blendVal}
+                                  disabled={!kfAtPlayhead}
+                                  title={
+                                    kfAtPlayhead
+                                      ? `Blend at kf ${kfAtPlayhead.id}`
+                                      : 'Add a host keyframe at playhead to edit blend'
+                                  }
+                                  onChange={(e) => {
+                                    if (!kfAtPlayhead) return
+                                    const v = Number(e.target.value)
+                                    const res = dispatch(
+                                      new SetControlBlendCommand({
+                                        hostNodeId: parentNodeId!,
+                                        controlKey: control.key,
+                                        keyframeId: kfAtPlayhead.id,
+                                        blendIndex: gi - 1,
+                                        value: v,
+                                      }),
+                                    )
+                                    if (!res.ok) notify(res.error.message)
+                                    else setTick((t) => t + 1)
+                                  }}
+                                  style={{ flex: 1 }}
+                                />
+                                <span style={{ minWidth: 32, textAlign: 'right' }}>
+                                  {blendVal.toFixed(2)}
+                                </span>
+                              </label>
+                            )
+                          })()}
+                      </div>
+                    ))}
                   </div>
                   {addBlockDialog && addBlockDialog.controlKey === control.key && (
                     <div
@@ -5668,6 +5679,39 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     >
                       <div style={{ fontSize: 11, fontWeight: 600 }}>
                         Add Clip Block — Control Interval [0,1]
+                      </div>
+                      <div
+                        style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}
+                      >
+                        <label style={{ fontSize: 11, minWidth: 80 }}>Timeline</label>
+                        <select
+                          data-testid={`control-add-block-timeline-${control.key}`}
+                          value={
+                            control.groups.some((g) => g.id === addBlockDialog.draftGroupId)
+                              ? addBlockDialog.draftGroupId
+                              : (control.groups[0]?.id ?? '')
+                          }
+                          onChange={(e) =>
+                            setAddBlockDialog((prev) =>
+                              prev ? { ...prev, draftGroupId: e.target.value } : prev,
+                            )
+                          }
+                          style={{
+                            flex: 1,
+                            padding: '4px 6px',
+                            fontSize: 11,
+                            borderRadius: 4,
+                            border: '1px solid var(--color-border, #ddd)',
+                            background: 'var(--color-bg, #fff)',
+                            color: 'var(--color-text, #1c1e21)',
+                          }}
+                        >
+                          {control.groups.map((g, gi) => (
+                            <option key={g.id} value={g.id}>
+                              T{gi + 1}: {g.name}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                       <div
                         style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}
@@ -5800,7 +5844,32 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     {flatBindings.length > 0 && (
                       <button
                         data-testid={`manager-control-clear-${control.key}`}
-                        onClick={() => setControlBindings(control.key, {})}
+                        onClick={() => {
+                          if (!parentNode?.controlSet) return
+                          const ctrl = parentNode.controlSet.controls.find(
+                            (c) => c.key === control.key,
+                          )
+                          if (!ctrl) return
+                          const nextGroups = ctrl.groups.map((g) => ({ ...g, bindings: {} }))
+                          dispatch(
+                            new SetControlSetCommand({
+                              nodeId: parentNode.id,
+                              controlSet: {
+                                ...parentNode.controlSet,
+                                controls: parentNode.controlSet.controls.map((c) =>
+                                  c.key === control.key
+                                    ? {
+                                        ...c,
+                                        groups: nextGroups,
+                                        bindings: mergeGroupBindings(nextGroups),
+                                      }
+                                    : c,
+                                ),
+                              },
+                            }),
+                          )
+                          setTick((v) => v + 1)
+                        }}
                         style={{
                           padding: '4px 8px',
                           borderRadius: 4,
@@ -5823,6 +5892,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         // Do not auto-guess from clip name; require explicit semantic selection
                         setAddBlockDialog({
                           controlKey: control.key,
+                          draftGroupId: control.groups[0]?.id ?? '',
                           draftSemantic: '',
                           draftClipId: clipId,
                           error: null,
@@ -6963,6 +7033,71 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 }}
               >
                 Delete placement
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Control timeline Clip Block context menu – Delete */}
+        {controlBlockMenu && (
+          <>
+            <div
+              style={{ position: 'fixed', inset: 0, zIndex: 1099 }}
+              onClick={() => setControlBlockMenu(null)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                setControlBlockMenu(null)
+              }}
+            />
+            <div
+              role="menu"
+              data-testid="control-block-context-menu"
+              style={{
+                position: 'fixed',
+                left: controlBlockMenu.x,
+                top: controlBlockMenu.y,
+                background: 'var(--color-bg, #fff)',
+                border: '1px solid var(--color-border, #ddd)',
+                borderRadius: 6,
+                padding: 4,
+                zIndex: 1100,
+                boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                minWidth: 160,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                role="menuitem"
+                data-testid="control-block-delete"
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  color: 'var(--color-danger, #c00)',
+                }}
+                onClick={() => {
+                  const m = controlBlockMenu
+                  const ok =
+                    m &&
+                    removeControlBlock({
+                      controlKey: m.controlKey,
+                      groupId: m.groupId,
+                      semanticName: m.semanticName,
+                      clipId: m.clipId,
+                      start: m.start,
+                      end: m.end,
+                    })
+                  if (ok) notify(`Deleted Clip Block ${m!.semanticName} from timeline`)
+                  else notify('Block not found — no change applied')
+                  setControlBlockMenu(null)
+                }}
+              >
+                Delete block
               </button>
             </div>
           </>

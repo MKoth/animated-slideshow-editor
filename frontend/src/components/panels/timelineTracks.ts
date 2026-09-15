@@ -239,33 +239,14 @@ export function timelineRows(
       rows.push(entryWithBadge)
     }
     if (expandedNodeIds[entry.node.id] === true) {
-      // Control lane visibility: Normal shows only exposed host+Blend (blendKey∈host.blendKeys && exposed===true), Authoring shows all
+      // Control lane visibility: Normal shows only exposed hosts, Authoring shows all.
+      // Blend lives inside host keyframes (no separate lanes).
       const isAuthoringForHost = authoringModeByHost[entry.node.id] === true
       if (entry.node.controlSet) {
         const controls = entry.node.controlSet
           .controls as readonly import('../../engine/control').Control[]
-        // Build blend ownership map
-        const allBlendKeys = new Set<string>()
-        const blendKeyToHostKey = new Map<string, string>()
-        for (const c of controls) {
-          for (const bk of (c as unknown as { blendKeys?: readonly string[] }).blendKeys ?? []) {
-            allBlendKeys.add(bk)
-            blendKeyToHostKey.set(bk, c.key)
-          }
-        }
         for (const control of controls) {
-          const isBlend = allBlendKeys.has(control.key)
-          let visible = false
-          if (isAuthoringForHost) visible = true
-          else if (isBlend) {
-            const hostKey = blendKeyToHostKey.get(control.key)
-            const hostControl = controls.find((h) => h.key === hostKey)
-            // Blend visible only if its host is exposed and blend itself exposed true
-            if (control.exposed === true && hostControl?.exposed === true) visible = true
-          } else {
-            // Host or regular control
-            if (control.exposed === true) visible = true
-          }
+          const visible = isAuthoringForHost ? true : control.exposed === true
           if (visible) {
             rows.push({
               kind: 'controlSubtrack',

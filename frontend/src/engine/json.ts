@@ -192,6 +192,7 @@ export type KeyframeJSON = {
   readonly tangentIn?: KeyframeTangent
   readonly tangentOut?: KeyframeTangent
   readonly disabled?: boolean
+  readonly blend?: readonly number[]
 }
 
 export type ControlTrackJSON = {

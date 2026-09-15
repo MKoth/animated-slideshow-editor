@@ -2580,6 +2580,7 @@ export function TimelineBody({
                 controlKey={controlValuePicker.controlKey}
                 keyframeId={controlValuePicker.keyframeId}
                 value={kf.value as number}
+                blend={kf.blend ? [...kf.blend] : []}
                 engine={engine}
                 dispatch={dispatch}
                 notify={notify}

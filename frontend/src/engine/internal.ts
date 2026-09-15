@@ -2223,6 +2223,38 @@ export class Engine {
     } as unknown as import('./events').EngineEvent)
   }
 
+  setControlBlend(
+    hostNodeId: string,
+    controlKey: string,
+    keyframeId: string,
+    blendIndex: number,
+    value: number,
+  ): number {
+    const hostNode = this.#nodes.getById(hostNodeId)
+    const control = hostNode.controlSet?.controls.find((c) => c.key === controlKey)
+    if (!control) throw new Error(`Control "${controlKey}" not found`)
+    const expected = Math.max(0, control.groups.length - 1)
+    if (blendIndex < 0 || blendIndex >= expected)
+      throw new Error(`Blend index ${blendIndex} out of range`)
+    if (!Number.isFinite(value) || value < 0 || value > 1)
+      throw new Error('Blend value must be within [0, 1]')
+    const slide = this.getActiveSlide()
+    if (!slide) throw new Error('No active slide')
+    const anim = slide.animation.node(hostNodeId)
+    const kf = anim?.controlKeyframes(controlKey).find((k) => k.id === keyframeId)
+    if (!kf) throw new Error(`Control keyframe "${keyframeId}" not found`)
+    const cur = kf.blend[blendIndex] ?? 0
+    const next = [...kf.blend]
+    while (next.length < expected) next.push(0)
+    next[blendIndex] = value
+    ;(kf as { blend: readonly number[] }).blend = next.slice(0, expected)
+    this.#bus.emit({
+      type: 'SlideAnimationChanged',
+      slideId: slide.id,
+    } as unknown as import('./events').EngineEvent)
+    return cur
+  }
+
   setOpacity(nodeId: string, opacity: number): void {
     this.#nodes.setOpacity(nodeId, opacity)
   }
@@ -4547,55 +4579,14 @@ export class Engine {
               })
               newControl.groups = newGroups
             }
-            // blendKeys preserved as is (keys will be uniquified later if collision? But spec says preserve)
-            if (Array.isArray((control as unknown as { blendKeys?: unknown }).blendKeys)) {
-              newControl.blendKeys = [...(control as unknown as { blendKeys: string[] }).blendKeys]
+            // legacy blendKeys dropped — blend lives in host keyframes
+            if ('blendKeys' in (newControl as Record<string, unknown>)) {
+              delete (newControl as Record<string, unknown>).blendKeys
             }
             return newControl as unknown as import('./json').ControlJSON
           }),
         }
-        // Re-insert Blend siblings contiguously: ensure host+blends are contiguous by stable sort
-        // The exported order is already contiguous; but if not, we will reorder to make hosts and blends contiguous
-        // Build map key->control for quick lookup
-        const clonedSet = cloned.controlSet as unknown as {
-          controls: import('./json').ControlJSON[]
-        }
-        const controlsArr = clonedSet.controls as unknown as import('./json').ControlJSON[]
-        // Validate and fix order: iterate hosts in order, collect their blends and ensure they are immediately after host
-        const keyToControl = new Map<string, import('./json').ControlJSON>()
-        for (const c of controlsArr) keyToControl.set(c.key, c)
-        const seen = new Set<string>()
-        const reordered: import('./json').ControlJSON[] = []
-        for (const c of controlsArr) {
-          if (seen.has(c.key)) continue
-          // If this control is a blend of a previous host already handled, skip (it will have been placed)
-          const isBlendOfSeen = [...seen].some((seenKey) => {
-            const seenCtrl = keyToControl.get(seenKey)
-            return (
-              seenCtrl &&
-              Array.isArray((seenCtrl as unknown as { blendKeys?: string[] }).blendKeys) &&
-              (seenCtrl as unknown as { blendKeys: string[] }).blendKeys.includes(c.key)
-            )
-          })
-          if (isBlendOfSeen) continue
-          reordered.push(c)
-          seen.add(c.key)
-          const blendKeys = (c as unknown as { blendKeys?: string[] }).blendKeys ?? []
-          for (const bk of blendKeys) {
-            const blendCtrl = keyToControl.get(bk)
-            if (blendCtrl && !seen.has(bk)) {
-              reordered.push(blendCtrl)
-              seen.add(bk)
-            }
-          }
-        }
-        // Append any remaining controls not yet seen (orphan blends without host? keep original order)
-        for (const c of controlsArr)
-          if (!seen.has(c.key)) {
-            reordered.push(c)
-            seen.add(c.key)
-          }
-        clonedSet.controls = reordered
+        // No sibling re-insert: blend lives inside host keyframes
       }
       if (Array.isArray(cloned.clipInstances)) {
         cloned.clipInstances = (cloned.clipInstances as unknown[]).map((inst) => {
@@ -4855,7 +4846,6 @@ export class Engine {
                     ) as Record<string, import('./control').ControlBinding>,
                   }))
                 : undefined
-              const blendKeys = (control as unknown as { blendKeys?: readonly string[] }).blendKeys
               const baseControl = {
                 ...control,
                 min: 0 as const,
@@ -4863,7 +4853,6 @@ export class Engine {
                 bindings,
                 groups: parsedGroups as unknown as
                   readonly import('./control').ControlGroup[] | undefined,
-                blendKeys: blendKeys ? [...blendKeys] : undefined,
               } as unknown as import('./control').Control
               if ((baseControl as unknown as { groups?: unknown }).groups === undefined) {
                 return ensureControlGroups(baseControl)

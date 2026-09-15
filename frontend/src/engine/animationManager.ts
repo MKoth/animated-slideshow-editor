@@ -42,6 +42,7 @@ export interface PastePayloadKeyframe {
   readonly interpolation: InterpolationType
   readonly tangentIn: KeyframeTangent
   readonly tangentOut: KeyframeTangent
+  readonly blend?: readonly number[]
 }
 
 export interface PastePayload {
@@ -389,6 +390,8 @@ export class AnimationManager {
         interpolation,
         requireKeyframeTangent(entry.payload.tangentIn, 'Keyframe tangent in'),
         requireKeyframeTangent(entry.payload.tangentOut, 'Keyframe tangent out'),
+        false,
+        entry.payload.blend ? [...entry.payload.blend] : [],
       )
       if (resolved.track.kind === 'visible' || resolved.track.kind === 'zIndex') {
         keyframe.interpolation = 'hold'
@@ -442,6 +445,7 @@ export class AnimationManager {
         { time: source.tangentIn.time, value: source.tangentIn.value },
         { time: source.tangentOut.time, value: source.tangentOut.value },
         !!source.disabled,
+        source.blend.length > 0 ? [...source.blend] : [],
       )
       this.#addToTrack(resolved, keyframe)
       created.push(keyframe)

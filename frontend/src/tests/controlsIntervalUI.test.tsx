@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { EngineContext } from '../app/engineContext'
 import type { EngineContextValue } from '../app/engineContext'
@@ -13,7 +13,7 @@ import {
   ReorderControlBindingCommand,
   TransactionCommand,
 } from '../engine/commands'
-import { createControl, createControlSet } from '../engine/control'
+import { createControl, createControlSet, addGroupToControlSet } from '../engine/control'
 import { Keyframe } from '../engine/keyframe'
 import { packControlIntervalBlocks } from '../engine/animationManagerModel'
 import { requireKeyframeTarget } from '../engine/keyframeTarget'
@@ -50,8 +50,8 @@ beforeEach(() => {
   useTimelineViewStore.setState({ zoomLevel: 1, scrollTime: 0 })
 })
 
-describe('Clip Blocks Authoring UI — Bindings table, drill-in geometry & Priority drag', () => {
-  it('Animation Manager → Controls Bindings table shows [start,end] and Priority with up/down reorder and Add Block flow', async () => {
+describe('Clip Blocks Authoring UI — per-timeline lanes, drill-in geometry & Priority drag', () => {
+  it('Animation Manager → Controls shows one lane per timeline with blocks, reorder and Add Block here flow (no merged table)', async () => {
     const engine = createEngineInternal()
     const undo = new UndoStack()
     engine.createProject({ name: 'Demo' })
@@ -105,49 +105,59 @@ describe('Clip Blocks Authoring UI — Bindings table, drill-in geometry & Prior
     // Switch to Controls tab
     await user.click(within(modal).getByTestId('manager-tab-controls'))
     const controlSection = await screen.findByTestId('manager-control-Open')
-    // Check Bindings table exists with required columns
-    const table = within(controlSection).getByTestId('control-interval-table-Open')
-    expect(table).toBeInTheDocument()
-    // Header columns
-    expect(within(table).getByText('semanticName')).toBeInTheDocument()
-    expect(within(table).getByText('Clip / Duration')).toBeInTheDocument()
-    expect(within(table).getByText('[start, end]')).toBeInTheDocument()
-    expect(within(table).getByText('Priority')).toBeInTheDocument()
+    // No merged table anymore — each timeline owns its lane
+    expect(
+      within(controlSection).queryByTestId('control-interval-table-Open'),
+    ).not.toBeInTheDocument()
+    // One timeline with its own lane
+    const timelines = within(controlSection).getByTestId('manager-control-timelines-Open')
+    expect(within(timelines).getByTestId('manager-control-timeline-Open-0')).toBeInTheDocument()
+    expect(
+      within(timelines).queryByTestId('manager-control-timeline-Open-1'),
+    ).not.toBeInTheDocument()
+    const lane = within(timelines).getByTestId('control-interval-lane-inline-Open-g0')
+    expect(lane).toBeInTheDocument()
 
-    // Check rows show start,end and Priority
-    expect(within(table).getByTestId('control-interval-row-Open-mouth')).toBeInTheDocument()
-    expect(within(table).getByTestId('control-interval-start-Open-mouth').textContent).toBe('0.000')
-    expect(within(table).getByTestId('control-interval-end-Open-mouth').textContent).toBe('0.500')
-    expect(within(table).getByTestId('control-interval-row-Open-smile')).toBeInTheDocument()
-    expect(within(table).getByTestId('control-interval-priority-Open-mouth').textContent).toBe('0')
-    expect(within(table).getByTestId('control-interval-priority-Open-smile').textContent).toBe('1')
+    // Lane blocks show geometry via style (left/width on 0…1)
+    const mouthBlock = within(lane).getByTestId('clip-block-inline-Open-g0-mouth-0')
+    const smileBlock = within(lane).getByTestId('clip-block-inline-Open-g0-smile-1')
+    expect(mouthBlock).toBeInTheDocument()
+    expect(smileBlock).toBeInTheDocument()
+    expect(mouthBlock.style.left).toBe('0%')
+    expect(mouthBlock.style.width).toBe('50%')
+    expect(smileBlock.style.left).toBe('50%')
+    expect(smileBlock.style.width).toBe('50%')
+    // clip name shown on blocks
+    expect(within(lane).getByText(/Clip Mouth/)).toBeInTheDocument()
+    expect(within(lane).getByText(/Clip Smile/)).toBeInTheDocument()
 
-    // clip name/duration
-    expect(within(table).getByText(/Clip Mouth/)).toBeInTheDocument()
-    expect(within(table).getByText(/\(1s\)/)).toBeInTheDocument()
-    expect(within(table).getByText(/Clip Smile/)).toBeInTheDocument()
-    expect(within(table).getByText(/\(2s\)/)).toBeInTheDocument()
-
-    // Up/down reorder: mouth is index0, can go down but not up
-    const upMouth = within(table).getByTestId('control-interval-up-Open-mouth')
-    const downMouth = within(table).getByTestId('control-interval-down-Open-mouth')
-    expect(upMouth).toBeDisabled()
-    expect(downMouth).not.toBeDisabled()
-    // Reorder mouth down -> should become index1, smile index0
-    await user.click(downMouth)
-    // After reorder, check priority swapped
-    expect(within(table).getByTestId('control-interval-priority-Open-mouth').textContent).toBe('1')
-    expect(within(table).getByTestId('control-interval-priority-Open-smile').textContent).toBe('0')
+    // Reorder via engine (vertical drag in lane dispatches the same reorder):
+    // mouth index0 -> index1, smile index0
+    dispatcher.dispatch(
+      new ReorderControlBindingCommand({
+        nodeId: host.id,
+        controlKey: 'Open',
+        semanticName: 'mouth',
+        newIndex: 1,
+      }),
+    )
+    await new Promise((r) => setTimeout(r, 50))
     // Also insertion order: later wins -> mouth now last wins
     const rig = engine.getNode(host.id)!
     expect(Object.keys(rig.controlSet!.controls[0].bindings)).toEqual(['smile', 'mouth'])
+    // Lane reflects new order (mouth now second)
+    expect(within(lane).getByTestId('clip-block-inline-Open-g0-mouth-1')).toBeInTheDocument()
+    expect(within(lane).getByTestId('clip-block-inline-Open-g0-smile-0')).toBeInTheDocument()
 
-    // Add Block flow: pick clipId+semanticName, default [0,1] then resize
-    const addBtn = within(controlSection).getByTestId('control-add-block-Open')
+    // Add Block here flow: pick timeline + clipId + semanticName, default [0,1]
+    const addBtn = within(timelines).getByTestId('manager-control-add-block-here-Open-0')
     expect(addBtn).toBeInTheDocument()
     await user.click(addBtn)
     const dialog = within(controlSection).getByTestId('control-add-block-dialog-Open')
     expect(dialog).toBeInTheDocument()
+    // Timeline picker defaults to T1
+    const timelineSelect = within(dialog).getByTestId('control-add-block-timeline-Open')
+    expect(timelineSelect).toBeInTheDocument()
     const semanticInput = within(dialog).getByTestId('control-add-block-semantic-Open')
     const clipSelect = within(dialog).getByTestId('control-add-block-clip-Open')
     expect(semanticInput).toBeInTheDocument()
@@ -159,10 +169,11 @@ describe('Clip Blocks Authoring UI — Bindings table, drill-in geometry & Prior
     await user.type(semanticInput, 'extra')
     await user.selectOptions(clipSelect, clip1Id)
     await user.click(within(dialog).getByTestId('control-add-block-confirm-Open'))
-    // New binding should appear with default [0,1]
-    expect(within(table).getByTestId('control-interval-row-Open-extra')).toBeInTheDocument()
-    expect(within(table).getByTestId('control-interval-start-Open-extra').textContent).toBe('0.000')
-    expect(within(table).getByTestId('control-interval-end-Open-extra').textContent).toBe('1.000')
+    // New block should appear in T1's lane with default [0,1]
+    const extraBlock = within(lane).getByTestId('clip-block-inline-Open-g0-extra-2')
+    expect(extraBlock).toBeInTheDocument()
+    expect(extraBlock.style.left).toBe('0%')
+    expect(extraBlock.style.width).toBe('100%')
     // Undo should remove it (check engine, then UI after tick)
     undo.undo(engine)
     await new Promise((r) => setTimeout(r, 50))
@@ -170,6 +181,129 @@ describe('Clip Blocks Authoring UI — Bindings table, drill-in geometry & Prior
     // Terminology: should use Control Interval / Clip Block, not Control Lane
     expect(screen.queryByText(/Control Lane/)).not.toBeInTheDocument()
     expect(screen.getByText(/Control Interval/)).toBeInTheDocument()
+  })
+
+  it('Second timeline gets its own lane; Add Block here targets only that timeline', async () => {
+    const engine = createEngineInternal()
+    const undo = new UndoStack()
+    engine.createProject({ name: 'Demo' })
+    const slide = engine.createSlide('Slide 1')
+    const host = engine.createNode(slide.scene.id, slide.scene.root.id, 'Host')
+    const childA = engine.createNode(slide.scene.id, host.id, 'ChildA')
+    childA.semanticName = 'mouth'
+    const dispatcher = new CommandDispatcher(engine, undo, () => undefined)
+    const clip1 = dispatcher.dispatch(
+      new CreateClipCommand({
+        name: 'Clip Mouth',
+        duration: 1,
+        category: 'control',
+        params: [],
+        channels: [{ property: 'positionX' }],
+      }),
+    )
+    const clip1Id = clip1.ok
+      ? (clip1.inverse as unknown as { clipId: string }).clipId
+      : engine.clips[0]!.id
+
+    host.controlSet = createControlSet(host.id, [
+      createControl({
+        key: 'Open',
+        label: 'Open',
+        exposed: true,
+        bindings: { mouth: { clipId: clip1Id, start: 0, end: 0.5 } },
+      }),
+    ])
+
+    const user = userEvent.setup()
+    renderManager(engine, undo, host.id)
+    const modal = await screen.findByTestId('animation-manager-modal')
+    await user.click(within(modal).getByTestId('manager-tab-controls'))
+    const controlSection = await screen.findByTestId('manager-control-Open')
+    const timelines = within(controlSection).getByTestId('manager-control-timelines-Open')
+
+    // Add a second timeline
+    await user.click(within(timelines).getByTestId('manager-control-add-timeline-Open'))
+    const lane0 = within(timelines).getByTestId('control-interval-lane-inline-Open-g0')
+    const lane1 = within(timelines).getByTestId('control-interval-lane-inline-Open-g1')
+    expect(lane0).toBeInTheDocument()
+    expect(lane1).toBeInTheDocument()
+    // Existing block lives in T1 only
+    expect(within(lane0).getByTestId('clip-block-inline-Open-g0-mouth-0')).toBeInTheDocument()
+    expect(within(lane1).queryByTestId('clip-block-inline-Open-g1-mouth-0')).not.toBeInTheDocument()
+
+    // Add a block to T2 via its own button
+    await user.click(within(timelines).getByTestId('manager-control-add-block-here-Open-1'))
+    const dialog = within(controlSection).getByTestId('control-add-block-dialog-Open')
+    // Timeline picker preselected to T2 (second option)
+    const timelineSelect = within(dialog).getByTestId(
+      'control-add-block-timeline-Open',
+    ) as HTMLSelectElement
+    expect(timelineSelect.value).toBe(engine.getNode(host.id).controlSet!.controls[0].groups[1].id)
+    await user.type(within(dialog).getByTestId('control-add-block-semantic-Open'), 'mouth')
+    await user.selectOptions(within(dialog).getByTestId('control-add-block-clip-Open'), clip1Id)
+    await user.click(within(dialog).getByTestId('control-add-block-confirm-Open'))
+    // Block appears in T2's lane, T1 unchanged (still one block)
+    expect(within(lane1).getByTestId('clip-block-inline-Open-g1-mouth-0')).toBeInTheDocument()
+    expect(within(lane0).queryByTestId('clip-block-inline-Open-g0-mouth-1')).not.toBeInTheDocument()
+    const groups = engine.getNode(host.id).controlSet!.controls[0].groups
+    expect(Object.keys(groups[0].bindings)).toEqual(['mouth'])
+    expect(Object.keys(groups[1].bindings)).toEqual(['mouth'])
+  })
+
+  it('Right-click on a timeline block opens a context menu with Delete that removes only that block', async () => {
+    const engine = createEngineInternal()
+    const undo = new UndoStack()
+    engine.createProject({ name: 'Demo' })
+    const slide = engine.createSlide('Slide 1')
+    const host = engine.createNode(slide.scene.id, slide.scene.root.id, 'Host')
+    const childA = engine.createNode(slide.scene.id, host.id, 'ChildA')
+    childA.semanticName = 'mouth'
+    const dispatcher = new CommandDispatcher(engine, undo, () => undefined)
+    const clip1 = dispatcher.dispatch(
+      new CreateClipCommand({
+        name: 'Clip Mouth',
+        duration: 1,
+        category: 'control',
+        params: [],
+        channels: [{ property: 'positionX' }],
+      }),
+    )
+    const clip1Id = clip1.ok
+      ? (clip1.inverse as unknown as { clipId: string }).clipId
+      : engine.clips[0]!.id
+
+    let cs = createControlSet(host.id, [
+      createControl({
+        key: 'Open',
+        label: 'Open',
+        exposed: true,
+        bindings: { mouth: { clipId: clip1Id, start: 0, end: 0.5 } },
+      }),
+    ])
+    cs = addGroupToControlSet(cs, 'Open', 'T2')
+    host.controlSet = cs
+
+    const user = userEvent.setup()
+    renderManager(engine, undo, host.id)
+    const modal = await screen.findByTestId('animation-manager-modal')
+    await user.click(within(modal).getByTestId('manager-tab-controls'))
+    const timelines = await screen.findByTestId('manager-control-timelines-Open')
+    const lane0 = within(timelines).getByTestId('control-interval-lane-inline-Open-g0')
+    const block = within(lane0).getByTestId('clip-block-inline-Open-g0-mouth-0')
+
+    // No menu initially
+    expect(within(modal).queryByTestId('control-block-context-menu')).not.toBeInTheDocument()
+    fireEvent.contextMenu(block, { clientX: 100, clientY: 100 })
+    const menu = await within(modal).findByTestId('control-block-context-menu')
+    expect(menu).toBeInTheDocument()
+    await user.click(within(menu).getByTestId('control-block-delete'))
+
+    // Only that block removed from T1; menu closed
+    expect(engine.getNode(host.id).controlSet!.controls[0].groups[0].bindings).toEqual({})
+    expect(
+      within(timelines).queryByTestId('clip-block-inline-Open-g0-mouth-0'),
+    ).not.toBeInTheDocument()
+    expect(within(modal).queryByTestId('control-block-context-menu')).not.toBeInTheDocument()
   })
 
   it('Drill-in Clip Blocks render at left=start*pps width=(end-start)*pps and support drag move (preserve width) and edge resize (span≥1e-6 guard, overlap allowed)', async () => {

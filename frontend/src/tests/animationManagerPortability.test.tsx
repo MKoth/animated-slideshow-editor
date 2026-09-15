@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { EngineContext } from '../app/engineContext'
 import type { EngineContextValue } from '../app/engineContext'
@@ -63,7 +63,8 @@ describe('15-07 Manager portability via dropdown and export', () => {
     const exportBtn = within(modal).getByTestId('manager-export-object')
     expect(exportBtn).toBeInTheDocument()
     expect(exportBtn).toHaveTextContent('Export .lesson_object')
-    // Dropdown section should exist
+    // Dropdown section lives on the collections tab only
+    fireEvent.click(within(modal).getByTestId('manager-tab-collections'))
     const section = within(modal).getByTestId('collection-lanes-section')
     expect(section).toBeInTheDocument()
     const select = within(section).getByTestId('place-collection-select')
@@ -77,8 +78,7 @@ describe('15-07 Manager portability via dropdown and export', () => {
     // Selecting collection enables button
     // Simulate change event
     const colId = engine.clipCollections[0]!.id
-    // Use fireEvent to change
-    const { fireEvent } = await import('@testing-library/react')
+    // Simulate change event
     fireEvent.change(select, { target: { value: colId } })
     expect(placeBtn).toBeEnabled()
   })
