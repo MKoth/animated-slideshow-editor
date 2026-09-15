@@ -4958,7 +4958,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               boxSizing: 'border-box',
             }}
           >
-            {/* Time ruler – orphan proportional (keep diamond distribution, same pps/step as slide) */}
+            {/* Time ruler – orphan proportional – aligned to diamond area (left offset matches param label column) */}
             {activeTab === 'orphans' && orphanTimelineBounds && (
               <div
                 style={{
@@ -4966,64 +4966,71 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   flexShrink: 0,
                   borderBottom: '1px solid var(--color-border, #ddd)',
                   width: '100%',
+                  display: 'flex',
+                  alignItems: 'stretch',
+                  gap: 12,
+                  padding: '0 12px 0 32px',
+                  boxSizing: 'border-box',
+                  background: 'var(--color-bg, #fff)',
                 }}
               >
-                <div style={{ width: '100%', marginLeft: 0, boxSizing: 'border-box' }}>
+                <div aria-hidden="true" style={{ flex: '0 0 140px' }} />
+                <div
+                  style={{
+                    position: 'relative',
+                    flex: '1 1 0',
+                    minWidth: 0,
+                    height: 22,
+                    borderBottom: '1px solid var(--color-border, #ddd)',
+                    background: 'var(--color-bg, #fff)',
+                    overflow: 'hidden',
+                  }}
+                  data-testid="orphan-ruler"
+                >
+                  {(() => {
+                    const span = orphanTimelineBounds
+                      ? orphanTimelineBounds.span
+                      : (activeSlide?.duration ?? 10)
+                    const step = rulerTickStep(pps)
+                    const ticks = rulerTickTimes(0, span, step)
+                    return ticks.map((time) => (
+                      <div
+                        key={time}
+                        data-testid={`orphan-ruler-tick-${time}`}
+                        style={{
+                          position: 'absolute',
+                          left: `${(time / span) * 100}%`,
+                          top: 0,
+                          bottom: 0,
+                          borderLeft: '1px solid var(--color-border, #ddd)',
+                          fontSize: 9,
+                          color: 'var(--color-text-muted, #666)',
+                          paddingLeft: 3,
+                          display: 'flex',
+                          alignItems: 'center',
+                          pointerEvents: 'none',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {tickLabel(time, step)}s
+                      </div>
+                    ))
+                  })()}
                   <div
+                    data-testid="manager-orphan-ruler-playhead"
                     style={{
-                      position: 'relative',
-                      width: '100%',
-                      height: 22,
-                      borderBottom: '1px solid var(--color-border, #ddd)',
-                      background: 'var(--color-bg, #fff)',
-                      overflow: 'hidden',
+                      position: 'absolute',
+                      left: `${orphanTimelineBounds ? (currentPlayheadTime / orphanTimelineBounds.span) * 100 : 0}%`,
+                      top: 0,
+                      bottom: 0,
+                      width: 1,
+                      background: 'var(--color-accent, #ff3b30)',
+                      pointerEvents: 'none',
+                      zIndex: 20,
                     }}
-                    data-testid="orphan-ruler"
-                  >
-                    {(() => {
-                      const span = orphanTimelineBounds
-                        ? orphanTimelineBounds.span
-                        : (activeSlide?.duration ?? 10)
-                      const step = rulerTickStep(pps)
-                      const ticks = rulerTickTimes(0, span, step)
-                      return ticks.map((time) => (
-                        <div
-                          key={time}
-                          data-testid={`orphan-ruler-tick-${time}`}
-                          style={{
-                            position: 'absolute',
-                            left: `${(time / span) * 100}%`,
-                            top: 0,
-                            bottom: 0,
-                            borderLeft: '1px solid var(--color-border, #ddd)',
-                            fontSize: 9,
-                            color: 'var(--color-text-muted, #666)',
-                            paddingLeft: 3,
-                            display: 'flex',
-                            alignItems: 'center',
-                            pointerEvents: 'none',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {tickLabel(time, step)}s
-                        </div>
-                      ))
-                    })()}
-                    <div
-                      data-testid="manager-orphan-ruler-playhead"
-                      style={{
-                        position: 'absolute',
-                        left: `${orphanTimelineBounds ? (currentPlayheadTime / orphanTimelineBounds.span) * 100 : 0}%`,
-                        top: 0,
-                        bottom: 0,
-                        width: 1,
-                        background: 'var(--color-accent, #ff3b30)',
-                        pointerEvents: 'none',
-                        zIndex: 20,
-                      }}
-                    />
-                  </div>
+                  />
                 </div>
+                <div aria-hidden="true" style={{ flex: '0 0 48px' }} />
               </div>
             )}
             {/* Time ruler – clips tab global slide ruler (above rows, sticky) */}
@@ -5593,8 +5600,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                         data-testid={`manager-orphan-diamonds-${row.node.id}-${param.key}`}
                                         style={{
                                           position: 'relative',
-                                          flexShrink: 0,
-                                          width: '100%',
+                                          flex: '1 1 0',
+                                          minWidth: 0,
                                           height: 16,
                                           background: 'rgba(124,92,255,0.04)',
                                           border: '1px solid rgba(124,92,255,0.12)',
