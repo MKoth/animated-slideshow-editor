@@ -3067,7 +3067,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   border: 'none',
                   background:
                     activeTab === 'collections' ? 'var(--color-accent, #7c5cff)' : 'transparent',
-                  color: activeTab === 'collections' ? '#fff' : 'var(--color-text-muted, #666)',
+                  color:
+                    activeTab === 'collections'
+                      ? 'var(--color-accent-text, #fff)'
+                      : 'var(--color-text-muted, #666)',
                 }}
               >
                 Collections
@@ -3085,7 +3088,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   border: 'none',
                   background:
                     activeTab === 'clips' ? 'var(--color-accent, #7c5cff)' : 'transparent',
-                  color: activeTab === 'clips' ? '#fff' : 'var(--color-text-muted, #666)',
+                  color:
+                    activeTab === 'clips'
+                      ? 'var(--color-accent-text, #fff)'
+                      : 'var(--color-text-muted, #666)',
                 }}
               >
                 Clips
@@ -3103,7 +3109,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   border: 'none',
                   background:
                     activeTab === 'controls' ? 'var(--color-accent, #7c5cff)' : 'transparent',
-                  color: activeTab === 'controls' ? '#fff' : 'var(--color-text-muted, #666)',
+                  color:
+                    activeTab === 'controls'
+                      ? 'var(--color-accent-text, #fff)'
+                      : 'var(--color-text-muted, #666)',
                 }}
               >
                 Controls
@@ -3124,7 +3133,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   border: 'none',
                   background:
                     activeTab === 'orphans' ? 'var(--color-accent, #7c5cff)' : 'transparent',
-                  color: activeTab === 'orphans' ? '#fff' : 'var(--color-text-muted, #666)',
+                  color:
+                    activeTab === 'orphans'
+                      ? 'var(--color-accent-text, #fff)'
+                      : 'var(--color-text-muted, #666)',
                 }}
               >
                 Orphans
@@ -3155,8 +3167,14 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     fontSize: 12,
                     opacity: selectedClipIds.size > 0 ? 1 : 0.6,
                     border: '1px solid var(--color-border, #ddd)',
-                    background: selectedClipIds.size > 0 ? 'var(--color-accent, #7c5cff)' : '#eee',
-                    color: selectedClipIds.size > 0 ? '#fff' : '#999',
+                    background:
+                      selectedClipIds.size > 0
+                        ? 'var(--color-accent, #7c5cff)'
+                        : 'var(--color-bg-elevated, #eceef1)',
+                    color:
+                      selectedClipIds.size > 0
+                        ? 'var(--color-accent-text, #fff)'
+                        : 'var(--color-text-muted, #666)',
                   }}
                 >
                   Add Control from selection
@@ -3169,8 +3187,12 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     padding: '6px 12px',
                     borderRadius: 4,
                     border: '1px solid var(--color-border, #ddd)',
-                    background: authoringMode ? 'var(--color-accent, #7c5cff)' : '#fff',
-                    color: authoringMode ? '#fff' : 'var(--color-text-muted, #666)',
+                    background: authoringMode
+                      ? 'var(--color-accent, #7c5cff)'
+                      : 'var(--color-bg-panel, #fff)',
+                    color: authoringMode
+                      ? 'var(--color-accent-text, #fff)'
+                      : 'var(--color-text-muted, #666)',
                     fontSize: 12,
                     cursor: 'pointer',
                   }}
@@ -3193,8 +3215,14 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   padding: '6px 12px',
                   borderRadius: 4,
                   border: '1px solid var(--color-border, #ddd)',
-                  background: selectedOrphanIds.size > 0 ? 'var(--color-accent, #7c5cff)' : '#eee',
-                  color: selectedOrphanIds.size > 0 ? '#fff' : '#999',
+                  background:
+                    selectedOrphanIds.size > 0
+                      ? 'var(--color-accent, #7c5cff)'
+                      : 'var(--color-bg-elevated, #eceef1)',
+                  color:
+                    selectedOrphanIds.size > 0
+                      ? 'var(--color-accent-text, #fff)'
+                      : 'var(--color-text-muted, #666)',
                   cursor: selectedOrphanIds.size > 0 ? 'pointer' : 'default',
                   fontSize: 12,
                   opacity: selectedOrphanIds.size > 0 ? 1 : 0.6,
@@ -3231,8 +3259,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     background:
                       selectedClipIds.size > 0 && !collectionBlockingError
                         ? 'var(--color-accent, #7c5cff)'
-                        : '#eee',
-                    color: selectedClipIds.size > 0 && !collectionBlockingError ? '#fff' : '#999',
+                        : 'var(--color-bg-elevated, #eceef1)',
+                    color:
+                      selectedClipIds.size > 0 && !collectionBlockingError
+                        ? 'var(--color-accent-text, #fff)'
+                        : 'var(--color-text-muted, #666)',
                     cursor:
                       selectedClipIds.size > 0 && !collectionBlockingError ? 'pointer' : 'default',
                     fontSize: 12,
@@ -3261,9 +3292,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             data-testid="orphan-scope-message"
             style={{
               fontSize: 12,
-              color: 'var(--color-error, #d00)',
-              background: '#fff0f0',
-              border: '1px solid #ffcccc',
+              color: 'var(--color-danger, #c00)',
+              background: 'color-mix(in srgb, var(--color-danger) 10%, var(--color-bg-panel))',
+              border: '1px solid color-mix(in srgb, var(--color-danger) 30%, var(--color-border))',
               padding: '6px 8px',
               borderRadius: 4,
             }}
@@ -3401,6 +3432,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     padding: '4px 6px',
                     borderRadius: 4,
                     border: '1px solid var(--color-border, #ddd)',
+                    background: 'var(--color-bg, #fff)',
+                    color: 'var(--color-text, #1c1e21)',
                     fontSize: 12,
                   }}
                 >
@@ -3440,8 +3473,12 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     padding: '4px 10px',
                     borderRadius: 4,
                     border: '1px solid var(--color-border, #ddd)',
-                    background: placeCollectionId ? 'var(--color-accent, #7c5cff)' : '#eee',
-                    color: placeCollectionId ? '#fff' : '#999',
+                    background: placeCollectionId
+                      ? 'var(--color-accent, #7c5cff)'
+                      : 'var(--color-bg-elevated, #eceef1)',
+                    color: placeCollectionId
+                      ? 'var(--color-accent-text, #fff)'
+                      : 'var(--color-text-muted, #666)',
                     cursor: placeCollectionId ? 'pointer' : 'default',
                     fontSize: 12,
                   }}
@@ -3728,7 +3765,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                   textOverflow: 'ellipsis',
                                   flex: 1,
                                   pointerEvents: 'none',
-                                  color: isSelected ? '#fff' : '#2e2e2e',
+                                  color: isSelected ? 'var(--color-accent-text, #fff)' : '#2e2e2e',
                                 }}
                               >
                                 {lane.collection.name}
@@ -4158,7 +4195,12 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     {/* Priority stacking hint */}
                     {packed.length === 0 && (
                       <div
-                        style={{ padding: 12, fontSize: 11, color: '#888', fontStyle: 'italic' }}
+                        style={{
+                          padding: 12,
+                          fontSize: 11,
+                          color: 'var(--color-text-muted, #888)',
+                          fontStyle: 'italic',
+                        }}
                       >
                         No Clip Blocks — Add Block [0,1] then resize
                       </div>
@@ -4178,7 +4220,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     style={{
                       padding: '6px 12px',
                       borderRadius: 4,
-                      border: '1px solid #ddd',
+                      border: '1px solid var(--color-border, #ddd)',
                       cursor: 'pointer',
                       fontSize: 12,
                     }}
@@ -4186,7 +4228,12 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     Done
                   </button>
                   <span
-                    style={{ fontSize: 11, color: '#666', display: 'flex', alignItems: 'center' }}
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--color-text-muted, #666)',
+                      display: 'flex',
+                      alignItems: 'center',
+                    }}
                   >
                     Edits dispatch definition commands (Control Interval) grouped as Transactions
                     with undo/redo — no new KeyframeTarget kinds
@@ -4336,6 +4383,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                           padding: '6px 8px',
                           borderRadius: 4,
                           border: '1px solid var(--color-border, #ddd)',
+                          background: 'var(--color-bg, #fff)',
+                          color: 'var(--color-text, #1c1e21)',
                           fontSize: 13,
                         }}
                         autoFocus
@@ -4350,7 +4399,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                           padding: '5px 10px',
                           borderRadius: 4,
                           background: 'var(--color-accent, #7c5cff)',
-                          color: '#fff',
+                          color: 'var(--color-accent-text, #fff)',
                           border: 'none',
                           cursor: 'pointer',
                           fontSize: 12,
@@ -4424,7 +4473,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                           color: 'var(--color-danger, #c00)',
                           cursor: 'pointer',
                           fontSize: 12,
-                          background: '#fff',
+                          background: 'var(--color-bg-panel, #fff)',
                         }}
                       >
                         Delete
@@ -4490,10 +4539,13 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         alignItems: 'center',
                         gap: 8,
                         padding: '6px 8px',
-                        background: '#fff0f0',
-                        border: '1px solid #ffcccc',
+                        background:
+                          'color-mix(in srgb, var(--color-danger) 10%, var(--color-bg-panel))',
+                        border:
+                          '1px solid color-mix(in srgb, var(--color-danger) 30%, var(--color-border))',
                         borderRadius: 4,
                         fontSize: 12,
+                        color: 'var(--color-text, #1c1e21)',
                       }}
                     >
                       <span>
@@ -4506,8 +4558,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         style={{
                           padding: '4px 10px',
                           borderRadius: 4,
-                          background: '#c00',
-                          color: '#fff',
+                          background: 'var(--color-danger, #c00)',
+                          color: 'var(--color-accent-text, #fff)',
                           border: 'none',
                           cursor: 'pointer',
                           fontSize: 12,
@@ -4579,17 +4631,19 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                               fontSize: 11,
                               fontFamily: 'monospace',
                               background: isZero
-                                ? '#ffe0e0'
+                                ? 'color-mix(in srgb, var(--color-danger) 12%, var(--color-bg-panel))'
                                 : isHovered
-                                  ? '#e0e7ff'
-                                  : 'var(--color-bg, #fafafa)',
-                              border: `1px solid ${isZero ? '#ff9999' : isHovered ? '#7c5cff' : 'var(--color-border, #ddd)'}`,
+                                  ? 'color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-panel))'
+                                  : 'var(--color-bg-elevated, #eceef1)',
+                              border: `1px solid ${isZero ? 'var(--color-danger, #c00)' : isHovered ? 'var(--color-accent, #7c5cff)' : 'var(--color-border, #ddd)'}`,
                               borderRadius: 4,
                               padding: '2px 6px',
                               display: 'inline-flex',
                               alignItems: 'center',
                               gap: 6,
-                              color: isZero ? '#900' : 'inherit',
+                              color: isZero
+                                ? 'var(--color-danger, #900)'
+                                : 'var(--color-text, #1c1e21)',
                             }}
                           >
                             <span style={{ fontWeight: isHovered ? 600 : 400 }}>
@@ -4600,8 +4654,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                               data-testid={`manager-control-binding-count-${control.key}-${sem}-${index}`}
                               style={{
                                 fontSize: 10,
-                                background: isZero ? '#c00' : 'var(--color-accent, #7c5cff)',
-                                color: '#fff',
+                                background: isZero
+                                  ? 'var(--color-danger, #c00)'
+                                  : 'var(--color-accent, #7c5cff)',
+                                color: 'var(--color-accent-text, #fff)',
                                 borderRadius: 10,
                                 padding: '1px 5px',
                               }}
@@ -4796,7 +4852,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                 }}
                                 style={{
                                   background:
-                                    hoveredBindingSemantic === sem ? '#eef2ff' : 'transparent',
+                                    hoveredBindingSemantic === sem
+                                      ? 'color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-panel))'
+                                      : 'transparent',
                                 }}
                                 onMouseEnter={() => handleBindingHoverEnter(sem)}
                                 onMouseLeave={handleBindingHoverLeave}
@@ -4804,19 +4862,24 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                 <td
                                   style={{
                                     padding: '6px 8px',
-                                    borderBottom: '1px solid #eee',
+                                    borderBottom: '1px solid var(--color-border, #eee)',
                                     fontFamily: 'monospace',
                                   }}
                                 >
                                   {sem}
                                 </td>
-                                <td style={{ padding: '6px 8px', borderBottom: '1px solid #eee' }}>
+                                <td
+                                  style={{
+                                    padding: '6px 8px',
+                                    borderBottom: '1px solid var(--color-border, #eee)',
+                                  }}
+                                >
                                   {clipName} ({duration}s)
                                 </td>
                                 <td
                                   style={{
                                     padding: '6px 8px',
-                                    borderBottom: '1px solid #eee',
+                                    borderBottom: '1px solid var(--color-border, #eee)',
                                     fontFamily: 'monospace',
                                   }}
                                 >
@@ -4838,6 +4901,15 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                       value={interval.start}
                                       aria-label={`Control Interval start for ${sem}`}
                                       data-testid={`control-interval-start-input-${control.key}-${sem}`}
+                                      style={{
+                                        width: 60,
+                                        padding: '2px 4px',
+                                        fontSize: 11,
+                                        border: '1px solid var(--color-border, #ddd)',
+                                        borderRadius: 4,
+                                        background: 'var(--color-bg, #fff)',
+                                        color: 'var(--color-text, #1c1e21)',
+                                      }}
                                       onChange={(e) => {
                                         const v = Number(e.target.value)
                                         if (!Number.isFinite(v)) return
@@ -4913,7 +4985,6 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                         if (!res.ok) notify(res.error.message)
                                         else setTick((t) => t + 1)
                                       }}
-                                      style={{ width: 60, padding: '2px 4px', fontSize: 11 }}
                                     />
                                     <input
                                       type="number"
@@ -4997,11 +5068,24 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                         if (!res.ok) notify(res.error.message)
                                         else setTick((t) => t + 1)
                                       }}
-                                      style={{ width: 60, padding: '2px 4px', fontSize: 11 }}
+                                      style={{
+                                        width: 60,
+                                        padding: '2px 4px',
+                                        fontSize: 11,
+                                        border: '1px solid var(--color-border, #ddd)',
+                                        borderRadius: 4,
+                                        background: 'var(--color-bg, #fff)',
+                                        color: 'var(--color-text, #1c1e21)',
+                                      }}
                                     />
                                   </span>
                                 </td>
-                                <td style={{ padding: '6px 8px', borderBottom: '1px solid #eee' }}>
+                                <td
+                                  style={{
+                                    padding: '6px 8px',
+                                    borderBottom: '1px solid var(--color-border, #eee)',
+                                  }}
+                                >
                                   <span
                                     data-testid={`control-interval-priority-${control.key}-${sem}`}
                                   >
@@ -5012,7 +5096,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                 <td
                                   style={{
                                     padding: '6px 8px',
-                                    borderBottom: '1px solid #eee',
+                                    borderBottom: '1px solid var(--color-border, #eee)',
                                     whiteSpace: 'nowrap',
                                   }}
                                 >
@@ -5523,7 +5607,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                   style={{
                                     padding: 12,
                                     fontSize: 11,
-                                    color: '#888',
+                                    color: 'var(--color-text-muted, #888)',
                                     fontStyle: 'italic',
                                   }}
                                 >
@@ -5557,7 +5641,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         borderRadius: 4,
                         border: '1px solid var(--color-accent, #7c5cff)',
                         background: 'var(--color-accent, #7c5cff)',
-                        color: '#fff',
+                        color: 'var(--color-accent-text, #fff)',
                         cursor: 'pointer',
                         fontSize: 11,
                       }}
@@ -5576,7 +5660,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         padding: 8,
                         border: '1px solid var(--color-accent, #7c5cff)',
                         borderRadius: 6,
-                        background: '#f8f7ff',
+                        background: 'var(--color-bg-elevated, #f8f7ff)',
                         display: 'flex',
                         flexDirection: 'column',
                         gap: 6,
@@ -5604,7 +5688,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                             padding: '4px 6px',
                             fontSize: 11,
                             borderRadius: 4,
-                            border: '1px solid #ddd',
+                            border: '1px solid var(--color-border, #ddd)',
+                            background: 'var(--color-bg, #fff)',
+                            color: 'var(--color-text, #1c1e21)',
                           }}
                         />
                         <datalist id={`semantic-list-${control.key}`}>
@@ -5626,7 +5712,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                             padding: '4px 6px',
                             fontSize: 11,
                             borderRadius: 4,
-                            border: '1px solid #ddd',
+                            border: '1px solid var(--color-border, #ddd)',
+                            background: 'var(--color-bg, #fff)',
+                            color: 'var(--color-text, #1c1e21)',
                           }}
                         >
                           <option value="">Select clip…</option>
@@ -5640,7 +5728,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                       {addBlockDialog.error && (
                         <div
                           data-testid={`control-add-block-error-${control.key}`}
-                          style={{ fontSize: 11, color: '#c00' }}
+                          style={{ fontSize: 11, color: 'var(--color-danger, #c00)' }}
                         >
                           {addBlockDialog.error}
                         </div>
@@ -5653,7 +5741,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                             padding: '4px 8px',
                             fontSize: 11,
                             borderRadius: 4,
-                            border: '1px solid #ddd',
+                            border: '1px solid var(--color-border, #ddd)',
+                            background: 'var(--color-bg-panel, #fff)',
+                            color: 'var(--color-text, #1c1e21)',
                             cursor: 'pointer',
                           }}
                         >
@@ -5667,7 +5757,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                             fontSize: 11,
                             borderRadius: 4,
                             background: 'var(--color-accent, #7c5cff)',
-                            color: '#fff',
+                            color: 'var(--color-accent-text, #fff)',
                             border: 'none',
                             cursor: 'pointer',
                           }}
@@ -5694,8 +5784,13 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         cursor: selectedClipIds.size > 0 ? 'pointer' : 'default',
                         fontSize: 11,
                         background:
-                          selectedClipIds.size > 0 ? 'var(--color-accent, #7c5cff)' : '#eee',
-                        color: selectedClipIds.size > 0 ? '#fff' : '#999',
+                          selectedClipIds.size > 0
+                            ? 'var(--color-accent, #7c5cff)'
+                            : 'var(--color-bg-elevated, #eceef1)',
+                        color:
+                          selectedClipIds.size > 0
+                            ? 'var(--color-accent-text, #fff)'
+                            : 'var(--color-text-muted, #666)',
                         opacity: selectedClipIds.size > 0 ? 1 : 0.6,
                       }}
                     >
@@ -5736,7 +5831,15 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                           'Select semantic name for the clip — if you cancel, it will not be attached',
                         )
                       }}
-                      style={{ padding: '4px 6px', borderRadius: 4, fontSize: 11, minWidth: 160 }}
+                      style={{
+                        padding: '4px 6px',
+                        borderRadius: 4,
+                        fontSize: 11,
+                        minWidth: 160,
+                        border: '1px solid var(--color-border, #ddd)',
+                        background: 'var(--color-bg, #fff)',
+                        color: 'var(--color-text, #1c1e21)',
+                      }}
                     >
                       <option value="">Bind clip…</option>
                       {availableClipsForBinding.map((c) => (
@@ -5746,7 +5849,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                       ))}
                     </select>
                     {flatBindings.length === 0 && (
-                      <span style={{ fontSize: 11, color: '#b45309' }}>
+                      <span style={{ fontSize: 11, color: 'var(--color-warning, #b45309)' }}>
                         Control does nothing until bound to a clip
                       </span>
                     )}
@@ -5851,7 +5954,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                             color: 'var(--color-danger, #c00)',
                             fontSize: 12,
                             cursor: 'pointer',
-                            background: '#fff',
+                            background: 'var(--color-bg-panel, #fff)',
                           }}
                         >
                           Delete
@@ -6312,12 +6415,12 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                       ? isSelected
                                         ? 'var(--color-accent, #7c5cff)'
                                         : '#b8a6ff'
-                                      : '#e5e5e5',
+                                      : 'var(--color-bg-elevated, #e5e5e5)',
                                   border: isHighlighted
                                     ? '2px solid #b38f00'
                                     : isEnabled
                                       ? `1px solid ${isSelected ? '#4c1d95' : '#7c5cff'}`
-                                      : '1px dashed #888',
+                                      : '1px dashed var(--color-border, #888)',
                                   borderRadius: 4,
                                   opacity: isEnabled ? 1 : 0.5,
                                   display: 'flex',
@@ -6470,9 +6573,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                         pointerEvents: 'none',
                                         color: isEnabled
                                           ? isSelected
-                                            ? '#fff'
+                                            ? 'var(--color-accent-text, #fff)'
                                             : '#2e2e2e'
-                                          : '#666',
+                                          : 'var(--color-text-muted, #666)',
                                       }}
                                     >
                                       {lane.clip.name}
@@ -7128,7 +7231,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 {selectedClipIds.size} lane(s) selected
               </div>
               <div
-                style={{ fontSize: 11, color: '#666', marginBottom: 8 }}
+                style={{ fontSize: 11, color: 'var(--color-text-muted, #666)', marginBottom: 8 }}
                 data-testid="create-collection-preview-info"
               >
                 {collectionBindingsPreview.length} binding(s) preview · {selectedClipIds.size}{' '}
@@ -7272,6 +7375,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     padding: '6px 8px',
                     borderRadius: 4,
                     border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg, #fff)',
+                    color: 'var(--color-text, #1c1e21)',
                   }}
                   data-testid="create-collection-name-input"
                   autoFocus
@@ -7318,8 +7423,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     padding: '6px 12px',
                     borderRadius: 4,
                     border: '1px solid transparent',
-                    background: canCreateCollection ? '#7c5cff' : '#9a9a9a',
-                    color: '#fff',
+                    background: canCreateCollection
+                      ? '#7c5cff'
+                      : 'var(--color-bg-elevated, #9a9a9a)',
+                    color: 'var(--color-accent-text, #fff)',
                     cursor: canCreateCollection ? 'pointer' : 'not-allowed',
                   }}
                   data-testid="create-collection-confirm"
@@ -7382,6 +7489,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     padding: '6px 8px',
                     borderRadius: 4,
                     border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg, #fff)',
+                    color: 'var(--color-text, #1c1e21)',
                   }}
                   data-testid="edit-collection-name-input"
                 />
@@ -7404,7 +7513,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   }}
                 >
                   {Object.entries(editingBindingsDraft).length === 0 && (
-                    <div style={{ fontSize: 12, color: '#888' }}>No bindings</div>
+                    <div style={{ fontSize: 12, color: 'var(--color-text-muted, #888)' }}>
+                      No bindings
+                    </div>
                   )}
                   {Object.entries(editingBindingsDraft).map(([sem, clipId]) => {
                     let clipName: string
@@ -7422,7 +7533,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         <span style={{ fontFamily: 'monospace', fontSize: 12, flex: 1 }}>
                           {sem} → {clipName} ({clipId.slice(0, 6)})
                         </span>
-                        <span style={{ fontSize: 11, color: '#666' }}>{clipId.slice(0, 8)}</span>
+                        <span style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
+                          {clipId.slice(0, 8)}
+                        </span>
                         <button
                           onClick={() => {
                             const next = { ...editingBindingsDraft }
@@ -7432,11 +7545,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                           style={{
                             padding: '2px 6px',
                             borderRadius: 4,
-                            border: '1px solid #c00',
-                            color: '#c00',
+                            border: '1px solid var(--color-danger, #c00)',
+                            color: 'var(--color-danger, #c00)',
                             fontSize: 11,
                             cursor: 'pointer',
-                            background: '#fff',
+                            background: 'var(--color-bg-panel, #fff)',
                           }}
                           data-testid={`edit-binding-remove-${sem}`}
                         >
@@ -7499,8 +7612,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     padding: '6px 12px',
                     borderRadius: 4,
                     border: '1px solid transparent',
-                    background: '#7c5cff',
-                    color: '#fff',
+                    background: 'var(--color-accent, #7c5cff)',
+                    color: 'var(--color-accent-text, #fff)',
                     cursor: 'pointer',
                   }}
                   data-testid="edit-collection-confirm"
@@ -7564,9 +7677,13 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     )
                     const shared = ids.length - exclusive.length
                     if (ids.length === 0)
-                      return <span style={{ fontSize: 11, color: '#666' }}>No clips bound.</span>
+                      return (
+                        <span style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
+                          No clips bound.
+                        </span>
+                      )
                     return (
-                      <span style={{ fontSize: 11, color: '#b45309' }}>
+                      <span style={{ fontSize: 11, color: 'var(--color-warning, #b45309)' }}>
                         This will also delete {exclusive.length} clip(s) bound to this collection
                         {shared > 0 ? ` (${shared} shared clip(s) will be kept)` : ''}.
                         <br />
@@ -7575,7 +7692,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     )
                   } catch {
                     return (
-                      <span style={{ fontSize: 11, color: '#666' }}>
+                      <span style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
                         Collection clips will be deleted.
                       </span>
                     )
@@ -7599,9 +7716,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   style={{
                     padding: '6px 12px',
                     borderRadius: 4,
-                    border: '1px solid #c00',
-                    background: '#c00',
-                    color: '#fff',
+                    border: '1px solid var(--color-danger, #c00)',
+                    background: 'var(--color-danger, #c00)',
+                    color: 'var(--color-accent-text, #fff)',
                   }}
                   data-testid="delete-collection-confirm"
                 >
@@ -7664,6 +7781,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     padding: '6px 8px',
                     borderRadius: 4,
                     border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg, #fff)',
+                    color: 'var(--color-text, #1c1e21)',
                   }}
                   data-testid="reverse-clip-name-input"
                   onKeyDown={(e) => {
@@ -7755,8 +7874,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     padding: '6px 12px',
                     borderRadius: 4,
                     border: '1px solid transparent',
-                    background: '#7c5cff',
-                    color: '#fff',
+                    background: 'var(--color-accent, #7c5cff)',
+                    color: 'var(--color-accent-text, #fff)',
                   }}
                   data-testid="reverse-clip-confirm"
                 >
@@ -7817,6 +7936,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     padding: '6px 8px',
                     borderRadius: 4,
                     border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg, #fff)',
+                    color: 'var(--color-text, #1c1e21)',
                   }}
                   data-testid="reverse-collection-name-input"
                   onKeyDown={(e) => {
@@ -7874,8 +7995,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     padding: '6px 12px',
                     borderRadius: 4,
                     border: '1px solid transparent',
-                    background: '#7c5cff',
-                    color: '#fff',
+                    background: 'var(--color-accent, #7c5cff)',
+                    color: 'var(--color-accent-text, #fff)',
                   }}
                   data-testid="reverse-collection-confirm"
                 >
@@ -7894,7 +8015,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               fontSize: 11,
               fontFamily: 'monospace',
               background: 'rgba(0,0,0,0.85)',
-              color: '#fff',
+              color: 'var(--color-accent-text, #fff)',
               padding: '4px 8px',
               borderRadius: 4,
               alignSelf: 'flex-start',
@@ -7939,6 +8060,8 @@ function AddBindingRow({
           padding: '4px 6px',
           borderRadius: 4,
           border: '1px solid var(--color-border)',
+          background: 'var(--color-bg, #fff)',
+          color: 'var(--color-text, #1c1e21)',
           fontSize: 12,
         }}
         data-testid="add-binding-semantic-input"
@@ -7951,6 +8074,8 @@ function AddBindingRow({
           padding: '4px 6px',
           borderRadius: 4,
           border: '1px solid var(--color-border)',
+          background: 'var(--color-bg, #fff)',
+          color: 'var(--color-text, #1c1e21)',
           fontSize: 12,
         }}
         data-testid="add-binding-clip-select"
@@ -8388,6 +8513,8 @@ function ManagerClipEditor({
               padding: '4px 6px',
               borderRadius: 4,
               border: '1px solid var(--color-border, #ddd)',
+              background: 'var(--color-bg, #fff)',
+              color: 'var(--color-text, #1c1e21)',
               fontSize: 12,
             }}
           />
@@ -8702,6 +8829,8 @@ function ManagerClipEditor({
                   padding: '4px 6px',
                   borderRadius: 4,
                   border: '1px solid var(--color-border, #ddd)',
+                  background: 'var(--color-bg, #fff)',
+                  color: 'var(--color-text, #1c1e21)',
                   fontSize: 12,
                 }}
               />
@@ -8740,7 +8869,7 @@ function ManagerClipEditor({
             left: dragPreviewPos.x + 12,
             top: dragPreviewPos.y - 28,
             background: 'rgba(0,0,0,0.85)',
-            color: '#fff',
+            color: 'var(--color-accent-text, #fff)',
             padding: '4px 8px',
             borderRadius: 4,
             fontSize: 11,
