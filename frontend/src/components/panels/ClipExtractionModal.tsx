@@ -2,7 +2,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useEngine } from '../../app/useEngine'
 import { ExtractToClipCommand } from '../../engine/commands/extractToClipCommand'
-import { collectBakingKeyframes, computeExtractionBounds } from '../../engine/clipExtraction'
+import type { ExtractDuplicatePolicy } from '../../engine/commands/extractToClipCommand'
+import {
+  collectBakingKeyframes,
+  computeExtractionBounds,
+  normalizeExtractable,
+  groupNormalizedByChannel,
+  findExistingCollisions,
+  collectExistingTimesForGroups,
+} from '../../engine/clipExtraction'
+import type { ExistingCollision, ExtractionBounds } from '../../engine/clipExtraction'
 import type { ExtractableKeyframe } from '../../engine/clipExtraction'
 import { SHADOW_LABELS } from '../../engine/shadowEffect'
 import type { ShadowProperty } from '../../engine/shadowEffect'
@@ -69,6 +78,8 @@ export function ClipExtractionModal({
   const [category, setCategory] = useState(initialCategory ?? 'extracted')
   const [error, setError] = useState<string | null>(null)
   const [bakeStartingPose, setBakeStartingPose] = useState(false)
+  // Duplicate-time collisions pending a Replace / Keep decision (existing mode)
+  const [collision, setCollision] = useState<{ items: ExistingCollision[] } | null>(null)
 
   useEffect(() => {
     if (!hasExisting && mode === 'existing') setMode('new')
@@ -138,6 +149,7 @@ export function ClipExtractionModal({
 
   const handleConfirm = () => {
     setError(null)
+    setCollision(null)
     if (filteredKeyframes.length === 0) {
       setError('No keyframes selected — enable at least one shadow property or select keyframes')
       return
@@ -191,17 +203,8 @@ export function ClipExtractionModal({
           setError('Select a clip')
           return
         }
-        const result = dispatch(
-          new ExtractToClipCommand({
-            keyframes: [...filteredKeyframes],
-            clipId: selectedClipId,
-            bakeStartingPose,
-          }),
-        )
-        if (!result.ok) {
-          setError(result.error.message)
-          return
-        }
+        const result = dispatchExisting()
+        if (!result) return
         onSuccess?.({
           mode: 'existing',
           clipId: selectedClipId,
@@ -214,6 +217,76 @@ export function ClipExtractionModal({
       setError(e instanceof Error ? e.message : String(e))
     }
   }
+
+  /**
+   * List incoming keyframes that land on an existing keyframe time in the
+   * target clip (existing mode only). Bake synthetics are excluded — the
+   * command already skips those that would duplicate.
+   */
+  const previewCollisions = (): ExistingCollision[] => {
+    if (mode !== 'existing' || !selectedClipId || !filteredBounds) return []
+    try {
+      const bounds: ExtractionBounds = filteredBounds
+      const normalized = filteredKeyframes.map((kf) => normalizeExtractable(kf, bounds))
+      const groups = groupNormalizedByChannel(normalized)
+      const clip = engine.getClip(selectedClipId)
+      return findExistingCollisions(groups, collectExistingTimesForGroups(clip, groups))
+    } catch {
+      return []
+    }
+  }
+
+  /**
+   * Dispatch extraction into the selected existing clip. Without a policy a
+   * duplicate-time collision fails and opens the Replace / Keep dialog;
+   * with a policy it resolves silently. Returns true on success.
+   */
+  const dispatchExisting = (onDuplicate?: ExtractDuplicatePolicy): boolean => {
+    if (!selectedClipId || !filteredBounds) {
+      setError('Select a clip')
+      return false
+    }
+    const result = dispatch(
+      new ExtractToClipCommand({
+        keyframes: [...filteredKeyframes],
+        clipId: selectedClipId,
+        bakeStartingPose,
+        ...(onDuplicate ? { onDuplicate } : {}),
+      }),
+    )
+    if (!result.ok) {
+      if (!onDuplicate && /already has a keyframe at time/.test(result.error.message)) {
+        const items = previewCollisions()
+        if (items.length > 0) {
+          setCollision({ items })
+          return false
+        }
+      }
+      setError(result.error.message)
+      return false
+    }
+    return true
+  }
+
+  const resolveCollision = (onDuplicate: ExtractDuplicatePolicy) => {
+    setCollision(null)
+    if (!selectedClipId || !filteredBounds) {
+      setError('Select a clip')
+      return
+    }
+    const ok = dispatchExisting(onDuplicate)
+    if (!ok) return
+    onSuccess?.({
+      mode: 'existing',
+      clipId: selectedClipId,
+      selStart: filteredBounds.selStart,
+      keyframes: [...filteredKeyframes],
+    })
+    onClose()
+  }
+
+  const prettyChannel = (key: string): string =>
+    key.startsWith('property:') ? key.slice('property:'.length) : key
 
   if (!bounds) {
     return (
@@ -355,7 +428,9 @@ export function ClipExtractionModal({
             background: 'var(--color-bg-elevated, #f7f7f7)',
           }}
         >
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600 }}>
+          <label
+            style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600 }}
+          >
             <input
               type="checkbox"
               data-testid="bake-starting-pose"
@@ -370,7 +445,8 @@ export function ClipExtractionModal({
             rotation, opacity, circle, shadow (numeric). Excludes morph.
             {bakeStartingPose && (
               <span style={{ marginLeft: 6, fontWeight: 600 }}>
-                +{bakingPreviewCount} synthetic keyframe{bakingPreviewCount === 1 ? '' : 's'} will be added
+                +{bakingPreviewCount} synthetic keyframe{bakingPreviewCount === 1 ? '' : 's'} will
+                be added
               </span>
             )}
           </div>
@@ -451,6 +527,92 @@ export function ClipExtractionModal({
             style={{ color: 'var(--color-error, red)', fontSize: 12, marginTop: 8 }}
           >
             {error}
+          </div>
+        )}
+
+        {collision && (
+          <div
+            role="dialog"
+            aria-label="Resolve duplicate keyframes"
+            data-testid="clip-extraction-collision-dialog"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.5)',
+              display: 'grid',
+              placeItems: 'center',
+              zIndex: 1200,
+            }}
+            onClick={() => setCollision(null)}
+          >
+            <div
+              style={{
+                background: 'var(--color-bg, #fff)',
+                color: 'var(--color-text, #000)',
+                borderRadius: 8,
+                width: 400,
+                maxWidth: '90vw',
+                maxHeight: '80vh',
+                overflow: 'auto',
+                border: '1px solid var(--color-border, #ddd)',
+                padding: 16,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h4 style={{ margin: 0, fontSize: 14 }}>Keyframes already exist at this time</h4>
+              <div style={{ fontSize: 12, color: 'var(--color-text-muted, #666)' }}>
+                {collision.items.length} incoming keyframe
+                {collision.items.length === 1 ? '' : 's'} land
+                {collision.items.length === 1 ? 's' : ''} on an existing keyframe:
+              </div>
+              <ul
+                style={{
+                  margin: 0,
+                  paddingLeft: 18,
+                  fontSize: 12,
+                  fontFamily: 'monospace',
+                  maxHeight: 120,
+                  overflow: 'auto',
+                }}
+              >
+                {collision.items.map((item, i) => (
+                  <li key={`${item.key}@${item.time}-${i}`}>
+                    {prettyChannel(item.key)} @ t={Number(item.time.toFixed(3))}
+                  </li>
+                ))}
+              </ul>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+                <button onClick={() => setCollision(null)} style={{ fontSize: 12 }}>
+                  Cancel
+                </button>
+                <button
+                  data-testid="clip-extraction-collision-keep"
+                  onClick={() => resolveCollision('skip')}
+                  title="Keep the existing keyframes, add only the non-colliding ones"
+                  style={{ fontSize: 12, padding: '6px 12px' }}
+                >
+                  Keep existing
+                </button>
+                <button
+                  data-testid="clip-extraction-collision-replace"
+                  onClick={() => resolveCollision('replace')}
+                  title="Overwrite the existing keyframes with the incoming values"
+                  style={{
+                    fontSize: 12,
+                    padding: '6px 12px',
+                    background: 'var(--color-accent, #7c5cff)',
+                    color: '#fff',
+                    border: '1px solid var(--color-accent, #7c5cff)',
+                    borderRadius: 4,
+                  }}
+                >
+                  Replace
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

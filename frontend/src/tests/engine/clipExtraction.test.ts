@@ -1,10 +1,21 @@
 import { describe, it, expect } from 'vitest'
 import { createEngine } from '../../engine/internal'
 import type { Engine } from '../../engine/internal'
-import { CommandDispatcher, UndoStack, CreateProjectCommand, CreateSlideCommand } from '../../engine/commands'
+import {
+  CommandDispatcher,
+  UndoStack,
+  CreateProjectCommand,
+  CreateSlideCommand,
+} from '../../engine/commands'
 import { ExtractToClipCommand } from '../../engine/commands/extractToClipCommand'
 import type { ExtractableKeyframe } from '../../engine/clipExtraction'
-import { computeExtractionBounds, normalizeExtractable, validateNoDuplicateTimes, channelKeyOf, groupNormalizedByChannel } from '../../engine/clipExtraction'
+import {
+  computeExtractionBounds,
+  normalizeExtractable,
+  validateNoDuplicateTimes,
+  channelKeyOf,
+  groupNormalizedByChannel,
+} from '../../engine/clipExtraction'
 import type { KeyframeTarget } from '../../engine/keyframeTarget'
 
 function setupEngine(): { engine: Engine; dispatcher: CommandDispatcher; undoStack: UndoStack } {
@@ -18,7 +29,14 @@ function setupEngine(): { engine: Engine; dispatcher: CommandDispatcher; undoSta
   return { engine, dispatcher, undoStack }
 }
 
-function makeExtractable(target: KeyframeTarget, time: number, value: unknown, interp: import('../../engine/keyframe').InterpolationType = 'linear', tangentIn = { time: 0, value: 0 }, tangentOut = { time: 0, value: 0 }): ExtractableKeyframe {
+function makeExtractable(
+  target: KeyframeTarget,
+  time: number,
+  value: unknown,
+  interp: import('../../engine/keyframe').InterpolationType = 'linear',
+  tangentIn = { time: 0, value: 0 },
+  tangentOut = { time: 0, value: 0 },
+): ExtractableKeyframe {
   return {
     target,
     time,
@@ -44,7 +62,7 @@ describe('clipExtraction pure functions', () => {
     expect(bounds.clipDuration).toBe(3)
     const normalized = kfs.map((kf) => normalizeExtractable(kf, bounds))
     expect(normalized[0].time).toBeCloseTo(0)
-    expect(normalized[1].time).toBeCloseTo(1/3)
+    expect(normalized[1].time).toBeCloseTo(1 / 3)
     expect(normalized[2].time).toBeCloseTo(1)
     // values unchanged
     expect(normalized[0].value).toBe(0)
@@ -52,7 +70,14 @@ describe('clipExtraction pure functions', () => {
   })
 
   it('normalizes tangent time by selDuration', () => {
-    const kf = makeExtractable({ kind: 'node', nodeId: 'n1', property: 'positionX' }, 2, 5, 'bezier', { time: -0.3, value: 1 }, { time: 0.6, value: -2 })
+    const kf = makeExtractable(
+      { kind: 'node', nodeId: 'n1', property: 'positionX' },
+      2,
+      5,
+      'bezier',
+      { time: -0.3, value: 1 },
+      { time: 0.6, value: -2 },
+    )
     const bounds = { selStart: 1, selEnd: 4, selDuration: 3, clipDuration: 3 }
     const n = normalizeExtractable(kf, bounds)
     expect(n.tangentIn.time).toBeCloseTo(-0.1)
@@ -103,7 +128,9 @@ describe('clipExtraction pure functions', () => {
   it('channelKeyOf distinguishes visible and circle', () => {
     expect(channelKeyOf({ kind: 'visible', nodeId: 'n1' })).toBe('visible')
     expect(channelKeyOf({ kind: 'circle', nodeId: 'n1', property: 'radius' })).toBe('circle:radius')
-    expect(channelKeyOf({ kind: 'node', nodeId: 'n1', property: 'opacity' })).toBe('property:opacity')
+    expect(channelKeyOf({ kind: 'node', nodeId: 'n1', property: 'opacity' })).toBe(
+      'property:opacity',
+    )
   })
 })
 
@@ -119,8 +146,17 @@ describe('ExtractToClipCommand - new clip', () => {
     engine.addKeyframe({ kind: 'node', nodeId: node.id, property: 'positionX' }, 4, 20)
     // Set second keyframe to bezier with tangents
     const second = engine.getKeyframes(node.id, 'positionX').find((k) => k.time === 2)!
-    engine.setKeyframeInterpolation({ kind: 'node', nodeId: node.id, property: 'positionX' }, second.id, 'bezier')
-    engine.setKeyframeTangents({ kind: 'node', nodeId: node.id, property: 'positionX' }, second.id, { time: -0.3, value: 1 }, { time: 0.3, value: 1 })
+    engine.setKeyframeInterpolation(
+      { kind: 'node', nodeId: node.id, property: 'positionX' },
+      second.id,
+      'bezier',
+    )
+    engine.setKeyframeTangents(
+      { kind: 'node', nodeId: node.id, property: 'positionX' },
+      second.id,
+      { time: -0.3, value: 1 },
+      { time: 0.3, value: 1 },
+    )
 
     const all = engine.getKeyframes(node.id, 'positionX')
     const extractable: ExtractableKeyframe[] = all.map((kf) => ({
@@ -151,7 +187,7 @@ describe('ExtractToClipCommand - new clip', () => {
     const clipKfs = clip.getChannelKeyframes('positionX')
     expect(clipKfs).toHaveLength(3)
     expect(clipKfs[0].time).toBeCloseTo(0)
-    expect(clipKfs[1].time).toBeCloseTo(1/3)
+    expect(clipKfs[1].time).toBeCloseTo(1 / 3)
     expect(clipKfs[2].time).toBeCloseTo(1)
     // Values preserved
     expect(clipKfs[0].value).toBe(0)
@@ -175,14 +211,30 @@ describe('ExtractToClipCommand - new clip', () => {
 
     const posKfs = engine.getKeyframes(n1.id, 'positionX').map((kf) => ({
       target: { kind: 'node' as const, nodeId: n1.id, property: 'positionX' as const },
-      time: kf.time, value: kf.value, interpolation: kf.interpolation, tangentIn: kf.tangentIn, tangentOut: kf.tangentOut, keyframeId: kf.id,
+      time: kf.time,
+      value: kf.value,
+      interpolation: kf.interpolation,
+      tangentIn: kf.tangentIn,
+      tangentOut: kf.tangentOut,
+      keyframeId: kf.id,
     }))
     const opKfs = engine.getKeyframes(n1.id, 'opacity').map((kf) => ({
       target: { kind: 'node' as const, nodeId: n1.id, property: 'opacity' as const },
-      time: kf.time, value: kf.value, interpolation: kf.interpolation, tangentIn: kf.tangentIn, tangentOut: kf.tangentOut, keyframeId: kf.id,
+      time: kf.time,
+      value: kf.value,
+      interpolation: kf.interpolation,
+      tangentIn: kf.tangentIn,
+      tangentOut: kf.tangentOut,
+      keyframeId: kf.id,
     }))
 
-    const result = dispatcher.dispatch(new ExtractToClipCommand({ keyframes: [...posKfs, ...opKfs], name: 'Mixed', category: 'test' }))
+    const result = dispatcher.dispatch(
+      new ExtractToClipCommand({
+        keyframes: [...posKfs, ...opKfs],
+        name: 'Mixed',
+        category: 'test',
+      }),
+    )
     expect(result.ok).toBe(true)
     const clip = engine.clips[0]!
     expect(clip.getChannelKeyframes('positionX')).toHaveLength(1)
@@ -204,14 +256,26 @@ describe('ExtractToClipCommand - new clip', () => {
 
     const visKfs = engine.getVisibleKeyframes(n1.id).map((kf) => ({
       target: { kind: 'visible' as const, nodeId: n1.id },
-      time: kf.time, value: kf.value, interpolation: kf.interpolation, tangentIn: kf.tangentIn, tangentOut: kf.tangentOut, keyframeId: kf.id,
+      time: kf.time,
+      value: kf.value,
+      interpolation: kf.interpolation,
+      tangentIn: kf.tangentIn,
+      tangentOut: kf.tangentOut,
+      keyframeId: kf.id,
     }))
     const radKfs = engine.getCircleKeyframes(n1.id, 'radius').map((kf) => ({
       target: { kind: 'circle' as const, nodeId: n1.id, property: 'radius' as const },
-      time: kf.time, value: kf.value, interpolation: kf.interpolation, tangentIn: kf.tangentIn, tangentOut: kf.tangentOut, keyframeId: kf.id,
+      time: kf.time,
+      value: kf.value,
+      interpolation: kf.interpolation,
+      tangentIn: kf.tangentIn,
+      tangentOut: kf.tangentOut,
+      keyframeId: kf.id,
     }))
 
-    const result = dispatcher.dispatch(new ExtractToClipCommand({ keyframes: [...visKfs, ...radKfs], name: 'VisCircle' }))
+    const result = dispatcher.dispatch(
+      new ExtractToClipCommand({ keyframes: [...visKfs, ...radKfs], name: 'VisCircle' }),
+    )
     expect(result.ok).toBe(true)
     const clip = engine.clips[0]!
     expect(clip.getVisibleKeyframes()).toHaveLength(2)
@@ -232,13 +296,20 @@ describe('ExtractToClipCommand - append to existing', () => {
     engine.addKeyframe({ kind: 'node', nodeId: n1.id, property: 'positionX' }, 2, 20)
 
     // Create initial clip with one channel
-    const createRes = dispatcher.dispatch(new ExtractToClipCommand({
-      keyframes: engine.getKeyframes(n1.id, 'positionX').map((kf) => ({
-        target: { kind: 'node' as const, nodeId: n1.id, property: 'positionX' as const },
-        time: kf.time, value: kf.value, interpolation: kf.interpolation, tangentIn: kf.tangentIn, tangentOut: kf.tangentOut, keyframeId: kf.id,
-      })),
-      name: 'Existing',
-    }))
+    const createRes = dispatcher.dispatch(
+      new ExtractToClipCommand({
+        keyframes: engine.getKeyframes(n1.id, 'positionX').map((kf) => ({
+          target: { kind: 'node' as const, nodeId: n1.id, property: 'positionX' as const },
+          time: kf.time,
+          value: kf.value,
+          interpolation: kf.interpolation,
+          tangentIn: kf.tangentIn,
+          tangentOut: kf.tangentOut,
+          keyframeId: kf.id,
+        })),
+        name: 'Existing',
+      }),
+    )
     expect(createRes.ok).toBe(true)
     const clipId = engine.clips[0]!.id
     const beforeCount = engine.getClip(clipId).getChannelKeyframes('positionX').length
@@ -249,13 +320,20 @@ describe('ExtractToClipCommand - append to existing', () => {
     engine.addKeyframe({ kind: 'node', nodeId: n2.id, property: 'opacity' }, 1, 0.5)
     engine.addKeyframe({ kind: 'node', nodeId: n2.id, property: 'opacity' }, 3, 1)
 
-    const appended = dispatcher.dispatch(new ExtractToClipCommand({
-      keyframes: engine.getKeyframes(n2.id, 'opacity').map((kf) => ({
-        target: { kind: 'node' as const, nodeId: n2.id, property: 'opacity' as const },
-        time: kf.time, value: kf.value, interpolation: kf.interpolation, tangentIn: kf.tangentIn, tangentOut: kf.tangentOut, keyframeId: kf.id,
-      })),
-      clipId,
-    }))
+    const appended = dispatcher.dispatch(
+      new ExtractToClipCommand({
+        keyframes: engine.getKeyframes(n2.id, 'opacity').map((kf) => ({
+          target: { kind: 'node' as const, nodeId: n2.id, property: 'opacity' as const },
+          time: kf.time,
+          value: kf.value,
+          interpolation: kf.interpolation,
+          tangentIn: kf.tangentIn,
+          tangentOut: kf.tangentOut,
+          keyframeId: kf.id,
+        })),
+        clipId,
+      }),
+    )
     expect(appended.ok).toBe(true)
     const clip = engine.getClip(clipId)
     // Should have both channels now
@@ -271,26 +349,128 @@ describe('ExtractToClipCommand - append to existing', () => {
     const slide = engine.getActiveSlide()!
     const n1 = engine.createNode(slide.scene.id, slide.scene.root.id, 'Box')
     engine.addKeyframe({ kind: 'node', nodeId: n1.id, property: 'positionX' }, 0, 0)
-    dispatcher.dispatch(new ExtractToClipCommand({
-      keyframes: engine.getKeyframes(n1.id, 'positionX').map((kf) => ({
-        target: { kind: 'node' as const, nodeId: n1.id, property: 'positionX' as const },
-        time: kf.time, value: kf.value, interpolation: kf.interpolation, tangentIn: kf.tangentIn, tangentOut: kf.tangentOut, keyframeId: kf.id,
-      })),
-      name: 'Existing',
-    }))
+    dispatcher.dispatch(
+      new ExtractToClipCommand({
+        keyframes: engine.getKeyframes(n1.id, 'positionX').map((kf) => ({
+          target: { kind: 'node' as const, nodeId: n1.id, property: 'positionX' as const },
+          time: kf.time,
+          value: kf.value,
+          interpolation: kf.interpolation,
+          tangentIn: kf.tangentIn,
+          tangentOut: kf.tangentOut,
+          keyframeId: kf.id,
+        })),
+        name: 'Existing',
+      }),
+    )
     const clipId = engine.clips[0]!.id
     // Now try to append a keyframe that will normalize to 0, which already exists
     engine.addKeyframe({ kind: 'node', nodeId: n1.id, property: 'positionX' }, 5, 100)
     const dupKf = engine.getKeyframes(n1.id, 'positionX').find((k) => k.time === 5)!
-    const result = dispatcher.dispatch(new ExtractToClipCommand({
-      keyframes: [{
-        target: { kind: 'node', nodeId: n1.id, property: 'positionX' },
-        time: dupKf.time, value: dupKf.value, interpolation: dupKf.interpolation, tangentIn: dupKf.tangentIn, tangentOut: dupKf.tangentOut, keyframeId: dupKf.id,
-      }],
-      clipId,
-    }))
+    const result = dispatcher.dispatch(
+      new ExtractToClipCommand({
+        keyframes: [
+          {
+            target: { kind: 'node', nodeId: n1.id, property: 'positionX' },
+            time: dupKf.time,
+            value: dupKf.value,
+            interpolation: dupKf.interpolation,
+            tangentIn: dupKf.tangentIn,
+            tangentOut: dupKf.tangentOut,
+            keyframeId: dupKf.id,
+          },
+        ],
+        clipId,
+      }),
+    )
     // Single keyframe extraction with selDuration 0 -> normalized 0, which collides with existing time 0
     expect(result.ok).toBe(false)
+  })
+})
+
+describe('ExtractToClipCommand - onDuplicate replace/skip', () => {
+  function setupColliding(): {
+    engine: Engine
+    dispatcher: CommandDispatcher
+    undoStack: UndoStack
+    clipId: string
+    nodeId: string
+  } {
+    const { engine, dispatcher, undoStack } = setupEngine()
+    const slide = engine.getActiveSlide()!
+    const n1 = engine.createNode(slide.scene.id, slide.scene.root.id, 'Box')
+    engine.addKeyframe({ kind: 'node', nodeId: n1.id, property: 'positionX' }, 0, 0)
+    dispatcher.dispatch(
+      new ExtractToClipCommand({
+        keyframes: engine.getKeyframes(n1.id, 'positionX').map((kf) => ({
+          target: { kind: 'node' as const, nodeId: n1.id, property: 'positionX' as const },
+          time: kf.time,
+          value: kf.value,
+          interpolation: kf.interpolation,
+          tangentIn: kf.tangentIn,
+          tangentOut: kf.tangentOut,
+          keyframeId: kf.id,
+        })),
+        name: 'Existing',
+      }),
+    )
+    const clipId = engine.clips[0]!.id
+    // Two more node keyframes: t=5 normalizes to 0 (collides), t=6 to 1 (clean)
+    engine.addKeyframe({ kind: 'node', nodeId: n1.id, property: 'positionX' }, 5, 100)
+    engine.addKeyframe({ kind: 'node', nodeId: n1.id, property: 'positionX' }, 6, 200)
+    return { engine, dispatcher, undoStack, clipId, nodeId: n1.id }
+  }
+
+  function extractablePair(engine: Engine, nodeId: string): ExtractableKeyframe[] {
+    return ([5, 6] as const).map((t) => {
+      const kf = engine.getKeyframes(nodeId, 'positionX').find((k) => k.time === t)!
+      return {
+        target: { kind: 'node' as const, nodeId, property: 'positionX' as const },
+        time: kf.time,
+        value: kf.value,
+        interpolation: kf.interpolation,
+        tangentIn: kf.tangentIn,
+        tangentOut: kf.tangentOut,
+        keyframeId: kf.id,
+      }
+    })
+  }
+
+  it('replace overwrites the colliding keyframe and appends the rest', () => {
+    const { engine, dispatcher, undoStack, clipId, nodeId } = setupColliding()
+    const result = dispatcher.dispatch(
+      new ExtractToClipCommand({
+        keyframes: extractablePair(engine, nodeId),
+        clipId,
+        onDuplicate: 'replace',
+      }),
+    )
+    expect(result.ok).toBe(true)
+    const kfs = engine.getClip(clipId).getChannelKeyframes('positionX')
+    expect(kfs.map((k) => k.time)).toEqual([0, 1])
+    expect(kfs.find((k) => k.time === 0)!.value).toBe(100)
+    expect(kfs.find((k) => k.time === 1)!.value).toBe(200)
+    undoStack.undo(engine as unknown as import('../../engine/internal').Engine)
+    const restored = engine.getClip(clipId).getChannelKeyframes('positionX')
+    expect(restored).toHaveLength(1)
+    expect(restored[0].time).toBe(0)
+    expect(restored[0].value).toBe(0)
+  })
+
+  it('skip keeps the existing keyframe and appends only the rest', () => {
+    const { engine, dispatcher, clipId, nodeId } = setupColliding()
+    const result = dispatcher.dispatch(
+      new ExtractToClipCommand({
+        keyframes: extractablePair(engine, nodeId),
+        clipId,
+        onDuplicate: 'skip',
+      }),
+    )
+    expect(result.ok).toBe(true)
+    const kfs = engine.getClip(clipId).getChannelKeyframes('positionX')
+    expect(kfs.map((k) => k.time)).toEqual([0, 1])
+    expect(kfs.find((k) => k.time === 0)!.value).toBe(0)
+    expect(kfs.find((k) => k.time === 1)!.value).toBe(200)
   })
 })
 
@@ -304,7 +484,12 @@ describe('ExtractToClipCommand undo', () => {
 
     const extractable = engine.getKeyframes(n1.id, 'positionX').map((kf) => ({
       target: { kind: 'node' as const, nodeId: n1.id, property: 'positionX' as const },
-      time: kf.time, value: kf.value, interpolation: kf.interpolation, tangentIn: kf.tangentIn, tangentOut: kf.tangentOut, keyframeId: kf.id,
+      time: kf.time,
+      value: kf.value,
+      interpolation: kf.interpolation,
+      tangentIn: kf.tangentIn,
+      tangentOut: kf.tangentOut,
+      keyframeId: kf.id,
     }))
 
     dispatcher.dispatch(new ExtractToClipCommand({ keyframes: extractable, name: 'Clip1' }))
@@ -322,23 +507,42 @@ describe('ExtractToClipCommand undo', () => {
     const slide = engine.getActiveSlide()!
     const n1 = engine.createNode(slide.scene.id, slide.scene.root.id, 'Box')
     engine.addKeyframe({ kind: 'node', nodeId: n1.id, property: 'positionX' }, 0, 0)
-    const firstClip = dispatcher.dispatch(new ExtractToClipCommand({
-      keyframes: engine.getKeyframes(n1.id, 'positionX').map((kf) => ({
-        target: { kind: 'node' as const, nodeId: n1.id, property: 'positionX' as const },
-        time: kf.time, value: kf.value, interpolation: kf.interpolation, tangentIn: kf.tangentIn, tangentOut: kf.tangentOut, keyframeId: kf.id,
-      })),
-      name: 'C1',
-    }))
+    const firstClip = dispatcher.dispatch(
+      new ExtractToClipCommand({
+        keyframes: engine.getKeyframes(n1.id, 'positionX').map((kf) => ({
+          target: { kind: 'node' as const, nodeId: n1.id, property: 'positionX' as const },
+          time: kf.time,
+          value: kf.value,
+          interpolation: kf.interpolation,
+          tangentIn: kf.tangentIn,
+          tangentOut: kf.tangentOut,
+          keyframeId: kf.id,
+        })),
+        name: 'C1',
+      }),
+    )
     expect(firstClip.ok).toBe(true)
     const clipId = engine.clips[0]!.id
     const beforeJson = engine.clips[0]!.toJSON()
 
     engine.addKeyframe({ kind: 'node', nodeId: n1.id, property: 'opacity' }, 0, 0)
     const op = engine.getKeyframes(n1.id, 'opacity')[0]!
-    dispatcher.dispatch(new ExtractToClipCommand({
-      keyframes: [{ target: { kind: 'node', nodeId: n1.id, property: 'opacity' }, time: op.time, value: op.value, interpolation: op.interpolation, tangentIn: op.tangentIn, tangentOut: op.tangentOut, keyframeId: op.id }],
-      clipId,
-    }))
+    dispatcher.dispatch(
+      new ExtractToClipCommand({
+        keyframes: [
+          {
+            target: { kind: 'node', nodeId: n1.id, property: 'opacity' },
+            time: op.time,
+            value: op.value,
+            interpolation: op.interpolation,
+            tangentIn: op.tangentIn,
+            tangentOut: op.tangentOut,
+            keyframeId: op.id,
+          },
+        ],
+        clipId,
+      }),
+    )
     expect(engine.getClip(clipId).getChannelKeyframes('opacity')).toHaveLength(1)
     undoStack.undo(engine as unknown as import('../../engine/internal').Engine)
     const restored = engine.getClip(clipId)
@@ -353,13 +557,20 @@ describe('ExtractToClipCommand undo', () => {
     engine.addKeyframe({ kind: 'node', nodeId: n1.id, property: 'positionX' }, 0, 0)
     engine.addKeyframe({ kind: 'node', nodeId: n1.id, property: 'positionX' }, 1, 10)
     const before = engine.getKeyframes(n1.id, 'positionX').map((k) => k.time)
-    dispatcher.dispatch(new ExtractToClipCommand({
-      keyframes: engine.getKeyframes(n1.id, 'positionX').map((kf) => ({
-        target: { kind: 'node' as const, nodeId: n1.id, property: 'positionX' as const },
-        time: kf.time, value: kf.value, interpolation: kf.interpolation, tangentIn: kf.tangentIn, tangentOut: kf.tangentOut, keyframeId: kf.id,
-      })),
-      name: 'Copy',
-    }))
+    dispatcher.dispatch(
+      new ExtractToClipCommand({
+        keyframes: engine.getKeyframes(n1.id, 'positionX').map((kf) => ({
+          target: { kind: 'node' as const, nodeId: n1.id, property: 'positionX' as const },
+          time: kf.time,
+          value: kf.value,
+          interpolation: kf.interpolation,
+          tangentIn: kf.tangentIn,
+          tangentOut: kf.tangentOut,
+          keyframeId: kf.id,
+        })),
+        name: 'Copy',
+      }),
+    )
     const after = engine.getKeyframes(n1.id, 'positionX').map((k) => k.time)
     expect(after).toEqual(before)
   })

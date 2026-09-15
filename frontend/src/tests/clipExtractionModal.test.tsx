@@ -2,21 +2,26 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { EngineContext } from '../app/engineContext'
 import { TimelinePanel } from '../components/panels/TimelinePanel'
-import { CommandDispatcher, UndoStack } from '../engine/commands'
+import { CommandDispatcher, UndoStack, AddClipKeyframeCommand } from '../engine/commands'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
 import { noopPersistence } from './contextHarness'
 import { useTimelineSelectionStore } from '../stores/timelineSelectionStore'
 import { useTimelineViewStore } from '../stores/timelineViewStore'
 import { usePlaybackController } from '../stores/playbackStore'
 
-function renderTimeline(): { engine: import('../engine/internal').Engine; dispatcher: CommandDispatcher } {
+function renderTimeline(): {
+  engine: import('../engine/internal').Engine
+  dispatcher: CommandDispatcher
+} {
   const engine = createEngineInternal()
   const undoStack = new UndoStack()
   const dispatcher = new CommandDispatcher(engine, undoStack, vi.fn())
   const value: import('../app/engineContext').EngineContextValue = {
     engine: toReadOnly(engine),
     undoStack,
-    dispatch: dispatcher.dispatch.bind(dispatcher) as import('../app/engineContext').EngineContextValue['dispatch'],
+    dispatch: dispatcher.dispatch.bind(
+      dispatcher,
+    ) as import('../app/engineContext').EngineContextValue['dispatch'],
     persistence: noopPersistence,
   }
   engine.createProject({ name: 'P' })
@@ -31,9 +36,17 @@ function renderTimeline(): { engine: import('../engine/internal').Engine; dispat
 
 describe('ClipExtraction UI', () => {
   beforeEach(() => {
-    useTimelineSelectionStore.setState({ editingContext: 'slide', selections: { slide: [], 'clip-edit': [] }, anchorKeyframeId: { slide: null, 'clip-edit': null }, marqueeAnchor: null })
+    useTimelineSelectionStore.setState({
+      editingContext: 'slide',
+      selections: { slide: [], 'clip-edit': [] },
+      anchorKeyframeId: { slide: null, 'clip-edit': null },
+      marqueeAnchor: null,
+    })
     useTimelineViewStore.setState({ expandedNodeIds: {} })
-    usePlaybackController.setState({ currentTimes: {}, status: 'stopped' } as unknown as Record<string, unknown>)
+    usePlaybackController.setState({ currentTimes: {}, status: 'stopped' } as unknown as Record<
+      string,
+      unknown
+    >)
   })
 
   it('shows Add to clip in context menu alongside Delete', async () => {
@@ -51,7 +64,9 @@ describe('ClipExtraction UI', () => {
     fireEvent.contextMenu(marker, { clientX: 100, clientY: 120 })
     const menu = await screen.findByTestId('timeline-context-menu')
     expect(menu).toBeInTheDocument()
-    expect(screen.getAllByRole('button', { name: 'Delete Keyframe' }).length).toBeGreaterThanOrEqual(1)
+    expect(
+      screen.getAllByRole('button', { name: 'Delete Keyframe' }).length,
+    ).toBeGreaterThanOrEqual(1)
     expect(screen.getByTestId('add-to-clip-button')).toBeInTheDocument()
   })
 
@@ -108,6 +123,62 @@ describe('ClipExtraction UI', () => {
     // Select existing clip radio (should be default if clips exist)
     const confirm = screen.getByTestId('clip-extraction-confirm')
     fireEvent.click(confirm)
-    await waitFor(() => expect(engine.getClip(engine.clips[0]!.id).getChannelKeyframes('opacity')).toHaveLength(1))
+    await waitFor(() =>
+      expect(engine.getClip(engine.clips[0]!.id).getChannelKeyframes('opacity')).toHaveLength(1),
+    )
+  })
+
+  async function setupCollision(): Promise<{
+    engine: import('../engine/internal').Engine
+    clipId: string
+  }> {
+    const { engine, dispatcher } = renderTimeline()
+    const slide = engine.getActiveSlide()!
+    const clip = engine.createClip('ExistingClip', 1, 'test', [], [{ property: 'positionX' }])
+    const addRes = dispatcher.dispatch(
+      new AddClipKeyframeCommand({
+        target: { kind: 'clip', clipId: clip.id, channel: 'positionX' },
+        time: 0,
+        value: 0,
+      }),
+    )
+    expect(addRes.ok).toBe(true)
+    // Single node keyframe normalizes to clip time 0 -> collides with existing
+    const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'Box')
+    engine.addKeyframe({ kind: 'node', nodeId: node.id, property: 'positionX' }, 5, 42)
+    useTimelineViewStore.getState().toggleExpanded(node.id)
+    const marker = await screen.findByTestId('keyframe-marker')
+    fireEvent.pointerDown(marker, { button: 0, clientX: 100, clientY: 10 })
+    fireEvent.contextMenu(marker, { clientX: 100, clientY: 120 })
+    fireEvent.click(await screen.findByTestId('add-to-clip-button'))
+    await screen.findByTestId('clip-extraction-modal')
+    // Existing mode is default when clips exist
+    fireEvent.click(screen.getByTestId('clip-extraction-confirm'))
+    await screen.findByTestId('clip-extraction-collision-dialog')
+    return { engine, clipId: clip.id }
+  }
+
+  it('duplicate time on append opens Replace/Keep dialog; Replace overwrites', async () => {
+    const { engine, clipId } = await setupCollision()
+    fireEvent.click(screen.getByTestId('clip-extraction-collision-replace'))
+    await waitFor(() => {
+      expect(screen.queryByTestId('clip-extraction-modal')).not.toBeInTheDocument()
+    })
+    const kfs = engine.getClip(clipId).getChannelKeyframes('positionX')
+    expect(kfs).toHaveLength(1)
+    expect(kfs[0].time).toBe(0)
+    expect(kfs[0].value).toBe(42)
+  })
+
+  it('duplicate time on append opens Replace/Keep dialog; Keep preserves existing', async () => {
+    const { engine, clipId } = await setupCollision()
+    fireEvent.click(screen.getByTestId('clip-extraction-collision-keep'))
+    await waitFor(() => {
+      expect(screen.queryByTestId('clip-extraction-modal')).not.toBeInTheDocument()
+    })
+    const kfs = engine.getClip(clipId).getChannelKeyframes('positionX')
+    expect(kfs).toHaveLength(1)
+    expect(kfs[0].time).toBe(0)
+    expect(kfs[0].value).toBe(0)
   })
 })

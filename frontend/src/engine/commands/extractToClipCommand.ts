@@ -4,28 +4,41 @@ import { requireString, requireFiniteNumber } from '../guards'
 import type { KeyframeTarget } from '../keyframeTarget'
 import { requireKeyframeTarget } from '../keyframeTarget'
 import type { ClipChannelDef } from '../clipDefinition'
+import type { ClipDefinition } from '../clipDefinition'
 import type { ExtractableKeyframe, NormalizedKeyframe } from '../clipExtraction'
 import {
   computeExtractionBounds,
   normalizeExtractable,
   channelKeyOf,
   validateNoDuplicateTimes,
+  findExistingCollisions,
+  collectExistingTimesForGroups,
   collectBakingKeyframes,
 } from '../clipExtraction'
 import type { BakingEvaluator } from '../clipExtraction'
 import { Keyframe as KeyframeModel, newKeyframeId } from '../keyframe'
+
+/** Collision policy when appending to an existing clip lands on an occupied time. */
+export type ExtractDuplicatePolicy = 'replace' | 'skip'
+
+export interface ExtractToExistingClipParams {
+  readonly keyframes: readonly ExtractableKeyframe[]
+  readonly clipId: string
+  readonly bakeStartingPose?: boolean
+  /**
+   * How to resolve collisions with existing keyframes at the same
+   * (channel, time). Absent = error (legacy behavior).
+   * 'replace' overwrites the existing keyframe, 'skip' keeps it and drops
+   * the incoming one. Non-colliding keyframes are always appended.
+   */
+  readonly onDuplicate?: ExtractDuplicatePolicy
+}
 
 export interface ExtractToNewClipParams {
   readonly keyframes: readonly ExtractableKeyframe[]
   readonly name: string
   readonly duration?: number
   readonly category?: string
-  readonly bakeStartingPose?: boolean
-}
-
-export interface ExtractToExistingClipParams {
-  readonly keyframes: readonly ExtractableKeyframe[]
-  readonly clipId: string
   readonly bakeStartingPose?: boolean
 }
 
@@ -60,6 +73,60 @@ function getBakingEvaluator(engine: Engine): BakingEvaluator {
   }
 }
 
+function roundTime(t: number): number {
+  return Math.round(t * 1e9) / 1e9
+}
+
+/**
+ * Remove the existing clip keyframe at (target channel, time), if any.
+ * Used by the 'replace' duplicate policy. Returns whether one was removed.
+ */
+function removeExistingKeyframeAtTime(
+  clip: ClipDefinition,
+  target: KeyframeTarget,
+  time: number,
+): boolean {
+  const idOf = (kfs: readonly { id: string; time: number }[]): string | undefined =>
+    kfs.find((k) => roundTime(k.time) === roundTime(time))?.id
+  if (target.kind === 'shadow') {
+    const id = idOf(clip.getShadowChannelKeyframes(target.property))
+    if (!id) return false
+    clip.removeShadowChannelKeyframe(target.property, id)
+    return true
+  }
+  if (target.kind === 'node' && 'property' in target) {
+    const id = idOf(clip.getChannelKeyframes(target.property))
+    if (!id) return false
+    clip.removeChannelKeyframe(target.property, id)
+    return true
+  }
+  if (target.kind === 'visible') {
+    const id = idOf(clip.getVisibleKeyframes())
+    if (!id) return false
+    clip.removeVisibleKeyframe(id)
+    return true
+  }
+  if (target.kind === 'morph') {
+    const id = idOf(clip.getMorphKeyframes())
+    if (!id) return false
+    clip.removeMorphKeyframe(id)
+    return true
+  }
+  if (target.kind === 'circle') {
+    const id = idOf(clip.getCircleKeyframes(target.property))
+    if (!id) return false
+    clip.removeCircleKeyframe(target.property, id)
+    return true
+  }
+  if (target.kind === 'node' && 'parameter' in target) {
+    const id = idOf(clip.getMaterialChannelKeyframes(target.parameter))
+    if (!id) return false
+    clip.removeMaterialChannelKeyframe(target.parameter, id)
+    return true
+  }
+  return false
+}
+
 /**
  * Merge baking synthetics into normalized set, filtering ones that would duplicate existing clip time 0.
  */
@@ -85,7 +152,14 @@ function mergeBakingNormalized(
       }
     }
     // Also avoid synthetic within synthetic duplicate (shouldn't happen)
-    if (result.some((r) => channelKeyOf(r.target) === key && Math.round(r.time * 1e9) / 1e9 === Math.round(bk.time * 1e9) / 1e9)) continue
+    if (
+      result.some(
+        (r) =>
+          channelKeyOf(r.target) === key &&
+          Math.round(r.time * 1e9) / 1e9 === Math.round(bk.time * 1e9) / 1e9,
+      )
+    )
+      continue
     result.push(bk)
   }
   return result
@@ -96,6 +170,7 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
   readonly parameters: Readonly<Record<string, unknown>>
   readonly #keyframes: readonly ExtractableKeyframe[]
   readonly #bakeStartingPose: boolean
+  readonly #onDuplicate: ExtractDuplicatePolicy | undefined
   readonly #destination:
     | { mode: 'new'; name: string; duration?: number; category?: string }
     | { mode: 'existing'; clipId: string }
@@ -105,16 +180,23 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
     this.#bakeStartingPose = bakeStartingPose
     if (isExistingParams(input)) {
       requireString(input.clipId, 'Extract clipId')
+      const onDuplicate = (input as { onDuplicate?: unknown }).onDuplicate
+      if (onDuplicate !== undefined && onDuplicate !== 'replace' && onDuplicate !== 'skip') {
+        throw new Error(`Extract onDuplicate must be 'replace' or 'skip'`)
+      }
+      this.#onDuplicate = onDuplicate as ExtractDuplicatePolicy | undefined
       this.#keyframes = [...input.keyframes]
       this.#destination = { mode: 'existing', clipId: input.clipId }
       this.parameters = {
         mode: 'existing',
         clipId: input.clipId,
         ...(bakeStartingPose ? { bakeStartingPose: true } : {}),
+        ...(this.#onDuplicate ? { onDuplicate: this.#onDuplicate } : {}),
         keyframes: input.keyframes as unknown as Record<string, unknown>[],
       }
     } else {
       requireString(input.name, 'Extract clip name')
+      this.#onDuplicate = undefined
       if (input.duration !== undefined) {
         requireFiniteNumber(input.duration, 'Extract clip duration')
         if (input.duration < 0) throw new Error('Clip duration must be non-negative')
@@ -156,31 +238,78 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
     }
     // Validate normalization and duplicate times without mutating
     const bounds = computeExtractionBounds(this.#keyframes)
-    let normalized: NormalizedKeyframe[] = this.#keyframes.map((kf) => normalizeExtractable(kf, bounds))
+    let normalized: NormalizedKeyframe[] = this.#keyframes.map((kf) =>
+      normalizeExtractable(kf, bounds),
+    )
     // Bake starting pose synthetics for validation
     if (this.#bakeStartingPose) {
       try {
-        const bakingExtractable = collectBakingKeyframes(bounds, this.#keyframes, getBakingEvaluator(engine))
+        const bakingExtractable = collectBakingKeyframes(
+          bounds,
+          this.#keyframes,
+          getBakingEvaluator(engine),
+        )
         // Pre-collect existing times for dup filtering (existing clip may already have 0)
         let existingTimesForBake: Map<string, readonly number[]> | undefined
         if (this.#destination.mode === 'existing') {
           const clip = engine.getClip(this.#destination.clipId)
           existingTimesForBake = new Map<string, readonly number[]>()
           // collect all existing times (not just groups) to filter baking duplicates
-          for (const prop of ['positionX','positionY','rotation','scaleX','scaleY','opacity'] as const) {
+          for (const prop of [
+            'positionX',
+            'positionY',
+            'rotation',
+            'scaleX',
+            'scaleY',
+            'opacity',
+          ] as const) {
             const kfs = clip.getChannelKeyframes(prop)
-            if (kfs.length>0) existingTimesForBake.set(`property:${prop}`, kfs.map((k)=>k.time))
+            if (kfs.length > 0)
+              existingTimesForBake.set(
+                `property:${prop}`,
+                kfs.map((k) => k.time),
+              )
           }
-          for (const prop of ['radius','startAngle','endAngle','segments'] as const) {
-            const kfs = clip.getCircleKeyframes(prop as unknown as import('../animationProperties').CircleAnimationProperty)
-            if (kfs.length>0) existingTimesForBake.set(`circle:${prop}`, kfs.map((k)=>k.time))
+          for (const prop of ['radius', 'startAngle', 'endAngle', 'segments'] as const) {
+            const kfs = clip.getCircleKeyframes(
+              prop as unknown as import('../animationProperties').CircleAnimationProperty,
+            )
+            if (kfs.length > 0)
+              existingTimesForBake.set(
+                `circle:${prop}`,
+                kfs.map((k) => k.time),
+              )
           }
-          for (const prop of ['offsetX','offsetY','scaleX','scaleY','skewX','skewY','rotation','blur','opacity','lightAzimuth','lightElevation','lightDistance'] as const) {
-            const kfs = clip.getShadowChannelKeyframes(prop as unknown as import('../shadowEffect').ShadowProperty)
-            if (kfs.length>0) existingTimesForBake.set(`shadow:${prop}`, kfs.map((k)=>k.time))
+          for (const prop of [
+            'offsetX',
+            'offsetY',
+            'scaleX',
+            'scaleY',
+            'skewX',
+            'skewY',
+            'rotation',
+            'blur',
+            'opacity',
+            'lightAzimuth',
+            'lightElevation',
+            'lightDistance',
+          ] as const) {
+            const kfs = clip.getShadowChannelKeyframes(
+              prop as unknown as import('../shadowEffect').ShadowProperty,
+            )
+            if (kfs.length > 0)
+              existingTimesForBake.set(
+                `shadow:${prop}`,
+                kfs.map((k) => k.time),
+              )
           }
         }
-        normalized = mergeBakingNormalized(bounds, normalized, bakingExtractable, existingTimesForBake)
+        normalized = mergeBakingNormalized(
+          bounds,
+          normalized,
+          bakingExtractable,
+          existingTimesForBake,
+        )
       } catch {
         // baking failed — fall back to no baking for validation
       }
@@ -192,34 +321,11 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
       if (arr) arr.push(nk)
       else groups.set(key, [nk])
     }
-    // For existing, check against existing clip times
-    if (this.#destination.mode === 'existing') {
+    // For existing, check against existing clip times (skipped when a
+    // duplicate policy resolves collisions instead of erroring)
+    if (this.#destination.mode === 'existing' && !this.#onDuplicate) {
       const clip = engine.getClip(this.#destination.clipId)
-      const existingTimesByKey = new Map<string, readonly number[]>()
-      // Collect existing times per channel key
-      for (const [key, arr] of groups) {
-        const nkTarget = arr[0].target
-        let existing: readonly number[] | undefined
-        if (nkTarget.kind === 'shadow') {
-          existing = clip.getShadowChannelKeyframes(nkTarget.property).map((k) => k.time)
-        } else if (nkTarget.kind === 'node' && 'property' in nkTarget) {
-          existing = clip.getChannelKeyframes(nkTarget.property).map((k) => k.time)
-        } else if (nkTarget.kind === 'visible') {
-          existing = clip.getVisibleKeyframes().map((k) => k.time)
-        } else if (nkTarget.kind === 'morph') {
-          existing = clip.getMorphKeyframes().map((k) => k.time)
-        } else if (nkTarget.kind === 'circle') {
-          existing = clip.getCircleKeyframes(nkTarget.property).map((k) => k.time)
-        } else if (nkTarget.kind === 'node' && 'parameter' in nkTarget) {
-          existing = clip.getMaterialChannelKeyframes(nkTarget.parameter).map((k) => k.time)
-        } else if (nkTarget.kind === 'table') {
-          // table not stored in clips — no existing check
-        }
-        if (existing && existing.length > 0) {
-          existingTimesByKey.set(key, existing)
-        }
-      }
-      validateNoDuplicateTimes(groups, existingTimesByKey)
+      validateNoDuplicateTimes(groups, collectExistingTimesForGroups(clip, groups))
     } else {
       validateNoDuplicateTimes(groups)
     }
@@ -280,25 +386,70 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
     // Bake starting pose — inject synthetic numeric keyframes at t=0
     if (this.#bakeStartingPose) {
       try {
-        const bakingExtractable = collectBakingKeyframes(bounds, this.#keyframes, getBakingEvaluator(engine))
+        const bakingExtractable = collectBakingKeyframes(
+          bounds,
+          this.#keyframes,
+          getBakingEvaluator(engine),
+        )
         let existingTimesForBake: Map<string, readonly number[]> | undefined
         if (this.#destination.mode === 'existing') {
           const clip = engine.getClip(this.#destination.clipId)
           existingTimesForBake = new Map<string, readonly number[]>()
-          for (const prop of ['positionX','positionY','rotation','scaleX','scaleY','opacity'] as const) {
+          for (const prop of [
+            'positionX',
+            'positionY',
+            'rotation',
+            'scaleX',
+            'scaleY',
+            'opacity',
+          ] as const) {
             const kfs = clip.getChannelKeyframes(prop)
-            if (kfs.length>0) existingTimesForBake.set(`property:${prop}`, kfs.map((k)=>k.time))
+            if (kfs.length > 0)
+              existingTimesForBake.set(
+                `property:${prop}`,
+                kfs.map((k) => k.time),
+              )
           }
-          for (const prop of ['radius','startAngle','endAngle','segments'] as const) {
-            const kfs = clip.getCircleKeyframes(prop as unknown as import('../animationProperties').CircleAnimationProperty)
-            if (kfs.length>0) existingTimesForBake.set(`circle:${prop}`, kfs.map((k)=>k.time))
+          for (const prop of ['radius', 'startAngle', 'endAngle', 'segments'] as const) {
+            const kfs = clip.getCircleKeyframes(
+              prop as unknown as import('../animationProperties').CircleAnimationProperty,
+            )
+            if (kfs.length > 0)
+              existingTimesForBake.set(
+                `circle:${prop}`,
+                kfs.map((k) => k.time),
+              )
           }
-          for (const prop of ['offsetX','offsetY','scaleX','scaleY','skewX','skewY','rotation','blur','opacity','lightAzimuth','lightElevation','lightDistance'] as const) {
-            const kfs = clip.getShadowChannelKeyframes(prop as unknown as import('../shadowEffect').ShadowProperty)
-            if (kfs.length>0) existingTimesForBake.set(`shadow:${prop}`, kfs.map((k)=>k.time))
+          for (const prop of [
+            'offsetX',
+            'offsetY',
+            'scaleX',
+            'scaleY',
+            'skewX',
+            'skewY',
+            'rotation',
+            'blur',
+            'opacity',
+            'lightAzimuth',
+            'lightElevation',
+            'lightDistance',
+          ] as const) {
+            const kfs = clip.getShadowChannelKeyframes(
+              prop as unknown as import('../shadowEffect').ShadowProperty,
+            )
+            if (kfs.length > 0)
+              existingTimesForBake.set(
+                `shadow:${prop}`,
+                kfs.map((k) => k.time),
+              )
           }
         }
-        normalized = mergeBakingNormalized(bounds, normalized, bakingExtractable, existingTimesForBake)
+        normalized = mergeBakingNormalized(
+          bounds,
+          normalized,
+          bakingExtractable,
+          existingTimesForBake,
+        )
       } catch {
         // ignore baking failure
       }
@@ -463,10 +614,25 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
         }
       }
 
+      // Resolve collisions per the duplicate policy (absent = validate already
+      // rejected them, so this set is empty).
+      let colliding = new Set<string>()
+      if (this.#onDuplicate) {
+        const existingTimes = collectExistingTimesForGroups(clip, groups)
+        colliding = new Set(
+          findExistingCollisions(groups, existingTimes).map((c) => `${c.key}@${roundTime(c.time)}`),
+        )
+      }
+
       // Insert keyframes
       for (const [, arr] of groups) {
         const sample = arr[0].target
         for (const nk of arr) {
+          const collisionKey = `${channelKeyOf(nk.target)}@${roundTime(nk.time)}`
+          if (colliding.has(collisionKey) && this.#onDuplicate === 'skip') continue
+          if (colliding.has(collisionKey) && this.#onDuplicate === 'replace') {
+            removeExistingKeyframeAtTime(clip, nk.target, nk.time)
+          }
           const kf = new KeyframeModel(
             newKeyframeId(),
             nk.time,

@@ -263,6 +263,83 @@ export function groupNormalizedByChannel(
   return groups
 }
 
+export interface ExistingCollision {
+  readonly key: string
+  readonly time: number
+}
+
+const roundTime = (t: number): number => Math.round(t * 1e9) / 1e9
+
+/**
+ * Structural clip surface needed to read existing keyframe times per channel.
+ * Compatible with ClipDefinition.
+ */
+export interface ClipTimeSource {
+  getChannelKeyframes(property: AnimationProperty): readonly { time: number }[]
+  getShadowChannelKeyframes(property: ShadowProperty): readonly { time: number }[]
+  getVisibleKeyframes(): readonly { time: number }[]
+  getMorphKeyframes(): readonly { time: number }[]
+  getCircleKeyframes(property: CircleAnimationProperty): readonly { time: number }[]
+  getMaterialChannelKeyframes(parameter: string): readonly { time: number }[]
+}
+
+/**
+ * Collect existing clip keyframe times per normalized channel key present in
+ * `groups`. Keys with no existing keyframes are omitted.
+ */
+export function collectExistingTimesForGroups(
+  clip: ClipTimeSource,
+  groups: Map<string, NormalizedKeyframe[]>,
+): Map<string, readonly number[]> {
+  const existingTimesByKey = new Map<string, readonly number[]>()
+  for (const [key, arr] of groups) {
+    const nkTarget = arr[0].target
+    let existing: readonly number[] | undefined
+    if (nkTarget.kind === 'shadow') {
+      existing = clip.getShadowChannelKeyframes(nkTarget.property).map((k) => k.time)
+    } else if (nkTarget.kind === 'node' && 'property' in nkTarget) {
+      existing = clip.getChannelKeyframes(nkTarget.property).map((k) => k.time)
+    } else if (nkTarget.kind === 'visible') {
+      existing = clip.getVisibleKeyframes().map((k) => k.time)
+    } else if (nkTarget.kind === 'morph') {
+      existing = clip.getMorphKeyframes().map((k) => k.time)
+    } else if (nkTarget.kind === 'circle') {
+      existing = clip.getCircleKeyframes(nkTarget.property).map((k) => k.time)
+    } else if (nkTarget.kind === 'node' && 'parameter' in nkTarget) {
+      existing = clip.getMaterialChannelKeyframes(nkTarget.parameter).map((k) => k.time)
+    } else if (nkTarget.kind === 'table') {
+      // table not stored in clips — no existing check
+    }
+    if (existing && existing.length > 0) {
+      existingTimesByKey.set(key, existing)
+    }
+  }
+  return existingTimesByKey
+}
+
+/**
+ * List every incoming keyframe that lands on an existing clip keyframe time
+ * (same channel, 1e-9 rounded equality). Used for the Replace/Keep dialog and
+ * by validateNoDuplicateTimes.
+ */
+export function findExistingCollisions(
+  groups: Map<string, NormalizedKeyframe[]>,
+  existingTimesByKey: Map<string, readonly number[]>,
+): ExistingCollision[] {
+  const out: ExistingCollision[] = []
+  for (const [key, keyframes] of groups) {
+    const existing = existingTimesByKey.get(key)
+    if (!existing) continue
+    const roundedExisting = new Set(existing.map(roundTime))
+    for (const kf of keyframes) {
+      if (roundedExisting.has(roundTime(kf.time))) {
+        out.push({ key, time: kf.time })
+      }
+    }
+  }
+  return out
+}
+
 export function validateNoDuplicateTimes(
   groups: Map<string, NormalizedKeyframe[]>,
   // Existing times per channel for append validation
@@ -272,25 +349,18 @@ export function validateNoDuplicateTimes(
     const seen = new Set<number>()
     for (const kf of keyframes) {
       // Check duplicate within the extraction group itself
-      const rounded = Math.round(kf.time * 1e9) / 1e9
+      const rounded = roundTime(kf.time)
       if (seen.has(rounded)) {
         throw new Error(`Duplicate normalized time ${kf.time} in channel ${key}`)
       }
       seen.add(rounded)
     }
-    if (existingTimesByKey) {
-      const existing = existingTimesByKey.get(key)
-      if (existing) {
-        for (const kf of keyframes) {
-          const rounded = Math.round(kf.time * 1e9) / 1e9
-          for (const et of existing) {
-            const er = Math.round(et * 1e9) / 1e9
-            if (er === rounded) {
-              throw new Error(`Clip already has a keyframe at time ${kf.time} on channel ${key}`)
-            }
-          }
-        }
-      }
+  }
+  if (existingTimesByKey) {
+    const collisions = findExistingCollisions(groups, existingTimesByKey)
+    if (collisions.length > 0) {
+      const first = collisions[0]
+      throw new Error(`Clip already has a keyframe at time ${first.time} on channel ${first.key}`)
     }
   }
 }
@@ -343,9 +413,18 @@ export function isBakableChannelKey(key: string): boolean {
 
 export interface BakingEvaluator {
   getNode(nodeId: string): SceneNode
-  evaluateNode(nodeId: string, time: number): { transform: { x:number; y:number; rotation:number; scaleX:number; scaleY:number }; opacity: number }
-  evaluateCircle(nodeId: string, time: number): { radius:number; startAngle:number; endAngle:number; segments:number } | null
-  evaluateTable(nodeId: string, time: number): { borderRadius:number; padding:number } | null
+  evaluateNode(
+    nodeId: string,
+    time: number,
+  ): {
+    transform: { x: number; y: number; rotation: number; scaleX: number; scaleY: number }
+    opacity: number
+  }
+  evaluateCircle(
+    nodeId: string,
+    time: number,
+  ): { radius: number; startAngle: number; endAngle: number; segments: number } | null
+  evaluateTable(nodeId: string, time: number): { borderRadius: number; padding: number } | null
   evaluateShadow(nodeId: string, time: number): import('./shadowEffect').ShadowEffect | null
 }
 
@@ -454,7 +533,11 @@ export function collectBakingKeyframes(
     }
     for (const prop of CIRCLE_ANIMATABLE_PROPERTIES) {
       const key = `circle:${prop}`
-      tryPush(key, { kind: 'circle', nodeId: primaryId, property: prop } as unknown as KeyframeTarget, circleVals[prop])
+      tryPush(
+        key,
+        { kind: 'circle', nodeId: primaryId, property: prop } as unknown as KeyframeTarget,
+        circleVals[prop],
+      )
     }
   }
 
@@ -462,7 +545,9 @@ export function collectBakingKeyframes(
 
   // Shadow numeric — only if group with shadowEffect (clip supports shadow)
   {
-    const isGroup = primaryNode.children.length > 0 && Object.values(primaryNode.components).every((v) => v === undefined)
+    const isGroup =
+      primaryNode.children.length > 0 &&
+      Object.values(primaryNode.components).every((v) => v === undefined)
     const hasShadow = !!primaryNode.shadowEffect
     if (isGroup && hasShadow) {
       let shadowEff: import('./shadowEffect').ShadowEffect | null = null
@@ -477,7 +562,15 @@ export function collectBakingKeyframes(
         const key = `shadow:${prop}`
         const val = (eff as unknown as Record<string, unknown>)[prop]
         if (typeof val === 'number') {
-          tryPush(key, { kind: 'shadow', nodeId: primaryId, property: prop as ShadowProperty } as unknown as KeyframeTarget, val)
+          tryPush(
+            key,
+            {
+              kind: 'shadow',
+              nodeId: primaryId,
+              property: prop as ShadowProperty,
+            } as unknown as KeyframeTarget,
+            val,
+          )
         }
       }
     }
