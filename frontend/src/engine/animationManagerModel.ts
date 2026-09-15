@@ -518,23 +518,43 @@ export function packControlIntervalBlocks(
     start: number
     end: number
     index: number
+    uniqueId: string
   }[] = []
-  const bindings = Object.entries(control.bindings)
-  for (let index = 0; index < bindings.length; index++) {
-    const [semanticName, raw] = bindings[index]!
-    const interval = typeof raw === 'string' ? { clipId: raw, start: 0, end: 1 } : raw
-    const override = previewOverrides?.get(semanticName)
-    const start = override ? override.start : interval.start
-    const end = override ? override.end : interval.end
-    // Guard span
-    if (end - start < CONTROL_INTERVAL_MIN_SPAN - 1e-9) continue
-    let clip: ClipDefinition | null = null
-    try {
-      clip = getClip(interval.clipId)
-    } catch {
-      clip = null
+  let globalIndex = 0
+  for (const [semanticName, rawValue] of Object.entries(control.bindings)) {
+    const list: unknown[] = Array.isArray(rawValue) ? (rawValue as unknown[]) : [rawValue]
+    for (const raw of list) {
+      const interval =
+        typeof raw === 'string'
+          ? { clipId: raw, start: 0, end: 1 }
+          : (raw as { clipId: string; start: number; end: number })
+      // preview override key: try semanticName first, then semantic::clipId
+      const override =
+        previewOverrides?.get(semanticName) ??
+        previewOverrides?.get(`${semanticName}::${interval.clipId}::${globalIndex}`)
+      const start = override ? override.start : interval.start
+      const end = override ? override.end : interval.end
+      if (end - start < CONTROL_INTERVAL_MIN_SPAN - 1e-9) {
+        globalIndex += 1
+        continue
+      }
+      let clip: ClipDefinition | null = null
+      try {
+        clip = getClip(interval.clipId)
+      } catch {
+        clip = null
+      }
+      entries.push({
+        semanticName,
+        clipId: interval.clipId,
+        clip,
+        start,
+        end,
+        index: globalIndex,
+        uniqueId: `${semanticName}::${interval.clipId}::${globalIndex}`,
+      })
+      globalIndex += 1
     }
-    entries.push({ semanticName, clipId: interval.clipId, clip, start, end, index })
   }
   const sorted = [...entries].sort((a, b) => a.start - b.start || a.index - b.index)
   const trackEnds: number[] = []
@@ -544,7 +564,7 @@ export function packControlIntervalBlocks(
     for (let t = 0; t < trackEnds.length; t++) {
       if (e.start >= trackEnds[t]! - 1e-9) {
         trackEnds[t] = e.end
-        trackOf.set(e.semanticName, t)
+        trackOf.set(e.uniqueId, t)
         placed = true
         break
       }
@@ -552,12 +572,12 @@ export function packControlIntervalBlocks(
     if (!placed) {
       const t = trackEnds.length
       trackEnds.push(e.end)
-      trackOf.set(e.semanticName, t)
+      trackOf.set(e.uniqueId, t)
     }
   }
   const pps = pixelsPerSecond
   return entries.map((e) => {
-    const track = trackOf.get(e.semanticName) ?? 0
+    const track = trackOf.get(e.uniqueId) ?? 0
     const left = e.start * pps
     const width = (e.end - e.start) * pps
     return {

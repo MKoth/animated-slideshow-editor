@@ -49,12 +49,15 @@ export class ReorderControlBindingCommand implements Command<ReorderControlBindi
     if (!oldControlSet) throw new Error('No controlSet')
     const controls = oldControlSet.controls.map((control) => {
       if (control.key !== this.#controlKey) return control
-      const entries = Object.entries(control.bindings)
+      const entries = Object.entries(control.bindings) as [
+        string,
+        import('../control').ControlBindingValue,
+      ][]
       const fromIdx = entries.findIndex(([k]) => k === this.#semanticName)
       if (fromIdx === -1) return control
       const [moved] = entries.splice(fromIdx, 1)
       entries.splice(this.#newIndex, 0, moved!)
-      const nextBindings: Record<string, import('../control').ControlBinding> = {}
+      const nextBindings: Record<string, import('../control').ControlBindingValue> = {}
       for (const [k, v] of entries) nextBindings[k] = v
       return { ...control, bindings: nextBindings }
     })

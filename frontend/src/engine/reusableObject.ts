@@ -123,61 +123,78 @@ export function validateReusableObject(json: unknown): string[] {
             if (control.min !== 0 || control.max !== 1) {
               errors.push(`Control "${String(control.key)}" must use the v1 range [0, 1]`)
             }
-            if (typeof control.bindings !== 'object' || control.bindings === null) {
+            if (
+              typeof control.bindings !== 'object' ||
+              control.bindings === null ||
+              Array.isArray(control.bindings)
+            ) {
               errors.push(`Control "${String(control.key)}" bindings must be an object`)
             } else {
               for (const [semantic, rawBinding] of Object.entries(
                 control.bindings as Record<string, unknown>,
               )) {
-                if (typeof rawBinding === 'string') {
-                  if (rawBinding === '')
-                    errors.push(
-                      `Control "${String(control.key)}" binding "${semantic}" clipId must be non-empty`,
-                    )
-                  continue
-                }
-                if (isRecord(rawBinding)) {
-                  const clipId = rawBinding.clipId
-                  const start = rawBinding.start
-                  const end = rawBinding.end
-                  if (typeof clipId !== 'string' || clipId === '') {
-                    errors.push(
-                      `Control "${String(control.key)}" binding "${semantic}" clipId must be non-empty`,
-                    )
-                    continue
+                const validateOne = (rb: unknown): void => {
+                  if (typeof rb === 'string') {
+                    if (rb === '')
+                      errors.push(
+                        `Control "${String(control.key)}" binding "${semantic}" clipId must be non-empty`,
+                      )
+                    return
                   }
-                  if (typeof start !== 'number' || !Number.isFinite(start)) {
-                    errors.push(
-                      `Control "${String(control.key)}" binding "${semantic}" start must be a finite number`,
-                    )
-                    continue
+                  if (isRecord(rb)) {
+                    const clipId = (rb as Record<string, unknown>).clipId
+                    const start = (rb as Record<string, unknown>).start
+                    const end = (rb as Record<string, unknown>).end
+                    if (typeof clipId !== 'string' || clipId === '') {
+                      errors.push(
+                        `Control "${String(control.key)}" binding "${semantic}" clipId must be non-empty`,
+                      )
+                      return
+                    }
+                    if (typeof start !== 'number' || !Number.isFinite(start)) {
+                      errors.push(
+                        `Control "${String(control.key)}" binding "${semantic}" start must be a finite number`,
+                      )
+                      return
+                    }
+                    if (typeof end !== 'number' || !Number.isFinite(end)) {
+                      errors.push(
+                        `Control "${String(control.key)}" binding "${semantic}" end must be a finite number`,
+                      )
+                      return
+                    }
+                    if (start < 0)
+                      errors.push(
+                        `Control "${String(control.key)}" binding "${semantic}" start must be >= 0`,
+                      )
+                    if (end > 1)
+                      errors.push(
+                        `Control "${String(control.key)}" binding "${semantic}" end must be <= 1`,
+                      )
+                    if (start >= end)
+                      errors.push(
+                        `Control "${String(control.key)}" binding "${semantic}" start must be < end`,
+                      )
+                    else if (end - (start as number) < CONTROL_INTERVAL_MIN_SPAN)
+                      errors.push(
+                        `Control "${String(control.key)}" binding "${semantic}" span must be >= ${CONTROL_INTERVAL_MIN_SPAN}`,
+                      )
+                    return
                   }
-                  if (typeof end !== 'number' || !Number.isFinite(end)) {
-                    errors.push(
-                      `Control "${String(control.key)}" binding "${semantic}" end must be a finite number`,
-                    )
-                    continue
-                  }
-                  if (start < 0)
-                    errors.push(
-                      `Control "${String(control.key)}" binding "${semantic}" start must be >= 0`,
-                    )
-                  if (end > 1)
-                    errors.push(
-                      `Control "${String(control.key)}" binding "${semantic}" end must be <= 1`,
-                    )
-                  if (start >= end)
-                    errors.push(
-                      `Control "${String(control.key)}" binding "${semantic}" start must be < end`,
-                    )
-                  else if (end - (start as number) < CONTROL_INTERVAL_MIN_SPAN)
-                    errors.push(
-                      `Control "${String(control.key)}" binding "${semantic}" span must be >= ${CONTROL_INTERVAL_MIN_SPAN}`,
-                    )
-                } else {
                   errors.push(
                     `Control "${String(control.key)}" binding "${semantic}" must be a string or interval object`,
                   )
+                }
+                if (Array.isArray(rawBinding)) {
+                  if (rawBinding.length === 0) {
+                    errors.push(
+                      `Control "${String(control.key)}" binding "${semantic}" array must not be empty`,
+                    )
+                    continue
+                  }
+                  for (const entry of rawBinding as unknown[]) validateOne(entry)
+                } else {
+                  validateOne(rawBinding)
                 }
               }
             }
@@ -209,60 +226,73 @@ export function validateReusableObject(json: unknown): string[] {
                       `Control "${String(control.key)}" group name must be a non-empty string`,
                     )
                   const gb = rawGroup.bindings
-                  if (typeof gb !== 'object' || gb === null) {
+                  if (typeof gb !== 'object' || gb === null || Array.isArray(gb)) {
                     errors.push(`Control "${String(control.key)}" group bindings must be an object`)
                     continue
                   }
                   for (const [semantic, rawBinding] of Object.entries(
                     gb as Record<string, unknown>,
                   )) {
-                    if (typeof rawBinding === 'string') {
-                      if (rawBinding === '')
-                        errors.push(
-                          `Control "${String(control.key)}" group binding "${semantic}" clipId must be non-empty`,
-                        )
-                      continue
-                    }
-                    if (isRecord(rawBinding)) {
-                      const clipId = rawBinding.clipId
-                      const start = rawBinding.start
-                      const end = rawBinding.end
-                      if (typeof clipId !== 'string' || clipId === '') {
-                        errors.push(
-                          `Control "${String(control.key)}" group binding "${semantic}" clipId must be non-empty`,
-                        )
-                        continue
+                    const validateOneGroup = (rb: unknown): void => {
+                      if (typeof rb === 'string') {
+                        if (rb === '')
+                          errors.push(
+                            `Control "${String(control.key)}" group binding "${semantic}" clipId must be non-empty`,
+                          )
+                        return
                       }
-                      if (typeof start !== 'number' || !Number.isFinite(start))
-                        errors.push(
-                          `Control "${String(control.key)}" group binding "${semantic}" start must be a finite number`,
-                        )
-                      if (typeof end !== 'number' || !Number.isFinite(end))
-                        errors.push(
-                          `Control "${String(control.key)}" group binding "${semantic}" end must be a finite number`,
-                        )
-                      if (typeof start === 'number' && typeof end === 'number') {
-                        if (start < 0)
+                      if (isRecord(rb)) {
+                        const clipId = (rb as Record<string, unknown>).clipId
+                        const start = (rb as Record<string, unknown>).start
+                        const end = (rb as Record<string, unknown>).end
+                        if (typeof clipId !== 'string' || clipId === '') {
                           errors.push(
-                            `Control "${String(control.key)}" group binding "${semantic}" start must be >= 0`,
+                            `Control "${String(control.key)}" group binding "${semantic}" clipId must be non-empty`,
                           )
-                        if (end > 1)
+                          return
+                        }
+                        if (typeof start !== 'number' || !Number.isFinite(start))
                           errors.push(
-                            `Control "${String(control.key)}" group binding "${semantic}" end must be <= 1`,
+                            `Control "${String(control.key)}" group binding "${semantic}" start must be a finite number`,
                           )
-                        if (start >= end)
+                        if (typeof end !== 'number' || !Number.isFinite(end))
                           errors.push(
-                            `Control "${String(control.key)}" group binding "${semantic}" start must be < end`,
+                            `Control "${String(control.key)}" group binding "${semantic}" end must be a finite number`,
                           )
-                        else if (end - (start as number) < CONTROL_INTERVAL_MIN_SPAN)
-                          errors.push(
-                            `Control "${String(control.key)}" group binding "${semantic}" span must be >= ${CONTROL_INTERVAL_MIN_SPAN}`,
-                          )
+                        if (typeof start === 'number' && typeof end === 'number') {
+                          if (start < 0)
+                            errors.push(
+                              `Control "${String(control.key)}" group binding "${semantic}" start must be >= 0`,
+                            )
+                          if (end > 1)
+                            errors.push(
+                              `Control "${String(control.key)}" group binding "${semantic}" end must be <= 1`,
+                            )
+                          if (start >= end)
+                            errors.push(
+                              `Control "${String(control.key)}" group binding "${semantic}" start must be < end`,
+                            )
+                          else if (end - (start as number) < CONTROL_INTERVAL_MIN_SPAN)
+                            errors.push(
+                              `Control "${String(control.key)}" group binding "${semantic}" span must be >= ${CONTROL_INTERVAL_MIN_SPAN}`,
+                            )
+                        }
+                        return
                       }
-                    } else {
                       errors.push(
                         `Control "${String(control.key)}" group binding "${semantic}" must be a string or interval object`,
                       )
+                    }
+                    if (Array.isArray(rawBinding)) {
+                      if (rawBinding.length === 0) {
+                        errors.push(
+                          `Control "${String(control.key)}" group binding "${semantic}" array must not be empty`,
+                        )
+                        continue
+                      }
+                      for (const entry of rawBinding as unknown[]) validateOneGroup(entry)
+                    } else {
+                      validateOneGroup(rawBinding)
                     }
                   }
                 }

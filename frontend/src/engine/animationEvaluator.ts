@@ -1515,10 +1515,33 @@ export class AnimationEvaluator {
     for (const host of hosts) {
       const animation = this.#slideLookup(node.id).animation.node(host.id)
       for (const control of host.controlSet?.controls ?? []) {
-        const binding = control.bindings[node.semanticName]
-        if (!binding) continue
+        const rawBinding = (control.bindings as Record<string, unknown>)[node.semanticName]
+        if (!rawBinding) continue
+        const track = animation?.controlKeyframes(control.key) ?? []
+        const value = Math.min(
+          Math.max(evaluateControlTrack(track, time, control.default), control.min),
+          control.max,
+        )
+        const range = control.max - control.min
+        const rawU = range === 0 ? 0 : Math.min(Math.max((value - control.min) / range, 0), 1)
+        const candidates: unknown[] = Array.isArray(rawBinding)
+          ? (rawBinding as unknown[])
+          : [rawBinding]
+        let chosen: unknown | null = null
+        for (const b of candidates) {
+          const normalized =
+            typeof b === 'string'
+              ? { clipId: b, start: 0, end: 1 }
+              : (b as { clipId: string; start: number; end: number })
+          const s = (normalized as { start: number }).start ?? 0
+          const e = (normalized as { end: number }).end ?? 1
+          if (this.#isRawUInInterval(rawU, s, e)) chosen = b
+        }
+        if (!chosen) continue
         const normalized =
-          typeof binding === 'string' ? { clipId: binding, start: 0, end: 1 } : binding
+          typeof chosen === 'string'
+            ? { clipId: chosen, start: 0, end: 1 }
+            : (chosen as { clipId: string; start: number; end: number })
         const clipId = normalized.clipId
         if (!clipId) continue
         let clip: ClipDefinition
@@ -1528,23 +1551,14 @@ export class AnimationEvaluator {
           continue
         }
         if (clip.duration < 0) continue
-        // Hold-only channels remain rejected even when referenced via an interval
         if (clip.hasVisibleTrack()) {
           console.warn(
             `[control] Skipping binding "${node.semanticName}" on "${control.key}" — clip "${clipId}" contains visible (hold-only)`,
           )
           continue
         }
-        const track = animation?.controlKeyframes(control.key) ?? []
-        const value = Math.min(
-          Math.max(evaluateControlTrack(track, time, control.default), control.min),
-          control.max,
-        )
-        const range = control.max - control.min
-        const rawU = range === 0 ? 0 : Math.min(Math.max((value - control.min) / range, 0), 1)
         const start = (normalized as { start: number }).start
         const end = (normalized as { end: number }).end
-        if (!this.#isRawUInInterval(rawU, start, end)) continue
         const span = end - start
         if (span < 1e-9) continue
         const uPrime = Math.min(Math.max((rawU - start) / span, 0), 1)
@@ -1615,20 +1629,35 @@ export class AnimationEvaluator {
       ] as readonly ControlGroup[])
     const result: ({ clip: ClipDefinition; uPrime: number } | null)[] = []
     for (const group of groups) {
-      const binding = (group.bindings as Record<string, ControlBinding>)[nodeSemantic]
-      if (!binding) {
+      const rawBinding = (group.bindings as Record<string, unknown>)[nodeSemantic]
+      if (!rawBinding) {
+        result.push(null)
+        continue
+      }
+      const candidates: unknown[] = Array.isArray(rawBinding)
+        ? (rawBinding as unknown[])
+        : [rawBinding]
+      let chosen: unknown | null = null
+      for (const b of candidates) {
+        const normalized =
+          typeof b === 'string'
+            ? { clipId: b, start: 0, end: 1 }
+            : (b as { clipId: string; start: number; end: number })
+        const s = (normalized as { start: number }).start ?? 0
+        const e = (normalized as { end: number }).end ?? 1
+        if (this.#isRawUInInterval(rawU, s, e)) chosen = b
+      }
+      if (!chosen) {
         result.push(null)
         continue
       }
       const normalized =
-        typeof binding === 'string' ? { clipId: binding, start: 0, end: 1 } : binding
+        typeof chosen === 'string'
+          ? { clipId: chosen, start: 0, end: 1 }
+          : (chosen as { clipId: string; start: number; end: number })
       const clipId = (normalized as { clipId: string }).clipId
       const start = (normalized as { start: number }).start ?? 0
       const end = (normalized as { end: number }).end ?? 1
-      if (!this.#isRawUInInterval(rawU, start, end)) {
-        result.push(null)
-        continue
-      }
       const span = end - start
       if (span < 1e-9) {
         result.push(null)

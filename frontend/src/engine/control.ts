@@ -26,16 +26,19 @@ export type ControlBinding = string | ControlBindingInterval
 export type ControlBindingJSON =
   string | { readonly clipId: string; readonly start: number; readonly end: number }
 
+export type ControlBindingValue = ControlBinding | readonly ControlBinding[]
+export type ControlBindingJSONValue = ControlBindingJSON | readonly ControlBindingJSON[]
+
 export interface ControlGroup {
   readonly id: string
   readonly name: string
-  readonly bindings: Readonly<Record<string, ControlBinding>>
+  readonly bindings: Readonly<Record<string, ControlBindingValue>>
 }
 
 export interface ControlGroupJSON {
   readonly id: string
   readonly name: string
-  readonly bindings: Readonly<Record<string, ControlBindingJSON>>
+  readonly bindings: Readonly<Record<string, ControlBindingJSONValue>>
 }
 
 export interface Control {
@@ -46,7 +49,7 @@ export interface Control {
   readonly max: 1
   readonly default: number
   readonly exposed: boolean
-  readonly bindings: Readonly<Record<string, ControlBinding>>
+  readonly bindings: Readonly<Record<string, ControlBindingValue>>
   readonly groups: readonly ControlGroup[]
   readonly blendKeys: readonly string[]
 }
@@ -70,6 +73,119 @@ export function isControlBindingInterval(
 
 export function controlBindingClipId(binding: ControlBinding): string {
   return typeof binding === 'string' ? binding : binding.clipId
+}
+
+export function normalizeBindingValue(
+  value: ControlBindingValue | undefined,
+): readonly ControlBindingInterval[] {
+  if (value === undefined) return []
+  const arr = Array.isArray(value) ? value : [value]
+  return arr.map((b) => normalizeControlBinding(b))
+}
+
+export function getBindingsForSemantic(
+  bindings: Readonly<Record<string, ControlBindingValue>>,
+  semantic: string,
+): readonly ControlBinding[] {
+  const v = bindings[semantic]
+  if (v === undefined) return []
+  return Array.isArray(v) ? (v as readonly ControlBinding[]) : [v as ControlBinding]
+}
+
+export function addBindingToRecord(
+  record: Record<string, ControlBindingValue>,
+  semantic: string,
+  binding: ControlBinding,
+): void {
+  const existing = record[semantic]
+  if (existing === undefined) {
+    record[semantic] = binding
+  } else if (Array.isArray(existing)) {
+    record[semantic] = [...existing, binding]
+  } else {
+    record[semantic] = [existing as ControlBinding, binding]
+  }
+}
+
+export function removeBindingFromRecord(
+  record: Record<string, ControlBindingValue>,
+  semantic: string,
+  clipId?: string,
+  start?: number,
+  end?: number,
+): boolean {
+  const existing = record[semantic]
+  if (existing === undefined) return false
+  if (!Array.isArray(existing)) {
+    // single value – remove only if matches filter
+    if (clipId !== undefined) {
+      const b = existing as ControlBinding
+      const cid = typeof b === 'string' ? b : b.clipId
+      if (cid !== clipId) return false
+      if (start !== undefined || end !== undefined) {
+        const norm = normalizeControlBinding(b as ControlBinding)
+        if (start !== undefined && norm.start !== start) return false
+        if (end !== undefined && norm.end !== end) return false
+      }
+    }
+    delete record[semantic]
+    return true
+  }
+  const arr = existing as readonly ControlBinding[]
+  if (clipId === undefined) {
+    // remove semantic entirely? For UI remove action we delete all for semantic
+    delete record[semantic]
+    return true
+  }
+  const filtered = arr.filter((b) => {
+    const cid = typeof b === 'string' ? b : b.clipId
+    if (cid !== clipId) return true
+    if (start !== undefined || end !== undefined) {
+      const norm = normalizeControlBinding(b as ControlBinding)
+      if (start !== undefined && norm.start !== start) return true
+      if (end !== undefined && norm.end !== end) return true
+    }
+    return false // remove this one
+  })
+  if (filtered.length === 0) delete record[semantic]
+  else if (filtered.length === 1) record[semantic] = filtered[0]!
+  else record[semantic] = filtered
+  return true
+}
+
+export function flattenControlBindings(
+  bindings: Readonly<Record<string, ControlBindingValue>>,
+): Array<{ semantic: string; binding: ControlBinding; index: number }> {
+  const out: Array<{ semantic: string; binding: ControlBinding; index: number }> = []
+  let idx = 0
+  for (const [semantic, value] of Object.entries(bindings)) {
+    if (Array.isArray(value)) {
+      for (const b of value as readonly ControlBinding[]) {
+        out.push({ semantic, binding: b as ControlBinding, index: idx++ })
+      }
+    } else {
+      out.push({ semantic, binding: value as ControlBinding, index: idx++ })
+    }
+  }
+  return out
+}
+
+export function countControlBindings(
+  bindings: Readonly<Record<string, ControlBindingValue>>,
+): number {
+  let n = 0
+  for (const v of Object.values(bindings)) {
+    if (Array.isArray(v)) n += (v as readonly unknown[]).length
+    else n += 1
+  }
+  return n
+}
+
+export function isEmptyControlBindings(
+  bindings: Readonly<Record<string, ControlBindingValue>> | undefined,
+): boolean {
+  if (!bindings) return true
+  return countControlBindings(bindings) === 0
 }
 
 export function validateControlBinding(
@@ -117,15 +233,21 @@ export function validateControlKey(key: string): void {
 export function createControlGroup(input: {
   id?: string
   name?: string
-  bindings?: Readonly<Record<string, ControlBinding>>
+  bindings?: Readonly<Record<string, ControlBindingValue>>
 }): ControlGroup {
   const id = input.id ?? newId('control-group')
   const name = input.name ?? 'Group 1'
-  const bindings: Record<string, ControlBinding> = {}
+  const bindings: Record<string, ControlBindingValue> = {}
   if (input.bindings) {
-    for (const [semantic, binding] of Object.entries(input.bindings)) {
-      // we need controlKey for validation; use placeholder group validation will be done in createControl
-      bindings[semantic] = typeof binding === 'string' ? binding : { ...binding }
+    for (const [semantic, value] of Object.entries(input.bindings)) {
+      if (Array.isArray(value)) {
+        bindings[semantic] = (value as readonly ControlBinding[]).map((b) =>
+          typeof b === 'string' ? b : { ...b },
+        )
+      } else {
+        const binding = value as ControlBinding
+        bindings[semantic] = typeof binding === 'string' ? binding : { ...binding }
+      }
     }
   }
   return { id, name, bindings }
@@ -133,11 +255,16 @@ export function createControlGroup(input: {
 
 export function mergeGroupBindings(
   groups: readonly ControlGroup[],
-): Record<string, ControlBinding> {
-  const merged: Record<string, ControlBinding> = {}
+): Record<string, ControlBindingValue> {
+  const merged: Record<string, ControlBindingValue> = {}
   for (const group of groups) {
-    for (const [semantic, binding] of Object.entries(group.bindings)) {
-      merged[semantic] = binding
+    for (const [semantic, value] of Object.entries(group.bindings)) {
+      if (Array.isArray(value)) {
+        const arr = value as readonly ControlBinding[]
+        for (const b of arr) addBindingToRecord(merged, semantic, b as ControlBinding)
+      } else {
+        addBindingToRecord(merged, semantic, value as ControlBinding)
+      }
     }
   }
   return merged
@@ -191,8 +318,14 @@ export function validateControls(controls: readonly Control[]): void {
     }
     // validate bindings (merged)
     if (control.bindings && typeof control.bindings === 'object') {
-      for (const [semantic, binding] of Object.entries(control.bindings)) {
-        validateControlBinding(binding as ControlBinding, semantic, control.key)
+      for (const [semantic, value] of Object.entries(control.bindings)) {
+        if (Array.isArray(value)) {
+          for (const b of value as readonly ControlBinding[]) {
+            validateControlBinding(b as ControlBinding, semantic, control.key)
+          }
+        } else {
+          validateControlBinding(value as ControlBinding, semantic, control.key)
+        }
       }
     }
     // validate groups
@@ -210,11 +343,21 @@ export function validateControls(controls: readonly Control[]): void {
         groupIds.add(group.id)
         if (typeof group.name !== 'string' || group.name.trim() === '')
           throw new Error(`Control "${control.key}" group name must be a non-empty string`)
-        if (group.bindings && typeof group.bindings === 'object') {
-          for (const [semantic, binding] of Object.entries(
-            group.bindings as Record<string, ControlBinding>,
+        if (
+          group.bindings &&
+          typeof group.bindings === 'object' &&
+          !Array.isArray(group.bindings)
+        ) {
+          for (const [semantic, value] of Object.entries(
+            group.bindings as Record<string, ControlBindingValue>,
           )) {
-            validateControlBinding(binding as ControlBinding, semantic, control.key)
+            if (Array.isArray(value)) {
+              for (const b of value as readonly ControlBinding[]) {
+                validateControlBinding(b as ControlBinding, semantic, control.key)
+              }
+            } else {
+              validateControlBinding(value as ControlBinding, semantic, control.key)
+            }
           }
         } else if (group.bindings !== undefined) {
           throw new Error(`Control "${control.key}" group bindings must be an object`)
@@ -285,11 +428,10 @@ export function validateControls(controls: readonly Control[]): void {
         if (siblingBlendCount !== 0)
           throw new Error(`Blend control "${blendKey}" must not have its own blendKeys`)
         // check sibling bindings empty? Allow empty groups as well
-        const isEmptyBindings = Object.keys(sibling.bindings ?? {}).length === 0
+        const isEmptyBindings = isEmptyControlBindings(sibling.bindings)
         const isEmptyGroups =
           sibling.groups !== undefined
-            ? sibling.groups.length === 1 &&
-              Object.keys(sibling.groups[0].bindings ?? {}).length === 0
+            ? sibling.groups.length === 1 && isEmptyControlBindings(sibling.groups[0].bindings)
             : true // legacy without groups but empty bindings
         if (!isEmptyBindings && !isEmptyGroups)
           throw new Error(`Blend control "${blendKey}" must have empty bindings`)
@@ -339,7 +481,7 @@ export function createControl(input: {
   label?: string
   default?: number
   exposed?: boolean
-  bindings?: Readonly<Record<string, ControlBinding>>
+  bindings?: Readonly<Record<string, ControlBindingValue>>
   groups?: readonly ControlGroup[]
   blendKeys?: readonly string[]
 }): Control {
@@ -374,17 +516,32 @@ export function createControl(input: {
     }
     // validate each binding
     for (const group of groups) {
-      for (const [semantic, binding] of Object.entries(group.bindings)) {
-        validateControlBinding(binding as ControlBinding, semantic, input.key)
+      for (const [semantic, value] of Object.entries(group.bindings)) {
+        if (Array.isArray(value)) {
+          for (const b of value as readonly ControlBinding[]) {
+            validateControlBinding(b as ControlBinding, semantic, input.key)
+          }
+        } else {
+          validateControlBinding(value as ControlBinding, semantic, input.key)
+        }
       }
     }
     for (const bk of blendKeys) validateControlKey(bk)
   } else if (input.bindings !== undefined) {
     // create single group from flat bindings
-    const bindings: Record<string, ControlBinding> = {}
-    for (const [semantic, binding] of Object.entries(input.bindings)) {
-      validateControlBinding(binding, semantic, input.key)
-      bindings[semantic] = typeof binding === 'string' ? binding : { ...binding }
+    const bindings: Record<string, ControlBindingValue> = {}
+    for (const [semantic, value] of Object.entries(input.bindings)) {
+      if (Array.isArray(value)) {
+        const arr = value as readonly ControlBinding[]
+        for (const b of arr) validateControlBinding(b as ControlBinding, semantic, input.key)
+        bindings[semantic] = (arr as readonly ControlBinding[]).map((b) =>
+          typeof b === 'string' ? b : { ...(b as ControlBindingInterval) },
+        )
+      } else {
+        const binding = value as ControlBinding
+        validateControlBinding(binding, semantic, input.key)
+        bindings[semantic] = typeof binding === 'string' ? binding : { ...binding }
+      }
     }
     groups = [{ id: newId('control-group'), name: 'Group 1', bindings }]
     blendKeys = []
@@ -454,24 +611,60 @@ export function controlSetToJSON(controlSet: ControlSet): ControlSetJSON {
     id: controlSet.id,
     hostNodeId: controlSet.hostNodeId,
     controls: controlSet.controls.map((control) => {
-      const bindings: Record<string, ControlBindingJSON> = {}
-      // merged-union for backward compat: emit union of all groups
+      const bindings: Record<string, ControlBindingJSONValue> = {}
+      // merged-union for backward compat: emit union of all groups (last-wins, array→last)
       const merged = mergeGroupBindings(control.groups)
-      for (const [semantic, binding] of Object.entries(merged)) {
-        if (typeof binding === 'string') {
-          bindings[semantic] = { clipId: binding, start: 0, end: 1 }
+      for (const [semantic, value] of Object.entries(merged)) {
+        const arr = Array.isArray(value)
+          ? (value as readonly ControlBinding[])
+          : [value as ControlBinding]
+        const last = arr[arr.length - 1] as ControlBinding
+        if (typeof last === 'string') {
+          bindings[semantic] = { clipId: last, start: 0, end: 1 }
         } else {
-          bindings[semantic] = { clipId: binding.clipId, start: binding.start, end: binding.end }
+          bindings[semantic] = {
+            clipId: (last as ControlBindingInterval).clipId,
+            start: (last as ControlBindingInterval).start,
+            end: (last as ControlBindingInterval).end,
+          }
+        }
+        // If array length >1, also preserve array for new readers via extra field? But old readers only see last. New readers use groups, so okay.
+        // For new readers that might read top-level without groups (legacy fallback), we emit array if multiple
+        if (Array.isArray(value) && (value as readonly ControlBinding[]).length > 1) {
+          ;(bindings as Record<string, ControlBindingJSONValue>)[semantic] = (
+            value as readonly ControlBinding[]
+          ).map((b) =>
+            typeof b === 'string'
+              ? { clipId: b, start: 0, end: 1 }
+              : {
+                  clipId: (b as ControlBindingInterval).clipId,
+                  start: (b as ControlBindingInterval).start,
+                  end: (b as ControlBindingInterval).end,
+                },
+          ) as readonly ControlBindingJSON[]
         }
       }
       // Also emit groups for new readers
       const groups: ControlGroupJSON[] = control.groups.map((group) => {
-        const gb: Record<string, ControlBindingJSON> = {}
-        for (const [semantic, binding] of Object.entries(group.bindings)) {
-          if (typeof binding === 'string') {
-            gb[semantic] = { clipId: binding, start: 0, end: 1 }
+        const gb: Record<string, ControlBindingJSONValue> = {}
+        for (const [semantic, value] of Object.entries(group.bindings)) {
+          if (Array.isArray(value)) {
+            gb[semantic] = (value as readonly ControlBinding[]).map((b) =>
+              typeof b === 'string'
+                ? { clipId: b, start: 0, end: 1 }
+                : {
+                    clipId: (b as ControlBindingInterval).clipId,
+                    start: (b as ControlBindingInterval).start,
+                    end: (b as ControlBindingInterval).end,
+                  },
+            ) as readonly ControlBindingJSON[]
           } else {
-            gb[semantic] = { clipId: binding.clipId, start: binding.start, end: binding.end }
+            const binding = value as ControlBinding
+            if (typeof binding === 'string') {
+              gb[semantic] = { clipId: binding, start: 0, end: 1 }
+            } else {
+              gb[semantic] = { clipId: binding.clipId, start: binding.start, end: binding.end }
+            }
           }
         }
         return { id: group.id, name: group.name, bindings: gb }
@@ -506,46 +699,67 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
     try {
       const key = requireString(item.key, 'Control key')
       validateControlKey(key)
-      // Parse top-level bindings (legacy and merged-union)
-      const topBindings: Record<string, ControlBinding> = {}
-      if (item.bindings && typeof item.bindings === 'object') {
+      // Parse top-level bindings (legacy and merged-union) – supports array per semantic
+      const topBindings: Record<string, ControlBindingValue> = {}
+      if (item.bindings && typeof item.bindings === 'object' && !Array.isArray(item.bindings)) {
         for (const [semantic, rawBinding] of Object.entries(
           item.bindings as Record<string, unknown>,
         )) {
-          if (typeof rawBinding === 'string') {
-            if (rawBinding.length > 0)
-              topBindings[semantic] = { clipId: rawBinding, start: 0, end: 1 }
-            continue
-          }
-          if (rawBinding && typeof rawBinding === 'object') {
-            const obj = rawBinding as Record<string, unknown>
-            try {
-              const clipId = requireString(
-                obj.clipId,
-                `Control "${key}" binding "${semantic}" clipId`,
-              )
-              const start = requireFiniteNumber(
-                obj.start,
-                `Control "${key}" binding "${semantic}" start`,
-              )
-              const end = requireFiniteNumber(obj.end, `Control "${key}" binding "${semantic}" end`)
-              if (start < 0 || end > 1 || start >= end || end - start < CONTROL_INTERVAL_MIN_SPAN) {
-                console.warn(
-                  `[control] Dropping invalid interval binding "${semantic}" on "${key}": start=${start} end=${end}`,
-                )
-                continue
-              }
-              topBindings[semantic] = { clipId, start, end }
-            } catch (e) {
-              console.warn(
-                `[control] Dropping invalid binding "${semantic}" on "${key}": ${e instanceof Error ? e.message : String(e)}`,
-              )
-              continue
+          const parseOne = (rb: unknown): ControlBinding | undefined => {
+            if (typeof rb === 'string') {
+              if (rb.length > 0) return { clipId: rb, start: 0, end: 1 }
+              return undefined
             }
-          } else {
+            if (rb && typeof rb === 'object' && !Array.isArray(rb)) {
+              const obj = rb as Record<string, unknown>
+              try {
+                const clipId = requireString(
+                  obj.clipId,
+                  `Control "${key}" binding "${semantic}" clipId`,
+                )
+                const start = requireFiniteNumber(
+                  obj.start,
+                  `Control "${key}" binding "${semantic}" start`,
+                )
+                const end = requireFiniteNumber(
+                  obj.end,
+                  `Control "${key}" binding "${semantic}" end`,
+                )
+                if (
+                  start < 0 ||
+                  end > 1 ||
+                  start >= end ||
+                  end - start < CONTROL_INTERVAL_MIN_SPAN
+                ) {
+                  console.warn(
+                    `[control] Dropping invalid interval binding "${semantic}" on "${key}": start=${start} end=${end}`,
+                  )
+                  return undefined
+                }
+                return { clipId, start, end }
+              } catch (e) {
+                console.warn(
+                  `[control] Dropping invalid binding "${semantic}" on "${key}": ${e instanceof Error ? e.message : String(e)}`,
+                )
+                return undefined
+              }
+            }
             console.warn(
               `[control] Dropping invalid binding "${semantic}" on "${key}": unsupported value`,
             )
+            return undefined
+          }
+          if (Array.isArray(rawBinding)) {
+            const arr: ControlBinding[] = []
+            for (const entry of rawBinding as unknown[]) {
+              const b = parseOne(entry)
+              if (b) arr.push(b)
+            }
+            if (arr.length === 0) continue
+            topBindings[semantic] = arr.length === 1 ? arr[0]! : arr
+          } else {
+            const b = parseOne(rawBinding)
+            if (b) topBindings[semantic] = b
           }
         }
       }
@@ -579,57 +793,69 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
               console.warn(`[control] Dropping invalid group name on "${key}" — using fallback`)
             }
           }
-          const gbindings: Record<string, ControlBinding> = {}
-          if (g.bindings && typeof g.bindings === 'object') {
+          const gbindings: Record<string, ControlBindingValue> = {}
+          if (g.bindings && typeof g.bindings === 'object' && !Array.isArray(g.bindings)) {
             for (const [semantic, rawBinding] of Object.entries(
               g.bindings as Record<string, unknown>,
             )) {
-              if (typeof rawBinding === 'string') {
-                if (rawBinding.length > 0)
-                  gbindings[semantic] = { clipId: rawBinding, start: 0, end: 1 }
-                else
+              const parseOneGroup = (rb: unknown): ControlBinding | undefined => {
+                if (typeof rb === 'string') {
+                  if (rb.length > 0) return { clipId: rb, start: 0, end: 1 }
                   console.warn(
                     `[control] Dropping empty string binding "${semantic}" on "${key}" group "${gname}"`,
                   )
-                continue
-              }
-              if (rawBinding && typeof rawBinding === 'object') {
-                const obj = rawBinding as Record<string, unknown>
-                try {
-                  const clipId = requireString(
-                    obj.clipId,
-                    `Control "${key}" group "${gname}" binding "${semantic}" clipId`,
-                  )
-                  const start = requireFiniteNumber(
-                    obj.start,
-                    `Control "${key}" group "${gname}" binding "${semantic}" start`,
-                  )
-                  const end = requireFiniteNumber(
-                    obj.end,
-                    `Control "${key}" group "${gname}" binding "${semantic}" end`,
-                  )
-                  if (
-                    start < 0 ||
-                    end > 1 ||
-                    start >= end ||
-                    end - start < CONTROL_INTERVAL_MIN_SPAN
-                  ) {
-                    console.warn(
-                      `[control] Dropping invalid group interval binding "${semantic}" on "${key}" group "${gname}": start=${start} end=${end}`,
-                    )
-                    continue
-                  }
-                  gbindings[semantic] = { clipId, start, end }
-                } catch (e) {
-                  console.warn(
-                    `[control] Dropping invalid group binding "${semantic}" on "${key}": ${e instanceof Error ? e.message : String(e)}`,
-                  )
-                  continue
+                  return undefined
                 }
-              } else {
+                if (rb && typeof rb === 'object' && !Array.isArray(rb)) {
+                  const obj = rb as Record<string, unknown>
+                  try {
+                    const clipId = requireString(
+                      obj.clipId,
+                      `Control "${key}" group "${gname}" binding "${semantic}" clipId`,
+                    )
+                    const start = requireFiniteNumber(
+                      obj.start,
+                      `Control "${key}" group "${gname}" binding "${semantic}" start`,
+                    )
+                    const end = requireFiniteNumber(
+                      obj.end,
+                      `Control "${key}" group "${gname}" binding "${semantic}" end`,
+                    )
+                    if (
+                      start < 0 ||
+                      end > 1 ||
+                      start >= end ||
+                      end - start < CONTROL_INTERVAL_MIN_SPAN
+                    ) {
+                      console.warn(
+                        `[control] Dropping invalid group interval binding "${semantic}" on "${key}" group "${gname}": start=${start} end=${end}`,
+                      )
+                      return undefined
+                    }
+                    return { clipId, start, end }
+                  } catch (e) {
+                    console.warn(
+                      `[control] Dropping invalid group binding "${semantic}" on "${key}": ${e instanceof Error ? e.message : String(e)}`,
+                    )
+                    return undefined
+                  }
+                }
                 console.warn(
                   `[control] Dropping invalid group binding "${semantic}" on "${key}": unsupported`,
                 )
+                return undefined
+              }
+              if (Array.isArray(rawBinding)) {
+                const arr: ControlBinding[] = []
+                for (const entry of rawBinding as unknown[]) {
+                  const b = parseOneGroup(entry)
+                  if (b) arr.push(b)
+                }
+                if (arr.length === 0) continue
+                gbindings[semantic] = arr.length === 1 ? arr[0]! : arr
+              } else {
+                const b = parseOneGroup(rawBinding)
+                if (b) gbindings[semantic] = b
               }
             }
           } else if (g.bindings !== undefined) {
@@ -795,11 +1021,10 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
         const hostIdx = controls.findIndex((c) => c.key === ctrl.key)
         const sibling = controls[hostIdx + 1 + i]
         if (!sibling || sibling.key !== bk) return true
-        const isEmptyBindings = Object.keys(sibling.bindings ?? {}).length === 0
+        const isEmptyBindings = isEmptyControlBindings(sibling.bindings)
         const isEmptyGroups =
           sibling.groups !== undefined
-            ? sibling.groups.length === 1 &&
-              Object.keys(sibling.groups[0].bindings ?? {}).length === 0
+            ? sibling.groups.length === 1 && isEmptyControlBindings(sibling.groups[0].bindings)
             : true
         if (!isEmptyBindings && !isEmptyGroups) return true
       }
@@ -822,11 +1047,11 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
             )
             continue
           }
-          const isEmptyBindings = Object.keys(expectedSibling.bindings ?? {}).length === 0
+          const isEmptyBindings = isEmptyControlBindings(expectedSibling.bindings)
           const isEmptyGroups =
             expectedSibling.groups !== undefined
               ? expectedSibling.groups.length === 1 &&
-                Object.keys(expectedSibling.groups[0].bindings ?? {}).length === 0
+                isEmptyControlBindings(expectedSibling.groups[0].bindings)
               : true
           if (!isEmptyBindings && !isEmptyGroups) {
             console.warn(
@@ -1250,30 +1475,30 @@ export function moveBindingBetweenGroups(
   if (binding === undefined)
     throw new Error(`Binding "${semanticName}" not found in group "${fromGroupId}"`)
   // Remove from source
-  const newFromBindings: Record<string, ControlBinding> = { ...fromGroup.bindings }
+  const newFromBindings: Record<string, ControlBindingValue> = { ...fromGroup.bindings }
   delete newFromBindings[semanticName]
   // Insert into target
-  const targetEntries = Object.entries(toGroup.bindings) as [string, ControlBinding][]
+  const targetEntries = Object.entries(toGroup.bindings) as [string, ControlBindingValue][]
   const insertAt =
     toIndex !== undefined
       ? Math.min(Math.max(toIndex, 0), targetEntries.length)
       : targetEntries.length
   // If moving within same group, handle reorder
-  let newTargetEntries: [string, ControlBinding][]
+  let newTargetEntries: [string, ControlBindingValue][]
   if (fromGroupId === toGroupId) {
-    const entries = Object.entries(fromGroup.bindings) as [string, ControlBinding][]
+    const entries = Object.entries(fromGroup.bindings) as [string, ControlBindingValue][]
     const fromPos = entries.findIndex(([k]) => k === semanticName)
     const filtered = entries.filter(([k]) => k !== semanticName)
     const dest =
       toIndex !== undefined ? Math.min(Math.max(toIndex, 0), filtered.length) : filtered.length
     // adjust for removal shift if dest > fromPos
     const actualDest = fromPos !== -1 && dest > fromPos ? dest : dest
-    filtered.splice(actualDest, 0, [semanticName, binding])
+    filtered.splice(actualDest, 0, [semanticName, binding as ControlBindingValue])
     newTargetEntries = filtered
     // For same group, we just replace that group's bindings
     const newGroups = host.groups.map((g, idx) => {
       if (idx !== fromIdx) return g
-      const nb: Record<string, ControlBinding> = {}
+      const nb: Record<string, ControlBindingValue> = {}
       for (const [k, v] of newTargetEntries) nb[k] = v
       return { ...g, bindings: nb }
     })
@@ -1283,8 +1508,8 @@ export function moveBindingBetweenGroups(
     validateControls(newControls)
     return { ...controlSet, controls: newControls }
   } else {
-    targetEntries.splice(insertAt, 0, [semanticName, binding])
-    const newTargetBindings: Record<string, ControlBinding> = {}
+    targetEntries.splice(insertAt, 0, [semanticName, binding as ControlBindingValue])
+    const newTargetBindings: Record<string, ControlBindingValue> = {}
     for (const [k, v] of targetEntries) newTargetBindings[k] = v
     const newGroups = host.groups.map((g, idx) => {
       if (idx === fromIdx) return { ...g, bindings: newFromBindings }
@@ -1312,13 +1537,13 @@ export function reorderBindingWithinGroup(
   const groupIdx = host.groups.findIndex((g) => g.id === groupId)
   if (groupIdx === -1) throw new Error(`Group "${groupId}" not found`)
   const group = host.groups[groupIdx]
-  const entries = Object.entries(group.bindings) as [string, ControlBinding][]
+  const entries = Object.entries(group.bindings) as [string, ControlBindingValue][]
   const curIdx = entries.findIndex(([k]) => k === semanticName)
   if (curIdx === -1) throw new Error(`Binding "${semanticName}" not found`)
   const [moved] = entries.splice(curIdx, 1)
   const dest = Math.min(Math.max(newIndex, 0), entries.length)
-  entries.splice(dest, 0, moved)
-  const newBindings: Record<string, ControlBinding> = {}
+  entries.splice(dest, 0, moved!)
+  const newBindings: Record<string, ControlBindingValue> = {}
   for (const [k, v] of entries) newBindings[k] = v
   const newGroups = host.groups.map((g, idx) =>
     idx === groupIdx ? { ...g, bindings: newBindings } : g,

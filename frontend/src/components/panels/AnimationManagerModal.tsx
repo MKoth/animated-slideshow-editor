@@ -1,5 +1,5 @@
 /* eslint-disable react-hooks/set-state-in-effect */
-/* eslint-disable react-hooks/refs -- hover highlight stores previous selection in ref */
+
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
 import {
@@ -80,7 +80,13 @@ import { assetsApi } from '../../api'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { ManagerRuler } from './ManagerRuler'
 import { snapKeyframeTime } from '../../engine/timelineSnapping'
-import { createControl, createControlSet, CONTROL_INTERVAL_MIN_SPAN } from '../../engine/control'
+import {
+  createControl,
+  createControlSet,
+  CONTROL_INTERVAL_MIN_SPAN,
+  flattenControlBindings,
+  addBindingToRecord,
+} from '../../engine/control'
 import { useAnimationManagerNavStore } from '../../stores/animationManagerNavStore'
 
 interface AnimationManagerModalProps {
@@ -643,7 +649,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const setControlBindings = useCallback(
     (
       controlKey: string,
-      bindings: Record<string, string | { clipId: string; start: number; end: number }>,
+      bindings: Record<string, import('../../engine/control').ControlBindingValue>,
     ) => {
       if (!parentNode?.controlSet) return
       dispatch(
@@ -672,7 +678,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     },
     [parentNode, setControlBindings],
   )
-
+  void removeControlBinding
   const handleUpdateControlInterval = useCallback(
     (controlKey: string, semanticName: string, start: number, end: number) => {
       if (!parentNodeId) return
@@ -692,7 +698,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     },
     [parentNodeId, dispatch, notify],
   )
-
+  void handleUpdateControlInterval
   const handleReorderControlBinding = useCallback(
     (controlKey: string, semanticName: string, newIndex: number) => {
       if (!parentNodeId) return
@@ -711,6 +717,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     },
     [parentNodeId, dispatch, notify],
   )
+  void handleReorderControlBinding
 
   const handleMoveBindingBetweenGroups = useCallback(
     (semanticName: string, fromControlKey: string, toControlKey: string, toIndex?: number) => {
@@ -748,12 +755,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       if (!parentNode?.controlSet) return
       const control = parentNode.controlSet.controls.find((c) => c.key === controlKey)
       if (!control) return
-      if (control.bindings[semantic]) {
-        setAddBlockDialog((prev) =>
-          prev ? { ...prev, error: `Binding "${semantic}" already exists` } : prev,
-        )
-        return
-      }
+      // Allow multiple clips per same semantic – no duplicate check (array per semantic)
       // Check clip exists
       try {
         engine.getClip(clipId)
@@ -768,11 +770,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         )
         return
       }
-      // Default interval [0,1] then user can resize
-      const nextBindings: Record<string, import('../../engine/control').ControlBinding> = {
+      // Default interval [0,1] then user can resize – use helper to append to array per semantic
+      const nextBindings: Record<string, import('../../engine/control').ControlBindingValue> = {
         ...control.bindings,
-        [semantic]: { clipId, start: 0, end: 1 },
       }
+      addBindingToRecord(nextBindings, semantic, { clipId, start: 0, end: 1 })
       const nextSet: import('../../engine/control').ControlSet = {
         ...parentNode.controlSet,
         controls: parentNode.controlSet.controls.map((c) =>
@@ -1083,21 +1085,26 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       notify('Select clip lanes in Clips tab first (Ctrl+click)')
       return
     }
+    const bindings: Record<string, import('../../engine/control').ControlBindingValue> = {}
     const seen = new Set<string>()
-    const bindings: Record<string, string> = {}
     const rejected: string[] = []
     for (const id of selectedClipIds) {
       const info = instanceToNode.get(id)
       if (!info?.semanticName?.trim()) continue
       const sem = info.semanticName.trim()
-      if (seen.has(sem)) continue
-      seen.add(sem)
+      const dedupKey = `${sem}::${info.clipId}`
+      if (seen.has(dedupKey)) continue
+      seen.add(dedupKey)
       const count = descendantSemanticMap.get(sem)?.length ?? 0
       if (count === 0) {
         rejected.push(sem)
         continue
       }
-      bindings[sem] = info.clipId
+      addBindingToRecord(
+        bindings as Record<string, import('../../engine/control').ControlBindingValue>,
+        sem,
+        info.clipId,
+      )
     }
     if (rejected.length > 0)
       notify(
@@ -1136,21 +1143,26 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         notify('Select clip lanes in Clips tab first (Ctrl+click)')
         return
       }
-      const preview: Record<string, string> = {}
+      const preview: Record<string, import('../../engine/control').ControlBindingValue> = {}
       const seen = new Set<string>()
       const rejected: string[] = []
       for (const id of selectedClipIds) {
         const info = instanceToNode.get(id)
         if (!info?.semanticName?.trim()) continue
         const sem = info.semanticName.trim()
-        if (seen.has(sem)) continue
-        seen.add(sem)
+        const dedupKey = `${sem}::${info.clipId}`
+        if (seen.has(dedupKey)) continue
+        seen.add(dedupKey)
         const count = descendantSemanticMap.get(sem)?.length ?? 0
         if (count === 0) {
           rejected.push(sem)
           continue
         }
-        preview[sem] = info.clipId
+        addBindingToRecord(
+          preview as Record<string, import('../../engine/control').ControlBindingValue>,
+          sem,
+          info.clipId,
+        )
       }
       if (rejected.length > 0)
         notify(
@@ -1162,7 +1174,18 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       }
       const existing =
         parentNode?.controlSet?.controls.find((c) => c.key === controlKey)?.bindings ?? {}
-      const merged = { ...existing, ...preview }
+      const merged: Record<string, import('../../engine/control').ControlBindingValue> = {
+        ...existing,
+      }
+      for (const [sem, val] of Object.entries(preview)) {
+        if (Array.isArray(val)) {
+          for (const b of val as import('../../engine/control').ControlBinding[]) {
+            addBindingToRecord(merged, sem, b)
+          }
+        } else {
+          addBindingToRecord(merged, sem, val as import('../../engine/control').ControlBinding)
+        }
+      }
       setControlBindings(controlKey, merged)
       notify(`Attached ${Object.keys(preview).length} binding(s) to ${controlKey}`)
     },
@@ -3925,7 +3948,12 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 ? (activeSlide.animation.node(parentNodeId!)?.controlKeyframes(control.key) ?? [])
                 : []
               const bindings = control.bindings ?? {}
-              const bindingEntries = Object.entries(bindings)
+              const flatBindings = flattenControlBindings(
+                bindings as unknown as Record<
+                  string,
+                  import('../../engine/control').ControlBindingValue
+                >,
+              )
               return (
                 <div
                   key={control.key}
@@ -4006,7 +4034,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         <div style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
                           {control.key} · {control.exposed ? 'Exposed' : 'Internal'} ·{' '}
                           {keyframes.length} keyframe{keyframes.length === 1 ? '' : 's'} ·{' '}
-                          {bindingEntries.length} binding{bindingEntries.length === 1 ? '' : 's'}
+                          {flatBindings.length} binding{flatBindings.length === 1 ? '' : 's'}
                         </div>
                       </div>
                       <input
@@ -4070,9 +4098,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                       <button
                         data-testid={`manager-control-edit-${control.key}`}
                         onClick={() => handleEditControl(control.key)}
-                        disabled={bindingEntries.length === 0}
+                        disabled={flatBindings.length === 0}
                         title={
-                          bindingEntries.length === 0
+                          flatBindings.length === 0
                             ? 'No bindings — attach a clip first'
                             : 'Edit clip animation'
                         }
@@ -4080,9 +4108,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                           padding: '5px 8px',
                           borderRadius: 4,
                           border: '1px solid var(--color-border, #ddd)',
-                          cursor: bindingEntries.length === 0 ? 'default' : 'pointer',
+                          cursor: flatBindings.length === 0 ? 'default' : 'pointer',
                           fontSize: 12,
-                          opacity: bindingEntries.length === 0 ? 0.6 : 1,
+                          opacity: flatBindings.length === 0 ? 0.6 : 1,
                         }}
                       >
                         Edit Animation
@@ -4159,7 +4187,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     data-testid={`manager-control-bindings-${control.key}`}
                     style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}
                   >
-                    {bindingEntries.length === 0 ? (
+                    {flatBindings.length === 0 ? (
                       <span
                         style={{
                           fontSize: 11,
@@ -4170,9 +4198,13 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         No bindings — select clip lanes in Clips tab then Attach
                       </span>
                     ) : (
-                      bindingEntries.map(([sem, rawId]) => {
+                      flatBindings.map(({ semantic: sem, binding: rawId, index }) => {
                         const clipId =
                           typeof rawId === 'string' ? rawId : (rawId as { clipId: string }).clipId
+                        const interval =
+                          typeof rawId === 'string'
+                            ? { start: 0, end: 1 }
+                            : (rawId as { start: number; end: number })
                         let clipName: string
                         try {
                           clipName = engine.getClip(clipId).name
@@ -4184,16 +4216,17 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         const names = nodes.map((n) => n.name).join(', ')
                         const isZero = count === 0
                         const isHovered = hoveredBindingSemantic === sem
+                        const uniqueKey = `${sem}::${clipId}::${index}`
                         return (
                           <span
-                            key={sem}
-                            data-testid={`manager-control-binding-${control.key}-${sem}`}
+                            key={uniqueKey}
+                            data-testid={`manager-control-binding-${control.key}-${sem}-${index}`}
                             onMouseEnter={() => handleBindingHoverEnter(sem)}
                             onMouseLeave={handleBindingHoverLeave}
                             title={
                               isZero
                                 ? `No descendant with semanticName "${sem}" under ${parentNode?.name ?? 'host'} — binding does nothing`
-                                : `${count} node${count === 1 ? '' : 's'}: ${names} — click to highlight`
+                                : `${count} node${count === 1 ? '' : 's'}: ${names} — click to highlight — [${interval.start.toFixed(2)},${interval.end.toFixed(2)}]`
                             }
                             style={{
                               fontSize: 11,
@@ -4213,10 +4246,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                             }}
                           >
                             <span style={{ fontWeight: isHovered ? 600 : 400 }}>
-                              {sem} → {clipName}
+                              {sem} → {clipName} [{interval.start.toFixed(2)},
+                              {interval.end.toFixed(2)}]
                             </span>
                             <span
-                              data-testid={`manager-control-binding-count-${control.key}-${sem}`}
+                              data-testid={`manager-control-binding-count-${control.key}-${sem}-${index}`}
                               style={{
                                 fontSize: 10,
                                 background: isZero ? '#c00' : 'var(--color-accent, #7c5cff)',
@@ -4230,8 +4264,38 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                 : `${count} ${count === 1 ? 'node' : 'nodes'}: ${names}`}
                             </span>
                             <button
-                              data-testid={`manager-control-unbind-${control.key}-${sem}`}
-                              onClick={() => removeControlBinding(control.key, sem)}
+                              data-testid={`manager-control-unbind-${control.key}-${sem}-${index}`}
+                              onClick={() => {
+                                const ctrl = parentNode?.controlSet?.controls.find(
+                                  (c) => c.key === control.key,
+                                )
+                                if (!ctrl) return
+                                const nextBindings: Record<
+                                  string,
+                                  import('../../engine/control').ControlBindingValue
+                                > = { ...ctrl.bindings }
+                                const existing = nextBindings[sem]
+                                if (Array.isArray(existing)) {
+                                  const arr =
+                                    existing as import('../../engine/control').ControlBinding[]
+                                  const filtered = arr.filter((b) => {
+                                    const cid =
+                                      typeof b === 'string' ? b : (b as { clipId: string }).clipId
+                                    if (cid !== clipId) return true
+                                    const iv =
+                                      typeof b === 'string'
+                                        ? { start: 0, end: 1 }
+                                        : (b as { start: number; end: number })
+                                    return !(iv.start === interval.start && iv.end === interval.end)
+                                  })
+                                  if (filtered.length === 0) delete nextBindings[sem]
+                                  else if (filtered.length === 1) nextBindings[sem] = filtered[0]!
+                                  else nextBindings[sem] = filtered
+                                } else {
+                                  delete nextBindings[sem]
+                                }
+                                setControlBindings(control.key, nextBindings)
+                              }}
                               title={`Remove ${sem} binding`}
                               style={{
                                 border: 'none',
@@ -4250,7 +4314,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     )}
                   </div>
                   {/* Control Interval Bindings table: semanticName, clip name/duration, [start,end], Priority with up/down reorder */}
-                  {bindingEntries.length > 0 && (
+                  {flatBindings.length > 0 && (
                     <table
                       data-testid={`control-interval-table-${control.key}`}
                       style={{
@@ -4309,233 +4373,417 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         </tr>
                       </thead>
                       <tbody>
-                        {bindingEntries.map(([sem, raw], idx) => {
-                          const interval =
-                            typeof raw === 'string' ? { clipId: raw, start: 0, end: 1 } : raw
-                          let clipName = interval.clipId.slice(0, 8)
-                          let duration = 1
-                          try {
-                            const c = engine.getClip(interval.clipId)
-                            clipName = c.name
-                            duration = c.duration
-                          } catch (_e) {
-                            void _e
-                          }
-                          const isDragPreview =
-                            dragState &&
-                            (dragState.mode === 'interval-move' ||
-                              dragState.mode === 'interval-resize-left' ||
-                              dragState.mode === 'interval-resize-right') &&
-                            dragState.controlKey === control.key &&
-                            dragState.semanticName === sem
-                          const previewStart = isDragPreview
-                            ? (dragState as unknown as { previewStart: number }).previewStart
-                            : interval.start
-                          const previewEnd = isDragPreview
-                            ? (dragState as unknown as { previewEnd: number }).previewEnd
-                            : interval.end
-                          return (
-                            <tr
-                              key={sem}
-                              data-testid={`control-interval-row-${control.key}-${sem}`}
-                              draggable
-                              onDragStart={(e) => {
-                                e.dataTransfer.setData(
-                                  'text/plain',
-                                  JSON.stringify({ controlKey: control.key, semanticName: sem }),
-                                )
-                                e.dataTransfer.effectAllowed = 'move'
-                              }}
-                              onDragOver={(e) => {
-                                e.preventDefault()
-                                e.dataTransfer.dropEffect = 'move'
-                              }}
-                              onDrop={(e) => {
-                                e.preventDefault()
-                                try {
-                                  const data = JSON.parse(e.dataTransfer.getData('text/plain')) as {
-                                    controlKey: string
-                                    semanticName: string
-                                  }
-                                  if (!data.semanticName || data.controlKey === control.key) return
-                                  // Move between groups (controls) when groups exist
-                                  handleMoveBindingBetweenGroups(
-                                    data.semanticName,
-                                    data.controlKey,
-                                    control.key,
+                        {flatBindings.map(
+                          ({ semantic: sem, binding: raw, index: flatIdx }, idx) => {
+                            const interval =
+                              typeof raw === 'string'
+                                ? { clipId: raw, start: 0, end: 1 }
+                                : (raw as { clipId: string; start: number; end: number })
+                            let clipName = interval.clipId.slice(0, 8)
+                            let duration = 1
+                            try {
+                              const c = engine.getClip(interval.clipId)
+                              clipName = c.name
+                              duration = c.duration
+                            } catch (_e) {
+                              void _e
+                            }
+                            const isDragPreview =
+                              dragState &&
+                              (dragState.mode === 'interval-move' ||
+                                dragState.mode === 'interval-resize-left' ||
+                                dragState.mode === 'interval-resize-right') &&
+                              dragState.controlKey === control.key &&
+                              dragState.semanticName === sem &&
+                              // for duplicate semantics, also match clipId if present in dragState
+                              ((dragState as unknown as { clipId?: string }).clipId === undefined ||
+                                (dragState as unknown as { clipId?: string }).clipId ===
+                                  interval.clipId)
+                            const previewStart = isDragPreview
+                              ? (dragState as unknown as { previewStart: number }).previewStart
+                              : interval.start
+                            const previewEnd = isDragPreview
+                              ? (dragState as unknown as { previewEnd: number }).previewEnd
+                              : interval.end
+                            const rowKey = `${sem}::${interval.clipId}::${flatIdx}`
+                            return (
+                              <tr
+                                key={rowKey}
+                                data-testid={`control-interval-row-${control.key}-${sem}`}
+                                draggable
+                                onDragStart={(e) => {
+                                  e.dataTransfer.setData(
+                                    'text/plain',
+                                    JSON.stringify({ controlKey: control.key, semanticName: sem }),
                                   )
-                                } catch (_e) {
-                                  void _e
-                                }
-                              }}
-                              style={{
-                                background:
-                                  hoveredBindingSemantic === sem ? '#eef2ff' : 'transparent',
-                              }}
-                              onMouseEnter={() => handleBindingHoverEnter(sem)}
-                              onMouseLeave={handleBindingHoverLeave}
-                            >
-                              <td
-                                style={{
-                                  padding: '6px 8px',
-                                  borderBottom: '1px solid #eee',
-                                  fontFamily: 'monospace',
+                                  e.dataTransfer.effectAllowed = 'move'
                                 }}
-                              >
-                                {sem}
-                              </td>
-                              <td style={{ padding: '6px 8px', borderBottom: '1px solid #eee' }}>
-                                {clipName} ({duration}s)
-                              </td>
-                              <td
-                                style={{
-                                  padding: '6px 8px',
-                                  borderBottom: '1px solid #eee',
-                                  fontFamily: 'monospace',
+                                onDragOver={(e) => {
+                                  e.preventDefault()
+                                  e.dataTransfer.dropEffect = 'move'
                                 }}
+                                onDrop={(e) => {
+                                  e.preventDefault()
+                                  try {
+                                    const data = JSON.parse(
+                                      e.dataTransfer.getData('text/plain'),
+                                    ) as {
+                                      controlKey: string
+                                      semanticName: string
+                                    }
+                                    if (!data.semanticName || data.controlKey === control.key)
+                                      return
+                                    // Move between groups (controls) when groups exist
+                                    handleMoveBindingBetweenGroups(
+                                      data.semanticName,
+                                      data.controlKey,
+                                      control.key,
+                                    )
+                                  } catch (_e) {
+                                    void _e
+                                  }
+                                }}
+                                style={{
+                                  background:
+                                    hoveredBindingSemantic === sem ? '#eef2ff' : 'transparent',
+                                }}
+                                onMouseEnter={() => handleBindingHoverEnter(sem)}
+                                onMouseLeave={handleBindingHoverLeave}
                               >
-                                <span data-testid={`control-interval-start-${control.key}-${sem}`}>
-                                  {previewStart.toFixed(3)}
-                                </span>
-                                {' , '}
-                                <span data-testid={`control-interval-end-${control.key}-${sem}`}>
-                                  {previewEnd.toFixed(3)}
-                                </span>
-                                <span style={{ marginLeft: 6, display: 'inline-flex', gap: 2 }}>
-                                  <input
-                                    type="number"
-                                    step={0.01}
-                                    min={0}
-                                    max={1}
-                                    value={interval.start}
-                                    aria-label={`Control Interval start for ${sem}`}
-                                    data-testid={`control-interval-start-input-${control.key}-${sem}`}
-                                    onChange={(e) => {
-                                      const v = Number(e.target.value)
-                                      if (!Number.isFinite(v)) return
-                                      if (
-                                        v < 0 ||
-                                        v >= interval.end ||
-                                        interval.end - v < CONTROL_INTERVAL_MIN_SPAN
-                                      ) {
-                                        notify(
-                                          `Control Interval start must be ≥0 and < end with span ≥ ${CONTROL_INTERVAL_MIN_SPAN}`,
+                                <td
+                                  style={{
+                                    padding: '6px 8px',
+                                    borderBottom: '1px solid #eee',
+                                    fontFamily: 'monospace',
+                                  }}
+                                >
+                                  {sem}
+                                </td>
+                                <td style={{ padding: '6px 8px', borderBottom: '1px solid #eee' }}>
+                                  {clipName} ({duration}s)
+                                </td>
+                                <td
+                                  style={{
+                                    padding: '6px 8px',
+                                    borderBottom: '1px solid #eee',
+                                    fontFamily: 'monospace',
+                                  }}
+                                >
+                                  <span
+                                    data-testid={`control-interval-start-${control.key}-${sem}`}
+                                  >
+                                    {previewStart.toFixed(3)}
+                                  </span>
+                                  {' , '}
+                                  <span data-testid={`control-interval-end-${control.key}-${sem}`}>
+                                    {previewEnd.toFixed(3)}
+                                  </span>
+                                  <span style={{ marginLeft: 6, display: 'inline-flex', gap: 2 }}>
+                                    <input
+                                      type="number"
+                                      step={0.01}
+                                      min={0}
+                                      max={1}
+                                      value={interval.start}
+                                      aria-label={`Control Interval start for ${sem}`}
+                                      data-testid={`control-interval-start-input-${control.key}-${sem}`}
+                                      onChange={(e) => {
+                                        const v = Number(e.target.value)
+                                        if (!Number.isFinite(v)) return
+                                        if (
+                                          v < 0 ||
+                                          v >= interval.end ||
+                                          interval.end - v < CONTROL_INTERVAL_MIN_SPAN
+                                        ) {
+                                          notify(
+                                            `Control Interval start must be ≥0 and < end with span ≥ ${CONTROL_INTERVAL_MIN_SPAN}`,
+                                          )
+                                          return
+                                        }
+                                        // flat-aware update: replace specific entry in array
+                                        const ctrl = parentNode?.controlSet?.controls.find(
+                                          (c) => c.key === control.key,
                                         )
-                                        return
-                                      }
-                                      handleUpdateControlInterval(control.key, sem, v, interval.end)
-                                    }}
-                                    style={{ width: 60, padding: '2px 4px', fontSize: 11 }}
-                                  />
-                                  <input
-                                    type="number"
-                                    step={0.01}
-                                    min={0}
-                                    max={1}
-                                    value={interval.end}
-                                    aria-label={`Control Interval end for ${sem}`}
-                                    data-testid={`control-interval-end-input-${control.key}-${sem}`}
-                                    onChange={(e) => {
-                                      const v = Number(e.target.value)
-                                      if (!Number.isFinite(v)) return
-                                      if (
-                                        v > 1 ||
-                                        v <= interval.start ||
-                                        v - interval.start < CONTROL_INTERVAL_MIN_SPAN
-                                      ) {
-                                        notify(
-                                          `Control Interval end must be ≤1 and > start with span ≥ ${CONTROL_INTERVAL_MIN_SPAN}`,
+                                        if (!ctrl) return
+                                        const nextBindings: Record<
+                                          string,
+                                          import('../../engine/control').ControlBindingValue
+                                        > = { ...ctrl.bindings }
+                                        const existing = nextBindings[sem]
+                                        if (Array.isArray(existing)) {
+                                          const arr =
+                                            existing as import('../../engine/control').ControlBinding[]
+                                          const newArr = arr.map((b) => {
+                                            const cid =
+                                              typeof b === 'string'
+                                                ? b
+                                                : (b as { clipId: string }).clipId
+                                            const iv =
+                                              typeof b === 'string'
+                                                ? { start: 0, end: 1 }
+                                                : (b as { start: number; end: number })
+                                            if (
+                                              cid === interval.clipId &&
+                                              iv.start === interval.start &&
+                                              iv.end === interval.end
+                                            ) {
+                                              return {
+                                                clipId: interval.clipId,
+                                                start: v,
+                                                end: interval.end,
+                                              }
+                                            }
+                                            return b
+                                          })
+                                          nextBindings[sem] =
+                                            newArr.length === 1 ? newArr[0]! : newArr
+                                        } else {
+                                          nextBindings[sem] = {
+                                            clipId: interval.clipId,
+                                            start: v,
+                                            end: interval.end,
+                                          }
+                                        }
+                                        const nextSet: import('../../engine/control').ControlSet = {
+                                          ...parentNode!.controlSet!,
+                                          controls: parentNode!.controlSet!.controls.map((c) =>
+                                            c.key === control.key
+                                              ? { ...c, bindings: nextBindings }
+                                              : c,
+                                          ),
+                                        }
+                                        const res = dispatch(
+                                          new SetControlSetCommand({
+                                            nodeId: parentNode!.id,
+                                            controlSet: nextSet,
+                                          }) as never,
                                         )
-                                        return
+                                        if (!res.ok) notify(res.error.message)
+                                        else setTick((t) => t + 1)
+                                      }}
+                                      style={{ width: 60, padding: '2px 4px', fontSize: 11 }}
+                                    />
+                                    <input
+                                      type="number"
+                                      step={0.01}
+                                      min={0}
+                                      max={1}
+                                      value={interval.end}
+                                      aria-label={`Control Interval end for ${sem}`}
+                                      data-testid={`control-interval-end-input-${control.key}-${sem}`}
+                                      onChange={(e) => {
+                                        const v = Number(e.target.value)
+                                        if (!Number.isFinite(v)) return
+                                        if (
+                                          v > 1 ||
+                                          v <= interval.start ||
+                                          v - interval.start < CONTROL_INTERVAL_MIN_SPAN
+                                        ) {
+                                          notify(
+                                            `Control Interval end must be ≤1 and > start with span ≥ ${CONTROL_INTERVAL_MIN_SPAN}`,
+                                          )
+                                          return
+                                        }
+                                        const ctrl = parentNode?.controlSet?.controls.find(
+                                          (c) => c.key === control.key,
+                                        )
+                                        if (!ctrl) return
+                                        const nextBindings: Record<
+                                          string,
+                                          import('../../engine/control').ControlBindingValue
+                                        > = { ...ctrl.bindings }
+                                        const existing = nextBindings[sem]
+                                        if (Array.isArray(existing)) {
+                                          const arr =
+                                            existing as import('../../engine/control').ControlBinding[]
+                                          const newArr = arr.map((b) => {
+                                            const cid =
+                                              typeof b === 'string'
+                                                ? b
+                                                : (b as { clipId: string }).clipId
+                                            const iv =
+                                              typeof b === 'string'
+                                                ? { start: 0, end: 1 }
+                                                : (b as { start: number; end: number })
+                                            if (
+                                              cid === interval.clipId &&
+                                              iv.start === interval.start &&
+                                              iv.end === interval.end
+                                            ) {
+                                              return {
+                                                clipId: interval.clipId,
+                                                start: interval.start,
+                                                end: v,
+                                              }
+                                            }
+                                            return b
+                                          })
+                                          nextBindings[sem] =
+                                            newArr.length === 1 ? newArr[0]! : newArr
+                                        } else {
+                                          nextBindings[sem] = {
+                                            clipId: interval.clipId,
+                                            start: interval.start,
+                                            end: v,
+                                          }
+                                        }
+                                        const nextSet: import('../../engine/control').ControlSet = {
+                                          ...parentNode!.controlSet!,
+                                          controls: parentNode!.controlSet!.controls.map((c) =>
+                                            c.key === control.key
+                                              ? { ...c, bindings: nextBindings }
+                                              : c,
+                                          ),
+                                        }
+                                        const res = dispatch(
+                                          new SetControlSetCommand({
+                                            nodeId: parentNode!.id,
+                                            controlSet: nextSet,
+                                          }) as never,
+                                        )
+                                        if (!res.ok) notify(res.error.message)
+                                        else setTick((t) => t + 1)
+                                      }}
+                                      style={{ width: 60, padding: '2px 4px', fontSize: 11 }}
+                                    />
+                                  </span>
+                                </td>
+                                <td style={{ padding: '6px 8px', borderBottom: '1px solid #eee' }}>
+                                  <span
+                                    data-testid={`control-interval-priority-${control.key}-${sem}`}
+                                  >
+                                    {idx}
+                                  </span>
+                                  {idx === flatBindings.length - 1 ? ' (wins)' : ''}
+                                </td>
+                                <td
+                                  style={{
+                                    padding: '6px 8px',
+                                    borderBottom: '1px solid #eee',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  <button
+                                    data-testid={`control-interval-up-${control.key}-${sem}`}
+                                    disabled={idx === 0}
+                                    onClick={() => {
+                                      // flat-aware reorder: move this flat entry to idx-1 in flat list
+                                      const flat = [...flatBindings]
+                                      if (idx <= 0 || idx >= flat.length) return
+                                      const [moved] = flat.splice(idx, 1)
+                                      flat.splice(idx - 1, 0, moved!)
+                                      // rebuild bindings from flat in new order
+                                      const rebuilt: Record<
+                                        string,
+                                        import('../../engine/control').ControlBindingValue
+                                      > = {}
+                                      for (const { semantic: s, binding: b } of flat) {
+                                        addBindingToRecord(
+                                          rebuilt,
+                                          s,
+                                          b as import('../../engine/control').ControlBinding,
+                                        )
                                       }
-                                      handleUpdateControlInterval(
-                                        control.key,
-                                        sem,
-                                        interval.start,
-                                        v,
+                                      const nextSet: import('../../engine/control').ControlSet = {
+                                        ...parentNode!.controlSet!,
+                                        controls: parentNode!.controlSet!.controls.map((c) =>
+                                          c.key === control.key ? { ...c, bindings: rebuilt } : c,
+                                        ),
+                                      }
+                                      const res = dispatch(
+                                        new SetControlSetCommand({
+                                          nodeId: parentNode!.id,
+                                          controlSet: nextSet,
+                                        }) as never,
                                       )
+                                      if (!res.ok) notify(res.error.message)
+                                      else setTick((t) => t + 1)
                                     }}
-                                    style={{ width: 60, padding: '2px 4px', fontSize: 11 }}
-                                  />
-                                </span>
-                              </td>
-                              <td style={{ padding: '6px 8px', borderBottom: '1px solid #eee' }}>
-                                <span
-                                  data-testid={`control-interval-priority-${control.key}-${sem}`}
-                                >
-                                  {idx}
-                                </span>
-                                {idx === bindingEntries.length - 1 ? ' (wins)' : ''}
-                              </td>
-                              <td
-                                style={{
-                                  padding: '6px 8px',
-                                  borderBottom: '1px solid #eee',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                <button
-                                  data-testid={`control-interval-up-${control.key}-${sem}`}
-                                  disabled={idx === 0}
-                                  onClick={() =>
-                                    handleReorderControlBinding(control.key, sem, idx - 1)
-                                  }
-                                  title="Move up (higher priority wins later, last-wins)"
-                                  style={{
-                                    padding: '2px 6px',
-                                    marginRight: 4,
-                                    cursor: idx === 0 ? 'default' : 'pointer',
-                                    fontSize: 11,
-                                  }}
-                                >
-                                  ↑
-                                </button>
-                                <button
-                                  data-testid={`control-interval-down-${control.key}-${sem}`}
-                                  disabled={idx === bindingEntries.length - 1}
-                                  onClick={() =>
-                                    handleReorderControlBinding(control.key, sem, idx + 1)
-                                  }
-                                  title="Move down (lower = higher priority, later wins)"
-                                  style={{
-                                    padding: '2px 6px',
-                                    marginRight: 4,
-                                    cursor:
-                                      idx === bindingEntries.length - 1 ? 'default' : 'pointer',
-                                    fontSize: 11,
-                                  }}
-                                >
-                                  ↓
-                                </button>
-                                <button
-                                  data-testid={`control-interval-drag-${control.key}-${sem}`}
-                                  draggable
-                                  onPointerDown={(e) => {
-                                    // Priority drag via vertical pointer
-                                    e.preventDefault()
-                                    const startY = e.clientY
-                                    const startX = e.clientX
-                                    const initIdx = idx
-                                    setDragState({
-                                      mode: 'interval-reorder',
-                                      nodeId: parentNode!.id,
-                                      controlKey: control.key,
-                                      semanticName: sem,
-                                      initialIndex: initIdx,
-                                      previewIndex: initIdx,
-                                      startY,
-                                      startX,
-                                    } as DragState)
-                                  }}
-                                  title="Drag to reorder Priority (insertion order, later wins)"
-                                  style={{ padding: '2px 6px', cursor: 'grab', fontSize: 11 }}
-                                >
-                                  ≡
-                                </button>
-                              </td>
-                            </tr>
-                          )
-                        })}
+                                    title="Move up (higher priority wins later, last-wins)"
+                                    style={{
+                                      padding: '2px 6px',
+                                      marginRight: 4,
+                                      cursor: idx === 0 ? 'default' : 'pointer',
+                                      fontSize: 11,
+                                    }}
+                                  >
+                                    ↑
+                                  </button>
+                                  <button
+                                    data-testid={`control-interval-down-${control.key}-${sem}`}
+                                    disabled={idx === flatBindings.length - 1}
+                                    onClick={() => {
+                                      const flat = [...flatBindings]
+                                      if (idx < 0 || idx >= flat.length - 1) return
+                                      const [moved] = flat.splice(idx, 1)
+                                      flat.splice(idx + 1, 0, moved!)
+                                      const rebuilt: Record<
+                                        string,
+                                        import('../../engine/control').ControlBindingValue
+                                      > = {}
+                                      for (const { semantic: s, binding: b } of flat) {
+                                        addBindingToRecord(
+                                          rebuilt,
+                                          s,
+                                          b as import('../../engine/control').ControlBinding,
+                                        )
+                                      }
+                                      const nextSet: import('../../engine/control').ControlSet = {
+                                        ...parentNode!.controlSet!,
+                                        controls: parentNode!.controlSet!.controls.map((c) =>
+                                          c.key === control.key ? { ...c, bindings: rebuilt } : c,
+                                        ),
+                                      }
+                                      const res = dispatch(
+                                        new SetControlSetCommand({
+                                          nodeId: parentNode!.id,
+                                          controlSet: nextSet,
+                                        }) as never,
+                                      )
+                                      if (!res.ok) notify(res.error.message)
+                                      else setTick((t) => t + 1)
+                                    }}
+                                    title="Move down (lower = higher priority, later wins)"
+                                    style={{
+                                      padding: '2px 6px',
+                                      marginRight: 4,
+                                      cursor:
+                                        idx === flatBindings.length - 1 ? 'default' : 'pointer',
+                                      fontSize: 11,
+                                    }}
+                                  >
+                                    ↓
+                                  </button>
+                                  <button
+                                    data-testid={`control-interval-drag-${control.key}-${sem}`}
+                                    draggable
+                                    onPointerDown={(e) => {
+                                      // Priority drag via vertical pointer
+                                      e.preventDefault()
+                                      const startY = e.clientY
+                                      const startX = e.clientX
+                                      const initIdx = idx
+                                      setDragState({
+                                        mode: 'interval-reorder',
+                                        nodeId: parentNode!.id,
+                                        controlKey: control.key,
+                                        semanticName: sem,
+                                        initialIndex: initIdx,
+                                        previewIndex: initIdx,
+                                        startY,
+                                        startX,
+                                      } as DragState)
+                                    }}
+                                    title="Drag to reorder Priority (insertion order, later wins)"
+                                    style={{ padding: '2px 6px', cursor: 'grab', fontSize: 11 }}
+                                  >
+                                    ≡
+                                  </button>
+                                </td>
+                              </tr>
+                            )
+                          },
+                        )}
                       </tbody>
                     </table>
                   )}
@@ -4597,6 +4845,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                             )
                           }
                           placeholder="e.g. smile"
+                          list={`semantic-list-${control.key}`}
                           style={{
                             flex: 1,
                             padding: '4px 6px',
@@ -4605,6 +4854,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                             border: '1px solid #ddd',
                           }}
                         />
+                        <datalist id={`semantic-list-${control.key}`}>
+                          {[...descendantSemanticMap.keys()].map((sem) => (
+                            <option key={sem} value={sem} />
+                          ))}
+                        </datalist>
                         <label style={{ fontSize: 11, minWidth: 40 }}>Clip</label>
                         <select
                           data-testid={`control-add-block-clip-${control.key}`}
@@ -4695,7 +4949,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                       Attach selected clips
                       {selectedClipIds.size > 0 ? ` (${selectedClipIds.size})` : ''}
                     </button>
-                    {bindingEntries.length > 0 && (
+                    {flatBindings.length > 0 && (
                       <button
                         data-testid={`manager-control-clear-${control.key}`}
                         onClick={() => setControlBindings(control.key, {})}
@@ -4712,45 +4966,22 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     )}
                     <select
                       data-testid={`manager-control-clip-select-${control.key}`}
-                      defaultValue=""
+                      value=""
                       onChange={(e) => {
                         const clipId = e.target.value
-                        if (!clipId) return
-                        const clip = availableClipsForBinding.find((c) => c.id === clipId)
-                        if (!clip) return
-                        const existingSem = Object.keys(bindings).find((k) => {
-                          const v = (bindings as Record<string, string | { clipId: string }>)[k]
-                          const id = typeof v === 'string' ? v : v.clipId
-                          return id === clipId
-                        })
-                        let sem = existingSem
-                        if (!sem) {
-                          const guess = (() => {
-                            for (const id of selectedClipIds) {
-                              const info = instanceToNode.get(id)
-                              if (info?.clipId === clipId && info.semanticName)
-                                return info.semanticName
-                            }
-                            return ''
-                          })()
-                          sem = guess || clip.name.replace(/\s+/g, '_')
-                          if (!sem || sem.trim() === '')
-                            sem = `binding_${Object.keys(bindings).length + 1}`
-                        }
-                        const count = descendantSemanticMap.get(sem)?.length ?? 0
-                        if (count === 0) {
-                          notify(
-                            `Cannot bind "${sem}" — no descendant with semanticName "${sem}" under ${parentNode?.name ?? 'host'}. Set Semantic Name in Inspector first.`,
-                          )
-                          e.target.value = ''
-                          return
-                        }
-                        const next = { ...bindings, [sem]: clipId }
-                        setControlBindings(control.key, next)
-                        notify(
-                          `Bound ${sem} → ${clip.name} (${count} node${count === 1 ? '' : 's'})`,
-                        )
                         e.target.value = ''
+                        if (!clipId) return
+                        // New flow: select clip then ask to select semantic via Add Block dialog
+                        // Do not auto-guess from clip name; require explicit semantic selection
+                        setAddBlockDialog({
+                          controlKey: control.key,
+                          draftSemantic: '',
+                          draftClipId: clipId,
+                          error: null,
+                        })
+                        notify(
+                          'Select semantic name for the clip — if you cancel, it will not be attached',
+                        )
                       }}
                       style={{ padding: '4px 6px', borderRadius: 4, fontSize: 11, minWidth: 160 }}
                     >
@@ -4761,7 +4992,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         </option>
                       ))}
                     </select>
-                    {bindingEntries.length === 0 && (
+                    {flatBindings.length === 0 && (
                       <span style={{ fontSize: 11, color: '#b45309' }}>
                         Control does nothing until bound to a clip
                       </span>

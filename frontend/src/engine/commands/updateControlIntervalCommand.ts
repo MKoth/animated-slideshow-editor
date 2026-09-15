@@ -40,7 +40,10 @@ export class UpdateControlIntervalCommand implements Command<UpdateControlInterv
     const control = controlSet.controls.find((c) => c.key === this.#controlKey)
     if (!control)
       throw new Error(`Control "${this.#controlKey}" not found on node "${this.#nodeId}"`)
-    const binding = control.bindings[this.#semanticName]
+    const raw = (control.bindings as Record<string, unknown>)[this.#semanticName]
+    if (!raw)
+      throw new Error(`Binding "${this.#semanticName}" not found on control "${this.#controlKey}"`)
+    const binding = Array.isArray(raw) ? (raw as unknown[])[(raw as unknown[]).length - 1] : raw
     if (!binding)
       throw new Error(`Binding "${this.#semanticName}" not found on control "${this.#controlKey}"`)
     // Validate interval semantics
@@ -54,7 +57,8 @@ export class UpdateControlIntervalCommand implements Command<UpdateControlInterv
       throw new Error(`Control Interval span must be >= ${CONTROL_INTERVAL_MIN_SPAN}`)
     }
     // Use existing validator for clipId
-    const existingClipId = typeof binding === 'string' ? binding : binding.clipId
+    const existingClipId =
+      typeof binding === 'string' ? (binding as string) : (binding as { clipId: string }).clipId
     validateControlBinding(
       { clipId: existingClipId, start: this.#start, end: this.#end },
       this.#semanticName,
@@ -68,10 +72,27 @@ export class UpdateControlIntervalCommand implements Command<UpdateControlInterv
     if (!oldControlSet) throw new Error('No controlSet')
     const controls = oldControlSet.controls.map((control) => {
       if (control.key !== this.#controlKey) return control
-      const existing = control.bindings[this.#semanticName]
-      if (!existing) return control
+      const raw = (control.bindings as Record<string, unknown>)[this.#semanticName]
+      if (!raw) return control
+      if (Array.isArray(raw)) {
+        const arr = raw as (string | { clipId: string; start: number; end: number })[]
+        if (arr.length === 0) return control
+        const last = arr[arr.length - 1]!
+        const clipId = typeof last === 'string' ? last : last.clipId
+        const newLast = { clipId, start: this.#start, end: this.#end }
+        const newArr = [...arr.slice(0, -1), newLast]
+        const nextBindings: Record<string, import('../control').ControlBindingValue> = {
+          ...control.bindings,
+        }
+        nextBindings[this.#semanticName] =
+          newArr.length === 1
+            ? newArr[0]!
+            : (newArr as unknown as import('../control').ControlBinding[])
+        return { ...control, bindings: nextBindings }
+      }
+      const existing = raw as string | { clipId: string; start: number; end: number }
       const clipId = typeof existing === 'string' ? existing : existing.clipId
-      const nextBindings: Record<string, import('../control').ControlBinding> = {
+      const nextBindings: Record<string, import('../control').ControlBindingValue> = {
         ...control.bindings,
       }
       nextBindings[this.#semanticName] = { clipId, start: this.#start, end: this.#end }

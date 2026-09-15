@@ -73,24 +73,31 @@ export class MoveBindingBetweenGroupsCommand implements Command<MoveBindingBetwe
       // Fall through to control-level move if groups not matching
     }
     const fromControl = oldControlSet.controls.find((c) => c.key === this.#fromControlKey)!
-    const binding = fromControl.bindings[this.#semanticName]
+    const binding = (
+      fromControl.bindings as Record<string, import('../control').ControlBindingValue>
+    )[this.#semanticName] as import('../control').ControlBindingValue
     // Build next controls with binding moved
     const controls = oldControlSet.controls.map((control) => {
       if (control.key === this.#fromControlKey) {
-        const nextBindings = { ...control.bindings }
+        const nextBindings: Record<string, import('../control').ControlBindingValue> = {
+          ...control.bindings,
+        }
         delete nextBindings[this.#semanticName]
         return { ...control, bindings: nextBindings }
       }
       if (control.key === this.#toControlKey) {
-        const entries = Object.entries(control.bindings)
-        const nextEntries: [string, import('../control').ControlBinding][] = [...entries]
+        const entries = Object.entries(control.bindings) as [
+          string,
+          import('../control').ControlBindingValue,
+        ][]
+        const nextEntries: [string, import('../control').ControlBindingValue][] = [...entries]
         // Insert at toIndex if provided, otherwise append (later wins)
         const insertAt =
           this.#toIndex !== undefined
             ? Math.min(this.#toIndex, nextEntries.length)
             : nextEntries.length
         nextEntries.splice(insertAt, 0, [this.#semanticName, binding])
-        const nextBindings: Record<string, import('../control').ControlBinding> = {}
+        const nextBindings: Record<string, import('../control').ControlBindingValue> = {}
         for (const [k, v] of nextEntries) nextBindings[k] = v
         return { ...control, bindings: nextBindings }
       }

@@ -3891,19 +3891,26 @@ export class Engine {
       referencedMaterialIds.add(node.material.materialDefinitionId)
       for (const inst of node.clipInstances) referencedClipIds.add(inst.clipId)
       for (const control of node.controlSet?.controls ?? []) {
-        for (const binding of Object.values(control.bindings)) {
-          const clipId = typeof binding === 'string' ? binding : binding.clipId
-          if (clipId) referencedClipIds.add(clipId)
+        for (const value of Object.values(control.bindings)) {
+          const list: unknown[] = Array.isArray(value) ? (value as unknown[]) : [value]
+          for (const binding of list as (string | { clipId: string })[]) {
+            const clipId =
+              typeof binding === 'string' ? binding : (binding as { clipId: string }).clipId
+            if (clipId) referencedClipIds.add(clipId)
+          }
         }
         for (const group of (
           control as unknown as { groups?: readonly import('./control').ControlGroup[] }
         ).groups ?? []) {
-          for (const binding of Object.values(group.bindings)) {
-            const clipId =
-              typeof binding === 'string'
-                ? (binding as string)
-                : (binding as { clipId: string }).clipId
-            if (clipId) referencedClipIds.add(clipId)
+          for (const value of Object.values(group.bindings)) {
+            const list: unknown[] = Array.isArray(value) ? (value as unknown[]) : [value]
+            for (const binding of list as (string | { clipId: string })[]) {
+              const clipId =
+                typeof binding === 'string'
+                  ? (binding as string)
+                  : (binding as { clipId: string }).clipId
+              if (clipId) referencedClipIds.add(clipId)
+            }
           }
         }
       }
@@ -4437,11 +4444,24 @@ export class Engine {
               ...control,
               id: newId('control'),
             }
-            // Remap bindings (flat merged union) if present
+            // Remap bindings (flat merged union) if present – supports array per semantic
             if (control.bindings) {
               newControl.bindings = Object.fromEntries(
                 Object.entries(control.bindings as Record<string, unknown>).map(
                   ([semanticName, rawBinding]) => {
+                    const mapOne = (rb: unknown): unknown => {
+                      if (typeof rb === 'string') {
+                        const mapped = clipIdMap.get(rb) ?? rb
+                        return mapped
+                      }
+                      const obj = rb as { clipId: string; start: number; end: number }
+                      const mappedId = clipIdMap.get(obj.clipId) ?? obj.clipId
+                      return { clipId: mappedId, start: obj.start, end: obj.end }
+                    }
+                    if (Array.isArray(rawBinding)) {
+                      const mappedArr = (rawBinding as unknown[]).map(mapOne)
+                      return [semanticName, mappedArr]
+                    }
                     if (typeof rawBinding === 'string') {
                       const mapped = clipIdMap.get(rawBinding) ?? rawBinding
                       return [semanticName, mapped]
@@ -4463,43 +4483,55 @@ export class Engine {
                 for (const [semanticName, rawBinding] of Object.entries(
                   group.bindings as Record<string, unknown>,
                 )) {
-                  let mapped: unknown
-                  if (typeof rawBinding === 'string') {
-                    const mid = clipIdMap.get(rawBinding) ?? rawBinding
-                    // Actually clipIdMap has old->new, so if old not in map, it was not in library.clips → missing
-                    if (!clipIdMap.has(rawBinding as string)) {
-                      console.warn(
-                        `[control] Skipping group "${group.name}" binding "${semanticName}" — clip "${rawBinding}" missing in import`,
-                      )
-                      continue
+                  const processOne = (rb: unknown): unknown | null => {
+                    if (typeof rb === 'string') {
+                      const mid = clipIdMap.get(rb) ?? rb
+                      if (!clipIdMap.has(rb as string)) {
+                        console.warn(
+                          `[control] Skipping group "${group.name}" binding "${semanticName}" — clip "${rb}" missing in import`,
+                        )
+                        return null
+                      }
+                      if (!descendantSemanticNames.has(semanticName)) {
+                        console.warn(
+                          `[control] Skipping group "${group.name}" binding "${semanticName}" — semanticName has no descendant match`,
+                        )
+                        return null
+                      }
+                      return mid
+                    } else if (rb && typeof rb === 'object' && !Array.isArray(rb)) {
+                      const obj = rb as { clipId: string; start: number; end: number }
+                      const mid = clipIdMap.get(obj.clipId) ?? obj.clipId
+                      if (!clipIdMap.has(obj.clipId)) {
+                        console.warn(
+                          `[control] Skipping group "${group.name}" binding "${semanticName}" — clip "${obj.clipId}" missing`,
+                        )
+                        return null
+                      }
+                      if (!descendantSemanticNames.has(semanticName)) {
+                        console.warn(
+                          `[control] Skipping group "${group.name}" binding "${semanticName}" — semanticName has no descendant match`,
+                        )
+                        return null
+                      }
+                      return { clipId: mid, start: obj.start, end: obj.end }
                     }
-                    if (!descendantSemanticNames.has(semanticName)) {
-                      console.warn(
-                        `[control] Skipping group "${group.name}" binding "${semanticName}" — semanticName has no descendant match`,
-                      )
-                      continue
-                    }
-                    mapped = mid
-                  } else if (rawBinding && typeof rawBinding === 'object') {
-                    const obj = rawBinding as { clipId: string; start: number; end: number }
-                    const mid = clipIdMap.get(obj.clipId) ?? obj.clipId
-                    if (!clipIdMap.has(obj.clipId)) {
-                      console.warn(
-                        `[control] Skipping group "${group.name}" binding "${semanticName}" — clip "${obj.clipId}" missing`,
-                      )
-                      continue
-                    }
-                    if (!descendantSemanticNames.has(semanticName)) {
-                      console.warn(
-                        `[control] Skipping group "${group.name}" binding "${semanticName}" — semanticName has no descendant match`,
-                      )
-                      continue
-                    }
-                    mapped = { clipId: mid, start: obj.start, end: obj.end }
-                  } else {
-                    continue
+                    return null
                   }
-                  newGroupBindings[semanticName] = mapped
+                  if (Array.isArray(rawBinding)) {
+                    const mappedArr: unknown[] = []
+                    for (const entry of rawBinding as unknown[]) {
+                      const m = processOne(entry)
+                      if (m !== null) mappedArr.push(m)
+                    }
+                    if (mappedArr.length === 0) continue
+                    newGroupBindings[semanticName] =
+                      mappedArr.length === 1 ? mappedArr[0] : mappedArr
+                  } else {
+                    const mapped = processOne(rawBinding)
+                    if (mapped === null) continue
+                    newGroupBindings[semanticName] = mapped
+                  }
                 }
                 return {
                   ...group,

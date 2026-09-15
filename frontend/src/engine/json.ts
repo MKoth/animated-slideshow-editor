@@ -152,10 +152,12 @@ export type NodeJSON = {
 export type ControlBindingJSON =
   string | { readonly clipId: string; readonly start: number; readonly end: number }
 
+export type ControlBindingJSONValue = ControlBindingJSON | readonly ControlBindingJSON[]
+
 export type ControlGroupJSON = {
   readonly id: string
   readonly name: string
-  readonly bindings: Readonly<Record<string, ControlBindingJSON>>
+  readonly bindings: Readonly<Record<string, ControlBindingJSONValue>>
 }
 
 export type ControlJSON = {
@@ -166,7 +168,7 @@ export type ControlJSON = {
   readonly max: number
   readonly default: number
   readonly exposed: boolean
-  readonly bindings: Readonly<Record<string, ControlBindingJSON>>
+  readonly bindings: Readonly<Record<string, ControlBindingJSONValue>>
   readonly groups?: readonly ControlGroupJSON[]
   readonly blendKeys?: readonly string[]
 }
