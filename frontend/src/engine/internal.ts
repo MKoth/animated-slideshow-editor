@@ -145,7 +145,12 @@ import {
 import { materialFromJSON } from './materialInstance'
 import { clipInstanceFromJSON } from './clipInstance'
 import { uniqueNodeName } from './naming'
-import { ensureControlGroups, renameControlInSet, CONTROL_KEY_PATTERN } from './control'
+import {
+  ensureControlGroups,
+  normalizeControlSetForMutation,
+  renameControlInSet,
+  CONTROL_KEY_PATTERN,
+} from './control'
 
 function constraintParamsToJSON(c: Constraint): import('./json').ConstraintParamsJSON {
   switch (c.type) {
@@ -2182,7 +2187,7 @@ export class Engine {
 
   setControlSet(nodeId: string, controlSet: import('./control').ControlSet | undefined): void {
     const node = this.#nodes.getById(nodeId)
-    node.controlSet = controlSet
+    node.controlSet = controlSet ? normalizeControlSetForMutation(controlSet) : undefined
     this.#bus.emit({ type: 'NodeChanged', nodeId })
   }
 

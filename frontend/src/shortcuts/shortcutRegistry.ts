@@ -37,6 +37,7 @@ export function getShortcutHandler(combo: string): ShortcutHandler | undefined {
 }
 
 export function formatCombo(event: KeyboardEvent): string | null {
+  if (!event.key || typeof event.key !== 'string') return null
   const key = event.key.toLowerCase()
   if (key === 'control' || key === 'meta' || key === 'shift' || key === 'alt') {
     return null

@@ -232,8 +232,8 @@ describe('Clip Blocks Authoring UI — Bindings table, drill-in geometry & Prior
     const lane = within(editor).getByTestId('control-interval-lane')
     expect(lane).toBeInTheDocument()
     const pps = pixelsPerSecond(useTimelineViewStore.getState().zoomLevel)
-    const mouthBlock = within(editor).getByTestId('clip-block-Open-mouth')
-    const smileBlock = within(editor).getByTestId('clip-block-Open-smile')
+    const mouthBlock = within(editor).getByTestId('clip-block-Open-mouth-0')
+    const smileBlock = within(editor).getByTestId('clip-block-Open-smile-1')
     expect(mouthBlock).toBeInTheDocument()
     expect(smileBlock).toBeInTheDocument()
     // Check geometry: left/start*pps, width=(end-start)*pps
@@ -249,8 +249,8 @@ describe('Clip Blocks Authoring UI — Bindings table, drill-in geometry & Prior
     expect(screen.queryByText(/Control Lane/)).not.toBeInTheDocument()
     expect(within(editor).getByText(/Clip Block/)).toBeInTheDocument()
     // Check handles exist
-    expect(within(editor).getByTestId('clip-block-handle-left-Open-mouth')).toBeInTheDocument()
-    expect(within(editor).getByTestId('clip-block-handle-right-Open-mouth')).toBeInTheDocument()
+    expect(within(editor).getByTestId('clip-block-handle-left-Open-mouth-0')).toBeInTheDocument()
+    expect(within(editor).getByTestId('clip-block-handle-right-Open-mouth-0')).toBeInTheDocument()
     // Overlap allowed: mouth [0.2,0.6] and smile [0.5,0.9] overlap at 0.5-0.6, they should be on different tracks (Priority stacking)
     expect(mouthBlock.getAttribute('data-track')).not.toBe(smileBlock.getAttribute('data-track'))
 

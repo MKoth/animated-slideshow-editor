@@ -26,7 +26,8 @@ import { ExportObjectModal } from './ExportObjectModal'
 import { ExportClipCollectionModal } from './ExportClipCollectionModal'
 import { AnimationManagerModal } from './AnimationManagerModal'
 import { useAnimationManagerNavStore } from '../../stores/animationManagerNavStore'
-import { hasAnimatedDescendant } from '../../engine/animationManagerModel'
+import { hasAnimatedDescendant, isAnimatedChild } from '../../engine/animationManagerModel'
+import { isGroupNode } from '../../engine/sceneNode'
 
 interface ContextMenuState {
   x: number
@@ -601,7 +602,10 @@ export function ScenePanel() {
               const activeSlideForMenu = engine.getActiveSlide()
               const node = engine.getNode(nodeId)
               if (activeSlideForMenu) {
-                showManager = hasAnimatedDescendant(node, activeSlideForMenu)
+                showManager =
+                  isGroupNode(node) ||
+                  isAnimatedChild(node, activeSlideForMenu) ||
+                  hasAnimatedDescendant(node, activeSlideForMenu)
               }
             } catch {
               showManager = false

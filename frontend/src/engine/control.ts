@@ -606,6 +606,31 @@ export function ensureControlGroups(control: Control): Control {
   }
 }
 
+/** Keep the merged binding view in sync with the single group used by v1 controls. */
+export function normalizeControlSetForMutation(controlSet: ControlSet): ControlSet {
+  return {
+    ...controlSet,
+    controls: controlSet.controls.map((control) => {
+      if (control.groups.length !== 1) return ensureControlGroups(control)
+      const bindings: Record<string, ControlBindingValue> = {}
+      for (const [semantic, value] of Object.entries(control.bindings)) {
+        bindings[semantic] = Array.isArray(value)
+          ? (value as readonly ControlBinding[]).map((binding) =>
+              typeof binding === 'string' ? binding : { ...binding },
+            )
+          : typeof value === 'string'
+            ? value
+            : { ...(value as ControlBindingInterval) }
+      }
+      return {
+        ...control,
+        bindings,
+        groups: [{ ...control.groups[0]!, bindings }],
+      }
+    }),
+  }
+}
+
 export function controlSetToJSON(controlSet: ControlSet): ControlSetJSON {
   return {
     id: controlSet.id,

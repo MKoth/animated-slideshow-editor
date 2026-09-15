@@ -528,10 +528,10 @@ export function packControlIntervalBlocks(
         typeof raw === 'string'
           ? { clipId: raw, start: 0, end: 1 }
           : (raw as { clipId: string; start: number; end: number })
-      // preview override key: try semanticName first, then semantic::clipId
+      // preview override key: try uniqueId first (for duplicate per-semantic), then semantic fallback for legacy single
       const override =
-        previewOverrides?.get(semanticName) ??
-        previewOverrides?.get(`${semanticName}::${interval.clipId}::${globalIndex}`)
+        previewOverrides?.get(`${semanticName}::${interval.clipId}::${globalIndex}`) ??
+        previewOverrides?.get(semanticName)
       const start = override ? override.start : interval.start
       const end = override ? override.end : interval.end
       if (end - start < CONTROL_INTERVAL_MIN_SPAN - 1e-9) {

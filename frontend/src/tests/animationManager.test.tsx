@@ -43,7 +43,11 @@ function renderManager(engine: Engine, undoStack: UndoStack, parentNodeId: strin
   const onClose = () => {}
   return render(
     <EngineContext.Provider value={value}>
-      <AnimationManagerModal open={parentNodeId !== null} parentNodeId={parentNodeId} onClose={onClose} />
+      <AnimationManagerModal
+        open={parentNodeId !== null}
+        parentNodeId={parentNodeId}
+        onClose={onClose}
+      />
     </EngineContext.Provider>,
   )
 }
@@ -60,6 +64,24 @@ describe('Animation Manager shell – 15-01', () => {
     const undo = new UndoStack()
     engine.createProject({ name: 'Demo' })
     const slide = engine.createSlide('Slide 1')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent')
+    // Parent is a leaf (no children) and has no animated descendant → should hide
+    // (group nodes with children always show, even when empty)
+    renderSceneWithEngine(engine, undo)
+    const tree = await screen.findByRole('tree', { name: `Scene tree of ${slide.name}` })
+    const parentRow = await within(tree).findByRole('treeitem', { name: 'Parent' })
+    fireEvent.contextMenu(parentRow, { clientX: 10, clientY: 10 })
+    const menu = await screen.findByRole('menu', { name: 'Context menu' })
+    expect(
+      within(menu).queryByRole('menuitem', { name: /Animation Manager/ }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('shows Animation Manager entry for group nodes even when subtree has no Animated Child', async () => {
+    const engine = createEngineInternal()
+    const undo = new UndoStack()
+    engine.createProject({ name: 'Demo' })
+    const slide = engine.createSlide('Slide 1')
     const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent')
     engine.createNode(slide.scene.id, parent.id, 'Child')
     renderSceneWithEngine(engine, undo)
@@ -67,7 +89,7 @@ describe('Animation Manager shell – 15-01', () => {
     const parentRow = await within(tree).findByRole('treeitem', { name: 'Parent' })
     fireEvent.contextMenu(parentRow, { clientX: 10, clientY: 10 })
     const menu = await screen.findByRole('menu', { name: 'Context menu' })
-    expect(within(menu).queryByRole('menuitem', { name: /Animation Manager/ })).not.toBeInTheDocument()
+    expect(within(menu).getByRole('menuitem', { name: 'Animation Manager…' })).toBeInTheDocument()
   })
 
   it('shows Animation Manager entry when descendant has a keyframe', async () => {
@@ -79,7 +101,13 @@ describe('Animation Manager shell – 15-01', () => {
     const child = engine.createNode(slide.scene.id, parent.id, 'Child')
     // add a keyframe to child
     const dispatcher = new CommandDispatcher(engine, undo, () => undefined)
-    dispatcher.dispatch(new AddKeyframeCommand({ target: { kind: 'node', nodeId: child.id, property: 'positionX' }, time: 1, value: 10 }))
+    dispatcher.dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'node', nodeId: child.id, property: 'positionX' },
+        time: 1,
+        value: 10,
+      }),
+    )
     renderSceneWithEngine(engine, undo)
     const tree = await screen.findByRole('tree', { name: `Scene tree of ${slide.name}` })
     const parentRow = await within(tree).findByRole('treeitem', { name: 'Parent' })
@@ -96,17 +124,37 @@ describe('Animation Manager shell – 15-01', () => {
     const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent')
     const child = engine.createNode(slide.scene.id, parent.id, 'Child')
     const dispatcher = new CommandDispatcher(engine, undo, () => undefined)
-    const clip = dispatcher.dispatch(new CreateClipCommand({ name: 'ClipA', duration: 7, category: '', params: [], channels: [{ property: 'positionX' }] }))
+    const clip = dispatcher.dispatch(
+      new CreateClipCommand({
+        name: 'ClipA',
+        duration: 7,
+        category: '',
+        params: [],
+        channels: [{ property: 'positionX' }],
+      }),
+    )
     // need to add clipInstance via engine directly? Use dispatcher assign
     if (clip.ok) {
-      dispatcher.dispatch(new AssignClipCommand({ nodeId: child.id, clipId: (clip.inverse as unknown as { clipId: string }).clipId ?? engine.clips[0]!.id }))
+      dispatcher.dispatch(
+        new AssignClipCommand({
+          nodeId: child.id,
+          clipId: (clip.inverse as unknown as { clipId: string }).clipId ?? engine.clips[0]!.id,
+        }),
+      )
     }
     // Ensure child has clipInstances
     if (child.clipInstances.length === 0 && engine.clips.length > 0) {
       // direct via internal API: use engine's clipInstances mutation via assign command alternative: create instance directly on node
       const clipId = engine.clips[0]!.id
       // manually add via internal Node property (since test engine is internal, we can mutate)
-      const inst = { id: 'testInst', clipId, startTime: 0, speed: 1, enabled: true, paramOverrides: {} } as unknown as typeof child.clipInstances[0]
+      const inst = {
+        id: 'testInst',
+        clipId,
+        startTime: 0,
+        speed: 1,
+        enabled: true,
+        paramOverrides: {},
+      } as unknown as (typeof child.clipInstances)[0]
       ;(child.clipInstances as unknown as unknown[]).push(inst)
     }
     renderSceneWithEngine(engine, undo)
@@ -128,9 +176,21 @@ describe('Animation Manager shell – 15-01', () => {
     const childC = engine.createNode(slide.scene.id, parent.id, 'ChildC')
     const dispatcher = new CommandDispatcher(engine, undo, () => undefined)
     // ChildA animated via positionX
-    dispatcher.dispatch(new AddKeyframeCommand({ target: { kind: 'node', nodeId: childA.id, property: 'positionX' }, time: 0.5, value: 10 }))
+    dispatcher.dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'node', nodeId: childA.id, property: 'positionX' },
+        time: 0.5,
+        value: 10,
+      }),
+    )
     // Nested also animated via visible
-    dispatcher.dispatch(new AddKeyframeCommand({ target: { kind: 'visible', nodeId: childB.id }, time: 1, value: true }))
+    dispatcher.dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'visible', nodeId: childB.id },
+        time: 1,
+        value: true,
+      }),
+    )
     // ChildC not animated – should be omitted
     renderManager(engine, undo, parent.id)
     const modal = await screen.findByTestId('animation-manager-modal')
@@ -146,7 +206,9 @@ describe('Animation Manager shell – 15-01', () => {
     expect(ids[1]).toBe(`manager-row-${childB.id}`)
     // Check Animated Params filtered: ChildA should show positionX but not opacity
     expect(within(modal).getByTestId(`manager-param-${childA.id}-positionX`)).toBeInTheDocument()
-    expect(within(modal).queryByTestId(`manager-param-${childA.id}-opacity`)).not.toBeInTheDocument()
+    expect(
+      within(modal).queryByTestId(`manager-param-${childA.id}-opacity`),
+    ).not.toBeInTheDocument()
     // Nested should show Visible only
     expect(within(modal).getByTestId(`manager-param-${childB.id}-visible`)).toBeInTheDocument()
   })
@@ -159,7 +221,9 @@ describe('Animation Manager shell – 15-01', () => {
     const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent')
     const tNode = engine.createNode(slide.scene.id, parent.id, 'TNode')
     const vNode = engine.createNode(slide.scene.id, parent.id, 'VNode')
-    const circleNode = engine.createNode(slide.scene.id, parent.id, 'CircleNode', { components: { circle: createCircleComponent() } })
+    const circleNode = engine.createNode(slide.scene.id, parent.id, 'CircleNode', {
+      components: { circle: createCircleComponent() },
+    })
     const shadowParent = engine.createNode(slide.scene.id, parent.id, 'ShadowGroup')
     // make shadowParent a group (has children) and set shadowEffect via engine internal
     engine.createNode(slide.scene.id, shadowParent.id, 'ShadowChild')
@@ -171,19 +235,61 @@ describe('Animation Manager shell – 15-01', () => {
     // use engine's createShape via internal?
     // Instead directly use NodeAnimation morphKeyframes: add morph keyframe via AddKeyframeCommand with kind morph
     const dispatcher = new CommandDispatcher(engine, undo, () => undefined)
-    dispatcher.dispatch(new AddKeyframeCommand({ target: { kind: 'node', nodeId: tNode.id, property: 'positionX' }, time: 0, value: 5 }))
-    dispatcher.dispatch(new AddKeyframeCommand({ target: { kind: 'visible', nodeId: vNode.id }, time: 0, value: false }))
-    dispatcher.dispatch(new AddKeyframeCommand({ target: { kind: 'circle', nodeId: circleNode.id, property: 'radius' }, time: 0, value: 10 }))
-    dispatcher.dispatch(new AddKeyframeCommand({ target: { kind: 'shadow', nodeId: shadowParent.id, property: 'blur' }, time: 0, value: 5 }))
-    dispatcher.dispatch(new AddKeyframeCommand({ target: { kind: 'node', nodeId: materialNode.id, parameter: 'tint' } as unknown as never, time: 0, value: '#ff0000' }))
+    dispatcher.dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'node', nodeId: tNode.id, property: 'positionX' },
+        time: 0,
+        value: 5,
+      }),
+    )
+    dispatcher.dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'visible', nodeId: vNode.id },
+        time: 0,
+        value: false,
+      }),
+    )
+    dispatcher.dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'circle', nodeId: circleNode.id, property: 'radius' },
+        time: 0,
+        value: 10,
+      }),
+    )
+    dispatcher.dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'shadow', nodeId: shadowParent.id, property: 'blur' },
+        time: 0,
+        value: 5,
+      }),
+    )
+    dispatcher.dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'node', nodeId: materialNode.id, parameter: 'tint' } as unknown as never,
+        time: 0,
+        value: '#ff0000',
+      }),
+    )
     // morph – need shapes
     // create shapes via engine: createShape command?
     // Simplify: directly add morph keyframe via AddKeyframeCommand morph target
     // morph requires fromShapeId etc – we dispatch with object
-    dispatcher.dispatch(new AddKeyframeCommand({ target: { kind: 'morph', nodeId: morphNode.id } as never, time: 0, value: { fromShapeId: null, toShapeId: null, coefficient: 0.5 } as unknown as number }))
+    dispatcher.dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'morph', nodeId: morphNode.id } as never,
+        time: 0,
+        value: { fromShapeId: null, toShapeId: null, coefficient: 0.5 } as unknown as number,
+      }),
+    )
     // camera
     const camId = slide.scene.camera.id
-    dispatcher.dispatch(new AddKeyframeCommand({ target: { kind: 'node', nodeId: camId, property: 'positionX' }, time: 0, value: 100 }))
+    dispatcher.dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'node', nodeId: camId, property: 'positionX' },
+        time: 0,
+        value: 100,
+      }),
+    )
     // Now create a parent that contains camera as child (root) – to test camera filtered, we open manager on root
     renderManager(engine, undo, slide.scene.root.id)
     const modal = await screen.findByTestId('animation-manager-modal')
@@ -211,7 +317,13 @@ describe('Animation Manager shell – 15-01', () => {
     const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent')
     const child = engine.createNode(slide.scene.id, parent.id, 'Child')
     const dispatcher = new CommandDispatcher(engine, undo, () => undefined)
-    dispatcher.dispatch(new AddKeyframeCommand({ target: { kind: 'node', nodeId: child.id, property: 'positionX' }, time: 0, value: 0 }))
+    dispatcher.dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'node', nodeId: child.id, property: 'positionX' },
+        time: 0,
+        value: 0,
+      }),
+    )
     const user = userEvent.setup()
     renderManager(engine, undo, parent.id)
     const modal = await screen.findByTestId('animation-manager-modal')
@@ -221,7 +333,9 @@ describe('Animation Manager shell – 15-01', () => {
     expect(within(modal).getByTestId(`manager-param-${child.id}-positionX`)).toBeInTheDocument()
     await user.click(toggle)
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(within(modal).queryByTestId(`manager-param-${child.id}-positionX`)).not.toBeInTheDocument()
+    expect(
+      within(modal).queryByTestId(`manager-param-${child.id}-positionX`),
+    ).not.toBeInTheDocument()
     await user.click(toggle)
     expect(within(modal).getByTestId(`manager-param-${child.id}-positionX`)).toBeInTheDocument()
   })
@@ -234,7 +348,13 @@ describe('Animation Manager shell – 15-01', () => {
     const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent')
     const child = engine.createNode(slide.scene.id, parent.id, 'Child')
     const dispatcher = new CommandDispatcher(engine, undo, () => undefined)
-    dispatcher.dispatch(new AddKeyframeCommand({ target: { kind: 'node', nodeId: child.id, property: 'positionX' }, time: 1, value: 10 }))
+    dispatcher.dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'node', nodeId: child.id, property: 'positionX' },
+        time: 1,
+        value: 10,
+      }),
+    )
     const kfId = engine.getKeyframes(child.id, 'positionX')[0]?.id ?? 'unknown'
     const user = userEvent.setup()
     renderManager(engine, undo, parent.id)
@@ -261,7 +381,13 @@ describe('Animation Manager shell – 15-01', () => {
     const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent')
     const child = engine.createNode(slide.scene.id, parent.id, 'Child')
     const dispatcher = new CommandDispatcher(engine, undo, () => undefined)
-    dispatcher.dispatch(new AddKeyframeCommand({ target: { kind: 'node', nodeId: child.id, property: 'positionX' }, time: 0, value: 0 }))
+    dispatcher.dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'node', nodeId: child.id, property: 'positionX' },
+        time: 0,
+        value: 0,
+      }),
+    )
     let closed = false
     const dispatcher2 = new CommandDispatcher(engine, undo, () => undefined)
     const value: EngineContextValue = {
@@ -270,7 +396,9 @@ describe('Animation Manager shell – 15-01', () => {
       dispatch: (c) => dispatcher2.dispatch(c),
       persistence: noopPersistence,
     }
-    const onClose = () => { closed = true }
+    const onClose = () => {
+      closed = true
+    }
     const { unmount } = render(
       <EngineContext.Provider value={value}>
         <AnimationManagerModal open={true} parentNodeId={parent.id} onClose={onClose} />
@@ -303,7 +431,13 @@ describe('Animation Manager shell – 15-01', () => {
     const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent')
     const child = engine.createNode(slide.scene.id, parent.id, 'Child')
     const dispatcher = new CommandDispatcher(engine, undo, () => undefined)
-    dispatcher.dispatch(new AddKeyframeCommand({ target: { kind: 'node', nodeId: child.id, property: 'positionX' }, time: 0, value: 0 }))
+    dispatcher.dispatch(
+      new AddKeyframeCommand({
+        target: { kind: 'node', nodeId: child.id, property: 'positionX' },
+        time: 0,
+        value: 0,
+      }),
+    )
     renderManager(engine, undo, parent.id)
     const overlay = await screen.findByTestId('animation-manager-overlay')
     expect(overlay).toHaveAttribute('role', 'dialog')
