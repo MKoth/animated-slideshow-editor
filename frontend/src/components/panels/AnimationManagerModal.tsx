@@ -4641,7 +4641,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               ref={controlsScrollRef}
               data-testid="manager-controls-ruler"
               style={{
-                position: 'relative',
+                position: 'sticky',
+                top: 0,
+                zIndex: 30,
                 border: '1px solid var(--color-border, #eee)',
                 borderRadius: 4,
                 background: 'var(--color-bg, #fafafa)',
@@ -6125,6 +6127,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             {activeTab === 'orphans' && orphanTimelineBounds && (
               <div
                 style={{
+                  position: 'sticky',
+                  top: 0,
+                  zIndex: 30,
                   overflowX: 'hidden',
                   flexShrink: 0,
                   borderBottom: '1px solid var(--color-border, #ddd)',
@@ -6200,10 +6205,14 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             {activeTab === 'clips' && activeSlide && (
               <div
                 style={{
+                  position: 'sticky',
+                  top: 0,
+                  zIndex: 30,
                   overflowX: 'hidden',
                   flexShrink: 0,
                   borderBottom: '1px solid var(--color-border, #ddd)',
                   width: '100%',
+                  background: 'var(--color-bg, #fff)',
                 }}
               >
                 <div style={{ width: '100%', marginLeft: 0, boxSizing: 'border-box' }}>
