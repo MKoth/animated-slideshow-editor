@@ -48,6 +48,7 @@ import {
   DeleteClipKeyframesCommand,
   DeleteKeyframesCommand,
   MoveClipKeyframesCommand,
+  SetClipKeyframeValueCommand,
   AssignClipCommand,
   CreateClipCollectionCommand,
   DeleteClipCollectionCommand,
@@ -288,7 +289,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const [activeTab, setActiveTab] = useState<ManagerTab>('clips')
   const [controlValues, setControlValues] = useState<Record<string, number>>({})
   const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({})
-  const [editing, setEditing] = useState<{ clipId: string; nodeId: string } | null>(null)
+  const [editing, setEditing] = useState<{
+    clipId: string
+    nodeId: string
+    instanceId?: string
+  } | null>(null)
   const [editingControl, setEditingControl] = useState<{ key: string; clipId: string } | null>(null)
   const [editingControlMeta, setEditingControlMeta] = useState<{
     key: string
@@ -2532,11 +2537,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     }
   })()
 
-  const handleEdit = (clipId: string, nodeId: string) => {
+  const handleEdit = (clipId: string, nodeId: string, instanceId?: string) => {
     // save pps before drill-in
     const currentZoom = useTimelineViewStore.getState().zoomLevel
     setSavedZoom(currentZoom)
-    setEditing({ clipId, nodeId })
+    setEditing({ clipId, nodeId, instanceId })
     setClipMenu(null)
   }
 
@@ -3457,6 +3462,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           <ManagerClipEditor
             clip={editingClip}
             nodeId={editing.nodeId}
+            instanceId={editing.instanceId}
             pps={pps}
             onBack={restorePpsAndBack}
           />
@@ -5735,7 +5741,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   cursor: 'pointer',
                   fontSize: 12,
                 }}
-                onClick={() => handleEdit(clipMenu.clipId, clipMenu.nodeId)}
+                onClick={() => handleEdit(clipMenu.clipId, clipMenu.nodeId, clipMenu.instanceId)}
               >
                 Edit
               </button>
@@ -6998,10 +7004,12 @@ function AddBindingRow({
 function ManagerClipEditor({
   clip,
   nodeId,
+  instanceId,
   pps,
 }: {
   clip: ClipDefinition
   nodeId: string
+  instanceId?: string
   pps: number
   onBack: () => void
 }) {
@@ -7016,6 +7024,36 @@ function ManagerClipEditor({
     return clipChannelRows(clip)
   }, [clip, tick])
   const clipDuration = clip.duration
+  // Instance-aware denormalization: if editing a specific instance, show timeline
+  // scaled to that instance's visual duration (actual placed length) so keyframes
+  // appear at the global-time positions the user originally authored.
+  // Denormalized local = normalized * clipDuration (clip-local) ; for instance
+  // visualLocal = normalized * visualDuration. We expose visual space when
+  // instance exists, normalizing back via visualDuration on save.
+  const instance = useMemo(() => {
+    void tick
+    try {
+      const node = engine.getNode(nodeId)
+      if (instanceId) {
+        const found = node.clipInstances.find((inst) => inst.id === instanceId)
+        if (found) return found
+      }
+      // Fallback: first instance of this clip on the node
+      return node.clipInstances.find((inst) => inst.clipId === clip.id) ?? null
+    } catch {
+      return null
+    }
+  }, [engine, nodeId, instanceId, clip.id, tick])
+  const visualDuration = useMemo(() => {
+    if (!instance) return null
+    const speed = instance.speed < 1e-4 ? 1e-4 : instance.speed
+    if (clipDuration <= 0) return null
+    return clipDuration / speed
+  }, [instance, clipDuration])
+  // Effective timeline duration for display: visualDuration when editing a placed
+  // instance (denormalized to "actual" 4-sec scale), otherwise clip local duration.
+  // This implements the requested denormalize-on-edit / normalize-on-save cycle.
+  const editingDuration = visualDuration ?? clipDuration
   const [pickerOpen, setPickerOpen] = useState(false)
   const [diamondMenu, setDiamondMenu] = useState<{
     x: number
@@ -7033,6 +7071,12 @@ function ManagerClipEditor({
   const [snapEnabled, setSnapEnabled] = useState(false)
   const [dragPreviewSec, setDragPreviewSec] = useState<number | null>(null)
   const [dragPreviewPos, setDragPreviewPos] = useState<{ x: number; y: number } | null>(null)
+  const [selectedKf, setSelectedKf] = useState<{
+    id: string
+    row: ClipEditorRow
+    value: unknown
+    time: number
+  } | null>(null)
   const timeAreaRef = useRef<HTMLDivElement>(null)
   const scrollerRef = useRef<HTMLDivElement>(null)
 
@@ -7044,8 +7088,18 @@ function ManagerClipEditor({
     }
   }, [engine, nodeId])
 
-  const contentWidth = Math.max(760, clipDuration * pps + 80)
-  const editorPps = pps // clip-local; spec says 0..duration domain
+  // Timeline width: fill available modal width for short clips (user request:
+  // "duration to take whole width, now 4s shrank to 20%") while preserving
+  // scroll for long clips. baseWidth is pps-accurate; contentWidth ensures
+  // minimum 760px UI. laneWidth fills contentWidth, so 4s always spans the
+  // modal. effectivePps = laneWidth / duration is used for diamond
+  // positioning and drag delta → seconds, keeping ruler and diamonds in sync
+  // (previous bug: ruler stretched to contentWidth while diamonds used pps).
+  const baseWidth = Math.max(1, editingDuration) * pps
+  const contentWidth = Math.max(760, baseWidth + 80)
+  const laneWidth = contentWidth // fill whole width; scroll when baseWidth > 760
+  const effectivePps = laneWidth / Math.max(1e-9, editingDuration)
+  const editorPps = effectivePps // clip-local effective pixels per second
 
   // Duration rescale – only in editor
   const handleDurationChange = (value: number) => {
@@ -7094,6 +7148,7 @@ function ManagerClipEditor({
       }),
     )
     if (!result.ok) notify(result.error.message)
+    else if (selectedKf?.id === keyframeId) setSelectedKf(null)
   }
 
   // Helper to get keyframes for a row
@@ -7115,6 +7170,10 @@ function ManagerClipEditor({
   }
 
   // Diamond drag handling – move only for uniform channels, with opt-in snap + live feedback
+  // Denormalized workflow: display local = normalized * editingDuration
+  // (visualDuration when editing a placed instance, otherwise clipDuration).
+  // Drag delta stays in seconds, snappedLocal clamped to editingDuration,
+  // then renormalized via editingDuration on save.
   useEffect(() => {
     if (!dragInfo) return
     const onMove = (e: PointerEvent) => {
@@ -7130,7 +7189,7 @@ function ManagerClipEditor({
         for (const r of rows) {
           for (const kf of getKeyframesForRow(r)) {
             if (kf.id === cur.keyframeId) continue
-            candidateTimesSec.push(kf.time * clipDuration)
+            candidateTimesSec.push(kf.time * editingDuration)
           }
         }
         snappedLocal = snapKeyframeTime(rawLocal, {
@@ -7140,8 +7199,8 @@ function ManagerClipEditor({
           pps: editorPps,
         })
       }
-      const clampedLocal = Math.max(0, Math.min(snappedLocal, clipDuration))
-      const newNormalized = clipDuration > 0 ? clampedLocal / clipDuration : 0
+      const clampedLocal = Math.max(0, Math.min(snappedLocal, editingDuration))
+      const newNormalized = editingDuration > 0 ? clampedLocal / editingDuration : 0
       // preview via DOM direct mutation
       const el = document.querySelector(
         `[data-keyframe-id="${cur.keyframeId}"]`,
@@ -7175,6 +7234,9 @@ function ManagerClipEditor({
         }),
       )
       if (!result.ok) notify(result.error.message)
+      else if (selectedKf && selectedKf.id === cur.keyframeId) {
+        setSelectedKf({ ...selectedKf, time: preview })
+      }
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
@@ -7187,13 +7249,14 @@ function ManagerClipEditor({
   }, [
     dragInfo,
     editorPps,
-    clipDuration,
+    editingDuration,
     clip.id,
     dispatch,
     notify,
     snapEnabled,
     rows,
     getKeyframesForRow,
+    selectedKf,
   ])
 
   const handleDiamondPointerDown = (
@@ -7204,9 +7267,11 @@ function ManagerClipEditor({
     if (e.button !== 0) return
     e.preventDefault()
     e.stopPropagation()
-    if (row.kind !== 'clipChannel') return // only uniform draggable in this slice
+    // Select for value editing (all row kinds)
+    setSelectedKf({ id: kf.id, row, value: kf.value, time: kf.time })
+    if (row.kind !== 'clipChannel') return // only uniform draggable for time
     const normalized = kf.time
-    const local = normalized * clipDuration
+    const local = normalized * editingDuration
     setDragInfo({
       keyframeId: kf.id,
       row,
@@ -7214,6 +7279,23 @@ function ManagerClipEditor({
       originalNormalized: normalized,
       originalLocal: local,
     })
+  }
+
+  const handleSelectedValueChange = (newValue: number) => {
+    if (!selectedKf || selectedKf.row.kind !== 'clipChannel') return
+    const row = selectedKf.row as Extract<ClipEditorRow, { kind: 'clipChannel' }>
+    const result = dispatch(
+      new SetClipKeyframeValueCommand({
+        target: { kind: 'clip', clipId: clip.id, channel: row.channel },
+        keyframeId: selectedKf.id,
+        newValue,
+      }),
+    )
+    if (!result.ok) notify(result.error.message)
+    else {
+      // update local selected value optimistically
+      setSelectedKf({ ...selectedKf, value: newValue })
+    }
   }
 
   const handleDiamondContextMenu = (e: React.MouseEvent, row: ClipEditorRow, kfId: string) => {
@@ -7341,8 +7423,10 @@ function ManagerClipEditor({
         </label>
         <span style={{ fontSize: 11, color: 'var(--color-text-muted, #888)', marginLeft: 'auto' }}>
           {dragPreviewSec !== null
-            ? `Dragging: ${dragPreviewSec.toFixed(2)}s (${clipDuration > 0 ? (dragPreviewSec / clipDuration).toFixed(3) : '0.000'} norm)`
-            : `Clip-local time 0..${clipDuration.toFixed(2)}s • diamonds = normalized × duration`}
+            ? `Dragging: ${dragPreviewSec.toFixed(2)}s (${editingDuration > 0 ? (dragPreviewSec / editingDuration).toFixed(3) : '0.000'} norm)`
+            : visualDuration !== null && Math.abs(editingDuration - clipDuration) > 1e-6
+              ? `Visual 0..${editingDuration.toFixed(2)}s (clip ${clipDuration.toFixed(2)}s) • diamonds = normalized × duration`
+              : `Clip-local time 0..${clipDuration.toFixed(2)}s • diamonds = normalized × duration`}
         </span>
       </div>
 
@@ -7484,12 +7568,12 @@ function ManagerClipEditor({
           style={{ flex: 1, overflow: 'auto', position: 'relative' }}
           data-testid="clip-editor-scroller"
         >
-          <div style={{ width: contentWidth, position: 'relative' }}>
+          <div style={{ width: laneWidth, position: 'relative' }}>
             <div ref={timeAreaRef} data-testid="clip-editor-ruler">
               <ManagerRuler
-                durationSec={clipDuration}
+                durationSec={editingDuration}
                 pps={editorPps}
-                widthPx={contentWidth}
+                widthPx={laneWidth}
                 testId="clip-editor-ruler"
               />
             </div>
@@ -7497,7 +7581,7 @@ function ManagerClipEditor({
               style={{
                 position: 'relative',
                 height: rows.length * ROW_HEIGHT,
-                width: contentWidth,
+                width: laneWidth,
                 background: 'var(--color-bg-panel, #fff)',
               }}
               data-testid="clip-editor-lanes"
@@ -7518,13 +7602,15 @@ function ManagerClipEditor({
                     data-testid={`clip-editor-lane-${row.kind}-${idx}`}
                   >
                     {kfs.map((kf) => {
-                      const left = kf.time * clipDuration * editorPps
+                      const left = kf.time * editingDuration * editorPps
+                      const isSelected = selectedKf?.id === kf.id
                       return (
                         <div
                           key={kf.id}
                           data-keyframe-id={kf.id}
                           data-testid={`clip-diamond-${kf.id}`}
-                          title={`kf ${kf.time.toFixed(3)} (local ${(kf.time * clipDuration).toFixed(2)}s) → ${String(kf.value)}`}
+                          data-selected={String(isSelected)}
+                          title={`kf ${kf.time.toFixed(3)} (local ${(kf.time * editingDuration).toFixed(2)}s) → ${String(kf.value)}${isSelected ? ' • selected' : ''}`}
                           onPointerDown={(e) => handleDiamondPointerDown(e, row, kf)}
                           onContextMenu={(e) => handleDiamondContextMenu(e, row, kf.id)}
                           style={{
@@ -7535,11 +7621,13 @@ function ManagerClipEditor({
                             height: 10,
                             marginTop: -5,
                             transform: 'rotate(45deg)',
-                            background: 'var(--color-accent, #7c5cff)',
-                            border: '1px solid #fff',
-                            boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
-                            cursor: row.kind === 'clipChannel' ? 'grab' : 'default',
-                            zIndex: 2,
+                            background: isSelected ? '#ff3b30' : 'var(--color-accent, #7c5cff)',
+                            border: isSelected ? '2px solid #fff' : '1px solid #fff',
+                            boxShadow: isSelected
+                              ? '0 0 0 2px rgba(255,59,48,0.4), 0 1px 2px rgba(0,0,0,0.2)'
+                              : '0 1px 2px rgba(0,0,0,0.2)',
+                            cursor: row.kind === 'clipChannel' ? 'grab' : 'pointer',
+                            zIndex: isSelected ? 3 : 2,
                           }}
                         />
                       )
@@ -7551,6 +7639,113 @@ function ManagerClipEditor({
           </div>
         </div>
       </div>
+
+      {/* Selected keyframe inspector – position/value editing */}
+      {selectedKf && (
+        <div
+          data-testid="clip-selected-inspector"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: '8px 10px',
+            background: 'var(--color-bg-elevated, #f5f5f5)',
+            border: '1px solid var(--color-border, #ddd)',
+            borderRadius: 6,
+          }}
+        >
+          <span style={{ fontSize: 12, fontWeight: 600 }}>
+            {selectedKf.row.label} • {selectedKf.id.slice(0, 6)}
+          </span>
+          <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+            Time
+            <input
+              type="number"
+              step={0.01}
+              value={Number((selectedKf.time * editingDuration).toFixed(3))}
+              onChange={(e) => {
+                const local = Number(e.target.value)
+                if (!Number.isFinite(local)) return
+                const newNorm = Math.max(
+                  0,
+                  Math.min(1, editingDuration > 0 ? local / editingDuration : 0),
+                )
+                if (Math.abs(newNorm - selectedKf.time) < 1e-6) return
+                const row = selectedKf.row
+                if (row.kind !== 'clipChannel') {
+                  notify('Only uniform channels support time editing in this slice')
+                  return
+                }
+                const result = dispatch(
+                  new MoveClipKeyframesCommand({
+                    target: {
+                      kind: 'clip',
+                      clipId: clip.id,
+                      channel: (row as Extract<ClipEditorRow, { kind: 'clipChannel' }>).channel,
+                    },
+                    moves: [{ keyframeId: selectedKf.id, newTime: newNorm }],
+                  }),
+                )
+                if (!result.ok) notify(result.error.message)
+                else setSelectedKf({ ...selectedKf, time: newNorm })
+              }}
+              data-testid="clip-selected-time-input"
+              style={{
+                width: 80,
+                padding: '4px 6px',
+                borderRadius: 4,
+                border: '1px solid var(--color-border, #ddd)',
+                fontSize: 12,
+              }}
+            />
+            <span style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>s</span>
+          </label>
+          {selectedKf.row.kind === 'clipChannel' && typeof selectedKf.value === 'number' && (
+            <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+              Value
+              <input
+                type="number"
+                step={0.1}
+                value={Number(selectedKf.value)}
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  if (!Number.isFinite(v)) return
+                  handleSelectedValueChange(v)
+                }}
+                data-testid="clip-selected-value-input"
+                style={{
+                  width: 90,
+                  padding: '4px 6px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border, #ddd)',
+                  fontSize: 12,
+                }}
+              />
+            </label>
+          )}
+          <span
+            style={{ fontSize: 11, color: 'var(--color-text-muted, #888)', marginLeft: 'auto' }}
+          >
+            {selectedKf.row.kind === 'clipChannel'
+              ? `drag diamond to move • edit time/value above`
+              : `time ${(selectedKf.time * editingDuration).toFixed(2)}s • value ${String(selectedKf.value)}`}
+          </span>
+          <button
+            onClick={() => setSelectedKf(null)}
+            data-testid="clip-selected-close"
+            style={{
+              padding: '4px 8px',
+              borderRadius: 4,
+              border: '1px solid var(--color-border, #ddd)',
+              background: 'var(--color-bg, #fff)',
+              cursor: 'pointer',
+              fontSize: 11,
+            }}
+          >
+            Deselect
+          </button>
+        </div>
+      )}
 
       {/* Live drag feedback tooltip */}
       {dragPreviewSec !== null && dragPreviewPos && (
@@ -7572,7 +7767,7 @@ function ManagerClipEditor({
           }}
         >
           {dragPreviewSec.toFixed(2)}s
-          {clipDuration > 0 ? ` (${(dragPreviewSec / clipDuration).toFixed(3)})` : ''}{' '}
+          {editingDuration > 0 ? ` (${(dragPreviewSec / editingDuration).toFixed(3)})` : ''}{' '}
           {snapEnabled ? '· snap' : ''}
         </div>
       )}
