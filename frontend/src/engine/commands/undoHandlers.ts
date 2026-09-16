@@ -2076,6 +2076,27 @@ export function applyUndo(
       }
       return
     }
+    case 'MirrorClip': {
+      const mirrorInv = inv as Record<string, unknown> | null
+      const newClipId = mirrorInv?.newClipId as string
+      const instanceId = mirrorInv?.instanceId as string | undefined
+      const nodeId = mirrorInv?.nodeId as string | undefined
+      if (instanceId && nodeId) {
+        try {
+          engine.removeClipInstance(nodeId, instanceId)
+        } catch {
+          void 0
+        }
+      }
+      if (newClipId) {
+        try {
+          engine.deleteClip(newClipId)
+        } catch {
+          void 0
+        }
+      }
+      return
+    }
     case 'ReverseClip': {
       const revInv = inv as Record<string, unknown> | null
       const newClipId = revInv?.newClipId as string
@@ -3890,6 +3911,67 @@ export function applyRedo(
           } catch {
             void 0
           }
+        }
+      }
+      return
+    }
+    case 'MirrorClip': {
+      const inv = _inverse as Record<string, unknown> | null
+      const snapshot = inv?.snapshot as unknown
+      const instanceId = inv?.instanceId as string | undefined
+      const nodeId = inv?.nodeId as string | undefined
+      const instanceSnapshot = inv?.instanceSnapshot as Record<string, unknown> | undefined
+      if (snapshot) {
+        try {
+          const clip = ClipDefinition.fromJSON(snapshot as unknown as import('../json').ClipJSON)
+          engine.importClip(clip)
+        } catch {
+          void 0
+        }
+      }
+      if (instanceId && nodeId && instanceSnapshot) {
+        try {
+          const clipId = (snapshot as Record<string, unknown>)?.id as string
+          if (clipId) {
+            const start = ((instanceSnapshot as Record<string, unknown>).startTime as number) ?? 0
+            const speed = ((instanceSnapshot as Record<string, unknown>).speed as number) ?? 1
+            const enabled =
+              ((instanceSnapshot as Record<string, unknown>).enabled as boolean) ?? true
+            const paramOverrides = (instanceSnapshot as Record<string, unknown>).paramOverrides as
+              Record<string, number> | undefined
+            const inst = engine.assignClipInstance(
+              nodeId,
+              clipId,
+              start,
+              speed,
+              enabled,
+              paramOverrides ?? {},
+            )
+            // Patch id to original
+            if (inst.id !== instanceId) {
+              const node = engine.getNode(nodeId)
+              const found = node.clipInstances.find((i) => i.id === inst.id)
+              if (found) (found as unknown as { id: string }).id = instanceId
+            }
+          }
+        } catch {
+          void 0
+        }
+      } else if (instanceId && nodeId) {
+        // Fallback without snapshot
+        try {
+          const clipId = (snapshot as Record<string, unknown>)?.id as string
+          if (clipId) {
+            const start = ((params as Record<string, unknown>).startTime as number) ?? 0
+            const inst = engine.assignClipInstance(nodeId, clipId, start, 1, true, {})
+            if (inst.id !== instanceId) {
+              const node = engine.getNode(nodeId)
+              const found = node.clipInstances.find((i) => i.id === inst.id)
+              if (found) (found as unknown as { id: string }).id = instanceId
+            }
+          }
+        } catch {
+          void 0
         }
       }
       return

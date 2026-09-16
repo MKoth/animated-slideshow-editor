@@ -134,6 +134,8 @@ import { newId } from './ids'
 import { newClipId } from './clipDefinition'
 import { newClipCollectionId } from './clipCollection'
 import { createReversedClipDefinition } from './clipReverse'
+import { createMirroredClipDefinition, mirrorClipDefaultName } from './clipMirror'
+import type { MirrorAxis } from './clipMirror'
 import { newCollectionPlacementId, collectionPlacementFromJSON } from './collectionPlacement'
 import type { CollectionPlacement } from './collectionPlacement'
 import { Keyframe as KeyframeModel, newKeyframeId } from './keyframe'
@@ -3225,6 +3227,15 @@ export class Engine {
     return reversed
   }
 
+  createMirroredClip(sourceClipId: string, axis: MirrorAxis, newName?: string): ClipDefinition {
+    const source = this.getClip(sourceClipId)
+    const name = newName ?? mirrorClipDefaultName(source.name, axis)
+    const { clip } = createMirroredClipDefinition(source, axis, name)
+    this.#clips.importClip(clip)
+    this.#bus.emit({ type: 'ClipCreated', clipId: clip.id })
+    return clip
+  }
+
   setClipDuration(clipId: string, duration: number): void {
     this.#clips.setDuration(clipId, duration)
   }
@@ -5973,6 +5984,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
     createReversedCollection: (sourceCollectionId, newName) =>
       engine.createReversedCollection(sourceCollectionId, newName),
     createReversedClip: (clipId, newName) => engine.createReversedClip(clipId, newName),
+    createMirroredClip: (sourceClipId, axis, newName) =>
+      engine.createMirroredClip(sourceClipId, axis, newName),
     deleteClipCollection: (collectionId) => engine.deleteClipCollection(collectionId),
     renameClipCollection: (collectionId, name) => engine.renameClipCollection(collectionId, name),
     setClipCollectionBindings: (collectionId, bindings) =>

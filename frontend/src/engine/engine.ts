@@ -215,6 +215,11 @@ export interface EnginePublic {
     newName?: string,
   ): { collection: ClipCollection; clipIdMap: Map<string, string> }
   createReversedClip(clipId: string, newName?: string): ClipDefinition
+  createMirroredClip(
+    clipId: string,
+    axis: import('./clipMirror').MirrorAxis,
+    newName?: string,
+  ): ClipDefinition
   deleteClipCollection(collectionId: string): ClipCollection
   renameClipCollection(collectionId: string, name: string): void
   setClipCollectionBindings(collectionId: string, bindings: Record<string, string>): void

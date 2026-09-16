@@ -61,6 +61,7 @@ import {
   MoveClipLayerCommand,
   ReverseClipCommand,
   ReverseCollectionCommand,
+  MirrorClipCommand,
   RemoveClipCommand,
   DeleteCollectionPlacementCommand,
   DeleteClipCommand,
@@ -72,6 +73,8 @@ import {
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { computeExtractionBounds } from '../../engine/clipExtraction'
+import { mirrorClipDefaultName } from '../../engine/clipMirror'
+import type { MirrorAxis } from '../../engine/clipMirror'
 import type { ExtractableKeyframe } from '../../engine/clipExtraction'
 import { ClipExtractionModal } from './ClipExtractionModal'
 import { DeleteOrphansConfirmModal } from './DeleteOrphansConfirmModal'
@@ -412,6 +415,15 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     defaultName: string
   } | null>(null)
   const [reverseNameDraft, setReverseNameDraft] = useState('')
+  const [mirrorClipPrompt, setMirrorClipPrompt] = useState<{
+    clipId: string
+    nodeId?: string
+    instanceId?: string
+    startTime?: number
+    defaultName: string
+  } | null>(null)
+  const [mirrorNameDraft, setMirrorNameDraft] = useState('')
+  const [mirrorAxis, setMirrorAxis] = useState<MirrorAxis>('X')
   const [deleteOrphansConfirm, setDeleteOrphansConfirm] = useState<{
     keyframes: readonly ExtractableKeyframe[]
     clipId: string
@@ -518,6 +530,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         if (reverseClipPrompt) {
           setReverseClipPrompt(null)
           e.stopPropagation()
+        } else if (mirrorClipPrompt) {
+          setMirrorClipPrompt(null)
+          e.stopPropagation()
         } else if (reverseCollectionPrompt) {
           setReverseCollectionPrompt(null)
           e.stopPropagation()
@@ -606,6 +621,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     controlBlockMenu,
     reverseClipPrompt,
     reverseCollectionPrompt,
+    mirrorClipPrompt,
     addBlockDialog,
     onClose,
     restorePpsAndBack,
@@ -1670,6 +1686,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       if (
         reverseClipPrompt ||
         reverseCollectionPrompt ||
+        mirrorClipPrompt ||
         collectionCreateOpen ||
         editingCollectionId ||
         deleteConfirmCollectionId ||
@@ -1803,6 +1820,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     notify,
     reverseClipPrompt,
     reverseCollectionPrompt,
+    mirrorClipPrompt,
     collectionCreateOpen,
     editingCollectionId,
     deleteConfirmCollectionId,
@@ -3374,6 +3392,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const handleBackdropClick = () => {
     if (reverseClipPrompt) {
       setReverseClipPrompt(null)
+      return
+    }
+    if (mirrorClipPrompt) {
+      setMirrorClipPrompt(null)
       return
     }
     if (reverseCollectionPrompt) {
@@ -7224,6 +7246,45 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               >
                 Reverse and Save As…
               </button>
+              <button
+                role="menuitem"
+                data-testid="clip-lane-mirror"
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+                onClick={() => {
+                  try {
+                    const clip = engine.getClip(clipMenu.clipId)
+                    const node = engine.getNode(clipMenu.nodeId)
+                    const inst = node.clipInstances.find((i) => i.id === clipMenu.instanceId)
+                    const start = inst ? inst.startTime : 0
+                    const axis: MirrorAxis = 'X'
+                    const defaultName = mirrorClipDefaultName(clip.name, axis)
+                    setMirrorAxis(axis)
+                    setMirrorNameDraft(defaultName)
+                    setMirrorClipPrompt({
+                      clipId: clipMenu.clipId,
+                      nodeId: clipMenu.nodeId,
+                      instanceId: clipMenu.instanceId,
+                      startTime: start,
+                      defaultName,
+                    })
+                    setClipMenu(null)
+                  } catch (e) {
+                    notify(e instanceof Error ? e.message : String(e))
+                    setClipMenu(null)
+                  }
+                }}
+              >
+                Mirror and Save As…
+              </button>
             </div>
           </>
         )}
@@ -8521,6 +8582,235 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     color: 'var(--color-accent-text, #fff)',
                   }}
                   data-testid="reverse-clip-confirm"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {mirrorClipPrompt && (
+          <div
+            className="modal-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Mirror and Save As"
+            data-testid="mirror-clip-modal"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1100,
+            }}
+            onClick={() => setMirrorClipPrompt(null)}
+          >
+            <div
+              className="modal"
+              style={{
+                background: 'var(--color-bg, #fff)',
+                borderRadius: 8,
+                padding: 16,
+                minWidth: 360,
+                border: '1px solid var(--color-border)',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Mirror and Save As…</h3>
+              <p
+                style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}
+              >
+                Create a spatially mirrored copy (X = left-right, Y = top-bottom). Timing is
+                unchanged and the original is untouched. New instance at same startTime with
+                speed=1.
+              </p>
+              <fieldset style={{ margin: '0 0 12px', padding: '8px 10px', fontSize: 13 }}>
+                <legend style={{ fontSize: 12 }}>Mirror axis</legend>
+                <label style={{ display: 'block', marginBottom: 4 }}>
+                  <input
+                    type="radio"
+                    name="manager-mirror-axis"
+                    checked={mirrorAxis === 'X'}
+                    data-testid="mirror-clip-axis-x"
+                    onChange={() => {
+                      const next: MirrorAxis = 'X'
+                      setMirrorAxis(next)
+                      try {
+                        const src = engine.getClip(mirrorClipPrompt.clipId)
+                        const prevDefault = mirrorClipDefaultName(src.name, mirrorAxis)
+                        const nextDefault = mirrorClipDefaultName(src.name, next)
+                        setMirrorClipPrompt({ ...mirrorClipPrompt, defaultName: nextDefault })
+                        if (mirrorNameDraft === prevDefault || mirrorNameDraft.trim() === '') {
+                          setMirrorNameDraft(nextDefault)
+                        }
+                      } catch {
+                        void 0
+                      }
+                    }}
+                  />{' '}
+                  X — left-right
+                </label>
+                <label style={{ display: 'block' }}>
+                  <input
+                    type="radio"
+                    name="manager-mirror-axis"
+                    checked={mirrorAxis === 'Y'}
+                    data-testid="mirror-clip-axis-y"
+                    onChange={() => {
+                      const next: MirrorAxis = 'Y'
+                      setMirrorAxis(next)
+                      try {
+                        const src = engine.getClip(mirrorClipPrompt.clipId)
+                        const prevDefault = mirrorClipDefaultName(src.name, mirrorAxis)
+                        const nextDefault = mirrorClipDefaultName(src.name, next)
+                        setMirrorClipPrompt({ ...mirrorClipPrompt, defaultName: nextDefault })
+                        if (mirrorNameDraft === prevDefault || mirrorNameDraft.trim() === '') {
+                          setMirrorNameDraft(nextDefault)
+                        }
+                      } catch {
+                        void 0
+                      }
+                    }}
+                  />{' '}
+                  Y — top-bottom
+                </label>
+              </fieldset>
+              {(() => {
+                try {
+                  const src = engine.getClip(mirrorClipPrompt.clipId)
+                  const skipped = [...src.circleTrackKeys, ...src.tableTrackKeys]
+                  if (skipped.length === 0) return null
+                  return (
+                    <p
+                      data-testid="mirror-clip-skips"
+                      style={{
+                        fontSize: 12,
+                        color: 'var(--color-warning, #a60)',
+                        margin: '0 0 8px',
+                      }}
+                    >
+                      Not mirrored (out of scope for v1): {skipped.join(', ')}. These lanes stay
+                      unchanged on the original.
+                    </p>
+                  )
+                } catch {
+                  return null
+                }
+              })()}
+              <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
+                New clip name
+                <input
+                  value={mirrorNameDraft}
+                  onChange={(e) => setMirrorNameDraft(e.target.value)}
+                  placeholder={mirrorClipPrompt.defaultName}
+                  autoFocus
+                  onFocus={(e) => e.target.select()}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    marginTop: 4,
+                    padding: '6px 8px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg, #fff)',
+                    color: 'var(--color-text, #1c1e21)',
+                  }}
+                  data-testid="mirror-clip-name-input"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const name = mirrorNameDraft.trim() || mirrorClipPrompt.defaultName
+                      const res = dispatch(
+                        new MirrorClipCommand({
+                          sourceClipId: mirrorClipPrompt.clipId,
+                          newName: name,
+                          axis: mirrorAxis,
+                          targetNodeId: mirrorClipPrompt.nodeId,
+                          startTime: mirrorClipPrompt.startTime,
+                        }),
+                      )
+                      if (!res.ok) notify(res.error.message)
+                      else {
+                        notify(`Mirrored clip "${name}" created`)
+                        for (const s of res.inverse.skipped) notify(s)
+                        const newId = res.inverse.newClipId
+                        if (mirrorClipPrompt.nodeId) {
+                          try {
+                            const node = engine.getNode(mirrorClipPrompt.nodeId)
+                            const inst = node.clipInstances.find((i) => i.clipId === newId)
+                            if (inst) {
+                              setHighlightedClipInstanceId(inst.id)
+                              setSelectedInstanceId(inst.id)
+                            }
+                          } catch (_e) {
+                            void _e
+                          }
+                        }
+                      }
+                      setMirrorClipPrompt(null)
+                    } else if (e.key === 'Escape') {
+                      setMirrorClipPrompt(null)
+                    }
+                  }}
+                />
+              </label>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button
+                  onClick={() => setMirrorClipPrompt(null)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                  }}
+                  data-testid="mirror-clip-cancel"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    const name = mirrorNameDraft.trim() || mirrorClipPrompt.defaultName
+                    if (!name.trim()) {
+                      notify('Name is required')
+                      return
+                    }
+                    const res = dispatch(
+                      new MirrorClipCommand({
+                        sourceClipId: mirrorClipPrompt.clipId,
+                        newName: name,
+                        axis: mirrorAxis,
+                        targetNodeId: mirrorClipPrompt.nodeId,
+                        startTime: mirrorClipPrompt.startTime,
+                      }),
+                    )
+                    if (!res.ok) notify(res.error.message)
+                    else {
+                      notify(`Mirrored clip "${name}" created`)
+                      for (const s of res.inverse.skipped) notify(s)
+                      const newId = res.inverse.newClipId
+                      if (mirrorClipPrompt.nodeId) {
+                        try {
+                          const node = engine.getNode(mirrorClipPrompt.nodeId)
+                          const inst = node.clipInstances.find((i) => i.clipId === newId)
+                          if (inst) {
+                            setHighlightedClipInstanceId(inst.id)
+                            setSelectedInstanceId(inst.id)
+                          }
+                        } catch (_e) {
+                          void _e
+                        }
+                      }
+                    }
+                    setMirrorClipPrompt(null)
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid transparent',
+                    background: 'var(--color-accent, #7c5cff)',
+                    color: 'var(--color-accent-text, #fff)',
+                  }}
+                  data-testid="mirror-clip-confirm"
                 >
                   Save
                 </button>
