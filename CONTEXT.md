@@ -186,7 +186,7 @@ _Avoid_: Animation instance
 A named scalar on an animation clip of one of two kinds — gain (multiplies the channel's base value) or offset (adds to it). A clip channel links to at most one parameter; unlinked channels are absolute. Instances may override a parameter's default.
 
 **Clip Channel**:
-An animated property inside an animation clip (one of the uniform six plus visible and circle angles and morph coefficient), existing while it has at least one keyframe. Keyframe times and values are normalized to the clip (`morphCoefficient` normalized to [0,1] like `opacity`; bespoke lane like `visible`, not a `ClipChannelDef` property).
+An animated property inside an animation clip (one of the uniform six plus visible, zIndex, circle angles and morph coefficient), existing while it has at least one keyframe. Keyframe times and values are normalized to the clip (`morphCoefficient` normalized to [0,1] like `opacity`; bespoke lane like `visible`, not a `ClipChannelDef` property).
 _Avoid_: Track, clip property
 
 **Clip Extraction**:

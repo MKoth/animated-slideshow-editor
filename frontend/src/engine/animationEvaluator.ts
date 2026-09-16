@@ -238,23 +238,68 @@ export class AnimationEvaluator {
     const animation = slide.animation.node(nodeId)
     const raw = animation?.zIndexKeyframes()
     const keyframes = raw ? enabledKeyframes(raw) : undefined
-    if (!keyframes || keyframes.length === 0) {
-      return node.zIndex
+    let baseValue: number | null = null
+    if (keyframes && keyframes.length > 0) {
+      const first = keyframes[0]
+      if (clampedTime <= first.time) {
+        baseValue = Math.trunc(first.value as number)
+      } else {
+        const last = keyframes[keyframes.length - 1]
+        if (clampedTime >= last.time) {
+          baseValue = Math.trunc(last.value as number)
+        } else {
+          for (let i = 0; i < keyframes.length - 1; i += 1) {
+            const from = keyframes[i]
+            const to = keyframes[i + 1]
+            if (clampedTime >= from.time && clampedTime < to.time) {
+              if (from.interpolation !== 'hold') {
+                throw new Error('Z-Index track only supports hold interpolation')
+              }
+              baseValue = Math.trunc(from.value as number)
+              break
+            }
+          }
+          baseValue ??= Math.trunc(last.value as number)
+        }
+      }
     }
+    // Layer enabled clip instances in order that have started (last-wins)
+    const instances = node.clipInstances
+    if (instances.length > 0) {
+      for (const instance of instances) {
+        if (!instance.enabled) continue
+        let clip: ClipDefinition
+        try {
+          clip = this.#clipLookup(instance.clipId)
+        } catch {
+          continue
+        }
+        if (!isClipInstanceActive(instance, clip, clampedTime)) continue
+        const anim = clip.zIndexAnimation()
+        if (!anim || anim.length === 0) continue
+        const u = Math.min(
+          Math.max(((clampedTime - instance.startTime) * instance.speed) / clip.duration, 0),
+          1,
+        )
+        const effU = effectiveUForClip(clip, anim.keyframes(), u)
+        baseValue = this.#evaluateClipZIndex(anim.keyframes(), effU)
+      }
+    }
+    return baseValue ?? node.zIndex
+  }
+
+  #evaluateClipZIndex(keyframes: readonly Keyframe[], u: number): number {
+    if (keyframes.length === 0) return 0
     const first = keyframes[0]
-    if (clampedTime <= first.time) {
-      return Math.trunc(first.value as number)
-    }
+    if (u <= first.time) return Math.trunc(first.value as number)
     const last = keyframes[keyframes.length - 1]
-    if (clampedTime >= last.time) {
-      return Math.trunc(last.value as number)
-    }
+    if (u >= last.time) return Math.trunc(last.value as number)
     for (let i = 0; i < keyframes.length - 1; i += 1) {
       const from = keyframes[i]
       const to = keyframes[i + 1]
-      if (clampedTime >= from.time && clampedTime < to.time) {
+      if (u >= from.time && u < to.time) {
         if (from.interpolation !== 'hold') {
-          throw new Error('Z-Index track only supports hold interpolation')
+          throw new Error('Z-Index clip track only supports hold interpolation')
         }
         return Math.trunc(from.value as number)
       }

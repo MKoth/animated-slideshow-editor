@@ -211,6 +211,7 @@ export class ClipDefinition {
   readonly #channelAnimations = new Map<ClipChannel, ClipChannelAnimation>()
   readonly #materialChannelAnimations = new Map<string, ClipChannelAnimation>()
   readonly #visibleAnimation = new ClipChannelAnimation()
+  readonly #zIndexAnimation = new ClipChannelAnimation()
   readonly #circleAnimations = new Map<CircleAnimationProperty, ClipChannelAnimation>()
   readonly #tableAnimations = new Map<TableAnimationProperty, ClipChannelAnimation>()
   readonly #symmetryAnimation = new ClipChannelAnimation()
@@ -350,6 +351,14 @@ export class ClipDefinition {
     return this.#visibleAnimation.length > 0
   }
 
+  getZIndexKeyframes(): readonly Keyframe[] {
+    return this.#zIndexAnimation.keyframes()
+  }
+
+  hasZIndexTrack(): boolean {
+    return this.#zIndexAnimation.length > 0
+  }
+
   getCircleKeyframes(property: CircleAnimationProperty): readonly Keyframe[] {
     return this.#circleAnimations.get(property)?.keyframes() ?? []
   }
@@ -386,6 +395,10 @@ export class ClipDefinition {
     return this.#visibleAnimation
   }
 
+  zIndexAnimation(): ClipChannelAnimation {
+    return this.#zIndexAnimation
+  }
+
   circleAnimation(property: CircleAnimationProperty): ClipChannelAnimation | undefined {
     return this.#circleAnimations.get(property)
   }
@@ -412,6 +425,10 @@ export class ClipDefinition {
 
   getVisibleKeyframe(keyframeId: string): Keyframe | undefined {
     return this.#visibleAnimation.getKeyframe(keyframeId)
+  }
+
+  getZIndexKeyframe(keyframeId: string): Keyframe | undefined {
+    return this.#zIndexAnimation.getKeyframe(keyframeId)
   }
 
   getCircleKeyframe(property: CircleAnimationProperty, keyframeId: string): Keyframe | undefined {
@@ -462,6 +479,10 @@ export class ClipDefinition {
 
   addVisibleKeyframe(keyframe: Keyframe): void {
     this.#visibleAnimation.add(keyframe)
+  }
+
+  addZIndexKeyframe(keyframe: Keyframe): void {
+    this.#zIndexAnimation.add(keyframe)
   }
 
   addCircleKeyframe(property: CircleAnimationProperty, keyframe: Keyframe): void {
@@ -524,6 +545,10 @@ export class ClipDefinition {
 
   removeVisibleKeyframe(keyframeId: string): Keyframe | undefined {
     return this.#visibleAnimation.remove(keyframeId)
+  }
+
+  removeZIndexKeyframe(keyframeId: string): Keyframe | undefined {
+    return this.#zIndexAnimation.remove(keyframeId)
   }
 
   removeCircleKeyframe(
@@ -626,9 +651,21 @@ export class ClipDefinition {
     for (const [param, anim] of this.#materialChannelAnimations) {
       copy.#materialChannelAnimations.set(param, anim.copy())
     }
-    // Copy visible, circle and morph animations
+    // Copy visible, zIndex, circle and morph animations
     for (const kf of this.#visibleAnimation.keyframes()) {
       copy.#visibleAnimation.add(
+        new KeyframeModel(
+          kf.id,
+          kf.time,
+          kf.value,
+          kf.interpolation,
+          { time: kf.tangentIn.time, value: kf.tangentIn.value },
+          { time: kf.tangentOut.time, value: kf.tangentOut.value },
+        ),
+      )
+    }
+    for (const kf of this.#zIndexAnimation.keyframes()) {
+      copy.#zIndexAnimation.add(
         new KeyframeModel(
           kf.id,
           kf.time,
@@ -704,6 +741,9 @@ export class ClipDefinition {
     }
     if (this.#visibleAnimation.length > 0) {
       ;(json as Record<string, unknown>).visibleAnimation = this.#visibleAnimation.toJSON()
+    }
+    if (this.#zIndexAnimation.length > 0) {
+      ;(json as Record<string, unknown>).zIndexAnimation = this.#zIndexAnimation.toJSON()
     }
     if (this.#circleAnimations.size > 0) {
       ;(json as Record<string, unknown>).circleChannelAnimations = Object.fromEntries(
@@ -814,6 +854,27 @@ export class ClipDefinition {
       })
       for (const kf of anim.keyframes()) {
         clip.#visibleAnimation.add(
+          new KeyframeModel(
+            kf.id,
+            kf.time,
+            kf.value,
+            kf.interpolation,
+            { time: kf.tangentIn.time, value: kf.tangentIn.value },
+            { time: kf.tangentOut.time, value: kf.tangentOut.value },
+          ),
+        )
+      }
+    }
+    const zIndexAnim = (json as Record<string, unknown>).zIndexAnimation
+    if (isRecord(zIndexAnim) && zIndexAnim !== null) {
+      const anim = ClipChannelAnimation.fromJSONWithKind(zIndexAnim, (value, id) => {
+        if (typeof value !== 'number' || !Number.isFinite(value)) {
+          throw new Error(`Clip zIndex keyframe "${id}" value must be a finite number`)
+        }
+        return Math.trunc(value)
+      })
+      for (const kf of anim.keyframes()) {
+        clip.#zIndexAnimation.add(
           new KeyframeModel(
             kf.id,
             kf.time,

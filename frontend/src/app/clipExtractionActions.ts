@@ -6,6 +6,7 @@ import {
   keyframeRefsOfScene,
   circleKeyframeRefsOfScene,
   visibleKeyframeRefsOfScene,
+  zIndexKeyframeRefsOfScene,
   morphKeyframeRefsOfScene,
   shadowKeyframeRefsOfScene,
 } from './keyframeSelectionActions'
@@ -34,6 +35,12 @@ function allRefsForExtraction(
       const kfs = engine.getVisibleKeyframes(ref.nodeId)
       const kf = kfs.find((k) => k.id === ref.keyframeId)
       if (kf) results.push({ target: { kind: 'visible', nodeId: ref.nodeId }, keyframe: kf })
+    }
+    // zIndex (hold-only, like visible)
+    for (const ref of zIndexKeyframeRefsOfScene(engine, scene)) {
+      const kfs = engine.getZIndexKeyframes(ref.nodeId)
+      const kf = kfs.find((k) => k.id === ref.keyframeId)
+      if (kf) results.push({ target: { kind: 'zIndex', nodeId: ref.nodeId }, keyframe: kf })
     }
     // circle
     for (const ref of circleKeyframeRefsOfScene(engine, scene)) {
@@ -100,6 +107,8 @@ export function collectExtractableForSingle(
     kf = engine.getKeyframes(target.nodeId, target.property).find((k) => k.id === keyframeId)
   } else if (target.kind === 'visible') {
     kf = engine.getVisibleKeyframes(target.nodeId).find((k) => k.id === keyframeId)
+  } else if (target.kind === 'zIndex') {
+    kf = engine.getZIndexKeyframes(target.nodeId).find((k) => k.id === keyframeId)
   } else if (target.kind === 'morph') {
     kf = engine.getMorphKeyframes(target.nodeId).find((k) => k.id === keyframeId)
   } else if (target.kind === 'circle') {

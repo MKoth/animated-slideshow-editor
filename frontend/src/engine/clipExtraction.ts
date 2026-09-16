@@ -86,6 +86,12 @@ export function normalizeExtractable(
       throw new Error(`Clip keyframe value for opacity must be within [0,1], got ${String(v)}`)
     }
   }
+  if (isZIndexTarget(kf.target)) {
+    const v = normalizedValue as number
+    if (typeof v !== 'number' || !Number.isFinite(v)) {
+      throw new Error(`Clip keyframe value for zIndex must be a finite number, got ${String(v)}`)
+    }
+  }
   if (isMorphTarget(kf.target)) {
     const v = normalizedValue as unknown
     if (typeof v === 'number') {
@@ -200,9 +206,14 @@ function isShadowTarget(target: KeyframeTarget): boolean {
   return target.kind === 'shadow'
 }
 
+function isZIndexTarget(target: KeyframeTarget): boolean {
+  return target.kind === 'zIndex'
+}
+
 export type NormalizedChannelKey =
   | { kind: 'property'; property: AnimationProperty }
   | { kind: 'visible'; nodeId: string } // visible is per-node but clip's visible is global; we merge all visible into one clip visible track
+  | { kind: 'zIndex' } // zIndex is per-node but clip's zIndex is global; merged like visible
   | { kind: 'circle'; property: CircleAnimationProperty }
   | { kind: 'parameter'; parameter: string; nodeId: string }
   | { kind: 'dataLabel'; label: string }
@@ -224,6 +235,9 @@ export function channelKeyOf(target: KeyframeTarget): string {
   }
   if (target.kind === 'visible') {
     return `visible`
+  }
+  if (target.kind === 'zIndex') {
+    return `zIndex`
   }
   if (target.kind === 'morph') {
     return `morph`
@@ -278,6 +292,7 @@ export interface ClipTimeSource {
   getChannelKeyframes(property: AnimationProperty): readonly { time: number }[]
   getShadowChannelKeyframes(property: ShadowProperty): readonly { time: number }[]
   getVisibleKeyframes(): readonly { time: number }[]
+  getZIndexKeyframes(): readonly { time: number }[]
   getMorphKeyframes(): readonly { time: number }[]
   getCircleKeyframes(property: CircleAnimationProperty): readonly { time: number }[]
   getMaterialChannelKeyframes(parameter: string): readonly { time: number }[]
@@ -301,6 +316,8 @@ export function collectExistingTimesForGroups(
       existing = clip.getChannelKeyframes(nkTarget.property).map((k) => k.time)
     } else if (nkTarget.kind === 'visible') {
       existing = clip.getVisibleKeyframes().map((k) => k.time)
+    } else if (nkTarget.kind === 'zIndex') {
+      existing = clip.getZIndexKeyframes().map((k) => k.time)
     } else if (nkTarget.kind === 'morph') {
       existing = clip.getMorphKeyframes().map((k) => k.time)
     } else if (nkTarget.kind === 'circle') {
@@ -395,7 +412,10 @@ export function toClipKeyframes(normalized: readonly NormalizedKeyframe[]): Keyf
   )
 }
 
-// ── Bake starting pose ───────────────────────────────────────────────
+// ── Bake starting / ending pose ──────────────────────────────────────────
+
+/** Which segment endpoint a baking pass pins: 'start' (t=0) or 'end' (t=1). */
+export type BakingAnchor = 'start' | 'end'
 
 export const BAKING_SHADOW_EXCLUDED: readonly ShadowProperty[] = ['color'] as const
 
@@ -405,8 +425,8 @@ export const BAKING_SHADOW_EXCLUDED: readonly ShadowProperty[] = ['color'] as co
  * Morph excluded per spec, visible/zIndex/discrete excluded.
  */
 export function isBakableChannelKey(key: string): boolean {
-  // Allow all numeric-derived keys; morph/visible are not bakable
-  if (key === 'morph' || key === 'visible') return false
+  // Allow all numeric-derived keys; morph/visible/zIndex are not bakable
+  if (key === 'morph' || key === 'visible' || key === 'zIndex') return false
   if (key.startsWith('dataLabel:')) return false
   return true
 }
@@ -429,15 +449,17 @@ export interface BakingEvaluator {
 }
 
 /**
- * Collect synthetic keyframes for "Bake starting pose".
- * For every numeric channel not already present in `selected`, inject a keyframe at bounds.selStart
- * with value evaluated at that time for a representative source node.
+ * Collect synthetic keyframes for "Bake starting pose" / "Bake ending pose".
+ * For every numeric channel not already present in `selected`, inject a keyframe at
+ * bounds.selStart ('start') or bounds.selEnd ('end') with the value evaluated at
+ * that time for a representative source node.
  * Returns extrastack to be merged with selected before normalization.
  */
 export function collectBakingKeyframes(
   bounds: ExtractionBounds,
   selected: readonly ExtractableKeyframe[],
   evaluator: BakingEvaluator,
+  at: BakingAnchor = 'start',
 ): ExtractableKeyframe[] {
   if (selected.length === 0) return []
   const existingKeys = new Set<string>()
@@ -465,16 +487,17 @@ export function collectBakingKeyframes(
   }
   if (!primaryNode) return []
 
-  const selStart = bounds.selStart
+  const anchor = at === 'end' ? bounds.selEnd : bounds.selStart
+  const idPrefix = at === 'end' ? 'bake-end' : 'bake'
   const result: ExtractableKeyframe[] = []
   const makeSynthetic = (target: KeyframeTarget, value: KeyframeValue): ExtractableKeyframe => ({
     target,
-    time: selStart,
+    time: anchor,
     value,
     interpolation: 'linear' as InterpolationType,
     tangentIn: { ...ZERO_TANGENT },
     tangentOut: { ...ZERO_TANGENT },
-    keyframeId: `bake:${channelKeyOf(target)}@${primaryId}`,
+    keyframeId: `${idPrefix}:${channelKeyOf(target)}@${primaryId}`,
   })
 
   const tryPush = (key: string, target: KeyframeTarget, value: KeyframeValue | undefined): void => {
@@ -491,7 +514,7 @@ export function collectBakingKeyframes(
   // Uniform-six via evaluateNode
   let evaluatedNode: ReturnType<BakingEvaluator['evaluateNode']> | null = null
   try {
-    evaluatedNode = evaluator.evaluateNode(primaryId, selStart)
+    evaluatedNode = evaluator.evaluateNode(primaryId, anchor)
   } catch {
     evaluatedNode = null
   }
@@ -520,7 +543,7 @@ export function collectBakingKeyframes(
   if (primaryNode.components.circle) {
     let circleState: ReturnType<BakingEvaluator['evaluateCircle']> | null = null
     try {
-      circleState = evaluator.evaluateCircle(primaryId, selStart)
+      circleState = evaluator.evaluateCircle(primaryId, anchor)
     } catch {
       circleState = null
     }
@@ -552,7 +575,7 @@ export function collectBakingKeyframes(
     if (isGroup && hasShadow) {
       let shadowEff: import('./shadowEffect').ShadowEffect | null = null
       try {
-        shadowEff = evaluator.evaluateShadow(primaryId, selStart)
+        shadowEff = evaluator.evaluateShadow(primaryId, anchor)
       } catch {
         shadowEff = null
       }
@@ -588,10 +611,11 @@ export function previewBakingCount(
   bounds: ExtractionBounds | null,
   selected: readonly ExtractableKeyframe[],
   evaluator: BakingEvaluator | null,
+  at: BakingAnchor = 'start',
 ): number {
   if (!bounds || !evaluator || selected.length === 0) return 0
   try {
-    return collectBakingKeyframes(bounds, selected, evaluator).length
+    return collectBakingKeyframes(bounds, selected, evaluator, at).length
   } catch {
     return 0
   }

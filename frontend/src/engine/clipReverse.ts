@@ -125,6 +125,15 @@ export function createReversedClipDefinition(
     for (const kf of rev.keyframes()) reversed.addVisibleKeyframe(kf)
   }
 
+  // zIndex (hold-only, mirrors like visible)
+  const zIndexAnim = source.zIndexAnimation()
+  if (zIndexAnim.length > 0) {
+    const isParametric = isParametricAnimation(zIndexAnim)
+    const shouldMirror = !isParametric
+    const rev = reverseAnimation(zIndexAnim, shouldMirror)
+    for (const kf of rev.keyframes()) reversed.addZIndexKeyframe(kf)
+  }
+
   // circle
   for (const prop of source.circleTrackKeys) {
     const srcAnim = source.circleAnimation(prop)
@@ -172,6 +181,8 @@ export function clipHasParametric(clip: ClipDefinition): boolean {
   }
   const v = clip.visibleAnimation()
   if (v.length > 0 && isParametricAnimation(v)) return true
+  const z = clip.zIndexAnimation()
+  if (z.length > 0 && isParametricAnimation(z)) return true
   for (const k of clip.circleTrackKeys) {
     const anim = clip.circleAnimation(k)
     if (anim && isParametricAnimation(anim)) return true

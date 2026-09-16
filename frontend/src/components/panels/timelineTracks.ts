@@ -440,6 +440,13 @@ export interface ClipVisibleRowEntry {
   readonly rowIndex: number
 }
 
+export interface ClipZIndexRowEntry {
+  readonly kind: 'clipZIndex'
+  readonly clipId: string
+  readonly label: string
+  readonly rowIndex: number
+}
+
 export interface ClipCircleRowEntry {
   readonly kind: 'clipCircle'
   readonly clipId: string
@@ -474,6 +481,7 @@ export interface ClipMaterialRowEntry {
 export type ClipEditorRow =
   | ClipChannelRowEntry
   | ClipVisibleRowEntry
+  | ClipZIndexRowEntry
   | ClipCircleRowEntry
   | ClipMorphRowEntry
   | ClipShadowRowEntry
@@ -500,6 +508,16 @@ export function clipChannelRows(clip: ClipDefinition): ClipEditorRow[] {
       kind: 'clipVisible',
       clipId: clip.id,
       label: VISIBLE_LABEL,
+      rowIndex,
+    })
+    rowIndex++
+  }
+  // zIndex hold – one lane, same pattern
+  if (clip.hasZIndexTrack()) {
+    rows.push({
+      kind: 'clipZIndex',
+      clipId: clip.id,
+      label: ZINDEX_LABEL,
       rowIndex,
     })
     rowIndex++

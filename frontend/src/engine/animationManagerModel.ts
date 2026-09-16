@@ -8,7 +8,12 @@ import type { ShadowProperty } from './shadowEffect'
 import type { ClipDefinition } from './clipDefinition'
 import type { ClipInstance } from './clipInstance'
 import { isGroupNode } from './sceneNode'
-import { PROPERTY_LABELS, CIRCLE_LABELS, MORPH_LABEL } from '../components/panels/timelineTracks'
+import {
+  PROPERTY_LABELS,
+  CIRCLE_LABELS,
+  MORPH_LABEL,
+  ZINDEX_LABEL,
+} from '../components/panels/timelineTracks'
 import { SHADOW_LABELS } from './shadowEffect'
 import type { MaterialParameterDefault } from './materialResolution'
 import { materialParametersOf } from '../components/panels/timelineTracks'
@@ -24,6 +29,7 @@ export interface AnimatedParam {
   readonly kind:
     | 'property'
     | 'visible'
+    | 'zIndex'
     | 'circle'
     | 'shadow'
     | 'material'
@@ -65,6 +71,8 @@ function hasClipChannelForProperty(
       if (clip.hasChannel(propertyKey as never)) return true
     } else if (kind === 'visible') {
       if (clip.hasVisibleTrack()) return true
+    } else if (kind === 'zIndex') {
+      if (clip.hasZIndexTrack()) return true
     } else if (kind === 'morph') {
       if (clip.hasMorphTrack()) return true
     } else if (kind === 'circle') {
@@ -93,6 +101,7 @@ export function isParamAnimated(
       return nodeAnim.hasTrack(key as never) && nodeAnim.keyframes(key as never).length > 0
     if (kind === 'visible')
       return nodeAnim.hasVisibleTrack() && nodeAnim.visibleKeyframes().length > 0
+    if (kind === 'zIndex') return nodeAnim.hasZIndexTrack() && nodeAnim.zIndexKeyframes().length > 0
     if (kind === 'morph') return nodeAnim.hasMorphTrack() && nodeAnim.morphKeyframes().length > 0
     if (kind === 'circle')
       return (
@@ -146,6 +155,10 @@ export function getAnimatedParams(
   // visible – show when node or its clips animate visibility
   if (isParamAnimated(node, slide, 'visible', 'visible', getClip)) {
     params.push({ kind: 'visible', key: 'visible', label: 'Visible' })
+  }
+  // zIndex – show when node or its clips animate z-order (visible-pattern: hold-only lane)
+  if (isParamAnimated(node, slide, 'zIndex', 'zIndex', getClip)) {
+    params.push({ kind: 'zIndex', key: 'zIndex', label: ZINDEX_LABEL })
   }
   // morph – for mesh nodes or if animated (visible-pattern: one morph lane per clip)
   // We include morph if node has mesh or if either side animates. To avoid omitting, check always.
@@ -277,6 +290,7 @@ export function hasAnyKeyframe(node: SceneNode, slide: Slide): boolean {
     if (anim.hasTrack(prop as never) && anim.keyframes(prop as never).length > 0) return true
   }
   if (anim.hasVisibleTrack() && anim.visibleKeyframes().length > 0) return true
+  if (anim.hasZIndexTrack() && anim.zIndexKeyframes().length > 0) return true
   if (anim.hasMorphTrack() && anim.morphKeyframes().length > 0) return true
   if (anim.hasSymmetryTrack() && anim.symmetryKeyframes().length > 0) return true
   for (const key of anim.materialTrackParameterKeys()) {
@@ -352,6 +366,7 @@ export function getOrphanKeyframes(
   if (!anim) return []
   if (param.kind === 'property') return anim.keyframes(param.key as never)
   if (param.kind === 'visible') return anim.visibleKeyframes()
+  if (param.kind === 'zIndex') return anim.zIndexKeyframes()
   if (param.kind === 'morph') return anim.morphKeyframes()
   if (param.kind === 'circle') return anim.circleKeyframes(param.key as never)
   if (param.kind === 'shadow') return anim.shadowKeyframes(param.key as ShadowProperty)

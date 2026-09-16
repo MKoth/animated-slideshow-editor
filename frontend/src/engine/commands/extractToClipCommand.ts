@@ -1,4 +1,5 @@
 import type { Engine } from '../internal'
+import type { EnginePublic } from '../internal'
 import type { Command } from './command'
 import { requireString, requireFiniteNumber } from '../guards'
 import type { KeyframeTarget } from '../keyframeTarget'
@@ -15,7 +16,7 @@ import {
   collectExistingTimesForGroups,
   collectBakingKeyframes,
 } from '../clipExtraction'
-import type { BakingEvaluator } from '../clipExtraction'
+import type { BakingEvaluator, ExtractionBounds } from '../clipExtraction'
 import { Keyframe as KeyframeModel, newKeyframeId } from '../keyframe'
 
 /** Collision policy when appending to an existing clip lands on an occupied time. */
@@ -25,6 +26,7 @@ export interface ExtractToExistingClipParams {
   readonly keyframes: readonly ExtractableKeyframe[]
   readonly clipId: string
   readonly bakeStartingPose?: boolean
+  readonly bakeEndingPose?: boolean
   /**
    * How to resolve collisions with existing keyframes at the same
    * (channel, time). Absent = error (legacy behavior).
@@ -40,6 +42,16 @@ export interface ExtractToNewClipParams {
   readonly duration?: number
   readonly category?: string
   readonly bakeStartingPose?: boolean
+  readonly bakeEndingPose?: boolean
+  /**
+   * Global time-segment override for batch extraction (time-segment → collection flow).
+   * When both are present, keyframe times are normalized against [rangeStart, rangeEnd]
+   * instead of the selection's own min/max, so clips extracted from different objects
+   * over the same segment share one time base and stay in sync inside a collection.
+   * Every keyframe time must lie within the range (1e-9 tolerance).
+   */
+  readonly rangeStart?: number
+  readonly rangeEnd?: number
 }
 
 export type ExtractToClipParameters = ExtractToNewClipParams | ExtractToExistingClipParams
@@ -63,7 +75,7 @@ function isExistingParams(params: ExtractToClipParameters): params is ExtractToE
   return 'clipId' in params
 }
 
-function getBakingEvaluator(engine: Engine): BakingEvaluator {
+function getBakingEvaluator(engine: EnginePublic): BakingEvaluator {
   return {
     getNode: (nodeId: string) => engine.getNode(nodeId),
     evaluateNode: (nodeId: string, time: number) => engine.evaluateNode(nodeId, time),
@@ -104,6 +116,12 @@ function removeExistingKeyframeAtTime(
     const id = idOf(clip.getVisibleKeyframes())
     if (!id) return false
     clip.removeVisibleKeyframe(id)
+    return true
+  }
+  if (target.kind === 'zIndex') {
+    const id = idOf(clip.getZIndexKeyframes())
+    if (!id) return false
+    clip.removeZIndexKeyframe(id)
     return true
   }
   if (target.kind === 'morph') {
@@ -170,14 +188,24 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
   readonly parameters: Readonly<Record<string, unknown>>
   readonly #keyframes: readonly ExtractableKeyframe[]
   readonly #bakeStartingPose: boolean
+  readonly #bakeEndingPose: boolean
   readonly #onDuplicate: ExtractDuplicatePolicy | undefined
   readonly #destination:
-    | { mode: 'new'; name: string; duration?: number; category?: string }
+    | {
+        mode: 'new'
+        name: string
+        duration?: number
+        category?: string
+        rangeStart?: number
+        rangeEnd?: number
+      }
     | { mode: 'existing'; clipId: string }
 
   constructor(input: ExtractToClipParameters) {
     const bakeStartingPose = (input as { bakeStartingPose?: unknown }).bakeStartingPose === true
+    const bakeEndingPose = (input as { bakeEndingPose?: unknown }).bakeEndingPose === true
     this.#bakeStartingPose = bakeStartingPose
+    this.#bakeEndingPose = bakeEndingPose
     if (isExistingParams(input)) {
       requireString(input.clipId, 'Extract clipId')
       const onDuplicate = (input as { onDuplicate?: unknown }).onDuplicate
@@ -191,6 +219,7 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
         mode: 'existing',
         clipId: input.clipId,
         ...(bakeStartingPose ? { bakeStartingPose: true } : {}),
+        ...(bakeEndingPose ? { bakeEndingPose: true } : {}),
         ...(this.#onDuplicate ? { onDuplicate: this.#onDuplicate } : {}),
         keyframes: input.keyframes as unknown as Record<string, unknown>[],
       }
@@ -201,12 +230,27 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
         requireFiniteNumber(input.duration, 'Extract clip duration')
         if (input.duration < 0) throw new Error('Clip duration must be non-negative')
       }
+      let rangeStart: number | undefined
+      let rangeEnd: number | undefined
+      if (input.rangeStart !== undefined || input.rangeEnd !== undefined) {
+        if (input.rangeStart === undefined || input.rangeEnd === undefined) {
+          throw new Error('Extract rangeStart and rangeEnd must be provided together')
+        }
+        requireFiniteNumber(input.rangeStart, 'Extract rangeStart')
+        requireFiniteNumber(input.rangeEnd, 'Extract rangeEnd')
+        if (!(input.rangeEnd - input.rangeStart > 1e-9)) {
+          throw new Error('Extract rangeEnd must be greater than rangeStart')
+        }
+        rangeStart = input.rangeStart
+        rangeEnd = input.rangeEnd
+      }
       this.#keyframes = [...input.keyframes]
       this.#destination = {
         mode: 'new',
         name: input.name,
         duration: input.duration,
         category: input.category ?? '',
+        ...(rangeStart !== undefined ? { rangeStart, rangeEnd: rangeEnd! } : {}),
       }
       this.parameters = {
         mode: 'new',
@@ -214,6 +258,8 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
         ...(input.duration !== undefined ? { duration: input.duration } : {}),
         ...(input.category !== undefined ? { category: input.category } : {}),
         ...(bakeStartingPose ? { bakeStartingPose: true } : {}),
+        ...(bakeEndingPose ? { bakeEndingPose: true } : {}),
+        ...(rangeStart !== undefined ? { rangeStart, rangeEnd } : {}),
         keyframes: input.keyframes as unknown as Record<string, unknown>[],
       }
     }
@@ -228,7 +274,107 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
     }
   }
 
-  validate(engine: Engine): void {
+  /**
+   * Resolve the normalization bounds: the explicit global [rangeStart, rangeEnd]
+   * segment when provided (new-clip batch flow), otherwise the selection's own
+   * min/max via computeExtractionBounds.
+   */
+  #resolveBounds(): ExtractionBounds {
+    if (this.#destination.mode === 'new' && this.#destination.rangeStart !== undefined) {
+      const selStart = this.#destination.rangeStart
+      const selEnd = this.#destination.rangeEnd!
+      const selDuration = selEnd - selStart
+      for (const kf of this.#keyframes) {
+        if (kf.time < selStart - 1e-9 || kf.time > selEnd + 1e-9) {
+          throw new Error(
+            `Keyframe at ${kf.time}s is outside the extraction range [${selStart}s, ${selEnd}s]`,
+          )
+        }
+      }
+      return { selStart, selEnd, selDuration, clipDuration: selDuration }
+    }
+    return computeExtractionBounds(this.#keyframes)
+  }
+
+  /**
+   * Collect baking synthetics for the enabled anchors in one joint set, so a
+   * channel missing from the selection gets both endpoints pinned (t=0 from the
+   * start pose, t=1 from the end pose) instead of the end pass seeing the start
+   * pass as "already present".
+   */
+  #collectBakingSynthetics(engine: EnginePublic, bounds: ExtractionBounds): ExtractableKeyframe[] {
+    const out: ExtractableKeyframe[] = []
+    const evaluator = getBakingEvaluator(engine)
+    if (this.#bakeStartingPose) {
+      out.push(...collectBakingKeyframes(bounds, this.#keyframes, evaluator, 'start'))
+    }
+    if (this.#bakeEndingPose) {
+      out.push(...collectBakingKeyframes(bounds, this.#keyframes, evaluator, 'end'))
+    }
+    return out
+  }
+
+  /**
+   * Pre-collect existing clip times for dup filtering (existing clip may already
+   * have 0/1 on a channel). Only meaningful in existing-clip mode.
+   */
+  #existingTimesForBakeMap(engine: EnginePublic): Map<string, readonly number[]> | undefined {
+    if (this.#destination.mode !== 'existing') return undefined
+    const clip = engine.getClip(this.#destination.clipId)
+    const map = new Map<string, readonly number[]>()
+    // collect all existing times (not just groups) to filter baking duplicates
+    for (const prop of [
+      'positionX',
+      'positionY',
+      'rotation',
+      'scaleX',
+      'scaleY',
+      'opacity',
+    ] as const) {
+      const kfs = clip.getChannelKeyframes(prop)
+      if (kfs.length > 0)
+        map.set(
+          `property:${prop}`,
+          kfs.map((k) => k.time),
+        )
+    }
+    for (const prop of ['radius', 'startAngle', 'endAngle', 'segments'] as const) {
+      const kfs = clip.getCircleKeyframes(
+        prop as unknown as import('../animationProperties').CircleAnimationProperty,
+      )
+      if (kfs.length > 0)
+        map.set(
+          `circle:${prop}`,
+          kfs.map((k) => k.time),
+        )
+    }
+    for (const prop of [
+      'offsetX',
+      'offsetY',
+      'scaleX',
+      'scaleY',
+      'skewX',
+      'skewY',
+      'rotation',
+      'blur',
+      'opacity',
+      'lightAzimuth',
+      'lightElevation',
+      'lightDistance',
+    ] as const) {
+      const kfs = clip.getShadowChannelKeyframes(
+        prop as unknown as import('../shadowEffect').ShadowProperty,
+      )
+      if (kfs.length > 0)
+        map.set(
+          `shadow:${prop}`,
+          kfs.map((k) => k.time),
+        )
+    }
+    return map
+  }
+
+  validate(engine: EnginePublic): void {
     if (!engine.project) {
       throw new Error('No project exists in memory')
     }
@@ -237,78 +383,19 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
       engine.getClip(this.#destination.clipId)
     }
     // Validate normalization and duplicate times without mutating
-    const bounds = computeExtractionBounds(this.#keyframes)
+    const bounds = this.#resolveBounds()
     let normalized: NormalizedKeyframe[] = this.#keyframes.map((kf) =>
       normalizeExtractable(kf, bounds),
     )
-    // Bake starting pose synthetics for validation
-    if (this.#bakeStartingPose) {
+    // Bake pose synthetics for validation (start and/or end anchors, joint merge)
+    if (this.#bakeStartingPose || this.#bakeEndingPose) {
       try {
-        const bakingExtractable = collectBakingKeyframes(
-          bounds,
-          this.#keyframes,
-          getBakingEvaluator(engine),
-        )
-        // Pre-collect existing times for dup filtering (existing clip may already have 0)
-        let existingTimesForBake: Map<string, readonly number[]> | undefined
-        if (this.#destination.mode === 'existing') {
-          const clip = engine.getClip(this.#destination.clipId)
-          existingTimesForBake = new Map<string, readonly number[]>()
-          // collect all existing times (not just groups) to filter baking duplicates
-          for (const prop of [
-            'positionX',
-            'positionY',
-            'rotation',
-            'scaleX',
-            'scaleY',
-            'opacity',
-          ] as const) {
-            const kfs = clip.getChannelKeyframes(prop)
-            if (kfs.length > 0)
-              existingTimesForBake.set(
-                `property:${prop}`,
-                kfs.map((k) => k.time),
-              )
-          }
-          for (const prop of ['radius', 'startAngle', 'endAngle', 'segments'] as const) {
-            const kfs = clip.getCircleKeyframes(
-              prop as unknown as import('../animationProperties').CircleAnimationProperty,
-            )
-            if (kfs.length > 0)
-              existingTimesForBake.set(
-                `circle:${prop}`,
-                kfs.map((k) => k.time),
-              )
-          }
-          for (const prop of [
-            'offsetX',
-            'offsetY',
-            'scaleX',
-            'scaleY',
-            'skewX',
-            'skewY',
-            'rotation',
-            'blur',
-            'opacity',
-            'lightAzimuth',
-            'lightElevation',
-            'lightDistance',
-          ] as const) {
-            const kfs = clip.getShadowChannelKeyframes(
-              prop as unknown as import('../shadowEffect').ShadowProperty,
-            )
-            if (kfs.length > 0)
-              existingTimesForBake.set(
-                `shadow:${prop}`,
-                kfs.map((k) => k.time),
-              )
-          }
-        }
+        const bakingExtractable = this.#collectBakingSynthetics(engine, bounds)
         normalized = mergeBakingNormalized(
           bounds,
           normalized,
           bakingExtractable,
-          existingTimesForBake,
+          this.#existingTimesForBakeMap(engine),
         )
       } catch {
         // baking failed — fall back to no baking for validation
@@ -332,7 +419,7 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
   }
 
   execute(engine: Engine): ExtractToClipInverse {
-    const bounds = computeExtractionBounds(this.#keyframes)
+    const bounds = this.#resolveBounds()
     const normalizedRaw = this.#keyframes.map((kf) => normalizeExtractable(kf, bounds))
     // Convert morph id-based values to name-based clip values
     let normalized: NormalizedKeyframe[] = normalizedRaw.map((nk) => {
@@ -383,72 +470,15 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
       }
       return nk
     })
-    // Bake starting pose — inject synthetic numeric keyframes at t=0
-    if (this.#bakeStartingPose) {
+    // Bake pose — inject synthetic numeric keyframes at t=0 (start) and/or t=1 (end)
+    if (this.#bakeStartingPose || this.#bakeEndingPose) {
       try {
-        const bakingExtractable = collectBakingKeyframes(
-          bounds,
-          this.#keyframes,
-          getBakingEvaluator(engine),
-        )
-        let existingTimesForBake: Map<string, readonly number[]> | undefined
-        if (this.#destination.mode === 'existing') {
-          const clip = engine.getClip(this.#destination.clipId)
-          existingTimesForBake = new Map<string, readonly number[]>()
-          for (const prop of [
-            'positionX',
-            'positionY',
-            'rotation',
-            'scaleX',
-            'scaleY',
-            'opacity',
-          ] as const) {
-            const kfs = clip.getChannelKeyframes(prop)
-            if (kfs.length > 0)
-              existingTimesForBake.set(
-                `property:${prop}`,
-                kfs.map((k) => k.time),
-              )
-          }
-          for (const prop of ['radius', 'startAngle', 'endAngle', 'segments'] as const) {
-            const kfs = clip.getCircleKeyframes(
-              prop as unknown as import('../animationProperties').CircleAnimationProperty,
-            )
-            if (kfs.length > 0)
-              existingTimesForBake.set(
-                `circle:${prop}`,
-                kfs.map((k) => k.time),
-              )
-          }
-          for (const prop of [
-            'offsetX',
-            'offsetY',
-            'scaleX',
-            'scaleY',
-            'skewX',
-            'skewY',
-            'rotation',
-            'blur',
-            'opacity',
-            'lightAzimuth',
-            'lightElevation',
-            'lightDistance',
-          ] as const) {
-            const kfs = clip.getShadowChannelKeyframes(
-              prop as unknown as import('../shadowEffect').ShadowProperty,
-            )
-            if (kfs.length > 0)
-              existingTimesForBake.set(
-                `shadow:${prop}`,
-                kfs.map((k) => k.time),
-              )
-          }
-        }
+        const bakingExtractable = this.#collectBakingSynthetics(engine, bounds)
         normalized = mergeBakingNormalized(
           bounds,
           normalized,
           bakingExtractable,
-          existingTimesForBake,
+          this.#existingTimesForBakeMap(engine),
         )
       } catch {
         // ignore baking failure
@@ -509,8 +539,11 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
             { time: nk.tangentIn.time, value: nk.tangentIn.value },
             { time: nk.tangentOut.time, value: nk.tangentOut.value },
           )
-          // Visible tracks in clips use hold interpolation only
-          if (sample.kind === 'visible' && kf.interpolation !== 'hold') {
+          // Visible and zIndex tracks in clips use hold interpolation only
+          if (
+            (sample.kind === 'visible' || sample.kind === 'zIndex') &&
+            kf.interpolation !== 'hold'
+          ) {
             kf.interpolation = 'hold'
           }
           if (
@@ -546,6 +579,14 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
             clip.addVisibleKeyframe(kf)
             engine.emitKeyframeAdded(
               { kind: 'visible', nodeId: 'clip-' + clip.id } as unknown as KeyframeTarget,
+              kf.id,
+            )
+            // Also emit clip-specific event for UI refresh
+            engine.emitClipChanged(clip.id)
+          } else if (sample.kind === 'zIndex') {
+            clip.addZIndexKeyframe(kf)
+            engine.emitKeyframeAdded(
+              { kind: 'zIndex', nodeId: 'clip-' + clip.id } as unknown as KeyframeTarget,
               kf.id,
             )
             // Also emit clip-specific event for UI refresh
@@ -641,7 +682,10 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
             { time: nk.tangentIn.time, value: nk.tangentIn.value },
             { time: nk.tangentOut.time, value: nk.tangentOut.value },
           )
-          if (sample.kind === 'visible' && kf.interpolation !== 'hold') {
+          if (
+            (sample.kind === 'visible' || sample.kind === 'zIndex') &&
+            kf.interpolation !== 'hold'
+          ) {
             kf.interpolation = 'hold'
           }
           if (
@@ -678,6 +722,13 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
             clip.addVisibleKeyframe(kf)
             engine.emitKeyframeAdded(
               { kind: 'visible', nodeId: 'clip-' + clip.id } as unknown as KeyframeTarget,
+              kf.id,
+            )
+            engine.emitClipChanged(clip.id)
+          } else if (sample.kind === 'zIndex') {
+            clip.addZIndexKeyframe(kf)
+            engine.emitKeyframeAdded(
+              { kind: 'zIndex', nodeId: 'clip-' + clip.id } as unknown as KeyframeTarget,
               kf.id,
             )
             engine.emitClipChanged(clip.id)

@@ -16,6 +16,7 @@ import {
   clampedSpeedForVisual,
   snapStartTime,
   packCollectionLanesForParent,
+  visualDurationForClip,
   visualDurationForCollectionPlacement,
   collectUnifiedBarEdgesForSnap,
 } from '../../engine/animationManagerModel'
@@ -74,6 +75,10 @@ import { computeExtractionBounds } from '../../engine/clipExtraction'
 import type { ExtractableKeyframe } from '../../engine/clipExtraction'
 import { ClipExtractionModal } from './ClipExtractionModal'
 import { DeleteOrphansConfirmModal } from './DeleteOrphansConfirmModal'
+import { TimeSegmentToCollectionModal } from './TimeSegmentToCollectionModal'
+import type { SegmentSourceEntry } from './TimeSegmentToCollectionModal'
+import { executeSegmentToCollection, nextClipNameForNode } from '../../engine/timeSegmentExtraction'
+import type { SegmentCollectionPlan, SegmentSourceClip } from '../../engine/timeSegmentExtraction'
 import type { AnimatedParam } from '../../engine/animationManagerModel'
 import type { KeyframeTarget } from '../../engine/keyframeTarget'
 import { assetsApi } from '../../api'
@@ -280,6 +285,7 @@ function countClipUses(engine: ReturnType<typeof useEngine>['engine'], clipId: s
 function paramToTarget(param: AnimatedParam, nodeId: string): KeyframeTarget {
   if (param.kind === 'property') return { kind: 'node', nodeId, property: param.key as never }
   if (param.kind === 'visible') return { kind: 'visible', nodeId }
+  if (param.kind === 'zIndex') return { kind: 'zIndex', nodeId }
   if (param.kind === 'morph') return { kind: 'morph', nodeId }
   if (param.kind === 'circle') return { kind: 'circle', nodeId, property: param.key as never }
   if (param.kind === 'shadow') return { kind: 'shadow', nodeId, property: param.key as never }
@@ -296,19 +302,6 @@ export interface OrphanEntry {
   readonly param: AnimatedParam
   readonly keyframe: import('../../engine/keyframe').Keyframe
   readonly target: KeyframeTarget
-}
-
-function nextClipNameForNode(nodeName: string, clips: readonly { name: string }[]): string {
-  const prefix = `${nodeName} Clip `
-  let max = 0
-  for (const c of clips) {
-    if (c.name.startsWith(prefix)) {
-      const suffix = c.name.slice(prefix.length).trim()
-      const n = parseInt(suffix, 10)
-      if (Number.isFinite(n) && n > max) max = n
-    }
-  }
-  return `${prefix}${max + 1}`
 }
 
 export function AnimationManagerModal({ open, parentNodeId, onClose }: AnimationManagerModalProps) {
@@ -355,6 +348,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     nodeName: string
     semanticName?: string
   } | null>(null)
+  // Batch flow: create one clip per object + one collection from a time segment
+  const [segmentModalOpen, setSegmentModalOpen] = useState(false)
   const [orphanScopeMessage, setOrphanScopeMessage] = useState<string | null>(null)
   const [highlightedClipInstanceId, setHighlightedClipInstanceId] = useState<string | null>(null)
   // Clip Lane multi-select for Collection grouping (15-05)
@@ -461,6 +456,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       setOrphanContextMenu(null)
       setOrphanMarquee(null)
       setOrphanExtraction(null)
+      setSegmentModalOpen(false)
       setOrphanScopeMessage(null)
       setHighlightedClipInstanceId(null)
       setSelectedClipIds(new Set())
@@ -532,6 +528,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         } else if (orphanExtraction) {
           setOrphanExtraction(null)
           e.stopPropagation()
+        } else if (segmentModalOpen) {
+          setSegmentModalOpen(false)
+          e.stopPropagation()
         } else if (orphanContextMenu) {
           setOrphanContextMenu(null)
           e.stopPropagation()
@@ -576,6 +575,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     clipMenu,
     orphanContextMenu,
     orphanExtraction,
+    segmentModalOpen,
     deleteOrphansConfirm,
     orphanScopeMessage,
     orphanMarquee,
@@ -1893,6 +1893,113 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       semanticName: node.semanticName,
     })
   }, [selectedOrphanIds, flatOrphanEntries, managerRows, notify])
+
+  // --- Time-segment → collection batch flow (Orphans tab) ---
+  // Flat source entries for the segment modal: every orphan keyframe with its
+  // owner node's display name + semantic name for grouping and gating.
+  const segmentEntries = useMemo((): SegmentSourceEntry[] => {
+    void tick
+    const meta = new Map(managerRows.map((r) => [r.node.id, r.node]))
+    return flatOrphanEntries.map((e) => {
+      let nodeName = e.nodeId.slice(0, 8)
+      let semanticName: string | undefined
+      const rowNode = meta.get(e.nodeId)
+      if (rowNode) {
+        nodeName = rowNode.name
+        semanticName = rowNode.semanticName
+      } else {
+        try {
+          const n = engine.getNode(e.nodeId)
+          nodeName = n.name
+          semanticName = n.semanticName
+        } catch {
+          // keep fallbacks
+        }
+      }
+      return {
+        nodeId: e.nodeId,
+        nodeName,
+        semanticName,
+        paramKey: `${e.param.kind}:${e.param.key}`,
+        paramLabel: e.param.label,
+        target: e.target,
+        time: e.keyframe.time,
+        value: e.keyframe.value as unknown as ExtractableKeyframe['value'],
+        interpolation: e.keyframe.interpolation,
+        tangentIn: { time: e.keyframe.tangentIn.time, value: e.keyframe.tangentIn.value },
+        tangentOut: { time: e.keyframe.tangentOut.time, value: e.keyframe.tangentOut.value },
+        keyframeId: e.keyframe.id,
+      }
+    })
+  }, [flatOrphanEntries, managerRows, engine, tick])
+
+  // All clip placements on descendant nodes with precomputed timeline spans.
+  // The segment wizard filters these by full containment in [from, to].
+  const segmentClips = useMemo((): SegmentSourceClip[] => {
+    void tick
+    const out: SegmentSourceClip[] = []
+    for (const row of managerRows) {
+      for (const inst of row.node.clipInstances) {
+        try {
+          const clip = engine.getClip(inst.clipId)
+          const start = inst.startTime
+          out.push({
+            nodeId: row.node.id,
+            nodeName: row.node.name,
+            semanticName: row.node.semanticName,
+            instanceId: inst.id,
+            clipId: inst.clipId,
+            clipName: clip.name,
+            start,
+            end: start + visualDurationForClip(clip, inst),
+          })
+        } catch {
+          // missing clip definition — skip
+        }
+      }
+    }
+    return out
+  }, [managerRows, engine, tick])
+
+  // Engine-backed evaluator for the segment wizard's bake previews.
+  // (Methods read live engine state, so no tick dependency is needed.)
+  const segmentBakingEvaluator = useMemo(
+    () => ({
+      getNode: (id: string) => engine.getNode(id),
+      evaluateNode: (id: string, time: number) => engine.evaluateNode(id, time),
+      evaluateCircle: (id: string, time: number) => engine.evaluateCircle(id, time),
+      evaluateTable: (id: string, time: number) => engine.evaluateTable(id, time),
+      evaluateShadow: (id: string, time: number) => engine.evaluateShadow(id, time),
+    }),
+    [engine],
+  )
+
+  const handleSegmentConfirm = useCallback(
+    (plan: SegmentCollectionPlan): string | null => {
+      if (!parentNodeId) return 'No parent selected.'
+      const result = executeSegmentToCollection(engine, dispatch, undoStack, {
+        ...plan,
+        parentNodeId,
+      })
+      if (!result.ok) return result.error
+      setSegmentModalOpen(false)
+      setSelectedOrphanIds(new Set())
+      setOrphanAnchorId(null)
+      setActiveTab('collections')
+      const bits = [
+        `Collection "${result.collectionName}" created — ${result.clips.length + result.reused.length} binding(s) (${result.extractedCount} keyframe(s)${result.reused.length > 0 ? `, ${result.reused.length} reused clip(s)` : ''})`,
+      ]
+      if (result.skippedCount > 0)
+        bits.push(`${result.skippedCount} skipped (${result.skippedKinds.join(', ')})`)
+      if (plan.deleteOrphans) bits.push(`deleted ${result.deletedCount} orphan(s)`)
+      if (result.removedInstanceCount > 0)
+        bits.push(`removed ${result.removedInstanceCount} clip placement(s)`)
+      for (const w of result.warnings) bits.push(w)
+      notify(bits.join(' · '))
+      return null
+    },
+    [engine, dispatch, undoStack, parentNodeId, notify],
+  )
 
   // --- Collection grouping handlers (15-05) ---
   const handleClipLaneSelect = useCallback(
@@ -3605,6 +3712,37 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 }}
               >
                 Add to clip… {selectedOrphanIds.size > 0 ? `(${selectedOrphanIds.size})` : ''}
+              </button>
+            )}
+            {activeTab === 'orphans' && (
+              <button
+                data-testid="orphan-create-from-segment-button"
+                onClick={() => setSegmentModalOpen(true)}
+                disabled={flatOrphanEntries.length === 0 && segmentClips.length === 0}
+                title={
+                  flatOrphanEntries.length === 0 && segmentClips.length === 0
+                    ? 'No orphan keyframes or clips in hierarchy'
+                    : 'Pick a time segment → one clip per object + one collection (orphans and fully-contained clips)'
+                }
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border, #ddd)',
+                  background:
+                    flatOrphanEntries.length > 0 || segmentClips.length > 0
+                      ? 'var(--color-accent, #7c5cff)'
+                      : 'var(--color-bg-elevated, #eceef1)',
+                  color:
+                    flatOrphanEntries.length > 0 || segmentClips.length > 0
+                      ? 'var(--color-accent-text, #fff)'
+                      : 'var(--color-text-muted, #666)',
+                  cursor:
+                    flatOrphanEntries.length > 0 || segmentClips.length > 0 ? 'pointer' : 'default',
+                  fontSize: 12,
+                  opacity: flatOrphanEntries.length > 0 || segmentClips.length > 0 ? 1 : 0.6,
+                }}
+              >
+                From time segment…
               </button>
             )}
             {activeTab === 'orphans' && selectedOrphanIds.size > 0 && (
@@ -7179,6 +7317,21 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           />
         )}
 
+        {/* Time-segment → collection batch modal (Orphans tab) */}
+        {segmentModalOpen && parentNodeId && parentNode && activeSlide && (
+          <TimeSegmentToCollectionModal
+            parentNodeId={parentNodeId}
+            parentName={parentNode.name}
+            slideDuration={activeSlide.duration}
+            existingClipNames={engine.clips.map((c) => c.name)}
+            entries={segmentEntries}
+            clips={segmentClips}
+            bakingEvaluator={segmentBakingEvaluator}
+            onClose={() => setSegmentModalOpen(false)}
+            onConfirm={handleSegmentConfirm}
+          />
+        )}
+
         {/* Filtered ClipExtractionModal for orphans */}
         {orphanExtraction &&
           (() => {
@@ -8412,6 +8565,7 @@ function ManagerClipEditor({
       const c = engine.getClip(clip.id)
       if (row.kind === 'clipChannel') return c.getChannelKeyframes(row.channel)
       if (row.kind === 'clipVisible') return c.getVisibleKeyframes()
+      if (row.kind === 'clipZIndex') return c.getZIndexKeyframes()
       if (row.kind === 'clipMorph') return c.getMorphKeyframes()
       if (row.kind === 'clipCircle') return c.getCircleKeyframes(row.property)
       if (row.kind === 'clipShadow') return c.getShadowChannelKeyframes(row.property)
@@ -8732,7 +8886,9 @@ function ManagerClipEditor({
                       ? (row as Extract<ClipEditorRow, { kind: 'clipMaterial' }>).parameter
                       : row.kind === 'clipVisible'
                         ? 'visible'
-                        : 'clipMorph'
+                        : row.kind === 'clipZIndex'
+                          ? 'zIndex'
+                          : 'clipMorph'
             const testId =
               row.kind === 'clipChannel'
                 ? `clip-editor-row-${row.channel}`
