@@ -5,6 +5,8 @@ import type { DispatchCommand } from './commands/dispatcher'
 import type { UndoStack } from './commands/undoStack'
 import { ExtractToClipCommand } from './commands/extractToClipCommand'
 import { CreateClipCollectionCommand } from './commands/createClipCollectionCommand'
+import { SetClipCollectionBindingsCommand } from './commands/setClipCollectionBindingsCommand'
+import { DeleteClipCommand } from './commands/deleteClipCommand'
 import { DeleteKeyframesCommand } from './commands/deleteKeyframesCommand'
 import { RemoveClipCommand } from './commands/removeClipCommand'
 
@@ -268,6 +270,12 @@ export interface SegmentCollectionPlan {
    * uniquifies colliding names within the batch ("Name", "Name 2", …).
    */
   readonly dedupeClipNames?: boolean
+  /**
+   * Replace mode: rebind this existing collection instead of creating a new one.
+   * Mutually exclusive with the create path — collectionName is ignored/locked.
+   * Included semantic names are overwritten, untouched names keep their clips.
+   */
+  readonly replaceCollectionId?: string
 }
 
 export interface SegmentCreatedClip {
@@ -293,6 +301,12 @@ export type SegmentExecutionResult =
       readonly deletedCount: number
       readonly removedInstanceCount: number
       readonly warnings: readonly string[]
+      /** True when this was a replace (rebind) rather than a create. */
+      readonly replaced?: boolean
+      /** Displaced old clips that were deleted (replace mode only). */
+      readonly deletedOldClipIds?: readonly string[]
+      /** Shared clips that were kept because another collection still binds them. */
+      readonly keptSharedClipNames?: readonly string[]
     }
   | { readonly ok: false; readonly error: string }
 
@@ -319,8 +333,22 @@ export function executeSegmentToCollection(
   ) {
     return fail('Invalid time segment: require From < To.')
   }
-  const collectionName = plan.collectionName.trim()
-  if (!collectionName) return fail('Collection name is required.')
+  const isReplace = plan.replaceCollectionId !== undefined && plan.replaceCollectionId !== ''
+  let replaceOldBindings: Record<string, string> = {}
+  let replaceOldName = ''
+  if (isReplace) {
+    try {
+      const oldCol = engine.getClipCollection(plan.replaceCollectionId!)
+      replaceOldBindings = oldCol.getBindingsObject()
+      replaceOldName = oldCol.name
+    } catch {
+      return fail('Collection to replace no longer exists — reopen the dialog.')
+    }
+  } else {
+    const collectionName = plan.collectionName.trim()
+    if (!collectionName) return fail('Collection name is required.')
+  }
+  const collectionName = isReplace ? replaceOldName : plan.collectionName.trim()
   if (plan.objects.length === 0) return fail('Select at least one object.')
 
   // Partition per object into clip-storable vs skipped; gather delete entries.
@@ -478,19 +506,96 @@ export function executeSegmentToCollection(
     }
     bindings[r.semanticName] = r.clipId
   }
-  const colRes = dispatch(
-    new CreateClipCollectionCommand({
-      name: collectionName,
-      bindings,
-      sourceNodeId: plan.parentNodeId,
-    }),
-  )
-  if (!colRes.ok) {
-    mergeRecords(undoStack, records)
-    return fail(`Clips created but collection failed: ${colRes.error.message}`)
+  let collectionId: string
+  const deletedOldClipIds: string[] = []
+  const keptSharedClipNames: string[] = []
+  if (isReplace) {
+    const targetId = plan.replaceCollectionId!
+    const merged: Record<string, string> = { ...replaceOldBindings, ...bindings }
+    const bindRes = dispatch(
+      new SetClipCollectionBindingsCommand({ collectionId: targetId, bindings: merged }),
+    )
+    if (!bindRes.ok) {
+      mergeRecords(undoStack, records)
+      return fail(`Clips created but rebinding failed: ${bindRes.error.message}`)
+    }
+    records += 1
+    collectionId = targetId
+    // Conservative old-clip deletion: only when no other collection binds it
+    // and no clip instance places it. Shared clips are kept with a warning.
+    for (const sem of Object.keys(bindings)) {
+      const oldId = replaceOldBindings[sem]
+      const newId = merged[sem]!
+      if (!oldId || oldId === newId) continue
+      let boundElsewhere = false
+      let boundName = ''
+      for (const col of engine.clipCollections) {
+        if (col.id === targetId) continue
+        try {
+          if ([...col.bindings.values()].includes(oldId)) {
+            boundElsewhere = true
+            try {
+              boundName = engine.getClip(oldId).name
+            } catch {
+              boundName = oldId.slice(0, 8)
+            }
+            break
+          }
+        } catch {
+          continue
+        }
+      }
+      if (boundElsewhere) {
+        keptSharedClipNames.push(boundName || oldId.slice(0, 8))
+        warnings.push(
+          `Old clip "${boundName || oldId.slice(0, 8)}" kept — another collection still binds it.`,
+        )
+        continue
+      }
+      let placed = false
+      try {
+        placed = engine.isClipReferenced(oldId)
+      } catch {
+        placed = false
+      }
+      if (placed) {
+        try {
+          const nm = engine.getClip(oldId).name
+          warnings.push(`Old clip "${nm}" kept — still placed on the timeline.`)
+        } catch {
+          warnings.push(`Old clip kept — still placed on the timeline.`)
+        }
+        continue
+      }
+      const delRes = dispatch(new DeleteClipCommand({ clipId: oldId }))
+      if (!delRes.ok) {
+        // Best-effort cleanup: keep the clip and warn instead of failing the rebind.
+        try {
+          const nm = engine.getClip(oldId).name
+          warnings.push(`Old clip "${nm}" kept: ${delRes.error.message}`)
+        } catch {
+          warnings.push(`Old clip kept: ${delRes.error.message}`)
+        }
+        continue
+      }
+      records += 1
+      deletedOldClipIds.push(oldId)
+    }
+  } else {
+    const colRes = dispatch(
+      new CreateClipCollectionCommand({
+        name: collectionName,
+        bindings,
+        sourceNodeId: plan.parentNodeId,
+      }),
+    )
+    if (!colRes.ok) {
+      mergeRecords(undoStack, records)
+      return fail(`Clips created but collection failed: ${colRes.error.message}`)
+    }
+    records += 1
+    collectionId = colRes.inverse.collectionId
   }
-  records += 1
-  const collectionId = colRes.inverse.collectionId
 
   let deletedCount = 0
   if (plan.deleteOrphans && deleteEntries.length > 0) {
@@ -505,7 +610,9 @@ export function executeSegmentToCollection(
       if (!delRes.ok) {
         mergeRecords(undoStack, records)
         return fail(
-          `Collection "${collectionName}" created, but deleting orphans failed: ${delRes.error.message}`,
+          isReplace
+            ? `Collection "${collectionName}" rebound, but deleting orphans failed: ${delRes.error.message}`
+            : `Collection "${collectionName}" created, but deleting orphans failed: ${delRes.error.message}`,
         )
       }
       records += 1
@@ -522,7 +629,9 @@ export function executeSegmentToCollection(
       if (!remRes.ok) {
         mergeRecords(undoStack, records)
         return fail(
-          `Collection "${collectionName}" created, but removing clip "${r.clipName}" failed: ${remRes.error.message}`,
+          isReplace
+            ? `Collection "${collectionName}" rebound, but removing clip "${r.clipName}" failed: ${remRes.error.message}`
+            : `Collection "${collectionName}" created, but removing clip "${r.clipName}" failed: ${remRes.error.message}`,
         )
       }
       records += 1
@@ -543,5 +652,12 @@ export function executeSegmentToCollection(
     deletedCount,
     removedInstanceCount,
     warnings,
+    ...(isReplace
+      ? {
+          replaced: true as const,
+          deletedOldClipIds,
+          keptSharedClipNames,
+        }
+      : {}),
   }
 }

@@ -53,6 +53,16 @@ interface Props {
    * display, or null on success (owner closes the modal itself).
    */
   readonly onConfirm: (plan: SegmentCollectionPlan) => string | null
+  /** Replace mode: rebind an existing collection instead of creating one. */
+  readonly mode?: 'create' | 'replace'
+  /** Fixed collection name shown (and locked) in replace mode. */
+  readonly replaceCollectionName?: string
+  /** Target collection id for replace mode (passed through in the plan). */
+  readonly replaceCollectionId?: string
+  /** Seedable initial range (defaults to the orphan span). */
+  readonly initialRange?: { from: number; to: number }
+  /** Pre-fill clip-name fields by node id (bound clip names in replace mode). */
+  readonly initialClipNamesByNode?: Readonly<Record<string, string>>
 }
 
 interface ObjectGroup {
@@ -92,14 +102,28 @@ export function TimeSegmentToCollectionModal({
   bakingEvaluator,
   onClose,
   onConfirm,
+  mode,
+  replaceCollectionName,
+  replaceCollectionId,
+  initialRange: initialRangeProp,
+  initialClipNamesByNode,
 }: Props) {
+  const isReplace = mode === 'replace'
   // Range + collection defaults are seeded once per mount (entries are stable while open).
-  const [initialRange] = useState(() =>
-    defaultSegmentRange(
+  const [initialRange] = useState(() => {
+    if (
+      initialRangeProp &&
+      Number.isFinite(initialRangeProp.from) &&
+      Number.isFinite(initialRangeProp.to) &&
+      initialRangeProp.to - initialRangeProp.from > 1e-9
+    ) {
+      return { from: initialRangeProp.from, to: initialRangeProp.to }
+    }
+    return defaultSegmentRange(
       entries.map((e) => e.time),
       slideDuration,
-    ),
-  )
+    )
+  })
 
   const [fromStr, setFromStr] = useState(() => formatSec(initialRange.from))
   const [toStr, setToStr] = useState(() => formatSec(initialRange.to))
@@ -207,8 +231,10 @@ export function TimeSegmentToCollectionModal({
     for (const o of objects) {
       if (names[o.nodeId] === undefined) {
         const master = masterName.trim()
+        const boundSeed = initialClipNamesByNode?.[o.nodeId]?.trim()
         names[o.nodeId] =
           master ||
+          boundSeed ||
           nextClipNameForNode(
             o.nodeName,
             [...taken].map((n) => ({ name: n })),
@@ -239,7 +265,15 @@ export function TimeSegmentToCollectionModal({
       setSelectedClips(clipSel)
       setNamesSeeded(true)
     }
-  }, [objects, existingClipNames, namesSeeded, clipNames, categories, masterName])
+  }, [
+    objects,
+    existingClipNames,
+    namesSeeded,
+    clipNames,
+    categories,
+    masterName,
+    initialClipNamesByNode,
+  ])
 
   const paramSelected = (nodeId: string, key: string): boolean =>
     selectedParams[`${nodeId}::${key}`] ?? true
@@ -306,18 +340,19 @@ export function TimeSegmentToCollectionModal({
 
   const canConfirm =
     rangeError === null &&
-    collectionName.trim().length > 0 &&
+    (isReplace ? true : collectionName.trim().length > 0) &&
     (storableCount > 0 || selectedClipRefs.length > 0) &&
     missingSemantic.length === 0 &&
     conflicts.length === 0
 
   const confirmError = (): string | null => {
+    const verb = isReplace ? 'replace' : 'create'
     if (rangeError) return rangeError
-    if (!collectionName.trim()) return 'Collection name is required.'
+    if (!isReplace && !collectionName.trim()) return 'Collection name is required.'
     if (missingSemantic.length > 0)
-      return `Cannot create: ${missingSemantic.map((o) => o.nodeName).join(', ')} has no Semantic Name. Set it in Inspector first.`
+      return `Cannot ${verb}: ${missingSemantic.map((o) => o.nodeName).join(', ')} has no Semantic Name. Set it in Inspector first.`
     if (conflicts.length > 0)
-      return `Cannot create: ${conflicts.map((o) => o.nodeName).join(', ')} has both keyframes and a clip selected — deselect either its parameters or its clip (one clip per object).`
+      return `Cannot ${verb}: ${conflicts.map((o) => o.nodeName).join(', ')} has both keyframes and a clip selected — deselect either its parameters or its clip (one clip per object).`
     if (storableCount === 0 && selectedClipRefs.length === 0)
       return selectedEntries.length > 0
         ? 'No clip-storable keyframes selected in this segment (only table / label / symmetry tracks).'
@@ -422,7 +457,9 @@ export function TimeSegmentToCollectionModal({
       from: range.from,
       to: range.to,
       objects: objs,
-      collectionName: collectionName.trim(),
+      collectionName: isReplace
+        ? (replaceCollectionName ?? collectionName).trim() || 'replace'
+        : collectionName.trim(),
       deleteOrphans,
       keepFirst: deleteOrphans && keepFirst,
       keepLast: deleteOrphans && keepLast,
@@ -432,6 +469,7 @@ export function TimeSegmentToCollectionModal({
       // the wizard seeds unique defaults and the master field may intentionally
       // repeat one name across categories — keep names exactly as shown.
       dedupeClipNames: false,
+      ...(isReplace && replaceCollectionId ? { replaceCollectionId } : {}),
     })
     if (result) setError(result)
   }
@@ -439,7 +477,7 @@ export function TimeSegmentToCollectionModal({
   const setRange = (nextFrom: number | null, nextTo: number | null) => {
     if (nextFrom !== null && nextTo !== null) {
       setLenStr(formatSec(nextTo - nextFrom))
-      if (!collectionTouched) {
+      if (!collectionTouched && !isReplace) {
         setCollectionName(defaultSegmentCollectionName(parentName, nextFrom, nextTo))
       }
     }
@@ -449,7 +487,9 @@ export function TimeSegmentToCollectionModal({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Create collection from time segment"
+      aria-label={
+        isReplace ? 'Replace collection from time segment' : 'Create collection from time segment'
+      }
       data-testid="segment-to-collection-modal"
       style={{
         position: 'fixed',
@@ -479,13 +519,28 @@ export function TimeSegmentToCollectionModal({
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 style={{ margin: 0, fontSize: 14 }}>Create collection from time segment</h3>
+        <h3 style={{ margin: 0, fontSize: 14 }}>
+          {isReplace
+            ? `Replace in collection "${replaceCollectionName ?? collectionName}"`
+            : 'Create collection from time segment'}
+        </h3>
         <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: 0 }}>
-          Parent <strong>{parentName}</strong> · {entries.length} orphan keyframe(s) and{' '}
-          {clips.length} clip placement(s) in hierarchy. Check orphan parameters to mint one clip
-          per object (category = its semantic name), and/or check fully-contained clips to reuse
-          them as-is — all grouped into one collection. Minted clips share the segment time base, so
-          members stay in sync.
+          {isReplace ? (
+            <>
+              Rebind <strong>{replaceCollectionName ?? collectionName}</strong> from this segment ·{' '}
+              {entries.length} orphan keyframe(s) and {clips.length} clip placement(s) in hierarchy.
+              Included semantic names are overwritten with freshly minted clips; untouched names
+              keep their clips. No new collection is created.
+            </>
+          ) : (
+            <>
+              Parent <strong>{parentName}</strong> · {entries.length} orphan keyframe(s) and{' '}
+              {clips.length} clip placement(s) in hierarchy. Check orphan parameters to mint one
+              clip per object (category = its semantic name), and/or check fully-contained clips to
+              reuse them as-is — all grouped into one collection. Minted clips share the segment
+              time base, so members stay in sync.
+            </>
+          )}
         </p>
 
         <label style={{ fontSize: 12 }}>
@@ -493,7 +548,11 @@ export function TimeSegmentToCollectionModal({
           <input
             data-testid="segment-master-name"
             value={masterName}
-            placeholder="Type once to rename all clips and the collection below"
+            placeholder={
+              isReplace
+                ? 'Type once to rename all clips below (collection name stays locked)'
+                : 'Type once to rename all clips and the collection below'
+            }
             onChange={(e) => {
               const v = e.target.value
               setMasterName(v)
@@ -504,8 +563,10 @@ export function TimeSegmentToCollectionModal({
                 for (const o of objects) next[o.nodeId] = trimmed
                 return next
               })
-              setCollectionName(trimmed)
-              setCollectionTouched(true)
+              if (!isReplace) {
+                setCollectionName(trimmed)
+                setCollectionTouched(true)
+              }
             }}
             style={inputStyle}
           />
@@ -745,24 +806,44 @@ export function TimeSegmentToCollectionModal({
             role="alert"
             style={{ fontSize: 12, color: 'var(--color-danger, #c00)' }}
           >
-            Cannot create: {missingSemantic.map((o) => o.nodeName).join(', ')} has no Semantic Name.
-            Set it in Inspector → General → Semantic Name first.
+            Cannot {isReplace ? 'replace' : 'create'}:{' '}
+            {missingSemantic.map((o) => o.nodeName).join(', ')} has no Semantic Name. Set it in
+            Inspector → General → Semantic Name first.
           </div>
         )}
 
         {/* Collection + cleanup */}
-        <label style={{ fontSize: 12 }}>
-          Collection name
-          <input
-            data-testid="segment-collection-name"
-            value={collectionName}
-            onChange={(e) => {
-              setCollectionName(e.target.value)
-              setCollectionTouched(true)
-            }}
-            style={inputStyle}
-          />
-        </label>
+        {isReplace ? (
+          <div style={{ fontSize: 12 }}>
+            Collection
+            <div
+              data-testid="segment-collection-name-fixed"
+              style={{
+                marginTop: 4,
+                padding: '4px 6px',
+                borderRadius: 4,
+                border: '1px solid var(--color-border, #ddd)',
+                background: 'var(--color-bg-elevated, #f0f0f0)',
+                fontSize: 12,
+              }}
+            >
+              {replaceCollectionName ?? collectionName} (locked — replace never renames)
+            </div>
+          </div>
+        ) : (
+          <label style={{ fontSize: 12 }}>
+            Collection name
+            <input
+              data-testid="segment-collection-name"
+              value={collectionName}
+              onChange={(e) => {
+                setCollectionName(e.target.value)
+                setCollectionTouched(true)
+              }}
+              style={inputStyle}
+            />
+          </label>
+        )}
         <div
           style={{
             border: '1px solid var(--color-border, #ddd)',
@@ -782,7 +863,7 @@ export function TimeSegmentToCollectionModal({
               checked={deleteOrphans}
               onChange={(e) => setDeleteOrphans(e.target.checked)}
             />
-            Delete source orphan keyframes after creation
+            Delete source orphan keyframes after {isReplace ? 'replace' : 'creation'}
             {deleteOrphans && (
               <span
                 style={{ fontWeight: 400, fontSize: 11, color: 'var(--color-text-muted, #666)' }}
@@ -855,9 +936,9 @@ export function TimeSegmentToCollectionModal({
             role="alert"
             style={{ fontSize: 12, color: 'var(--color-danger, #c00)' }}
           >
-            Cannot create: {conflicts.map((o) => o.nodeName).join(', ')} has both keyframes and a
-            clip selected — deselect either its parameters or its clip (one clip per object in a
-            collection).
+            Cannot {isReplace ? 'replace' : 'create'}: {conflicts.map((o) => o.nodeName).join(', ')}{' '}
+            has both keyframes and a clip selected — deselect either its parameters or its clip (one
+            clip per object in a collection).
           </div>
         )}
 
@@ -937,7 +1018,9 @@ export function TimeSegmentToCollectionModal({
             title={
               !canConfirm
                 ? (confirmError() ?? 'Resolve errors first')
-                : `Create ${objects.filter((o) => objectOn(o.nodeId)).length} clip(s) + collection`
+                : isReplace
+                  ? `Replace ${objects.filter((o) => objectOn(o.nodeId)).length} clip(s) in collection`
+                  : `Create ${objects.filter((o) => objectOn(o.nodeId)).length} clip(s) + collection`
             }
             style={{
               padding: '6px 12px',
@@ -952,7 +1035,7 @@ export function TimeSegmentToCollectionModal({
               cursor: canConfirm ? 'pointer' : 'default',
             }}
           >
-            Create clips + collection
+            {isReplace ? 'Replace clips in collection' : 'Create clips + collection'}
           </button>
         </div>
       </div>

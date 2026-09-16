@@ -78,6 +78,17 @@ import { DeleteOrphansConfirmModal } from './DeleteOrphansConfirmModal'
 import { TimeSegmentToCollectionModal } from './TimeSegmentToCollectionModal'
 import type { SegmentSourceEntry } from './TimeSegmentToCollectionModal'
 import { executeSegmentToCollection, nextClipNameForNode } from '../../engine/timeSegmentExtraction'
+import {
+  defaultSegmentRange,
+  formatSec,
+  parseSec,
+  validateSegmentRange,
+} from '../../engine/timeSegmentExtraction'
+import {
+  executeCollectionFlatten,
+  longestClipDuration,
+  previewCollectionFlatten,
+} from '../../engine/collectionFlatten'
 import type { SegmentCollectionPlan, SegmentSourceClip } from '../../engine/timeSegmentExtraction'
 import type { AnimatedParam } from '../../engine/animationManagerModel'
 import type { KeyframeTarget } from '../../engine/keyframeTarget'
@@ -362,6 +373,12 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const [editingBindingsDraft, setEditingBindingsDraft] = useState<Record<string, string>>({})
   const [editingNameDraft, setEditingNameDraft] = useState('')
   const [deleteConfirmCollectionId, setDeleteConfirmCollectionId] = useState<string | null>(null)
+  // Fine-grained collection editing (Spec 353): flatten + replace
+  const [flattenOpen, setFlattenOpen] = useState(false)
+  const [flattenFromStr, setFlattenFromStr] = useState('0')
+  const [flattenToStr, setFlattenToStr] = useState('1')
+  const [flattenError, setFlattenError] = useState<string | null>(null)
+  const [replaceOpen, setReplaceOpen] = useState(false)
   // Collection Lane placements (15-06)
   const [selectedPlacementId, setSelectedPlacementId] = useState<string | null>(null)
   const [placeCollectionId, setPlaceCollectionId] = useState<string>('')
@@ -468,6 +485,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       setEditingBindingsDraft({})
       setEditingNameDraft('')
       setDeleteConfirmCollectionId(null)
+      setFlattenOpen(false)
+      setFlattenError(null)
+      setReplaceOpen(false)
       setSelectedPlacementId(null)
       setPlaceCollectionId('')
       setCollectionPlacementMenu(null)
@@ -2287,6 +2307,124 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     setEditingBindingsDraft({})
     setCollectionLocalError(null)
   }, [editingCollectionId, editingBindingsDraft, editingNameDraft, engine, dispatch, notify])
+
+  // --- Fine-grained collection editing: flatten + replace (Spec 353) ---
+  const openFlattenDialog = useCallback(() => {
+    if (!editingCollectionId || !activeSlide) return
+    try {
+      const longest = longestClipDuration(engine, editingCollectionId)
+      const playhead = usePlaybackController.getState().getTime(activeSlide.id) ?? 0
+      const from = Math.max(0, playhead)
+      const to = Math.min(activeSlide.duration, from + (longest > 0 ? longest : 1))
+      setFlattenFromStr(formatSec(from))
+      setFlattenToStr(formatSec(to > from ? to : Math.min(activeSlide.duration, from + 1)))
+      setFlattenError(null)
+      setFlattenOpen(true)
+    } catch (e) {
+      setCollectionLocalError(e instanceof Error ? e.message : String(e))
+    }
+  }, [editingCollectionId, activeSlide, engine])
+
+  const handleFlattenConfirm = useCallback(() => {
+    if (!editingCollectionId) return
+    const from = parseSec(flattenFromStr)
+    const to = parseSec(flattenToStr)
+    if (from === null || to === null) {
+      setFlattenError('Enter numeric From and To times.')
+      return
+    }
+    const slideDuration = activeSlide?.duration ?? to
+    const rangeErr = validateSegmentRange(from, to, slideDuration)
+    if (rangeErr) {
+      setFlattenError(rangeErr)
+      return
+    }
+    const result = executeCollectionFlatten(engine, dispatch, undoStack, {
+      collectionId: editingCollectionId,
+      from,
+      to,
+    })
+    if (!result.ok) {
+      setFlattenError(result.error)
+      return
+    }
+    setFlattenOpen(false)
+    setFlattenError(null)
+    const bits = [
+      `Flattened ${result.writtenCount} keyframe(s) to [${formatSec(from)}s, ${formatSec(to)}s]`,
+    ]
+    for (const w of result.warnings) bits.push(w)
+    notify(bits.join(' · '))
+  }, [
+    editingCollectionId,
+    flattenFromStr,
+    flattenToStr,
+    activeSlide,
+    engine,
+    dispatch,
+    undoStack,
+    notify,
+  ])
+
+  const handleReplaceConfirm = useCallback(
+    (plan: SegmentCollectionPlan): string | null => {
+      if (!editingCollectionId) return 'No collection selected.'
+      const result = executeSegmentToCollection(engine, dispatch, undoStack, {
+        ...plan,
+        parentNodeId: parentNodeId ?? plan.parentNodeId,
+        collectionName: plan.collectionName,
+        replaceCollectionId: editingCollectionId,
+      })
+      if (!result.ok) return result.error
+      setReplaceOpen(false)
+      try {
+        const col = engine.getClipCollection(editingCollectionId)
+        setEditingBindingsDraft({ ...col.getBindingsObject() })
+        setEditingNameDraft(col.name)
+      } catch {
+        // collection still exists (replace never deletes it)
+      }
+      const bits = [
+        `Collection "${result.collectionName}" replaced — ${result.clips.length + result.reused.length} binding(s) updated`,
+      ]
+      if (result.skippedCount > 0)
+        bits.push(`${result.skippedCount} skipped (${result.skippedKinds.join(', ')})`)
+      if (plan.deleteOrphans) bits.push(`deleted ${result.deletedCount} orphan(s)`)
+      if (result.deletedOldClipIds && result.deletedOldClipIds.length > 0)
+        bits.push(`deleted ${result.deletedOldClipIds.length} old clip(s)`)
+      for (const w of result.warnings) bits.push(w)
+      notify(bits.join(' · '))
+      return null
+    },
+    [editingCollectionId, engine, dispatch, undoStack, parentNodeId, notify],
+  )
+
+  const replaceSeed = useMemo(() => {
+    if (!editingCollectionId) return { clipNamesByNode: {}, collectionName: '' }
+    let collectionName = ''
+    const clipNamesBySemantic = new Map<string, string>()
+    try {
+      const col = engine.getClipCollection(editingCollectionId)
+      collectionName = col.name
+      for (const [sem, clipId] of col.bindings) {
+        try {
+          clipNamesBySemantic.set(sem.trim(), engine.getClip(clipId).name)
+        } catch {
+          continue
+        }
+      }
+    } catch {
+      return { clipNamesByNode: {}, collectionName: '' }
+    }
+    const clipNamesByNode: Record<string, string> = {}
+    for (const row of managerRows) {
+      const sem = row.node.semanticName?.trim()
+      if (!sem) continue
+      const bound = clipNamesBySemantic.get(sem)
+      if (bound) clipNamesByNode[row.node.id] = bound
+    }
+    return { clipNamesByNode, collectionName }
+  }, [editingCollectionId, engine, managerRows, tick])
 
   // Marquee drag for orphans – threshold 5px, handle-excluded
   const handleOrphansPointerDown = useCallback(
@@ -7887,6 +8025,39 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   {collectionLocalError}
                 </div>
               )}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <button
+                  onClick={openFlattenDialog}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg)',
+                    cursor: 'pointer',
+                    fontSize: 12,
+                  }}
+                  data-testid="edit-collection-flatten"
+                >
+                  Flatten to timeline
+                </button>
+                <button
+                  onClick={() => {
+                    setReplaceOpen(true)
+                    setCollectionLocalError(null)
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg)',
+                    cursor: 'pointer',
+                    fontSize: 12,
+                  }}
+                  data-testid="edit-collection-replace"
+                >
+                  Replace from timeline
+                </button>
+              </div>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                 <button
                   onClick={() => {
@@ -7920,6 +8091,181 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               </div>
             </div>
           </div>
+        )}
+
+        {/* Flatten to timeline dialog */}
+        {flattenOpen && editingCollectionId && activeSlide && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Flatten collection to timeline"
+            data-testid="flatten-modal"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1200,
+            }}
+            onClick={() => setFlattenOpen(false)}
+          >
+            <div
+              style={{
+                background: 'var(--color-bg, #fff)',
+                borderRadius: 8,
+                padding: 16,
+                minWidth: 420,
+                maxWidth: 560,
+                border: '1px solid var(--color-border, #ddd)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 style={{ margin: 0, fontSize: 14 }}>Flatten to timeline</h3>
+              <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: 0 }}>
+                Explode every bound clip into orphan keyframes at natural duration (timeline = from
+                + u · duration). Placements are left in place — overlapping ranges will double-drive
+                until one side is removed.
+              </p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <label style={{ flex: 1, fontSize: 12 }}>
+                  From (s)
+                  <input
+                    data-testid="flatten-from-input"
+                    value={flattenFromStr}
+                    onChange={(e) => setFlattenFromStr(e.target.value)}
+                    style={{
+                      width: '100%',
+                      marginTop: 4,
+                      padding: '4px 6px',
+                      borderRadius: 4,
+                      border: '1px solid var(--color-border, #ddd)',
+                      fontSize: 12,
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </label>
+                <label style={{ flex: 1, fontSize: 12 }}>
+                  To (s)
+                  <input
+                    data-testid="flatten-to-input"
+                    value={flattenToStr}
+                    onChange={(e) => setFlattenToStr(e.target.value)}
+                    style={{
+                      width: '100%',
+                      marginTop: 4,
+                      padding: '4px 6px',
+                      borderRadius: 4,
+                      border: '1px solid var(--color-border, #ddd)',
+                      fontSize: 12,
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </label>
+              </div>
+              {(() => {
+                const from = parseSec(flattenFromStr)
+                const to = parseSec(flattenToStr)
+                if (from === null || to === null) return null
+                if (validateSegmentRange(from, to, activeSlide.duration) !== null) return null
+                const preview = previewCollectionFlatten(engine, {
+                  collectionId: editingCollectionId,
+                  from,
+                  to,
+                })
+                return (
+                  <div data-testid="flatten-preview" style={{ fontSize: 12 }}>
+                    <div>
+                      {preview.totalWrites} keyframe(s) across {preview.entries.length} node(s)
+                      {preview.truncatedCount > 0 && ` · ${preview.truncatedCount} past To skipped`}
+                    </div>
+                    {preview.entries.map((e) => (
+                      <div key={e.nodeId} data-testid={`flatten-preview-${e.nodeId}`}>
+                        {e.nodeName} ({e.semanticName}): {e.writeCount} from {e.clipName}
+                      </div>
+                    ))}
+                    {preview.conflicts.length > 0 && (
+                      <div
+                        data-testid="flatten-conflicts"
+                        role="alert"
+                        style={{ color: 'var(--color-danger, #c00)', marginTop: 4 }}
+                      >
+                        {preview.conflicts.map((c) => (
+                          <div key={`${c.target}-${c.nodeName}`}>
+                            “{c.nodeName}” {c.label} already has {c.existingCount} keyframe(s) in
+                            the range
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {preview.warnings.length > 0 && preview.totalWrites === 0 && (
+                      <div style={{ color: 'var(--color-text-muted, #666)', marginTop: 4 }}>
+                        {preview.warnings.join(' ')}
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
+              {flattenError && (
+                <div
+                  data-testid="flatten-error"
+                  role="alert"
+                  style={{ fontSize: 12, color: 'var(--color-danger, #c00)' }}
+                >
+                  {flattenError}
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button
+                  onClick={() => setFlattenOpen(false)}
+                  style={{ padding: '6px 12px', borderRadius: 4, cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  data-testid="flatten-confirm"
+                  onClick={handleFlattenConfirm}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid transparent',
+                    background: 'var(--color-accent, #7c5cff)',
+                    color: 'var(--color-accent-text, #fff)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Flatten
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Replace from timeline wizard (reuses the segment wizard in replace mode) */}
+        {replaceOpen && editingCollectionId && parentNodeId && parentNode && activeSlide && (
+          <TimeSegmentToCollectionModal
+            parentNodeId={parentNodeId}
+            parentName={parentNode.name}
+            slideDuration={activeSlide.duration}
+            existingClipNames={engine.clips.map((c) => c.name)}
+            entries={segmentEntries}
+            clips={segmentClips}
+            bakingEvaluator={segmentBakingEvaluator}
+            onClose={() => setReplaceOpen(false)}
+            onConfirm={handleReplaceConfirm}
+            mode="replace"
+            replaceCollectionId={editingCollectionId}
+            replaceCollectionName={replaceSeed.collectionName}
+            initialClipNamesByNode={replaceSeed.clipNamesByNode}
+            initialRange={defaultSegmentRange(
+              segmentEntries.map((e) => e.time),
+              activeSlide.duration,
+            )}
+          />
         )}
 
         {/* Delete confirm */}
