@@ -62,6 +62,7 @@ import {
   ReverseClipCommand,
   ReverseCollectionCommand,
   MirrorClipCommand,
+  MirrorCollectionCommand,
   RemoveClipCommand,
   DeleteCollectionPlacementCommand,
   DeleteClipCommand,
@@ -73,7 +74,8 @@ import {
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { computeExtractionBounds } from '../../engine/clipExtraction'
-import { mirrorClipDefaultName } from '../../engine/clipMirror'
+import { mirrorClipDefaultName, mirrorCollectionDefaultName } from '../../engine/clipMirror'
+import { buildMirrorSwapPreview } from '../../engine/clipMirror'
 import type { MirrorAxis } from '../../engine/clipMirror'
 import type { ExtractableKeyframe } from '../../engine/clipExtraction'
 import { ClipExtractionModal } from './ClipExtractionModal'
@@ -424,6 +426,13 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   } | null>(null)
   const [mirrorNameDraft, setMirrorNameDraft] = useState('')
   const [mirrorAxis, setMirrorAxis] = useState<MirrorAxis>('X')
+  const [mirrorCollectionPrompt, setMirrorCollectionPrompt] = useState<{
+    collectionId: string
+    parentNodeId?: string
+    startTime?: number
+    defaultName: string
+  } | null>(null)
+  const [mirrorCollectionNameDraft, setMirrorCollectionNameDraft] = useState('')
   const [deleteOrphansConfirm, setDeleteOrphansConfirm] = useState<{
     keyframes: readonly ExtractableKeyframe[]
     clipId: string
@@ -507,6 +516,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       setReverseClipPrompt(null)
       setReverseCollectionPrompt(null)
       setReverseNameDraft('')
+      setMirrorClipPrompt(null)
+      setMirrorCollectionPrompt(null)
       setDeleteOrphansConfirm(null)
       setAddBlockDialog(null)
     }
@@ -535,6 +546,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           e.stopPropagation()
         } else if (reverseCollectionPrompt) {
           setReverseCollectionPrompt(null)
+          e.stopPropagation()
+        } else if (mirrorCollectionPrompt) {
+          setMirrorCollectionPrompt(null)
           e.stopPropagation()
         } else if (collectionCreateOpen) {
           setCollectionCreateOpen(false)
@@ -7355,6 +7369,44 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               </button>
               <button
                 role="menuitem"
+                data-testid="collection-lane-mirror"
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+                onClick={() => {
+                  try {
+                    const placement = engine.getCollectionPlacement(
+                      collectionPlacementMenu.placementId,
+                    )
+                    const collection = engine.getClipCollection(placement.collectionId)
+                    const axis: MirrorAxis = 'X'
+                    const defaultName = mirrorCollectionDefaultName(collection.name, axis)
+                    setMirrorAxis(axis)
+                    setMirrorCollectionNameDraft(defaultName)
+                    setMirrorCollectionPrompt({
+                      collectionId: placement.collectionId,
+                      parentNodeId: placement.parentNodeId,
+                      startTime: placement.startTime,
+                      defaultName,
+                    })
+                    setCollectionPlacementMenu(null)
+                  } catch (e) {
+                    notify(e instanceof Error ? e.message : String(e))
+                    setCollectionPlacementMenu(null)
+                  }
+                }}
+              >
+                Mirror and Save As…
+              </button>
+              <button
+                role="menuitem"
                 data-testid="collection-lane-delete"
                 style={{
                   display: 'block',
@@ -8932,6 +8984,223 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     color: 'var(--color-accent-text, #fff)',
                   }}
                   data-testid="reverse-collection-confirm"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {mirrorCollectionPrompt && (
+          <div
+            className="modal-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Mirror Collection and Save As"
+            data-testid="mirror-collection-modal"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1100,
+            }}
+            onClick={() => setMirrorCollectionPrompt(null)}
+          >
+            <div
+              className="modal"
+              style={{
+                background: 'var(--color-bg, #fff)',
+                borderRadius: 8,
+                padding: 16,
+                minWidth: 380,
+                border: '1px solid var(--color-border)',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Mirror Collection and Save As…</h3>
+              <p
+                style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}
+              >
+                Create a spatially mirrored copy (X = left-right, Y = top-bottom). Each member is
+                mirrored per the single-clip rules and lateral bindings swap sides. Originals are
+                untouched.
+              </p>
+              <fieldset style={{ margin: '0 0 12px', padding: '8px 10px', fontSize: 13 }}>
+                <legend style={{ fontSize: 12 }}>Mirror axis</legend>
+                <label style={{ display: 'block', marginBottom: 4 }}>
+                  <input
+                    type="radio"
+                    name="manager-mirror-collection-axis"
+                    checked={mirrorAxis === 'X'}
+                    data-testid="mirror-collection-axis-x"
+                    onChange={() => {
+                      const next: MirrorAxis = 'X'
+                      setMirrorAxis(next)
+                      try {
+                        const src = engine.getClipCollection(mirrorCollectionPrompt.collectionId)
+                        const nextDefault = mirrorCollectionDefaultName(src.name, next)
+                        setMirrorCollectionPrompt({
+                          ...mirrorCollectionPrompt,
+                          defaultName: nextDefault,
+                        })
+                        if (
+                          mirrorCollectionNameDraft.trim() === '' ||
+                          mirrorCollectionNameDraft === mirrorCollectionPrompt.defaultName
+                        ) {
+                          setMirrorCollectionNameDraft(nextDefault)
+                        }
+                      } catch {
+                        void 0
+                      }
+                    }}
+                  />{' '}
+                  X — left-right
+                </label>
+                <label style={{ display: 'block' }}>
+                  <input
+                    type="radio"
+                    name="manager-mirror-collection-axis"
+                    checked={mirrorAxis === 'Y'}
+                    data-testid="mirror-collection-axis-y"
+                    onChange={() => {
+                      const next: MirrorAxis = 'Y'
+                      setMirrorAxis(next)
+                      try {
+                        const src = engine.getClipCollection(mirrorCollectionPrompt.collectionId)
+                        const nextDefault = mirrorCollectionDefaultName(src.name, next)
+                        setMirrorCollectionPrompt({
+                          ...mirrorCollectionPrompt,
+                          defaultName: nextDefault,
+                        })
+                        if (
+                          mirrorCollectionNameDraft.trim() === '' ||
+                          mirrorCollectionNameDraft === mirrorCollectionPrompt.defaultName
+                        ) {
+                          setMirrorCollectionNameDraft(nextDefault)
+                        }
+                      } catch {
+                        void 0
+                      }
+                    }}
+                  />{' '}
+                  Y — top-bottom
+                </label>
+              </fieldset>
+              {(() => {
+                try {
+                  const src = engine.getClipCollection(mirrorCollectionPrompt.collectionId)
+                  const preview = buildMirrorSwapPreview(src.getBindingsObject())
+                  return (
+                    <div
+                      data-testid="mirror-collection-swap-preview"
+                      style={{ fontSize: 12, margin: '0 0 8px' }}
+                    >
+                      <div style={{ fontWeight: 600, marginBottom: 4 }}>Lateral binding swap</div>
+                      <ul style={{ margin: 0, paddingLeft: 16 }}>
+                        {preview.map((p) => (
+                          <li key={p.source} style={{ fontFamily: 'monospace' }}>
+                            {p.source} → {p.mirrored}
+                            {!p.swapped && ' (unchanged)'}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )
+                } catch {
+                  return null
+                }
+              })()}
+              <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
+                New collection name
+                <input
+                  value={mirrorCollectionNameDraft}
+                  onChange={(e) => setMirrorCollectionNameDraft(e.target.value)}
+                  placeholder={mirrorCollectionPrompt.defaultName}
+                  autoFocus
+                  onFocus={(e) => e.target.select()}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    marginTop: 4,
+                    padding: '6px 8px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg, #fff)',
+                    color: 'var(--color-text, #1c1e21)',
+                  }}
+                  data-testid="mirror-collection-name-input"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      const name =
+                        mirrorCollectionNameDraft.trim() || mirrorCollectionPrompt.defaultName
+                      const res = dispatch(
+                        new MirrorCollectionCommand({
+                          sourceCollectionId: mirrorCollectionPrompt.collectionId,
+                          newName: name,
+                          axis: mirrorAxis,
+                          targetParentNodeId: mirrorCollectionPrompt.parentNodeId,
+                          startTime: mirrorCollectionPrompt.startTime,
+                        }),
+                      )
+                      if (!res.ok) notify(res.error.message)
+                      else {
+                        notify(`Mirrored collection "${name}" created`)
+                        for (const s of res.inverse.skipped) notify(s)
+                      }
+                      setMirrorCollectionPrompt(null)
+                    } else if (e.key === 'Escape') {
+                      setMirrorCollectionPrompt(null)
+                    }
+                  }}
+                />
+              </label>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button
+                  onClick={() => setMirrorCollectionPrompt(null)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                  }}
+                  data-testid="mirror-collection-cancel"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    const name =
+                      mirrorCollectionNameDraft.trim() || mirrorCollectionPrompt.defaultName
+                    if (!name.trim()) {
+                      notify('Name is required')
+                      return
+                    }
+                    const res = dispatch(
+                      new MirrorCollectionCommand({
+                        sourceCollectionId: mirrorCollectionPrompt.collectionId,
+                        newName: name,
+                        axis: mirrorAxis,
+                        targetParentNodeId: mirrorCollectionPrompt.parentNodeId,
+                        startTime: mirrorCollectionPrompt.startTime,
+                      }),
+                    )
+                    if (!res.ok) notify(res.error.message)
+                    else {
+                      notify(`Mirrored collection "${name}" created`)
+                      for (const s of res.inverse.skipped) notify(s)
+                    }
+                    setMirrorCollectionPrompt(null)
+                  }}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 4,
+                    border: '1px solid transparent',
+                    background: 'var(--color-accent, #7c5cff)',
+                    color: 'var(--color-accent-text, #fff)',
+                  }}
+                  data-testid="mirror-collection-confirm"
                 >
                   Save
                 </button>

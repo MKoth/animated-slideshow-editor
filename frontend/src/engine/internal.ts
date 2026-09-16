@@ -136,6 +136,12 @@ import { newClipCollectionId } from './clipCollection'
 import { createReversedClipDefinition } from './clipReverse'
 import { createMirroredClipDefinition, mirrorClipDefaultName } from './clipMirror'
 import type { MirrorAxis } from './clipMirror'
+import {
+  mirrorCollectionDefaultName,
+  mirrorSkippedNotices,
+  requireMirrorAxis,
+  swapLateralSemanticName,
+} from './clipMirror'
 import { newCollectionPlacementId, collectionPlacementFromJSON } from './collectionPlacement'
 import type { CollectionPlacement } from './collectionPlacement'
 import { Keyframe as KeyframeModel, newKeyframeId } from './keyframe'
@@ -3459,6 +3465,43 @@ export class Engine {
     return { collection, clipIdMap }
   }
 
+  createMirroredCollection(
+    sourceCollectionId: string,
+    axis: MirrorAxis,
+    newName?: string,
+  ): { collection: ClipCollection; clipIdMap: Map<string, string>; skipped: string[] } {
+    const source = this.getClipCollection(sourceCollectionId)
+    requireMirrorAxis(axis)
+    const name = newName ?? mirrorCollectionDefaultName(source.name, axis)
+    const clipIdMap = new Map<string, string>()
+    const newBindings: Record<string, string> = {}
+    const skipped: string[] = []
+    for (const [semanticName, clipId] of source.bindings) {
+      let newClipId = clipIdMap.get(clipId)
+      if (!newClipId) {
+        const sourceClip = this.getClip(clipId)
+        for (const notice of mirrorSkippedNotices(sourceClip)) {
+          if (!skipped.includes(notice)) skipped.push(notice)
+        }
+        const mirroredClip = this.createMirroredClip(
+          clipId,
+          axis,
+          mirrorClipDefaultName(sourceClip.name, axis),
+        )
+        newClipId = mirroredClip.id
+        clipIdMap.set(clipId, newClipId)
+      }
+      // Lateral binding swap: a clip bound under N names is mirrored once and
+      // bound N times under the (possibly swapped) keys. swap() is an
+      // involution, so distinct source keys stay distinct — bilateral pairs
+      // simply exchange sides. v1 collections co-start (no per-member start
+      // offsets in the model), so offsets are preserved structurally.
+      newBindings[swapLateralSemanticName(semanticName)] = newClipId
+    }
+    const collection = this.createClipCollection(name, newBindings, source.sourceNodeId)
+    return { collection, clipIdMap, skipped }
+  }
+
   deleteClipCollection(collectionId: string): ClipCollection {
     const removed = this.#clipCollections.deleteCollection(collectionId)
     // Spec 15-06/15-05: delete removes only collection definition; already-placed Collection Lanes remain as plain ClipInstances (no cascading delete of instances)
@@ -5986,6 +6029,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
     createReversedClip: (clipId, newName) => engine.createReversedClip(clipId, newName),
     createMirroredClip: (sourceClipId, axis, newName) =>
       engine.createMirroredClip(sourceClipId, axis, newName),
+    createMirroredCollection: (sourceCollectionId, axis, newName) =>
+      engine.createMirroredCollection(sourceCollectionId, axis, newName),
     deleteClipCollection: (collectionId) => engine.deleteClipCollection(collectionId),
     renameClipCollection: (collectionId, name) => engine.renameClipCollection(collectionId, name),
     setClipCollectionBindings: (collectionId, bindings) =>

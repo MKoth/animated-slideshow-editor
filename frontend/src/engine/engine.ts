@@ -220,6 +220,15 @@ export interface EnginePublic {
     axis: import('./clipMirror').MirrorAxis,
     newName?: string,
   ): ClipDefinition
+  createMirroredCollection(
+    sourceCollectionId: string,
+    axis: import('./clipMirror').MirrorAxis,
+    newName?: string,
+  ): {
+    collection: ClipCollection
+    clipIdMap: Map<string, string>
+    skipped: string[]
+  }
   deleteClipCollection(collectionId: string): ClipCollection
   renameClipCollection(collectionId: string, name: string): void
   setClipCollectionBindings(collectionId: string, bindings: Record<string, string>): void

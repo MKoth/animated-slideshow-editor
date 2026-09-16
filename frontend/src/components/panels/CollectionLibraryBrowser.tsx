@@ -4,7 +4,9 @@ import type { ClipCollectionLibraryEntry } from '../../api'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useEngine } from '../../app/useEngine'
 import { ApplyClipCollectionModal } from './ApplyClipCollectionModal'
-import { ReverseCollectionCommand } from '../../engine/commands'
+import { ReverseCollectionCommand, MirrorCollectionCommand } from '../../engine/commands'
+import { mirrorCollectionDefaultName, buildMirrorSwapPreview } from '../../engine/clipMirror'
+import type { MirrorAxis } from '../../engine/clipMirror'
 
 export function CollectionLibraryBrowser({
   visible,
@@ -33,6 +35,12 @@ export function CollectionLibraryBrowser({
     defaultName: string
   } | null>(null)
   const [reverseNameDraft, setReverseNameDraft] = useState('')
+  const [mirrorPrompt, setMirrorPrompt] = useState<{
+    entry: ClipCollectionLibraryEntry
+    defaultName: string
+  } | null>(null)
+  const [mirrorNameDraft, setMirrorNameDraft] = useState('')
+  const [mirrorAxis, setMirrorAxis] = useState<MirrorAxis>('X')
 
   useEffect(() => {
     // Refresh on every open so project changes cannot leave the browser showing
@@ -241,6 +249,30 @@ export function CollectionLibraryBrowser({
                               >
                                 Reverse and Save As…
                               </button>
+                              <button
+                                role="menuitem"
+                                data-testid={`library-collection-mirror-${entry.id}`}
+                                style={{
+                                  display: 'block',
+                                  width: '100%',
+                                  textAlign: 'left',
+                                  padding: '6px 10px',
+                                  border: 'none',
+                                  background: 'transparent',
+                                  cursor: 'pointer',
+                                  fontSize: 12,
+                                }}
+                                onClick={() => {
+                                  const axis: MirrorAxis = 'X'
+                                  const defaultName = mirrorCollectionDefaultName(entry.name, axis)
+                                  setMirrorAxis(axis)
+                                  setMirrorNameDraft(defaultName)
+                                  setMirrorPrompt({ entry, defaultName })
+                                  setOverflowId(null)
+                                }}
+                              >
+                                Mirror and Save As…
+                              </button>
                             </div>
                           )}
                         </div>
@@ -366,6 +398,166 @@ export function CollectionLibraryBrowser({
                   color: '#fff',
                 }}
                 data-testid="library-collection-reverse-confirm"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {mirrorPrompt && (
+        <div
+          className="projects-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Mirror Collection and Save As"
+          data-testid="library-collection-mirror-modal"
+        >
+          <div
+            className="projects-dialog"
+            style={{ minWidth: 380 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Mirror Collection and Save As…</h3>
+            <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
+              Spatial mirror (X = left-right, Y = top-bottom). Lateral bindings swap sides;
+              originals are untouched.
+            </p>
+            <fieldset style={{ margin: '0 0 12px', padding: '8px 10px', fontSize: 13 }}>
+              <legend style={{ fontSize: 12 }}>Mirror axis</legend>
+              <label style={{ display: 'block', marginBottom: 4 }}>
+                <input
+                  type="radio"
+                  name="library-mirror-collection-axis"
+                  checked={mirrorAxis === 'X'}
+                  data-testid="library-collection-mirror-axis-x"
+                  onChange={() => {
+                    setMirrorAxis('X')
+                    const nextDefault = mirrorCollectionDefaultName(mirrorPrompt.entry.name, 'X')
+                    setMirrorPrompt({ entry: mirrorPrompt.entry, defaultName: nextDefault })
+                    if (
+                      mirrorNameDraft.trim() === '' ||
+                      mirrorNameDraft === mirrorPrompt.defaultName
+                    ) {
+                      setMirrorNameDraft(nextDefault)
+                    }
+                  }}
+                />{' '}
+                X — left-right
+              </label>
+              <label style={{ display: 'block' }}>
+                <input
+                  type="radio"
+                  name="library-mirror-collection-axis"
+                  checked={mirrorAxis === 'Y'}
+                  data-testid="library-collection-mirror-axis-y"
+                  onChange={() => {
+                    setMirrorAxis('Y')
+                    const nextDefault = mirrorCollectionDefaultName(mirrorPrompt.entry.name, 'Y')
+                    setMirrorPrompt({ entry: mirrorPrompt.entry, defaultName: nextDefault })
+                    if (
+                      mirrorNameDraft.trim() === '' ||
+                      mirrorNameDraft === mirrorPrompt.defaultName
+                    ) {
+                      setMirrorNameDraft(nextDefault)
+                    }
+                  }}
+                />{' '}
+                Y — top-bottom
+              </label>
+            </fieldset>
+            <div
+              data-testid="library-collection-mirror-preview"
+              style={{ fontSize: 12, margin: '0 0 8px' }}
+            >
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>Lateral binding swap</div>
+              <ul style={{ margin: 0, paddingLeft: 16 }}>
+                {buildMirrorSwapPreview(Object.keys(mirrorPrompt.entry.bindings)).map((p) => (
+                  <li key={p.source} style={{ fontFamily: 'monospace' }}>
+                    {p.source} → {p.mirrored}
+                    {!p.swapped && ' (unchanged)'}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
+              New collection name
+              <input
+                value={mirrorNameDraft}
+                onChange={(e) => setMirrorNameDraft(e.target.value)}
+                placeholder={mirrorPrompt.defaultName}
+                autoFocus
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  marginTop: 4,
+                  padding: '6px 8px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border)',
+                }}
+                data-testid="library-collection-mirror-name-input"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const name = mirrorNameDraft.trim() || mirrorPrompt.defaultName
+                    importCollection(mirrorPrompt.entry, engine).then((importedId) => {
+                      const sourceId = importedId ?? mirrorPrompt.entry.id
+                      const res = dispatch(
+                        new MirrorCollectionCommand({
+                          sourceCollectionId: sourceId,
+                          newName: name,
+                          axis: mirrorAxis,
+                        }),
+                      )
+                      if (!res.ok) notify(res.error.message)
+                      else {
+                        notify(`Mirrored collection "${name}" created`)
+                        for (const s of res.inverse.skipped) notify(s)
+                      }
+                      setMirrorPrompt(null)
+                    })
+                  } else if (e.key === 'Escape') setMirrorPrompt(null)
+                }}
+              />
+            </label>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                onClick={() => setMirrorPrompt(null)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border)',
+                }}
+                data-testid="library-collection-mirror-cancel"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  const name = mirrorNameDraft.trim() || mirrorPrompt.defaultName
+                  const importedId = await importCollection(mirrorPrompt.entry, engine)
+                  const sourceId = importedId ?? mirrorPrompt.entry.id
+                  const res = dispatch(
+                    new MirrorCollectionCommand({
+                      sourceCollectionId: sourceId,
+                      newName: name,
+                      axis: mirrorAxis,
+                    }),
+                  )
+                  if (!res.ok) notify(res.error.message)
+                  else {
+                    notify(`Mirrored collection "${name}" created`)
+                    for (const s of res.inverse.skipped) notify(s)
+                  }
+                  setMirrorPrompt(null)
+                }}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid transparent',
+                  background: '#7c5cff',
+                  color: '#fff',
+                }}
+                data-testid="library-collection-mirror-confirm"
               >
                 Save
               </button>

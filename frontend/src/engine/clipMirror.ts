@@ -20,6 +20,113 @@ export function mirrorClipDefaultName(sourceName: string, axis: MirrorAxis): str
 }
 
 /**
+ * Collection-level default name: same "<original> Mirrored (X)" format as
+ * single clips (issue #356). Kept as a separate export so collection surfaces
+ * do not depend on the clip naming helper by accident.
+ */
+export function mirrorCollectionDefaultName(sourceName: string, axis: MirrorAxis): string {
+  requireMirrorAxis(axis)
+  return mirrorClipDefaultName(sourceName, axis)
+}
+
+function escapeRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * Swap delimiter-prefixed lateral markers (`_L`/`_R`, `.L`/`.R`) only when
+ * not followed by a letter, so `_Left` is left for the word rule instead of
+ * becoming `_Reft`, while `arm_L`, `arm_L_end`, and `arm.L` still swap.
+ */
+function swapDelimitedMarker(source: string, delimiter: '_' | '.'): string {
+  const d = escapeRegExp(delimiter)
+  const pattern = new RegExp(`${d}L(?![A-Za-z])|${d}R(?![A-Za-z])`, 'g')
+  return source.replace(pattern, (match) =>
+    match === `${delimiter}L` ? `${delimiter}R` : `${delimiter}L`,
+  )
+}
+
+/**
+ * Lateral Semantic Name swap (issue #356).
+ *
+ * Exact-match involution over the common bilateral conventions: `_L`/`_R`
+ * and `.L`/`.R` (delimiter + letter, swapped wherever they occur), plus the
+ * `left`/`right` words matched as whole tokens — delimited by `_`, `.`, `-`,
+ * whitespace, string boundaries, or camelCase transitions — in lower,
+ * capitalized, and upper casing. `left_hand`, `LeftArm`, `armLeft`, and
+ * `LEFT_HAND` all mirror; `leftover`, `highlight`, `torso`, and `head` pass
+ * through unchanged so unexpected renames never silently rewire a rig.
+ *
+ * The function is its own inverse: `swap(swap(x)) === x`, so distinct source
+ * keys always map to distinct mirrored keys and shared-clip collections can
+ * exchange both sides without collisions.
+ */
+export function swapLateralSemanticName(name: string): string {
+  let result = name
+  result = swapDelimitedMarker(result, '_')
+  result = swapDelimitedMarker(result, '.')
+  return swapLeftRightWords(result)
+}
+
+/** Swap a whole token, preserving lower/Capitalized/UPPER casing. */
+function swapLeftRightToken(token: string): string {
+  const lower = token.toLowerCase()
+  const target = lower === 'left' ? 'right' : 'left'
+  if (token === token.toUpperCase()) return target.toUpperCase()
+  if (
+    token.length > 0 &&
+    token[0] === token[0]!.toUpperCase() &&
+    token.slice(1) === token.slice(1).toLowerCase()
+  ) {
+    return target[0]!.toUpperCase() + target.slice(1)
+  }
+  return target
+}
+
+function swapLeftRightWords(name: string): string {
+  return name
+    .split(/([_.\-\s]+)/g)
+    .map((part) => {
+      if (part === '' || /^[_.\-\s]+$/.test(part)) return part
+      return part
+        .split(/(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])/)
+        .map((word) => {
+          const lower = word.toLowerCase()
+          if (lower !== 'left' && lower !== 'right') return word
+          return swapLeftRightToken(word)
+        })
+        .join('')
+    })
+    .join('')
+}
+
+export interface MirrorSwapPreviewEntry {
+  readonly source: string
+  readonly mirrored: string
+  readonly swapped: boolean
+}
+
+/**
+ * Preview model for the Mirror confirm dialog: one entry per source binding
+ * key in input order, with `swapped=false` for unpaired pass-through names.
+ * Accepts a bindings record, a bindings map, or a plain key list so engine,
+ * command, and UI layers can share one implementation.
+ */
+export function buildMirrorSwapPreview(
+  keys: Record<string, string> | ReadonlyMap<string, string> | readonly string[],
+): readonly MirrorSwapPreviewEntry[] {
+  const names: string[] = Array.isArray(keys)
+    ? [...keys]
+    : keys instanceof Map
+      ? [...keys.keys()]
+      : Object.keys(keys)
+  return names.map((source) => {
+    const mirrored = swapLateralSemanticName(source)
+    return { source, mirrored, swapped: mirrored !== source }
+  })
+}
+
+/**
  * Value-negation table (X-mirror; Y swaps the position roles).
  * Rotation is always negated; scales, opacity, and the untouched axis never are.
  * Gain/offset-linked channels follow the same table: the stored channel
