@@ -19,8 +19,13 @@ import {
   MirrorClipCommand,
   MirrorCollectionCommand,
 } from '../../engine/commands'
-import { mirrorClipDefaultName, mirrorCollectionDefaultName } from '../../engine/clipMirror'
-import { buildMirrorSwapPreview } from '../../engine/clipMirror'
+import {
+  mirrorClipDefaultName,
+  mirrorCollectionDefaultName,
+  buildMirrorSwapPreview,
+  mirrorSkippedLaneNames,
+  collectMirrorSkippedLaneNames,
+} from '../../engine/clipMirror'
 import type { MirrorAxis } from '../../engine/clipMirror'
 import { ApplyClipCollectionModal } from './ApplyClipCollectionModal'
 import { ExportClipCollectionModal } from './ExportClipCollectionModal'
@@ -1034,9 +1039,11 @@ export function AnimationsPanel() {
           data-testid="reverse-clip-modal"
         >
           <div className="projects-dialog" style={{ minWidth: 360 }}>
-            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Reverse and Save As…</h3>
+            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>
+              ↺ Reverse and Save As… — time mirror
+            </h3>
             <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
-              Create a time-reversed copy. Original is untouched.
+              Create a time-mirrored copy (last seconds become first). Original is untouched.
             </p>
             <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
               New clip name
@@ -1124,7 +1131,9 @@ export function AnimationsPanel() {
           data-testid="mirror-clip-modal"
         >
           <div className="projects-dialog" style={{ minWidth: 360 }}>
-            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Mirror and Save As…</h3>
+            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>
+              ⇋ Mirror and Save As… — space mirror
+            </h3>
             <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
               Create a spatially mirrored copy (X = left-right, Y = top-bottom). Timing is
               unchanged; the original is untouched.
@@ -1189,7 +1198,7 @@ export function AnimationsPanel() {
             {(() => {
               try {
                 const src = engine.getClip(mirrorClipPrompt.clipId)
-                const skipped = [...src.circleTrackKeys, ...src.tableTrackKeys]
+                const skipped = mirrorSkippedLaneNames(src)
                 if (skipped.length === 0) return null
                 return (
                   <p
@@ -1298,9 +1307,12 @@ export function AnimationsPanel() {
           data-testid="reverse-collection-modal"
         >
           <div className="projects-dialog" style={{ minWidth: 360 }}>
-            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Reverse Collection and Save As…</h3>
+            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>
+              ↺ Reverse Collection and Save As… — time mirror
+            </h3>
             <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
-              Creates reversed copies of each member clip and a new collection.
+              Create a time-mirrored copy (last seconds become first). Creates reversed copies of
+              each member clip and a new collection.
             </p>
             <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
               New collection name
@@ -1388,11 +1400,13 @@ export function AnimationsPanel() {
           data-testid="mirror-collection-modal"
         >
           <div className="projects-dialog" style={{ minWidth: 380 }}>
-            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Mirror Collection and Save As…</h3>
+            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>
+              ⇋ Mirror Collection and Save As… — space mirror
+            </h3>
             <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
               Create a spatially mirrored copy (X = left-right, Y = top-bottom). Each member clip is
-              mirrored per the single-clip rules; lateral bindings swap sides. Originals are
-              untouched.
+              mirrored per the single-clip rules; lateral bindings swap sides. Timing is unchanged
+              and originals are untouched.
             </p>
             <fieldset style={{ margin: '0 0 12px', padding: '8px 10px', fontSize: 13 }}>
               <legend style={{ fontSize: 12 }}>Mirror axis</legend>
@@ -1489,22 +1503,24 @@ export function AnimationsPanel() {
             {(() => {
               try {
                 const src = engine.getClipCollection(mirrorCollectionPrompt.collectionId)
-                const lanes = new Set<string>()
-                for (const clipId of Object.values(src.getBindingsObject())) {
-                  try {
-                    const clip = engine.getClip(clipId)
-                    for (const k of [...clip.circleTrackKeys, ...clip.tableTrackKeys]) lanes.add(k)
-                  } catch {
-                    void 0
-                  }
-                }
-                if (lanes.size === 0) return null
+                const lanes = collectMirrorSkippedLaneNames(
+                  (function* () {
+                    for (const clipId of Object.values(src.getBindingsObject())) {
+                      try {
+                        yield engine.getClip(clipId)
+                      } catch {
+                        void 0
+                      }
+                    }
+                  })(),
+                )
+                if (lanes.length === 0) return null
                 return (
                   <p
                     data-testid="mirror-collection-skips"
                     style={{ fontSize: 12, color: 'var(--color-warning, #a60)', margin: '0 0 8px' }}
                   >
-                    Not mirrored (out of scope for v1): {[...lanes].join(', ')}. These lanes stay
+                    Not mirrored (out of scope for v1): {lanes.join(', ')}. These lanes stay
                     unchanged on the originals.
                   </p>
                 )

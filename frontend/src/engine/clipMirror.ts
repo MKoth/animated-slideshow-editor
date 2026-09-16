@@ -486,6 +486,43 @@ export function mirrorSkippedNotices(source: ClipDefinition): readonly string[] 
 }
 
 /**
+ * Compact lane names behind {@link mirrorSkippedNotices}: only lanes that
+ * actually hold keyframes are reported, so empty lanes are never flagged.
+ * Shared by every Mirror confirm dialog so the preview cannot diverge from
+ * the engine's skip decision.
+ */
+export function mirrorSkippedLaneNames(source: ClipDefinition): readonly string[] {
+  if (mirrorSkippedNotices(source).length === 0) return []
+  const names: string[] = []
+  for (const prop of source.circleTrackKeys) {
+    if ((source.circleAnimation(prop)?.length ?? 0) > 0) names.push(prop)
+  }
+  for (const prop of source.tableTrackKeys) {
+    if ((source.tableAnimation(prop)?.length ?? 0) > 0) names.push(prop)
+  }
+  return names
+}
+
+/**
+ * Union of {@link mirrorSkippedLaneNames} across a collection's member clips,
+ * in first-seen order. Callers resolve ids to clips (skipping failures); the
+ * lane-name decision itself stays in this module.
+ */
+export function collectMirrorSkippedLaneNames(clips: Iterable<ClipDefinition>): readonly string[] {
+  const lanes: string[] = []
+  const seen = new Set<string>()
+  for (const clip of clips) {
+    for (const name of mirrorSkippedLaneNames(clip)) {
+      if (!seen.has(name)) {
+        seen.add(name)
+        lanes.push(name)
+      }
+    }
+  }
+  return lanes
+}
+
+/**
  * Create a spatially mirrored copy of a clip.
  * - new identity, `isReversed=false`, keyframe times untouched
  * - duration, category, channel list, and parameter definitions preserved

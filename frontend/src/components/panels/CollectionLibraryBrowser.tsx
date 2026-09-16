@@ -5,7 +5,11 @@ import { useNotificationStore } from '../../stores/notificationStore'
 import { useEngine } from '../../app/useEngine'
 import { ApplyClipCollectionModal } from './ApplyClipCollectionModal'
 import { ReverseCollectionCommand, MirrorCollectionCommand } from '../../engine/commands'
-import { mirrorCollectionDefaultName, buildMirrorSwapPreview } from '../../engine/clipMirror'
+import {
+  mirrorCollectionDefaultName,
+  buildMirrorSwapPreview,
+  collectMirrorSkippedLaneNames,
+} from '../../engine/clipMirror'
 import type { MirrorAxis } from '../../engine/clipMirror'
 
 export function CollectionLibraryBrowser({
@@ -324,7 +328,9 @@ export function CollectionLibraryBrowser({
             style={{ minWidth: 360 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Reverse and Save As…</h3>
+            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>
+              ↺ Reverse and Save As… — time mirror
+            </h3>
             <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
               New collection name
               <input
@@ -418,10 +424,12 @@ export function CollectionLibraryBrowser({
             style={{ minWidth: 380 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Mirror Collection and Save As…</h3>
+            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>
+              ⇋ Mirror Collection and Save As… — space mirror
+            </h3>
             <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
-              Spatial mirror (X = left-right, Y = top-bottom). Lateral bindings swap sides;
-              originals are untouched.
+              Spatial mirror (X = left-right, Y = top-bottom). Timing is unchanged; lateral bindings
+              swap sides; originals are untouched.
             </p>
             <fieldset style={{ margin: '0 0 12px', padding: '8px 10px', fontSize: 13 }}>
               <legend style={{ fontSize: 12 }}>Mirror axis</legend>
@@ -471,15 +479,74 @@ export function CollectionLibraryBrowser({
               style={{ fontSize: 12, margin: '0 0 8px' }}
             >
               <div style={{ fontWeight: 600, marginBottom: 4 }}>Lateral binding swap</div>
-              <ul style={{ margin: 0, paddingLeft: 16 }}>
-                {buildMirrorSwapPreview(Object.keys(mirrorPrompt.entry.bindings)).map((p) => (
-                  <li key={p.source} style={{ fontFamily: 'monospace' }}>
-                    {p.source} → {p.mirrored}
-                    {!p.swapped && ' (unchanged)'}
-                  </li>
-                ))}
-              </ul>
+              {(() => {
+                const preview = buildMirrorSwapPreview(Object.keys(mirrorPrompt.entry.bindings))
+                if (!preview.some((p) => p.swapped)) {
+                  return (
+                    <div style={{ color: 'var(--color-text-muted, #666)' }}>
+                      No lateral names — bindings pass through unchanged.
+                    </div>
+                  )
+                }
+                return (
+                  <ul style={{ margin: 0, paddingLeft: 16 }}>
+                    {preview.map((p) => (
+                      <li key={p.source} style={{ fontFamily: 'monospace' }}>
+                        {p.source} → {p.mirrored}
+                        {!p.swapped && ' (unchanged)'}
+                      </li>
+                    ))}
+                  </ul>
+                )
+              })()}
             </div>
+            {(() => {
+              // Skip preview for library entries: the entry may not be
+              // imported yet, so fall back to a generic v1 scope note when
+              // per-lane data is unavailable.
+              try {
+                const inProject = engine.getClipCollection(mirrorPrompt.entry.id)
+                const lanes = collectMirrorSkippedLaneNames(
+                  (function* () {
+                    for (const clipId of Object.values(inProject.getBindingsObject())) {
+                      try {
+                        yield engine.getClip(clipId)
+                      } catch {
+                        void 0
+                      }
+                    }
+                  })(),
+                )
+                if (lanes.length === 0) return null
+                return (
+                  <p
+                    data-testid="library-collection-mirror-skips"
+                    style={{
+                      fontSize: 12,
+                      color: 'var(--color-warning, #a60)',
+                      margin: '0 0 8px',
+                    }}
+                  >
+                    Not mirrored (out of scope for v1): {lanes.join(', ')}. These lanes stay
+                    unchanged on the originals.
+                  </p>
+                )
+              } catch {
+                return (
+                  <p
+                    data-testid="library-collection-mirror-skips"
+                    style={{
+                      fontSize: 12,
+                      color: 'var(--color-warning, #a60)',
+                      margin: '0 0 8px',
+                    }}
+                  >
+                    Circle/table lanes are out of scope for mirror v1 and stay unchanged on the
+                    originals.
+                  </p>
+                )
+              }
+            })()}
             <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
               New collection name
               <input

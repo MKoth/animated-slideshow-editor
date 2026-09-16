@@ -4,7 +4,7 @@ import type { ClipLibraryEntry } from '../../api'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useEngine } from '../../app/useEngine'
 import { ReverseClipCommand, MirrorClipCommand } from '../../engine/commands'
-import { mirrorClipDefaultName } from '../../engine/clipMirror'
+import { mirrorClipDefaultName, mirrorSkippedLaneNames } from '../../engine/clipMirror'
 import type { MirrorAxis } from '../../engine/clipMirror'
 
 function formatDuration(seconds: number): string {
@@ -277,7 +277,9 @@ export function LibraryBrowser() {
             style={{ minWidth: 360 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Reverse and Save As…</h3>
+            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>
+              ↺ Reverse and Save As… — time mirror
+            </h3>
             <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
               New clip name
               <input
@@ -373,7 +375,9 @@ export function LibraryBrowser() {
             style={{ minWidth: 360 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Mirror and Save As…</h3>
+            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>
+              ⇋ Mirror and Save As… — space mirror
+            </h3>
             <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
               Create a spatially mirrored copy (X = left-right, Y = top-bottom). Timing is
               unchanged; the original is untouched.
@@ -422,7 +426,7 @@ export function LibraryBrowser() {
             {(() => {
               try {
                 const src = engine.getClip(mirrorPrompt.entry.id)
-                const skipped = [...src.circleTrackKeys, ...src.tableTrackKeys]
+                const skipped = mirrorSkippedLaneNames(src)
                 if (skipped.length === 0) return null
                 return (
                   <p

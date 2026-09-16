@@ -74,8 +74,13 @@ import {
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { computeExtractionBounds } from '../../engine/clipExtraction'
-import { mirrorClipDefaultName, mirrorCollectionDefaultName } from '../../engine/clipMirror'
-import { buildMirrorSwapPreview } from '../../engine/clipMirror'
+import {
+  mirrorClipDefaultName,
+  mirrorCollectionDefaultName,
+  buildMirrorSwapPreview,
+  mirrorSkippedLaneNames,
+  collectMirrorSkippedLaneNames,
+} from '../../engine/clipMirror'
 import type { MirrorAxis } from '../../engine/clipMirror'
 import type { ExtractableKeyframe } from '../../engine/clipExtraction'
 import { ClipExtractionModal } from './ClipExtractionModal'
@@ -8515,12 +8520,14 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               }}
               onClick={(e) => e.stopPropagation()}
             >
-              <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Reverse and Save As…</h3>
+              <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>
+                ↺ Reverse and Save As… — time mirror
+              </h3>
               <p
                 style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}
               >
-                Create a time-reversed copy. Original is untouched. New instance at same startTime
-                with speed=1.
+                Create a time-mirrored copy (last seconds become first). Original is untouched. New
+                instance at same startTime with speed=1.
               </p>
               <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
                 New clip name
@@ -8670,7 +8677,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               }}
               onClick={(e) => e.stopPropagation()}
             >
-              <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Mirror and Save As…</h3>
+              <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>
+                ⇋ Mirror and Save As… — space mirror
+              </h3>
               <p
                 style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}
               >
@@ -8732,8 +8741,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               {(() => {
                 try {
                   const src = engine.getClip(mirrorClipPrompt.clipId)
-                  const skipped = [...src.circleTrackKeys, ...src.tableTrackKeys]
-                  if (skipped.length === 0) return null
+                  // Compact lane summary; full per-lane notices surface after Save.
+                  const laneNames = mirrorSkippedLaneNames(src)
+                  if (laneNames.length === 0) return null
                   return (
                     <p
                       data-testid="mirror-clip-skips"
@@ -8743,7 +8753,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         margin: '0 0 8px',
                       }}
                     >
-                      Not mirrored (out of scope for v1): {skipped.join(', ')}. These lanes stay
+                      Not mirrored (out of scope for v1): {laneNames.join(', ')}. These lanes stay
                       unchanged on the original.
                     </p>
                   )
@@ -8899,12 +8909,15 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               }}
               onClick={(e) => e.stopPropagation()}
             >
-              <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Reverse Collection and Save As…</h3>
+              <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>
+                ↺ Reverse Collection and Save As… — time mirror
+              </h3>
               <p
                 style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}
               >
-                Creates reversed copies of each member clip and a new collection with same
-                semanticName map. Offsets preserved (v1).
+                Create a time-mirrored copy (last seconds become first). Creates reversed copies of
+                each member clip and a new collection with same semanticName map. Offsets preserved
+                (v1).
               </p>
               <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
                 New collection name
@@ -9020,13 +9033,15 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               }}
               onClick={(e) => e.stopPropagation()}
             >
-              <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>Mirror Collection and Save As…</h3>
+              <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>
+                ⇋ Mirror Collection and Save As… — space mirror
+              </h3>
               <p
                 style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}
               >
                 Create a spatially mirrored copy (X = left-right, Y = top-bottom). Each member is
-                mirrored per the single-clip rules and lateral bindings swap sides. Originals are
-                untouched.
+                mirrored per the single-clip rules and lateral bindings swap sides. Timing is
+                unchanged and originals are untouched.
               </p>
               <fieldset style={{ margin: '0 0 12px', padding: '8px 10px', fontSize: 13 }}>
                 <legend style={{ fontSize: 12 }}>Mirror axis</legend>
@@ -9093,21 +9108,60 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 try {
                   const src = engine.getClipCollection(mirrorCollectionPrompt.collectionId)
                   const preview = buildMirrorSwapPreview(src.getBindingsObject())
+                  const swapped = preview.filter((p) => p.swapped)
                   return (
                     <div
                       data-testid="mirror-collection-swap-preview"
                       style={{ fontSize: 12, margin: '0 0 8px' }}
                     >
                       <div style={{ fontWeight: 600, marginBottom: 4 }}>Lateral binding swap</div>
-                      <ul style={{ margin: 0, paddingLeft: 16 }}>
-                        {preview.map((p) => (
-                          <li key={p.source} style={{ fontFamily: 'monospace' }}>
-                            {p.source} → {p.mirrored}
-                            {!p.swapped && ' (unchanged)'}
-                          </li>
-                        ))}
-                      </ul>
+                      {swapped.length === 0 ? (
+                        <div style={{ color: 'var(--color-text-muted, #666)' }}>
+                          No lateral names — bindings pass through unchanged.
+                        </div>
+                      ) : (
+                        <ul style={{ margin: 0, paddingLeft: 16 }}>
+                          {preview.map((p) => (
+                            <li key={p.source} style={{ fontFamily: 'monospace' }}>
+                              {p.source} → {p.mirrored}
+                              {!p.swapped && ' (unchanged)'}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
+                  )
+                } catch {
+                  return null
+                }
+              })()}
+              {(() => {
+                try {
+                  const src = engine.getClipCollection(mirrorCollectionPrompt.collectionId)
+                  const lanes = collectMirrorSkippedLaneNames(
+                    (function* () {
+                      for (const clipId of Object.values(src.getBindingsObject())) {
+                        try {
+                          yield engine.getClip(clipId)
+                        } catch {
+                          void 0
+                        }
+                      }
+                    })(),
+                  )
+                  if (lanes.length === 0) return null
+                  return (
+                    <p
+                      data-testid="mirror-collection-skips"
+                      style={{
+                        fontSize: 12,
+                        color: 'var(--color-warning, #a60)',
+                        margin: '0 0 8px',
+                      }}
+                    >
+                      Not mirrored (out of scope for v1): {lanes.join(', ')}. These lanes stay
+                      unchanged on the originals.
+                    </p>
                   )
                 } catch {
                   return null
@@ -9191,6 +9245,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     else {
                       notify(`Mirrored collection "${name}" created`)
                       for (const s of res.inverse.skipped) notify(s)
+                      for (const w of res.inverse.morphWarnings ?? []) notify(w)
                     }
                     setMirrorCollectionPrompt(null)
                   }}
