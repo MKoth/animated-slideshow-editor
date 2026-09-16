@@ -927,7 +927,7 @@ export class ClipDefinition {
         }
         if (typeof value === 'object' && value !== null) {
           const rec = value as Record<string, unknown>
-          // New clip format: name-based
+          // New clip format: name-based (+ optional category paths for duplicate names)
           if ('fromShapeName' in rec || 'toShapeName' in rec || 'coefficient' in rec) {
             const fromShapeName = rec.fromShapeName
             const toShapeName = rec.toShapeName
@@ -941,10 +941,25 @@ export class ClipDefinition {
             if (typeof coeff !== 'number' || !Number.isFinite(coeff) || coeff < 0 || coeff > 1) {
               throw new Error(`Clip morph keyframe "${id}" coefficient must be between 0 and 1`)
             }
+            const parsePath = (
+              raw: unknown,
+              field: string,
+            ): readonly string[] | null | undefined => {
+              if (raw === undefined) return undefined
+              if (raw === null) return null
+              if (!Array.isArray(raw) || raw.some((s) => typeof s !== 'string' || s.length === 0)) {
+                throw new Error(`Clip morph keyframe "${id}" ${field} must be string[] or null`)
+              }
+              return [...(raw as string[])]
+            }
+            const fromCategoryPath = parsePath(rec.fromCategoryPath, 'fromCategoryPath')
+            const toCategoryPath = parsePath(rec.toCategoryPath, 'toCategoryPath')
             return {
               fromShapeName: fromShapeName as string | null,
               toShapeName: toShapeName as string | null,
               coefficient: coeff as number,
+              ...(fromCategoryPath !== undefined ? { fromCategoryPath } : {}),
+              ...(toCategoryPath !== undefined ? { toCategoryPath } : {}),
             }
           }
           // legacy id-based object (from old per-keyframe pair using ids) — treat names as ids fallback

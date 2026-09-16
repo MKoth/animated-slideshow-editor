@@ -9455,6 +9455,159 @@ function ManagerClipEditor({
     }
   }, [engine, nodeId])
 
+  // Morph debug display: clip morph keyframes store name-based values
+  // { fromShapeName, toShapeName, coefficient, from/toCategoryPath? }.
+  // Resolve names to category paths (cat1->cat2->name) via the edited
+  // node's shapes so [object Object] never shows and stale names are visible.
+  // New clips carry category paths; legacy clips (no path) fall back to
+  // first name match with an ambiguity flag — mirroring the evaluator.
+  const morphShapes = useMemo(() => {
+    void tick
+    try {
+      return engine.getShapes(nodeId)
+    } catch {
+      return []
+    }
+  }, [engine, nodeId, tick])
+  const morphCategories = useMemo(() => {
+    void tick
+    try {
+      return engine.getShapeCategories(nodeId)
+    } catch {
+      return []
+    }
+  }, [engine, nodeId, tick])
+  const morphPathOfShapeId = useCallback(
+    (categoryId: string | null | undefined): readonly string[] | null => {
+      if (categoryId === null || categoryId === undefined) return null
+      const byId = new Map(morphCategories.map((c) => [c.id, c] as const))
+      const chain: string[] = []
+      const seen = new Set<string>()
+      let cur: string | null = categoryId
+      while (cur !== null) {
+        if (seen.has(cur)) break
+        seen.add(cur)
+        const cat = byId.get(cur)
+        if (!cat) return null
+        chain.unshift(cat.name)
+        cur = cat.parentId ?? null
+      }
+      return chain.length > 0 ? chain : null
+    },
+    [morphCategories],
+  )
+  const morphResolveDisplay = useCallback(
+    (shapeName: string | null, storedPath?: readonly string[] | null): string => {
+      if (shapeName === null || shapeName === undefined) return '— None —'
+      const matches = morphShapes.filter((s) => s.name === shapeName)
+      if (matches.length === 0) return `"${shapeName}" (missing on node)`
+      let picked = matches[0]
+      let legacyAmbiguous = false
+      if (matches.length > 1) {
+        if (storedPath !== undefined) {
+          const exact = matches.filter((s) => {
+            const p = morphPathOfShapeId(s.categoryId ?? null)
+            const a = p ?? null
+            const b = storedPath ?? null
+            if (a === null && b === null) return true
+            if (a === null || b === null) return false
+            if (a.length !== b.length) return false
+            return a.every((seg, i) => seg === b[i])
+          })
+          if (exact.length > 0) picked = exact[0]
+          // else: stored path is stale — fall through to first match (evaluator does the same)
+        } else {
+          legacyAmbiguous = true
+        }
+      }
+      const path = morphPathOfShapeId(picked!.categoryId ?? null)
+      const prefix = path && path.length > 0 ? `${path.join('->')}->` : 'Uncategorized->'
+      const storedText =
+        storedPath === undefined
+          ? 'legacy (no path)'
+          : storedPath === null
+            ? 'Uncategorized'
+            : storedPath.join('->')
+      const suffix =
+        matches.length > 1
+          ? storedPath !== undefined
+            ? ` (resolved ${matches.length}, stored: ${storedText})`
+            : ` (×${matches.length} same name! legacy — first match shown)`
+          : ''
+      void legacyAmbiguous
+      return `${prefix}${picked!.name}${suffix}`
+    },
+    [morphShapes, morphPathOfShapeId],
+  )
+  const parseMorphClipValue = useCallback(
+    (
+      value: unknown,
+    ): {
+      fromName: string | null
+      toName: string | null
+      coefficient: number | null
+      fromPath?: readonly string[] | null
+      toPath?: readonly string[] | null
+    } => {
+      if (typeof value === 'number') {
+        return { fromName: null, toName: null, coefficient: value }
+      }
+      if (typeof value === 'object' && value !== null) {
+        const r = value as Record<string, unknown>
+        if ('fromShapeName' in r || 'toShapeName' in r || 'coefficient' in r) {
+          const parsePath = (raw: unknown): readonly string[] | null | undefined => {
+            if (raw === undefined) return undefined
+            if (raw === null) return null
+            if (Array.isArray(raw) && raw.every((s) => typeof s === 'string')) return [...raw]
+            return undefined
+          }
+          return {
+            fromName: (r.fromShapeName as string | null) ?? null,
+            toName: (r.toShapeName as string | null) ?? null,
+            coefficient: typeof r.coefficient === 'number' ? (r.coefficient as number) : null,
+            fromPath: parsePath(r.fromCategoryPath),
+            toPath: parsePath(r.toCategoryPath),
+          }
+        }
+        // legacy id-based object stored in old clips
+        if ('fromShapeId' in r || 'toShapeId' in r) {
+          return {
+            fromName: (r.fromShapeId as string | null) ?? null,
+            toName: (r.toShapeId as string | null) ?? null,
+            coefficient: typeof r.coefficient === 'number' ? (r.coefficient as number) : null,
+          }
+        }
+      }
+      return { fromName: null, toName: null, coefficient: null }
+    },
+    [],
+  )
+  const formatClipMorphTitle = useCallback(
+    (value: unknown): string => {
+      const parsed = parseMorphClipValue(value)
+      const from =
+        parsed.fromName === null ? '—' : morphResolveDisplay(parsed.fromName, parsed.fromPath)
+      const to = parsed.toName === null ? '—' : morphResolveDisplay(parsed.toName, parsed.toPath)
+      const coeff = parsed.coefficient === null ? '?' : String(parsed.coefficient)
+      return `from ${from} → to ${to} @ ${coeff}`
+    },
+    [parseMorphClipValue, morphResolveDisplay],
+  )
+  const formatClipKeyframeTitle = useCallback(
+    (row: ClipEditorRow, value: unknown): string => {
+      if (row.kind === 'clipMorph') return formatClipMorphTitle(value)
+      if (typeof value === 'object' && value !== null) {
+        try {
+          return JSON.stringify(value)
+        } catch {
+          return String(value)
+        }
+      }
+      return String(value)
+    },
+    [formatClipMorphTitle],
+  )
+
   // Timeline width: fill available modal width for short clips (user request:
   // "duration to take whole width, now 4s shrank to 20%") while preserving
   // scroll for long clips. baseWidth is pps-accurate; contentWidth ensures
@@ -9982,7 +10135,7 @@ function ManagerClipEditor({
                           data-keyframe-id={kf.id}
                           data-testid={`clip-diamond-${kf.id}`}
                           data-selected={String(isSelected)}
-                          title={`kf ${kf.time.toFixed(3)} (local ${(kf.time * editingDuration).toFixed(2)}s) → ${String(kf.value)}${isSelected ? ' • selected' : ''}`}
+                          title={`kf ${kf.time.toFixed(3)} (local ${(kf.time * editingDuration).toFixed(2)}s) → ${formatClipKeyframeTitle(row, kf.value)}${isSelected ? ' • selected' : ''}`}
                           onPointerDown={(e) => handleDiamondPointerDown(e, row, kf)}
                           onContextMenu={(e) => handleDiamondContextMenu(e, row, kf.id)}
                           style={{
@@ -10024,6 +10177,7 @@ function ManagerClipEditor({
             background: 'var(--color-bg-elevated, #f5f5f5)',
             border: '1px solid var(--color-border, #ddd)',
             borderRadius: 6,
+            flexWrap: 'wrap',
           }}
         >
           <span style={{ fontSize: 12, fontWeight: 600 }}>
@@ -10097,12 +10251,116 @@ function ManagerClipEditor({
               />
             </label>
           )}
+          {selectedKf.row.kind === 'clipMorph' &&
+            (() => {
+              const live = getKeyframesForRow(selectedKf.row).find((k) => k.id === selectedKf.id)
+              const parsed = parseMorphClipValue(live?.value ?? selectedKf.value)
+              const fromPath = morphResolveDisplay(parsed.fromName, parsed.fromPath)
+              const toPath = morphResolveDisplay(parsed.toName, parsed.toPath)
+              const coeffText = parsed.coefficient === null ? '?' : String(parsed.coefficient)
+              const isMissing =
+                (parsed.fromName !== null &&
+                  morphShapes.filter((s) => s.name === parsed.fromName).length === 0) ||
+                (parsed.toName !== null &&
+                  morphShapes.filter((s) => s.name === parsed.toName).length === 0)
+              const isLegacyAmbiguous =
+                (parsed.fromName !== null &&
+                  morphShapes.filter((s) => s.name === parsed.fromName).length > 1 &&
+                  parsed.fromPath === undefined) ||
+                (parsed.toName !== null &&
+                  morphShapes.filter((s) => s.name === parsed.toName).length > 1 &&
+                  parsed.toPath === undefined)
+              return (
+                <>
+                  <span
+                    style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}
+                    title={`raw fromShapeName: ${parsed.fromName ?? 'null'}${parsed.fromPath !== undefined ? ` [${parsed.fromPath === null ? 'Uncategorized' : parsed.fromPath.join('->')}]` : ' (legacy: no stored path)'}`}
+                  >
+                    From
+                    <code
+                      data-testid="clip-selected-morph-from"
+                      style={{
+                        padding: '4px 6px',
+                        borderRadius: 4,
+                        border: '1px solid var(--color-border, #ddd)',
+                        background: 'var(--color-bg, #fff)',
+                        fontSize: 11,
+                        maxWidth: 260,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        display: 'inline-block',
+                      }}
+                    >
+                      {fromPath}
+                    </code>
+                  </span>
+                  <span
+                    style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}
+                    title={`raw toShapeName: ${parsed.toName ?? 'null'}${parsed.toPath !== undefined ? ` [${parsed.toPath === null ? 'Uncategorized' : parsed.toPath.join('->')}]` : ' (legacy: no stored path)'}`}
+                  >
+                    To
+                    <code
+                      data-testid="clip-selected-morph-to"
+                      style={{
+                        padding: '4px 6px',
+                        borderRadius: 4,
+                        border: '1px solid var(--color-border, #ddd)',
+                        background: 'var(--color-bg, #fff)',
+                        fontSize: 11,
+                        maxWidth: 260,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                        display: 'inline-block',
+                      }}
+                    >
+                      {toPath}
+                    </code>
+                  </span>
+                  <span style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    Coefficient
+                    <code
+                      data-testid="clip-selected-morph-coefficient"
+                      style={{
+                        padding: '4px 6px',
+                        borderRadius: 4,
+                        border: '1px solid var(--color-border, #ddd)',
+                        background: 'var(--color-bg, #fff)',
+                        fontSize: 11,
+                      }}
+                    >
+                      {coeffText}
+                    </code>
+                  </span>
+                  {isMissing && (
+                    <span
+                      data-testid="clip-selected-morph-warning"
+                      style={{ fontSize: 11, color: '#b45309' }}
+                    >
+                      shape name not found on node — clip falls back to base geometry
+                    </span>
+                  )}
+                  {!isMissing && isLegacyAmbiguous && (
+                    <span
+                      data-testid="clip-selected-morph-legacy-warning"
+                      style={{ fontSize: 11, color: '#b45309' }}
+                    >
+                      legacy clip without category — first name match shown; re-extract from orphans
+                      to store the category
+                    </span>
+                  )}
+                </>
+              )
+            })()}
           <span
             style={{ fontSize: 11, color: 'var(--color-text-muted, #888)', marginLeft: 'auto' }}
           >
             {selectedKf.row.kind === 'clipChannel'
               ? `drag diamond to move • edit time/value above`
-              : `time ${(selectedKf.time * editingDuration).toFixed(2)}s • value ${String(selectedKf.value)}`}
+              : selectedKf.row.kind === 'clipMorph'
+                ? `time ${(selectedKf.time * editingDuration).toFixed(2)}s • ${formatClipMorphTitle(getKeyframesForRow(selectedKf.row).find((k) => k.id === selectedKf.id)?.value ?? selectedKf.value)}`
+                : `time ${(selectedKf.time * editingDuration).toFixed(2)}s • value ${formatClipKeyframeTitle(selectedKf.row, getKeyframesForRow(selectedKf.row).find((k) => k.id === selectedKf.id)?.value ?? selectedKf.value)}`}
           </span>
           <button
             onClick={() => setSelectedKf(null)}

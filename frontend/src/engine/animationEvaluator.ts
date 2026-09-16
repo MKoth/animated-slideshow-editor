@@ -15,6 +15,8 @@ import { isParametricInterpolation } from './keyframe'
 import { circleSegmentsForArc } from './circleComponent'
 import type { MeshVertex } from './mesh'
 import type { Shape } from './shape'
+import { resolveClipShapeByNameAndPath } from './shape'
+import type { ShapeCategory } from './shapeCategory'
 import { resolveCrossBlendedVertices, resolveMorphedVerticesFromKeyframe } from './shape'
 import type { MorphKeyframeValue, MorphClipKeyframeValue } from './shape'
 import type { SymmetryKeyframeValue } from './symmetry'
@@ -599,6 +601,9 @@ export class AnimationEvaluator {
     // Layer enabled clip instances in order that have started (last-wins), name-based resolution
     const node = this.#nodeLookup(nodeId)
     const shapes = (node.components.mesh as { shapes?: readonly Shape[] } | undefined)?.shapes
+    const categories = (
+      node.components.mesh as { shapeCategories?: readonly ShapeCategory[] } | undefined
+    )?.shapeCategories
     const instances = node.clipInstances
     if (instances.length > 0) {
       for (const instance of instances) {
@@ -617,7 +622,7 @@ export class AnimationEvaluator {
         const anim = clip.morphAnimation()
         if (!anim || anim.length === 0) continue
         const effU = effectiveUForClip(clip, anim.keyframes(), u)
-        let clipValue = this.#evaluateMorphClipKeyframes(anim.keyframes(), effU, shapes)
+        let clipValue = this.#evaluateMorphClipKeyframes(anim.keyframes(), effU, shapes, categories)
         if (clipValue) {
           // Legacy clip scalar (null binding) should inherit base binding if present
           if (
@@ -665,7 +670,7 @@ export class AnimationEvaluator {
               const enabled = enabledKeyframes(anim.keyframes())
               if (enabled.length > 0) {
                 const effU = effectiveUForClip(entry.clip, enabled, entry.uPrime)
-                cur = this.#evaluateMorphClipKeyframes(enabled, effU, shapes)
+                cur = this.#evaluateMorphClipKeyframes(enabled, effU, shapes, categories)
               }
             }
             if (!hasBlended && cur === null) {
@@ -717,6 +722,9 @@ export class AnimationEvaluator {
   ): readonly MeshVertex[] | null {
     const node = this.#nodeLookup(nodeId)
     if (!node.components.mesh) return null
+    const categories = (
+      node.components.mesh as { shapeCategories?: readonly ShapeCategory[] } | undefined
+    )?.shapeCategories
     const slide = this.#slideLookup(nodeId)
     const boundedTime = requireFiniteNumber(time, 'Evaluation time')
     const clampedTime = Math.min(Math.max(boundedTime, 0), slide.duration)
@@ -750,6 +758,7 @@ export class AnimationEvaluator {
           effU2,
           baseVertices,
           shapes,
+          categories,
         )
         if (clipMorphed) morphed = clipMorphed
       }
@@ -782,7 +791,13 @@ export class AnimationEvaluator {
               continue
             }
             const effU = effectiveUForClip(entry.clip, enabled, entry.uPrime)
-            const verts = this.#evaluateMorphClipVertices(enabled, effU, baseVertices, shapes)
+            const verts = this.#evaluateMorphClipVertices(
+              enabled,
+              effU,
+              baseVertices,
+              shapes,
+              categories,
+            )
             // verts may be baseVertices fallback; treat as contribution (not null) per spec's soft-warn fallback
             // If entry had no morph track, we already pushed null; otherwise verts is at least base.
             groupVerts.push(verts)
@@ -1056,10 +1071,28 @@ export class AnimationEvaluator {
       const r = v as Record<string, unknown>
       // support both clip (name) and node (id) shapes
       if ('fromShapeName' in r || 'toShapeName' in r) {
+        const parsePath = (raw: unknown): readonly string[] | null | undefined => {
+          if (raw === undefined) return undefined
+          if (raw === null) return null
+          if (Array.isArray(raw) && raw.every((s) => typeof s === 'string')) return [...raw]
+          return undefined
+        }
         return {
           fromShapeName: (r.fromShapeName as string | null) ?? null,
           toShapeName: (r.toShapeName as string | null) ?? null,
           coefficient: r.coefficient as number,
+          ...('fromCategoryPath' in r
+            ? (() => {
+                const p = parsePath(r.fromCategoryPath)
+                return p !== undefined ? { fromCategoryPath: p } : {}
+              })()
+            : {}),
+          ...('toCategoryPath' in r
+            ? (() => {
+                const p = parsePath(r.toCategoryPath)
+                return p !== undefined ? { toCategoryPath: p } : {}
+              })()
+            : {}),
         }
       }
       // if stored as id-based (legacy), interpret as name via id fallback (should be migrated)
@@ -1075,16 +1108,37 @@ export class AnimationEvaluator {
   #resolveClipValueToNode(
     clipVal: MorphClipKeyframeValue,
     shapes: readonly Shape[] | undefined,
+    categories?: readonly ShapeCategory[] | undefined,
   ): MorphKeyframeValue {
     if (!shapes || shapes.length === 0) {
       return { fromShapeId: null, toShapeId: null, coefficient: clipVal.coefficient }
     }
     const fromShape = clipVal.fromShapeName
-      ? shapes.find((s) => s.name === clipVal.fromShapeName)
+      ? resolveClipShapeByNameAndPath(
+          shapes,
+          categories,
+          clipVal.fromShapeName,
+          clipVal.fromCategoryPath,
+        )
       : undefined
     const toShape = clipVal.toShapeName
-      ? shapes.find((s) => s.name === clipVal.toShapeName)
+      ? resolveClipShapeByNameAndPath(
+          shapes,
+          categories,
+          clipVal.toShapeName,
+          clipVal.toCategoryPath,
+        )
       : undefined
+    if (clipVal.fromShapeName && !fromShape) {
+      console.warn(
+        `[morph] Clip shape "${clipVal.fromShapeName}" not found on target node — falling back to base`,
+      )
+    }
+    if (clipVal.toShapeName && !toShape) {
+      console.warn(
+        `[morph] Clip shape "${clipVal.toShapeName}" not found on target node — falling back to base`,
+      )
+    }
     // If name not found, keep null to trigger fallback to base; soft-warn is in resolveMorphedVertices
     return {
       fromShapeId: fromShape ? fromShape.id : null,
@@ -1097,6 +1151,7 @@ export class AnimationEvaluator {
     keyframes: readonly Keyframe[],
     u: number,
     shapes: readonly Shape[] | undefined,
+    categories?: readonly ShapeCategory[] | undefined,
   ): MorphKeyframeValue | null {
     if (keyframes.length === 0) return null
     // clip keyframes time in 0..1 normalized
@@ -1105,7 +1160,8 @@ export class AnimationEvaluator {
     const firstVal = this.#morphClipValueOf(first)
     // clip Value is MorphClipKeyframeValue already; but we need to resolve to node ids for layering?
     // For evaluateMorphValue we resolve names to ids to produce MorphKeyframeValue
-    const resolve = (v: MorphClipKeyframeValue) => this.#resolveClipValueToNode(v, shapes)
+    const resolve = (v: MorphClipKeyframeValue) =>
+      this.#resolveClipValueToNode(v, shapes, categories)
     if (u <= first.time) return resolve(firstVal)
     if (u >= last.time) return resolve(this.#morphClipValueOf(last))
     for (let i = 0; i < keyframes.length - 1; i += 1) {
@@ -1118,11 +1174,13 @@ export class AnimationEvaluator {
         const ratio = (u - from.time) / (to.time - from.time)
         const eased = this.#easedProgress(from, to, u, ratio)
         const coeff = fromVal.coefficient + (toVal.coefficient - fromVal.coefficient) * eased
-        // keep from binding for scalar evaluate
+        // keep from binding for scalar evaluate (including category paths)
         const blended: MorphClipKeyframeValue = {
           fromShapeName: fromVal.fromShapeName,
           toShapeName: fromVal.toShapeName,
           coefficient: coeff,
+          ...('fromCategoryPath' in fromVal ? { fromCategoryPath: fromVal.fromCategoryPath } : {}),
+          ...('toCategoryPath' in fromVal ? { toCategoryPath: fromVal.toCategoryPath } : {}),
         }
         return resolve(blended)
       }
@@ -1135,17 +1193,18 @@ export class AnimationEvaluator {
     u: number,
     baseVertices: readonly MeshVertex[],
     shapes: readonly Shape[] | undefined,
+    categories?: readonly ShapeCategory[] | undefined,
   ): readonly MeshVertex[] | null {
     if (keyframes.length === 0) return null
     if (!shapes || shapes.length === 0) return baseVertices
     const first = keyframes[0]
     const last = keyframes[keyframes.length - 1]
     if (u <= first.time) {
-      const v = this.#resolveClipValueToNode(this.#morphClipValueOf(first), shapes)
+      const v = this.#resolveClipValueToNode(this.#morphClipValueOf(first), shapes, categories)
       return resolveMorphedVerticesFromKeyframe(baseVertices, shapes, v)
     }
     if (u >= last.time) {
-      const v = this.#resolveClipValueToNode(this.#morphClipValueOf(last), shapes)
+      const v = this.#resolveClipValueToNode(this.#morphClipValueOf(last), shapes, categories)
       return resolveMorphedVerticesFromKeyframe(baseVertices, shapes, v)
     }
     for (let i = 0; i < keyframes.length - 1; i += 1) {
@@ -1153,17 +1212,21 @@ export class AnimationEvaluator {
       const to = keyframes[i + 1]
       if (u >= from.time && u < to.time) {
         if (from.interpolation === 'hold') {
-          const v = this.#resolveClipValueToNode(this.#morphClipValueOf(from), shapes)
+          const v = this.#resolveClipValueToNode(this.#morphClipValueOf(from), shapes, categories)
           return resolveMorphedVerticesFromKeyframe(baseVertices, shapes, v)
         }
-        const fromVal = this.#resolveClipValueToNode(this.#morphClipValueOf(from), shapes)
-        const toVal = this.#resolveClipValueToNode(this.#morphClipValueOf(to), shapes)
+        const fromVal = this.#resolveClipValueToNode(
+          this.#morphClipValueOf(from),
+          shapes,
+          categories,
+        )
+        const toVal = this.#resolveClipValueToNode(this.#morphClipValueOf(to), shapes, categories)
         const ratio = (u - from.time) / (to.time - from.time)
         const eased = this.#easedProgress(from, to, u, ratio)
         return resolveCrossBlendedVertices(baseVertices, shapes, fromVal, toVal, eased)
       }
     }
-    const v = this.#resolveClipValueToNode(this.#morphClipValueOf(last), shapes)
+    const v = this.#resolveClipValueToNode(this.#morphClipValueOf(last), shapes, categories)
     return resolveMorphedVerticesFromKeyframe(baseVertices, shapes, v)
   }
 

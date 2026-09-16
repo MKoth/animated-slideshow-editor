@@ -7,6 +7,7 @@ import type { KeyframeTarget } from './keyframeTarget'
 import type { Keyframe, InterpolationType, KeyframeTangent } from './keyframe'
 import { SEGMENT_EPS } from './timeSegmentExtraction'
 import { CLIP_CHANNELS } from './clipDefinition'
+import { resolveClipShapeByNameAndPath } from './shape'
 
 export interface FlattenPlan {
   readonly collectionId: string
@@ -122,16 +123,30 @@ function resolveMorphForNode(engine: EnginePublic, nodeId: string, raw: unknown)
   if ('fromShapeId' in r || 'toShapeId' in r) return raw
   const fromName = (r.fromShapeName as string | null) ?? null
   const toName = (r.toShapeName as string | null) ?? null
+  const parsePath = (v: unknown): readonly string[] | null | undefined => {
+    if (v === undefined) return undefined
+    if (v === null) return null
+    if (Array.isArray(v) && v.every((s) => typeof s === 'string')) return [...v]
+    return undefined
+  }
+  const fromPath = parsePath(r.fromCategoryPath)
+  const toPath = parsePath(r.toCategoryPath)
   let fromId: string | null = null
   let toId: string | null = null
   try {
     const shapes = engine.getShapes(nodeId)
+    let categories: readonly import('./shapeCategory').ShapeCategory[] = []
+    try {
+      categories = engine.getShapeCategories(nodeId)
+    } catch {
+      categories = []
+    }
     if (fromName) {
-      const s = shapes.find((sh) => sh.name === fromName)
+      const s = resolveClipShapeByNameAndPath(shapes, categories, fromName, fromPath)
       if (s) fromId = s.id
     }
     if (toName) {
-      const s = shapes.find((sh) => sh.name === toName)
+      const s = resolveClipShapeByNameAndPath(shapes, categories, toName, toPath)
       if (s) toId = s.id
     }
   } catch {

@@ -18,6 +18,7 @@ import {
 } from '../clipExtraction'
 import type { BakingEvaluator, ExtractionBounds } from '../clipExtraction'
 import { Keyframe as KeyframeModel, newKeyframeId } from '../keyframe'
+import { categoryPathOfShape } from '../shape'
 
 /** Collision policy when appending to an existing clip lands on an occupied time. */
 export type ExtractDuplicatePolicy = 'replace' | 'skip'
@@ -448,15 +449,30 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
         }
         let fromName: string | null = null
         let toName: string | null = null
+        let fromCategoryPath: readonly string[] | null | undefined
+        let toCategoryPath: readonly string[] | null | undefined
         try {
-          const shapes = engine.getShapes((nk.target as unknown as { nodeId: string }).nodeId)
+          const nodeId = (nk.target as unknown as { nodeId: string }).nodeId
+          const shapes = engine.getShapes(nodeId)
+          let categories: readonly import('../shapeCategory').ShapeCategory[] = []
+          try {
+            categories = engine.getShapeCategories(nodeId)
+          } catch {
+            categories = []
+          }
           if (morphVal.fromShapeId) {
             const s = shapes.find((sh) => sh.id === morphVal.fromShapeId)
-            if (s) fromName = s.name
+            if (s) {
+              fromName = s.name
+              fromCategoryPath = categoryPathOfShape(s, categories)
+            }
           }
           if (morphVal.toShapeId) {
             const s = shapes.find((sh) => sh.id === morphVal.toShapeId)
-            if (s) toName = s.name
+            if (s) {
+              toName = s.name
+              toCategoryPath = categoryPathOfShape(s, categories)
+            }
           }
         } catch {
           // ignore, keep null
@@ -465,6 +481,8 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
           fromShapeName: fromName,
           toShapeName: toName,
           coefficient: morphVal.coefficient,
+          ...(fromCategoryPath !== undefined ? { fromCategoryPath } : {}),
+          ...(toCategoryPath !== undefined ? { toCategoryPath } : {}),
         }
         return { ...nk, value: clipVal as unknown as import('../keyframe').KeyframeValue }
       }

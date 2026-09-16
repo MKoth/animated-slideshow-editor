@@ -137,6 +137,14 @@ export function normalizeExtractable(
       ) {
         throw new Error(`Morph clip keyframe toShapeName must be string or null`)
       }
+      for (const field of ['fromCategoryPath', 'toCategoryPath'] as const) {
+        const p = r[field]
+        if (p !== undefined && p !== null) {
+          if (!Array.isArray(p) || p.some((s) => typeof s !== 'string' || s.length === 0)) {
+            throw new Error(`Morph clip keyframe ${field} must be string[] or null`)
+          }
+        }
+      }
     } else {
       throw new Error(`Morph keyframe value must be number or object`)
     }

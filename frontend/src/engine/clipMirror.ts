@@ -338,10 +338,21 @@ function mirrorMorphKeyframeValue(value: KeyframeValue): KeyframeValue {
     // Note: id-based legacy values also carry `coefficient`, so the name
     // path must key on the name fields themselves — never on `coefficient`.
     if ('fromShapeName' in rec || 'toShapeName' in rec) {
+      const mirrorPath = (p: unknown): unknown => {
+        if (p === undefined || p === null) return p
+        if (Array.isArray(p)) {
+          return p.map((seg) => (typeof seg === 'string' ? mirrorMorphShapeName(seg) : seg))
+        }
+        return p
+      }
       return {
         ...(rec as object),
         fromShapeName: mirrorMorphShapeName((rec.fromShapeName as string | null) ?? null),
         toShapeName: mirrorMorphShapeName((rec.toShapeName as string | null) ?? null),
+        ...('fromCategoryPath' in rec
+          ? { fromCategoryPath: mirrorPath(rec.fromCategoryPath) }
+          : {}),
+        ...('toCategoryPath' in rec ? { toCategoryPath: mirrorPath(rec.toCategoryPath) } : {}),
       } as unknown as KeyframeValue
     }
     // Legacy id-based objects reference node-local random ids (kept stable

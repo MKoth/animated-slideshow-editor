@@ -99,6 +99,90 @@ export interface MorphClipKeyframeValue {
   readonly fromShapeName: string | null
   readonly toShapeName: string | null
   readonly coefficient: number // 0..1
+  /**
+   * Portable category path (root → leaf category names) for disambiguating
+   * duplicate shape names across categories (e.g. "straight" in
+   * front / half-profile / profile). Null = Uncategorized, undefined =
+   * legacy clip without path info (resolves by first name match).
+   */
+  readonly fromCategoryPath?: readonly string[] | null
+  readonly toCategoryPath?: readonly string[] | null
+}
+
+/**
+ * Build the portable category path for a shape's categoryId.
+ * Returns null for Uncategorized (or unknown categoryId), otherwise
+ * root → leaf category names. Cycle-safe.
+ */
+export function categoryPathForShape(
+  categories: readonly import('./shapeCategory').ShapeCategory[] | undefined,
+  categoryId: string | null | undefined,
+): readonly string[] | null {
+  if (categoryId === null || categoryId === undefined) return null
+  if (!categories || categories.length === 0) return null
+  const byId = new Map(categories.map((c) => [c.id, c] as const))
+  const chain: string[] = []
+  const seen = new Set<string>()
+  let cur: string | null = categoryId
+  while (cur !== null) {
+    if (seen.has(cur)) break
+    seen.add(cur)
+    const cat = byId.get(cur)
+    if (!cat) return null
+    chain.unshift(cat.name)
+    cur = cat.parentId ?? null
+  }
+  return chain.length > 0 ? chain : null
+}
+
+/** Compute the category path of a shape within its node's shape list. */
+export function categoryPathOfShape(
+  shape: Pick<Shape, 'categoryId'>,
+  categories: readonly import('./shapeCategory').ShapeCategory[] | undefined,
+): readonly string[] | null {
+  return categoryPathForShape(categories, shape.categoryId ?? null)
+}
+
+function categoryPathsEqual(
+  a: readonly string[] | null | undefined,
+  b: readonly string[] | null | undefined,
+): boolean {
+  const na = a ?? null
+  const nb = b ?? null
+  if (na === null && nb === null) return true
+  if (na === null || nb === null) return false
+  if (na.length !== nb.length) return false
+  for (let i = 0; i < na.length; i += 1) if (na[i] !== nb[i]) return false
+  return true
+}
+
+/**
+ * Resolve a clip's name-based shape reference to a node-local shape,
+ * preferring an exact category-path match when the clip carries one.
+ * Falls back to first name match for legacy clips (no path) or when the
+ * stored path no longer exists on the target node (returns undefined only
+ * when no shape with that name exists at all).
+ */
+export function resolveClipShapeByNameAndPath(
+  shapes: readonly Shape[] | undefined,
+  categories: readonly import('./shapeCategory').ShapeCategory[] | undefined,
+  name: string | null,
+  storedPath?: readonly string[] | null,
+): Shape | undefined {
+  if (name === null || name === undefined) return undefined
+  if (!shapes || shapes.length === 0) return undefined
+  const matches = shapes.filter((s) => s.name === name)
+  if (matches.length === 0) return undefined
+  if (matches.length === 1) return matches[0]
+  if (storedPath !== undefined) {
+    const exact = matches.filter((s) =>
+      categoryPathsEqual(categoryPathOfShape(s, categories), storedPath),
+    )
+    if (exact.length > 0) return exact[0]
+    // Stored path is stale (category renamed/deleted) — fall through to
+    // first-match legacy behavior so old clips keep playing with a warning.
+  }
+  return matches[0]
 }
 
 export function lerpVertex(a: MeshVertex, b: MeshVertex, t: number): MeshVertex {
@@ -237,10 +321,27 @@ export function requireMorphClipKeyframeValue(
   ) {
     throw new Error(`${what} coefficient must be a number between 0 and 1`)
   }
+  const parsePath = (raw: unknown, field: string): readonly string[] | null | undefined => {
+    if (raw === undefined) return undefined
+    if (raw === null) return null
+    if (!Array.isArray(raw)) throw new Error(`${what} ${field} must be an array of strings or null`)
+    const out: string[] = []
+    for (const seg of raw) {
+      if (typeof seg !== 'string' || seg.length === 0) {
+        throw new Error(`${what} ${field} must be an array of non-empty strings or null`)
+      }
+      out.push(seg)
+    }
+    return out
+  }
+  const fromCategoryPath = parsePath(r.fromCategoryPath, 'fromCategoryPath')
+  const toCategoryPath = parsePath(r.toCategoryPath, 'toCategoryPath')
   return {
     fromShapeName: fromShapeName as string | null,
     toShapeName: toShapeName as string | null,
     coefficient: coefficient as number,
+    ...(fromCategoryPath !== undefined ? { fromCategoryPath } : {}),
+    ...(toCategoryPath !== undefined ? { toCategoryPath } : {}),
   }
 }
 
