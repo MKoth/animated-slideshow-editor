@@ -3,6 +3,8 @@ import type { ClipChannel } from './clipDefinition'
 import { ClipChannelAnimation } from './clipDefinition'
 import { Keyframe as KeyframeModel, newKeyframeId } from './keyframe'
 import type { KeyframeValue } from './keyframe'
+import { normalizeAzimuth } from './shadowEffect'
+import type { ShadowProperty } from './shadowEffect'
 
 /**
  * Spatial mirror axis for Mirror-and-Save (issue #355).
@@ -151,6 +153,137 @@ function negateTangentComponent(value: number, negate: boolean): number {
 }
 
 /**
+ * Shadow light-azimuth mirror (issue #358).
+ *
+ * X-mirror maps azimuth to 180−azimuth (normalized to 0–360): cos flips sign
+ * while sin is preserved, so the re-derived projection negates offsetX and
+ * keeps offsetY — the same side-switch as negating a manual offsetX.
+ * Y-mirror maps azimuth to −azimuth (normalized to 0–360): sin flips sign
+ * while cos is preserved, so the re-derived projection negates offsetY and
+ * keeps offsetX. Both use {@link normalizeAzimuth} for the 0–360 range.
+ */
+export function mirrorShadowAzimuth(value: number, axis: MirrorAxis): number {
+  requireMirrorAxis(axis)
+  return normalizeAzimuth(axis === 'X' ? 180 - value : -value)
+}
+
+/**
+ * Shadow angle mirror (issue #358): negate a manual rotation/skew value and
+ * wrap it into (−180, 180], matching the projection's own normalization so
+ * mirrored slants lean the mirrored way without 360° jumps.
+ */
+export function mirrorShadowAngle(value: number): number {
+  const negated = -value || 0
+  if (negated > 180 || negated <= -180) {
+    return ((((negated + 180) % 360) + 360) % 360) - 180
+  }
+  return negated
+}
+
+/**
+ * Whether a shadow lane carries the auto-derived light direction. A clip with
+ * a lightAzimuth lane mirrors via the azimuth only and lets the projection
+ * re-derive downstream; otherwise it is a manual clip and mirrors via the
+ * raw offset/rotation/skew values. Either way there is exactly one mirroring
+ * path per lane — never a double application.
+ */
+function isAutoShadowClip(source: ClipDefinition): boolean {
+  return (source.shadowChannelAnimation('lightAzimuth')?.length ?? 0) > 0
+}
+
+/**
+ * Mirror one shadow lane with a value map: fresh keyframe ids, same times and
+ * interpolation kinds, tangent time-components kept while tangent
+ * value-components are negated exactly when `negateTangents` says so.
+ * Session flags (disabled, blend) are preserved.
+ */
+function mapShadowLane(
+  source: ClipChannelAnimation,
+  mapValue: (value: KeyframeValue) => KeyframeValue,
+  negateTangents: (value: KeyframeValue) => boolean,
+): ClipChannelAnimation {
+  const dest = new ClipChannelAnimation()
+  for (const kf of source.keyframes()) {
+    const negate = negateTangents(kf.value)
+    dest.add(
+      new KeyframeModel(
+        newKeyframeId(),
+        kf.time,
+        mapValue(kf.value),
+        kf.interpolation,
+        {
+          time: kf.tangentIn.time,
+          value: negateTangentComponent(kf.tangentIn.value, negate),
+        },
+        {
+          time: kf.tangentOut.time,
+          value: negateTangentComponent(kf.tangentOut.value, negate),
+        },
+        kf.disabled,
+        [...kf.blend],
+      ),
+    )
+  }
+  return dest
+}
+
+/**
+ * Mirror one azimuth lane: values map through {@link mirrorShadowAzimuth}
+ * while tangent value-components are negated (the map has derivative −1).
+ */
+function mirrorShadowAzimuthAnimation(
+  source: ClipChannelAnimation,
+  axis: MirrorAxis,
+): ClipChannelAnimation {
+  return mapShadowLane(
+    source,
+    (value) => (typeof value === 'number' ? mirrorShadowAzimuth(value, axis) : value),
+    () => true,
+  )
+}
+
+/**
+ * Mirror one manual angle lane (rotation/skewX/skewY): values negate with
+ * {@link mirrorShadowAngle} normalization. Non-numeric values (never expected
+ * here) pass through with preserved tangents.
+ */
+function mirrorShadowAngleAnimation(source: ClipChannelAnimation): ClipChannelAnimation {
+  return mapShadowLane(
+    source,
+    (value) => (typeof value === 'number' ? mirrorShadowAngle(value) : value),
+    (value) => typeof value === 'number',
+  )
+}
+
+/** Mirror one shadow lane by property name (issue #358 value table). */
+function mirrorShadowAnimation(
+  source: ClipDefinition,
+  prop: ShadowProperty,
+  axis: MirrorAxis,
+  isAuto: boolean,
+): ClipChannelAnimation | undefined {
+  const srcAnim = source.shadowChannelAnimation(prop)
+  if (!srcAnim || srcAnim.length === 0) return undefined
+  if (prop === 'lightAzimuth') {
+    return mirrorShadowAzimuthAnimation(srcAnim, axis)
+  }
+  if (isAuto) {
+    // Auto-derived mode: the raw projection re-derives from the mirrored
+    // azimuth downstream, so raw lanes pass through with no double application.
+    return mirrorAnimation(srcAnim, false)
+  }
+  if (prop === 'offsetX') return mirrorAnimation(srcAnim, axis === 'X')
+  if (prop === 'offsetY') return mirrorAnimation(srcAnim, axis === 'Y')
+  if (prop === 'rotation' || prop === 'skewX' || prop === 'skewY') {
+    return mirrorShadowAngleAnimation(srcAnim)
+  }
+  // Scales are never negated (silhouette flip stays behind the dedicated
+  // mirror flag); blur, opacity, color, elevation, distance, and the
+  // unaffected-axis offset pass through unchanged.
+  return mirrorAnimation(srcAnim, false)
+}
+
+/**
  * Mirror one channel animation: same keyframe times and interpolation kinds
  * (hold/linear/bezier preserved verbatim; parametric bounce/elastic/spring
  * evaluated at the same normalized position with negated output), fresh ids,
@@ -219,9 +352,16 @@ export function mirrorSkippedNotices(source: ClipDefinition): readonly string[] 
  * Create a spatially mirrored copy of a clip.
  * - new identity, `isReversed=false`, keyframe times untouched
  * - duration, category, channel list, and parameter definitions preserved
- * - visible, zIndex, symmetry-lane, material, morph, and shadow tracks pass
- *   through unchanged (shadow direction mirroring lands in #358; morph
- *   geometry auto-mirror lands in #357)
+ * - visible, zIndex, symmetry-lane, material, and morph tracks pass through
+ *   unchanged (morph geometry auto-mirror lands in #357)
+ * - shadow lanes mirror by direction (issue #358): X-mirror negates offsetX
+ *   (Y-mirror negates offsetY), rotation/skews negate with angular
+ *   normalization, light azimuth maps to 180−azimuth on X (−azimuth on Y,
+ *   both normalized to 0–360); auto clips (lightAzimuth lane present) mirror
+ *   via the azimuth only while raw lanes pass through for the projection to
+ *   re-derive, manual clips mirror via the raw values; scales are never
+ *   negated and blur/opacity/color/elevation/distance plus the
+ *   unaffected-axis offset are unchanged
  * - circle/table lanes are skipped with a visible notice (out of scope v1)
  * - bone (no opacity) and camera (no rotation) constraints are respected by
  *   preserving the channel list: no channels are added or removed, opacity is
@@ -291,10 +431,11 @@ export function createMirroredClipDefinition(
     }
   }
 
+  const autoShadow = isAutoShadowClip(source)
   for (const prop of source.shadowChannelKeys) {
-    const srcAnim = source.shadowChannelAnimation(prop)
-    if (!srcAnim || srcAnim.length === 0) continue
-    for (const kf of mirrorAnimation(srcAnim, false).keyframes()) {
+    const mirroredAnim = mirrorShadowAnimation(source, prop, axis, autoShadow)
+    if (!mirroredAnim) continue
+    for (const kf of mirroredAnim.keyframes()) {
       mirrored.addShadowChannelKeyframe(prop, kf)
     }
   }

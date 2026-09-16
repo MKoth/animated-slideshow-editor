@@ -165,7 +165,7 @@ describe('createMirroredClipDefinition value table', () => {
 })
 
 describe('createMirroredClipDefinition pass-through lanes', () => {
-  it('copies visible, zIndex, symmetry, material, morph, shadow verbatim', () => {
+  it('copies visible, zIndex, symmetry, material, morph verbatim; shadows mirror by direction (#358)', () => {
     const src = buildSourceClip()
     src.addSymmetryKeyframe(
       new KeyframeModel(newKeyframeId(), 0, { axis: 'x', factor: 0.5 } as never),
@@ -211,7 +211,7 @@ describe('createMirroredClipDefinition pass-through lanes', () => {
       { fromShapeName: 'A', toShapeName: 'B', coefficient: 0.3 },
     ])
     expect(clip.getShadowChannelKeyframes('offsetX').map((k) => [k.time, k.value])).toEqual([
-      [0, 10],
+      [0, -10],
     ])
   })
 
