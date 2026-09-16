@@ -1544,6 +1544,7 @@ export function AnimationsPanel() {
                     else {
                       notify(`Mirrored collection "${name}" created`)
                       for (const s of res.inverse.skipped) notify(s)
+                      for (const w of res.inverse.morphWarnings ?? []) notify(w)
                     }
                     setMirrorCollectionPrompt(null)
                   } else if (e.key === 'Escape') setMirrorCollectionPrompt(null)
@@ -1581,6 +1582,7 @@ export function AnimationsPanel() {
                   else {
                     notify(`Mirrored collection "${name}" created`)
                     for (const s of res.inverse.skipped) notify(s)
+                    for (const w of res.inverse.morphWarnings ?? []) notify(w)
                   }
                   setMirrorCollectionPrompt(null)
                 }}

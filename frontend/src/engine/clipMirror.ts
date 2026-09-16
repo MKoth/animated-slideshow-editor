@@ -316,6 +316,143 @@ function mirrorAnimation(source: ClipChannelAnimation, negate: boolean): ClipCha
   return dest
 }
 
+/**
+ * Mirror one morph lane (issue #357): times, coefficients, interpolation
+ * kinds, and tangents are copied verbatim (fresh ids, same disabled/blend);
+ * only the lateral shape-name pair is remapped through the same
+ * left↔right dictionary as collection bindings, so lateralized morphs land
+ * on the correct side of mirrored geometry. Unpaired names, nulls, and
+ * legacy numeric scalars pass through unchanged.
+ */
+function mirrorMorphShapeName(name: string | null): string | null {
+  if (name === null) return null
+  return swapLateralSemanticName(name)
+}
+
+function mirrorMorphKeyframeValue(value: KeyframeValue): KeyframeValue {
+  if (typeof value === 'number') return value
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    const rec = value as unknown as Record<string, unknown>
+    // Name-based clip values (canonical): remap lateral pairs, keep
+    // everything else (coefficient and any future fields) verbatim.
+    // Note: id-based legacy values also carry `coefficient`, so the name
+    // path must key on the name fields themselves — never on `coefficient`.
+    if ('fromShapeName' in rec || 'toShapeName' in rec) {
+      return {
+        ...(rec as object),
+        fromShapeName: mirrorMorphShapeName((rec.fromShapeName as string | null) ?? null),
+        toShapeName: mirrorMorphShapeName((rec.toShapeName as string | null) ?? null),
+      } as unknown as KeyframeValue
+    }
+    // Legacy id-based objects reference node-local random ids (kept stable
+    // by mirrorMorphGeometry's same-ids invariant), so they pass through
+    // verbatim — the lateral dictionary applies to names only.
+  }
+  return value
+}
+
+function mirrorMorphAnimation(source: ClipChannelAnimation): ClipChannelAnimation {
+  const dest = new ClipChannelAnimation()
+  for (const kf of source.keyframes()) {
+    dest.add(
+      new KeyframeModel(
+        newKeyframeId(),
+        kf.time,
+        mirrorMorphKeyframeValue(kf.value),
+        kf.interpolation,
+        { time: kf.tangentIn.time, value: kf.tangentIn.value },
+        { time: kf.tangentOut.time, value: kf.tangentOut.value },
+        kf.disabled,
+        [...kf.blend],
+      ),
+    )
+  }
+  return dest
+}
+
+/**
+ * Index-preserving morph-geometry auto-mirror (issue #357).
+ *
+ * Mirrors rest vertices plus every Shape's vertices (same ids, names, order;
+ * face winding corrected once on the shared topology) so verbatim-copied
+ * morph coefficient curves keep resolving on mirrored geometry instead of
+ * falling back to the base mesh. The mirror operator commutes with the morph
+ * lerp, so `lerp(mirroredA, mirroredB, t) == mirror(lerp(A, B, t))`.
+ *
+ * UVs stay attached to their vertices (no UV mirror — reflecting the geometry
+ * already reflects the sampled image with it, matching SymmetrizeSubtree).
+ * Bone weights and bind pose are preserved (same per-vertex indices).
+ * `-0` is normalized to `0` so double-mirroring round-trips deep-equal.
+ *
+ * Vertex-count mismatches warn and leave that shape unmirrored (eval falls
+ * back to base geometry per `resolveMorphedVertices`); the rest of the mesh
+ * still mirrors and the call never throws for shape data.
+ */
+export interface MirroredMorphGeometry {
+  readonly mesh: import('./mesh').MeshData
+  readonly shapes: readonly import('./shape').Shape[]
+  readonly warnings: readonly string[]
+}
+
+function negateMorphCoordinate(value: number): number {
+  return -value || 0
+}
+
+function mirrorMorphPoint(
+  v: { readonly x: number; readonly y: number },
+  axis: MirrorAxis,
+): { x: number; y: number } {
+  return axis === 'X'
+    ? { x: negateMorphCoordinate(v.x), y: v.y }
+    : { x: v.x, y: negateMorphCoordinate(v.y) }
+}
+
+export function mirrorMorphGeometry(
+  mesh: import('./mesh').MeshData,
+  shapes: readonly import('./shape').Shape[] | undefined,
+  axis: MirrorAxis,
+  opts?: { readonly nodeName?: string },
+): MirroredMorphGeometry {
+  requireMirrorAxis(axis)
+  const warnings: string[] = []
+  const label = opts?.nodeName ? ` on node "${opts.nodeName}"` : ''
+  const vertices = mesh.vertices.map((v) => mirrorMorphPoint(v, axis))
+  // Shared topology: flip winding once (v1↔v2), same as SymmetrizeSubtree.
+  const faces = mesh.faces.map((f) => ({ v0: f.v0, v1: f.v2, v2: f.v1 }))
+  const uvs = mesh.uvs.map((uv) => ({ u: uv.u, v: uv.v }))
+  const mirroredMesh: import('./mesh').MeshData = {
+    ...mesh,
+    vertices,
+    faces,
+    uvs,
+  }
+  const mirroredShapes: import('./shape').Shape[] = []
+  for (const shape of shapes ?? []) {
+    if (shape.vertices.length !== mesh.vertices.length) {
+      const warning =
+        `[morph-mirror] Shape "${shape.name}"${label} has ${shape.vertices.length} vertices ` +
+        `but the mesh has ${mesh.vertices.length} — leaving it unmirrored; ` +
+        `morphs fall back to base geometry`
+      warnings.push(warning)
+      console.warn(warning)
+      mirroredShapes.push({
+        id: shape.id,
+        name: shape.name,
+        categoryId: shape.categoryId ?? null,
+        vertices: shape.vertices.map((v) => ({ x: v.x, y: v.y })),
+      })
+      continue
+    }
+    mirroredShapes.push({
+      id: shape.id,
+      name: shape.name,
+      categoryId: shape.categoryId ?? null,
+      vertices: shape.vertices.map((v) => mirrorMorphPoint(v, axis)),
+    })
+  }
+  return { mesh: mirroredMesh, shapes: mirroredShapes, warnings }
+}
+
 export interface MirroredClipResult {
   readonly clip: ClipDefinition
   /**
@@ -352,8 +489,12 @@ export function mirrorSkippedNotices(source: ClipDefinition): readonly string[] 
  * Create a spatially mirrored copy of a clip.
  * - new identity, `isReversed=false`, keyframe times untouched
  * - duration, category, channel list, and parameter definitions preserved
- * - visible, zIndex, symmetry-lane, material, and morph tracks pass through
- *   unchanged (morph geometry auto-mirror lands in #357)
+ * - visible, zIndex, symmetry-lane, and material tracks pass through
+ *   unchanged; morph coefficient curves (times, coefficients, tangents,
+ *   interpolation, disabled/blend) are copied verbatim with only the lateral
+ *   shape-name pair remapped through the same left↔right dictionary as
+ *   collection bindings (issue #357) — geometry auto-mirroring lives in
+ *   {@link mirrorMorphGeometry} and the collection command
  * - shadow lanes mirror by direction (issue #358): X-mirror negates offsetX
  *   (Y-mirror negates offsetY), rotation/skews negate with angular
  *   normalization, light azimuth maps to 180−azimuth on X (−azimuth on Y,
@@ -426,7 +567,7 @@ export function createMirroredClipDefinition(
 
   const morphSrc = source.morphAnimation()
   if (morphSrc.length > 0) {
-    for (const kf of mirrorAnimation(morphSrc, false).keyframes()) {
+    for (const kf of mirrorMorphAnimation(morphSrc).keyframes()) {
       mirrored.addMorphKeyframe(kf)
     }
   }

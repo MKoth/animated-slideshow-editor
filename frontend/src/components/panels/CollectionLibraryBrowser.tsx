@@ -512,6 +512,7 @@ export function CollectionLibraryBrowser({
                       else {
                         notify(`Mirrored collection "${name}" created`)
                         for (const s of res.inverse.skipped) notify(s)
+                        for (const w of res.inverse.morphWarnings ?? []) notify(w)
                       }
                       setMirrorPrompt(null)
                     })
@@ -547,6 +548,7 @@ export function CollectionLibraryBrowser({
                   else {
                     notify(`Mirrored collection "${name}" created`)
                     for (const s of res.inverse.skipped) notify(s)
+                    for (const w of res.inverse.morphWarnings ?? []) notify(w)
                   }
                   setMirrorPrompt(null)
                 }}

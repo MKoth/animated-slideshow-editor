@@ -12,6 +12,8 @@ import { ClipCollection } from '../clipCollection'
 import { defaultTableComponent } from '../defaultTable'
 import { applyTableLayout } from '../tableLayoutApply'
 import { relativeTransform, transformsEqual, worldTransformOf } from '../worldTransform'
+import { mirrorMorphGeometry } from '../clipMirror'
+import type { MirrorCollectionShapeSnapshot } from './mirrorCollectionCommand'
 
 export function applyUndo(
   engine: Engine,
@@ -2182,6 +2184,29 @@ export function applyUndo(
           void 0
         }
       }
+      // Morph geometry auto-mirror (issue #357) is part of the same single
+      // History Entry: restore pre-mirror rest vertices + shapes.
+      const shapeSnapshots = mirrorInv?.shapeSnapshots as
+        readonly MirrorCollectionShapeSnapshot[] | undefined
+      if (shapeSnapshots) {
+        for (let i = shapeSnapshots.length - 1; i >= 0; i--) {
+          const snap = shapeSnapshots[i]!
+          try {
+            engine.setMeshData(snap.nodeId, snap.oldMesh)
+          } catch {
+            void 0
+          }
+          try {
+            if (snap.oldShapes !== undefined) {
+              engine.restoreShapes(snap.nodeId, snap.oldShapes)
+            } else {
+              engine.restoreShapes(snap.nodeId, [])
+            }
+          } catch {
+            void 0
+          }
+        }
+      }
       if (newCollectionId) {
         try {
           engine.deleteClipCollection(newCollectionId)
@@ -4144,6 +4169,29 @@ export function applyRedo(
         } catch {
           try {
             engine.restoreClipCollectionFromJSON(snapshot)
+          } catch {
+            void 0
+          }
+        }
+      }
+      // Morph geometry auto-mirror (issue #357): undo restored the original
+      // geometry, so redo re-mirrors the current (original) state. Mirror is
+      // an involution, matching the SymmetrizeSubtree redo pattern; per-node
+      // failures warn and continue, never failing the redo.
+      const shapeSnapshots = inv?.shapeSnapshots as readonly { nodeId: string }[] | undefined
+      const axisParam = (params as Record<string, unknown>).axis as unknown
+      if (shapeSnapshots && shapeSnapshots.length > 0) {
+        const axis = axisParam === 'X' || axisParam === 'Y' ? axisParam : ('X' as const)
+        for (const snap of shapeSnapshots) {
+          try {
+            const node = engine.getNode(snap.nodeId)
+            const meshComp = node.components.mesh
+            if (!meshComp) continue
+            const { mesh, shapes } = mirrorMorphGeometry(meshComp.mesh, meshComp.shapes, axis, {
+              nodeName: node.name,
+            })
+            engine.setMeshData(snap.nodeId, mesh)
+            engine.restoreShapes(snap.nodeId, [...shapes])
           } catch {
             void 0
           }
