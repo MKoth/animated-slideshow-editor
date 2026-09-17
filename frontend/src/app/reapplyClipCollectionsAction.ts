@@ -9,6 +9,7 @@ import {
 import { walkPreOrder } from '../engine/sceneNode'
 import type { ClipCollection } from '../engine/clipCollection'
 import type { SceneNode } from '../engine/sceneNode'
+import { mergeUndoRecords } from './undoMerge'
 
 export type ReapplyClipCollectionsResult =
   | {
@@ -21,15 +22,6 @@ export type ReapplyClipCollectionsResult =
       readonly preservedEditCount: number
     }
   | { readonly ok: false; readonly error: string }
-
-function mergeRecords(undoStack: UndoStack, records: number): void {
-  if (records <= 1) return
-  try {
-    undoStack.mergeLastAsTransaction(records)
-  } catch {
-    /* best-effort: undo entries stay separate but valid */
-  }
-}
 
 /**
  * True when re-placing this collection would cleanly create at least one
@@ -119,7 +111,7 @@ export function executeReapplyClipCollections(
     try {
       freshParent = engine.getNode(parentNodeId)
     } catch {
-      mergeRecords(undoStack, records)
+      mergeUndoRecords(undoStack, records)
       return fail('Parent no longer exists — refresh stopped partway.')
     }
     if (!wouldPlaceSucceed(engine, freshParent, collection)) {
@@ -201,7 +193,7 @@ export function executeReapplyClipCollections(
       }
     }
   }
-  mergeRecords(undoStack, records)
+  mergeUndoRecords(undoStack, records)
   const bits = [`Refreshed ${refreshed} placement(s)`]
   if (preserved > 0) bits.push(`${preserved} edit(s) preserved`)
   if (skipped.length > 0) bits.push(`${skipped.length} kept (${skipped.join('; ')})`)

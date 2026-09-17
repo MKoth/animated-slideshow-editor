@@ -11,6 +11,7 @@ import { noopPersistence } from './contextHarness'
 import { useMissingAssetsStore } from '../stores/missingAssetsStore'
 import { useParentingModeStore } from '../stores/parentingModeStore'
 import { useSelectionStore } from '../stores/selectionStore'
+import { usePlaybackController } from '../stores/playbackStore'
 
 function renderPanel(): { engine: Engine; undoStack: UndoStack } {
   const engine = createEngineInternal()
@@ -657,6 +658,27 @@ describe('ScenePanel drag & drop', () => {
     dropOn(girlRow, 'before', dataTransfer)
 
     expect(slide.scene.root.children.map((node) => node.name)).toEqual(['Camera', 'Boy', 'Girl'])
+  })
+
+  it('bakes the pose at the playhead into rest from the toolbar', async () => {
+    const user = userEvent.setup()
+    const { engine, undoStack } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'Hand')
+    const clip = engine.createClip('Wave', 2, '', [], [{ property: 'positionX' }])
+    engine.addClipChannelKeyframe(clip.id, 'positionX', 0, 10)
+    engine.addClipChannelKeyframe(clip.id, 'positionX', 1, 50)
+    engine.assignClipInstance(node.id, clip.id, 0, 1, true, {})
+    usePlaybackController.setState({ currentTimes: { [slide.id]: 1 } })
+    useSelectionStore.setState({ selectedIds: [node.id] })
+
+    await waitForTree('Slide 1')
+    const baseline = undoStack.entries.length
+    await user.click(screen.getByTestId('scene-bake-pose'))
+
+    expect(engine.getNode(node.id).transform.x).toBeCloseTo(30, 9)
+    expect(engine.getNode(node.id).clipInstances).toHaveLength(1)
+    expect(undoStack.entries).toHaveLength(baseline + 1)
   })
 
   it('cancels an in-progress drag when Escape is pressed so a drop does nothing', async () => {

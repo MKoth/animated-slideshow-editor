@@ -19,6 +19,9 @@ import { namesInTree, uniqueNodeName } from '../../engine/naming'
 import { useMissingAssetsStore } from '../../stores/missingAssetsStore'
 import { useSceneTreeViewStore } from '../../stores/sceneTreeViewStore'
 import { useSelectionStore } from '../../stores/selectionStore'
+import { usePlaybackController } from '../../stores/playbackStore'
+import { useNotificationStore } from '../../stores/notificationStore'
+import { executeBakePoseAsBase } from '../../app/bakePoseAsBaseAction'
 import { iconOf } from './nodeIconKinds'
 import { LockIcon, MissingAssetIcon, NodeIcon, VisibilityIcon } from './nodeIcons'
 import { ParentingModeDialog } from './ParentingModeDialog'
@@ -176,7 +179,7 @@ function SceneTreeRow({
 }
 
 export function ScenePanel() {
-  const { engine, dispatch } = useEngine()
+  const { engine, dispatch, undoStack } = useEngine()
   const [, setTick] = useState(0)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [dragIds, setDragIds] = useState<string[] | null>(null)
@@ -498,6 +501,20 @@ export function ScenePanel() {
     setContextMenu(null)
   }
 
+  const handleBakePose = () => {
+    const targetSlide = engine.getActiveSlide()
+    if (!targetSlide) return
+    const notify = useNotificationStore.getState().notify
+    const rootNodeIds = useSelectionStore.getState().selectedIds
+    if (rootNodeIds.length === 0) {
+      notify('Select a subtree to bake')
+      return
+    }
+    const time = usePlaybackController.getState().getTime(targetSlide.id)
+    const result = executeBakePoseAsBase(engine, dispatch, undoStack, { rootNodeIds, time })
+    notify(result.ok ? result.message : result.error)
+  }
+
   const [exportOpen, setExportOpen] = useState(false)
   const [exportCollectionParentId, setExportCollectionParentId] = useState<string | null>(null)
   const [managerParentId, setManagerParentId] = useState<string | null>(null)
@@ -555,6 +572,15 @@ export function ScenePanel() {
           data-testid="scene-export-object"
         >
           Export Object
+        </button>
+        <button
+          className="scene-panel__create-group"
+          onClick={handleBakePose}
+          title="Rewrite the selected subtree's rest transforms to the current pose (playhead on the active slide). Animation is kept — animated frames render unchanged, quiet regions stop falling back to stale bases. Parts driven by offset/gain-linked or blended control layers may shift slightly."
+          aria-label="Bake Pose as Base"
+          data-testid="scene-bake-pose"
+        >
+          Bake Pose
         </button>
       </div>
       <section className="scene-slide" key={slide.id}>

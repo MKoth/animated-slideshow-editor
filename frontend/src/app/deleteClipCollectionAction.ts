@@ -6,6 +6,7 @@ import {
   RemoveClipCommand,
 } from '../engine/commands'
 import { walkPreOrder } from '../engine/sceneNode'
+import { mergeUndoRecords } from './undoMerge'
 
 export type DeleteClipCollectionResult =
   | {
@@ -15,15 +16,6 @@ export type DeleteClipCollectionResult =
       readonly deletedClipCount: number
     }
   | { readonly ok: false; readonly error: string }
-
-function mergeRecords(undoStack: UndoStack, records: number): void {
-  if (records <= 1) return
-  try {
-    undoStack.mergeLastAsTransaction(records)
-  } catch {
-    /* best-effort: undo entries stay separate but valid */
-  }
-}
 
 /**
  * Delete a clip collection together with its member clips.
@@ -71,7 +63,7 @@ export function executeDeleteClipCollection(
     for (const { nodeId, instanceId } of instancesToRemove) {
       const res = dispatch(new RemoveClipCommand({ nodeId, instanceId }))
       if (!res.ok) {
-        mergeRecords(undoStack, records)
+        mergeUndoRecords(undoStack, records)
         return fail(`Collection not deleted: ${res.error.message}`)
       }
       records += 1
@@ -87,18 +79,18 @@ export function executeDeleteClipCollection(
     for (const cid of existingExclusive) {
       const res = dispatch(new DeleteClipCommand({ clipId: cid }))
       if (!res.ok) {
-        mergeRecords(undoStack, records)
+        mergeUndoRecords(undoStack, records)
         return fail(`Collection not deleted: ${res.error.message}`)
       }
       records += 1
     }
     const resCol = dispatch(new DeleteClipCollectionCommand({ collectionId }))
     if (!resCol.ok) {
-      mergeRecords(undoStack, records)
+      mergeUndoRecords(undoStack, records)
       return fail(resCol.error.message)
     }
     records += 1
-    mergeRecords(undoStack, records)
+    mergeUndoRecords(undoStack, records)
     if (existingExclusive.length > 0) {
       return {
         ok: true,
