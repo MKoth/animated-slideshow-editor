@@ -135,6 +135,7 @@ import { newClipId } from './clipDefinition'
 import { newClipCollectionId } from './clipCollection'
 import { createReversedClipDefinition } from './clipReverse'
 import { createMirroredClipDefinition, mirrorClipDefaultName } from './clipMirror'
+import { createCopiedClipDefinition, copyClipDefaultName } from './clipCopy'
 import type { MirrorAxis } from './clipMirror'
 import {
   mirrorCollectionDefaultName,
@@ -3258,6 +3259,15 @@ export class Engine {
     return clip
   }
 
+  createCopiedClip(sourceClipId: string, newName?: string): ClipDefinition {
+    const source = this.getClip(sourceClipId)
+    const name = newName ?? copyClipDefaultName(source.name)
+    const copied = createCopiedClipDefinition(source, name)
+    this.#clips.importClip(copied)
+    this.#bus.emit({ type: 'ClipCreated', clipId: copied.id })
+    return copied
+  }
+
   setClipDuration(clipId: string, duration: number): void {
     this.#clips.setDuration(clipId, duration)
   }
@@ -3541,6 +3551,31 @@ export class Engine {
     }
     const collection = this.createClipCollection(name, newBindings, source.sourceNodeId)
     return { collection, clipIdMap, skipped }
+  }
+
+  createCopiedCollection(
+    sourceCollectionId: string,
+    newName?: string,
+  ): { collection: ClipCollection; clipIdMap: Map<string, string> } {
+    const source = this.getClipCollection(sourceCollectionId)
+    const name =
+      newName !== undefined
+        ? newName
+        : this.ensureUniqueCollectionName(source.sourceNodeId, `${source.name} Copy`)
+    const clipIdMap = new Map<string, string>()
+    const newBindings: Record<string, string> = {}
+    for (const [semanticName, clipId] of source.bindings) {
+      let newClipId = clipIdMap.get(clipId)
+      if (!newClipId) {
+        const copiedClip = this.createCopiedClip(clipId, name)
+        this.setClipCategory(copiedClip.id, semanticName)
+        newClipId = copiedClip.id
+        clipIdMap.set(clipId, newClipId)
+      }
+      newBindings[semanticName] = newClipId
+    }
+    const collection = this.createClipCollection(name, newBindings, source.sourceNodeId)
+    return { collection, clipIdMap }
   }
 
   deleteClipCollection(collectionId: string): ClipCollection {
@@ -6444,6 +6479,9 @@ export function toReadOnly(engine: Engine): EnginePublic {
     createReversedClip: (clipId, newName) => engine.createReversedClip(clipId, newName),
     createMirroredClip: (sourceClipId, axis, newName) =>
       engine.createMirroredClip(sourceClipId, axis, newName),
+    createCopiedClip: (clipId, newName) => engine.createCopiedClip(clipId, newName),
+    createCopiedCollection: (sourceCollectionId, newName) =>
+      engine.createCopiedCollection(sourceCollectionId, newName),
     createMirroredCollection: (sourceCollectionId, axis, newName) =>
       engine.createMirroredCollection(sourceCollectionId, axis, newName),
     deleteClipCollection: (collectionId) => engine.deleteClipCollection(collectionId),

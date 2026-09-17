@@ -62,6 +62,8 @@ import {
   ReverseCollectionCommand,
   MirrorClipCommand,
   MirrorCollectionCommand,
+  CopyClipCommand,
+  CopyCollectionCommand,
   RemoveClipCommand,
   DeleteCollectionPlacementCommand,
   SetControlSetCommand,
@@ -79,6 +81,7 @@ import {
   mirrorSkippedLaneNames,
   collectMirrorSkippedLaneNames,
 } from '../../engine/clipMirror'
+import { copyClipDefaultName, copyCollectionDefaultName } from '../../engine/clipCopy'
 import type { MirrorAxis } from '../../engine/clipMirror'
 import type { ExtractableKeyframe } from '../../engine/clipExtraction'
 import { ClipExtractionModal } from './ClipExtractionModal'
@@ -7360,6 +7363,45 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               >
                 Mirror and Save As…
               </button>
+              <button
+                role="menuitem"
+                data-testid="clip-lane-copy"
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+                onClick={() => {
+                  try {
+                    const clip = engine.getClip(clipMenu.clipId)
+                    const node = engine.getNode(clipMenu.nodeId)
+                    const inst = node.clipInstances.find((i) => i.id === clipMenu.instanceId)
+                    const start = inst ? inst.startTime : 0
+                    const name = copyClipDefaultName(clip.name)
+                    const res = dispatch(
+                      new CopyClipCommand({
+                        sourceClipId: clipMenu.clipId,
+                        newName: name,
+                        targetNodeId: clipMenu.nodeId,
+                        startTime: start,
+                      }),
+                    )
+                    if (!res.ok) notify(res.error.message)
+                    else notify(`Copied clip "${name}" created`)
+                    setClipMenu(null)
+                  } catch (e) {
+                    notify(e instanceof Error ? e.message : String(e))
+                    setClipMenu(null)
+                  }
+                }}
+              >
+                Copy and Save As…
+              </button>
             </div>
           </>
         )}
@@ -7465,6 +7507,45 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 }}
               >
                 Mirror and Save As…
+              </button>
+              <button
+                role="menuitem"
+                data-testid="collection-lane-copy"
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+                onClick={() => {
+                  try {
+                    const placement = engine.getCollectionPlacement(
+                      collectionPlacementMenu.placementId,
+                    )
+                    const collection = engine.getClipCollection(placement.collectionId)
+                    const name = copyCollectionDefaultName(collection.name)
+                    const res = dispatch(
+                      new CopyCollectionCommand({
+                        sourceCollectionId: placement.collectionId,
+                        newName: name,
+                        targetParentNodeId: placement.parentNodeId,
+                        startTime: placement.startTime,
+                      }),
+                    )
+                    if (!res.ok) notify(res.error.message)
+                    else notify(`Copied collection "${name}" created`)
+                    setCollectionPlacementMenu(null)
+                  } catch (e) {
+                    notify(e instanceof Error ? e.message : String(e))
+                    setCollectionPlacementMenu(null)
+                  }
+                }}
+              >
+                Copy and Save As…
               </button>
               <button
                 role="menuitem"

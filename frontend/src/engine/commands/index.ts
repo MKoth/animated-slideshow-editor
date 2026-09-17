@@ -577,6 +577,10 @@ export { MirrorClipCommand } from './mirrorClipCommand'
 export type { MirrorClipInverse, MirrorClipParameters } from './mirrorClipCommand'
 export { ReverseClipCommand } from './reverseClipCommand'
 export type { ReverseClipInverse, ReverseClipParameters } from './reverseClipCommand'
+export { CopyClipCommand } from './copyClipCommand'
+export type { CopyClipInverse, CopyClipParameters } from './copyClipCommand'
+export { CopyCollectionCommand } from './copyCollectionCommand'
+export type { CopyCollectionInverse, CopyCollectionParameters } from './copyCollectionCommand'
 export { ReverseCollectionCommand } from './reverseCollectionCommand'
 export type {
   ReverseCollectionInverse,

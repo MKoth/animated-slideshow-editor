@@ -2119,12 +2119,74 @@ export function applyUndo(
       }
       return
     }
+    case 'CopyClip': {
+      const copyInv = inv as Record<string, unknown> | null
+      const newClipId = copyInv?.newClipId as string
+      const instanceId = copyInv?.instanceId as string | undefined
+      const nodeId = copyInv?.nodeId as string | undefined
+      if (instanceId && nodeId) {
+        try {
+          engine.removeClipInstance(nodeId, instanceId)
+        } catch {
+          void 0
+        }
+      }
+      if (newClipId) {
+        try {
+          engine.deleteClip(newClipId)
+        } catch {
+          void 0
+        }
+      }
+      return
+    }
     case 'ReverseCollection': {
       const revInv2 = inv as Record<string, unknown> | null
       const newCollectionId = revInv2?.newCollectionId as string
       const newClipIds = revInv2?.newClipIds as string[] | undefined
       const placementId = revInv2?.placementId as string | undefined
       const createdInstanceIds = revInv2?.createdInstanceIds as
+        { nodeId: string; instanceId: string }[] | undefined
+      if (createdInstanceIds) {
+        for (const { nodeId, instanceId } of createdInstanceIds) {
+          try {
+            engine.removeClipInstance(nodeId, instanceId)
+          } catch {
+            void 0
+          }
+        }
+      }
+      if (placementId) {
+        try {
+          engine.deleteCollectionPlacement(placementId)
+        } catch {
+          void 0
+        }
+      }
+      if (newCollectionId) {
+        try {
+          engine.deleteClipCollection(newCollectionId)
+        } catch {
+          void 0
+        }
+      }
+      if (newClipIds) {
+        for (const clipId of newClipIds) {
+          try {
+            engine.deleteClip(clipId)
+          } catch {
+            void 0
+          }
+        }
+      }
+      return
+    }
+    case 'CopyCollection': {
+      const copyInv2 = inv as Record<string, unknown> | null
+      const newCollectionId = copyInv2?.newCollectionId as string
+      const newClipIds = copyInv2?.newClipIds as string[] | undefined
+      const placementId = copyInv2?.placementId as string | undefined
+      const createdInstanceIds = copyInv2?.createdInstanceIds as
         { nodeId: string; instanceId: string }[] | undefined
       if (createdInstanceIds) {
         for (const { nodeId, instanceId } of createdInstanceIds) {
@@ -4137,7 +4199,107 @@ export function applyRedo(
       }
       return
     }
+    case 'CopyClip': {
+      const inv = _inverse as Record<string, unknown> | null
+      const snapshot = inv?.snapshot as unknown
+      const instanceId = inv?.instanceId as string | undefined
+      const nodeId = inv?.nodeId as string | undefined
+      const instanceSnapshot = inv?.instanceSnapshot as Record<string, unknown> | undefined
+      if (snapshot) {
+        try {
+          const clip = ClipDefinition.fromJSON(snapshot as unknown as import('../json').ClipJSON)
+          engine.importClip(clip)
+        } catch {
+          void 0
+        }
+      }
+      if (instanceId && nodeId && instanceSnapshot) {
+        try {
+          const clipId = (snapshot as Record<string, unknown>)?.id as string
+          if (clipId) {
+            const start = ((instanceSnapshot as Record<string, unknown>).startTime as number) ?? 0
+            const speed = ((instanceSnapshot as Record<string, unknown>).speed as number) ?? 1
+            const enabled =
+              ((instanceSnapshot as Record<string, unknown>).enabled as boolean) ?? true
+            const paramOverrides = (instanceSnapshot as Record<string, unknown>).paramOverrides as
+              Record<string, number> | undefined
+            const inst = engine.assignClipInstance(
+              nodeId,
+              clipId,
+              start,
+              speed,
+              enabled,
+              paramOverrides ?? {},
+            )
+            if (inst.id !== instanceId) {
+              const node = engine.getNode(nodeId)
+              const found = node.clipInstances.find((i) => i.id === inst.id)
+              if (found) (found as unknown as { id: string }).id = instanceId
+            }
+          }
+        } catch {
+          void 0
+        }
+      } else if (instanceId && nodeId) {
+        try {
+          const clipId = (snapshot as Record<string, unknown>)?.id as string
+          if (clipId) {
+            const start = ((params as Record<string, unknown>).startTime as number) ?? 0
+            const inst = engine.assignClipInstance(nodeId, clipId, start, 1, true, {})
+            if (inst.id !== instanceId) {
+              const node = engine.getNode(nodeId)
+              const found = node.clipInstances.find((i) => i.id === inst.id)
+              if (found) (found as unknown as { id: string }).id = instanceId
+            }
+          }
+        } catch {
+          void 0
+        }
+      }
+      return
+    }
     case 'ReverseCollection': {
+      const inv = _inverse as Record<string, unknown> | null
+      const snapshot = inv?.snapshot as unknown
+      const clipSnapshots = inv?.clipSnapshots as unknown[] | undefined
+      const placementSnapshot = inv?.placementSnapshot as Record<string, unknown> | undefined
+      const parentNodeId = inv?.parentNodeId as string | undefined
+      if (clipSnapshots) {
+        for (const cs of clipSnapshots) {
+          try {
+            const clip = ClipDefinition.fromJSON(cs as unknown as import('../json').ClipJSON)
+            engine.importClip(clip)
+          } catch {
+            void 0
+          }
+        }
+      }
+      if (snapshot) {
+        try {
+          const col = ClipCollection.fromJSON(
+            snapshot as unknown as import('../json').ClipCollectionJSON,
+          )
+          engine.importClipCollection(col)
+        } catch {
+          try {
+            engine.restoreClipCollectionFromJSON(snapshot)
+          } catch {
+            void 0
+          }
+        }
+      }
+      if (placementSnapshot && parentNodeId) {
+        try {
+          const colId = (snapshot as Record<string, unknown>)?.id as string
+          const start = ((placementSnapshot as Record<string, unknown>)?.startTime as number) ?? 0
+          if (colId) engine.placeCollection(colId, parentNodeId, start)
+        } catch {
+          void 0
+        }
+      }
+      return
+    }
+    case 'CopyCollection': {
       const inv = _inverse as Record<string, unknown> | null
       const snapshot = inv?.snapshot as unknown
       const clipSnapshots = inv?.clipSnapshots as unknown[] | undefined

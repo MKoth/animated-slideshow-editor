@@ -220,6 +220,11 @@ export interface EnginePublic {
     axis: import('./clipMirror').MirrorAxis,
     newName?: string,
   ): ClipDefinition
+  createCopiedClip(clipId: string, newName?: string): ClipDefinition
+  createCopiedCollection(
+    sourceCollectionId: string,
+    newName?: string,
+  ): { collection: ClipCollection; clipIdMap: Map<string, string> }
   createMirroredCollection(
     sourceCollectionId: string,
     axis: import('./clipMirror').MirrorAxis,
