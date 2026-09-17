@@ -10,6 +10,7 @@ import {
   CreateClipCommand,
   AssignClipCommand,
   SetSemanticNameCommand,
+  SetZIndexCommand,
 } from '../../engine/commands'
 import { ExportClipCollectionCommand } from '../../engine/commands'
 import { validateReusableObject } from '../../engine/reusableObject'
@@ -36,6 +37,43 @@ function expectOk<T>(result: { ok: boolean; inverse?: T; error?: Error }): T {
 }
 
 describe('ReusableObject export/import', () => {
+  it('preserves local pivots and z-index through same-scene round-trip', () => {
+    const { engine, dispatcher } = setupEngine()
+    const slide = engine.getActiveSlide()!
+    const rootId = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'PivotObject',
+          transform: {
+            x: 120,
+            y: 80,
+            rotation: 0.25,
+            scaleX: 1.5,
+            scaleY: 0.75,
+            localPivot: { x: 0.35, y: -0.2 },
+          },
+        }),
+      ),
+    ).nodeId
+    expectOk(dispatcher.dispatch(new SetZIndexCommand({ nodeId: rootId, zIndex: 7 })))
+
+    const objectJson = engine.exportReusableObject(rootId, 'PivotObject')
+    const result = engine.importReusableObject(objectJson)
+    const imported = engine.getNode(result.rootNewId)
+
+    expect(imported.transform).toEqual({
+      x: 120,
+      y: 80,
+      rotation: 0.25,
+      scaleX: 1.5,
+      scaleY: 0.75,
+      localPivot: { x: 0.35, y: -0.2 },
+    })
+    expect(imported.zIndex).toBe(7)
+  })
+
   it('defines .lesson_object format and validates (mirrors library)', () => {
     const { engine, dispatcher } = setupEngine()
     const slide = engine.getActiveSlide()!

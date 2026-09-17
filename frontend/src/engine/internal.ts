@@ -4795,15 +4795,17 @@ export class Engine {
         scaleX: 1,
         scaleY: 1,
       }) as import('./transform').Transform
+      const localPivot = nodeJson.localPivot
       const semanticName = (nodeJson as unknown as { semanticName?: string }).semanticName
       const node = this.createNode(targetSlide.scene.id, parentId, nodeJson.name, {
         id: nid,
-        transform,
+        transform: localPivot === undefined ? transform : { ...transform, localPivot },
         components,
         semanticName,
       })
       node.visible = typeof nodeJson.visible === 'boolean' ? nodeJson.visible : true
       node.opacity = typeof nodeJson.opacity === 'number' ? nodeJson.opacity : 1
+      node.zIndex = typeof nodeJson.zIndex === 'number' ? nodeJson.zIndex : 0
       const matJson = (nodeJson as unknown as { material?: unknown }).material
       if (matJson !== undefined) {
         try {
@@ -4928,7 +4930,6 @@ export class Engine {
           void 0
         }
       }
-      // localPivot already handled via transform
     }
 
     // Animation: import keyframes for nodes
