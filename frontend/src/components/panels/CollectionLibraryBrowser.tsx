@@ -4,7 +4,11 @@ import type { ClipCollectionLibraryEntry } from '../../api'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useEngine } from '../../app/useEngine'
 import { ApplyClipCollectionModal } from './ApplyClipCollectionModal'
-import { ReverseCollectionCommand, MirrorCollectionCommand } from '../../engine/commands'
+import {
+  DeleteClipCollectionCommand,
+  ReverseCollectionCommand,
+  MirrorCollectionCommand,
+} from '../../engine/commands'
 import {
   mirrorCollectionDefaultName,
   buildMirrorSwapPreview,
@@ -45,6 +49,21 @@ export function CollectionLibraryBrowser({
   } | null>(null)
   const [mirrorNameDraft, setMirrorNameDraft] = useState('')
   const [mirrorAxis, setMirrorAxis] = useState<MirrorAxis>('X')
+
+  const removeTemporaryImports = (name: string, importedId: string | null): void => {
+    const ids = engine.clipCollections
+      .filter(
+        (collection) =>
+          collection.name === name &&
+          collection.sourceNodeId === undefined &&
+          (collection.id === importedId || importedId !== null),
+      )
+      .map((collection) => collection.id)
+    for (const collectionId of ids) {
+      const result = dispatch(new DeleteClipCollectionCommand({ collectionId }))
+      if (!result.ok) notify(result.error.message)
+    }
+  }
 
   useEffect(() => {
     // Refresh on every open so project changes cannot leave the browser showing
@@ -366,6 +385,7 @@ export function CollectionLibraryBrowser({
                       )
                       if (!res.ok) notify(res.error.message)
                       else notify(`Reversed collection "${name}" created`)
+                      removeTemporaryImports(reversePrompt.entry.name, importedId)
                       setReversePrompt(null)
                     })
                   } else if (e.key === 'Escape') setReversePrompt(null)
@@ -394,6 +414,7 @@ export function CollectionLibraryBrowser({
                   )
                   if (!res.ok) notify(res.error.message)
                   else notify(`Reversed collection "${name}" created`)
+                  removeTemporaryImports(reversePrompt.entry.name, importedId)
                   setReversePrompt(null)
                 }}
                 style={{
@@ -581,6 +602,7 @@ export function CollectionLibraryBrowser({
                         for (const s of res.inverse.skipped) notify(s)
                         for (const w of res.inverse.morphWarnings ?? []) notify(w)
                       }
+                      removeTemporaryImports(mirrorPrompt.entry.name, importedId)
                       setMirrorPrompt(null)
                     })
                   } else if (e.key === 'Escape') setMirrorPrompt(null)
@@ -617,6 +639,7 @@ export function CollectionLibraryBrowser({
                     for (const s of res.inverse.skipped) notify(s)
                     for (const w of res.inverse.morphWarnings ?? []) notify(w)
                   }
+                  removeTemporaryImports(mirrorPrompt.entry.name, importedId)
                   setMirrorPrompt(null)
                 }}
                 style={{

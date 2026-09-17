@@ -212,6 +212,21 @@ describe('mirrorMorphGeometry index-preserving auto-mirror (#357)', () => {
     expect(mesh.vertices[1]).toEqual({ x: 10, y: 0 })
   })
 
+  it('mirrors bind-pose coordinates while preserving weights', () => {
+    const skinnedMesh = {
+      ...mesh,
+      boneWeights: [[{ boneId: 'root', weight: 1 }], [], []],
+      bindPose: {
+        root: { x: 10, y: 4, rotation: 0.25, scaleX: 1, scaleY: 1 },
+      },
+    }
+    const out = mirrorMorphGeometry(skinnedMesh as never, undefined, 'X')
+    expect(out.mesh.boneWeights).toEqual(skinnedMesh.boneWeights)
+    expect(out.mesh.bindPose).toEqual({
+      root: { x: -10, y: 4, rotation: -0.25, scaleX: 1, scaleY: 1 },
+    })
+  })
+
   it('Y-mirror negates y only', () => {
     const out = mirrorMorphGeometry(mesh as never, shapes as never, 'Y')
     expect(out.mesh.vertices).toEqual([
@@ -283,6 +298,8 @@ describe('MirrorCollectionCommand shape auto-mirror in a single History Entry (#
     } as never)
     const sA = engine.createShape(node.id, 'A')
     const sB = engine.createShape(node.id, 'mouthLeft')
+    const category = engine.createShapeCategory(node.id, 'Expressions', null)
+    engine.moveShapeToCategory(node.id, sB.id, category.id)
     // sculpt asymmetric offsets
     for (let i = 0; i < 3; i++) {
       const a = engine.getShapes(node.id).find((s) => s.id === sA.id)!.vertices[i]!
@@ -305,10 +322,11 @@ describe('MirrorCollectionCommand shape auto-mirror in a single History Entry (#
     return engine.createClipCollection('Smiles', { face: clip.id }).id
   }
 
-  it('mints remapped morph clips and auto-mirrors target geometry atomically', () => {
+  it('mints remapped morph clips and appends mirrored Shapes atomically', () => {
     const { engine, dispatcher, undoStack } = setupEngine()
     const { root, node } = buildRig(engine)
     const sourceId = buildCollection(engine)
+    const beforeCategories = engine.getShapeCategories(node.id)
     const beforeVerts = engine
       .getNode(node.id)
       .components.mesh!.mesh.vertices.map((v) => ({ ...v }))
@@ -337,24 +355,40 @@ describe('MirrorCollectionCommand shape auto-mirror in a single History Entry (#
         .getMorphKeyframes()
         .map((k) => k.value),
     ).toEqual([
-      { fromShapeName: 'A', toShapeName: 'mouthRight', coefficient: 0 },
-      { fromShapeName: 'A', toShapeName: 'mouthRight', coefficient: 1 },
+      { fromShapeName: 'A Mirrored (X)', toShapeName: 'mouthRight', coefficient: 0 },
+      { fromShapeName: 'A Mirrored (X)', toShapeName: 'mouthRight', coefficient: 1 },
     ])
-    // target geometry auto-mirrored index-preservingly
+    // Existing rest geometry and Shapes remain untouched.
     const afterMesh = engine.getNode(node.id).components.mesh!.mesh
-    expect(afterMesh.vertices[1]!.x).toBe(-beforeVerts[1]!.x)
-    expect(afterMesh.faces).toEqual([{ v0: 0, v1: 2, v2: 1 }])
-    expect(engine.getShapes(node.id).map((s) => s.id)).toEqual(beforeShapeIds)
-    expect(engine.getShapes(node.id).map((s) => s.name)).toEqual(['A', 'mouthLeft'])
+    expect(afterMesh.vertices).toEqual(beforeVerts)
+    expect(afterMesh.faces).toEqual([{ v0: 0, v1: 1, v2: 2 }])
+    expect(
+      engine
+        .getShapes(node.id)
+        .map((s) => s.id)
+        .slice(0, 2),
+    ).toEqual(beforeShapeIds)
+    expect(engine.getShapes(node.id).map((s) => s.name)).toEqual([
+      'A',
+      'mouthLeft',
+      'A Mirrored (X)',
+      'mouthRight',
+    ])
+    expect(engine.getShapeCategories(node.id)).toEqual(beforeCategories)
 
     // single undo restores clips, collection, placement, AND geometry
     expect(dispatcher.undo()).toBe(true)
     expect(() => engine.getClipCollection(res.inverse.newCollectionId)).toThrow()
     expect(engine.getNode(node.id).components.mesh!.mesh.vertices).toEqual(beforeVerts)
     expect(engine.getNode(node.id).components.mesh!.mesh.faces).toEqual([{ v0: 0, v1: 1, v2: 2 }])
-    // redo restores mirrored geometry as well
+    // redo restores the additive mirrored Shape as well
     expect(dispatcher.redo()).toBe(true)
-    expect(engine.getNode(node.id).components.mesh!.mesh.vertices[1]!.x).toBe(-beforeVerts[1]!.x)
+    expect(engine.getShapes(node.id).map((s) => s.name)).toEqual([
+      'A',
+      'mouthLeft',
+      'A Mirrored (X)',
+      'mouthRight',
+    ])
     expect(engine.getClipCollection(res.inverse.newCollectionId).name).toBe('Smiles Mirrored (X)')
   })
 
@@ -405,10 +439,10 @@ describe('MirrorCollectionCommand shape auto-mirror in a single History Entry (#
     expect(engine.getClipCollection(res.inverse.newCollectionId).name).toBe('Smiles Mirrored (X)')
   })
 
-  it('warns when remapped shape names are missing on an asymmetric target', () => {
+  it('creates the missing lateral Shape on an asymmetric target', () => {
     const { engine, dispatcher } = setupEngine()
     // buildRig creates only A + mouthLeft — the remapped mouthRight is absent
-    const { root } = buildRig(engine)
+    const { root, node } = buildRig(engine)
     const sourceId = buildCollection(engine)
     const res = dispatcher.dispatch(
       new MirrorCollectionCommand({
@@ -421,7 +455,8 @@ describe('MirrorCollectionCommand shape auto-mirror in a single History Entry (#
     )
     expect(res.ok).toBe(true)
     if (!res.ok) throw new Error('mirror failed')
-    expect((res.inverse.morphWarnings ?? []).join(' ')).toMatch(/mouthRight/)
+    expect(res.inverse.morphWarnings ?? []).toEqual([])
+    expect(engine.getShapes(node.id).map((s) => s.name)).toContain('mouthRight')
   })
 
   it('stays quiet when a symmetric target already holds both lateral shapes', () => {

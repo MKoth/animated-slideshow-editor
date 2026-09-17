@@ -1,12 +1,13 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
 import { requireString, requireFiniteNumber } from '../guards'
-import { requireMirrorAxis, mirrorMorphGeometry } from '../clipMirror'
+import { requireMirrorAxis, mirrorMorphGeometry, swapLateralSemanticName } from '../clipMirror'
 import type { MirrorAxis } from '../clipMirror'
 import { walkPreOrder } from '../sceneNode'
 import { cloneMeshData } from '../mesh'
 import type { MeshData } from '../mesh'
 import type { Shape } from '../shape'
+import { newId } from '../ids'
 
 export interface MirrorCollectionParameters {
   readonly sourceCollectionId: string
@@ -20,6 +21,7 @@ export interface MirrorCollectionShapeSnapshot {
   readonly nodeId: string
   readonly oldMesh: MeshData
   readonly oldShapes: readonly Shape[] | undefined
+  readonly newShapes: readonly Shape[]
 }
 
 export interface MirrorCollectionInverse {
@@ -104,20 +106,25 @@ export class MirrorCollectionCommand implements Command<MirrorCollectionInverse>
       this.#newName,
     )
     const newClipIds = [...clipIdMap.values()]
-    const clipSnapshots = newClipIds.map((id) => engine.getClip(id).toJSON())
+    let clipSnapshots = newClipIds.map((id) => engine.getClip(id).toJSON())
     let shapeSnapshots: MirrorCollectionShapeSnapshot[] | undefined
     let morphWarnings: string[] | undefined
+    const morphShapeNameMaps = new Map<string, Map<string, string>>()
     if (this.#targetParentNodeId !== undefined) {
-      // Morph geometry auto-mirror end-to-end (issue #357): mirror rest
-      // vertices plus every Shape's vertices index-preservingly on the
-      // target subtree so verbatim-copied coefficient curves keep resolving
-      // on mirrored geometry. Asymmetric rigs degrade to warnings, never
-      // failures — per-node try/catch, mismatches warn with base fallback.
+      // Keep the existing object intact. Mirror only missing lateral Shape
+      // targets as additive copies; replacing the mesh/rest Shapes here makes
+      // a saved mirror destroy the source object's baked pose and morphs.
       try {
         const root = engine.getNode(this.#targetParentNodeId)
+        const morphBindings = new Set(
+          Object.entries(collection.getBindingsObject())
+            .filter(([, clipId]) => engine.getClip(clipId).getMorphKeyframes().length > 0)
+            .map(([semanticName]) => semanticName.trim()),
+        )
         for (const node of walkPreOrder(root)) {
           const meshComp = node.components.mesh
           if (!meshComp) continue
+          if (!node.semanticName || !morphBindings.has(node.semanticName.trim())) continue
           try {
             const oldMesh = cloneMeshData(meshComp.mesh)
             const oldShapes = meshComp.shapes
@@ -128,16 +135,59 @@ export class MirrorCollectionCommand implements Command<MirrorCollectionInverse>
                   vertices: s.vertices.map((v) => ({ x: v.x, y: v.y })),
                 }))
               : undefined
-            const { mesh, shapes, warnings } = mirrorMorphGeometry(
+            const { shapes, warnings } = mirrorMorphGeometry(
               meshComp.mesh,
               meshComp.shapes,
               this.#axis,
               { nodeName: node.name },
             )
-            if (!shapeSnapshots) shapeSnapshots = []
-            shapeSnapshots.push({ nodeId: node.id, oldMesh, oldShapes })
-            engine.setMeshData(node.id, mesh)
-            engine.restoreShapes(node.id, [...shapes])
+            const existingShapes = [...(meshComp.shapes ?? [])]
+            const shapesByName = new Map(existingShapes.map((shape) => [shape.name, shape]))
+            const additions: Shape[] = []
+            const mirroredBySourceId = new Map(
+              shapes.map((shape, index) => [meshComp.shapes?.[index]?.id, shape]),
+            )
+            const clipId = collection.getBinding(node.semanticName.trim())
+            const morphClip = clipId ? engine.getClip(clipId) : null
+            const nameMap = new Map<string, string>()
+            for (const keyframe of morphClip?.getMorphKeyframes() ?? []) {
+              const value = keyframe.value
+              if (typeof value !== 'object' || value === null || Array.isArray(value)) continue
+              for (const key of ['fromShapeName', 'toShapeName'] as const) {
+                const mirroredName = (value as unknown as Record<string, unknown>)[key]
+                if (typeof mirroredName !== 'string' || nameMap.has(mirroredName)) continue
+                const lateralSourceName = swapLateralSemanticName(mirroredName)
+                const source = shapesByName.get(lateralSourceName) ?? shapesByName.get(mirroredName)
+                if (!source) continue
+                const mirrored = mirroredBySourceId.get(source.id)
+                if (!mirrored) continue
+                const desiredName =
+                  lateralSourceName !== mirroredName
+                    ? mirroredName
+                    : `${mirroredName} Mirrored (${this.#axis})`
+                const existing = [...existingShapes, ...additions].find(
+                  (candidate) =>
+                    candidate.categoryId === (source.categoryId ?? null) &&
+                    candidate.name === desiredName,
+                )
+                nameMap.set(mirroredName, desiredName)
+                if (existing) continue
+                additions.push({
+                  ...mirrored,
+                  id: newId('shape'),
+                  name: desiredName,
+                })
+              }
+            }
+            if (nameMap.size > 0) {
+              morphShapeNameMaps.set(clipId!, nameMap)
+            }
+            if (additions.length > 0) {
+              const newShapes = [...existingShapes, ...additions]
+              if (!shapeSnapshots) shapeSnapshots = []
+              shapeSnapshots.push({ nodeId: node.id, oldMesh, oldShapes, newShapes })
+              engine.restoreShapes(node.id, newShapes)
+            }
             if (warnings.length > 0) {
               if (!morphWarnings) morphWarnings = []
               morphWarnings.push(...warnings)
@@ -157,6 +207,26 @@ export class MirrorCollectionCommand implements Command<MirrorCollectionInverse>
         morphWarnings.push(warning)
         console.warn(warning)
       }
+      for (const newClipId of newClipIds) {
+        const nameMap = morphShapeNameMaps.get(newClipId)
+        if (!nameMap) continue
+        const clip = engine.getClip(newClipId)
+        for (const keyframe of clip.getMorphKeyframes()) {
+          const value = keyframe.value
+          if (typeof value !== 'object' || value === null || Array.isArray(value)) continue
+          const record = value as unknown as Record<string, unknown>
+          keyframe.value = {
+            ...record,
+            ...(typeof record.fromShapeName === 'string'
+              ? { fromShapeName: nameMap.get(record.fromShapeName) ?? record.fromShapeName }
+              : {}),
+            ...(typeof record.toShapeName === 'string'
+              ? { toShapeName: nameMap.get(record.toShapeName) ?? record.toShapeName }
+              : {}),
+          } as never
+        }
+      }
+      clipSnapshots = newClipIds.map((id) => engine.getClip(id).toJSON())
       // Mirror-time missing-shape check (issue #357): warn for remapped
       // shape names absent from the target subtree — eval falls back to
       // base geometry per resolveMorphedVertices, never failing the mirror.

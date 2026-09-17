@@ -418,6 +418,24 @@ function mirrorMorphPoint(
     : { x: v.x, y: negateMorphCoordinate(v.y) }
 }
 
+function mirrorBindPose(
+  bindPose: NonNullable<import('./mesh').MeshData['bindPose']> | undefined,
+  axis: MirrorAxis,
+): NonNullable<import('./mesh').MeshData['bindPose']> | undefined {
+  if (!bindPose) return undefined
+  return Object.fromEntries(
+    Object.entries(bindPose).map(([boneId, pose]) => [
+      boneId,
+      {
+        ...pose,
+        x: axis === 'X' ? negateMorphCoordinate(pose.x) : pose.x,
+        y: axis === 'Y' ? negateMorphCoordinate(pose.y) : pose.y,
+        rotation: negateMorphCoordinate(pose.rotation),
+      },
+    ]),
+  )
+}
+
 export function mirrorMorphGeometry(
   mesh: import('./mesh').MeshData,
   shapes: readonly import('./shape').Shape[] | undefined,
@@ -436,6 +454,7 @@ export function mirrorMorphGeometry(
     vertices,
     faces,
     uvs,
+    ...(mesh.bindPose ? { bindPose: mirrorBindPose(mesh.bindPose, axis) } : {}),
   }
   const mirroredShapes: import('./shape').Shape[] = []
   for (const shape of shapes ?? []) {
@@ -541,8 +560,8 @@ export function collectMirrorSkippedLaneNames(clips: Iterable<ClipDefinition>): 
  *   unchanged; morph coefficient curves (times, coefficients, tangents,
  *   interpolation, disabled/blend) are copied verbatim with only the lateral
  *   shape-name pair remapped through the same left↔right dictionary as
- *   collection bindings (issue #357) — geometry auto-mirroring lives in
- *   {@link mirrorMorphGeometry} and the collection command
+ *   collection bindings (issue #357). Collection placement appends missing
+ *   lateral Shape copies without replacing the target's existing geometry.
  * - shadow lanes mirror by direction (issue #358): X-mirror negates offsetX
  *   (Y-mirror negates offsetY), rotation/skews negate with angular
  *   normalization, light azimuth maps to 180−azimuth on X (−azimuth on Y,

@@ -12,7 +12,6 @@ import { ClipCollection } from '../clipCollection'
 import { defaultTableComponent } from '../defaultTable'
 import { applyTableLayout } from '../tableLayoutApply'
 import { relativeTransform, transformsEqual, worldTransformOf } from '../worldTransform'
-import { mirrorMorphGeometry } from '../clipMirror'
 import type { MirrorCollectionShapeSnapshot } from './mirrorCollectionCommand'
 
 export function applyUndo(
@@ -4209,24 +4208,14 @@ export function applyRedo(
           }
         }
       }
-      // Morph geometry auto-mirror (issue #357): undo restored the original
-      // geometry, so redo re-mirrors the current (original) state. Mirror is
-      // an involution, matching the SymmetrizeSubtree redo pattern; per-node
-      // failures warn and continue, never failing the redo.
-      const shapeSnapshots = inv?.shapeSnapshots as readonly { nodeId: string }[] | undefined
-      const axisParam = (params as Record<string, unknown>).axis as unknown
+      // Redo restores the exact additive Shape snapshots created by execute.
+      // Do not recompute from current geometry or overwrite user edits.
+      const shapeSnapshots = inv?.shapeSnapshots as
+        readonly { nodeId: string; newShapes: readonly import('../shape').Shape[] }[] | undefined
       if (shapeSnapshots && shapeSnapshots.length > 0) {
-        const axis = axisParam === 'X' || axisParam === 'Y' ? axisParam : ('X' as const)
         for (const snap of shapeSnapshots) {
           try {
-            const node = engine.getNode(snap.nodeId)
-            const meshComp = node.components.mesh
-            if (!meshComp) continue
-            const { mesh, shapes } = mirrorMorphGeometry(meshComp.mesh, meshComp.shapes, axis, {
-              nodeName: node.name,
-            })
-            engine.setMeshData(snap.nodeId, mesh)
-            engine.restoreShapes(snap.nodeId, [...shapes])
+            engine.restoreShapes(snap.nodeId, snap.newShapes)
           } catch {
             void 0
           }

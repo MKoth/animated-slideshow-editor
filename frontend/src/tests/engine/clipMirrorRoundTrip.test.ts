@@ -158,7 +158,6 @@ describe('mirror round-trip acceptance spine (#359)', () => {
     const beforeFaces = JSON.parse(
       JSON.stringify(engine.getNode(face.id).components.mesh!.mesh.faces),
     )
-    const shapeIds = new Map(engine.getShapes(face.id).map((s) => [s.name, s.id] as const))
     const entriesBefore = undoStack.entries.length
 
     const res = dispatcher.dispatch(
@@ -238,54 +237,30 @@ describe('mirror round-trip acceptance spine (#359)', () => {
     // Morph coefficient curves verbatim with lateral name remap.
     const mirroredMorph = engine.getClip(bindings['face']!)
     expect(mirroredMorph.getMorphKeyframes().map((k) => k.value)).toEqual([
-      { fromShapeName: 'Base', toShapeName: 'mouthRight', coefficient: 0 },
-      { fromShapeName: 'Base', toShapeName: 'mouthRight', coefficient: 1 },
+      { fromShapeName: 'Base Mirrored (X)', toShapeName: 'mouthRight', coefficient: 0 },
+      { fromShapeName: 'Base Mirrored (X)', toShapeName: 'mouthRight', coefficient: 1 },
     ])
 
-    // Geometry auto-mirrored index-preservingly as part of the same entry.
+    // Existing rest geometry stays intact; the lateral Shape is additive.
     const afterMesh = engine.getNode(face.id).components.mesh!.mesh
-    expect(afterMesh.vertices[1]!.x).toBe(-beforeVerts[1]!.x)
-    expect(afterMesh.faces).toEqual([{ v0: 0, v1: 2, v2: 1 }])
+    expect(afterMesh.vertices).toEqual(beforeVerts)
+    expect(afterMesh.faces).toEqual(beforeFaces)
 
-    // Morphed-vertex equality with directly mirrored evaluation: morphing on
-    // mirrored geometry equals mirroring the original morphed result.
+    // The remapped morph resolves to the additive mirrored Shape.
     const afterShapes = engine.getShapes(face.id)
     const afterByName = new Map(afterShapes.map((s) => [s.name, s] as const))
     // The remapped lateral shape resolves on the mirrored target (no
     // missing-shape fallback in the happy path).
+    expect(afterByName.has('Base Mirrored (X)')).toBe(true)
     expect(afterByName.has('mouthRight')).toBe(true)
-    const coeff = 1
-    // Original morphed on pre-mirror geometry (Base -> mouthLeft at t=1).
-    const originalEval = resolveMorphedVertices(
-      beforeVerts,
-      [
-        {
-          id: shapeIds.get('Base')!,
-          name: 'Base',
-          categoryId: null,
-          vertices: beforeVerts.map((v) => ({ x: v.x + 2, y: v.y })),
-        },
-        {
-          id: shapeIds.get('mouthLeft')!,
-          name: 'mouthLeft',
-          categoryId: null,
-          vertices: beforeVerts.map((v) => ({ x: v.x - 3, y: v.y })),
-        },
-      ] as never,
-      {
-        binding: { fromShapeId: shapeIds.get('Base')!, toShapeId: shapeIds.get('mouthLeft')! },
-        coefficient: coeff,
-      },
-    )
     const mirroredEval = resolveMorphedVertices(afterMesh.vertices, afterShapes, {
       binding: {
-        fromShapeId: afterByName.get('Base')!.id,
+        fromShapeId: afterByName.get('Base Mirrored (X)')!.id,
         toShapeId: afterByName.get('mouthRight')!.id,
       },
-      coefficient: coeff,
+      coefficient: 1,
     })
-    const directlyMirrored = originalEval.map((v) => ({ x: -v.x || 0, y: v.y }))
-    expect(mirroredEval).toEqual(directlyMirrored)
+    expect(mirroredEval).toEqual(afterByName.get('mouthRight')!.vertices)
 
     // Mirrored performance plays back on the bilateral rig:
     // right node runs the mirrored left transform; left shadow re-derives.
@@ -294,16 +269,18 @@ describe('mirror round-trip acceptance spine (#359)', () => {
     expect(afterShadow.offsetX).toBeCloseTo(-beforeShadow.offsetX, 8)
     expect(afterShadow.offsetY).toBeCloseTo(beforeShadow.offsetY, 8)
 
-    // Single undo restores clips, collection, placement, AND geometry.
+    // Single undo restores clips, collection, placement, and removes only the
+    // additive Shape.
     expect(dispatcher.undo()).toBe(true)
     expect(() => engine.getClipCollection(res.inverse.newCollectionId)).toThrow()
     expect(engine.getNode(face.id).components.mesh!.mesh.vertices).toEqual(beforeVerts)
     expect(engine.getNode(face.id).components.mesh!.mesh.faces).toEqual(beforeFaces)
     expect(engine.getClipCollection(sourceId).name).toBe('Scene')
-    // Redo restores the mirrored collection, placement playback, and geometry together.
+    // Redo restores the mirrored collection, placement, and additive Shape.
     expect(dispatcher.redo()).toBe(true)
     expect(engine.getClipCollection(res.inverse.newCollectionId).name).toBe('Scene Mirrored (X)')
-    expect(engine.getNode(face.id).components.mesh!.mesh.vertices[1]!.x).toBe(-beforeVerts[1]!.x)
+    expect(engine.getNode(face.id).components.mesh!.mesh.vertices).toEqual(beforeVerts)
+    expect(engine.getShapes(face.id).map((s) => s.name)).toContain('mouthRight')
     expect(engine.evaluateNode(right.id, 0).transform.x).toBeCloseTo(-10)
     const redoShadow = engine.evaluateShadow(left.id, 0, { w: 100, h: 50 })!
     expect(redoShadow.offsetX).toBeCloseTo(-beforeShadow.offsetX, 8)

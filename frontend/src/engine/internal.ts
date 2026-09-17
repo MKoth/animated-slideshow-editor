@@ -2424,9 +2424,19 @@ export class Engine {
   setMeshData(nodeId: string, mesh: MeshData): void {
     const node = this.getNode(nodeId)
     const existingShapes = node.components.mesh?.shapes
+    const existingShapeCategories = node.components.mesh?.shapeCategories
     const newMeshComp: import('./components').MeshComponent = existingShapes
-      ? { kind: 'mesh' as const, mesh, shapes: existingShapes }
-      : { kind: 'mesh' as const, mesh }
+      ? {
+          kind: 'mesh' as const,
+          mesh,
+          shapes: existingShapes,
+          ...(existingShapeCategories ? { shapeCategories: existingShapeCategories } : {}),
+        }
+      : {
+          kind: 'mesh' as const,
+          mesh,
+          ...(existingShapeCategories ? { shapeCategories: existingShapeCategories } : {}),
+        }
     const newComponents = { ...node.components, mesh: newMeshComp }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     ;(node as any).components = Object.freeze(newComponents)
