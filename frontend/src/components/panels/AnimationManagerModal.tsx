@@ -87,6 +87,7 @@ import { TimeSegmentToCollectionModal } from './TimeSegmentToCollectionModal'
 import type { SegmentSourceEntry } from './TimeSegmentToCollectionModal'
 import { executeSegmentToCollection, nextClipNameForNode } from '../../engine/timeSegmentExtraction'
 import { executeDeleteClipCollection } from '../../app/deleteClipCollectionAction'
+import { executeReapplyClipCollections } from '../../app/reapplyClipCollectionsAction'
 import {
   defaultSegmentRange,
   formatSec,
@@ -4140,6 +4141,40 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   }}
                 >
                   Place at playhead
+                </button>
+                <button
+                  data-testid="reapply-collections-button"
+                  disabled={parentNode.collectionPlacements.length === 0}
+                  onClick={() => {
+                    if (!parentNodeId) return
+                    const result = executeReapplyClipCollections(
+                      engine,
+                      dispatch,
+                      undoStack,
+                      parentNodeId,
+                    )
+                    if (!result.ok) {
+                      notify(result.error)
+                    } else {
+                      notify(result.message)
+                      setSelectedPlacementId(null)
+                    }
+                  }}
+                  title="Delete and re-place all collections under this parent at the same startTimes, re-binding current descendants by semanticName. Surviving lanes keep retime/respeed edits; placements with no matches are kept."
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border, #ddd)',
+                    background:
+                      parentNode.collectionPlacements.length > 0
+                        ? 'var(--color-bg-elevated, #eceef1)'
+                        : 'var(--color-bg, #f5f5f5)',
+                    color: 'var(--color-text, #1c1e21)',
+                    cursor: parentNode.collectionPlacements.length > 0 ? 'pointer' : 'default',
+                    fontSize: 12,
+                  }}
+                >
+                  Refresh collections
                 </button>
               </span>
             </div>

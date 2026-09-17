@@ -553,3 +553,75 @@ describe('Animation Manager 15-06 – Collection Lane single bar, uniform stretc
     expect(engine.getClipInstance(child.id, instC.id).startTime).toBe(5)
   })
 })
+
+describe('Animation Manager – Refresh collections (delete + reapply)', () => {
+  it('refresh button re-binds a re-added child with the same semantic in one undo step', async () => {
+    const engine = createEngineInternal()
+    const undo = new UndoStack()
+    engine.createProject({ name: 'P' })
+    const slide = engine.createSlide('S1')
+    const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent')
+    const child1 = engine.createNode(slide.scene.id, parent.id, 'Child1')
+    engine.setSemanticName(child1.id, 'hand')
+    const child2 = engine.createNode(slide.scene.id, parent.id, 'Child2')
+    engine.setSemanticName(child2.id, 'foot')
+    const dispatcher = new CommandDispatcher(engine, undo, () => undefined)
+    const clip1 = (
+      dispatcher.dispatch(
+        new CreateClipCommand({ name: 'ClipA', duration: 7, category: '' }),
+      ) as any
+    ).inverse.clipId as string
+    const clip2 = (
+      dispatcher.dispatch(
+        new CreateClipCommand({ name: 'ClipB', duration: 7, category: '' }),
+      ) as any
+    ).inverse.clipId as string
+    const col = engine.createClipCollection('MyCollection', { hand: clip1, foot: clip2 }, parent.id)
+    const placeRes = dispatcher.dispatch(
+      new PlaceCollectionCommand({ collectionId: col.id, parentNodeId: parent.id, startTime: 0 }),
+    ) as any
+    expect(placeRes.ok).toBe(true)
+    undo.clear()
+
+    renderManager(engine, undo, parent.id)
+    const modal = await screen.findByTestId('animation-manager-modal')
+    fireEvent.click(within(modal).getByTestId('manager-tab-collections'))
+    const refreshBtn = (await within(modal).findByTestId(
+      'reapply-collections-button',
+    )) as HTMLButtonElement
+    expect(refreshBtn.disabled).toBe(false)
+
+    // User deletes Child1 and re-adds it with the same semantic: fresh node has no clips
+    engine.removeNode(child1.id)
+    const replacement = engine.createNode(slide.scene.id, parent.id, 'Child1')
+    engine.setSemanticName(replacement.id, 'hand')
+    expect(engine.getNode(replacement.id).clipInstances).toHaveLength(0)
+
+    fireEvent.click(refreshBtn)
+    // New child picked up the collection clip; surviving child still bound
+    expect(engine.getNode(replacement.id).clipInstances).toHaveLength(1)
+    expect(engine.getNode(child2.id).clipInstances).toHaveLength(1)
+    // One undo step for the whole refresh
+    expect(undo.entries.length).toBe(1)
+    expect(dispatcher.undo()).toBe(true)
+    // Undo restores pre-refresh members (old child id is gone, so its lane cannot
+    // come back — but the placement itself is restored)
+    expect(engine.getNode(parent.id).collectionPlacements).toHaveLength(1)
+  })
+
+  it('refresh button is disabled when nothing is placed', async () => {
+    const engine = createEngineInternal()
+    const undo = new UndoStack()
+    engine.createProject({ name: 'P' })
+    const slide = engine.createSlide('S1')
+    const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent')
+
+    renderManager(engine, undo, parent.id)
+    const modal = await screen.findByTestId('animation-manager-modal')
+    fireEvent.click(within(modal).getByTestId('manager-tab-collections'))
+    const refreshBtn = (await within(modal).findByTestId(
+      'reapply-collections-button',
+    )) as HTMLButtonElement
+    expect(refreshBtn.disabled).toBe(true)
+  })
+})
