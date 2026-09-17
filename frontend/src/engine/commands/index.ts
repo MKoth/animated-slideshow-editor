@@ -519,6 +519,7 @@ export { DeleteCollectionPlacementCommand } from './deleteCollectionPlacementCom
 export type {
   DeleteCollectionPlacementInverse,
   DeleteCollectionPlacementParameters,
+  DeletedPlacementMember,
 } from './deleteCollectionPlacementCommand'
 export { ImportReusableObjectCommand } from './importReusableObjectCommand'
 export type {

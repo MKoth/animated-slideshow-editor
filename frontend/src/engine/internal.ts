@@ -3724,13 +3724,18 @@ export class Engine {
     const parent = this.getNode(placement.parentNodeId)
     const idx = parent.collectionPlacements.findIndex((p) => p.id === placementId)
     if (idx !== -1) parent.collectionPlacements.splice(idx, 1)
-    // Leave member instances as plain ClipInstances (no cascading delete) – clear placementId
+    // Remove member instances spawned by this placement — deleting a placement
+    // undoes placing it. Clip definitions and the collection itself are kept.
+    const members: { nodeId: string; instanceId: string }[] = []
     for (const node of walkPreOrder(parent)) {
       for (const inst of node.clipInstances) {
         if (inst.placementId === placementId) {
-          delete (inst as unknown as Record<string, unknown>).placementId
+          members.push({ nodeId: node.id, instanceId: inst.id })
         }
       }
+    }
+    for (const m of members) {
+      this.removeClipInstance(m.nodeId, m.instanceId)
     }
     this.#bus.emit({
       type: 'CollectionPlacementDeleted',

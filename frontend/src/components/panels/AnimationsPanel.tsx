@@ -12,13 +12,13 @@ import { useTimelineSelectionStore } from '../../stores/timelineSelectionStore'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { LibraryBrowser } from './LibraryBrowser'
 import {
-  DeleteClipCollectionCommand,
   RenameClipCollectionCommand,
   ReverseClipCommand,
   ReverseCollectionCommand,
   MirrorClipCommand,
   MirrorCollectionCommand,
 } from '../../engine/commands'
+import { executeDeleteClipCollection } from '../../app/deleteClipCollectionAction'
 import {
   mirrorClipDefaultName,
   mirrorCollectionDefaultName,
@@ -44,7 +44,7 @@ function formatDuration(seconds: number): string {
 }
 
 export function AnimationsPanel() {
-  const { engine, dispatch } = useEngine()
+  const { engine, dispatch, undoStack } = useEngine()
   const [, setTick] = useState(0)
 
   useEngineEvent((event) => {
@@ -297,9 +297,9 @@ export function AnimationsPanel() {
   }
 
   const handleDeleteCollection = (collectionId: string) => {
-    const result = dispatch(new DeleteClipCollectionCommand({ collectionId }))
-    if (!result.ok) notify(result.error.message)
-    else notify('Collection deleted')
+    const result = executeDeleteClipCollection(engine, dispatch, undoStack, collectionId)
+    if (!result.ok) notify(result.error)
+    else notify(result.message)
   }
   const commitRenameCollection = (collectionId: string, raw: string) => {
     setEditingCollectionId(null)

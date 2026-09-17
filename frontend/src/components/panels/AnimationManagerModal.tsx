@@ -52,7 +52,6 @@ import {
   SetClipKeyframeValueCommand,
   AssignClipCommand,
   CreateClipCollectionCommand,
-  DeleteClipCollectionCommand,
   SetClipCollectionBindingsCommand,
   RenameClipCollectionCommand,
   PlaceCollectionCommand,
@@ -65,7 +64,6 @@ import {
   MirrorCollectionCommand,
   RemoveClipCommand,
   DeleteCollectionPlacementCommand,
-  DeleteClipCommand,
   SetControlSetCommand,
   UpdateControlIntervalCommand,
   ReorderControlBindingCommand,
@@ -88,6 +86,7 @@ import { DeleteOrphansConfirmModal } from './DeleteOrphansConfirmModal'
 import { TimeSegmentToCollectionModal } from './TimeSegmentToCollectionModal'
 import type { SegmentSourceEntry } from './TimeSegmentToCollectionModal'
 import { executeSegmentToCollection, nextClipNameForNode } from '../../engine/timeSegmentExtraction'
+import { executeDeleteClipCollection } from '../../app/deleteClipCollectionAction'
 import {
   defaultSegmentRange,
   formatSec,
@@ -301,6 +300,12 @@ function countClipUses(engine: ReturnType<typeof useEngine>['engine'], clipId: s
     }
   }
   return n
+}
+
+function deletedPlacementMessage(removedLanes: number): string {
+  return removedLanes > 0
+    ? `Deleted collection placement (+${removedLanes} clip lane(s) removed)`
+    : 'Deleted collection placement'
 }
 
 function paramToTarget(param: AnimatedParam, nodeId: string): KeyframeTarget {
@@ -1726,7 +1731,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         const pid = selectedPlacementId
         const result = dispatch(new DeleteCollectionPlacementCommand({ placementId: pid }))
         if (!result.ok) notify(result.error.message)
-        else notify('Deleted collection placement')
+        else notify(deletedPlacementMessage(result.inverse.memberInstances.length))
         setSelectedPlacementId(null)
         return
       }
@@ -2220,83 +2225,13 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
 
   const handleDeleteCollection = useCallback(
     (collectionId: string) => {
-      try {
-        const col = engine.getClipCollection(collectionId)
-        const allCols = engine.clipCollections
-        const clipIds = [...col.bindings.values()]
-        // Only delete clips exclusively owned by this collection (not shared)
-        const exclusiveClipIds = clipIds.filter(
-          (cid) =>
-            !allCols.some((c) => c.id !== collectionId && [...c.bindings.values()].includes(cid)),
-        )
-        // Collect all ClipInstances referencing exclusive clips
-        const instancesToRemove: { nodeId: string; instanceId: string }[] = []
-        if (exclusiveClipIds.length > 0 && engine.project) {
-          for (const slide of engine.project.slides) {
-            for (const node of walkPreOrder(slide.scene.root)) {
-              for (const inst of node.clipInstances) {
-                if (exclusiveClipIds.includes(inst.clipId)) {
-                  instancesToRemove.push({ nodeId: node.id, instanceId: inst.id })
-                }
-              }
-            }
-          }
-        }
-        let mergeCount = 0
-        if (instancesToRemove.length > 0) {
-          const cmds = instancesToRemove.map(
-            ({ nodeId, instanceId }) => new RemoveClipCommand({ nodeId, instanceId }),
-          )
-          const tx = new TransactionCommand(cmds as unknown as never[])
-          const res = dispatch(tx as never)
-          if (!res.ok) {
-            notify(res.error.message)
-            return
-          }
-          mergeCount++
-        }
-        const existingExclusive = exclusiveClipIds.filter((cid) => {
-          try {
-            engine.getClip(cid)
-            return true
-          } catch {
-            return false
-          }
-        })
-        if (existingExclusive.length > 0) {
-          const cmds = existingExclusive.map((cid) => new DeleteClipCommand({ clipId: cid }))
-          const tx = new TransactionCommand(cmds as unknown as never[])
-          const res = dispatch(tx as never)
-          if (!res.ok) {
-            notify(res.error.message)
-            return
-          }
-          mergeCount++
-        }
-        const resCol = dispatch(new DeleteClipCollectionCommand({ collectionId }))
-        if (!resCol.ok) {
-          notify(resCol.error.message)
-          return
-        }
-        mergeCount++
-        if (mergeCount > 1) {
-          try {
-            undoStack.mergeLastAsTransaction(mergeCount)
-          } catch {
-            /* ignore */
-          }
-        }
-        if (existingExclusive.length > 0) {
-          notify(`Collection deleted — ${existingExclusive.length} clip(s) also deleted`)
-        } else if (clipIds.length > 0 && exclusiveClipIds.length === 0) {
-          notify('Collection deleted — clips kept (shared with other collections)')
-        } else {
-          notify('Collection deleted')
-        }
-        setDeleteConfirmCollectionId(null)
-      } catch (e) {
-        notify(e instanceof Error ? e.message : String(e))
+      const result = executeDeleteClipCollection(engine, dispatch, undoStack, collectionId)
+      if (!result.ok) {
+        notify(result.error)
+        return
       }
+      notify(result.message)
+      setDeleteConfirmCollectionId(null)
     },
     [dispatch, notify, engine, undoStack],
   )
@@ -7453,11 +7388,13 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 }}
                 onClick={() => {
                   const pid = collectionPlacementMenu.placementId
-                  try {
-                    engine.deleteCollectionPlacement(pid)
-                    notify('Deleted collection placement')
-                  } catch (e) {
-                    notify(e instanceof Error ? e.message : String(e))
+                  const result = dispatch(
+                    new DeleteCollectionPlacementCommand({ placementId: pid }),
+                  )
+                  if (!result.ok) notify(result.error.message)
+                  else {
+                    notify(deletedPlacementMessage(result.inverse.memberInstances.length))
+                    if (selectedPlacementId === pid) setSelectedPlacementId(null)
                   }
                   setCollectionPlacementMenu(null)
                 }}

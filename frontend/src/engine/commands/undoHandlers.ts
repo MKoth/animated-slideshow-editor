@@ -2340,6 +2340,13 @@ export function applyUndo(
       const placement = (inv as Record<string, unknown>)
         .placement as import('../collectionPlacement').CollectionPlacement
       const index = (inv as Record<string, unknown>).index as number
+      const memberInstances = (inv as Record<string, unknown>).memberInstances as
+        | readonly {
+            nodeId: string
+            layerIndex: number
+            instance: import('../json').ClipInstanceJSON
+          }[]
+        | undefined
       const members = (inv as Record<string, unknown>).memberPlacements as
         | readonly {
             nodeId: string
@@ -2350,7 +2357,24 @@ export function applyUndo(
       if (placement) {
         try {
           engine.restoreCollectionPlacement(placement, index)
-          if (members) {
+          if (memberInstances) {
+            // New inverses: re-create member instances removed with the placement
+            for (let i = memberInstances.length - 1; i >= 0; i--) {
+              const m = memberInstances[i]!
+              try {
+                const node = engine.getNode(m.nodeId)
+                const restored = clipInstanceFromJSON(m.instance)
+                node.clipInstances.splice(
+                  Math.min(m.layerIndex, node.clipInstances.length),
+                  0,
+                  restored,
+                )
+              } catch {
+                void 0
+              }
+            }
+          } else if (members) {
+            // Legacy inverses (detach semantics): re-link surviving instances
             for (const m of members) {
               try {
                 const inst = engine.getClipInstance(m.nodeId, m.instanceId)
