@@ -495,6 +495,41 @@ export function collectBakingKeyframes(
   }
   if (!primaryNode) return []
 
+  return collectNodeBaking(bounds, primaryId, primaryNode, evaluator, existingKeys, at)
+}
+
+/**
+ * Bake every bakable numeric channel of one node (no selection needed).
+ * Used for keyframe-less descendants in the segment → collection flow: the
+ * resulting synthetics become the whole clip so the object's pose holds for
+ * the collection duration. Shares channel coverage with collectBakingKeyframes
+ * (uniform-six minus bone/camera exclusions, circle when present, shadow
+ * numerics on shadowed groups; material/table skipped as in MVP baking).
+ */
+export function collectBakingKeyframesForNode(
+  bounds: ExtractionBounds,
+  nodeId: string,
+  evaluator: BakingEvaluator,
+  at: BakingAnchor = 'start',
+): ExtractableKeyframe[] {
+  let node: SceneNode | null = null
+  try {
+    node = evaluator.getNode(nodeId)
+  } catch {
+    return []
+  }
+  if (!node) return []
+  return collectNodeBaking(bounds, nodeId, node, evaluator, new Set<string>(), at)
+}
+
+function collectNodeBaking(
+  bounds: ExtractionBounds,
+  nodeId: string,
+  node: SceneNode,
+  evaluator: BakingEvaluator,
+  existingKeys: Set<string>,
+  at: BakingAnchor,
+): ExtractableKeyframe[] {
   const anchor = at === 'end' ? bounds.selEnd : bounds.selStart
   const idPrefix = at === 'end' ? 'bake-end' : 'bake'
   const result: ExtractableKeyframe[] = []
@@ -505,7 +540,7 @@ export function collectBakingKeyframes(
     interpolation: 'linear' as InterpolationType,
     tangentIn: { ...ZERO_TANGENT },
     tangentOut: { ...ZERO_TANGENT },
-    keyframeId: `${idPrefix}:${channelKeyOf(target)}@${primaryId}`,
+    keyframeId: `${idPrefix}:${channelKeyOf(target)}@${nodeId}`,
   })
 
   const tryPush = (key: string, target: KeyframeTarget, value: KeyframeValue | undefined): void => {
@@ -522,7 +557,7 @@ export function collectBakingKeyframes(
   // Uniform-six via evaluateNode
   let evaluatedNode: ReturnType<BakingEvaluator['evaluateNode']> | null = null
   try {
-    evaluatedNode = evaluator.evaluateNode(primaryId, anchor)
+    evaluatedNode = evaluator.evaluateNode(nodeId, anchor)
   } catch {
     evaluatedNode = null
   }
@@ -539,23 +574,23 @@ export function collectBakingKeyframes(
       // Skip if node cannot animate this prop (camera/bone) — try to validate via node check
       // For now, allow all; requireAnimatable check deferred to command via node type
       // Bones cannot have opacity, camera cannot have rotation — skip those
-      if (primaryNode.components.bone && prop === 'opacity') continue
-      if (primaryNode.components.camera && prop === 'rotation') continue
+      if (node.components.bone && prop === 'opacity') continue
+      if (node.components.camera && prop === 'rotation') continue
       const key = `property:${prop}`
       const val = map[prop]
-      tryPush(key, { kind: 'node', nodeId: primaryId, property: prop } as KeyframeTarget, val)
+      tryPush(key, { kind: 'node', nodeId, property: prop } as KeyframeTarget, val)
     }
   }
 
   // Circle — only if primary has circle
-  if (primaryNode.components.circle) {
+  if (node.components.circle) {
     let circleState: ReturnType<BakingEvaluator['evaluateCircle']> | null = null
     try {
-      circleState = evaluator.evaluateCircle(primaryId, anchor)
+      circleState = evaluator.evaluateCircle(nodeId, anchor)
     } catch {
       circleState = null
     }
-    const fallback = primaryNode.components.circle
+    const fallback = node.components.circle
     const circleVals: Record<CircleAnimationProperty, number> = {
       radius: circleState?.radius ?? fallback.radius,
       startAngle: circleState?.startAngle ?? fallback.startAngle,
@@ -566,7 +601,7 @@ export function collectBakingKeyframes(
       const key = `circle:${prop}`
       tryPush(
         key,
-        { kind: 'circle', nodeId: primaryId, property: prop } as unknown as KeyframeTarget,
+        { kind: 'circle', nodeId, property: prop } as unknown as KeyframeTarget,
         circleVals[prop],
       )
     }
@@ -577,17 +612,16 @@ export function collectBakingKeyframes(
   // Shadow numeric — only if group with shadowEffect (clip supports shadow)
   {
     const isGroup =
-      primaryNode.children.length > 0 &&
-      Object.values(primaryNode.components).every((v) => v === undefined)
-    const hasShadow = !!primaryNode.shadowEffect
+      node.children.length > 0 && Object.values(node.components).every((v) => v === undefined)
+    const hasShadow = !!node.shadowEffect
     if (isGroup && hasShadow) {
       let shadowEff: import('./shadowEffect').ShadowEffect | null = null
       try {
-        shadowEff = evaluator.evaluateShadow(primaryId, anchor)
+        shadowEff = evaluator.evaluateShadow(nodeId, anchor)
       } catch {
         shadowEff = null
       }
-      const eff = shadowEff ?? primaryNode.shadowEffect!
+      const eff = shadowEff ?? node.shadowEffect!
       for (const prop of SHADOW_PROPERTIES) {
         if ((BAKING_SHADOW_EXCLUDED as readonly string[]).includes(prop)) continue
         const key = `shadow:${prop}`
@@ -597,7 +631,7 @@ export function collectBakingKeyframes(
             key,
             {
               kind: 'shadow',
-              nodeId: primaryId,
+              nodeId,
               property: prop as ShadowProperty,
             } as unknown as KeyframeTarget,
             val,
@@ -624,6 +658,23 @@ export function previewBakingCount(
   if (!bounds || !evaluator || selected.length === 0) return 0
   try {
     return collectBakingKeyframes(bounds, selected, evaluator, at).length
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Preview count for a keyframe-less node (bake-only clip candidate).
+ */
+export function previewBakingCountForNode(
+  bounds: ExtractionBounds | null,
+  nodeId: string,
+  evaluator: BakingEvaluator | null,
+  at: BakingAnchor = 'start',
+): number {
+  if (!bounds || !evaluator) return 0
+  try {
+    return collectBakingKeyframesForNode(bounds, nodeId, evaluator, at).length
   } catch {
     return 0
   }

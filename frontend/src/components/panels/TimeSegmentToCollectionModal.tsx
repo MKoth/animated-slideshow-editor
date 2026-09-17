@@ -20,7 +20,15 @@ import type {
   SegmentSourceClip,
 } from '../../engine/timeSegmentExtraction'
 import type { BakingEvaluator } from '../../engine/clipExtraction'
-import { previewBakingCount } from '../../engine/clipExtraction'
+import { previewBakingCount, previewBakingCountForNode } from '../../engine/clipExtraction'
+
+export interface SegmentStaticNode {
+  readonly nodeId: string
+  readonly nodeName: string
+  readonly semanticName?: string
+  /** Depth under the rigging-group parent: 1 = direct child. */
+  readonly depth: number
+}
 
 export interface SegmentSourceEntry {
   readonly nodeId: string
@@ -45,6 +53,12 @@ interface Props {
   readonly entries: readonly SegmentSourceEntry[]
   /** All clip placements on descendant nodes (unfiltered); the wizard lists those fully inside the segment. */
   readonly clips: readonly SegmentSourceClip[]
+  /**
+   * Every descendant of the rigging-group parent with its depth (1 = direct
+   * child). Keyframe-less descendants within the bake depth get bake-only
+   * clips so static objects hold their pose. Optional for test compat.
+   */
+  readonly staticNodes?: readonly SegmentStaticNode[]
   /** Evaluator for bake previews (engine-backed); null disables live synthetic counts. */
   readonly bakingEvaluator: BakingEvaluator | null
   readonly onClose: () => void
@@ -99,6 +113,7 @@ export function TimeSegmentToCollectionModal({
   existingClipNames,
   entries,
   clips,
+  staticNodes,
   bakingEvaluator,
   onClose,
   onConfirm,
@@ -140,6 +155,18 @@ export function TimeSegmentToCollectionModal({
   const [bakeStart, setBakeStart] = useState(true)
   const [bakeEnd, setBakeEnd] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Extra bake depth for keyframe-less descendants (1 = direct children,
+  // 0 = keyframed objects only). Null = not yet touched → deepest level.
+  const [bakeDepth, setBakeDepth] = useState<number | null>(null)
+  const [selectedStatic, setSelectedStatic] = useState<Record<string, boolean>>({})
+
+  const allStatics: readonly SegmentStaticNode[] = useMemo(() => staticNodes ?? [], [staticNodes])
+  const maxStaticDepth = useMemo(
+    () => allStatics.reduce((m, s) => Math.max(m, s.depth), 0),
+    [allStatics],
+  )
+  const effectiveBakeDepth = Math.min(bakeDepth ?? maxStaticDepth, maxStaticDepth)
+  const bakeEnabled = bakeStart || bakeEnd
 
   // Object / param / clip selection + per-object clip naming
   const [selectedObjects, setSelectedObjects] = useState<Record<string, boolean>>({})
@@ -222,31 +249,34 @@ export function TimeSegmentToCollectionModal({
   }, [inRange, clips, range])
 
   // Seed per-object defaults for objects revealed later by range changes
-  // (never overwrites user edits).
+  // (never overwrites user edits). Static descendants are seeded too so
+  // bake-only clip names are ready when the depth slider reveals them.
   useEffect(() => {
     const taken = new Set([...existingClipNames, ...Object.values(clipNames)])
     let changed = false
     const names = { ...clipNames }
     const cats = { ...categories }
-    for (const o of objects) {
-      if (names[o.nodeId] === undefined) {
+    const seedName = (nodeId: string, nodeName: string, semanticName?: string) => {
+      if (names[nodeId] === undefined) {
         const master = masterName.trim()
-        const boundSeed = initialClipNamesByNode?.[o.nodeId]?.trim()
-        names[o.nodeId] =
+        const boundSeed = initialClipNamesByNode?.[nodeId]?.trim()
+        names[nodeId] =
           master ||
           boundSeed ||
           nextClipNameForNode(
-            o.nodeName,
+            nodeName,
             [...taken].map((n) => ({ name: n })),
           )
-        taken.add(names[o.nodeId]!)
+        taken.add(names[nodeId]!)
         changed = true
       }
-      if (cats[o.nodeId] === undefined) {
-        cats[o.nodeId] = o.semanticName?.trim() ?? ''
+      if (cats[nodeId] === undefined) {
+        cats[nodeId] = semanticName?.trim() ?? ''
         changed = true
       }
     }
+    for (const o of objects) seedName(o.nodeId, o.nodeName, o.semanticName)
+    for (const s of allStatics) seedName(s.nodeId, s.nodeName, s.semanticName)
     if (changed) {
       setClipNames(names)
       setCategories(cats)
@@ -267,6 +297,7 @@ export function TimeSegmentToCollectionModal({
     }
   }, [
     objects,
+    allStatics,
     existingClipNames,
     namesSeeded,
     clipNames,
@@ -325,6 +356,28 @@ export function TimeSegmentToCollectionModal({
     [objects, selectedObjects, selectedParams, selectedClips],
   )
 
+  // Keyframe-less descendants within the bake depth: bake-only clip
+  // candidates. Nodes already listed above (in-range keyframes or contained
+  // clips) are excluded — they bake through the normal per-object path.
+  const coveredNodeIds = useMemo(() => new Set(objects.map((o) => o.nodeId)), [objects])
+  const staticOn = (nodeId: string): boolean => selectedStatic[nodeId] ?? true
+  const eligibleStatics = useMemo(
+    () =>
+      allStatics
+        .filter((s) => s.depth <= effectiveBakeDepth && !coveredNodeIds.has(s.nodeId))
+        .sort((a, b) => a.depth - b.depth || a.nodeName.localeCompare(b.nodeName)),
+    [allStatics, effectiveBakeDepth, coveredNodeIds],
+  )
+  const selectedStatics = useMemo(
+    () => (bakeEnabled ? eligibleStatics.filter((s) => staticOn(s.nodeId)) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [eligibleStatics, selectedStatic, bakeEnabled],
+  )
+  const staticMissing = useMemo(
+    () => selectedStatics.filter((s) => !s.semanticName?.trim()),
+    [selectedStatics],
+  )
+
   const deletePreview = useMemo((): number => {
     if (!deleteOrphans) return 0
     const dels: SegmentDeleteEntry[] = selectedEntries.map((e) => ({
@@ -341,8 +394,9 @@ export function TimeSegmentToCollectionModal({
   const canConfirm =
     rangeError === null &&
     (isReplace ? true : collectionName.trim().length > 0) &&
-    (storableCount > 0 || selectedClipRefs.length > 0) &&
+    (storableCount > 0 || selectedClipRefs.length > 0 || selectedStatics.length > 0) &&
     missingSemantic.length === 0 &&
+    staticMissing.length === 0 &&
     conflicts.length === 0
 
   const confirmError = (): string | null => {
@@ -351,9 +405,11 @@ export function TimeSegmentToCollectionModal({
     if (!isReplace && !collectionName.trim()) return 'Collection name is required.'
     if (missingSemantic.length > 0)
       return `Cannot ${verb}: ${missingSemantic.map((o) => o.nodeName).join(', ')} has no Semantic Name. Set it in Inspector first.`
+    if (staticMissing.length > 0)
+      return `Cannot ${verb}: ${staticMissing.map((s) => s.nodeName).join(', ')} has no Semantic Name. Set it in Inspector or deselect it below.`
     if (conflicts.length > 0)
       return `Cannot ${verb}: ${conflicts.map((o) => o.nodeName).join(', ')} has both keyframes and a clip selected — deselect either its parameters or its clip (one clip per object).`
-    if (storableCount === 0 && selectedClipRefs.length === 0)
+    if (storableCount === 0 && selectedClipRefs.length === 0 && selectedStatics.length === 0)
       return selectedEntries.length > 0
         ? 'No clip-storable keyframes selected in this segment (only table / label / symmetry tracks).'
         : 'Nothing selected: check parameters or clips to include in the segment.'
@@ -361,8 +417,8 @@ export function TimeSegmentToCollectionModal({
   }
 
   const confirmObjects = useMemo(
-    () =>
-      objects
+    () => {
+      const keyframed = objects
         .filter((o) => objectOn(o.nodeId))
         .map((o) => {
           const kfs: ExtractableKeyframe[] = []
@@ -398,9 +454,40 @@ export function TimeSegmentToCollectionModal({
             clips: refs,
           }
         })
-        .filter((o) => o.keyframes.length > 0 || o.clips.length > 0),
+        .filter((o) => o.keyframes.length > 0 || o.clips.length > 0)
+      // Bake-only placeholders: empty keyframes tell the executor to mint the
+      // clip purely from the evaluated pose at the checked anchor(s).
+      const bakedOnly = selectedStatics.map((s) => {
+        const sem = (s.semanticName ?? '').trim()
+        return {
+          nodeId: s.nodeId,
+          nodeName: s.nodeName,
+          semanticName: sem,
+          clipName: (clipNames[s.nodeId] ?? '').trim() || nextClipNameForNode(s.nodeName, []),
+          category: (categories[s.nodeId] ?? '').trim() || sem,
+          keyframes: [] as ExtractableKeyframe[],
+          clips: [] as {
+            nodeId: string
+            instanceId: string
+            clipId: string
+            clipName: string
+            start: number
+            end: number
+          }[],
+        }
+      })
+      return [...keyframed, ...bakedOnly]
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [objects, selectedObjects, selectedParams, selectedClips, clipNames, categories],
+    [
+      objects,
+      selectedObjects,
+      selectedParams,
+      selectedClips,
+      clipNames,
+      categories,
+      selectedStatics,
+    ],
   )
 
   const bakeBounds = useMemo(
@@ -418,7 +505,7 @@ export function TimeSegmentToCollectionModal({
 
   const bakeStartPreview = useMemo(() => {
     if (!bakeBounds) return 0
-    return confirmObjects.reduce(
+    const keyframed = confirmObjects.reduce(
       (n, o) =>
         n +
         (o.keyframes.length > 0 && o.clips.length === 0
@@ -426,11 +513,17 @@ export function TimeSegmentToCollectionModal({
           : 0),
       0,
     )
-  }, [bakeBounds, confirmObjects, bakingEvaluator])
+    if (!bakeStart) return keyframed
+    const statics = selectedStatics.reduce(
+      (n, s) => n + previewBakingCountForNode(bakeBounds, s.nodeId, bakingEvaluator, 'start'),
+      0,
+    )
+    return keyframed + statics
+  }, [bakeBounds, confirmObjects, selectedStatics, bakingEvaluator, bakeStart])
 
   const bakeEndPreview = useMemo(() => {
     if (!bakeBounds) return 0
-    return confirmObjects.reduce(
+    const keyframed = confirmObjects.reduce(
       (n, o) =>
         n +
         (o.keyframes.length > 0 && o.clips.length === 0
@@ -438,7 +531,13 @@ export function TimeSegmentToCollectionModal({
           : 0),
       0,
     )
-  }, [bakeBounds, confirmObjects, bakingEvaluator])
+    if (!bakeEnd) return keyframed
+    const statics = selectedStatics.reduce(
+      (n, s) => n + previewBakingCountForNode(bakeBounds, s.nodeId, bakingEvaluator, 'end'),
+      0,
+    )
+    return keyframed + statics
+  }, [bakeBounds, confirmObjects, selectedStatics, bakingEvaluator, bakeEnd])
 
   const handleConfirm = () => {
     setError(null)
@@ -466,6 +565,7 @@ export function TimeSegmentToCollectionModal({
       removeClipInstances,
       bakeStart,
       bakeEnd,
+      bakeDepth: effectiveBakeDepth,
       // the wizard seeds unique defaults and the master field may intentionally
       // repeat one name across categories — keep names exactly as shown.
       dedupeClipNames: false,
@@ -561,6 +661,7 @@ export function TimeSegmentToCollectionModal({
               setClipNames((prev) => {
                 const next = { ...prev }
                 for (const o of objects) next[o.nodeId] = trimmed
+                for (const s of allStatics) next[s.nodeId] = trimmed
                 return next
               })
               if (!isReplace) {
@@ -956,7 +1057,8 @@ export function TimeSegmentToCollectionModal({
           <div style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
             Pin each minted clip to the evaluated pose for parameters with no keyframes at that end
             (position, rotation, scale, opacity, circle, shadow numerics). Reused clips are
-            unaffected.
+            unaffected. With a bake box checked, keyframe-less descendants within the extra depth
+            below get bake-only clips so static objects hold their pose.
           </div>
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
             <input
@@ -986,7 +1088,142 @@ export function TimeSegmentToCollectionModal({
               </span>
             )}
           </label>
+          {allStatics.length > 0 && (
+            <>
+              <label
+                style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}
+                title="How many nesting levels under the parent get bake-only clips (1 = direct children, 0 = keyframed objects only)"
+              >
+                <span style={{ whiteSpace: 'nowrap' }}>Bake extra depth</span>
+                <input
+                  type="range"
+                  data-testid="segment-bake-depth"
+                  min={0}
+                  max={maxStaticDepth}
+                  step={1}
+                  value={effectiveBakeDepth}
+                  disabled={!bakeEnabled}
+                  onChange={(e) => setBakeDepth(Number(e.target.value))}
+                  style={{ flex: 1 }}
+                />
+                <span
+                  style={{
+                    fontSize: 11,
+                    color: 'var(--color-text-muted, #666)',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Level {effectiveBakeDepth} of {maxStaticDepth}
+                </span>
+              </label>
+              <div
+                data-testid="segment-bake-extra-count"
+                style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}
+              >
+                {!bakeEnabled
+                  ? 'Check a Bake box to enable extra baking of static objects.'
+                  : selectedStatics.length > 0
+                    ? `+${selectedStatics.length} static object(s) will get baked clips (no keyframes in segment)`
+                    : effectiveBakeDepth === 0
+                      ? 'Depth 0 — only objects with keyframes.'
+                      : 'No static objects at this depth.'}
+                {bakeEnabled && staticMissing.length > 0 && (
+                  <span style={{ color: 'var(--color-danger, #c00)' }}>
+                    {' '}
+                    · {staticMissing.length} need Semantic Name.
+                  </span>
+                )}
+              </div>
+              {eligibleStatics.length > 0 && (
+                <details>
+                  <summary
+                    style={{
+                      fontSize: 12,
+                      cursor: 'pointer',
+                      color: 'var(--color-text-muted, #666)',
+                    }}
+                  >
+                    {eligibleStatics.length} static object(s) in depth (category = semantic name)
+                  </summary>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+                    {eligibleStatics.map((s) => {
+                      const on = staticOn(s.nodeId)
+                      const missing = !s.semanticName?.trim()
+                      return (
+                        <div
+                          key={s.nodeId}
+                          data-testid={`segment-static-${s.nodeId}`}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            fontSize: 12,
+                            opacity: on ? 1 : 0.6,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            data-testid={`segment-static-toggle-${s.nodeId}`}
+                            checked={on}
+                            onChange={(e) =>
+                              setSelectedStatic((p) => ({ ...p, [s.nodeId]: e.target.checked }))
+                            }
+                          />
+                          <span style={{ fontWeight: 600 }}>{s.nodeName}</span>
+                          <span
+                            style={{
+                              fontSize: 11,
+                              color: missing
+                                ? 'var(--color-danger, #c00)'
+                                : 'var(--color-text-muted, #666)',
+                            }}
+                          >
+                            {missing
+                              ? `depth ${s.depth} — no Semantic Name`
+                              : `depth ${s.depth} · ${s.semanticName!.trim()}`}
+                          </span>
+                          <input
+                            data-testid={`segment-clipname-${s.nodeId}`}
+                            value={clipNames[s.nodeId] ?? ''}
+                            placeholder="Clip name"
+                            onChange={(e) =>
+                              setClipNames((p) => ({ ...p, [s.nodeId]: e.target.value }))
+                            }
+                            style={{ ...inputStyle, marginTop: 0, flex: 1 }}
+                          />
+                        </div>
+                      )
+                    })}
+                  </div>
+                </details>
+              )}
+            </>
+          )}
         </div>
+        {staticMissing.length > 0 && (
+          <div
+            data-testid="segment-static-missing"
+            role="alert"
+            style={{ fontSize: 12, color: 'var(--color-danger, #c00)' }}
+          >
+            Cannot {isReplace ? 'replace' : 'create'}:{' '}
+            {staticMissing.map((s) => s.nodeName).join(', ')} has no Semantic Name. Set it in
+            Inspector first, or{' '}
+            <button
+              data-testid="segment-static-deselect-missing"
+              onClick={() =>
+                setSelectedStatic((p) => {
+                  const next = { ...p }
+                  for (const s of staticMissing) next[s.nodeId] = false
+                  return next
+                })
+              }
+              style={{ fontSize: 12, padding: '2px 8px', borderRadius: 4, cursor: 'pointer' }}
+            >
+              deselect them
+            </button>
+          </div>
+        )}
 
         {skippedCount > 0 && (
           <div style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
@@ -1019,8 +1256,8 @@ export function TimeSegmentToCollectionModal({
               !canConfirm
                 ? (confirmError() ?? 'Resolve errors first')
                 : isReplace
-                  ? `Replace ${objects.filter((o) => objectOn(o.nodeId)).length} clip(s) in collection`
-                  : `Create ${objects.filter((o) => objectOn(o.nodeId)).length} clip(s) + collection`
+                  ? `Replace ${objects.filter((o) => objectOn(o.nodeId)).length + selectedStatics.length} clip(s) in collection`
+                  : `Create ${objects.filter((o) => objectOn(o.nodeId)).length + selectedStatics.length} clip(s) + collection`
             }
             style={{
               padding: '6px 12px',

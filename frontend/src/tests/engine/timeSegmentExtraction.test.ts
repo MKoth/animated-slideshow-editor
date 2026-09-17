@@ -9,7 +9,7 @@ import {
   ExtractToClipCommand,
 } from '../../engine/commands'
 import type { ExtractableKeyframe } from '../../engine/clipExtraction'
-import { collectBakingKeyframes } from '../../engine/clipExtraction'
+import { collectBakingKeyframes, collectBakingKeyframesForNode } from '../../engine/clipExtraction'
 import type { KeyframeTarget } from '../../engine/keyframeTarget'
 import {
   validateSegmentRange,
@@ -980,6 +980,185 @@ describe('baking endpoints', () => {
     expect(undoStack.entries.length).toBe(baseline + 1)
     expect(dispatcher.undo()).toBe(true)
     expect(engine.clips).toHaveLength(0)
+  })
+
+  describe('bake-only static objects (depth slider)', () => {
+    function setupRigWithStatic(): {
+      engine: Engine
+      dispatcher: CommandDispatcher
+      undoStack: UndoStack
+      parentId: string
+      leftId: string
+      staticId: string
+    } {
+      const { engine, dispatcher, undoStack } = setupEngine()
+      const slide = engine.getActiveSlide()!
+      const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Rig')
+      const left = engine.createNode(slide.scene.id, parent.id, 'LeftHand')
+      engine.setSemanticName(left.id, 'left_hand')
+      engine.addKeyframe(propTarget(left.id), 2, 10)
+      const prop = engine.createNode(slide.scene.id, parent.id, 'Prop')
+      engine.setSemanticName(prop.id, 'prop')
+      return {
+        engine,
+        dispatcher,
+        undoStack,
+        parentId: parent.id,
+        leftId: left.id,
+        staticId: prop.id,
+      }
+    }
+
+    function bakeOnlyPlan(
+      parentId: string,
+      leftId: string,
+      staticId: string,
+      engine: Engine,
+      overrides: Partial<SegmentCollectionPlan> = {},
+    ): SegmentCollectionPlan {
+      const kfs = engine.getKeyframes(leftId, 'positionX').map((kf) => ({
+        target: propTarget(leftId),
+        time: kf.time,
+        value: kf.value,
+        interpolation: kf.interpolation,
+        tangentIn: kf.tangentIn,
+        tangentOut: kf.tangentOut,
+        keyframeId: kf.id,
+      }))
+      return {
+        parentNodeId: parentId,
+        from: 1,
+        to: 4,
+        objects: [
+          {
+            nodeId: leftId,
+            nodeName: 'LeftHand',
+            semanticName: 'left_hand',
+            clipName: 'LeftHand Clip 1',
+            category: 'left_hand',
+            keyframes: kfs,
+          },
+          {
+            nodeId: staticId,
+            nodeName: 'Prop',
+            semanticName: 'prop',
+            clipName: 'Prop Clip 1',
+            category: 'prop',
+            keyframes: [],
+          },
+        ],
+        collectionName: 'Rig 1.00-4.00s',
+        deleteOrphans: false,
+        keepFirst: false,
+        keepLast: false,
+        bakeStart: true,
+        bakeDepth: 1,
+        ...overrides,
+      }
+    }
+
+    it('mints a bake-only clip pinned at t=0 for a keyframe-less descendant', () => {
+      const { engine, dispatcher, undoStack, parentId, leftId, staticId } = setupRigWithStatic()
+      const result = executeSegmentToCollection(
+        engine,
+        dispatcher.dispatch.bind(dispatcher),
+        undoStack,
+        bakeOnlyPlan(parentId, leftId, staticId, engine),
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) throw new Error(`expected ok: ${result.error}`)
+      expect(result.clips).toHaveLength(2)
+      const baked = result.clips.find((c) => c.nodeId === staticId)!
+      const clip = engine.getClip(baked.clipId)
+      // start anchor only → one keyframe per bakable channel at t=0
+      expect(clip.getChannelKeyframes('positionX').map((k) => k.time)).toEqual([0])
+      expect(clip.getChannelKeyframes('positionY')).toHaveLength(1)
+      const col = engine.getClipCollection(result.collectionId)
+      expect(col.getBinding('prop')).toBe(baked.clipId)
+    })
+
+    it('pins only the checked anchor (bakeEnd only → t=1 keys)', () => {
+      const { engine, dispatcher, undoStack, parentId, leftId, staticId } = setupRigWithStatic()
+      const result = executeSegmentToCollection(
+        engine,
+        dispatcher.dispatch.bind(dispatcher),
+        undoStack,
+        bakeOnlyPlan(parentId, leftId, staticId, engine, { bakeStart: false, bakeEnd: true }),
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) throw new Error(`expected ok: ${result.error}`)
+      const baked = result.clips.find((c) => c.nodeId === staticId)!
+      const clip = engine.getClip(baked.clipId)
+      expect(clip.getChannelKeyframes('positionX').map((k) => k.time)).toEqual([1])
+    })
+
+    it('skips bake-only objects with a warning when baking is off', () => {
+      const { engine, dispatcher, undoStack, parentId, leftId, staticId } = setupRigWithStatic()
+      const result = executeSegmentToCollection(
+        engine,
+        dispatcher.dispatch.bind(dispatcher),
+        undoStack,
+        bakeOnlyPlan(parentId, leftId, staticId, engine, { bakeStart: false, bakeEnd: false }),
+      )
+      expect(result.ok).toBe(true)
+      if (!result.ok) throw new Error('expected ok')
+      // static object skipped, keyframed object still minted
+      expect(result.clips).toHaveLength(1)
+      expect(result.clips[0]!.nodeId).toBe(leftId)
+      expect(result.warnings.some((w) => w.includes('Prop'))).toBe(true)
+    })
+
+    it('fails the batch when a bake-only object has no semantic name', () => {
+      const { engine, dispatcher, undoStack, parentId, leftId, staticId } = setupRigWithStatic()
+      engine.setSemanticName(staticId, undefined)
+      const base = bakeOnlyPlan(parentId, leftId, staticId, engine)
+      const result = executeSegmentToCollection(
+        engine,
+        dispatcher.dispatch.bind(dispatcher),
+        undoStack,
+        {
+          ...base,
+          objects: base.objects.map((o) =>
+            o.nodeId === staticId ? { ...o, semanticName: '   ' } : o,
+          ),
+        },
+      )
+      expect(result.ok).toBe(false)
+      if (result.ok) throw new Error('expected failure')
+      expect(result.error).toMatch(/Semantic Name/)
+    })
+  })
+
+  describe('collectBakingKeyframesForNode', () => {
+    it('bakes the full uniform-six set for a node with no keyframes', () => {
+      const { engine } = setupEngine()
+      const slide = engine.getActiveSlide()!
+      const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'Prop')
+      const evaluator = {
+        getNode: (id: string) => engine.getNode(id),
+        evaluateNode: (id: string, time: number) => engine.evaluateNode(id, time),
+        evaluateCircle: (id: string, time: number) => engine.evaluateCircle(id, time),
+        evaluateTable: (id: string, time: number) => engine.evaluateTable(id, time),
+        evaluateShadow: (id: string, time: number) => engine.evaluateShadow(id, time),
+      }
+      const bounds = { selStart: 1, selEnd: 4, selDuration: 3, clipDuration: 3 }
+      const out = collectBakingKeyframesForNode(bounds, node.id, evaluator, 'start')
+      expect(out).toHaveLength(6)
+      expect(out.every((kf) => kf.time === 1)).toBe(true)
+    })
+
+    it('returns [] for an unknown node', () => {
+      const { engine } = setupEngine()
+      const evaluator = {
+        getNode: (id: string) => engine.getNode(id),
+        evaluateNode: (id: string, time: number) => engine.evaluateNode(id, time),
+        evaluateCircle: (id: string, time: number) => engine.evaluateCircle(id, time),
+        evaluateTable: (id: string, time: number) => engine.evaluateTable(id, time),
+        evaluateShadow: (id: string, time: number) => engine.evaluateShadow(id, time),
+      }
+      const bounds = { selStart: 1, selEnd: 4, selDuration: 3, clipDuration: 3 }
+      expect(collectBakingKeyframesForNode(bounds, 'missing', evaluator, 'start')).toEqual([])
+    })
   })
 })
 

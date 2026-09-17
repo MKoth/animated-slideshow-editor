@@ -1,4 +1,6 @@
 import type { ExtractableKeyframe } from './clipExtraction'
+import { collectBakingKeyframesForNode } from './clipExtraction'
+import type { BakingEvaluator, ExtractionBounds } from './clipExtraction'
 import type { KeyframeTarget } from './keyframeTarget'
 import type { EnginePublic } from './internal'
 import type { DispatchCommand } from './commands/dispatcher'
@@ -265,6 +267,13 @@ export interface SegmentCollectionPlan {
   /** Pin each minted clip's end to the pose evaluated at To. */
   readonly bakeEnd?: boolean
   /**
+   * Depth-slider value chosen in the wizard (1 = direct children, 0 =
+   * keyframed objects only). Informational: the wizard already resolves
+   * keyframe-less descendants into `objects` with empty keyframes, so the
+   * executor ignores this field.
+   */
+  readonly bakeDepth?: number
+  /**
    * Keep per-object clip names exactly as given (duplicates allowed — clips live
    * in different categories, so sharing a name is fine). Defaults to true, which
    * uniquifies colliding names within the batch ("Name", "Name 2", …).
@@ -422,6 +431,49 @@ export function executeSegmentToCollection(
       continue
     }
     if (!obj.clipName.trim()) return fail(`Clip name is required for "${obj.nodeName}".`)
+    if (obj.keyframes.length === 0) {
+      // Bake-only placeholder from the wizard's depth slider: a keyframe-less
+      // descendant pinned to the evaluated pose at the checked anchor(s).
+      // The synthetics become the whole clip so the pose holds for the
+      // collection duration (single anchor = constant evaluation).
+      if (!plan.bakeStart && !plan.bakeEnd) {
+        warnings.push(
+          `"${obj.nodeName}": no keyframes in the segment and baking is off — clip skipped.`,
+        )
+        continue
+      }
+      try {
+        engine.getNode(obj.nodeId)
+      } catch {
+        return fail(`"${obj.nodeName}" no longer exists — reopen the wizard.`)
+      }
+      const bakeBounds: ExtractionBounds = {
+        selStart: plan.from,
+        selEnd: plan.to,
+        selDuration: plan.to - plan.from,
+        clipDuration: plan.to - plan.from,
+      }
+      const evaluator: BakingEvaluator = {
+        getNode: (id: string) => engine.getNode(id),
+        evaluateNode: (id: string, time: number) => engine.evaluateNode(id, time),
+        evaluateCircle: (id: string, time: number) => engine.evaluateCircle(id, time),
+        evaluateTable: (id: string, time: number) => engine.evaluateTable(id, time),
+        evaluateShadow: (id: string, time: number) => engine.evaluateShadow(id, time),
+      }
+      const synthetics: ExtractableKeyframe[] = []
+      if (plan.bakeStart)
+        synthetics.push(
+          ...collectBakingKeyframesForNode(bakeBounds, obj.nodeId, evaluator, 'start'),
+        )
+      if (plan.bakeEnd)
+        synthetics.push(...collectBakingKeyframesForNode(bakeBounds, obj.nodeId, evaluator, 'end'))
+      if (synthetics.length === 0) {
+        warnings.push(`"${obj.nodeName}": no bakable channels — clip skipped.`)
+        continue
+      }
+      ready.push({ obj, extractable: synthetics, clipName: obj.clipName.trim() })
+      continue
+    }
     const storable: ExtractableKeyframe[] = []
     for (const kf of obj.keyframes) {
       deleteEntries.push({ target: kf.target, time: kf.time, keyframeId: kf.keyframeId })

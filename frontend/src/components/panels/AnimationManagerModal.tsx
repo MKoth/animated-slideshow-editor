@@ -2031,6 +2031,33 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     [engine],
   )
 
+  // Every descendant of the rigging-group parent with its depth (1 = direct
+  // child). The segment wizard offers keyframe-less descendants within the
+  // bake-depth slider as bake-only clips so static objects hold their pose.
+  const segmentStaticNodes = useMemo((): {
+    nodeId: string
+    nodeName: string
+    semanticName?: string
+    depth: number
+  }[] => {
+    void tick
+    if (!parentNode) return []
+    const out: { nodeId: string; nodeName: string; semanticName?: string; depth: number }[] = []
+    const walk = (node: SceneNode, depth: number): void => {
+      for (const child of node.children) {
+        out.push({
+          nodeId: child.id,
+          nodeName: child.name,
+          semanticName: child.semanticName,
+          depth,
+        })
+        walk(child, depth + 1)
+      }
+    }
+    walk(parentNode, 1)
+    return out
+  }, [parentNode, tick])
+
   const handleSegmentConfirm = useCallback(
     (plan: SegmentCollectionPlan): string | null => {
       if (!parentNodeId) return 'No parent selected.'
@@ -7582,6 +7609,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             existingClipNames={engine.clips.map((c) => c.name)}
             entries={segmentEntries}
             clips={segmentClips}
+            staticNodes={segmentStaticNodes}
             bakingEvaluator={segmentBakingEvaluator}
             onClose={() => setSegmentModalOpen(false)}
             onConfirm={handleSegmentConfirm}
@@ -8372,6 +8400,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             existingClipNames={engine.clips.map((c) => c.name)}
             entries={segmentEntries}
             clips={segmentClips}
+            staticNodes={segmentStaticNodes}
             bakingEvaluator={segmentBakingEvaluator}
             onClose={() => setReplaceOpen(false)}
             onConfirm={handleReplaceConfirm}

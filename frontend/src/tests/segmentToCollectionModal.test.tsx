@@ -306,6 +306,104 @@ describe('TimeSegmentToCollectionModal baking', () => {
   })
 })
 
+describe('TimeSegmentToCollectionModal extra bake depth', () => {
+  const STATICS: {
+    nodeId: string
+    nodeName: string
+    semanticName?: string
+    depth: number
+  }[] = [
+    { nodeId: 'nS', nodeName: 'Prop', semanticName: 'prop', depth: 1 },
+    { nodeId: 'nD', nodeName: 'DeepProp', semanticName: 'deep_prop', depth: 3 },
+  ]
+
+  function setupStatics(
+    onConfirm?: (plan: SegmentCollectionPlan) => string | null,
+    statics: typeof STATICS = STATICS,
+  ) {
+    const confirm = onConfirm ?? (() => null)
+    const spy = vi.fn(confirm)
+    render(
+      <TimeSegmentToCollectionModal
+        parentNodeId="parent"
+        parentName="Rig"
+        slideDuration={10}
+        existingClipNames={[]}
+        entries={ENTRIES}
+        clips={[]}
+        staticNodes={statics}
+        bakingEvaluator={null}
+        onClose={() => {}}
+        onConfirm={spy}
+      />,
+    )
+    return { spy }
+  }
+
+  it('defaults the slider to the deepest level and counts static objects', async () => {
+    setupStatics()
+    await screen.findByTestId('segment-object-nA')
+    const slider = screen.getByTestId('segment-bake-depth') as HTMLInputElement
+    expect(slider.value).toBe('3')
+    expect(slider.max).toBe('3')
+    expect(screen.getByTestId('segment-bake-extra-count').textContent).toMatch(
+      /\+2 static object\(s\) will get baked clips/,
+    )
+    expect(screen.getByTestId('segment-static-nS')).toBeInTheDocument()
+    expect(screen.getByTestId('segment-static-nD')).toBeInTheDocument()
+  })
+
+  it('includes bake-only objects in the plan and drops them at depth 0', async () => {
+    const { spy } = setupStatics()
+    await screen.findByTestId('segment-object-nA')
+    fireEvent.click(screen.getByTestId('segment-confirm'))
+    const plan = spy.mock.calls[0]![0] as SegmentCollectionPlan
+    // 2 keyframed + 2 baked-only
+    expect(plan.objects).toHaveLength(4)
+    expect(plan.bakeDepth).toBe(3)
+    const baked = plan.objects.filter((o) => o.keyframes.length === 0)
+    expect(baked.map((o) => o.nodeId).sort()).toEqual(['nD', 'nS'])
+    expect(baked[0]!.clips ?? []).toHaveLength(0)
+
+    // depth 0 → only keyframed objects
+    fireEvent.change(screen.getByTestId('segment-bake-depth'), { target: { value: '0' } })
+    expect(screen.getByTestId('segment-bake-extra-count').textContent).toMatch(/Depth 0/)
+    expect(screen.queryByTestId('segment-static-nS')).toBeNull()
+    fireEvent.click(screen.getByTestId('segment-confirm'))
+    const plan2 = spy.mock.calls[1]![0] as SegmentCollectionPlan
+    expect(plan2.objects).toHaveLength(2)
+    expect(plan2.bakeDepth).toBe(0)
+  })
+
+  it('blocks confirm when a static object lacks a semantic name until deselected', async () => {
+    const { spy } = setupStatics(undefined, [
+      { nodeId: 'nS', nodeName: 'Prop', semanticName: undefined, depth: 1 },
+    ])
+    await screen.findByTestId('segment-object-nA')
+    expect(screen.getByTestId('segment-static-missing')).toBeInTheDocument()
+    expect(screen.getByTestId('segment-confirm') as HTMLButtonElement).toBeDisabled()
+    fireEvent.click(screen.getByTestId('segment-static-deselect-missing'))
+    expect(screen.queryByTestId('segment-static-missing')).toBeNull()
+    const btn = screen.getByTestId('segment-confirm') as HTMLButtonElement
+    expect(btn).not.toBeDisabled()
+    fireEvent.click(btn)
+    const plan = spy.mock.calls[0]![0] as SegmentCollectionPlan
+    expect(plan.objects.map((o) => o.nodeId).sort()).toEqual(['nA', 'nB'])
+  })
+
+  it('disables extra baking when both bake boxes are unchecked', async () => {
+    const { spy } = setupStatics()
+    await screen.findByTestId('segment-object-nA')
+    fireEvent.click(screen.getByTestId('segment-bake-start'))
+    expect(screen.getByTestId('segment-bake-depth') as HTMLInputElement).toBeDisabled()
+    expect(screen.getByTestId('segment-bake-extra-count').textContent).toMatch(/Check a Bake box/)
+    fireEvent.click(screen.getByTestId('segment-confirm'))
+    const plan = spy.mock.calls[0]![0] as SegmentCollectionPlan
+    // statics excluded without baking
+    expect(plan.objects.map((o) => o.nodeId).sort()).toEqual(['nA', 'nB'])
+  })
+})
+
 describe('TimeSegmentToCollectionModal master name', () => {
   it('pushes one name to every clip and the collection', async () => {
     const { spy } = setup()
