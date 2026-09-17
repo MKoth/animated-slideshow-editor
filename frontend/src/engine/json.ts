@@ -460,6 +460,9 @@ export type ClipInstanceJSON = {
   readonly enabled: boolean
   readonly paramOverrides?: Readonly<Record<string, number>>
   readonly placementId?: string
+  readonly collectionId?: string
+  readonly collectionTargetId?: string
+  readonly collectionSemantic?: string
 }
 
 export type CollectionPlacementJSON = {

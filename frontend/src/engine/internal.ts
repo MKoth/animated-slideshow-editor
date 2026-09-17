@@ -282,6 +282,12 @@ export class Engine {
       for (const c of collections) {
         this.#clipCollections.importCollection(c)
       }
+      // Migration: collapse legacy duplicates (same rig + name), keeping latest.
+      try {
+        this.deduplicateClipCollections()
+      } catch {
+        void 0
+      }
     }
     const first = project.slides[0]
     this.#activeSlideId = first ? first.id : null
@@ -3451,12 +3457,26 @@ export class Engine {
     return this.#clipCollections.createCollection(name, bindings, sourceNodeId)
   }
 
+  private ensureUniqueCollectionName(sourceNodeId: string | undefined, base: string): string {
+    const trimmed = base.trim() || 'Collection'
+    if (!this.#clipCollections.findByRigAndName(sourceNodeId, trimmed)) return trimmed
+    let counter = 2
+    while (true) {
+      const candidate = `${trimmed} ${counter}`
+      if (!this.#clipCollections.findByRigAndName(sourceNodeId, candidate)) return candidate
+      counter += 1
+    }
+  }
+
   createReversedCollection(
     sourceCollectionId: string,
     newName?: string,
   ): { collection: ClipCollection; clipIdMap: Map<string, string> } {
     const source = this.getClipCollection(sourceCollectionId)
-    const name = newName ?? `${source.name} Reversed`
+    const name =
+      newName !== undefined
+        ? newName
+        : this.ensureUniqueCollectionName(source.sourceNodeId, `${source.name} Reversed`)
     const clipIdMap = new Map<string, string>()
     const newBindings: Record<string, string> = {}
     for (const [semanticName, clipId] of source.bindings) {
@@ -3484,7 +3504,13 @@ export class Engine {
   ): { collection: ClipCollection; clipIdMap: Map<string, string>; skipped: string[] } {
     const source = this.getClipCollection(sourceCollectionId)
     requireMirrorAxis(axis)
-    const name = newName ?? mirrorCollectionDefaultName(source.name, axis)
+    const name =
+      newName !== undefined
+        ? newName
+        : this.ensureUniqueCollectionName(
+            source.sourceNodeId,
+            mirrorCollectionDefaultName(source.name, axis),
+          )
     const clipIdMap = new Map<string, string>()
     const newBindings: Record<string, string> = {}
     const skipped: string[] = []
@@ -3543,11 +3569,17 @@ export class Engine {
         })()
         if (placement) {
           const parent = this.getNode(placement.parentNodeId)
-          // Clear placementId on members (make plain)
+          // Clear placementId on members (make plain) and clear collection provenance
           for (const n of walkPreOrder(parent)) {
             for (const inst of n.clipInstances) {
-              if (inst.placementId === pid)
+              if (inst.placementId === pid) {
                 delete (inst as unknown as Record<string, unknown>).placementId
+                if (inst.collectionId === collectionId) {
+                  delete (inst as unknown as Record<string, unknown>).collectionId
+                  delete (inst as unknown as Record<string, unknown>).collectionTargetId
+                  delete (inst as unknown as Record<string, unknown>).collectionSemantic
+                }
+              }
             }
           }
           // Remove placement
@@ -3556,6 +3588,18 @@ export class Engine {
         }
       } catch {
         void 0
+      }
+    }
+    // Detach Apply provenance: applied instances become manual clips.
+    for (const slide of this.#projects.current?.slides ?? []) {
+      for (const node of walkPreOrder(slide.scene.root)) {
+        for (const inst of node.clipInstances) {
+          if (inst.collectionId === collectionId && !inst.placementId) {
+            delete (inst as unknown as Record<string, unknown>).collectionId
+            delete (inst as unknown as Record<string, unknown>).collectionTargetId
+            delete (inst as unknown as Record<string, unknown>).collectionSemantic
+          }
+        }
       }
     }
     this.#bus.emit({
@@ -3574,6 +3618,296 @@ export class Engine {
       this.getClip(clipId)
     }
     this.#clipCollections.setBindings(collectionId, bindings)
+    // Live definition: existing placements + Apply-provenance instances refresh
+    // to the updated version. Manual clips are never touched.
+    try {
+      this.refreshCollectionApplications(collectionId)
+    } catch {
+      void 0
+    }
+  }
+
+  /**
+   * Refresh every application of a collection to its current bindings.
+   * - Placements: members are rebound in place (clipId swap), preserving
+   *   start/speed/enabled/overrides; removed semantics delete members,
+   *   added semantics create members at placement start.
+   * - Apply provenance: instances with matching collectionId are rebound in
+   *   place; removed semantics delete instances; added semantics broadcast
+   *   to previous Apply targets.
+   */
+  refreshCollectionApplications(collectionId: string): void {
+    const collection = this.getClipCollection(collectionId)
+    const newBindings = collection.getBindingsObject()
+
+    // --- Placements ---
+    const placements: { placement: CollectionPlacement; parentId: string }[] = []
+    for (const slide of this.#projects.current?.slides ?? []) {
+      for (const node of walkPreOrder(slide.scene.root)) {
+        for (const p of node.collectionPlacements) {
+          if (p.collectionId === collectionId)
+            placements.push({ placement: p, parentId: p.parentNodeId })
+        }
+      }
+    }
+    for (const { placement } of placements) {
+      let parent: SceneNode
+      try {
+        parent = this.getNode(placement.parentNodeId)
+      } catch {
+        continue
+      }
+      const descendants = [...walkPreOrder(parent)]
+      const descendantIds = new Set(descendants.map((n) => n.id))
+      const membersByNode = new Map<string, ClipInstance[]>()
+      for (const n of descendants) {
+        for (const inst of n.clipInstances) {
+          if (inst.placementId === placement.id) {
+            const list = membersByNode.get(n.id) ?? []
+            list.push(inst)
+            membersByNode.set(n.id, list)
+          }
+        }
+      }
+      // Remove orphaned members whose node left the subtree.
+      for (const [nodeId, list] of [...membersByNode.entries()]) {
+        if (!descendantIds.has(nodeId)) {
+          for (const inst of list) {
+            try {
+              this.removeClipInstance(nodeId, inst.id)
+            } catch {
+              void 0
+            }
+          }
+          membersByNode.delete(nodeId)
+        }
+      }
+      for (const node of descendants) {
+        const sem = node.semanticName?.trim()
+        if (!sem) continue
+        const newClipId = newBindings[sem]
+        const existing = membersByNode.get(node.id) ?? []
+        if (newClipId) {
+          try {
+            this.getClip(newClipId)
+          } catch {
+            continue
+          }
+          if (existing.length > 0) {
+            const [first, ...extras] = existing
+            if (first!.clipId !== newClipId) first!.clipId = newClipId
+            first!.collectionId = collectionId
+            first!.collectionSemantic = sem
+            first!.collectionTargetId = parent.id
+            for (const extra of extras) {
+              try {
+                this.removeClipInstance(node.id, extra.id)
+              } catch {
+                void 0
+              }
+            }
+          } else {
+            try {
+              this.assignClipInstance(
+                node.id,
+                newClipId,
+                placement.startTime,
+                1,
+                true,
+                {},
+                placement.id,
+                {
+                  collectionId,
+                  targetId: parent.id,
+                  semantic: sem,
+                },
+              )
+            } catch {
+              void 0
+            }
+          }
+        } else {
+          for (const inst of existing) {
+            try {
+              this.removeClipInstance(node.id, inst.id)
+            } catch {
+              void 0
+            }
+          }
+        }
+      }
+    }
+
+    // --- Apply provenance (no placementId) ---
+    const applyByTarget = new Map<string, { nodeId: string; instance: ClipInstance }[]>()
+    const legacy: { nodeId: string; instance: ClipInstance }[] = []
+    for (const slide of this.#projects.current?.slides ?? []) {
+      for (const node of walkPreOrder(slide.scene.root)) {
+        for (const inst of node.clipInstances) {
+          if (inst.collectionId !== collectionId || inst.placementId) continue
+          if (inst.collectionTargetId) {
+            const list = applyByTarget.get(inst.collectionTargetId) ?? []
+            list.push({ nodeId: node.id, instance: inst })
+            applyByTarget.set(inst.collectionTargetId, list)
+          } else {
+            legacy.push({ nodeId: node.id, instance: inst })
+          }
+        }
+      }
+    }
+    // Legacy instances without target: rebind in place, remove when binding gone.
+    for (const { nodeId, instance } of legacy) {
+      let node: SceneNode | null = null
+      try {
+        node = this.getNode(nodeId)
+      } catch {
+        continue
+      }
+      const sem = instance.collectionSemantic ?? node.semanticName?.trim()
+      if (!sem) continue
+      const newClipId = newBindings[sem]
+      if (newClipId) {
+        try {
+          this.getClip(newClipId)
+        } catch {
+          continue
+        }
+        if (instance.clipId !== newClipId) instance.clipId = newClipId
+        instance.collectionSemantic = sem
+      } else {
+        try {
+          this.removeClipInstance(nodeId, instance.id)
+        } catch {
+          void 0
+        }
+      }
+    }
+    // Target-scoped groups: full rebroadcast to previous Apply roots.
+    for (const [targetId, group] of applyByTarget.entries()) {
+      let target: SceneNode
+      try {
+        target = this.getNode(targetId)
+      } catch {
+        continue
+      }
+      const descendants = [...walkPreOrder(target)]
+      const descendantIds = new Set(descendants.map((n) => n.id))
+      // Drop instances whose node left the target subtree.
+      for (const { nodeId, instance } of [...group]) {
+        if (!descendantIds.has(nodeId)) {
+          try {
+            this.removeClipInstance(nodeId, instance.id)
+          } catch {
+            void 0
+          }
+        }
+      }
+      const byNode = new Map<string, ClipInstance[]>()
+      for (const { nodeId, instance } of group) {
+        if (!descendantIds.has(nodeId)) continue
+        // Skip instances already removed above.
+        try {
+          this.getClipInstance(nodeId, instance.id)
+        } catch {
+          continue
+        }
+        const list = byNode.get(nodeId) ?? []
+        list.push(instance)
+        byNode.set(nodeId, list)
+      }
+      for (const node of descendants) {
+        const sem = node.semanticName?.trim()
+        if (!sem) continue
+        const newClipId = newBindings[sem]
+        const existing = byNode.get(node.id) ?? []
+        if (newClipId) {
+          try {
+            this.getClip(newClipId)
+          } catch {
+            continue
+          }
+          if (existing.length > 0) {
+            const [first, ...extras] = existing
+            if (first!.clipId !== newClipId) first!.clipId = newClipId
+            first!.collectionId = collectionId
+            first!.collectionTargetId = targetId
+            first!.collectionSemantic = sem
+            for (const extra of extras) {
+              try {
+                this.removeClipInstance(node.id, extra.id)
+              } catch {
+                void 0
+              }
+            }
+          } else {
+            try {
+              this.assignClipInstance(node.id, newClipId, 0, 1, true, {}, undefined, {
+                collectionId,
+                targetId,
+                semantic: sem,
+              })
+            } catch {
+              void 0
+            }
+          }
+        } else {
+          for (const inst of existing) {
+            try {
+              this.removeClipInstance(node.id, inst.id)
+            } catch {
+              void 0
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Collapse legacy duplicates sharing rig + name, keeping the last definition.
+   * Placements and Apply provenance pointing at removed ids are repointed to
+   * the kept id so existing lanes survive. Returns removed ids.
+   */
+  deduplicateClipCollections(): string[] {
+    const groups = new Map<string, ClipCollection[]>()
+    for (const c of this.#clipCollections.collections) {
+      const rig = c.sourceNodeId ?? '__global__'
+      const k = `${rig}::${c.name.trim().toLowerCase()}`
+      const list = groups.get(k) ?? []
+      list.push(c)
+      groups.set(k, list)
+    }
+    const removed: string[] = []
+    for (const list of groups.values()) {
+      if (list.length < 2) continue
+      const kept = list[list.length - 1]!
+      for (const dup of list.slice(0, -1)) {
+        // Repoint placements.
+        for (const slide of this.#projects.current?.slides ?? []) {
+          for (const node of walkPreOrder(slide.scene.root)) {
+            for (const p of node.collectionPlacements) {
+              if (p.collectionId === dup.id) p.collectionId = kept.id
+            }
+            for (const inst of node.clipInstances) {
+              if (inst.collectionId === dup.id) inst.collectionId = kept.id
+            }
+          }
+        }
+        try {
+          this.#clipCollections.deleteCollection(dup.id)
+          removed.push(dup.id)
+        } catch {
+          void 0
+        }
+      }
+    }
+    for (const id of removed) {
+      this.#bus.emit({
+        type: 'ClipCollectionRemoved',
+        collectionId: id,
+      } as unknown as import('./events').EngineEvent)
+    }
+    return removed
   }
 
   importClipCollection(collection: ClipCollection): void {
@@ -3589,6 +3923,11 @@ export class Engine {
       void 0
     }
     this.#clipCollections.importCollection(collection)
+    try {
+      this.refreshCollectionApplications(collection.id)
+    } catch {
+      void 0
+    }
   }
 
   exportClipCollection(parentNodeId: string, name: string): ClipCollection {
@@ -3635,18 +3974,38 @@ export class Engine {
         `No exportable bindings found in hierarchy rooted at "${parent.name}". Ensure nodes have both a Semantic Name and a clip.`,
       )
     }
-    // Re-exporting the same hierarchy/name updates the existing definition.
-    // Keeping old definitions here makes every edit appear as another option
-    // in the collection pickers and causes object exports to accumulate stale versions.
+    // Re-exporting the same rig/name updates the existing definition in place.
+    // Identity is the collection id; hierarchy/bindings alone never dedupe,
+    // so symmetrical collections with different names are always preserved.
+    const wanted = name.trim()
     const matches = this.#clipCollections.collections.filter(
-      (collection) => collection.sourceNodeId === parentNodeId && collection.name === name,
+      (collection) =>
+        (collection.sourceNodeId ?? '__global__') === (parentNodeId ?? '__global__') &&
+        collection.name.trim().toLowerCase() === wanted.toLowerCase(),
     )
     const collection = matches[matches.length - 1]
-    if (!collection) return this.createClipCollection(name, bindings, parentNodeId)
+    if (!collection) return this.createClipCollection(wanted, bindings, parentNodeId)
 
     this.setClipCollectionBindings(collection.id, bindings)
+    // Collapse any legacy duplicates for this rig+name, repointing their
+    // placements/provenance to the kept (latest) definition.
     for (const duplicate of matches) {
-      if (duplicate.id !== collection.id) this.deleteClipCollection(duplicate.id)
+      if (duplicate.id === collection.id) continue
+      for (const slide of this.#projects.current?.slides ?? []) {
+        for (const node of walkPreOrder(slide.scene.root)) {
+          for (const p of node.collectionPlacements) {
+            if (p.collectionId === duplicate.id) p.collectionId = collection.id
+          }
+          for (const inst of node.clipInstances) {
+            if (inst.collectionId === duplicate.id) inst.collectionId = collection.id
+          }
+        }
+      }
+      try {
+        this.#clipCollections.deleteCollection(duplicate.id)
+      } catch {
+        void 0
+      }
     }
     return this.getClipCollection(collection.id)
   }
@@ -3659,13 +4018,17 @@ export class Engine {
     const target = this.getNode(targetNodeId)
     const created: { nodeId: string; instanceId: string; clipId: string }[] = []
     for (const node of walkPreOrder(target)) {
-      const sem = node.semanticName
+      const sem = node.semanticName?.trim()
       if (!sem) continue
       const clipId = collection.getBinding(sem)
       if (!clipId) continue
       // Validate clip exists
       this.getClip(clipId)
-      const instance = this.assignClipInstance(node.id, clipId, 0, 1, true, {})
+      const instance = this.assignClipInstance(node.id, clipId, 0, 1, true, {}, undefined, {
+        collectionId,
+        targetId: target.id,
+        semantic: sem,
+      })
       created.push({ nodeId: node.id, instanceId: instance.id, clipId })
     }
     this.#bus.emit({
@@ -3859,7 +4222,7 @@ export class Engine {
     const placement = this.createCollectionPlacement(collectionId, parentNodeId, startTime)
     const created: { nodeId: string; instanceId: string; clipId: string }[] = []
     for (const node of walkPreOrder(parent)) {
-      const sem = node.semanticName
+      const sem = node.semanticName?.trim()
       if (!sem) continue
       const clipId = collection.getBinding(sem)
       if (!clipId) continue
@@ -3872,6 +4235,7 @@ export class Engine {
         true,
         {},
         placement.id,
+        { collectionId, targetId: parent.id, semantic: sem },
       )
       created.push({ nodeId: node.id, instanceId: instance.id, clipId })
     }
@@ -4692,6 +5056,14 @@ export class Engine {
           if (typeof oldPlacementId === 'string' && placementIdMap.has(oldPlacementId)) {
             base.placementId = placementIdMap.get(oldPlacementId)
           }
+          const oldCollectionId = base.collectionId as string | undefined
+          if (typeof oldCollectionId === 'string') {
+            base.collectionId = collectionIdMap.get(oldCollectionId) ?? oldCollectionId
+          }
+          const oldTargetId = base.collectionTargetId as string | undefined
+          if (typeof oldTargetId === 'string') {
+            base.collectionTargetId = nodeIdMap.get(oldTargetId) ?? oldTargetId
+          }
           return base
         })
       }
@@ -5406,10 +5778,17 @@ export class Engine {
       for (const clip of clips) {
         this.#clips.importClip(clip)
       }
-      // Restore clip collections
+      // Restore clip collections: preserve every distinct id.
+      // Hierarchy/bindings alone never dedupe; only legacy same-rig + same-name
+      // duplicates collapse (keeping latest).
       const collections = parseClipCollectionsFromLessonJSON(json)
       for (const col of collections) {
         this.#clipCollections.importCollection(col)
+      }
+      try {
+        this.deduplicateClipCollections()
+      } catch {
+        void 0
       }
       // Restore IK chains from JSON
       if (json.ikChains) {
@@ -5497,6 +5876,7 @@ export class Engine {
     enabled: boolean,
     paramOverrides: Record<string, number>,
     placementId?: string,
+    provenance?: import('./clipInstance').CollectionProvenance,
   ): ClipInstance {
     this.getClip(clipId)
     const node = this.getNode(nodeId)
@@ -5507,6 +5887,7 @@ export class Engine {
       enabled,
       paramOverrides,
       placementId,
+      provenance,
     )
     node.clipInstances.push(instance)
     this.#bus.emit({ type: 'ClipInstanceAdded', nodeId, instanceId: instance.id })

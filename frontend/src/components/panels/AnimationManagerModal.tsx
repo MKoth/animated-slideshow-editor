@@ -4126,11 +4126,20 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   }}
                 >
                   <option value="">Select collection…</option>
-                  {engine.clipCollections.map((col) => (
-                    <option key={col.id} value={col.id}>
-                      {col.name} ({col.bindings.size})
-                    </option>
-                  ))}
+                  {engine.clipCollections.map((col) => {
+                    let rigSuffix = ''
+                    try {
+                      if (col.sourceNodeId)
+                        rigSuffix = ` · ${engine.getNode(col.sourceNodeId).name}`
+                    } catch {
+                      rigSuffix = ''
+                    }
+                    return (
+                      <option key={col.id} value={col.id}>
+                        {col.name} ({col.bindings.size}){rigSuffix}
+                      </option>
+                    )
+                  })}
                 </select>
                 <button
                   data-testid="place-collection-button"

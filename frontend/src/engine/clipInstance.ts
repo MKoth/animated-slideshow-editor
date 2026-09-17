@@ -2,14 +2,23 @@ import { newId } from './ids'
 import { isRecord, requireFiniteNumber, requireString } from './guards'
 import type { ClipInstanceJSON } from './json'
 
+export interface CollectionProvenance {
+  readonly collectionId: string
+  readonly targetId?: string
+  readonly semantic?: string
+}
+
 export interface ClipInstance {
   readonly id: string
-  readonly clipId: string
+  clipId: string
   startTime: number
   speed: number
   enabled: boolean
   paramOverrides: Record<string, number>
   placementId?: string
+  collectionId?: string
+  collectionTargetId?: string
+  collectionSemantic?: string
 }
 
 export function createClipInstance(
@@ -19,6 +28,7 @@ export function createClipInstance(
   enabled = true,
   paramOverrides: Record<string, number> = {},
   placementId?: string,
+  provenance?: CollectionProvenance,
 ): ClipInstance {
   return {
     id: newClipInstanceId(),
@@ -28,6 +38,9 @@ export function createClipInstance(
     enabled,
     paramOverrides: { ...paramOverrides },
     ...(placementId ? { placementId } : {}),
+    ...(provenance?.collectionId ? { collectionId: provenance.collectionId } : {}),
+    ...(provenance?.targetId ? { collectionTargetId: provenance.targetId } : {}),
+    ...(provenance?.semantic ? { collectionSemantic: provenance.semantic } : {}),
   }
 }
 
@@ -40,6 +53,9 @@ export function cloneClipInstance(instance: ClipInstance): ClipInstance {
     enabled: instance.enabled,
     paramOverrides: { ...instance.paramOverrides },
     ...(instance.placementId ? { placementId: instance.placementId } : {}),
+    ...(instance.collectionId ? { collectionId: instance.collectionId } : {}),
+    ...(instance.collectionTargetId ? { collectionTargetId: instance.collectionTargetId } : {}),
+    ...(instance.collectionSemantic ? { collectionSemantic: instance.collectionSemantic } : {}),
   }
 }
 
@@ -54,6 +70,9 @@ export function clipInstanceToJSON(instance: ClipInstance): ClipInstanceJSON {
       ? { paramOverrides: { ...instance.paramOverrides } }
       : {}),
     ...(instance.placementId ? { placementId: instance.placementId } : {}),
+    ...(instance.collectionId ? { collectionId: instance.collectionId } : {}),
+    ...(instance.collectionTargetId ? { collectionTargetId: instance.collectionTargetId } : {}),
+    ...(instance.collectionSemantic ? { collectionSemantic: instance.collectionSemantic } : {}),
   }
 }
 
@@ -85,6 +104,21 @@ export function clipInstanceFromJSON(json: unknown): ClipInstance {
     typeof (json as Record<string, unknown>).placementId === 'string'
       ? ((json as Record<string, unknown>).placementId as string)
       : undefined
+  const collectionId =
+    typeof (json as Record<string, unknown>).collectionId === 'string' &&
+    ((json as Record<string, unknown>).collectionId as string).trim() !== ''
+      ? ((json as Record<string, unknown>).collectionId as string)
+      : undefined
+  const collectionTargetId =
+    typeof (json as Record<string, unknown>).collectionTargetId === 'string' &&
+    ((json as Record<string, unknown>).collectionTargetId as string).trim() !== ''
+      ? ((json as Record<string, unknown>).collectionTargetId as string)
+      : undefined
+  const collectionSemantic =
+    typeof (json as Record<string, unknown>).collectionSemantic === 'string' &&
+    ((json as Record<string, unknown>).collectionSemantic as string).trim() !== ''
+      ? ((json as Record<string, unknown>).collectionSemantic as string).trim()
+      : undefined
   return {
     id,
     clipId,
@@ -93,6 +127,9 @@ export function clipInstanceFromJSON(json: unknown): ClipInstance {
     enabled,
     paramOverrides,
     ...(placementId ? { placementId } : {}),
+    ...(collectionId ? { collectionId } : {}),
+    ...(collectionTargetId ? { collectionTargetId } : {}),
+    ...(collectionSemantic ? { collectionSemantic } : {}),
   }
 }
 

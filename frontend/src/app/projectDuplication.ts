@@ -277,6 +277,14 @@ export function duplicateLessonJSON(
             const mapped = placementIdMap.get(inst.placementId as string)
             if (mapped) inst.placementId = mapped
           }
+          if (typeof inst.collectionId === 'string') {
+            const mapped = collectionIdMap.get(inst.collectionId as string)
+            if (mapped) inst.collectionId = mapped
+          }
+          if (typeof inst.collectionTargetId === 'string') {
+            const mapped = nodeIdMap.get(inst.collectionTargetId as string)
+            if (mapped) inst.collectionTargetId = mapped
+          }
         }
       }
       const placements = (node as Record<string, unknown>).collectionPlacements as

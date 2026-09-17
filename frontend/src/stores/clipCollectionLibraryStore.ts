@@ -52,10 +52,14 @@ function collectionToCreateInput(
     if (clipJsons.length > 0) clips = clipJsons
     if (missing.length > 0) {
       // Do not throw — save with available clips and warn; import will still work for available bindings
-      console.warn(`Saving collection "${json.name}" with ${missing.length} missing clip(s): ${missing.join(', ')}`)
-      useNotificationStore.getState().notify(
-        `Saving "${json.name}" with ${missing.length} missing clip(s) — those bindings will not be self-contained. Re-export the hierarchy to fix.`,
+      console.warn(
+        `Saving collection "${json.name}" with ${missing.length} missing clip(s): ${missing.join(', ')}`,
       )
+      useNotificationStore
+        .getState()
+        .notify(
+          `Saving "${json.name}" with ${missing.length} missing clip(s) — those bindings will not be self-contained. Re-export the hierarchy to fix.`,
+        )
     }
   }
   return {
@@ -142,22 +146,19 @@ export const useClipCollectionLibraryStore = create<ClipCollectionLibraryState>(
           result = await clipCollectionsApi.createCollection(input)
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e)
-          const isDuplicate = msg.includes('already exists') || msg.includes('409') || msg.includes('duplicate')
+          const isDuplicate =
+            msg.includes('already exists') || msg.includes('409') || msg.includes('duplicate')
           if (isDuplicate) {
-            try {
-              result = await clipCollectionsApi.updateCollection(input.id, {
-                name: input.name,
-                bindings: input.bindings,
-                source_node_id: input.source_node_id,
-                clips: input.clips,
-              })
-              set((state) => ({
-                definitions: state.definitions.map((d) => (d.id === result.id ? result : d)),
-              }))
-              return result
-            } catch (updateErr) {
-              throw updateErr
-            }
+            result = await clipCollectionsApi.updateCollection(input.id, {
+              name: input.name,
+              bindings: input.bindings,
+              source_node_id: input.source_node_id,
+              clips: input.clips,
+            })
+            set((state) => ({
+              definitions: state.definitions.map((d) => (d.id === result.id ? result : d)),
+            }))
+            return result
           }
           throw e
         }
@@ -224,25 +225,40 @@ export const useClipCollectionLibraryStore = create<ClipCollectionLibraryState>(
             name: (clipJson as { name?: string }).name as string,
             duration: (clipJson as { duration?: number }).duration as number,
             category: ((clipJson as { category?: string }).category as string) ?? null,
-            params: ((clipJson as { params?: unknown[] }).params as import('../api').ClipParamDef[]) ?? [],
-            channels: ((clipJson as { channels?: unknown[] }).channels as import('../api').ClipChannelDefApi[]) ?? [],
+            params:
+              ((clipJson as { params?: unknown[] }).params as import('../api').ClipParamDef[]) ??
+              [],
+            channels:
+              ((clipJson as { channels?: unknown[] })
+                .channels as import('../api').ClipChannelDefApi[]) ?? [],
             channelAnimations:
-              ((clipJson as { channelAnimations?: unknown }).channelAnimations as Record<string, Record<string, unknown>>) ??
-              ((clipJson as { channel_animations?: unknown }).channel_animations as Record<string, Record<string, unknown>>) ??
+              ((clipJson as { channelAnimations?: unknown }).channelAnimations as Record<
+                string,
+                Record<string, unknown>
+              >) ??
+              ((clipJson as { channel_animations?: unknown }).channel_animations as Record<
+                string,
+                Record<string, unknown>
+              >) ??
               null,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           } as unknown as import('../api').ClipLibraryEntry
           const importResult = dispatchRef(new ImportClipCommand({ entry: entryForImport }))
           if (!importResult.ok) {
-            set({ error: `Failed to import embedded clip ${oldId.slice(0, 8)}: ${importResult.error.message}` })
-           return null
+            set({
+              error: `Failed to import embedded clip ${oldId.slice(0, 8)}: ${importResult.error.message}`,
+            })
+            return null
           }
-          const newClipId = (importResult as { ok: true; inverse: { clipId: string } }).inverse.clipId
+          const newClipId = (importResult as { ok: true; inverse: { clipId: string } }).inverse
+            .clipId
           clipIdMap.set(oldId, newClipId)
         } catch (e) {
-          set({ error: `Failed to import embedded clip ${oldId.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}` })
-           return null
+          set({
+            error: `Failed to import embedded clip ${oldId.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`,
+          })
+          return null
         }
       }
       const missingBindings: string[] = []
@@ -259,11 +275,17 @@ export const useClipCollectionLibraryStore = create<ClipCollectionLibraryState>(
         }
       }
       if (Object.keys(newBindings).length === 0) {
-        set({ error: `Collection "${entry.name}" has no importable bindings — all referenced clips missing: ${missingBindings.join(', ')}. Re-export in original project.` })
-         return null
+        set({
+          error: `Collection "${entry.name}" has no importable bindings — all referenced clips missing: ${missingBindings.join(', ')}. Re-export in original project.`,
+        })
+        return null
       }
       if (missingBindings.length > 0) {
-        useNotificationStore.getState().notify(`Importing "${entry.name}" with ${missingBindings.length} missing clip(s) skipped: ${missingBindings.join(', ')}`)
+        useNotificationStore
+          .getState()
+          .notify(
+            `Importing "${entry.name}" with ${missingBindings.length} missing clip(s) skipped: ${missingBindings.join(', ')}`,
+          )
       }
     } else {
       // Legacy entry without embedded clips — try clip library, skip missing with warning
@@ -280,7 +302,8 @@ export const useClipCollectionLibraryStore = create<ClipCollectionLibraryState>(
               missingLegacy.push(`${semantic}→${clipId.slice(0, 8)}`)
               continue
             }
-            const newClipId = (importResult as { ok: true; inverse: { clipId: string } }).inverse.clipId
+            const newClipId = (importResult as { ok: true; inverse: { clipId: string } }).inverse
+              .clipId
             newBindings[semantic] = newClipId
           } catch {
             missingLegacy.push(`${semantic}→${clipId.slice(0, 8)}`)
@@ -289,17 +312,41 @@ export const useClipCollectionLibraryStore = create<ClipCollectionLibraryState>(
       }
       if (Object.keys(newBindings).length === 0) {
         const base = `Collection "${entry.name}" has no importable clips — all ${Object.keys(entry.bindings).length} bindings missing.`
-        const hint = ' This is a legacy entry saved before self-contained support. Open the original project, re-export and Save to Library again.'
+        const hint =
+          ' This is a legacy entry saved before self-contained support. Open the original project, re-export and Save to Library again.'
         set({ error: base + hint })
-         return null
+        return null
       }
       if (missingLegacy.length > 0) {
-        useNotificationStore.getState().notify(`Importing legacy "${entry.name}" with ${missingLegacy.length} missing clip(s) skipped: ${missingLegacy.join(', ')}. Re-save self-contained to fix.`)
+        useNotificationStore
+          .getState()
+          .notify(
+            `Importing legacy "${entry.name}" with ${missingLegacy.length} missing clip(s) skipped: ${missingLegacy.join(', ')}. Re-save self-contained to fix.`,
+          )
       }
+    }
+    // Library imports land in the global scope (no sourceNodeId).
+    // Preserve both when a global name collides: uniquify instead of failing.
+    let importName = entry.name.trim() || 'Collection'
+    const hasGlobalName = (candidate: string): boolean => {
+      try {
+        return engine.clipCollections.some(
+          (c) =>
+            (c.sourceNodeId ?? '__global__') === '__global__' &&
+            c.name.trim().toLowerCase() === candidate.trim().toLowerCase(),
+        )
+      } catch {
+        return false
+      }
+    }
+    if (hasGlobalName(importName)) {
+      let counter = 2
+      while (hasGlobalName(`${entry.name.trim()} ${counter}`)) counter += 1
+      importName = `${entry.name.trim()} ${counter}`
     }
     const result = dispatchRef(
       new CreateClipCollectionCommand({
-        name: entry.name,
+        name: importName,
         bindings: newBindings,
         // The source node belongs to the project that created the library
         // entry. It cannot be reused as a node reference in this project.
