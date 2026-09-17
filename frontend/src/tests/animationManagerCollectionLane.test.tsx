@@ -624,4 +624,60 @@ describe('Animation Manager – Refresh collections (delete + reapply)', () => {
     )) as HTMLButtonElement
     expect(refreshBtn.disabled).toBe(true)
   })
+
+  it('collection lane move converts pointer pixels with the rendered lane scale, not timeline zoom', async () => {
+    const engine = createEngineInternal()
+    const undo = new UndoStack()
+    engine.createProject({ name: 'P' })
+    const slide = engine.createSlide('S1')
+    const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent')
+    const child = engine.createNode(slide.scene.id, parent.id, 'Hand')
+    engine.setSemanticName(child.id, 'hand')
+    const dispatcher = new CommandDispatcher(engine, undo, () => undefined)
+    const clipId = (
+      dispatcher.dispatch(
+        new CreateClipCommand({
+          name: 'C1',
+          duration: 10,
+          category: '',
+          params: [],
+          channels: [{ property: 'positionX' }],
+        }),
+      ) as any
+    ).inverse.clipId as string
+    const col = engine.createClipCollection('Col', { hand: clipId }, parent.id)
+    const placeRes = dispatcher.dispatch(
+      new PlaceCollectionCommand({ collectionId: col.id, parentNodeId: parent.id, startTime: 0 }),
+    ) as any
+    const placementId = placeRes.inverse.placementId as string
+
+    renderManager(engine, undo, parent.id)
+    const modal = await screen.findByTestId('animation-manager-modal')
+    const section = await within(modal).findByTestId('collection-lanes-section')
+    const lane = await within(section).findByTestId(`collection-lane-${placementId}`)
+    // Lane renders 500px for a 10s slide => 50 px/s, while timeline zoom pps is 100
+    const laneEl = lane.parentElement as HTMLElement
+    laneEl.getBoundingClientRect = () =>
+      ({
+        width: 500,
+        height: 100,
+        top: 0,
+        left: 0,
+        right: 500,
+        bottom: 100,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect
+
+    fireEvent.pointerDown(lane, { button: 0, clientX: 100, clientY: 10 })
+    fireEvent.pointerMove(window, { clientX: 200, clientY: 10 })
+    fireEvent.pointerUp(window)
+
+    // 100px at 50 px/s = +2s (would be +1s if the zoom pps were used)
+    expect(engine.getCollectionPlacement(placementId).startTime).toBeCloseTo(2, 5)
+    for (const m of engine.getPlacementMembers(placementId)) {
+      expect(engine.getClipInstance(m.nodeId, m.instance.id).startTime).toBeCloseTo(2, 5)
+    }
+  })
 })

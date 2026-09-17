@@ -195,6 +195,7 @@ describe('Animation Manager shell – 15-01', () => {
     renderManager(engine, undo, parent.id)
     const modal = await screen.findByTestId('animation-manager-modal')
     expect(modal).toBeInTheDocument()
+    fireEvent.click(within(modal).getByTestId('manager-tab-clips'))
     // Should contain ChildA and Nested, not ChildC
     expect(within(modal).getByTestId(`manager-row-${childA.id}`)).toBeInTheDocument()
     expect(within(modal).getByTestId(`manager-row-${childB.id}`)).toBeInTheDocument()
@@ -293,6 +294,7 @@ describe('Animation Manager shell – 15-01', () => {
     // Now create a parent that contains camera as child (root) – to test camera filtered, we open manager on root
     renderManager(engine, undo, slide.scene.root.id)
     const modal = await screen.findByTestId('animation-manager-modal')
+    fireEvent.click(within(modal).getByTestId('manager-tab-clips'))
     // Check presence of each param kind
     expect(within(modal).getByTestId(`manager-param-${tNode.id}-positionX`)).toBeInTheDocument()
     expect(within(modal).getByTestId(`manager-param-${vNode.id}-visible`)).toBeInTheDocument()
@@ -327,6 +329,7 @@ describe('Animation Manager shell – 15-01', () => {
     const user = userEvent.setup()
     renderManager(engine, undo, parent.id)
     const modal = await screen.findByTestId('animation-manager-modal')
+    fireEvent.click(within(modal).getByTestId('manager-tab-clips'))
     const toggle = within(modal).getByTestId(`manager-toggle-${child.id}`)
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
     // params visible
@@ -359,7 +362,11 @@ describe('Animation Manager shell – 15-01', () => {
     const user = userEvent.setup()
     renderManager(engine, undo, parent.id)
     const modal = await screen.findByTestId('animation-manager-modal')
-    // default tab is clips – no diamonds
+    // default tab is collections – no diamonds
+    expect(within(modal).getByTestId('manager-tab-collections')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
     expect(within(modal).queryByTestId(`orphan-diamond-${kfId}`)).not.toBeInTheDocument()
     // switch to orphans
     await user.click(within(modal).getByTestId('manager-tab-orphans'))
@@ -446,5 +453,55 @@ describe('Animation Manager shell – 15-01', () => {
     expect(modal).toBeInTheDocument()
     // big modal style checks: minWidth 760 via inline style
     expect(modal.style.minWidth).toBe('760px')
+  })
+})
+
+describe('Animation Manager lane drag – 15-02', () => {
+  it('converts pointer pixels with the rendered lane scale, not the timeline zoom pps', async () => {
+    const engine = createEngineInternal()
+    const undo = new UndoStack()
+    engine.createProject({ name: 'Demo' })
+    const slide = engine.createSlide('Slide 1')
+    const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent')
+    const child = engine.createNode(slide.scene.id, parent.id, 'Child')
+    const dispatcher = new CommandDispatcher(engine, undo, () => undefined)
+    const clipRes = dispatcher.dispatch(
+      new CreateClipCommand({
+        name: 'ClipA',
+        duration: 10,
+        category: '',
+        params: [],
+        channels: [{ property: 'positionX' }],
+      }),
+    )
+    const clipId = (clipRes as { ok: true; inverse: { clipId: string } }).inverse.clipId
+    dispatcher.dispatch(new AssignClipCommand({ nodeId: child.id, clipId }))
+    const instanceId = engine.getNode(child.id).clipInstances[0]!.id
+
+    renderManager(engine, undo, parent.id)
+    const modal = await screen.findByTestId('animation-manager-modal')
+    fireEvent.click(within(modal).getByTestId('manager-tab-clips'))
+    const lane = within(modal).getByTestId(`clip-lane-${child.id}-${instanceId}`)
+    // Lane renders 500px for a 10s slide => 50 px/s, while timeline zoom pps is 100
+    const laneEl = lane.parentElement as HTMLElement
+    laneEl.getBoundingClientRect = () =>
+      ({
+        width: 500,
+        height: 100,
+        top: 0,
+        left: 0,
+        right: 500,
+        bottom: 100,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect
+
+    fireEvent.pointerDown(lane, { button: 0, clientX: 100, clientY: 10 })
+    fireEvent.pointerMove(window, { clientX: 200, clientY: 10 })
+    fireEvent.pointerUp(window)
+
+    // 100px at 50 px/s = +2s (would be +1s if the zoom pps were used)
+    expect(engine.getClipInstance(child.id, instanceId).startTime).toBeCloseTo(2, 5)
   })
 })

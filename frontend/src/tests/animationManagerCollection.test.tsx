@@ -101,8 +101,13 @@ describe('Animation Manager 15-05 – Clip Collection grouping', () => {
     const user = userEvent.setup()
     renderManager(engine, undo, parent.id)
     const modal = await screen.findByTestId('animation-manager-modal')
-    // Should be on Clips tab default
-    expect(await screen.findByTestId('manager-tab-clips')).toHaveAttribute('aria-selected', 'true')
+    // Should be on Collections tab default
+    expect(await screen.findByTestId('manager-tab-collections')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    // Switch to Clips tab to reach per-object lanes
+    fireEvent.click(within(modal).getByTestId('manager-tab-clips'))
     // Find lanes
     const lane1 = within(modal).getByTestId(`clip-lane-${child1.id}-${child1.clipInstances[0]!.id}`)
     const lane2 = within(modal).getByTestId(`clip-lane-${child2.id}-${child2.clipInstances[0]!.id}`)
@@ -177,6 +182,7 @@ describe('Animation Manager 15-05 – Clip Collection grouping', () => {
     const user = userEvent.setup()
     renderManager(engine, undo, parent.id)
     const modal = await screen.findByTestId('animation-manager-modal')
+    fireEvent.click(within(modal).getByTestId('manager-tab-clips'))
     const laneA = within(modal).getByTestId(`clip-lane-${childA.id}-${childA.clipInstances[0]!.id}`)
     const laneB = within(modal).getByTestId(`clip-lane-${childB.id}-${childB.clipInstances[0]!.id}`)
     // First collection: select both
@@ -239,6 +245,7 @@ describe('Animation Manager 15-05 – Clip Collection grouping', () => {
     expect(orphanBanner).toBeInTheDocument()
     expect(orphanBanner).toHaveTextContent('orphan')
     // Clip lane should be visible but Create should be blocked
+    fireEvent.click(within(modal).getByTestId('manager-tab-clips'))
     const lane = within(modal).getByTestId(`clip-lane-${child.id}-${child.clipInstances[0]!.id}`)
     fireEvent.click(lane, { ctrlKey: true })
     const createBtn = within(modal).getByTestId('manager-create-collection')
@@ -276,6 +283,7 @@ describe('Animation Manager 15-05 – Clip Collection grouping', () => {
     dispatcher.dispatch(new AssignClipCommand({ nodeId: childNoSem.id, clipId }))
     renderManager(engine, undo, parent.id)
     const modal = await screen.findByTestId('animation-manager-modal')
+    fireEvent.click(within(modal).getByTestId('manager-tab-clips'))
     const lane = within(modal).getByTestId(
       `clip-lane-${childNoSem.id}-${childNoSem.clipInstances[0]!.id}`,
     )
@@ -356,6 +364,7 @@ describe('Animation Manager 15-05 – Clip Collection grouping', () => {
     dispatcher.dispatch(new AssignClipCommand({ nodeId: child3.id, clipId: clip3 }))
     renderManager(engine, undo, parent.id)
     const modal = await screen.findByTestId('animation-manager-modal')
+    fireEvent.click(within(modal).getByTestId('manager-tab-clips'))
     const lane1 = within(modal).getByTestId(`clip-lane-${child1.id}-${child1.clipInstances[0]!.id}`)
     const lane2 = within(modal).getByTestId(`clip-lane-${child2.id}-${child2.clipInstances[0]!.id}`)
     const user = userEvent.setup()
@@ -489,6 +498,7 @@ describe('Animation Manager 15-05 – Clip Collection grouping', () => {
     // Now targetChild has clip instance same clipId
     renderManager(engine, undo, parent.id)
     const modal = await screen.findByTestId('animation-manager-modal')
+    fireEvent.click(within(modal).getByTestId('manager-tab-clips'))
     const lane = within(modal).getByTestId(`clip-lane-${child.id}-${child.clipInstances[0]!.id}`)
     fireEvent.click(lane, { ctrlKey: true })
     const user = userEvent.setup()

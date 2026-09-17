@@ -141,6 +141,8 @@ type DragState =
       previewStart: number
       previewSpeed: number
       previewVisual: number
+      /** Measured px-per-second of the rendered lane; bars are fit-to-width, not zoom-based */
+      effectivePps?: number
     }
   | {
       mode: 'resize-right'
@@ -156,6 +158,8 @@ type DragState =
       previewStart: number
       previewSpeed: number
       previewVisual: number
+      /** Measured px-per-second of the rendered lane; bars are fit-to-width, not zoom-based */
+      effectivePps?: number
     }
   | {
       mode: 'resize-left'
@@ -171,6 +175,8 @@ type DragState =
       previewStart: number
       previewSpeed: number
       previewVisual: number
+      /** Measured px-per-second of the rendered lane; bars are fit-to-width, not zoom-based */
+      effectivePps?: number
     }
   | {
       mode: 'collection-move'
@@ -184,6 +190,8 @@ type DragState =
       startY: number
       initialIndex: number
       previewIndex: number
+      /** Measured px-per-second of the rendered lane; bars are fit-to-width, not zoom-based */
+      effectivePps?: number
     }
   | {
       mode: 'collection-resize-right'
@@ -195,6 +203,8 @@ type DragState =
       startX: number
       previewVisual: number
       previewStart: number
+      /** Measured px-per-second of the rendered lane; bars are fit-to-width, not zoom-based */
+      effectivePps?: number
     }
   | {
       mode: 'collection-resize-left'
@@ -207,6 +217,8 @@ type DragState =
       startX: number
       previewVisual: number
       previewStart: number
+      /** Measured px-per-second of the rendered lane; bars are fit-to-width, not zoom-based */
+      effectivePps?: number
     }
   | {
       mode: 'clip-reorder'
@@ -309,6 +321,19 @@ function deletedPlacementMessage(removedLanes: number): string {
     : 'Deleted collection placement'
 }
 
+/**
+ * Bar positions in the manager lanes are percentages of the slide duration, so the
+ * on-screen px-per-second is laneWidth / duration – independent of the timeline zoom.
+ * Drag math must convert pixels with that scale or the bar drifts from the pointer.
+ * Returns undefined when the layout is unmeasurable (jsdom/tests), so callers fall
+ * back to the zoom pps.
+ */
+function laneEffectivePps(laneEl: HTMLElement | null, durationSec: number): number | undefined {
+  if (!laneEl || !(durationSec > 0)) return undefined
+  const width = laneEl.getBoundingClientRect().width
+  return width > 1 ? width / durationSec : undefined
+}
+
 function paramToTarget(param: AnimatedParam, nodeId: string): KeyframeTarget {
   if (param.kind === 'property') return { kind: 'node', nodeId, property: param.key as never }
   if (param.kind === 'visible') return { kind: 'visible', nodeId }
@@ -334,7 +359,7 @@ export interface OrphanEntry {
 export function AnimationManagerModal({ open, parentNodeId, onClose }: AnimationManagerModalProps) {
   const { engine, dispatch, undoStack } = useEngine()
   const [tick, setTick] = useState(0)
-  const [activeTab, setActiveTab] = useState<ManagerTab>('clips')
+  const [activeTab, setActiveTab] = useState<ManagerTab>('collections')
   const [controlValues, setControlValues] = useState<Record<string, number>>({})
   const [expandedMap, setExpandedMap] = useState<Record<string, boolean>>({})
   const [editing, setEditing] = useState<{
@@ -489,7 +514,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   // Reset tab and expanded when opening parent changes
   useEffect(() => {
     if (open) {
-      setActiveTab('clips')
+      setActiveTab('collections')
       setControlValues({})
       setExpandedMap({})
       setEditing(null)
@@ -2518,15 +2543,17 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     const onPointerMove = (e: PointerEvent) => {
       const deltaPx = e.clientX - dragState.startX
       if (dragState.mode === 'move') {
-        const raw = dragState.initialStart + deltaPx / pps
+        const movePps = dragState.effectivePps ?? pps
+        const raw = dragState.initialStart + deltaPx / movePps
         const clampedRaw = Math.max(0, raw)
         const snapped = gridSnapEnabled
-          ? snapStartTime(clampedRaw, pps, true, snapCandidateTimes)
+          ? snapStartTime(clampedRaw, movePps, true, snapCandidateTimes)
           : clampedRaw
         setDragState((prev) => (prev ? ({ ...prev, previewStart: snapped } as DragState) : prev))
       } else if (dragState.mode === 'resize-right') {
-        const newWidthPx = dragState.initialVisual * pps + deltaPx
-        let newVisual = newWidthPx / pps
+        const resizePps = dragState.effectivePps ?? pps
+        const newWidthPx = dragState.initialVisual * resizePps + deltaPx
+        let newVisual = newWidthPx / resizePps
         if (newVisual < MIN_VISUAL_DURATION) newVisual = MIN_VISUAL_DURATION
         const newSpeed = clampedSpeedForVisual(dragState.clipDuration, newVisual)
         // Recompute visual to reflect speed clamp (in case speed hit MIN)
@@ -2543,7 +2570,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             : prev,
         )
       } else if (dragState.mode === 'resize-left') {
-        const deltaSec = deltaPx / pps
+        const resizePps = dragState.effectivePps ?? pps
+        const deltaSec = deltaPx / resizePps
         const rawStart = dragState.initialStart + deltaSec
         const rightEdge = dragState.rightEdge
         let newVisualRaw = rightEdge - rawStart
@@ -2601,15 +2629,17 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           )
           return
         }
-        const raw = dragState.initialStart + deltaPx / pps
+        const movePps = dragState.effectivePps ?? pps
+        const raw = dragState.initialStart + deltaPx / movePps
         const clampedRaw = Math.max(0, raw)
         const snapped = gridSnapEnabled
-          ? snapStartTime(clampedRaw, pps, true, snapCandidateTimes)
+          ? snapStartTime(clampedRaw, movePps, true, snapCandidateTimes)
           : clampedRaw
         setDragState((prev) => (prev ? ({ ...prev, previewStart: snapped } as DragState) : prev))
       } else if (dragState.mode === 'collection-resize-right') {
-        const newWidthPx = dragState.initialVisual * pps + deltaPx
-        let newVisual = newWidthPx / pps
+        const resizePps = dragState.effectivePps ?? pps
+        const newWidthPx = dragState.initialVisual * resizePps + deltaPx
+        let newVisual = newWidthPx / resizePps
         if (newVisual < MIN_VISUAL_DURATION) newVisual = MIN_VISUAL_DURATION
         // Clamp to slide duration
         if (activeSlide)
@@ -2625,7 +2655,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             : prev,
         )
       } else if (dragState.mode === 'collection-resize-left') {
-        const deltaSec = deltaPx / pps
+        const resizePps = dragState.effectivePps ?? pps
+        const deltaSec = deltaPx / resizePps
         const rawStart = dragState.initialStart + deltaSec
         const rightEdge = dragState.rightEdge
         let newVisualRaw = rightEdge - rawStart
@@ -4362,6 +4393,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                             e.preventDefault()
                             e.stopPropagation()
                             setSelectedPlacementId(lane.placement.id)
+                            const effectivePps = laneEffectivePps(
+                              (e.currentTarget as HTMLElement).parentElement?.parentElement ?? null,
+                              activeSlide?.duration ?? 10,
+                            )
                             if (mode === 'collection-resize-right') {
                               setDragState({
                                 mode: 'collection-resize-right',
@@ -4373,6 +4408,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                 startX: e.clientX,
                                 previewVisual: lane.visualDuration,
                                 previewStart: lane.start,
+                                effectivePps,
                               } as DragState)
                             } else {
                               const rightEdge = lane.start + lane.visualDuration
@@ -4387,6 +4423,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                 startX: e.clientX,
                                 previewVisual: lane.visualDuration,
                                 previewStart: lane.start,
+                                effectivePps,
                               } as DragState)
                             }
                           }
@@ -4415,6 +4452,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                               startY,
                               initialIndex: initialIndex === -1 ? lane.track : initialIndex,
                               previewIndex: initialIndex === -1 ? lane.track : initialIndex,
+                              effectivePps: laneEffectivePps(
+                                (e.currentTarget as HTMLElement).parentElement,
+                                activeSlide?.duration ?? 10,
+                              ),
                             } as DragState)
                           }
                           const handleContextMenu = (e: React.MouseEvent) => {
@@ -6871,6 +6912,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                     previewStart: lane.start,
                                     previewSpeed: lane.instance.speed,
                                     previewVisual: lane.visualDuration,
+                                    effectivePps: laneEffectivePps(
+                                      (e.currentTarget as HTMLElement).parentElement
+                                        ?.parentElement ?? null,
+                                      activeSlide?.duration ?? 10,
+                                    ),
                                   } as DragState)
                                 }
                                 const barPointerDown = (e: React.PointerEvent) => {
@@ -6913,6 +6959,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                     previewStart: lane.start,
                                     previewSpeed: lane.instance.speed,
                                     previewVisual: lane.visualDuration,
+                                    effectivePps: laneEffectivePps(
+                                      (e.currentTarget as HTMLElement).parentElement,
+                                      activeSlide?.duration ?? 10,
+                                    ),
                                   } as DragState)
                                 }
                                 const handleContextMenu = (e: React.MouseEvent) => {
