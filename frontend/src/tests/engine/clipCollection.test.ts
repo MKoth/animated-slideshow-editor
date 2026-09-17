@@ -9,6 +9,7 @@ import {
   CreateNodeCommand,
   CreateClipCommand,
   AssignClipCommand,
+  RemoveClipCommand,
   SetSemanticNameCommand,
 } from '../../engine/commands'
 import {
@@ -217,6 +218,59 @@ describe('Hierarchical export', () => {
     expect(engine.clipCollections[0]!.name).toBe('Rig')
   })
 
+  it('re-export updates one collection instead of creating a previous version', () => {
+    const { engine, dispatcher } = setupEngine()
+    const slide = engine.getActiveSlide()!
+    const parent = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'Root',
+        }),
+      ),
+    ).nodeId
+    const child = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: parent, name: 'Hand' }),
+      ),
+    ).nodeId
+    dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: child, semanticName: 'hand' }))
+    const firstClip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'Old', duration: 1, category: '' })),
+    ).clipId
+    const secondClip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'New', duration: 1, category: '' })),
+    ).clipId
+    expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: child, clipId: firstClip })))
+
+    const first = dispatcher.dispatch(
+      new ExportClipCollectionCommand({ parentNodeId: parent, name: 'Rig' }),
+    )
+    expect(first.ok).toBe(true)
+    const firstId = (first as { ok: true; inverse: { collectionId: string } }).inverse.collectionId
+
+    expectOk(
+      dispatcher.dispatch(
+        new RemoveClipCommand({
+          nodeId: child,
+          instanceId: engine.getNode(child).clipInstances[0]!.id,
+        }),
+      ),
+    )
+    expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: child, clipId: secondClip })))
+    const second = dispatcher.dispatch(
+      new ExportClipCollectionCommand({ parentNodeId: parent, name: 'Rig' }),
+    )
+    expect(second.ok).toBe(true)
+    const secondId = (second as { ok: true; inverse: { collectionId: string } }).inverse
+      .collectionId
+
+    expect(secondId).toBe(firstId)
+    expect(engine.clipCollections).toHaveLength(1)
+    expect(engine.getClipCollection(secondId).getBinding('hand')).toBe(secondClip)
+  })
+
   it('blocks export when hierarchy has no clips', () => {
     const { engine, dispatcher: d2 } = setupEngine()
     const s = engine.getActiveSlide()!
@@ -230,7 +284,9 @@ describe('Hierarchical export', () => {
       ),
     ).nodeId
     // No clips assigned — should block
-    const res = d2.dispatch(new ExportClipCollectionCommand({ parentNodeId: parent, name: 'ShouldFail' }))
+    const res = d2.dispatch(
+      new ExportClipCollectionCommand({ parentNodeId: parent, name: 'ShouldFail' }),
+    )
     expect(res.ok).toBe(false)
     if (res.ok) throw new Error('expected export to fail')
     expect(res.error.message).toMatch(/No clips found/)

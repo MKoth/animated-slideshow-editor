@@ -2256,11 +2256,22 @@ export function applyUndo(
       return
     }
     case 'ExportClipCollection': {
-      const collectionId = (inv as Record<string, unknown>).collectionId as string
+      const inverse = inv as Record<string, unknown>
+      const collectionId = inverse.collectionId as string
+      const previousCollections = inverse.previousCollections as readonly unknown[] | undefined
       try {
         engine.deleteClipCollection(collectionId)
       } catch {
         void 0
+      }
+      if (Array.isArray(previousCollections)) {
+        for (const snapshot of previousCollections) {
+          try {
+            engine.restoreClipCollectionFromJSON(snapshot)
+          } catch {
+            void 0
+          }
+        }
       }
       return
     }

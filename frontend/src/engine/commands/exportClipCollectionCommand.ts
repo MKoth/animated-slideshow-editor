@@ -11,6 +11,7 @@ export interface ExportClipCollectionParameters {
 export interface ExportClipCollectionInverse {
   readonly collectionId: string
   readonly snapshot: ClipCollectionJSON
+  readonly previousCollections?: readonly ClipCollectionJSON[]
 }
 
 export class ExportClipCollectionCommand implements Command<ExportClipCollectionInverse> {
@@ -34,9 +35,19 @@ export class ExportClipCollectionCommand implements Command<ExportClipCollection
   }
 
   execute(engine: Engine): ExportClipCollectionInverse {
+    const previousCollections = engine.clipCollections
+      .filter(
+        (collection) =>
+          collection.sourceNodeId === this.#parentNodeId && collection.name === this.#name,
+      )
+      .map((collection) => collection.toJSON())
     const col = engine.exportClipCollection(this.#parentNodeId, this.#name)
     const snapshot = col.toJSON()
-    return { collectionId: col.id, snapshot }
+    return {
+      collectionId: col.id,
+      snapshot,
+      ...(previousCollections.length > 0 ? { previousCollections } : {}),
+    }
   }
 
   toJSON(): Readonly<Record<string, unknown>> {

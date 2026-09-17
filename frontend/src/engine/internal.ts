@@ -3625,7 +3625,20 @@ export class Engine {
         `No exportable bindings found in hierarchy rooted at "${parent.name}". Ensure nodes have both a Semantic Name and a clip.`,
       )
     }
-    return this.createClipCollection(name, bindings, parentNodeId)
+    // Re-exporting the same hierarchy/name updates the existing definition.
+    // Keeping old definitions here makes every edit appear as another option
+    // in the collection pickers and causes object exports to accumulate stale versions.
+    const matches = this.#clipCollections.collections.filter(
+      (collection) => collection.sourceNodeId === parentNodeId && collection.name === name,
+    )
+    const collection = matches[matches.length - 1]
+    if (!collection) return this.createClipCollection(name, bindings, parentNodeId)
+
+    this.setClipCollectionBindings(collection.id, bindings)
+    for (const duplicate of matches) {
+      if (duplicate.id !== collection.id) this.deleteClipCollection(duplicate.id)
+    }
+    return this.getClipCollection(collection.id)
   }
 
   applyClipCollection(
