@@ -28,6 +28,7 @@ import {
   selectedMaterialKeyframeRefs,
   selectedMorphKeyframeRefs,
   selectedZIndexKeyframeRefs,
+  selectedSymmetryKeyframeRefs,
 } from '../../app/keyframeSelectionActions'
 import { selectedClipKeyframeRefs } from '../../app/clipKeyframeActions'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
@@ -273,7 +274,9 @@ export function InspectorPanel({ width }: { width: number }) {
     const propertyRefs = selectedKeyframeRefs(engine)
     const materialRefs = selectedMaterialKeyframeRefs(engine)
     const morphRefs = selectedMorphKeyframeRefs(engine)
-    const totalSelected = propertyRefs.length + materialRefs.length + morphRefs.length
+    const symmetryRefs = selectedSymmetryKeyframeRefs(engine)
+    const totalSelected =
+      propertyRefs.length + materialRefs.length + morphRefs.length + symmetryRefs.length
     if (totalSelected === 1) {
       return (
         <div className="inspector-panel" style={{ width }}>
@@ -315,6 +318,21 @@ export function InspectorPanel({ width }: { width: number }) {
                   <KeyframeInspector
                     dispatch={dispatch}
                     morphNodeId={ref.nodeId}
+                    keyframe={keyframe}
+                    playing={playing}
+                    notify={notify}
+                  />
+                )
+              }
+              if (symmetryRefs.length === 1) {
+                const ref = symmetryRefs[0]
+                const keyframes = engine.getSymmetryKeyframes(ref.nodeId)
+                const keyframe = keyframes.find((kf) => kf.id === ref.keyframeId)
+                if (!keyframe) return null
+                return (
+                  <KeyframeInspector
+                    dispatch={dispatch}
+                    symmetryNodeId={ref.nodeId}
                     keyframe={keyframe}
                     playing={playing}
                     notify={notify}
@@ -735,9 +753,12 @@ export function InspectorPanel({ width }: { width: number }) {
                 Assign Child Z-Index by Render Order
               </button>
               <p style={{ margin: 0, fontSize: 11, opacity: 0.7, lineHeight: 1.3 }}>
-                Sets each direct child’s Z-Index to 0…{targets[0]!.children.length - 1} matching current
-                visual stacking (sorted by evaluated Z-Index at playhead, stable by tree order).
-                {zIndexAutoKey ? ' Creates/updates hold keyframes at playhead.' : ' Static — not keyframed.'}
+                Sets each direct child’s Z-Index to 0…{targets[0]!.children.length - 1} matching
+                current visual stacking (sorted by evaluated Z-Index at playhead, stable by tree
+                order).
+                {zIndexAutoKey
+                  ? ' Creates/updates hold keyframes at playhead.'
+                  : ' Static — not keyframed.'}
               </p>
             </div>
           )}
@@ -897,8 +918,13 @@ export function InspectorPanel({ width }: { width: number }) {
           const materialRefs = selectedMaterialKeyframeRefs(engine)
           const morphRefs = selectedMorphKeyframeRefs(engine)
           const zIndexRefs = selectedZIndexKeyframeRefs(engine)
+          const symmetryRefs = selectedSymmetryKeyframeRefs(engine)
           const totalSelected =
-            propertyRefs.length + materialRefs.length + morphRefs.length + zIndexRefs.length
+            propertyRefs.length +
+            materialRefs.length +
+            morphRefs.length +
+            zIndexRefs.length +
+            symmetryRefs.length
           if (totalSelected !== 1) {
             return null
           }
@@ -944,6 +970,21 @@ export function InspectorPanel({ width }: { width: number }) {
               <KeyframeInspector
                 dispatch={dispatch}
                 zIndexNodeId={ref.nodeId}
+                keyframe={keyframe}
+                playing={playing}
+                notify={notify}
+              />
+            )
+          }
+          if (symmetryRefs.length === 1) {
+            const ref = symmetryRefs[0]
+            const keyframes = engine.getSymmetryKeyframes(ref.nodeId)
+            const keyframe = keyframes.find((kf) => kf.id === ref.keyframeId)
+            if (!keyframe) return null
+            return (
+              <KeyframeInspector
+                dispatch={dispatch}
+                symmetryNodeId={ref.nodeId}
                 keyframe={keyframe}
                 playing={playing}
                 notify={notify}

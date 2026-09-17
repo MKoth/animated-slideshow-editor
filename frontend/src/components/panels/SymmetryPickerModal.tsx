@@ -2,7 +2,8 @@
 import { useEffect, useState } from 'react'
 import type { EnginePublic } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
-import { SetKeyframeValueCommand } from '../../engine/commands'
+import { SetKeyframeValueCommand, SetKeyframeInterpolationCommand } from '../../engine/commands'
+import type { InterpolationType } from '../../engine/keyframe'
 import type { SymmetryKeyframeValue, SymmetryAxis } from '../../engine/symmetry'
 
 interface SymmetryPickerModalProps {
@@ -10,6 +11,7 @@ interface SymmetryPickerModalProps {
   nodeId: string
   keyframeId: string
   value: SymmetryKeyframeValue
+  interpolation: InterpolationType
   engine: EnginePublic
   dispatch: DispatchCommand
   notify: (msg: string) => void
@@ -21,6 +23,7 @@ export function SymmetryPickerModal({
   nodeId,
   keyframeId,
   value,
+  interpolation,
   dispatch,
   notify,
   onClose,
@@ -140,6 +143,39 @@ export function SymmetryPickerModal({
           <div style={{ fontSize: 11, opacity: 0.6 }}>
             Axis: {axis} @ {factor.toFixed(2)}
           </div>
+          <label style={{ fontSize: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            Interpolation
+            <select
+              aria-label="Symmetry interpolation"
+              value={interpolation}
+              onChange={(e) => {
+                const result = dispatch(
+                  new SetKeyframeInterpolationCommand({
+                    target: { kind: 'symmetry', nodeId },
+                    keyframeId,
+                    interpolation: e.target.value as InterpolationType,
+                  }),
+                )
+                if (!result.ok) notify(result.error.message)
+              }}
+              style={{
+                padding: '6px 8px',
+                borderRadius: 4,
+                border: '1px solid var(--color-border)',
+                background: 'var(--color-bg)',
+                color: 'var(--color-text)',
+              }}
+            >
+              <option value="hold">Hold</option>
+              <option value="linear">Linear</option>
+              <option value="bezier">Bezier</option>
+              <optgroup label="Parametric">
+                <option value="bounce">Bounce</option>
+                <option value="elastic">Elastic</option>
+                <option value="spring">Spring</option>
+              </optgroup>
+            </select>
+          </label>
         </div>
         <div
           style={{

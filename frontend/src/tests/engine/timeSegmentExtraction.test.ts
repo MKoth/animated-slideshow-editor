@@ -116,7 +116,7 @@ describe('naming', () => {
 })
 
 describe('target classification', () => {
-  it('stores node/visible/zIndex/morph/circle/shadow, skips the rest', () => {
+  it('stores node/visible/zIndex/morph/symmetry/circle/shadow, skips the rest', () => {
     expect(isClipStorableTarget(propTarget('n'))).toBe(true)
     expect(isClipStorableTarget({ kind: 'node', nodeId: 'n', parameter: 'tint' })).toBe(true)
     expect(isClipStorableTarget({ kind: 'visible', nodeId: 'n' })).toBe(true)
@@ -124,9 +124,9 @@ describe('target classification', () => {
     expect(isClipStorableTarget({ kind: 'morph', nodeId: 'n' })).toBe(true)
     expect(isClipStorableTarget({ kind: 'circle', nodeId: 'n', property: 'radius' })).toBe(true)
     expect(isClipStorableTarget({ kind: 'shadow', nodeId: 'n', property: 'blur' })).toBe(true)
+    expect(isClipStorableTarget({ kind: 'symmetry', nodeId: 'n' })).toBe(true)
     expect(isClipStorableTarget({ kind: 'table', nodeId: 'n', property: 'padding' })).toBe(false)
     expect(isClipStorableTarget({ kind: 'dataLabel', nodeId: 'n', label: 'L' })).toBe(false)
-    expect(isClipStorableTarget({ kind: 'symmetry', nodeId: 'n' })).toBe(false)
   })
   it('deleteGroupKey matches one DeleteKeyframesCommand per track', () => {
     expect(deleteGroupKey(propTarget('n'))).toBe('node:n:positionX')
@@ -836,6 +836,7 @@ describe('baking endpoints', () => {
       evaluateCircle: () => null,
       evaluateTable: () => null,
       evaluateShadow: () => null,
+      evaluateSymmetry: () => null,
     }
     const bounds = { selStart: 1, selEnd: 4, selDuration: 3, clipDuration: 3 }
     const selected = [makeExtractable({ kind: 'node', nodeId: 'n1', property: 'positionX' }, 2, 10)]
@@ -925,6 +926,83 @@ describe('baking endpoints', () => {
     const clip = engine.clips[0]!
     const baked = clip.getChannelKeyframes('positionY')
     expect(baked.map((k) => k.time)).toEqual([0, 1])
+  })
+
+  it('extracts symmetry keyframes into the clip', () => {
+    const { engine, dispatcher } = setupEngine()
+    const slide = engine.getActiveSlide()!
+    const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'Mesh')
+    engine.addKeyframe({ kind: 'symmetry', nodeId: node.id }, 2, {
+      axis: 'x',
+      factor: 0,
+    } as never)
+    engine.addKeyframe({ kind: 'symmetry', nodeId: node.id }, 3, {
+      axis: 'x',
+      factor: 1,
+    } as never)
+    const kfs = engine.getKeyframesOf({ kind: 'symmetry', nodeId: node.id }).map((kf) => ({
+      target: { kind: 'symmetry', nodeId: node.id } as KeyframeTarget,
+      time: kf.time,
+      value: kf.value,
+      interpolation: kf.interpolation,
+      tangentIn: kf.tangentIn,
+      tangentOut: kf.tangentOut,
+      keyframeId: kf.id,
+    }))
+    const res = dispatcher.dispatch(
+      new ExtractToClipCommand({
+        keyframes: kfs,
+        name: 'SymClip',
+        duration: 3,
+        category: 'c',
+        rangeStart: 1,
+        rangeEnd: 4,
+      }),
+    )
+    expect(res.ok).toBe(true)
+    const clip = engine.clips[0]!
+    const sym = clip.getSymmetryKeyframes()
+    expect(sym).toHaveLength(2)
+    expect(sym.map((k) => k.time)).toEqual([1 / 3, 2 / 3])
+    expect((sym[1]!.value as unknown as { factor: number }).factor).toBe(1)
+  })
+
+  it('bakes symmetry at the anchor when the channel is missing', () => {
+    const { engine, dispatcher } = setupEngine()
+    const slide = engine.getActiveSlide()!
+    const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'Mesh')
+    engine.addKeyframe({ kind: 'symmetry', nodeId: node.id }, 4, {
+      axis: 'y',
+      factor: 0.5,
+    } as never)
+    engine.addKeyframe(propTarget(node.id), 2, 10)
+    engine.addKeyframe(propTarget(node.id), 3, 20)
+    const kfs = engine.getKeyframes(node.id, 'positionX').map((kf) => ({
+      target: propTarget(node.id),
+      time: kf.time,
+      value: kf.value,
+      interpolation: kf.interpolation,
+      tangentIn: kf.tangentIn,
+      tangentOut: kf.tangentOut,
+      keyframeId: kf.id,
+    }))
+    const res = dispatcher.dispatch(
+      new ExtractToClipCommand({
+        keyframes: kfs,
+        name: 'SymBaked',
+        duration: 3,
+        category: 'c',
+        rangeStart: 1,
+        rangeEnd: 4,
+        bakeStartingPose: true,
+      }),
+    )
+    expect(res.ok).toBe(true)
+    const clip = engine.clips[0]!
+    const sym = clip.getSymmetryKeyframes()
+    expect(sym).toHaveLength(1)
+    expect(sym[0]!.time).toBeCloseTo(0)
+    expect((sym[0]!.value as unknown as { axis: string }).axis).toBe('y')
   })
 
   it('segment executor passes bake flags through in one undo step', () => {
@@ -1140,6 +1218,7 @@ describe('baking endpoints', () => {
         evaluateCircle: (id: string, time: number) => engine.evaluateCircle(id, time),
         evaluateTable: (id: string, time: number) => engine.evaluateTable(id, time),
         evaluateShadow: (id: string, time: number) => engine.evaluateShadow(id, time),
+        evaluateSymmetry: (id: string, time: number) => engine.evaluateSymmetry(id, time),
       }
       const bounds = { selStart: 1, selEnd: 4, selDuration: 3, clipDuration: 3 }
       const out = collectBakingKeyframesForNode(bounds, node.id, evaluator, 'start')
@@ -1155,6 +1234,7 @@ describe('baking endpoints', () => {
         evaluateCircle: (id: string, time: number) => engine.evaluateCircle(id, time),
         evaluateTable: (id: string, time: number) => engine.evaluateTable(id, time),
         evaluateShadow: (id: string, time: number) => engine.evaluateShadow(id, time),
+        evaluateSymmetry: (id: string, time: number) => engine.evaluateSymmetry(id, time),
       }
       const bounds = { selStart: 1, selEnd: 4, selDuration: 3, clipDuration: 3 }
       expect(collectBakingKeyframesForNode(bounds, 'missing', evaluator, 'start')).toEqual([])

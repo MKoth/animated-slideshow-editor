@@ -3,6 +3,7 @@ import { ANIMATABLE_PROPERTIES, CIRCLE_ANIMATABLE_PROPERTIES } from './animation
 import type { Keyframe, KeyframeTangent, InterpolationType, KeyframeValue } from './keyframe'
 import { Keyframe as KeyframeModel, newKeyframeId, ZERO_TANGENT } from './keyframe'
 import type { KeyframeTarget } from './keyframeTarget'
+import { requireSymmetryKeyframeValue } from './symmetry'
 import { SHADOW_PROPERTIES } from './shadowEffect'
 import type { ShadowProperty } from './shadowEffect'
 import type { SceneNode } from './sceneNode'
@@ -149,6 +150,9 @@ export function normalizeExtractable(
       throw new Error(`Morph keyframe value must be number or object`)
     }
   }
+  if (kf.target.kind === 'symmetry') {
+    requireSymmetryKeyframeValue(kf.value, 'Clip symmetry keyframe value')
+  }
   if (isShadowTarget(kf.target)) {
     const prop = (kf.target as { property: string }).property
     const v = normalizedValue
@@ -227,6 +231,7 @@ export type NormalizedChannelKey =
   | { kind: 'dataLabel'; label: string }
   | { kind: 'table'; property: import('./animationProperties').TableAnimationProperty }
   | { kind: 'morph' }
+  | { kind: 'symmetry' }
   | { kind: 'shadow'; property: import('./shadowEffect').ShadowProperty }
 
 export function channelKeyOf(target: KeyframeTarget): string {
@@ -249,6 +254,9 @@ export function channelKeyOf(target: KeyframeTarget): string {
   }
   if (target.kind === 'morph') {
     return `morph`
+  }
+  if (target.kind === 'symmetry') {
+    return `symmetry`
   }
   if (target.kind === 'circle') {
     return `circle:${target.property}`
@@ -302,6 +310,7 @@ export interface ClipTimeSource {
   getVisibleKeyframes(): readonly { time: number }[]
   getZIndexKeyframes(): readonly { time: number }[]
   getMorphKeyframes(): readonly { time: number }[]
+  getSymmetryKeyframes(): readonly { time: number }[]
   getCircleKeyframes(property: CircleAnimationProperty): readonly { time: number }[]
   getMaterialChannelKeyframes(parameter: string): readonly { time: number }[]
 }
@@ -328,6 +337,8 @@ export function collectExistingTimesForGroups(
       existing = clip.getZIndexKeyframes().map((k) => k.time)
     } else if (nkTarget.kind === 'morph') {
       existing = clip.getMorphKeyframes().map((k) => k.time)
+    } else if (nkTarget.kind === 'symmetry') {
+      existing = clip.getSymmetryKeyframes().map((k) => k.time)
     } else if (nkTarget.kind === 'circle') {
       existing = clip.getCircleKeyframes(nkTarget.property).map((k) => k.time)
     } else if (nkTarget.kind === 'node' && 'parameter' in nkTarget) {
@@ -454,6 +465,7 @@ export interface BakingEvaluator {
   ): { radius: number; startAngle: number; endAngle: number; segments: number } | null
   evaluateTable(nodeId: string, time: number): { borderRadius: number; padding: number } | null
   evaluateShadow(nodeId: string, time: number): import('./shadowEffect').ShadowEffect | null
+  evaluateSymmetry(nodeId: string, time: number): import('./symmetry').SymmetryKeyframeValue | null
 }
 
 /**
@@ -637,6 +649,30 @@ function collectNodeBaking(
             val,
           )
         }
+      }
+    }
+  }
+
+  // Symmetry — bake evaluated { axis, factor } so mesh symmetrize holds over the clip
+  {
+    const key = `symmetry`
+    if (!existingKeys.has(key)) {
+      try {
+        const sym = evaluator.evaluateSymmetry(nodeId, anchor)
+        if (sym && typeof sym.factor === 'number' && Number.isFinite(sym.factor)) {
+          const axis = sym.axis === 'y' ? 'y' : 'x'
+          const factor = Math.min(Math.max(sym.factor, 0), 1)
+          tryPush(
+            key,
+            { kind: 'symmetry', nodeId } as unknown as KeyframeTarget,
+            {
+              axis,
+              factor,
+            } as unknown as KeyframeValue,
+          )
+        }
+      } catch {
+        // ignore baking failure for symmetry
       }
     }
   }

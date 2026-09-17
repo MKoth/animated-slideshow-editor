@@ -1,7 +1,9 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect } from 'vitest'
 import { createEngineInternal } from '../../engine/internal'
 import { SymmetrizeSubtreeCommand } from '../../engine/commands/symmetrizeSubtreeCommand'
 import { applyUVTransformToSingle } from '../../engine/uvTransform'
+import { Keyframe, newKeyframeId } from '../../engine/keyframe'
 
 function setup() {
   const engine: any = createEngineInternal()
@@ -43,8 +45,12 @@ describe('Symmetry', () => {
     const shape = engine.createShape(child.id, 'ShapeA')
     // move shape vertex to be asymmetric
     engine.setShapeVertex(child.id, shape.id, 1, 20, 0) // make shape vertex different
-    const originalChildVerts = engine.getNode(child.id).components.mesh!.mesh.vertices.map((v: any) => ({ ...v }))
-    const originalChildUVs = engine.getNode(child.id).components.mesh!.mesh.uvs.map((uv: any) => ({ ...uv }))
+    const originalChildVerts = engine
+      .getNode(child.id)
+      .components.mesh!.mesh.vertices.map((v: any) => ({ ...v }))
+    const originalChildUVs = engine
+      .getNode(child.id)
+      .components.mesh!.mesh.uvs.map((uv: any) => ({ ...uv }))
     const originalParentX = parent.transform.x
     const originalParentRot = parent.transform.rotation
     const originalChildX = child.transform.x
@@ -198,7 +204,10 @@ describe('Symmetry', () => {
     void parsed
     const slideJson = json.slides[0]!
     expect(slideJson.animation!.nodes[0]!.symmetryTrack).toBeDefined()
-    expect(slideJson.animation!.nodes[0]!.symmetryTrack!.keyframes[0]!.value).toEqual({ axis: 'y', factor: 0.5 })
+    expect(slideJson.animation!.nodes[0]!.symmetryTrack!.keyframes[0]!.value).toEqual({
+      axis: 'y',
+      factor: 0.5,
+    })
   })
 
   it('symmetrize keeps mesh UVs attached while mirroring geometry', () => {
@@ -228,7 +237,11 @@ describe('Symmetry', () => {
       materialDefinitionId: mat.materialDefinitionId,
       overrides: { ...mat.overrides },
       textureId: texId,
-      uvTransform: { uvScale: { u: 2, v: 1 }, uvOffset: { u: 0.1, v: 0 }, fitMode: 'stretch' as const },
+      uvTransform: {
+        uvScale: { u: 2, v: 1 },
+        uvOffset: { u: 0.1, v: 0 },
+        fitMode: 'stretch' as const,
+      },
     }
     engine.emitMaterialChanged(node.id)
     const beforeUV = engine.getNode(node.id).material.uvTransform!
@@ -242,29 +255,87 @@ describe('Symmetry', () => {
     expect(after.material.uvTransform).toEqual(beforeUV)
     expect(after.material.uvTransform!.uvScale.u).toBe(2)
     const beforeFinal = applyUVTransformToSingle({ u: beforeMeshU, v: 0 }, beforeUV)
-    const afterFinal = applyUVTransformToSingle({ u: after.components.mesh!.mesh.uvs[1]!.u, v: 0 }, after.material.uvTransform!)
+    const afterFinal = applyUVTransformToSingle(
+      { u: after.components.mesh!.mesh.uvs[1]!.u, v: 0 },
+      after.material.uvTransform!,
+    )
     expect(afterFinal.u).toBeCloseTo(beforeFinal.u)
   })
 
   it('symmetrize flips imported texture instances on the selected axis', () => {
     const { engine, slide } = setup()
     const definition = engine.defineAsset('Texture')
-    const node = engine.createAssetInstance(slide.scene.id, slide.scene.root.id, definition.id, 'Texture', {
-      transform: { x: 10, y: 20, rotation: 0.25, scaleX: 2, scaleY: 3 },
-    })
+    const node = engine.createAssetInstance(
+      slide.scene.id,
+      slide.scene.root.id,
+      definition.id,
+      'Texture',
+      {
+        transform: { x: 10, y: 20, rotation: 0.25, scaleX: 2, scaleY: 3 },
+      },
+    )
 
     const xCommand = new SymmetrizeSubtreeCommand({ nodeId: node.id, axis: 'x' })
     xCommand.validate(engine as any)
     xCommand.execute(engine as any)
     expect(node.transform).toMatchObject({ x: -10, y: 20, rotation: -0.25, scaleX: -2, scaleY: 3 })
 
-    const yNode = engine.createAssetInstance(slide.scene.id, slide.scene.root.id, definition.id, 'Texture Y', {
-      transform: { x: 10, y: 20, rotation: 0.25, scaleX: 2, scaleY: 3 },
-    })
+    const yNode = engine.createAssetInstance(
+      slide.scene.id,
+      slide.scene.root.id,
+      definition.id,
+      'Texture Y',
+      {
+        transform: { x: 10, y: 20, rotation: 0.25, scaleX: 2, scaleY: 3 },
+      },
+    )
     const yCommand = new SymmetrizeSubtreeCommand({ nodeId: yNode.id, axis: 'y' })
     yCommand.validate(engine as any)
     yCommand.execute(engine as any)
     expect(yNode.transform).toMatchObject({ x: 10, y: -20, rotation: -0.25, scaleX: 2, scaleY: -3 })
+  })
+
+  it('symmetry from a placed timeline clip evaluates (last-wins over base)', () => {
+    const { engine, slide } = setup()
+    engine.setSlideDuration(slide.id, 4)
+    const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'MeshNode', {
+      transform: { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+    })
+    const mesh = {
+      vertices: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 5, y: 10 },
+      ],
+      faces: [{ v0: 0, v1: 1, v2: 2 }],
+      uvs: [
+        { u: 0, v: 0 },
+        { u: 1, v: 0 },
+        { u: 0.5, v: 1 },
+      ],
+    }
+    engine.setMeshData(node.id, mesh as any)
+    // base track: no symmetry
+    engine.addKeyframe({ kind: 'symmetry', nodeId: node.id }, 0, { axis: 'x', factor: 0 })
+    // clip carrying full symmetry
+    const clip = engine.createClip('SymClip', 2, '', [], [])
+    clip.addSymmetryKeyframe(
+      new Keyframe(
+        newKeyframeId(),
+        0,
+        { axis: 'x', factor: 1 } as never,
+        'linear',
+        { time: 0, value: 0 },
+        { time: 0, value: 0 },
+      ),
+    )
+    engine.assignClipInstance(node.id, clip.id, 0, 1, true, {})
+    // inside the instance window the clip wins over base
+    expect(engine.evaluateSymmetry(node.id, 1)).toEqual({ axis: 'x', factor: 1 })
+    const mirrored = engine.evaluateSymmetryVertices(node.id, 1, mesh.vertices as any)
+    expect(mirrored![1]!.x).toBe(-10)
+    // outside the instance window the base track shows through again
+    expect(engine.evaluateSymmetry(node.id, 3)).toEqual({ axis: 'x', factor: 0 })
   })
 
   it('animated symmetrize flips imported texture instances on the selected axis', async () => {
@@ -272,9 +343,15 @@ describe('Symmetry', () => {
     const { engine, slide } = setup()
     engine.setSlideDuration(slide.id, 1)
     const definition = engine.defineAsset('Texture')
-    const node = engine.createAssetInstance(slide.scene.id, slide.scene.root.id, definition.id, 'Texture', {
-      transform: { x: 10, y: 20, rotation: 0, scaleX: 1, scaleY: 1 },
-    })
+    const node = engine.createAssetInstance(
+      slide.scene.id,
+      slide.scene.root.id,
+      definition.id,
+      'Texture',
+      {
+        transform: { x: 10, y: 20, rotation: 0, scaleX: 1, scaleY: 1 },
+      },
+    )
 
     const commands = symmetryKeyframeCommandsForSubtree(engine, node.id, 'y', 0.5)
     for (const command of commands) {

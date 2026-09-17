@@ -140,6 +140,7 @@ export function ClipExtractionModal({
         evaluateCircle: (id: string, time: number) => engine.evaluateCircle(id, time),
         evaluateTable: (id: string, time: number) => engine.evaluateTable(id, time),
         evaluateShadow: (id: string, time: number) => engine.evaluateShadow(id, time),
+        evaluateSymmetry: (id: string, time: number) => engine.evaluateSymmetry(id, time),
       }
       return collectBakingKeyframes(filteredBounds, filteredKeyframes, evaluator).length
     } catch {

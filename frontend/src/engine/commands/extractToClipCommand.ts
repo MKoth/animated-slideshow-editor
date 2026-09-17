@@ -83,6 +83,7 @@ function getBakingEvaluator(engine: EnginePublic): BakingEvaluator {
     evaluateCircle: (nodeId: string, time: number) => engine.evaluateCircle(nodeId, time),
     evaluateTable: (nodeId: string, time: number) => engine.evaluateTable(nodeId, time),
     evaluateShadow: (nodeId: string, time: number) => engine.evaluateShadow(nodeId, time),
+    evaluateSymmetry: (nodeId: string, time: number) => engine.evaluateSymmetry(nodeId, time),
   }
 }
 
@@ -129,6 +130,12 @@ function removeExistingKeyframeAtTime(
     const id = idOf(clip.getMorphKeyframes())
     if (!id) return false
     clip.removeMorphKeyframe(id)
+    return true
+  }
+  if (target.kind === 'symmetry') {
+    const id = idOf(clip.getSymmetryKeyframes())
+    if (!id) return false
+    clip.removeSymmetryKeyframe(id)
     return true
   }
   if (target.kind === 'circle') {
@@ -369,6 +376,14 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
       if (kfs.length > 0)
         map.set(
           `shadow:${prop}`,
+          kfs.map((k) => k.time),
+        )
+    }
+    {
+      const kfs = clip.getSymmetryKeyframes()
+      if (kfs.length > 0)
+        map.set(
+          `symmetry`,
           kfs.map((k) => k.time),
         )
     }
@@ -616,6 +631,13 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
               kf.id,
             )
             engine.emitClipChanged(clip.id)
+          } else if (sample.kind === 'symmetry') {
+            clip.addSymmetryKeyframe(kf)
+            engine.emitKeyframeAdded(
+              { kind: 'symmetry', nodeId: 'clip-' + clip.id } as unknown as KeyframeTarget,
+              kf.id,
+            )
+            engine.emitClipChanged(clip.id)
           } else if (sample.kind === 'circle') {
             clip.addCircleKeyframe(sample.property, kf)
             engine.emitKeyframeAdded(
@@ -754,6 +776,13 @@ export class ExtractToClipCommand implements Command<ExtractToClipInverse> {
             clip.addMorphKeyframe(kf)
             engine.emitKeyframeAdded(
               { kind: 'morph', nodeId: 'clip-' + clip.id } as unknown as KeyframeTarget,
+              kf.id,
+            )
+            engine.emitClipChanged(clip.id)
+          } else if (sample.kind === 'symmetry') {
+            clip.addSymmetryKeyframe(kf)
+            engine.emitKeyframeAdded(
+              { kind: 'symmetry', nodeId: 'clip-' + clip.id } as unknown as KeyframeTarget,
               kf.id,
             )
             engine.emitClipChanged(clip.id)

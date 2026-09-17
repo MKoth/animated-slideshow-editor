@@ -2554,6 +2554,7 @@ export function TimelineBody({
                 nodeId={symmetryPicker.nodeId}
                 keyframeId={symmetryPicker.keyframeId}
                 value={symVal}
+                interpolation={kf.interpolation}
                 engine={engine}
                 dispatch={dispatch}
                 notify={notify}

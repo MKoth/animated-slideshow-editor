@@ -123,6 +123,7 @@ export function isClipStorableTarget(target: KeyframeTarget): boolean {
     target.kind === 'visible' ||
     target.kind === 'zIndex' ||
     target.kind === 'morph' ||
+    target.kind === 'symmetry' ||
     target.kind === 'circle' ||
     target.kind === 'shadow'
   )
@@ -459,6 +460,7 @@ export function executeSegmentToCollection(
         evaluateCircle: (id: string, time: number) => engine.evaluateCircle(id, time),
         evaluateTable: (id: string, time: number) => engine.evaluateTable(id, time),
         evaluateShadow: (id: string, time: number) => engine.evaluateShadow(id, time),
+        evaluateSymmetry: (id: string, time: number) => engine.evaluateSymmetry(id, time),
       }
       const synthetics: ExtractableKeyframe[] = []
       if (plan.bakeStart)

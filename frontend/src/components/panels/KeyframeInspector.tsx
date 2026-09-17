@@ -62,6 +62,7 @@ export interface KeyframeInspectorProps {
   readonly parameter?: string
   readonly morphNodeId?: string
   readonly zIndexNodeId?: string
+  readonly symmetryNodeId?: string
   readonly clipTarget?: { clipId: string; channel: AnimationProperty }
   readonly keyframe: Keyframe
   readonly playing: boolean
@@ -75,6 +76,7 @@ export function KeyframeInspector({
   parameter,
   morphNodeId,
   zIndexNodeId,
+  symmetryNodeId,
   clipTarget,
   keyframe,
   playing,
@@ -83,6 +85,7 @@ export function KeyframeInspector({
   const isClip = clipTarget !== undefined
   const isMorph = morphNodeId !== undefined
   const isZIndex = zIndexNodeId !== undefined
+  const isSymmetry = symmetryNodeId !== undefined
   const { engine: inspectorEngine } = useEngine()
   let morphShapes: readonly import('../../engine/shape').Shape[] = []
   let morphValue: import('../../engine/shape').MorphKeyframeValue | null = null
@@ -115,6 +118,9 @@ export function KeyframeInspector({
     if (isZIndex && zIndexNodeId) {
       return { kind: 'zIndex' as const, nodeId: zIndexNodeId }
     }
+    if (isSymmetry && symmetryNodeId) {
+      return { kind: 'symmetry' as const, nodeId: symmetryNodeId }
+    }
     if (parameter) {
       return { kind: 'node' as const, nodeId: nodeId!, parameter }
     }
@@ -125,10 +131,12 @@ export function KeyframeInspector({
     parameter,
     morphNodeId,
     zIndexNodeId,
+    symmetryNodeId,
     clipTarget,
     isClip,
     isMorph,
     isZIndex,
+    isSymmetry,
   ])
 
   const handleInterpolationChange = useCallback(
@@ -150,7 +158,8 @@ export function KeyframeInspector({
             target: target as
               | import('../../engine/keyframeTarget').NodePropertyTarget
               | import('../../engine/keyframeTarget').NodeParameterTarget
-              | import('../../engine/keyframeTarget').NodeMorphTarget,
+              | import('../../engine/keyframeTarget').NodeMorphTarget
+              | import('../../engine/keyframeTarget').NodeSymmetryTarget,
             keyframeId: keyframe.id,
             interpolation: newInterpolation,
           }),
@@ -193,7 +202,8 @@ export function KeyframeInspector({
             target: target as
               | import('../../engine/keyframeTarget').NodePropertyTarget
               | import('../../engine/keyframeTarget').NodeParameterTarget
-              | import('../../engine/keyframeTarget').NodeMorphTarget,
+              | import('../../engine/keyframeTarget').NodeMorphTarget
+              | import('../../engine/keyframeTarget').NodeSymmetryTarget,
             keyframeId: keyframe.id,
             interpolation: 'bezier',
           }),
@@ -201,7 +211,8 @@ export function KeyframeInspector({
             target: target as
               | import('../../engine/keyframeTarget').NodePropertyTarget
               | import('../../engine/keyframeTarget').NodeParameterTarget
-              | import('../../engine/keyframeTarget').NodeMorphTarget,
+              | import('../../engine/keyframeTarget').NodeMorphTarget
+              | import('../../engine/keyframeTarget').NodeSymmetryTarget,
             keyframeId: keyframe.id,
             tangentIn: { ...preset.tangentIn },
             tangentOut: { ...preset.tangentOut },
@@ -244,7 +255,8 @@ export function KeyframeInspector({
             target: target as
               | import('../../engine/keyframeTarget').NodePropertyTarget
               | import('../../engine/keyframeTarget').NodeParameterTarget
-              | import('../../engine/keyframeTarget').NodeMorphTarget,
+              | import('../../engine/keyframeTarget').NodeMorphTarget
+              | import('../../engine/keyframeTarget').NodeSymmetryTarget,
             keyframeId: keyframe.id,
             tangentIn,
             tangentOut,
@@ -320,7 +332,8 @@ export function KeyframeInspector({
             target: target as
               | import('../../engine/keyframeTarget').NodePropertyTarget
               | import('../../engine/keyframeTarget').NodeParameterTarget
-              | import('../../engine/keyframeTarget').NodeMorphTarget,
+              | import('../../engine/keyframeTarget').NodeMorphTarget
+              | import('../../engine/keyframeTarget').NodeSymmetryTarget,
             keyframeId: keyframe.id,
             newValue: num,
           }),
@@ -519,6 +532,10 @@ export function KeyframeInspector({
             />
           </div>
         </>
+      ) : isSymmetry ? (
+        <p className="inspector-field__notice">
+          Axis + factor are edited via Edit Symmetry… on the timeline.
+        </p>
       ) : (
         <div className="inspector-field">
           <NumericField

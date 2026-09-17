@@ -568,6 +568,10 @@ export class ClipDefinition {
     return this.#morphAnimation.remove(keyframeId)
   }
 
+  removeSymmetryKeyframe(keyframeId: string): Keyframe | undefined {
+    return this.#symmetryAnimation.remove(keyframeId)
+  }
+
   removeShadowChannelKeyframe(property: ShadowProperty, keyframeId: string): Keyframe | undefined {
     const anim = this.#shadowChannelAnimations.get(property)
     if (!anim) return undefined

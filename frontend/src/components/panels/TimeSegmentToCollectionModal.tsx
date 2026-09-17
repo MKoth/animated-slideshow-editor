@@ -411,7 +411,7 @@ export function TimeSegmentToCollectionModal({
       return `Cannot ${verb}: ${conflicts.map((o) => o.nodeName).join(', ')} has both keyframes and a clip selected — deselect either its parameters or its clip (one clip per object).`
     if (storableCount === 0 && selectedClipRefs.length === 0 && selectedStatics.length === 0)
       return selectedEntries.length > 0
-        ? 'No clip-storable keyframes selected in this segment (only table / label / symmetry tracks).'
+        ? 'No clip-storable keyframes selected in this segment (only table / label tracks).'
         : 'Nothing selected: check parameters or clips to include in the segment.'
     return null
   }
@@ -1227,8 +1227,8 @@ export function TimeSegmentToCollectionModal({
 
         {skippedCount > 0 && (
           <div style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
-            {skippedCount} selected keyframe(s) are on tracks clips cannot store (table / labels /
-            symmetry) — excluded from clips{deleteOrphans ? ', still deleted' : ''}.
+            {skippedCount} selected keyframe(s) are on tracks clips cannot store (table / labels) —
+            excluded from clips{deleteOrphans ? ', still deleted' : ''}.
           </div>
         )}
         {error && (

@@ -860,6 +860,29 @@ export class AnimationEvaluator {
         ? this.#evaluateSymmetryKeyframes(keyframes, clampedTime)
         : null
     const node = this.#nodeLookup(nodeId)
+    // Layer enabled timeline clip instances in order (last-wins), like every
+    // other channel — without this, symmetry stored in a placed clip never
+    // evaluates (applying a symmetry clip would silently do nothing).
+    for (const instance of node.clipInstances) {
+      if (!instance.enabled) continue
+      let clip: ClipDefinition
+      try {
+        clip = this.#clipLookup(instance.clipId)
+      } catch {
+        continue
+      }
+      if (!isClipInstanceActive(instance, clip, clampedTime)) continue
+      const clipKeyframes = enabledKeyframes(clip.getSymmetryKeyframes())
+      if (clipKeyframes.length === 0) continue
+      const u = Math.min(
+        Math.max(((clampedTime - instance.startTime) * instance.speed) / clip.duration, 0),
+        1,
+      )
+      value = this.#evaluateSymmetryKeyframes(
+        clipKeyframes,
+        effectiveUForClip(clip, clipKeyframes, u),
+      )
+    }
     if (node.semanticName !== undefined) {
       const hosts: SceneNode[] = []
       for (let host = node.parent; host; host = host.parent) if (host.controlSet) hosts.push(host)
