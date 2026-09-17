@@ -3452,10 +3452,12 @@ export class Engine {
     for (const [semanticName, clipId] of source.bindings) {
       let newClipId = clipIdMap.get(clipId)
       if (!newClipId) {
-        const reversedClip = this.createReversedClip(
-          clipId,
-          `${this.getClip(clipId).name} Reversed`,
-        )
+        // Member clips take the (possibly user-edited) collection name
+        // verbatim; the per-clip semantic name goes to the category. A source
+        // clip shared under several semantics is still minted once (first
+        // semantic wins the category).
+        const reversedClip = this.createReversedClip(clipId, name)
+        this.setClipCategory(reversedClip.id, semanticName)
         newClipId = reversedClip.id
         clipIdMap.set(clipId, newClipId)
       }
@@ -3477,17 +3479,20 @@ export class Engine {
     const newBindings: Record<string, string> = {}
     const skipped: string[] = []
     for (const [semanticName, clipId] of source.bindings) {
+      // The new binding key (lateral pairs exchange sides); the member clip's
+      // category records where it is bound in the NEW collection.
+      const boundSemantic = swapLateralSemanticName(semanticName)
       let newClipId = clipIdMap.get(clipId)
       if (!newClipId) {
         const sourceClip = this.getClip(clipId)
         for (const notice of mirrorSkippedNotices(sourceClip)) {
           if (!skipped.includes(notice)) skipped.push(notice)
         }
-        const mirroredClip = this.createMirroredClip(
-          clipId,
-          axis,
-          mirrorClipDefaultName(sourceClip.name, axis),
-        )
+        // Member clips take the (possibly user-edited) collection name
+        // verbatim; a source clip shared under several semantics is still
+        // minted once (first semantic wins the category).
+        const mirroredClip = this.createMirroredClip(clipId, axis, name)
+        this.setClipCategory(mirroredClip.id, boundSemantic)
         newClipId = mirroredClip.id
         clipIdMap.set(clipId, newClipId)
       }
@@ -3496,7 +3501,7 @@ export class Engine {
       // involution, so distinct source keys stay distinct — bilateral pairs
       // simply exchange sides. v1 collections co-start (no per-member start
       // offsets in the model), so offsets are preserved structurally.
-      newBindings[swapLateralSemanticName(semanticName)] = newClipId
+      newBindings[boundSemantic] = newClipId
     }
     const collection = this.createClipCollection(name, newBindings, source.sourceNodeId)
     return { collection, clipIdMap, skipped }

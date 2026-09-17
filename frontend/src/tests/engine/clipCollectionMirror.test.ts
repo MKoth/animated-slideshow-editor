@@ -149,11 +149,13 @@ describe('createMirroredCollection', () => {
         .getChannelKeyframes('rotation')
         .map((k) => k.value),
     ).toEqual([-90])
-    // metadata preserved
+    // metadata preserved (duration/channels/params); category carries the
+    // new binding semantic, name carries the new collection name
     const srcClip = engine.getClip(source.getBinding('left_hand')!)!
     const mirrored = engine.getClip(mirroredLeftId)
     expect(mirrored.duration).toBe(srcClip.duration)
-    expect(mirrored.category).toBe(srcClip.category)
+    expect(mirrored.category).toBe('right_hand')
+    expect(mirrored.name).toBe('Gesture Mirrored (X)')
     expect(mirrored.channels).toEqual(srcClip.channels)
     expect(mirrored.params).toEqual(srcClip.params)
     // originals untouched
