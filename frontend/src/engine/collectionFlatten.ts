@@ -64,6 +64,7 @@ function describeTarget(target: KeyframeTarget): string {
   if (target.kind === 'visible') return 'visible'
   if (target.kind === 'zIndex') return 'zIndex'
   if (target.kind === 'morph') return 'morphCoefficient'
+  if (target.kind === 'symmetry') return 'symmetry'
   if (target.kind === 'circle') return `circle ${target.property}`
   if (target.kind === 'shadow') return `shadow ${target.property}`
   return target.kind
@@ -77,6 +78,7 @@ function targetKey(target: KeyframeTarget): string {
   if (target.kind === 'visible') return `visible:${target.nodeId}`
   if (target.kind === 'zIndex') return `zIndex:${target.nodeId}`
   if (target.kind === 'morph') return `morph:${target.nodeId}`
+  if (target.kind === 'symmetry') return `symmetry:${target.nodeId}`
   if (target.kind === 'circle') return `circle:${target.nodeId}:${target.property}`
   if (target.kind === 'shadow') return `shadow:${target.nodeId}:${target.property}`
   return `unknown:${(target as { nodeId?: string }).nodeId ?? ''}:${JSON.stringify(target)}`
@@ -100,6 +102,8 @@ function existingInRange(
       kfs = engine.getZIndexKeyframes(target.nodeId)
     } else if (target.kind === 'morph') {
       kfs = engine.getMorphKeyframes(target.nodeId)
+    } else if (target.kind === 'symmetry') {
+      kfs = engine.getSymmetryKeyframes(target.nodeId)
     } else if (target.kind === 'circle') {
       kfs = engine.getCircleKeyframes(target.nodeId, target.property)
     } else if (target.kind === 'shadow') {
@@ -320,6 +324,9 @@ function collectWrites(engine: EnginePublic, plan: FlattenPlan): Collected | { e
       }
       for (const kf of clip.getMorphKeyframes()) {
         pushForNode(node, { kind: 'morph', nodeId: node.id }, kf)
+      }
+      for (const kf of clip.getSymmetryKeyframes()) {
+        pushForNode(node, { kind: 'symmetry', nodeId: node.id }, kf)
       }
       for (const prop of clip.circleTrackKeys) {
         for (const kf of clip.getCircleKeyframes(prop)) {

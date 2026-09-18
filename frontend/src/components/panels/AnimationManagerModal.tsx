@@ -9823,6 +9823,7 @@ function ManagerClipEditor({
       if (row.kind === 'clipVisible') return c.getVisibleKeyframes()
       if (row.kind === 'clipZIndex') return c.getZIndexKeyframes()
       if (row.kind === 'clipMorph') return c.getMorphKeyframes()
+      if (row.kind === 'clipSymmetry') return c.getSymmetryKeyframes()
       if (row.kind === 'clipCircle') return c.getCircleKeyframes(row.property)
       if (row.kind === 'clipShadow') return c.getShadowChannelKeyframes(row.property)
       if (row.kind === 'clipMaterial') return c.getMaterialChannelKeyframes(row.parameter)
@@ -10144,7 +10145,9 @@ function ManagerClipEditor({
                         ? 'visible'
                         : row.kind === 'clipZIndex'
                           ? 'zIndex'
-                          : 'clipMorph'
+                          : row.kind === 'clipSymmetry'
+                            ? 'symmetry'
+                            : 'clipMorph'
             const testId =
               row.kind === 'clipChannel'
                 ? `clip-editor-row-${row.channel}`

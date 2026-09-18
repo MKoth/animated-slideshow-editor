@@ -462,6 +462,13 @@ export interface ClipMorphRowEntry {
   readonly rowIndex: number
 }
 
+export interface ClipSymmetryRowEntry {
+  readonly kind: 'clipSymmetry'
+  readonly clipId: string
+  readonly label: string
+  readonly rowIndex: number
+}
+
 export interface ClipShadowRowEntry {
   readonly kind: 'clipShadow'
   readonly clipId: string
@@ -484,6 +491,7 @@ export type ClipEditorRow =
   | ClipZIndexRowEntry
   | ClipCircleRowEntry
   | ClipMorphRowEntry
+  | ClipSymmetryRowEntry
   | ClipShadowRowEntry
   | ClipMaterialRowEntry
 
@@ -528,6 +536,15 @@ export function clipChannelRows(clip: ClipDefinition): ClipEditorRow[] {
       kind: 'clipMorph',
       clipId: clip.id,
       label: MORPH_LABEL,
+      rowIndex,
+    })
+    rowIndex++
+  }
+  if (clip.getSymmetryKeyframes().length > 0) {
+    rows.push({
+      kind: 'clipSymmetry',
+      clipId: clip.id,
+      label: 'Symmetry',
       rowIndex,
     })
     rowIndex++

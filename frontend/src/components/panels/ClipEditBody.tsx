@@ -92,6 +92,8 @@ export function ClipEditBody({
     (typeof allRows)[number],
     { kind: 'clipChannel' }
   >[]
+  const symmetryKeyframes = engine.getClipSymmetryKeyframes(clipId)
+  const laneCount = rows.length + (symmetryKeyframes.length > 0 ? 1 : 0)
 
   const selectedNodeId = useSelectionStore((state) => state.selectedIds[0])
   const animatableParams = useMemo(() => {
@@ -558,6 +560,16 @@ export function ClipEditBody({
               </button>
             </li>
           ))}
+          {symmetryKeyframes.length > 0 && (
+            <li
+              className="timeline-subtrack clip-edit-channel"
+              data-channel="symmetry"
+              data-depth={0}
+              style={{ paddingLeft: 12 }}
+            >
+              <span className="timeline-subtrack__label">Symmetry</span>
+            </li>
+          )}
           <li className="timeline-subtrack" style={{ paddingLeft: 12, position: 'relative' }}>
             <button
               className="timeline-subtrack__add"
@@ -616,7 +628,7 @@ export function ClipEditBody({
             </div>
             <div
               className="timeline-lanes"
-              style={{ height: rows.length * ROW_HEIGHT, width: contentWidth }}
+              style={{ height: laneCount * ROW_HEIGHT, width: contentWidth }}
             >
               {rows.map((row, index) => {
                 const keyframes = engine.getClipChannelKeyframes(clipId, row.channel)
@@ -653,6 +665,28 @@ export function ClipEditBody({
                   </div>
                 )
               })}
+              {symmetryKeyframes.length > 0 && (
+                <div
+                  className="timeline-lane-row"
+                  data-channel="symmetry"
+                  style={{ top: rows.length * ROW_HEIGHT }}
+                >
+                  {symmetryKeyframes.map((keyframe) => (
+                    <KeyframeMarker
+                      key={keyframe.id}
+                      keyframeId={keyframe.id}
+                      shownTime={keyframe.time * (duration || 1)}
+                      selected={false}
+                      disabled
+                      pps={pps}
+                      step={step}
+                      parameterLabel="Symmetry"
+                      onPointerDown={() => undefined}
+                      onContextMenu={(event) => event.preventDefault()}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
             <div
               className="timeline-playhead"

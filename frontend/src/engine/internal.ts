@@ -3328,6 +3328,10 @@ export class Engine {
     return this.#clips.getChannelKeyframes(clipId, channel)
   }
 
+  getClipSymmetryKeyframes(clipId: string): readonly Keyframe[] {
+    return this.getClip(clipId).getSymmetryKeyframes()
+  }
+
   addClipChannelKeyframe(
     clipId: string,
     channel: AnimationProperty,
@@ -6457,6 +6461,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getConstraintManager: () => engine.getConstraintManager(),
     getClip: (clipId) => engine.getClip(clipId),
     getClipChannelKeyframes: (clipId, channel) => engine.getClipChannelKeyframes(clipId, channel),
+    getClipSymmetryKeyframes: (clipId) => engine.getClipSymmetryKeyframes(clipId),
     getClipInstances: (nodeId) => engine.getClipInstances(nodeId),
     isClipReferenced: (clipId) => engine.isClipReferenced(clipId),
     getClipBlockingNodeNames: (clipId) => engine.getClipBlockingNodeNames(clipId),

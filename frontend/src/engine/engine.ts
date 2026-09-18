@@ -179,6 +179,7 @@ export interface EnginePublic {
   getConstraintManager(): ConstraintManager
   getClip(clipId: string): ClipDefinition
   getClipChannelKeyframes(clipId: string, channel: AnimationProperty): readonly Keyframe[]
+  getClipSymmetryKeyframes(clipId: string): readonly Keyframe[]
   getClipInstances(nodeId: string): readonly ClipInstance[]
   isClipReferenced(clipId: string): boolean
   getClipBlockingNodeNames(clipId: string): string[]

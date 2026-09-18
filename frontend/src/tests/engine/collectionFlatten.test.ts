@@ -8,6 +8,7 @@ import {
   CreateSlideCommand,
 } from '../../engine/commands'
 import type { KeyframeTarget } from '../../engine/keyframeTarget'
+import { Keyframe } from '../../engine/keyframe'
 import { executeSegmentToCollection } from '../../engine/timeSegmentExtraction'
 import {
   previewCollectionFlatten,
@@ -142,6 +143,27 @@ describe('collection flatten preview', () => {
 })
 
 describe('executeCollectionFlatten', () => {
+  it('flattens symmetry keyframes from collection clips', () => {
+    const { engine, dispatcher, undoStack, collectionId, leftId } = setupCollection()
+    const collection = engine.getClipCollection(collectionId)
+    const clip = engine.getClip(collection.getBinding('left_hand')!)
+    clip.addSymmetryKeyframe(new Keyframe('symmetry-0', 0, { axis: 'x', factor: 0 }))
+    clip.addSymmetryKeyframe(new Keyframe('symmetry-1', 1, { axis: 'x', factor: 1 }))
+
+    const result = executeCollectionFlatten(
+      engine,
+      dispatcher.dispatch.bind(dispatcher),
+      undoStack,
+      { collectionId, from: 5, to: 8 },
+    )
+
+    expect(result.ok).toBe(true)
+    expect(engine.getSymmetryKeyframes(leftId).map((kf) => kf.value)).toEqual([
+      { axis: 'x', factor: 0 },
+      { axis: 'x', factor: 1 },
+    ])
+  })
+
   it('writes orphans at natural duration with values verbatim', () => {
     const { engine, dispatcher, undoStack, collectionId, leftId, rightId } = setupCollection()
     const result = executeCollectionFlatten(
