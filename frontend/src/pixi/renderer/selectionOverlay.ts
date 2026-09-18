@@ -150,7 +150,12 @@ export class SelectionOverlay {
     transform: WorldTransform,
     pivot: { x: number; y: number } | null,
   ): { x: number; y: number }[] | null {
-    if (transform.scaleX <= 0 || transform.scaleY <= 0) {
+    if (
+      transform.scaleX === 0 ||
+      transform.scaleY === 0 ||
+      !Number.isFinite(transform.scaleX) ||
+      !Number.isFinite(transform.scaleY)
+    ) {
       return null
     }
     const halfW = size.width / 2
@@ -263,7 +268,12 @@ export function orientedCornersForSelection(
   transform: WorldTransform,
   pivot: { x: number; y: number } | null,
 ): { x: number; y: number }[] | null {
-  if (transform.scaleX <= 0 || transform.scaleY <= 0) {
+  if (
+    transform.scaleX === 0 ||
+    transform.scaleY === 0 ||
+    !Number.isFinite(transform.scaleX) ||
+    !Number.isFinite(transform.scaleY)
+  ) {
     return null
   }
   const halfW = size.width / 2

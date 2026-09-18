@@ -82,13 +82,19 @@ export function aabbOf(
   transform: WorldTransform | null,
   pivot?: { readonly x: number; readonly y: number } | null,
 ): WorldRect | null {
-  if (!transform || transform.scaleX <= 0 || transform.scaleY <= 0) {
+  if (
+    !transform ||
+    transform.scaleX === 0 ||
+    transform.scaleY === 0 ||
+    !Number.isFinite(transform.scaleX) ||
+    !Number.isFinite(transform.scaleY)
+  ) {
     return null
   }
   const hasPivot = pivot && (pivot.x !== 0 || pivot.y !== 0)
   if (!hasPivot) {
-    const halfWidth = (size.width * transform.scaleX) / 2
-    const halfHeight = (size.height * transform.scaleY) / 2
+    const halfWidth = Math.abs(size.width * transform.scaleX) / 2
+    const halfHeight = Math.abs(size.height * transform.scaleY) / 2
     const corners = rotatedCornersCenter(size, transform, halfWidth, halfHeight)
     return {
       minX: Math.min(...corners.map((p) => p.x)),
@@ -130,7 +136,14 @@ function containsPoint(
   transform: WorldTransform | null,
   pivot?: { readonly x: number; readonly y: number } | null,
 ): boolean {
-  if (!size || !transform || transform.scaleX <= 0 || transform.scaleY <= 0) {
+  if (
+    !size ||
+    !transform ||
+    transform.scaleX === 0 ||
+    transform.scaleY === 0 ||
+    !Number.isFinite(transform.scaleX) ||
+    !Number.isFinite(transform.scaleY)
+  ) {
     return false
   }
   // Transform is pivot point world; bounds center is pivot - pivotOffset

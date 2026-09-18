@@ -425,14 +425,14 @@ export class HandleInteraction {
         const sign = dot >= 0 ? 1 : -1
         const factor = (mouseDist / initialDist) * sign
         const absFactor = Math.max(
-          MIN_SCALE / Math.max(this.#initialWorld.scaleX, this.#initialWorld.scaleY),
+          MIN_SCALE /
+            Math.max(Math.abs(this.#initialWorld.scaleX), Math.abs(this.#initialWorld.scaleY)),
           Math.abs(factor),
         )
+        // Preserve mirror: scale from the initial sign, never force positive.
+        // Dragging across the anchor shrinks to MIN, it does not flip.
         newWorldScaleX = this.#initialWorld.scaleX * absFactor
         newWorldScaleY = this.#initialWorld.scaleY * absFactor
-        if (factor < 0) {
-          // keep positive
-        }
       } else {
         let factor = 1
         if (Math.abs(deltaLocalUnscaled.x) > 1e-6) {
@@ -449,24 +449,35 @@ export class HandleInteraction {
     } else {
       if (Math.abs(deltaLocalUnscaled.x) > 1e-6) {
         const newWSX = mx / deltaLocalUnscaled.x
-        newWorldScaleX = Math.max(MIN_SCALE, Math.abs(newWSX)) * Math.sign(newWSX || 1)
-        if (newWorldScaleX < 0) newWorldScaleX = Math.abs(newWorldScaleX)
+        // Keep the computed sign so a mirrored axis stays mirrored;
+        // fall back to the initial sign when the pointer sits on the anchor.
+        const sign = Math.sign(newWSX || this.#initialWorld.scaleX || 1)
+        newWorldScaleX = sign * Math.max(MIN_SCALE, Math.abs(newWSX))
       } else {
         newWorldScaleX = this.#initialWorld.scaleX
       }
       if (Math.abs(deltaLocalUnscaled.y) > 1e-6) {
         const newWSY = my / deltaLocalUnscaled.y
-        newWorldScaleY = Math.max(MIN_SCALE, Math.abs(newWSY)) * Math.sign(newWSY || 1)
-        if (newWorldScaleY < 0) newWorldScaleY = Math.abs(newWorldScaleY)
+        const sign = Math.sign(newWSY || this.#initialWorld.scaleY || 1)
+        newWorldScaleY = sign * Math.max(MIN_SCALE, Math.abs(newWSY))
       } else {
         newWorldScaleY = this.#initialWorld.scaleY
       }
-      newWorldScaleX = Math.max(MIN_SCALE, newWorldScaleX)
-      newWorldScaleY = Math.max(MIN_SCALE, newWorldScaleY)
+      newWorldScaleX =
+        Math.sign(newWorldScaleX || this.#initialWorld.scaleX || 1) *
+        Math.max(MIN_SCALE, Math.abs(newWorldScaleX))
+      newWorldScaleY =
+        Math.sign(newWorldScaleY || this.#initialWorld.scaleY || 1) *
+        Math.max(MIN_SCALE, Math.abs(newWorldScaleY))
     }
 
-    newWorldScaleX = Math.max(MIN_SCALE, newWorldScaleX)
-    newWorldScaleY = Math.max(MIN_SCALE, newWorldScaleY)
+    // Clamp magnitude to MIN_SCALE while preserving mirror sign.
+    newWorldScaleX =
+      Math.sign(newWorldScaleX || this.#initialWorld.scaleX || 1) *
+      Math.max(MIN_SCALE, Math.abs(newWorldScaleX))
+    newWorldScaleY =
+      Math.sign(newWorldScaleY || this.#initialWorld.scaleY || 1) *
+      Math.max(MIN_SCALE, Math.abs(newWorldScaleY))
 
     const anchorLocalForPivot = anchorLocal
     const dx = (anchorLocalForPivot.x - pivotOffset.x + offsetX) * newWorldScaleX
