@@ -92,7 +92,7 @@ beforeEach(() => {
   useTimelineViewStore.setState({ zoomLevel: 1, scrollTime: 0, height: DEFAULT_TIMELINE_HEIGHT })
   useNotificationStore.setState({ notifications: [] })
   useSelectionStore.setState({ selectedIds: [] })
-  useClipboardStore.setState({ items: [] })
+  useClipboardStore.setState({ items: [], payload: null })
   usePlaybackController.setState({ currentTimes: {} })
   pixiRegistry.reset()
   resetTextureRegistries()

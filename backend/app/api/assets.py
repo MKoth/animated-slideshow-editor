@@ -93,14 +93,14 @@ def get_asset_peaks(request: Request, asset_id: str) -> PeaksOut:
         raise HTTPException(status_code=404, detail=f"asset {asset_id} has no peaks (not audio)")
     from app.assets.peaks import get_or_compute_peaks
 
-    storage = request.app.state.asset_importer._storage  # type: ignore[attr-defined]
+    storage = request.app.state.asset_importer._storage
     database = request.app.state.database
     payload = get_or_compute_peaks(definition, storage, database)
     return PeaksOut(
         peaks=payload["peaks"],  # type: ignore[arg-type]
-        duration=payload["duration"] if isinstance(payload["duration"], (int, float)) else None,  # type: ignore[arg-type]
-        sampleRate=payload["sampleRate"] if isinstance(payload["sampleRate"], int) else None,  # type: ignore[arg-type]
-        channels=payload["channels"] if isinstance(payload["channels"], int) else None,  # type: ignore[arg-type]
+        duration=payload["duration"] if isinstance(payload["duration"], (int, float)) else None,
+        sampleRate=payload["sampleRate"] if isinstance(payload["sampleRate"], int) else None,
+        channels=payload["channels"] if isinstance(payload["channels"], int) else None,
     )
 
 

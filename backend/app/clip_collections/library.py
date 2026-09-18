@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import desc, select
 
 from app.clip_collections.model import ClipCollectionDefinition
-from app.clip_collections.schemas import ClipCollectionCreateIn
 from app.database import Database
 
 
@@ -19,6 +19,11 @@ class ClipCollectionValidationError(ValueError):
 
 class ClipCollectionDuplicateIDError(ValueError):
     """Raised when a collection with given id already exists."""
+
+
+#: Sentinel for "category not provided" in update() — distinct from None,
+#: which explicitly clears the category back to Uncategorized.
+CATEGORY_UNSET: Any = object()
 
 
 class ClipCollectionLibrary:
@@ -48,16 +53,20 @@ class ClipCollectionLibrary:
         bindings: dict[str, str],
         source_node_id: str | None,
         now: datetime,
-        clips: list[dict] | None = None,
+        clips: list[dict[str, object]] | None = None,
+        category: str | None = None,
     ) -> ClipCollectionDefinition:
         _require_non_empty(name, "name must not be empty")
         _validate_bindings(bindings)
         with self._database.session() as session:
             if session.get(ClipCollectionDefinition, collection_id) is not None:
-                raise ClipCollectionDuplicateIDError(f"collection with id {collection_id!r} already exists")
+                raise ClipCollectionDuplicateIDError(
+                    f"collection with id {collection_id!r} already exists"
+                )
             definition = ClipCollectionDefinition(
                 id=collection_id,
                 name=name.strip(),
+                category=_normalize_category(category),
                 bindings={k.strip(): v for k, v in bindings.items()},
                 source_node_id=source_node_id,
                 clips=clips,
@@ -75,11 +84,15 @@ class ClipCollectionLibrary:
         bindings: dict[str, str] | None,
         source_node_id: str | None,
         now: datetime,
-        clips: list[dict] | None = None,
+        clips: list[dict[str, object]] | None = None,
+        category: str | None | object = CATEGORY_UNSET,
     ) -> ClipCollectionDefinition:
-        if all(v is None for v in (name, bindings, source_node_id, clips)):
+        if (
+            all(v is None for v in (name, bindings, source_node_id, clips))
+            and category is CATEGORY_UNSET
+        ):
             raise ClipCollectionValidationError(
-                "at least one of name, bindings, source_node_id or clips is required"
+                "at least one of name, category, bindings, source_node_id or clips is required"
             )
         if name is not None:
             _require_non_empty(name, "name must not be empty")
@@ -91,6 +104,8 @@ class ClipCollectionLibrary:
                 raise ClipCollectionNotFoundError(collection_id)
             if name is not None:
                 definition.name = name.strip()
+            if category is not CATEGORY_UNSET:
+                definition.category = _normalize_category(category)
             if bindings is not None:
                 definition.bindings = {k.strip(): v for k, v in bindings.items()}
             if source_node_id is not None:
@@ -114,6 +129,15 @@ class ClipCollectionLibrary:
 def _require_non_empty(value: str, message: str) -> None:
     if not value.strip():
         raise ClipCollectionValidationError(message)
+
+
+def _normalize_category(value: str | None | object) -> str | None:
+    if value is None or value is CATEGORY_UNSET:
+        return None
+    if not isinstance(value, str):
+        raise ClipCollectionValidationError("category must be a string")
+    stripped = value.strip()
+    return stripped or None
 
 
 def _validate_bindings(bindings: dict[str, str]) -> None:

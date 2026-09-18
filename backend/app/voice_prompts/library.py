@@ -117,14 +117,15 @@ class VoicePromptLibrary:
                         new_params["provider"] = patch["provider"]
                 # Only update if changed and not empty? Keep empty dict as None? Preserve original empty logic
                 if new_params:
-                    row.params = new_params  # type: ignore[assignment]
+                    row.params = new_params
                 else:
                     # if original was None keep None unless model/provider added then keep containing?
-                    if row.params is not None or "model_id" in patch or "provider" in patch:
+                    if (row.params is not None or "model_id" in patch or "provider" in patch) and (
+                        current_params or new_params
+                    ):
                         # if params becomes empty and original was None, keep None for cleanliness
-                        if current_params or new_params:
-                            row.params = new_params if new_params else None  # type: ignore[assignment]
-            row.updated_at = current  # type: ignore[assignment]
+                        row.params = new_params if new_params else None
+            row.updated_at = current
             session.commit()
         return self.get(prompt_id)
 

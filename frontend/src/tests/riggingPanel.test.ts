@@ -50,13 +50,15 @@ describe('rigging panel — bone collection', () => {
     const slide = engine.project?.slides[0]
     if (!slide) throw new Error('No slide')
 
-    createBoneNode(engine, 'Root', slide.scene.root.id, 0, 0)
-    createBoneNode(engine, 'Child', slide.scene.root.id, 100, 0)
-    createBoneNode(engine, 'Grandchild', slide.scene.root.id, 200, 0)
+    // NOTE: the scene root itself is named 'Root', and node names are unique
+    // per scene — so bone fixtures must avoid that name.
+    createBoneNode(engine, 'Hip', slide.scene.root.id, 0, 0)
+    createBoneNode(engine, 'Knee', slide.scene.root.id, 100, 0)
+    createBoneNode(engine, 'Ankle', slide.scene.root.id, 200, 0)
 
     const bones = collectBones(slide.scene.root)
     expect(bones).toHaveLength(3)
-    expect(bones.map((b) => b.name)).toEqual(['Root', 'Child', 'Grandchild'])
+    expect(bones.map((b) => b.name)).toEqual(['Hip', 'Knee', 'Ankle'])
   })
 
   it('returns empty array when no bones exist', () => {

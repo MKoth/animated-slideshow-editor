@@ -477,6 +477,7 @@ export type ClipCollectionJSON = {
   readonly name: string
   readonly bindings: Readonly<Record<string, string>>
   readonly sourceNodeId?: string
+  readonly category?: string
 }
 
 export type IKChainJSON = {

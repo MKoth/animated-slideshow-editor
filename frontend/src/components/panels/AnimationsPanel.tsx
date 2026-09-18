@@ -13,11 +13,18 @@ import { useNotificationStore } from '../../stores/notificationStore'
 import { LibraryBrowser } from './LibraryBrowser'
 import {
   RenameClipCollectionCommand,
+  SetClipCollectionCategoryCommand,
   ReverseClipCommand,
   ReverseCollectionCommand,
   MirrorClipCommand,
   MirrorCollectionCommand,
 } from '../../engine/commands'
+import {
+  ALL_COLLECTION_CATEGORIES,
+  collectionCategoryLabel,
+  distinctCollectionCategories,
+  matchesCollectionCategory,
+} from './collectionCategories'
 import { executeDeleteClipCollection } from '../../app/deleteClipCollectionAction'
 import {
   mirrorClipDefaultName,
@@ -180,6 +187,12 @@ export function AnimationsPanel() {
   const selected = definitions.find((clip) => clip.id === selectedId)
 
   const collections = engine.clipCollections
+  const [collectionCategoryFilter, setCollectionCategoryFilter] =
+    useState<string>(ALL_COLLECTION_CATEGORIES)
+  const allCollectionCategories = distinctCollectionCategories(engine.clipCollections)
+  const visibleCollections = collections.filter((col) =>
+    matchesCollectionCategory(col, collectionCategoryFilter),
+  )
   const [editingCollectionId, setEditingCollectionId] = useState<string | null>(null)
   const [applyCollectionId, setApplyCollectionId] = useState<string | null>(null)
   const [exportCollectionOpen, setExportCollectionOpen] = useState(false)
@@ -232,6 +245,7 @@ export function AnimationsPanel() {
       format: 'animated-slides-clip-collection',
       version: 1,
       name: collection.name,
+      category: collection.category !== '' ? collection.category : null,
       bindings: collection.getBindingsObject(),
       clips,
     }
@@ -258,6 +272,7 @@ export function AnimationsPanel() {
         format?: unknown
         version?: unknown
         name?: unknown
+        category?: unknown
         bindings?: unknown
         clips?: unknown
       }
@@ -273,6 +288,10 @@ export function AnimationsPanel() {
       const entry = {
         id: `clipCollection-file-${Date.now()}`,
         name: value.name,
+        category:
+          typeof value.category === 'string' && value.category.trim() !== ''
+            ? value.category.trim()
+            : null,
         bindings: value.bindings as Record<string, string>,
         source_node_id: null,
         clips: value.clips as Record<string, unknown>[],
@@ -307,6 +326,21 @@ export function AnimationsPanel() {
     if (!trimmed) return
     const result = dispatch(new RenameClipCollectionCommand({ collectionId, name: trimmed }))
     if (!result.ok) notify(result.error.message)
+  }
+  const commitCollectionCategory = (collectionId: string, raw: string) => {
+    const trimmed = raw.trim()
+    let current = ''
+    try {
+      current = engine.getClipCollection(collectionId).category
+    } catch {
+      return
+    }
+    if (trimmed === current) return
+    const result = dispatch(
+      new SetClipCollectionCategoryCommand({ collectionId, category: trimmed }),
+    )
+    if (!result.ok) notify(result.error.message)
+    else notify(`Collection category set to ${trimmed === '' ? 'Uncategorized' : `"${trimmed}"`}`)
   }
   const ensureReferencedClipsInLibrary = async (
     col: ReturnType<typeof engine.getClipCollection>,
@@ -433,7 +467,11 @@ export function AnimationsPanel() {
           <button className="animations-toolbar__create" onClick={handleCreate}>
             Create Clip
           </button>
-          <button className="animations-toolbar__create" onClick={openLibraryBrowser}>
+          <button
+            className="animations-toolbar__create"
+            onClick={openLibraryBrowser}
+            data-testid="clips-browse-button"
+          >
             Browse Library
           </button>
         </div>
@@ -642,7 +680,22 @@ export function AnimationsPanel() {
           }}
         >
           <h3 style={{ margin: 0, fontSize: 13 }}>Clip Collections</h3>
-          <div style={{ display: 'flex', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <select
+              value={collectionCategoryFilter}
+              onChange={(e) => setCollectionCategoryFilter(e.target.value)}
+              data-testid="collections-category-filter"
+              title="Filter collections by category"
+              style={{ fontSize: 11, padding: '4px 6px', borderRadius: 4 }}
+            >
+              <option value={ALL_COLLECTION_CATEGORIES}>All categories</option>
+              <option value="">Uncategorized</option>
+              {allCollectionCategories.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
             <button
               onClick={() => collectionFileInputRef.current?.click()}
               style={{
@@ -722,6 +775,13 @@ export function AnimationsPanel() {
               </p>
             )}
           </div>
+        ) : visibleCollections.length === 0 ? (
+          <div className="panel-empty-state" style={{ padding: 12 }}>
+            <p style={{ fontSize: 12 }}>
+              No collections in {collectionCategoryLabel(collectionCategoryFilter)}. Select All
+              categories to see everything.
+            </p>
+          </div>
         ) : (
           <ul
             style={{
@@ -733,7 +793,7 @@ export function AnimationsPanel() {
               gap: 6,
             }}
           >
-            {collections.map((col) => {
+            {visibleCollections.map((col) => {
               const bindings = [...col.bindings.entries()]
               const editing = editingCollectionId === col.id
               return (
@@ -749,28 +809,57 @@ export function AnimationsPanel() {
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     {editing ? (
-                      <input
-                        aria-label="Collection name"
-                        defaultValue={col.name}
-                        autoFocus
-                        onFocus={(e) => e.target.select()}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter')
-                            commitRenameCollection(col.id, e.currentTarget.value)
-                          else if (e.key === 'Escape') setEditingCollectionId(null)
-                        }}
-                        onBlur={(e) => {
-                          if (editingCollectionId === col.id)
-                            commitRenameCollection(col.id, e.target.value)
-                        }}
-                        style={{
-                          flex: 1,
-                          padding: '4px 6px',
-                          borderRadius: 4,
-                          border: '1px solid var(--color-border)',
-                        }}
-                        data-testid={`collection-rename-input-${col.id}`}
-                      />
+                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <input
+                          aria-label="Collection name"
+                          defaultValue={col.name}
+                          autoFocus
+                          onFocus={(e) => e.target.select()}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter')
+                              commitRenameCollection(col.id, e.currentTarget.value)
+                            else if (e.key === 'Escape') setEditingCollectionId(null)
+                          }}
+                          onBlur={(e) => {
+                            if (editingCollectionId === col.id)
+                              commitRenameCollection(col.id, e.target.value)
+                          }}
+                          style={{
+                            flex: 1,
+                            padding: '4px 6px',
+                            borderRadius: 4,
+                            border: '1px solid var(--color-border)',
+                          }}
+                          data-testid={`collection-rename-input-${col.id}`}
+                        />
+                        <input
+                          aria-label="Collection category"
+                          defaultValue={col.category}
+                          placeholder="Category (blank = Uncategorized)"
+                          list={`collection-category-list-${col.id}`}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter')
+                              commitCollectionCategory(col.id, e.currentTarget.value)
+                            else if (e.key === 'Escape') setEditingCollectionId(null)
+                          }}
+                          onBlur={(e) => {
+                            commitCollectionCategory(col.id, e.target.value)
+                          }}
+                          style={{
+                            flex: 1,
+                            padding: '4px 6px',
+                            borderRadius: 4,
+                            border: '1px solid var(--color-border)',
+                            fontSize: 11,
+                          }}
+                          data-testid={`collection-category-input-${col.id}`}
+                        />
+                        <datalist id={`collection-category-list-${col.id}`}>
+                          {allCollectionCategories.map((cat) => (
+                            <option key={cat} value={cat} />
+                          ))}
+                        </datalist>
+                      </div>
                     ) : (
                       <strong style={{ flex: 1, fontSize: 12 }} title={col.id}>
                         {col.name}
@@ -778,6 +867,13 @@ export function AnimationsPanel() {
                     )}
                     <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
                       {bindings.length} binding(s)
+                    </span>
+                    <span
+                      style={{ fontSize: 11, color: 'var(--color-text-muted)' }}
+                      data-testid={`collection-category-${col.id}`}
+                      title="Collection category"
+                    >
+                      {col.category !== '' ? `[${col.category}]` : 'Uncategorized'}
                     </span>
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>

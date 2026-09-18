@@ -73,6 +73,10 @@ interface Props {
   readonly replaceCollectionName?: string
   /** Target collection id for replace mode (passed through in the plan). */
   readonly replaceCollectionId?: string
+  /** Current top-level category of the replaced collection (editable in replace mode). */
+  readonly replaceCollectionCategory?: string
+  /** Global distinct collection categories for the datalist suggestions. */
+  readonly existingCollectionCategories?: readonly string[]
   /** Seedable initial range (defaults to the orphan span). */
   readonly initialRange?: { from: number; to: number }
   /** Pre-fill clip-name fields by node id (bound clip names in replace mode). */
@@ -120,6 +124,8 @@ export function TimeSegmentToCollectionModal({
   mode,
   replaceCollectionName,
   replaceCollectionId,
+  replaceCollectionCategory,
+  existingCollectionCategories,
   initialRange: initialRangeProp,
   initialClipNamesByNode,
 }: Props) {
@@ -147,6 +153,10 @@ export function TimeSegmentToCollectionModal({
     defaultSegmentCollectionName(parentName, initialRange.from, initialRange.to),
   )
   const [collectionTouched, setCollectionTouched] = useState(false)
+  // Top-level collection category ('' = Uncategorized).
+  const [collectionCategory, setCollectionCategory] = useState(
+    () => replaceCollectionCategory ?? '',
+  )
   const [masterName, setMasterName] = useState('')
   const [deleteOrphans, setDeleteOrphans] = useState(true)
   const [keepFirst, setKeepFirst] = useState(false)
@@ -559,6 +569,7 @@ export function TimeSegmentToCollectionModal({
       collectionName: isReplace
         ? (replaceCollectionName ?? collectionName).trim() || 'replace'
         : collectionName.trim(),
+      collectionCategory: collectionCategory.trim(),
       deleteOrphans,
       keepFirst: deleteOrphans && keepFirst,
       keepLast: deleteOrphans && keepLast,
@@ -945,6 +956,22 @@ export function TimeSegmentToCollectionModal({
             />
           </label>
         )}
+        <label style={{ fontSize: 12 }}>
+          Collection category (blank = Uncategorized)
+          <input
+            data-testid="segment-collection-category"
+            value={collectionCategory}
+            onChange={(e) => setCollectionCategory(e.target.value)}
+            placeholder="Uncategorized"
+            list="segment-collection-category-list"
+            style={inputStyle}
+          />
+          <datalist id="segment-collection-category-list">
+            {(existingCollectionCategories ?? []).map((cat) => (
+              <option key={cat} value={cat} />
+            ))}
+          </datalist>
+        </label>
         <div
           style={{
             border: '1px solid var(--color-border, #ddd)',

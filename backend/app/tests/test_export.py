@@ -1,5 +1,6 @@
 import base64
 import json
+from typing import Any
 
 from fastapi.testclient import TestClient
 
@@ -33,13 +34,13 @@ def _wav_base64(duration: float = 1.0) -> str:
     return base64.b64encode(data).decode("ascii")
 
 
-def _make_descriptor(fps: float = 30, durations: list[float] | None = None) -> dict:
+def _make_descriptor(fps: float = 30, durations: list[float] | None = None) -> dict[str, Any]:
     if durations is None:
         durations = [2.0, 1.5]
     # Build minimal descriptor matching frontend shape but constructed directly for backend test
     # Use the frontend builder logic via python mimic — or just hardcode expected shape
     # For test independence, build descriptor manually replicating frontend's output shape
-    slides = []
+    slides: list[Any] = []
     for idx, dur in enumerate(durations):
         slide_id = f"slide-{idx}"
         frame_count = round(dur * fps)
@@ -112,7 +113,14 @@ def _make_descriptor(fps: float = 30, durations: list[float] | None = None) -> d
                     "pixelFormat": "yuv420p",
                     "movflags": "+faststart",
                     "codec": "libx264",
-                    "ffmpegArgs": ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+                    "ffmpegArgs": [
+                        "-c:v",
+                        "libx264",
+                        "-pix_fmt",
+                        "yuv420p",
+                        "-movflags",
+                        "+faststart",
+                    ],
                 },
                 "audio": {
                     "lanes": ["voice", "sfx", "music"],
@@ -127,7 +135,14 @@ def _make_descriptor(fps: float = 30, durations: list[float] | None = None) -> d
                 },
                 "segment": {
                     "outputFile": f"segment-{slide_id}.mp4",
-                    "videoArgs": ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+                    "videoArgs": [
+                        "-c:v",
+                        "libx264",
+                        "-pix_fmt",
+                        "yuv420p",
+                        "-movflags",
+                        "+faststart",
+                    ],
                     "audioArgs": ["-c:a", "aac", "-filter:a", "loudnorm=I=-16:TP=-1.5:LRA=11"],
                     "duration": dur,
                 },
@@ -261,9 +276,9 @@ def test_export_descriptor_shape_validation_video_plus_3_audio_inputs(client: Te
     desc2["slides"][0]["audio"]["lanes"] = ["voice", "sfx"]  # only 2
     desc2["slides"][0]["audio"]["inputs"] = ["video", "audio:voice", "audio:sfx"]
     desc2["slides"][0]["audio"]["laneInputs"] = 2
-    desc2["slides"][0]["audio"]["filterComplex"] = desc2["slides"][0]["audio"]["filterComplex"].replace(
-        "amix=inputs=3", "amix=inputs=2"
-    )
+    desc2["slides"][0]["audio"]["filterComplex"] = desc2["slides"][0]["audio"][
+        "filterComplex"
+    ].replace("amix=inputs=3", "amix=inputs=2")
     desc2["slides"][0]["audio"]["amix"] = "amix=inputs=2:duration=longest:dropout_transition=0"
     r2 = client.post("/api/export/jobs", json=desc2)
     assert r2.status_code == 422
@@ -284,17 +299,17 @@ def test_export_amix_loudnorm_concat_yuv420p_faststart_required(client: TestClie
     _clear_jobs_for_test()
     desc = _make_descriptor()
     # remove amix from filterComplex
-    desc["slides"][0]["audio"]["filterComplex"] = desc["slides"][0]["audio"]["filterComplex"].replace(
-        "amix=inputs=3:duration=longest:dropout_transition=0", "no-amix"
-    )
+    desc["slides"][0]["audio"]["filterComplex"] = desc["slides"][0]["audio"][
+        "filterComplex"
+    ].replace("amix=inputs=3:duration=longest:dropout_transition=0", "no-amix")
     r = client.post("/api/export/jobs", json=desc)
     assert r.status_code == 422
     assert "amix" in r.text.lower()
 
     desc2 = _make_descriptor()
-    desc2["slides"][0]["audio"]["filterComplex"] = desc2["slides"][0]["audio"]["filterComplex"].replace(
-        "loudnorm=I=-16:TP=-1.5:LRA=11", "no-loudnorm"
-    )
+    desc2["slides"][0]["audio"]["filterComplex"] = desc2["slides"][0]["audio"][
+        "filterComplex"
+    ].replace("loudnorm=I=-16:TP=-1.5:LRA=11", "no-loudnorm")
     desc2["slides"][0]["audio"]["loudnorm"] = "nope"
     r2 = client.post("/api/export/jobs", json=desc2)
     assert r2.status_code == 422
@@ -313,7 +328,14 @@ def test_export_amix_loudnorm_concat_yuv420p_faststart_required(client: TestClie
     assert r4.status_code == 422
 
     desc5 = _make_descriptor()
-    desc5["ffmpegGlobalArgs"] = ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart"]  # missing concat demuxer
+    desc5["ffmpegGlobalArgs"] = [
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+    ]  # missing concat demuxer
     r5 = client.post("/api/export/jobs", json=desc5)
     assert r5.status_code == 422
     assert "concat" in r5.text.lower()
@@ -329,7 +351,9 @@ def test_export_atrim_and_trim_no_bleed(client: TestClient) -> None:
 
     desc2 = _make_descriptor(durations=[2.0])
     # filterFragment must contain atrim=end=duration
-    desc2["slides"][0]["audio"]["clips"][0]["filterFragment"] = "aformat,volume=1.0,atrim=end=999,asetpts=PTS-STARTPTS"
+    desc2["slides"][0]["audio"]["clips"][0]["filterFragment"] = (
+        "aformat,volume=1.0,atrim=end=999,asetpts=PTS-STARTPTS"
+    )
     # Need to keep overall filterComplex containing atrim=end=2.0 but clip fragment wrong should also fail
     r2 = client.post("/api/export/jobs", json=desc2)
     assert r2.status_code == 422

@@ -493,6 +493,11 @@ export type {
   SetClipCollectionBindingsInverse,
   SetClipCollectionBindingsParameters,
 } from './setClipCollectionBindingsCommand'
+export { SetClipCollectionCategoryCommand } from './setClipCollectionCategoryCommand'
+export type {
+  SetClipCollectionCategoryInverse,
+  SetClipCollectionCategoryParameters,
+} from './setClipCollectionCategoryCommand'
 export { ExportClipCollectionCommand } from './exportClipCollectionCommand'
 export type {
   ExportClipCollectionInverse,

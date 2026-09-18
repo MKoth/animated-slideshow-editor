@@ -3,6 +3,7 @@ import { ApiClient } from './apiClient'
 export interface ClipCollectionLibraryEntry {
   id: string
   name: string
+  category?: string | null
   bindings: Record<string, string>
   source_node_id: string | null
   clips?: Record<string, unknown>[] | null
@@ -13,6 +14,7 @@ export interface ClipCollectionLibraryEntry {
 export interface ClipCollectionCreateInput {
   id: string
   name: string
+  category?: string | null
   bindings: Record<string, string>
   source_node_id?: string | null
   clips?: Record<string, unknown>[] | null
@@ -20,6 +22,7 @@ export interface ClipCollectionCreateInput {
 
 export interface ClipCollectionUpdateInput {
   name?: string
+  category?: string | null
   bindings?: Record<string, string>
   source_node_id?: string | null
   clips?: Record<string, unknown>[] | null
@@ -37,7 +40,9 @@ export class ClipCollectionsApi {
   }
 
   async getCollection(collectionId: string): Promise<ClipCollectionLibraryEntry> {
-    return this.client.get<ClipCollectionLibraryEntry>(`/api/clip-collections/library/${collectionId}`)
+    return this.client.get<ClipCollectionLibraryEntry>(
+      `/api/clip-collections/library/${collectionId}`,
+    )
   }
 
   async createCollection(input: ClipCollectionCreateInput): Promise<ClipCollectionLibraryEntry> {
@@ -46,6 +51,7 @@ export class ClipCollectionsApi {
       JSON.stringify({
         id: input.id,
         name: input.name,
+        category: input.category ?? null,
         bindings: input.bindings,
         source_node_id: input.source_node_id ?? null,
         clips: input.clips ?? null,
@@ -59,6 +65,7 @@ export class ClipCollectionsApi {
   ): Promise<ClipCollectionLibraryEntry> {
     const body: Record<string, unknown> = {}
     if (input.name !== undefined) body.name = input.name
+    if (input.category !== undefined) body.category = input.category
     if (input.bindings !== undefined) body.bindings = input.bindings
     if (input.source_node_id !== undefined) body.source_node_id = input.source_node_id
     if (input.clips !== undefined) body.clips = input.clips

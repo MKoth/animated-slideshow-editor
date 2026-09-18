@@ -73,7 +73,7 @@ class AssetImporter:
 
         try:
             parsed = json.loads(upload.content.decode("utf-8"))
-        except Exception as exc:  # noqa: BLE001
+        except ValueError as exc:
             raise ImageValidationError(f"reusable object JSON is invalid: {exc}") from exc
         if not isinstance(parsed, dict) or "nodes" not in parsed:
             raise ImageValidationError("reusable object JSON must contain a nodes array")
@@ -111,7 +111,7 @@ class AssetImporter:
             original_path=original_path,
             thumbnail_path=thumbnail_path,
             mime_type="application/json",
-            asset_metadata=asset_metadata,  # type: ignore[arg-type]
+            asset_metadata=asset_metadata,
         )
 
     def _create_definition(
@@ -146,7 +146,7 @@ class AssetImporter:
                 meta = probe_audio_metadata(inspected.content, inspected.extension.lower())
                 # meta contains duration, sampleRate, channels
                 asset_metadata = dict(meta)
-            except Exception:
+            except (OSError, ValueError, TypeError):
                 asset_metadata = None
         return AssetDefinition(
             id=definition_id,

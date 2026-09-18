@@ -6,6 +6,7 @@ import { useEngine } from '../app/useEngine'
 import { AnimationsPanel } from '../components/panels/AnimationsPanel'
 import { Notifications } from '../components/notifications/Notifications'
 import { useClipLibraryStore } from '../stores/clipLibraryStore'
+import { useClipCollectionLibraryStore } from '../stores/clipCollectionLibraryStore'
 import { useNotificationStore } from '../stores/notificationStore'
 import { CreateProjectCommand } from '../engine/commands/createProjectCommand'
 import { CreateClipCommand } from '../engine/commands/createClipCommand'
@@ -60,10 +61,36 @@ beforeEach(() => {
   useClipLibraryStore.setState({
     selectedId: null,
     error: null,
+    definitions: [],
+    loaded: false,
+    loading: false,
+    unavailable: false,
+  })
+  useClipCollectionLibraryStore.setState({
+    definitions: [],
+    loaded: false,
+    loading: false,
+    error: null,
+    unavailable: false,
   })
   useNotificationStore.setState({ notifications: [] })
-  vi.stubGlobal('fetch', vi.fn())
+  // Mount-time library preloads (clips + collections) must resolve quietly so
+  // they neither clobber preset store state nor render error banners. Per-test
+  // fetch stubs are queued only after awaiting the loaded flags below.
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response(JSON.stringify([]), { status: 200 })),
+  )
 })
+
+async function waitForLibraryPreloads(): Promise<void> {
+  await waitFor(() => {
+    expect(useClipLibraryStore.getState().loaded).toBe(true)
+  })
+  await waitFor(() => {
+    expect(useClipCollectionLibraryStore.getState().loaded).toBe(true)
+  })
+}
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -178,24 +205,29 @@ describe('AnimationsPanel', () => {
   })
 
   it('blocks deletion of a clip that is referenced by a node and shows the blocking node name', async () => {
+    renderPanelWithClips()
+    await screen.findByText('Bounce In')
+    await waitForLibraryPreloads()
     useClipLibraryStore.setState({
       error: 'Cannot delete clip: it is referenced by nodes: Hero Image',
     })
-    renderPanelWithClips()
-    await screen.findByText('Bounce In')
 
     expect(
-      screen.getByText('Cannot delete clip: it is referenced by nodes: Hero Image'),
+      await screen.findByText('Cannot delete clip: it is referenced by nodes: Hero Image'),
     ).toBeInTheDocument()
   })
 
   it('clears the error when the user dismisses it', async () => {
-    useClipLibraryStore.setState({
-      error: 'Cannot delete clip: it is referenced by nodes: Hero Image',
-    })
     const user = userEvent.setup()
     renderPanelWithClips()
     await screen.findByText('Bounce In')
+    await waitForLibraryPreloads()
+    useClipLibraryStore.setState({
+      error: 'Cannot delete clip: it is referenced by nodes: Hero Image',
+    })
+    expect(
+      await screen.findByText('Cannot delete clip: it is referenced by nodes: Hero Image'),
+    ).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Dismiss error' }))
 
@@ -255,10 +287,11 @@ describe('AnimationsPanel', () => {
 
     it('saves a clip to the library and shows a success toast when no duplicate exists', async () => {
       const entry = makeLibraryEntry()
-      vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(entry), { status: 200 }))
       const user = userEvent.setup()
       renderPanelWithClips()
       await screen.findByText('Bounce In')
+      await waitForLibraryPreloads()
+      vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(entry), { status: 200 }))
 
       await user.click(screen.getByRole('button', { name: 'Save Bounce In to Library' }))
 
@@ -268,10 +301,11 @@ describe('AnimationsPanel', () => {
     })
 
     it('shows a confirmation dialog when a clip with the same name exists in the library', async () => {
-      useClipLibraryStore.setState({ definitions: [makeLibraryEntry()] })
       const user = userEvent.setup()
       renderPanelWithClips()
       await screen.findByText('Bounce In')
+      await waitForLibraryPreloads()
+      useClipLibraryStore.setState({ definitions: [makeLibraryEntry()] })
 
       await user.click(screen.getByRole('button', { name: 'Save Bounce In to Library' }))
 
@@ -287,10 +321,11 @@ describe('AnimationsPanel', () => {
     })
 
     it('closes the confirmation dialog when Cancel is clicked', async () => {
-      useClipLibraryStore.setState({ definitions: [makeLibraryEntry()] })
       const user = userEvent.setup()
       renderPanelWithClips()
       await screen.findByText('Bounce In')
+      await waitForLibraryPreloads()
+      useClipLibraryStore.setState({ definitions: [makeLibraryEntry()] })
 
       await user.click(screen.getByRole('button', { name: 'Save Bounce In to Library' }))
       await user.click(screen.getByRole('button', { name: /cancel/i }))
@@ -304,14 +339,15 @@ describe('AnimationsPanel', () => {
     })
 
     it('saves as a new clip with a unique name when Save as New is clicked in the confirmation dialog', async () => {
-      useClipLibraryStore.setState({ definitions: [makeLibraryEntry()] })
       const newEntry = makeLibraryEntry({ id: 'lib-2', name: 'Bounce In (2)' })
-      vi.mocked(fetch).mockResolvedValueOnce(
-        new Response(JSON.stringify(newEntry), { status: 200 }),
-      )
       const user = userEvent.setup()
       renderPanelWithClips()
       await screen.findByText('Bounce In')
+      await waitForLibraryPreloads()
+      useClipLibraryStore.setState({ definitions: [makeLibraryEntry()] })
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response(JSON.stringify(newEntry), { status: 200 }),
+      )
 
       await user.click(screen.getByRole('button', { name: 'Save Bounce In to Library' }))
       await user.click(screen.getByRole('button', { name: /save as new/i }))
@@ -322,14 +358,15 @@ describe('AnimationsPanel', () => {
     })
 
     it('overwrites the existing clip when Overwrite is clicked in the confirmation dialog', async () => {
-      useClipLibraryStore.setState({ definitions: [makeLibraryEntry()] })
       const updatedEntry = makeLibraryEntry({ name: 'Bounce In Updated' })
-      vi.mocked(fetch).mockResolvedValueOnce(
-        new Response(JSON.stringify(updatedEntry), { status: 200 }),
-      )
       const user = userEvent.setup()
       renderPanelWithClips()
       await screen.findByText('Bounce In')
+      await waitForLibraryPreloads()
+      useClipLibraryStore.setState({ definitions: [makeLibraryEntry()] })
+      vi.mocked(fetch).mockResolvedValueOnce(
+        new Response(JSON.stringify(updatedEntry), { status: 200 }),
+      )
 
       await user.click(screen.getByRole('button', { name: 'Save Bounce In to Library' }))
       await user.click(screen.getByRole('button', { name: /overwrite/i }))
@@ -340,10 +377,11 @@ describe('AnimationsPanel', () => {
     })
 
     it('shows an error notification when save to library fails', async () => {
-      vi.mocked(fetch).mockResolvedValueOnce(new Response('{}', { status: 500 }))
       const user = userEvent.setup()
       renderPanelWithClips()
       await screen.findByText('Bounce In')
+      await waitForLibraryPreloads()
+      vi.mocked(fetch).mockResolvedValueOnce(new Response('{}', { status: 500 }))
 
       await user.click(screen.getByRole('button', { name: 'Save Bounce In to Library' }))
 

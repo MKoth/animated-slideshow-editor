@@ -6,6 +6,7 @@ import json
 import struct
 import subprocess
 import wave
+from contextlib import suppress
 from pathlib import Path
 
 from app.assets.model import AssetDefinition
@@ -56,26 +57,63 @@ def compute_peaks_from_samples(
     return [0] * num_buckets
 
 
+def _try_float(value: object) -> float | None:
+    """Best-effort float parse of a decoded JSON scalar; None when unusable."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _try_int(value: object) -> int | None:
+    """Best-effort int parse of a decoded JSON scalar; None when unusable."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _read_wav_header(content: bytes) -> dict[str, object] | None:
+    """Parse WAV header metadata; None when content is not a readable WAV."""
+    try:
+        with wave.open(io.BytesIO(content), "rb") as w:
+            nframes = w.getnframes()
+            framerate = w.getframerate() or 44100
+            nchannels = w.getnchannels() or 1
+            duration = nframes / framerate if framerate else 0
+            sampwidth = w.getsampwidth()
+            return {
+                "duration": float(duration) if duration > 0 else 1.0,
+                "sampleRate": int(framerate),
+                "channels": int(nchannels),
+                "sampleWidth": int(sampwidth),
+            }
+    except (wave.Error, EOFError, OSError, struct.error, ValueError):
+        return None
+
+
 def probe_audio_metadata(content: bytes, extension: str) -> dict[str, object]:
     """Return {duration, sampleRate, channels} from content; best-effort."""
     ext = extension.lower()
     # WAV via wave module
     if ext == ".wav":
-        try:
-            with wave.open(io.BytesIO(content), "rb") as w:
-                nframes = w.getnframes()
-                framerate = w.getframerate() or 44100
-                nchannels = w.getnchannels() or 1
-                duration = nframes / framerate if framerate else 0
-                sampwidth = w.getsampwidth()
-                return {
-                    "duration": float(duration) if duration > 0 else 1.0,
-                    "sampleRate": int(framerate),
-                    "channels": int(nchannels),
-                    "sampleWidth": int(sampwidth),
-                }
-        except Exception:
-            pass
+        wav_meta = _read_wav_header(content)
+        if wav_meta is not None:
+            return wav_meta
     # Try ffprobe for any audio
     ffprobe_meta = _ffprobe_metadata(content, ext)
     if ffprobe_meta is not None:
@@ -91,8 +129,8 @@ def _ffprobe_metadata(content: bytes, ext: str) -> dict[str, object] | None:
     # ffprobe expects file on disk; write to temp if available
     try:
         # Check ffprobe exists
-        subprocess.run(["ffprobe", "-version"], capture_output=True, timeout=1)
-    except Exception:
+        subprocess.run(["ffprobe", "-version"], capture_output=True, timeout=1, check=False)
+    except (OSError, subprocess.SubprocessError):
         return None
     import os
     import tempfile
@@ -117,6 +155,7 @@ def _ffprobe_metadata(content: bytes, ext: str) -> dict[str, object] | None:
             capture_output=True,
             text=True,
             timeout=5,
+            check=False,
         )
         if result.returncode != 0:
             return None
@@ -127,26 +166,22 @@ def _ffprobe_metadata(content: bytes, ext: str) -> dict[str, object] | None:
         for stream in data.get("streams", []):
             if stream.get("codec_type") == "audio":
                 if stream.get("duration"):
-                    try:
-                        duration = float(stream["duration"])
-                    except Exception:
-                        pass
+                    parsed_duration = _try_float(stream["duration"])
+                    if parsed_duration is not None:
+                        duration = parsed_duration
                 if stream.get("sample_rate"):
-                    try:
-                        sample_rate = int(stream["sample_rate"])
-                    except Exception:
-                        pass
+                    parsed_rate = _try_int(stream["sample_rate"])
+                    if parsed_rate is not None:
+                        sample_rate = parsed_rate
                 if stream.get("channels"):
-                    try:
-                        channels = int(stream["channels"])
-                    except Exception:
-                        pass
+                    parsed_channels = _try_int(stream["channels"])
+                    if parsed_channels is not None:
+                        channels = parsed_channels
                 break
         if duration is None and data.get("format", {}).get("duration"):
-            try:
-                duration = float(data["format"]["duration"])
-            except Exception:
-                pass
+            parsed_format_duration = _try_float(data["format"]["duration"])
+            if parsed_format_duration is not None:
+                duration = parsed_format_duration
         if duration is None or duration <= 0:
             return None
         return {
@@ -154,14 +189,12 @@ def _ffprobe_metadata(content: bytes, ext: str) -> dict[str, object] | None:
             "sampleRate": int(sample_rate) if sample_rate else 44100,
             "channels": int(channels) if channels else 2,
         }
-    except Exception:
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, AttributeError, KeyError):
         return None
     finally:
         if tmp and os.path.exists(tmp):
-            try:
+            with suppress(OSError):
                 os.unlink(tmp)
-            except Exception:
-                pass
 
 
 def _estimate_duration_fallback(content: bytes, ext: str) -> float:
@@ -198,7 +231,7 @@ def _wav_samples(content: bytes) -> tuple[list[int], int, int] | None:
                 return samples, framerate, nchannels
             else:
                 return None
-    except Exception:
+    except (wave.Error, EOFError, OSError, struct.error, ValueError):
         return None
 
 
@@ -222,8 +255,8 @@ def compute_waveform_peaks(
 
 def _audiowaveform_peaks(content: bytes, ext: str, num_buckets: int) -> list[int] | None:
     try:
-        subprocess.run(["audiowaveform", "--help"], capture_output=True, timeout=1)
-    except Exception:
+        subprocess.run(["audiowaveform", "--help"], capture_output=True, timeout=1, check=False)
+    except (OSError, subprocess.SubprocessError):
         return None
     import json as js
     import os
@@ -253,6 +286,7 @@ def _audiowaveform_peaks(content: bytes, ext: str, num_buckets: int) -> list[int
             capture_output=True,
             text=True,
             timeout=8,
+            check=False,
         )
         if result.returncode != 0 or not os.path.exists(tmp_out):
             return None
@@ -279,15 +313,13 @@ def _audiowaveform_peaks(content: bytes, ext: str, num_buckets: int) -> list[int
                 # pad
                 return (flat + [0] * num_buckets)[:num_buckets]
         return None
-    except Exception:
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, AttributeError, KeyError):
         return None
     finally:
         for p in (tmp_in, tmp_out):
             if p and os.path.exists(p):
-                try:
+                with suppress(OSError):
                     os.unlink(p)
-                except Exception:
-                    pass
 
 
 def _synthetic_peaks(content: bytes, num_buckets: int) -> list[int]:
@@ -317,15 +349,18 @@ def get_or_compute_peaks(
     cached_peaks = meta.get("waveformPeaks")
     cached_duration = meta.get("duration")
     # Validate cached peaks: list 800-2000 ints 0-255
-    if isinstance(cached_peaks, list) and MIN_BUCKETS <= len(cached_peaks) <= MAX_BUCKETS:
-        if all(isinstance(p, int) and 0 <= p <= 255 for p in cached_peaks):
-            # assume cached is valid, return
-            return {
-                "peaks": cached_peaks,
-                "duration": cached_duration,
-                "sampleRate": meta.get("sampleRate"),
-                "channels": meta.get("channels"),
-            }
+    if (
+        isinstance(cached_peaks, list)
+        and MIN_BUCKETS <= len(cached_peaks) <= MAX_BUCKETS
+        and all(isinstance(p, int) and 0 <= p <= 255 for p in cached_peaks)
+    ):
+        # assume cached is valid, return
+        return {
+            "peaks": cached_peaks,
+            "duration": cached_duration,
+            "sampleRate": meta.get("sampleRate"),
+            "channels": meta.get("channels"),
+        }
 
     # Need to compute
     # Load file bytes
@@ -342,16 +377,19 @@ def get_or_compute_peaks(
         content = definition.id.encode()
 
     # Ensure duration etc exist; probe if missing
-    duration = meta.get("duration") if isinstance(meta.get("duration"), (int, float)) else None
+    raw_duration: object = meta.get("duration")
+    duration: float | None = float(raw_duration) if isinstance(raw_duration, (int, float)) else None
     extension = Path(definition.original_filename).suffix.lower() or ".wav"
     if duration is None and content is not None:
         probe = probe_audio_metadata(content, extension)
-        duration = probe.get("duration")  # type: ignore[union-attr]
+        probed_duration = _try_float(probe.get("duration"))
+        if probed_duration is not None:
+            duration = probed_duration
         # Also store sampleRate/channels if not present
         if "sampleRate" not in meta:
-            meta["sampleRate"] = probe.get("sampleRate")  # type: ignore[union-attr]
+            meta["sampleRate"] = probe.get("sampleRate")
         if "channels" not in meta:
-            meta["channels"] = probe.get("channels")  # type: ignore[union-attr]
+            meta["channels"] = probe.get("channels")
         if "duration" not in meta and duration is not None:
             meta["duration"] = duration
 

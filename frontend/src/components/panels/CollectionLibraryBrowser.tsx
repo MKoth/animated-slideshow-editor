@@ -15,6 +15,7 @@ import {
   collectMirrorSkippedLaneNames,
 } from '../../engine/clipMirror'
 import type { MirrorAxis } from '../../engine/clipMirror'
+import { ALL_COLLECTION_CATEGORIES, distinctCollectionCategories } from './collectionCategories'
 
 export function CollectionLibraryBrowser({
   visible,
@@ -35,6 +36,7 @@ export function CollectionLibraryBrowser({
   const { engine, dispatch } = useEngine()
 
   const [search, setSearch] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState<string>(ALL_COLLECTION_CATEGORIES)
   const [deleteConfirm, setDeleteConfirm] = useState<ClipCollectionLibraryEntry | null>(null)
   const [applyCollectionId, setApplyCollectionId] = useState<string | null>(null)
   const [overflowId, setOverflowId] = useState<string | null>(null)
@@ -73,8 +75,19 @@ export function CollectionLibraryBrowser({
 
   if (!visible) return null
 
+  const categories = distinctCollectionCategories(
+    definitions.map((d) => ({
+      category: typeof d.category === 'string' ? d.category : '',
+    })),
+  )
+
   const filtered = definitions.filter((entry) => {
-    return !search.trim() || entry.name.toLowerCase().includes(search.trim().toLowerCase())
+    const matchesSearch =
+      !search.trim() || entry.name.toLowerCase().includes(search.trim().toLowerCase())
+    const entryCat = typeof entry.category === 'string' ? entry.category.trim() : ''
+    const matchesCategory =
+      categoryFilter === ALL_COLLECTION_CATEGORIES || entryCat === categoryFilter
+    return matchesSearch && matchesCategory
   })
 
   const handleImport = async (entry: ClipCollectionLibraryEntry) => {
@@ -130,6 +143,19 @@ export function CollectionLibraryBrowser({
                 onChange={(e) => setSearch(e.target.value)}
                 style={{ flex: 1 }}
               />
+              <select
+                aria-label="Filter by category"
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+              >
+                <option value={ALL_COLLECTION_CATEGORIES}>All categories</option>
+                <option value="">Uncategorized</option>
+                {categories.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
             </div>
             {loading && <p>Loading library...</p>}
             {!loading && filtered.length === 0 && (
@@ -168,6 +194,11 @@ export function CollectionLibraryBrowser({
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <strong style={{ flex: 1, fontSize: 12 }}>{entry.name}</strong>
+                        <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                          {typeof entry.category === 'string' && entry.category.trim() !== ''
+                            ? `[${entry.category.trim()}]`
+                            : 'Uncategorized'}
+                        </span>
                         <span
                           style={{
                             fontSize: 11,

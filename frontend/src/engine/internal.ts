@@ -3463,12 +3463,17 @@ export class Engine {
     name: string,
     bindings: Record<string, string>,
     sourceNodeId?: string,
+    category?: string,
   ): ClipCollection {
     // Validate bindings reference existing clips
     for (const clipId of Object.values(bindings)) {
       this.getClip(clipId)
     }
-    return this.#clipCollections.createCollection(name, bindings, sourceNodeId)
+    return this.#clipCollections.createCollection(name, bindings, sourceNodeId, category)
+  }
+
+  setClipCollectionCategory(collectionId: string, category: string): void {
+    this.#clipCollections.setCategory(collectionId, category)
   }
 
   private ensureUniqueCollectionName(sourceNodeId: string | undefined, base: string): string {
@@ -3507,7 +3512,12 @@ export class Engine {
       }
       newBindings[semanticName] = newClipId
     }
-    const collection = this.createClipCollection(name, newBindings, source.sourceNodeId)
+    const collection = this.createClipCollection(
+      name,
+      newBindings,
+      source.sourceNodeId,
+      source.category,
+    )
     return { collection, clipIdMap }
   }
 
@@ -3553,7 +3563,12 @@ export class Engine {
       // offsets in the model), so offsets are preserved structurally.
       newBindings[boundSemantic] = newClipId
     }
-    const collection = this.createClipCollection(name, newBindings, source.sourceNodeId)
+    const collection = this.createClipCollection(
+      name,
+      newBindings,
+      source.sourceNodeId,
+      source.category,
+    )
     return { collection, clipIdMap, skipped }
   }
 
@@ -3578,7 +3593,12 @@ export class Engine {
       }
       newBindings[semanticName] = newClipId
     }
-    const collection = this.createClipCollection(name, newBindings, source.sourceNodeId)
+    const collection = this.createClipCollection(
+      name,
+      newBindings,
+      source.sourceNodeId,
+      source.category,
+    )
     return { collection, clipIdMap }
   }
 
@@ -4871,6 +4891,7 @@ export class Engine {
         (colJson as unknown as { name: string }).name,
         newBindings,
         (colJson as unknown as { sourceNodeId?: string }).sourceNodeId,
+        (colJson as unknown as { category?: string }).category,
       )
       this.#clipCollections.importCollection(collection)
     }
@@ -6477,8 +6498,10 @@ export function toReadOnly(engine: Engine): EnginePublic {
     getCastShadow: (nodeId) => engine.getCastShadow(nodeId),
     setCastShadow: (nodeId, castShadow) => engine.setCastShadow(nodeId, castShadow),
     getClipCollection: (collectionId) => engine.getClipCollection(collectionId),
-    createClipCollection: (name, bindings, sourceNodeId) =>
-      engine.createClipCollection(name, bindings, sourceNodeId),
+    createClipCollection: (name, bindings, sourceNodeId, category) =>
+      engine.createClipCollection(name, bindings, sourceNodeId, category),
+    setClipCollectionCategory: (collectionId, category) =>
+      engine.setClipCollectionCategory(collectionId, category),
     createReversedCollection: (sourceCollectionId, newName) =>
       engine.createReversedCollection(sourceCollectionId, newName),
     createReversedClip: (clipId, newName) => engine.createReversedClip(clipId, newName),

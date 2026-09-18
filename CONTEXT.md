@@ -194,7 +194,7 @@ The workflow that copies a selection of node keyframes (time/value/interp/tangen
 _Avoid_: Bake to clip, export keyframes
 
 **Clip Collection** (also **Rig Animation**, **Hierarchical Clips**):
-A named grouping of per-node clips bound by semantic name: a map from semanticName → clipId plus parent id. Export walks a parent subtree collecting each node's clip instances (including `morphCoefficient` clips); apply walks a target subtree and broadcasts each clip to all nodes matching the semantic name. No morph-specific naming convention — the same `semanticName` (e.g. `left_hand`) carries any morph clip; binding remains node-local (`MorphBinding` stays on `NodeAnimation`, not in the clip).
+A named grouping of per-node clips bound by semantic name: a map from semanticName → clipId plus parent id and a top-level category (blank = Uncategorized) used to filter the Animation Manager, panels, and library browsers. Export walks a parent subtree collecting each node's clip instances (including `morphCoefficient` clips); apply walks a target subtree and broadcasts each clip to all nodes matching the semantic name. No morph-specific naming convention — the same `semanticName` (e.g. `left_hand`) carries any morph clip; binding remains node-local (`MorphBinding` stays on `NodeAnimation`, not in the clip).
 _Avoid_: Animation set, pose library
 
 **Scale Group** (also **Group Node** alias):

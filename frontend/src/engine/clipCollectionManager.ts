@@ -1,5 +1,5 @@
 import type { EventBus } from './events'
-import { ClipCollection, newClipCollectionId } from './clipCollection'
+import { ClipCollection, newClipCollectionId, normalizeCollectionCategory } from './clipCollection'
 
 export class ClipCollectionManager {
   readonly #bus: EventBus
@@ -49,6 +49,7 @@ export class ClipCollectionManager {
     name: string,
     bindings: Record<string, string>,
     sourceNodeId?: string,
+    category?: string,
   ): ClipCollection {
     const trimmed = name.trim()
     if (trimmed === '') throw new Error('ClipCollection name must not be empty')
@@ -59,7 +60,13 @@ export class ClipCollectionManager {
       )
     }
     const id = newClipCollectionId()
-    const collection = new ClipCollection(id, trimmed, bindings, sourceNodeId)
+    const collection = new ClipCollection(
+      id,
+      trimmed,
+      bindings,
+      sourceNodeId,
+      normalizeCollectionCategory(category),
+    )
     this.#collections.set(id, collection)
     this.#bus.emit({
       type: 'ClipCollectionCreated',
@@ -138,7 +145,7 @@ export class ClipCollectionManager {
     const old = new Map(c.bindings)
     // Replace internal map via copy trick
     // Directly mutate via private hack: we have setters per binding but easier to recreate
-    const copy = new ClipCollection(c.id, c.name, bindings, c.sourceNodeId)
+    const copy = new ClipCollection(c.id, c.name, bindings, c.sourceNodeId, c.category)
     // replace in map
     this.#collections.set(collectionId, copy)
     this.#bus.emit({
@@ -146,6 +153,25 @@ export class ClipCollectionManager {
       collectionId,
     } as unknown as import('./events').EngineEvent)
     return old
+  }
+
+  setCategory(collectionId: string, category: string): string {
+    const c = this.getCollection(collectionId)
+    const old = c.category
+    c.category = category
+    this.#bus.emit({
+      type: 'ClipCollectionRenamed',
+      collectionId,
+    } as unknown as import('./events').EngineEvent)
+    return old
+  }
+
+  distinctCategories(): string[] {
+    const seen = new Set<string>()
+    for (const c of this.#collections.values()) {
+      if (c.category !== '') seen.add(c.category)
+    }
+    return [...seen].sort((a, b) => a.localeCompare(b))
   }
 
   clear(): void {

@@ -2316,6 +2316,12 @@ export function applyUndo(
       engine.setClipCollectionBindings(collectionId, oldBindings)
       return
     }
+    case 'SetClipCollectionCategory': {
+      const collectionId = (inv as Record<string, unknown>).collectionId as string
+      const oldCategory = (inv as Record<string, unknown>).oldCategory as string
+      engine.setClipCollectionCategory(collectionId, oldCategory)
+      return
+    }
     case 'ExportClipCollection': {
       const inverse = inv as Record<string, unknown>
       const collectionId = inverse.collectionId as string
@@ -3850,6 +3856,7 @@ export function applyRedo(
         params.name as string,
         params.bindings as Record<string, string>,
         params.sourceNodeId as string | undefined,
+        params.category as string | undefined,
       )
       return
     }
@@ -3864,6 +3871,9 @@ export function applyRedo(
         params.collectionId as string,
         params.bindings as Record<string, string>,
       )
+      return
+    case 'SetClipCollectionCategory':
+      engine.setClipCollectionCategory(params.collectionId as string, params.category as string)
       return
     case 'ExportClipCollection': {
       const inv = _inverse as Record<string, unknown> | null

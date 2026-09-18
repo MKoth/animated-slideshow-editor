@@ -728,6 +728,9 @@ export function validateLibraryClipCollections(errors: string[], collections: un
         `Library clipCollection "${String(col.id)}" sourceNodeId must be non-empty string`,
       )
     }
+    if (col.category !== undefined && typeof col.category !== 'string') {
+      errors.push(`Library clipCollection "${String(col.id)}" category must be a string`)
+    }
     if (typeof col.id === 'string' && col.id !== '') {
       if (ids.has(col.id)) {
         errors.push(`A library clipCollection with id "${col.id}" already exists`)

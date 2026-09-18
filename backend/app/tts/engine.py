@@ -153,8 +153,8 @@ except Exception:  # pragma: no cover
     def _is_valid_model(model_id: str) -> bool:  # type: ignore[no-redef]
         return model_id == _DEFAULT_MODEL_ID
 
-    def _is_valid_provider(p: str) -> bool:  # type: ignore[no-redef]
-        return p in _SUPPORTED_PROVIDERS
+    def _is_valid_provider(provider: str) -> bool:  # type: ignore[no-redef]
+        return provider in _SUPPORTED_PROVIDERS
 
 
 def map_language(raw: str | None) -> str:
@@ -533,11 +533,7 @@ def get_tts_engine(
     eff_provider = (raw_provider or _DEF_PROV).strip().lower()
     if not _is_valid_provider(eff_provider):
         raise ValueError(f"unknown provider '{eff_provider}'")
-    raw_model_id = (
-        model_id
-        if model_id is not None
-        else os.getenv("TTS_MODEL_ID", _DEF_MID)
-    )
+    raw_model_id = model_id if model_id is not None else os.getenv("TTS_MODEL_ID", _DEF_MID)
     eff_model_id = (raw_model_id or _DEF_MID).strip()
     if not _is_valid_model(eff_model_id):
         raise ValueError(f"unknown modelId '{eff_model_id}'")

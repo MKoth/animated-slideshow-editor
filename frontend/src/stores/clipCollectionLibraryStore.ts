@@ -28,6 +28,7 @@ function collectionToCreateInput(
 ): {
   id: string
   name: string
+  category: string | null
   bindings: Record<string, string>
   source_node_id: string | null
   clips: Record<string, unknown>[] | null
@@ -65,6 +66,7 @@ function collectionToCreateInput(
   return {
     id: json.id,
     name: json.name,
+    category: json.category ?? null,
     bindings: { ...json.bindings } as Record<string, string>,
     source_node_id: json.sourceNodeId ?? null,
     clips,
@@ -134,6 +136,7 @@ export const useClipCollectionLibraryStore = create<ClipCollectionLibraryState>(
       if (overwriteEntryId) {
         result = await clipCollectionsApi.updateCollection(overwriteEntryId, {
           name: input.name,
+          category: input.category,
           bindings: input.bindings,
           source_node_id: input.source_node_id,
           clips: input.clips,
@@ -151,6 +154,7 @@ export const useClipCollectionLibraryStore = create<ClipCollectionLibraryState>(
           if (isDuplicate) {
             result = await clipCollectionsApi.updateCollection(input.id, {
               name: input.name,
+              category: input.category,
               bindings: input.bindings,
               source_node_id: input.source_node_id,
               clips: input.clips,
@@ -348,6 +352,9 @@ export const useClipCollectionLibraryStore = create<ClipCollectionLibraryState>(
       new CreateClipCollectionCommand({
         name: importName,
         bindings: newBindings,
+        ...(typeof entry.category === 'string' && entry.category.trim() !== ''
+          ? { category: entry.category.trim() }
+          : {}),
         // The source node belongs to the project that created the library
         // entry. It cannot be reused as a node reference in this project.
       }),

@@ -8,6 +8,7 @@ import type { UndoStack } from './commands/undoStack'
 import { ExtractToClipCommand } from './commands/extractToClipCommand'
 import { CreateClipCollectionCommand } from './commands/createClipCollectionCommand'
 import { SetClipCollectionBindingsCommand } from './commands/setClipCollectionBindingsCommand'
+import { SetClipCollectionCategoryCommand } from './commands/setClipCollectionCategoryCommand'
 import { DeleteClipCommand } from './commands/deleteClipCommand'
 import { DeleteKeyframesCommand } from './commands/deleteKeyframesCommand'
 import { RemoveClipCommand } from './commands/removeClipCommand'
@@ -258,6 +259,8 @@ export interface SegmentCollectionPlan {
   readonly to: number
   readonly objects: readonly SegmentObjectPlan[]
   readonly collectionName: string
+  /** Top-level collection category ('' = Uncategorized). Ignored in replace mode unless changed (then applied via SetClipCollectionCategoryCommand). */
+  readonly collectionCategory?: string
   readonly deleteOrphans: boolean
   readonly keepFirst: boolean
   readonly keepLast: boolean
@@ -574,6 +577,25 @@ export function executeSegmentToCollection(
       return fail(`Clips created but rebinding failed: ${bindRes.error.message}`)
     }
     records += 1
+    // Apply a changed top-level category in replace mode.
+    if (plan.collectionCategory !== undefined) {
+      const wanted = plan.collectionCategory.trim()
+      try {
+        const current = engine.getClipCollection(targetId).category
+        if (current !== wanted) {
+          const catRes = dispatch(
+            new SetClipCollectionCategoryCommand({ collectionId: targetId, category: wanted }),
+          )
+          if (!catRes.ok) {
+            warnings.push(`Category not updated: ${catRes.error.message}`)
+          } else {
+            records += 1
+          }
+        }
+      } catch {
+        warnings.push('Category not updated — collection no longer exists.')
+      }
+    }
     collectionId = targetId
     // Conservative old-clip deletion: only when no other collection binds it
     // and no clip instance places it. Shared clips are kept with a warning.
@@ -641,6 +663,9 @@ export function executeSegmentToCollection(
         name: collectionName,
         bindings,
         sourceNodeId: plan.parentNodeId,
+        ...(plan.collectionCategory !== undefined && plan.collectionCategory.trim() !== ''
+          ? { category: plan.collectionCategory.trim() }
+          : {}),
       }),
     )
     if (!colRes.ok) {

@@ -13,8 +13,9 @@ class ClipCollectionDefinition(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    category: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     bindings: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
     source_node_id: Mapped[str | None] = mapped_column(String(36), nullable=True, default=None)
-    clips: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True, default=None)
+    clips: Mapped[list[dict[str, object]] | None] = mapped_column(JSON, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

@@ -45,6 +45,7 @@ SPEAKER_META: dict[str, dict[str, str]] = {
     "Sohee": {"description": "Warm rich", "nativeLanguage": "Korean", "iso": "ko"},
 }
 
+
 def _speaker_hint(speaker: str) -> str:
     meta = SPEAKER_META.get(speaker)
     if not meta:
@@ -202,9 +203,17 @@ def migrate_stored_voice(
     # If speaker exists globally but not in this model -> unknown for this model
     if key in {k.lower() for k in SPEAKER_META}:
         # known speaker but not supported by this model
-        return "", True, f"Voice '{stripped}' not supported by {mid.split('/')[-1]} — using default ({default_speaker_for_model(mid, language)})"
+        return (
+            "",
+            True,
+            f"Voice '{stripped}' not supported by {mid.split('/')[-1]} — using default ({default_speaker_for_model(mid, language)})",
+        )
     # Completely unknown
-    return "", True, f"Unknown voice '{stripped}' — using default ({default_speaker_for_model(mid, language)})"
+    return (
+        "",
+        True,
+        f"Unknown voice '{stripped}' — using default ({default_speaker_for_model(mid, language)})",
+    )
 
 
 def get_model_mode(model_id: str) -> str:
@@ -234,7 +243,9 @@ def normalize_provider(raw: str | None) -> str | None:
         return None
     normalized = raw.strip().lower()
     if normalized not in SUPPORTED_PROVIDERS:
-        raise ValueError(f"unknown provider '{raw}'; must be one of {', '.join(SUPPORTED_PROVIDERS)}")
+        raise ValueError(
+            f"unknown provider '{raw}'; must be one of {', '.join(SUPPORTED_PROVIDERS)}"
+        )
     return normalized
 
 
@@ -269,7 +280,7 @@ def is_model_downloaded(model_id: str) -> bool:
             try:
                 with open(index_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-            except Exception:
+            except (OSError, ValueError):
                 return False
             weight_map = data.get("weight_map", {}) if isinstance(data, dict) else {}
             shards: set[str] = set()
@@ -285,7 +296,7 @@ def is_model_downloaded(model_id: str) -> bool:
             return True
         # No model file nor index -> not fully downloaded
         return False
-    except Exception:
+    except Exception:  # noqa: BLE001 — availability probe; any failure means "not downloaded"
         return False
 
 

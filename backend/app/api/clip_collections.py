@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 
 from app.clip_collections.library import (
+    CATEGORY_UNSET,
     ClipCollectionDuplicateIDError,
     ClipCollectionLibrary,
     ClipCollectionNotFoundError,
@@ -46,7 +47,9 @@ def get_library_collection(request: Request, collection_id: str) -> ClipCollecti
 
 
 @router.post("/clip-collections/library", response_model=ClipCollectionDefinitionOut)
-def create_library_collection(request: Request, payload: ClipCollectionCreateIn) -> ClipCollectionDefinitionOut:
+def create_library_collection(
+    request: Request, payload: ClipCollectionCreateIn
+) -> ClipCollectionDefinitionOut:
     library: ClipCollectionLibrary = request.app.state.clip_collection_library
     try:
         definition = library.create(
@@ -55,6 +58,7 @@ def create_library_collection(request: Request, payload: ClipCollectionCreateIn)
             bindings=payload.bindings,
             source_node_id=payload.source_node_id,
             clips=payload.clips,
+            category=payload.category,
             now=now_utc(),
         )
     except ClipCollectionValidationError as exc:
@@ -76,6 +80,8 @@ def update_library_collection(
             bindings=payload.bindings,
             source_node_id=payload.source_node_id,
             clips=payload.clips,
+            # Explicit null/blank clears back to Uncategorized; omitted leaves unchanged.
+            category=payload.category if "category" in payload.model_fields_set else CATEGORY_UNSET,
             now=now_utc(),
         )
     except ClipCollectionNotFoundError as exc:

@@ -7,6 +7,7 @@ import os
 import subprocess
 import tempfile
 import wave
+from contextlib import suppress
 from pathlib import Path
 from typing import Literal
 
@@ -139,7 +140,7 @@ def _ffmpeg_stretch(
             "pcm_s16le",
             tmp_out,
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15, check=False)
         if result.returncode != 0:
             return None
         if not Path(tmp_out).exists():
@@ -162,17 +163,13 @@ def _ffmpeg_stretch(
                 sr = 44100
                 ch = 1
         return (out_bytes, float(dur), int(sr), int(ch), engine)
-    except (FileNotFoundError, subprocess.SubprocessError, OSError):
-        return None
-    except Exception:
+    except (OSError, subprocess.SubprocessError, ValueError, wave.Error):
         return None
     finally:
         for p in (tmp_in, tmp_out):
             if p and os.path.exists(p):
-                try:
+                with suppress(OSError):
                     os.unlink(p)
-                except Exception:
-                    pass
 
 
 @router.post("/audio/stretch", response_model=StretchResponse)

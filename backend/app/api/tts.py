@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -22,7 +23,9 @@ class TTSGenerateRequest(BaseModel):
     language: str | None = None
     voice: str | None = None
     instruction: str | None = None
-    modelId: str | None = Field(default=None, alias="modelId", description="HuggingFace model id override")
+    modelId: str | None = Field(
+        default=None, alias="modelId", description="HuggingFace model id override"
+    )
     provider: str | None = Field(default=None, description="tts provider override: auto, sine, mlx")
 
     model_config = {"populate_by_name": True}
@@ -33,7 +36,7 @@ class TTSGenerateRequest(BaseModel):
         if v is None:
             return None
         if not isinstance(v, str):
-            raise ValueError("language must be a string")
+            raise TypeError("language must be a string")
         try:
             return normalize_language_code(v)
         except ValueError as e:
@@ -45,7 +48,7 @@ class TTSGenerateRequest(BaseModel):
         if v is None:
             return None
         if not isinstance(v, str):
-            raise ValueError("modelId must be a string")
+            raise TypeError("modelId must be a string")
         if v.strip() == "":
             return None
         try:
@@ -63,7 +66,7 @@ class TTSGenerateRequest(BaseModel):
         if v is None:
             return None
         if not isinstance(v, str):
-            raise ValueError("provider must be a string")
+            raise TypeError("provider must be a string")
         if v.strip() == "":
             return None
         try:
@@ -90,7 +93,7 @@ class TtsSettingsUpdate(BaseModel):
         if v is None:
             return None
         if not isinstance(v, str):
-            raise ValueError("provider must be a string")
+            raise TypeError("provider must be a string")
         if v.strip() == "":
             return None
         try:
@@ -108,7 +111,7 @@ class TtsSettingsUpdate(BaseModel):
         if v is None:
             return None
         if not isinstance(v, str):
-            raise ValueError("modelId must be a string")
+            raise TypeError("modelId must be a string")
         if v.strip() == "":
             return None
         try:
@@ -126,7 +129,7 @@ class TtsSettingsUpdate(BaseModel):
         if v is None:
             return None
         if not isinstance(v, str):
-            raise ValueError("model_id must be a string")
+            raise TypeError("model_id must be a string")
         if v.strip() == "":
             return None
         try:
@@ -139,7 +142,9 @@ class TtsSettingsUpdate(BaseModel):
             return v.strip()
 
 
-def _get_registry_defaults():
+def _get_registry_defaults() -> tuple[
+    str, str, list[str], list[str], Callable[[], dict[str, dict[str, object]]]
+]:
     try:
         from app.tts.registry import (
             DEFAULT_MODEL_ID,
@@ -149,7 +154,13 @@ def _get_registry_defaults():
             get_all_capabilities,
         )
 
-        return DEFAULT_MODEL_ID, DEFAULT_PROVIDER, SUPPORTED_MODELS, SUPPORTED_PROVIDERS, get_all_capabilities
+        return (
+            DEFAULT_MODEL_ID,
+            DEFAULT_PROVIDER,
+            SUPPORTED_MODELS,
+            SUPPORTED_PROVIDERS,
+            get_all_capabilities,
+        )
     except Exception:
         # fallback
         default_model = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16"
@@ -158,7 +169,24 @@ def _get_registry_defaults():
         providers = ["auto", "sine", "mlx"]
 
         def cap():  # type: ignore
-            return {default_model: {"languages": ["zh", "en", "ja", "ko", "de", "fr", "ru", "pt", "es", "it"], "speakers": ["Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric", "Ryan", "Aiden", "Ono_Anna", "Sohee"], "instructionSupported": False, "downloaded": False}}
+            return {
+                default_model: {
+                    "languages": ["zh", "en", "ja", "ko", "de", "fr", "ru", "pt", "es", "it"],
+                    "speakers": [
+                        "Vivian",
+                        "Serena",
+                        "Uncle_Fu",
+                        "Dylan",
+                        "Eric",
+                        "Ryan",
+                        "Aiden",
+                        "Ono_Anna",
+                        "Sohee",
+                    ],
+                    "instructionSupported": False,
+                    "downloaded": False,
+                }
+            }
 
         return default_model, default_provider, models, providers, cap
 
@@ -201,7 +229,7 @@ def _get_settings_values(request: Request) -> tuple[str, str]:
 
 @router.get("/tts/models")
 def get_tts_models(request: Request) -> dict[str, Any]:
-    default_model, default_provider, models, providers, get_all = _get_registry_defaults()
+    _default_model, _default_provider, models, providers, get_all = _get_registry_defaults()
     provider, model_id = _get_settings_values(request)
     capabilities = _enrich_capabilities_with_download(get_all())
     download_statuses = _get_download_statuses(models)
@@ -216,16 +244,13 @@ def get_tts_models(request: Request) -> dict[str, Any]:
         "perModel": capabilities,
         "defaults": {"provider": provider, "modelId": model_id},
         "downloaded": download_statuses,
-        "modelsStatus": [
-            {"id": m, "downloaded": download_statuses.get(m, False)}
-            for m in models
-        ],
+        "modelsStatus": [{"id": m, "downloaded": download_statuses.get(m, False)} for m in models],
     }
 
 
 @router.get("/tts/capabilities")
 def get_tts_capabilities(request: Request) -> dict[str, Any]:
-    default_model, default_provider, models, providers, get_all = _get_registry_defaults()
+    _default_model, _default_provider, models, providers, get_all = _get_registry_defaults()
     provider, model_id = _get_settings_values(request)
     raw_capabilities = get_all()
     capabilities = _enrich_capabilities_with_download(raw_capabilities)
@@ -237,9 +262,9 @@ def get_tts_capabilities(request: Request) -> dict[str, Any]:
         langs = cap.get("languages", [])
         spks = cap.get("speakers", [])
         if isinstance(langs, list):
-            all_languages.update(langs)  # type: ignore
+            all_languages.update(langs)
         if isinstance(spks, list):
-            all_speakers.update(spks)  # type: ignore
+            all_speakers.update(spks)
     # also include per-model as get_supported_* from engine
     try:
         from app.tts.engine import get_supported_languages, get_supported_speakers
@@ -265,17 +290,14 @@ def get_tts_capabilities(request: Request) -> dict[str, Any]:
         "per_model": capabilities,
         "defaults": {"provider": provider, "modelId": model_id},
         "downloaded": download_statuses,
-        "modelsStatus": [
-            {"id": m, "downloaded": download_statuses.get(m, False)}
-            for m in models
-        ],
+        "modelsStatus": [{"id": m, "downloaded": download_statuses.get(m, False)} for m in models],
     }
 
 
 @router.get("/tts/settings")
 def get_tts_settings(request: Request) -> dict[str, Any]:
     provider, model_id = _get_settings_values(request)
-    default_model, default_provider, models, providers, get_all = _get_registry_defaults()
+    _default_model, _default_provider, models, providers, _get_all = _get_registry_defaults()
     download_statuses = _get_download_statuses(models)
     return {
         "provider": provider,
@@ -286,10 +308,7 @@ def get_tts_settings(request: Request) -> dict[str, Any]:
         "models": models,
         "providers": providers,
         "downloaded": download_statuses,
-        "modelsStatus": [
-            {"id": m, "downloaded": download_statuses.get(m, False)}
-            for m in models
-        ],
+        "modelsStatus": [{"id": m, "downloaded": download_statuses.get(m, False)} for m in models],
     }
 
 
@@ -300,7 +319,7 @@ def update_tts_settings(request: Request, body: TtsSettingsUpdate) -> dict[str, 
         from app.config import load_settings
 
         settings = load_settings()
-        request.app.state.settings = settings  # type: ignore
+        request.app.state.settings = settings
     # Determine new values (keep existing if body None)
     provider, model_id = _get_settings_values(request)
     new_provider = body.provider if body.provider is not None else provider
@@ -318,24 +337,28 @@ def update_tts_settings(request: Request, body: TtsSettingsUpdate) -> dict[str, 
         from app.tts.registry import normalize_model_id, normalize_provider
 
         if body.provider is not None:
-            new_provider = normalize_provider(new_provider) or new_provider  # type: ignore
+            new_provider = normalize_provider(new_provider) or new_provider
         if body.modelId is not None or getattr(body, "model_id", None) is not None:
-            new_model_id = normalize_model_id(new_model_id) or new_model_id  # type: ignore
+            new_model_id = normalize_model_id(new_model_id) or new_model_id
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
     # Update settings – handle frozen or not
     try:
         # try direct mutation
-        settings.tts_provider = new_provider  # type: ignore
-        settings.tts_model_id = new_model_id  # type: ignore
+        settings.tts_provider = new_provider
+        settings.tts_model_id = new_model_id
     except Exception:
         try:
-            new_settings = dataclasses.replace(settings, tts_provider=new_provider, tts_model_id=new_model_id)  # type: ignore
-            request.app.state.settings = new_settings  # type: ignore
+            new_settings = dataclasses.replace(
+                settings, tts_provider=new_provider, tts_model_id=new_model_id
+            )
+            request.app.state.settings = new_settings
             settings = new_settings
         except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"failed to update settings: {exc}") from exc
+            raise HTTPException(
+                status_code=500, detail=f"failed to update settings: {exc}"
+            ) from exc
 
     # Trigger engine singleton reload
     try:
@@ -354,26 +377,26 @@ def update_tts_settings(request: Request, body: TtsSettingsUpdate) -> dict[str, 
                 delattr(request.app.state, "tts_engine")
             except Exception:
                 try:
-                    request.app.state.tts_engine = None  # type: ignore
+                    request.app.state.tts_engine = None
                 except Exception:
                     pass
         # Preload new engine (handles fallback)
         try:
             engine = get_tts_engine(provider=new_provider, model_id=new_model_id)
-            request.app.state.tts_engine = engine  # type: ignore
+            request.app.state.tts_engine = engine
         except MlxNotAvailableError:
             if new_provider == "mlx":
                 # Store placeholder that will 503 on next generate – consistent with factory
                 request.app.state.tts_engine = MlxQwenTtsEngine(new_model_id)  # type: ignore
             else:
-                request.app.state.tts_engine = SineTtsEngine()  # type: ignore
+                request.app.state.tts_engine = SineTtsEngine()
         except ValueError as ve:
             raise HTTPException(status_code=422, detail=str(ve)) from ve
         except Exception:
             # fallback to sine
             from app.tts.engine import SineTtsEngine
 
-            request.app.state.tts_engine = SineTtsEngine()  # type: ignore
+            request.app.state.tts_engine = SineTtsEngine()
     except HTTPException:
         raise
     except Exception:
@@ -441,11 +464,23 @@ async def tts_generate(request: Request, body: TTSGenerateRequest) -> Response:
     # Determine effective provider/model: request body > prompt stored > global settings
     settings = getattr(request.app.state, "settings", None)
     default_model, default_provider, _, _, _ = _get_registry_defaults()
-    global_provider = getattr(settings, "tts_provider", default_provider) if settings else default_provider
-    global_model_id = getattr(settings, "tts_model_id", default_model) if settings else default_model
+    global_provider = (
+        getattr(settings, "tts_provider", default_provider) if settings else default_provider
+    )
+    global_model_id = (
+        getattr(settings, "tts_model_id", default_model) if settings else default_model
+    )
 
-    effective_provider = body.provider if body.provider is not None else (prompt_provider if prompt_provider else global_provider)
-    effective_model_id = body.modelId if body.modelId is not None else (prompt_model_id if prompt_model_id else global_model_id)
+    effective_provider = (
+        body.provider
+        if body.provider is not None
+        else (prompt_provider if prompt_provider else global_provider)
+    )
+    effective_model_id = (
+        body.modelId
+        if body.modelId is not None
+        else (prompt_model_id if prompt_model_id else global_model_id)
+    )
 
     # Normalize (ensure lower for provider, strip for model)
     if isinstance(effective_provider, str):
@@ -478,7 +513,7 @@ async def tts_generate(request: Request, body: TTSGenerateRequest) -> Response:
         engine = get_tts_engine(provider=provider_for_engine, model_id=model_id_for_engine)
         # Update cache
         try:
-            request.app.state.tts_engine = engine  # type: ignore
+            request.app.state.tts_engine = engine
         except Exception:
             pass
     except Exception as exc:
@@ -494,7 +529,7 @@ async def tts_generate(request: Request, body: TTSGenerateRequest) -> Response:
 
                 engine = SineTtsEngine()
                 try:
-                    request.app.state.tts_engine = engine  # type: ignore
+                    request.app.state.tts_engine = engine
                 except Exception:
                     pass
             except Exception as fallback_exc:
@@ -514,7 +549,7 @@ async def tts_generate(request: Request, body: TTSGenerateRequest) -> Response:
             # Run blocking inference in thread pool to avoid blocking event loop
             # Engine.generate is blocking (MLX may be heavy)
             wav_bytes: bytes = await asyncio.to_thread(
-                engine.generate,  # type: ignore
+                engine.generate,
                 text,
                 effective_language,
                 effective_voice,

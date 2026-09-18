@@ -53,6 +53,7 @@ import {
   AssignClipCommand,
   CreateClipCollectionCommand,
   SetClipCollectionBindingsCommand,
+  SetClipCollectionCategoryCommand,
   RenameClipCollectionCommand,
   PlaceCollectionCommand,
   SetCollectionPlacementStartTimeCommand,
@@ -89,6 +90,13 @@ import { DeleteOrphansConfirmModal } from './DeleteOrphansConfirmModal'
 import { TimeSegmentToCollectionModal } from './TimeSegmentToCollectionModal'
 import type { SegmentSourceEntry } from './TimeSegmentToCollectionModal'
 import { executeSegmentToCollection, nextClipNameForNode } from '../../engine/timeSegmentExtraction'
+import {
+  ALL_COLLECTION_CATEGORIES,
+  collectionCategoryLabel,
+  distinctClipCategories,
+  distinctCollectionCategories,
+  matchesCollectionCategory,
+} from './collectionCategories'
 import { executeDeleteClipCollection } from '../../app/deleteClipCollectionAction'
 import { executeReapplyClipCollections } from '../../app/reapplyClipCollectionsAction'
 import {
@@ -412,11 +420,17 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const [clipAnchorId, setClipAnchorId] = useState<string | null>(null)
   const [collectionCreateOpen, setCollectionCreateOpen] = useState(false)
   const [collectionNameDraft, setCollectionNameDraft] = useState('')
+  const [collectionCategoryDraft, setCollectionCategoryDraft] = useState('')
   const [collectionLocalError, setCollectionLocalError] = useState<string | null>(null)
   const [editingCollectionId, setEditingCollectionId] = useState<string | null>(null)
   const [editingBindingsDraft, setEditingBindingsDraft] = useState<Record<string, string>>({})
   const [editingNameDraft, setEditingNameDraft] = useState('')
+  const [editingCategoryDraft, setEditingCategoryDraft] = useState('')
   const [deleteConfirmCollectionId, setDeleteConfirmCollectionId] = useState<string | null>(null)
+  // Top-level collection category filter: '' = Uncategorized (default),
+  // '__all' = All categories. Scopes the Collections tab list and the
+  // place-collection dropdown to the category being worked with.
+  const [collectionCategoryFilter, setCollectionCategoryFilter] = useState<string>('')
   // Fine-grained collection editing (Spec 353): flatten + replace
   const [flattenOpen, setFlattenOpen] = useState(false)
   const [flattenFromStr, setFlattenFromStr] = useState('0')
@@ -1595,8 +1609,17 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const collectionsForParent = useMemo(() => {
     void tick
     if (!parentNodeId) return []
-    return engine.clipCollections.filter((c) => c.sourceNodeId === parentNodeId)
-  }, [engine, parentNodeId, tick])
+    return engine.clipCollections.filter(
+      (c) =>
+        c.sourceNodeId === parentNodeId && matchesCollectionCategory(c, collectionCategoryFilter),
+    )
+  }, [engine, parentNodeId, tick, collectionCategoryFilter])
+
+  // Global distinct collection categories for the filter dropdowns.
+  const allCollectionCategories = useMemo(() => {
+    void tick
+    return distinctCollectionCategories(engine.clipCollections)
+  }, [engine, tick])
 
   // Collection placements packing (Spec 15-06) – derived from parentNode.collectionPlacements
   const packedCollectionLanes = useMemo(() => {
@@ -2187,6 +2210,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     // default name from parent
     const defaultName = parentNode ? `${parentNode.name} Collection` : 'New Collection'
     if (!collectionNameDraft.trim()) setCollectionNameDraft(defaultName)
+    // default category from the active filter (All → blank = Uncategorized)
+    if (collectionCategoryFilter !== ALL_COLLECTION_CATEGORIES) {
+      setCollectionCategoryDraft(collectionCategoryFilter)
+    }
     setCollectionLocalError(null)
     setCollectionCreateOpen(true)
   }, [
@@ -2195,6 +2222,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     flatOrphanEntries,
     collectionMissingSemantic,
     collectionNameDraft,
+    collectionCategoryFilter,
     parentNode,
     notify,
   ])
@@ -2230,7 +2258,14 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       return
     }
     const result = dispatch(
-      new CreateClipCollectionCommand({ name, bindings, sourceNodeId: parentNodeId }),
+      new CreateClipCollectionCommand({
+        name,
+        bindings,
+        sourceNodeId: parentNodeId,
+        ...(collectionCategoryDraft.trim() !== ''
+          ? { category: collectionCategoryDraft.trim() }
+          : {}),
+      }),
     )
     if (!result.ok) {
       setCollectionLocalError(result.error.message)
@@ -2239,6 +2274,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     notify(`Created ClipCollection "${name}" (${Object.keys(bindings).length} bindings)`)
     setCollectionCreateOpen(false)
     setCollectionNameDraft('')
+    setCollectionCategoryDraft('')
     setCollectionLocalError(null)
     // keep selection but maybe clear? Keep for edit
     // Do not clear selection to allow shared clip test
@@ -2248,6 +2284,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     flatOrphanEntries,
     collectionMissingSemantic,
     collectionNameDraft,
+    collectionCategoryDraft,
     collectionBindingsPreview,
     dispatch,
     notify,
@@ -2273,6 +2310,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         setEditingCollectionId(collectionId)
         setEditingBindingsDraft({ ...col.getBindingsObject() })
         setEditingNameDraft(col.name)
+        setEditingCategoryDraft(col.category)
         setCollectionLocalError(null)
       } catch (e) {
         notify(e instanceof Error ? e.message : String(e))
@@ -2327,6 +2365,18 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           return
         }
       }
+      if (editingCategoryDraft.trim() !== col.category) {
+        const catResult = dispatch(
+          new SetClipCollectionCategoryCommand({
+            collectionId: editingCollectionId,
+            category: editingCategoryDraft.trim(),
+          }),
+        )
+        if (!catResult.ok) {
+          setCollectionLocalError(catResult.error.message)
+          return
+        }
+      }
     } catch (e) {
       setCollectionLocalError(e instanceof Error ? e.message : String(e))
       return
@@ -2335,7 +2385,15 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     setEditingCollectionId(null)
     setEditingBindingsDraft({})
     setCollectionLocalError(null)
-  }, [editingCollectionId, editingBindingsDraft, editingNameDraft, engine, dispatch, notify])
+  }, [
+    editingCollectionId,
+    editingBindingsDraft,
+    editingNameDraft,
+    editingCategoryDraft,
+    engine,
+    dispatch,
+    notify,
+  ])
 
   // --- Fine-grained collection editing: flatten + replace (Spec 353) ---
   const openFlattenDialog = useCallback(() => {
@@ -2410,6 +2468,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         const col = engine.getClipCollection(editingCollectionId)
         setEditingBindingsDraft({ ...col.getBindingsObject() })
         setEditingNameDraft(col.name)
+        setEditingCategoryDraft(col.category)
       } catch {
         // collection still exists (replace never deletes it)
       }
@@ -2429,12 +2488,15 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   )
 
   const replaceSeed = useMemo(() => {
-    if (!editingCollectionId) return { clipNamesByNode: {}, collectionName: '' }
+    if (!editingCollectionId)
+      return { clipNamesByNode: {}, collectionName: '', collectionCategory: '' }
     let collectionName = ''
+    let collectionCategory = ''
     const clipNamesBySemantic = new Map<string, string>()
     try {
       const col = engine.getClipCollection(editingCollectionId)
       collectionName = col.name
+      collectionCategory = col.category
       for (const [sem, clipId] of col.bindings) {
         try {
           clipNamesBySemantic.set(sem.trim(), engine.getClip(clipId).name)
@@ -2443,7 +2505,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         }
       }
     } catch {
-      return { clipNamesByNode: {}, collectionName: '' }
+      return { clipNamesByNode: {}, collectionName: '', collectionCategory: '' }
     }
     const clipNamesByNode: Record<string, string> = {}
     for (const row of managerRows) {
@@ -2452,7 +2514,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       const bound = clipNamesBySemantic.get(sem)
       if (bound) clipNamesByNode[row.node.id] = bound
     }
-    return { clipNamesByNode, collectionName }
+    return { clipNamesByNode, collectionName, collectionCategory }
   }, [editingCollectionId, engine, managerRows, tick])
 
   // Marquee drag for orphans – threshold 5px, handle-excluded
@@ -4117,6 +4179,32 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               </span>
               <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center' }}>
                 <select
+                  value={collectionCategoryFilter}
+                  onChange={(e) => {
+                    setCollectionCategoryFilter(e.target.value)
+                    setPlaceCollectionId('')
+                  }}
+                  data-testid="place-collection-category-select"
+                  title="Filter collections by category"
+                  style={{
+                    padding: '4px 6px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border, #ddd)',
+                    background: 'var(--color-bg, #fff)',
+                    color: 'var(--color-text, #1c1e21)',
+                    fontSize: 12,
+                    maxWidth: 160,
+                  }}
+                >
+                  <option value={ALL_COLLECTION_CATEGORIES}>All categories</option>
+                  <option value="">Uncategorized</option>
+                  {allCollectionCategories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+                <select
                   value={placeCollectionId}
                   onChange={(e) => setPlaceCollectionId(e.target.value)}
                   data-testid="place-collection-select"
@@ -4130,20 +4218,24 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   }}
                 >
                   <option value="">Select collection…</option>
-                  {engine.clipCollections.map((col) => {
-                    let rigSuffix = ''
-                    try {
-                      if (col.sourceNodeId)
-                        rigSuffix = ` · ${engine.getNode(col.sourceNodeId).name}`
-                    } catch {
-                      rigSuffix = ''
-                    }
-                    return (
-                      <option key={col.id} value={col.id}>
-                        {col.name} ({col.bindings.size}){rigSuffix}
-                      </option>
-                    )
-                  })}
+                  {engine.clipCollections
+                    .filter((col) => matchesCollectionCategory(col, collectionCategoryFilter))
+                    .map((col) => {
+                      let rigSuffix = ''
+                      try {
+                        if (col.sourceNodeId)
+                          rigSuffix = ` · ${engine.getNode(col.sourceNodeId).name}`
+                      } catch {
+                        rigSuffix = ''
+                      }
+                      const catLabel = col.category !== '' ? ` [${col.category}]` : ''
+                      return (
+                        <option key={col.id} value={col.id}>
+                          {col.name} ({col.bindings.size}){catLabel}
+                          {rigSuffix}
+                        </option>
+                      )
+                    })}
                 </select>
                 <button
                   data-testid="place-collection-button"
@@ -6315,6 +6407,42 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             data-testid="manager-collections"
             style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}
           >
+            <div
+              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+              data-testid="manager-collections-filter-row"
+            >
+              <label style={{ fontSize: 12, color: 'var(--color-text-muted, #666)' }}>
+                Category
+              </label>
+              <select
+                value={collectionCategoryFilter}
+                onChange={(e) => {
+                  setCollectionCategoryFilter(e.target.value)
+                  setPlaceCollectionId('')
+                }}
+                data-testid="manager-collections-category-select"
+                style={{
+                  padding: '4px 6px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border, #ddd)',
+                  background: 'var(--color-bg, #fff)',
+                  color: 'var(--color-text, #1c1e21)',
+                  fontSize: 12,
+                }}
+              >
+                <option value={ALL_COLLECTION_CATEGORIES}>All categories</option>
+                <option value="">Uncategorized</option>
+                {allCollectionCategories.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+              <span style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
+                {collectionsForParent.length} collection(s) ·{' '}
+                {collectionCategoryLabel(collectionCategoryFilter)}
+              </span>
+            </div>
             {collectionsForParent.length === 0 ? (
               <div
                 data-testid="manager-collections-empty"
@@ -6327,8 +6455,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   textAlign: 'center',
                 }}
               >
-                No Clip Collections for "{parentNode?.name ?? 'parent'}". Select Clip Lanes in Clips
-                tab → Create Collection.
+                No Clip Collections for "{parentNode?.name ?? 'parent'}" in{' '}
+                {collectionCategoryLabel(collectionCategoryFilter)}. Select Clip Lanes in Clips tab
+                → Create Collection.
               </div>
             ) : (
               <div
@@ -6359,7 +6488,15 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         {col.name}
                       </span>
                       <span style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
-                        {col.bindings.size} binding(s) · source:{' '}
+                        {col.bindings.size} binding(s) ·{' '}
+                        {col.category !== '' ? (
+                          <span data-testid={`collection-category-${col.id}`}>
+                            [{col.category}]
+                          </span>
+                        ) : (
+                          <span data-testid={`collection-category-${col.id}`}>Uncategorized</span>
+                        )}{' '}
+                        · source:{' '}
                         {col.sourceNodeId
                           ? (() => {
                               try {
@@ -7726,6 +7863,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             bakingEvaluator={segmentBakingEvaluator}
             onClose={() => setSegmentModalOpen(false)}
             onConfirm={handleSegmentConfirm}
+            existingCollectionCategories={allCollectionCategories}
           />
         )}
 
@@ -8076,6 +8214,31 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   autoFocus
                 />
               </label>
+              <label style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>
+                Category (blank = Uncategorized)
+                <input
+                  value={collectionCategoryDraft}
+                  onChange={(e) => setCollectionCategoryDraft(e.target.value)}
+                  placeholder="Uncategorized"
+                  list="create-collection-category-list"
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    marginTop: 4,
+                    padding: '6px 8px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg, #fff)',
+                    color: 'var(--color-text, #1c1e21)',
+                  }}
+                  data-testid="create-collection-category-input"
+                />
+                <datalist id="create-collection-category-list">
+                  {allCollectionCategories.map((cat) => (
+                    <option key={cat} value={cat} />
+                  ))}
+                </datalist>
+              </label>
               {collectionLocalError && (
                 <div
                   data-testid="create-collection-local-error"
@@ -8189,6 +8352,31 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   data-testid="edit-collection-name-input"
                 />
               </label>
+              <label style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>
+                Category (blank = Uncategorized)
+                <input
+                  value={editingCategoryDraft}
+                  onChange={(e) => setEditingCategoryDraft(e.target.value)}
+                  placeholder="Uncategorized"
+                  list="edit-collection-category-list"
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    marginTop: 4,
+                    padding: '6px 8px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border)',
+                    background: 'var(--color-bg, #fff)',
+                    color: 'var(--color-text, #1c1e21)',
+                  }}
+                  data-testid="edit-collection-category-input"
+                />
+                <datalist id="edit-collection-category-list">
+                  {allCollectionCategories.map((cat) => (
+                    <option key={cat} value={cat} />
+                  ))}
+                </datalist>
+              </label>
               <div style={{ marginBottom: 8 }}>
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
                   Bindings (semanticName → clipId)
@@ -8254,7 +8442,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   })}
                 </div>
                 <AddBindingRow
+                  key={editingCollectionId}
                   clips={engine.clips}
+                  collections={engine.clipCollections}
                   onAdd={(sem, clipId) => {
                     if (!sem.trim() || !clipId) {
                       setCollectionLocalError('Semantic and clip required')
@@ -8520,6 +8710,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             mode="replace"
             replaceCollectionId={editingCollectionId}
             replaceCollectionName={replaceSeed.collectionName}
+            replaceCollectionCategory={replaceSeed.collectionCategory}
+            existingCollectionCategories={allCollectionCategories}
             initialClipNamesByNode={replaceSeed.clipNamesByNode}
             initialRange={defaultSegmentRange(
               segmentEntries.map((e) => e.time),
@@ -9439,73 +9631,155 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
 
 function AddBindingRow({
   clips,
+  collections,
   onAdd,
 }: {
   clips: readonly ClipDefinition[]
+  collections: readonly import('../../engine/clipCollection').ClipCollection[]
   onAdd: (semanticName: string, clipId: string) => void
 }) {
   const [sem, setSem] = useState('')
+  // Top level narrows candidates to clips already bound by collections in that
+  // category (discovery aid). Defaults to All so every clip stays pickable —
+  // binding a brand-new clip must never be blocked by the filter.
+  const [topCat, setTopCat] = useState<string>(ALL_COLLECTION_CATEGORIES)
+  const [clipCat, setClipCat] = useState<string>(ALL_COLLECTION_CATEGORIES)
   const [clipId, setClipId] = useState('')
+  const topCats = useMemo(() => distinctCollectionCategories(collections), [collections])
+  // Top level: collection category narrows candidates to clips bound by
+  // collections in that category. Lower level: clip category (usually the
+  // semantic name). '__all' at either level disables that level.
+  const candidateClips = useMemo(() => {
+    if (topCat === ALL_COLLECTION_CATEGORIES) return clips
+    const ids = new Set<string>()
+    for (const col of collections) {
+      if (!matchesCollectionCategory(col, topCat)) continue
+      for (const id of col.bindings.values()) ids.add(id)
+    }
+    return clips.filter((c) => ids.has(c.id))
+  }, [clips, collections, topCat])
+  const clipCats = useMemo(() => distinctClipCategories(candidateClips), [candidateClips])
+  const visibleClips =
+    clipCat === ALL_COLLECTION_CATEGORIES
+      ? candidateClips
+      : candidateClips.filter((c) => (c.category ?? '').trim() === clipCat)
   return (
     <div
-      style={{ marginTop: 8, display: 'flex', gap: 6, alignItems: 'center' }}
+      style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}
       data-testid="add-binding-row"
     >
-      <input
-        placeholder="semanticName (e.g. left_hand)"
-        value={sem}
-        onChange={(e) => setSem(e.target.value)}
-        style={{
-          flex: 1,
-          padding: '4px 6px',
-          borderRadius: 4,
-          border: '1px solid var(--color-border)',
-          background: 'var(--color-bg, #fff)',
-          color: 'var(--color-text, #1c1e21)',
-          fontSize: 12,
-        }}
-        data-testid="add-binding-semantic-input"
-      />
-      <select
-        value={clipId}
-        onChange={(e) => setClipId(e.target.value)}
-        style={{
-          flex: 1,
-          padding: '4px 6px',
-          borderRadius: 4,
-          border: '1px solid var(--color-border)',
-          background: 'var(--color-bg, #fff)',
-          color: 'var(--color-text, #1c1e21)',
-          fontSize: 12,
-        }}
-        data-testid="add-binding-clip-select"
-      >
-        <option value="">— select clip —</option>
-        {clips.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name} ({c.id.slice(0, 6)})
-          </option>
-        ))}
-      </select>
-      <button
-        onClick={() => {
-          onAdd(sem, clipId)
-          if (sem.trim() && clipId) {
-            setSem('')
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <select
+          value={topCat}
+          onChange={(e) => {
+            setTopCat(e.target.value)
+            setClipCat(ALL_COLLECTION_CATEGORIES)
             setClipId('')
-          }
-        }}
-        style={{
-          padding: '4px 8px',
-          borderRadius: 4,
-          border: '1px solid var(--color-border)',
-          fontSize: 12,
-          cursor: 'pointer',
-        }}
-        data-testid="add-binding-confirm"
-      >
-        Add
-      </button>
+          }}
+          title="Filter clips by collection category (top level)"
+          style={{
+            flex: 1,
+            padding: '4px 6px',
+            borderRadius: 4,
+            border: '1px solid var(--color-border)',
+            background: 'var(--color-bg, #fff)',
+            color: 'var(--color-text, #1c1e21)',
+            fontSize: 12,
+          }}
+          data-testid="add-binding-collection-category-select"
+        >
+          <option value={ALL_COLLECTION_CATEGORIES}>All collection categories</option>
+          <option value="">Uncategorized collections</option>
+          {topCats.map((cat) => (
+            <option key={cat} value={cat}>
+              {cat}
+            </option>
+          ))}
+        </select>
+        <select
+          value={clipCat}
+          onChange={(e) => {
+            setClipCat(e.target.value)
+            setClipId('')
+          }}
+          title="Filter clips by clip category (usually the semantic name)"
+          style={{
+            flex: 1,
+            padding: '4px 6px',
+            borderRadius: 4,
+            border: '1px solid var(--color-border)',
+            background: 'var(--color-bg, #fff)',
+            color: 'var(--color-text, #1c1e21)',
+            fontSize: 12,
+          }}
+          data-testid="add-binding-clip-category-select"
+        >
+          <option value={ALL_COLLECTION_CATEGORIES}>All clip categories</option>
+          <option value="">Uncategorized clips</option>
+          {clipCats.map((cat) => (
+            <option key={cat} value={cat}>
+              {cat}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <input
+          placeholder="semanticName (e.g. left_hand)"
+          value={sem}
+          onChange={(e) => setSem(e.target.value)}
+          style={{
+            flex: 1,
+            padding: '4px 6px',
+            borderRadius: 4,
+            border: '1px solid var(--color-border)',
+            background: 'var(--color-bg, #fff)',
+            color: 'var(--color-text, #1c1e21)',
+            fontSize: 12,
+          }}
+          data-testid="add-binding-semantic-input"
+        />
+        <select
+          value={clipId}
+          onChange={(e) => setClipId(e.target.value)}
+          style={{
+            flex: 1,
+            padding: '4px 6px',
+            borderRadius: 4,
+            border: '1px solid var(--color-border)',
+            background: 'var(--color-bg, #fff)',
+            color: 'var(--color-text, #1c1e21)',
+            fontSize: 12,
+          }}
+          data-testid="add-binding-clip-select"
+        >
+          <option value="">— select clip —</option>
+          {visibleClips.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name} ({c.id.slice(0, 6)})
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={() => {
+            onAdd(sem, clipId)
+            if (sem.trim() && clipId) {
+              setSem('')
+              setClipId('')
+            }
+          }}
+          style={{
+            padding: '4px 8px',
+            borderRadius: 4,
+            border: '1px solid var(--color-border)',
+            fontSize: 12,
+            cursor: 'pointer',
+          }}
+          data-testid="add-binding-confirm"
+        >
+          Add
+        </button>
+      </div>
     </div>
   )
 }

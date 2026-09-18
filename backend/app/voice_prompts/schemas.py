@@ -24,7 +24,7 @@ class VoicePromptCreate(BaseModel):
         if v is None:
             return None
         if not isinstance(v, str):
-            raise ValueError("language must be a string")
+            raise TypeError("language must be a string")
         try:
             return normalize_language_code(v)
         except ValueError as e:
@@ -36,7 +36,7 @@ class VoicePromptCreate(BaseModel):
         if v is None:
             return None
         if not isinstance(v, str):
-            raise ValueError("modelId must be a string")
+            raise TypeError("modelId must be a string")
         try:
             return normalize_model_id(v)
         except ValueError as e:
@@ -48,7 +48,7 @@ class VoicePromptCreate(BaseModel):
         if v is None:
             return None
         if not isinstance(v, str):
-            raise ValueError("provider must be a string")
+            raise TypeError("provider must be a string")
         try:
             return normalize_provider(v)
         except ValueError as e:
@@ -72,7 +72,7 @@ class VoicePromptUpdate(BaseModel):
         if v is None:
             return None
         if not isinstance(v, str):
-            raise ValueError("language must be a string")
+            raise TypeError("language must be a string")
         # Allow explicit null via JSON null; empty string means Auto -> None
         # Update can receive null to clear language
         try:
@@ -86,7 +86,7 @@ class VoicePromptUpdate(BaseModel):
         if v is None:
             return None
         if not isinstance(v, str):
-            raise ValueError("modelId must be a string")
+            raise TypeError("modelId must be a string")
         # allow explicit clearing via null – empty string treated as null
         if isinstance(v, str) and v.strip() == "":
             return None
@@ -101,7 +101,7 @@ class VoicePromptUpdate(BaseModel):
         if v is None:
             return None
         if not isinstance(v, str):
-            raise ValueError("provider must be a string")
+            raise TypeError("provider must be a string")
         if isinstance(v, str) and v.strip() == "":
             return None
         try:
@@ -125,6 +125,28 @@ class VoicePromptOut(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+def _is_known_model_id(value: str) -> bool:
+    """Best-effort check that a legacy model id normalizes; False when unknown."""
+    try:
+        from app.tts.registry import normalize_model_id as _norm_mid
+
+        _norm_mid(value)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def _is_known_provider(value: str) -> bool:
+    """Best-effort check that a legacy provider normalizes; False when unknown."""
+    try:
+        from app.tts.registry import normalize_provider as _norm_prov
+
+        _norm_prov(value)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
 def row_to_schema(row: Any) -> VoicePromptOut:
     # Support both new columns and legacy params fallback for modelId/provider stored inside params
     model_id_val = getattr(row, "model_id", None)
@@ -132,24 +154,12 @@ def row_to_schema(row: Any) -> VoicePromptOut:
     # Legacy: if columns are None but params contains modelId/provider, surface those for backwards compat
     if model_id_val is None and isinstance(getattr(row, "params", None), dict):
         legacy_mid = row.params.get("modelId") if isinstance(row.params, dict) else None
-        if isinstance(legacy_mid, str) and legacy_mid.strip():
-            try:
-                from app.tts.registry import normalize_model_id as _norm_mid
-
-                _norm_mid(legacy_mid)
-                model_id_val = legacy_mid
-            except Exception:
-                pass
+        if isinstance(legacy_mid, str) and legacy_mid.strip() and _is_known_model_id(legacy_mid):
+            model_id_val = legacy_mid
     if provider_val is None and isinstance(getattr(row, "params", None), dict):
         legacy_prov = row.params.get("provider") if isinstance(row.params, dict) else None
-        if isinstance(legacy_prov, str) and legacy_prov.strip():
-            try:
-                from app.tts.registry import normalize_provider as _norm_prov
-
-                _norm_prov(legacy_prov)
-                provider_val = legacy_prov.strip().lower()
-            except Exception:
-                pass
+        if isinstance(legacy_prov, str) and legacy_prov.strip() and _is_known_provider(legacy_prov):
+            provider_val = legacy_prov.strip().lower()
     return VoicePromptOut(
         id=row.id,
         title=row.title,

@@ -451,6 +451,8 @@ export function validateReusableObject(json: unknown): string[] {
             errors.push(`Library clipCollection "${String(col.id)}" name must be non-empty`)
           if (!isRecord(col.bindings))
             errors.push(`Library clipCollection "${String(col.id)}" bindings must be object`)
+          if (col.category !== undefined && typeof col.category !== 'string')
+            errors.push(`Library clipCollection "${String(col.id)}" category must be a string`)
         }
       }
     }

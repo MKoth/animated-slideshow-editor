@@ -6,6 +6,7 @@ export interface CreateClipCollectionParameters {
   readonly name: string
   readonly bindings: Readonly<Record<string, string>>
   readonly sourceNodeId?: string
+  readonly category?: string
 }
 
 export interface CreateClipCollectionInverse {
@@ -19,6 +20,7 @@ export class CreateClipCollectionCommand implements Command<CreateClipCollection
   readonly #name: string
   readonly #bindings: Record<string, string>
   readonly #sourceNodeId?: string
+  readonly #category: string
 
   constructor(input: CreateClipCollectionParameters) {
     requireString(input.name, 'ClipCollection name')
@@ -33,13 +35,18 @@ export class CreateClipCollectionCommand implements Command<CreateClipCollection
         throw new Error(`Binding "${k}" must be non-empty string`)
       bindings[k.trim()] = v
     }
+    if (input.category !== undefined && typeof input.category !== 'string') {
+      throw new Error('ClipCollection category must be a string')
+    }
     this.#name = input.name
     this.#bindings = bindings
     this.#sourceNodeId = input.sourceNodeId
+    this.#category = typeof input.category === 'string' ? input.category.trim() : ''
     this.parameters = {
       name: input.name,
       bindings: { ...bindings },
       ...(input.sourceNodeId !== undefined ? { sourceNodeId: input.sourceNodeId } : {}),
+      ...(this.#category !== '' ? { category: this.#category } : {}),
     }
   }
 
@@ -56,7 +63,12 @@ export class CreateClipCollectionCommand implements Command<CreateClipCollection
   }
 
   execute(engine: Engine): CreateClipCollectionInverse {
-    const col = engine.createClipCollection(this.#name, this.#bindings, this.#sourceNodeId)
+    const col = engine.createClipCollection(
+      this.#name,
+      this.#bindings,
+      this.#sourceNodeId,
+      this.#category,
+    )
     return { collectionId: col.id, snapshot: col.toJSON() }
   }
 

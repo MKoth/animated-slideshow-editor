@@ -2,19 +2,33 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.clip_collections.model import ClipCollectionDefinition
+
 
 class ClipCollectionCreateIn(BaseModel):
     id: str = Field(..., description="Client-generated id, e.g. clipCollection-...")
     name: str = Field(..., min_length=1)
+    category: str | None = Field(
+        default=None, description="Top-level grouping label; null/blank = Uncategorized"
+    )
     bindings: dict[str, str] = Field(..., description="semanticName -> clipId")
     source_node_id: str | None = None
-    clips: list[dict] | None = Field(default=None, description="Snapshot of referenced clips for self-contained import")
+    clips: list[dict[str, object]] | None = Field(
+        default=None, description="Snapshot of referenced clips for self-contained import"
+    )
 
     @field_validator("name")
     def name_must_not_be_blank(cls, v: str) -> str:
         if not v.strip():
             raise ValueError("name must not be empty")
         return v.strip()
+
+    @field_validator("category")
+    def category_must_be_trimmed(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        stripped = v.strip()
+        return stripped or None
 
     @field_validator("bindings")
     def bindings_must_be_valid(cls, v: dict[str, str]) -> dict[str, str]:
@@ -31,15 +45,23 @@ class ClipCollectionCreateIn(BaseModel):
 
 class ClipCollectionUpdateIn(BaseModel):
     name: str | None = None
+    category: str | None = None
     bindings: dict[str, str] | None = None
     source_node_id: str | None = None
-    clips: list[dict] | None = None
+    clips: list[dict[str, object]] | None = None
 
     @field_validator("name")
     def name_must_not_be_blank(cls, v: str | None) -> str | None:
         if v is not None and not v.strip():
             raise ValueError("name must not be empty")
         return v.strip() if isinstance(v, str) else v
+
+    @field_validator("category")
+    def category_must_be_trimmed(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        stripped = v.strip()
+        return stripped or None
 
     @field_validator("bindings")
     def bindings_must_be_valid(cls, v: dict[str, str] | None) -> dict[str, str] | None:
@@ -58,17 +80,19 @@ class ClipCollectionUpdateIn(BaseModel):
 class ClipCollectionDefinitionOut(BaseModel):
     id: str
     name: str
+    category: str | None = None
     bindings: dict[str, str]
     source_node_id: str | None = None
-    clips: list[dict] | None = None
+    clips: list[dict[str, object]] | None = None
     created_at: datetime
     updated_at: datetime
 
 
-def definition_to_schema(definition) -> ClipCollectionDefinitionOut:
+def definition_to_schema(definition: ClipCollectionDefinition) -> ClipCollectionDefinitionOut:
     return ClipCollectionDefinitionOut(
         id=definition.id,
         name=definition.name,
+        category=definition.category,
         bindings=dict(definition.bindings or {}),
         source_node_id=definition.source_node_id,
         clips=list(definition.clips) if definition.clips else None,

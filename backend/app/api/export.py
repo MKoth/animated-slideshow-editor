@@ -15,6 +15,7 @@ _jobs: dict[str, dict[str, Any]] = {}
 # Pydantic models — relaxed validation mirroring frontend descriptor shape
 # ---------------------------------------------------------------------------
 
+
 class ExportClipDescriptor(BaseModel):
     id: str
     assetId: str
@@ -172,7 +173,9 @@ def _validate_descriptor(job: ExportJobRequest) -> None:
                 detail=f"slide {slide.slideId} frameCount {slide.frameCount} != round(duration*fps) {expected_n}",
             )
         if len(slide.frameTimestamps) != slide.frameCount:
-            raise HTTPException(status_code=422, detail=f"slide {slide.slideId} frameTimestamps length mismatch")
+            raise HTTPException(
+                status_code=422, detail=f"slide {slide.slideId} frameTimestamps length mismatch"
+            )
         # timestamps must be deterministic: i/fps
         for i, ts in enumerate(slide.frameTimestamps):
             expected_ts = i / job.settings.fps
@@ -182,61 +185,107 @@ def _validate_descriptor(job: ExportJobRequest) -> None:
                     detail=f"slide {slide.slideId} timestamp[{i}] {ts} != {expected_ts}",
                 )
         if slide.video.pixelFormat != EXPECTED_PIX_FMT:
-            raise HTTPException(status_code=422, detail=f"slide {slide.slideId} video pixelFormat must be {EXPECTED_PIX_FMT}")
+            raise HTTPException(
+                status_code=422,
+                detail=f"slide {slide.slideId} video pixelFormat must be {EXPECTED_PIX_FMT}",
+            )
         if slide.video.movflags != EXPECTED_MOVFLAGS:
-            raise HTTPException(status_code=422, detail=f"slide {slide.slideId} video movflags must be {EXPECTED_MOVFLAGS}")
+            raise HTTPException(
+                status_code=422,
+                detail=f"slide {slide.slideId} video movflags must be {EXPECTED_MOVFLAGS}",
+            )
         if set(slide.audio.lanes) != FIXED_LANES:
-            raise HTTPException(status_code=422, detail=f"slide {slide.slideId} audio lanes must be {sorted(FIXED_LANES)}")
+            raise HTTPException(
+                status_code=422,
+                detail=f"slide {slide.slideId} audio lanes must be {sorted(FIXED_LANES)}",
+            )
         if slide.audio.laneInputs != 3:
-            raise HTTPException(status_code=422, detail=f"slide {slide.slideId} laneInputs must be 3")
+            raise HTTPException(
+                status_code=422, detail=f"slide {slide.slideId} laneInputs must be 3"
+            )
         if slide.audio.amix != EXPECTED_AMIX:
-            raise HTTPException(status_code=422, detail=f"slide {slide.slideId} amix must be {EXPECTED_AMIX}")
+            raise HTTPException(
+                status_code=422, detail=f"slide {slide.slideId} amix must be {EXPECTED_AMIX}"
+            )
         if slide.audio.loudnorm != EXPECTED_LOUDNORM:
-            raise HTTPException(status_code=422, detail=f"slide {slide.slideId} loudnorm must be {EXPECTED_LOUDNORM}")
+            raise HTTPException(
+                status_code=422,
+                detail=f"slide {slide.slideId} loudnorm must be {EXPECTED_LOUDNORM}",
+            )
         if f"atrim=end={slide.duration}" not in slide.audio.atrim:
-            raise HTTPException(status_code=422, detail=f"slide {slide.slideId} atrim must contain end={slide.duration}")
+            raise HTTPException(
+                status_code=422,
+                detail=f"slide {slide.slideId} atrim must contain end={slide.duration}",
+            )
         if f"atrim=end={slide.duration}" not in slide.audio.filterComplex:
-            raise HTTPException(status_code=422, detail=f"slide {slide.slideId} filterComplex must contain atrim=end={slide.duration}")
+            raise HTTPException(
+                status_code=422,
+                detail=f"slide {slide.slideId} filterComplex must contain atrim=end={slide.duration}",
+            )
         if EXPECTED_AMIX not in slide.audio.filterComplex:
-            raise HTTPException(status_code=422, detail=f"slide {slide.slideId} filterComplex must contain amix")
+            raise HTTPException(
+                status_code=422, detail=f"slide {slide.slideId} filterComplex must contain amix"
+            )
         if EXPECTED_LOUDNORM not in slide.audio.filterComplex:
-            raise HTTPException(status_code=422, detail=f"slide {slide.slideId} filterComplex must contain loudnorm")
+            raise HTTPException(
+                status_code=422, detail=f"slide {slide.slideId} filterComplex must contain loudnorm"
+            )
         if "aformat" not in slide.audio.filterComplex:
-            raise HTTPException(status_code=422, detail=f"slide {slide.slideId} filterComplex must contain aformat")
+            raise HTTPException(
+                status_code=422, detail=f"slide {slide.slideId} filterComplex must contain aformat"
+            )
         if "volume=" not in slide.audio.filterComplex:
-            raise HTTPException(status_code=422, detail=f"slide {slide.slideId} filterComplex must contain volume")
+            raise HTTPException(
+                status_code=422, detail=f"slide {slide.slideId} filterComplex must contain volume"
+            )
         # Inputs must be video+3 audio lanes
         if len(slide.audio.inputs) != 4:
-            raise HTTPException(status_code=422, detail=f"slide {slide.slideId} inputs must be video+3 audio (4)")
+            raise HTTPException(
+                status_code=422, detail=f"slide {slide.slideId} inputs must be video+3 audio (4)"
+            )
         if slide.audio.inputs[0] != "video":
-            raise HTTPException(status_code=422, detail=f"slide {slide.slideId} first input must be video")
+            raise HTTPException(
+                status_code=422, detail=f"slide {slide.slideId} first input must be video"
+            )
         # per-clip checks
         for clip in slide.audio.clips:
             if clip.trackId not in FIXED_LANES:
-                raise HTTPException(status_code=422, detail=f"clip {clip.id} trackId must be one of {FIXED_LANES}")
+                raise HTTPException(
+                    status_code=422, detail=f"clip {clip.id} trackId must be one of {FIXED_LANES}"
+                )
             if clip.trimEnd != slide.duration:
                 raise HTTPException(
-                    status_code=422, detail=f"clip {clip.id} trimEnd {clip.trimEnd} must equal slide.duration {slide.duration}"
+                    status_code=422,
+                    detail=f"clip {clip.id} trimEnd {clip.trimEnd} must equal slide.duration {slide.duration}",
                 )
             if clip.filterFragment is None:
                 continue
             if "aformat" not in clip.filterFragment:
-                raise HTTPException(status_code=422, detail=f"clip {clip.id} filterFragment must contain aformat")
+                raise HTTPException(
+                    status_code=422, detail=f"clip {clip.id} filterFragment must contain aformat"
+                )
             if "volume=" not in clip.filterFragment:
-                raise HTTPException(status_code=422, detail=f"clip {clip.id} filterFragment must contain volume")
+                raise HTTPException(
+                    status_code=422, detail=f"clip {clip.id} filterFragment must contain volume"
+                )
             if f"atrim=end={slide.duration}" not in clip.filterFragment:
                 raise HTTPException(
-                    status_code=422, detail=f"clip {clip.id} filterFragment must contain atrim=end={slide.duration}"
+                    status_code=422,
+                    detail=f"clip {clip.id} filterFragment must contain atrim=end={slide.duration}",
                 )
             # Determine if clip has any non-default audio effect (rate/pitch/noise)
-            has_pitch = clip.pitchSemitones is not None and abs(clip.pitchSemitones) > 1e-9
+            pitch_semitones = clip.pitchSemitones if clip.pitchSemitones is not None else 0.0
+            has_pitch = abs(pitch_semitones) > 1e-9
             has_nr = clip.noiseReduction is not None and clip.noiseReduction > 1e-9
             has_rate = clip.playbackRate != 1
             has_effect = has_rate or has_pitch or has_nr
             if has_effect:
                 if has_rate:
                     if clip.rubberbandTempo is None:
-                        raise HTTPException(status_code=422, detail=f"clip {clip.id} with playbackRate !=1 must have rubberbandTempo")
+                        raise HTTPException(
+                            status_code=422,
+                            detail=f"clip {clip.id} with playbackRate !=1 must have rubberbandTempo",
+                        )
                     expected_tempo = 1 / clip.playbackRate
                     if abs(clip.rubberbandTempo - expected_tempo) > 1e-4:
                         raise HTTPException(
@@ -245,46 +294,86 @@ def _validate_descriptor(job: ExportJobRequest) -> None:
                         )
                 if has_pitch:
                     if clip.rubberbandPitch is None:
-                        raise HTTPException(status_code=422, detail=f"clip {clip.id} with pitch !=0 must have rubberbandPitch")
+                        raise HTTPException(
+                            status_code=422,
+                            detail=f"clip {clip.id} with pitch !=0 must have rubberbandPitch",
+                        )
                     # pitchScale = 2^(semitones/12)
                     import math
-                    expected_pitch = math.pow(2, clip.pitchSemitones / 12.0)
+
+                    expected_pitch = math.pow(2, pitch_semitones / 12.0)
                     if abs(clip.rubberbandPitch - expected_pitch) > 1e-4:
-                        raise HTTPException(status_code=422, detail=f"clip {clip.id} pitch {clip.rubberbandPitch} != expected {expected_pitch}")
+                        raise HTTPException(
+                            status_code=422,
+                            detail=f"clip {clip.id} pitch {clip.rubberbandPitch} != expected {expected_pitch}",
+                        )
                 if "rubberband=tempo=" not in clip.filterFragment and has_rate:
-                    raise HTTPException(status_code=422, detail=f"clip {clip.id} filterFragment must contain rubberband")
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"clip {clip.id} filterFragment must contain rubberband",
+                    )
                 if has_pitch and "rubberband" not in clip.filterFragment:
-                    raise HTTPException(status_code=422, detail=f"clip {clip.id} with pitch must contain rubberband")
+                    raise HTTPException(
+                        status_code=422, detail=f"clip {clip.id} with pitch must contain rubberband"
+                    )
                 if has_nr and "afftdn" not in clip.filterFragment:
-                    raise HTTPException(status_code=422, detail=f"clip {clip.id} with noiseReduction must contain afftdn")
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"clip {clip.id} with noiseReduction must contain afftdn",
+                    )
                 if clip.derivedAssetKey is None:
-                    raise HTTPException(status_code=422, detail=f"clip {clip.id} with effect must have derivedAssetKey")
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"clip {clip.id} with effect must have derivedAssetKey",
+                    )
                 # cache key must be assetId:rate — normalized check is fuzzy on backend
                 # allow startswith assetId: for tolerant comparison
                 if not clip.derivedAssetKey.startswith(f"{clip.assetId}:"):
-                    raise HTTPException(status_code=422, detail=f"clip {clip.id} derivedAssetKey must be assetId:rate")
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"clip {clip.id} derivedAssetKey must be assetId:rate",
+                    )
             else:
                 if clip.rubberbandTempo is not None and abs(clip.rubberbandTempo - 1) > 1e-9:
-                    raise HTTPException(status_code=422, detail=f"clip {clip.id} with rate 1 must not have tempo !=1")
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"clip {clip.id} with rate 1 must not have tempo !=1",
+                    )
                 if has_pitch:
-                    raise HTTPException(status_code=422, detail=f"clip {clip.id} pitch should be 0 when no effect")
+                    raise HTTPException(
+                        status_code=422, detail=f"clip {clip.id} pitch should be 0 when no effect"
+                    )
                 # For clips without effects, rubberband/afftdn should not appear (but allow if not present)
                 # To keep backward compat, we only error if filterFragment contains rubberband/afftdn without effect flag
                 # Actually has_effect already false, so any rubberband/afftdn present would be unexpected
                 if clip.filterFragment and "rubberband=" in clip.filterFragment and not has_effect:
-                    raise HTTPException(status_code=422, detail=f"clip {clip.id} with rate 1 and no pitch must not contain rubberband")
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"clip {clip.id} with rate 1 and no pitch must not contain rubberband",
+                    )
                 if clip.filterFragment and "afftdn" in clip.filterFragment and not has_nr:
-                    raise HTTPException(status_code=422, detail=f"clip {clip.id} with no noiseReduction must not contain afftdn")
+                    raise HTTPException(
+                        status_code=422,
+                        detail=f"clip {clip.id} with no noiseReduction must not contain afftdn",
+                    )
 
     # Global checks
     if job.global_.concatMethod != EXPECTED_CONCAT:
-        raise HTTPException(status_code=422, detail=f"global concatMethod must be {EXPECTED_CONCAT}")
+        raise HTTPException(
+            status_code=422, detail=f"global concatMethod must be {EXPECTED_CONCAT}"
+        )
     if job.global_.video.get("pixelFormat") != EXPECTED_PIX_FMT:
-        raise HTTPException(status_code=422, detail=f"global video pixelFormat must be {EXPECTED_PIX_FMT}")
+        raise HTTPException(
+            status_code=422, detail=f"global video pixelFormat must be {EXPECTED_PIX_FMT}"
+        )
     if job.global_.video.get("movflags") != EXPECTED_MOVFLAGS:
-        raise HTTPException(status_code=422, detail=f"global video movflags must be {EXPECTED_MOVFLAGS}")
+        raise HTTPException(
+            status_code=422, detail=f"global video movflags must be {EXPECTED_MOVFLAGS}"
+        )
     if job.global_.audio.get("loudnorm") != EXPECTED_LOUDNORM:
-        raise HTTPException(status_code=422, detail=f"global audio loudnorm must be {EXPECTED_LOUDNORM}")
+        raise HTTPException(
+            status_code=422, detail=f"global audio loudnorm must be {EXPECTED_LOUDNORM}"
+        )
     if EXPECTED_PIX_FMT not in job.ffmpegGlobalArgs:
         raise HTTPException(status_code=422, detail="ffmpegGlobalArgs must contain yuv420p")
     if EXPECTED_MOVFLAGS not in job.ffmpegGlobalArgs:

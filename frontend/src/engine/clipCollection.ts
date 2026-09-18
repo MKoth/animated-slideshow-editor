@@ -11,12 +11,14 @@ export class ClipCollection {
   #name: string
   #bindings: Map<string, string>
   #sourceNodeId?: string
+  #category: string
 
   constructor(
     id: string,
     name: string,
     bindings: ReadonlyMap<string, string> | Record<string, string>,
     sourceNodeId?: string,
+    category?: string,
   ) {
     this.id = id
     this.#name = name
@@ -28,6 +30,7 @@ export class ClipCollection {
     if (sourceNodeId !== undefined) {
       this.#sourceNodeId = sourceNodeId
     }
+    this.#category = normalizeCollectionCategory(category)
   }
 
   get name(): string {
@@ -44,6 +47,14 @@ export class ClipCollection {
 
   set sourceNodeId(value: string | undefined) {
     this.#sourceNodeId = value
+  }
+
+  get category(): string {
+    return this.#category
+  }
+
+  set category(value: string) {
+    this.#category = normalizeCollectionCategory(value)
   }
 
   get bindings(): ReadonlyMap<string, string> {
@@ -74,7 +85,13 @@ export class ClipCollection {
   }
 
   copy(): ClipCollection {
-    return new ClipCollection(this.id, this.#name, new Map(this.#bindings), this.#sourceNodeId)
+    return new ClipCollection(
+      this.id,
+      this.#name,
+      new Map(this.#bindings),
+      this.#sourceNodeId,
+      this.#category,
+    )
   }
 
   toJSON(): ClipCollectionJSON {
@@ -83,6 +100,7 @@ export class ClipCollection {
       name: this.#name,
       bindings: Object.fromEntries(this.#bindings),
       ...(this.#sourceNodeId !== undefined ? { sourceNodeId: this.#sourceNodeId } : {}),
+      ...(this.#category !== '' ? { category: this.#category } : {}),
     }
   }
 
@@ -112,8 +130,19 @@ export class ClipCollection {
       }
       sourceNodeId = json.sourceNodeId
     }
-    return new ClipCollection(id, name, bindings, sourceNodeId)
+    let category = ''
+    if (json.category !== undefined) {
+      if (typeof json.category !== 'string') {
+        throw new Error('ClipCollection category must be a string if provided')
+      }
+      category = normalizeCollectionCategory(json.category)
+    }
+    return new ClipCollection(id, name, bindings, sourceNodeId, category)
   }
+}
+
+export function normalizeCollectionCategory(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
 }
 
 export function newClipCollectionId(): string {

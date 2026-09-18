@@ -98,16 +98,16 @@ describe('LibraryBrowser', () => {
   describe('Browse Library button', () => {
     it('renders a Browse Library button in the Animations panel', async () => {
       renderPanel()
-      expect(await screen.findByRole('button', { name: 'Browse Library' })).toBeInTheDocument()
+      expect(await screen.findByTestId('clips-browse-button')).toBeInTheDocument()
     })
 
     it('opens the library browser modal when Browse Library is clicked', async () => {
       stubFetch(() => Promise.resolve(new Response(JSON.stringify([]), { status: 200 })))
       const user = userEvent.setup()
       renderPanel()
-      await screen.findByRole('button', { name: 'Browse Library' })
+      await screen.findByTestId('clips-browse-button')
 
-      await user.click(screen.getByRole('button', { name: 'Browse Library' }))
+      await user.click(screen.getByTestId('clips-browse-button'))
 
       expect(screen.getByRole('dialog', { name: 'Browse Library' })).toBeInTheDocument()
     })
@@ -124,9 +124,9 @@ describe('LibraryBrowser', () => {
       )
       const user = userEvent.setup()
       renderPanel()
-      await screen.findByRole('button', { name: 'Browse Library' })
+      await screen.findByTestId('clips-browse-button')
 
-      await user.click(screen.getByRole('button', { name: 'Browse Library' }))
+      await user.click(screen.getByTestId('clips-browse-button'))
 
       expect(screen.getByText('Loading library...')).toBeInTheDocument()
       release(new Response(JSON.stringify([]), { status: 200 }))
@@ -136,9 +136,9 @@ describe('LibraryBrowser', () => {
       stubFetch(() => Promise.resolve(new Response(JSON.stringify([]), { status: 200 })))
       const user = userEvent.setup()
       renderPanel()
-      await screen.findByRole('button', { name: 'Browse Library' })
+      await screen.findByTestId('clips-browse-button')
 
-      await user.click(screen.getByRole('button', { name: 'Browse Library' }))
+      await user.click(screen.getByTestId('clips-browse-button'))
 
       await waitFor(() => {
         expect(
@@ -175,9 +175,9 @@ describe('LibraryBrowser', () => {
       )
       const user = userEvent.setup()
       renderPanel()
-      await screen.findByRole('button', { name: 'Browse Library' })
+      await screen.findByTestId('clips-browse-button')
 
-      await user.click(screen.getByRole('button', { name: 'Browse Library' }))
+      await user.click(screen.getByTestId('clips-browse-button'))
 
       await waitFor(() => {
         expect(screen.getByText('Fade In')).toBeInTheDocument()
@@ -195,9 +195,9 @@ describe('LibraryBrowser', () => {
       stubFetch(() => Promise.reject(new Error('connection refused')))
       const user = userEvent.setup()
       renderPanel()
-      await screen.findByRole('button', { name: 'Browse Library' })
+      await screen.findByTestId('clips-browse-button')
 
-      await user.click(screen.getByRole('button', { name: 'Browse Library' }))
+      await user.click(screen.getByTestId('clips-browse-button'))
 
       await waitFor(() => {
         expect(
@@ -228,8 +228,8 @@ describe('LibraryBrowser', () => {
       )
       const user = userEvent.setup()
       renderPanel()
-      await screen.findByRole('button', { name: 'Browse Library' })
-      await user.click(screen.getByRole('button', { name: 'Browse Library' }))
+      await screen.findByTestId('clips-browse-button')
+      await user.click(screen.getByTestId('clips-browse-button'))
       await waitFor(() => {
         expect(screen.getByText('Fade In')).toBeInTheDocument()
       })
@@ -292,8 +292,8 @@ describe('LibraryBrowser', () => {
       )
       const user = userEvent.setup()
       renderPanelWithClips()
-      await screen.findByRole('button', { name: 'Browse Library' })
-      await user.click(screen.getByRole('button', { name: 'Browse Library' }))
+      await screen.findByTestId('clips-browse-button')
+      await user.click(screen.getByTestId('clips-browse-button'))
       await waitFor(() => {
         expect(screen.getByText('Fade In')).toBeInTheDocument()
       })
@@ -327,7 +327,7 @@ describe('LibraryBrowser', () => {
       const user = userEvent.setup()
       renderPanelWithClips()
       await screen.findByText('Bounce In')
-      await user.click(screen.getByRole('button', { name: 'Browse Library' }))
+      await user.click(screen.getByTestId('clips-browse-button'))
       await waitFor(() => {
         expect(screen.getByText('Library Clip')).toBeInTheDocument()
       })
@@ -352,8 +352,8 @@ describe('LibraryBrowser', () => {
       )
       const user = userEvent.setup()
       renderPanel()
-      await screen.findByRole('button', { name: 'Browse Library' })
-      await user.click(screen.getByRole('button', { name: 'Browse Library' }))
+      await screen.findByTestId('clips-browse-button')
+      await user.click(screen.getByTestId('clips-browse-button'))
       await waitFor(() => {
         expect(screen.getByText('Fade In')).toBeInTheDocument()
       })
@@ -377,8 +377,8 @@ describe('LibraryBrowser', () => {
       )
       const user = userEvent.setup()
       renderPanel()
-      await screen.findByRole('button', { name: 'Browse Library' })
-      await user.click(screen.getByRole('button', { name: 'Browse Library' }))
+      await screen.findByTestId('clips-browse-button')
+      await user.click(screen.getByTestId('clips-browse-button'))
       await waitFor(() => {
         expect(screen.getByText('Fade In')).toBeInTheDocument()
       })
@@ -406,8 +406,8 @@ describe('LibraryBrowser', () => {
       })
       const user = userEvent.setup()
       renderPanel()
-      await screen.findByRole('button', { name: 'Browse Library' })
-      await user.click(screen.getByRole('button', { name: 'Browse Library' }))
+      await screen.findByTestId('clips-browse-button')
+      await user.click(screen.getByTestId('clips-browse-button'))
       await waitFor(() => {
         expect(screen.getByText('Fade In')).toBeInTheDocument()
       })
@@ -429,8 +429,8 @@ describe('LibraryBrowser', () => {
       stubFetch(() => Promise.resolve(new Response(JSON.stringify([]), { status: 200 })))
       const user = userEvent.setup()
       renderPanel()
-      await screen.findByRole('button', { name: 'Browse Library' })
-      await user.click(screen.getByRole('button', { name: 'Browse Library' }))
+      await screen.findByTestId('clips-browse-button')
+      await user.click(screen.getByTestId('clips-browse-button'))
       await waitFor(() => {
         expect(screen.getByRole('dialog', { name: 'Browse Library' })).toBeInTheDocument()
       })
@@ -446,8 +446,8 @@ describe('LibraryBrowser', () => {
       stubFetch(() => Promise.reject(new Error('connection refused')))
       const user = userEvent.setup()
       renderPanel()
-      await screen.findByRole('button', { name: 'Browse Library' })
-      await user.click(screen.getByRole('button', { name: 'Browse Library' }))
+      await screen.findByTestId('clips-browse-button')
+      await user.click(screen.getByTestId('clips-browse-button'))
       await waitFor(() => {
         const dialog = screen.getByRole('dialog', { name: 'Browse Library' })
         expect(within(dialog).getByRole('alert')).toBeInTheDocument()

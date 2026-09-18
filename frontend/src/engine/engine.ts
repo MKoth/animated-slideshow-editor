@@ -210,7 +210,9 @@ export interface EnginePublic {
     name: string,
     bindings: Record<string, string>,
     sourceNodeId?: string,
+    category?: string,
   ): ClipCollection
+  setClipCollectionCategory(collectionId: string, category: string): void
   createReversedCollection(
     sourceCollectionId: string,
     newName?: string,

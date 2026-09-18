@@ -19,7 +19,9 @@ def wav_bytes(duration: float = 2.0, freq: float = 440.0, sample_rate: int = 441
     return buf.getvalue()
 
 
-def upload_file(filename: str, content: bytes, content_type: str):
+def upload_file(
+    filename: str, content: bytes, content_type: str
+) -> tuple[str, tuple[str, bytes, str]]:
     return ("files", (filename, content, content_type))
 
 
