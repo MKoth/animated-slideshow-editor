@@ -1,6 +1,7 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
-import type { AssetDefinition } from '../../api'
+import type { AssetDefinition, AssetFolder } from '../../api'
+import { ASSET_FOLDER_MIME, folderPath } from '../assets/folders'
 import { ASSET_DEFINITION_MIME, AUDIO_ASSET_MIME } from '../../pixi/renderer/dropPlacement'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { registerImportOpener } from '../assets/importTrigger'
@@ -46,7 +47,8 @@ function formatDurationBadge(seconds: number): string {
 
 function getAssetDuration(asset: EmbeddedAsset): number | null {
   const meta = asset.metadata as Record<string, unknown> | undefined
-  if (meta && typeof meta.duration === 'number' && Number.isFinite(meta.duration)) return meta.duration
+  if (meta && typeof meta.duration === 'number' && Number.isFinite(meta.duration))
+    return meta.duration
   return null
 }
 
@@ -72,7 +74,8 @@ function getDefinitionWaveformPeaks(def: AssetDefinition): number[] | null {
 
 function getDefinitionDuration(def: AssetDefinition): number | null {
   const meta = def.metadata as Record<string, unknown> | undefined
-  if (meta && typeof meta.duration === 'number' && Number.isFinite(meta.duration)) return meta.duration as number
+  if (meta && typeof meta.duration === 'number' && Number.isFinite(meta.duration))
+    return meta.duration as number
   return null
 }
 
@@ -91,8 +94,6 @@ function isAudioDefinition(def: AssetDefinition): boolean {
   return false
 }
 
-
-
 type AssetFilter = 'all' | 'images' | 'audio'
 
 interface PreviewProps {
@@ -102,6 +103,9 @@ interface PreviewProps {
 
 function AssetPreview({ definition, onClose }: PreviewProps) {
   const deleteAsset = useAssetLibraryStore((state) => state.deleteAsset)
+  const folders = useAssetLibraryStore((state) => state.folders)
+  const moveAsset = useAssetLibraryStore((state) => state.moveAsset)
+  const [moveTarget, setMoveTarget] = useState<string>('')
 
   return (
     <section className="asset-preview" aria-label="Asset preview">
@@ -117,6 +121,33 @@ function AssetPreview({ definition, onClose }: PreviewProps) {
         </div>
       </header>
       <img className="asset-preview__image" src={definition.original_url} alt={definition.name} />
+      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+        <select
+          aria-label="Move asset to folder"
+          value={moveTarget}
+          onChange={(event) => setMoveTarget(event.target.value)}
+          style={{ flex: 1, padding: '4px 6px', borderRadius: 4 }}
+        >
+          <option value="">Move to…</option>
+          <option value="__root__">Root</option>
+          {folders.map((folder) => (
+            <option key={folder.id} value={folder.id}>
+              {folder.name}
+            </option>
+          ))}
+        </select>
+        <button
+          disabled={moveTarget === ''}
+          onClick={() => {
+            if (moveTarget === '') return
+            void moveAsset(definition.id, moveTarget === '__root__' ? null : moveTarget)
+            setMoveTarget('')
+          }}
+          style={{ padding: '4px 10px', borderRadius: 4, cursor: 'pointer' }}
+        >
+          Move
+        </button>
+      </div>
       <dl className="asset-preview__details">
         <dt>Category</dt>
         <dd>{definition.category}</dd>
@@ -179,10 +210,13 @@ function AudioEmbeddedPreview({ asset, onClose }: { asset: EmbeddedAsset; onClos
     try {
       const bytes = Uint8Array.from(atob(asset.data), (c) => c.charCodeAt(0))
       const blob = new Blob([bytes], { type: asset.mimeType })
-      const file = new File([blob], `${asset.name}.${asset.mimeType.split('/')[1] ?? 'wav'}`, { type: asset.mimeType })
+      const file = new File([blob], `${asset.name}.${asset.mimeType.split('/')[1] ?? 'wav'}`, {
+        type: asset.mimeType,
+      })
       const store = useAssetLibraryStore.getState()
       const result = await store.importFiles([file])
-      if (result.created.length > 0) useNotificationStore.getState().notify(`${asset.name} saved to library`)
+      if (result.created.length > 0)
+        useNotificationStore.getState().notify(`${asset.name} saved to library`)
       else useNotificationStore.getState().notify('Save failed — backend unavailable')
     } catch (e) {
       useNotificationStore.getState().notify(e instanceof Error ? e.message : String(e))
@@ -193,33 +227,89 @@ function AudioEmbeddedPreview({ asset, onClose }: { asset: EmbeddedAsset; onClos
       <header className="asset-preview__header">
         <h3 className="asset-preview__title">{asset.name}</h3>
         <div className="asset-preview__actions">
-          <button className="asset-preview__delete" onClick={handleDelete}>Delete</button>
-          <button className="asset-preview__close" onClick={onClose}>Close</button>
+          <button className="asset-preview__delete" onClick={handleDelete}>
+            Delete
+          </button>
+          <button className="asset-preview__close" onClick={onClose}>
+            Close
+          </button>
         </div>
       </header>
       <div style={{ background: '#1a1a1a', padding: 12, borderRadius: 6 }}>
-        <WaveformCanvas peaks={peaks} width={320} height={48} color="#7c5cff" testId="waveform-preview-embedded" />
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 11, color: '#aaa' }}>
+        <WaveformCanvas
+          peaks={peaks}
+          width={320}
+          height={48}
+          color="#7c5cff"
+          testId="waveform-preview-embedded"
+        />
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            marginTop: 8,
+            fontSize: 11,
+            color: '#aaa',
+          }}
+        >
           <span>{badge}</span>
-          <span>{asset.mimeType} • {formatFileSize(Math.round((asset.data.length * 3) / 4))}</span>
+          <span>
+            {asset.mimeType} • {formatFileSize(Math.round((asset.data.length * 3) / 4))}
+          </span>
         </div>
       </div>
       <dl className="asset-preview__details">
-        <dt>Duration</dt><dd>{badge}</dd>
-        <dt>Sample rate</dt><dd>{(asset.metadata as Record<string, unknown>)?.sampleRate as number ?? '—'}</dd>
-        <dt>Channels</dt><dd>{(asset.metadata as Record<string, unknown>)?.channels as number ?? '—'}</dd>
-        <dt>Mime</dt><dd>{asset.mimeType}</dd>
-        <dt>Scope</dt><dd>Project only (recorded)</dd>
+        <dt>Duration</dt>
+        <dd>{badge}</dd>
+        <dt>Sample rate</dt>
+        <dd>{((asset.metadata as Record<string, unknown>)?.sampleRate as number) ?? '—'}</dd>
+        <dt>Channels</dt>
+        <dd>{((asset.metadata as Record<string, unknown>)?.channels as number) ?? '—'}</dd>
+        <dt>Mime</dt>
+        <dd>{asset.mimeType}</dd>
+        <dt>Scope</dt>
+        <dd>Project only (recorded)</dd>
       </dl>
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-        <button data-testid="audio-preview-play" onClick={handleAudition} style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--color-border)', background: isPlaying ? '#7c5cff' : 'var(--color-bg)', color: isPlaying ? '#fff' : undefined, cursor: 'pointer' }}>{isPlaying ? 'Stop' : 'Listen'}</button>
-        <button data-testid="audio-preview-save-global" onClick={handleSaveGlobal} style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--color-border)', background: 'var(--color-bg)', cursor: 'pointer' }}>Save between projects</button>
+        <button
+          data-testid="audio-preview-play"
+          onClick={handleAudition}
+          style={{
+            padding: '6px 12px',
+            borderRadius: 4,
+            border: '1px solid var(--color-border)',
+            background: isPlaying ? '#7c5cff' : 'var(--color-bg)',
+            color: isPlaying ? '#fff' : undefined,
+            cursor: 'pointer',
+          }}
+        >
+          {isPlaying ? 'Stop' : 'Listen'}
+        </button>
+        <button
+          data-testid="audio-preview-save-global"
+          onClick={handleSaveGlobal}
+          style={{
+            padding: '6px 12px',
+            borderRadius: 4,
+            border: '1px solid var(--color-border)',
+            background: 'var(--color-bg)',
+            cursor: 'pointer',
+          }}
+        >
+          Save between projects
+        </button>
       </div>
     </section>
   )
 }
 
-function AudioGlobalPreview({ definition, onClose }: { definition: AssetDefinition; onClose: () => void }) {
+function AudioGlobalPreview({
+  definition,
+  onClose,
+}: {
+  definition: AssetDefinition
+  onClose: () => void
+}) {
   const duration = getDefinitionDuration(definition)
   const peaks = getDefinitionWaveformPeaks(definition)
   const badge = duration !== null ? formatDurationBadge(duration) : '--:--'
@@ -253,27 +343,68 @@ function AudioGlobalPreview({ definition, onClose }: { definition: AssetDefiniti
       <header className="asset-preview__header">
         <h3 className="asset-preview__title">{definition.name}</h3>
         <div className="asset-preview__actions">
-          <button className="asset-preview__delete" onClick={handleDelete}>Delete</button>
-          <button className="asset-preview__close" onClick={onClose}>Close preview</button>
+          <button className="asset-preview__delete" onClick={handleDelete}>
+            Delete
+          </button>
+          <button className="asset-preview__close" onClick={onClose}>
+            Close preview
+          </button>
         </div>
       </header>
       <div style={{ background: '#1a1a1a', padding: 12, borderRadius: 6 }}>
-        <WaveformCanvas peaks={peaks} width={320} height={48} color="#7c5cff" testId="waveform-preview-global" />
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 11, color: '#aaa' }}>
+        <WaveformCanvas
+          peaks={peaks}
+          width={320}
+          height={48}
+          color="#7c5cff"
+          testId="waveform-preview-global"
+        />
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            marginTop: 8,
+            fontSize: 11,
+            color: '#aaa',
+          }}
+        >
           <span>{badge}</span>
-          <span>{definition.mimeType ?? definition.category} • {formatFileSize(definition.file_size)}</span>
+          <span>
+            {definition.mimeType ?? definition.category} • {formatFileSize(definition.file_size)}
+          </span>
         </div>
       </div>
       <dl className="asset-preview__details">
-        <dt>Category</dt><dd>{definition.category}</dd>
-        <dt>Duration</dt><dd>{badge}</dd>
-        <dt>Resolution</dt><dd>{definition.width} × {definition.height}</dd>
-        <dt>File size</dt><dd>{formatFileSize(definition.file_size)}</dd>
-        <dt>Imported</dt><dd>{formatImportDate(definition.import_date)}</dd>
-        <dt>Scope</dt><dd>Global (shared between projects)</dd>
+        <dt>Category</dt>
+        <dd>{definition.category}</dd>
+        <dt>Duration</dt>
+        <dd>{badge}</dd>
+        <dt>Resolution</dt>
+        <dd>
+          {definition.width} × {definition.height}
+        </dd>
+        <dt>File size</dt>
+        <dd>{formatFileSize(definition.file_size)}</dd>
+        <dt>Imported</dt>
+        <dd>{formatImportDate(definition.import_date)}</dd>
+        <dt>Scope</dt>
+        <dd>Global (shared between projects)</dd>
       </dl>
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-        <button data-testid="audio-preview-play-global" onClick={handleAudition} style={{ padding: '6px 12px', borderRadius: 4, border: '1px solid var(--color-border)', background: isPlaying ? '#7c5cff' : 'var(--color-bg)', color: isPlaying ? '#fff' : undefined, cursor: 'pointer' }}>{isPlaying ? 'Stop' : 'Listen'}</button>
+        <button
+          data-testid="audio-preview-play-global"
+          onClick={handleAudition}
+          style={{
+            padding: '6px 12px',
+            borderRadius: 4,
+            border: '1px solid var(--color-border)',
+            background: isPlaying ? '#7c5cff' : 'var(--color-bg)',
+            color: isPlaying ? '#fff' : undefined,
+            cursor: 'pointer',
+          }}
+        >
+          {isPlaying ? 'Stop' : 'Listen'}
+        </button>
       </div>
     </section>
   )
@@ -346,9 +477,39 @@ function AudioAssetCell({ asset, view, onSelect }: AudioAssetCellProps) {
       data-asset-id={asset.id}
       data-mime={asset.mimeType}
     >
-      <div className={view === 'grid' ? 'asset-cell__thumb' : 'asset-row__thumb'} style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1a1a1a', borderRadius: 4, overflow: 'hidden' }}>
-        <WaveformCanvas peaks={peaks} width={view === 'grid' ? 120 : 160} height={24} color="#7c5cff" testId="waveform-canvas-embedded" />
-        <span className="badge" style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 9, padding: '1px 4px', borderRadius: 3, fontFamily: 'monospace' }}>
+      <div
+        className={view === 'grid' ? 'asset-cell__thumb' : 'asset-row__thumb'}
+        style={{
+          position: 'relative',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: '#1a1a1a',
+          borderRadius: 4,
+          overflow: 'hidden',
+        }}
+      >
+        <WaveformCanvas
+          peaks={peaks}
+          width={view === 'grid' ? 120 : 160}
+          height={24}
+          color="#7c5cff"
+          testId="waveform-canvas-embedded"
+        />
+        <span
+          className="badge"
+          style={{
+            position: 'absolute',
+            top: 4,
+            right: 4,
+            background: 'rgba(0,0,0,0.6)',
+            color: '#fff',
+            fontSize: 9,
+            padding: '1px 4px',
+            borderRadius: 3,
+            fontFamily: 'monospace',
+          }}
+        >
           {badge}
         </span>
       </div>
@@ -360,7 +521,15 @@ function AudioAssetCell({ asset, view, onSelect }: AudioAssetCellProps) {
   )
 }
 
-function BackendAudioCell({ definition, view, onSelect }: { definition: AssetDefinition; view: AssetView; onSelect: (id: string) => void }) {
+function BackendAudioCell({
+  definition,
+  view,
+  onSelect,
+}: {
+  definition: AssetDefinition
+  view: AssetView
+  onSelect: (id: string) => void
+}) {
   const duration = getDefinitionDuration(definition)
   const initialPeaks = getDefinitionWaveformPeaks(definition)
   const [peaks, setPeaks] = useState<number[] | null>(initialPeaks)
@@ -381,17 +550,29 @@ function BackendAudioCell({ definition, view, onSelect }: { definition: AssetDef
             const resp = await fetch(definition.original_url)
             if (resp.ok) {
               const buf = await resp.arrayBuffer()
-              const Ctor = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
-                ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+              const Ctor =
+                (
+                  window as unknown as {
+                    AudioContext?: typeof AudioContext
+                    webkitAudioContext?: typeof AudioContext
+                  }
+                ).AudioContext ??
+                (window as unknown as { webkitAudioContext?: typeof AudioContext })
+                  .webkitAudioContext
               if (Ctor) {
                 const ctx = new Ctor()
                 const audioBuf = await ctx.decodeAudioData(buf)
-                const qp = computePeaksFromAudioBuffer(audioBuf, bucketCountForDuration(audioBuf.duration))
+                const qp = computePeaksFromAudioBuffer(
+                  audioBuf,
+                  bucketCountForDuration(audioBuf.duration),
+                )
                 if (!cancelled) setQuickPeaks(qp)
                 await ctx.close().catch(() => {})
               }
             }
-          } catch { /* quick decode best-effort */ }
+          } catch {
+            /* quick decode best-effort */
+          }
         }
         const data = await assetsApi.getPeaks(definition.id)
         if (!cancelled && Array.isArray(data.peaks) && data.peaks.length >= 800) {
@@ -399,10 +580,14 @@ function BackendAudioCell({ definition, view, onSelect }: { definition: AssetDef
         } else if (!cancelled && quickPeaks) {
           setPeaks(quickPeaks)
         }
-      } catch { /* backend may be down */ }
+      } catch {
+        /* backend may be down */
+      }
     }
     void doFetch()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [definition.id, definition.original_url, duration, initialPeaks, quickPeaks])
 
   const displayPeaks = peaks ?? quickPeaks
@@ -425,15 +610,150 @@ function BackendAudioCell({ definition, view, onSelect }: { definition: AssetDef
       onDragStart={handleDragStart}
       data-asset-id={definition.id}
     >
-      <div className={view === 'grid' ? 'asset-cell__thumb' : 'asset-row__thumb'} style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1a1a1a', borderRadius: 4, overflow: 'hidden' }}>
-        <WaveformCanvas peaks={displayPeaks} width={view === 'grid' ? 120 : 160} height={24} color="#7c5cff" testId="waveform-canvas-backend" />
-        <span className="badge" style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 9, padding: '1px 4px', borderRadius: 3, fontFamily: 'monospace' }}>
+      <div
+        className={view === 'grid' ? 'asset-cell__thumb' : 'asset-row__thumb'}
+        style={{
+          position: 'relative',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: '#1a1a1a',
+          borderRadius: 4,
+          overflow: 'hidden',
+        }}
+      >
+        <WaveformCanvas
+          peaks={displayPeaks}
+          width={view === 'grid' ? 120 : 160}
+          height={24}
+          color="#7c5cff"
+          testId="waveform-canvas-backend"
+        />
+        <span
+          className="badge"
+          style={{
+            position: 'absolute',
+            top: 4,
+            right: 4,
+            background: 'rgba(0,0,0,0.6)',
+            color: '#fff',
+            fontSize: 9,
+            padding: '1px 4px',
+            borderRadius: 3,
+            fontFamily: 'monospace',
+          }}
+        >
           {badge}
         </span>
       </div>
-      <span className={view === 'grid' ? 'asset-cell__name' : 'asset-row__name'}>{definition.name}</span>
+      <span className={view === 'grid' ? 'asset-cell__name' : 'asset-row__name'}>
+        {definition.name}
+      </span>
       <span className={view === 'grid' ? 'asset-cell__category' : 'asset-row__category'}>
         {definition.category} ♫
+      </span>
+    </button>
+  )
+}
+
+interface FolderCellProps {
+  folder: AssetFolder
+  view: AssetView
+  selected: boolean
+  renaming: boolean
+  renameDraft: string
+  onSelect: (folderId: string) => void
+  onOpen: (folderId: string) => void
+  onRenameDraftChange: (value: string) => void
+  onRenameCommit: () => void
+  onRenameCancel: () => void
+  onDropAsset: (assetId: string, folderId: string) => void
+  onDropFolder: (folderId: string, targetId: string) => void
+}
+
+function FolderCell({
+  folder,
+  view,
+  selected,
+  renaming,
+  renameDraft,
+  onSelect,
+  onOpen,
+  onRenameDraftChange,
+  onRenameCommit,
+  onRenameCancel,
+  onDropAsset,
+  onDropFolder,
+}: FolderCellProps) {
+  const handleDragStart = (event: React.DragEvent) => {
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData(ASSET_FOLDER_MIME, folder.id)
+  }
+
+  const handleDrop = (event: React.DragEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const assetId = event.dataTransfer.getData(ASSET_DEFINITION_MIME)
+    if (assetId) {
+      onDropAsset(assetId, folder.id)
+      return
+    }
+    const droppedFolderId = event.dataTransfer.getData(ASSET_FOLDER_MIME)
+    if (droppedFolderId && droppedFolderId !== folder.id) {
+      onDropFolder(droppedFolderId, folder.id)
+    }
+  }
+
+  return (
+    <button
+      className={
+        view === 'grid'
+          ? `asset-cell asset-cell--folder${selected ? ' asset-cell--selected' : ''}`
+          : `asset-row asset-row--folder${selected ? ' asset-row--selected' : ''}`
+      }
+      aria-label={`Folder ${folder.name}`}
+      draggable={!renaming}
+      onClick={() => onSelect(folder.id)}
+      onDoubleClick={() => onOpen(folder.id)}
+      onDragStart={handleDragStart}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={handleDrop}
+      data-folder-id={folder.id}
+    >
+      <span
+        className={view === 'grid' ? 'asset-cell__thumb' : 'asset-row__thumb'}
+        aria-hidden
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: view === 'grid' ? 40 : 22,
+        }}
+      >
+        📁
+      </span>
+      {renaming ? (
+        <input
+          aria-label={`Rename ${folder.name}`}
+          value={renameDraft}
+          autoFocus
+          onClick={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onChange={(event) => onRenameDraftChange(event.target.value)}
+          onBlur={onRenameCommit}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') onRenameCommit()
+            if (event.key === 'Escape') onRenameCancel()
+          }}
+          style={{ maxWidth: '100%', font: 'inherit', padding: '2px 4px' }}
+        />
+      ) : (
+        <span className={view === 'grid' ? 'asset-cell__name' : 'asset-row__name'}>
+          {folder.name}
+        </span>
+      )}
+      <span className={view === 'grid' ? 'asset-cell__category' : 'asset-row__category'}>
+        Folder
       </span>
     </button>
   )
@@ -455,6 +775,8 @@ function useEmbeddedAudioAssets(): EmbeddedAsset[] {
 
 export function AssetsPanel() {
   const definitions = useAssetLibraryStore((state) => state.definitions)
+  const folders = useAssetLibraryStore((state) => state.folders)
+  const currentFolderId = useAssetLibraryStore((state) => state.currentFolderId)
   const loading = useAssetLibraryStore((state) => state.loading)
   const unavailable = useAssetLibraryStore((state) => state.unavailable)
   const search = useAssetLibraryStore((state) => state.search)
@@ -462,13 +784,26 @@ export function AssetsPanel() {
   const order = useAssetLibraryStore((state) => state.order)
   const selectedId = useAssetLibraryStore((state) => state.selectedId)
   const loadLibrary = useAssetLibraryStore((state) => state.loadLibrary)
+  const loadFolders = useAssetLibraryStore((state) => state.loadFolders)
+  const setCurrentFolder = useAssetLibraryStore((state) => state.setCurrentFolder)
   const setSearch = useAssetLibraryStore((state) => state.setSearch)
   const setSorting = useAssetLibraryStore((state) => state.setSorting)
   const selectAsset = useAssetLibraryStore((state) => state.selectAsset)
   const importFiles = useAssetLibraryStore((state) => state.importFiles)
+  const createFolder = useAssetLibraryStore((state) => state.createFolder)
+  const renameFolder = useAssetLibraryStore((state) => state.renameFolder)
+  const deleteFolder = useAssetLibraryStore((state) => state.deleteFolder)
+  const moveAsset = useAssetLibraryStore((state) => state.moveAsset)
+  const moveFolder = useAssetLibraryStore((state) => state.moveFolder)
 
   const [view, setView] = useState<AssetView>('grid')
   const [filter, setFilter] = useState<AssetFilter>('all')
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null)
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
+  const [creatingFolder, setCreatingFolder] = useState(false)
+  const [newFolderName, setNewFolderName] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const embeddedAudioAssets = useEmbeddedAudioAssets()
@@ -477,7 +812,17 @@ export function AssetsPanel() {
     void loadLibrary()
   }, [loadLibrary])
 
+  useEffect(() => {
+    void loadFolders()
+  }, [loadFolders])
+
   useEffect(() => registerImportOpener(() => fileInputRef.current?.click()), [])
+
+  const clearFolderUiSelection = () => {
+    setSelectedFolderId(null)
+    setRenamingFolderId(null)
+    setConfirmingDeleteId(null)
+  }
 
   const handleImportFiles = (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files ?? [])
@@ -508,6 +853,75 @@ export function AssetsPanel() {
     (option) => option.sort === sort && option.order === order,
   )?.label
 
+  const breadcrumb = folderPath(folders, currentFolderId)
+  const childFolders = folders
+    .filter((folder) => folder.parent_id === currentFolderId)
+    .filter((folder) => folder.name.toLowerCase().includes(search.trim().toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  const handleSelectFolder = (folderId: string) => {
+    setSelectedFolderId(folderId)
+    selectAsset(null)
+  }
+
+  const handleOpenFolder = (folderId: string) => {
+    clearFolderUiSelection()
+    selectAsset(null)
+    setCurrentFolder(folderId)
+  }
+
+  const handleSelectAsset = (assetId: string) => {
+    setSelectedFolderId(null)
+    selectAsset(assetId)
+  }
+
+  const handleCreateFolder = () => {
+    const name = newFolderName.trim()
+    if (!name) return
+    void createFolder(name).then((folder) => {
+      if (folder) {
+        setNewFolderName('')
+        setCreatingFolder(false)
+      }
+    })
+  }
+
+  const handleRenameCommit = () => {
+    if (renamingFolderId === null) return
+    const name = renameDraft.trim()
+    const current = folders.find((folder) => folder.id === renamingFolderId)
+    setRenamingFolderId(null)
+    if (name && current && name !== current.name) {
+      void renameFolder(renamingFolderId, name)
+    }
+  }
+
+  const handleDropAsset = (assetId: string, folderId: string) => {
+    void moveAsset(assetId, folderId)
+  }
+
+  const handleDropFolder = (droppedId: string, targetId: string) => {
+    if (droppedId === targetId) return
+    void moveFolder(droppedId, targetId)
+  }
+
+  const handleBreadcrumbDrop = (event: React.DragEvent, targetId: string | null) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const assetId = event.dataTransfer.getData(ASSET_DEFINITION_MIME)
+    if (assetId) {
+      void moveAsset(assetId, targetId)
+      return
+    }
+    const droppedFolderId = event.dataTransfer.getData(ASSET_FOLDER_MIME)
+    if (!droppedFolderId) return
+    if (droppedFolderId === targetId) return
+    // Dropping onto an ancestor of itself is rejected server-side with a notice.
+    void moveFolder(droppedFolderId, targetId)
+  }
+
+  const selectedFolder = folders.find((folder) => folder.id === selectedFolderId) ?? null
+
   const filteredDefinitions = definitions.filter((d) => {
     const isAudio = isAudioDefinition(d)
     if (filter === 'audio') return isAudio
@@ -515,19 +929,26 @@ export function AssetsPanel() {
     return true
   })
 
-  const filteredEmbeddedAudio = filter === 'images' ? [] : embeddedAudioAssets.filter((a) => {
-    if (!search.trim()) return true
-    return a.name.toLowerCase().includes(search.trim().toLowerCase())
-  })
+  const filteredEmbeddedAudio =
+    filter === 'images'
+      ? []
+      : embeddedAudioAssets.filter((a) => {
+          if (!search.trim()) return true
+          return a.name.toLowerCase().includes(search.trim().toLowerCase())
+        })
 
   // For display counts: All shows both, Images shows only definitions, Audio shows only audio (definitions audio + embedded)
-  const hasAnyForFilter = filter === 'audio'
-    ? filteredDefinitions.length > 0 || filteredEmbeddedAudio.length > 0
-    : filter === 'images'
-      ? filteredDefinitions.length > 0
-      : filteredDefinitions.length > 0 || filteredEmbeddedAudio.length > 0
+  const hasAnyAssetsForFilter =
+    filter === 'audio'
+      ? filteredDefinitions.length > 0 || filteredEmbeddedAudio.length > 0
+      : filter === 'images'
+        ? filteredDefinitions.length > 0
+        : filteredDefinitions.length > 0 || filteredEmbeddedAudio.length > 0
+  // Folders are shown in every filter — they may contain matching assets
+  // (e.g. audio inside a folder while the Audio chip is active).
+  const visibleFolders = childFolders
 
-  const showEmpty = !hasAnyForFilter
+  const showEmpty = !hasAnyAssetsForFilter && visibleFolders.length === 0
 
   return (
     <div className="assets-panel">
@@ -539,6 +960,17 @@ export function AssetsPanel() {
             disabled={unavailable}
           >
             Import Assets
+          </button>
+          <button
+            onClick={() => {
+              setCreatingFolder(true)
+              setNewFolderName('')
+            }}
+            disabled={unavailable}
+            aria-label="New folder"
+            style={{ padding: '4px 10px', borderRadius: 4, cursor: 'pointer' }}
+          >
+            New folder
           </button>
           <div className="assets-toolbar__views" role="group" aria-label="View">
             <button
@@ -565,7 +997,84 @@ export function AssetsPanel() {
             </button>
           </div>
         </div>
+        <nav className="assets-toolbar__row" aria-label="Breadcrumb">
+          <button
+            onClick={() => {
+              clearFolderUiSelection()
+              selectAsset(null)
+              setCurrentFolder(null)
+            }}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => handleBreadcrumbDrop(event, null)}
+            aria-label="Go to root folder"
+            aria-current={currentFolderId === null ? 'page' : undefined}
+            style={{
+              padding: '2px 6px',
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontWeight: currentFolderId === null ? 700 : 400,
+            }}
+          >
+            Root
+          </button>
+          {breadcrumb.map((folder) => (
+            <span key={folder.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <span aria-hidden>/</span>
+              <button
+                onClick={() => handleOpenFolder(folder.id)}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => handleBreadcrumbDrop(event, folder.id)}
+                aria-label={`Go to ${folder.name} folder`}
+                aria-current={currentFolderId === folder.id ? 'page' : undefined}
+                style={{
+                  padding: '2px 6px',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  fontWeight: currentFolderId === folder.id ? 700 : 400,
+                }}
+              >
+                {folder.name}
+              </button>
+            </span>
+          ))}
+        </nav>
+        {creatingFolder && (
+          <div className="assets-toolbar__row" role="group" aria-label="Create folder">
+            <input
+              aria-label="New folder name"
+              placeholder="Folder name"
+              value={newFolderName}
+              autoFocus
+              onChange={(event) => setNewFolderName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') handleCreateFolder()
+                if (event.key === 'Escape') {
+                  setCreatingFolder(false)
+                  setNewFolderName('')
+                }
+              }}
+              style={{ flex: 1, padding: '4px 8px', borderRadius: 4 }}
+            />
+            <button
+              onClick={handleCreateFolder}
+              disabled={newFolderName.trim() === ''}
+              style={{ padding: '4px 10px', borderRadius: 4, cursor: 'pointer' }}
+            >
+              Create
+            </button>
+            <button
+              onClick={() => {
+                setCreatingFolder(false)
+                setNewFolderName('')
+              }}
+              style={{ padding: '4px 10px', borderRadius: 4, cursor: 'pointer' }}
+            >
+              Cancel
+            </button>
+          </div>
+        )}
         <div className="assets-toolbar__row" role="group" aria-label="Filter">
+          {' '}
           <button
             className={filter === 'all' ? 'filter-chip filter-chip--active' : 'filter-chip'}
             aria-pressed={filter === 'all'}
@@ -642,25 +1151,134 @@ export function AssetsPanel() {
       ) : (
         <>
           <ul className={view === 'grid' ? 'asset-grid' : 'asset-list'}>
+            {visibleFolders.map((folder) => (
+              <li key={folder.id}>
+                <FolderCell
+                  folder={folder}
+                  view={view}
+                  selected={selectedFolderId === folder.id}
+                  renaming={renamingFolderId === folder.id}
+                  renameDraft={renameDraft}
+                  onSelect={handleSelectFolder}
+                  onOpen={handleOpenFolder}
+                  onRenameDraftChange={setRenameDraft}
+                  onRenameCommit={handleRenameCommit}
+                  onRenameCancel={() => setRenamingFolderId(null)}
+                  onDropAsset={handleDropAsset}
+                  onDropFolder={handleDropFolder}
+                />
+              </li>
+            ))}
             {filteredDefinitions.map((definition) => (
               <li key={definition.id}>
                 {isAudioDefinition(definition) ? (
-                  <BackendAudioCell definition={definition} view={view} onSelect={selectAsset} />
+                  <BackendAudioCell
+                    definition={definition}
+                    view={view}
+                    onSelect={handleSelectAsset}
+                  />
                 ) : (
-                  <AssetCell definition={definition} view={view} onSelect={selectAsset} />
+                  <AssetCell definition={definition} view={view} onSelect={handleSelectAsset} />
                 )}
               </li>
             ))}
             {filteredEmbeddedAudio.map((asset) => (
               <li key={asset.id}>
-                <AudioAssetCell asset={asset} view={view} onSelect={selectAsset} />
+                <AudioAssetCell asset={asset} view={view} onSelect={handleSelectAsset} />
               </li>
             ))}
           </ul>
-          {selected && !isAudioDefinition(selected) && <AssetPreview definition={selected} onClose={() => selectAsset(null)} />}
-          {selected && isAudioDefinition(selected) && <AudioGlobalPreview definition={selected} onClose={() => selectAsset(null)} />}
-          {!selected && selectedEmbedded && <AudioEmbeddedPreview asset={selectedEmbedded} onClose={() => selectAsset(null)} />}
+          {selected && !isAudioDefinition(selected) && (
+            <AssetPreview definition={selected} onClose={() => selectAsset(null)} />
+          )}
+          {selected && isAudioDefinition(selected) && (
+            <AudioGlobalPreview definition={selected} onClose={() => selectAsset(null)} />
+          )}
+          {!selected && selectedEmbedded && (
+            <AudioEmbeddedPreview asset={selectedEmbedded} onClose={() => selectAsset(null)} />
+          )}
         </>
+      )}
+      {selectedFolder && (
+        <div
+          role="group"
+          aria-label="Selected folder actions"
+          style={{
+            position: 'absolute',
+            left: 8,
+            right: 8,
+            bottom: 8,
+            zIndex: 5,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            padding: '6px 8px',
+            borderRadius: 6,
+            border: '1px solid var(--color-border)',
+            background: 'var(--color-bg-panel)',
+            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.35)',
+          }}
+        >
+          <span
+            style={{
+              fontSize: 12,
+              flex: 1,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {selectedFolder.name}
+          </span>
+          {confirmingDeleteId === selectedFolder.id ? (
+            <>
+              <span style={{ fontSize: 12 }}>Delete? Contents move up.</span>
+              <button
+                onClick={() => {
+                  void deleteFolder(selectedFolder.id)
+                  clearFolderUiSelection()
+                }}
+                aria-label={`Confirm delete ${selectedFolder.name}`}
+                style={{ padding: '4px 10px', borderRadius: 4, cursor: 'pointer' }}
+              >
+                Confirm delete
+              </button>
+              <button
+                onClick={() => setConfirmingDeleteId(null)}
+                style={{ padding: '4px 10px', borderRadius: 4, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => {
+                  setRenamingFolderId(selectedFolder.id)
+                  setRenameDraft(selectedFolder.name)
+                }}
+                aria-label={`Rename ${selectedFolder.name}`}
+                style={{ padding: '4px 10px', borderRadius: 4, cursor: 'pointer' }}
+              >
+                Rename
+              </button>
+              <button
+                onClick={() => setConfirmingDeleteId(selectedFolder.id)}
+                aria-label={`Delete ${selectedFolder.name}`}
+                style={{ padding: '4px 10px', borderRadius: 4, cursor: 'pointer' }}
+              >
+                Delete
+              </button>
+            </>
+          )}
+          <button
+            onClick={clearFolderUiSelection}
+            aria-label="Deselect folder"
+            style={{ padding: '4px 8px', borderRadius: 4, cursor: 'pointer' }}
+          >
+            ✕
+          </button>
+        </div>
       )}
     </div>
   )

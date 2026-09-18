@@ -24,7 +24,13 @@ export const voicePromptsApi = new VoicePromptsApi(apiClient)
 export const ttsApi = new TtsApi(apiClient)
 export const ttsSettingsApi = new TtsSettingsApi(apiClient)
 
-export type { AssetDefinition, AssetSortKey, AssetSortOrder, AssetUploadResult } from './assetsApi'
+export type {
+  AssetDefinition,
+  AssetFolder,
+  AssetSortKey,
+  AssetSortOrder,
+  AssetUploadResult,
+} from './assetsApi'
 export type {
   ClipChannelDefApi,
   ClipCreateInput,

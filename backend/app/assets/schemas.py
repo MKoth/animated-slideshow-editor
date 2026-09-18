@@ -3,7 +3,7 @@ from typing import cast
 
 from pydantic import BaseModel
 
-from app.assets.model import AssetDefinition
+from app.assets.model import AssetDefinition, AssetFolder
 from app.assets.storage import asset_url
 
 
@@ -39,6 +39,29 @@ class AssetDefinitionOut(BaseModel):
     thumbnail_url: str
     mimeType: str | None = None
     metadata: dict[str, object] | None = None
+    folder_id: str | None = None
+
+
+class AssetFolderOut(BaseModel):
+    id: str
+    name: str
+    parent_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class AssetFolderCreate(BaseModel):
+    name: str
+    parent_id: str | None = None
+
+
+class AssetFolderUpdate(BaseModel):
+    name: str | None = None
+    parent_id: str | None = None
+
+
+class AssetMoveIn(BaseModel):
+    folder_id: str | None = None
 
 
 class PeaksOut(BaseModel):
@@ -87,4 +110,15 @@ def definition_to_schema(definition: AssetDefinition) -> AssetDefinitionOut:
         thumbnail_url=asset_url(definition.thumbnail_path),
         mimeType=definition.mime_type,
         metadata=definition.asset_metadata,
+        folder_id=definition.folder_id,
+    )
+
+
+def folder_to_schema(folder: AssetFolder) -> AssetFolderOut:
+    return AssetFolderOut(
+        id=folder.id,
+        name=folder.name,
+        parent_id=folder.parent_id,
+        created_at=folder.created_at,
+        updated_at=folder.updated_at,
     )

@@ -4,7 +4,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.assets.categories import DEFAULT_ASSET_CATEGORY, CategoryValidationError, validate_category
-from app.assets.model import AssetDefinition
+from app.assets.library import FolderNotFoundError
+from app.assets.model import AssetDefinition, AssetFolder
 from app.assets.pipeline import ImagePipeline, ImageValidationError, InspectedImage
 from app.assets.storage import AssetStorage
 from app.database import Database
@@ -37,24 +38,35 @@ class AssetImporter:
         self._storage = storage
         self._pipeline = pipeline
 
-    def import_uploads(self, uploads: list[Upload], imported_at: datetime) -> ImportResult:
+    def import_uploads(
+        self,
+        uploads: list[Upload],
+        imported_at: datetime,
+        folder_id: str | None = None,
+    ) -> ImportResult:
         result = ImportResult()
         written_paths: list[str] = []
         with self._database.session() as session:
             try:
+                if folder_id is not None and session.get(AssetFolder, folder_id) is None:
+                    raise FolderNotFoundError(folder_id)
                 for upload in uploads:
                     try:
                         validate_category(upload.category)
                         # Reusable objects are stored as JSON blobs, not images — bypass the image pipeline
                         if upload.category in ("object", "Object"):
-                            definition = self._create_object_definition(upload, imported_at)
+                            definition = self._create_object_definition(
+                                upload, imported_at, folder_id
+                            )
                             session.add(definition)
                             written_paths.append(definition.original_path)
                             written_paths.append(definition.thumbnail_path)
                             result.created.append(definition)
                             continue
                         inspected = self._pipeline.inspect(upload.content)
-                        definition = self._create_definition(upload, inspected, imported_at)
+                        definition = self._create_definition(
+                            upload, inspected, imported_at, folder_id
+                        )
                         session.add(definition)
                         written_paths.append(definition.original_path)
                         written_paths.append(definition.thumbnail_path)
@@ -68,7 +80,9 @@ class AssetImporter:
                 raise
         return result
 
-    def _create_object_definition(self, upload: Upload, imported_at: datetime) -> AssetDefinition:
+    def _create_object_definition(
+        self, upload: Upload, imported_at: datetime, folder_id: str | None = None
+    ) -> AssetDefinition:
         import json
 
         try:
@@ -112,10 +126,15 @@ class AssetImporter:
             thumbnail_path=thumbnail_path,
             mime_type="application/json",
             asset_metadata=asset_metadata,
+            folder_id=folder_id,
         )
 
     def _create_definition(
-        self, upload: Upload, inspected: InspectedImage, imported_at: datetime
+        self,
+        upload: Upload,
+        inspected: InspectedImage,
+        imported_at: datetime,
+        folder_id: str | None = None,
     ) -> AssetDefinition:
         definition_id = str(uuid4())
         name = Path(upload.filename).stem or upload.filename
@@ -162,4 +181,5 @@ class AssetImporter:
             thumbnail_path=thumbnail_path,
             mime_type=mime_type,
             asset_metadata=asset_metadata,
+            folder_id=folder_id,
         )

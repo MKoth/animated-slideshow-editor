@@ -1,6 +1,9 @@
 import type { AssetDefinition } from '../api'
 import type { EnginePublic } from '../engine'
-import { collectReferencedDefinitionIds, collectReferencedAudioAssetIds } from '../engine/missingAssets'
+import {
+  collectReferencedDefinitionIds,
+  collectReferencedAudioAssetIds,
+} from '../engine/missingAssets'
 import { useAssetLibraryStore } from '../stores/assetLibraryStore'
 
 const inFlight = new Map<string, Promise<boolean>>()
@@ -40,12 +43,15 @@ async function doCapture(engine: EnginePublic, definitionId: string): Promise<bo
   if (bytes === null) {
     return false
   }
+  // Library organisation (folder_id) never enters the portable snapshot.
+  const snapshot = { ...definition }
+  delete snapshot.folder_id
   engine.embedAsset({
     id: definition.id,
     name: definition.name,
     data: bytes.data,
     mimeType: bytes.mimeType,
-    metadata: { ...definition },
+    metadata: snapshot,
   })
   return true
 }
@@ -83,7 +89,10 @@ async function doCaptureAudio(engine: EnginePublic, assetId: string): Promise<bo
   const definition = libraryDefinition(assetId)
   if (!definition) return false
   // Only for audio definitions
-  const isAudio = definition.category === 'audio' || definition.mimeType?.startsWith('audio/') || /\.(wav|mp3|mpeg|ogg|webm)$/i.test(definition.original_filename)
+  const isAudio =
+    definition.category === 'audio' ||
+    definition.mimeType?.startsWith('audio/') ||
+    /\.(wav|mp3|mpeg|ogg|webm)$/i.test(definition.original_filename)
   if (!isAudio) return false
   const url = definition.original_url
   if (!url) return false
@@ -92,7 +101,9 @@ async function doCaptureAudio(engine: EnginePublic, assetId: string): Promise<bo
   // Prefer mimeType from definition if available
   const mimeType = definition.mimeType ?? bytes.mimeType
   // Preserve audio metadata (duration, sampleRate, etc) in embedded metadata
-  const metadata: Record<string, unknown> = { ...(definition.metadata as Record<string, unknown> | undefined) }
+  const metadata: Record<string, unknown> = {
+    ...(definition.metadata as Record<string, unknown> | undefined),
+  }
   if (definition.mimeType) metadata.mimeType = definition.mimeType
   // Ensure category preserved for filtering
   metadata.category = definition.category

@@ -100,6 +100,21 @@ describe('captureAssetSnapshot', () => {
     expect(engine.project?.embeddedAssets).toHaveLength(1)
   })
 
+  it('excludes the library folder_id from the portable snapshot', async () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'P' })
+    engine.createSlide('S1')
+    setLibraryDefinitions([{ ...BOY, folder_id: 'f1' }])
+    stubAssetImage(BOY.original_url)
+
+    const captured = await captureAssetSnapshot(engine, BOY.id)
+
+    expect(captured).toBe(true)
+    const metadata = (engine.getEmbeddedAsset(BOY.id)?.metadata ?? {}) as Record<string, unknown>
+    expect(metadata).toMatchObject({ category: 'Character' })
+    expect('folder_id' in metadata).toBe(false)
+  })
+
   it('skips the fetch when the definition is already embedded', async () => {
     const engine = createEngine()
     engine.createProject({ name: 'P' })

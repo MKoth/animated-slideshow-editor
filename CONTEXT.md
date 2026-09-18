@@ -97,6 +97,10 @@ A named attachment point defined on an asset definition (e.g. Head, Speech Bubbl
 The canonical classification label on an asset definition: Character, Character Part, Animal, Plant, Object, Background, UI, Decoration, Speech Bubble, Icon, Effect, Particle, Text, or Uncategorized (default). Shared by the asset library, asset authoring, and the AI asset pipeline.
 _Avoid_: Fish, Flowers, custom per-step category vocabularies
 
+**Asset Folder**:
+A user-created, nestable container organising the asset library. A folder has a name (unique among its siblings) and an optional parent (none means root); an asset definition points at zero or one folder (`folder_id`, none means root). Persisted server-side in SQLite alongside the library. Deleting a folder never deletes assets — its subfolders and assets move up to its parent (or root). Project-embedded snapshots carry no folder information.
+_Avoid_: Asset category (a classification label, not a container), tag
+
 **Missing Assets Report**:
 The reconciliation of a project's asset-definition references against the live library store, run on open/import: references with no definition in the store — and no embedded snapshot in the project — are listed by the affected nodes' names ("Missing Assets: Clock.png, Boy.png"), and the user continues with those nodes rendered as grey-box placeholders on the canvas and marked in the scene tree. Projects are self-contained, so the report applies only to legacy/slim files whose references resolve neither embedded nor store-side.
 _Avoid_: Broken asset, unresolved reference

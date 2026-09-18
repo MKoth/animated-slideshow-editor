@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, CheckConstraint, DateTime, Float, Integer, String, Text
+from sqlalchemy import JSON, CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.assets.categories import ASSET_CATEGORIES, DEFAULT_ASSET_CATEGORY
@@ -10,6 +10,23 @@ _CATEGORY_CHECK = CheckConstraint(
     f"category IN ({', '.join(repr(category) for category in ASSET_CATEGORIES)})",
     name="ck_asset_definition_category",
 )
+
+
+class AssetFolder(Base):
+    """A user-created folder organising the asset library. parent_id NULL means root."""
+
+    __tablename__ = "asset_folders"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    parent_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("asset_folders.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class AssetDefinition(Base):
@@ -42,4 +59,10 @@ class AssetDefinition(Base):
     mime_type: Mapped[str | None] = mapped_column(String(100), nullable=True, default=None)
     asset_metadata: Mapped[dict[str, object] | None] = mapped_column(
         "metadata", JSON, nullable=True, default=None
+    )
+    folder_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("asset_folders.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
     )
