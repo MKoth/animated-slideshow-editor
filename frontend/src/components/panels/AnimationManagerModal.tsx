@@ -99,6 +99,10 @@ import {
 } from './collectionCategories'
 import { executeDeleteClipCollection } from '../../app/deleteClipCollectionAction'
 import { executeReapplyClipCollections } from '../../app/reapplyClipCollectionsAction'
+import { executeBulkClipOffset, previewBulkClipOffset } from '../../app/clipBulkOffsetAction'
+import type { BulkOffsetMap, BulkOffsetPreview } from '../../app/clipBulkOffsetAction'
+import { BulkOffsetModal } from './BulkOffsetModal'
+import type { BulkOffsetBindingRow } from './BulkOffsetModal'
 import {
   defaultSegmentRange,
   formatSec,
@@ -437,6 +441,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const [flattenToStr, setFlattenToStr] = useState('1')
   const [flattenError, setFlattenError] = useState<string | null>(null)
   const [replaceOpen, setReplaceOpen] = useState(false)
+  // Bulk additive offset of clip keyframe values across collection bindings (retarget flow)
+  const [bulkOffsetOpen, setBulkOffsetOpen] = useState(false)
+  const [bulkOffsetFilterSeed, setBulkOffsetFilterSeed] = useState('')
   // Collection Lane placements (15-06)
   const [selectedPlacementId, setSelectedPlacementId] = useState<string | null>(null)
   const [placeCollectionId, setPlaceCollectionId] = useState<string>('')
@@ -562,6 +569,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       setFlattenOpen(false)
       setFlattenError(null)
       setReplaceOpen(false)
+      setBulkOffsetOpen(false)
+      setBulkOffsetFilterSeed('')
       setSelectedPlacementId(null)
       setPlaceCollectionId('')
       setCollectionPlacementMenu(null)
@@ -633,6 +642,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         } else if (segmentModalOpen) {
           setSegmentModalOpen(false)
           e.stopPropagation()
+        } else if (bulkOffsetOpen) {
+          setBulkOffsetOpen(false)
+          e.stopPropagation()
         } else if (orphanContextMenu) {
           setOrphanContextMenu(null)
           e.stopPropagation()
@@ -686,6 +698,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     deleteConfirmCollectionId,
     collectionPlacementMenu,
     controlBlockMenu,
+    bulkOffsetOpen,
     reverseClipPrompt,
     reverseCollectionPrompt,
     mirrorClipPrompt,
@@ -1615,6 +1628,49 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     )
   }, [engine, parentNodeId, tick, collectionCategoryFilter])
 
+  // Bulk offset targets: every (collection, semantic → clip) binding under this parent.
+  const bulkOffsetRows = useMemo((): BulkOffsetBindingRow[] => {
+    void tick
+    const rows: BulkOffsetBindingRow[] = []
+    for (const col of collectionsForParent) {
+      for (const [semanticName, clipId] of Object.entries(col.getBindingsObject())) {
+        let clipName = clipId
+        try {
+          clipName = engine.getClip(clipId).name
+        } catch {
+          // keep the id when the bound clip is gone; the action reports it as missing
+        }
+        rows.push({
+          collectionId: col.id,
+          collectionName: col.name,
+          semanticName,
+          clipId,
+          clipName,
+          uses: countClipUses(engine, clipId),
+        })
+      }
+    }
+    return rows
+  }, [collectionsForParent, engine, tick])
+
+  const handleBulkOffsetConfirm = useCallback(
+    (selection: { clipIds: string[]; offsets: BulkOffsetMap }): string | null => {
+      const result = executeBulkClipOffset(engine, dispatch, selection)
+      if (!result.ok) return result.error
+      setBulkOffsetOpen(false)
+      setTick((value) => value + 1)
+      notify(result.message)
+      return null
+    },
+    [engine, dispatch, notify],
+  )
+
+  const bulkOffsetPreview = useCallback(
+    (clipIds: string[], offsets: BulkOffsetMap): BulkOffsetPreview =>
+      previewBulkClipOffset(engine, { clipIds, offsets }),
+    [engine],
+  )
+
   // Global distinct collection categories for the filter dropdowns.
   const allCollectionCategories = useMemo(() => {
     void tick
@@ -1767,7 +1823,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         editingCollectionId ||
         deleteConfirmCollectionId ||
         deleteOrphansConfirm ||
-        orphanExtraction
+        orphanExtraction ||
+        bulkOffsetOpen
       ) {
         return
       }
@@ -1902,6 +1959,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     deleteConfirmCollectionId,
     deleteOrphansConfirm,
     orphanExtraction,
+    bulkOffsetOpen,
   ])
 
   // --- Orphan multi-select helpers ---
@@ -4311,6 +4369,34 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   }}
                 >
                   Refresh collections
+                </button>
+                <button
+                  data-testid="collection-bulk-offset"
+                  disabled={collectionsForParent.length === 0}
+                  onClick={() => {
+                    const seeds = new Set<string>()
+                    for (const instId of selectedClipIds) {
+                      const sem = instanceToNode.get(instId)?.semanticName?.trim()
+                      if (sem) seeds.add(sem)
+                    }
+                    setBulkOffsetFilterSeed(seeds.size === 1 ? [...seeds][0]! : '')
+                    setBulkOffsetOpen(true)
+                  }}
+                  title="Additively offset keyframe values across collection bindings filtered by semantic name (e.g. retarget a replaced head by +100 Y). Shared clips are edited in place."
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: 4,
+                    border: '1px solid var(--color-border, #ddd)',
+                    background:
+                      collectionsForParent.length > 0
+                        ? 'var(--color-bg-elevated, #eceef1)'
+                        : 'var(--color-bg, #f5f5f5)',
+                    color: 'var(--color-text, #1c1e21)',
+                    cursor: collectionsForParent.length > 0 ? 'pointer' : 'default',
+                    fontSize: 12,
+                  }}
+                >
+                  Bulk offset…
                 </button>
               </span>
             </div>
@@ -8540,6 +8626,18 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               </div>
             </div>
           </div>
+        )}
+
+        {/* Bulk additive offset of clip values across collection bindings */}
+        {bulkOffsetOpen && parentNode && (
+          <BulkOffsetModal
+            parentName={parentNode.name}
+            rows={bulkOffsetRows}
+            initialFilter={bulkOffsetFilterSeed}
+            getPreview={bulkOffsetPreview}
+            onClose={() => setBulkOffsetOpen(false)}
+            onConfirm={handleBulkOffsetConfirm}
+          />
         )}
 
         {/* Flatten to timeline dialog */}
