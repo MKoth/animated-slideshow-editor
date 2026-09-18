@@ -63,6 +63,10 @@ import {
 } from './timelineComponents'
 import type { TimelineMenuState } from './timelineComponents'
 import { ClipExtractionModal } from './ClipExtractionModal'
+import { DeleteKeyframesInRangeModal } from './DeleteKeyframesInRangeModal'
+import type { RangeDeleteSelection } from './DeleteKeyframesInRangeModal'
+import { buildRangeDeleteCommands } from '../../app/deleteKeyframesInRange'
+import { dispatchKeyframeCommands } from '../../engine/keyframeEdit'
 import { DeleteOrphansConfirmModal } from './DeleteOrphansConfirmModal'
 import {
   collectSelectedExtractableKeyframes,
@@ -72,6 +76,25 @@ import type { ExtractableKeyframe } from '../../engine/clipExtraction'
 import { useKeyframeClipboardStore } from '../../stores/keyframeClipboardStore'
 
 const MARQUEE_START_DISTANCE = 4
+
+/**
+ * Whether the context menu targets an object track header rather than a
+ * specific property lane (object menus carry only `nodeId` + `atTime`).
+ */
+function isObjectHeaderMenu(menu: TimelineMenuState): boolean {
+  const discriminant = menu as unknown as Record<string, unknown>
+  return (
+    discriminant['property'] == null &&
+    discriminant['parameter'] == null &&
+    discriminant['label'] == null &&
+    discriminant['circleProperty'] == null &&
+    discriminant['shadowProperty'] == null &&
+    discriminant['morph'] == null &&
+    discriminant['symmetry'] == null &&
+    discriminant['zIndex'] == null &&
+    discriminant['controlKey'] == null
+  )
+}
 
 function MorphSubtrackHeader({
   node,
@@ -176,6 +199,7 @@ export function TimelineBody({
   const selectedKeyframeIds = selectedKeyframeIdsOf(timelineSelection)
   const [menu, setMenu] = useState<TimelineMenuState | null>(null)
   const [extraction, setExtraction] = useState<ExtractableKeyframe[] | null>(null)
+  const [rangeDeleteNodeId, setRangeDeleteNodeId] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<{
     keyframes: readonly ExtractableKeyframe[]
     clipId: string
@@ -1177,6 +1201,33 @@ export function TimelineBody({
       notify(result.error.message)
     }
     useTimelineSelectionStore.getState().clearSelection()
+  }
+
+  const confirmRangeDelete = (selection: RangeDeleteSelection) => {
+    setRangeDeleteNodeId(null)
+    if (selection.plan.length === 0) {
+      return
+    }
+    const commands = buildRangeDeleteCommands(selection.plan)
+    // Single undo step: dispatchKeyframeCommands wraps multiple commands
+    // in one TransactionCommand.
+    const result = dispatchKeyframeCommands(dispatch, commands)
+    if (result && !result.ok) {
+      notify(result.error.message)
+      return
+    }
+    const deletedIds = new Set<string>()
+    for (const entry of selection.plan) {
+      for (const id of entry.keyframeIds) {
+        deletedIds.add(id)
+      }
+    }
+    const remaining = new Set(
+      selectedKeyframeIdsOf(useTimelineSelectionStore.getState()).filter(
+        (id) => !deletedIds.has(id),
+      ),
+    )
+    useTimelineSelectionStore.getState().pruneSelection(remaining)
   }
 
   const addToClipFromMenu = () => {
@@ -2451,6 +2502,14 @@ export function TimelineBody({
           menu={menu}
           onAdd={addKeyframeFromMenu}
           onDelete={deleteKeyframeFromMenu}
+          onDeleteInRange={
+            !menu.keyframeId && isObjectHeaderMenu(menu)
+              ? () => {
+                  setRangeDeleteNodeId(menu.nodeId)
+                  setMenu(null)
+                }
+              : undefined
+          }
           onAddToClip={addToClipFromMenu}
           onEditMorph={() => {
             const m = menu
@@ -2497,6 +2556,15 @@ export function TimelineBody({
                 })()
               : undefined
           }
+        />
+      )}
+      {rangeDeleteNodeId && (
+        <DeleteKeyframesInRangeModal
+          nodeId={rangeDeleteNodeId}
+          slideId={slideId}
+          slideDuration={duration}
+          onClose={() => setRangeDeleteNodeId(null)}
+          onConfirm={confirmRangeDelete}
         />
       )}
       {morphPicker &&

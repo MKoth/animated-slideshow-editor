@@ -292,6 +292,7 @@ export function TimelineContextMenu({
   menu,
   onAdd,
   onDelete,
+  onDeleteInRange,
   onAddToClip,
   onEditMorph,
   onEditSymmetry,
@@ -306,6 +307,7 @@ export function TimelineContextMenu({
   menu: TimelineMenuState
   onAdd: () => void
   onDelete: () => void
+  onDeleteInRange?: () => void
   onAddToClip?: () => void
   onEditMorph?: () => void
   onEditSymmetry?: () => void
@@ -386,6 +388,15 @@ export function TimelineContextMenu({
             <button className="timeline-context-menu__item" onClick={onAdd}>
               Add Keyframe
             </button>
+            {onDeleteInRange && (
+              <button
+                className="timeline-context-menu__item"
+                data-testid="delete-keyframes-in-range-button"
+                onClick={onDeleteInRange}
+              >
+                Delete keyframes from timeline section
+              </button>
+            )}
             {canPaste && onPaste && (
               <button
                 className="timeline-context-menu__item"
