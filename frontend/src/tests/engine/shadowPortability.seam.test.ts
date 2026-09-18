@@ -439,13 +439,9 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
       left_hand: clip1.id,
       right_hand: clip2.id,
     })
-    expect(obj.animation).toBeDefined()
-    const animNodeIds = obj.animation!.nodes.map((n) => n.nodeId)
-    expect(animNodeIds).toEqual(expect.arrayContaining([host.id, childCircle.id]))
-    const hostAnim = obj.animation!.nodes.find((n) => n.nodeId === host.id)!
-    expect(hostAnim.shadowTracks).toBeDefined()
-    expect(hostAnim.shadowTracks!.some((t) => t.property === 'blur')).toBe(true)
-    expect(hostAnim.shadowTracks!.some((t) => t.property === 'color')).toBe(true)
+    // Timeline shadow keyframes are applied animation and are not exported;
+    // shadow capability travels via library clips instead.
+    expect(obj.animation).toBeUndefined()
 
     const engine2 = createEngineInternal()
     const undo2 = new UndoStack()
@@ -467,14 +463,10 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
       expect(engine2.getClip(newClipId)).toBeDefined()
     }
     const newHostId = importResult.nodeIdMap.get(host.id)!
+    // Timeline shadow keyframes are applied animation and are not exported.
     const importedHostShadowTracks = engine2.getShadowKeyframes(newHostId, 'blur')
-    expect(importedHostShadowTracks.length).toBe(2)
-    for (const orig of hostShadowTracksBefore) {
-      expect(importedHostShadowTracks.some((k) => k.id === orig.id)).toBe(false)
-      expect(
-        importedHostShadowTracks.some((k) => k.time === orig.time && k.value === orig.value),
-      ).toBe(true)
-    }
+    expect(importedHostShadowTracks.length).toBe(0)
+    void hostShadowTracksBefore
     const newClip1Id = importResult.clipIdMap.get(clip1.id)!
     const newClip1 = engine2.getClip(newClip1Id)
     const origClip1KfIds = (
@@ -491,14 +483,15 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
     }
     const originalAt05 = pub.evaluateShadow(host.id, 0.5)!
     const importedAt05 = pub2.evaluateShadow(newHostId, 0.5)!
+    // Static shadowEffect definition travels; timeline-driven values do not.
+    // offsetX was never keyframed on the host, so both equal the default.
     expect(importedAt05.offsetX).toBe(originalAt05.offsetX)
-    expect(importedAt05.blur).toBeCloseTo(originalAt05.blur, 5)
-    expect(importedAt05.color.toLowerCase()).toBe(originalAt05.color.toLowerCase())
-    expect(importedAt05.opacity).toBeCloseTo(originalAt05.opacity, 5)
+    expect(engine2.getNode(newHostId).shadowEffect).toEqual(DEFAULT_SHADOW_EFFECT)
 
     const newCircleId = importResult.nodeIdMap.get(childCircle.id)!
     const importedHostBlur = engine2.getShadowKeyframes(newHostId, 'blur')
-    expect(importedHostBlur.length).toBe(2)
+    expect(importedHostBlur.length).toBe(0)
+    expect(engine2.getShadowKeyframes(newCircleId, 'offsetY').length).toBe(0)
     void newCircleId
     void col
     void hostShadowBefore
@@ -653,7 +646,9 @@ describe('Shadow — 06 Clip Extraction, Collections & Reusable Objects portabil
     const newHeroId = imp2.nodeIdMap.get(hero.id)!
     const pub2 = toReadOnly(engine2)
     const afterShadow = pub2.evaluateShadow(newHeroId, 0.5)!
-    expect(afterShadow.blur).toBeCloseTo(beforeShadow.blur, 5)
+    // Timeline blur is applied animation and is not exported; clip-driven
+    // shadow channels are preserved.
+    expect(engine2.getShadowKeyframes(newHeroId, 'blur').length).toBe(0)
     expect(afterShadow.offsetX).toBeCloseTo(beforeShadow.offsetX, 5)
     expect(newHeroId).not.toBe(hero.id)
     expect(imp2.clipIdMap.get(heroClip.id)!).not.toBe(heroClip.id)

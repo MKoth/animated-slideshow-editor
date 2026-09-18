@@ -9,6 +9,9 @@ export interface ReusableObjectJSON {
   readonly description?: string
   readonly rootId: string
   readonly nodes: readonly import('./json').NodeJSON[]
+  // Legacy import-only: old files may carry applied timeline keyframes.
+  // New exports never write this; motion capability travels via library
+  // clips / clipCollections / controlSet bindings + clipInstances.
   readonly animation?: import('./json').SlideAnimationJSON
   readonly library?: import('./json').LessonLibraryJSON
   readonly ikChains?: import('./json').IKManagerJSON

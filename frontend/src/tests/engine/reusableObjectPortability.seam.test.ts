@@ -13,8 +13,10 @@ import {
   ImportReusableObjectCommand,
   PlaceCollectionCommand,
   ApplyClipCollectionCommand,
+  DeleteNodeCommand,
 } from '../../engine/commands'
 import { ExportClipCollectionCommand } from '../../engine/commands'
+import { ClipCollectionManager } from '../../engine/clipCollectionManager'
 import { validateReusableObject, REUSABLE_OBJECT_VERSION } from '../../engine/reusableObject'
 import { walkPreOrder } from '../../engine/sceneNode'
 import { Keyframe, newKeyframeId } from '../../engine/keyframe'
@@ -182,21 +184,9 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
       'A',
       'B',
     ])
-    // Filtered animation includes morphBinding/morphTrack per node
-    expect(obj.animation).toBeDefined()
-    const meshAnim = obj.animation!.nodes.find((n) => n.nodeId === meshNode)!
-    // Global morphBinding no longer persisted — per-keyframe pair owns binding
-    expect(meshAnim.morphTrack).toBeDefined()
-    expect(meshAnim.morphTrack!.keyframes.length).toBe(2)
-    // Per-keyframe fromShapeId/toShapeId preserved before remapping
-    for (const kf of meshAnim.morphTrack!.keyframes) {
-      const v = kf.value as unknown as { fromShapeId: string | null; toShapeId: string | null }
-      // Before export, ids are original
-      if (typeof v === 'object' && v !== null && 'fromShapeId' in v) {
-        expect([a.id, b.id]).toContain(v.fromShapeId)
-        expect([a.id, b.id]).toContain(v.toShapeId)
-      }
-    }
+    // Timeline keyframes are not part of a reusable object definition;
+    // motion capability travels via library clips / collections instead.
+    expect(obj.animation).toBeUndefined()
     // Library snapshot includes clips and clipCollections including morphAnimation
     expect(obj.library).toBeDefined()
     expect(obj.library!.clips!.length).toBeGreaterThanOrEqual(2)
@@ -478,19 +468,13 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
     for (const oldSid of oldShapeIds) expect(newIds).not.toContain(oldSid)
     // Global morphBinding no longer persisted — per-keyframe pair owns binding, so global is null
     expect(engine.getMorphBinding(newMeshId)).toBeNull()
-    // MorphTrack keyframe value remapped via shapeIdMap
+    // Timeline morph keyframes are applied animation and are not exported;
+    // morph capability travels via library clips instead.
     const newKfs = engine.getMorphKeyframes(newMeshId)
-    expect(newKfs.length).toBe(1)
-    const v = newKfs[0]!.value as any
-    expect(oldShapeIds.has(v.fromShapeId)).toBe(false)
-    expect(newIds).toContain(v.fromShapeId)
-    expect(newIds).toContain(v.toShapeId)
-    // Skeleton: bone node's id is remapped, and mesh boneWeights (if any) would be remapped – we at least check bone id new
+    expect(newKfs.length).toBe(0)
+    // Skeleton: bone node's id is remapped — we at least check bone id new
     const newBoneId = res.nodeIdMap.get(bone)!
     expect(newBoneId).not.toBe(bone)
-    // Animation keyframe ids regenerated
-    const beforeKfIds = new Set(anim.morphKeyframes().map((k) => k.id))
-    for (const kf of newKfs) expect(beforeKfIds.has(kf.id)).toBe(false)
   })
 
   it('round-trip: export then import restores hierarchy and saved animations with new ids; evaluator at timestamp matches preview', () => {
@@ -625,25 +609,20 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
     // Verify collection remapped
     const newColId = importRes.collectionIdMap.get(col.id)!
     expect(engine2.getClipCollection(newColId).getBinding('arm')).toBe(newClipId)
-    // Verify morph per-keyframe pair preservation via shapeIdMap (global binding null)
+    // Timeline morph keyframes are applied animation and are not exported;
+    // morph capability travels via library clips instead (shapes still remap).
     const newShapes = engine2.getShapes(newMeshId)
     expect(engine2.getMorphBinding(newMeshId)).toBeNull()
     const newMorphKfs = engine2.getMorphKeyframes(newMeshId)
-    expect(newMorphKfs.length).toBe(1)
-    const newMorphVal = newMorphKfs[0]!.value as any
-    expect(newShapes.map((s) => s.id)).toContain(newMorphVal.fromShapeId)
-    expect(newShapes.map((s) => s.id)).toContain(newMorphVal.toShapeId)
+    expect(newMorphKfs.length).toBe(0)
+    expect(newShapes.length).toBe(2)
     // Evaluator at same timestamp matches preview (within tolerance)
+    // Clip-driven motion is preserved; timeline morph is intentionally dropped.
     const pub2 = toReadOnly(engine2)
     const afterEval = pub2.evaluateNode(newChildId, 1.5)
     expect(afterEval.transform.x).toBeCloseTo(beforeEval.transform.x, 5)
     expect(afterEval.transform.y).toBeCloseTo(beforeEval.transform.y, 5)
     expect(afterEval.opacity).toBeCloseTo(beforeEval.opacity, 5)
-    // Also test morph evaluator preservation via import (check shape ids)
-    const beforeMorphVal = engine.getMorphKeyframes(meshNode)[0]!.value as any
-    const afterMorphVal = engine2.getMorphKeyframes(newMeshId)[0]!.value as any
-    // Coefficient should be same, shape ids should be new but correspond
-    expect(afterMorphVal.coefficient).toBeCloseTo(beforeMorphVal.coefficient, 5)
   })
 
   it('import forks placement ids and remaps collection/placement linkage to avoid collisions', () => {
@@ -810,7 +789,7 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
 
     const objectJson = engine.exportReusableObject(host, 'Rig')
     expect(objectJson.library?.clips?.some((entry) => entry.id === clip)).toBe(true)
-    expect(objectJson.animation?.nodes.some((entry) => entry.controlTracks?.length)).toBe(false)
+    expect(objectJson.animation).toBeUndefined()
 
     const imported = engine.importReusableObject(objectJson)
     const importedHost = engine.getNode(imported.nodeIdMap.get(host)!)
@@ -825,7 +804,105 @@ describe('15-07 Reusable Object portability and library assignment via dropdown'
       engine
         .getSlide(engine.getActiveSlide()!.id)
         .animation.node(importedHost.id)
-        ?.controlKeyframes('Jaw.Open'),
+        ?.controlKeyframes('Jaw.Open') ?? [],
     ).toEqual([])
+  })
+
+  it('reimport after deleting the object reuses the orphaned collection instead of duplicating dropdown entries', () => {
+    const { engine, dispatcher, expectOk } = setupEngine()
+    const slide = engine.getActiveSlide()!
+    const handle = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'Handle',
+        }),
+      ),
+    ).nodeId as string
+    const child = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: handle, name: 'Child' }),
+      ),
+    ).nodeId as string
+    expectOk(
+      dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: child, semanticName: 'hand' })),
+    )
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 2, category: '' })),
+    ).clipId as string
+    engine
+      .getClip(clip)
+      .addChannelKeyframe(
+        'positionX',
+        new Keyframe(newKeyframeId(), 0, 0, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+      )
+    expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: child, clipId: clip })))
+    const col = engine.createClipCollection('DupCol', { hand: clip }, handle)
+    const obj = engine.exportReusableObject(handle, 'Obj')
+
+    // Delete the object subtree: nodes go away, the collection stays orphaned
+    expectOk(dispatcher.dispatch(new DeleteNodeCommand({ nodeId: handle })))
+    expect(engine.clipCollections.length).toBe(1)
+    expect(() => engine.getNode(col.sourceNodeId!)).toThrow()
+
+    const res = engine.importReusableObject(obj)
+    const sameNamed = engine.clipCollections.filter(
+      (c) =>
+        ClipCollectionManager.normalizeCollectionName(c.name) ===
+        ClipCollectionManager.normalizeCollectionName('DupCol'),
+    )
+    // No duplicate dropdown entry
+    expect(sameNamed.length).toBe(1)
+    const reused = sameNamed[0]!
+    expect(res.collectionIdMap.get(col.id)).toBe(reused.id)
+    // Source repoints at the new rig and bindings at the fresh clips
+    expect(() => engine.getNode(reused.sourceNodeId!)).not.toThrow()
+    expect([...res.nodeIdMap.values()]).toContain(reused.sourceNodeId!)
+    expect(reused.getBinding('hand')).toBe(res.clipIdMap.get(clip)!)
+  })
+
+  it('importing while the original rig is still alive forks a separate per-rig collection', () => {
+    const { engine, dispatcher, expectOk } = setupEngine()
+    const slide = engine.getActiveSlide()!
+    const handle = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId: slide.scene.root.id,
+          name: 'Handle',
+        }),
+      ),
+    ).nodeId as string
+    const child = expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({ sceneId: slide.scene.id, parentId: handle, name: 'Child' }),
+      ),
+    ).nodeId as string
+    expectOk(
+      dispatcher.dispatch(new SetSemanticNameCommand({ nodeId: child, semanticName: 'hand' })),
+    )
+    const clip = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'C', duration: 2, category: '' })),
+    ).clipId as string
+    engine
+      .getClip(clip)
+      .addChannelKeyframe(
+        'positionX',
+        new Keyframe(newKeyframeId(), 0, 0, 'linear', { time: 0, value: 0 }, { time: 0, value: 0 }),
+      )
+    expectOk(dispatcher.dispatch(new AssignClipCommand({ nodeId: child, clipId: clip })))
+    engine.createClipCollection('LiveCol', { hand: clip }, handle)
+    const obj = engine.exportReusableObject(handle, 'Obj')
+
+    const res = engine.importReusableObject(obj)
+    const sameNamed = engine.clipCollections.filter(
+      (c) =>
+        ClipCollectionManager.normalizeCollectionName(c.name) ===
+        ClipCollectionManager.normalizeCollectionName('LiveCol'),
+    )
+    // Both rigs coexist, so both collections are kept with distinct ids/sources
+    expect(sameNamed.length).toBe(2)
+    expect(res.reusedCollectionIds.length).toBe(0)
   })
 })

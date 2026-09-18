@@ -11,6 +11,8 @@ export interface ImportReusableObjectInverse {
   readonly createdNodeIds: readonly string[]
   readonly createdClipIds: readonly string[]
   readonly createdCollectionIds: readonly string[]
+  readonly reusedCollectionIds?: readonly string[]
+  readonly replacedCollectionSnapshots?: readonly unknown[]
 }
 
 export class ImportReusableObjectCommand implements Command<ImportReusableObjectInverse> {
@@ -30,7 +32,8 @@ export class ImportReusableObjectCommand implements Command<ImportReusableObject
     if (!engine.project) throw new Error('No project exists in memory')
     // Validate JSON lazily to avoid circular import issues – import dynamically
     // Use a simple structural check here; full validation happens in Engine.importReusableObject
-    if (!this.#objectJson || typeof this.#objectJson !== 'object') throw new Error('Invalid reusable object JSON')
+    if (!this.#objectJson || typeof this.#objectJson !== 'object')
+      throw new Error('Invalid reusable object JSON')
     if (this.#targetParentId) engine.getNode(this.#targetParentId)
   }
 
@@ -40,6 +43,12 @@ export class ImportReusableObjectCommand implements Command<ImportReusableObject
       createdNodeIds: [...result.nodeIdMap.values()],
       createdClipIds: [...result.clipIdMap.values()],
       createdCollectionIds: [...result.collectionIdMap.values()],
+      ...(result.reusedCollectionIds.length > 0
+        ? { reusedCollectionIds: [...result.reusedCollectionIds] }
+        : {}),
+      ...(result.replacedCollectionSnapshots.length > 0
+        ? { replacedCollectionSnapshots: [...result.replacedCollectionSnapshots] }
+        : {}),
     }
   }
 

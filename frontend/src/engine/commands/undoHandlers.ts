@@ -2475,11 +2475,28 @@ export function applyUndo(
         readonly string[] | undefined
       const createdCollectionIds = (inv as Record<string, unknown>).createdCollectionIds as
         readonly string[] | undefined
-      // Remove clip collections first
+      const reusedCollectionIds = new Set(
+        ((inv as Record<string, unknown>).reusedCollectionIds as readonly string[] | undefined) ??
+          [],
+      )
+      const replacedCollectionSnapshots = (inv as Record<string, unknown>)
+        .replacedCollectionSnapshots as readonly unknown[] | undefined
+      // Remove clip collections first (skip reused ones — they pre-existed)
       if (createdCollectionIds) {
         for (const id of [...createdCollectionIds].reverse()) {
+          if (reusedCollectionIds.has(id)) continue
           try {
             engine.deleteClipCollection(id)
+          } catch {
+            void 0
+          }
+        }
+      }
+      // Restore replaced (reused) collections to their pre-import snapshots
+      if (replacedCollectionSnapshots) {
+        for (const snapshot of replacedCollectionSnapshots) {
+          try {
+            engine.restoreClipCollectionFromJSON(snapshot)
           } catch {
             void 0
           }

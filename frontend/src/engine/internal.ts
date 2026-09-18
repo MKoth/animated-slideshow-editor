@@ -4403,25 +4403,11 @@ export class Engine {
       }
     }
 
-    let animation: import('./json').SlideAnimationJSON | undefined
-    try {
-      const fullAnim = (
-        slide.animation as unknown as { toJSON: () => import('./json').SlideAnimationJSON }
-      ).toJSON()
-      const filtered = fullAnim.nodes
-        .filter((entry) => nodeIds.has(entry.nodeId))
-        // Control tracks are per-slide instance data, not part of a reusable object
-        // definition. Imported objects therefore start from each Control's default.
-        .map((entry) => {
-          if (!entry.controlTracks || entry.controlTracks.length === 0) return entry
-          const withoutControlTracks = { ...entry }
-          delete withoutControlTracks.controlTracks
-          return withoutControlTracks
-        })
-      if (filtered.length > 0) animation = { nodes: filtered }
-    } catch {
-      animation = undefined
-    }
+    // Timeline keyframes are per-slide applied animation, not part of a reusable
+    // object definition. Motion capability travels via library clips /
+    // clipCollections / controlSet bindings + clipInstances instead.
+    // `animation` is therefore never written on export; import still reads it
+    // when present so old .lesson_object files remain backward compatible.
 
     const referencedAssetIds = new Set<string>()
     const referencedMaterialIds = new Set<string>()
@@ -4658,7 +4644,6 @@ export class Engine {
         : {}),
       rootId: rootNodeId,
       nodes,
-      ...(animation !== undefined ? { animation } : {}),
       ...(library !== undefined ? { library } : {}),
       ...(ikChains !== undefined ? { ikChains } : {}),
       ...(constraints !== undefined ? { constraints } : {}),
@@ -4676,6 +4661,8 @@ export class Engine {
     clipIdMap: Map<string, string>
     collectionIdMap: Map<string, string>
     rootNewId: string
+    reusedCollectionIds: string[]
+    replacedCollectionSnapshots: import('./json').ClipCollectionJSON[]
   } {
     const errors = validateReusableObject(objectJson)
     if (errors.length > 0) throw new Error(errors.join('; '))
@@ -4698,6 +4685,8 @@ export class Engine {
     clipIdMap: Map<string, string>
     collectionIdMap: Map<string, string>
     rootNewId: string
+    reusedCollectionIds: string[]
+    replacedCollectionSnapshots: import('./json').ClipCollectionJSON[]
   } {
     const errors = validateReusableObject(objectJson)
     if (errors.length > 0) throw new Error(errors.join('; '))
@@ -4741,6 +4730,8 @@ export class Engine {
     clipIdMap: Map<string, string>
     collectionIdMap: Map<string, string>
     rootNewId: string
+    reusedCollectionIds: string[]
+    replacedCollectionSnapshots: import('./json').ClipCollectionJSON[]
   } {
     const nodeIdMap = new Map<string, string>()
     const clipIdMap = new Map<string, string>()
@@ -4861,9 +4852,41 @@ export class Engine {
       clipIdMap.set(oldId, newClipId())
     }
     const collectionsJson = library?.clipCollections ?? []
+    // Reuse-by-name: if a same-named collection already exists whose source
+    // node is gone (e.g. delete object, then reimport), adopt it instead of
+    // forking a duplicate dropdown entry. Live sources still fork so duplicate
+    // / copy-paste of coexisting rigs keeps per-rig collections.
+    const reuseTargetByOldId = new Map<string, string>()
+    const replacedCollectionSnapshots: import('./json').ClipCollectionJSON[] = []
+    {
+      const reusedKeys = new Set<string>()
+      for (const colJson of collectionsJson) {
+        const oldId = (colJson as unknown as { id: string }).id
+        const name = (colJson as unknown as { name: string }).name
+        if (typeof name !== 'string') continue
+        const key = ClipCollectionManager.normalizeCollectionName(name)
+        if (reusedKeys.has(key)) continue
+        const existing = this.#clipCollections.findByName(name)
+        if (!existing) continue
+        const source = existing.sourceNodeId
+        let dangling = source === undefined
+        if (!dangling) {
+          try {
+            this.getNode(source as string)
+          } catch {
+            dangling = true
+          }
+        }
+        if (!dangling) continue
+        reusedKeys.add(key)
+        reuseTargetByOldId.set(oldId, existing.id)
+        collectionIdMap.set(oldId, existing.id)
+        replacedCollectionSnapshots.push(existing.toJSON())
+      }
+    }
     for (const colJson of collectionsJson) {
       const oldId = (colJson as unknown as { id: string }).id
-      collectionIdMap.set(oldId, newClipCollectionId())
+      if (!collectionIdMap.has(oldId)) collectionIdMap.set(oldId, newClipCollectionId())
     }
 
     for (const clipJson of clipsJson) {
@@ -4886,12 +4909,28 @@ export class Engine {
       const newBindings: Record<string, string> = {}
       for (const [sem, oldClipId] of Object.entries(bindings))
         newBindings[sem] = clipIdMap.get(oldClipId) ?? oldClipId
+      const importedName = (colJson as unknown as { name: string }).name
+      const importedCategory = (colJson as unknown as { category?: string }).category
+      if (reuseTargetByOldId.has(oldId)) {
+        // Adopt the orphaned collection: repoint bindings at the fresh clips.
+        // Source is remapped in the fixup below when mappable.
+        const existing = this.#clipCollections.getCollection(newId)
+        const replacement = new ClipCollection(
+          newId,
+          importedName,
+          newBindings,
+          existing.sourceNodeId,
+          importedCategory,
+        )
+        this.#clipCollections.importCollection(replacement)
+        continue
+      }
       const collection = new ClipCollection(
         newId,
-        (colJson as unknown as { name: string }).name,
+        importedName,
         newBindings,
         (colJson as unknown as { sourceNodeId?: string }).sourceNodeId,
-        (colJson as unknown as { category?: string }).category,
+        importedCategory,
       )
       this.#clipCollections.importCollection(collection)
     }
@@ -5782,7 +5821,15 @@ export class Engine {
 
     const rootNewId = nodeIdMap.get(objectJson.rootId)!
     this.#bus.emit({ type: 'NodeCreated', nodeId: rootNewId })
-    return { nodeIdMap, clipIdMap, collectionIdMap, rootNewId }
+    const reusedCollectionIds = [...reuseTargetByOldId.values()]
+    return {
+      nodeIdMap,
+      clipIdMap,
+      collectionIdMap,
+      rootNewId,
+      reusedCollectionIds,
+      replacedCollectionSnapshots,
+    }
   }
 
   get shaderDefinitions(): readonly ShaderDefinition[] {

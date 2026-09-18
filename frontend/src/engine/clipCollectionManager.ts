@@ -45,6 +45,21 @@ export class ClipCollectionManager {
     return undefined
   }
 
+  /**
+   * Global lookup by normalized name, ignoring rig/source.
+   * Used by reusable-object import to reuse an orphaned collection
+   * (source node deleted) instead of forking a duplicate entry.
+   */
+  findByName(name: string): ClipCollection | undefined {
+    const wanted = ClipCollectionManager.normalizeCollectionName(name)
+    for (const c of this.#collections.values()) {
+      if (ClipCollectionManager.normalizeCollectionName(c.name) === wanted) {
+        return c
+      }
+    }
+    return undefined
+  }
+
   createCollection(
     name: string,
     bindings: Record<string, string>,

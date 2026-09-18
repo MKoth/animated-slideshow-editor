@@ -290,6 +290,8 @@ export interface EnginePublic {
     clipIdMap: Map<string, string>
     collectionIdMap: Map<string, string>
     rootNewId: string
+    reusedCollectionIds: string[]
+    replacedCollectionSnapshots: import('./json').ClipCollectionJSON[]
   }
   importReusableObjectToParent(
     objectJson: import('./reusableObject').ReusableObjectJSON,
@@ -299,6 +301,8 @@ export interface EnginePublic {
     clipIdMap: Map<string, string>
     collectionIdMap: Map<string, string>
     rootNewId: string
+    reusedCollectionIds: string[]
+    replacedCollectionSnapshots: import('./json').ClipCollectionJSON[]
   }
   duplicateNodeSubtree(nodeId: string): {
     nodeIdMap: Map<string, string>
