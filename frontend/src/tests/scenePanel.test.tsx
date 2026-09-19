@@ -10,6 +10,7 @@ import { createEngineInternal, toReadOnly } from '../engine/internal'
 import { noopPersistence } from './contextHarness'
 import { useMissingAssetsStore } from '../stores/missingAssetsStore'
 import { useParentingModeStore } from '../stores/parentingModeStore'
+import { useSceneTreeViewStore } from '../stores/sceneTreeViewStore'
 import { useSelectionStore } from '../stores/selectionStore'
 import { usePlaybackController } from '../stores/playbackStore'
 
@@ -42,6 +43,7 @@ async function waitForTree(slideName: string) {
 
 beforeEach(() => {
   useSelectionStore.setState({ selectedIds: [] })
+  useSceneTreeViewStore.setState({ collapsedNodeIds: {} })
   useMissingAssetsStore.setState({ report: null, dialogVisible: false })
   useParentingModeStore.getState().reset()
 })
@@ -209,6 +211,84 @@ describe('ScenePanel', () => {
     await waitFor(() => expect(boyRow).toHaveAttribute('aria-selected', 'true'))
     expect(catRow).toHaveAttribute('aria-selected', 'true')
     expect(rootRow).toHaveAttribute('aria-selected', 'false')
+  })
+
+  it('reveals a selected node hidden under a collapsed parent', async () => {
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent')
+    const child = engine.createNode(slide.scene.id, parent.id, 'Child')
+
+    const tree = await waitForTree('Slide 1')
+    fireEvent.click(await tree.findByTestId(`scene-chevron-${parent.id}`))
+    expect(tree.queryByRole('treeitem', { name: 'Child' })).not.toBeInTheDocument()
+
+    useSelectionStore.getState().select(child.id)
+
+    const childRow = await tree.findByRole('treeitem', { name: 'Child' })
+    expect(childRow).toHaveAttribute('aria-selected', 'true')
+    expect(tree.getByTestId(`scene-chevron-${parent.id}`)).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('expands every collapsed ancestor level of the selected node', async () => {
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    const grandparent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Grandparent')
+    const parent = engine.createNode(slide.scene.id, grandparent.id, 'Parent')
+    const child = engine.createNode(slide.scene.id, parent.id, 'Child')
+
+    const tree = await waitForTree('Slide 1')
+    useSceneTreeViewStore.getState().setCollapsed(grandparent.id, true)
+    useSceneTreeViewStore.getState().setCollapsed(parent.id, true)
+    await waitFor(() =>
+      expect(tree.queryByRole('treeitem', { name: 'Child' })).not.toBeInTheDocument(),
+    )
+
+    useSelectionStore.getState().select(child.id)
+
+    const childRow = await tree.findByRole('treeitem', { name: 'Child' })
+    expect(childRow).toHaveAttribute('aria-selected', 'true')
+    expect(tree.getByTestId(`scene-chevron-${grandparent.id}`)).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+    expect(tree.getByTestId(`scene-chevron-${parent.id}`)).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('ignores selected ids that are not in any scene and leaves other branches collapsed', async () => {
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent')
+    engine.createNode(slide.scene.id, parent.id, 'Child')
+    engine.createNode(slide.scene.id, slide.scene.root.id, 'Other')
+
+    const tree = await waitForTree('Slide 1')
+    useSceneTreeViewStore.getState().setCollapsed(parent.id, true)
+
+    useSelectionStore.getState().select('ghost-node')
+
+    await waitFor(() =>
+      expect(tree.getByTestId(`scene-chevron-${parent.id}`)).toHaveAttribute(
+        'aria-expanded',
+        'false',
+      ),
+    )
+    expect(tree.queryByRole('treeitem', { name: 'Child' })).not.toBeInTheDocument()
+    expect(tree.getByRole('treeitem', { name: 'Other' })).toBeInTheDocument()
+  })
+
+  it('scrolls the selected row into view', async () => {
+    const { engine } = renderPanel()
+    const slide = createProjectAndSlide(engine)
+    const boy = engine.createNode(slide.scene.id, slide.scene.root.id, 'Boy')
+    const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView')
+
+    await waitForTree('Slide 1')
+    await screen.findByRole('treeitem', { name: 'Boy' })
+
+    useSelectionStore.getState().select(boy.id)
+
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' }))
   })
 
   it('adds and renames rows as nodes change', async () => {

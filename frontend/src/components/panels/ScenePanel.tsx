@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { applyHierarchyMove } from '../../app/hierarchyMoveActions'
 export const SCENE_NODE_IDS_MIME = 'application/x.scene-node-ids'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
@@ -67,6 +67,7 @@ function SceneTreeRow({
 }: SceneTreeRowProps) {
   const { dispatch } = useEngine()
   const selected = useSelectionStore((state) => state.selectedIds.includes(node.id))
+  const rowRef = useRef<HTMLButtonElement>(null)
   const children = visibleChildren(node)
   const missing = missingNodeIds.has(node.id)
   const hasChildren = children.length > 0
@@ -75,6 +76,12 @@ function SceneTreeRow({
   if (dropOver?.targetId === node.id) {
     affordanceClass = ` scene-tree__row--drop-${dropOver.zone}`
   }
+
+  useEffect(() => {
+    if (selected) {
+      rowRef.current?.scrollIntoView({ block: 'nearest' })
+    }
+  }, [selected])
 
   const handleEyeClick = (event: React.MouseEvent) => {
     event.stopPropagation()
@@ -102,6 +109,7 @@ function SceneTreeRow({
           <span className="scene-tree__chevron scene-tree__chevron--spacer" aria-hidden="true" />
         )}
         <button
+          ref={rowRef}
           role="treeitem"
           aria-selected={selected}
           draggable={node.parent !== null || undefined}
@@ -214,6 +222,23 @@ export function ScenePanel() {
       // engine may be in transient state during command
     }
   })
+
+  const selectedIds = useSelectionStore((state) => state.selectedIds)
+
+  // Reveal selected nodes: un-collapse every collapsed ancestor so the row is visible.
+  useEffect(() => {
+    for (const nodeId of selectedIds) {
+      let node: SceneNode
+      try {
+        node = engine.getNode(nodeId)
+      } catch {
+        continue
+      }
+      for (let parent = node.parent; parent; parent = parent.parent) {
+        useSceneTreeViewStore.getState().setCollapsed(parent.id, false)
+      }
+    }
+  }, [engine, selectedIds])
 
   // Close context menu on click or Escape
   useEffect(() => {

@@ -140,6 +140,10 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
   Object.assign(globalThis, { ResizeObserver: FakeResizeObserver })
 }
 
+if (typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = () => {}
+}
+
 export function resizeObserverFor(
   target: Element,
 ): InstanceType<typeof FakeResizeObserver> | undefined {
