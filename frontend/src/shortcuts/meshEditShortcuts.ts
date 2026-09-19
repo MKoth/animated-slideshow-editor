@@ -1,6 +1,7 @@
 import { registerShortcut } from './shortcutRegistry'
 import { useMeshEditStore } from '../stores/meshEditStore'
 import { useEditingModeStore } from '../stores/editingModeStore'
+import { useSelectionStore } from '../stores/selectionStore'
 import { useBoneEditStore } from '../stores/boneEditStore'
 import { useBoneCreationStore } from '../stores/boneCreationStore'
 
@@ -85,6 +86,24 @@ export function registerMeshEditShortcuts(): () => void {
     }
   })
 
+  const disposeC = registerShortcut('c', () => {
+    const { meshEditNodeId } = useMeshEditStore.getState()
+    if (meshEditNodeId) {
+      useMeshEditStore.getState().setMeshEditTool('sculpt')
+      return
+    }
+    const selectedId = useSelectionStore.getState().selectedIds[0]
+    if (!selectedId) {
+      return
+    }
+    if (useBoneEditStore.getState().isEditing) {
+      useBoneEditStore.getState().exit()
+    }
+    useEditingModeStore.getState().setMode('meshEdit')
+    useMeshEditStore.getState().enterMeshEdit(selectedId)
+    useMeshEditStore.getState().setMeshEditTool('sculpt')
+  })
+
   const dispose1Num = registerShortcut('1', () => {
     const { meshEditNodeId, meshEditTool } = useMeshEditStore.getState()
     if (meshEditNodeId && meshEditTool === 'weightPaint') {
@@ -131,6 +150,7 @@ export function registerMeshEditShortcuts(): () => void {
     disposeX()
     disposeY()
     disposeW()
+    disposeC()
     dispose1Num()
     dispose2Num()
     dispose3Num()

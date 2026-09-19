@@ -87,6 +87,11 @@ export const SHORTCUT_CATALOG: readonly ShortcutSection[] = [
       { keys: ['S'], action: 'Subdivide tool', context: 'Mesh editing' },
       { keys: ['M'], action: 'Mirror tool', context: 'Mesh editing' },
       { keys: ['W'], action: 'Weight Paint tool', context: 'Mesh editing' },
+      {
+        keys: ['C'],
+        action: 'Sculpt tool (enters mesh edit on selected node if needed)',
+        context: 'Canvas / Mesh editing',
+      },
       { keys: ['X'], action: 'Mirror axis X', context: 'Mirror tool active' },
       { keys: ['Y'], action: 'Mirror axis Y', context: 'Mirror tool active' },
       {
