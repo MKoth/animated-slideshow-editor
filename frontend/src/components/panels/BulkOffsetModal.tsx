@@ -56,6 +56,11 @@ function rowKey(row: BulkOffsetBindingRow): string {
   return `${row.collectionId}::${row.semanticName}`
 }
 
+function matchesFilter(row: BulkOffsetBindingRow, filter: string): boolean {
+  const needle = filter.trim().toLowerCase()
+  return !needle || row.semanticName.toLowerCase().includes(needle)
+}
+
 export function BulkOffsetModal({
   parentName,
   rows,
@@ -66,7 +71,7 @@ export function BulkOffsetModal({
 }: Props) {
   const [filter, setFilter] = useState(initialFilter ?? '')
   const [checked, setChecked] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(rows.map((row) => [rowKey(row), true])),
+    Object.fromEntries(rows.map((row) => [rowKey(row), matchesFilter(row, initialFilter ?? '')])),
   )
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() =>
     Object.fromEntries([...new Set(rows.map((row) => row.collectionId))].map((id) => [id, true])),
@@ -156,6 +161,20 @@ export function BulkOffsetModal({
     })
   }
 
+  const handleFilterChange = (value: string): void => {
+    setFilter(value)
+    const needle = value.trim().toLowerCase()
+    setChecked((prev) => {
+      const next = { ...prev }
+      for (const row of rows) {
+        if (needle && !row.semanticName.toLowerCase().includes(needle)) {
+          next[rowKey(row)] = false
+        }
+      }
+      return next
+    })
+  }
+
   const handleConfirm = (): void => {
     if (selectedClipIds.length === 0) {
       setError('No bindings selected — check at least one semantic binding')
@@ -215,7 +234,7 @@ export function BulkOffsetModal({
             <input
               data-testid="bulk-offset-filter"
               value={filter}
-              onChange={(e) => setFilter(e.target.value)}
+              onChange={(e) => handleFilterChange(e.target.value)}
               placeholder="e.g. head"
               style={inputStyle}
             />

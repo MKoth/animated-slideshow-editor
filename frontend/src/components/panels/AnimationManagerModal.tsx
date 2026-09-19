@@ -432,7 +432,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const [editingCategoryDraft, setEditingCategoryDraft] = useState('')
   const [deleteConfirmCollectionId, setDeleteConfirmCollectionId] = useState<string | null>(null)
   // Top-level collection category filter: '' = Uncategorized (default),
-  // '__all' = All categories. Scopes the Collections tab list and the
+  // '__all' = All categories. Scopes the Collections tab, bulk edit, and
   // place-collection dropdown to the category being worked with.
   const [collectionCategoryFilter, setCollectionCategoryFilter] = useState<string>('')
   // Fine-grained collection editing (Spec 353): flatten + replace
@@ -1621,16 +1621,15 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
 
   const collectionsForParent = useMemo(() => {
     void tick
-    if (!parentNodeId) return []
-    return engine.clipCollections.filter(
-      (c) =>
-        c.sourceNodeId === parentNodeId && matchesCollectionCategory(c, collectionCategoryFilter),
+    return engine.clipCollections.filter((c) =>
+      matchesCollectionCategory(c, collectionCategoryFilter),
     )
-  }, [engine, parentNodeId, tick, collectionCategoryFilter])
+  }, [engine, tick, collectionCategoryFilter])
 
-  // Bulk offset targets: every (collection, semantic → clip) binding under this parent.
+  // Bulk offset targets: every binding in the category-filtered collection set.
   const bulkOffsetRows = useMemo((): BulkOffsetBindingRow[] => {
     void tick
+    if (!parentNodeId) return []
     const rows: BulkOffsetBindingRow[] = []
     for (const col of collectionsForParent) {
       for (const [semanticName, clipId] of Object.entries(col.getBindingsObject())) {
@@ -1651,7 +1650,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       }
     }
     return rows
-  }, [collectionsForParent, engine, tick])
+  }, [collectionsForParent, engine, parentNodeId, tick])
 
   const handleBulkOffsetConfirm = useCallback(
     (selection: { clipIds: string[]; offsets: BulkOffsetMap }): string | null => {
@@ -4276,24 +4275,22 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   }}
                 >
                   <option value="">Select collection…</option>
-                  {engine.clipCollections
-                    .filter((col) => matchesCollectionCategory(col, collectionCategoryFilter))
-                    .map((col) => {
-                      let rigSuffix = ''
-                      try {
-                        if (col.sourceNodeId)
-                          rigSuffix = ` · ${engine.getNode(col.sourceNodeId).name}`
-                      } catch {
-                        rigSuffix = ''
-                      }
-                      const catLabel = col.category !== '' ? ` [${col.category}]` : ''
-                      return (
-                        <option key={col.id} value={col.id}>
-                          {col.name} ({col.bindings.size}){catLabel}
-                          {rigSuffix}
-                        </option>
-                      )
-                    })}
+                  {collectionsForParent.map((col) => {
+                    let rigSuffix = ''
+                    try {
+                      if (col.sourceNodeId)
+                        rigSuffix = ` · ${engine.getNode(col.sourceNodeId).name}`
+                    } catch {
+                      rigSuffix = ''
+                    }
+                    const catLabel = col.category !== '' ? ` [${col.category}]` : ''
+                    return (
+                      <option key={col.id} value={col.id}>
+                        {col.name} ({col.bindings.size}){catLabel}
+                        {rigSuffix}
+                      </option>
+                    )
+                  })}
                 </select>
                 <button
                   data-testid="place-collection-button"
@@ -4372,7 +4369,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 </button>
                 <button
                   data-testid="collection-bulk-offset"
-                  disabled={collectionsForParent.length === 0}
+                  disabled={bulkOffsetRows.length === 0}
                   onClick={() => {
                     const seeds = new Set<string>()
                     for (const instId of selectedClipIds) {
@@ -4388,11 +4385,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     borderRadius: 4,
                     border: '1px solid var(--color-border, #ddd)',
                     background:
-                      collectionsForParent.length > 0
+                      bulkOffsetRows.length > 0
                         ? 'var(--color-bg-elevated, #eceef1)'
                         : 'var(--color-bg, #f5f5f5)',
                     color: 'var(--color-text, #1c1e21)',
-                    cursor: collectionsForParent.length > 0 ? 'pointer' : 'default',
+                    cursor: bulkOffsetRows.length > 0 ? 'pointer' : 'default',
                     fontSize: 12,
                   }}
                 >
@@ -6541,9 +6538,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   textAlign: 'center',
                 }}
               >
-                No Clip Collections for "{parentNode?.name ?? 'parent'}" in{' '}
-                {collectionCategoryLabel(collectionCategoryFilter)}. Select Clip Lanes in Clips tab
-                → Create Collection.
+                No Clip Collections in {collectionCategoryLabel(collectionCategoryFilter)}. Select
+                Clip Lanes in Clips tab → Create Collection.
               </div>
             ) : (
               <div

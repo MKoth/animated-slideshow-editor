@@ -61,11 +61,10 @@ describe('BulkOffsetModal', () => {
     expect(screen.getByTestId('bulk-offset-row-colA-head')).toBeInTheDocument()
     expect(screen.getByTestId('bulk-offset-row-colB-head')).toBeInTheDocument()
 
-    // clearing the filter reveals the body row still checked (filter never drops selection)
+    // clearing the filter reveals the body row unchecked because filtering is a selection boundary
     fireEvent.change(screen.getByTestId('bulk-offset-filter'), { target: { value: '' } })
     expect(screen.getByTestId('bulk-offset-row-colA-body')).toBeInTheDocument()
-    // uncheck everything but head
-    fireEvent.click(screen.getByTestId('bulk-offset-row-colA-body'))
+    expect(screen.getByTestId('bulk-offset-row-colA-body').querySelector('input')).not.toBeChecked()
 
     fireEvent.click(screen.getByTestId('bulk-offset-channel-positionY'))
     fireEvent.change(screen.getByTestId('bulk-offset-delta-positionY'), {
@@ -79,7 +78,7 @@ describe('BulkOffsetModal', () => {
     expect(selection.offsets).toEqual({ positionY: 100 })
   })
 
-  it('keeps checked rows hidden by the filter in the confirm set', () => {
+  it('does not include bindings hidden by the filter in the confirm set', () => {
     const { spy } = setup()
     fireEvent.click(screen.getByTestId('bulk-offset-channel-positionY'))
     fireEvent.change(screen.getByTestId('bulk-offset-delta-positionY'), {
@@ -89,7 +88,7 @@ describe('BulkOffsetModal', () => {
 
     expect(spy).toHaveBeenCalledOnce()
     const selection = spy.mock.calls[0]![0] as BulkOffsetConfirmSelection
-    expect([...selection.clipIds].sort()).toEqual(['clipBody', 'clipHead', 'clipHeadRun'].sort())
+    expect([...selection.clipIds].sort()).toEqual(['clipHead', 'clipHeadRun'].sort())
   })
 
   it('select-none blocks confirm with an error', () => {
