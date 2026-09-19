@@ -84,6 +84,12 @@ export class BoneCreationPreview {
     this.#redraw(pendingStart, point)
   }
 
+  #cameraScale(): number {
+    const cam = this.#getCameraTransform()
+    if (!cam) return 1
+    return Math.max(Math.abs(cam.scaleX), Math.abs(cam.scaleY), 0.1)
+  }
+
   #redraw(
     start: import('./worldGeometry').WorldPoint,
     end: import('./worldGeometry').WorldPoint,
@@ -91,20 +97,21 @@ export class BoneCreationPreview {
     const g = this.#graphics
     if (!g) return
     g.clear()
+    const scale = this.#cameraScale()
     // dashed shaft
     const dx = end.x - start.x
     const dy = end.y - start.y
     const len = Math.hypot(dx, dy)
     if (len < 0.01) {
-      g.circle(start.x, start.y, 5)
+      g.circle(start.x, start.y, 5 / scale)
         .fill({ color: 0xff0000, alpha: 0.35 })
-        .stroke({ width: 1, color: 0xffffff, alpha: 0.7 })
+        .stroke({ width: 1 / scale, color: 0xffffff, alpha: 0.7 })
       return
     }
     const nx = dx / len
     const ny = dy / len
-    const dash = 10
-    const gap = 6
+    const dash = 10 / scale
+    const gap = 6 / scale
     let pos = 0
     while (pos < len) {
       const sX = start.x + nx * pos
@@ -112,16 +119,18 @@ export class BoneCreationPreview {
       const ePos = Math.min(pos + dash, len)
       const eX = start.x + nx * ePos
       const eY = start.y + ny * ePos
-      g.moveTo(sX, sY).lineTo(eX, eY).stroke({ width: 4, color: 0xff0000, alpha: 0.55 })
+      g.moveTo(sX, sY)
+        .lineTo(eX, eY)
+        .stroke({ width: 4 / scale, color: 0xff0000, alpha: 0.55 })
       pos += dash + gap
     }
     // endpoint handles semi-transparent
-    g.circle(start.x, start.y, 6)
+    g.circle(start.x, start.y, 6 / scale)
       .fill({ color: 0xff0000, alpha: 0.35 })
-      .stroke({ width: 1.5, color: 0xffffff, alpha: 0.85 })
-    g.circle(end.x, end.y, 6)
+      .stroke({ width: 1.5 / scale, color: 0xffffff, alpha: 0.85 })
+    g.circle(end.x, end.y, 6 / scale)
       .fill({ color: 0xff0000, alpha: 0.35 })
-      .stroke({ width: 1.5, color: 0xffffff, alpha: 0.85 })
+      .stroke({ width: 1.5 / scale, color: 0xffffff, alpha: 0.85 })
     // length hint at midpoint
     // midpoint line already, no text (pixi text would need extra)
   }

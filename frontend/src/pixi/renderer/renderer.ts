@@ -255,12 +255,13 @@ export class Renderer {
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
         getNodeSize: (nodeId) => this.#sceneRenderer?.nodeSize(nodeId) ?? null,
         getWorldTransform: transformOf,
+        getCameraTransform: () => this.#cameraTransform(),
         subscribeTime: (listener) => this.#currentTime.subscribe(listener),
         store: useSelectionStore,
       })
       this.#selectionOverlay.attach()
 
-      this.#guideOverlay = new GuideOverlay(this.#pixi, world)
+      this.#guideOverlay = new GuideOverlay(this.#pixi, world, () => this.#cameraTransform())
       this.#guideOverlay.attach()
       this.#guideOverlay.bringToFront()
 
@@ -289,7 +290,7 @@ export class Renderer {
       this.#meshOverlay.attach()
       this.#meshOverlay.bringToFront()
 
-      this.#marqueeOverlay = new MarqueeOverlay(this.#pixi, world)
+      this.#marqueeOverlay = new MarqueeOverlay(this.#pixi, world, () => this.#cameraTransform())
       this.#marqueeOverlay.attach()
       this.#marqueeOverlay.bringToFront()
 
@@ -451,6 +452,7 @@ export class Renderer {
         world,
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
         getWorldTransform: transformOf,
+        getCameraTransform: () => this.#cameraTransform(),
       })
       this.#boneEditOverlay.attach()
       this.#boneEditOverlay.bringToFront()
@@ -472,6 +474,7 @@ export class Renderer {
         world,
         engine: this.#engine,
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
+        getCameraTransform: () => this.#cameraTransform(),
       })
       this.#ikOverlay.attach()
       this.#ikOverlay.bringToFront()
@@ -702,6 +705,11 @@ export class Renderer {
     }
     this.#brushOverlay?.handleTick()
     this.#meshOverlay?.handleTick()
+    this.#selectionOverlay?.handleTick()
+    this.#ikOverlay?.handleTick()
+    this.#boneEditOverlay?.handleTick()
+    this.#guideOverlay?.handleTick()
+    this.#marqueeOverlay?.handleTick()
   }
 
   #cameraTransform(): ViewportTransform | null {

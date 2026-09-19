@@ -4,6 +4,7 @@ import type { Unsubscribe } from '../../engine'
 import { useIKSelectionStore } from '../../stores/ikSelectionStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import type { PixiContainer, PixiGraphics, RendererPixi } from './pixi'
+import type { ViewportTransform } from './worldGeometry'
 import { evaluatedWorldTransformOf } from '../../engine/worldTransform'
 
 export const TARGET_COLOR = 0x1a73e8
@@ -18,6 +19,7 @@ export interface IkOverlayContext {
   readonly world: PixiContainer
   readonly engine: EnginePublic
   readonly getScene: () => Scene | null
+  readonly getCameraTransform?: () => ViewportTransform | null
 }
 
 export class IkOverlay {
@@ -25,17 +27,26 @@ export class IkOverlay {
   readonly #world: PixiContainer
   readonly #engine: EnginePublic
   readonly #getScene: () => Scene | null
+  readonly #getCameraTransform?: () => ViewportTransform | null
   #graphics: PixiGraphics | null = null
   #unsubscribeEngine: Unsubscribe | null = null
   #unsubscribeSelection: Unsubscribe | null = null
   #unsubscribeTime: Unsubscribe | null = null
   #attached = false
+  #lastCameraScale: number | null = null
 
   constructor(context: IkOverlayContext) {
     this.#pixi = context.pixi
     this.#world = context.world
     this.#engine = context.engine
     this.#getScene = context.getScene
+    this.#getCameraTransform = context.getCameraTransform
+  }
+
+  #cameraScale(): number {
+    const cam = this.#getCameraTransform?.()
+    if (!cam) return 1
+    return Math.max(Math.abs(cam.scaleX), Math.abs(cam.scaleY), 0.1)
   }
 
   attach(): void {
@@ -77,6 +88,7 @@ export class IkOverlay {
     this.#unsubscribeSelection = null
     this.#unsubscribeTime?.()
     this.#unsubscribeTime = null
+    this.#lastCameraScale = null
     this.#graphics?.destroy()
     this.#graphics = null
   }
@@ -88,12 +100,21 @@ export class IkOverlay {
     }
   }
 
+  handleTick(): void {
+    if (!this.#attached) return
+    const scale = this.#cameraScale()
+    if (this.#lastCameraScale === null || Math.abs(scale - this.#lastCameraScale) > 1e-6) {
+      this.redraw()
+    }
+  }
+
   redraw(): void {
     const graphics = this.#graphics
     if (!graphics) {
       return
     }
     graphics.clear()
+    this.#lastCameraScale = this.#cameraScale()
     const scene = this.#getScene()
     if (!scene) {
       return
@@ -119,7 +140,8 @@ export class IkOverlay {
 
   #drawTarget(graphics: PixiGraphics, x: number, y: number, selected: boolean): void {
     const color = selected ? TARGET_SELECTED_COLOR : TARGET_COLOR
-    const s = TARGET_SIZE
+    const scale = this.#cameraScale()
+    const s = TARGET_SIZE / scale
     graphics
       .moveTo(x, y - s)
       .lineTo(x + s, y)
@@ -127,19 +149,20 @@ export class IkOverlay {
       .lineTo(x - s, y)
       .closePath()
       .fill({ color, alpha: 0.9 })
-      .stroke({ width: 2, color: 0xffffff })
+      .stroke({ width: 2 / scale, color: 0xffffff })
   }
 
   #drawPole(graphics: PixiGraphics, x: number, y: number, selected: boolean): void {
     const color = selected ? POLE_SELECTED_COLOR : POLE_COLOR
-    const s = POLE_SIZE
+    const scale = this.#cameraScale()
+    const s = POLE_SIZE / scale
     graphics
       .moveTo(x, y - s)
       .lineTo(x + s, y + s)
       .lineTo(x - s, y + s)
       .closePath()
       .fill({ color, alpha: 0.9 })
-      .stroke({ width: 2, color: 0xffffff })
+      .stroke({ width: 2 / scale, color: 0xffffff })
   }
 
   hitTestTarget(
@@ -152,7 +175,7 @@ export class IkOverlay {
     }
     const ikManager = this.#engine.getIKManager()
     const chains = ikManager.getChainsForSlide(slide.id)
-    const threshold = TARGET_SIZE + 4
+    const threshold = (TARGET_SIZE + 4) / this.#cameraScale()
 
     for (const chain of chains) {
       const target = this.#targetPosition(chain)

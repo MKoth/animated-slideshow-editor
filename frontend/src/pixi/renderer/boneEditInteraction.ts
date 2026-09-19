@@ -112,6 +112,12 @@ export class BoneEditInteraction {
     this.#overlay.bringToFront()
   }
 
+  #cameraScale(): number {
+    const cam = this.#getCameraTransform()
+    if (!cam) return 1
+    return Math.max(Math.abs(cam.scaleX), Math.abs(cam.scaleY), 0.1)
+  }
+
   readonly #onKeyDown = (event: KeyboardEvent): void => {
     if (event.key === 'Escape') {
       const { isEditing } = useBoneEditStore.getState()
@@ -395,8 +401,7 @@ export class BoneEditInteraction {
     const length = node.components.bone.length
     const head = { x: wt.x, y: wt.y }
     const tail = localToWorld(length, 0, wt)
-    const scale = Math.max(Math.abs(wt.scaleX), Math.abs(wt.scaleY), 0.1)
-    const threshold = 12 / scale
+    const threshold = 12 / this.#cameraScale()
     if (Math.hypot(worldX - head.x, worldY - head.y) <= threshold) return 'head'
     if (Math.hypot(worldX - tail.x, worldY - tail.y) <= threshold) return 'tail'
     return null
@@ -405,7 +410,7 @@ export class BoneEditInteraction {
   #hitTestBone(worldX: number, worldY: number, scene: Scene): string | null {
     let bestId: string | null = null
     let bestDistSq = Infinity
-    const threshold = 12
+    const threshold = 12 / this.#cameraScale()
     const thresholdSq = threshold * threshold
     for (const node of walkPreOrder(scene.root)) {
       if (!node.components.bone) continue

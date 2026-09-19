@@ -185,7 +185,15 @@ export class HandleInteraction {
     const point = cursorToWorld(this.#canvas, camera, event.clientX, event.clientY)
     if (!point) return
     const handles = handlePositionsForSelection(corners)
-    const rotationHandle = rotationHandleForSelection(corners, world.rotation)
+    const cameraScaleForRotation =
+      Number.isFinite(camera.scaleX) && camera.scaleX !== 0
+        ? Math.max(Math.abs(camera.scaleX), Math.abs(camera.scaleY))
+        : 1
+    const rotationHandle = rotationHandleForSelection(
+      corners,
+      world.rotation,
+      cameraScaleForRotation,
+    )
     const hits: HandleHit[] = []
     const handleKinds: HandleKind[] = ['tl', 't', 'tr', 'l', 'r', 'bl', 'b', 'br']
     for (let i = 0; i < handles.length; i++) {

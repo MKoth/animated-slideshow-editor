@@ -1,6 +1,6 @@
 import type { RendererPixi, PixiContainer, PixiGraphics } from './pixi'
 import type { Scene } from '../../engine'
-import type { WorldTransform } from './worldGeometry'
+import type { ViewportTransform, WorldTransform } from './worldGeometry'
 import type { WorldTransformSource } from './hitTest'
 import { worldTransformOf } from '../../engine/worldTransform'
 import { useBoneEditStore } from '../../stores/boneEditStore'
@@ -11,6 +11,7 @@ export interface BoneEditOverlayContext {
   readonly world: PixiContainer
   readonly getScene: () => Scene | null
   readonly getWorldTransform?: WorldTransformSource
+  readonly getCameraTransform?: () => ViewportTransform | null
 }
 
 function localToWorld(
@@ -33,16 +34,25 @@ export class BoneEditOverlay {
   readonly #world: PixiContainer
   readonly #getScene: () => Scene | null
   readonly #getWorldTransform?: WorldTransformSource
+  readonly #getCameraTransform?: () => ViewportTransform | null
   #graphics: PixiGraphics | null = null
   #attached = false
   #unsubscribeBone: (() => void) | null = null
   #unsubscribeVisibility: (() => void) | null = null
+  #lastCameraScale: number | null = null
 
   constructor(context: BoneEditOverlayContext) {
     this.#pixi = context.pixi
     this.#world = context.world
     this.#getScene = context.getScene
     this.#getWorldTransform = context.getWorldTransform
+    this.#getCameraTransform = context.getCameraTransform
+  }
+
+  #cameraScale(): number {
+    const cam = this.#getCameraTransform?.()
+    if (!cam) return 1
+    return Math.max(Math.abs(cam.scaleX), Math.abs(cam.scaleY), 0.1)
   }
 
   attach(): void {
@@ -64,6 +74,7 @@ export class BoneEditOverlay {
     this.#unsubscribeBone = null
     this.#unsubscribeVisibility?.()
     this.#unsubscribeVisibility = null
+    this.#lastCameraScale = null
     this.#graphics?.destroy()
     this.#graphics = null
   }
@@ -72,10 +83,19 @@ export class BoneEditOverlay {
     if (this.#graphics) this.#world.addChild(this.#graphics)
   }
 
+  handleTick(): void {
+    if (!this.#attached) return
+    const scale = this.#cameraScale()
+    if (this.#lastCameraScale === null || Math.abs(scale - this.#lastCameraScale) > 1e-6) {
+      this.redraw()
+    }
+  }
+
   redraw(): void {
     const g = this.#graphics
     if (!g) return
     g.clear()
+    this.#lastCameraScale = this.#cameraScale()
     if (!useOverlayVisibilityStore.getState().bonesVisible) return
     const { isEditing, selectedBoneId, selectedJoint } = useBoneEditStore.getState()
     if (!isEditing || !selectedBoneId) return
@@ -89,23 +109,24 @@ export class BoneEditOverlay {
     const head = { x: transform.x, y: transform.y }
     const tail = localToWorld(length, 0, transform)
 
+    const scale = this.#cameraScale()
     // highlight bone line
     g.moveTo(head.x, head.y)
       .lineTo(tail.x, tail.y)
-      .stroke({ width: 6, color: 0x1a73e8, alpha: 0.25 })
+      .stroke({ width: 6 / scale, color: 0x1a73e8, alpha: 0.25 })
 
     // head handle
     const headColor = selectedJoint === 'head' ? 0x1a73e8 : 0xffffff
     const headFill = selectedJoint === 'head' ? 0x1a73e8 : 0xff0000
-    g.circle(head.x, head.y, 7)
+    g.circle(head.x, head.y, 7 / scale)
       .fill({ color: headFill, alpha: 0.9 })
-      .stroke({ width: 2, color: headColor })
+      .stroke({ width: 2 / scale, color: headColor })
     // tail handle
     const tailColor = selectedJoint === 'tail' ? 0x1a73e8 : 0xffffff
     const tailFill = selectedJoint === 'tail' ? 0x1a73e8 : 0xff0000
-    g.circle(tail.x, tail.y, 7)
+    g.circle(tail.x, tail.y, 7 / scale)
       .fill({ color: tailFill, alpha: 0.9 })
-      .stroke({ width: 2, color: tailColor })
+      .stroke({ width: 2 / scale, color: tailColor })
   }
 
   #resolveTransform(scene: Scene, nodeId: string): WorldTransform | null {
