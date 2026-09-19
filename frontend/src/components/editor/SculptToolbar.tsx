@@ -4,9 +4,12 @@ import { useMeshEditStore } from '../../stores/meshEditStore'
 import { useShapeGhostStore } from '../../stores/shapeGhostStore'
 import { useOverlayVisibilityStore } from '../../stores/overlayVisibilityStore'
 import { useEditingModeStore } from '../../stores/editingModeStore'
+import { useNotificationStore } from '../../stores/notificationStore'
+import { CreateShapeCommand, DuplicateShapeCommand } from '../../engine/commands'
+import { uniqueShapeName, type Shape } from '../../engine/shape'
 
 export function SculptToolbar() {
-  const { engine } = useEngine()
+  const { engine, dispatch } = useEngine()
   const mode = useEditingModeStore((state) => state.mode)
   const meshEditNodeId = useMeshEditStore((state) => state.meshEditNodeId)
   const meshEditTool = useMeshEditStore((state) => state.meshEditTool)
@@ -44,7 +47,7 @@ export function SculptToolbar() {
     }
   })()
   const shapes = useMemo(
-    () => (node?.components.mesh?.shapes ?? []) as readonly { id: string; name: string }[],
+    () => (node?.components.mesh?.shapes ?? []) as readonly Shape[],
     [node?.components.mesh?.shapes],
   )
   const hasShapes = shapes.length > 0
@@ -77,6 +80,27 @@ export function SculptToolbar() {
     }
   }, [hasShapes, activeShapeId, shapes, setActiveShapeId])
 
+  const handleAddShape = () => {
+    if (!meshEditNodeId) return
+    const selected =
+      activeShapeId && shapes.some((s) => s.id === activeShapeId) ? activeShapeId : null
+    const result = selected
+      ? dispatch(new DuplicateShapeCommand({ nodeId: meshEditNodeId, shapeId: selected }))
+      : dispatch(
+          new CreateShapeCommand({
+            nodeId: meshEditNodeId,
+            name: uniqueShapeName('Shape', shapes, null),
+            categoryId: null,
+          }),
+        )
+    if (!result.ok) {
+      useNotificationStore.getState().notify(result.error.message)
+      return
+    }
+    const newShapeId = (result.inverse as { shapeId?: string })?.shapeId
+    if (newShapeId) setActiveShapeId(newShapeId)
+  }
+
   if (mode !== 'meshEdit' && (meshEditTool as string) !== 'sculpt') {
     if ((meshEditTool as string) !== 'sculpt') return null
   }
@@ -105,6 +129,14 @@ export function SculptToolbar() {
             </option>
           ))}
         </select>
+        <button
+          className="weight-paint-toolbar__tool"
+          aria-label="Add Shape"
+          title="Add Shape — duplicates the selected Shape, otherwise creates a new one"
+          onClick={handleAddShape}
+        >
+          +
+        </button>
       </div>
 
       <div className="weight-paint-toolbar__separator" />
