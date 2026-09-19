@@ -13,10 +13,9 @@ import type { KeyframeTarget } from '../engine'
 import {
   buildRangeDeleteCommands,
   countPlannedDeletes,
-  countTrackInRange,
   planRangeDelete,
-  snapshotRangeNodes,
 } from '../app/deleteKeyframesInRange'
+import { countTrackInRange, snapshotRangeNodes } from '../app/rangeKeyframes'
 
 function setup(): {
   engine: Engine
