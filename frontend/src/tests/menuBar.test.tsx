@@ -9,6 +9,7 @@ import type { Engine } from '../engine/internal'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
 import { useClipboardStore } from '../stores/clipboardStore'
 import { useSelectionStore } from '../stores/selectionStore'
+import { useUiStore } from '../stores/uiStore'
 
 async function openEditMenu() {
   const user = userEvent.setup()
@@ -55,6 +56,7 @@ function createProjectAndSlide(engine: Engine) {
 beforeEach(() => {
   useSelectionStore.setState({ selectedIds: [] })
   useClipboardStore.setState({ items: [] })
+  useUiStore.setState({ debugPanelVisible: false })
 })
 
 describe('MenuBar z-order items', () => {
@@ -146,5 +148,28 @@ describe('MenuBar save item', () => {
     await user.click(screen.getByRole('menuitem', { name: 'Save' }))
 
     expect(save).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('MenuBar debug panel item', () => {
+  async function openSettingsMenu() {
+    const user = userEvent.setup()
+    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'Settings' }))
+    return user
+  }
+
+  it('toggles the debug panel preference and shows a checkmark while enabled', async () => {
+    renderMenuBar()
+
+    const user = await openSettingsMenu()
+    await user.click(screen.getByRole('menuitem', { name: /Debug Panel/ }))
+
+    expect(useUiStore.getState().debugPanelVisible).toBe(true)
+
+    await openSettingsMenu()
+    expect(screen.getByRole('menuitem', { name: /✓ Debug Panel/ })).toBeInTheDocument()
+    await user.click(screen.getByRole('menuitem', { name: /✓ Debug Panel/ }))
+
+    expect(useUiStore.getState().debugPanelVisible).toBe(false)
   })
 })

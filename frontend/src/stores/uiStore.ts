@@ -22,6 +22,7 @@ interface UiState {
   activeSidebarTab: SidebarTab
   activeMaterialsSection: MaterialsSectionId
   gridSnap: boolean
+  debugPanelVisible: boolean
   animationMode: boolean
   cameraAnimationMode: boolean
   setTheme: (theme: Theme) => void
@@ -33,6 +34,8 @@ interface UiState {
   setActiveMaterialsSection: (section: MaterialsSectionId) => void
   setGridSnap: (enabled: boolean) => void
   toggleGridSnap: () => void
+  setDebugPanelVisible: (visible: boolean) => void
+  toggleDebugPanelVisible: () => void
   setAnimationMode: (enabled: boolean) => void
   toggleAnimationMode: () => void
   setCameraAnimationMode: (enabled: boolean) => void
@@ -71,6 +74,7 @@ export const useUiStore = create<UiState>()(
       activeSidebarTab: 'assets',
       activeMaterialsSection: 'materials' as MaterialsSectionId,
       gridSnap: false,
+      debugPanelVisible: false,
       animationMode: false,
       cameraAnimationMode: false,
       setTheme: (theme) => set({ theme }),
@@ -85,6 +89,9 @@ export const useUiStore = create<UiState>()(
       setActiveMaterialsSection: (section) => set({ activeMaterialsSection: section }),
       setGridSnap: (enabled) => set({ gridSnap: enabled }),
       toggleGridSnap: () => set((state) => ({ gridSnap: !state.gridSnap })),
+      setDebugPanelVisible: (visible) => set({ debugPanelVisible: visible }),
+      toggleDebugPanelVisible: () =>
+        set((state) => ({ debugPanelVisible: !state.debugPanelVisible })),
       setAnimationMode: (enabled) => set((state) => withMode(state, 'animationMode', enabled)),
       toggleAnimationMode: () =>
         set((state) => withMode(state, 'animationMode', !state.animationMode)),

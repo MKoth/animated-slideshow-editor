@@ -88,6 +88,7 @@ beforeEach(() => {
     inspectorWidth: DEFAULT_INSPECTOR_WIDTH,
     visiblePanels: { leftSidebar: true, inspector: true, timeline: true },
     activeSidebarTab: 'assets',
+    debugPanelVisible: true,
   })
   useTimelineViewStore.setState({ zoomLevel: 1, scrollTime: 0, height: DEFAULT_TIMELINE_HEIGHT })
   useNotificationStore.setState({ notifications: [] })
@@ -124,6 +125,21 @@ describe('editor shell', () => {
       within(timelinePanel as HTMLElement).getByText('No project. Create one to get started.'),
     ).toBeInTheDocument()
     expect(screen.getByText('Ready')).toBeInTheDocument()
+  })
+
+  it('hides the debug panel by default and toggles it from the Settings menu', async () => {
+    stubLibraryResponse()
+    useUiStore.setState({ debugPanelVisible: false })
+    const user = userEvent.setup()
+    const { container } = renderEditor()
+
+    expect(container.querySelector('.debug-panel')).toBeNull()
+
+    await user.click(within(screen.getByRole('banner')).getByRole('button', { name: 'Settings' }))
+    await user.click(screen.getByRole('menuitem', { name: /Debug Panel/ }))
+
+    expect(container.querySelector('.debug-panel')).not.toBeNull()
+    expect(useUiStore.getState().debugPanelVisible).toBe(true)
   })
 
   it('switches the theme, updates the data-theme attribute, and persists the choice', async () => {

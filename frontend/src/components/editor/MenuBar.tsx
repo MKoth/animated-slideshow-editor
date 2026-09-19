@@ -31,6 +31,7 @@ const DELETE_ITEM = 'Delete'
 const SAVE_ITEM = 'Save'
 
 const TTS_SETTINGS_ITEM = 'TTS Settings'
+const DEBUG_PANEL_ITEM = 'Debug Panel'
 const KEYBOARD_SHORTCUTS_ITEM = 'Keyboard Shortcuts'
 const MENUS = [
   {
@@ -64,7 +65,7 @@ const MENUS = [
   },
   {
     label: 'Settings',
-    items: [TTS_SETTINGS_ITEM],
+    items: import.meta.env.DEV ? [TTS_SETTINGS_ITEM, DEBUG_PANEL_ITEM] : [TTS_SETTINGS_ITEM],
   },
   {
     label: 'Help',
@@ -154,11 +155,15 @@ export function MenuBar() {
   useEngineEvent(() => setTick((tick) => tick + 1))
   const libraryUnavailable = useAssetLibraryStore((state) => state.unavailable)
   const gridSnap = useUiStore((state) => state.gridSnap)
+  const debugPanelVisible = useUiStore((state) => state.debugPanelVisible)
   const selectedIds = useSelectionStore((state) => state.selectedIds)
   const clipboardCount = useClipboardStore(
     (state) => (state.payload?.entries.length ?? 0) + state.items.length,
   )
-  const checkedItems = new Set(gridSnap ? [SNAP_TO_GRID_ITEM] : [])
+  const checkedItems = new Set([
+    ...(gridSnap ? [SNAP_TO_GRID_ITEM] : []),
+    ...(debugPanelVisible ? [DEBUG_PANEL_ITEM] : []),
+  ])
   const disabledItems = new Set<string>()
   if (selectedIds.length === 0) {
     disabledItems.add(COPY_ITEM)
@@ -183,6 +188,8 @@ export function MenuBar() {
       requestNewProject()
     } else if (item === TTS_SETTINGS_ITEM) {
       setShowTtsSettings(true)
+    } else if (item === DEBUG_PANEL_ITEM) {
+      useUiStore.getState().toggleDebugPanelVisible()
     } else if (item === KEYBOARD_SHORTCUTS_ITEM) {
       setShowShortcuts(true)
     } else if (item === COPY_ITEM) {

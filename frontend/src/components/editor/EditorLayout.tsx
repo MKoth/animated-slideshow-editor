@@ -30,6 +30,7 @@ export function EditorLayout() {
   const widthSupported = useMinSupportedWidth(MIN_SUPPORTED_WIDTH)
   const leftSidebarWidth = useUiStore((state) => state.leftSidebarWidth)
   const inspectorWidth = useUiStore((state) => state.inspectorWidth)
+  const debugPanelVisible = useUiStore((state) => state.debugPanelVisible)
   const timelineHeight = useTimelineViewStore((state) => state.height)
   const setLeftSidebarWidth = useUiStore((state) => state.setLeftSidebarWidth)
   const setInspectorWidth = useUiStore((state) => state.setInspectorWidth)
@@ -91,7 +92,10 @@ export function EditorLayout() {
                 borderRadius: 4,
                 border: 'none',
                 background: activeBottomTab === 'timeline' ? 'var(--color-accent)' : 'transparent',
-                color: activeBottomTab === 'timeline' ? 'var(--color-accent-text)' : 'var(--color-text-muted)',
+                color:
+                  activeBottomTab === 'timeline'
+                    ? 'var(--color-accent-text)'
+                    : 'var(--color-text-muted)',
                 cursor: 'pointer',
                 fontSize: 11,
               }}
@@ -108,7 +112,10 @@ export function EditorLayout() {
                 borderRadius: 4,
                 border: 'none',
                 background: activeBottomTab === 'history' ? 'var(--color-accent)' : 'transparent',
-                color: activeBottomTab === 'history' ? 'var(--color-accent-text)' : 'var(--color-text-muted)',
+                color:
+                  activeBottomTab === 'history'
+                    ? 'var(--color-accent-text)'
+                    : 'var(--color-text-muted)',
                 cursor: 'pointer',
                 fontSize: 11,
               }}
@@ -125,7 +132,7 @@ export function EditorLayout() {
         </div>
       </div>
       <StatusBar />
-      <DebugPanel />
+      {debugPanelVisible && <DebugPanel />}
     </div>
   )
 }
