@@ -2530,14 +2530,29 @@ export class Engine {
     return computeBakedVertices(this as unknown as import('./engine').EnginePublic, nodeId, time)
   }
 
-  duplicateShape(nodeId: string, shapeId: string): Shape {
+  duplicateShape(
+    nodeId: string,
+    shapeId: string,
+    opts?: { readonly mirrored?: boolean; readonly axis?: SymmetryAxis },
+  ): Shape {
     const node = this.getNode(nodeId)
     if (!node.components.mesh) throw new Error(`Node "${nodeId}" does not have a mesh component`)
     const existing = node.components.mesh.shapes ?? []
     const source = existing.find((s) => s.id === shapeId)
     if (!source) throw new Error(`Shape not found: ${shapeId}`)
+    const mirrored = opts?.mirrored ?? false
+    const axis: SymmetryAxis = opts?.axis ?? 'x'
+    if (axis !== 'x' && axis !== 'y') {
+      throw new Error(`Axis must be "x" or "y", got "${String(axis)}"`)
+    }
     const newName = uniqueShapeName(source.name, existing, source.categoryId ?? null)
-    const duplicated = duplicateShapeModel(source, newName)
+    const duplicated = mirrored
+      ? createShape(
+          newName,
+          source.vertices.map((v) => mirroredVertex(v, axis)),
+          source.categoryId ?? null,
+        )
+      : duplicateShapeModel(source, newName)
     const newShapes = [...existing, duplicated]
     this.#setShapes(nodeId, newShapes)
     return duplicated
@@ -6483,7 +6498,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     createBakedShape: (nodeId, name, categoryId, time) =>
       engine.createBakedShape(nodeId, name, categoryId ?? null, time ?? 0),
     getBakedVertices: (nodeId, time) => engine.getBakedVertices(nodeId, time ?? 0),
-    duplicateShape: (nodeId, shapeId) => engine.duplicateShape(nodeId, shapeId),
+    duplicateShape: (nodeId, shapeId, opts) => engine.duplicateShape(nodeId, shapeId, opts),
     copyShapeToNode: (s, sid, t, opts) => engine.copyShapeToNode(s, sid, t, opts),
     renameShape: (nodeId, shapeId, newName) => engine.renameShape(nodeId, shapeId, newName),
     deleteShape: (nodeId, shapeId) => engine.deleteShape(nodeId, shapeId),

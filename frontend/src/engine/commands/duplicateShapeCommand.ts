@@ -1,9 +1,12 @@
 import type { Engine } from '../internal'
 import type { Command } from './command'
+import type { SymmetryAxis } from '../symmetry'
 
 export interface DuplicateShapeParameters {
   readonly nodeId: string
   readonly shapeId: string
+  readonly mirrored?: boolean
+  readonly axis?: SymmetryAxis
 }
 
 export interface DuplicateShapeInverse {
@@ -17,11 +20,20 @@ export class DuplicateShapeCommand implements Command<DuplicateShapeInverse> {
   readonly parameters: Readonly<Record<string, unknown>>
   readonly #nodeId: string
   readonly #shapeId: string
+  readonly #mirrored: boolean
+  readonly #axis: SymmetryAxis
 
   constructor(input: DuplicateShapeParameters) {
     this.#nodeId = input.nodeId
     this.#shapeId = input.shapeId
-    this.parameters = { nodeId: input.nodeId, shapeId: input.shapeId }
+    this.#mirrored = input.mirrored ?? false
+    this.#axis = input.axis ?? 'x'
+    this.parameters = {
+      nodeId: input.nodeId,
+      shapeId: input.shapeId,
+      ...(input.mirrored !== undefined ? { mirrored: input.mirrored } : {}),
+      ...(input.axis !== undefined ? { axis: input.axis } : {}),
+    }
   }
 
   validate(engine: Engine): void {
@@ -31,10 +43,16 @@ export class DuplicateShapeCommand implements Command<DuplicateShapeInverse> {
     const shapes = engine.getShapes(this.#nodeId)
     if (!shapes.some((s) => s.id === this.#shapeId))
       throw new Error(`Shape not found: ${this.#shapeId}`)
+    if (this.#axis !== 'x' && this.#axis !== 'y') {
+      throw new Error(`Axis must be "x" or "y", got "${String(this.#axis)}"`)
+    }
   }
 
   execute(engine: Engine): DuplicateShapeInverse {
-    const duplicated = engine.duplicateShape(this.#nodeId, this.#shapeId)
+    const duplicated = engine.duplicateShape(this.#nodeId, this.#shapeId, {
+      mirrored: this.#mirrored,
+      axis: this.#axis,
+    })
     return { nodeId: this.#nodeId, shapeId: duplicated.id, shape: duplicated }
   }
 

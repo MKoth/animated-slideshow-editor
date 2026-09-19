@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EnginePublic, SceneNode } from '../../engine'
 import type { DispatchCommand } from '../../engine/commands'
 import {
@@ -48,6 +48,9 @@ export function MeshInspectorSection({
   const [copyTargetId, setCopyTargetId] = useState<string>('')
   const [copyMirrored, setCopyMirrored] = useState(false)
   const [copyAxis, setCopyAxis] = useState<'x' | 'y'>('x')
+  const [duplicateMenuId, setDuplicateMenuId] = useState<string | null>(null)
+  const duplicateMenuRef = useRef<HTMLDivElement | null>(null)
+  const duplicateMenuButtonRef = useRef<HTMLButtonElement | null>(null)
   const [moveShapeId, setMoveShapeId] = useState<string | null>(null)
   const [dragCatId, setDragCatId] = useState<string | null>(null)
   const [dragShapeId, setDragShapeId] = useState<string | null>(null)
@@ -90,6 +93,25 @@ export function MeshInspectorSection({
     const valid = new Set(categories.map((c) => `${target.id}:${c.id}`))
     useShapeCategoryViewStore.getState().prune(valid)
   }, [catIdsKey, target.id, categories])
+
+  useEffect(() => {
+    if (!duplicateMenuId) return
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (duplicateMenuRef.current?.contains(target)) return
+      if (duplicateMenuButtonRef.current?.contains(target)) return
+      setDuplicateMenuId(null)
+    }
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDuplicateMenuId(null)
+    }
+    document.addEventListener('click', closeOnOutsideClick)
+    document.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.removeEventListener('click', closeOnOutsideClick)
+      document.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [duplicateMenuId])
 
   const copyCandidates = useMemo(() => {
     void tick
@@ -177,6 +199,17 @@ export function MeshInspectorSection({
 
   const handleDuplicate = (shapeId: string) => {
     const result = dispatch(new DuplicateShapeCommand({ nodeId: target.id, shapeId }))
+    if (!result.ok) notify(result.error.message)
+    else {
+      const newId = (result.inverse as { shapeId?: string })?.shapeId
+      if (newId) useMeshEditStore.getState().setActiveShapeId(newId)
+    }
+  }
+  const handleDuplicateMirrored = (shapeId: string, axis: 'x' | 'y') => {
+    setDuplicateMenuId(null)
+    const result = dispatch(
+      new DuplicateShapeCommand({ nodeId: target.id, shapeId, mirrored: true, axis }),
+    )
     if (!result.ok) notify(result.error.message)
     else {
       const newId = (result.inverse as { shapeId?: string })?.shapeId
@@ -959,15 +992,41 @@ export function MeshInspectorSection({
           >
             ↓
           </button>
-          <button
-            className="inspector-section__link"
-            aria-label={`Duplicate shape ${shape.name}`}
-            onClick={() => handleDuplicate(shape.id)}
-            disabled={playing}
-            style={{ fontSize: 11, padding: '4px 6px' }}
-          >
-            Duplicate
-          </button>
+          <span style={{ display: 'inline-flex' }}>
+            <button
+              className="inspector-section__link"
+              aria-label={`Duplicate shape ${shape.name}`}
+              onClick={() => handleDuplicate(shape.id)}
+              disabled={playing}
+              style={{
+                fontSize: 11,
+                padding: '4px 6px',
+                borderTopRightRadius: 0,
+                borderBottomRightRadius: 0,
+              }}
+            >
+              Duplicate
+            </button>
+            <button
+              ref={duplicateMenuId === shape.id ? duplicateMenuButtonRef : undefined}
+              className="inspector-section__link"
+              aria-label={`Duplicate shape ${shape.name} options`}
+              aria-haspopup="menu"
+              aria-expanded={duplicateMenuId === shape.id}
+              onClick={() => setDuplicateMenuId(duplicateMenuId === shape.id ? null : shape.id)}
+              disabled={playing}
+              title="Duplicate mirrored across X or Y"
+              style={{
+                fontSize: 11,
+                padding: '4px 6px',
+                borderTopLeftRadius: 0,
+                borderBottomLeftRadius: 0,
+                marginLeft: -1,
+              }}
+            >
+              ▾
+            </button>
+          </span>
           <button
             className="inspector-section__link"
             aria-label={`Rename shape ${shape.name}`}
@@ -1008,6 +1067,45 @@ export function MeshInspectorSection({
             Delete
           </button>
         </div>
+        {duplicateMenuId === shape.id && (
+          <div
+            ref={duplicateMenuRef}
+            role="menu"
+            aria-label={`Duplicate options for shape ${shape.name}`}
+            style={{
+              marginTop: 6,
+              border: '1px solid var(--color-border)',
+              borderRadius: 4,
+              padding: 4,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 2,
+              background: 'var(--color-bg-elevated)',
+              color: 'var(--color-text)',
+            }}
+          >
+            <button
+              role="menuitem"
+              className="inspector-section__link"
+              aria-label={`Duplicate shape ${shape.name} mirrored on X`}
+              onClick={() => handleDuplicateMirrored(shape.id, 'x')}
+              disabled={playing}
+              style={{ fontSize: 11, padding: '4px 6px', textAlign: 'left' }}
+            >
+              Duplicate mirrored X (left ↔ right)
+            </button>
+            <button
+              role="menuitem"
+              className="inspector-section__link"
+              aria-label={`Duplicate shape ${shape.name} mirrored on Y`}
+              onClick={() => handleDuplicateMirrored(shape.id, 'y')}
+              disabled={playing}
+              style={{ fontSize: 11, padding: '4px 6px', textAlign: 'left' }}
+            >
+              Duplicate mirrored Y (top ↔ bottom)
+            </button>
+          </div>
+        )}
         {showBefore && (
           <div
             style={{ fontSize: 9, color: '#1a73e8', textAlign: 'center', pointerEvents: 'none' }}

@@ -105,7 +105,14 @@ export interface EnginePublic {
     time?: number,
   ): import('./shape').Shape
   getBakedVertices(nodeId: string, time?: number): readonly import('./mesh').MeshVertex[] | null
-  duplicateShape(nodeId: string, shapeId: string): import('./shape').Shape
+  duplicateShape(
+    nodeId: string,
+    shapeId: string,
+    opts?: {
+      mirrored?: boolean
+      axis?: import('./symmetry').SymmetryAxis
+    },
+  ): import('./shape').Shape
   copyShapeToNode(
     sourceNodeId: string,
     sourceShapeId: string,

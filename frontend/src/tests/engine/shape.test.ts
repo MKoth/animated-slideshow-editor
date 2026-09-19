@@ -57,6 +57,28 @@ describe('Shape storage & JSON round-trip (foundation)', () => {
     expect(shapes.map((s) => s.name)).toEqual(['Smile', 'Smile 2', 'Smile 3'])
   })
 
+  it('duplicate mirrored X/Y negates only the chosen axis and keeps category', () => {
+    const { engine, nodeId } = setupEngineWithMesh()
+    const category = engine.createShapeCategory(nodeId, 'Face', null)
+    const source = engine.createShape(nodeId, 'Smile', category.id)
+    const mirroredX = engine.duplicateShape(nodeId, source.id, { mirrored: true, axis: 'x' })
+    expect(mirroredX.id).not.toBe(source.id)
+    expect(mirroredX.name).toBe('Smile 2')
+    expect(mirroredX.categoryId).toBe(category.id)
+    expect(mirroredX.vertices).toEqual(source.vertices.map((v) => ({ x: -v.x, y: v.y })))
+    const mirroredY = engine.duplicateShape(nodeId, source.id, { mirrored: true, axis: 'y' })
+    expect(mirroredY.vertices).toEqual(source.vertices.map((v) => ({ x: v.x, y: -v.y })))
+    expect(engine.getShapes(nodeId)).toHaveLength(3)
+  })
+
+  it('duplicate mirrored rejects an unknown axis', () => {
+    const { engine, nodeId } = setupEngineWithMesh()
+    const source = engine.createShape(nodeId, 'Smile')
+    expect(() =>
+      engine.duplicateShape(nodeId, source.id, { mirrored: true, axis: 'z' as never }),
+    ).toThrow(/Axis must be "x" or "y"/)
+  })
+
   it('storage order equals array order', () => {
     const { engine, nodeId } = setupEngineWithMesh()
     const s1 = engine.createShape(nodeId, 'A')
@@ -364,5 +386,38 @@ describe('Shape storage & JSON round-trip (foundation)', () => {
     // Redo create
     expect(dispatcher.redo()).toBe(true)
     expect(e.getShapes(nodeId)).toHaveLength(1)
+  })
+
+  it('mirrored DuplicateShapeCommand is undoable and redo restores mirrored vertices', () => {
+    const engine = createEngineInternal()
+    const undoStack = new UndoStack()
+    const dispatcher = new CommandDispatcher(engine, undoStack, () => {})
+    engine.createProject({ name: 'P3' })
+    engine.createSlide('S1')
+    const slide = engine.getActiveSlide()!
+    const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'MeshNode', {
+      components: { mesh: { kind: 'mesh', mesh: createDefaultRectangleMesh(10, 10) } },
+    })
+    const nodeId = node.id
+    const source = engine.createShape(nodeId, 'Base')
+    const res = dispatcher.dispatch(
+      new DuplicateShapeCommand({ nodeId, shapeId: source.id, mirrored: true, axis: 'x' }),
+    )
+    expect(res.ok).toBe(true)
+    if (!res.ok) throw new Error('mirrored duplicate failed')
+    expect(engine.getShapes(nodeId)).toHaveLength(2)
+    const mirroredVertices = source.vertices.map((v) => ({ x: -v.x, y: v.y }))
+    expect(engine.getShapes(nodeId)[1]!.vertices).toEqual(mirroredVertices)
+    // Undo removes, redo restores the mirrored snapshot
+    expect(dispatcher.undo()).toBe(true)
+    expect(engine.getShapes(nodeId)).toHaveLength(1)
+    expect(dispatcher.redo()).toBe(true)
+    expect(engine.getShapes(nodeId)).toHaveLength(2)
+    expect(engine.getShapes(nodeId)[1]!.vertices).toEqual(mirroredVertices)
+    // Invalid axis is rejected before execute
+    const bad = dispatcher.dispatch(
+      new DuplicateShapeCommand({ nodeId, shapeId: source.id, mirrored: true, axis: 'z' as never }),
+    )
+    expect(bad.ok).toBe(false)
   })
 })

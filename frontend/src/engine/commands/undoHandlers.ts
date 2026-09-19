@@ -3385,7 +3385,10 @@ export function applyRedo(
         engine.restoreShapes(params.nodeId as string, [...existing, inv.shape])
         return
       }
-      engine.duplicateShape(params.nodeId as string, params.shapeId as string)
+      engine.duplicateShape(params.nodeId as string, params.shapeId as string, {
+        mirrored: (params.mirrored as boolean | undefined) ?? false,
+        axis: (params.axis as 'x' | 'y' | undefined) ?? 'x',
+      })
       return
     }
     case 'RenameShape':
