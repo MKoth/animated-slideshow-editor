@@ -56,6 +56,11 @@ export const SHORTCUT_CATALOG: readonly ShortcutSection[] = [
       },
       { keys: ['Ctrl/⌘', 'S'], action: 'Save project', context: 'Global' },
       {
+        keys: ['L'],
+        action: 'Open focused animation lanes for the selected object',
+        context: 'Object selected (not in text inputs)',
+      },
+      {
         keys: ['Esc'],
         action: 'Exit mesh / bone edit mode, cancel pending bone, close menus and dialogs',
         context: 'Global',
