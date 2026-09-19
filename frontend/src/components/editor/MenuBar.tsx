@@ -20,6 +20,7 @@ import { useSelectionStore } from '../../stores/selectionStore'
 import { useUiStore } from '../../stores/uiStore'
 import { triggerAssetImport } from '../assets/importTrigger'
 import { TtsGlobalSettingsModal } from '../settings/TtsGlobalSettings'
+import { KeyboardShortcutsModal } from './KeyboardShortcutsModal'
 
 const IMPORT_ASSETS_ITEM = 'Import Assets'
 const SNAP_TO_GRID_ITEM = 'Snap to Grid'
@@ -30,6 +31,7 @@ const DELETE_ITEM = 'Delete'
 const SAVE_ITEM = 'Save'
 
 const TTS_SETTINGS_ITEM = 'TTS Settings'
+const KEYBOARD_SHORTCUTS_ITEM = 'Keyboard Shortcuts'
 const MENUS = [
   {
     label: 'File',
@@ -66,7 +68,7 @@ const MENUS = [
   },
   {
     label: 'Help',
-    items: ['About'],
+    items: [KEYBOARD_SHORTCUTS_ITEM, 'About'],
   },
 ] as const
 
@@ -148,6 +150,7 @@ export function MenuBar() {
   const { engine, dispatch, persistence } = useEngine()
   const [, setTick] = useState(0)
   const [showTtsSettings, setShowTtsSettings] = useState(false)
+  const [showShortcuts, setShowShortcuts] = useState(false)
   useEngineEvent(() => setTick((tick) => tick + 1))
   const libraryUnavailable = useAssetLibraryStore((state) => state.unavailable)
   const gridSnap = useUiStore((state) => state.gridSnap)
@@ -180,6 +183,8 @@ export function MenuBar() {
       requestNewProject()
     } else if (item === TTS_SETTINGS_ITEM) {
       setShowTtsSettings(true)
+    } else if (item === KEYBOARD_SHORTCUTS_ITEM) {
+      setShowShortcuts(true)
     } else if (item === COPY_ITEM) {
       copySelection(engine)
     } else if (item === PASTE_ITEM) {
@@ -220,6 +225,7 @@ export function MenuBar() {
         </nav>
       </header>
       {showTtsSettings && <TtsGlobalSettingsModal onClose={() => setShowTtsSettings(false)} />}
+      {showShortcuts && <KeyboardShortcutsModal onClose={() => setShowShortcuts(false)} />}
     </>
   )
 }
