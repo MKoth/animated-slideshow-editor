@@ -143,6 +143,43 @@ export function categoryPathOfShape(
   return categoryPathForShape(categories, shape.categoryId ?? null)
 }
 
+export interface ShapeCategoryGroup {
+  readonly label: string
+  readonly shapes: readonly Shape[]
+}
+
+/**
+ * Group shapes for category-labelled pickers (e.g. the Sculpt shape dropdown).
+ * Known categories keep their category order with full root → leaf path labels;
+ * uncategorized shapes (including shapes pointing at a missing category) come
+ * first. Empty groups are omitted.
+ */
+export function groupShapesByCategory(
+  shapes: readonly Shape[],
+  categories: readonly import('./shapeCategory').ShapeCategory[] | undefined,
+): readonly ShapeCategoryGroup[] {
+  const known = new Set((categories ?? []).map((c) => c.id))
+  const byCategory = new Map<string | null, Shape[]>()
+  for (const shape of shapes) {
+    const key = shape.categoryId && known.has(shape.categoryId) ? shape.categoryId : null
+    const list = byCategory.get(key)
+    if (list) list.push(shape)
+    else byCategory.set(key, [shape])
+  }
+  const groups: ShapeCategoryGroup[] = []
+  const uncategorized = byCategory.get(null)
+  if (uncategorized && uncategorized.length > 0) {
+    groups.push({ label: 'Uncategorized', shapes: uncategorized })
+  }
+  for (const category of categories ?? []) {
+    const list = byCategory.get(category.id)
+    if (!list || list.length === 0) continue
+    const path = categoryPathForShape(categories, category.id) ?? [category.name]
+    groups.push({ label: path.join(' / '), shapes: list })
+  }
+  return groups
+}
+
 function categoryPathsEqual(
   a: readonly string[] | null | undefined,
   b: readonly string[] | null | undefined,

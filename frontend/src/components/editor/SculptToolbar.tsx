@@ -6,7 +6,8 @@ import { useOverlayVisibilityStore } from '../../stores/overlayVisibilityStore'
 import { useEditingModeStore } from '../../stores/editingModeStore'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { CreateShapeCommand, DuplicateShapeCommand } from '../../engine/commands'
-import { uniqueShapeName, type Shape } from '../../engine/shape'
+import { groupShapesByCategory, uniqueShapeName, type Shape } from '../../engine/shape'
+import { useShapePreviewStore } from '../../stores/shapePreviewStore'
 
 export function SculptToolbar() {
   const { engine, dispatch } = useEngine()
@@ -50,7 +51,13 @@ export function SculptToolbar() {
     () => (node?.components.mesh?.shapes ?? []) as readonly Shape[],
     [node?.components.mesh?.shapes],
   )
+  const categories = useMemo(
+    () => node?.components.mesh?.shapeCategories ?? [],
+    [node?.components.mesh?.shapeCategories],
+  )
+  const shapeGroups = useMemo(() => groupShapesByCategory(shapes, categories), [shapes, categories])
   const hasShapes = shapes.length > 0
+  const nodeId = node?.id ?? null
 
   // Clear stale ghost if its shape was deleted or now equals active
   useEffect(() => {
@@ -72,13 +79,32 @@ export function SculptToolbar() {
     }
   }, [meshEditNodeId, ghostShapeId, setGhost])
 
-  // Auto-select first shape if none active (deferred)
+  // Auto-select first shape if none active (deferred) — prefer the shape
+  // already selected (previewed) in the Inspector for this node.
   useEffect(() => {
-    if (hasShapes && !activeShapeId) {
-      const first = shapes[0]
-      if (first) setActiveShapeId(first.id)
+    if (!hasShapes || activeShapeId) return
+    const preview = useShapePreviewStore.getState()
+    const inspected =
+      preview.previewNodeId === nodeId && preview.previewShapeId
+        ? shapes.find((s) => s.id === preview.previewShapeId)
+        : undefined
+    const next = inspected ?? shapes[0]
+    if (next) setActiveShapeId(next.id)
+  }, [hasShapes, activeShapeId, shapes, setActiveShapeId, nodeId])
+
+  // A stale Inspector Preview on a different shape would pin the canvas to that
+  // shape while strokes commit to the active one — drop it while sculpting.
+  useEffect(() => {
+    if (!activeShapeId || !nodeId) return
+    const preview = useShapePreviewStore.getState()
+    if (
+      preview.previewNodeId === nodeId &&
+      preview.previewShapeId &&
+      preview.previewShapeId !== activeShapeId
+    ) {
+      useShapePreviewStore.getState().clearPreview()
     }
-  }, [hasShapes, activeShapeId, shapes, setActiveShapeId])
+  }, [activeShapeId, nodeId])
 
   const handleAddShape = () => {
     if (!meshEditNodeId) return
@@ -123,10 +149,14 @@ export function SculptToolbar() {
           disabled={!hasShapes}
         >
           {!hasShapes && <option value="">No Shapes — Create one</option>}
-          {shapes.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
+          {shapeGroups.map((group) => (
+            <optgroup key={group.label} label={group.label}>
+              {group.shapes.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
         <button
@@ -225,13 +255,19 @@ export function SculptToolbar() {
           aria-label="Ghost shape"
         >
           <option value="">Off</option>
-          {shapes
-            .filter((s) => s.id !== activeShapeId)
-            .map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
+          {shapeGroups.map((group) => {
+            const ghostOptions = group.shapes.filter((s) => s.id !== activeShapeId)
+            if (ghostOptions.length === 0) return null
+            return (
+              <optgroup key={group.label} label={group.label}>
+                {ghostOptions.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </optgroup>
+            )
+          })}
         </select>
       </div>
 

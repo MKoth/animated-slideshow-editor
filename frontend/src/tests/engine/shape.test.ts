@@ -4,7 +4,9 @@ import { createDefaultRectangleMesh } from '../../engine/mesh'
 import { copyComponents } from '../../engine/components'
 import { deserialize, serialize, validate } from '../../engine/lessonSerializer'
 import type { LessonJSON } from '../../engine/json'
-import { shapeFromJSON } from '../../engine/shape'
+import { groupShapesByCategory, shapeFromJSON } from '../../engine/shape'
+import type { Shape } from '../../engine/shape'
+import type { ShapeCategory } from '../../engine/shapeCategory'
 import { createEngine as createEngineInternal } from '../../engine/internal'
 import { UndoStack } from '../../engine/commands/undoStack'
 import { CommandDispatcher } from '../../engine/commands/dispatcher'
@@ -419,5 +421,47 @@ describe('Shape storage & JSON round-trip (foundation)', () => {
       new DuplicateShapeCommand({ nodeId, shapeId: source.id, mirrored: true, axis: 'z' as never }),
     )
     expect(bad.ok).toBe(false)
+  })
+})
+
+describe('groupShapesByCategory', () => {
+  const mesh = createDefaultRectangleMesh(10, 10)
+  const makeShape = (id: string, name: string, categoryId: string | null): Shape => ({
+    id,
+    name,
+    categoryId,
+    vertices: mesh.vertices.map((v) => ({ x: v.x, y: v.y })),
+  })
+
+  it('groups uncategorized first then categories in order, using full nested paths', () => {
+    const categories: ShapeCategory[] = [
+      { id: 'cat-a', name: 'Face', parentId: null },
+      { id: 'cat-b', name: 'Left', parentId: 'cat-a' },
+      { id: 'cat-c', name: 'Body', parentId: null },
+    ]
+    const shapes = [
+      makeShape('s1', 'base', null),
+      makeShape('s2', 'left', 'cat-b'),
+      makeShape('s3', 'left', 'cat-c'),
+    ]
+    const groups = groupShapesByCategory(shapes, categories)
+    expect(groups.map((g) => g.label)).toEqual(['Uncategorized', 'Face / Left', 'Body'])
+    expect(groups[0]!.shapes.map((s) => s.id)).toEqual(['s1'])
+    expect(groups[1]!.shapes.map((s) => s.id)).toEqual(['s2'])
+    expect(groups[2]!.shapes.map((s) => s.id)).toEqual(['s3'])
+  })
+
+  it('treats missing category ids as uncategorized and skips empty groups', () => {
+    const categories: ShapeCategory[] = [
+      { id: 'cat-a', name: 'Face', parentId: null },
+      { id: 'cat-empty', name: 'Empty', parentId: null },
+    ]
+    const shapes = [makeShape('s1', 'base', null), makeShape('s2', 'ghost', 'cat-missing')]
+    const groups = groupShapesByCategory(shapes, categories)
+    expect(groups.map((g) => g.label)).toEqual(['Uncategorized'])
+    expect(groups[0]!.shapes.map((s) => s.id)).toEqual(['s1', 's2'])
+
+    expect(groupShapesByCategory(shapes, undefined).map((g) => g.label)).toEqual(['Uncategorized'])
+    expect(groupShapesByCategory(shapes, []).map((g) => g.label)).toEqual(['Uncategorized'])
   })
 })
