@@ -28,8 +28,10 @@ import { ParentingModeDialog } from './ParentingModeDialog'
 import { ExportObjectModal } from './ExportObjectModal'
 import { ExportClipCollectionModal } from './ExportClipCollectionModal'
 import { AnimationManagerModal } from './AnimationManagerModal'
+import { ReverseSymmetrizeModal } from './ReverseSymmetrizeModal'
 import { useAnimationManagerNavStore } from '../../stores/animationManagerNavStore'
 import { hasAnimatedDescendant, isAnimatedChild } from '../../engine/animationManagerModel'
+import { hasMirrorableKeyframes } from '../../engine/reverseSymmetrize'
 import { isGroupNode } from '../../engine/sceneNode'
 
 interface ContextMenuState {
@@ -543,6 +545,7 @@ export function ScenePanel() {
   const [exportOpen, setExportOpen] = useState(false)
   const [exportCollectionParentId, setExportCollectionParentId] = useState<string | null>(null)
   const [managerParentId, setManagerParentId] = useState<string | null>(null)
+  const [reverseSymmetrizeNodeId, setReverseSymmetrizeNodeId] = useState<string | null>(null)
   const navPending = useAnimationManagerNavStore((s) => s.pending)
   useEffect(() => {
     if (navPending) {
@@ -686,6 +689,19 @@ export function ScenePanel() {
           >
             Export Clip Collection…
           </button>
+          {hasMirrorableKeyframes(engine, contextMenu.nodeId) && (
+            <button
+              className="menu__item"
+              role="menuitem"
+              data-testid="scene-reverse-symmetrize"
+              onClick={() => {
+                if (contextMenu) setReverseSymmetrizeNodeId(contextMenu.nodeId)
+                setContextMenu(null)
+              }}
+            >
+              Reverse Symmetrize…
+            </button>
+          )}
           <hr className="menu__separator" />
           {Z_ORDER_ITEMS.map((item) => (
             <button
@@ -716,6 +732,11 @@ export function ScenePanel() {
         open={managerParentId !== null}
         parentNodeId={managerParentId}
         onClose={() => setManagerParentId(null)}
+      />
+      <ReverseSymmetrizeModal
+        open={reverseSymmetrizeNodeId !== null}
+        rootNodeId={reverseSymmetrizeNodeId}
+        onClose={() => setReverseSymmetrizeNodeId(null)}
       />
     </div>
   )
