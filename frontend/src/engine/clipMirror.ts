@@ -329,7 +329,7 @@ function mirrorMorphShapeName(name: string | null): string | null {
   return swapLateralSemanticName(name)
 }
 
-function mirrorMorphKeyframeValue(value: KeyframeValue): KeyframeValue {
+function mirrorMorphKeyframeValue(value: KeyframeValue, preserveNames = false): KeyframeValue {
   if (typeof value === 'number') return value
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
     const rec = value as unknown as Record<string, unknown>
@@ -337,8 +337,12 @@ function mirrorMorphKeyframeValue(value: KeyframeValue): KeyframeValue {
     // everything else (coefficient and any future fields) verbatim.
     // Note: id-based legacy values also carry `coefficient`, so the name
     // path must key on the name fields themselves — never on `coefficient`.
+    // Reverse+mirror passes preserveNames so a "turn left" morph stays
+    // "turn left" — only the symmetry bracket mirrors playback.
     if ('fromShapeName' in rec || 'toShapeName' in rec) {
+      const remap = preserveNames ? (n: string | null) => n : mirrorMorphShapeName
       const mirrorPath = (p: unknown): unknown => {
+        if (preserveNames) return p
         if (p === undefined || p === null) return p
         if (Array.isArray(p)) {
           return p.map((seg) => (typeof seg === 'string' ? mirrorMorphShapeName(seg) : seg))
@@ -347,8 +351,8 @@ function mirrorMorphKeyframeValue(value: KeyframeValue): KeyframeValue {
       }
       return {
         ...(rec as object),
-        fromShapeName: mirrorMorphShapeName((rec.fromShapeName as string | null) ?? null),
-        toShapeName: mirrorMorphShapeName((rec.toShapeName as string | null) ?? null),
+        fromShapeName: remap((rec.fromShapeName as string | null) ?? null),
+        toShapeName: remap((rec.toShapeName as string | null) ?? null),
         ...('fromCategoryPath' in rec
           ? { fromCategoryPath: mirrorPath(rec.fromCategoryPath) }
           : {}),
@@ -362,14 +366,17 @@ function mirrorMorphKeyframeValue(value: KeyframeValue): KeyframeValue {
   return value
 }
 
-function mirrorMorphAnimation(source: ClipChannelAnimation): ClipChannelAnimation {
+function mirrorMorphAnimation(
+  source: ClipChannelAnimation,
+  preserveNames = false,
+): ClipChannelAnimation {
   const dest = new ClipChannelAnimation()
   for (const kf of source.keyframes()) {
     dest.add(
       new KeyframeModel(
         newKeyframeId(),
         kf.time,
-        mirrorMorphKeyframeValue(kf.value),
+        mirrorMorphKeyframeValue(kf.value, preserveNames),
         kf.interpolation,
         { time: kf.tangentIn.time, value: kf.tangentIn.value },
         { time: kf.tangentOut.time, value: kf.tangentOut.value },
@@ -574,11 +581,14 @@ export function collectMirrorSkippedLaneNames(clips: Iterable<ClipDefinition>): 
  * - bone (no opacity) and camera (no rotation) constraints are respected by
  *   preserving the channel list: no channels are added or removed, opacity is
  *   never negated, and rotation mirrors only where present
+ * - `opts.preserveMorphNames` skips the lateral morph rename (used by
+ *   reverse+mirror so shape names stay on their original side)
  */
 export function createMirroredClipDefinition(
   source: ClipDefinition,
   axis: MirrorAxis,
   newName?: string,
+  opts?: { preserveMorphNames?: boolean },
 ): MirroredClipResult {
   requireMirrorAxis(axis)
   const name = newName ?? mirrorClipDefaultName(source.name, axis)
@@ -589,7 +599,7 @@ export function createMirroredClipDefinition(
     source.category,
     [...source.params],
     [...source.channels],
-    false, // isReversed
+    source.isReversed, // temporal reversal survives the spatial mirror (reverse-then-mirror stays reversed)
   )
 
   // uniform-six channels (incl. gain/offset-linked: stored keyframes negated)
@@ -634,7 +644,10 @@ export function createMirroredClipDefinition(
 
   const morphSrc = source.morphAnimation()
   if (morphSrc.length > 0) {
-    for (const kf of mirrorMorphAnimation(morphSrc).keyframes()) {
+    for (const kf of mirrorMorphAnimation(
+      morphSrc,
+      opts?.preserveMorphNames === true,
+    ).keyframes()) {
       mirrored.addMorphKeyframe(kf)
     }
   }

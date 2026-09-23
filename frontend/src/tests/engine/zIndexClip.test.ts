@@ -149,10 +149,12 @@ describe('zIndex clip extraction', () => {
     if (!reversed.ok) throw new Error('reverse failed')
     const rev = engine.getClip(reversed.inverse.newClipId)
     expect(rev.hasZIndexTrack()).toBe(true)
-    expect(rev.getZIndexKeyframes().map((k) => [k.time, k.value])).toEqual([
-      [0, 9],
-      [1, 2],
-    ])
+    // Hold-correct reversal: the source holds 2 on [0, 1) with 9 only at the
+    // final instant, so the reversed track holds 2 throughout. The naive
+    // t' = 1 - t mirror ([0, 9], [1, 2]) wrongly holds 9 across (0, 1).
+    // (The single-instant 9 at exactly u = 0 is not expressible with
+    // forward-hold keys.)
+    expect(rev.getZIndexKeyframes().map((k) => [k.time, k.value])).toEqual([[0, 2]])
   })
 })
 

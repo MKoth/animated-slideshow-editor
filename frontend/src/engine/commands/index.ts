@@ -597,3 +597,8 @@ export type {
   MirrorCollectionParameters,
   MirrorCollectionShapeSnapshot,
 } from './mirrorCollectionCommand'
+export { ReverseMirrorCollectionCommand } from './reverseMirrorCollectionCommand'
+export type {
+  ReverseMirrorCollectionInverse,
+  ReverseMirrorCollectionParameters,
+} from './reverseMirrorCollectionCommand'

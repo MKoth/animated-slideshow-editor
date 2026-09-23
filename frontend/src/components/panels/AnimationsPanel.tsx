@@ -18,6 +18,7 @@ import {
   ReverseCollectionCommand,
   MirrorClipCommand,
   MirrorCollectionCommand,
+  ReverseMirrorCollectionCommand,
 } from '../../engine/commands'
 import {
   ALL_COLLECTION_CATEGORIES,
@@ -34,6 +35,7 @@ import {
   collectMirrorSkippedLaneNames,
 } from '../../engine/clipMirror'
 import type { MirrorAxis } from '../../engine/clipMirror'
+import { reverseMirrorCollectionDefaultName } from '../../engine/clipReverseMirror'
 import { ApplyClipCollectionModal } from './ApplyClipCollectionModal'
 import { ExportClipCollectionModal } from './ExportClipCollectionModal'
 import { CollectionLibraryBrowser } from './CollectionLibraryBrowser'
@@ -231,6 +233,12 @@ export function AnimationsPanel() {
   } | null>(null)
   const [mirrorCollectionAxis, setMirrorCollectionAxis] = useState<MirrorAxis>('X')
   const [mirrorCollectionNameDraft, setMirrorCollectionNameDraft] = useState('')
+  const [reverseMirrorCollectionPrompt, setReverseMirrorCollectionPrompt] = useState<{
+    collectionId: string
+    defaultName: string
+  } | null>(null)
+  const [reverseMirrorCollectionAxis, setReverseMirrorCollectionAxis] = useState<MirrorAxis>('X')
+  const [reverseMirrorCollectionNameDraft, setReverseMirrorCollectionNameDraft] = useState('')
 
   const downloadCollectionFile = (collectionId: string) => {
     const collection = engine.getClipCollection(collectionId)
@@ -1035,6 +1043,36 @@ export function AnimationsPanel() {
                             >
                               Mirror and Save As…
                             </button>
+                            <button
+                              role="menuitem"
+                              data-testid={`collection-reverse-mirror-${col.id}`}
+                              style={{
+                                display: 'block',
+                                width: '100%',
+                                textAlign: 'left',
+                                padding: '6px 10px',
+                                border: 'none',
+                                background: 'transparent',
+                                cursor: 'pointer',
+                                fontSize: 12,
+                              }}
+                              onClick={() => {
+                                const axis: MirrorAxis = 'X'
+                                const defaultName = reverseMirrorCollectionDefaultName(
+                                  col.name,
+                                  axis,
+                                )
+                                setReverseMirrorCollectionAxis(axis)
+                                setReverseMirrorCollectionNameDraft(defaultName)
+                                setReverseMirrorCollectionPrompt({
+                                  collectionId: col.id,
+                                  defaultName,
+                                })
+                                setCollectionOverflowId(null)
+                              }}
+                            >
+                              Reverse + Mirror and Save As…
+                            </button>
                           </div>
                         )}
                       </div>
@@ -1706,6 +1744,214 @@ export function AnimationsPanel() {
                   color: '#fff',
                 }}
                 data-testid="mirror-collection-confirm"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {reverseMirrorCollectionPrompt && (
+        <div
+          className="projects-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Reverse and Mirror Collection and Save As"
+          data-testid="reverse-mirror-collection-modal"
+        >
+          <div className="projects-dialog" style={{ minWidth: 380 }}>
+            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>
+              ↺⇋ Reverse + Mirror Collection and Save As…
+            </h3>
+            <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
+              Time-reverse each member clip (last seconds become first) and spatially mirror it (X =
+              left-right, Y = top-bottom). Bindings and morph shape names stay on their original
+              sides — every member plays fully mirrored (symmetry bracket 1 → 0), and originals are
+              untouched.
+            </p>
+            <fieldset style={{ margin: '0 0 12px', padding: '8px 10px', fontSize: 13 }}>
+              <legend style={{ fontSize: 12 }}>Mirror axis</legend>
+              <label style={{ display: 'block', marginBottom: 4 }}>
+                <input
+                  type="radio"
+                  name="reverse-mirror-collection-axis"
+                  checked={reverseMirrorCollectionAxis === 'X'}
+                  data-testid="reverse-mirror-collection-axis-x"
+                  onChange={() => {
+                    const next: MirrorAxis = 'X'
+                    setReverseMirrorCollectionAxis(next)
+                    try {
+                      const src = engine.getClipCollection(
+                        reverseMirrorCollectionPrompt.collectionId,
+                      )
+                      const nextDefault = reverseMirrorCollectionDefaultName(src.name, next)
+                      setReverseMirrorCollectionPrompt({
+                        collectionId: reverseMirrorCollectionPrompt.collectionId,
+                        defaultName: nextDefault,
+                      })
+                      if (
+                        reverseMirrorCollectionNameDraft.trim() === '' ||
+                        reverseMirrorCollectionNameDraft ===
+                          reverseMirrorCollectionPrompt.defaultName
+                      ) {
+                        setReverseMirrorCollectionNameDraft(nextDefault)
+                      }
+                    } catch {
+                      void 0
+                    }
+                  }}
+                />{' '}
+                X — left-right
+              </label>
+              <label style={{ display: 'block' }}>
+                <input
+                  type="radio"
+                  name="reverse-mirror-collection-axis"
+                  checked={reverseMirrorCollectionAxis === 'Y'}
+                  data-testid="reverse-mirror-collection-axis-y"
+                  onChange={() => {
+                    const next: MirrorAxis = 'Y'
+                    setReverseMirrorCollectionAxis(next)
+                    try {
+                      const src = engine.getClipCollection(
+                        reverseMirrorCollectionPrompt.collectionId,
+                      )
+                      const nextDefault = reverseMirrorCollectionDefaultName(src.name, next)
+                      setReverseMirrorCollectionPrompt({
+                        collectionId: reverseMirrorCollectionPrompt.collectionId,
+                        defaultName: nextDefault,
+                      })
+                      if (
+                        reverseMirrorCollectionNameDraft.trim() === '' ||
+                        reverseMirrorCollectionNameDraft ===
+                          reverseMirrorCollectionPrompt.defaultName
+                      ) {
+                        setReverseMirrorCollectionNameDraft(nextDefault)
+                      }
+                    } catch {
+                      void 0
+                    }
+                  }}
+                />{' '}
+                Y — top-bottom
+              </label>
+            </fieldset>
+            <div
+              data-testid="reverse-mirror-collection-swap-preview"
+              style={{ fontSize: 12, margin: '0 0 8px', color: 'var(--color-text-muted, #666)' }}
+            >
+              Bindings &amp; morphs stay on their original sides — no left↔right swap.
+            </div>
+            {(() => {
+              try {
+                const src = engine.getClipCollection(reverseMirrorCollectionPrompt.collectionId)
+                const lanes = collectMirrorSkippedLaneNames(
+                  (function* () {
+                    for (const clipId of Object.values(src.getBindingsObject())) {
+                      try {
+                        yield engine.getClip(clipId)
+                      } catch {
+                        void 0
+                      }
+                    }
+                  })(),
+                )
+                if (lanes.length === 0) return null
+                return (
+                  <p
+                    data-testid="reverse-mirror-collection-skips"
+                    style={{ fontSize: 12, color: 'var(--color-warning, #a60)', margin: '0 0 8px' }}
+                  >
+                    Not mirrored (out of scope for v1): {lanes.join(', ')}. These lanes stay
+                    unchanged on the originals.
+                  </p>
+                )
+              } catch {
+                return null
+              }
+            })()}
+            <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
+              New collection name
+              <input
+                value={reverseMirrorCollectionNameDraft}
+                onChange={(e) => setReverseMirrorCollectionNameDraft(e.target.value)}
+                placeholder={reverseMirrorCollectionPrompt.defaultName}
+                autoFocus
+                onFocus={(e) => e.target.select()}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  marginTop: 4,
+                  padding: '6px 8px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border)',
+                }}
+                data-testid="reverse-mirror-collection-name-input"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const name =
+                      reverseMirrorCollectionNameDraft.trim() ||
+                      reverseMirrorCollectionPrompt.defaultName
+                    const res = dispatch(
+                      new ReverseMirrorCollectionCommand({
+                        sourceCollectionId: reverseMirrorCollectionPrompt.collectionId,
+                        newName: name,
+                        axis: reverseMirrorCollectionAxis,
+                      }),
+                    )
+                    if (!res.ok) notify(res.error.message)
+                    else {
+                      notify(`Reverse-mirrored collection "${name}" created`)
+                      for (const s of res.inverse.skipped) notify(s)
+                    }
+                    setReverseMirrorCollectionPrompt(null)
+                  } else if (e.key === 'Escape') setReverseMirrorCollectionPrompt(null)
+                }}
+              />
+            </label>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                onClick={() => setReverseMirrorCollectionPrompt(null)}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border)',
+                }}
+                data-testid="reverse-mirror-collection-cancel"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const name =
+                    reverseMirrorCollectionNameDraft.trim() ||
+                    reverseMirrorCollectionPrompt.defaultName
+                  if (!name.trim()) {
+                    notify('Name is required')
+                    return
+                  }
+                  const res = dispatch(
+                    new ReverseMirrorCollectionCommand({
+                      sourceCollectionId: reverseMirrorCollectionPrompt.collectionId,
+                      newName: name,
+                      axis: reverseMirrorCollectionAxis,
+                    }),
+                  )
+                  if (!res.ok) notify(res.error.message)
+                  else {
+                    notify(`Reverse-mirrored collection "${name}" created`)
+                    for (const s of res.inverse.skipped) notify(s)
+                  }
+                  setReverseMirrorCollectionPrompt(null)
+                }}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 4,
+                  border: '1px solid transparent',
+                  background: '#7c5cff',
+                  color: '#fff',
+                }}
+                data-testid="reverse-mirror-collection-confirm"
               >
                 Save
               </button>

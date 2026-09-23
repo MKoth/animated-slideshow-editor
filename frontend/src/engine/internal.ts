@@ -135,6 +135,11 @@ import { newClipId } from './clipDefinition'
 import { newClipCollectionId } from './clipCollection'
 import { createReversedClipDefinition } from './clipReverse'
 import { createMirroredClipDefinition, mirrorClipDefaultName } from './clipMirror'
+import {
+  createReverseMirroredClipDefinition,
+  reverseMirrorClipDefaultName,
+  reverseMirrorCollectionDefaultName,
+} from './clipReverseMirror'
 import { createCopiedClipDefinition, copyClipDefaultName } from './clipCopy'
 import type { MirrorAxis } from './clipMirror'
 import {
@@ -3274,6 +3279,19 @@ export class Engine {
     return clip
   }
 
+  createReverseMirroredClip(
+    sourceClipId: string,
+    axis: MirrorAxis,
+    newName?: string,
+  ): ClipDefinition {
+    const source = this.getClip(sourceClipId)
+    const name = newName ?? reverseMirrorClipDefaultName(source.name, axis)
+    const { clip } = createReverseMirroredClipDefinition(source, axis, name)
+    this.#clips.importClip(clip)
+    this.#bus.emit({ type: 'ClipCreated', clipId: clip.id })
+    return clip
+  }
+
   createCopiedClip(sourceClipId: string, newName?: string): ClipDefinition {
     const source = this.getClip(sourceClipId)
     const name = newName ?? copyClipDefaultName(source.name)
@@ -3577,6 +3595,52 @@ export class Engine {
       // simply exchange sides. v1 collections co-start (no per-member start
       // offsets in the model), so offsets are preserved structurally.
       newBindings[boundSemantic] = newClipId
+    }
+    const collection = this.createClipCollection(
+      name,
+      newBindings,
+      source.sourceNodeId,
+      source.category,
+    )
+    return { collection, clipIdMap, skipped }
+  }
+
+  createReverseMirroredCollection(
+    sourceCollectionId: string,
+    axis: MirrorAxis,
+    newName?: string,
+  ): { collection: ClipCollection; clipIdMap: Map<string, string>; skipped: string[] } {
+    const source = this.getClipCollection(sourceCollectionId)
+    requireMirrorAxis(axis)
+    const name =
+      newName !== undefined
+        ? newName
+        : this.ensureUniqueCollectionName(
+            source.sourceNodeId,
+            reverseMirrorCollectionDefaultName(source.name, axis),
+          )
+    // No lateral guessing: bindings stay on their original keys and morph
+    // shape names stay untouched — the symmetry 1 → 0 bracket on every
+    // member carries the mirror. Only values are spatially negated.
+    const clipIdMap = new Map<string, string>()
+    const newBindings: Record<string, string> = {}
+    const skipped: string[] = []
+    for (const [semanticName, clipId] of source.bindings) {
+      let newClipId = clipIdMap.get(clipId)
+      if (!newClipId) {
+        const sourceClip = this.getClip(clipId)
+        for (const notice of mirrorSkippedNotices(sourceClip)) {
+          if (!skipped.includes(notice)) skipped.push(notice)
+        }
+        // Member clips take the (possibly user-edited) collection name
+        // verbatim; a source clip shared under several semantics is still
+        // minted once (first semantic wins the category).
+        const reverseMirroredClip = this.createReverseMirroredClip(clipId, axis, name)
+        this.setClipCategory(reverseMirroredClip.id, semanticName)
+        newClipId = reverseMirroredClip.id
+        clipIdMap.set(clipId, newClipId)
+      }
+      newBindings[semanticName] = newClipId
     }
     const collection = this.createClipCollection(
       name,
@@ -6574,6 +6638,10 @@ export function toReadOnly(engine: Engine): EnginePublic {
       engine.createCopiedCollection(sourceCollectionId, newName),
     createMirroredCollection: (sourceCollectionId, axis, newName) =>
       engine.createMirroredCollection(sourceCollectionId, axis, newName),
+    createReverseMirroredClip: (clipId, axis, newName) =>
+      engine.createReverseMirroredClip(clipId, axis, newName),
+    createReverseMirroredCollection: (sourceCollectionId, axis, newName) =>
+      engine.createReverseMirroredCollection(sourceCollectionId, axis, newName),
     deleteClipCollection: (collectionId) => engine.deleteClipCollection(collectionId),
     renameClipCollection: (collectionId, name) => engine.renameClipCollection(collectionId, name),
     setClipCollectionBindings: (collectionId, bindings) =>

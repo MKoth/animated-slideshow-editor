@@ -244,6 +244,20 @@ export interface EnginePublic {
     clipIdMap: Map<string, string>
     skipped: string[]
   }
+  createReverseMirroredClip(
+    clipId: string,
+    axis: import('./clipMirror').MirrorAxis,
+    newName?: string,
+  ): ClipDefinition
+  createReverseMirroredCollection(
+    sourceCollectionId: string,
+    axis: import('./clipMirror').MirrorAxis,
+    newName?: string,
+  ): {
+    collection: ClipCollection
+    clipIdMap: Map<string, string>
+    skipped: string[]
+  }
   deleteClipCollection(collectionId: string): ClipCollection
   renameClipCollection(collectionId: string, name: string): void
   setClipCollectionBindings(collectionId: string, bindings: Record<string, string>): void

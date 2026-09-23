@@ -2286,6 +2286,47 @@ export function applyUndo(
       }
       return
     }
+    case 'ReverseMirrorCollection': {
+      const rmInv = inv as Record<string, unknown> | null
+      const newCollectionId = rmInv?.newCollectionId as string
+      const newClipIds = rmInv?.newClipIds as string[] | undefined
+      const placementId = rmInv?.placementId as string | undefined
+      const createdInstanceIds = rmInv?.createdInstanceIds as
+        { nodeId: string; instanceId: string }[] | undefined
+      if (createdInstanceIds) {
+        for (const { nodeId, instanceId } of createdInstanceIds) {
+          try {
+            engine.removeClipInstance(nodeId, instanceId)
+          } catch {
+            void 0
+          }
+        }
+      }
+      if (placementId) {
+        try {
+          engine.deleteCollectionPlacement(placementId)
+        } catch {
+          void 0
+        }
+      }
+      if (newCollectionId) {
+        try {
+          engine.deleteClipCollection(newCollectionId)
+        } catch {
+          void 0
+        }
+      }
+      if (newClipIds) {
+        for (const clipId of newClipIds) {
+          try {
+            engine.deleteClip(clipId)
+          } catch {
+            void 0
+          }
+        }
+      }
+      return
+    }
     case 'CreateClipCollection': {
       const collectionId = (inv as Record<string, unknown>).collectionId as string
       try {
@@ -4408,6 +4449,47 @@ export function applyRedo(
         for (const snap of shapeSnapshots) {
           try {
             engine.restoreShapes(snap.nodeId, snap.newShapes)
+          } catch {
+            void 0
+          }
+        }
+      }
+      if (placementSnapshot && parentNodeId) {
+        try {
+          const colId = (snapshot as Record<string, unknown>)?.id as string
+          const start = ((placementSnapshot as Record<string, unknown>)?.startTime as number) ?? 0
+          if (colId) engine.placeCollection(colId, parentNodeId, start)
+        } catch {
+          void 0
+        }
+      }
+      return
+    }
+    case 'ReverseMirrorCollection': {
+      const inv = _inverse as Record<string, unknown> | null
+      const snapshot = inv?.snapshot as unknown
+      const clipSnapshots = inv?.clipSnapshots as unknown[] | undefined
+      const placementSnapshot = inv?.placementSnapshot as Record<string, unknown> | undefined
+      const parentNodeId = inv?.parentNodeId as string | undefined
+      if (clipSnapshots) {
+        for (const cs of clipSnapshots) {
+          try {
+            const clip = ClipDefinition.fromJSON(cs as unknown as import('../json').ClipJSON)
+            engine.importClip(clip)
+          } catch {
+            void 0
+          }
+        }
+      }
+      if (snapshot) {
+        try {
+          const col = ClipCollection.fromJSON(
+            snapshot as unknown as import('../json').ClipCollectionJSON,
+          )
+          engine.importClipCollection(col)
+        } catch {
+          try {
+            engine.restoreClipCollectionFromJSON(snapshot)
           } catch {
             void 0
           }
