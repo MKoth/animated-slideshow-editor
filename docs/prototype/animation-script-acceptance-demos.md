@@ -208,3 +208,11 @@ parallel {                                          // tracking flight: rotation
 - Are holes 1–4 (method vocabulary, read syntax, arrow math, sampling) spec work, or should some move to the library ticket #366?
 - Is hole 6 (per-part data) acceptable as hand-written statements for v1, with typed params coming from #366?
 - Any beat that reads as "the language contorts here" — that's the signal this sketch exists to catch.
+
+## Verdict (HITL reaction, 2026-09-24)
+
+- **Demo A scene model confirmed:** endings land in empty form cells; the stem is shown once above the table. R-drop = drop the `-ar`.
+- **No beat reads as a contortion** — the four sketches are accepted as the expressiveness proof.
+- **Hole ownership:** the **spec owns the language surface** (method vocabulary, read syntax, `table(...)` grammar, `for` over aliases, member addressing, sample-rate default); **#366 owns expressions and the `pointArrowAt` body math**.
+- **Per-part data:** hand-written per-node statements are acceptable for v1; typed params / data rows arrive from #366.
+- **Negative findings:** no fixed beats (`mark('m', t)`) were needed; no engine addition is demanded. World→local projection stays a recorded v1 boundary, not a blocker.
