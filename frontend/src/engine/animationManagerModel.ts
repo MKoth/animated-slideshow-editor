@@ -21,7 +21,7 @@ import { snapKeyframeTime } from './timelineSnapping'
 import type { CollectionPlacement } from './collectionPlacement'
 import type { ClipCollection } from './clipCollection'
 import type { Control } from './control'
-import { CONTROL_INTERVAL_MIN_SPAN } from './control'
+import { CONTROL_INTERVAL_MIN_SPAN, groupCollectionBlocks } from './control'
 
 export type ManagerTab = 'collections' | 'clips' | 'controls' | 'orphans'
 
@@ -500,8 +500,19 @@ export function packClipLanesForNode(
 }
 
 export interface PackedControlBlock {
+  readonly kind: 'clip' | 'collection'
   readonly semanticName: string
   readonly clipId: string
+  /** Set for collection entries: the referenced ClipCollection id. */
+  readonly collectionId?: string
+  /** Set for collection entries: display name (null-safe fallback to id). */
+  readonly collectionName?: string
+  /** Set for collection entries: the ControlCollectionBlock id (stable UI identity). */
+  readonly blockId?: string
+  /** Owning timeline for collection entries (drill-in merged view spans groups). */
+  readonly groupId?: string
+  /** Set for collection entries: number of semantic bindings in the collection. */
+  readonly memberCount?: number
   readonly clip: ClipDefinition | null
   readonly start: number
   readonly end: number
@@ -519,16 +530,27 @@ export interface PackedControlBlock {
  * stack into vertical tracks, lower track = higher Priority (later wins).
  * `pps` maps normalized units to pixels: left=start*pps, width=(end-start)*pps.
  * Overlap via Priority stacking mirrors clip Lane packing.
+ *
+ * Live-linked collection blocks (one grouped entry per block, appended after
+ * clip entries) participate in the same packing: later index = lower lane =
+ * wins evaluation, matching `#getGroupClips` (collections win ties in-group).
  */
 export function packControlIntervalBlocks(
   control: Control,
   getClip: (clipId: string) => ClipDefinition | null,
   pixelsPerSecond: number,
   previewOverrides?: Map<string, { start: number; end: number }>,
+  getCollection?: (collectionId: string) => ClipCollection | null,
 ): readonly PackedControlBlock[] {
   const entries: {
+    kind: 'clip' | 'collection'
     semanticName: string
     clipId: string
+    collectionId?: string
+    collectionName?: string
+    blockId?: string
+    groupId?: string
+    memberCount?: number
     clip: ClipDefinition | null
     start: number
     end: number
@@ -560,6 +582,7 @@ export function packControlIntervalBlocks(
         clip = null
       }
       entries.push({
+        kind: 'clip',
         semanticName,
         clipId: interval.clipId,
         clip,
@@ -569,6 +592,46 @@ export function packControlIntervalBlocks(
         uniqueId: `${semanticName}::${interval.clipId}::${globalIndex}`,
       })
       globalIndex += 1
+    }
+  }
+  if (getCollection) {
+    for (const group of control.groups ?? []) {
+      for (const block of groupCollectionBlocks(group)) {
+        const override = previewOverrides?.get(`collection::${block.id}`)
+        const start = override ? override.start : block.start
+        const end = override ? override.end : block.end
+        if (end - start < CONTROL_INTERVAL_MIN_SPAN - 1e-9) {
+          globalIndex += 1
+          continue
+        }
+        let collectionName: string | undefined
+        let memberCount: number | undefined
+        try {
+          const collection = getCollection(block.collectionId)
+          if (collection) {
+            collectionName = collection.name
+            memberCount = collection.bindings.size
+          }
+        } catch {
+          collectionName = undefined
+        }
+        entries.push({
+          kind: 'collection',
+          semanticName: '',
+          clipId: '',
+          collectionId: block.collectionId,
+          collectionName,
+          blockId: block.id,
+          groupId: group.id,
+          memberCount,
+          clip: null,
+          start,
+          end,
+          index: globalIndex,
+          uniqueId: `collection::${block.id}::${globalIndex}`,
+        })
+        globalIndex += 1
+      }
     }
   }
   const sorted = [...entries].sort((a, b) => a.start - b.start || a.index - b.index)
@@ -596,8 +659,14 @@ export function packControlIntervalBlocks(
     const left = e.start * pps
     const width = (e.end - e.start) * pps
     return {
+      kind: e.kind,
       semanticName: e.semanticName,
       clipId: e.clipId,
+      ...(e.collectionId !== undefined ? { collectionId: e.collectionId } : {}),
+      ...(e.collectionName !== undefined ? { collectionName: e.collectionName } : {}),
+      ...(e.blockId !== undefined ? { blockId: e.blockId } : {}),
+      ...(e.groupId !== undefined ? { groupId: e.groupId } : {}),
+      ...(e.memberCount !== undefined ? { memberCount: e.memberCount } : {}),
       clip: e.clip,
       start: e.start,
       end: e.end,

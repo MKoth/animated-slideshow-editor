@@ -158,6 +158,19 @@ export type ControlGroupJSON = {
   readonly id: string
   readonly name: string
   readonly bindings: Readonly<Record<string, ControlBindingJSONValue>>
+  /**
+   * Live-linked clip-collection blocks on the control value axis.
+   * Each block fans out to the collection's semantic bindings at read time.
+   * Absent (or empty) = clip-only group; old files remain readable.
+   */
+  readonly collectionBlocks?: readonly ControlCollectionBlockJSON[]
+}
+
+export type ControlCollectionBlockJSON = {
+  readonly id: string
+  readonly collectionId: string
+  readonly start: number
+  readonly end: number
 }
 
 export type ControlJSON = {

@@ -1,5 +1,3 @@
-/* eslint-disable react-hooks/set-state-in-effect */
-
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { useEngine, useEngineEvent } from '../../app/useEngine'
 import {
@@ -133,6 +131,12 @@ import {
   removeGroupFromControlSet,
   mergeGroupBindings,
   moveBindingBetweenGroups,
+  groupCollectionBlocks,
+  addCollectionBlockToGroup,
+  removeCollectionBlockFromGroup,
+  updateCollectionBlockInterval,
+  reorderCollectionBlockWithinGroup,
+  moveCollectionBlockBetweenGroups,
 } from '../../engine/control'
 import { SetControlBlendCommand } from '../../engine/commands/setControlBlendCommand'
 import { useAnimationManagerNavStore } from '../../stores/animationManagerNavStore'
@@ -265,6 +269,9 @@ type DragState =
       groupId?: string
       semanticName: string
       clipId?: string
+      /** Set for live-linked collection blocks (semanticName is unused there) */
+      kind?: 'clip' | 'collection'
+      blockId?: string
       initialStart: number
       initialEnd: number
       span: number
@@ -283,6 +290,9 @@ type DragState =
       groupId?: string
       semanticName: string
       clipId?: string
+      /** Set for live-linked collection blocks (semanticName is unused there) */
+      kind?: 'clip' | 'collection'
+      blockId?: string
       initialStart: number
       initialEnd: number
       startX: number
@@ -299,6 +309,9 @@ type DragState =
       groupId?: string
       semanticName: string
       clipId?: string
+      /** Set for live-linked collection blocks (semanticName is unused there) */
+      kind?: 'clip' | 'collection'
+      blockId?: string
       initialStart: number
       initialEnd: number
       startX: number
@@ -314,6 +327,9 @@ type DragState =
       /** Owning timeline for per-group lanes; absent = legacy merged/drill-in drag */
       groupId?: string
       semanticName: string
+      /** Set for live-linked collection blocks (indices address collectionBlocks) */
+      kind?: 'clip' | 'collection'
+      blockId?: string
       initialIndex: number
       previewIndex: number
       startY: number
@@ -464,6 +480,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     clipId: string
     start: number
     end: number
+    /** Set for grouped collection blocks (semanticName/clipId unused there) */
+    kind?: 'clip' | 'collection'
+    blockId?: string
+    collectionId?: string
   } | null>(null)
   const [reverseClipPrompt, setReverseClipPrompt] = useState<{
     clipId: string
@@ -516,8 +536,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const [addBlockDialog, setAddBlockDialog] = useState<{
     controlKey: string
     draftGroupId: string
+    mode: 'clip' | 'collection'
     draftSemantic: string
     draftClipId: string
+    draftCollectionId: string
     error: string | null
   } | null>(null)
   const notify = useNotificationStore((s) => s.notify)
@@ -1024,6 +1046,129 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     },
     [parentNode, writeControlGroupBindings],
   )
+
+  /** Remove one grouped collection block from a timeline by block id. */
+  const removeControlCollectionBlock = useCallback(
+    (args: { controlKey: string; groupId: string; blockId: string }): boolean => {
+      if (!parentNode?.controlSet) return false
+      try {
+        const nextSet = removeCollectionBlockFromGroup(
+          parentNode.controlSet,
+          args.controlKey,
+          args.groupId,
+          args.blockId,
+        )
+        const res = dispatch(
+          new SetControlSetCommand({ nodeId: parentNode.id, controlSet: nextSet }),
+        )
+        if (!res.ok) {
+          notify(res.error.message)
+          return false
+        }
+        setTick((v) => v + 1)
+        return true
+      } catch (err) {
+        notify(err instanceof Error ? err.message : String(err))
+        return false
+      }
+    },
+    [dispatch, notify, parentNode],
+  )
+
+  /**
+   * Commit a drag move/resize for one grouped collection block.
+   * Returns false when the block wasn't found.
+   */
+  const commitGroupCollectionIntervalEdit = useCallback(
+    (args: {
+      controlKey: string
+      groupId: string
+      blockId: string
+      previewStart: number
+      previewEnd: number
+    }): boolean => {
+      if (!parentNode?.controlSet) return false
+      try {
+        const nextSet = updateCollectionBlockInterval(
+          parentNode.controlSet,
+          args.controlKey,
+          args.groupId,
+          args.blockId,
+          args.previewStart,
+          args.previewEnd,
+        )
+        const res = dispatch(
+          new SetControlSetCommand({ nodeId: parentNode.id, controlSet: nextSet }),
+        )
+        if (!res.ok) {
+          notify(res.error.message)
+          return false
+        }
+        setTick((v) => v + 1)
+        return true
+      } catch (err) {
+        notify(err instanceof Error ? err.message : String(err))
+        return false
+      }
+    },
+    [dispatch, notify, parentNode],
+  )
+
+  /**
+   * Reorder collection blocks inside one timeline (Priority stacking among
+   * collections; indices address that timeline's collectionBlocks array).
+   */
+  const reorderGroupCollectionBlock = useCallback(
+    (args: {
+      controlKey: string
+      groupId: string
+      fromIndex: number
+      toIndex: number
+    }): boolean => {
+      if (!parentNode?.controlSet) return false
+      try {
+        const nextSet = reorderCollectionBlockWithinGroup(
+          parentNode.controlSet,
+          args.controlKey,
+          args.groupId,
+          args.fromIndex,
+          args.toIndex,
+        )
+        const res = dispatch(
+          new SetControlSetCommand({ nodeId: parentNode.id, controlSet: nextSet }),
+        )
+        if (!res.ok) {
+          notify(res.error.message)
+          return false
+        }
+        setTick((v) => v + 1)
+        return true
+      } catch (err) {
+        notify(err instanceof Error ? err.message : String(err))
+        return false
+      }
+    },
+    [dispatch, notify, parentNode],
+  )
+
+  /**
+   * Hover a grouped collection block: highlight all member semantics at once
+   * (hover key is namespaced so clip rows never clash with it).
+   */
+  const handleCollectionHoverEnter = useCallback(
+    (blockId: string, memberSemantics: readonly string[]) => {
+      setHoveredBindingSemantic(`collection::${blockId}`)
+      const ids = new Set<string>()
+      for (const sem of memberSemantics) {
+        for (const n of descendantSemanticMap.get(sem) ?? []) ids.add(n.id)
+      }
+      if (ids.size > 0) {
+        previousSelectionRef.current = [...useSelectionStore.getState().selectedIds]
+        useSelectionStore.getState().selectMany([...ids])
+      }
+    },
+    [descendantSemanticMap],
+  )
   const handleUpdateControlInterval = useCallback(
     (controlKey: string, semanticName: string, start: number, end: number) => {
       if (!parentNodeId) return
@@ -1090,6 +1235,68 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const handleAddBlock = useCallback(
     (controlKey: string) => {
       if (!addBlockDialog || addBlockDialog.controlKey !== controlKey) return
+      if (!parentNode?.controlSet) return
+      const control = parentNode.controlSet.controls.find((c) => c.key === controlKey)
+      if (!control) return
+      // Resolve target timeline (group); default to first group
+      const targetGroup =
+        control.groups.find((g) => g.id === addBlockDialog.draftGroupId) ?? control.groups[0]
+      if (!targetGroup) return
+      if (addBlockDialog.mode === 'collection') {
+        const collectionId = addBlockDialog.draftCollectionId.trim()
+        if (!collectionId) {
+          setAddBlockDialog((prev) =>
+            prev ? { ...prev, error: 'Collection selection required' } : prev,
+          )
+          return
+        }
+        let collectionName = collectionId
+        let memberCount = 0
+        try {
+          const collection = engine.getClipCollection(collectionId)
+          collectionName = collection.name
+          memberCount = collection.bindings.size
+        } catch {
+          setAddBlockDialog((prev) => (prev ? { ...prev, error: 'Collection not found' } : prev))
+          return
+        }
+        if (memberCount === 0) {
+          setAddBlockDialog((prev) =>
+            prev ? { ...prev, error: 'Collection has no bindings' } : prev,
+          )
+          return
+        }
+        if (groupCollectionBlocks(targetGroup).some((b) => b.collectionId === collectionId)) {
+          setAddBlockDialog((prev) =>
+            prev ? { ...prev, error: 'Collection already attached to this timeline' } : prev,
+          )
+          return
+        }
+        try {
+          const nextSet = addCollectionBlockToGroup(
+            parentNode.controlSet,
+            controlKey,
+            targetGroup.id,
+            { collectionId, start: 0, end: 1 },
+          )
+          const res = dispatch(
+            new SetControlSetCommand({ nodeId: parentNode.id, controlSet: nextSet }),
+          )
+          if (!res.ok) {
+            setAddBlockDialog((prev) => (prev ? { ...prev, error: res.error.message } : prev))
+            return
+          }
+        } catch (err) {
+          setAddBlockDialog((prev) =>
+            prev ? { ...prev, error: err instanceof Error ? err.message : String(err) } : prev,
+          )
+          return
+        }
+        setAddBlockDialog(null)
+        setTick((v) => v + 1)
+        notify(`Attached collection "${collectionName}" to ${controlKey}`)
+        return
+      }
       const semantic = addBlockDialog.draftSemantic.trim()
       const clipId = addBlockDialog.draftClipId.trim()
       if (!semantic) {
@@ -1100,13 +1307,6 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         setAddBlockDialog((prev) => (prev ? { ...prev, error: 'Clip selection required' } : prev))
         return
       }
-      if (!parentNode?.controlSet) return
-      const control = parentNode.controlSet.controls.find((c) => c.key === controlKey)
-      if (!control) return
-      // Resolve target timeline (group); default to first group
-      const targetGroup =
-        control.groups.find((g) => g.id === addBlockDialog.draftGroupId) ?? control.groups[0]
-      if (!targetGroup) return
       // Allow multiple clips per same semantic – no duplicate check (array per semantic)
       // Check clip exists
       try {
@@ -2830,17 +3030,28 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         if (Math.abs(deltaY) > Math.abs(deltaPx) && Math.abs(deltaY) > 8) {
           // Switch to reorder if vertical dominant — use flat index for array-per-semantic.
           // Per-timeline lane drags reorder within their own timeline.
+          // Collection blocks reorder within their own sub-list (indices address
+          // collectionBlocks, not the clip flat list).
           const control = parentNode?.controlSet?.controls.find(
             (c) => c.key === dragState.controlKey,
           )
           const reorderGroupId = (dragState as unknown as { groupId?: string }).groupId
+          const reorderKind = (dragState as unknown as { kind?: string }).kind
+          const reorderBlockId = (dragState as unknown as { blockId?: string }).blockId
           const reorderScope =
             reorderGroupId !== undefined
               ? control?.groups.find((g) => g.id === reorderGroupId)?.bindings
               : control?.bindings
           let initialIdx = 0
           let count = 1
-          if (control && reorderScope) {
+          if (reorderKind === 'collection' && reorderGroupId !== undefined && control) {
+            const blocks = groupCollectionBlocks(
+              control.groups.find((g) => g.id === reorderGroupId),
+            )
+            const found = blocks.findIndex((b) => b.id === reorderBlockId)
+            initialIdx = found !== -1 ? found : 0
+            count = Math.max(blocks.length, 1)
+          } else if (control && reorderScope) {
             const flat = flattenControlBindings(
               reorderScope as unknown as Record<
                 string,
@@ -2887,6 +3098,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             nodeId: dragState.nodeId,
             controlKey: dragState.controlKey,
             ...(reorderGroupId !== undefined ? { groupId: reorderGroupId } : {}),
+            ...(reorderKind === 'collection' && reorderBlockId !== undefined
+              ? { kind: 'collection' as const, blockId: reorderBlockId }
+              : {}),
             semanticName: dragState.semanticName,
             initialIndex: initialIdx >= 0 ? initialIdx : 0,
             previewIndex: Math.max(
@@ -2974,14 +3188,28 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       } else if (dragState.mode === 'interval-reorder') {
         const deltaY = e.clientY - dragState.startY
         const control = parentNode?.controlSet?.controls.find((c) => c.key === dragState.controlKey)
-        const count = control
-          ? flattenControlBindings(
-              control.bindings as unknown as Record<
-                string,
-                import('../../engine/control').ControlBindingValue
-              >,
-            ).length
-          : 1
+        const reorderDrag = dragState as unknown as {
+          kind?: string
+          groupId?: string
+        }
+        // Collection blocks reorder within their own sub-list; clip blocks use
+        // the (legacy merged) flat count. Group-scoped clip counts are resolved
+        // at commit time by reorderGroupBinding.
+        const count =
+          reorderDrag.kind === 'collection' && reorderDrag.groupId && control
+            ? Math.max(
+                groupCollectionBlocks(control.groups.find((g) => g.id === reorderDrag.groupId))
+                  .length,
+                1,
+              )
+            : control
+              ? flattenControlBindings(
+                  control.bindings as unknown as Record<
+                    string,
+                    import('../../engine/control').ControlBindingValue
+                  >,
+                ).length
+              : 1
         const newIndex = Math.max(
           0,
           Math.min(count - 1, Math.round(dragState.initialIndex + deltaY / CLIP_LANE_HEIGHT_PX)),
@@ -3181,7 +3409,21 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           try {
             // Per-timeline lane drags commit into their own timeline.
             const groupDrag = current as unknown as { groupId?: string; clipId?: string }
-            if (groupDrag.groupId) {
+            const collDrag = current as unknown as {
+              kind?: string
+              blockId?: string
+              groupId?: string
+            }
+            if (collDrag.kind === 'collection' && collDrag.groupId && collDrag.blockId) {
+              const ok = commitGroupCollectionIntervalEdit({
+                controlKey: current.controlKey,
+                groupId: collDrag.groupId,
+                blockId: collDrag.blockId,
+                previewStart: current.previewStart,
+                previewEnd: current.previewEnd,
+              })
+              if (!ok) notify('Block not found in its timeline — no change applied')
+            } else if (groupDrag.groupId) {
               const ok = commitGroupIntervalEdit({
                 controlKey: current.controlKey,
                 groupId: groupDrag.groupId,
@@ -3314,7 +3556,21 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           try {
             // Per-timeline lane drags commit into their own timeline.
             const groupResize = current as unknown as { groupId?: string; clipId?: string }
-            if (groupResize.groupId) {
+            const collResize = current as unknown as {
+              kind?: string
+              blockId?: string
+              groupId?: string
+            }
+            if (collResize.kind === 'collection' && collResize.groupId && collResize.blockId) {
+              const ok = commitGroupCollectionIntervalEdit({
+                controlKey: current.controlKey,
+                groupId: collResize.groupId,
+                blockId: collResize.blockId,
+                previewStart: current.previewStart,
+                previewEnd: current.previewEnd,
+              })
+              if (!ok) notify('Block not found in its timeline — no change applied')
+            } else if (groupResize.groupId) {
               const ok = commitGroupIntervalEdit({
                 controlKey: current.controlKey,
                 groupId: groupResize.groupId,
@@ -3440,7 +3696,20 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
           try {
             // Per-timeline lane reorder commits into its own timeline.
             const groupReorder = current as unknown as { groupId?: string }
-            if (groupReorder.groupId) {
+            const collReorder = current as unknown as {
+              kind?: string
+              blockId?: string
+              groupId?: string
+            }
+            if (collReorder.kind === 'collection' && collReorder.groupId) {
+              const ok = reorderGroupCollectionBlock({
+                controlKey: current.controlKey,
+                groupId: collReorder.groupId,
+                fromIndex: current.initialIndex,
+                toIndex: current.previewIndex,
+              })
+              if (!ok) notify('Block not found in its timeline — no change applied')
+            } else if (groupReorder.groupId) {
               const ok = reorderGroupBinding({
                 controlKey: current.controlKey,
                 groupId: groupReorder.groupId,
@@ -3531,6 +3800,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     notify,
     commitGroupIntervalEdit,
     reorderGroupBinding,
+    commitGroupCollectionIntervalEdit,
+    reorderGroupCollectionBlock,
   ])
 
   if (!open) return null
@@ -4764,10 +5035,17 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               const ds = dragState as unknown as {
                 semanticName: string
                 clipId?: string
+                kind?: string
+                blockId?: string
                 initialStart?: number
                 initialEnd?: number
               }
-              if (ds.clipId !== undefined) {
+              if (ds.kind === 'collection' && ds.blockId) {
+                previewOverrides.set(`collection::${ds.blockId}`, {
+                  start: dragState.previewStart,
+                  end: dragState.previewEnd,
+                })
+              } else if (ds.clipId !== undefined) {
                 // Find flat index for uniqueId: need to locate binding index for this clip+interval — epsilon tolerant
                 const flat = flattenControlBindings(
                   ctrl.bindings as unknown as Record<
@@ -4825,6 +5103,13 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               },
               pps,
               previewOverrides,
+              (id: string) => {
+                try {
+                  return engine.getClipCollection(id)
+                } catch {
+                  return null
+                }
+              },
             )
             const maxTrack = packed.length > 0 ? Math.max(...packed.map((b) => b.track)) : 0
             const laneHeight = (maxTrack + 1) * CLIP_LANE_HEIGHT_PX
@@ -4949,6 +5234,187 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                     }}
                   >
                     {packed.map((block) => {
+                      if (block.kind === 'collection') {
+                        const resolved = (() => {
+                          try {
+                            return block.collectionId
+                              ? engine.getClipCollection(block.collectionId)
+                              : null
+                          } catch {
+                            return null
+                          }
+                        })()
+                        const missing = resolved === null
+                        const memberSemantics = resolved ? [...resolved.bindings.keys()] : []
+                        const memberCount = resolved ? resolved.bindings.size : 0
+                        const collectionName =
+                          block.collectionName ??
+                          resolved?.name ??
+                          (block.collectionId ?? '').slice(0, 8)
+                        const hoverKey = `collection::${block.blockId}`
+                        const dragMatch =
+                          !!dragState &&
+                          (dragState.mode === 'interval-move' ||
+                            dragState.mode === 'interval-resize-left' ||
+                            dragState.mode === 'interval-resize-right') &&
+                          (dragState as unknown as { controlKey: string }).controlKey ===
+                            ctrl.key &&
+                          (dragState as unknown as { kind?: string }).kind === 'collection' &&
+                          (dragState as unknown as { blockId?: string }).blockId === block.blockId
+                        const startForBlock = dragMatch
+                          ? (dragState as unknown as { previewStart: number }).previewStart
+                          : block.start
+                        const endForBlock = dragMatch
+                          ? (dragState as unknown as { previewEnd: number }).previewEnd
+                          : block.end
+                        const beginDrag = (
+                          mode: 'interval-move' | 'interval-resize-left' | 'interval-resize-right',
+                          e: React.PointerEvent,
+                        ) => {
+                          if (e.button !== 0 || !block.groupId || !block.blockId) return
+                          e.preventDefault()
+                          e.stopPropagation()
+                          setDragState({
+                            mode,
+                            nodeId: parentNode!.id,
+                            controlKey: ctrl.key,
+                            groupId: block.groupId,
+                            semanticName: '',
+                            kind: 'collection',
+                            blockId: block.blockId,
+                            initialStart: block.start,
+                            initialEnd: block.end,
+                            span: block.end - block.start,
+                            startX: e.clientX,
+                            startY: e.clientY,
+                            previewStart: startForBlock,
+                            previewEnd: endForBlock,
+                          } as unknown as DragState)
+                        }
+                        return (
+                          <div
+                            key={`collection::${block.blockId}::${block.priority}`}
+                            data-testid={`collection-block-${ctrl.key}-${block.blockId}`}
+                            data-collection={block.collectionId}
+                            data-start={String(startForBlock)}
+                            data-end={String(endForBlock)}
+                            data-track={String(block.track)}
+                            title={
+                              missing
+                                ? `▦ collection "${block.collectionId}" is missing (does nothing) — right-click to detach`
+                                : `▦ ${collectionName} [${startForBlock.toFixed(3)}, ${endForBlock.toFixed(3)}] — ${memberCount} clip${memberCount === 1 ? '' : 's'}: ${memberSemantics.join(', ')} — drag body=move, edges=resize`
+                            }
+                            onContextMenu={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              if (!block.groupId || !block.blockId) return
+                              setControlBlockMenu({
+                                x: e.clientX,
+                                y: e.clientY,
+                                controlKey: ctrl.key,
+                                groupId: block.groupId,
+                                semanticName: '',
+                                clipId: '',
+                                start: block.start,
+                                end: block.end,
+                                kind: 'collection',
+                                blockId: block.blockId,
+                                collectionId: block.collectionId,
+                              })
+                            }}
+                            onMouseEnter={() =>
+                              handleCollectionHoverEnter(block.blockId ?? '', memberSemantics)
+                            }
+                            onMouseLeave={handleBindingHoverLeave}
+                            style={{
+                              position: 'absolute',
+                              left: block.left,
+                              width: Math.max(block.width, 8),
+                              top: block.track * CLIP_LANE_HEIGHT_PX + 2,
+                              height: CLIP_LANE_BAR_HEIGHT_PX,
+                              background:
+                                dragMatch || hoveredBindingSemantic === hoverKey
+                                  ? '#0e9f6e'
+                                  : '#a7e3c7',
+                              border: `1px solid ${dragMatch ? '#064e3b' : missing ? '#c00' : '#0e9f6e'}`,
+                              borderRadius: 4,
+                              display: 'flex',
+                              alignItems: 'center',
+                              padding: '0 8px',
+                              boxSizing: 'border-box',
+                              cursor: dragMatch ? 'grabbing' : 'grab',
+                              zIndex: block.zIndex,
+                              userSelect: 'none',
+                              overflow: 'hidden',
+                              opacity: dragMatch ? 0.95 : 1,
+                            }}
+                            onPointerDown={(e) => {
+                              const target = e.target as HTMLElement
+                              if (
+                                target.dataset.handle === 'left' ||
+                                target.dataset.handle === 'right'
+                              )
+                                return
+                              beginDrag('interval-move', e)
+                            }}
+                          >
+                            <span
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 600,
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                flex: 1,
+                                pointerEvents: 'none',
+                                color: '#064e3b',
+                              }}
+                            >
+                              {missing ? '⚠ ' : '▦ '}
+                              {collectionName} ({memberCount})
+                            </span>
+                            <span
+                              style={{
+                                fontSize: 9,
+                                fontFamily: 'monospace',
+                                marginLeft: 6,
+                                pointerEvents: 'none',
+                                color: '#064e3b',
+                              }}
+                            >
+                              [{startForBlock.toFixed(2)},{endForBlock.toFixed(2)}]
+                            </span>
+                            <div
+                              data-handle="left"
+                              style={{
+                                position: 'absolute',
+                                left: 0,
+                                top: 0,
+                                bottom: 0,
+                                width: CLIP_HANDLE_WIDTH_PX,
+                                cursor: 'ew-resize',
+                                background: 'rgba(0,0,0,0.08)',
+                                borderRight: '1px solid rgba(0,0,0,0.15)',
+                              }}
+                              onPointerDown={(e) => beginDrag('interval-resize-left', e)}
+                            />
+                            <div
+                              data-handle="right"
+                              style={{
+                                position: 'absolute',
+                                right: 0,
+                                top: 0,
+                                bottom: 0,
+                                width: CLIP_HANDLE_WIDTH_PX,
+                                cursor: 'ew-resize',
+                                background: 'rgba(0,0,0,0.08)',
+                                borderLeft: '1px solid rgba(0,0,0,0.15)',
+                              }}
+                              onPointerDown={(e) => beginDrag('interval-resize-right', e)}
+                            />
+                          </div>
+                        )
+                      }
                       const isDraggingMoveResize =
                         !!dragState &&
                         (dragState.mode === 'interval-move' ||
@@ -5555,8 +6021,14 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                             T{gi + 1}: {group.name}
                           </span>
                           <span style={{ fontSize: 10, color: 'var(--color-text-muted, #666)' }}>
-                            {Object.keys(group.bindings).length} block
-                            {Object.keys(group.bindings).length === 1 ? '' : 's'}
+                            {Object.keys(group.bindings).length +
+                              groupCollectionBlocks(group).length}{' '}
+                            block
+                            {Object.keys(group.bindings).length +
+                              groupCollectionBlocks(group).length ===
+                            1
+                              ? ''
+                              : 's'}
                           </span>
                           <button
                             data-testid={`manager-control-add-block-here-${control.key}-${gi}`}
@@ -5564,8 +6036,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                               setAddBlockDialog({
                                 controlKey: control.key,
                                 draftGroupId: group.id,
+                                mode: 'clip',
                                 draftSemantic: '',
                                 draftClipId: availableClipsForBinding[0]?.id ?? '',
+                                draftCollectionId: engine.clipCollections[0]?.id ?? '',
                                 error: null,
                               })
                             }
@@ -5600,65 +6074,79 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                             dragState.controlKey === control.key &&
                             (dragState as unknown as { groupId?: string }).groupId === group.id
                           ) {
-                            const dragWithClip = dragState as unknown as {
-                              clipId?: string
-                              initialStart?: number
-                              initialEnd?: number
-                            }
-                            const EPS = 1e-9
-                            const targetBlk = groupFlat.find((f) => {
-                              if (f.semantic !== dragState.semanticName) return false
-                              const raw = f.binding as unknown as {
+                            const dragKind = (dragState as unknown as { kind?: string }).kind
+                            const dragBlockId = (dragState as unknown as { blockId?: string })
+                              .blockId
+                            if (dragKind === 'collection' && dragBlockId) {
+                              previewOverrides.set(`collection::${dragBlockId}`, {
+                                start: dragState.previewStart,
+                                end: dragState.previewEnd,
+                              })
+                            } else {
+                              const dragWithClip = dragState as unknown as {
                                 clipId?: string
-                                start?: number
-                                end?: number
+                                initialStart?: number
+                                initialEnd?: number
                               }
-                              const cid =
-                                typeof f.binding === 'string'
-                                  ? (f.binding as string)
-                                  : (raw.clipId ?? '')
-                              if (dragWithClip.clipId && cid !== dragWithClip.clipId) return false
-                              const bStart =
-                                typeof (f.binding as { start?: number }).start === 'number'
-                                  ? (f.binding as { start?: number }).start!
-                                  : 0
-                              const bEnd =
-                                typeof (f.binding as { end?: number }).end === 'number'
-                                  ? (f.binding as { end?: number }).end!
-                                  : 1
-                              if (
-                                dragWithClip.initialStart !== undefined &&
-                                Math.abs(bStart - dragWithClip.initialStart) > EPS
-                              )
-                                return false
-                              if (
-                                dragWithClip.initialEnd !== undefined &&
-                                Math.abs(bEnd - dragWithClip.initialEnd) > EPS
-                              )
-                                return false
-                              return true
-                            })
-                            const blk =
-                              targetBlk ??
-                              groupFlat.find((f) => f.semantic === dragState.semanticName)
-                            if (blk) {
-                              const raw = blk.binding as unknown as { clipId?: string }
-                              const cid =
-                                typeof blk.binding === 'string'
-                                  ? (blk.binding as string)
-                                  : (raw.clipId ?? '')
-                              previewOverrides.set(
-                                `${dragState.semanticName}::${cid}::${blk.index}`,
-                                {
-                                  start: dragState.previewStart,
-                                  end: dragState.previewEnd,
-                                },
-                              )
+                              const EPS = 1e-9
+                              const targetBlk = groupFlat.find((f) => {
+                                if (f.semantic !== dragState.semanticName) return false
+                                const raw = f.binding as unknown as {
+                                  clipId?: string
+                                  start?: number
+                                  end?: number
+                                }
+                                const cid =
+                                  typeof f.binding === 'string'
+                                    ? (f.binding as string)
+                                    : (raw.clipId ?? '')
+                                if (dragWithClip.clipId && cid !== dragWithClip.clipId) return false
+                                const bStart =
+                                  typeof (f.binding as { start?: number }).start === 'number'
+                                    ? (f.binding as { start?: number }).start!
+                                    : 0
+                                const bEnd =
+                                  typeof (f.binding as { end?: number }).end === 'number'
+                                    ? (f.binding as { end?: number }).end!
+                                    : 1
+                                if (
+                                  dragWithClip.initialStart !== undefined &&
+                                  Math.abs(bStart - dragWithClip.initialStart) > EPS
+                                )
+                                  return false
+                                if (
+                                  dragWithClip.initialEnd !== undefined &&
+                                  Math.abs(bEnd - dragWithClip.initialEnd) > EPS
+                                )
+                                  return false
+                                return true
+                              })
+                              const blk =
+                                targetBlk ??
+                                groupFlat.find((f) => f.semantic === dragState.semanticName)
+                              if (blk) {
+                                const raw = blk.binding as unknown as { clipId?: string }
+                                const cid =
+                                  typeof blk.binding === 'string'
+                                    ? (blk.binding as string)
+                                    : (raw.clipId ?? '')
+                                previewOverrides.set(
+                                  `${dragState.semanticName}::${cid}::${blk.index}`,
+                                  {
+                                    start: dragState.previewStart,
+                                    end: dragState.previewEnd,
+                                  },
+                                )
+                              }
                             }
                           }
                           const lanePps = Math.max(pps, 600)
-                          // Per-timeline lane: group-local order drives vertical stacking (later wins = lower lane)
-                          const laneHeight = groupFlat.length * CLIP_LANE_HEIGHT_PX
+                          // Per-timeline lane: group-local order drives vertical stacking (later wins = lower lane).
+                          // Clip blocks come first; grouped collection blocks stack below them
+                          // (collections win ties within a timeline, matching evaluation).
+                          const collectionBlocks = groupCollectionBlocks(group)
+                          const laneHeight =
+                            (groupFlat.length + collectionBlocks.length) * CLIP_LANE_HEIGHT_PX
                           const step = rulerTickStep(lanePps)
                           const ticks = rulerTickTimes(0, 1, step)
                           return (
@@ -6100,7 +6588,347 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                       </div>
                                     )
                                   })}
-                                  {groupFlat.length === 0 && (
+                                  {collectionBlocks.map((block, ci) => {
+                                    const rowIdx = groupFlat.length + ci
+                                    const resolved = (() => {
+                                      try {
+                                        return engine.getClipCollection(block.collectionId)
+                                      } catch {
+                                        return null
+                                      }
+                                    })()
+                                    const missing = resolved === null
+                                    const memberSemantics = resolved
+                                      ? [...resolved.bindings.keys()]
+                                      : []
+                                    const memberCount = resolved ? resolved.bindings.size : 0
+                                    const collectionName =
+                                      resolved?.name ?? block.collectionId.slice(0, 8)
+                                    const matchedNames = memberSemantics.flatMap(
+                                      (sem) =>
+                                        descendantSemanticMap.get(sem)?.map((n) => n.name) ?? [],
+                                    )
+                                    const hoverKey = `collection::${block.id}`
+                                    const isDraggingMoveResize =
+                                      !!dragState &&
+                                      (dragState.mode === 'interval-move' ||
+                                        dragState.mode === 'interval-resize-left' ||
+                                        dragState.mode === 'interval-resize-right') &&
+                                      (dragState as unknown as { controlKey: string })
+                                        .controlKey === control.key &&
+                                      (dragState as unknown as { groupId?: string }).groupId ===
+                                        group.id &&
+                                      (dragState as unknown as { kind?: string }).kind ===
+                                        'collection' &&
+                                      (dragState as unknown as { blockId?: string }).blockId ===
+                                        block.id
+                                    const isDraggingReorder =
+                                      !!dragState &&
+                                      dragState.mode === 'interval-reorder' &&
+                                      (dragState as unknown as { controlKey: string })
+                                        .controlKey === control.key &&
+                                      (dragState as unknown as { groupId?: string }).groupId ===
+                                        group.id &&
+                                      (dragState as unknown as { kind?: string }).kind ===
+                                        'collection' &&
+                                      (dragState as unknown as { initialIndex: number })
+                                        .initialIndex === ci
+                                    const isDragging = isDraggingMoveResize || isDraggingReorder
+                                    const startForBlock = isDraggingMoveResize
+                                      ? (dragState as unknown as { previewStart: number })
+                                          .previewStart
+                                      : block.start
+                                    const endForBlock = isDraggingMoveResize
+                                      ? (dragState as unknown as { previewEnd: number }).previewEnd
+                                      : block.end
+                                    const spanForBlock = endForBlock - startForBlock
+                                    const left = `${startForBlock * 100}%`
+                                    const width = `${spanForBlock * 100}%`
+                                    return (
+                                      <div
+                                        key={`collection::${block.id}`}
+                                        data-testid={`collection-block-inline-${control.key}-g${gi}-${ci}`}
+                                        data-collection={block.collectionId}
+                                        data-start={String(startForBlock)}
+                                        data-end={String(endForBlock)}
+                                        data-track={String(rowIdx)}
+                                        title={
+                                          missing
+                                            ? `T${gi + 1} · collection "${block.collectionId}" is missing (does nothing) — right-click to remove`
+                                            : `T${gi + 1} · ▦ ${collectionName} [${startForBlock.toFixed(3)}, ${endForBlock.toFixed(3)}] — ${memberCount} clip${memberCount === 1 ? '' : 's'}: ${memberSemantics.join(', ')}${matchedNames.length > 0 ? ` — drives: ${matchedNames.join(', ')}` : ' — NO descendant match (does nothing)'} — drag body=move, edges=resize, drag vertically=reorder`
+                                        }
+                                        onContextMenu={(e) => {
+                                          e.preventDefault()
+                                          e.stopPropagation()
+                                          setControlBlockMenu({
+                                            x: e.clientX,
+                                            y: e.clientY,
+                                            controlKey: control.key,
+                                            groupId: group.id,
+                                            semanticName: '',
+                                            clipId: '',
+                                            start: block.start,
+                                            end: block.end,
+                                            kind: 'collection',
+                                            blockId: block.id,
+                                            collectionId: block.collectionId,
+                                          })
+                                        }}
+                                        onMouseEnter={() =>
+                                          handleCollectionHoverEnter(block.id, memberSemantics)
+                                        }
+                                        onMouseLeave={handleBindingHoverLeave}
+                                        style={{
+                                          position: 'absolute',
+                                          left,
+                                          width,
+                                          minWidth: 8,
+                                          top: rowIdx * CLIP_LANE_HEIGHT_PX + 2,
+                                          height: CLIP_LANE_BAR_HEIGHT_PX,
+                                          background:
+                                            isDragging || hoveredBindingSemantic === hoverKey
+                                              ? '#0e9f6e'
+                                              : '#a7e3c7',
+                                          border: `1px solid ${isDragging ? '#064e3b' : missing ? '#c00' : '#0e9f6e'}`,
+                                          borderRadius: 4,
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          padding: '0 8px',
+                                          boxSizing: 'border-box',
+                                          cursor: isDragging ? 'grabbing' : 'grab',
+                                          zIndex: rowIdx,
+                                          userSelect: 'none',
+                                          overflow: 'hidden',
+                                          opacity: isDragging ? 0.95 : 1,
+                                        }}
+                                        onPointerDown={(e) => {
+                                          const target = e.target as HTMLElement
+                                          if (
+                                            target.dataset.handle === 'left' ||
+                                            target.dataset.handle === 'right'
+                                          )
+                                            return
+                                          if (e.button !== 0) return
+                                          e.preventDefault()
+                                          e.stopPropagation()
+                                          const span = endForBlock - startForBlock
+                                          const laneEl = (e.currentTarget as HTMLElement).closest(
+                                            '[data-testid^="control-interval-lane-inline"]',
+                                          ) as HTMLElement | null
+                                          const laneWidth =
+                                            laneEl?.getBoundingClientRect().width ?? lanePps
+                                          setDragState({
+                                            mode: 'interval-move',
+                                            nodeId: parentNode!.id,
+                                            controlKey: control.key,
+                                            groupId: group.id,
+                                            semanticName: '',
+                                            kind: 'collection',
+                                            blockId: block.id,
+                                            initialStart: block.start,
+                                            initialEnd: block.end,
+                                            span,
+                                            startX: e.clientX,
+                                            startY: e.clientY,
+                                            previewStart: startForBlock,
+                                            previewEnd: endForBlock,
+                                            effectivePps: lanePps,
+                                            laneWidth,
+                                          } as unknown as DragState)
+                                        }}
+                                      >
+                                        <span
+                                          style={{
+                                            fontSize: 10,
+                                            fontWeight: 600,
+                                            whiteSpace: 'nowrap',
+                                            overflow: 'hidden',
+                                            textOverflow: 'ellipsis',
+                                            flex: 1,
+                                            pointerEvents: 'none',
+                                            color: '#064e3b',
+                                          }}
+                                        >
+                                          {missing ? '⚠ ' : '▦ '}
+                                          {collectionName} ({memberCount} clip
+                                          {memberCount === 1 ? '' : 's'})
+                                        </span>
+                                        <span
+                                          style={{
+                                            fontSize: 9,
+                                            fontFamily: 'monospace',
+                                            marginLeft: 6,
+                                            pointerEvents: 'none',
+                                            color: '#064e3b',
+                                          }}
+                                        >
+                                          [{startForBlock.toFixed(2)},{endForBlock.toFixed(2)}]
+                                        </span>
+                                        <button
+                                          data-testid={`collection-block-unbind-inline-${control.key}-g${gi}-${ci}`}
+                                          onPointerDown={(e) => e.stopPropagation()}
+                                          onClick={() => {
+                                            removeControlCollectionBlock({
+                                              controlKey: control.key,
+                                              groupId: group.id,
+                                              blockId: block.id,
+                                            })
+                                          }}
+                                          title={`Detach ${collectionName} from T${gi + 1}`}
+                                          style={{
+                                            border: 'none',
+                                            background: 'transparent',
+                                            cursor: 'pointer',
+                                            padding: '0 2px',
+                                            fontSize: 11,
+                                            lineHeight: 1,
+                                            color: '#064e3b',
+                                            pointerEvents: 'auto',
+                                            flexShrink: 0,
+                                          }}
+                                        >
+                                          ×
+                                        </button>
+                                        {control.groups.length > 1 && (
+                                          <select
+                                            data-testid={`collection-block-move-inline-${control.key}-g${gi}-${ci}`}
+                                            value=""
+                                            onPointerDown={(e) => e.stopPropagation()}
+                                            onClick={(e) => e.stopPropagation()}
+                                            onChange={(e) => {
+                                              const toGroupId = e.target.value
+                                              e.target.value = ''
+                                              if (!toGroupId || !parentNode?.controlSet) return
+                                              try {
+                                                const nextSet = moveCollectionBlockBetweenGroups(
+                                                  parentNode.controlSet,
+                                                  control.key,
+                                                  group.id,
+                                                  toGroupId,
+                                                  block.id,
+                                                )
+                                                const res = dispatch(
+                                                  new SetControlSetCommand({
+                                                    nodeId: parentNode.id,
+                                                    controlSet: nextSet,
+                                                  }),
+                                                )
+                                                if (!res.ok) notify(res.error.message)
+                                                else {
+                                                  setTick((v) => v + 1)
+                                                  notify(
+                                                    `Moved collection "${collectionName}" to another timeline`,
+                                                  )
+                                                }
+                                              } catch (err) {
+                                                notify(
+                                                  err instanceof Error ? err.message : String(err),
+                                                )
+                                              }
+                                            }}
+                                            title={`Move collection "${collectionName}" to another timeline`}
+                                            style={{
+                                              fontSize: 9,
+                                              padding: 0,
+                                              maxWidth: 40,
+                                              flexShrink: 0,
+                                            }}
+                                          >
+                                            <option value="">⇄</option>
+                                            {control.groups
+                                              .filter((g) => g.id !== group.id)
+                                              .map((g) => (
+                                                <option key={g.id} value={g.id}>
+                                                  T
+                                                  {control.groups.findIndex(
+                                                    (gg) => gg.id === g.id,
+                                                  ) + 1}
+                                                </option>
+                                              ))}
+                                          </select>
+                                        )}
+                                        <div
+                                          data-handle="left"
+                                          style={{
+                                            position: 'absolute',
+                                            left: 0,
+                                            top: 0,
+                                            bottom: 0,
+                                            width: CLIP_HANDLE_WIDTH_PX,
+                                            cursor: 'ew-resize',
+                                            background: 'rgba(0,0,0,0.08)',
+                                            borderRight: '1px solid rgba(0,0,0,0.15)',
+                                          }}
+                                          onPointerDown={(e) => {
+                                            if (e.button !== 0) return
+                                            e.preventDefault()
+                                            e.stopPropagation()
+                                            const laneEl = (e.currentTarget as HTMLElement).closest(
+                                              '[data-testid^="control-interval-lane-inline"]',
+                                            ) as HTMLElement | null
+                                            const laneWidth =
+                                              laneEl?.getBoundingClientRect().width ?? lanePps
+                                            setDragState({
+                                              mode: 'interval-resize-left',
+                                              nodeId: parentNode!.id,
+                                              controlKey: control.key,
+                                              groupId: group.id,
+                                              semanticName: '',
+                                              kind: 'collection',
+                                              blockId: block.id,
+                                              initialStart: block.start,
+                                              initialEnd: block.end,
+                                              startX: e.clientX,
+                                              previewStart: startForBlock,
+                                              previewEnd: endForBlock,
+                                              effectivePps: lanePps,
+                                              laneWidth,
+                                            } as unknown as DragState)
+                                          }}
+                                        />
+                                        <div
+                                          data-handle="right"
+                                          style={{
+                                            position: 'absolute',
+                                            right: 0,
+                                            top: 0,
+                                            bottom: 0,
+                                            width: CLIP_HANDLE_WIDTH_PX,
+                                            cursor: 'ew-resize',
+                                            background: 'rgba(0,0,0,0.08)',
+                                            borderLeft: '1px solid rgba(0,0,0,0.15)',
+                                          }}
+                                          onPointerDown={(e) => {
+                                            if (e.button !== 0) return
+                                            e.preventDefault()
+                                            e.stopPropagation()
+                                            const laneEl = (e.currentTarget as HTMLElement).closest(
+                                              '[data-testid^="control-interval-lane-inline"]',
+                                            ) as HTMLElement | null
+                                            const laneWidth =
+                                              laneEl?.getBoundingClientRect().width ?? lanePps
+                                            setDragState({
+                                              mode: 'interval-resize-right',
+                                              nodeId: parentNode!.id,
+                                              controlKey: control.key,
+                                              groupId: group.id,
+                                              semanticName: '',
+                                              kind: 'collection',
+                                              blockId: block.id,
+                                              initialStart: block.start,
+                                              initialEnd: block.end,
+                                              startX: e.clientX,
+                                              previewStart: startForBlock,
+                                              previewEnd: endForBlock,
+                                              effectivePps: lanePps,
+                                              laneWidth,
+                                            } as unknown as DragState)
+                                          }}
+                                        />
+                                      </div>
+                                    )
+                                  })}
+                                  {groupFlat.length === 0 && collectionBlocks.length === 0 && (
                                     <div
                                       style={{
                                         padding: 12,
@@ -6233,7 +7061,41 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                       }}
                     >
                       <div style={{ fontSize: 11, fontWeight: 600 }}>
-                        Add Clip Block — Control Interval [0,1]
+                        {addBlockDialog.mode === 'collection'
+                          ? 'Add Collection Block — Control Interval [0,1]'
+                          : 'Add Clip Block — Control Interval [0,1]'}
+                      </div>
+                      <div
+                        style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}
+                      >
+                        <label style={{ fontSize: 11, minWidth: 80 }}>Kind</label>
+                        <select
+                          data-testid={`control-add-block-kind-${control.key}`}
+                          value={addBlockDialog.mode}
+                          onChange={(e) =>
+                            setAddBlockDialog((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    mode: e.target.value as 'clip' | 'collection',
+                                    error: null,
+                                  }
+                                : prev,
+                            )
+                          }
+                          style={{
+                            flex: 1,
+                            padding: '4px 6px',
+                            fontSize: 11,
+                            borderRadius: 4,
+                            border: '1px solid var(--color-border, #ddd)',
+                            background: 'var(--color-bg, #fff)',
+                            color: 'var(--color-text, #1c1e21)',
+                          }}
+                        >
+                          <option value="clip">Clip block</option>
+                          <option value="collection">Collection block (live-linked)</option>
+                        </select>
                       </div>
                       <div
                         style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}
@@ -6268,62 +7130,106 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                           ))}
                         </select>
                       </div>
-                      <div
-                        style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}
-                      >
-                        <label style={{ fontSize: 11, minWidth: 80 }}>Semantic</label>
-                        <input
-                          data-testid={`control-add-block-semantic-${control.key}`}
-                          value={addBlockDialog.draftSemantic}
-                          onChange={(e) =>
-                            setAddBlockDialog((prev) =>
-                              prev ? { ...prev, draftSemantic: e.target.value } : prev,
-                            )
-                          }
-                          placeholder="e.g. smile"
-                          list={`semantic-list-${control.key}`}
+                      {addBlockDialog.mode === 'collection' ? (
+                        <div
                           style={{
-                            flex: 1,
-                            padding: '4px 6px',
-                            fontSize: 11,
-                            borderRadius: 4,
-                            border: '1px solid var(--color-border, #ddd)',
-                            background: 'var(--color-bg, #fff)',
-                            color: 'var(--color-text, #1c1e21)',
-                          }}
-                        />
-                        <datalist id={`semantic-list-${control.key}`}>
-                          {[...descendantSemanticMap.keys()].map((sem) => (
-                            <option key={sem} value={sem} />
-                          ))}
-                        </datalist>
-                        <label style={{ fontSize: 11, minWidth: 40 }}>Clip</label>
-                        <select
-                          data-testid={`control-add-block-clip-${control.key}`}
-                          value={addBlockDialog.draftClipId}
-                          onChange={(e) =>
-                            setAddBlockDialog((prev) =>
-                              prev ? { ...prev, draftClipId: e.target.value } : prev,
-                            )
-                          }
-                          style={{
-                            flex: 1,
-                            padding: '4px 6px',
-                            fontSize: 11,
-                            borderRadius: 4,
-                            border: '1px solid var(--color-border, #ddd)',
-                            background: 'var(--color-bg, #fff)',
-                            color: 'var(--color-text, #1c1e21)',
+                            display: 'flex',
+                            gap: 6,
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
                           }}
                         >
-                          <option value="">Select clip…</option>
-                          {availableClipsForBinding.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name} ({c.duration}s)
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                          <label style={{ fontSize: 11, minWidth: 80 }}>Collection</label>
+                          <select
+                            data-testid={`control-add-block-collection-${control.key}`}
+                            value={addBlockDialog.draftCollectionId}
+                            onChange={(e) =>
+                              setAddBlockDialog((prev) =>
+                                prev ? { ...prev, draftCollectionId: e.target.value } : prev,
+                              )
+                            }
+                            style={{
+                              flex: 1,
+                              padding: '4px 6px',
+                              fontSize: 11,
+                              borderRadius: 4,
+                              border: '1px solid var(--color-border, #ddd)',
+                              background: 'var(--color-bg, #fff)',
+                              color: 'var(--color-text, #1c1e21)',
+                            }}
+                          >
+                            <option value="">Select collection…</option>
+                            {engine.clipCollections.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name} ({c.bindings.size} clip
+                                {c.bindings.size === 1 ? '' : 's'})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : (
+                        <div
+                          style={{
+                            display: 'flex',
+                            gap: 6,
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                          }}
+                        >
+                          <label style={{ fontSize: 11, minWidth: 80 }}>Semantic</label>
+                          <input
+                            data-testid={`control-add-block-semantic-${control.key}`}
+                            value={addBlockDialog.draftSemantic}
+                            onChange={(e) =>
+                              setAddBlockDialog((prev) =>
+                                prev ? { ...prev, draftSemantic: e.target.value } : prev,
+                              )
+                            }
+                            placeholder="e.g. smile"
+                            list={`semantic-list-${control.key}`}
+                            style={{
+                              flex: 1,
+                              padding: '4px 6px',
+                              fontSize: 11,
+                              borderRadius: 4,
+                              border: '1px solid var(--color-border, #ddd)',
+                              background: 'var(--color-bg, #fff)',
+                              color: 'var(--color-text, #1c1e21)',
+                            }}
+                          />
+                          <datalist id={`semantic-list-${control.key}`}>
+                            {[...descendantSemanticMap.keys()].map((sem) => (
+                              <option key={sem} value={sem} />
+                            ))}
+                          </datalist>
+                          <label style={{ fontSize: 11, minWidth: 40 }}>Clip</label>
+                          <select
+                            data-testid={`control-add-block-clip-${control.key}`}
+                            value={addBlockDialog.draftClipId}
+                            onChange={(e) =>
+                              setAddBlockDialog((prev) =>
+                                prev ? { ...prev, draftClipId: e.target.value } : prev,
+                              )
+                            }
+                            style={{
+                              flex: 1,
+                              padding: '4px 6px',
+                              fontSize: 11,
+                              borderRadius: 4,
+                              border: '1px solid var(--color-border, #ddd)',
+                              background: 'var(--color-bg, #fff)',
+                              color: 'var(--color-text, #1c1e21)',
+                            }}
+                          >
+                            <option value="">Select clip…</option>
+                            {availableClipsForBinding.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name} ({c.duration}s)
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                       {addBlockDialog.error && (
                         <div
                           data-testid={`control-add-block-error-${control.key}`}
@@ -6448,8 +7354,10 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         setAddBlockDialog({
                           controlKey: control.key,
                           draftGroupId: control.groups[0]?.id ?? '',
+                          mode: 'clip',
                           draftSemantic: '',
                           draftClipId: clipId,
+                          draftCollectionId: engine.clipCollections[0]?.id ?? '',
                           error: null,
                         })
                         notify(
@@ -7892,6 +8800,21 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 }}
                 onClick={() => {
                   const m = controlBlockMenu
+                  if (!m) {
+                    setControlBlockMenu(null)
+                    return
+                  }
+                  if (m.kind === 'collection' && m.blockId) {
+                    const ok = removeControlCollectionBlock({
+                      controlKey: m.controlKey,
+                      groupId: m.groupId,
+                      blockId: m.blockId,
+                    })
+                    if (ok) notify('Detached collection block from timeline')
+                    else notify('Block not found — no change applied')
+                    setControlBlockMenu(null)
+                    return
+                  }
                   const ok =
                     m &&
                     removeControlBlock({
@@ -7907,7 +8830,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   setControlBlockMenu(null)
                 }}
               >
-                Delete block
+                {controlBlockMenu.kind === 'collection' ? 'Detach collection' : 'Delete block'}
               </button>
             </div>
           </>

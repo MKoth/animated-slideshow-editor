@@ -22,6 +22,7 @@ import type { MorphKeyframeValue, MorphClipKeyframeValue } from './shape'
 import type { SymmetryKeyframeValue } from './symmetry'
 import { resolveSymmetrizedVertices } from './symmetry'
 import { CONTROL_INTERVAL_EPSILON, evaluateControlTrack, evaluateHostWithBlends } from './control'
+import { groupCollectionBlocks } from './control'
 import type { Control, ControlGroup, ControlBinding } from './control'
 import type { ShadowEffect, ShadowProperty } from './shadowEffect'
 import type { NodeAnimation } from './nodeAnimation'
@@ -173,22 +174,37 @@ const CHANNEL_TO_TRANSFORM_KEY: Record<AnimationProperty, string> = {
   opacity: 'opacity',
 }
 
+/**
+ * Structural view of a ClipCollection for control evaluation: resolve the
+ * member clip driving one semantic name, or undefined when unbound.
+ * Kept structural (instead of importing ClipCollection) so tests can stub it.
+ */
+export interface ControlCollectionResolution {
+  getBinding(semanticName: string): string | undefined
+}
+
+/** Lookup for live-linked control collection blocks; null = missing (gap). */
+export type ControlCollectionLookup = (collectionId: string) => ControlCollectionResolution | null
+
 export class AnimationEvaluator {
   readonly #nodeLookup: (nodeId: string) => SceneNode
   readonly #slideLookup: (nodeId: string) => Slide
   readonly #parameterKindOf: MaterialParameterKindOf
   readonly #clipLookup: (clipId: string) => ClipDefinition
+  readonly #collectionLookup: ControlCollectionLookup
 
   constructor(
     nodeLookup: (nodeId: string) => SceneNode,
     slideLookup: (nodeId: string) => Slide,
     parameterKindOf: MaterialParameterKindOf,
     clipLookup: (clipId: string) => ClipDefinition,
+    collectionLookup?: ControlCollectionLookup,
   ) {
     this.#nodeLookup = nodeLookup
     this.#slideLookup = slideLookup
     this.#parameterKindOf = parameterKindOf
     this.#clipLookup = clipLookup
+    this.#collectionLookup = collectionLookup ?? (() => null)
   }
 
   evaluateNode(nodeId: string, time: number, target?: EvaluatedNodeScratch): EvaluatedNodeState {
@@ -285,6 +301,44 @@ export class AnimationEvaluator {
         )
         const effU = effectiveUForClip(clip, anim.keyframes(), u)
         baseValue = this.#evaluateClipZIndex(anim.keyframes(), effU)
+      }
+    }
+    // Controls step zIndex like a time point: nearest hosts first so ancestors
+    // win (same order as #applyControls); per-group last-wins within a
+    // control; discrete blend threshold across groups (no interpolation).
+    if (node.semanticName !== undefined) {
+      const hosts: SceneNode[] = []
+      for (let host = node.parent; host; host = host.parent) {
+        if (host.controlSet) hosts.push(host)
+      }
+      for (const host of hosts) {
+        const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
+        for (const control of host.controlSet?.controls ?? []) {
+          const { u: rawU, blends: blendFactors } = this.#evaluateHostWithBlends(
+            control,
+            hostAnim,
+            clampedTime,
+          )
+          const groupClips = this.#getGroupClips(node.semanticName, control, rawU)
+          let stepped: number | undefined = undefined
+          for (let gi = 0; gi < groupClips.length; gi++) {
+            const blend = gi === 0 ? 0 : (blendFactors[gi - 1] ?? 0)
+            const entry = groupClips[gi]
+            if (!entry) continue
+            const anim = entry.clip.zIndexAnimation()
+            if (!anim || anim.length === 0) continue
+            const enabled = enabledKeyframes(anim.keyframes())
+            if (enabled.length === 0) continue
+            const effU = effectiveUForClip(entry.clip, enabled, entry.uPrime)
+            const cur = this.#evaluateClipZIndex(enabled, effU)
+            if (stepped === undefined) {
+              stepped = gi === 0 ? cur : blend < 0.5 ? (baseValue ?? node.zIndex) : cur
+            } else if (blend >= 0.5) {
+              stepped = cur
+            }
+          }
+          if (stepped !== undefined) baseValue = stepped
+        }
       }
     }
     return baseValue ?? node.zIndex
@@ -1815,35 +1869,60 @@ export class AnimationEvaluator {
       ] as readonly ControlGroup[])
     const result: ({ clip: ClipDefinition; uPrime: number } | null)[] = []
     for (const group of groups) {
+      // One ordered candidate list per group: clip intervals in stored order,
+      // then live-linked collection blocks in stored order. Last-wins scan
+      // below means collections win ties over clips within the same group —
+      // matching the lane rendering (collections stack below clips).
+      const candidates: {
+        clipId: string
+        start: number
+        end: number
+      }[] = []
       const rawBinding = (group.bindings as Record<string, unknown>)[nodeSemantic]
-      if (!rawBinding) {
+      if (rawBinding) {
+        const raws: unknown[] = Array.isArray(rawBinding) ? rawBinding : [rawBinding]
+        for (const b of raws) {
+          const normalized =
+            typeof b === 'string'
+              ? { clipId: b, start: 0, end: 1 }
+              : (b as { clipId: string; start: number; end: number })
+          candidates.push({
+            clipId: (normalized as { clipId: string }).clipId,
+            start: (normalized as { start: number }).start ?? 0,
+            end: (normalized as { end: number }).end ?? 1,
+          })
+        }
+      }
+      for (const block of groupCollectionBlocks(group)) {
+        let memberClipId: string | undefined
+        try {
+          memberClipId =
+            this.#collectionLookup(block.collectionId)?.getBinding(nodeSemantic) ?? undefined
+        } catch {
+          memberClipId = undefined
+        }
+        if (typeof memberClipId !== 'string' || memberClipId.trim() === '') continue
+        candidates.push({
+          clipId: memberClipId,
+          start: block.start,
+          end: block.end,
+        })
+      }
+      if (candidates.length === 0) {
         result.push(null)
         continue
       }
-      const candidates: unknown[] = Array.isArray(rawBinding)
-        ? (rawBinding as unknown[])
-        : [rawBinding]
-      let chosen: unknown | null = null
-      for (const b of candidates) {
-        const normalized =
-          typeof b === 'string'
-            ? { clipId: b, start: 0, end: 1 }
-            : (b as { clipId: string; start: number; end: number })
-        const s = (normalized as { start: number }).start ?? 0
-        const e = (normalized as { end: number }).end ?? 1
-        if (this.#isRawUInInterval(rawU, s, e)) chosen = b
+      let chosen: (typeof candidates)[number] | null = null
+      for (const c of candidates) {
+        if (this.#isRawUInInterval(rawU, c.start, c.end)) chosen = c
       }
       if (!chosen) {
         result.push(null)
         continue
       }
-      const normalized =
-        typeof chosen === 'string'
-          ? { clipId: chosen, start: 0, end: 1 }
-          : (chosen as { clipId: string; start: number; end: number })
-      const clipId = (normalized as { clipId: string }).clipId
-      const start = (normalized as { start: number }).start ?? 0
-      const end = (normalized as { end: number }).end ?? 1
+      const clipId = chosen.clipId
+      const start = chosen.start
+      const end = chosen.end
       const span = end - start
       if (span < 1e-9) {
         result.push(null)
@@ -1857,24 +1936,10 @@ export class AnimationEvaluator {
         result.push(null)
         continue
       }
-      if (clip.hasVisibleTrack()) {
-        console.warn(
-          `[control] Skipping binding "${nodeSemantic}" on "${control.key}" group "${group.name}" — clip "${clipId}" contains visible (hold-only)`,
-        )
-        result.push(null)
-        continue
-      }
-      // zIndex rejection (defence) — check raw JSON marker if present
-      const rawZ = (clip as unknown as { hasZIndexTrack?: () => boolean }).hasZIndexTrack?.()
-      if (rawZ) {
-        console.warn(
-          `[control] Skipping binding "${nodeSemantic}" on "${control.key}" group "${group.name}" — clip "${clipId}" contains zIndex (hold-only)`,
-        )
-        result.push(null)
-        continue
-      }
-      // Also check for zIndex animation via generic
-      // ClipDefinition has no zIndex, but keep guard for future
+      // No whole-clip rejection for discrete lanes: visible stays inert by
+      // global design (evaluateVisible is static), and zIndex steps through
+      // evaluateZIndex — the coefficient is a time point, so every other
+      // channel in the clip still drives.
       result.push({ clip, uPrime })
     }
     return result

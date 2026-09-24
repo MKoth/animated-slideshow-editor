@@ -245,6 +245,13 @@ export class Engine {
       (nodeId) => this.getSlideOfNode(nodeId),
       this.#materialParameterKindOf,
       (clipId) => this.getClip(clipId),
+      (collectionId) => {
+        try {
+          return this.#clipCollections.getCollection(collectionId)
+        } catch {
+          return null
+        }
+      },
     )
     this.#clips = new ClipManager(this.#bus)
     this.#clipCollections = new ClipCollectionManager(this.#bus)
@@ -3684,6 +3691,10 @@ export class Engine {
   deleteClipCollection(collectionId: string): ClipCollection {
     const removed = this.#clipCollections.deleteCollection(collectionId)
     // Spec 15-06/15-05: delete removes only collection definition; already-placed Collection Lanes remain as plain ClipInstances (no cascading delete of instances)
+    // Control collection blocks are likewise kept as dangling live links: the
+    // evaluator treats a missing collection as a gap (absent pass-through) and
+    // the Controls tab surfaces a "missing collection" state with a remove
+    // affordance, so deleting a collection never silently rewrites rig intent.
     // For placements, we keep instances but clear their placementId and remove the placement itself so the lane disappears
     const toDeletePlacements: string[] = []
     for (const slide of this.#projects.current?.slides ?? []) {
@@ -4492,6 +4503,7 @@ export class Engine {
     const referencedMaterialIds = new Set<string>()
     const referencedShaderIds = new Set<string>()
     const referencedClipIds = new Set<string>()
+    const referencedCollectionIds = new Set<string>()
     const referencedDataSourceIds = new Set<string>()
 
     for (const id of nodeIds) {
@@ -4524,6 +4536,10 @@ export class Engine {
               if (clipId) referencedClipIds.add(clipId)
             }
           }
+          // Live-linked collection blocks travel with their collection + member clips
+          for (const block of group.collectionBlocks ?? []) {
+            if (block.collectionId) referencedCollectionIds.add(block.collectionId)
+          }
         }
       }
       const chart = node.components.chart
@@ -4555,6 +4571,8 @@ export class Engine {
     for (const col of this.#clipCollections.collections) {
       let include = false
       if (col.sourceNodeId && nodeIds.has(col.sourceNodeId)) include = true
+      // Directly referenced by a control collection block (live link travels)
+      if (!include && referencedCollectionIds.has(col.id)) include = true
       if (!include) {
         for (const clipId of col.bindings.values()) {
           if (referencedClipIds.has(clipId)) {
@@ -5199,11 +5217,54 @@ export class Engine {
                     newGroupBindings[semanticName] = mapped
                   }
                 }
+                // Remap live-linked collection blocks (drop when the collection
+                // wasn't imported; member clips resolve live at evaluation time,
+                // so no per-semantic descendant check applies here).
+                const rawBlocks = (
+                  group as unknown as {
+                    collectionBlocks?: readonly {
+                      id?: unknown
+                      collectionId?: unknown
+                      start?: unknown
+                      end?: unknown
+                    }[]
+                  }
+                ).collectionBlocks
+                let newCollectionBlocks: unknown[] | undefined
+                if (Array.isArray(rawBlocks)) {
+                  newCollectionBlocks = []
+                  for (const rb of rawBlocks) {
+                    if (!rb || typeof rb !== 'object') {
+                      console.warn(
+                        `[control] Skipping group "${group.name}" collection block — not an object`,
+                      )
+                      continue
+                    }
+                    const oldCollectionId =
+                      typeof rb.collectionId === 'string' ? rb.collectionId : ''
+                    if (!collectionIdMap.has(oldCollectionId)) {
+                      console.warn(
+                        `[control] Skipping group "${group.name}" collection block — collection "${oldCollectionId}" missing in import`,
+                      )
+                      continue
+                    }
+                    newCollectionBlocks.push({
+                      id: newId('control-collection-block'),
+                      collectionId: collectionIdMap.get(oldCollectionId),
+                      start: rb.start,
+                      end: rb.end,
+                    })
+                  }
+                  if (newCollectionBlocks.length === 0) newCollectionBlocks = undefined
+                }
                 return {
                   ...group,
                   id: newId('control-group'),
                   name: group.name,
                   bindings: newGroupBindings,
+                  ...(newCollectionBlocks !== undefined
+                    ? { collectionBlocks: newCollectionBlocks }
+                    : {}),
                 }
               })
               newControl.groups = newGroups
@@ -5483,6 +5544,21 @@ export class Engine {
                         return [k, v as string] as const
                       }),
                     ) as Record<string, import('./control').ControlBinding>,
+                    ...((g as unknown as { collectionBlocks?: unknown }).collectionBlocks !==
+                    undefined
+                      ? {
+                          collectionBlocks: (
+                            g as unknown as {
+                              collectionBlocks: readonly Record<string, unknown>[]
+                            }
+                          ).collectionBlocks.map((b) => ({
+                            id: b.id as string,
+                            collectionId: b.collectionId as string,
+                            start: b.start as number,
+                            end: b.end as number,
+                          })),
+                        }
+                      : {}),
                   }))
                 : undefined
               const baseControl = {

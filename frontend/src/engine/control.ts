@@ -8,7 +8,7 @@ import {
   ZERO_TANGENT,
 } from './keyframe'
 import { evaluateSegment } from './interpolators'
-import type { ControlSetJSON } from './json'
+import type { ControlCollectionBlockJSON, ControlSetJSON } from './json'
 import { requireFiniteNumber, requireString } from './guards'
 
 export const CONTROL_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_.]*$/
@@ -30,16 +30,36 @@ export type ControlBindingJSON =
 export type ControlBindingValue = ControlBinding | readonly ControlBinding[]
 export type ControlBindingJSONValue = ControlBindingJSON | readonly ControlBindingJSON[]
 
+/**
+ * A live-linked reference from a Control timeline to a whole ClipCollection.
+ * The block occupies `[start,end]` on the control value axis (like a clip
+ * interval) and fans out to the collection's `semanticName → clipId` bindings
+ * at read time, so collection edits propagate automatically. Each member clip
+ * is evaluated at the same remapped `uPrime = (rawU - start) / (end - start)`.
+ */
+export interface ControlCollectionBlock {
+  readonly id: string
+  readonly collectionId: string
+  readonly start: number
+  readonly end: number
+}
+
 export interface ControlGroup {
   readonly id: string
   readonly name: string
   readonly bindings: Readonly<Record<string, ControlBindingValue>>
+  /**
+   * Grouped collection blocks, in display/priority order. Optional for
+   * backward compat — absent means a clip-only group.
+   */
+  readonly collectionBlocks?: readonly ControlCollectionBlock[]
 }
 
 export interface ControlGroupJSON {
   readonly id: string
   readonly name: string
   readonly bindings: Readonly<Record<string, ControlBindingJSONValue>>
+  readonly collectionBlocks?: readonly ControlCollectionBlockJSON[]
 }
 
 export interface Control {
@@ -153,6 +173,180 @@ export function removeBindingFromRecord(
   return true
 }
 
+// ---------------------------------------------------------------------------
+// Collection blocks (live-linked ClipCollection references on a timeline)
+// ---------------------------------------------------------------------------
+
+/** Read a group's collection blocks tolerantly (absent = clip-only group). */
+export function groupCollectionBlocks(
+  group: Pick<ControlGroup, 'collectionBlocks'> | undefined | null,
+): readonly ControlCollectionBlock[] {
+  if (!group) return []
+  const blocks = (group as ControlGroup).collectionBlocks
+  if (!blocks) return []
+  return blocks
+}
+
+export function validateControlCollectionBlock(
+  block: ControlCollectionBlock,
+  controlKey: string,
+): void {
+  if (!block || typeof block !== 'object')
+    throw new Error(`Control "${controlKey}" collection block must be an object`)
+  if (typeof block.id !== 'string' || block.id === '')
+    throw new Error(`Control "${controlKey}" collection block id must be non-empty`)
+  if (typeof block.collectionId !== 'string' || block.collectionId === '')
+    throw new Error(
+      `Control "${controlKey}" collection block must reference a non-empty collectionId`,
+    )
+  const start = requireFiniteNumber(
+    (block as unknown as Record<string, unknown>).start,
+    `Control "${controlKey}" collection block start`,
+  )
+  const end = requireFiniteNumber(
+    (block as unknown as Record<string, unknown>).end,
+    `Control "${controlKey}" collection block end`,
+  )
+  if (start < 0) throw new Error(`Control "${controlKey}" collection block start must be >= 0`)
+  if (end > 1) throw new Error(`Control "${controlKey}" collection block end must be <= 1`)
+  if (start >= end) throw new Error(`Control "${controlKey}" collection block start must be < end`)
+  if (end - start < CONTROL_INTERVAL_MIN_SPAN)
+    throw new Error(
+      `Control "${controlKey}" collection block span must be >= ${CONTROL_INTERVAL_MIN_SPAN}`,
+    )
+}
+
+function withCollectionBlocks(
+  controlSet: ControlSet,
+  hostKey: string,
+  groupId: string,
+  next: readonly ControlCollectionBlock[],
+): ControlSet {
+  const hostIdx = controlSet.controls.findIndex((c) => c.key === hostKey)
+  if (hostIdx === -1) throw new Error(`Host control "${hostKey}" not found`)
+  const host = controlSet.controls[hostIdx]!
+  const groupIdx = host.groups.findIndex((g) => g.id === groupId)
+  if (groupIdx === -1) throw new Error(`Group "${groupId}" not found on "${hostKey}"`)
+  const newGroups = host.groups.map((g, idx) =>
+    idx === groupIdx ? { ...g, collectionBlocks: [...next] } : g,
+  )
+  const newHost: Control = {
+    ...host,
+    groups: newGroups,
+    bindings: mergeGroupBindings(newGroups),
+  }
+  const newControls = [...controlSet.controls]
+  newControls[hostIdx] = newHost
+  validateControls(newControls)
+  return { ...controlSet, controls: newControls }
+}
+
+function findControlGroup(controlSet: ControlSet, hostKey: string, groupId: string): ControlGroup {
+  const host = controlSet.controls.find((c) => c.key === hostKey)
+  if (!host) throw new Error(`Host control "${hostKey}" not found`)
+  const group = host.groups.find((g) => g.id === groupId)
+  if (!group) throw new Error(`Group "${groupId}" not found on "${hostKey}"`)
+  return group
+}
+
+export function addCollectionBlockToGroup(
+  controlSet: ControlSet,
+  hostKey: string,
+  groupId: string,
+  input: { collectionId: string; start?: number; end?: number },
+): ControlSet {
+  const group = findControlGroup(controlSet, hostKey, groupId)
+  const block: ControlCollectionBlock = {
+    id: newId('control-collection-block'),
+    collectionId: input.collectionId,
+    start: input.start ?? 0,
+    end: input.end ?? 1,
+  }
+  validateControlCollectionBlock(block, hostKey)
+  return withCollectionBlocks(controlSet, hostKey, groupId, [
+    ...groupCollectionBlocks(group),
+    block,
+  ])
+}
+
+export function removeCollectionBlockFromGroup(
+  controlSet: ControlSet,
+  hostKey: string,
+  groupId: string,
+  blockId: string,
+): ControlSet {
+  const group = findControlGroup(controlSet, hostKey, groupId)
+  const blocks = groupCollectionBlocks(group)
+  const next = blocks.filter((b) => b.id !== blockId)
+  if (next.length === blocks.length)
+    throw new Error(`Collection block "${blockId}" not found on "${hostKey}"`)
+  return withCollectionBlocks(controlSet, hostKey, groupId, next)
+}
+
+export function updateCollectionBlockInterval(
+  controlSet: ControlSet,
+  hostKey: string,
+  groupId: string,
+  blockId: string,
+  start: number,
+  end: number,
+): ControlSet {
+  const group = findControlGroup(controlSet, hostKey, groupId)
+  const blocks = groupCollectionBlocks(group)
+  const idx = blocks.findIndex((b) => b.id === blockId)
+  if (idx === -1) throw new Error(`Collection block "${blockId}" not found on "${hostKey}"`)
+  const next = blocks.map((b, i) => (i === idx ? { ...b, start, end } : b))
+  validateControlCollectionBlock(next[idx]!, hostKey)
+  return withCollectionBlocks(controlSet, hostKey, groupId, next)
+}
+
+export function reorderCollectionBlockWithinGroup(
+  controlSet: ControlSet,
+  hostKey: string,
+  groupId: string,
+  fromIndex: number,
+  toIndex: number,
+): ControlSet {
+  const group = findControlGroup(controlSet, hostKey, groupId)
+  const blocks = [...groupCollectionBlocks(group)]
+  if (!Number.isInteger(fromIndex) || fromIndex < 0 || fromIndex >= blocks.length)
+    throw new Error(`fromIndex ${fromIndex} out of range`)
+  const [moved] = blocks.splice(fromIndex, 1)
+  const dest = Math.min(Math.max(toIndex, 0), blocks.length)
+  blocks.splice(dest, 0, moved!)
+  return withCollectionBlocks(controlSet, hostKey, groupId, blocks)
+}
+
+export function moveCollectionBlockBetweenGroups(
+  controlSet: ControlSet,
+  hostKey: string,
+  fromGroupId: string,
+  toGroupId: string,
+  blockId: string,
+  toIndex?: number,
+): ControlSet {
+  const fromGroup = findControlGroup(controlSet, hostKey, fromGroupId)
+  findControlGroup(controlSet, hostKey, toGroupId)
+  const blocks = groupCollectionBlocks(fromGroup)
+  const block = blocks.find((b) => b.id === blockId)
+  if (!block) throw new Error(`Collection block "${blockId}" not found on "${hostKey}"`)
+  const remaining = blocks.filter((b) => b.id !== blockId)
+  if (fromGroupId === toGroupId) {
+    const dest =
+      toIndex !== undefined ? Math.min(Math.max(toIndex, 0), remaining.length) : remaining.length
+    const reordered = [...remaining]
+    reordered.splice(dest, 0, block)
+    return withCollectionBlocks(controlSet, hostKey, fromGroupId, reordered)
+  }
+  const afterRemove = withCollectionBlocks(controlSet, hostKey, fromGroupId, remaining)
+  const toGroup = findControlGroup(afterRemove, hostKey, toGroupId)
+  const destBlocks = [...groupCollectionBlocks(toGroup)]
+  const dest =
+    toIndex !== undefined ? Math.min(Math.max(toIndex, 0), destBlocks.length) : destBlocks.length
+  destBlocks.splice(dest, 0, block)
+  return withCollectionBlocks(afterRemove, hostKey, toGroupId, destBlocks)
+}
+
 export function flattenControlBindings(
   bindings: Readonly<Record<string, ControlBindingValue>>,
 ): Array<{ semantic: string; binding: ControlBinding; index: number }> {
@@ -234,6 +428,7 @@ export function createControlGroup(input: {
   id?: string
   name?: string
   bindings?: Readonly<Record<string, ControlBindingValue>>
+  collectionBlocks?: readonly ControlCollectionBlock[]
 }): ControlGroup {
   const id = input.id ?? newId('control-group')
   const name = input.name ?? 'Group 1'
@@ -250,7 +445,13 @@ export function createControlGroup(input: {
       }
     }
   }
-  return { id, name, bindings }
+  const group: ControlGroup = { id, name, bindings }
+  if (input.collectionBlocks !== undefined) {
+    const blocks = input.collectionBlocks.map((b) => ({ ...b }))
+    for (const b of blocks) validateControlCollectionBlock(b, name)
+    return { ...group, collectionBlocks: blocks }
+  }
+  return group
 }
 
 export function mergeGroupBindings(
@@ -349,6 +550,16 @@ export function validateControls(controls: readonly Control[]): void {
         } else if (group.bindings !== undefined) {
           throw new Error(`Control "${control.key}" group bindings must be an object`)
         }
+        const collectionBlocks = groupCollectionBlocks(group)
+        const blockIds = new Set<string>()
+        for (const block of collectionBlocks) {
+          validateControlCollectionBlock(block, control.key)
+          if (blockIds.has(block.id))
+            throw new Error(
+              `Control "${control.key}" has duplicate collection block id "${block.id}"`,
+            )
+          blockIds.add(block.id)
+        }
       }
     }
   }
@@ -371,11 +582,20 @@ export function createControl(input: {
   let groups: ControlGroup[]
   if (input.groups !== undefined) {
     // validate groups provided (blendKeys ignored — legacy tolerant)
-    groups = input.groups.map((g) => ({
-      id: g.id ?? newId('control-group'),
-      name: g.name ?? 'Group 1',
-      bindings: { ...g.bindings },
-    }))
+    groups = input.groups.map((g) => {
+      const next: ControlGroup = {
+        id: g.id ?? newId('control-group'),
+        name: g.name ?? 'Group 1',
+        bindings: { ...g.bindings },
+      }
+      const blocks = groupCollectionBlocks(g)
+      if (g.collectionBlocks !== undefined) {
+        const cloned = blocks.map((b) => ({ ...b }))
+        for (const b of cloned) validateControlCollectionBlock(b, input.key)
+        return { ...next, collectionBlocks: cloned }
+      }
+      return next
+    })
     // validate duplicate group ids
     const gidSet = new Set<string>()
     for (const g of groups) {
@@ -454,7 +674,14 @@ export function ensureControlGroups(control: Control): Control {
     return {
       ...(rest as unknown as Control),
       bindings: merged,
-      groups: groups.map((g) => ({ id: g.id, name: g.name, bindings: { ...g.bindings } })),
+      groups: groups.map((g) => ({
+        id: g.id,
+        name: g.name,
+        bindings: { ...g.bindings },
+        ...(g.collectionBlocks !== undefined
+          ? { collectionBlocks: groupCollectionBlocks(g).map((b) => ({ ...b })) }
+          : {}),
+      })),
     }
   }
   // Legacy: synthesize groups from flat bindings
@@ -487,13 +714,79 @@ export function normalizeControlSetForMutation(controlSet: ControlSet): ControlS
             ? value
             : { ...(value as ControlBindingInterval) }
       }
+      const sourceGroup = control.groups[0]!
       return {
         ...control,
         bindings,
-        groups: [{ ...control.groups[0]!, bindings }],
+        groups: [
+          {
+            ...sourceGroup,
+            bindings,
+            ...(sourceGroup.collectionBlocks !== undefined
+              ? { collectionBlocks: groupCollectionBlocks(sourceGroup).map((b) => ({ ...b })) }
+              : {}),
+          },
+        ],
       }
     }),
   }
+}
+
+/**
+ * Tolerant parse of a group's `collectionBlocks` array (warn-and-drop invalid
+ * entries so old readers and hand-edited files never hard-fail).
+ */
+function parseControlCollectionBlocks(
+  raw: unknown,
+  controlKey: string,
+  groupName: string,
+): ControlCollectionBlock[] {
+  if (raw === undefined) return []
+  if (!Array.isArray(raw)) {
+    console.warn(
+      `[control] Dropping invalid collectionBlocks on "${controlKey}" group "${groupName}": must be an array`,
+    )
+    return []
+  }
+  const out: ControlCollectionBlock[] = []
+  const seenIds = new Set<string>()
+  for (const entry of raw as unknown[]) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      console.warn(
+        `[control] Dropping invalid collection block on "${controlKey}" group "${groupName}": not an object`,
+      )
+      continue
+    }
+    const obj = entry as Record<string, unknown>
+    const id =
+      typeof obj.id === 'string' && obj.id !== '' ? obj.id : newId('control-collection-block')
+    if (seenIds.has(id)) {
+      console.warn(
+        `[control] Dropping duplicate collection block id "${id}" on "${controlKey}" group "${groupName}"`,
+      )
+      continue
+    }
+    const block: ControlCollectionBlock = {
+      id,
+      collectionId: typeof obj.collectionId === 'string' ? obj.collectionId : '',
+      start: typeof obj.start === 'number' ? obj.start : NaN,
+      end: typeof obj.end === 'number' ? obj.end : NaN,
+    }
+    try {
+      validateControlCollectionBlock(
+        { ...block, start: block.start as number, end: block.end as number },
+        controlKey,
+      )
+    } catch (e) {
+      console.warn(
+        `[control] Dropping invalid collection block on "${controlKey}" group "${groupName}": ${e instanceof Error ? e.message : String(e)}`,
+      )
+      continue
+    }
+    seenIds.add(id)
+    out.push(block)
+  }
+  return out
 }
 
 export function controlSetToJSON(controlSet: ControlSet): ControlSetJSON {
@@ -557,7 +850,20 @@ export function controlSetToJSON(controlSet: ControlSet): ControlSetJSON {
             }
           }
         }
-        return { id: group.id, name: group.name, bindings: gb }
+        const blocks = groupCollectionBlocks(group)
+        const groupJson: ControlGroupJSON = { id: group.id, name: group.name, bindings: gb }
+        if (blocks.length > 0) {
+          return {
+            ...groupJson,
+            collectionBlocks: blocks.map((b): ControlCollectionBlockJSON => ({
+              id: b.id,
+              collectionId: b.collectionId,
+              start: b.start,
+              end: b.end,
+            })),
+          }
+        }
+        return groupJson
       })
       return {
         id: control.id,
@@ -757,13 +1063,23 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
             )
           }
           // Validate group name non-empty (tolerant: already warned, but keep)
+          const collectionBlocks = parseControlCollectionBlocks(
+            (g as Record<string, unknown>).collectionBlocks,
+            key,
+            gname,
+          )
+          const base = { id: gid, name: 'Group 1', bindings: gbindings }
           if (typeof gname !== 'string' || gname.trim() === '') {
             console.warn(
               `[control] Group "${gid}" on "${key}" has empty name — falling back to "Group 1"`,
             )
-            groups.push({ id: gid, name: 'Group 1', bindings: gbindings })
+            groups.push(collectionBlocks.length > 0 ? { ...base, collectionBlocks } : base)
           } else {
-            groups.push({ id: gid, name: gname, bindings: gbindings })
+            groups.push(
+              collectionBlocks.length > 0
+                ? { id: gid, name: gname, bindings: gbindings, collectionBlocks }
+                : { id: gid, name: gname, bindings: gbindings },
+            )
           }
         }
         // Check duplicate group ids (tolerant: warn and keep, but dedupe by generating fresh for duplicates)
@@ -859,7 +1175,9 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
         const emptyBindings = isEmptyControlBindings(c.bindings)
         const emptyGroups =
           c.groups !== undefined
-            ? c.groups.length === 1 && isEmptyControlBindings(c.groups[0]!.bindings)
+            ? c.groups.length === 1 &&
+              isEmptyControlBindings(c.groups[0]!.bindings) &&
+              groupCollectionBlocks(c.groups[0]).length === 0
             : true
         if (emptyBindings && emptyGroups) {
           console.warn(
