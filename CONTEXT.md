@@ -90,6 +90,10 @@ _Avoid_: Table layout, cell positioning
 A TableCellComponent feature where individual cells can span multiple columns and/or rows via colSpan/rowSpan. Spanning is layout-only — columns are sized independently; spanned cells sit across resolved columns. No circular width dependencies.
 _Avoid_: Merged cells, cell merge
 
+**Grid Slot**:
+The logical (row, column) coordinate a Table Cell occupies once Grid Layout has resolved colSpan/rowSpan; the origin slot determines row/column group membership, so a spanned cell is counted once.
+_Avoid_: Cell index, grid position
+
 **Anchor**:
 A named attachment point defined on an asset definition (e.g. Head, Speech Bubble). Metadata in v1 — nodes attach by parenting, not by anchor.
 
@@ -164,6 +168,38 @@ _Avoid_: Shadow Sprite, shadow instance, shadow
 
 ### Animation
 
+**Animation Script**:
+A per-slide authored program that compiles to ordinary timeline data — node keyframes, Clip Instances, Collection placements, Control Tracks, and static text content — when run explicitly, inside one Transaction; the source persists as a text artifact and is never a runtime player. It owns a time segment starting at a declared origin and is distinct from Prompter text.
+_Avoid_: Script (ambiguous with Prompter text), timeline program
+
+**Animation Script Binding**:
+A named, immutable alias declared in an Animation Script's prelude that resolves at compile time to one scene node (by Unique Name), a semantic group, a table, or a project clip or Clip Collection; unresolved, duplicate, or ambiguous references block the compile. Node bindings are scoped to the script's slide; clip and collection bindings to the project.
+_Avoid_: Selector, reference, alias
+
+**Animation Script Cursor**:
+The compile-time position in an Animation Script from which cursor-relative statements start, beginning at the segment's declared origin and advancing by each statement's extent; never a runtime playhead and never persisted.
+_Avoid_: Playhead, play position
+
+**Animation Script Segment**:
+The slide-time window an Animation Script owns: starting at its declared `from` and ending at the cursor after its last statement. Statements may not start before `from` or end past `Slide.duration` (compile errors); an underflowing segment simply ends, leaving compiled values to hold.
+_Avoid_: Range, span, duration
+
+**Animation Script Marker**:
+A named, compile-time-only time label inside an Animation Script, resolving to an absolute slide second; defined before use, never persisted, and not a timeline marker. Inside a function body a marker is local to that invocation — two calls never collide, and a caller's marks stay invisible.
+_Avoid_: Cue, timeline marker, label
+
+**Animation Script Function**:
+A named, typed, compile-time-inlined fragment of an Animation Script — parameters, immutable locals, expressions, and ordinary statements — invoked as a statement, never callable at runtime; the call advances the cursor by the body's extent. A body is a closed scope: it sees its parameters, its own locals, library entries, and built-ins — never the calling script's bindings, local functions, or marks. Recursion is a compile error.
+_Avoid_: Macro, subroutine, script call
+
+**Animation Script Library Entry**:
+A named, versioned, project-scoped Animation Script Function persisted in the project's Animation Script library (`library.scriptFunctions` in the `.lesson` file) and callable by name from any of the project's scripts. An independent, self-contained compilation unit: its own optional `defaults`, parameterized, never seeing a calling script's state; its version is monotonic, bumped when its source is edited.
+_Avoid_: Shared function, global function
+
+**Animation Script Built-in**:
+A compiler-provided Animation Script Function shipped with the language (e.g. `pointArrowAt`), addressed by a reserved name, not editable and not a library entry; built-ins may carry named variant parameters (`at:` vs `over:` + `every:`).
+_Avoid_: Native function, stdlib
+
 **Keyframe**:
 A point on an animated track: an id, a property or channel, a time, a value, an interpolation type (hold, linear, or bezier) governing the segment to the next keyframe, and in/out tangents (control-point offsets in time/value units) used when bezier. Node keyframes use seconds; clip keyframes are normalized (time and value in [0, 1]). The value is a number for the uniform-six properties and clip channels; for material-parameter tracks it carries the parameter's kind shape (number, color hex string, boolean, int, number[] vector, or asset-id string), interpolating linearly for continuous kinds and holding for discrete ones.
 _Avoid_: Frame, animation point
@@ -205,8 +241,8 @@ _Avoid_: Animation set, pose library
 An empty scene node used as a parent to uniformly scale a rig and its animations without breaking relative motion; clips remain in local space and compose via world transform. No new component — reuses Rig Handle / Locator primitive.
 _Avoid_: Scale container, multiplier node
 
-**Visible Track**:
-The boolean visibility animation track on a scene node. Interpolates with hold only (no tween); eye icon toggles base value or adds a hold keyframe at playhead in animation mode.
+**Visible Track** (legacy):
+A stored boolean visibility lane on a scene node. Not evaluated — the node's static `visible` flag is authoritative and existing keyframes are ignored (kept only so legacy files load); Animation Scripts lower show/hide to opacity hold keyframes.
 _Avoid_: Opacity zero, hide track
 
 ### Animation Manager
