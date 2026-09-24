@@ -8,6 +8,8 @@ import { copyComponents } from './components'
 import { copyMaterialInstance } from './materialInstance'
 import { cloneShadowEffect } from './shadowEffect'
 import { newClipInstanceId } from './clipInstance'
+import { newCollectionPlacementId } from './collectionPlacement'
+import { cloneControlSet } from './control'
 
 export interface CopiedScene {
   readonly scene: Scene
@@ -37,7 +39,14 @@ export class SceneManager {
 
   copyScene(source: Scene): CopiedScene {
     const nodeIds = new Map<string, string>()
-    const root = copyNodeDeep(source.root, null, nodeIds)
+    const placementIds = new Map<string, string>()
+    for (const node of walkPreOrder(source.root)) {
+      nodeIds.set(node.id, newId('node'))
+      for (const placement of node.collectionPlacements) {
+        placementIds.set(placement.id, newCollectionPlacementId())
+      }
+    }
+    const root = copyNodeDeep(source.root, null, nodeIds, placementIds)
     const cameraId = nodeIds.get(source.camera.id)
     if (!cameraId) {
       throw new Error('Copied scene has no camera node')
@@ -81,10 +90,13 @@ export class SceneManager {
 function copyNodeDeep(
   source: SceneNode,
   parent: SceneNode | null,
-  nodeIds: Map<string, string>,
+  nodeIds: ReadonlyMap<string, string>,
+  placementIds: ReadonlyMap<string, string>,
 ): SceneNode {
-  const id = newId('node')
-  nodeIds.set(source.id, id)
+  const id = nodeIds.get(source.id)
+  if (!id) {
+    throw new Error(`Copied scene has no node for: ${source.id}`)
+  }
   const copy = new SceneNode(
     id,
     source.name,
@@ -102,11 +114,32 @@ function copyNodeDeep(
   if (source.castShadow !== undefined) {
     copy.castShadow = source.castShadow
   }
+  if (source.controlSet) {
+    copy.controlSet = cloneControlSet(source.controlSet, id)
+  }
+  for (const placement of source.collectionPlacements) {
+    const placementId = placementIds.get(placement.id)
+    if (!placementId) {
+      throw new Error(`Copied scene has no placement for: ${placement.id}`)
+    }
+    copy.collectionPlacements.push({
+      id: placementId,
+      collectionId: placement.collectionId,
+      parentNodeId: nodeIds.get(placement.parentNodeId) ?? placement.parentNodeId,
+      startTime: placement.startTime,
+    })
+  }
   for (const inst of source.clipInstances) {
     copy.clipInstances.push({
       ...inst,
       id: newClipInstanceId(),
       paramOverrides: { ...inst.paramOverrides },
+      ...(inst.placementId !== undefined
+        ? { placementId: placementIds.get(inst.placementId) ?? inst.placementId }
+        : {}),
+      ...(inst.collectionTargetId !== undefined
+        ? { collectionTargetId: nodeIds.get(inst.collectionTargetId) ?? inst.collectionTargetId }
+        : {}),
     })
   }
   copy.parent = parent
@@ -114,7 +147,7 @@ function copyNodeDeep(
     parent.children.push(copy)
   }
   for (const child of source.children) {
-    copyNodeDeep(child, copy, nodeIds)
+    copyNodeDeep(child, copy, nodeIds, placementIds)
   }
   return copy
 }

@@ -661,6 +661,54 @@ export function createControlSet(
   return { id: newId('control-set'), hostNodeId, controls: [...normalized] }
 }
 
+/**
+ * Deep-copy a Control Set onto a new host with fresh ControlSet/Control/group/
+ * collection-block ids. `Control.key` is preserved — it is the public name
+ * Control Tracks address, so copied tracks resolve against the copy — and
+ * binding clip ids are copied verbatim because they are project-global
+ * definitions that a scene copy never forks.
+ */
+export function cloneControlSet(source: ControlSet, hostNodeId: string): ControlSet {
+  return {
+    id: newId('control-set'),
+    hostNodeId,
+    controls: source.controls.map((control) => ({
+      ...control,
+      id: newId('control'),
+      bindings: cloneBindings(control.bindings),
+      groups: control.groups.map((group) => ({
+        ...group,
+        id: newId('control-group'),
+        bindings: cloneBindings(group.bindings),
+        ...(group.collectionBlocks !== undefined
+          ? {
+              collectionBlocks: group.collectionBlocks.map((block) => ({
+                ...block,
+                id: newId('control-collection-block'),
+              })),
+            }
+          : {}),
+      })),
+    })),
+  }
+}
+
+function cloneBindings(
+  bindings: Readonly<Record<string, ControlBindingValue>>,
+): Record<string, ControlBindingValue> {
+  const copy: Record<string, ControlBindingValue> = {}
+  for (const [semantic, value] of Object.entries(bindings)) {
+    copy[semantic] = Array.isArray(value)
+      ? (value as readonly ControlBinding[]).map(cloneBinding)
+      : cloneBinding(value as ControlBinding)
+  }
+  return copy
+}
+
+function cloneBinding(binding: ControlBinding): ControlBinding {
+  return typeof binding === 'string' ? binding : { ...binding }
+}
+
 export function ensureControlGroups(control: Control): Control {
   // If control already has groups, return as is (but ensure bindings merged)
   const hasGroups = (control as unknown as { groups?: unknown }).groups !== undefined

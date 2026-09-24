@@ -1,18 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createEngineInternal } from '../engine/internal'
 import { createControl, createControlSet } from '../engine/control'
-import { Keyframe } from '../engine/keyframe'
-
-function createControlClip(
-  engine: ReturnType<typeof createEngineInternal>,
-  name: string,
-  value: number,
-) {
-  const clip = engine.createClip(name, 1, 'control', [], [{ property: 'positionX' }])
-  clip.addChannelKeyframe('positionX', new Keyframe(`${name}-start`, 0, value))
-  clip.addChannelKeyframe('positionX', new Keyframe(`${name}-end`, 1, value))
-  return clip
-}
+import { createControlClip } from './engine/helpers'
 
 describe('control bindings', () => {
   it('evaluates and reloads multiple clips bound to one semantic name', () => {
@@ -23,8 +12,8 @@ describe('control bindings', () => {
     const child = engine.createNode(slide.scene.id, host.id, 'Child')
     child.semanticName = 'hand'
 
-    const first = createControlClip(engine, 'First', 10)
-    const second = createControlClip(engine, 'Second', 20)
+    const first = createControlClip(engine, 'First', 10, 10)
+    const second = createControlClip(engine, 'Second', 20, 20)
     host.controlSet = createControlSet(host.id, [
       createControl({
         key: 'Pose',

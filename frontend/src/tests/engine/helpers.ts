@@ -1,12 +1,27 @@
 import type { EngineEvent } from '../../engine/events'
 import { createEngine } from '../../engine/internal'
 import type { Engine } from '../../engine/internal'
+import type { ClipDefinition } from '../../engine/clipDefinition'
+import { Keyframe } from '../../engine/keyframe'
 import type { Project } from '../../engine/project'
 
 export function collectEvents(engine: Engine): EngineEvent[] {
   const events: EngineEvent[] = []
   engine.subscribe((event) => events.push(event))
   return events
+}
+
+/** A `duration: 1` control clip driving `positionX` from `from` at u=0 to `to` at u=1. */
+export function createControlClip(
+  engine: Engine,
+  name: string,
+  from: number,
+  to: number,
+): ClipDefinition {
+  const clip = engine.createClip(name, 1, 'control', [], [{ property: 'positionX' }])
+  clip.addChannelKeyframe('positionX', new Keyframe(`${name}-start`, 0, from))
+  clip.addChannelKeyframe('positionX', new Keyframe(`${name}-end`, 1, to))
+  return clip
 }
 
 export function makeProject(name: string, slideNames: readonly string[] = []): Project {
