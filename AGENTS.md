@@ -22,4 +22,6 @@ When presenting design choices or multiple-option decisions to the user, always 
 
 ### Testing
 
-Run only related tests during development (e.g. `npm run test --prefix frontend -- <pattern> --run`). Full suites run automatically via the `husky` pre-commit hook (`frontend/.husky/pre-commit` → `lint-staged` → `vitest run` / `pytest`); avoid running the entire suite locally unless needed.
+Run only related tests during development (e.g. `npm run test --prefix frontend -- <pattern> --run`). The `husky` pre-commit hook runs `lint-staged` → `vitest run` / `pytest` over the staged files, so it does not exercise the whole suite; avoid running the entire suite locally unless needed.
+
+The full frontend suite has a known OOM: `frontend/src/tests/meshGenerationSection.test.tsx` exhausts its vitest worker, so the tail of its tests never run and the run exits 1 with `Worker exited unexpectedly`. It reproduces on `main` and in isolation (a larger heap only delays it) — judge a full-suite run by its failures, not its exit code. The tally survives the crash: `npm run test --prefix frontend -- --run --reporter=json --outputFile=/tmp/vitest.json`, green when `numFailedTests` is 0.
