@@ -93,10 +93,7 @@ function copyNodeDeep(
   nodeIds: ReadonlyMap<string, string>,
   placementIds: ReadonlyMap<string, string>,
 ): SceneNode {
-  const id = nodeIds.get(source.id)
-  if (!id) {
-    throw new Error(`Copied scene has no node for: ${source.id}`)
-  }
+  const id = requireCopiedId(nodeIds, source.id, 'node')
   const copy = new SceneNode(
     id,
     source.name,
@@ -118,14 +115,10 @@ function copyNodeDeep(
     copy.controlSet = cloneControlSet(source.controlSet, id)
   }
   for (const placement of source.collectionPlacements) {
-    const placementId = placementIds.get(placement.id)
-    if (!placementId) {
-      throw new Error(`Copied scene has no placement for: ${placement.id}`)
-    }
     copy.collectionPlacements.push({
-      id: placementId,
+      id: requireCopiedId(placementIds, placement.id, 'placement'),
       collectionId: placement.collectionId,
-      parentNodeId: nodeIds.get(placement.parentNodeId) ?? placement.parentNodeId,
+      parentNodeId: requireCopiedId(nodeIds, placement.parentNodeId, 'placement parent'),
       startTime: placement.startTime,
     })
   }
@@ -135,10 +128,16 @@ function copyNodeDeep(
       id: newClipInstanceId(),
       paramOverrides: { ...inst.paramOverrides },
       ...(inst.placementId !== undefined
-        ? { placementId: placementIds.get(inst.placementId) ?? inst.placementId }
+        ? { placementId: requireCopiedId(placementIds, inst.placementId, 'instance placement') }
         : {}),
       ...(inst.collectionTargetId !== undefined
-        ? { collectionTargetId: nodeIds.get(inst.collectionTargetId) ?? inst.collectionTargetId }
+        ? {
+            collectionTargetId: requireCopiedId(
+              nodeIds,
+              inst.collectionTargetId,
+              'collection target',
+            ),
+          }
         : {}),
     })
   }
@@ -150,6 +149,18 @@ function copyNodeDeep(
     copyNodeDeep(child, copy, nodeIds, placementIds)
   }
   return copy
+}
+
+function requireCopiedId(
+  copiedIds: ReadonlyMap<string, string>,
+  sourceId: string,
+  what: string,
+): string {
+  const copied = copiedIds.get(sourceId)
+  if (!copied) {
+    throw new Error(`Copied scene has no ${what} for: ${sourceId}`)
+  }
+  return copied
 }
 
 function findNodeById(root: SceneNode, id: string): SceneNode {
