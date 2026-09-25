@@ -30,6 +30,11 @@ export type {
   SetSlideAnimationScriptInverse,
   SetSlideAnimationScriptParameters,
 } from './setSlideAnimationScriptCommand'
+export { SetSlideAnimationScriptFootprintCommand } from './setSlideAnimationScriptFootprintCommand'
+export type {
+  SetSlideAnimationScriptFootprintInverse,
+  SetSlideAnimationScriptFootprintParameters,
+} from './setSlideAnimationScriptFootprintCommand'
 export { SetFullscreenShaderCommand } from './setFullscreenShaderCommand'
 export type {
   SetFullscreenShaderInverse,

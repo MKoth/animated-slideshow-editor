@@ -47,6 +47,28 @@ function setupProject(engine: Engine, slideNames: readonly string[] = ['Slide 1'
   })
 }
 
+function addHero(dispatcher: CommandDispatcher, engine: Engine): string {
+  const slide = engine.getActiveSlide()
+  if (!slide) throw new Error('expected an active slide')
+  const result = dispatcher.dispatch(
+    new CreateNodeCommand({
+      sceneId: slide.scene.id,
+      parentId: slide.scene.root.id,
+      name: 'Hero',
+    }),
+  )
+  if (!result.ok) throw new Error(result.error.message)
+  return result.inverse.nodeId
+}
+
+function setScript(dispatcher: CommandDispatcher, engine: Engine, source: string): void {
+  const slide = engine.getActiveSlide()
+  if (!slide) throw new Error('expected an active slide')
+  act(() => {
+    dispatcher.dispatch(new SetSlideAnimationScriptCommand({ slideId: slide.id, source }))
+  })
+}
+
 beforeEach(() => {
   useSelectionStore.setState({ selectedIds: [] })
   usePlaybackController.setState({ currentTimes: {} })
@@ -179,19 +201,6 @@ describe('Script tab shell', () => {
 })
 
 describe('Script tab Check', () => {
-  function addHero(dispatcher: CommandDispatcher, engine: Engine) {
-    const slide = engine.getActiveSlide()
-    if (!slide) throw new Error('expected an active slide')
-    const result = dispatcher.dispatch(
-      new CreateNodeCommand({
-        sceneId: slide.scene.id,
-        parentId: slide.scene.root.id,
-        name: 'Hero',
-      }),
-    )
-    if (!result.ok) throw new Error(result.error.message)
-  }
-
   it('checks the draft and renders the prospective segment summary without touching history', async () => {
     const user = userEvent.setup()
     const { engine, undoStack, dispatcher } = renderPanel()
@@ -268,5 +277,82 @@ describe('Script tab Check', () => {
 
     fireEvent.change(editor, { target: { value: 'script "Demo" from 0' } })
     expect(screen.queryByTestId('script-check-result')).not.toBeInTheDocument()
+  })
+})
+
+describe('Script tab Run', () => {
+  const source = [
+    'script "Demo" from 0.5',
+    'bind hero = node("Hero")',
+    'hero.tween({ x: 5 }, 0.4)',
+  ].join('\n')
+
+  it('runs the saved source as one undoable History entry and renders the run summary', async () => {
+    const user = userEvent.setup()
+    const { engine, undoStack, dispatcher } = renderPanel()
+    setupProject(engine)
+    const heroId = addHero(dispatcher, engine)
+    setScript(dispatcher, engine, source)
+    await user.click(screen.getByTestId('bottom-tab-script'))
+    const undoBefore = undoStack.entries.length
+
+    await user.click(screen.getByTestId('script-run'))
+
+    expect(screen.getByTestId('script-run-summary')).toHaveTextContent('Segment 0.5s → 0.9s')
+    expect(screen.getByTestId('script-run-summary')).toHaveTextContent('tracks: Hero.x')
+    expect(screen.getByTestId('script-run-summary')).toHaveTextContent('2 keyframes')
+    expect(engine.getKeyframes(heroId, 'positionX').map((keyframe) => keyframe.value)).toEqual([
+      0, 5,
+    ])
+    expect(engine.getActiveSlide()?.animationScript?.source).toBe(source)
+    expect(engine.getActiveSlide()?.animationScript?.lastCompiled?.from).toBe(0.5)
+    expect(undoStack.entries).toHaveLength(undoBefore + 1)
+    expect(undoStack.entries[0].type).toBe('Transaction')
+
+    act(() => {
+      dispatcher.undo()
+    })
+    expect(engine.getKeyframes(heroId, 'positionX')).toHaveLength(0)
+    expect(engine.getActiveSlide()?.animationScript?.lastCompiled).toBeUndefined()
+  })
+
+  it('disables Run until unsaved draft changes are saved', async () => {
+    const user = userEvent.setup()
+    const { engine, dispatcher } = renderPanel()
+    setupProject(engine)
+    addHero(dispatcher, engine)
+    setScript(dispatcher, engine, source)
+    await user.click(screen.getByTestId('bottom-tab-script'))
+
+    expect(screen.getByTestId('script-run')).toBeEnabled()
+
+    await user.type(screen.getByLabelText('Animation Script source'), ' ')
+    expect(screen.getByTestId('script-run')).toBeDisabled()
+
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(screen.getByTestId('script-run')).toBeEnabled()
+  })
+
+  it('blocks a run with diagnostics and dispatches nothing', async () => {
+    const user = userEvent.setup()
+    const { engine, undoStack, dispatcher } = renderPanel()
+    setupProject(engine)
+    const heroId = addHero(dispatcher, engine)
+    setScript(
+      dispatcher,
+      engine,
+      ['script "Demo" from 0', 'bind hero = node("Hero")', 'hero.tween({ x: 1 })'].join('\n'),
+    )
+    await user.click(screen.getByTestId('bottom-tab-script'))
+    const undoBefore = undoStack.entries.length
+
+    await user.click(screen.getByTestId('script-run'))
+
+    expect(screen.getByTestId('script-run-summary')).toHaveTextContent('Run blocked by 1 error')
+    expect(screen.getAllByTestId('script-diagnostic')).toHaveLength(1)
+    expect(screen.getByTestId('script-diagnostic')).toHaveTextContent(/needs a duration/i)
+    expect(engine.getKeyframes(heroId, 'positionX')).toHaveLength(0)
+    expect(engine.getActiveSlide()?.animationScript?.lastCompiled).toBeUndefined()
+    expect(undoStack.entries).toHaveLength(undoBefore)
   })
 })

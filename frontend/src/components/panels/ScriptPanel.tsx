@@ -1,11 +1,22 @@
 import { useRef, useState } from 'react'
 import { useEngine } from '../../app/useEngine'
 import { checkAnimationScript } from '../../engine/animationScriptCheck'
+import { runAnimationScript } from '../../engine/animationScriptRun'
+import type { AnimationScriptRunResult } from '../../engine/animationScriptRun'
 import type {
   AnimationScriptCompileResult,
   AnimationScriptDiagnostic,
+  AnimationScriptSummary,
 } from '../../engine/animationScriptCompiler'
 import { SetSlideAnimationScriptCommand } from '../../engine/commands'
+
+type ScriptOutcome =
+  | {
+      readonly kind: 'check'
+      readonly source: string
+      readonly result: AnimationScriptCompileResult
+    }
+  | { readonly kind: 'run'; readonly source: string; readonly result: AnimationScriptRunResult }
 
 export function ScriptPanel({
   slideId,
@@ -23,14 +34,11 @@ export function ScriptPanel({
   const editorRef = useRef<HTMLTextAreaElement>(null)
   const [draft, setDraft] = useState(source)
   const [syncedFrom, setSyncedFrom] = useState({ slideId, source })
-  const [check, setCheck] = useState<{
-    source: string
-    result: AnimationScriptCompileResult
-  } | null>(null)
+  const [outcome, setOutcome] = useState<ScriptOutcome | null>(null)
 
   if (syncedFrom.slideId !== slideId || syncedFrom.source !== source) {
     if (syncedFrom.slideId !== slideId) {
-      setCheck(null)
+      setOutcome(null)
     }
     setSyncedFrom({ slideId, source })
     setDraft(source)
@@ -47,13 +55,30 @@ export function ScriptPanel({
   }
 
   const runCheck = () => {
-    setCheck({ source: draft, result: checkAnimationScript(engine, slideId, draft) })
+    setOutcome({
+      kind: 'check',
+      source: draft,
+      result: checkAnimationScript(engine, slideId, draft),
+    })
+  }
+
+  const runScript = () => {
+    setOutcome({
+      kind: 'run',
+      source,
+      result: runAnimationScript(engine, dispatch, slideId, source),
+    })
   }
 
   const editDraft = (value: string) => {
     setDraft(value)
-    setCheck(null)
+    setOutcome(null)
   }
+
+  const visibleOutcome =
+    outcome === null || outcome.source !== (outcome.kind === 'check' ? draft : source)
+      ? null
+      : outcome
 
   const revealDiagnostic = (diagnostic: AnimationScriptDiagnostic) => {
     const editor = editorRef.current
@@ -97,6 +122,24 @@ export function ScriptPanel({
           }}
         >
           Check
+        </button>
+        <button
+          type="button"
+          data-testid="script-run"
+          onClick={runScript}
+          disabled={dirty}
+          title={dirty ? 'Save your changes before running' : 'Compile and apply this script'}
+          style={{
+            padding: '4px 12px',
+            borderRadius: 4,
+            border: '1px solid var(--color-border)',
+            background: !dirty ? 'var(--color-accent)' : 'transparent',
+            color: !dirty ? 'var(--color-accent-text)' : 'var(--color-text-muted)',
+            cursor: !dirty ? 'pointer' : 'default',
+            fontSize: 11,
+          }}
+        >
+          Run
         </button>
         <button
           type="button"
@@ -177,40 +220,73 @@ export function ScriptPanel({
           }}
         />
       </div>
-      {check !== null && check.source === draft && (
-        <CheckResult result={check.result} onReveal={revealDiagnostic} />
+      {visibleOutcome !== null && (
+        <CompileOutcome
+          kind={visibleOutcome.kind}
+          summary={visibleOutcome.result.summary}
+          diagnostics={visibleOutcome.result.diagnostics}
+          ok={outcomeOk(visibleOutcome)}
+          error={visibleOutcome.kind === 'run' ? visibleOutcome.result.error : null}
+          onReveal={revealDiagnostic}
+        />
       )}
     </div>
   )
 }
 
-function CheckResult({
-  result,
+function outcomeOk(outcome: ScriptOutcome): boolean {
+  return outcome.kind === 'run' ? outcome.result.ran : outcome.result.runnable
+}
+
+function outcomeStatus(
+  kind: 'check' | 'run',
+  ok: boolean,
+  error: string | null,
+  errorCount: number,
+): string {
+  if (error !== null) return `Run failed: ${error}`
+  if (ok) return kind === 'run' ? 'Ran' : ''
+  return `Run blocked by ${count(errorCount, 'error')}`
+}
+
+function CompileOutcome({
+  kind,
+  summary,
+  diagnostics,
+  ok,
+  error,
   onReveal,
 }: {
-  result: AnimationScriptCompileResult
+  kind: 'check' | 'run'
+  summary: AnimationScriptSummary
+  diagnostics: readonly AnimationScriptDiagnostic[]
+  ok: boolean
+  error: string | null
   onReveal: (diagnostic: AnimationScriptDiagnostic) => void
 }) {
-  const errorCount = result.diagnostics.filter(
-    (diagnostic) => diagnostic.severity === 'error',
-  ).length
-  const blocked = result.runnable ? '' : `Run blocked by ${count(errorCount, 'error')} · `
+  const errorCount = diagnostics.filter((diagnostic) => diagnostic.severity === 'error').length
+  const status = outcomeStatus(kind, ok, error, errorCount)
+  const testIds =
+    kind === 'check'
+      ? { result: 'script-check-result', summary: 'script-check-summary' }
+      : { result: 'script-run-result', summary: 'script-run-summary' }
   const tracks =
-    result.summary.tracks.length === 0
+    summary.tracks.length === 0
       ? 'no tracks'
-      : `tracks: ${result.summary.tracks
-          .map((track) => `${track.nodeName}.${track.property}`)
-          .join(', ')}`
-  const summary = [
-    `${blocked}Segment ${formatSeconds(result.summary.from)}s → ${formatSeconds(result.summary.to)}s`,
+      : `tracks: ${summary.tracks.map((track) => `${track.nodeName}.${track.property}`).join(', ')}`
+  const line = [
+    status,
+    `Segment ${formatSeconds(summary.from)}s → ${formatSeconds(summary.to)}s`,
     tracks,
-    count(result.summary.keyframeCount, 'keyframe'),
-    count(result.summary.instanceCount, 'instance'),
-  ].join(' · ')
+    count(summary.keyframeCount, 'keyframe'),
+    count(summary.instanceCount, 'instance'),
+  ]
+    .filter((part) => part.length > 0)
+    .join(' · ')
 
   return (
     <div
-      data-testid="script-check-result"
+      data-testid={testIds.result}
       style={{
         borderTop: '1px solid var(--color-border)',
         background: 'var(--color-bg-panel)',
@@ -221,17 +297,17 @@ function CheckResult({
       }}
     >
       <div
-        data-testid="script-check-summary"
+        data-testid={testIds.summary}
         style={{
           padding: '6px 8px',
           fontSize: 11,
-          color: result.runnable ? 'var(--color-text)' : 'var(--color-danger, #d64545)',
-          borderBottom: result.diagnostics.length > 0 ? '1px solid var(--color-border)' : 'none',
+          color: ok ? 'var(--color-text)' : 'var(--color-danger, #d64545)',
+          borderBottom: diagnostics.length > 0 ? '1px solid var(--color-border)' : 'none',
         }}
       >
-        {summary}
+        {line}
       </div>
-      {result.diagnostics.map((diagnostic, index) => (
+      {diagnostics.map((diagnostic, index) => (
         <button
           key={index}
           type="button"

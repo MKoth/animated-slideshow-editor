@@ -44,6 +44,8 @@ export type { FullscreenShaderReference } from './fullscreenShader'
 export type { SlideAnimationScript } from './animationScript'
 export type { CompiledFootprint, CompiledFootprintTrack } from './compiledFootprint'
 export { checkAnimationScript } from './animationScriptCheck'
+export { runAnimationScript } from './animationScriptRun'
+export type { AnimationScriptRunResult } from './animationScriptRun'
 export {
   compileAnimationScript,
   enginePropertyForScriptProperty,

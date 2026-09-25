@@ -57,6 +57,7 @@ import type { ShadowEffect } from './shadowEffect'
 import type { Slide } from './slide'
 import type { SlideDurationChange } from './slideManager'
 import type { SlideAnimationScript } from './animationScript'
+import type { CompiledFootprint } from './compiledFootprint'
 import type { EngineEvent, Unsubscribe } from './events'
 import type { CreateNodeOptions } from './nodeManager'
 import type { Transform } from './transform'
@@ -371,6 +372,13 @@ export class Engine {
 
   setSlideAnimationScriptSource(slideId: string, source: string): void {
     this.#slides.setAnimationScriptSource(slideId, source)
+  }
+
+  setSlideAnimationScriptFootprint(
+    slideId: string,
+    footprint: CompiledFootprint | null,
+  ): CompiledFootprint | null {
+    return this.#slides.setAnimationScriptFootprint(slideId, footprint)
   }
 
   setFullscreenShader(slideId: string, shaderDefinitionId: string | null): void {

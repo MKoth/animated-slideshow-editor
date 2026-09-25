@@ -16,6 +16,7 @@ import type { ClampedKeyframe } from './slideAnimation'
 import { requireFiniteNumber, requireNonEmpty, requireStringAllowEmpty } from './guards'
 import { newAudioClipId } from './audioClip'
 import type { SlideAnimationScript } from './animationScript'
+import type { CompiledFootprint } from './compiledFootprint'
 import { newPrompterPartId, newAudioSegmentId } from './prompter'
 
 const SLIDE_ORDINAL_PATTERN = /^Slide (\d+)$/
@@ -192,6 +193,28 @@ export class SlideManager {
       source: requireStringAllowEmpty(source, 'Animation Script source'),
       ...(lastCompiled !== undefined ? { lastCompiled } : {}),
     })
+  }
+
+  /**
+   * Record the footprint of a Run, or clear it on undo; the authored source is
+   * untouched. Returns the footprint it replaced so the caller can build its inverse.
+   */
+  setAnimationScriptFootprint(
+    slideId: string,
+    footprint: CompiledFootprint | null,
+  ): CompiledFootprint | null {
+    const slide = this.get(slideId)
+    const script = slide.animationScript
+    if (!script) {
+      throw new Error(`Slide "${slideId}" has no Animation Script`)
+    }
+    const previousFootprint = script.lastCompiled ?? null
+    slide.animationScript = {
+      source: script.source,
+      ...(footprint !== null ? { lastCompiled: footprint } : {}),
+    }
+    this.#bus.emit({ type: 'SlideAnimationScriptChanged', slideId })
+    return previousFootprint
   }
 
   /** Assign a fullscreen shader to a slide, or clear it; assigning resets overrides. */

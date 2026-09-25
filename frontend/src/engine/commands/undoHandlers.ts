@@ -11,6 +11,7 @@ import { ClipDefinition } from '../clipDefinition'
 import { ClipCollection } from '../clipCollection'
 import { defaultTableComponent } from '../defaultTable'
 import { applyTableLayout } from '../tableLayoutApply'
+import { compiledFootprintFromJSON } from '../compiledFootprint'
 import { relativeTransform, transformsEqual, worldTransformOf } from '../worldTransform'
 import type { MirrorCollectionShapeSnapshot } from './mirrorCollectionCommand'
 
@@ -398,6 +399,16 @@ export function applyUndo(
       } else {
         engine.setSlideAnimationScriptSource(slideId, previousSource)
       }
+      return
+    }
+    case 'SetSlideAnimationScriptFootprint': {
+      const slideId = inv.slideId as string
+      const previousFootprint = inv.previousFootprint as
+        import('../json').CompiledFootprintJSON | null
+      engine.setSlideAnimationScriptFootprint(
+        slideId,
+        previousFootprint === null ? null : compiledFootprintFromJSON(previousFootprint),
+      )
       return
     }
     case 'SetFullscreenShader': {
@@ -2912,6 +2923,12 @@ export function applyRedo(
       return
     case 'SetSlideAnimationScript':
       engine.setSlideAnimationScriptSource(params.slideId as string, params.source as string)
+      return
+    case 'SetSlideAnimationScriptFootprint':
+      engine.setSlideAnimationScriptFootprint(
+        params.slideId as string,
+        compiledFootprintFromJSON(params.footprint as import('../json').CompiledFootprintJSON),
+      )
       return
     case 'SetFullscreenShader':
       engine.setFullscreenShader(
