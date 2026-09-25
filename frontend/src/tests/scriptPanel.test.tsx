@@ -5,9 +5,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { EngineContext } from '../app/engineContext'
 import type { EngineContextValue } from '../app/engineContext'
 import { BottomPanel } from '../components/editor/BottomPanel'
-import { CommandDispatcher, SetSlideAnimationScriptCommand, UndoStack } from '../engine/commands'
+import {
+  CommandDispatcher,
+  CreateNodeCommand,
+  SetSlideAnimationScriptCommand,
+  UndoStack,
+} from '../engine/commands'
 import type { Engine } from '../engine/internal'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
+import { serialize } from '../engine/lessonSerializer'
 import { usePlaybackController } from '../stores/playbackStore'
 import { useSelectionStore } from '../stores/selectionStore'
 import { DEFAULT_TIMELINE_HEIGHT } from '../stores/uiPrefs'
@@ -169,5 +175,98 @@ describe('Script tab shell', () => {
 
     expect(engine.getActiveSlide()?.animationScript?.source).toBe('script "Keys" from 0')
     expect(undoStack.entries[0].type).toBe('SetSlideAnimationScript')
+  })
+})
+
+describe('Script tab Check', () => {
+  function addHero(dispatcher: CommandDispatcher, engine: Engine) {
+    const slide = engine.getActiveSlide()
+    if (!slide) throw new Error('expected an active slide')
+    const result = dispatcher.dispatch(
+      new CreateNodeCommand({
+        sceneId: slide.scene.id,
+        parentId: slide.scene.root.id,
+        name: 'Hero',
+      }),
+    )
+    if (!result.ok) throw new Error(result.error.message)
+  }
+
+  it('checks the draft and renders the prospective segment summary without touching history', async () => {
+    const user = userEvent.setup()
+    const { engine, undoStack, dispatcher } = renderPanel()
+    setupProject(engine)
+    addHero(dispatcher, engine)
+    await user.click(screen.getByTestId('bottom-tab-create-script'))
+
+    const editor = screen.getByLabelText('Animation Script source')
+    fireEvent.change(editor, {
+      target: {
+        value: [
+          'script "Demo" from 0.5',
+          'bind hero = node("Hero")',
+          'hero.tween({ x: 5 }, 0.4)',
+        ].join('\n'),
+      },
+    })
+    const undoBefore = undoStack.entries.length
+    const serializedBefore = serialize(engine.project!)
+
+    await user.click(screen.getByTestId('script-check'))
+
+    expect(screen.getByTestId('script-check-summary')).toHaveTextContent('Segment 0.5s → 0.9s')
+    expect(screen.getByTestId('script-check-summary')).toHaveTextContent('tracks: Hero.x')
+    expect(screen.getByTestId('script-check-summary')).toHaveTextContent('2 keyframes')
+    expect(undoStack.entries).toHaveLength(undoBefore)
+    expect(serialize(engine.project!)).toBe(serializedBefore)
+  })
+
+  it('lists diagnostics and clicking one places the editor cursor at its source position', async () => {
+    const user = userEvent.setup()
+    const { engine, dispatcher } = renderPanel()
+    setupProject(engine)
+    addHero(dispatcher, engine)
+    await user.click(screen.getByTestId('bottom-tab-create-script'))
+
+    const source = [
+      'script "Demo" from 0',
+      'bind hero = node("Hero")',
+      'hero.tween({ x: 1 })',
+    ].join('\n')
+    const editor = screen.getByLabelText('Animation Script source') as HTMLTextAreaElement
+    fireEvent.change(editor, { target: { value: source } })
+
+    await user.click(screen.getByTestId('script-check'))
+
+    const diagnostics = screen.getAllByTestId('script-diagnostic')
+    expect(diagnostics).toHaveLength(1)
+    expect(diagnostics[0]).toHaveAttribute('data-severity', 'error')
+    expect(diagnostics[0]).toHaveTextContent(/needs a duration/i)
+    expect(diagnostics[0]).toHaveTextContent('Line 3, Col 6')
+
+    await user.click(diagnostics[0])
+
+    const expected = source.indexOf('tween')
+    expect(editor).toHaveFocus()
+    expect(editor.selectionStart).toBe(expected)
+    expect(editor.selectionEnd).toBe(expected)
+  })
+
+  it('clears a stale check when the source is edited and warns about unused bindings', async () => {
+    const user = userEvent.setup()
+    const { engine, dispatcher } = renderPanel()
+    setupProject(engine)
+    addHero(dispatcher, engine)
+    await user.click(screen.getByTestId('bottom-tab-create-script'))
+
+    const editor = screen.getByLabelText('Animation Script source')
+    fireEvent.change(editor, {
+      target: { value: ['script "Demo" from 0', 'bind hero = node("Hero")'].join('\n') },
+    })
+    await user.click(screen.getByTestId('script-check'))
+    expect(screen.getByTestId('script-diagnostic')).toHaveAttribute('data-severity', 'warning')
+
+    fireEvent.change(editor, { target: { value: 'script "Demo" from 0' } })
+    expect(screen.queryByTestId('script-check-result')).not.toBeInTheDocument()
   })
 })

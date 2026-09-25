@@ -43,6 +43,25 @@ export type { EmbeddedShaderDefinition } from './embeddedShader'
 export type { FullscreenShaderReference } from './fullscreenShader'
 export type { SlideAnimationScript } from './animationScript'
 export type { CompiledFootprint, CompiledFootprintTrack } from './compiledFootprint'
+export { checkAnimationScript } from './animationScriptCheck'
+export {
+  compileAnimationScript,
+  enginePropertyForScriptProperty,
+  SCRIPT_PROPERTY_NAMES,
+} from './animationScriptCompiler'
+export type {
+  AnimationScriptCompileContext,
+  AnimationScriptCompileResult,
+  AnimationScriptDiagnostic,
+  AnimationScriptKeyframeInfo,
+  AnimationScriptNodeInfo,
+  AnimationScriptSummary,
+  AnimationScriptTrackSummary,
+  ScriptProperty,
+} from './animationScriptCompiler'
+export { formatCandidates, nearMissCandidates } from './animationScriptNearMiss'
+export { DEFAULT_SCRIPT_EASE, SCRIPT_EASE_NAMES, resolveScriptEase } from './animationScriptEase'
+export type { ResolvedScriptEase, ScriptEaseName } from './animationScriptEase'
 export {
   DEFAULT_MATERIAL_DEFINITION_ID,
   DEFAULT_MATERIAL_NAME,

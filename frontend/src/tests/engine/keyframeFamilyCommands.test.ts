@@ -22,6 +22,7 @@ import {
 } from '../../engine/commands'
 import { createEngine } from '../../engine/internal'
 import type { Engine } from '../../engine/internal'
+import { EASING_PRESETS } from '../../engine/easingPresets'
 
 const CUSTOM_MATERIAL = {
   id: 'mat-params',
@@ -123,6 +124,60 @@ describe('AddKeyframeCommand', () => {
       inverse,
     })
     expect(log).toHaveBeenCalledWith(expect.stringContaining('AddKeyframe'))
+  })
+
+  it('accepts an explicit ease and restores it on redo', () => {
+    const setup = setupWithNode()
+    const target = propertyTarget(setup.nodeId)
+    const preset = EASING_PRESETS.find((entry) => entry.label === 'Ease In-Out')
+    if (!preset) throw new Error('expected the Ease In-Out preset')
+
+    expectOk(
+      setup.dispatcher.dispatch(
+        new AddKeyframeCommand({
+          target,
+          time: 1,
+          value: 5,
+          interpolation: 'bezier',
+          tangentIn: preset.tangentIn,
+          tangentOut: preset.tangentOut,
+        }),
+      ),
+    )
+
+    const added = setup.engine.getKeyframes(setup.nodeId, 'positionX')
+    expect(added).toHaveLength(1)
+    expect(added[0]).toMatchObject({
+      time: 1,
+      value: 5,
+      interpolation: 'bezier',
+      tangentIn: preset.tangentIn,
+      tangentOut: preset.tangentOut,
+    })
+
+    expect(setup.dispatcher.undo()).toBe(true)
+    expect(setup.engine.getKeyframes(setup.nodeId, 'positionX')).toHaveLength(0)
+
+    expect(setup.dispatcher.redo()).toBe(true)
+    const redone = setup.engine.getKeyframes(setup.nodeId, 'positionX')
+    expect(redone).toHaveLength(1)
+    expect(redone[0]).toMatchObject({
+      interpolation: 'bezier',
+      tangentIn: preset.tangentIn,
+      tangentOut: preset.tangentOut,
+    })
+  })
+
+  it('rejects a non-hold interpolation on the zIndex track', () => {
+    const setup = setupWithNode()
+    const target: KeyframeTarget = { kind: 'zIndex', nodeId: setup.nodeId }
+
+    const result = setup.dispatcher.dispatch(
+      new AddKeyframeCommand({ target, time: 1, value: 3, interpolation: 'linear' }),
+    )
+
+    expect(result.ok).toBe(false)
+    expect(setup.engine.getZIndexKeyframes(setup.nodeId)).toHaveLength(0)
   })
 
   it('rejects unknown node, non-animatable property, unknown parameter, out-of-bounds time, and invalid values with the engine unchanged', () => {

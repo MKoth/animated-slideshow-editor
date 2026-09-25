@@ -2108,8 +2108,13 @@ export class Engine {
     return null
   }
 
-  addKeyframe(target: KeyframeTarget, time: number, value: unknown): Keyframe {
-    return this.#animations.addKeyframe(target, time, value)
+  addKeyframe(
+    target: KeyframeTarget,
+    time: number,
+    value: unknown,
+    options?: import('./animationManager').AddKeyframeOptions,
+  ): Keyframe {
+    return this.#animations.addKeyframe(target, time, value, options)
   }
 
   deleteKeyframes(target: KeyframeTarget, keyframeIds: readonly string[]): Keyframe[] {

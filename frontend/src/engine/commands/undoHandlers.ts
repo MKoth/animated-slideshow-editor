@@ -3022,7 +3022,17 @@ export function applyRedo(
     }
     case 'AddKeyframe': {
       const target = params.target as import('../keyframeTarget').KeyframeTarget
-      engine.addKeyframe(target, params.time as number, params.value)
+      engine.addKeyframe(target, params.time as number, params.value, {
+        ...(params.interpolation !== undefined
+          ? { interpolation: params.interpolation as import('../keyframe').InterpolationType }
+          : {}),
+        ...(params.tangentIn !== undefined
+          ? { tangentIn: params.tangentIn as import('../keyframe').KeyframeTangent }
+          : {}),
+        ...(params.tangentOut !== undefined
+          ? { tangentOut: params.tangentOut as import('../keyframe').KeyframeTangent }
+          : {}),
+      })
       return
     }
     case 'DeleteKeyframes': {

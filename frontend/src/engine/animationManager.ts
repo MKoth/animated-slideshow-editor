@@ -2,7 +2,7 @@ import type { EventBus } from './events'
 import type { SceneNode } from './sceneNode'
 import type { Slide } from './slide'
 import type { Keyframe } from './keyframe'
-import { Keyframe as KeyframeModel, newKeyframeId } from './keyframe'
+import { Keyframe as KeyframeModel, newKeyframeId, ZERO_TANGENT } from './keyframe'
 import type { InterpolationType, KeyframeTangent } from './keyframe'
 import { requireKeyframeInterpolation, requireKeyframeTangent } from './keyframe'
 import type { AnimationProperty } from './animationProperties'
@@ -33,6 +33,13 @@ export interface KeyframeMoveResult {
 export interface KeyframeTangents {
   readonly tangentIn: KeyframeTangent
   readonly tangentOut: KeyframeTangent
+}
+
+/** An explicit ease applied when a keyframe is added, instead of inheriting the previous one. */
+export interface AddKeyframeOptions {
+  readonly interpolation?: InterpolationType
+  readonly tangentIn?: KeyframeTangent
+  readonly tangentOut?: KeyframeTangent
 }
 
 /** A clipboard payload: keyframes relative to their earliest keyframe (Spec 07 R10). */
@@ -153,30 +160,75 @@ export class AnimationManager {
     return slide.animation.node(nodeId)?.hasZIndexTrack() ?? false
   }
 
-  addKeyframe(target: KeyframeTarget, time: number, value: unknown): Keyframe {
+  addKeyframe(
+    target: KeyframeTarget,
+    time: number,
+    value: unknown,
+    options: AddKeyframeOptions = {},
+  ): Keyframe {
     const resolved = this.#resolve(target)
     const boundedTime = requireKeyframeTime(time, resolved.slide.duration)
     const normalizedValue = this.#normalizeMorphValueIfNeeded(resolved, value)
     const boundedValue = requireTrackKeyframeValue(resolved.track, normalizedValue)
     this.#assertTimeFree(resolved, boundedTime, [], [])
-    let interpolation = previousInterpolation(this.#keyframesOf(resolved), boundedTime)
+    const explicitInterpolation =
+      options.interpolation === undefined
+        ? undefined
+        : requireKeyframeInterpolation(options.interpolation)
+    if (explicitInterpolation !== undefined) {
+      this.#requireEaseAllowedOnTrack(resolved, explicitInterpolation)
+    }
+    const hasTangents = options.tangentIn !== undefined || options.tangentOut !== undefined
+    if (hasTangents && (options.tangentIn === undefined || options.tangentOut === undefined)) {
+      throw new Error('Keyframe tangents must be provided together')
+    }
+    if (hasTangents && (resolved.track.kind === 'visible' || resolved.track.kind === 'zIndex')) {
+      throw new Error(
+        `${resolved.track.kind === 'visible' ? 'Visible' : 'Z-Index'} track does not support tangents`,
+      )
+    }
+    let interpolation =
+      explicitInterpolation ?? previousInterpolation(this.#keyframesOf(resolved), boundedTime)
     if (resolved.track.kind === 'visible' || resolved.track.kind === 'zIndex') {
       interpolation = 'hold'
     }
     if (resolved.track.kind === 'shadow' && resolved.track.property === 'color') {
       if (interpolation !== 'hold' && interpolation !== 'linear') interpolation = 'linear'
     }
-    const keyframe = new KeyframeModel(newKeyframeId(), boundedTime, boundedValue, interpolation)
-    if (resolved.track.kind === 'visible' || resolved.track.kind === 'zIndex') {
-      keyframe.interpolation = 'hold'
-    }
-    if (resolved.track.kind === 'shadow' && resolved.track.property === 'color') {
-      if (keyframe.interpolation !== 'hold' && keyframe.interpolation !== 'linear')
-        keyframe.interpolation = 'linear'
-    }
+    const keyframe = new KeyframeModel(
+      newKeyframeId(),
+      boundedTime,
+      boundedValue,
+      interpolation,
+      options.tangentIn === undefined
+        ? ZERO_TANGENT
+        : requireKeyframeTangent(options.tangentIn, 'Keyframe tangent in'),
+      options.tangentOut === undefined
+        ? ZERO_TANGENT
+        : requireKeyframeTangent(options.tangentOut, 'Keyframe tangent out'),
+    )
     this.#addToTrack(resolved, keyframe)
     this.#bus.emit({ type: 'KeyframeAdded', target, keyframeId: keyframe.id })
     return keyframe
+  }
+
+  #requireEaseAllowedOnTrack(resolved: ResolvedTarget, interpolation: InterpolationType): void {
+    if (
+      (resolved.track.kind === 'visible' || resolved.track.kind === 'zIndex') &&
+      interpolation !== 'hold'
+    ) {
+      throw new Error(
+        `${resolved.track.kind === 'visible' ? 'Visible' : 'Z-Index'} track only supports hold interpolation`,
+      )
+    }
+    if (
+      resolved.track.kind === 'shadow' &&
+      resolved.track.property === 'color' &&
+      interpolation !== 'hold' &&
+      interpolation !== 'linear'
+    ) {
+      throw new Error('Shadow color track only supports hold and linear interpolation')
+    }
   }
 
   deleteKeyframes(target: KeyframeTarget, keyframeIds: readonly string[]): Keyframe[] {
