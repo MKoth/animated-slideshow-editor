@@ -173,7 +173,7 @@ A per-slide authored program that compiles to ordinary timeline data — node ke
 _Avoid_: Script (ambiguous with Prompter text), timeline program
 
 **Animation Script Binding**:
-A named, immutable alias declared in an Animation Script's prelude that resolves at compile time to one scene node (by Unique Name), a semantic group, a table, or a project clip or Clip Collection; unresolved, duplicate, or ambiguous references block the compile. Node bindings are scoped to the script's slide; clip and collection bindings to the project.
+A named, immutable alias declared in an Animation Script's prelude that resolves at compile time to one scene node (by Unique Name), a semantic group, a table, or a project clip or Clip Collection; unresolved, duplicate, or ambiguous references block the compile. A semantic group collects every node carrying that Semantic Name in scene pre-order, so broadcast writes and their per-member pins are reproducible. Node bindings are scoped to the script's slide; clip and collection bindings to the project.
 _Avoid_: Selector, reference, alias
 
 **Animation Script Cursor**:
@@ -457,7 +457,7 @@ The per-scene unique display name of a scene node. User-renamable, validated wit
 _Avoid_: Label, id
 
 **Semantic Name**:
-An optional, repeatable tag on a scene node used only for hierarchical clip binding (e.g. left_hand). Many nodes may share it; Clip Collection apply broadcasts to all matches.
+An optional, repeatable tag on a scene node used for hierarchical clip binding (e.g. left_hand) and for Animation Script `group("...")` addressing. Many nodes may share it; Clip Collection apply broadcasts to all matches, and a group binding collects every carrier in scene pre-order.
 _Avoid_: Tag, category
 
 ### Object Library

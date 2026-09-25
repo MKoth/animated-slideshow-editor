@@ -15,7 +15,7 @@ import type {
 } from './animationScriptParser'
 import { DEFAULT_SCRIPT_EASE, SCRIPT_EASE_NAMES, resolveScriptEase } from './animationScriptEase'
 import type { ResolvedScriptEase } from './animationScriptEase'
-import { formatCandidates, nearMissCandidates } from './animationScriptNearMiss'
+import { nearMissSuggestion } from './animationScriptNearMiss'
 
 /** The property vocabulary a first-cut tween or set may write. */
 export const SCRIPT_PROPERTY_NAMES = [
@@ -35,6 +35,8 @@ export interface AnimationScriptNodeInfo {
   readonly name: string
   readonly isBone: boolean
   readonly isCamera: boolean
+  /** The node's optional Semantic Name tag; `group("...")` collects carriers. */
+  readonly semanticName?: string
 }
 
 /**
@@ -43,6 +45,9 @@ export interface AnimationScriptNodeInfo {
  * touches engine state. The compiler plans every write as a fresh keyframe:
  * the Run clears the previous and new footprints before emitting, so no
  * existing keyframe inside a written track's window survives to be updated.
+ *
+ * `nodes` must be in scene pre-order (`walkPreOrder`): group bindings collect
+ * their members in that order, making broadcast writes reproducible.
  */
 export interface AnimationScriptCompileContext {
   readonly slideDuration: number
@@ -83,18 +88,35 @@ export interface AnimationScriptCompileResult {
   readonly summary: AnimationScriptSummary
 }
 
+interface ScriptMember {
+  readonly nodeId: string
+  readonly nodeName: string
+}
+
 interface BindingInfo {
   readonly alias: string
   readonly aliasSpan: SourceSpan
-  readonly nodeId: string
-  readonly nodeName: string
+  readonly kind: 'node' | 'group'
+  /**
+   * The binding's targets in scene pre-order. A node binding has exactly one
+   * member; a group binding has one per node carrying its Semantic Name, in
+   * `walkPreOrder` order. Broadcast writes therefore touch members in a
+   * deterministic, documented order and every write is per member.
+   */
+  readonly members: readonly ScriptMember[]
   used: boolean
 }
 
 interface ValidatedEntry {
   readonly property: ScriptProperty
   readonly value: number
+  readonly keySpan: SourceSpan
   readonly valueSpan: SourceSpan
+}
+
+interface MemberWrite {
+  readonly member: ScriptMember
+  readonly entries: readonly ValidatedEntry[]
 }
 
 interface PlannedKeyframe {
@@ -211,21 +233,27 @@ class Compiler {
       this.#error(`Binding "${statement.alias}" is already declared`, statement.aliasSpan)
       return
     }
-    if (statement.resourceKind !== 'node') {
-      this.#error(
-        `Binding kind "${statement.resourceKind}" is not available yet — use node("Unique Name")`,
-        statement.resourceKindSpan,
-      )
+    if (statement.resourceKind === 'node') {
+      this.#declareNodeBinding(statement)
       return
     }
+    if (statement.resourceKind === 'group') {
+      this.#declareGroupBinding(statement)
+      return
+    }
+    this.#error(
+      `Binding kind "${statement.resourceKind}" is not available yet — use node("Unique Name") or group("Semantic Name")`,
+      statement.resourceKindSpan,
+    )
+  }
+
+  #declareNodeBinding(statement: BindNode): void {
     const matches = this.#context.nodes.filter((node) => node.name === statement.resourceName)
     if (matches.length === 0) {
-      const candidates = nearMissCandidates(
+      const suggestion = nearMissSuggestion(
         statement.resourceName,
         this.#context.nodes.map((node) => node.name),
       )
-      const suggestion =
-        candidates.length > 0 ? ` Did you mean ${formatCandidates(candidates)}?` : ''
       this.#error(
         `No node named "${statement.resourceName}".${suggestion}`,
         statement.resourceNameSpan,
@@ -242,10 +270,53 @@ class Compiler {
     this.#bindings.set(statement.alias, {
       alias: statement.alias,
       aliasSpan: statement.aliasSpan,
-      nodeId: matches[0].id,
-      nodeName: matches[0].name,
+      kind: 'node',
+      members: [{ nodeId: matches[0].id, nodeName: matches[0].name }],
       used: false,
     })
+  }
+
+  #declareGroupBinding(statement: BindNode): void {
+    const semanticName = statement.resourceName.trim()
+    const members = this.#context.nodes
+      .filter((node) => node.semanticName?.trim() === semanticName)
+      .map((node) => ({ nodeId: node.id, nodeName: node.name }))
+    if (members.length === 0) {
+      const suggestion = nearMissSuggestion(semanticName, this.#semanticNames())
+      this.#error(
+        `Group "${semanticName}" resolves to no nodes — no node on this slide carries that Semantic Name.${suggestion}`,
+        statement.resourceNameSpan,
+      )
+      // Register the failed alias so later uses do not cascade a second,
+      // redundant "Unknown binding" error onto the resolution error.
+      this.#bindings.set(statement.alias, {
+        alias: statement.alias,
+        aliasSpan: statement.aliasSpan,
+        kind: 'group',
+        members,
+        used: false,
+      })
+      return
+    }
+    this.#bindings.set(statement.alias, {
+      alias: statement.alias,
+      aliasSpan: statement.aliasSpan,
+      kind: 'group',
+      members,
+      used: false,
+    })
+  }
+
+  /** Distinct Semantic Names on the slide, in scene pre-order. */
+  #semanticNames(): string[] {
+    const names: string[] = []
+    for (const node of this.#context.nodes) {
+      const semanticName = node.semanticName?.trim()
+      if (semanticName !== undefined && semanticName !== '' && !names.includes(semanticName)) {
+        names.push(semanticName)
+      }
+    }
+    return names
   }
 
   #lowerStatement(statement: StatementNode): void {
@@ -262,8 +333,7 @@ class Compiler {
       this.#lowerSet(statement, binding)
       return
     }
-    const candidates = nearMissCandidates(statement.method, ['tween', 'set'])
-    const suggestion = candidates.length > 0 ? ` Did you mean ${formatCandidates(candidates)}?` : ''
+    const suggestion = nearMissSuggestion(statement.method, ['tween', 'set'])
     this.#error(
       `Unknown method "${statement.method}". Available methods: tween and set.${suggestion}`,
       statement.methodSpan,
@@ -277,14 +347,13 @@ class Compiler {
       binding.used = true
       return binding
     }
-    const candidates = nearMissCandidates(statement.alias, [...this.#bindings.keys()])
-    const suggestion = candidates.length > 0 ? ` Did you mean ${formatCandidates(candidates)}?` : ''
+    const suggestion = nearMissSuggestion(statement.alias, [...this.#bindings.keys()])
     this.#error(`Unknown binding "${statement.alias}".${suggestion}`, statement.aliasSpan)
     return null
   }
 
   #lowerTween(statement: StatementNode, binding: BindingInfo): void {
-    const entries = this.#validateEntries(statement, binding)
+    const entries = this.#validateEntries(statement)
     const ease = this.#resolveEase(statement)
     if (statement.duration === undefined) {
       this.#error(
@@ -294,6 +363,11 @@ class Compiler {
       return
     }
     if (entries.length === 0 || ease === null) {
+      this.#advanceCursorByDeclaredExtent(statement)
+      return
+    }
+    const writes = this.#validateMemberWrites(binding, entries)
+    if (writes.length === 0) {
       this.#advanceCursorByDeclaredExtent(statement)
       return
     }
@@ -308,10 +382,12 @@ class Compiler {
       this.#cursor = endTime
       return
     }
-    for (const entry of entries) {
-      const entryEase = entry.property === 'zIndex' ? HOLD_EASE : ease
-      this.#plan(binding, entry.property, startTime, entryEase, null)
-      this.#plan(binding, entry.property, endTime, entryEase, { value: entry.value })
+    for (const write of writes) {
+      for (const entry of write.entries) {
+        const entryEase = entry.property === 'zIndex' ? HOLD_EASE : ease
+        this.#plan(write.member, entry.property, startTime, entryEase, null)
+        this.#plan(write.member, entry.property, endTime, entryEase, { value: entry.value })
+      }
     }
     this.#cursor = endTime
   }
@@ -329,7 +405,7 @@ class Compiler {
         statement.easeSpan ?? statement.span,
       )
     }
-    const entries = this.#validateEntries(statement, binding)
+    const entries = this.#validateEntries(statement)
     if (entries.length === 0) {
       return
     }
@@ -341,28 +417,31 @@ class Compiler {
       )
       return
     }
-    for (const entry of entries) {
-      this.#plan(binding, entry.property, time, HOLD_EASE, { value: entry.value })
+    for (const write of this.#validateMemberWrites(binding, entries)) {
+      for (const entry of write.entries) {
+        this.#plan(write.member, entry.property, time, HOLD_EASE, { value: entry.value })
+      }
     }
   }
 
-  #validateEntries(statement: StatementNode, binding: BindingInfo): ValidatedEntry[] {
-    const node = this.#context.nodes.find((candidate) => candidate.id === binding.nodeId)
-    if (!node) return []
+  #validateEntries(statement: StatementNode): ValidatedEntry[] {
     const entries: ValidatedEntry[] = []
     for (const entry of statement.entries) {
       if (!isScriptProperty(entry.key)) {
-        const candidates = nearMissCandidates(entry.key, SCRIPT_PROPERTY_NAMES)
-        const suggestion =
-          candidates.length > 0 ? ` Did you mean ${formatCandidates(candidates)}?` : ''
+        const suggestion = nearMissSuggestion(entry.key, SCRIPT_PROPERTY_NAMES)
         this.#error(
           `Unknown property "${entry.key}". Available properties: ${SCRIPT_PROPERTY_NAMES.join(', ')}.${suggestion}`,
           entry.keySpan,
         )
         continue
       }
-      if (!this.#validateValue(entry, node)) continue
-      entries.push({ property: entry.key, value: entry.value, valueSpan: entry.valueSpan })
+      if (!this.#validateValue(entry)) continue
+      entries.push({
+        property: entry.key,
+        value: entry.value,
+        keySpan: entry.keySpan,
+        valueSpan: entry.valueSpan,
+      })
     }
     if (statement.entries.length === 0) {
       this.#error(`${statement.method} needs at least one property`, statement.methodSpan)
@@ -370,7 +449,7 @@ class Compiler {
     return entries
   }
 
-  #validateValue(entry: PropertyEntry, node: AnimationScriptNodeInfo): boolean {
+  #validateValue(entry: PropertyEntry): boolean {
     if (!Number.isFinite(entry.value)) {
       this.#error(`${entry.key} must be a finite number`, entry.valueSpan)
       return false
@@ -383,12 +462,48 @@ class Compiler {
       this.#error('zIndex must be a whole number', entry.valueSpan)
       return false
     }
-    if (entry.key === 'rotation' && node.isCamera) {
-      this.#error('Camera nodes cannot animate rotation', entry.keySpan)
+    return true
+  }
+
+  /**
+   * Keep the entries each binding member can take: a group broadcast validates
+   * every member independently and names the offending member in capability
+   * errors, while a node binding keeps the unqualified wording.
+   */
+  #validateMemberWrites(binding: BindingInfo, entries: readonly ValidatedEntry[]): MemberWrite[] {
+    const writes: MemberWrite[] = []
+    for (const member of binding.members) {
+      const node = this.#context.nodes.find((candidate) => candidate.id === member.nodeId)
+      if (!node) continue
+      const memberEntries = entries.filter((entry) =>
+        this.#validateCapability(entry, node, binding.kind === 'group' ? member.nodeName : null),
+      )
+      if (memberEntries.length > 0) writes.push({ member, entries: memberEntries })
+    }
+    return writes
+  }
+
+  #validateCapability(
+    entry: ValidatedEntry,
+    node: AnimationScriptNodeInfo,
+    memberName: string | null,
+  ): boolean {
+    if (entry.property === 'rotation' && node.isCamera) {
+      this.#error(
+        memberName === null
+          ? 'Camera nodes cannot animate rotation'
+          : `Member "${memberName}" is a Camera node and cannot animate rotation`,
+        entry.keySpan,
+      )
       return false
     }
-    if (entry.key === 'opacity' && node.isBone) {
-      this.#error('Bone nodes cannot animate opacity', entry.keySpan)
+    if (entry.property === 'opacity' && node.isBone) {
+      this.#error(
+        memberName === null
+          ? 'Bone nodes cannot animate opacity'
+          : `Member "${memberName}" is a Bone node and cannot animate opacity`,
+        entry.keySpan,
+      )
       return false
     }
     return true
@@ -398,20 +513,19 @@ class Compiler {
     const name = statement.ease ?? DEFAULT_SCRIPT_EASE
     const ease = resolveScriptEase(name)
     if (ease) return ease
-    const candidates = nearMissCandidates(name, SCRIPT_EASE_NAMES)
-    const suggestion = candidates.length > 0 ? ` Did you mean ${formatCandidates(candidates)}?` : ''
+    const suggestion = nearMissSuggestion(name, SCRIPT_EASE_NAMES)
     this.#error(`Unknown ease "${name}".${suggestion}`, statement.easeSpan ?? statement.methodSpan)
     return null
   }
 
   #plan(
-    binding: ScriptPlanTarget,
+    member: ScriptMember,
     property: ScriptProperty,
     time: number,
     ease: ResolvedScriptEase,
     write: { readonly value: number } | null,
   ): void {
-    const slotKey = slotKeyFor(binding.nodeId, property, time)
+    const slotKey = slotKeyFor(member.nodeId, property, time)
     const planned = this.#planned.get(slotKey)
     if (planned) {
       if (write) planned.value = write.value
@@ -420,10 +534,10 @@ class Compiler {
       planned.tangentOut = ease.tangentOut
       return
     }
-    const value = write?.value ?? this.#context.evaluateProperty(binding.nodeId, property, time)
+    const value = write?.value ?? this.#context.evaluateProperty(member.nodeId, property, time)
     this.#addPlanned({
-      nodeId: binding.nodeId,
-      nodeName: binding.nodeName,
+      nodeId: member.nodeId,
+      nodeName: member.nodeName,
       property,
       time,
       value,
@@ -466,7 +580,9 @@ class Compiler {
 
   #warnUnusedBindings(): void {
     for (const binding of this.#bindings.values()) {
-      if (!binding.used) {
+      // A zero-member group already failed to resolve; do not pile an unused
+      // warning on top of the resolution error.
+      if (!binding.used && binding.members.length > 0) {
         this.#warning(`Binding "${binding.alias}" is never used`, binding.aliasSpan)
       }
     }
@@ -526,11 +642,6 @@ class Compiler {
       length: Math.max(1, span.end - span.start),
     }
   }
-}
-
-interface ScriptPlanTarget {
-  readonly nodeId: string
-  readonly nodeName: string
 }
 
 /** Map an author-facing property to the engine property track it animates. */

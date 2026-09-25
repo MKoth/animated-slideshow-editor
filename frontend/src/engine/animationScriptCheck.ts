@@ -25,6 +25,7 @@ export function checkAnimationScript(
       name: node.name,
       isBone: node.components.bone !== undefined,
       isCamera: node.components.camera !== undefined,
+      ...(node.semanticName !== undefined && { semanticName: node.semanticName }),
     })
   }
   return compileAnimationScript(source, {

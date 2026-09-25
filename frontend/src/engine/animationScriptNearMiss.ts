@@ -40,6 +40,17 @@ export function formatCandidates(candidates: readonly string[]): string {
   return `${quoted.slice(0, -1).join(', ')} or ${quoted[quoted.length - 1]}`
 }
 
+/**
+ * The diagnostic suffix a near-miss query appends: `" Did you mean "A" or "B"?"`,
+ * or `''` when nothing is close enough. Shared by every script diagnostic that
+ * wants candidates, so the phrasing stays identical across binding, method,
+ * property, and ease errors.
+ */
+export function nearMissSuggestion(query: string, candidates: readonly string[]): string {
+  const near = nearMissCandidates(query, candidates)
+  return near.length > 0 ? ` Did you mean ${formatCandidates(near)}?` : ''
+}
+
 function similarityScore(normalizedQuery: string, normalizedCandidate: string): number | null {
   if (normalizedCandidate === normalizedQuery) return 0
   // A name that extends or truncates the query ("Habl" → "Habl (2)") is a
