@@ -7,11 +7,17 @@ import type { KeyframeTarget } from './keyframeTarget'
 import type { CompiledFootprint } from './compiledFootprint'
 import { lineColumnAt, parseAnimationScript } from './animationScriptParser'
 import type {
+  AtNode,
   BindNode,
+  DefaultsNode,
+  MarkNode,
+  ParallelNode,
   PropertyEntry,
   ScriptProgram,
+  ScriptStatementNode,
   SourceSpan,
   StatementNode,
+  WaitNode,
 } from './animationScriptParser'
 import { DEFAULT_SCRIPT_EASE, SCRIPT_EASE_NAMES, resolveScriptEase } from './animationScriptEase'
 import type { ResolvedScriptEase } from './animationScriptEase'
@@ -119,6 +125,16 @@ interface MemberWrite {
   readonly entries: readonly ValidatedEntry[]
 }
 
+interface ResolvedDuration {
+  readonly seconds: number
+  readonly span: SourceSpan
+}
+
+interface ScriptDefaults {
+  readonly duration?: ResolvedDuration
+  readonly ease?: string
+}
+
 interface PlannedKeyframe {
   readonly target: KeyframeTarget
   readonly nodeId: string
@@ -131,8 +147,6 @@ interface PlannedKeyframe {
   tangentIn: KeyframeTangent
   tangentOut: KeyframeTangent
 }
-
-const TIME_EPSILON = 1e-6
 
 const HOLD_EASE: ResolvedScriptEase = {
   interpolation: 'hold',
@@ -152,11 +166,14 @@ class Compiler {
   readonly #context: AnimationScriptCompileContext
   readonly #diagnostics: AnimationScriptDiagnostic[] = []
   readonly #bindings = new Map<string, BindingInfo>()
+  /** Compile-time-only marker labels; never persisted, never a timeline marker. */
+  readonly #markers = new Map<string, number>()
   readonly #planned = new Map<string, PlannedKeyframe>()
   readonly #trackOrder: AnimationScriptTrackSummary[] = []
   #order = 0
   #cursor = 0
   #from = 0
+  #defaults: ScriptDefaults = {}
 
   constructor(source: string, context: AnimationScriptCompileContext) {
     this.#source = source
@@ -169,12 +186,9 @@ class Compiler {
       this.#error(diagnostic.message, diagnostic.span)
     }
     this.#applyHeader(program)
+    this.#applyDefaults(program.defaults)
     for (const statement of program.statements) {
-      if (statement.kind === 'bind') {
-        this.#declareBinding(statement)
-      } else {
-        this.#lowerStatement(statement)
-      }
+      this.#cursor = this.#lowerStatement(statement, this.#cursor)
     }
     this.#warnUnusedBindings()
     this.#planBoundaryPins()
@@ -219,13 +233,39 @@ class Compiler {
       return
     }
     this.#from = roundTime(header.from)
-    if (header.from < 0 || header.from >= this.#context.slideDuration) {
+    if (this.#from < 0 || this.#from >= this.#context.slideDuration) {
       this.#error(
         `"from" must be between 0 and the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
         header.fromSpan,
       )
     }
     this.#cursor = this.#from
+  }
+
+  /**
+   * Resolve the header's `defaults { duration, ease }` once, so statements see
+   * a clean fallback. An invalid default is reported here and then ignored; a
+   * tween left without any duration falls back to its own missing-duration
+   * error rather than the invalid default being re-reported per statement.
+   */
+  #applyDefaults(defaults: DefaultsNode | null): void {
+    if (!defaults) return
+    let duration: ResolvedDuration | undefined
+    if (defaults.duration !== undefined && defaults.durationSpan !== undefined) {
+      if (this.#validateDuration(defaults.duration, defaults.durationSpan)) {
+        duration = { seconds: defaults.duration, span: defaults.durationSpan }
+      }
+    }
+    let ease: string | undefined
+    if (defaults.ease !== undefined && defaults.easeSpan !== undefined) {
+      if (resolveScriptEase(defaults.ease)) {
+        ease = defaults.ease
+      } else {
+        const suggestion = nearMissSuggestion(defaults.ease, SCRIPT_EASE_NAMES)
+        this.#error(`Unknown ease "${defaults.ease}".${suggestion}`, defaults.easeSpan)
+      }
+    }
+    this.#defaults = { duration, ease }
   }
 
   #declareBinding(statement: BindNode): void {
@@ -319,26 +359,115 @@ class Compiler {
     return names
   }
 
-  #lowerStatement(statement: StatementNode): void {
+  /**
+   * Lower one statement starting at `cursor` and return the cursor after it.
+   * Every timed operator is expressed this way, so sequential composition is
+   * just a fold and `parallel` / `at` can give children their own cursor frame.
+   */
+  #lowerStatement(statement: ScriptStatementNode, cursor: number): number {
+    switch (statement.kind) {
+      case 'bind':
+        this.#declareBinding(statement)
+        return cursor
+      case 'wait':
+        return this.#lowerWait(statement, cursor)
+      case 'mark':
+        return this.#lowerMark(statement, cursor)
+      case 'at':
+        return this.#lowerAt(statement, cursor)
+      case 'parallel':
+        return this.#lowerParallel(statement, cursor)
+      case 'statement':
+        return this.#lowerCall(statement, cursor)
+    }
+  }
+
+  #lowerWait(statement: WaitNode, cursor: number): number {
+    if (!this.#validateDuration(statement.duration, statement.durationSpan)) {
+      return cursor
+    }
+    const endTime = roundTime(cursor + statement.duration)
+    if (endTime > this.#context.slideDuration) {
+      this.#error(
+        `wait ends at ${formatSeconds(endTime)}s, past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
+        statement.durationSpan,
+      )
+    }
+    return endTime
+  }
+
+  #lowerMark(statement: MarkNode, cursor: number): number {
+    if (this.#markers.has(statement.name)) {
+      this.#error(`Marker "${statement.name}" is already declared`, statement.nameSpan)
+      return cursor
+    }
+    this.#markers.set(statement.name, roundTime(cursor))
+    return cursor
+  }
+
+  #lowerAt(statement: AtNode, cursor: number): number {
+    let target: number | null = null
+    if (statement.time !== undefined && statement.timeSpan !== undefined) {
+      target = roundTime(statement.time)
+      if (target < this.#from) {
+        this.#error(
+          `"at" cannot be before the segment start (from = ${formatSeconds(this.#from)}s)`,
+          statement.timeSpan,
+        )
+      } else if (target > this.#context.slideDuration) {
+        this.#error(
+          `"at" is past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
+          statement.timeSpan,
+        )
+      }
+    } else if (statement.marker !== undefined && statement.markerSpan !== undefined) {
+      const marked = this.#markers.get(statement.marker)
+      if (marked === undefined) {
+        const suggestion = nearMissSuggestion(statement.marker, [...this.#markers.keys()])
+        this.#error(
+          `Unknown marker "${statement.marker}" — define it with mark("${statement.marker}") before use.${suggestion}`,
+          statement.markerSpan,
+        )
+        // No valid target exists; leave the cursor alone so the summary and
+        // footprint do not report keyframes at a time the author never wrote.
+        return cursor
+      }
+      target = marked
+    }
+    const end = this.#lowerStatement(statement.statement, target ?? cursor)
+    return Math.max(cursor, end)
+  }
+
+  /**
+   * Every child starts at the cursor the group found, in its own frame; the
+   * group advances by the latest child end (absolute placements count).
+   */
+  #lowerParallel(statement: ParallelNode, cursor: number): number {
+    let latest = cursor
+    for (const child of statement.body) {
+      const end = this.#lowerStatement(child, cursor)
+      if (end > latest) latest = end
+    }
+    return latest
+  }
+
+  #lowerCall(statement: StatementNode, cursor: number): number {
     const binding = this.#resolveAlias(statement)
     if (!binding) {
-      this.#advanceCursorByDeclaredExtent(statement)
-      return
+      return this.#advanceCursorByResolvedDuration(statement, cursor)
     }
     if (statement.method === 'tween') {
-      this.#lowerTween(statement, binding)
-      return
+      return this.#lowerTween(statement, binding, cursor)
     }
     if (statement.method === 'set') {
-      this.#lowerSet(statement, binding)
-      return
+      return this.#lowerSet(statement, binding, cursor)
     }
     const suggestion = nearMissSuggestion(statement.method, ['tween', 'set'])
     this.#error(
       `Unknown method "${statement.method}". Available methods: tween and set.${suggestion}`,
       statement.methodSpan,
     )
-    this.#advanceCursorByDeclaredExtent(statement)
+    return this.#advanceCursorByResolvedDuration(statement, cursor)
   }
 
   #resolveAlias(statement: StatementNode): BindingInfo | null {
@@ -352,35 +481,35 @@ class Compiler {
     return null
   }
 
-  #lowerTween(statement: StatementNode, binding: BindingInfo): void {
-    const entries = this.#validateEntries(statement)
-    const ease = this.#resolveEase(statement)
-    if (statement.duration === undefined) {
+  #lowerTween(statement: StatementNode, binding: BindingInfo, cursor: number): number {
+    const duration = this.#resolveDuration(statement)
+    if (duration === null) {
       this.#error(
-        'tween needs a duration — pass one after the property map, like tween({ x: 4 }, 0.4)',
+        'tween needs a duration — pass one after the property map, like tween({ x: 4 }, 0.4), or set defaults { duration }',
         statement.methodSpan,
       )
-      return
+      return cursor
     }
+    if (!this.#validateDuration(duration.seconds, duration.span)) {
+      return cursor
+    }
+    const entries = this.#validateEntries(statement)
+    const ease = this.#resolveEase(statement)
     if (entries.length === 0 || ease === null) {
-      this.#advanceCursorByDeclaredExtent(statement)
-      return
+      return roundTime(cursor + duration.seconds)
     }
     const writes = this.#validateMemberWrites(binding, entries)
     if (writes.length === 0) {
-      this.#advanceCursorByDeclaredExtent(statement)
-      return
+      return roundTime(cursor + duration.seconds)
     }
-    const duration = statement.duration
-    const startTime = this.#cursor
-    const endTime = roundTime(startTime + duration)
-    if (endTime > this.#context.slideDuration + TIME_EPSILON) {
+    const startTime = cursor
+    const endTime = roundTime(startTime + duration.seconds)
+    if (endTime > this.#context.slideDuration) {
       this.#error(
         `Statement ends at ${formatSeconds(endTime)}s, past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
-        statement.durationSpan ?? statement.span,
+        duration.span,
       )
-      this.#cursor = endTime
-      return
+      return endTime
     }
     for (const write of writes) {
       for (const entry of write.entries) {
@@ -389,10 +518,10 @@ class Compiler {
         this.#plan(write.member, entry.property, endTime, entryEase, { value: entry.value })
       }
     }
-    this.#cursor = endTime
+    return endTime
   }
 
-  #lowerSet(statement: StatementNode, binding: BindingInfo): void {
+  #lowerSet(statement: StatementNode, binding: BindingInfo, cursor: number): number {
     if (statement.duration !== undefined) {
       this.#error(
         'set does not take a duration — it writes an instant keyframe',
@@ -407,21 +536,22 @@ class Compiler {
     }
     const entries = this.#validateEntries(statement)
     if (entries.length === 0) {
-      return
+      return cursor
     }
-    const time = this.#cursor
-    if (time > this.#context.slideDuration + TIME_EPSILON) {
+    const time = cursor
+    if (time > this.#context.slideDuration) {
       this.#error(
         `Statement starts at ${formatSeconds(time)}s, past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
         statement.span,
       )
-      return
+      return cursor
     }
     for (const write of this.#validateMemberWrites(binding, entries)) {
       for (const entry of write.entries) {
         this.#plan(write.member, entry.property, time, HOLD_EASE, { value: entry.value })
       }
     }
+    return cursor
   }
 
   #validateEntries(statement: StatementNode): ValidatedEntry[] {
@@ -510,12 +640,28 @@ class Compiler {
   }
 
   #resolveEase(statement: StatementNode): ResolvedScriptEase | null {
-    const name = statement.ease ?? DEFAULT_SCRIPT_EASE
+    const name = statement.ease ?? this.#defaults.ease ?? DEFAULT_SCRIPT_EASE
     const ease = resolveScriptEase(name)
     if (ease) return ease
     const suggestion = nearMissSuggestion(name, SCRIPT_EASE_NAMES)
     this.#error(`Unknown ease "${name}".${suggestion}`, statement.easeSpan ?? statement.methodSpan)
     return null
+  }
+
+  /** A tween's duration: its own argument first, the header defaults second. */
+  #resolveDuration(statement: StatementNode): ResolvedDuration | null {
+    if (statement.duration !== undefined && statement.durationSpan !== undefined) {
+      return { seconds: statement.duration, span: statement.durationSpan }
+    }
+    return this.#defaults.duration ?? null
+  }
+
+  #validateDuration(seconds: number, span: SourceSpan): boolean {
+    if (!isValidDuration(seconds)) {
+      this.#error('duration must be a non-negative number of seconds', span)
+      return false
+    }
+    return true
   }
 
   #plan(
@@ -588,10 +734,18 @@ class Compiler {
     }
   }
 
-  #advanceCursorByDeclaredExtent(statement: StatementNode): void {
-    if (statement.method === 'tween' && statement.duration !== undefined) {
-      this.#cursor = roundTime(this.#cursor + statement.duration)
+  /**
+   * The cursor a tween would have reached had it lowered cleanly. Recovery
+   * paths use it so later statements keep sensible times without re-reporting
+   * the failure; `set` never advances.
+   */
+  #advanceCursorByResolvedDuration(statement: StatementNode, cursor: number): number {
+    if (statement.method !== 'tween') return cursor
+    const duration = this.#resolveDuration(statement)
+    if (duration === null || !isValidDuration(duration.seconds)) {
+      return cursor
     }
+    return roundTime(cursor + duration.seconds)
   }
 
   #targetFor(nodeId: string, property: ScriptProperty): KeyframeTarget {
@@ -655,6 +809,10 @@ export function enginePropertyForScriptProperty(
 
 function isScriptProperty(value: string): value is ScriptProperty {
   return (SCRIPT_PROPERTY_NAMES as readonly string[]).includes(value)
+}
+
+function isValidDuration(seconds: number): boolean {
+  return Number.isFinite(seconds) && seconds >= 0
 }
 
 function slotKeyFor(nodeId: string, property: ScriptProperty, time: number): string {
