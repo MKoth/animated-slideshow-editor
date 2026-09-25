@@ -13,8 +13,9 @@ import type { ProjectManager } from './projectManager'
 import type { SceneManager } from './sceneManager'
 import { SlideAnimation } from './animation'
 import type { ClampedKeyframe } from './slideAnimation'
-import { requireFiniteNumber, requireNonEmpty } from './guards'
+import { requireFiniteNumber, requireNonEmpty, requireStringAllowEmpty } from './guards'
 import { newAudioClipId } from './audioClip'
+import type { SlideAnimationScript } from './animationScript'
 import { newPrompterPartId, newAudioSegmentId } from './prompter'
 
 const SLIDE_ORDINAL_PATTERN = /^Slide (\d+)$/
@@ -171,6 +172,26 @@ export class SlideManager {
     slide.duration = duration
     this.#bus.emit({ type: 'SlideDurationChanged', slideId })
     return { oldDuration, clampedKeyframes }
+  }
+
+  /** Set, replace, or clear a slide's Animation Script; the source is the only authored state. */
+  setAnimationScript(slideId: string, script: SlideAnimationScript | null): void {
+    const slide = this.get(slideId)
+    if (script !== null) {
+      requireStringAllowEmpty(script.source, 'Animation Script source')
+    }
+    slide.animationScript = script === null ? null : { ...script }
+    this.#bus.emit({ type: 'SlideAnimationScriptChanged', slideId })
+  }
+
+  /** Edit only the authored source, leaving compiler bookkeeping (the compiled footprint) intact. */
+  setAnimationScriptSource(slideId: string, source: string): void {
+    const slide = this.get(slideId)
+    const lastCompiled = slide.animationScript?.lastCompiled
+    this.setAnimationScript(slideId, {
+      source: requireStringAllowEmpty(source, 'Animation Script source'),
+      ...(lastCompiled !== undefined ? { lastCompiled } : {}),
+    })
   }
 
   /** Assign a fullscreen shader to a slide, or clear it; assigning resets overrides. */

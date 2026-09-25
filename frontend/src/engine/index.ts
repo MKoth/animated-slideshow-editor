@@ -41,6 +41,8 @@ export type { EmbeddedAsset } from './embeddedAsset'
 export type { EmbeddedMaterialDefinition, EmbeddedMaterialParameter } from './embeddedMaterial'
 export type { EmbeddedShaderDefinition } from './embeddedShader'
 export type { FullscreenShaderReference } from './fullscreenShader'
+export type { SlideAnimationScript } from './animationScript'
+export type { CompiledFootprint, CompiledFootprintTrack } from './compiledFootprint'
 export {
   DEFAULT_MATERIAL_DEFINITION_ID,
   DEFAULT_MATERIAL_NAME,
@@ -91,6 +93,9 @@ export type {
   ControlJSON,
   ControlSetJSON,
   ControlTrackJSON,
+  AnimationScriptJSON,
+  CompiledFootprintJSON,
+  CompiledFootprintTrackJSON,
 } from './json'
 export type { Control, ControlSet } from './control'
 export { createControl, createControlSet, validateControlKey, validateControls } from './control'

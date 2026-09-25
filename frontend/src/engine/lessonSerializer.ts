@@ -28,6 +28,7 @@ import {
 } from './lessonValidation'
 import { validateAudioClipJSON, audioClipFromJSON } from './audioClip'
 import { validatePrompterJSON, prompterFromJSON } from './prompter'
+import { animationScriptFromJSON, validateAnimationScriptJSON } from './animationScript'
 import type { MaterialParameterKindOf } from './nodeAnimation'
 import { DEFAULT_MATERIAL_DEFINITION_ID } from './materialInstance'
 import { DEFAULT_MATERIAL_PARAMETERS } from './materialResolution'
@@ -346,6 +347,13 @@ function validateSlide(
 
   if (slideJson.prompter !== undefined) {
     validatePrompterJSON(errors, slideJson.prompter, String(slideJson.id))
+  }
+  if (slideJson.animationScript !== undefined) {
+    validateAnimationScriptJSON(
+      errors,
+      slideJson.animationScript,
+      `Slide "${String(slideJson.id)}"`,
+    )
   }
   if (slideJson.audio !== undefined) {
     if (!isRecord(slideJson.audio) || !Array.isArray(slideJson.audio.clips)) {
@@ -1138,6 +1146,7 @@ function buildSlideFromJSON(json: SlideJSON, parameterKindOf: MaterialParameterK
         ),
     prompter,
     { clips: audioClips },
+    json.animationScript === undefined ? null : animationScriptFromJSON(json.animationScript),
   )
 }
 

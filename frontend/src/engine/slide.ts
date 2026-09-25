@@ -6,6 +6,8 @@ import type { Prompter } from './prompter'
 import { prompterToJSON } from './prompter'
 import type { AudioClip } from './audioClip'
 import { audioClipToJSON } from './audioClip'
+import type { SlideAnimationScript } from './animationScript'
+import { animationScriptToJSON } from './animationScript'
 
 export const DEFAULT_SLIDE_DURATION = 10
 export const MIN_SLIDE_DURATION = 0.1
@@ -20,6 +22,7 @@ export class Slide {
   fullscreenShader: FullscreenShaderReference | null
   prompter: Prompter | null
   audio: { clips: AudioClip[] }
+  animationScript: SlideAnimationScript | null
 
   constructor(
     id: string,
@@ -30,6 +33,7 @@ export class Slide {
     fullscreenShader: FullscreenShaderReference | null = null,
     prompter: Prompter | null = null,
     audio?: { clips: AudioClip[] },
+    animationScript: SlideAnimationScript | null = null,
   ) {
     this.id = id
     this.name = name
@@ -39,6 +43,7 @@ export class Slide {
     this.fullscreenShader = fullscreenShader
     this.prompter = prompter
     this.audio = audio ?? { clips: [] }
+    this.animationScript = animationScript
   }
 
   toJSON(): SlideJSON {
@@ -54,6 +59,9 @@ export class Slide {
       ...(this.prompter !== null ? { prompter: prompterToJSON(this.prompter) } : {}),
       ...(this.audio.clips.length > 0
         ? { audio: { clips: this.audio.clips.map(audioClipToJSON) } }
+        : {}),
+      ...(this.animationScript !== null
+        ? { animationScript: animationScriptToJSON(this.animationScript) }
         : {}),
     }
   }

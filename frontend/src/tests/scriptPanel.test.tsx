@@ -1,0 +1,173 @@
+import { act } from 'react'
+import { fireEvent, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { EngineContext } from '../app/engineContext'
+import type { EngineContextValue } from '../app/engineContext'
+import { BottomPanel } from '../components/editor/BottomPanel'
+import { CommandDispatcher, SetSlideAnimationScriptCommand, UndoStack } from '../engine/commands'
+import type { Engine } from '../engine/internal'
+import { createEngineInternal, toReadOnly } from '../engine/internal'
+import { usePlaybackController } from '../stores/playbackStore'
+import { useSelectionStore } from '../stores/selectionStore'
+import { DEFAULT_TIMELINE_HEIGHT } from '../stores/uiPrefs'
+import { useTimelineViewStore } from '../stores/timelineViewStore'
+import { noopPersistence } from './contextHarness'
+
+function renderPanel() {
+  const engine = createEngineInternal()
+  const undoStack = new UndoStack()
+  const dispatcher = new CommandDispatcher(engine, undoStack, vi.fn())
+  const value: EngineContextValue = {
+    engine: toReadOnly(engine),
+    undoStack,
+    dispatch: (command) => dispatcher.dispatch(command),
+    persistence: noopPersistence,
+  }
+  render(
+    <EngineContext.Provider value={value}>
+      <BottomPanel height={400} />
+    </EngineContext.Provider>,
+  )
+  return { engine, undoStack, dispatcher }
+}
+
+function setupProject(engine: Engine, slideNames: readonly string[] = ['Slide 1']) {
+  act(() => {
+    engine.createProject({ name: 'Demo' })
+    for (const name of slideNames) {
+      engine.createSlide(name)
+    }
+  })
+}
+
+beforeEach(() => {
+  useSelectionStore.setState({ selectedIds: [] })
+  usePlaybackController.setState({ currentTimes: {} })
+  useTimelineViewStore.persist.clearStorage()
+  useTimelineViewStore.setState({ zoomLevel: 1, scrollTime: 0, height: DEFAULT_TIMELINE_HEIGHT })
+  localStorage.clear()
+})
+
+describe('Script tab shell', () => {
+  it('hides the Script tab behind a create affordance for a slide without a script', () => {
+    const { engine } = renderPanel()
+    setupProject(engine)
+
+    expect(screen.getByTestId('bottom-tab-timeline')).toBeInTheDocument()
+    expect(screen.getByTestId('bottom-tab-history')).toBeInTheDocument()
+    expect(screen.queryByTestId('bottom-tab-script')).not.toBeInTheDocument()
+    expect(screen.getByTestId('bottom-tab-create-script')).toHaveTextContent('Create Script')
+  })
+
+  it('creates an empty script from the affordance and opens the editor for the active slide', async () => {
+    const user = userEvent.setup()
+    const { engine, undoStack } = renderPanel()
+    setupProject(engine)
+
+    await user.click(screen.getByTestId('bottom-tab-create-script'))
+
+    expect(screen.getByTestId('bottom-tab-script')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByTestId('bottom-tab-create-script')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Animation Script source')).toHaveValue('')
+    expect(screen.getByTestId('script-panel')).toHaveTextContent('Slide 1')
+    expect(engine.getActiveSlide()?.animationScript).toEqual({ source: '' })
+    expect(undoStack.entries[0].type).toBe('SetSlideAnimationScript')
+  })
+
+  it('commits a source edit as one undoable History entry; undo and redo return the text', async () => {
+    const user = userEvent.setup()
+    const { engine, undoStack, dispatcher } = renderPanel()
+    setupProject(engine)
+    await user.click(screen.getByTestId('bottom-tab-create-script'))
+    const entriesAfterCreate = undoStack.entries.length
+
+    const editor = screen.getByLabelText('Animation Script source')
+    await user.type(editor, 'script "Hi" from 0')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(undoStack.entries).toHaveLength(entriesAfterCreate + 1)
+    expect(undoStack.entries[0].type).toBe('SetSlideAnimationScript')
+    expect(engine.getActiveSlide()?.animationScript?.source).toBe('script "Hi" from 0')
+
+    act(() => {
+      dispatcher.undo()
+    })
+    expect(screen.getByLabelText('Animation Script source')).toHaveValue('')
+
+    act(() => {
+      dispatcher.redo()
+    })
+    expect(screen.getByLabelText('Animation Script source')).toHaveValue('script "Hi" from 0')
+  })
+
+  it('renders line numbers beside the plain-text source', async () => {
+    const user = userEvent.setup()
+    const { engine } = renderPanel()
+    setupProject(engine)
+
+    await user.click(screen.getByTestId('bottom-tab-create-script'))
+    expect(screen.getByTestId('script-line-numbers').children).toHaveLength(1)
+
+    const editor = screen.getByLabelText('Animation Script source')
+    await user.type(editor, 'one{Enter}two')
+    expect(screen.getByTestId('script-line-numbers').children).toHaveLength(2)
+    expect(screen.getByTestId('script-line-numbers')).toHaveTextContent('12')
+
+    editor.scrollTop = 40
+    fireEvent.scroll(editor)
+    expect(screen.getByTestId('script-line-numbers').scrollTop).toBe(40)
+  })
+
+  it('follows the active slide, hiding the tab again for slides without a script', async () => {
+    const user = userEvent.setup()
+    const { engine, dispatcher } = renderPanel()
+    setupProject(engine, ['Slide 1', 'Slide 2'])
+    const [slide1, slide2] = engine.project!.slides
+
+    act(() => {
+      engine.setActiveSlide(slide1.id)
+    })
+    expect(screen.queryByTestId('bottom-tab-script')).not.toBeInTheDocument()
+
+    act(() => {
+      dispatcher.dispatch(
+        new SetSlideAnimationScriptCommand({
+          slideId: slide1.id,
+          source: 'script "One" from 0',
+        }),
+      )
+    })
+    await user.click(screen.getByTestId('bottom-tab-script'))
+    expect(screen.getByLabelText('Animation Script source')).toHaveValue('script "One" from 0')
+
+    act(() => {
+      engine.setActiveSlide(slide2.id)
+    })
+    expect(screen.queryByTestId('bottom-tab-script')).not.toBeInTheDocument()
+    expect(screen.getByTestId('bottom-tab-create-script')).toBeInTheDocument()
+    expect(screen.getByTestId('bottom-tab-timeline')).toHaveAttribute('aria-selected', 'true')
+
+    act(() => {
+      engine.setActiveSlide(slide1.id)
+    })
+    await user.click(screen.getByTestId('bottom-tab-script'))
+    expect(screen.getByTestId('script-panel')).toHaveTextContent('Slide 1')
+    expect(screen.getByLabelText('Animation Script source')).toHaveValue('script "One" from 0')
+  })
+
+  it('commits with Ctrl/Cmd+Enter', async () => {
+    const user = userEvent.setup()
+    const { engine, undoStack } = renderPanel()
+    setupProject(engine)
+    await user.click(screen.getByTestId('bottom-tab-create-script'))
+
+    await user.type(
+      screen.getByLabelText('Animation Script source'),
+      'script "Keys" from 0{Control>}{Enter}{/Control}',
+    )
+
+    expect(engine.getActiveSlide()?.animationScript?.source).toBe('script "Keys" from 0')
+    expect(undoStack.entries[0].type).toBe('SetSlideAnimationScript')
+  })
+})

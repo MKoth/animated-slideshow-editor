@@ -1,5 +1,6 @@
 import type { MaterialOverrideValue } from './materialInstance'
 import type { InterpolationType, KeyframeTangent, KeyframeValue } from './keyframe'
+import type { KeyframeTarget } from './keyframeTarget'
 
 export type MaterialOverrideJSON = MaterialOverrideValue
 
@@ -329,6 +330,25 @@ export type SlideAudioJSON = {
   readonly clips: readonly AudioClipJSON[]
 }
 
+export type CompiledFootprintTrackJSON = {
+  readonly nodeId: string
+  readonly target: KeyframeTarget
+}
+
+export type CompiledFootprintJSON = {
+  readonly from: number
+  readonly to: number
+  readonly tracks: readonly CompiledFootprintTrackJSON[]
+  readonly placementParents: readonly string[]
+  readonly instanceNodes: readonly string[]
+  readonly entryVersions: Readonly<Record<string, number>>
+}
+
+export type AnimationScriptJSON = {
+  readonly source: string
+  readonly lastCompiled?: CompiledFootprintJSON
+}
+
 export type SlideJSON = {
   readonly id: string
   readonly name: string
@@ -338,6 +358,7 @@ export type SlideJSON = {
   readonly fullscreenShader?: FullscreenShaderJSON
   readonly prompter?: PrompterJSON
   readonly audio?: SlideAudioJSON
+  readonly animationScript?: AnimationScriptJSON
 }
 
 export type LessonProjectJSON = {

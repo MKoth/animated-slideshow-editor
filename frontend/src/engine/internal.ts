@@ -56,6 +56,7 @@ import { clampShadowEffect, shadowEffectFromJSON, normalizeAzimuth } from './sha
 import type { ShadowEffect } from './shadowEffect'
 import type { Slide } from './slide'
 import type { SlideDurationChange } from './slideManager'
+import type { SlideAnimationScript } from './animationScript'
 import type { EngineEvent, Unsubscribe } from './events'
 import type { CreateNodeOptions } from './nodeManager'
 import type { Transform } from './transform'
@@ -362,6 +363,14 @@ export class Engine {
 
   setSlideDuration(slideId: string, duration: number): SlideDurationChange {
     return this.#slides.setDuration(slideId, duration)
+  }
+
+  setSlideAnimationScript(slideId: string, script: SlideAnimationScript | null): void {
+    this.#slides.setAnimationScript(slideId, script)
+  }
+
+  setSlideAnimationScriptSource(slideId: string, source: string): void {
+    this.#slides.setAnimationScriptSource(slideId, source)
   }
 
   setFullscreenShader(slideId: string, shaderDefinitionId: string | null): void {

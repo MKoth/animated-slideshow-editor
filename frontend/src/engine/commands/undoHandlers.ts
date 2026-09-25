@@ -390,6 +390,16 @@ export function applyUndo(
       }
       return
     }
+    case 'SetSlideAnimationScript': {
+      const slideId = inv.slideId as string
+      const previousSource = inv.previousSource as string | null
+      if (previousSource === null) {
+        engine.setSlideAnimationScript(slideId, null)
+      } else {
+        engine.setSlideAnimationScriptSource(slideId, previousSource)
+      }
+      return
+    }
     case 'SetFullscreenShader': {
       const slideId = inv.slideId as string
       const prev = inv.previous as import('../fullscreenShader').FullscreenShaderReference | null
@@ -2899,6 +2909,9 @@ export function applyRedo(
       return
     case 'SetSlideDuration':
       engine.setSlideDuration(params.slideId as string, params.duration as number)
+      return
+    case 'SetSlideAnimationScript':
+      engine.setSlideAnimationScriptSource(params.slideId as string, params.source as string)
       return
     case 'SetFullscreenShader':
       engine.setFullscreenShader(

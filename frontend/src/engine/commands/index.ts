@@ -25,6 +25,11 @@ export { DuplicateSlideCommand } from './duplicateSlideCommand'
 export type { DuplicateSlideInverse, DuplicateSlideParameters } from './duplicateSlideCommand'
 export { SetSlideDurationCommand } from './setSlideDurationCommand'
 export type { SetSlideDurationInverse, SetSlideDurationParameters } from './setSlideDurationCommand'
+export { SetSlideAnimationScriptCommand } from './setSlideAnimationScriptCommand'
+export type {
+  SetSlideAnimationScriptInverse,
+  SetSlideAnimationScriptParameters,
+} from './setSlideAnimationScriptCommand'
 export { SetFullscreenShaderCommand } from './setFullscreenShaderCommand'
 export type {
   SetFullscreenShaderInverse,
