@@ -1,8 +1,7 @@
 import type { EnginePublic } from './engine'
 import { walkPreOrder } from './sceneNode'
-import { compileAnimationScript, enginePropertyForScriptProperty } from './animationScriptCompiler'
+import { compileAnimationScript } from './animationScriptCompiler'
 import type {
-  AnimationScriptKeyframeInfo,
   AnimationScriptCompileResult,
   AnimationScriptNodeInfo,
   ScriptProperty,
@@ -32,7 +31,6 @@ export function checkAnimationScript(
     slideDuration: slide.duration,
     nodes,
     evaluateProperty: (nodeId, property, time) => evaluateProperty(engine, nodeId, property, time),
-    keyframesOf: (nodeId, property) => keyframesOf(engine, nodeId, property),
   })
 }
 
@@ -60,23 +58,4 @@ function evaluateProperty(
     case 'opacity':
       return state.opacity
   }
-}
-
-function keyframesOf(
-  engine: EnginePublic,
-  nodeId: string,
-  property: ScriptProperty,
-): readonly AnimationScriptKeyframeInfo[] {
-  const keyframes =
-    property === 'zIndex'
-      ? engine.getZIndexKeyframes(nodeId)
-      : engine.getKeyframes(nodeId, enginePropertyForScriptProperty(property))
-  return keyframes.map((keyframe) => ({
-    id: keyframe.id,
-    time: keyframe.time,
-    value: keyframe.value as number,
-    interpolation: keyframe.interpolation,
-    tangentIn: keyframe.tangentIn,
-    tangentOut: keyframe.tangentOut,
-  }))
 }

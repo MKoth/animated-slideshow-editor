@@ -6776,6 +6776,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
       engine.importReusableObjectToParent(objectJson, targetParentId),
     duplicateNodeSubtree: (nodeId) => engine.duplicateNodeSubtree(nodeId),
     resolveAnimationTarget: (target) => engine.resolveAnimationTarget(target),
+    getKeyframesOf: (target) => engine.getKeyframesOf(target),
     setKeyframeDisabled: (target, keyframeId, disabled) =>
       engine.setKeyframeDisabled(target, keyframeId, disabled),
   }

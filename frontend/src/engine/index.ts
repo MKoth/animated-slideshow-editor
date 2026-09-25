@@ -55,7 +55,6 @@ export type {
   AnimationScriptCompileContext,
   AnimationScriptCompileResult,
   AnimationScriptDiagnostic,
-  AnimationScriptKeyframeInfo,
   AnimationScriptNodeInfo,
   AnimationScriptSummary,
   AnimationScriptTrackSummary,

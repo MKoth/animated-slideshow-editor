@@ -1,8 +1,5 @@
 import type { Command } from './commands'
 import { AddKeyframeCommand } from './commands/addKeyframeCommand'
-import { SetKeyframeInterpolationCommand } from './commands/setKeyframeInterpolationCommand'
-import { SetKeyframeTangentsCommand } from './commands/setKeyframeTangentsCommand'
-import { SetKeyframeValueCommand } from './commands/setKeyframeValueCommand'
 import { ZERO_TANGENT } from './keyframe'
 import type { AnimationProperty } from './animationProperties'
 import type { InterpolationType, KeyframeTangent } from './keyframe'
@@ -40,25 +37,17 @@ export interface AnimationScriptNodeInfo {
   readonly isCamera: boolean
 }
 
-export interface AnimationScriptKeyframeInfo {
-  readonly id: string
-  readonly time: number
-  readonly value: number
-  readonly interpolation: InterpolationType
-  readonly tangentIn: KeyframeTangent
-  readonly tangentOut: KeyframeTangent
-}
-
 /**
- * The slide state the compiler reads: node names and kinds, pre-existing
- * evaluated values, and pre-existing keyframes. Pure and read-only — a Check
- * against this context never touches engine state.
+ * The slide state the compiler reads: node names and kinds plus pre-run
+ * evaluated values. Pure and read-only — a Check against this context never
+ * touches engine state. The compiler plans every write as a fresh keyframe:
+ * the Run clears the previous and new footprints before emitting, so no
+ * existing keyframe inside a written track's window survives to be updated.
  */
 export interface AnimationScriptCompileContext {
   readonly slideDuration: number
   readonly nodes: readonly AnimationScriptNodeInfo[]
   evaluateProperty(nodeId: string, property: ScriptProperty, time: number): number
-  keyframesOf(nodeId: string, property: ScriptProperty): readonly AnimationScriptKeyframeInfo[]
 }
 
 export interface AnimationScriptDiagnostic {
@@ -119,12 +108,6 @@ interface PlannedKeyframe {
   interpolation: InterpolationType
   tangentIn: KeyframeTangent
   tangentOut: KeyframeTangent
-  /** Set when this write updates a pre-existing keyframe instead of adding one. */
-  readonly existingId?: string
-  readonly existingValue?: number
-  readonly existingInterpolation?: InterpolationType
-  readonly existingTangentIn?: KeyframeTangent
-  readonly existingTangentOut?: KeyframeTangent
 }
 
 const TIME_EPSILON = 1e-6
@@ -437,11 +420,7 @@ class Compiler {
       planned.tangentOut = ease.tangentOut
       return
     }
-    const existing = this.#existingKeyframeAt(binding.nodeId, property, time)
-    const value =
-      write?.value ??
-      existing?.value ??
-      this.#context.evaluateProperty(binding.nodeId, property, time)
+    const value = write?.value ?? this.#context.evaluateProperty(binding.nodeId, property, time)
     this.#addPlanned({
       nodeId: binding.nodeId,
       nodeName: binding.nodeName,
@@ -449,7 +428,6 @@ class Compiler {
       time,
       value,
       ease,
-      ...(existing ? { existing } : {}),
     })
   }
 
@@ -460,9 +438,8 @@ class Compiler {
     time: number
     value: number
     ease: ResolvedScriptEase
-    existing?: AnimationScriptKeyframeInfo
   }): void {
-    const { nodeId, nodeName, property, time, value, ease, existing } = input
+    const { nodeId, nodeName, property, time, value, ease } = input
     this.#planned.set(slotKeyFor(nodeId, property, time), {
       target: this.#targetFor(nodeId, property),
       nodeId,
@@ -474,35 +451,15 @@ class Compiler {
       interpolation: ease.interpolation,
       tangentIn: ease.tangentIn,
       tangentOut: ease.tangentOut,
-      ...(existing === undefined
-        ? {}
-        : {
-            existingId: existing.id,
-            existingValue: existing.value,
-            existingInterpolation: existing.interpolation,
-            existingTangentIn: existing.tangentIn,
-            existingTangentOut: existing.tangentOut,
-          }),
     })
     if (!this.#trackOrder.some((track) => track.nodeId === nodeId && track.property === property)) {
       this.#trackOrder.push({ nodeId, nodeName, property })
     }
   }
 
-  #existingKeyframeAt(
-    nodeId: string,
-    property: ScriptProperty,
-    time: number,
-  ): AnimationScriptKeyframeInfo | undefined {
-    return this.#context
-      .keyframesOf(nodeId, property)
-      .find((keyframe) => Math.abs(keyframe.time - time) < TIME_EPSILON)
-  }
-
   #planBoundaryPins(): void {
     for (const track of this.#trackOrder) {
       if (this.#planned.has(slotKeyFor(track.nodeId, track.property, this.#from))) continue
-      if (this.#existingKeyframeAt(track.nodeId, track.property, this.#from)) continue
       this.#plan(track, track.property, this.#from, HOLD_EASE, null)
     }
   }
@@ -532,40 +489,6 @@ class Compiler {
     const commands: Command<unknown>[] = []
     const entries = [...this.#planned.values()].sort((a, b) => a.order - b.order)
     for (const entry of entries) {
-      if (entry.existingId !== undefined) {
-        if (entry.existingValue !== entry.value) {
-          commands.push(
-            new SetKeyframeValueCommand({
-              target: entry.target,
-              keyframeId: entry.existingId,
-              newValue: entry.value,
-            }),
-          )
-        }
-        if (entry.existingInterpolation !== entry.interpolation) {
-          commands.push(
-            new SetKeyframeInterpolationCommand({
-              target: entry.target,
-              keyframeId: entry.existingId,
-              interpolation: entry.interpolation,
-            }),
-          )
-        }
-        if (
-          entry.existingTangentIn !== entry.tangentIn ||
-          entry.existingTangentOut !== entry.tangentOut
-        ) {
-          commands.push(
-            new SetKeyframeTangentsCommand({
-              target: entry.target,
-              keyframeId: entry.existingId,
-              tangentIn: entry.tangentIn,
-              tangentOut: entry.tangentOut,
-            }),
-          )
-        }
-        continue
-      }
       commands.push(
         new AddKeyframeCommand({
           target: entry.target,

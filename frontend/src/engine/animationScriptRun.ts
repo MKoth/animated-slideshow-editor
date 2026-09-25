@@ -2,6 +2,7 @@ import type { EnginePublic } from './engine'
 import type { DispatchCommand } from './commands/dispatcher'
 import { TransactionCommand } from './commands/transactionCommand'
 import { SetSlideAnimationScriptFootprintCommand } from './commands/setSlideAnimationScriptFootprintCommand'
+import { animationScriptClearCommands } from './animationScriptClear'
 import { checkAnimationScript } from './animationScriptCheck'
 import { compiledFootprintToJSON } from './compiledFootprint'
 import type { AnimationScriptDiagnostic, AnimationScriptSummary } from './animationScriptCompiler'
@@ -9,8 +10,10 @@ import type { AnimationScriptDiagnostic, AnimationScriptSummary } from './animat
 /**
  * The Animation Script Run seam: compile `(source, slide state)` pure, then
  * dispatch the emitted commands plus the compiled-footprint record as children
- * of one Transaction — one Run, one History entry. A blocked compile dispatches
- * nothing; a failing run rolls back completely. The source is never rewritten.
+ * of one Transaction — one Run, one History entry. Replace-by-footprint runs a
+ * clear of the previous and new footprints first, so a re-run replaces its own
+ * output instead of duplicating it. A blocked compile dispatches nothing; a
+ * failing run rolls back completely. The source is never rewritten.
  */
 export interface AnimationScriptRunResult {
   readonly ran: boolean
@@ -35,8 +38,10 @@ export function runAnimationScript(
   if (!compiled.runnable) {
     return { ran: false, error: null, ...outcome }
   }
+  const previousFootprint = engine.getSlide(slideId).animationScript?.lastCompiled ?? null
   const result = dispatch(
     new TransactionCommand([
+      ...animationScriptClearCommands(engine, previousFootprint, compiled.footprint),
       ...compiled.commands,
       new SetSlideAnimationScriptFootprintCommand({
         slideId,

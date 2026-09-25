@@ -330,6 +330,7 @@ export interface EnginePublic {
     rootNewId: string
   }
   resolveAnimationTarget(target: KeyframeTarget): KeyframeTrackRef
+  getKeyframesOf(target: KeyframeTarget): readonly Keyframe[]
   setKeyframeDisabled(target: KeyframeTarget, keyframeId: string, disabled: boolean): boolean
 }
 
