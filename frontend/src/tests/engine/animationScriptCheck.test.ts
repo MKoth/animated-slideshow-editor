@@ -312,11 +312,11 @@ describe('Animation Script Check — statement diagnostics', () => {
     const result = checkAnimationScript(
       system.engine,
       slideId,
-      ['script "Demo" from 0', 'bind hero = node("Hero")', 'hero.move({ x: 1 }, 0.4)'].join('\n'),
+      ['script "Demo" from 0', 'bind hero = node("Hero")', 'hero.fly({ x: 1 }, 0.4)'].join('\n'),
     )
 
     expect(result.runnable).toBe(false)
-    expect(result.diagnostics[0].message).toMatch(/Unknown method "move"/)
+    expect(result.diagnostics[0].message).toMatch(/Unknown method "fly"/)
   })
 
   it('suggests a near-miss property name', () => {

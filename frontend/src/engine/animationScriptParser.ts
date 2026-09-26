@@ -142,6 +142,11 @@ export interface PropertyEntry {
 export const SCRIPT_METHOD_NAMES = [
   'tween',
   'set',
+  'move',
+  'fadeIn',
+  'fadeOut',
+  'tint',
+  'pulse',
   'shadow',
   'symmetry',
   'morph',
@@ -612,9 +617,10 @@ class Parser {
    * `alias [.selector(args)]* .method(args..., duration?, ease?)`. A table
    * binding may carry structural selectors (`cell`, `row`, `col`) between the
    * alias and the method; the compiler types them against the bound table.
-   * Record-shaped methods (`tween`, `set`, `shadow`, `symmetry`) open with a
-   * property map; `morph`, `dataLabel` and `control` take positional values
-   * first.
+   * Record-shaped methods (`tween`, `set`, `move`, `shadow`, `symmetry`) open
+   * with a property map; `morph`, `dataLabel`, `control` and `tint` take
+   * positional values first; `fadeIn`, `fadeOut` and `pulse` take only the
+   * timing arguments.
    */
   #parseCallStatement(): StatementNode | null {
     const start = this.#peek().span.start
@@ -634,7 +640,19 @@ class Parser {
       this.#expectPunctuation('(')
       if (this.#isMethodSegment(name.text)) {
         method = name
-        if (name.text === 'morph') {
+        if (name.text === 'fadeIn' || name.text === 'fadeOut' || name.text === 'pulse') {
+          const timing = this.#parseBareTimingArguments()
+          if (timing === null) return null
+          duration = timing.duration
+          ease = timing.ease
+          easeSpan = timing.easeSpan
+          break
+        }
+        if (name.text === 'tint') {
+          const color = this.#parseExpression('a color in quotes')
+          if (color === null) return null
+          args.push(color)
+        } else if (name.text === 'morph') {
           const coefficient = this.#parseExpression('a morph coefficient')
           if (coefficient === null) return null
           args.push(coefficient)
@@ -750,6 +768,72 @@ class Parser {
       } else if (this.#peek().kind === 'identifier' && duration !== undefined) {
         // After a duration, an identifier is always an ease name — unknown
         // eases get the compiler's near-miss diagnostic, not a syntax error.
+        const token = this.#advance()
+        if (ease !== undefined) {
+          this.#report('Only one ease is allowed', token.span)
+          continue
+        }
+        ease = token.text
+        easeSpan = token.span
+      } else if (this.#startsExpression()) {
+        if (duration !== undefined) {
+          this.#report('Only one duration is allowed', this.#peek().span)
+          this.#parseExpression('a duration in seconds')
+          continue
+        }
+        duration = this.#parseExpression('a duration in seconds') ?? undefined
+      } else {
+        const token = this.#peek()
+        this.#report(
+          `Expected a duration or an ease name, found ${describeToken(token)}`,
+          token.span,
+        )
+        return null
+      }
+    }
+    this.#expectPunctuation(')')
+    return { duration, ease, easeSpan }
+  }
+
+  /**
+   * The optional `duration` and `ease` arguments for gestures without a
+   * property map or positional value (`fadeIn`, `fadeOut`, `pulse`). The first
+   * argument needs no leading comma; the rest follows the comma-prefixed
+   * timing rules so `fadeIn(0.5s, easeOut)` and `fadeIn(easeOut)` both read.
+   */
+  #parseBareTimingArguments(): {
+    duration?: ScriptExpression
+    ease?: string
+    easeSpan?: SourceSpan
+  } | null {
+    let duration: ScriptExpression | undefined
+    let ease: string | undefined
+    let easeSpan: SourceSpan | undefined
+    if (this.#checkPunctuation(')')) {
+      this.#expectPunctuation(')')
+      return {}
+    }
+    if (this.#isEaseName()) {
+      const token = this.#advance()
+      ease = token.text
+      easeSpan = token.span
+    } else if (this.#startsExpression()) {
+      duration = this.#parseExpression('a duration in seconds') ?? undefined
+    } else {
+      const token = this.#peek()
+      this.#report(`Expected a duration or an ease name, found ${describeToken(token)}`, token.span)
+      return null
+    }
+    while (this.#matchPunctuation(',')) {
+      if (this.#isEaseName()) {
+        const token = this.#advance()
+        if (ease !== undefined) {
+          this.#report('Only one ease is allowed', token.span)
+          continue
+        }
+        ease = token.text
+        easeSpan = token.span
+      } else if (this.#peek().kind === 'identifier' && duration !== undefined) {
         const token = this.#advance()
         if (ease !== undefined) {
           this.#report('Only one ease is allowed', token.span)

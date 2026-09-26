@@ -753,6 +753,16 @@ class Compiler {
         return this.#lowerTween(statement, target, cursor)
       case 'set':
         return this.#lowerSet(statement, target, cursor)
+      case 'move':
+        return this.#lowerMove(statement, target, cursor)
+      case 'fadeIn':
+        return this.#lowerFade(statement, target, cursor, 1)
+      case 'fadeOut':
+        return this.#lowerFade(statement, target, cursor, 0)
+      case 'tint':
+        return this.#lowerTint(statement, target, cursor)
+      case 'pulse':
+        return this.#lowerPulse(statement, target, cursor)
       case 'shadow':
         return this.#lowerShadow(statement, target, cursor)
       case 'symmetry':
@@ -932,6 +942,95 @@ class Compiler {
   }
 
   /**
+   * `move({ x?, y?, rotation? }, duration?, ease?)`: compiler sugar over the
+   * transform surface. Only the three move keys are legal; every value
+   * validates exactly like the equivalent raw tween entry.
+   */
+  #lowerMove(statement: StatementNode, binding: BindingInfo, cursor: number): number {
+    return this.#lowerTweenLike(statement, cursor, () =>
+      this.#validateMoveEntries(statement, binding),
+    )
+  }
+
+  /**
+   * `fadeIn(d?, e?)` / `fadeOut(d?, e?)`: opacity to 1/0 from the evaluated
+   * value. Always opacity, never the `visible` lane — the same two keyframes
+   * a raw `tween({ opacity })` would emit.
+   */
+  #lowerFade(
+    statement: StatementNode,
+    binding: BindingInfo,
+    cursor: number,
+    target: 0 | 1,
+  ): number {
+    return this.#lowerTweenLike(statement, cursor, () =>
+      this.#validateFadeEntries(statement, binding, target),
+    )
+  }
+
+  /**
+   * `tint(color, d?, e?)`: the material tint. Bare `tint(color)` is a set at
+   * the cursor (advance 0, ignoring header defaults); with an explicit timing
+   * argument it tweens from the evaluated tint like a raw tween would.
+   */
+  #lowerTint(statement: StatementNode, binding: BindingInfo, cursor: number): number {
+    if (isBareTint(statement)) {
+      return this.#lowerTintSet(statement, binding, cursor)
+    }
+    return this.#lowerTweenLike(statement, cursor, () =>
+      this.#validateTintEntries(statement, binding),
+    )
+  }
+
+  /** `pulse(d?, e?)`: scale to ×1.1 at half duration and back to the start. */
+  #lowerPulse(statement: StatementNode, binding: BindingInfo, cursor: number): number {
+    const duration = this.#resolveDuration(statement)
+    if (duration.kind === 'missing') {
+      this.#error(
+        `pulse needs a duration — pass one, like pulse(0.4), or set defaults { duration }`,
+        statement.methodSpan,
+      )
+      return cursor
+    }
+    if (duration.kind === 'failed') {
+      return cursor
+    }
+    if (!this.#validateDuration(duration.seconds, duration.span)) {
+      return cursor
+    }
+    const ease = this.#resolveEase(statement)
+    const endTime = roundTime(cursor + duration.seconds)
+    if (ease === null) {
+      return endTime
+    }
+    if (endTime > this.#context.slideDuration) {
+      this.#error(
+        `Statement ends at ${formatSeconds(endTime)}s, past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
+        duration.span,
+      )
+      return endTime
+    }
+    const midTime = roundTime(cursor + duration.seconds / 2)
+    for (const member of binding.members) {
+      for (const property of ['scaleX', 'scaleY'] as const) {
+        const track: ScriptTrack = { kind: 'node', property }
+        // Plan the start pin first so a previous statement's end value on the
+        // same track wins (statement-order priority, like sequential tweens);
+        // the peak and the return then derive from that effective start.
+        this.#plan(member, track, cursor, ease.ease, null)
+        const startValue = this.#planned.get(slotKeyFor(member.nodeId, track, cursor))
+          ?.value as unknown as number
+        const peakValue = startValue * 1.1
+        this.#plan(member, track, midTime, ease.ease, { value: peakValue })
+        this.#plan(member, track, endTime, ease.ease, {
+          value: startValue,
+        })
+      }
+    }
+    return endTime
+  }
+
+  /**
    * The shared timed-statement lowering: resolve the duration (statement then
    * header defaults), resolve the ease, validate the member writes, and plan a
    * start pin plus an end keyframe per written track. The cursor advances by
@@ -945,9 +1044,13 @@ class Compiler {
     const duration = this.#resolveDuration(statement)
     if (duration.kind === 'missing') {
       const example =
-        statement.args.length > 0
-          ? `${statement.method}(..., 0.4)`
-          : `${statement.method}({ ... }, 0.4)`
+        statement.method === 'fadeIn' ||
+        statement.method === 'fadeOut' ||
+        statement.method === 'pulse'
+          ? `${statement.method}(0.4)`
+          : statement.args.length > 0
+            ? `${statement.method}(..., 0.4)`
+            : `${statement.method}({ ... }, 0.4)`
       this.#error(
         `${statement.method} needs a duration — pass one after its values, like ${example}, or set defaults { duration }`,
         statement.methodSpan,
@@ -1138,6 +1241,150 @@ class Compiler {
       if (entries.length > 0) writes.push({ member, entries })
     }
     return writes
+  }
+
+  /**
+   * `move` accepts only the transform keys. Any other key names the key and
+   * points at `tween`, so the restriction reads as intent rather than a
+   * missing property.
+   */
+  #validateMoveEntries(statement: StatementNode, binding: BindingInfo): MemberWrite[] {
+    if (statement.entries.length === 0) {
+      this.#error('move needs at least one property, like move({ x: 4 })', statement.methodSpan)
+      return []
+    }
+    const writes: MemberWrite[] = []
+    for (const member of binding.members) {
+      const node = this.#nodeOf(member)
+      if (!node) continue
+      const memberName = binding.kind === 'group' ? member.nodeName : null
+      const entries: ValidatedEntry[] = []
+      for (const entry of statement.entries) {
+        if (entry.key !== 'x' && entry.key !== 'y' && entry.key !== 'rotation') {
+          this.#error(
+            memberName === null
+              ? `move only supports x, y and rotation — "${entry.key}" cannot be used with move, use tween instead`
+              : `move only supports x, y and rotation — "${entry.key}" on "${memberName}" cannot be used with move, use tween instead`,
+            entry.keySpan,
+          )
+          continue
+        }
+        const validated = this.#resolveWriteEntry(entry, node, memberName)
+        if (validated) entries.push(validated)
+      }
+      if (entries.length > 0) writes.push({ member, entries })
+    }
+    return writes
+  }
+
+  /**
+   * `fadeIn`/`fadeOut` validate to a single opacity entry per member. The
+   * value is fixed (1/0); only the member capability (Bone nodes) can fail,
+   * exactly as the equivalent raw tween would.
+   */
+  #validateFadeEntries(
+    statement: StatementNode,
+    binding: BindingInfo,
+    target: 0 | 1,
+  ): MemberWrite[] {
+    if (statement.entries.length > 0 || statement.args.length > 0) {
+      this.#error(
+        `${statement.method} takes no property values — it animates opacity to ${target}`,
+        statement.methodSpan,
+      )
+      return []
+    }
+    const writes: MemberWrite[] = []
+    for (const member of binding.members) {
+      const node = this.#nodeOf(member)
+      if (!node) continue
+      const memberName = binding.kind === 'group' ? member.nodeName : null
+      const track: ScriptTrack = { kind: 'node', property: 'opacity' }
+      if (
+        !this.#validateTrackCapability(track, node, 'opacity', memberName, statement.methodSpan)
+      ) {
+        continue
+      }
+      writes.push({
+        member,
+        entries: [
+          {
+            track,
+            property: 'opacity',
+            value: target,
+            keySpan: statement.methodSpan,
+            valueSpan: statement.methodSpan,
+          },
+        ],
+      })
+    }
+    return writes
+  }
+
+  /**
+   * `tint` validates its single color argument against the color material
+   * kind, then fans out one entry per member on the shared tint track.
+   */
+  #validateTintEntries(statement: StatementNode, binding: BindingInfo): MemberWrite[] {
+    const colorExpression = statement.args[0]
+    if (statement.args.length !== 1 || colorExpression === undefined) {
+      this.#error('tint takes one color, like tint("#ff0000", 0.5)', statement.methodSpan)
+      return []
+    }
+    if (containsDurationUnit(colorExpression)) {
+      this.#error(
+        `Expected the tint color without a duration suffix, found "${this.#source.slice(colorExpression.span.start, colorExpression.span.end)}"`,
+        colorExpression.span,
+      )
+      return []
+    }
+    const raw = this.#evaluateString(colorExpression, 'a color in quotes')
+    if (raw === null) return []
+    const value = this.#requireEngineValue(
+      () => requireMaterialKeyframeValue('color', raw) as ScriptTrackValue,
+      'tint',
+      null,
+      colorExpression.span,
+    )
+    if (value === null) return []
+    const writes: MemberWrite[] = []
+    for (const member of binding.members) {
+      writes.push({
+        member,
+        entries: [
+          {
+            track: { kind: 'parameter', parameter: 'tint', kindOf: 'color' },
+            property: 'tint',
+            value,
+            keySpan: colorExpression.span,
+            valueSpan: colorExpression.span,
+          },
+        ],
+      })
+    }
+    return writes
+  }
+
+  /** Bare `tint(color)`: an instant hold keyframe at the cursor, advance 0. */
+  #lowerTintSet(statement: StatementNode, binding: BindingInfo, cursor: number): number {
+    const writes = this.#validateTintEntries(statement, binding)
+    if (writes.length === 0) {
+      return cursor
+    }
+    const time = cursor
+    if (time > this.#context.slideDuration) {
+      this.#error(
+        `Statement starts at ${formatSeconds(time)}s, past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
+        statement.span,
+      )
+      return cursor
+    }
+    for (const write of writes) {
+      for (const entry of write.entries) {
+        this.#plan(write.member, entry.track, time, HOLD_EASE, { value: entry.value })
+      }
+    }
+    return cursor
   }
 
   /**
@@ -1981,10 +2228,14 @@ class Compiler {
   /**
    * The cursor a timed statement would have reached had it lowered cleanly.
    * Recovery paths use it so later statements keep sensible times without
-   * re-reporting the failure; `set` and `setText` never advance.
+   * re-reporting the failure; `set` and `setText` never advance. Bare
+   * `tint(color)` is a set, so it never advances on recovery either.
    */
   #advanceCursorByResolvedDuration(statement: StatementNode, cursor: number): number {
     if (!isTimedStatementMethod(statement.method)) return cursor
+    if (statement.method === 'tint' && isBareTint(statement)) {
+      return cursor
+    }
     const duration = this.#resolveDuration(statement)
     if (duration.kind !== 'resolved' || !isValidDuration(duration.seconds)) {
       return cursor
@@ -2558,11 +2809,23 @@ function hasMorphShapePair(
 function isTimedStatementMethod(method: string): boolean {
   return (
     method === 'tween' ||
+    method === 'move' ||
+    method === 'fadeIn' ||
+    method === 'fadeOut' ||
+    method === 'tint' ||
+    method === 'pulse' ||
     method === 'shadow' ||
     method === 'symmetry' ||
     method === 'morph' ||
     method === 'dataLabel' ||
     method === 'control'
+  )
+}
+
+/** Bare `tint(color)` carries no explicit timing and lowers to a set. */
+function isBareTint(statement: StatementNode): boolean {
+  return (
+    statement.method === 'tint' && statement.duration === undefined && statement.ease === undefined
   )
 }
 
