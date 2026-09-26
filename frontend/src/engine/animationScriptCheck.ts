@@ -1,6 +1,6 @@
 import type { EnginePublic } from './engine'
 import { walkPreOrder } from './sceneNode'
-import { compileAnimationScript } from './animationScriptCompiler'
+import { compileAnimationScript, isScriptTableProperty } from './animationScriptCompiler'
 import type {
   AnimationScriptCompileResult,
   AnimationScriptNodeInfo,
@@ -20,12 +20,20 @@ export function checkAnimationScript(
   const slide = engine.getSlide(slideId)
   const nodes: AnimationScriptNodeInfo[] = []
   for (const node of walkPreOrder(slide.scene.root)) {
+    const tableCell = node.components.tableCell
     nodes.push({
       id: node.id,
       name: node.name,
       isBone: node.components.bone !== undefined,
       isCamera: node.components.camera !== undefined,
       ...(node.semanticName !== undefined && { semanticName: node.semanticName }),
+      ...(node.parent !== null && { parentId: node.parent.id }),
+      isTable: node.components.table !== undefined,
+      isTableCell: tableCell !== undefined,
+      ...(node.components.table !== undefined && {
+        tableColumnCount: node.components.table.columns.length,
+      }),
+      ...(tableCell !== undefined && { colSpan: tableCell.colSpan, rowSpan: tableCell.rowSpan }),
     })
   }
   return compileAnimationScript(source, {
@@ -43,6 +51,13 @@ function evaluateProperty(
 ): number {
   if (property === 'zIndex') {
     return engine.evaluateZIndex(nodeId, time)
+  }
+  if (isScriptTableProperty(property)) {
+    const table = engine.evaluateTable(nodeId, time)
+    if (!table) {
+      throw new Error(`Node "${nodeId}" cannot evaluate ${property} without a table or cell`)
+    }
+    return table[property]
   }
   const state = engine.evaluateNode(nodeId, time)
   switch (property) {

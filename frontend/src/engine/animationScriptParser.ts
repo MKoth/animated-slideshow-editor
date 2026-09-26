@@ -122,10 +122,31 @@ export interface PropertyEntry {
   readonly value: ScriptExpression
 }
 
+/** The method vocabulary of a statement receiver; the compiler owns diagnostics. */
+export const SCRIPT_METHOD_NAMES = ['tween', 'set'] as const
+
+/** Structural table selectors: `conj.cell(r, c)` / `conj.row(i)` / `conj.col(j)`. */
+export const SCRIPT_TABLE_SELECTOR_NAMES = ['cell', 'row', 'col'] as const
+
+/**
+ * A structural target selector after a binding alias, e.g. `conj.cell(0, 1)`
+ * where `conj = table("...")`. The arguments are compile-time expressions the
+ * compiler resolves against the table's Grid Slots.
+ */
+export interface SelectorNode {
+  readonly kind: 'selector'
+  readonly name: string
+  readonly nameSpan: SourceSpan
+  readonly args: readonly ScriptExpression[]
+  readonly span: SourceSpan
+}
+
 export interface StatementNode {
   readonly kind: 'statement'
   readonly alias: string
   readonly aliasSpan: SourceSpan
+  /** Structural table selectors between the alias and the method, in source order. */
+  readonly selectors: readonly SelectorNode[]
   readonly method: string
   readonly methodSpan: SourceSpan
   readonly entries: readonly PropertyEntry[]
@@ -521,13 +542,101 @@ class Parser {
     }
   }
 
+  /**
+   * `alias [.selector(args)]* .method(record, duration?, ease?)`. A table
+   * binding may carry structural selectors (`cell`, `row`, `col`) between the
+   * alias and the method; the compiler types them against the bound table.
+   */
   #parseCallStatement(): StatementNode | null {
     const start = this.#peek().span.start
     const alias = this.#advance()
+    const selectors: SelectorNode[] = []
+    let method: Token | null = null
+    let entries: PropertyEntry[] | null = null
+    let duration: ScriptExpression | undefined
+    let ease: string | undefined
+    let easeSpan: SourceSpan | undefined
+
     this.#expectPunctuation('.')
-    const method = this.#expectIdentifier('a method name')
-    this.#expectPunctuation('(')
-    const entries = this.#parseRecord()
+    for (;;) {
+      const name = this.#expectIdentifier('a method name')
+      if (name === null) return null
+      this.#expectPunctuation('(')
+      if (this.#isMethodSegment(name.text)) {
+        entries = this.#parseRecord()
+        const timing = this.#parseTimingArguments()
+        if (timing === null) return null
+        duration = timing.duration
+        ease = timing.ease
+        easeSpan = timing.easeSpan
+        method = name
+        break
+      }
+      const args = this.#parseSelectorArguments()
+      if (!this.#expectPunctuation(')')) return null
+      selectors.push({
+        kind: 'selector',
+        name: name.text,
+        nameSpan: name.span,
+        args,
+        span: { start: name.span.start, end: this.#previousEnd() },
+      })
+      if (!this.#matchPunctuation('.')) break
+    }
+    if (method === null) {
+      this.#report(
+        'A table selector needs a method call, like cell(0, 1).tween({...}) or row(0).set({...})',
+        selectors[selectors.length - 1].span,
+      )
+      return null
+    }
+    if (entries === null) {
+      return null
+    }
+    return {
+      kind: 'statement',
+      alias: alias.text,
+      aliasSpan: alias.span,
+      selectors,
+      method: method.text,
+      methodSpan: method.span,
+      entries,
+      duration,
+      ease,
+      easeSpan,
+      span: { start, end: this.#previousEnd() },
+    }
+  }
+
+  /**
+   * Whether a segment after the alias opens a method (a property map follows)
+   * or a structural selector (bare arguments follow). Known vocabulary decides
+   * first; an unknown name is read by its argument shape so the compiler can
+   * report either an unknown method or an unknown selector.
+   */
+  #isMethodSegment(name: string): boolean {
+    if ((SCRIPT_METHOD_NAMES as readonly string[]).includes(name)) return true
+    if ((SCRIPT_TABLE_SELECTOR_NAMES as readonly string[]).includes(name)) return false
+    return this.#checkPunctuation('{')
+  }
+
+  #parseSelectorArguments(): ScriptExpression[] {
+    const args: ScriptExpression[] = []
+    while (!this.#atEnd() && !this.#checkPunctuation(')')) {
+      const arg = this.#parseExpression('a number')
+      if (arg === null) break
+      args.push(arg)
+      if (!this.#matchPunctuation(',')) break
+    }
+    return args
+  }
+
+  /** The optional `, duration` and `, ease` arguments after a property map. */
+  #parseTimingArguments(): {
+    duration?: ScriptExpression
+    ease?: string
+    easeSpan?: SourceSpan
+  } | null {
     let duration: ScriptExpression | undefined
     let ease: string | undefined
     let easeSpan: SourceSpan | undefined
@@ -567,21 +676,7 @@ class Parser {
       }
     }
     this.#expectPunctuation(')')
-    if (method === null || entries === null) {
-      return null
-    }
-    return {
-      kind: 'statement',
-      alias: alias.text,
-      aliasSpan: alias.span,
-      method: method.text,
-      methodSpan: method.span,
-      entries,
-      duration,
-      ease,
-      easeSpan,
-      span: { start, end: this.#previousEnd() },
-    }
+    return { duration, ease, easeSpan }
   }
 
   #parseRecord(): PropertyEntry[] | null {

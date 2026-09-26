@@ -5,7 +5,12 @@ import type { AnimationProperty } from './animationProperties'
 import type { InterpolationType, KeyframeTangent } from './keyframe'
 import type { KeyframeTarget } from './keyframeTarget'
 import type { CompiledFootprint } from './compiledFootprint'
-import { lineColumnAt, parseAnimationScript } from './animationScriptParser'
+import {
+  SCRIPT_METHOD_NAMES,
+  SCRIPT_TABLE_SELECTOR_NAMES,
+  lineColumnAt,
+  parseAnimationScript,
+} from './animationScriptParser'
 import type {
   AtNode,
   BindNode,
@@ -16,10 +21,18 @@ import type {
   ScriptExpression,
   ScriptProgram,
   ScriptStatementNode,
+  SelectorNode,
   SourceSpan,
   StatementNode,
   WaitNode,
 } from './animationScriptParser'
+import {
+  buildScriptTableGrid,
+  scriptTableCellAt,
+  scriptTableColumnCells,
+  scriptTableRowCells,
+} from './animationScriptTable'
+import type { ScriptTableGrid } from './animationScriptTable'
 import { DEFAULT_SCRIPT_EASE, SCRIPT_EASE_NAMES, resolveScriptEase } from './animationScriptEase'
 import type { ResolvedScriptEase } from './animationScriptEase'
 import { nearMissSuggestion } from './animationScriptNearMiss'
@@ -30,8 +43,13 @@ import {
 } from './animationScriptExpression'
 import type { ScriptExpressionContext, ScriptValue } from './animationScriptExpression'
 
-/** The property vocabulary a first-cut tween or set may write. */
-export const SCRIPT_PROPERTY_NAMES = [
+/** Table styles travel the engine's existing table tracks, not node tracks. */
+export const SCRIPT_TABLE_PROPERTY_NAMES = ['borderRadius', 'padding'] as const
+
+export type ScriptTableProperty = (typeof SCRIPT_TABLE_PROPERTY_NAMES)[number]
+
+/** The node-property vocabulary a tween or set may write on any node. */
+export const SCRIPT_NODE_PROPERTY_NAMES = [
   'x',
   'y',
   'rotation',
@@ -41,7 +59,17 @@ export const SCRIPT_PROPERTY_NAMES = [
   'zIndex',
 ] as const
 
+/** The full property vocabulary; table styles resolve by node kind. */
+export const SCRIPT_PROPERTY_NAMES = [
+  ...SCRIPT_NODE_PROPERTY_NAMES,
+  ...SCRIPT_TABLE_PROPERTY_NAMES,
+] as const
+
 export type ScriptProperty = (typeof SCRIPT_PROPERTY_NAMES)[number]
+
+export function isScriptTableProperty(property: ScriptProperty): property is ScriptTableProperty {
+  return (SCRIPT_TABLE_PROPERTY_NAMES as readonly string[]).includes(property)
+}
 
 export interface AnimationScriptNodeInfo {
   readonly id: string
@@ -50,6 +78,17 @@ export interface AnimationScriptNodeInfo {
   readonly isCamera: boolean
   /** The node's optional Semantic Name tag; `group("...")` collects carriers. */
   readonly semanticName?: string
+  /** The node's parent; absent on the scene root. Table grids walk these links. */
+  readonly parentId?: string
+  /** The node carries a table component and can be bound with table("..."). */
+  readonly isTable?: boolean
+  /** The node carries a tableCell component. */
+  readonly isTableCell?: boolean
+  /** The owning table's declared column count; only meaningful when `isTable`. */
+  readonly tableColumnCount?: number
+  /** Cell span; only meaningful when `isTableCell`. */
+  readonly colSpan?: number
+  readonly rowSpan?: number
 }
 
 /**
@@ -109,14 +148,17 @@ interface ScriptMember {
 interface BindingInfo {
   readonly alias: string
   readonly aliasSpan: SourceSpan
-  readonly kind: 'node' | 'group'
+  readonly kind: 'node' | 'group' | 'table'
   /**
-   * The binding's targets in scene pre-order. A node binding has exactly one
-   * member; a group binding has one per node carrying its Semantic Name, in
-   * `walkPreOrder` order. Broadcast writes therefore touch members in a
+   * The binding's targets in scene pre-order. A node or table binding has
+   * exactly one member; a group binding has one per node carrying its Semantic
+   * Name, in `walkPreOrder` order. Selector-resolved table members follow the
+   * grid's engine layout order. Broadcast writes therefore touch members in a
    * deterministic, documented order and every write is per member.
    */
   readonly members: readonly ScriptMember[]
+  /** Present only on table bindings: the Grid Slot map selectors resolve against. */
+  readonly grid?: ScriptTableGrid
   used: boolean
 }
 
@@ -314,13 +356,55 @@ class Compiler {
       this.#declareGroupBinding(statement)
       return
     }
+    if (statement.resourceKind === 'table') {
+      this.#declareTableBinding(statement)
+      return
+    }
     this.#error(
-      `Binding kind "${statement.resourceKind}" is not available yet — use node("Unique Name") or group("Semantic Name")`,
+      `Binding kind "${statement.resourceKind}" is not available yet — use node("Unique Name"), group("Semantic Name") or table("Unique Name")`,
       statement.resourceKindSpan,
     )
   }
 
+  /**
+   * `table("Unique Name")` binds a table node structurally: the alias itself
+   * writes the table node like an ordinary node, while `.cell`, `.row` and
+   * `.col` selectors resolve against its Grid Slots.
+   */
+  #declareTableBinding(statement: BindNode): void {
+    const table = this.#resolveUniqueNode(statement)
+    if (table === null) return
+    if (table.isTable !== true) {
+      this.#error(
+        `Node "${statement.resourceName}" is not a table — table("...") needs a node with a table component`,
+        statement.resourceNameSpan,
+      )
+      return
+    }
+    this.#bindings.set(statement.alias, {
+      alias: statement.alias,
+      aliasSpan: statement.aliasSpan,
+      kind: 'table',
+      members: [{ nodeId: table.id, nodeName: table.name }],
+      grid: buildScriptTableGrid(table, this.#context.nodes),
+      used: false,
+    })
+  }
+
   #declareNodeBinding(statement: BindNode): void {
+    const node = this.#resolveUniqueNode(statement)
+    if (node === null) return
+    this.#bindings.set(statement.alias, {
+      alias: statement.alias,
+      aliasSpan: statement.aliasSpan,
+      kind: 'node',
+      members: [{ nodeId: node.id, nodeName: node.name }],
+      used: false,
+    })
+  }
+
+  /** The one node with the binding's exact Unique Name, or null after reporting. */
+  #resolveUniqueNode(statement: BindNode): AnimationScriptNodeInfo | null {
     const matches = this.#context.nodes.filter((node) => node.name === statement.resourceName)
     if (matches.length === 0) {
       const suggestion = nearMissSuggestion(
@@ -331,22 +415,16 @@ class Compiler {
         `No node named "${statement.resourceName}".${suggestion}`,
         statement.resourceNameSpan,
       )
-      return
+      return null
     }
     if (matches.length > 1) {
       this.#error(
         `Node name "${statement.resourceName}" is ambiguous — ${matches.length} nodes share it`,
         statement.resourceNameSpan,
       )
-      return
+      return null
     }
-    this.#bindings.set(statement.alias, {
-      alias: statement.alias,
-      aliasSpan: statement.aliasSpan,
-      kind: 'node',
-      members: [{ nodeId: matches[0].id, nodeName: matches[0].name }],
-      used: false,
-    })
+    return matches[0]
   }
 
   #declareGroupBinding(statement: BindNode): void {
@@ -499,15 +577,19 @@ class Compiler {
     if (!binding) {
       return this.#advanceCursorByResolvedDuration(statement, cursor)
     }
+    const target = this.#resolveTarget(statement, binding)
+    if (!target) {
+      return this.#advanceCursorByResolvedDuration(statement, cursor)
+    }
     if (statement.method === 'tween') {
-      return this.#lowerTween(statement, binding, cursor)
+      return this.#lowerTween(statement, target, cursor)
     }
     if (statement.method === 'set') {
-      return this.#lowerSet(statement, binding, cursor)
+      return this.#lowerSet(statement, target, cursor)
     }
-    const suggestion = nearMissSuggestion(statement.method, ['tween', 'set'])
+    const suggestion = nearMissSuggestion(statement.method, SCRIPT_METHOD_NAMES)
     this.#error(
-      `Unknown method "${statement.method}". Available methods: tween and set.${suggestion}`,
+      `Unknown method "${statement.method}". Available methods: ${SCRIPT_METHOD_NAMES.join(' and ')}.${suggestion}`,
       statement.methodSpan,
     )
     return this.#advanceCursorByResolvedDuration(statement, cursor)
@@ -522,6 +604,137 @@ class Compiler {
     const suggestion = nearMissSuggestion(statement.alias, [...this.#bindings.keys()])
     this.#error(`Unknown binding "${statement.alias}".${suggestion}`, statement.aliasSpan)
     return null
+  }
+
+  /**
+   * Resolve the binding plus any structural table selectors into the target the
+   * statement writes. A bare binding writes its own members (the table node for
+   * a table binding); `.cell(r, c)` resolves one cell node, while `.row(i)` and
+   * `.col(j)` resolve a group of cells in engine layout order.
+   */
+  #resolveTarget(statement: StatementNode, binding: BindingInfo): BindingInfo | null {
+    if (statement.selectors.length === 0) return binding
+    if (statement.selectors.length > 1) {
+      this.#error('Only one table selector is allowed per statement', statement.selectors[1].span)
+      return null
+    }
+    const selector = statement.selectors[0]
+    if (binding.kind !== 'table' || binding.grid === undefined) {
+      this.#error(
+        `Binding "${binding.alias}" is a ${binding.kind} binding — .cell, .row and .col selectors need a table("...") binding`,
+        selector.span,
+      )
+      return null
+    }
+    if (selector.name === 'cell') return this.#resolveCellSelector(selector, binding.grid)
+    if (selector.name === 'row') return this.#resolveRowSelector(selector, binding.grid)
+    if (selector.name === 'col') return this.#resolveColumnSelector(selector, binding.grid)
+    const suggestion = nearMissSuggestion(selector.name, SCRIPT_TABLE_SELECTOR_NAMES)
+    this.#error(
+      `Unknown table selector "${selector.name}". Available selectors: cell, row and col.${suggestion}`,
+      selector.nameSpan,
+    )
+    return null
+  }
+
+  #resolveCellSelector(selector: SelectorNode, grid: ScriptTableGrid): BindingInfo | null {
+    if (selector.args.length !== 2) {
+      this.#error(
+        `cell needs a row and a column, like cell(0, 1) — got ${selector.args.length} argument${selector.args.length === 1 ? '' : 's'}`,
+        selector.span,
+      )
+      return null
+    }
+    const row = this.#resolveSlotIndex(selector.args[0], 'Grid Slot row')
+    const column = this.#resolveSlotIndex(selector.args[1], 'Grid Slot column')
+    if (row === null || column === null) return null
+    const cell = scriptTableCellAt(grid, row, column)
+    if (cell === undefined) {
+      if (row >= grid.rowCount || column >= grid.columnCount) {
+        this.#error(
+          `Grid Slot (${row}, ${column}) is out of range for table "${grid.tableName}" — it has ${formatCount(grid.rowCount, 'row')} and ${formatCount(grid.columnCount, 'column')}`,
+          selector.span,
+        )
+      } else {
+        this.#error(
+          `Grid Slot (${row}, ${column}) of table "${grid.tableName}" holds no cell`,
+          selector.span,
+        )
+      }
+      return null
+    }
+    return this.#singleMemberTarget(selector, cell.nodeId, cell.nodeName)
+  }
+
+  #resolveRowSelector(selector: SelectorNode, grid: ScriptTableGrid): BindingInfo | null {
+    return this.#resolveCellGroupSelector(selector, grid, 'row')
+  }
+
+  #resolveColumnSelector(selector: SelectorNode, grid: ScriptTableGrid): BindingInfo | null {
+    return this.#resolveCellGroupSelector(selector, grid, 'column')
+  }
+
+  /**
+   * Resolve `row(i)` / `col(j)` into the cells whose origin slot sits in that
+   * row/column, in engine layout order. A spanned cell belongs only to its
+   * top-left corner's groups, so it is never written twice by a broadcast.
+   */
+  #resolveCellGroupSelector(
+    selector: SelectorNode,
+    grid: ScriptTableGrid,
+    axis: 'row' | 'column',
+  ): BindingInfo | null {
+    const label = axis === 'row' ? 'Row' : 'Column'
+    const selectorName = axis === 'row' ? 'row' : 'col'
+    if (selector.args.length !== 1) {
+      this.#error(
+        `${selectorName} needs a ${axis} index, like ${selectorName}(0) — got ${selector.args.length} argument${selector.args.length === 1 ? '' : 's'}`,
+        selector.span,
+      )
+      return null
+    }
+    const index = this.#resolveSlotIndex(selector.args[0], `${label} index`)
+    if (index === null) return null
+    const cells =
+      axis === 'row' ? scriptTableRowCells(grid, index) : scriptTableColumnCells(grid, index)
+    if (cells.length === 0) {
+      const bound = axis === 'row' ? grid.rowCount : grid.columnCount
+      this.#error(
+        index >= bound
+          ? `${label} ${index} is out of range for table "${grid.tableName}" — it has ${formatCount(bound, axis)}`
+          : `${label} ${index} of table "${grid.tableName}" has no cells`,
+        selector.span,
+      )
+      return null
+    }
+    return {
+      alias: selector.name,
+      aliasSpan: selector.nameSpan,
+      kind: 'group',
+      members: cells.map((cell) => ({ nodeId: cell.nodeId, nodeName: cell.nodeName })),
+      used: false,
+    }
+  }
+
+  #singleMemberTarget(selector: SelectorNode, nodeId: string, nodeName: string): BindingInfo {
+    return {
+      alias: selector.name,
+      aliasSpan: selector.nameSpan,
+      kind: 'node',
+      members: [{ nodeId, nodeName }],
+      used: false,
+    }
+  }
+
+  /** A 0-based Grid Slot coordinate: a whole, non-negative compile-time number. */
+  #resolveSlotIndex(expression: ScriptExpression, what: string): number | null {
+    const value = this.#evaluateNumber(expression, 'a whole number')
+    if (value === null) return null
+    if (!Number.isInteger(value) || value < 0) {
+      this.#error(`${what} must be a whole number, zero or greater`, expression.span)
+      return null
+    }
+    return value
   }
 
   #lowerTween(statement: StatementNode, binding: BindingInfo, cursor: number): number {
@@ -606,7 +819,7 @@ class Compiler {
       if (!isScriptProperty(entry.key)) {
         const suggestion = nearMissSuggestion(entry.key, SCRIPT_PROPERTY_NAMES)
         this.#error(
-          `Unknown property "${entry.key}". Available properties: ${SCRIPT_PROPERTY_NAMES.join(', ')}.${suggestion}`,
+          `Unknown property "${entry.key}". Available properties: ${SCRIPT_NODE_PROPERTY_NAMES.join(', ')}. Table and cell nodes also accept ${SCRIPT_TABLE_PROPERTY_NAMES.join(' and ')}.${suggestion}`,
           entry.keySpan,
         )
         continue
@@ -646,6 +859,10 @@ class Compiler {
     }
     if (entry.property === 'zIndex' && !Number.isInteger(entry.value)) {
       this.#error('zIndex must be a whole number', entry.valueSpan)
+      return false
+    }
+    if (isScriptTableProperty(entry.property) && entry.value < 0) {
+      this.#error(`${entry.property} must be a non-negative number`, entry.valueSpan)
       return false
     }
     return true
@@ -688,6 +905,19 @@ class Compiler {
         memberName === null
           ? 'Bone nodes cannot animate opacity'
           : `Member "${memberName}" is a Bone node and cannot animate opacity`,
+        entry.keySpan,
+      )
+      return false
+    }
+    if (
+      isScriptTableProperty(entry.property) &&
+      node.isTable !== true &&
+      node.isTableCell !== true
+    ) {
+      this.#error(
+        memberName === null
+          ? `Only table and table cell nodes can animate ${entry.property}`
+          : `Member "${memberName}" is not a table or table cell and cannot animate ${entry.property}`,
         entry.keySpan,
       )
       return false
@@ -902,6 +1132,9 @@ class Compiler {
     if (property === 'zIndex') {
       return { kind: 'zIndex', nodeId }
     }
+    if (isScriptTableProperty(property)) {
+      return { kind: 'table', nodeId, property }
+    }
     return { kind: 'node', nodeId, property: enginePropertyForScriptProperty(property) }
   }
 
@@ -950,7 +1183,7 @@ class Compiler {
 
 /** Map an author-facing property to the engine property track it animates. */
 export function enginePropertyForScriptProperty(
-  property: Exclude<ScriptProperty, 'zIndex'>,
+  property: Exclude<ScriptProperty, 'zIndex' | ScriptTableProperty>,
 ): AnimationProperty {
   if (property === 'x') return 'positionX'
   if (property === 'y') return 'positionY'
@@ -997,4 +1230,8 @@ function roundTime(time: number): number {
 
 function formatSeconds(seconds: number): string {
   return String(roundTime(seconds))
+}
+
+function formatCount(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`
 }

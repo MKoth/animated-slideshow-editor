@@ -181,7 +181,12 @@ function computeLegacyCellRects(
   return result
 }
 
-function nextFreePosition(
+/**
+ * The first free Grid Slot in row-major order. Shared with the Animation Script
+ * compiler so its structural addressing resolves the same slots the renderer
+ * lays out.
+ */
+export function nextFreePosition(
   occupied: ReadonlySet<string>,
   columnCount: number,
 ): { row: number; column: number } {
