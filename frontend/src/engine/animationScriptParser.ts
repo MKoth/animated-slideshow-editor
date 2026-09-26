@@ -251,8 +251,56 @@ export interface ParallelNode {
   readonly span: SourceSpan
 }
 
+/**
+ * `repeat(n) { ... }` unrolls its body `n` times at compile time, advancing by
+ * the unrolled sum. Counts are compile-time constants; `repeat(0)` warns.
+ */
+export interface RepeatNode {
+  readonly kind: 'repeat'
+  readonly count: ScriptExpression
+  readonly body: readonly ScriptStatementNode[]
+  readonly span: SourceSpan
+}
+
+/**
+ * `for x in <list> { ... }` unrolls its body once per list element, binding
+ * `x` to the element for that iteration. Elements accept binding aliases (one
+ * node or group per iteration) and numbers (including `range(...)`).
+ */
+export interface ForNode {
+  readonly kind: 'for'
+  readonly variable: string
+  readonly variableSpan: SourceSpan
+  readonly iterable: ScriptExpression
+  readonly body: readonly ScriptStatementNode[]
+  readonly span: SourceSpan
+}
+
+/**
+ * `stagger(step, targets) { ... }` runs its body once per target, starting
+ * member `i` at `cursor + i×step` and advancing by `(n−1)×step + body extent`.
+ * Targets accept a group binding or a list of node bindings in order.
+ */
+export interface StaggerNode {
+  readonly kind: 'stagger'
+  readonly step: ScriptExpression
+  readonly targets: ScriptExpression
+  readonly body: readonly ScriptStatementNode[]
+  readonly span: SourceSpan
+}
+
 export type ScriptStatementNode =
-  BindNode | LetNode | StatementNode | SetTextNode | WaitNode | MarkNode | AtNode | ParallelNode
+  | BindNode
+  | LetNode
+  | StatementNode
+  | SetTextNode
+  | WaitNode
+  | MarkNode
+  | AtNode
+  | ParallelNode
+  | RepeatNode
+  | ForNode
+  | StaggerNode
 
 export interface ScriptProgram {
   readonly header: HeaderNode | null
@@ -310,7 +358,10 @@ const FORBIDDEN_KEYWORD_MESSAGES = new Map<string, string>([
  * while `wait.tween(...)` is an alias named `wait`, which is why the `.` lookahead
  * keeps deciding; `bind` and `let` are handled separately because their forms differ.
  */
-const OPERATOR_KEYWORDS = new Set(['wait', 'mark', 'at', 'parallel'])
+const OPERATOR_KEYWORDS = new Set(['wait', 'mark', 'at', 'parallel', 'repeat', 'for', 'stagger'])
+
+const GROUP_INDEX_MESSAGE =
+  'Index addressing on groups is not part of v1 — bind individual nodes to address members, like bind c1 = node("Card 1")'
 
 export function parseAnimationScript(source: string): ScriptProgram {
   return new Parser(source).parse()
@@ -383,6 +434,9 @@ class Parser {
     if (operator === 'mark') return this.#parseMark()
     if (operator === 'at') return this.#parseAt()
     if (operator === 'parallel') return this.#parseParallel()
+    if (operator === 'repeat') return this.#parseRepeat()
+    if (operator === 'for') return this.#parseFor()
+    if (operator === 'stagger') return this.#parseStagger()
     if (this.#isIdentifier('defaults')) {
       this.#report('defaults must appear immediately after the script header', this.#peek().span)
       return null
@@ -566,6 +620,65 @@ class Parser {
   #parseParallel(): ParallelNode | null {
     const start = this.#peek().span.start
     this.#advance()
+    const body = this.#parseBlock('parallel')
+    if (body === null) return null
+    return { kind: 'parallel', body, span: { start, end: this.#previousEnd() } }
+  }
+
+  #parseRepeat(): RepeatNode | null {
+    const start = this.#peek().span.start
+    this.#advance()
+    if (!this.#expectPunctuation('(')) return null
+    const count = this.#parseExpression('a repeat count')
+    this.#expectPunctuation(')')
+    if (count === null) return null
+    const body = this.#parseBlock('repeat')
+    if (body === null) return null
+    return { kind: 'repeat', count, body, span: { start, end: this.#previousEnd() } }
+  }
+
+  #parseFor(): ForNode | null {
+    const start = this.#peek().span.start
+    this.#advance()
+    const variable = this.#expectIdentifier('a loop variable name')
+    const inKeyword = this.#expectIdentifier('the word "in"')
+    const iterable = this.#parseExpression('a list to iterate, like [a, b, c] or range(0, 3, 1)')
+    if (variable === null || inKeyword === null || iterable === null) return null
+    if (inKeyword.text !== 'in') {
+      this.#report(`Expected the word "in", found "${inKeyword.text}"`, inKeyword.span)
+      return null
+    }
+    const body = this.#parseBlock('for')
+    if (body === null) return null
+    return {
+      kind: 'for',
+      variable: variable.text,
+      variableSpan: variable.span,
+      iterable,
+      body,
+      span: { start, end: this.#previousEnd() },
+    }
+  }
+
+  #parseStagger(): StaggerNode | null {
+    const start = this.#peek().span.start
+    this.#advance()
+    if (!this.#expectPunctuation('(')) return null
+    const step = this.#parseExpression('a stagger step in seconds')
+    if (step === null) return null
+    if (!this.#matchPunctuation(',')) {
+      this.#report('Expected "," after the stagger step', this.#peek().span)
+      return null
+    }
+    const targets = this.#parseExpression('stagger targets, like cards or [c1, c2, c3]')
+    this.#expectPunctuation(')')
+    if (targets === null) return null
+    const body = this.#parseBlock('stagger')
+    if (body === null) return null
+    return { kind: 'stagger', step, targets, body, span: { start, end: this.#previousEnd() } }
+  }
+
+  #parseBlock(owner: string): ScriptStatementNode[] | null {
     if (!this.#expectPunctuation('{')) return null
     const body: ScriptStatementNode[] = []
     while (!this.#atEnd() && !this.#checkPunctuation('}')) {
@@ -581,12 +694,12 @@ class Parser {
     if (!this.#matchPunctuation('}')) {
       const token = this.#peek()
       this.#report(
-        `Expected "}" to close the parallel block, found ${describeToken(token)}`,
+        `Expected "}" to close the ${owner} block, found ${describeToken(token)}`,
         token.span,
       )
       return null
     }
-    return { kind: 'parallel', body, span: { start, end: this.#previousEnd() } }
+    return body
   }
 
   #parseBind(): BindNode | null {
@@ -633,6 +746,14 @@ class Parser {
     let ease: string | undefined
     let easeSpan: SourceSpan | undefined
 
+    if (this.#checkPunctuation('[')) {
+      this.#report(GROUP_INDEX_MESSAGE, {
+        start: alias.span.start,
+        end: this.#peek().span.end,
+      })
+      this.#consumeIndexSuffix()
+      return null
+    }
     this.#expectPunctuation('.')
     for (;;) {
       const name = this.#expectIdentifier('a method name')
@@ -1057,13 +1178,33 @@ class Parser {
     return null
   }
 
+  /** Consume a `[ ... ]` suffix after reporting the v1 no-index diagnostic. */
+  #consumeIndexSuffix(): void {
+    if (!this.#matchPunctuation('[')) return
+    let depth = 1
+    while (!this.#atEnd() && depth > 0) {
+      if (this.#checkPunctuation('[')) depth += 1
+      else if (this.#checkPunctuation(']')) depth -= 1
+      this.#advance()
+    }
+  }
+
   /**
    * Attach `.` accesses to a primary expression: `alias.x` (a property read),
    * `conj.row(0)` (a selector target), `worldAt(a, t).rotation` (a field read on
-   * a record). The compiler types each member against its object.
+   * a record). Index suffixes (`alias[0]`) are rejected: group indexing is not
+   * part of v1. The compiler types each member against its object.
    */
   #parseMemberChain(base: ScriptExpression): ScriptExpression {
     let expression = base
+    if (this.#checkPunctuation('[')) {
+      this.#report(GROUP_INDEX_MESSAGE, {
+        start: expression.span.start,
+        end: this.#peek().span.end,
+      })
+      this.#consumeIndexSuffix()
+      return expression
+    }
     while (this.#matchPunctuation('.')) {
       const name = this.#expectIdentifier('a property or function name')
       if (name === null) return expression

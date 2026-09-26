@@ -24,17 +24,20 @@ import type {
   AtNode,
   BindNode,
   DefaultsNode,
+  ForNode,
   LetNode,
   MarkNode,
   MemberExpression,
   ParallelNode,
   PropertyEntry,
+  RepeatNode,
   ScriptExpression,
   ScriptProgram,
   ScriptStatementNode,
   SelectorNode,
   SetTextNode,
   SourceSpan,
+  StaggerNode,
   StatementNode,
   WaitNode,
 } from './animationScriptParser'
@@ -276,6 +279,10 @@ interface BindingInfo {
   used: boolean
 }
 
+type ForElement =
+  | { readonly kind: 'number'; readonly value: number }
+  | { readonly kind: 'binding'; readonly binding: BindingInfo }
+
 interface ValidatedEntry {
   readonly track: ScriptTrack
   /** The author-facing name this entry resolved from, for diagnostics. */
@@ -358,6 +365,14 @@ const SCRIPT_READ_SPECS: Readonly<Record<string, ScriptReadSpec>> = {
   controlValue: { shape: 'controlValue(host, "Key", t?)', minArgs: 2, maxArgs: 3, timeArgument: 2 },
 }
 
+/**
+ * Compile budgets for unrolled loops: a single loop iterates at most this
+ * many times, and a whole compile unrolls at most this many statements. Both
+ * produce diagnostics instead of hangs, matching the range-list budget.
+ */
+export const SCRIPT_MAX_LOOP_ITERATIONS = 10000
+export const SCRIPT_MAX_UNROLLED_STATEMENTS = 10000
+
 export function compileAnimationScript(
   source: string,
   context: AnimationScriptCompileContext,
@@ -375,6 +390,12 @@ class Compiler {
    * `parallel` bodies (and, later, function and loop bodies) push their own.
    */
   readonly #scopes: Map<string, ScriptValue>[] = [new Map()]
+  /**
+   * Loop-local binding proxies, innermost loop last. A `for` variable bound to
+   * a node or group shadows by name for its iteration; a `stagger` target alias
+   * rebinds to its current member. Checked before `#bindings`.
+   */
+  readonly #aliasOverrides: Map<string, BindingInfo>[] = []
   /** Compile-time-only marker labels; never persisted, never a timeline marker. */
   readonly #markers = new Map<string, number>()
   readonly #planned = new Map<string, PlannedKeyframe>()
@@ -392,6 +413,10 @@ class Compiler {
   #readCursor = 0
   #from = 0
   #defaults: ScriptDefaults = {}
+  /** Nesting depth inside repeat/for/stagger bodies; markers error when > 0. */
+  #loopDepth = 0
+  /** Total unrolled body statements this compile; the budget stops hangs. */
+  #unrolledStatements = 0
 
   constructor(source: string, context: AnimationScriptCompileContext) {
     this.#source = source
@@ -497,8 +522,24 @@ class Compiler {
   }
 
   #declareBinding(statement: BindNode): void {
-    if (this.#bindings.has(statement.alias)) {
+    const existing = this.#bindings.get(statement.alias)
+    if (existing) {
+      // A loop body unrolls the same `bind` source once per iteration; the
+      // second copy is the same declaration, not a duplicate.
+      if (
+        existing.aliasSpan.start === statement.aliasSpan.start &&
+        existing.aliasSpan.end === statement.aliasSpan.end
+      ) {
+        return
+      }
       this.#error(`Binding "${statement.alias}" is already declared`, statement.aliasSpan)
+      return
+    }
+    if (this.#lookupOverride(statement.alias) !== undefined) {
+      this.#error(
+        `Name "${statement.alias}" is already used by a loop variable`,
+        statement.aliasSpan,
+      )
       return
     }
     if ((SCRIPT_RESERVED_NAMES as readonly string[]).includes(statement.alias)) {
@@ -656,6 +697,12 @@ class Compiler {
         return this.#lowerAt(statement, cursor)
       case 'parallel':
         return this.#lowerParallel(statement, cursor)
+      case 'repeat':
+        return this.#lowerRepeat(statement, cursor)
+      case 'for':
+        return this.#lowerFor(statement, cursor)
+      case 'stagger':
+        return this.#lowerStagger(statement, cursor)
       case 'setText':
         return this.#lowerSetText(statement, cursor)
       case 'statement':
@@ -678,6 +725,13 @@ class Compiler {
   }
 
   #lowerMark(statement: MarkNode, cursor: number): number {
+    if (this.#loopDepth > 0) {
+      this.#error(
+        `Marker "${statement.name}" cannot be declared inside a repeat/for/stagger body — a label would duplicate per iteration`,
+        statement.nameSpan,
+      )
+      return cursor
+    }
     if (this.#markers.has(statement.name)) {
       this.#error(`Marker "${statement.name}" is already declared`, statement.nameSpan)
       return cursor
@@ -739,6 +793,436 @@ class Compiler {
     return latest
   }
 
+  /**
+   * `repeat(n) { ... }` unrolls at compile time to plain keyframes — no runtime
+   * loop exists. The cursor advances by the unrolled sum; `repeat(0)` warns and
+   * advances zero. Each iteration runs in its own `let` scope so body locals
+   * never collide across iterations; `bind` declarations are idempotent by
+   * source span for the same reason.
+   */
+  #lowerRepeat(statement: RepeatNode, cursor: number): number {
+    if (containsDurationUnit(statement.count)) {
+      this.#error(
+        `Expected the repeat count without a duration suffix, found "${this.#source.slice(statement.count.span.start, statement.count.span.end)}"`,
+        statement.count.span,
+      )
+      return cursor
+    }
+    const count = this.#evaluateNumber(statement.count, 'a repeat count')
+    if (count === null) return cursor
+    if (!Number.isInteger(count) || count < 0) {
+      this.#error('repeat count must be a whole number, zero or greater', statement.count.span)
+      return cursor
+    }
+    if (count === 0) {
+      this.#warning('repeat(0) does nothing — the body never runs', statement.count.span)
+      this.#reportLoopBodyMarks(statement.body)
+      return cursor
+    }
+    if (count > SCRIPT_MAX_LOOP_ITERATIONS) {
+      this.#error(
+        `repeat(${count}) would unroll past the compile budget of ${SCRIPT_MAX_LOOP_ITERATIONS} iterations`,
+        statement.count.span,
+      )
+      return cursor
+    }
+    let current = cursor
+    this.#loopDepth += 1
+    try {
+      for (let index = 0; index < count; index += 1) {
+        this.#scopes.push(new Map())
+        try {
+          for (const child of statement.body) {
+            if (!this.#claimUnrolledSlot(child.span)) {
+              return current
+            }
+            current = this.#lowerStatement(child, current)
+          }
+        } finally {
+          this.#scopes.pop()
+        }
+      }
+    } finally {
+      this.#loopDepth -= 1
+    }
+    return current
+  }
+
+  /**
+   * `for x in <list> { ... }` unrolls once per element. A list literal may hold
+   * binding aliases (`for e in [e0, e1]`, each iteration rebinding `e` to that
+   * alias's members) and numbers (`for d in [0.4, 0.8]`, each iteration binding
+   * `d` as a value); a `let` variable or `range(...)` must hold numbers.
+   */
+  #lowerFor(statement: ForNode, cursor: number): number {
+    const elements = this.#resolveForElements(statement)
+    if (elements === null) return cursor
+    if (elements.length === 0) {
+      this.#reportLoopBodyMarks(statement.body)
+      return cursor
+    }
+    if (elements.length > SCRIPT_MAX_LOOP_ITERATIONS) {
+      this.#error(
+        `for "${statement.variable}" would unroll ${elements.length} iterations, past the compile budget of ${SCRIPT_MAX_LOOP_ITERATIONS}`,
+        statement.iterable.span,
+      )
+      return cursor
+    }
+    if (!this.#declareLoopVariable(statement)) return cursor
+    let current = cursor
+    this.#loopDepth += 1
+    try {
+      for (const element of elements) {
+        this.#scopes.push(new Map())
+        this.#aliasOverrides.push(new Map())
+        try {
+          if (element.kind === 'number') {
+            this.#scopes[this.#scopes.length - 1].set(statement.variable, {
+              kind: 'number',
+              value: element.value,
+            })
+          } else {
+            this.#aliasOverrides[this.#aliasOverrides.length - 1].set(statement.variable, {
+              alias: statement.variable,
+              aliasSpan: statement.variableSpan,
+              kind: element.binding.kind,
+              members: element.binding.members,
+              ...(element.binding.grid !== undefined ? { grid: element.binding.grid } : {}),
+              used: false,
+            })
+            element.binding.used = true
+          }
+          for (const child of statement.body) {
+            if (!this.#claimUnrolledSlot(child.span)) {
+              return current
+            }
+            current = this.#lowerStatement(child, current)
+          }
+        } finally {
+          this.#scopes.pop()
+          this.#aliasOverrides.pop()
+        }
+      }
+    } finally {
+      this.#loopDepth -= 1
+    }
+    return current
+  }
+
+  /**
+   * `stagger(step, targets) { ... }` runs its body once per target, starting
+   * member `i` at `cursor + i×step`. The block advances by the latest member
+   * end — `(n−1)×step + body extent` for deterministic bodies — so cascades are
+   * one statement. Targets accept a group binding or a list of node bindings in
+   * order; an empty target list is a compile error.
+   */
+  #lowerStagger(statement: StaggerNode, cursor: number): number {
+    const step = this.#evaluateNumber(statement.step, 'a stagger step in seconds')
+    if (step === null) return cursor
+    if (!Number.isFinite(step) || step < 0) {
+      this.#error('stagger step must be a non-negative number of seconds', statement.step.span)
+      return cursor
+    }
+    const targets = this.#resolveStaggerTargets(statement)
+    if (!targets) return cursor
+    if (targets.members.length === 0) {
+      this.#error(
+        `stagger needs at least one target — "${this.#source.slice(statement.targets.span.start, statement.targets.span.end)}" resolves to no nodes`,
+        statement.targets.span,
+      )
+      return cursor
+    }
+    if (targets.members.length > SCRIPT_MAX_LOOP_ITERATIONS) {
+      this.#error(
+        `stagger would unroll ${targets.members.length} targets, past the compile budget of ${SCRIPT_MAX_LOOP_ITERATIONS}`,
+        statement.targets.span,
+      )
+      return cursor
+    }
+    let latest = cursor
+    this.#loopDepth += 1
+    try {
+      for (let index = 0; index < targets.members.length; index += 1) {
+        const member = targets.members[index]
+        const start = roundTime(cursor + index * step)
+        this.#scopes.push(new Map())
+        this.#aliasOverrides.push(new Map())
+        try {
+          for (const alias of targets.rebindAliases) {
+            this.#aliasOverrides[this.#aliasOverrides.length - 1].set(alias, {
+              alias,
+              aliasSpan: statement.targets.span,
+              kind: 'node',
+              members: [member],
+              used: false,
+            })
+          }
+          let current = start
+          for (const child of statement.body) {
+            if (!this.#claimUnrolledSlot(child.span)) {
+              return latest
+            }
+            current = this.#lowerStatement(child, current)
+          }
+          if (current > latest) latest = current
+        } finally {
+          this.#scopes.pop()
+          this.#aliasOverrides.pop()
+        }
+      }
+    } finally {
+      this.#loopDepth -= 1
+    }
+    return latest
+  }
+
+  /** One unrolled body statement against the whole-compile budget. */
+  #claimUnrolledSlot(span: SourceSpan): boolean {
+    if (this.#unrolledStatements >= SCRIPT_MAX_UNROLLED_STATEMENTS) {
+      this.#error(
+        `Unrolled loops pass the compile budget of ${SCRIPT_MAX_UNROLLED_STATEMENTS} statements — split the loop or shorten the body`,
+        span,
+      )
+      return false
+    }
+    this.#unrolledStatements += 1
+    return true
+  }
+
+  /**
+   * Report markers inside a loop body that never unrolls (repeat(0), empty
+   * for). Live iterations report via #lowerMark; zero-trip bodies still violate
+   * the one-label rule syntactically, so scan without planning anything.
+   */
+  #reportLoopBodyMarks(body: readonly ScriptStatementNode[]): void {
+    for (const child of body) {
+      if (child.kind === 'mark') {
+        this.#error(
+          `Marker "${child.name}" cannot be declared inside a repeat/for/stagger body — a label would duplicate per iteration`,
+          child.nameSpan,
+        )
+      } else if (
+        child.kind === 'parallel' ||
+        child.kind === 'repeat' ||
+        child.kind === 'for' ||
+        child.kind === 'stagger'
+      ) {
+        this.#reportLoopBodyMarks(child.body)
+      } else if (child.kind === 'at') {
+        this.#reportLoopBodyMarks([child.statement])
+      }
+    }
+  }
+
+  /**
+   * Declare a `for` loop variable. Loop variables live in per-iteration scopes,
+   * so they shadow outer `let`s and outer loop variables like a nested block;
+   * only global bindings and built-ins collide.
+   */
+  #declareLoopVariable(statement: ForNode): boolean {
+    if (this.#bindings.has(statement.variable)) {
+      this.#error(
+        `Name "${statement.variable}" is already used by a binding`,
+        statement.variableSpan,
+      )
+      return false
+    }
+    if (
+      SCRIPT_BUILTIN_NAMES.includes(statement.variable) ||
+      (SCRIPT_RESERVED_NAMES as readonly string[]).includes(statement.variable)
+    ) {
+      this.#error(`Name "${statement.variable}" is reserved by a built-in`, statement.variableSpan)
+      return false
+    }
+    return true
+  }
+
+  /**
+   * Resolve a `for` iterable to its elements. A list literal may mix binding
+   * aliases (each an iteration over that alias's members) and numbers; any
+   * other list (a `let` variable, `range(...)`) must hold numbers.
+   */
+  #resolveForElements(statement: ForNode): ForElement[] | null {
+    const iterable = statement.iterable
+    if (iterable.kind === 'list') {
+      const elements: ForElement[] = []
+      for (const item of iterable.elements) {
+        if (item.kind === 'identifier') {
+          const binding = this.#lookupBinding(item.name)
+          if (binding) {
+            binding.used = true
+            elements.push({ kind: 'binding', binding })
+            continue
+          }
+          if (this.#lookupValue(item.name) !== undefined) {
+            this.#error(
+              `for "${statement.variable}" lists accept node bindings and numbers — "${item.name}" is a value, not a node or group`,
+              item.span,
+            )
+            return null
+          }
+        }
+        const value = this.#evaluateValue(item)
+        if (value === null || value.kind === 'invalid') return null
+        if (value.kind === 'number') {
+          elements.push({ kind: 'number', value: value.value })
+          continue
+        }
+        if (value.kind === 'list') {
+          this.#error(
+            `for "${statement.variable}" lists accept node bindings and numbers — nested lists are not iterable`,
+            item.span,
+          )
+          return null
+        }
+        this.#error(
+          `for "${statement.variable}" lists accept node bindings and numbers — found ${describeScriptValue(value)}`,
+          item.span,
+        )
+        return null
+      }
+      return elements
+    }
+    if (iterable.kind === 'identifier') {
+      const binding = this.#lookupBinding(iterable.name)
+      if (binding) {
+        this.#error(
+          `for "${statement.variable}" needs a list to iterate — binding "${binding.alias}" is a ${binding.kind}, not a list. Use a list like [a, b, c] or range(0, 3, 1).`,
+          iterable.span,
+        )
+        return null
+      }
+    }
+    const value = this.#evaluateValue(iterable)
+    if (value === null || value.kind === 'invalid') return null
+    if (value.kind !== 'list') {
+      this.#error(
+        `for "${statement.variable}" needs a list to iterate, like for ${statement.variable} in [a, b, c] or for ${statement.variable} in range(0, 3, 1) — found ${describeScriptValue(value)}`,
+        iterable.span,
+      )
+      return null
+    }
+    const elements: ForElement[] = []
+    for (const item of value.values) {
+      if (item.kind === 'number') {
+        elements.push({ kind: 'number', value: item.value })
+        continue
+      }
+      if (item.kind === 'invalid') return null
+      this.#error(
+        `for "${statement.variable}" lists accept node bindings and numbers — found ${describeScriptValue(item)}. Bindings must be listed inline, like [a, b, c].`,
+        iterable.span,
+      )
+      return null
+    }
+    return elements
+  }
+
+  /** Resolve stagger targets to ordered members plus aliases to rebind per member. */
+  #resolveStaggerTargets(statement: StaggerNode): {
+    members: readonly ScriptMember[]
+    rebindAliases: readonly string[]
+  } | null {
+    const targets = statement.targets
+    if (targets.kind === 'identifier') {
+      const binding = this.#lookupBinding(targets.name)
+      if (!binding) {
+        if (this.#lookupValue(targets.name) !== undefined) {
+          this.#error(
+            `stagger targets need a group binding or a list of node bindings — "${targets.name}" is a value, not a node or group`,
+            targets.span,
+          )
+          return null
+        }
+        const suggestion = nearMissSuggestion(targets.name, [
+          ...this.#bindings.keys(),
+          ...this.#overrideNames(),
+        ])
+        this.#error(`Unknown binding "${targets.name}".${suggestion}`, targets.span)
+        return null
+      }
+      binding.used = true
+      return { members: binding.members, rebindAliases: [binding.alias] }
+    }
+    if (targets.kind === 'list') {
+      if (targets.elements.length === 0) {
+        this.#error(
+          'stagger needs at least one target — an empty list staggers nothing',
+          targets.span,
+        )
+        return null
+      }
+      const members: ScriptMember[] = []
+      const rebindAliases: string[] = []
+      for (const item of targets.elements) {
+        if (item.kind !== 'identifier') {
+          this.#error(
+            'stagger lists accept node bindings, like stagger(0.2s, [c1, c2, c3])',
+            item.span,
+          )
+          return null
+        }
+        const binding = this.#lookupBinding(item.name)
+        if (!binding) {
+          const suggestion = nearMissSuggestion(item.name, [
+            ...this.#bindings.keys(),
+            ...this.#overrideNames(),
+          ])
+          this.#error(`Unknown binding "${item.name}".${suggestion}`, item.span)
+          return null
+        }
+        if (binding.kind === 'group') {
+          this.#error(
+            `stagger lists accept node bindings — "${binding.alias}" is a group. Pass the group directly, like stagger(0.2s, ${binding.alias}).`,
+            item.span,
+          )
+          return null
+        }
+        binding.used = true
+        if (binding.members.length !== 1) {
+          this.#error(
+            `stagger lists accept node bindings — "${binding.alias}" resolves to no nodes`,
+            item.span,
+          )
+          return null
+        }
+        members.push(binding.members[0])
+        if (!rebindAliases.includes(binding.alias)) rebindAliases.push(binding.alias)
+      }
+      return { members, rebindAliases }
+    }
+    this.#error(
+      'stagger targets need a group binding or a list of node bindings, like stagger(0.2s, cards) or stagger(0.2s, [c1, c2])',
+      targets.span,
+    )
+    return null
+  }
+
+  /** A binding by alias, checking loop-local overrides before globals. */
+  #lookupBinding(name: string): BindingInfo | undefined {
+    const override = this.#lookupOverride(name)
+    if (override) return override
+    return this.#bindings.get(name)
+  }
+
+  #lookupOverride(name: string): BindingInfo | undefined {
+    for (let index = this.#aliasOverrides.length - 1; index >= 0; index -= 1) {
+      const found = this.#aliasOverrides[index].get(name)
+      if (found) return found
+    }
+    return undefined
+  }
+
+  #overrideNames(): string[] {
+    const names: string[] = []
+    for (const scope of this.#aliasOverrides) {
+      for (const name of scope.keys()) {
+        if (!names.includes(name)) names.push(name)
+      }
+    }
+    return names
+  }
+
   #lowerCall(statement: StatementNode, cursor: number): number {
     const binding = this.#resolveAlias(statement)
     if (!binding) {
@@ -783,12 +1267,22 @@ class Compiler {
   }
 
   #resolveAlias(statement: StatementNode): BindingInfo | null {
-    const binding = this.#bindings.get(statement.alias)
+    const binding = this.#lookupBinding(statement.alias)
     if (binding) {
       binding.used = true
       return binding
     }
-    const suggestion = nearMissSuggestion(statement.alias, [...this.#bindings.keys()])
+    if (this.#lookupValue(statement.alias) !== undefined) {
+      this.#error(
+        `Binding "${statement.alias}" is a value — declare a node with bind first, or use it as a number`,
+        statement.aliasSpan,
+      )
+      return null
+    }
+    const suggestion = nearMissSuggestion(statement.alias, [
+      ...this.#bindings.keys(),
+      ...this.#overrideNames(),
+    ])
     this.#error(`Unknown binding "${statement.alias}".${suggestion}`, statement.aliasSpan)
     return null
   }
@@ -1482,18 +1976,36 @@ class Compiler {
     node: AnimationScriptNodeInfo,
     memberName: string | null,
   ): ValidatedEntry | null {
-    const cacheKey = `morphCoefficient|${entry.value.span.start}-${entry.value.span.end}`
-    let coefficient = this.#entryValueCache.get(cacheKey)
-    if (coefficient === undefined) {
-      coefficient = this.#evaluateNumberTrack(
-        entry.value,
-        'morphCoefficient',
-        memberName,
-        (value) => (value < 0 || value > 1 ? 'morphCoefficient must be between 0 and 1' : null),
-      )
-      this.#entryValueCache.set(cacheKey, coefficient)
+    // Loop bodies rebind values per iteration, so the broadcast cache is
+    // bypassed inside loops — the same span may evaluate differently each time.
+    if (this.#loopDepth === 0) {
+      const cacheKey = `morphCoefficient|${entry.value.span.start}-${entry.value.span.end}`
+      let coefficient = this.#entryValueCache.get(cacheKey)
+      if (coefficient === undefined) {
+        coefficient = this.#evaluateNumberTrack(
+          entry.value,
+          'morphCoefficient',
+          memberName,
+          (value) => (value < 0 || value > 1 ? 'morphCoefficient must be between 0 and 1' : null),
+        )
+        this.#entryValueCache.set(cacheKey, coefficient)
+      }
+      if (coefficient === null || coefficient === undefined) return null
+      return this.#morphEntry(entry, node, memberName, coefficient as number)
     }
-    if (coefficient === null || coefficient === undefined) return null
+    const fresh = this.#evaluateNumberTrack(entry.value, 'morphCoefficient', memberName, (value) =>
+      value < 0 || value > 1 ? 'morphCoefficient must be between 0 and 1' : null,
+    )
+    if (fresh === null) return null
+    return this.#morphEntry(entry, node, memberName, fresh)
+  }
+
+  #morphEntry(
+    entry: PropertyEntry,
+    node: AnimationScriptNodeInfo,
+    memberName: string | null,
+    coefficient: number,
+  ): ValidatedEntry | null {
     if (node.isMesh !== true) {
       this.#error(
         memberName === null
@@ -1531,6 +2043,9 @@ class Compiler {
     track: ScriptTrack,
     memberName: string | null,
   ): ScriptTrackValue | null {
+    if (this.#loopDepth > 0) {
+      return this.#evaluateTrackExpression(expression, track, memberName)
+    }
     const cacheKey = `${trackKey(track)}|${expression.span.start}-${expression.span.end}`
     const cached = this.#entryValueCache.get(cacheKey)
     if (cached !== undefined) return cached
@@ -1750,6 +2265,30 @@ class Compiler {
       return null
     }
     const property = entry.key as ShadowProperty
+    if (this.#loopDepth > 0) {
+      const what = this.#valuePhrase(property, memberName)
+      const raw =
+        property === 'color'
+          ? this.#evaluateString(entry.value, what)
+          : this.#evaluateNumber(entry.value, what)
+      const fresh =
+        raw === null
+          ? null
+          : this.#requireEngineValue(
+              () => requireShadowKeyframeValue(property, raw),
+              property,
+              memberName,
+              entry.value.span,
+            )
+      if (fresh === null || fresh === undefined) return null
+      return {
+        track: { kind: 'shadow', property },
+        property,
+        value: fresh,
+        keySpan: entry.keySpan,
+        valueSpan: entry.value.span,
+      }
+    }
     const cacheKey = `shadow:${property}|${entry.value.span.start}-${entry.value.span.end}`
     let value = this.#entryValueCache.get(cacheKey)
     if (value === undefined) {
@@ -2253,6 +2792,9 @@ class Compiler {
     if (this.#bindings.has(statement.name)) {
       this.#error(`Name "${statement.name}" is already used by a binding`, statement.nameSpan)
       declared = false
+    } else if (this.#lookupOverride(statement.name) !== undefined) {
+      this.#error(`Name "${statement.name}" is already used by a loop variable`, statement.nameSpan)
+      declared = false
     } else if (
       SCRIPT_BUILTIN_NAMES.includes(statement.name) ||
       (SCRIPT_RESERVED_NAMES as readonly string[]).includes(statement.name)
@@ -2291,11 +2833,14 @@ class Compiler {
       return null
     }
     if (expression.object.kind === 'identifier') {
-      const binding = this.#bindings.get(expression.object.name)
+      const binding = this.#lookupBinding(expression.object.name)
       if (binding) {
         binding.used = true
         if (binding.kind === 'group') {
           this.#errorGroupRead(binding.alias, expression.nameSpan)
+          return null
+        }
+        if (binding.members.length !== 1) {
           return null
         }
         return this.#readMemberProperty(binding.members[0], expression)
@@ -2435,7 +2980,7 @@ class Compiler {
       )
       return null
     }
-    const binding = this.#bindings.get(tableExpression.name)
+    const binding = this.#lookupBinding(tableExpression.name)
     if (!binding) {
       if (this.#lookupValue(tableExpression.name) !== undefined) {
         this.#error(
@@ -2444,7 +2989,10 @@ class Compiler {
         )
         return null
       }
-      const suggestion = nearMissSuggestion(tableExpression.name, [...this.#bindings.keys()])
+      const suggestion = nearMissSuggestion(tableExpression.name, [
+        ...this.#bindings.keys(),
+        ...this.#overrideNames(),
+      ])
       this.#error(`Unknown binding "${tableExpression.name}".${suggestion}`, tableExpression.span)
       return null
     }
@@ -2526,7 +3074,7 @@ class Compiler {
     what: string,
   ): { readonly members: readonly ScriptMember[] } | null {
     if (expression.kind === 'identifier') {
-      const binding = this.#bindings.get(expression.name)
+      const binding = this.#lookupBinding(expression.name)
       if (binding) {
         binding.used = true
         if (binding.kind === 'group' && !allowGroup) {
@@ -2545,7 +3093,10 @@ class Compiler {
         )
         return null
       }
-      const suggestion = nearMissSuggestion(expression.name, [...this.#bindings.keys()])
+      const suggestion = nearMissSuggestion(expression.name, [
+        ...this.#bindings.keys(),
+        ...this.#overrideNames(),
+      ])
       this.#error(`Unknown binding "${expression.name}".${suggestion}`, expression.span)
       return null
     }
@@ -2557,9 +3108,12 @@ class Compiler {
         )
         return null
       }
-      const binding = this.#bindings.get(expression.object.name)
+      const binding = this.#lookupBinding(expression.object.name)
       if (!binding) {
-        const suggestion = nearMissSuggestion(expression.object.name, [...this.#bindings.keys()])
+        const suggestion = nearMissSuggestion(expression.object.name, [
+          ...this.#bindings.keys(),
+          ...this.#overrideNames(),
+        ])
         this.#error(`Unknown binding "${expression.object.name}".${suggestion}`, expression.span)
         return null
       }
@@ -2665,7 +3219,7 @@ class Compiler {
         if (SCRIPT_BUILTIN_NAMES.includes(name)) {
           return `Built-in "${name}" is a function — call it like ${name}(...)`
         }
-        const binding = this.#bindings.get(name)
+        const binding = this.#lookupBinding(name)
         if (binding) {
           return `Binding "${name}" is a ${binding.kind} and cannot be used as a value — declare a number with let first`
         }
