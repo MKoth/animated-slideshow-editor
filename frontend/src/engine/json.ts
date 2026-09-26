@@ -185,6 +185,11 @@ export type ControlJSON = {
   readonly bindings: Readonly<Record<string, ControlBindingJSONValue>>
   readonly groups?: readonly ControlGroupJSON[]
   readonly blendKeys?: readonly string[]
+  /**
+   * Optional display names for the blend parameters between adjacent
+   * timelines (index i = blend T(i+1)→T(i+2)). Absent = default labels.
+   */
+  readonly blendNames?: readonly string[]
 }
 
 export type ControlSetJSON = {

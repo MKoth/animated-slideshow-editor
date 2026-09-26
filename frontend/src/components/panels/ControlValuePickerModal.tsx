@@ -45,6 +45,7 @@ export function ControlValuePickerModal({
 
   const blendCount = Math.max(0, (control?.groups.length ?? 1) - 1)
   const groupNames: readonly string[] = control?.groups.map((g) => g.name) ?? []
+  const blendNames: readonly string[] = control?.blendNames ?? []
   const normalizeBlend = (src: readonly number[]): number[] => {
     const out = new Array<number>(blendCount).fill(0)
     for (let i = 0; i < out.length && i < src.length; i++) {
@@ -213,18 +214,28 @@ export function ControlValuePickerModal({
               {Array.from({ length: blendCount }, (_, i) => {
                 const fromName = groupNames[i] ?? `T${i + 1}`
                 const toName = groupNames[i + 1] ?? `T${i + 2}`
+                const customBlendName = (blendNames[i] ?? '').trim()
+                const defaultBlendLabel = `Blend T${i + 1}→T${i + 2} (${fromName} → ${toName})`
                 const draftBlend = blendDrafts[i] ?? 0
                 return (
                   <label
                     key={i}
                     style={{ fontSize: 12, display: 'flex', flexDirection: 'column', gap: 8 }}
                   >
-                    <span style={{ fontWeight: 600 }}>
-                      Blend T{i + 1}→T{i + 2} ({fromName} → {toName}) —{' '}
+                    <span
+                      style={{ fontWeight: 600 }}
+                      title={customBlendName ? defaultBlendLabel : undefined}
+                      data-testid={`control-blend-label-${i}`}
+                    >
+                      {customBlendName || defaultBlendLabel} —{' '}
                       {Number.isFinite(draftBlend) ? draftBlend.toFixed(2) : '—'}
                     </span>
                     <input
-                      aria-label={`Blend T${i + 1} to T${i + 2}`}
+                      aria-label={
+                        customBlendName
+                          ? `${customBlendName} (Blend T${i + 1} to T${i + 2})`
+                          : `Blend T${i + 1} to T${i + 2}`
+                      }
                       type="range"
                       min={0}
                       max={1}

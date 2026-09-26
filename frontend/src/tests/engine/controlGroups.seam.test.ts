@@ -9,6 +9,8 @@ import {
   addGroupToControlSet,
   removeGroupFromControlSet,
   reorderGroupsInControlSet,
+  setBlendNameInControlSet,
+  validateControls,
   moveBindingBetweenGroups,
   reorderBindingWithinGroup,
   reorderControlBlock,
@@ -626,5 +628,131 @@ describe('Control Groups N timelines + blend-inside-host-kf (redesign)', () => {
       expect((g.bindings.head as { start: number }).start).toBeCloseTo(0.25)
       expect((g.bindings.head as { end: number }).end).toBeCloseTo(0.75)
     }
+  })
+})
+
+describe('Blend parameter names (blendNames)', () => {
+  it('setBlendName writes, trims and clears names; out-of-range throws', () => {
+    let cs = createControlSet('host', [createControl({ key: 'Open', bindings: { m: 'clip1' } })])
+    // No second timeline yet — no blend gap to name
+    expect(() => setBlendNameInControlSet(cs, 'Open', 0, 'Mouth')).toThrow(/out of range/)
+    expect(() => setBlendNameInControlSet(cs, 'Missing', 0, 'Mouth')).toThrow(/not found/)
+
+    cs = addGroupToControlSet(cs, 'Open')
+    cs = setBlendNameInControlSet(cs, 'Open', 0, '  Mouth openness  ')
+    expect(cs.controls[0].blendNames).toEqual(['Mouth openness'])
+
+    // Clearing writes back to default (field dropped, not an empty string)
+    cs = setBlendNameInControlSet(cs, 'Open', 0, '   ')
+    expect(cs.controls[0].blendNames).toBeUndefined()
+
+    // Out-of-range gap index throws
+    expect(() => setBlendNameInControlSet(cs, 'Open', 1, 'X')).toThrow(/out of range/)
+  })
+
+  it('removeGroup splices blend names like host keyframe blend factors', () => {
+    let cs = createControlSet('host', [createControl({ key: 'M', bindings: { m: 'clip1' } })])
+    cs = addGroupToControlSet(cs, 'M', 'T2')
+    cs = addGroupToControlSet(cs, 'M', 'T3')
+    cs = setBlendNameInControlSet(cs, 'M', 0, 'A')
+    cs = setBlendNameInControlSet(cs, 'M', 1, 'B')
+
+    // Remove middle group: gap T1→T2 spliced, T2→T3 name shifts to T1→T2
+    const g2Id = cs.controls[0].groups[1].id
+    cs = removeGroupFromControlSet(cs, 'M', g2Id)
+    expect(cs.controls[0].groups.map((g) => g.name)).toEqual(['Group 1', 'T3'])
+    expect(cs.controls[0].blendNames).toEqual(['B'])
+
+    // Removing down to one timeline drops the last name too
+    const lastId = cs.controls[0].groups[1].id
+    cs = removeGroupFromControlSet(cs, 'M', lastId)
+    expect(cs.controls[0].groups.length).toBe(1)
+    expect(cs.controls[0].blendNames).toBeUndefined()
+  })
+
+  it('JSON round-trip preserves names; legacy files without the field load; invalid input tolerated', () => {
+    let cs = createControlSet('host', [createControl({ key: 'Open', bindings: { m: 'clip1' } })])
+    // No names -> field omitted from JSON (no churn for existing projects)
+    let json = controlSetToJSON(cs)
+    expect((json.controls[0] as any).blendNames).toBeUndefined()
+
+    cs = addGroupToControlSet(cs, 'Open')
+    cs = setBlendNameInControlSet(cs, 'Open', 0, 'Mouth openness')
+    json = controlSetToJSON(cs)
+    expect((json.controls[0] as any).blendNames).toEqual(['Mouth openness'])
+
+    const restored = controlSetFromJSON(JSON.parse(JSON.stringify(json)), 'host')!
+    expect(restored.controls[0].blendNames).toEqual(['Mouth openness'])
+
+    // Legacy JSON without the field loads with undefined names
+    const legacy = controlSetFromJSON(
+      {
+        id: 'cs',
+        hostNodeId: 'host',
+        controls: [
+          {
+            id: 'c1',
+            key: 'Open',
+            label: 'Open',
+            min: 0,
+            max: 1,
+            default: 0,
+            exposed: true,
+            bindings: { m: 'clip1' },
+            groups: [
+              { id: 'g1', name: 'Group 1', bindings: { m: 'clip1' } },
+              { id: 'g2', name: 'Group 2', bindings: {} },
+            ],
+          },
+        ],
+      },
+      'host',
+    )!
+    expect(legacy.controls[0].blendNames).toBeUndefined()
+
+    // Invalid entries keep index alignment via '' placeholders; oversize capped
+    const dirty = controlSetFromJSON(
+      {
+        id: 'cs',
+        hostNodeId: 'host',
+        controls: [
+          {
+            id: 'c1',
+            key: 'Open',
+            label: 'Open',
+            min: 0,
+            max: 1,
+            default: 0,
+            exposed: true,
+            bindings: { m: 'clip1' },
+            groups: [
+              { id: 'g1', name: 'Group 1', bindings: { m: 'clip1' } },
+              { id: 'g2', name: 'Group 2', bindings: {} },
+              { id: 'g3', name: 'Group 3', bindings: {} },
+            ],
+            blendNames: [42, 'Second gap', 'Extra beyond gaps'],
+          },
+        ],
+      },
+      'host',
+    )!
+    expect(dirty.controls[0].blendNames).toEqual(['', 'Second gap'])
+  })
+
+  it('validateControls rejects overlong / non-string blendNames', () => {
+    const base = createControlSet('host', [
+      createControl({ key: 'Open', bindings: { m: 'clip1' } }),
+    ])
+    const withTwo = addGroupToControlSet(base, 'Open')
+    const tooMany = {
+      ...withTwo,
+      controls: [{ ...withTwo.controls[0], blendNames: ['A', 'B'] }],
+    }
+    expect(() => validateControls(tooMany.controls)).toThrow(/blend name/)
+    const notStrings = {
+      ...withTwo,
+      controls: [{ ...withTwo.controls[0], blendNames: [7] }],
+    }
+    expect(() => validateControls(notStrings.controls)).toThrow(/must be strings/)
   })
 })

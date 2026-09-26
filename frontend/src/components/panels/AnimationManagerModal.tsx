@@ -129,6 +129,7 @@ import {
   addBindingToRecord,
   addGroupToControlSet,
   removeGroupFromControlSet,
+  setBlendNameInControlSet,
   mergeGroupBindings,
   moveBindingBetweenGroups,
   groupCollectionBlocks,
@@ -404,6 +405,11 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const [editingControlMeta, setEditingControlMeta] = useState<{
     key: string
     draftLabel: string
+  } | null>(null)
+  const [editingBlendName, setEditingBlendName] = useState<{
+    controlKey: string
+    blendIndex: number
+    draftName: string
   } | null>(null)
   const [deleteControlConfirmKey, setDeleteControlConfirmKey] = useState<string | null>(null)
   const [savedZoom, setSavedZoom] = useState<number | null>(null)
@@ -1381,6 +1387,43 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     setTick((value) => value + 1)
     notify(`Renamed ${editingControlMeta.key} → "${label}"`)
   }, [editingControlMeta, parentNode, dispatch, notify])
+
+  const handleEditBlendName = useCallback(
+    (controlKey: string, blendIndex: number) => {
+      const control = parentNode?.controlSet?.controls.find((c) => c.key === controlKey)
+      if (!control) return
+      setEditingBlendName({
+        controlKey,
+        blendIndex,
+        draftName: (control.blendNames?.[blendIndex] ?? '').trim(),
+      })
+    },
+    [parentNode],
+  )
+
+  const handleSaveBlendName = useCallback(() => {
+    if (!editingBlendName || !parentNode?.controlSet) return
+    try {
+      const nextSet = setBlendNameInControlSet(
+        parentNode.controlSet,
+        editingBlendName.controlKey,
+        editingBlendName.blendIndex,
+        editingBlendName.draftName,
+      )
+      const res = dispatch(new SetControlSetCommand({ nodeId: parentNode.id, controlSet: nextSet }))
+      if (!res.ok) {
+        notify(res.error.message)
+        return
+      }
+      const name = editingBlendName.draftName.trim()
+      const gap = `T${editingBlendName.blendIndex + 1}→T${editingBlendName.blendIndex + 2}`
+      setEditingBlendName(null)
+      setTick((value) => value + 1)
+      notify(name ? `Renamed blend ${gap} → "${name}"` : `Cleared custom name of blend ${gap}`)
+    } catch (e) {
+      notify(e instanceof Error ? e.message : String(e))
+    }
+  }, [editingBlendName, parentNode, dispatch, notify])
 
   const handleDeleteControl = useCallback(
     (key: string) => {
@@ -6994,8 +7037,72 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                 : undefined
                             })()
                             const blendVal = kfAtPlayhead ? (kfAtPlayhead.blend[gi - 1] ?? 0) : 0
-                            return (
-                              <label
+                            const defaultBlendLabel = `Blend T${gi}→T${gi + 1}`
+                            const customBlendName = (control.blendNames?.[gi - 1] ?? '').trim()
+                            const blendDisplayLabel = customBlendName || defaultBlendLabel
+                            const isEditingBlend =
+                              editingBlendName?.controlKey === control.key &&
+                              editingBlendName?.blendIndex === gi - 1
+                            return isEditingBlend ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <input
+                                  data-testid={`manager-control-blend-rename-input-${control.key}-${gi - 1}`}
+                                  value={editingBlendName?.draftName ?? ''}
+                                  onChange={(e) =>
+                                    setEditingBlendName({
+                                      controlKey: control.key,
+                                      blendIndex: gi - 1,
+                                      draftName: e.target.value,
+                                    })
+                                  }
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleSaveBlendName()
+                                    if (e.key === 'Escape') setEditingBlendName(null)
+                                  }}
+                                  placeholder={defaultBlendLabel}
+                                  title="Empty clears the custom name"
+                                  style={{
+                                    flex: 1,
+                                    padding: '5px 8px',
+                                    borderRadius: 4,
+                                    border: '1px solid var(--color-border, #ddd)',
+                                    background: 'var(--color-bg, #fff)',
+                                    color: 'var(--color-text, #1c1e21)',
+                                    fontSize: 11,
+                                  }}
+                                  autoFocus
+                                />
+                                <button
+                                  data-testid={`manager-control-blend-rename-save-${control.key}-${gi - 1}`}
+                                  onClick={handleSaveBlendName}
+                                  style={{
+                                    padding: '4px 8px',
+                                    borderRadius: 4,
+                                    background: 'var(--color-accent, #7c5cff)',
+                                    color: 'var(--color-accent-text, #fff)',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    fontSize: 11,
+                                  }}
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  data-testid={`manager-control-blend-rename-cancel-${control.key}-${gi - 1}`}
+                                  onClick={() => setEditingBlendName(null)}
+                                  style={{
+                                    padding: '4px 8px',
+                                    borderRadius: 4,
+                                    border: '1px solid var(--color-border, #ddd)',
+                                    cursor: 'pointer',
+                                    fontSize: 11,
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div
                                 style={{
                                   display: 'flex',
                                   alignItems: 'center',
@@ -7004,11 +7111,44 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                   flex: 1,
                                 }}
                               >
-                                <span style={{ minWidth: 70 }}>
-                                  Blend T{gi}→T{gi + 1}
+                                <span
+                                  style={{
+                                    minWidth: 70,
+                                    maxWidth: 180,
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                  title={customBlendName ? defaultBlendLabel : undefined}
+                                >
+                                  {blendDisplayLabel}
                                 </span>
+                                <button
+                                  data-testid={`manager-control-blend-rename-${control.key}-${gi - 1}`}
+                                  onClick={() => handleEditBlendName(control.key, gi - 1)}
+                                  title={
+                                    customBlendName
+                                      ? `Rename blend parameter (currently "${customBlendName}")`
+                                      : 'Rename blend parameter'
+                                  }
+                                  style={{
+                                    padding: '2px 6px',
+                                    borderRadius: 4,
+                                    border: '1px solid var(--color-border, #ddd)',
+                                    background: 'transparent',
+                                    cursor: 'pointer',
+                                    fontSize: 10,
+                                  }}
+                                >
+                                  Rename
+                                </button>
                                 <input
                                   data-testid={`manager-control-blend-${control.key}-${gi - 1}`}
+                                  aria-label={
+                                    customBlendName
+                                      ? `${customBlendName} (Blend T${gi} to T${gi + 1})`
+                                      : `Blend T${gi} to T${gi + 1}`
+                                  }
                                   type="range"
                                   min={0}
                                   max={1}
@@ -7040,7 +7180,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                                 <span style={{ minWidth: 32, textAlign: 'right' }}>
                                   {blendVal.toFixed(2)}
                                 </span>
-                              </label>
+                              </div>
                             )
                           })()}
                       </div>

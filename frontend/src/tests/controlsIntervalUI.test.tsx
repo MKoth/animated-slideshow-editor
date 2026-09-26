@@ -250,6 +250,67 @@ describe('Clip Blocks Authoring UI — per-timeline lanes, drill-in geometry & P
     expect(Object.keys(groups[1].bindings)).toEqual(['mouth'])
   })
 
+  it('Blend parameter can be renamed; custom name replaces the default label', async () => {
+    const engine = createEngineInternal()
+    const undo = new UndoStack()
+    engine.createProject({ name: 'Demo' })
+    const slide = engine.createSlide('Slide 1')
+    const host = engine.createNode(slide.scene.id, slide.scene.root.id, 'Host')
+    host.controlSet = createControlSet(host.id, [
+      createControl({
+        key: 'Open',
+        label: 'Open',
+        exposed: true,
+        bindings: { mouth: { clipId: 'clip-mouth', start: 0, end: 0.5 } },
+      }),
+    ])
+
+    const user = userEvent.setup()
+    renderManager(engine, undo, host.id)
+    const modal = await screen.findByTestId('animation-manager-modal')
+    await user.click(within(modal).getByTestId('manager-tab-controls'))
+    const controlSection = await screen.findByTestId('manager-control-Open')
+    const timelines = within(controlSection).getByTestId('manager-control-timelines-Open')
+
+    // Add a second timeline -> default blend label appears, nothing stored
+    await user.click(within(timelines).getByTestId('manager-control-add-timeline-Open'))
+    expect(within(timelines).getByText('Blend T1→T2')).toBeInTheDocument()
+    expect(engine.getNode(host.id).controlSet!.controls[0].blendNames).toBeUndefined()
+
+    // Rename the blend parameter
+    await user.click(within(timelines).getByTestId('manager-control-blend-rename-Open-0'))
+    const renameInput = within(timelines).getByTestId(
+      'manager-control-blend-rename-input-Open-0',
+    ) as HTMLInputElement
+    await user.type(renameInput, 'Mouth openness')
+    await user.click(within(timelines).getByTestId('manager-control-blend-rename-save-Open-0'))
+    const namedLabel = await within(timelines).findByText('Mouth openness')
+    expect(namedLabel).toBeInTheDocument()
+    // Technical label survives as tooltip only
+    expect(namedLabel.getAttribute('title')).toBe('Blend T1→T2')
+    expect(within(timelines).queryByText('Blend T1→T2')).not.toBeInTheDocument()
+    expect(engine.getNode(host.id).controlSet!.controls[0].blendNames).toEqual(['Mouth openness'])
+
+    // Clearing restores the default label
+    await user.click(within(timelines).getByTestId('manager-control-blend-rename-Open-0'))
+    await user.clear(within(timelines).getByTestId('manager-control-blend-rename-input-Open-0'))
+    await user.click(within(timelines).getByTestId('manager-control-blend-rename-save-Open-0'))
+    expect(await within(timelines).findByText('Blend T1→T2')).toBeInTheDocument()
+    expect(engine.getNode(host.id).controlSet!.controls[0].blendNames).toBeUndefined()
+
+    // Renaming is undoable (SetControlSet inverse)
+    await user.click(within(timelines).getByTestId('manager-control-blend-rename-Open-0'))
+    await user.type(
+      within(timelines).getByTestId('manager-control-blend-rename-input-Open-0'),
+      'Mouth openness',
+    )
+    await user.click(within(timelines).getByTestId('manager-control-blend-rename-save-Open-0'))
+    expect(engine.getNode(host.id).controlSet!.controls[0].blendNames).toEqual(['Mouth openness'])
+    undo.undo(engine)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(engine.getNode(host.id).controlSet!.controls[0].blendNames).toBeUndefined()
+  })
+
   it('Right-click on a timeline block opens a context menu with Delete that removes only that block', async () => {
     const engine = createEngineInternal()
     const undo = new UndoStack()

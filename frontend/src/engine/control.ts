@@ -72,6 +72,12 @@ export interface Control {
   readonly exposed: boolean
   readonly bindings: Readonly<Record<string, ControlBindingValue>>
   readonly groups: readonly ControlGroup[]
+  /**
+   * Optional display names for the blend parameters between adjacent
+   * timelines. Index i names blend T(i+1)→T(i+2); `''`/missing = default
+   * label. Length is at most groups.length - 1, mirroring Keyframe.blend.
+   */
+  readonly blendNames?: readonly string[]
 }
 
 export interface ControlSet {
@@ -562,6 +568,20 @@ export function validateControls(controls: readonly Control[]): void {
         }
       }
     }
+    // validate blend names — one optional display name per gap (N-1 for N timelines)
+    if (control.blendNames !== undefined) {
+      if (!Array.isArray(control.blendNames))
+        throw new Error(`Control "${control.key}" blendNames must be an array`)
+      const gapCount = Math.max(0, (control.groups?.length ?? 1) - 1)
+      if (control.blendNames.length > gapCount)
+        throw new Error(
+          `Control "${control.key}" has ${control.blendNames.length} blend names but only ${gapCount} blend gap(s)`,
+        )
+      for (const name of control.blendNames) {
+        if (typeof name !== 'string')
+          throw new Error(`Control "${control.key}" blend names must be strings`)
+      }
+    }
   }
 }
 
@@ -676,6 +696,7 @@ export function cloneControlSet(source: ControlSet, hostNodeId: string): Control
       ...control,
       id: newId('control'),
       bindings: cloneBindings(control.bindings),
+      ...(control.blendNames !== undefined ? { blendNames: [...control.blendNames] } : {}),
       groups: control.groups.map((group) => ({
         ...group,
         id: newId('control-group'),
@@ -737,8 +758,13 @@ export function ensureControlGroups(control: Control): Control {
   const groups: ControlGroup[] = [
     { id: newId('control-group'), name: 'Group 1', bindings: { ...flat } },
   ]
-  const { blendKeys: _drop2, ...rest2 } = control as unknown as Record<string, unknown>
+  const {
+    blendKeys: _drop2,
+    blendNames: _dropNames,
+    ...rest2
+  } = control as unknown as Record<string, unknown>
   void _drop2
+  void _dropNames
   return {
     ...(rest2 as unknown as Control),
     bindings: { ...flat },
@@ -923,6 +949,11 @@ export function controlSetToJSON(controlSet: ControlSet): ControlSetJSON {
         exposed: control.exposed,
         bindings,
         groups,
+        // Emit blend names only when at least one is set — old readers never see the field
+        ...(control.blendNames !== undefined &&
+        control.blendNames.some((name) => name.trim() !== '')
+          ? { blendNames: [...control.blendNames] }
+          : {}),
       }
     }),
   }
@@ -1185,6 +1216,31 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
 
       const defaultVal = typeof item.default === 'number' ? item.default : 0
       const merged = mergeGroupBindings(groups)
+      // Parse per-gap blend parameter names (additive tolerant): strings only,
+      // capped at groups.length - 1, all-empty = absent.
+      let blendNames: string[] | undefined
+      if (Array.isArray(item.blendNames)) {
+        const maxGaps = Math.max(0, groups.length - 1)
+        const parsed: string[] = []
+        let dropped = false
+        for (const entry of (item.blendNames as unknown[]).slice(0, maxGaps)) {
+          // Keep '' for invalid entries so surviving names stay index-aligned
+          // with the host keyframe blend factors.
+          if (typeof entry === 'string') parsed.push(entry)
+          else {
+            parsed.push('')
+            dropped = true
+          }
+        }
+        if ((item.blendNames as unknown[]).length > maxGaps) dropped = true
+        if (dropped)
+          console.warn(
+            `[control] Dropping invalid blend names on "${key}": must be strings, at most ${maxGaps}`,
+          )
+        if (parsed.some((name) => name.trim() !== '')) blendNames = parsed
+      } else if (item.blendNames !== undefined) {
+        console.warn(`[control] Dropping invalid blendNames on "${key}": must be an array`)
+      }
       const control: Control = {
         id: requireString(item.id, 'Control id'),
         key,
@@ -1195,6 +1251,7 @@ export function controlSetFromJSON(value: unknown, nodeId: string): ControlSet |
         exposed: item.exposed === true,
         bindings: merged,
         groups,
+        ...(blendNames !== undefined ? { blendNames } : {}),
       }
       if (control.default < 0 || control.default > 1 || !Number.isFinite(control.default)) continue
       controls.push(control)
@@ -1424,6 +1481,37 @@ export function addGroupToControlSet(
 }
 
 /**
+ * Set the display name of one blend parameter (gap `blendIndex` = blend
+ * T(blendIndex+1)→T(blendIndex+2)). An empty name clears the custom label
+ * back to the default. Names are stored densely up to the highest named gap
+ * with `''` = default, so removing trailing empties keeps the field compact.
+ */
+export function setBlendNameInControlSet(
+  controlSet: ControlSet,
+  hostKey: string,
+  blendIndex: number,
+  name: string,
+): ControlSet {
+  const hostIdx = controlSet.controls.findIndex((c) => c.key === hostKey)
+  if (hostIdx === -1) throw new Error(`Host control "${hostKey}" not found`)
+  const host = controlSet.controls[hostIdx]!
+  const gapCount = Math.max(0, host.groups.length - 1)
+  if (!Number.isInteger(blendIndex) || blendIndex < 0 || blendIndex >= gapCount)
+    throw new Error(`Blend index ${blendIndex} out of range on "${hostKey}"`)
+  const next: string[] = [...(host.blendNames ?? [])]
+  while (next.length <= blendIndex) next.push('')
+  next[blendIndex] = name.trim()
+  while (next.length > 0 && next[next.length - 1] === '') next.pop()
+  const { blendNames: _drop, ...rest } = host
+  void _drop
+  const newHost: Control = next.length > 0 ? { ...rest, blendNames: [...next] } : rest
+  const newControls: Control[] = [...controlSet.controls]
+  newControls[hostIdx] = newHost
+  validateControls(newControls)
+  return { ...controlSet, controls: newControls }
+}
+
+/**
  * Pad host keyframes for a new timeline: append 0 to every host kf blend array.
  * Call after addGroupToControlSet when animation is available.
  */
@@ -1454,10 +1542,19 @@ export function removeGroupFromControlSet(
   if (groupIdx === -1) throw new Error(`Group "${groupId}" not found on "${hostKey}"`)
   if (host.groups.length === 1) throw new Error(`Cannot remove last group from "${hostKey}"`)
   const newGroups = host.groups.filter((g) => g.id !== groupId)
+  // Splice the blend name at the removed gap (same index the host keyframe
+  // blend factors use: groupIdx>0 ? groupIdx-1 : 0) so names stay aligned.
+  const gapIdx = groupIdx <= 0 ? 0 : groupIdx - 1
+  const nextNames: string[] = [...(host.blendNames ?? [])]
+  if (nextNames.length > gapIdx) nextNames.splice(gapIdx, 1)
+  while (nextNames.length > 0 && nextNames[nextNames.length - 1] === '') nextNames.pop()
+  const { blendNames: _dropped, ...hostRest } = host
+  void _dropped
   const newHost: Control = {
-    ...host,
+    ...hostRest,
     groups: newGroups,
     bindings: mergeGroupBindings(newGroups),
+    ...(nextNames.length > 0 ? { blendNames: [...nextNames] } : {}),
   }
   const newControls: Control[] = [...controlSet.controls]
   newControls[hostIdx] = newHost
@@ -1479,6 +1576,8 @@ export function reorderGroupsInControlSet(
   for (let i = 0; i < sorted.length; i++)
     if (sorted[i] !== i) throw new Error(`newOrder must be a permutation`)
   const newGroups = newOrder.map((idx) => host.groups[idx]!)
+  // blendNames intentionally stay at the same gap indices: blend factors on
+  // host keyframes are positional too, so names remain aligned with values.
   const newHost: Control = {
     ...host,
     groups: newGroups,
