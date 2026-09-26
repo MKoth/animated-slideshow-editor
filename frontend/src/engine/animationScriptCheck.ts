@@ -23,6 +23,7 @@ import {
   TINT_PARAMETER_KEY,
 } from './materialResolution'
 import { DEFAULT_SHADOW_EFFECT, lerpHexColor } from './shadowEffect'
+import { evaluateControlTrack } from './control'
 
 export interface AnimationScriptCheckOptions {
   /**
@@ -199,6 +200,18 @@ function evaluateTrackValue(
     }
     case 'dataLabel':
       return engine.evaluateDataLabels(nodeId, time).get(track.label) ?? 0
+    case 'control': {
+      const control = engine
+        .getNode(nodeId)
+        .controlSet?.controls.find((entry) => entry.key === track.controlKey)
+      if (!control) return 0
+      const value = evaluateControlTrack(
+        engine.getKeyframesOf({ kind: 'control', nodeId, controlKey: track.controlKey }),
+        time,
+        control.default,
+      )
+      return Math.min(Math.max(value, control.min), control.max)
+    }
   }
 }
 

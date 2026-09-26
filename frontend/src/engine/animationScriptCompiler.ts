@@ -106,6 +106,7 @@ export type ScriptTrack =
   | { readonly kind: 'symmetry' }
   | { readonly kind: 'shadow'; readonly property: ShadowProperty }
   | { readonly kind: 'dataLabel'; readonly label: string }
+  | { readonly kind: 'control'; readonly controlKey: string }
 
 /** A track value in the shape its engine kind stores (Spec 07 / Shadow 04). */
 export type ScriptTrackValue =
@@ -760,6 +761,8 @@ class Compiler {
         return this.#lowerMorph(statement, target, cursor)
       case 'dataLabel':
         return this.#lowerDataLabel(statement, target, cursor)
+      case 'control':
+        return this.#lowerControl(statement, target, cursor)
     }
     const suggestion = nearMissSuggestion(statement.method, SCRIPT_METHOD_NAMES)
     this.#error(
@@ -1003,6 +1006,13 @@ class Compiler {
         return null
       }
     }
+    if (entry.track.kind === 'control' && isParametricInterpolation(ease.interpolation)) {
+      this.#error(
+        `Parametric interpolation "${easeName}" is not supported on Control Tracks — use hold, linear or a bezier ease`,
+        entry.keySpan,
+      )
+      return null
+    }
     return ease
   }
 
@@ -1027,6 +1037,19 @@ class Compiler {
   #lowerDataLabel(statement: StatementNode, binding: BindingInfo, cursor: number): number {
     return this.#lowerTweenLike(statement, cursor, () =>
       this.#validateDataLabelEntries(statement, binding),
+    )
+  }
+
+  /**
+   * `alias.control("Key", value, duration?, ease?)`: a Control Track tween on
+   * an exposed Control of the host. The value is a 0…1 scalar and the ease is
+   * limited to hold/linear/bezier (ADR 0012); a hidden or missing Control is a
+   * compile error naming the key. Group targets broadcast per member, each
+   * pinned from its own pre-clear value.
+   */
+  #lowerControl(statement: StatementNode, binding: BindingInfo, cursor: number): number {
+    return this.#lowerTweenLike(statement, cursor, () =>
+      this.#validateControlEntries(statement, binding),
     )
   }
 
@@ -1729,6 +1752,81 @@ class Compiler {
     return writes
   }
 
+  /** `control("Key", value, ...)` on each member's exposed Control. */
+  #validateControlEntries(statement: StatementNode, binding: BindingInfo): MemberWrite[] {
+    const keyExpression = statement.args[0]
+    const valueExpression = statement.args[1]
+    if (
+      statement.args.length !== 2 ||
+      keyExpression === undefined ||
+      valueExpression === undefined
+    ) {
+      this.#error(
+        'control takes a Control key and a value, like control("Mouth.Openness", 1, 0.5)',
+        statement.methodSpan,
+      )
+      return []
+    }
+    if (containsDurationUnit(valueExpression)) {
+      this.#error(
+        `Expected the Control value without a duration suffix, found "${this.#source.slice(valueExpression.span.start, valueExpression.span.end)}"`,
+        valueExpression.span,
+      )
+      return []
+    }
+    const key = this.#evaluateString(keyExpression, 'a Control key in quotes')
+    if (key === null) return []
+    const value = this.#evaluateNumber(valueExpression, `a value for Control "${key}"`)
+    if (value === null) return []
+    if (!Number.isFinite(value) || value < 0 || value > 1) {
+      this.#error(`Control "${key}" value must be between 0 and 1`, valueExpression.span)
+      return []
+    }
+    const writes: MemberWrite[] = []
+    for (const member of binding.members) {
+      const node = this.#nodeOf(member)
+      if (!node) continue
+      const memberName = binding.kind === 'group' ? member.nodeName : null
+      const controls = node.controls ?? []
+      const control = controls.find((entry) => entry.key === key)
+      if (!control) {
+        const suggestion = nearMissSuggestion(
+          key,
+          controls.map((entry) => entry.key),
+        )
+        this.#error(
+          memberName === null
+            ? `No Control "${key}" on "${member.nodeName}".${suggestion}`
+            : `Member "${member.nodeName}" has no Control "${key}".${suggestion}`,
+          keyExpression.span,
+        )
+        continue
+      }
+      if (!control.exposed) {
+        this.#error(
+          memberName === null
+            ? `Control "${key}" on "${member.nodeName}" is hidden — only exposed Controls are part of the rig's public API`
+            : `Member "${member.nodeName}" has hidden Control "${key}" — only exposed Controls are part of the rig's public API`,
+          keyExpression.span,
+        )
+        continue
+      }
+      writes.push({
+        member,
+        entries: [
+          {
+            track: { kind: 'control', controlKey: key },
+            property: `control:${key}`,
+            value,
+            keySpan: keyExpression.span,
+            valueSpan: valueExpression.span,
+          },
+        ],
+      })
+    }
+    return writes
+  }
+
   #resolveEase(statement: StatementNode): { name: string; ease: ResolvedScriptEase } | null {
     const name = statement.ease ?? this.#defaults.ease ?? DEFAULT_SCRIPT_EASE
     const ease = resolveScriptEase(name)
@@ -1785,6 +1883,8 @@ class Compiler {
         return `shadow.${track.property}`
       case 'dataLabel':
         return `dataLabel:${track.label}`
+      case 'control':
+        return `control:${track.controlKey}`
     }
   }
 
@@ -2375,6 +2475,8 @@ class Compiler {
         return { kind: 'shadow', nodeId, property: track.property }
       case 'dataLabel':
         return { kind: 'dataLabel', nodeId, label: track.label }
+      case 'control':
+        return { kind: 'control', nodeId, controlKey: track.controlKey }
     }
   }
 
@@ -2459,7 +2561,8 @@ function isTimedStatementMethod(method: string): boolean {
     method === 'shadow' ||
     method === 'symmetry' ||
     method === 'morph' ||
-    method === 'dataLabel'
+    method === 'dataLabel' ||
+    method === 'control'
   )
 }
 
@@ -2525,6 +2628,8 @@ function trackKey(track: ScriptTrack): string {
       return `shadow:${track.property}`
     case 'dataLabel':
       return `dataLabel:${track.label}`
+    case 'control':
+      return `control:${track.controlKey}`
   }
 }
 

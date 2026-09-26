@@ -146,6 +146,7 @@ export const SCRIPT_METHOD_NAMES = [
   'symmetry',
   'morph',
   'dataLabel',
+  'control',
 ] as const
 
 /** Structural table selectors: `conj.cell(r, c)` / `conj.row(i)` / `conj.col(j)`. */
@@ -175,8 +176,9 @@ export interface StatementNode {
   /** The record a `tween`/`set`/`shadow`/`symmetry` carries; empty for positional methods. */
   readonly entries: readonly PropertyEntry[]
   /**
-   * Positional arguments before the timing arguments: `morph(coefficient, ...)`
-   * and `dataLabel("label", value, ...)`. Empty for record-shaped methods.
+   * Positional arguments before the timing arguments: `morph(coefficient, ...)`,
+   * `dataLabel("label", value, ...)` and `control("Key", value, ...)`. Empty
+   * for record-shaped methods.
    */
   readonly args: readonly ScriptExpression[]
   readonly duration?: ScriptExpression
@@ -611,7 +613,8 @@ class Parser {
    * binding may carry structural selectors (`cell`, `row`, `col`) between the
    * alias and the method; the compiler types them against the bound table.
    * Record-shaped methods (`tween`, `set`, `shadow`, `symmetry`) open with a
-   * property map; `morph` and `dataLabel` take positional values first.
+   * property map; `morph`, `dataLabel` and `control` take positional values
+   * first.
    */
   #parseCallStatement(): StatementNode | null {
     const start = this.#peek().span.start
@@ -644,6 +647,17 @@ class Parser {
             return null
           }
           const value = this.#parseExpression('a value for the data label')
+          if (value === null) return null
+          args.push(value)
+        } else if (name.text === 'control') {
+          const key = this.#parseExpression('a Control key in quotes')
+          if (key === null) return null
+          args.push(key)
+          if (!this.#matchPunctuation(',')) {
+            this.#report('Expected "," after the Control key', this.#peek().span)
+            return null
+          }
+          const value = this.#parseExpression('a value for the Control')
           if (value === null) return null
           args.push(value)
         } else {
