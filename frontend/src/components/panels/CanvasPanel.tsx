@@ -3,6 +3,7 @@ import { captureAssetSnapshot, embeddedDataUrl } from '../../app/assetSnapshot'
 import { useEngine } from '../../app/useEngine'
 import { realPixi } from '../../pixi/renderer/pixi'
 import { Renderer } from '../../pixi/renderer/renderer'
+import { setNodeSizeProvider } from '../../pixi/renderer/nodeMeasurement'
 import type { CurrentTimeSource } from '../../pixi/renderer/sceneRenderer'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { useMaterialLibraryStore } from '../../stores/materialLibraryStore'
@@ -97,8 +98,10 @@ export function CanvasPanel() {
         renderer.refreshNodeRendering()
       }
     })
+    const clearNodeSize = setNodeSizeProvider((nodeId) => renderer.nodeSize(nodeId))
     void renderer.start()
     return () => {
+      clearNodeSize()
       unsubscribeLibrary()
       unsubscribeShaders()
       unsubscribeMaterials()

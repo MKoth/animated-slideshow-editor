@@ -6,6 +6,16 @@ import type {
   AnimationScriptNodeInfo,
   ScriptProperty,
 } from './animationScriptCompiler'
+import { createAnimationScriptReads } from './animationScriptReads'
+import type { AnimationScriptMeasure } from './animationScriptReads'
+
+export interface AnimationScriptCheckOptions {
+  /**
+   * The renderer's measured node sizes, used by `bounds(...)`. Omitted in a
+   * headless compile, where bounds report no measurable geometry.
+   */
+  readonly measure?: AnimationScriptMeasure
+}
 
 /**
  * The Animation Script Check seam: a pure function of `(source, slide state)`
@@ -16,6 +26,7 @@ export function checkAnimationScript(
   engine: EnginePublic,
   slideId: string,
   source: string,
+  options: AnimationScriptCheckOptions = {},
 ): AnimationScriptCompileResult {
   const slide = engine.getSlide(slideId)
   const nodes: AnimationScriptNodeInfo[] = []
@@ -34,12 +45,19 @@ export function checkAnimationScript(
         tableColumnCount: node.components.table.columns.length,
       }),
       ...(tableCell !== undefined && { colSpan: tableCell.colSpan, rowSpan: tableCell.rowSpan }),
+      ...(node.controlSet !== undefined && {
+        controls: node.controlSet.controls.map((control) => ({
+          key: control.key,
+          exposed: control.exposed,
+        })),
+      }),
     })
   }
   return compileAnimationScript(source, {
     slideDuration: slide.duration,
     nodes,
     evaluateProperty: (nodeId, property, time) => evaluateProperty(engine, nodeId, property, time),
+    reads: createAnimationScriptReads(engine, options.measure),
   })
 }
 

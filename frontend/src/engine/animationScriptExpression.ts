@@ -7,13 +7,22 @@
  * the language.
  */
 
-import type { ScriptExpression, SourceSpan } from './animationScriptParser'
+import type { MemberExpression, ScriptExpression, SourceSpan } from './animationScriptParser'
 import { nearMissSuggestion } from './animationScriptNearMiss'
 
 export type ScriptValue =
   | { readonly kind: 'number'; readonly value: number }
   | { readonly kind: 'list'; readonly values: readonly ScriptValue[] }
   | { readonly kind: 'string'; readonly value: string }
+  /**
+   * A compile-time record: a compiled read's named fields (`worldAt`, `bounds`,
+   * `cellRect`). Fields are read with `.name`; records never persist.
+   */
+  | {
+      readonly kind: 'record'
+      readonly label: string
+      readonly fields: ReadonlyMap<string, ScriptValue>
+    }
   /**
    * A value whose initializer already failed. Arithmetic and number contexts
    * propagate it silently so one root-cause error is not reported again at
@@ -36,9 +45,17 @@ export const SCRIPT_MATH_BUILTINS = [
 
 export const SCRIPT_RANGE_BUILTIN = 'range'
 
+/** Compile-time read functions; the compiler evaluates them against the slide. */
+export const SCRIPT_READ_BUILTIN_NAMES = ['worldAt', 'bounds', 'cellRect', 'controlValue'] as const
+
+export function isScriptReadBuiltin(name: string): boolean {
+  return (SCRIPT_READ_BUILTIN_NAMES as readonly string[]).includes(name)
+}
+
 export const SCRIPT_BUILTIN_NAMES: readonly string[] = [
   ...SCRIPT_MATH_BUILTINS,
   SCRIPT_RANGE_BUILTIN,
+  ...SCRIPT_READ_BUILTIN_NAMES,
 ]
 
 const BUILTIN_ARITY: Readonly<Record<string, number>> = {
@@ -65,6 +82,18 @@ export interface ScriptExpressionContext {
   /** A near-miss suffix for an unknown name. */
   suggest(name: string): string
   report(message: string, span: SourceSpan): void
+  /**
+   * A compiler-provided native call, e.g. a compile-time read. `undefined`
+   * means the callee is not a native and evaluation falls through to the
+   * built-ins; `null` means the native failed and already reported.
+   */
+  call?(expression: Extract<ScriptExpression, { kind: 'call' }>): ScriptValue | null | undefined
+  /**
+   * A compiler-provided `.` access: a property read (`alias.x`), a selector
+   * target, or a field read on a record. `undefined` falls through to the
+   * default diagnostic; `null` means the access failed and already reported.
+   */
+  member?(expression: MemberExpression): ScriptValue | null | undefined
 }
 
 export function evaluateScriptExpression(
@@ -125,6 +154,15 @@ export function evaluateScriptExpression(
       return evaluateBinary(expression, context)
     case 'call':
       return evaluateCall(expression, context)
+    case 'member': {
+      const value = context.member?.(expression)
+      if (value !== undefined) return value
+      context.report(
+        `Cannot read "${expression.name}" here — only bindings and record values have properties`,
+        expression.nameSpan,
+      )
+      return null
+    }
   }
 }
 
@@ -147,6 +185,13 @@ function evaluateBinary(
   if (left.kind === 'list' || right.kind === 'list') {
     context.report(
       `Operator "${operator}" cannot combine lists — lists feed loops and staggers, not arithmetic`,
+      expression.operatorSpan,
+    )
+    return null
+  }
+  if (left.kind === 'record' || right.kind === 'record') {
+    context.report(
+      `Operator "${operator}" cannot combine records — read a field instead, like alias.field`,
       expression.operatorSpan,
     )
     return null
@@ -176,6 +221,8 @@ function evaluateCall(
   expression: Extract<ScriptExpression, { kind: 'call' }>,
   context: ScriptExpressionContext,
 ): ScriptValue | null {
+  const native = context.call?.(expression)
+  if (native !== undefined) return native
   const arity = BUILTIN_ARITY[expression.callee]
   if (arity === undefined) {
     context.report(
@@ -299,6 +346,8 @@ export function describeScriptValue(value: ScriptValue): string {
       return 'a string'
     case 'list':
       return `a list of ${value.values.length} value${value.values.length === 1 ? '' : 's'}`
+    case 'record':
+      return value.label
     case 'invalid':
       return 'an unknown value'
   }

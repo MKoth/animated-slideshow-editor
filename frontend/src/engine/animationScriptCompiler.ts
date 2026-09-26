@@ -17,6 +17,7 @@ import type {
   DefaultsNode,
   LetNode,
   MarkNode,
+  MemberExpression,
   ParallelNode,
   ScriptExpression,
   ScriptProgram,
@@ -32,7 +33,7 @@ import {
   scriptTableColumnCells,
   scriptTableRowCells,
 } from './animationScriptTable'
-import type { ScriptTableGrid } from './animationScriptTable'
+import type { ScriptTableGrid, ScriptTableGridCell } from './animationScriptTable'
 import { DEFAULT_SCRIPT_EASE, SCRIPT_EASE_NAMES, resolveScriptEase } from './animationScriptEase'
 import type { ResolvedScriptEase } from './animationScriptEase'
 import { nearMissSuggestion } from './animationScriptNearMiss'
@@ -40,8 +41,11 @@ import {
   SCRIPT_BUILTIN_NAMES,
   describeScriptValue,
   evaluateScriptExpression,
+  isScriptReadBuiltin,
 } from './animationScriptExpression'
 import type { ScriptExpressionContext, ScriptValue } from './animationScriptExpression'
+import { mergeBounds } from './animationScriptReads'
+import type { AnimationScriptBoundsRead, AnimationScriptReadSource } from './animationScriptReads'
 
 /** Table styles travel the engine's existing table tracks, not node tracks. */
 export const SCRIPT_TABLE_PROPERTY_NAMES = ['borderRadius', 'padding'] as const
@@ -67,6 +71,21 @@ export const SCRIPT_PROPERTY_NAMES = [
 
 export type ScriptProperty = (typeof SCRIPT_PROPERTY_NAMES)[number]
 
+/**
+ * The properties `alias.property` reads at the cursor. `zIndex` and the table
+ * styles are write-only in v1, so they stay out of the read vocabulary.
+ */
+export const SCRIPT_READABLE_PROPERTY_NAMES = [
+  'x',
+  'y',
+  'rotation',
+  'scaleX',
+  'scaleY',
+  'opacity',
+] as const
+
+export type ScriptReadableProperty = (typeof SCRIPT_READABLE_PROPERTY_NAMES)[number]
+
 export function isScriptTableProperty(property: ScriptProperty): property is ScriptTableProperty {
   return (SCRIPT_TABLE_PROPERTY_NAMES as readonly string[]).includes(property)
 }
@@ -89,6 +108,16 @@ export interface AnimationScriptNodeInfo {
   /** Cell span; only meaningful when `isTableCell`. */
   readonly colSpan?: number
   readonly rowSpan?: number
+  /**
+   * The node's Controls, for read validation: only exposed Controls are
+   * readable, by their stable key.
+   */
+  readonly controls?: readonly AnimationScriptControlInfo[]
+}
+
+export interface AnimationScriptControlInfo {
+  readonly key: string
+  readonly exposed: boolean
 }
 
 /**
@@ -105,6 +134,11 @@ export interface AnimationScriptCompileContext {
   readonly slideDuration: number
   readonly nodes: readonly AnimationScriptNodeInfo[]
   evaluateProperty(nodeId: string, property: ScriptProperty, time: number): number
+  /**
+   * The compile-time read seam. Reads evaluate the current scene state at a
+   * time and never write engine state, so Check and Run read identically.
+   */
+  readonly reads: AnimationScriptReadSource
 }
 
 export interface AnimationScriptDiagnostic {
@@ -213,6 +247,27 @@ const HOLD_EASE: ResolvedScriptEase = {
   tangentOut: ZERO_TANGENT,
 }
 
+interface ScriptReadSpec {
+  /** The call shape shown in arity diagnostics. */
+  readonly shape: string
+  readonly minArgs: number
+  readonly maxArgs: number
+  /** The argument position that is a time, where a duration suffix is legal. */
+  readonly timeArgument: number
+}
+
+/**
+ * The compile-time read vocabulary. One table holds each read's call shape,
+ * arity and time-argument position, so arity diagnostics, the duration-suffix
+ * rule and the read names cannot drift apart.
+ */
+const SCRIPT_READ_SPECS: Readonly<Record<string, ScriptReadSpec>> = {
+  worldAt: { shape: 'worldAt(target, t?)', minArgs: 1, maxArgs: 2, timeArgument: 1 },
+  bounds: { shape: 'bounds(target, t?)', minArgs: 1, maxArgs: 2, timeArgument: 1 },
+  cellRect: { shape: 'cellRect(table, row, column, t?)', minArgs: 3, maxArgs: 4, timeArgument: 3 },
+  controlValue: { shape: 'controlValue(host, "Key", t?)', minArgs: 2, maxArgs: 3, timeArgument: 2 },
+}
+
 export function compileAnimationScript(
   source: string,
   context: AnimationScriptCompileContext,
@@ -236,6 +291,8 @@ class Compiler {
   readonly #trackOrder: AnimationScriptTrackSummary[] = []
   #order = 0
   #cursor = 0
+  /** The statement's own start frame; reads evaluate at this cursor. */
+  #readCursor = 0
   #from = 0
   #defaults: ScriptDefaults = {}
 
@@ -476,6 +533,7 @@ class Compiler {
    * just a fold and `parallel` / `at` can give children their own cursor frame.
    */
   #lowerStatement(statement: ScriptStatementNode, cursor: number): number {
+    this.#readCursor = cursor
     switch (statement.kind) {
       case 'bind':
         this.#declareBinding(statement)
@@ -613,12 +671,16 @@ class Compiler {
    * `.col(j)` resolve a group of cells in engine layout order.
    */
   #resolveTarget(statement: StatementNode, binding: BindingInfo): BindingInfo | null {
-    if (statement.selectors.length === 0) return binding
-    if (statement.selectors.length > 1) {
-      this.#error('Only one table selector is allowed per statement', statement.selectors[1].span)
+    return this.#resolveSelectors(statement.selectors, binding)
+  }
+
+  #resolveSelectors(selectors: readonly SelectorNode[], binding: BindingInfo): BindingInfo | null {
+    if (selectors.length === 0) return binding
+    if (selectors.length > 1) {
+      this.#error('Only one table selector is allowed per statement', selectors[1].span)
       return null
     }
-    const selector = statement.selectors[0]
+    const selector = selectors[0]
     if (binding.kind !== 'table' || binding.grid === undefined) {
       this.#error(
         `Binding "${binding.alias}" is a ${binding.kind} binding — .cell, .row and .col selectors need a table("...") binding`,
@@ -648,22 +710,29 @@ class Compiler {
     const row = this.#resolveSlotIndex(selector.args[0], 'Grid Slot row')
     const column = this.#resolveSlotIndex(selector.args[1], 'Grid Slot column')
     if (row === null || column === null) return null
-    const cell = scriptTableCellAt(grid, row, column)
-    if (cell === undefined) {
-      if (row >= grid.rowCount || column >= grid.columnCount) {
-        this.#error(
-          `Grid Slot (${row}, ${column}) is out of range for table "${grid.tableName}" — it has ${formatCount(grid.rowCount, 'row')} and ${formatCount(grid.columnCount, 'column')}`,
-          selector.span,
-        )
-      } else {
-        this.#error(
-          `Grid Slot (${row}, ${column}) of table "${grid.tableName}" holds no cell`,
-          selector.span,
-        )
-      }
-      return null
-    }
+    const cell = this.#resolveGridSlot(grid, row, column, selector.span)
+    if (!cell) return null
     return this.#singleMemberTarget(selector, cell.nodeId, cell.nodeName)
+  }
+
+  /** The cell owning a Grid Slot (origin or spanned), or null after reporting. */
+  #resolveGridSlot(
+    grid: ScriptTableGrid,
+    row: number,
+    column: number,
+    span: SourceSpan,
+  ): ScriptTableGridCell | null {
+    const cell = scriptTableCellAt(grid, row, column)
+    if (cell) return cell
+    if (row >= grid.rowCount || column >= grid.columnCount) {
+      this.#error(
+        `Grid Slot (${row}, ${column}) is out of range for table "${grid.tableName}" — it has ${formatCount(grid.rowCount, 'row')} and ${formatCount(grid.columnCount, 'column')}`,
+        span,
+      )
+    } else {
+      this.#error(`Grid Slot (${row}, ${column}) of table "${grid.tableName}" holds no cell`, span)
+    }
+    return null
   }
 
   #resolveRowSelector(selector: SelectorNode, grid: ScriptTableGrid): BindingInfo | null {
@@ -1070,6 +1139,363 @@ class Compiler {
   }
 
   /**
+   * A `.` access: a property read on a binding or table selector
+   * (`stem.x`, `conj.cell(0, 1).opacity`), a record field read
+   * (`worldAt(a, t).rotation`), or a structural selector in a value position.
+   * Reads evaluate at the cursor and never write anything.
+   */
+  #evaluateMember(expression: MemberExpression): ScriptValue | null | undefined {
+    if (expression.args !== undefined) {
+      this.#error(
+        `"${expression.name}(...)" is a structural selector and not a value — use it as a read target, like bounds(alias.row(0))`,
+        expression.nameSpan,
+      )
+      return null
+    }
+    if (expression.object.kind === 'identifier') {
+      const binding = this.#bindings.get(expression.object.name)
+      if (binding) {
+        binding.used = true
+        if (binding.kind === 'group') {
+          this.#errorGroupRead(binding.alias, expression.nameSpan)
+          return null
+        }
+        return this.#readMemberProperty(binding.members[0], expression)
+      }
+    }
+    if (expression.object.kind === 'member' && expression.object.args !== undefined) {
+      const target = this.#resolveReadTarget(
+        expression.object,
+        false,
+        `reading "${expression.name}"`,
+      )
+      if (!target || target.members.length !== 1) return null
+      return this.#readMemberProperty(target.members[0], expression)
+    }
+    const object = this.#evaluateValue(expression.object)
+    if (object === null || object.kind === 'invalid') {
+      return object === null ? null : { kind: 'invalid' }
+    }
+    if (object.kind === 'record') {
+      const field = object.fields.get(expression.name)
+      if (field !== undefined) return field
+      const suggestion = nearMissSuggestion(expression.name, [...object.fields.keys()])
+      this.#error(
+        `"${expression.name}" is not a field of ${object.label} — available fields: ${[...object.fields.keys()].join(', ')}.${suggestion}`,
+        expression.nameSpan,
+      )
+      return null
+    }
+    this.#error(
+      `"${expression.name}" cannot be read from ${describeScriptValue(object)} — only bindings and records have readable members`,
+      expression.nameSpan,
+    )
+    return null
+  }
+
+  #errorGroupRead(alias: string, span: SourceSpan): void {
+    this.#error(
+      `Binding "${alias}" is a group — group reads are limited to bounds(...). Bind individual nodes to read a member value.`,
+      span,
+    )
+  }
+
+  /** `binding.x` and `conj.cell(...).x`: the evaluated value at the cursor. */
+  #readMemberProperty(member: ScriptMember, expression: MemberExpression): ScriptValue | null {
+    if (!isReadableProperty(expression.name)) {
+      if (isScriptProperty(expression.name)) {
+        this.#error(
+          `"${expression.name}" cannot be read — reads cover ${SCRIPT_READABLE_PROPERTY_NAMES.join(', ')}`,
+          expression.nameSpan,
+        )
+      } else {
+        const suggestion = nearMissSuggestion(expression.name, SCRIPT_READABLE_PROPERTY_NAMES)
+        this.#error(
+          `Unknown read "${expression.name}" on "${member.nodeName}". Readable properties: ${SCRIPT_READABLE_PROPERTY_NAMES.join(', ')}.${suggestion}`,
+          expression.nameSpan,
+        )
+      }
+      return null
+    }
+    const time = this.#validateReadTime(this.#readCursor, expression.nameSpan)
+    if (time === null) return null
+    return {
+      kind: 'number',
+      value: this.#context.evaluateProperty(member.nodeId, expression.name, time),
+    }
+  }
+
+  #evaluateReadCall(
+    expression: Extract<ScriptExpression, { kind: 'call' }>,
+  ): ScriptValue | null | undefined {
+    switch (expression.callee) {
+      case 'worldAt':
+        return this.#evaluateWorldAt(expression)
+      case 'bounds':
+        return this.#evaluateBounds(expression)
+      case 'cellRect':
+        return this.#evaluateCellRect(expression)
+      case 'controlValue':
+        return this.#evaluateControlValue(expression)
+    }
+  }
+
+  /** `worldAt(node, t?)` — the node's world x, y and rotation at `t`. */
+  #evaluateWorldAt(expression: Extract<ScriptExpression, { kind: 'call' }>): ScriptValue | null {
+    if (!this.#checkReadArity(expression)) return null
+    const target = this.#resolveReadTarget(expression.args[0], false, 'worldAt')
+    if (!target) return null
+    const time = this.#resolveReadTime(expression.args[1], expression)
+    if (time === null) return null
+    const world = this.#context.reads.world(target.members[0].nodeId, time)
+    return numberRecord('the world transform', {
+      x: world.x,
+      y: world.y,
+      rotation: world.rotation,
+    })
+  }
+
+  /**
+   * `bounds(nodeOrGroup, t?)` — the subtree-union world AABB at `t`. The box
+   * ignores rotation and uses renderer-measured sizes; a group unions each
+   * member's own subtree bounds.
+   */
+  #evaluateBounds(expression: Extract<ScriptExpression, { kind: 'call' }>): ScriptValue | null {
+    if (!this.#checkReadArity(expression)) return null
+    const target = this.#resolveReadTarget(expression.args[0], true, 'bounds')
+    if (!target) return null
+    // A zero-member group already failed to resolve; do not pile a second
+    // unmeasurable-geometry error onto the resolution error.
+    if (target.members.length === 0) return null
+    const time = this.#resolveReadTime(expression.args[1], expression)
+    if (time === null) return null
+    let union: AnimationScriptBoundsRead | null = null
+    for (const member of target.members) {
+      const memberBounds = this.#context.reads.bounds(member.nodeId, time)
+      if (memberBounds) {
+        union = union === null ? memberBounds : mergeBounds(union, memberBounds)
+      }
+    }
+    if (union === null) {
+      const names = target.members.map((member) => `"${member.nodeName}"`).join(', ')
+      this.#error(
+        `bounds could not measure any geometry for ${names} at ${formatSeconds(time)}s — bounds use renderer-measured node sizes`,
+        expression.span,
+      )
+      return null
+    }
+    return numberRecord('the world bounds', { ...union })
+  }
+
+  #evaluateCellRect(expression: Extract<ScriptExpression, { kind: 'call' }>): ScriptValue | null {
+    if (!this.#checkReadArity(expression)) return null
+    const tableExpression = expression.args[0]
+    if (tableExpression.kind !== 'identifier') {
+      this.#error(
+        'cellRect needs a table("...") binding as its first argument, like cellRect(conj, 0, 1)',
+        tableExpression.span,
+      )
+      return null
+    }
+    const binding = this.#bindings.get(tableExpression.name)
+    if (!binding) {
+      if (this.#lookupValue(tableExpression.name) !== undefined) {
+        this.#error(
+          `cellRect needs a table("...") binding — "${tableExpression.name}" is a value`,
+          tableExpression.span,
+        )
+        return null
+      }
+      const suggestion = nearMissSuggestion(tableExpression.name, [...this.#bindings.keys()])
+      this.#error(`Unknown binding "${tableExpression.name}".${suggestion}`, tableExpression.span)
+      return null
+    }
+    binding.used = true
+    if (binding.kind !== 'table' || binding.grid === undefined) {
+      this.#error(
+        `cellRect needs a table("...") binding — "${binding.alias}" is a ${binding.kind} binding`,
+        tableExpression.span,
+      )
+      return null
+    }
+    const row = this.#resolveSlotIndex(expression.args[1], 'Grid Slot row')
+    const column = this.#resolveSlotIndex(expression.args[2], 'Grid Slot column')
+    if (row === null || column === null) return null
+    const cell = this.#resolveGridSlot(binding.grid, row, column, expression.span)
+    if (!cell) return null
+    const time = this.#resolveReadTime(expression.args[3], expression)
+    if (time === null) return null
+    const rect = this.#context.reads.cellRect(binding.members[0].nodeId, cell.nodeId, time)
+    if (!rect) {
+      this.#error(
+        `Could not measure the rectangle of Grid Slot (${row}, ${column}) of table "${binding.grid.tableName}"`,
+        expression.span,
+      )
+      return null
+    }
+    return numberRecord('the cell rectangle', {
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      height: rect.height,
+      rotation: rect.rotation,
+    })
+  }
+
+  #evaluateControlValue(
+    expression: Extract<ScriptExpression, { kind: 'call' }>,
+  ): ScriptValue | null {
+    if (!this.#checkReadArity(expression)) return null
+    const target = this.#resolveReadTarget(expression.args[0], false, 'controlValue')
+    if (!target) return null
+    const key = this.#evaluateString(expression.args[1], 'the Control key')
+    if (key === null) return null
+    const member = target.members[0]
+    const node = this.#context.nodes.find((candidate) => candidate.id === member.nodeId)
+    const controls = node?.controls ?? []
+    const control = controls.find((entry) => entry.key === key)
+    if (!control) {
+      const suggestion = nearMissSuggestion(
+        key,
+        controls.map((entry) => entry.key),
+      )
+      this.#error(
+        `No Control "${key}" on "${member.nodeName}".${suggestion}`,
+        expression.args[1].span,
+      )
+      return null
+    }
+    if (!control.exposed) {
+      this.#error(
+        `Control "${key}" on "${member.nodeName}" is hidden — only exposed Controls are part of the rig's public API`,
+        expression.args[1].span,
+      )
+      return null
+    }
+    const time = this.#resolveReadTime(expression.args[2], expression)
+    if (time === null) return null
+    return { kind: 'number', value: this.#context.reads.controlValue(member.nodeId, key, time) }
+  }
+
+  /**
+   * The target of a read: a node or table binding, or a table selector
+   * (`conj.cell(0, 1)`, `conj.row(2)`). Groups are legal only for reads that
+   * accept a broadcast target (`bounds`); everything else needs one node.
+   */
+  #resolveReadTarget(
+    expression: ScriptExpression,
+    allowGroup: boolean,
+    what: string,
+  ): { readonly members: readonly ScriptMember[] } | null {
+    if (expression.kind === 'identifier') {
+      const binding = this.#bindings.get(expression.name)
+      if (binding) {
+        binding.used = true
+        if (binding.kind === 'group' && !allowGroup) {
+          this.#error(
+            `${what} needs a single node — binding "${binding.alias}" is a group. Bind an individual node, or use bounds(...) for a group.`,
+            expression.span,
+          )
+          return null
+        }
+        return { members: binding.members }
+      }
+      if (this.#lookupValue(expression.name) !== undefined) {
+        this.#error(
+          `${what} targets a binding — "${expression.name}" is a value, not a node or group`,
+          expression.span,
+        )
+        return null
+      }
+      const suggestion = nearMissSuggestion(expression.name, [...this.#bindings.keys()])
+      this.#error(`Unknown binding "${expression.name}".${suggestion}`, expression.span)
+      return null
+    }
+    if (expression.kind === 'member' && expression.args !== undefined) {
+      if (expression.object.kind !== 'identifier') {
+        this.#error(
+          `${what} targets a binding — a table selector starts from a table("...") alias`,
+          expression.span,
+        )
+        return null
+      }
+      const binding = this.#bindings.get(expression.object.name)
+      if (!binding) {
+        const suggestion = nearMissSuggestion(expression.object.name, [...this.#bindings.keys()])
+        this.#error(`Unknown binding "${expression.object.name}".${suggestion}`, expression.span)
+        return null
+      }
+      binding.used = true
+      const selector: SelectorNode = {
+        kind: 'selector',
+        name: expression.name,
+        nameSpan: expression.nameSpan,
+        args: expression.args,
+        span: expression.span,
+      }
+      const resolved = this.#resolveSelectors([selector], binding)
+      if (!resolved) return null
+      if (resolved.kind === 'group' && !allowGroup) {
+        this.#error(
+          `${what} needs a single node — "${expression.name}(...)" selects a group. Use bounds(...) for a group.`,
+          expression.span,
+        )
+        return null
+      }
+      return { members: resolved.members }
+    }
+    this.#error(
+      `${what} needs a node or group binding as its target, like ${what}(alias)`,
+      expression.span,
+    )
+    return null
+  }
+
+  #checkReadArity(expression: Extract<ScriptExpression, { kind: 'call' }>): boolean {
+    const spec = SCRIPT_READ_SPECS[expression.callee]
+    const count = expression.args.length
+    if (count >= spec.minArgs && count <= spec.maxArgs) return true
+    this.#error(
+      `${expression.callee} is called like ${spec.shape} — got ${count} argument${count === 1 ? '' : 's'}`,
+      expression.span,
+    )
+    return false
+  }
+
+  /**
+   * A read time: explicit when given, the cursor otherwise. Reads never guess:
+   * a time outside `[0, slide.duration]` is a compile error, explicit or not.
+   */
+  #resolveReadTime(
+    expression: ScriptExpression | undefined,
+    call: Extract<ScriptExpression, { kind: 'call' }>,
+  ): number | null {
+    let time: number
+    let span: SourceSpan
+    if (expression === undefined) {
+      time = this.#readCursor
+      span = call.span
+    } else {
+      const seconds = this.#evaluateNumber(expression, 'a read time in seconds')
+      if (seconds === null) return null
+      time = roundTime(seconds)
+      span = expression.span
+    }
+    return this.#validateReadTime(time, span)
+  }
+
+  #validateReadTime(time: number, span: SourceSpan): number | null {
+    if (time < 0 || time > this.#context.slideDuration) {
+      this.#error(
+        `Read time ${formatSeconds(time)}s is outside the slide [0, ${formatSeconds(this.#context.slideDuration)}s]`,
+        span,
+      )
+      return null
+    }
+    return time
+  }
+
+  /**
    * Evaluate an expression in a number position. `null` means the value failed
    * or is not a number; the diagnostic is already reported (or deliberately
    * suppressed for an `invalid` value).
@@ -1078,6 +1504,16 @@ class Compiler {
     const value = this.#evaluateValue(expression)
     if (value === null || value.kind === 'invalid') return null
     if (value.kind !== 'number') {
+      this.#error(`Expected ${what}, found ${describeScriptValue(value)}`, expression.span)
+      return null
+    }
+    return value.value
+  }
+
+  #evaluateString(expression: ScriptExpression, what: string): string | null {
+    const value = this.#evaluateValue(expression)
+    if (value === null || value.kind === 'invalid') return null
+    if (value.kind !== 'string') {
       this.#error(`Expected ${what}, found ${describeScriptValue(value)}`, expression.span)
       return null
     }
@@ -1099,6 +1535,11 @@ class Compiler {
       },
       suggest: (name) => nearMissSuggestion(name, this.#valueNames()),
       report: (message, span) => this.#error(message, span),
+      call: (expression) => {
+        if (!isScriptReadBuiltin(expression.callee)) return undefined
+        return this.#evaluateReadCall(expression)
+      },
+      member: (expression) => this.#evaluateMember(expression),
     }
   }
 
@@ -1194,9 +1635,28 @@ function isScriptProperty(value: string): value is ScriptProperty {
   return (SCRIPT_PROPERTY_NAMES as readonly string[]).includes(value)
 }
 
+function isReadableProperty(value: string): value is ScriptReadableProperty {
+  return (SCRIPT_READABLE_PROPERTY_NAMES as readonly string[]).includes(value)
+}
+
+/** A compile-time record read (`worldAt`, `bounds`, `cellRect`) as a value. */
+function numberRecord(label: string, fields: Readonly<Record<string, number>>): ScriptValue {
+  return {
+    kind: 'record',
+    label,
+    fields: new Map(
+      Object.entries(fields).map(([name, value]) => [
+        name,
+        { kind: 'number', value } as ScriptValue,
+      ]),
+    ),
+  }
+}
+
 /**
  * Duration suffixes are a duration-position convenience; a property value that
- * carries one is rejected wherever it sits in the expression.
+ * carries one is rejected wherever it sits in the expression — except inside a
+ * read call's time argument, which is a time position like any duration slot.
  */
 function containsDurationUnit(expression: ScriptExpression): boolean {
   switch (expression.kind) {
@@ -1207,12 +1667,21 @@ function containsDurationUnit(expression: ScriptExpression): boolean {
       return false
     case 'list':
       return expression.elements.some(containsDurationUnit)
+    case 'member':
+      return (
+        containsDurationUnit(expression.object) ||
+        (expression.args?.some(containsDurationUnit) ?? false)
+      )
     case 'unary':
       return containsDurationUnit(expression.operand)
     case 'binary':
       return containsDurationUnit(expression.left) || containsDurationUnit(expression.right)
-    case 'call':
-      return expression.args.some(containsDurationUnit)
+    case 'call': {
+      const timeArgument = SCRIPT_READ_SPECS[expression.callee]?.timeArgument
+      return expression.args.some(
+        (argument, index) => index !== timeArgument && containsDurationUnit(argument),
+      )
+    }
   }
 }
 

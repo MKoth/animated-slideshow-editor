@@ -8,7 +8,7 @@ import { evaluatedNodeScratch } from '../../engine/animationEvaluator'
 import type { EffectiveShaderScratch } from '../../engine/materialResolution'
 import { effectiveShaderScratch } from '../../engine/materialResolution'
 import { EvaluatedWorldTransformSource } from '../../engine/worldTransform'
-import type { ViewportTransform } from './worldGeometry'
+import type { ViewportTransform, WorldSize } from './worldGeometry'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { useUiStore } from '../../stores/uiStore'
 import { useEditingModeStore } from '../../stores/editingModeStore'
@@ -578,6 +578,11 @@ export class Renderer {
   refreshNodeRendering(): void {
     this.#sceneRenderer?.refreshNodeRendering()
     this.#syncFullscreenShader()
+  }
+
+  /** The renderer-measured local size of a node, for Animation Script bounds. */
+  nodeSize(nodeId: string): WorldSize | null {
+    return this.#sceneRenderer?.nodeSize(nodeId) ?? null
   }
 
   dispose(): void {

@@ -4,6 +4,7 @@ import { TransactionCommand } from './commands/transactionCommand'
 import { SetSlideAnimationScriptFootprintCommand } from './commands/setSlideAnimationScriptFootprintCommand'
 import { animationScriptClearCommands } from './animationScriptClear'
 import { checkAnimationScript } from './animationScriptCheck'
+import type { AnimationScriptCheckOptions } from './animationScriptCheck'
 import { compiledFootprintToJSON } from './compiledFootprint'
 import type { AnimationScriptDiagnostic, AnimationScriptSummary } from './animationScriptCompiler'
 
@@ -29,8 +30,9 @@ export function runAnimationScript(
   dispatch: DispatchCommand,
   slideId: string,
   source: string,
+  options: AnimationScriptCheckOptions = {},
 ): AnimationScriptRunResult {
-  const compiled = checkAnimationScript(engine, slideId, source)
+  const compiled = checkAnimationScript(engine, slideId, source, options)
   const outcome = {
     diagnostics: compiled.diagnostics,
     summary: compiled.summary,

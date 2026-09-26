@@ -9,6 +9,7 @@ import type {
   AnimationScriptSummary,
 } from '../../engine/animationScriptCompiler'
 import { SetSlideAnimationScriptCommand } from '../../engine/commands'
+import { measuredNodeSize } from '../../pixi/renderer/nodeMeasurement'
 
 type ScriptOutcome =
   | {
@@ -58,7 +59,7 @@ export function ScriptPanel({
     setOutcome({
       kind: 'check',
       source: draft,
-      result: checkAnimationScript(engine, slideId, draft),
+      result: checkAnimationScript(engine, slideId, draft, { measure: measuredNodeSize }),
     })
   }
 
@@ -66,7 +67,7 @@ export function ScriptPanel({
     setOutcome({
       kind: 'run',
       source,
-      result: runAnimationScript(engine, dispatch, slideId, source),
+      result: runAnimationScript(engine, dispatch, slideId, source, { measure: measuredNodeSize }),
     })
   }
 
@@ -157,6 +158,20 @@ export function ScriptPanel({
         >
           Save
         </button>
+      </div>
+      <div
+        data-testid="script-reads-caution"
+        style={{
+          padding: '3px 8px',
+          fontSize: 10,
+          color: 'var(--color-text-muted)',
+          borderBottom: '1px solid var(--color-border)',
+          background: 'var(--color-bg-panel)',
+        }}
+      >
+        Reads (alias.x, worldAt, bounds, cellRect, controlValue) are compile-time and side-effect
+        free. bounds use renderer-measured sizes and ignore rotation; read times must stay within
+        the slide.
       </div>
       <div
         style={{

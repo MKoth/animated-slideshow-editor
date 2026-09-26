@@ -90,6 +90,21 @@ export interface ListLiteralExpression {
   readonly span: SourceSpan
 }
 
+/**
+ * A `.` access on an expression: a property read (`alias.x`, `point.x`), a
+ * structural table selector used as a read target (`conj.row(0)`), or a field
+ * read on a record value returned by a read (`worldAt(a, t).rotation`). When
+ * `args` is present the member is a call; when absent it is a property.
+ */
+export interface MemberExpression {
+  readonly kind: 'member'
+  readonly object: ScriptExpression
+  readonly name: string
+  readonly nameSpan: SourceSpan
+  readonly args?: readonly ScriptExpression[]
+  readonly span: SourceSpan
+}
+
 export interface UnaryExpression {
   readonly kind: 'unary'
   readonly operator: '-' | '+'
@@ -113,6 +128,7 @@ export type ScriptExpression =
   | IdentifierExpression
   | CallExpression
   | ListLiteralExpression
+  | MemberExpression
   | UnaryExpression
   | BinaryExpression
 
@@ -813,7 +829,7 @@ class Parser {
     if (token.kind === 'identifier') {
       this.#advance()
       if (!this.#matchPunctuation('(')) {
-        return { kind: 'identifier', name: token.text, span: token.span }
+        return this.#parseMemberChain({ kind: 'identifier', name: token.text, span: token.span })
       }
       const args: ScriptExpression[] = []
       while (!this.#atEnd() && !this.#checkPunctuation(')')) {
@@ -829,19 +845,19 @@ class Parser {
         )
         return null
       }
-      return {
+      return this.#parseMemberChain({
         kind: 'call',
         callee: token.text,
         calleeSpan: token.span,
         args,
         span: { start: token.span.start, end: this.#previousEnd() },
-      }
+      })
     }
     if (token.kind === 'punctuation' && token.text === '(') {
       this.#advance()
       const inner = this.#parseExpression('a value')
       this.#expectPunctuation(')')
-      return inner
+      return inner === null ? null : this.#parseMemberChain(inner)
     }
     if (token.kind === 'punctuation' && token.text === '[') {
       this.#advance()
@@ -859,7 +875,11 @@ class Parser {
         )
         return null
       }
-      return { kind: 'list', elements, span: { start: token.span.start, end: this.#previousEnd() } }
+      return this.#parseMemberChain({
+        kind: 'list',
+        elements,
+        span: { start: token.span.start, end: this.#previousEnd() },
+      })
     }
     if (token.kind === 'punctuation' && isForbiddenBinaryOperator(token)) {
       this.#report(forbiddenOperatorMessage(token.text), token.span)
@@ -869,6 +889,45 @@ class Parser {
     }
     this.#report(`Expected ${what}, found ${describeToken(token)}`, token.span)
     return null
+  }
+
+  /**
+   * Attach `.` accesses to a primary expression: `alias.x` (a property read),
+   * `conj.row(0)` (a selector target), `worldAt(a, t).rotation` (a field read on
+   * a record). The compiler types each member against its object.
+   */
+  #parseMemberChain(base: ScriptExpression): ScriptExpression {
+    let expression = base
+    while (this.#matchPunctuation('.')) {
+      const name = this.#expectIdentifier('a property or function name')
+      if (name === null) return expression
+      let args: ScriptExpression[] | undefined
+      if (this.#matchPunctuation('(')) {
+        args = []
+        while (!this.#atEnd() && !this.#checkPunctuation(')')) {
+          const arg = this.#parseExpression('a value')
+          if (arg === null) return expression
+          args.push(arg)
+          if (!this.#matchPunctuation(',')) break
+        }
+        if (!this.#matchPunctuation(')')) {
+          this.#report(
+            `Expected ")" to close the call to "${name.text}", found ${describeToken(this.#peek())}`,
+            this.#peek().span,
+          )
+          return expression
+        }
+      }
+      expression = {
+        kind: 'member',
+        object: expression,
+        name: name.text,
+        nameSpan: name.span,
+        ...(args !== undefined ? { args } : {}),
+        span: { start: expression.span.start, end: this.#previousEnd() },
+      }
+    }
+    return expression
   }
 
   /** Whether the current token can begin an expression in an argument slot. */

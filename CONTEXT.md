@@ -180,6 +180,11 @@ _Avoid_: Selector, reference, alias
 The compile-time position in an Animation Script from which cursor-relative statements start, beginning at the segment's declared origin and advancing by each statement's extent; never a runtime playhead and never persisted.
 _Avoid_: Playhead, play position
 
+**Animation Script Read**:
+A side-effect-free, compile-time value an Animation Script expression can use: a node's evaluated `x`, `y`, `rotation`, `scaleX`, `scaleY` or `opacity` at the cursor (on a node binding or a `table.cell(r, c)` selector); `worldAt(node, t)` (world x, y, rotation); `bounds(nodeOrGroup, t?)` (subtree-union world AABB); `cellRect(table, r, c, t?)` (a Grid Slot's world rectangle composed with the table's world transform: x, y, width, height, rotation); and `controlValue(host, "Key", t?)` (an exposed Control's value). Times are explicit or the cursor; a read time outside `[0, Slide.duration]` is a compile error. Reads never write engine state, so Check and Run read identical values, and tracking is always sampled and baked, never a live constraint. Group reads are limited to `bounds` — per-member values need individual aliases.
+_Read caveats_: the AABB ignores rotation (it is the axis-aligned box of the unrotated node) and uses renderer-measured sizes — text bounds come from the renderer's deterministic metric estimate, the same determinism class as Video Export; a node the renderer has not measured reads as unmeasurable. The Script tab shows these cautions beside the editor.
+_Avoid_: Query, getter, runtime expression
+
 **Animation Script Segment**:
 The slide-time window an Animation Script owns: starting at its declared `from` and ending at the cursor after its last statement. Statements may not start before `from` or end past `Slide.duration` (compile errors); an underflowing segment simply ends, leaving compiled values to hold.
 _Avoid_: Range, span, duration

@@ -44,8 +44,18 @@ export type { FullscreenShaderReference } from './fullscreenShader'
 export type { SlideAnimationScript } from './animationScript'
 export type { CompiledFootprint, CompiledFootprintTrack } from './compiledFootprint'
 export { checkAnimationScript } from './animationScriptCheck'
+export type { AnimationScriptCheckOptions } from './animationScriptCheck'
 export { runAnimationScript } from './animationScriptRun'
 export type { AnimationScriptRunResult } from './animationScriptRun'
+export { createAnimationScriptReads, mergeBounds } from './animationScriptReads'
+export type {
+  AnimationScriptBoundsRead,
+  AnimationScriptMeasure,
+  AnimationScriptNodeSize,
+  AnimationScriptReadSource,
+  AnimationScriptRectRead,
+  AnimationScriptWorldRead,
+} from './animationScriptReads'
 export {
   compileAnimationScript,
   enginePropertyForScriptProperty,

@@ -147,6 +147,18 @@ describe('Script tab shell', () => {
     expect(screen.getByTestId('script-line-numbers').scrollTop).toBe(40)
   })
 
+  it('documents the read cautions beside the editor', async () => {
+    const user = userEvent.setup()
+    const { engine } = renderPanel()
+    setupProject(engine)
+
+    await user.click(screen.getByTestId('bottom-tab-create-script'))
+
+    const caution = screen.getByTestId('script-reads-caution')
+    expect(caution).toHaveTextContent(/renderer-measured/)
+    expect(caution).toHaveTextContent(/ignore rotation/)
+  })
+
   it('follows the active slide, hiding the tab again for slides without a script', async () => {
     const user = userEvent.setup()
     const { engine, dispatcher } = renderPanel()
