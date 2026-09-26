@@ -11,7 +11,7 @@ import type {
   ScriptTrackValue,
 } from './animationScriptCompiler'
 import { createAnimationScriptReads } from './animationScriptReads'
-import type { AnimationScriptMeasure } from './animationScriptReads'
+import type { AnimationScriptMeasure, AnimationScriptReadSource } from './animationScriptReads'
 import { evaluateSegment } from './interpolators'
 import type { Keyframe } from './keyframe'
 import {
@@ -23,7 +23,6 @@ import {
   TINT_PARAMETER_KEY,
 } from './materialResolution'
 import { DEFAULT_SHADOW_EFFECT, lerpHexColor } from './shadowEffect'
-import { evaluateControlTrack } from './control'
 
 export interface AnimationScriptCheckOptions {
   /**
@@ -79,12 +78,14 @@ export function checkAnimationScript(
       }),
     })
   }
+  const reads = createAnimationScriptReads(engine, options.measure)
   return compileAnimationScript(source, {
     slideDuration: slide.duration,
     nodes,
     evaluateProperty: (nodeId, property, time) => evaluateProperty(engine, nodeId, property, time),
-    evaluateTrackValue: (nodeId, track, time) => evaluateTrackValue(engine, nodeId, track, time),
-    reads: createAnimationScriptReads(engine, options.measure),
+    evaluateTrackValue: (nodeId, track, time) =>
+      evaluateTrackValue(engine, reads, nodeId, track, time),
+    reads,
   })
 }
 
@@ -150,6 +151,7 @@ function evaluateProperty(
  */
 function evaluateTrackValue(
   engine: EnginePublic,
+  reads: AnimationScriptReadSource,
   nodeId: string,
   track: ScriptTrack,
   time: number,
@@ -200,18 +202,8 @@ function evaluateTrackValue(
     }
     case 'dataLabel':
       return engine.evaluateDataLabels(nodeId, time).get(track.label) ?? 0
-    case 'control': {
-      const control = engine
-        .getNode(nodeId)
-        .controlSet?.controls.find((entry) => entry.key === track.controlKey)
-      if (!control) return 0
-      const value = evaluateControlTrack(
-        engine.getKeyframesOf({ kind: 'control', nodeId, controlKey: track.controlKey }),
-        time,
-        control.default,
-      )
-      return Math.min(Math.max(value, control.min), control.max)
-    }
+    case 'control':
+      return reads.controlValue(nodeId, track.controlKey, time)
   }
 }
 
