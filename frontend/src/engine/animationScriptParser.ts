@@ -90,6 +90,18 @@ export interface ListLiteralExpression {
   readonly span: SourceSpan
 }
 
+export interface RecordLiteralField {
+  readonly key: string
+  readonly keySpan: SourceSpan
+  readonly value: ScriptExpression
+}
+
+export interface RecordLiteralExpression {
+  readonly kind: 'record'
+  readonly fields: readonly RecordLiteralField[]
+  readonly span: SourceSpan
+}
+
 /**
  * A `.` access on an expression: a property read (`alias.x`, `point.x`), a
  * structural table selector used as a read target (`conj.row(0)`), or a field
@@ -128,6 +140,7 @@ export type ScriptExpression =
   | IdentifierExpression
   | CallExpression
   | ListLiteralExpression
+  | RecordLiteralExpression
   | MemberExpression
   | UnaryExpression
   | BinaryExpression
@@ -158,6 +171,23 @@ export const SCRIPT_METHOD_NAMES = [
 export const SCRIPT_TABLE_SELECTOR_NAMES = ['cell', 'row', 'col'] as const
 
 /**
+ * The base parameter types a `function` definition may name. `list` alone is
+ * the generic list; `list<T>` and `[{...}]` refine the element type.
+ */
+export const SCRIPT_PARAM_BASE_TYPES = [
+  'node',
+  'group',
+  'table',
+  'cellRef',
+  'clip',
+  'collection',
+  'number',
+  'color',
+  'string',
+  'list',
+] as const
+
+/**
  * A structural target selector after a binding alias, e.g. `conj.cell(0, 1)`
  * where `conj = table("...")`. The arguments are compile-time expressions the
  * compiler resolves against the table's Grid Slots.
@@ -170,10 +200,21 @@ export interface SelectorNode {
   readonly span: SourceSpan
 }
 
+export interface ReceiverFieldNode {
+  readonly name: string
+  readonly nameSpan: SourceSpan
+}
+
 export interface StatementNode {
   readonly kind: 'statement'
   readonly alias: string
   readonly aliasSpan: SourceSpan
+  /**
+   * Record field navigation between the alias and any table selector, e.g.
+   * `row.target` in `row.target.tween(...)` where `row` is a data-row record.
+   * Empty for ordinary `alias.method(...)` statements.
+   */
+  readonly fields: readonly ReceiverFieldNode[]
   /** Structural table selectors between the alias and the method, in source order. */
   readonly selectors: readonly SelectorNode[]
   readonly method: string
@@ -289,11 +330,66 @@ export interface StaggerNode {
   readonly span: SourceSpan
 }
 
+/**
+ * A parameter type in a `function` definition: a base type (`node`, `group`,
+ * `table`, `cellRef`, `clip`, `collection`, `number`, `color`, `string`,
+ * `list`), a `list<T>` element type, a `[{...}]` list-of-record sugar, or an
+ * inline structural record `{ field: Type, ... }`.
+ */
+export type ScriptParamType =
+  | { readonly kind: 'base'; readonly name: string; readonly span: SourceSpan }
+  | { readonly kind: 'list'; readonly element: ScriptParamType; readonly span: SourceSpan }
+  | {
+      readonly kind: 'record'
+      readonly fields: readonly {
+        readonly name: string
+        readonly nameSpan: SourceSpan
+        readonly type: ScriptParamType
+      }[]
+      readonly span: SourceSpan
+    }
+
+export interface FunctionParamNode {
+  readonly name: string
+  readonly nameSpan: SourceSpan
+  readonly paramType: ScriptParamType
+  readonly typeSpan: SourceSpan
+}
+
+/**
+ * `function name(param: type, ...) { ... }` defines a typed, compile-time
+ * inlined fragment. Definitions are top-level and must precede their use;
+ * bodies are closed scopes with their own optional `defaults`.
+ */
+export interface FunctionDefNode {
+  readonly kind: 'function'
+  readonly name: string
+  readonly nameSpan: SourceSpan
+  readonly params: readonly FunctionParamNode[]
+  readonly defaults: DefaultsNode | null
+  readonly body: readonly ScriptStatementNode[]
+  readonly span: SourceSpan
+}
+
+/**
+ * `name(arg, ...)` invokes a local function as a statement. The call advances
+ * the cursor by the body's extent, exactly like any other timed statement.
+ */
+export interface FunctionCallNode {
+  readonly kind: 'functionCall'
+  readonly name: string
+  readonly nameSpan: SourceSpan
+  readonly args: readonly ScriptExpression[]
+  readonly span: SourceSpan
+}
+
 export type ScriptStatementNode =
   | BindNode
   | LetNode
   | StatementNode
   | SetTextNode
+  | FunctionDefNode
+  | FunctionCallNode
   | WaitNode
   | MarkNode
   | AtNode
@@ -426,6 +522,9 @@ class Parser {
     if (this.#isIdentifier('let')) {
       return this.#parseLet()
     }
+    if (this.#isIdentifier('function')) {
+      return this.#parseFunctionDef()
+    }
     if (this.#isIdentifier('setText') && this.#nextIsPunctuation('(')) {
       return this.#parseSetText()
     }
@@ -453,6 +552,9 @@ class Parser {
           this.#peek().span,
         )
         return null
+      }
+      if (this.#nextIsPunctuation('(')) {
+        return this.#parseFunctionCall()
       }
       return this.#parseCallStatement()
     }
@@ -607,6 +709,10 @@ class Parser {
       this.#report('"at" cannot place a let', statement.nameSpan)
       return null
     }
+    if (statement.kind === 'function') {
+      this.#report('"at" cannot place a function definition', statement.nameSpan)
+      return null
+    }
     return {
       kind: 'at',
       time,
@@ -678,11 +784,211 @@ class Parser {
     return { kind: 'stagger', step, targets, body, span: { start, end: this.#previousEnd() } }
   }
 
+  /**
+   * `function name(param: type, ...) { ... }` defines a typed fragment. The
+   * body may open with its own `defaults { ... }`; `bind` and nested
+   * `function` definitions stay top-level so bodies remain closed scopes.
+   */
+  #parseFunctionDef(): FunctionDefNode | null {
+    const start = this.#peek().span.start
+    this.#advance()
+    const name = this.#expectIdentifier('a function name')
+    if (name === null) return null
+    if (!this.#expectPunctuation('(')) return null
+    const params: FunctionParamNode[] = []
+    while (!this.#atEnd() && !this.#checkPunctuation(')')) {
+      const paramName = this.#expectIdentifier('a parameter name')
+      if (paramName === null) return null
+      if (!this.#expectPunctuation(':')) return null
+      const paramType = this.#parseParamType()
+      if (paramName === null || paramType === null) return null
+      params.push({
+        name: paramName.text,
+        nameSpan: paramName.span,
+        paramType,
+        typeSpan: paramType.span,
+      })
+      if (!this.#matchPunctuation(',')) break
+    }
+    if (!this.#expectPunctuation(')')) return null
+    if (!this.#expectPunctuation('{')) return null
+    let defaults: DefaultsNode | null = null
+    if (this.#isIdentifier('defaults')) {
+      defaults = this.#parseDefaults()
+    }
+    const body: ScriptStatementNode[] = []
+    while (!this.#atEnd() && !this.#checkPunctuation('}')) {
+      const before = this.#index
+      if (this.#isIdentifier('bind')) {
+        this.#report(
+          'bind cannot appear inside a function body — pass bindings as typed parameters instead',
+          this.#peek().span,
+        )
+        this.#skipToNextStatement()
+        if (this.#index === before) this.#index += 1
+        continue
+      }
+      if (this.#isIdentifier('function')) {
+        this.#report(
+          'Nested functions are not part of v1 — define functions at the top level',
+          this.#peek().span,
+        )
+        this.#skipToNextStatement()
+        if (this.#index === before) this.#index += 1
+        continue
+      }
+      if (this.#isIdentifier('defaults')) {
+        this.#report(
+          'defaults must appear first inside a function body, before any statement',
+          this.#peek().span,
+        )
+        this.#skipToNextStatement()
+        if (this.#index === before) this.#index += 1
+        continue
+      }
+      const statement = this.#parseStatement()
+      if (statement) {
+        body.push(statement)
+        continue
+      }
+      this.#skipToNextStatement()
+      if (this.#index === before) this.#index += 1
+    }
+    if (!this.#matchPunctuation('}')) {
+      const token = this.#peek()
+      this.#report(
+        `Expected "}" to close the function "${name.text}", found ${describeToken(token)}`,
+        token.span,
+      )
+      return null
+    }
+    return {
+      kind: 'function',
+      name: name.text,
+      nameSpan: name.span,
+      params,
+      defaults,
+      body,
+      span: { start, end: this.#previousEnd() },
+    }
+  }
+
+  /**
+   * `name(arg, ...)` invokes a local function as a statement. Parsed whenever
+   * an identifier is followed by `(` (except the `setText` free call); the
+   * compiler owns unknown-name and arity diagnostics.
+   */
+  #parseFunctionCall(): FunctionCallNode | null {
+    const start = this.#peek().span.start
+    const name = this.#advance()
+    if (!this.#expectPunctuation('(')) return null
+    const args: ScriptExpression[] = []
+    while (!this.#atEnd() && !this.#checkPunctuation(')')) {
+      const arg = this.#parseExpression('a value')
+      if (arg === null) return null
+      args.push(arg)
+      if (!this.#matchPunctuation(',')) break
+    }
+    if (!this.#matchPunctuation(')')) {
+      this.#report(
+        `Expected ")" to close the call to "${name.text}", found ${describeToken(this.#peek())}`,
+        this.#peek().span,
+      )
+      return null
+    }
+    return {
+      kind: 'functionCall',
+      name: name.text,
+      nameSpan: name.span,
+      args,
+      span: { start, end: this.#previousEnd() },
+    }
+  }
+
+  /**
+   * A parameter type: `[{...}]` list-of-record sugar, `list<T>`, a bare base
+   * name, or an inline record `{ field: Type, ... }`.
+   */
+  #parseParamType(): ScriptParamType | null {
+    const token = this.#peek()
+    if (token.kind === 'punctuation' && token.text === '[') {
+      const start = token.span.start
+      this.#advance()
+      const element = this.#parseParamType()
+      if (element === null) return null
+      if (!this.#expectPunctuation(']')) return null
+      return { kind: 'list', element, span: { start, end: this.#previousEnd() } }
+    }
+    if (token.kind === 'punctuation' && token.text === '{') {
+      const start = token.span.start
+      this.#advance()
+      const fields: { name: string; nameSpan: SourceSpan; type: ScriptParamType }[] = []
+      const seen = new Set<string>()
+      while (!this.#atEnd() && !this.#checkPunctuation('}')) {
+        const fieldName = this.#expectIdentifier('a field name')
+        if (fieldName === null) return null
+        if (!this.#expectPunctuation(':')) return null
+        const fieldType = this.#parseParamType()
+        if (fieldType === null) return null
+        if (seen.has(fieldName.text)) {
+          this.#report(`Field "${fieldName.text}" is written twice`, fieldName.span)
+        }
+        seen.add(fieldName.text)
+        fields.push({ name: fieldName.text, nameSpan: fieldName.span, type: fieldType })
+        if (!this.#matchPunctuation(',')) break
+      }
+      if (!this.#matchPunctuation('}')) {
+        this.#report(
+          `Expected "}" to close the record type, found ${describeToken(this.#peek())}`,
+          this.#peek().span,
+        )
+        return null
+      }
+      return { kind: 'record', fields, span: { start, end: this.#previousEnd() } }
+    }
+    if (token.kind !== 'identifier') {
+      this.#report(`Expected a parameter type, found ${describeToken(token)}`, token.span)
+      return null
+    }
+    const nameToken = this.#advance()
+    if (nameToken.text === 'list' && this.#checkPunctuation('<')) {
+      const start = nameToken.span.start
+      this.#advance()
+      const element = this.#parseParamType()
+      if (element === null) return null
+      if (!this.#matchPunctuation('>')) {
+        this.#report(
+          `Expected ">" to close list<...>, found ${describeToken(this.#peek())}`,
+          this.#peek().span,
+        )
+        return null
+      }
+      return { kind: 'list', element, span: { start, end: this.#previousEnd() } }
+    }
+    if (!(SCRIPT_PARAM_BASE_TYPES as readonly string[]).includes(nameToken.text)) {
+      this.#report(
+        `Unknown parameter type "${nameToken.text}". Available types: ${SCRIPT_PARAM_BASE_TYPES.join(', ')}, list<...> and inline records like { target: node }.`,
+        nameToken.span,
+      )
+      return null
+    }
+    return { kind: 'base', name: nameToken.text, span: nameToken.span }
+  }
+
   #parseBlock(owner: string): ScriptStatementNode[] | null {
     if (!this.#expectPunctuation('{')) return null
     const body: ScriptStatementNode[] = []
     while (!this.#atEnd() && !this.#checkPunctuation('}')) {
       const before = this.#index
+      if (this.#isIdentifier('function')) {
+        this.#report(
+          'Function definitions must appear at the top level, not inside a block',
+          this.#peek().span,
+        )
+        this.#skipToNextStatement()
+        if (this.#index === before) this.#index += 1
+        continue
+      }
       const statement = this.#parseStatement()
       if (statement) {
         body.push(statement)
@@ -738,6 +1044,7 @@ class Parser {
   #parseCallStatement(): StatementNode | null {
     const start = this.#peek().span.start
     const alias = this.#advance()
+    const fields: ReceiverFieldNode[] = []
     const selectors: SelectorNode[] = []
     let method: Token | null = null
     let entries: PropertyEntry[] = []
@@ -758,6 +1065,19 @@ class Parser {
     for (;;) {
       const name = this.#expectIdentifier('a method name')
       if (name === null) return null
+      if (!this.#checkPunctuation('(')) {
+        // A `.field` without arguments navigates a record value, e.g.
+        // `row.target` in `row.target.tween(...)`.
+        fields.push({ name: name.text, nameSpan: name.span })
+        if (!this.#matchPunctuation('.')) {
+          this.#report(
+            'A record field needs a method call, like row.target.tween({...})',
+            name.span,
+          )
+          return null
+        }
+        continue
+      }
       this.#expectPunctuation('(')
       if (this.#isMethodSegment(name.text)) {
         method = name
@@ -833,6 +1153,7 @@ class Parser {
       kind: 'statement',
       alias: alias.text,
       aliasSpan: alias.span,
+      fields,
       selectors,
       method: method.text,
       methodSpan: method.span,
@@ -1168,6 +1489,37 @@ class Parser {
         span: { start: token.span.start, end: this.#previousEnd() },
       })
     }
+    if (token.kind === 'punctuation' && token.text === '{') {
+      const start = token.span.start
+      this.#advance()
+      const fields: RecordLiteralField[] = []
+      const seen = new Set<string>()
+      while (!this.#atEnd() && !this.#checkPunctuation('}')) {
+        const key = this.#expectIdentifier('a field name')
+        if (key === null) return null
+        if (!this.#expectPunctuation(':')) return null
+        const value = this.#parseExpression('a value')
+        if (value === null) return null
+        if (seen.has(key.text)) {
+          this.#report(`Field "${key.text}" is written twice`, key.span)
+        }
+        seen.add(key.text)
+        fields.push({ key: key.text, keySpan: key.span, value })
+        if (!this.#matchPunctuation(',')) break
+      }
+      if (!this.#matchPunctuation('}')) {
+        this.#report(
+          `Expected "}" to close the record, found ${describeToken(this.#peek())}`,
+          this.#peek().span,
+        )
+        return null
+      }
+      return this.#parseMemberChain({
+        kind: 'record',
+        fields,
+        span: { start, end: this.#previousEnd() },
+      })
+    }
     if (token.kind === 'punctuation' && isForbiddenBinaryOperator(token)) {
       this.#report(forbiddenOperatorMessage(token.text), token.span)
       this.#advance()
@@ -1336,11 +1688,19 @@ class Parser {
   #isStatementStart(): boolean {
     const token = this.#peek()
     if (token.kind !== 'identifier') return false
-    if (token.text === 'bind' || token.text === 'let' || this.#operatorKeyword() !== null) {
+    if (
+      token.text === 'bind' ||
+      token.text === 'let' ||
+      token.text === 'function' ||
+      this.#operatorKeyword() !== null
+    ) {
       return true
     }
     const next = this.#tokens[this.#index + 1]
     if (token.text === 'setText' && next?.kind === 'punctuation' && next.text === '(') {
+      return true
+    }
+    if (next?.kind === 'punctuation' && next.text === '(') {
       return true
     }
     return next?.kind === 'punctuation' && (next.text === '.' || next.text === '=')

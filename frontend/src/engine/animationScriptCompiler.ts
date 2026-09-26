@@ -25,6 +25,9 @@ import type {
   BindNode,
   DefaultsNode,
   ForNode,
+  FunctionCallNode,
+  FunctionDefNode,
+  FunctionParamNode,
   LetNode,
   MarkNode,
   MemberExpression,
@@ -32,6 +35,7 @@ import type {
   PropertyEntry,
   RepeatNode,
   ScriptExpression,
+  ScriptParamType,
   ScriptProgram,
   ScriptStatementNode,
   SelectorNode,
@@ -265,13 +269,13 @@ interface ScriptMember {
 interface BindingInfo {
   readonly alias: string
   readonly aliasSpan: SourceSpan
-  readonly kind: 'node' | 'group' | 'table'
+  readonly kind: 'node' | 'group' | 'table' | 'cellRef'
   /**
-   * The binding's targets in scene pre-order. A node or table binding has
-   * exactly one member; a group binding has one per node carrying its Semantic
-   * Name, in `walkPreOrder` order. Selector-resolved table members follow the
-   * grid's engine layout order. Broadcast writes therefore touch members in a
-   * deterministic, documented order and every write is per member.
+   * The binding's targets in scene pre-order. A node, table or cellRef binding
+   * has exactly one member; a group binding has one per node carrying its
+   * Semantic Name, in `walkPreOrder` order. Selector-resolved table members
+   * follow the grid's engine layout order. Broadcast writes therefore touch
+   * members in a deterministic, documented order and every write is per member.
    */
   readonly members: readonly ScriptMember[]
   /** Present only on table bindings: the Grid Slot map selectors resolve against. */
@@ -282,6 +286,9 @@ interface BindingInfo {
 type ForElement =
   | { readonly kind: 'number'; readonly value: number }
   | { readonly kind: 'binding'; readonly binding: BindingInfo }
+  | { readonly kind: 'record'; readonly value: ScriptValue }
+  | { readonly kind: 'list'; readonly value: ScriptValue }
+  | { readonly kind: 'string'; readonly value: string }
 
 interface ValidatedEntry {
   readonly track: ScriptTrack
@@ -372,6 +379,37 @@ const SCRIPT_READ_SPECS: Readonly<Record<string, ScriptReadSpec>> = {
  */
 export const SCRIPT_MAX_LOOP_ITERATIONS = 10000
 export const SCRIPT_MAX_UNROLLED_STATEMENTS = 10000
+/**
+ * Maximum inlining depth for local function calls. Recursion is a compile
+ * error, so depth is bounded by the acyclic call graph; this budget turns a
+ * pathological chain into a diagnostic instead of a stack overflow.
+ */
+export const SCRIPT_MAX_CALL_DEPTH = 32
+
+/**
+ * Names a `function` definition may not take: the expression built-ins, the
+ * shipped `pointArrowAt` built-in (owned by #388), the `setText` free call,
+ * and the statement keywords. Collisions are compile errors.
+ */
+const SCRIPT_FUNCTION_RESERVED_NAMES: readonly string[] = [
+  ...SCRIPT_BUILTIN_NAMES,
+  'pointArrowAt',
+  'setText',
+  'bind',
+  'let',
+  'function',
+  'wait',
+  'mark',
+  'at',
+  'parallel',
+  'repeat',
+  'for',
+  'stagger',
+  'defaults',
+  'script',
+  'from',
+  'in',
+]
 
 export function compileAnimationScript(
   source: string,
@@ -384,20 +422,30 @@ class Compiler {
   readonly #source: string
   readonly #context: AnimationScriptCompileContext
   readonly #diagnostics: AnimationScriptDiagnostic[] = []
-  readonly #bindings = new Map<string, BindingInfo>()
+  #bindings = new Map<string, BindingInfo>()
   /**
    * `let` values, innermost block last. The top-level scope is always present;
    * `parallel` bodies (and, later, function and loop bodies) push their own.
    */
-  readonly #scopes: Map<string, ScriptValue>[] = [new Map()]
+  #scopes: Map<string, ScriptValue>[] = [new Map()]
   /**
    * Loop-local binding proxies, innermost loop last. A `for` variable bound to
    * a node or group shadows by name for its iteration; a `stagger` target alias
    * rebinds to its current member. Checked before `#bindings`.
    */
-  readonly #aliasOverrides: Map<string, BindingInfo>[] = []
+  #aliasOverrides: Map<string, BindingInfo>[] = []
   /** Compile-time-only marker labels; never persisted, never a timeline marker. */
-  readonly #markers = new Map<string, number>()
+  #markers = new Map<string, number>()
+  /**
+   * Local functions declared so far, in source order (define-before-use). The
+   * map holds only successfully declared functions; `#allFunctionDefs` holds
+   * every definition in the source for forward-reference diagnostics.
+   */
+  readonly #functions = new Map<string, FunctionDefNode>()
+  /** Every `function` definition in the source, first wins, for diagnostics. */
+  readonly #allFunctionDefs = new Map<string, FunctionDefNode>()
+  /** Inlining stack for recursion detection and the call-depth budget. */
+  readonly #callStack: string[] = []
   readonly #planned = new Map<string, PlannedKeyframe>()
   readonly #trackOrder: TrackOrderEntry[] = []
   /** Static `setText` commands with their source order, dispatched inside the run Transaction. */
@@ -430,6 +478,7 @@ class Compiler {
     }
     this.#applyHeader(program)
     this.#applyDefaults(program.defaults)
+    this.#collectFunctionDefs(program.statements)
     for (const statement of program.statements) {
       this.#cursor = this.#lowerStatement(statement, this.#cursor)
     }
@@ -521,6 +570,356 @@ class Compiler {
     this.#defaults = { duration, ease }
   }
 
+  /**
+   * Pre-collect every top-level `function` definition for define-before-use
+   * diagnostics (a call before its definition names the definition, not just
+   * "unknown"). First wins; duplicates are reported when declared in order.
+   */
+  #collectFunctionDefs(statements: readonly ScriptStatementNode[]): void {
+    for (const statement of statements) {
+      if (statement.kind !== 'function') continue
+      if (!this.#allFunctionDefs.has(statement.name)) {
+        this.#allFunctionDefs.set(statement.name, statement)
+      }
+    }
+  }
+
+  #declareFunction(statement: FunctionDefNode): void {
+    if (this.#loopDepth > 0 || this.#scopes.length > 1 || this.#callStack.length > 0) {
+      this.#error(
+        `Function "${statement.name}" must appear at the top level, not inside a block`,
+        statement.nameSpan,
+      )
+      return
+    }
+    if (this.#functions.has(statement.name)) {
+      this.#error(`Function "${statement.name}" is already defined`, statement.nameSpan)
+      return
+    }
+    if (
+      SCRIPT_FUNCTION_RESERVED_NAMES.includes(statement.name) ||
+      (SCRIPT_RESERVED_NAMES as readonly string[]).includes(statement.name)
+    ) {
+      const suggestion = nearMissSuggestion(statement.name, [...this.#allFunctionDefs.keys()])
+      const builtin =
+        SCRIPT_BUILTIN_NAMES.includes(statement.name) || statement.name === 'pointArrowAt'
+          ? ` — "${statement.name}" is a built-in`
+          : ''
+      this.#error(
+        `Function name "${statement.name}" is reserved by the Animation Script language${builtin}.${suggestion}`,
+        statement.nameSpan,
+      )
+      return
+    }
+    if (this.#bindings.has(statement.name)) {
+      this.#error(
+        `Function name "${statement.name}" is already used by a binding`,
+        statement.nameSpan,
+      )
+      return
+    }
+    if (this.#lookupValue(statement.name) !== undefined) {
+      this.#error(
+        `Function name "${statement.name}" is already used by a variable`,
+        statement.nameSpan,
+      )
+      return
+    }
+    if (this.#lookupOverride(statement.name) !== undefined) {
+      this.#error(
+        `Function name "${statement.name}" is already used by a loop variable`,
+        statement.nameSpan,
+      )
+      return
+    }
+    const seen = new Set<string>()
+    for (const param of statement.params) {
+      if (seen.has(param.name)) {
+        this.#error(
+          `Parameter "${param.name}" is declared twice in function "${statement.name}"`,
+          param.nameSpan,
+        )
+        continue
+      }
+      seen.add(param.name)
+    }
+    this.#functions.set(statement.name, statement)
+  }
+
+  /**
+   * `name(args)` as a statement: type-check the arguments against the typed
+   * parameters, then inline the body with a closed scope. The call advances by
+   * the body's extent, so `parallel`/`at`/`stagger` compose like any statement.
+   */
+  #lowerFunctionCall(statement: FunctionCallNode, cursor: number): number {
+    const known = this.#allFunctionDefs.get(statement.name)
+    const declared = this.#functions.get(statement.name)
+    if (!known) {
+      const suggestion = nearMissSuggestion(statement.name, [
+        ...this.#allFunctionDefs.keys(),
+        ...this.#functions.keys(),
+      ])
+      this.#error(`Unknown function "${statement.name}".${suggestion}`, statement.nameSpan)
+      return cursor
+    }
+    if (known.span.start > statement.span.start || !declared) {
+      this.#error(
+        `Function "${statement.name}" must be defined before use — move its definition above this call`,
+        statement.nameSpan,
+      )
+      return cursor
+    }
+    if (this.#callStack.includes(statement.name)) {
+      const chain = [...this.#callStack, statement.name].join(' → ')
+      this.#error(
+        `Recursion is not part of the Animation Script language — function call cycle ${chain}`,
+        statement.nameSpan,
+      )
+      return cursor
+    }
+    if (this.#callStack.length >= SCRIPT_MAX_CALL_DEPTH) {
+      this.#error(
+        `Function call depth passes the compile budget of ${SCRIPT_MAX_CALL_DEPTH} — flatten the call chain`,
+        statement.nameSpan,
+      )
+      return cursor
+    }
+    if (statement.args.length !== declared.params.length) {
+      this.#error(
+        `Function "${statement.name}" takes ${declared.params.length} argument${declared.params.length === 1 ? '' : 's'}, got ${statement.args.length}`,
+        statement.span,
+      )
+      return cursor
+    }
+    const resolved: ScriptValue[] = []
+    let failed = false
+    for (let index = 0; index < declared.params.length; index += 1) {
+      const param = declared.params[index]
+      const arg = statement.args[index]
+      const value = this.#resolveFunctionArg(declared.name, param, arg)
+      if (value === null) {
+        failed = true
+        continue
+      }
+      resolved.push(value)
+    }
+    if (failed) return cursor
+    return this.#invokeFunction(declared, resolved, statement, cursor)
+  }
+
+  /**
+   * Resolve one call argument against its declared parameter type, in the
+   * caller's scope. Mismatches name the parameter, the function, the expected
+   * type and the source location.
+   */
+  #resolveFunctionArg(
+    functionName: string,
+    param: FunctionParamNode,
+    arg: ScriptExpression,
+  ): ScriptValue | null {
+    return this.#checkValueAgainstType(functionName, param, arg, this.#evaluateArgValue(arg))
+  }
+
+  /** Evaluate a call argument in the caller's scope, without extra reporting. */
+  #evaluateArgValue(arg: ScriptExpression): ScriptValue | null {
+    return this.#evaluateValue(arg)
+  }
+
+  #checkValueAgainstType(
+    functionName: string,
+    param: FunctionParamNode,
+    arg: ScriptExpression,
+    value: ScriptValue | null,
+  ): ScriptValue | null {
+    if (value === null || value.kind === 'invalid') return value === null ? null : value
+    return this.#matchType(functionName, param.name, param.paramType, value, arg)
+  }
+
+  #matchType(
+    functionName: string,
+    paramName: string,
+    type: ScriptParamType,
+    value: ScriptValue,
+    arg: ScriptExpression,
+  ): ScriptValue | null {
+    const mismatch = (found: string, expected?: ScriptParamType): null => {
+      this.#error(
+        `Type mismatch for parameter "${paramName}" of function "${functionName}": expected ${describeParamType(expected ?? type)}, found ${found}`,
+        arg.span,
+      )
+      return null
+    }
+    if (type.kind === 'base') {
+      switch (type.name) {
+        case 'number':
+          return value.kind === 'number' ? value : mismatch(describeScriptValue(value))
+        case 'color': {
+          if (value.kind !== 'string') return mismatch(describeScriptValue(value))
+          try {
+            requireMaterialKeyframeValue('color', value.value)
+          } catch (error) {
+            this.#error(
+              `Type mismatch for parameter "${paramName}" of function "${functionName}": expected color, found invalid color "${value.value}" (${error instanceof Error ? error.message : String(error)})`,
+              arg.span,
+            )
+            return null
+          }
+          return value
+        }
+        case 'string':
+          return value.kind === 'string' ? value : mismatch(describeScriptValue(value))
+        case 'node':
+        case 'group':
+        case 'table':
+        case 'cellRef': {
+          if (value.kind !== 'binding') return mismatch(describeScriptValue(value))
+          const binding = bindingOf(value)
+          if (!binding) return mismatch(describeScriptValue(value))
+          if (binding.kind !== type.name) {
+            return mismatch(`a ${binding.kind === 'cellRef' ? 'cell reference' : binding.kind}`)
+          }
+          return value
+        }
+        case 'clip':
+        case 'collection':
+          return mismatch(describeScriptValue(value))
+        case 'list':
+          return value.kind === 'list' ? value : mismatch(describeScriptValue(value))
+        default:
+          return mismatch(describeScriptValue(value))
+      }
+    }
+    if (type.kind === 'list') {
+      if (value.kind !== 'list') return mismatch(describeScriptValue(value))
+      const checked: ScriptValue[] = []
+      for (const element of value.values) {
+        const matched = this.#matchType(functionName, paramName, type.element, element, arg)
+        if (matched === null) return null
+        checked.push(matched)
+      }
+      return { kind: 'list', values: checked }
+    }
+    if (value.kind !== 'record') return mismatch(describeScriptValue(value))
+    const fields = new Map<string, ScriptValue>()
+    for (const field of type.fields) {
+      const actual = value.fields.get(field.name)
+      if (actual === undefined) {
+        this.#error(
+          `Record shape mismatch for parameter "${paramName}" of function "${functionName}": missing field "${field.name}" (expected ${describeParamType(field.type)})`,
+          arg.span,
+        )
+        return null
+      }
+      const matched = this.#matchType(functionName, paramName, field.type, actual, arg)
+      if (matched === null) return null
+      fields.set(field.name, matched)
+    }
+    for (const key of value.fields.keys()) {
+      if (!type.fields.some((field) => field.name === key)) {
+        this.#error(
+          `Record shape mismatch for parameter "${paramName}" of function "${functionName}": unexpected field "${key}"`,
+          arg.span,
+        )
+        return null
+      }
+    }
+    return { kind: 'record', label: value.label, fields }
+  }
+
+  /**
+   * Inline a validated call with a closed scope: parameters plus the body's own
+   * locals/loop variables only. Caller bindings, values, overrides, marks and
+   * defaults are saved and restored; markers are per-invocation local.
+   */
+  #invokeFunction(
+    def: FunctionDefNode,
+    args: readonly ScriptValue[],
+    call: FunctionCallNode,
+    cursor: number,
+  ): number {
+    const paramBindings = new Map<string, BindingInfo>()
+    const paramValues = new Map<string, ScriptValue>()
+    for (let index = 0; index < def.params.length; index += 1) {
+      const param = def.params[index]
+      const value = args[index]
+      if (isBindingParamType(param.paramType)) {
+        const binding = bindingOf(value)
+        if (binding) {
+          paramBindings.set(param.name, {
+            alias: param.name,
+            aliasSpan: param.nameSpan,
+            kind: binding.kind,
+            members: binding.members,
+            ...(binding.grid !== undefined ? { grid: binding.grid } : {}),
+            used: false,
+          })
+          binding.used = true
+        }
+        continue
+      }
+      paramValues.set(param.name, value)
+    }
+    const savedBindings = this.#bindings
+    const savedScopes = this.#scopes
+    const savedOverrides = this.#aliasOverrides
+    const savedMarkers = this.#markers
+    const savedDefaults = this.#defaults
+    const savedLoopDepth = this.#loopDepth
+    const savedReadCursor = this.#readCursor
+    this.#bindings = paramBindings
+    this.#scopes = [new Map(paramValues)]
+    this.#aliasOverrides = []
+    this.#markers = new Map()
+    this.#defaults = {}
+    this.#loopDepth = 0
+    this.#callStack.push(def.name)
+    let current = cursor
+    try {
+      if (def.defaults) {
+        const duration =
+          def.defaults.duration !== undefined
+            ? this.#evaluateNumber(def.defaults.duration, 'a duration in seconds')
+            : undefined
+        let ease: string | undefined
+        if (def.defaults.ease !== undefined && def.defaults.easeSpan !== undefined) {
+          if (resolveScriptEase(def.defaults.ease)) {
+            ease = def.defaults.ease
+          } else {
+            const suggestion = nearMissSuggestion(def.defaults.ease, SCRIPT_EASE_NAMES)
+            this.#error(`Unknown ease "${def.defaults.ease}".${suggestion}`, def.defaults.easeSpan)
+          }
+        }
+        const validatedDuration =
+          duration !== undefined && duration !== null && def.defaults.duration
+            ? this.#validateDuration(duration, def.defaults.duration.span)
+              ? { seconds: duration, span: def.defaults.duration.span }
+              : undefined
+            : undefined
+        this.#defaults = {
+          ...(validatedDuration !== undefined ? { duration: validatedDuration } : {}),
+          ...(ease !== undefined ? { ease } : {}),
+        }
+      }
+      for (const child of def.body) {
+        if (!this.#claimUnrolledSlot(child.span)) {
+          break
+        }
+        current = this.#lowerStatement(child, current)
+      }
+    } finally {
+      this.#callStack.pop()
+      this.#bindings = savedBindings
+      this.#scopes = savedScopes
+      this.#aliasOverrides = savedOverrides
+      this.#markers = savedMarkers
+      this.#defaults = savedDefaults
+      this.#loopDepth = savedLoopDepth
+      this.#readCursor = savedReadCursor
+    }
+    void call
+    return current
+  }
+
   #declareBinding(statement: BindNode): void {
     const existing = this.#bindings.get(statement.alias)
     if (existing) {
@@ -551,6 +950,13 @@ class Compiler {
     }
     if (this.#lookupValue(statement.alias) !== undefined) {
       this.#error(`Name "${statement.alias}" is already used by a variable`, statement.aliasSpan)
+      return
+    }
+    if (this.#functions.has(statement.alias)) {
+      this.#error(
+        `Name "${statement.alias}" is already used by a function — call it like ${statement.alias}(...)`,
+        statement.aliasSpan,
+      )
       return
     }
     if (statement.resourceKind === 'node') {
@@ -707,6 +1113,11 @@ class Compiler {
         return this.#lowerSetText(statement, cursor)
       case 'statement':
         return this.#lowerCall(statement, cursor)
+      case 'function':
+        this.#declareFunction(statement)
+        return cursor
+      case 'functionCall':
+        return this.#lowerFunctionCall(statement, cursor)
     }
   }
 
@@ -851,8 +1262,10 @@ class Compiler {
   /**
    * `for x in <list> { ... }` unrolls once per element. A list literal may hold
    * binding aliases (`for e in [e0, e1]`, each iteration rebinding `e` to that
-   * alias's members) and numbers (`for d in [0.4, 0.8]`, each iteration binding
-   * `d` as a value); a `let` variable or `range(...)` must hold numbers.
+   * alias's members), numbers, and data-row records (`for row in rows` where
+   * `rows` is a `list<record>` parameter); a `let` variable, a parameter, or
+   * `range(...)` may hold numbers, records, strings, lists, or bindings
+   * threaded as values.
    */
   #lowerFor(statement: ForNode, cursor: number): number {
     const elements = this.#resolveForElements(statement)
@@ -879,6 +1292,13 @@ class Compiler {
           if (element.kind === 'number') {
             this.#scopes[this.#scopes.length - 1].set(statement.variable, {
               kind: 'number',
+              value: element.value,
+            })
+          } else if (element.kind === 'record' || element.kind === 'list') {
+            this.#scopes[this.#scopes.length - 1].set(statement.variable, element.value)
+          } else if (element.kind === 'string') {
+            this.#scopes[this.#scopes.length - 1].set(statement.variable, {
+              kind: 'string',
               value: element.value,
             })
           } else {
@@ -1027,6 +1447,13 @@ class Compiler {
       )
       return false
     }
+    if (this.#functions.has(statement.variable)) {
+      this.#error(
+        `Name "${statement.variable}" is already used by a function`,
+        statement.variableSpan,
+      )
+      return false
+    }
     if (
       SCRIPT_BUILTIN_NAMES.includes(statement.variable) ||
       (SCRIPT_RESERVED_NAMES as readonly string[]).includes(statement.variable)
@@ -1039,8 +1466,10 @@ class Compiler {
 
   /**
    * Resolve a `for` iterable to its elements. A list literal may mix binding
-   * aliases (each an iteration over that alias's members) and numbers; any
-   * other list (a `let` variable, `range(...)`) must hold numbers.
+   * aliases (each an iteration over that alias's members), numbers, strings,
+   * records, and nested lists; any other list (a `let` variable, a function
+   * parameter, `range(...)`) may hold numbers, records, strings, lists, or
+   * bindings threaded as values.
    */
   #resolveForElements(statement: ForNode): ForElement[] | null {
     const iterable = statement.iterable
@@ -1054,13 +1483,6 @@ class Compiler {
             elements.push({ kind: 'binding', binding })
             continue
           }
-          if (this.#lookupValue(item.name) !== undefined) {
-            this.#error(
-              `for "${statement.variable}" lists accept node bindings and numbers — "${item.name}" is a value, not a node or group`,
-              item.span,
-            )
-            return null
-          }
         }
         const value = this.#evaluateValue(item)
         if (value === null || value.kind === 'invalid') return null
@@ -1068,15 +1490,20 @@ class Compiler {
           elements.push({ kind: 'number', value: value.value })
           continue
         }
-        if (value.kind === 'list') {
-          this.#error(
-            `for "${statement.variable}" lists accept node bindings and numbers — nested lists are not iterable`,
-            item.span,
-          )
+        if (value.kind === 'binding') {
+          const binding = bindingOf(value)
+          if (binding) {
+            elements.push({ kind: 'binding', binding })
+            continue
+          }
           return null
         }
+        if (value.kind === 'record' || value.kind === 'string' || value.kind === 'list') {
+          elements.push({ kind: value.kind, value } as ForElement)
+          continue
+        }
         this.#error(
-          `for "${statement.variable}" lists accept node bindings and numbers — found ${describeScriptValue(value)}`,
+          `for "${statement.variable}" lists accept node bindings, records, strings, lists and numbers — found ${describeScriptValue(value)}`,
           item.span,
         )
         return null
@@ -1085,7 +1512,7 @@ class Compiler {
     }
     if (iterable.kind === 'identifier') {
       const binding = this.#lookupBinding(iterable.name)
-      if (binding) {
+      if (binding && this.#lookupValue(iterable.name) === undefined) {
         this.#error(
           `for "${statement.variable}" needs a list to iterate — binding "${binding.alias}" is a ${binding.kind}, not a list. Use a list like [a, b, c] or range(0, 3, 1).`,
           iterable.span,
@@ -1108,9 +1535,21 @@ class Compiler {
         elements.push({ kind: 'number', value: item.value })
         continue
       }
+      if (item.kind === 'binding') {
+        const binding = bindingOf(item)
+        if (binding) {
+          elements.push({ kind: 'binding', binding })
+          continue
+        }
+        return null
+      }
+      if (item.kind === 'record' || item.kind === 'string' || item.kind === 'list') {
+        elements.push({ kind: item.kind, value: item } as ForElement)
+        continue
+      }
       if (item.kind === 'invalid') return null
       this.#error(
-        `for "${statement.variable}" lists accept node bindings and numbers — found ${describeScriptValue(item)}. Bindings must be listed inline, like [a, b, c].`,
+        `for "${statement.variable}" lists accept node bindings, records, strings, lists and numbers — found ${describeScriptValue(item)}. Bindings may be listed inline, like [a, b, c].`,
         iterable.span,
       )
       return null
@@ -1126,23 +1565,105 @@ class Compiler {
     const targets = statement.targets
     if (targets.kind === 'identifier') {
       const binding = this.#lookupBinding(targets.name)
-      if (!binding) {
-        if (this.#lookupValue(targets.name) !== undefined) {
+      if (binding) {
+        binding.used = true
+        return { members: binding.members, rebindAliases: [binding.alias] }
+      }
+      const value = this.#lookupValue(targets.name)
+      if (value !== undefined) {
+        if (value.kind === 'list') {
+          const members: ScriptMember[] = []
+          for (const element of value.values) {
+            if (element.kind !== 'binding') {
+              this.#error(
+                `stagger targets need a group binding or a list of node bindings — "${targets.name}" holds ${describeScriptValue(element)}, not a node`,
+                targets.span,
+              )
+              return null
+            }
+            const memberBinding = bindingOf(element)
+            if (!memberBinding || memberBinding.members.length !== 1) {
+              this.#error(
+                `stagger targets need a group binding or a list of node bindings — "${targets.name}" holds an empty target`,
+                targets.span,
+              )
+              return null
+            }
+            memberBinding.used = true
+            members.push(memberBinding.members[0])
+          }
+          if (members.length === 0) {
+            this.#error(
+              `stagger needs at least one target — "${targets.name}" resolves to no nodes`,
+              targets.span,
+            )
+            return null
+          }
+          return { members, rebindAliases: [targets.name] }
+        }
+        if (value.kind === 'binding') {
+          const memberBinding = bindingOf(value)
+          if (memberBinding) {
+            memberBinding.used = true
+            return { members: memberBinding.members, rebindAliases: [targets.name] }
+          }
+        }
+        this.#error(
+          `stagger targets need a group binding or a list of node bindings — "${targets.name}" is ${describeScriptValue(value)}, not a node or group`,
+          targets.span,
+        )
+        return null
+      }
+      const suggestion = nearMissSuggestion(targets.name, [
+        ...this.#bindings.keys(),
+        ...this.#overrideNames(),
+      ])
+      this.#error(`Unknown binding "${targets.name}".${suggestion}`, targets.span)
+      return null
+    }
+    if (targets.kind === 'member') {
+      const value = this.#evaluateValue(targets)
+      if (value === null || value.kind === 'invalid') return null
+      if (value.kind === 'binding') {
+        const memberBinding = bindingOf(value)
+        if (memberBinding) {
+          memberBinding.used = true
+          return { members: memberBinding.members, rebindAliases: [] }
+        }
+        return null
+      }
+      if (value.kind === 'list') {
+        const members: ScriptMember[] = []
+        for (const element of value.values) {
+          if (element.kind !== 'binding') {
+            this.#error(
+              'stagger targets need a group binding or a list of node bindings',
+              targets.span,
+            )
+            return null
+          }
+          const memberBinding = bindingOf(element)
+          if (!memberBinding || memberBinding.members.length !== 1) {
+            this.#error('stagger targets need single-node bindings', targets.span)
+            return null
+          }
+          memberBinding.used = true
+          members.push(memberBinding.members[0])
+        }
+        if (members.length === 0) {
           this.#error(
-            `stagger targets need a group binding or a list of node bindings — "${targets.name}" is a value, not a node or group`,
+            'stagger needs at least one target — the list resolves to no nodes',
             targets.span,
           )
           return null
         }
-        const suggestion = nearMissSuggestion(targets.name, [
-          ...this.#bindings.keys(),
-          ...this.#overrideNames(),
-        ])
-        this.#error(`Unknown binding "${targets.name}".${suggestion}`, targets.span)
-        return null
+        return { members, rebindAliases: [] }
       }
-      binding.used = true
-      return { members: binding.members, rebindAliases: [binding.alias] }
+      this.#error(
+        'stagger targets need a group binding or a list of node bindings, like stagger(0.2s, cards) or stagger(0.2s, [c1, c2])',
+        targets.span,
+      )
+      return null
     }
     if (targets.kind === 'list') {
       if (targets.elements.length === 0) {
@@ -1224,7 +1745,7 @@ class Compiler {
   }
 
   #lowerCall(statement: StatementNode, cursor: number): number {
-    const binding = this.#resolveAlias(statement)
+    const binding = this.#resolveReceiver(statement)
     if (!binding) {
       return this.#advanceCursorByResolvedDuration(statement, cursor)
     }
@@ -1279,12 +1800,89 @@ class Compiler {
       )
       return null
     }
+    if (this.#functions.has(statement.alias)) {
+      this.#error(
+        `Binding "${statement.alias}" is a function — call it like ${statement.alias}(...)`,
+        statement.aliasSpan,
+      )
+      return null
+    }
     const suggestion = nearMissSuggestion(statement.alias, [
       ...this.#bindings.keys(),
       ...this.#overrideNames(),
     ])
     this.#error(`Unknown binding "${statement.alias}".${suggestion}`, statement.aliasSpan)
     return null
+  }
+
+  /**
+   * Resolve a statement receiver `alias[.field]*[.selector].method`: a plain
+   * binding alias, or a record field path (`row.target`) where the base is a
+   * data-row record (a loop variable or a function parameter) and the final
+   * field holds a node/group/table/cell reference.
+   */
+  #resolveReceiver(statement: StatementNode): BindingInfo | null {
+    if (statement.fields.length === 0) {
+      return this.#resolveAlias(statement)
+    }
+    let current = this.#lookupValue(statement.alias)
+    if (current === undefined) {
+      const binding = this.#lookupBinding(statement.alias)
+      if (binding) {
+        this.#error(
+          `"${statement.fields[0].name}" cannot be read from binding "${statement.alias}" — only record values have fields`,
+          statement.fields[0].nameSpan,
+        )
+        return null
+      }
+      if (this.#functions.has(statement.alias)) {
+        this.#error(
+          `Binding "${statement.alias}" is a function — call it like ${statement.alias}(...)`,
+          statement.aliasSpan,
+        )
+        return null
+      }
+      const suggestion = nearMissSuggestion(statement.alias, [
+        ...this.#valueNames(),
+        ...this.#bindings.keys(),
+        ...this.#overrideNames(),
+      ])
+      this.#error(`Unknown name "${statement.alias}".${suggestion}`, statement.aliasSpan)
+      return null
+    }
+    for (let index = 0; index < statement.fields.length; index += 1) {
+      const field = statement.fields[index]
+      if (current.kind === 'invalid') return null
+      if (current.kind !== 'record') {
+        this.#error(
+          `"${field.name}" cannot be read from ${describeScriptValue(current)} — only record values have fields`,
+          field.nameSpan,
+        )
+        return null
+      }
+      const next = current.fields.get(field.name)
+      if (next === undefined) {
+        const suggestion = nearMissSuggestion(field.name, [...current.fields.keys()])
+        this.#error(
+          `"${field.name}" is not a field of ${current.label} — available fields: ${[...current.fields.keys()].join(', ')}.${suggestion}`,
+          field.nameSpan,
+        )
+        return null
+      }
+      current = next
+    }
+    if (current.kind === 'invalid') return null
+    if (current.kind !== 'binding') {
+      this.#error(
+        `Receiver "${statement.alias}.${statement.fields.map((field) => field.name).join('.')}" is ${describeScriptValue(current)}, not a node — data-row fields holding nodes address statements, like row.target.tween({...})`,
+        statement.fields[statement.fields.length - 1].nameSpan,
+      )
+      return null
+    }
+    const binding = bindingOf(current)
+    if (!binding) return null
+    binding.used = true
+    return binding
   }
 
   /**
@@ -2795,6 +3393,9 @@ class Compiler {
     } else if (this.#lookupOverride(statement.name) !== undefined) {
       this.#error(`Name "${statement.name}" is already used by a loop variable`, statement.nameSpan)
       declared = false
+    } else if (this.#functions.has(statement.name)) {
+      this.#error(`Name "${statement.name}" is already used by a function`, statement.nameSpan)
+      declared = false
     } else if (
       SCRIPT_BUILTIN_NAMES.includes(statement.name) ||
       (SCRIPT_RESERVED_NAMES as readonly string[]).includes(statement.name)
@@ -2826,6 +3427,8 @@ class Compiler {
    */
   #evaluateMember(expression: MemberExpression): ScriptValue | null | undefined {
     if (expression.args !== undefined) {
+      const cellRef = this.#resolveCellRefValue(expression)
+      if (cellRef !== undefined) return cellRef
       this.#error(
         `"${expression.name}(...)" is a structural selector and not a value — use it as a read target, like bounds(alias.row(0))`,
         expression.nameSpan,
@@ -2869,11 +3472,62 @@ class Compiler {
       )
       return null
     }
+    if (object.kind === 'binding') {
+      const binding = bindingOf(object)
+      if (binding) {
+        binding.used = true
+        if (binding.kind === 'group') {
+          this.#errorGroupRead(binding.alias, expression.nameSpan)
+          return null
+        }
+        if (binding.members.length !== 1) {
+          return null
+        }
+        return this.#readMemberProperty(binding.members[0], expression)
+      }
+    }
     this.#error(
       `"${expression.name}" cannot be read from ${describeScriptValue(object)} — only bindings and records have readable members`,
       expression.nameSpan,
     )
     return null
+  }
+
+  /**
+   * `table.cell(r, c)` (and `row`/`col`) in a value position: a cell reference
+   * for `cellRef` parameters, or a cell group for `group` parameters. Plain
+   * nodes and groups stay identifier references; only table selectors produce
+   * values here.
+   */
+  #resolveCellRefValue(expression: MemberExpression): ScriptValue | null | undefined {
+    if (expression.object.kind !== 'identifier') return undefined
+    const binding = this.#lookupBinding(expression.object.name)
+    if (!binding) return undefined
+    if (binding.kind !== 'table' || binding.grid === undefined) return undefined
+    if (expression.name !== 'cell' && expression.name !== 'row' && expression.name !== 'col') {
+      return undefined
+    }
+    binding.used = true
+    const selector: SelectorNode = {
+      kind: 'selector',
+      name: expression.name,
+      nameSpan: expression.nameSpan,
+      args: expression.args ?? [],
+      span: expression.span,
+    }
+    const resolved = this.#resolveSelectors([selector], binding)
+    if (!resolved) return null
+    if (resolved.kind === 'node') {
+      const cellRef: BindingInfo = {
+        alias: `${binding.alias}.${expression.name}`,
+        aliasSpan: expression.nameSpan,
+        kind: 'cellRef',
+        members: resolved.members,
+        used: false,
+      }
+      return bindingValueFor(cellRef)
+    }
+    return bindingValueFor(resolved)
   }
 
   #errorGroupRead(alias: string, span: SourceSpan): void {
@@ -3064,9 +3718,10 @@ class Compiler {
   }
 
   /**
-   * The target of a read: a node or table binding, or a table selector
-   * (`conj.cell(0, 1)`, `conj.row(2)`). Groups are legal only for reads that
-   * accept a broadcast target (`bounds`); everything else needs one node.
+   * The target of a read: a node or table binding, a data-row field path
+   * (`row.target`), or a table selector (`conj.cell(0, 1)`, `conj.row(2)`).
+   * Groups are legal only for reads that accept a broadcast target (`bounds`,
+   * `setText`); everything else needs one node.
    */
   #resolveReadTarget(
     expression: ScriptExpression,
@@ -3086,7 +3741,22 @@ class Compiler {
         }
         return { members: binding.members }
       }
-      if (this.#lookupValue(expression.name) !== undefined) {
+      const value = this.#lookupValue(expression.name)
+      if (value !== undefined) {
+        if (value.kind === 'binding') {
+          const memberBinding = bindingOf(value)
+          if (memberBinding) {
+            memberBinding.used = true
+            if (memberBinding.kind === 'group' && !allowGroup) {
+              this.#error(
+                `${what} needs a single node — "${expression.name}" is a group. Bind an individual node, or use bounds(...) for a group.`,
+                expression.span,
+              )
+              return null
+            }
+            return { members: memberBinding.members }
+          }
+        }
         this.#error(
           `${what} targets a binding — "${expression.name}" is a value, not a node or group`,
           expression.span,
@@ -3098,6 +3768,30 @@ class Compiler {
         ...this.#overrideNames(),
       ])
       this.#error(`Unknown binding "${expression.name}".${suggestion}`, expression.span)
+      return null
+    }
+    if (expression.kind === 'member' && expression.args === undefined) {
+      const value = this.#evaluateValue(expression)
+      if (value === null || value.kind === 'invalid') return null
+      if (value.kind === 'binding') {
+        const memberBinding = bindingOf(value)
+        if (memberBinding) {
+          memberBinding.used = true
+          if (memberBinding.kind === 'group' && !allowGroup) {
+            this.#error(
+              `${what} needs a single node — a group field needs bounds(...) for a group.`,
+              expression.span,
+            )
+            return null
+          }
+          return { members: memberBinding.members }
+        }
+        return null
+      }
+      this.#error(
+        `${what} targets a binding — found ${describeScriptValue(value)}, not a node or group`,
+        expression.span,
+      )
       return null
     }
     if (expression.kind === 'member' && expression.args !== undefined) {
@@ -3214,14 +3908,10 @@ class Compiler {
 
   #expressionContext(): ScriptExpressionContext {
     return {
-      lookup: (name) => this.#lookupValue(name),
+      lookup: (name) => this.#lookupValueOrBinding(name),
       explain: (name) => {
         if (SCRIPT_BUILTIN_NAMES.includes(name)) {
           return `Built-in "${name}" is a function — call it like ${name}(...)`
-        }
-        const binding = this.#lookupBinding(name)
-        if (binding) {
-          return `Binding "${name}" is a ${binding.kind} and cannot be used as a value — declare a number with let first`
         }
         return undefined
       },
@@ -3239,6 +3929,24 @@ class Compiler {
     for (let index = this.#scopes.length - 1; index >= 0; index -= 1) {
       const value = this.#scopes[index].get(name)
       if (value !== undefined) return value
+    }
+    return undefined
+  }
+
+  /**
+   * A name in an expression position: a `let` value first, then a loop-local
+   * binding proxy, then a top-level (or function-local) binding. Bindings
+   * thread through as `binding` values so record literals (`{ target: e0 }`)
+   * and data-row lists can carry node references; number contexts report them
+   * as mismatches instead.
+   */
+  #lookupValueOrBinding(name: string): ScriptValue | undefined {
+    const value = this.#lookupValue(name)
+    if (value !== undefined) return value
+    const binding = this.#lookupBinding(name)
+    if (binding) {
+      binding.used = true
+      return bindingValueFor(binding)
     }
     return undefined
   }
@@ -3482,6 +4190,8 @@ function containsDurationUnit(expression: ScriptExpression): boolean {
       return false
     case 'list':
       return expression.elements.some(containsDurationUnit)
+    case 'record':
+      return expression.fields.some((field) => containsDurationUnit(field.value))
     case 'member':
       return (
         containsDurationUnit(expression.object) ||
@@ -3518,4 +4228,46 @@ function formatSeconds(seconds: number): string {
 
 function formatCount(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? '' : 's'}`
+}
+
+/** Whether a parameter type threads as a binding (not a `let` value). */
+function isBindingParamType(type: ScriptParamType): boolean {
+  if (type.kind === 'base') {
+    return (
+      type.name === 'node' ||
+      type.name === 'group' ||
+      type.name === 'table' ||
+      type.name === 'cellRef' ||
+      type.name === 'clip' ||
+      type.name === 'collection'
+    )
+  }
+  return false
+}
+
+function describeParamType(type: ScriptParamType): string {
+  if (type.kind === 'base') return type.name
+  if (type.kind === 'list') return `list<${describeParamType(type.element)}>`
+  return `{ ${type.fields.map((field) => `${field.name}: ${describeParamType(field.type)}`).join(', ')} }`
+}
+
+/**
+ * A binding threaded as a compile-time value (function arguments, data-row
+ * fields, `list<node>` elements). The payload is the compiler's `BindingInfo`;
+ * the expression layer only threads it.
+ */
+function bindingValueFor(binding: BindingInfo): ScriptValue {
+  const label =
+    binding.kind === 'node'
+      ? 'a node'
+      : binding.kind === 'group'
+        ? 'a group'
+        : binding.kind === 'table'
+          ? 'a table'
+          : 'a cell reference'
+  return { kind: 'binding', label, bindingKind: binding.kind, payload: binding }
+}
+
+function bindingOf(value: ScriptValue): BindingInfo | null {
+  return value.kind === 'binding' ? (value.payload as BindingInfo) : null
 }

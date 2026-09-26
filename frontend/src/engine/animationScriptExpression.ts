@@ -16,12 +16,26 @@ export type ScriptValue =
   | { readonly kind: 'string'; readonly value: string }
   /**
    * A compile-time record: a compiled read's named fields (`worldAt`, `bounds`,
-   * `cellRect`). Fields are read with `.name`; records never persist.
+   * `cellRect`) or a function data row (`{ target: node, ... }`). Fields are
+   * read with `.name`; records never persist.
    */
   | {
       readonly kind: 'record'
       readonly label: string
       readonly fields: ReadonlyMap<string, ScriptValue>
+    }
+  /**
+   * A binding reference carried as a value: a function parameter of type
+   * `node`/`group`/`table`/`cellRef` (and, later, `clip`/`collection`), a data
+   * row field holding such a reference, or an element of a `list<node>`. The
+   * payload is compiler-owned (a `BindingInfo`); the expression layer only
+   * threads it and names it in diagnostics.
+   */
+  | {
+      readonly kind: 'binding'
+      readonly label: string
+      readonly bindingKind: string
+      readonly payload: unknown
     }
   /**
    * A value whose initializer already failed. Arithmetic and number contexts
@@ -132,6 +146,19 @@ export function evaluateScriptExpression(
       }
       return failed ? null : { kind: 'list', values }
     }
+    case 'record': {
+      const fields = new Map<string, ScriptValue>()
+      let failed = false
+      for (const field of expression.fields) {
+        const value = evaluateScriptExpression(field.value, context)
+        if (value === null) {
+          failed = true
+          continue
+        }
+        fields.set(field.key, value)
+      }
+      return failed ? null : { kind: 'record', label: 'a record', fields }
+    }
     case 'unary': {
       const operand = evaluateScriptExpression(expression.operand, context)
       if (operand === null) return null
@@ -192,6 +219,25 @@ function evaluateBinary(
   if (left.kind === 'record' || right.kind === 'record') {
     context.report(
       `Operator "${operator}" cannot combine records — read a field instead, like alias.field`,
+      expression.operatorSpan,
+    )
+    return null
+  }
+  if (left.kind === 'binding' || right.kind === 'binding') {
+    context.report(
+      `Operator "${operator}" cannot combine bindings — bindings address nodes, not numbers`,
+      expression.operatorSpan,
+    )
+    return null
+  }
+  if (
+    left.kind !== 'number' ||
+    right.kind !== 'number' ||
+    typeof left.value !== 'number' ||
+    typeof right.value !== 'number'
+  ) {
+    context.report(
+      `Operator "${operator}" expects numbers, found ${describeScriptValue(left)} and ${describeScriptValue(right)}`,
       expression.operatorSpan,
     )
     return null
@@ -347,6 +393,8 @@ export function describeScriptValue(value: ScriptValue): string {
     case 'list':
       return `a list of ${value.values.length} value${value.values.length === 1 ? '' : 's'}`
     case 'record':
+      return value.label
+    case 'binding':
       return value.label
     case 'invalid':
       return 'an unknown value'
