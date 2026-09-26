@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  AddClipKeyframeCommand,
   AddKeyframeCommand,
+  CreateClipCommand,
   CreateNodeCommand,
   CreateProjectCommand,
   CreateSlideCommand,
@@ -40,14 +42,14 @@ function addNode(
   system: System,
   slideId: string,
   name: string,
-  options: { semanticName?: string } = {},
+  options: { semanticName?: string; parentId?: string } = {},
 ): string {
   const slide = system.engine.getSlide(slideId)
   return dispatchOk(
     system,
     new CreateNodeCommand({
       sceneId: slide.scene.id,
-      parentId: slide.scene.root.id,
+      parentId: options.parentId ?? slide.scene.root.id,
       name,
       ...(options.semanticName !== undefined && { semanticName: options.semanticName }),
     }),
@@ -152,6 +154,64 @@ describe('Animation Script control writes', () => {
     ])
     expect(evaluateControl(system, hostId, 'Mouth.Openness', 0.5)).toBeCloseTo(0.5)
     expect(evaluateControl(system, hostId, 'Mouth.Openness', 1)).toBe(1)
+  })
+
+  it('drives a bound descendant through the engine control evaluation', () => {
+    const { system, slideId } = setup()
+    const hostId = addNode(system, slideId, 'Rig')
+    const targetId = addNode(system, slideId, 'Target', {
+      semanticName: 'target',
+      parentId: hostId,
+    })
+    const clip = dispatchOk(
+      system,
+      new CreateClipCommand({
+        name: 'Normalized X',
+        duration: 1,
+        category: 'control',
+        params: [],
+        channels: [{ property: 'positionX' }],
+      }),
+    )
+    for (const [time, value] of [
+      [0, 10],
+      [1, 30],
+    ] as const) {
+      dispatchOk(
+        system,
+        new AddClipKeyframeCommand({
+          target: { kind: 'clip', clipId: clip.clipId, channel: 'positionX' },
+          time,
+          value,
+        }),
+      )
+    }
+    dispatchOk(
+      system,
+      new SetControlSetCommand({
+        nodeId: hostId,
+        controlSet: createControlSet(hostId, [
+          createControl({
+            key: 'Mouth.Openness',
+            bindings: { target: clip.clipId },
+            exposed: true,
+          }),
+        ]),
+      }),
+    )
+
+    const result = check(system, slideId, [
+      'script "Demo" from 0',
+      'bind rig = node("Rig")',
+      'rig.control("Mouth.Openness", 1, 1, linear)',
+    ])
+    expect(result.diagnostics).toEqual([])
+    apply(system, result)
+
+    // The Control value 0 → 1 drives the bound clip channel 10 → 30.
+    expect(system.engine.evaluateNode(targetId, 0).transform.x).toBe(10)
+    expect(system.engine.evaluateNode(targetId, 0.5).transform.x).toBe(20)
+    expect(system.engine.evaluateNode(targetId, 1).transform.x).toBe(30)
   })
 
   it('advances the cursor by each duration and boundary-pins every written Control', () => {
