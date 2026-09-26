@@ -40,6 +40,11 @@ function isParametricKeyframes(keyframes: readonly Keyframe[]): boolean {
   return false
 }
 
+function hasEnabledKeyframes(keyframes: readonly Keyframe[]): boolean {
+  for (const kf of keyframes) if (!(kf as unknown as { disabled?: boolean }).disabled) return true
+  return false
+}
+
 function enabledKeyframes(keyframes: readonly Keyframe[]): readonly Keyframe[] {
   // Session-only disabled keyframes are skipped for evaluation (grey preview)
   // Keep sorted order; caller handles empty fallback.
@@ -314,6 +319,7 @@ export class AnimationEvaluator {
       for (const host of hosts) {
         const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
         for (const control of host.controlSet?.controls ?? []) {
+          const dormant = this.#isControlDormant(hostAnim, control)
           const { u: rawU, blends: blendFactors } = this.#evaluateHostWithBlends(
             control,
             hostAnim,
@@ -337,7 +343,22 @@ export class AnimationEvaluator {
               stepped = cur
             }
           }
-          if (stepped !== undefined) baseValue = stepped
+          if (stepped === undefined) continue
+          if (
+            dormant &&
+            this.#nodeTimeDrivesChannel(
+              node,
+              clampedTime,
+              (animation) => hasEnabledKeyframes(animation.zIndexKeyframes()),
+              (clip) => {
+                const zIndexAnim = clip.zIndexAnimation()
+                return !!zIndexAnim && hasEnabledKeyframes(zIndexAnim.keyframes())
+              },
+            )
+          ) {
+            continue
+          }
+          baseValue = stepped
         }
       }
     }
@@ -704,6 +725,7 @@ export class AnimationEvaluator {
       for (const host of hosts) {
         const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
         for (const control of host.controlSet?.controls ?? []) {
+          const dormant = this.#isControlDormant(hostAnim, control)
           const { u: rawU, blends: blendFactors } = this.#evaluateHostWithBlends(
             control,
             hostAnim,
@@ -755,7 +777,22 @@ export class AnimationEvaluator {
               blended = { fromShapeId: fromId, toShapeId: toId, coefficient: coeff }
             }
           }
-          if (hasBlended && blended) baseValue = blended
+          if (!hasBlended || !blended) continue
+          if (
+            dormant &&
+            this.#nodeTimeDrivesChannel(
+              node,
+              clampedTime,
+              (animation) => hasEnabledKeyframes(animation.morphKeyframes()),
+              (clip) => {
+                const morphAnim = clip.morphAnimation()
+                return !!morphAnim && hasEnabledKeyframes(morphAnim.keyframes())
+              },
+            )
+          ) {
+            continue
+          }
+          baseValue = blended
         }
       }
     }
@@ -824,6 +861,7 @@ export class AnimationEvaluator {
       for (const host of hosts) {
         const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
         for (const control of host.controlSet?.controls ?? []) {
+          const dormant = this.#isControlDormant(hostAnim, control)
           const { u: rawU, blends: blendFactors } = this.#evaluateHostWithBlends(
             control,
             hostAnim,
@@ -896,7 +934,22 @@ export class AnimationEvaluator {
               }
             }
           }
-          if (acc !== null) morphed = acc
+          if (acc === null) continue
+          if (
+            dormant &&
+            this.#nodeTimeDrivesChannel(
+              node,
+              clampedTime,
+              (animation) => hasEnabledKeyframes(animation.morphKeyframes()),
+              (clip) => {
+                const morphAnim = clip.morphAnimation()
+                return !!morphAnim && hasEnabledKeyframes(morphAnim.keyframes())
+              },
+            )
+          ) {
+            continue
+          }
+          morphed = acc
         }
       }
     }
@@ -943,6 +996,7 @@ export class AnimationEvaluator {
       for (const host of hosts) {
         const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
         for (const control of host.controlSet?.controls ?? []) {
+          const dormant = this.#isControlDormant(hostAnim, control)
           const { u: rawU, blends: blendFactors } = this.#evaluateHostWithBlends(
             control,
             hostAnim,
@@ -996,7 +1050,19 @@ export class AnimationEvaluator {
               }
             }
           }
-          if (hasBlended && blended) value = blended
+          if (!hasBlended || !blended) continue
+          if (
+            dormant &&
+            this.#nodeTimeDrivesChannel(
+              node,
+              clampedTime,
+              (animation) => hasEnabledKeyframes(animation.symmetryKeyframes()),
+              (clip) => hasEnabledKeyframes(clip.getSymmetryKeyframes()),
+            )
+          ) {
+            continue
+          }
+          value = blended
         }
       }
     }
@@ -1435,6 +1501,7 @@ export class AnimationEvaluator {
       for (const host of hosts) {
         const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
         for (const control of host.controlSet?.controls ?? []) {
+          const dormant = this.#isControlDormant(hostAnim, control)
           const { u: rawU, blends: blendFactors } = this.#evaluateHostWithBlends(
             control,
             hostAnim,
@@ -1477,7 +1544,19 @@ export class AnimationEvaluator {
                 blended = blended + (cur - blended) * blend
               }
             }
-            if (blended !== undefined) values[property] = blended
+            if (blended === undefined) continue
+            if (
+              dormant &&
+              this.#nodeTimeDrivesChannel(
+                node,
+                clampedTime,
+                (animation) => hasEnabledKeyframes(animation.circleKeyframes(property as never)),
+                (clip) => hasEnabledKeyframes(clip.getCircleKeyframes(property as never)),
+              )
+            ) {
+              continue
+            }
+            values[property] = blended
           }
         }
       }
@@ -1536,6 +1615,7 @@ export class AnimationEvaluator {
       for (const host of hosts) {
         const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
         for (const control of host.controlSet?.controls ?? []) {
+          const dormant = this.#isControlDormant(hostAnim, control)
           const { u: rawU, blends: blendFactors } = this.#evaluateHostWithBlends(
             control,
             hostAnim,
@@ -1578,7 +1658,19 @@ export class AnimationEvaluator {
                 blended = blended! + (cur - blended!) * blend
               }
             }
-            if (blended !== undefined) values[property] = blended
+            if (blended === undefined) continue
+            if (
+              dormant &&
+              this.#nodeTimeDrivesChannel(
+                node,
+                clampedTime,
+                (animation) => hasEnabledKeyframes(animation.tableKeyframes(property as never)),
+                (clip) => hasEnabledKeyframes(clip.getTableKeyframes(property as never)),
+              )
+            ) {
+              continue
+            }
+            values[property] = blended
           }
         }
       }
@@ -1673,6 +1765,7 @@ export class AnimationEvaluator {
     for (const host of hosts) {
       const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
       for (const control of host.controlSet?.controls ?? []) {
+        const dormant = this.#isControlDormant(hostAnim, control)
         const { u: rawU, blends: blendFactors } = this.#evaluateHostWithBlends(
           control,
           hostAnim,
@@ -1741,7 +1834,22 @@ export class AnimationEvaluator {
               blended = blended + (cur - blended) * blend
             }
           }
-          if (blended !== undefined) this.#setChannelValue(state, channel, blended)
+          if (blended === undefined) continue
+          if (
+            dormant &&
+            this.#nodeTimeDrivesChannel(
+              node,
+              time,
+              (animation) => hasEnabledKeyframes(animation.keyframes(channel)),
+              (clip) => {
+                const channelAnim = clip.channelAnimation(channel)
+                return !!channelAnim && hasEnabledKeyframes(channelAnim.keyframes())
+              },
+            )
+          ) {
+            continue
+          }
+          this.#setChannelValue(state, channel, blended)
         }
       }
     }
@@ -1853,6 +1961,39 @@ export class AnimationEvaluator {
     return { u, blends: raw.blends }
   }
 
+  /** A control with no enabled keyframes on this slide is dormant (ADR 0018). */
+  #isControlDormant(hostAnim: NodeAnimation | undefined, control: Control): boolean {
+    return !(hostAnim?.hasEnabledControlKeyframes(control.key) ?? false)
+  }
+
+  /**
+   * True when the target node's own time animation drives a channel: enabled raw
+   * keyframes on the node, or an enabled ClipInstance active at `time` whose clip
+   * carries enabled keyframes for the channel. A dormant Control yields per
+   * channel to this (ADR 0018).
+   */
+  #nodeTimeDrivesChannel(
+    node: SceneNode,
+    time: number,
+    rawDrives: (animation: NodeAnimation) => boolean,
+    clipDrives: (clip: ClipDefinition) => boolean,
+  ): boolean {
+    const animation = this.#slideLookup(node.id).animation.node(node.id)
+    if (animation && rawDrives(animation)) return true
+    for (const instance of node.clipInstances) {
+      if (!instance.enabled) continue
+      let clip: ClipDefinition
+      try {
+        clip = this.#clipLookup(instance.clipId)
+      } catch {
+        continue
+      }
+      if (!isClipInstanceActive(instance, clip, time)) continue
+      if (clipDrives(clip)) return true
+    }
+    return false
+  }
+
   #getGroupClips(
     nodeSemantic: string,
     control: Control,
@@ -1956,6 +2097,7 @@ export class AnimationEvaluator {
     for (const host of hosts) {
       const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
       for (const control of host.controlSet?.controls ?? []) {
+        const dormant = this.#isControlDormant(hostAnim, control)
         const { u: rawU, blends: blendFactors } = this.#evaluateHostWithBlends(
           control,
           hostAnim,
@@ -2041,10 +2183,20 @@ export class AnimationEvaluator {
               blended = this.#lerpMaterialValue(kind, blended, cur, blendEarly)
             }
           }
-          if (blended !== undefined) {
-            if (!Object.prototype.hasOwnProperty.call(target.values, param)) target.keys.push(param)
-            target.values[param] = blended
+          if (blended === undefined) continue
+          if (
+            dormant &&
+            this.#nodeTimeDrivesChannel(
+              node,
+              time,
+              (animation) => hasEnabledKeyframes(animation.materialKeyframes(param)),
+              (clip) => hasEnabledKeyframes(clip.getMaterialChannelKeyframes(param)),
+            )
+          ) {
+            continue
           }
+          if (!Object.prototype.hasOwnProperty.call(target.values, param)) target.keys.push(param)
+          target.values[param] = blended
         }
       }
     }
@@ -2084,6 +2236,7 @@ export class AnimationEvaluator {
     for (const host of hosts) {
       const hostAnim = this.#slideLookup(node.id).animation.node(host.id)
       for (const control of host.controlSet?.controls ?? []) {
+        const dormant = this.#isControlDormant(hostAnim, control)
         const { u: rawU, blends: blendFactors } = this.#evaluateHostWithBlends(
           control,
           hostAnim,
@@ -2146,7 +2299,20 @@ export class AnimationEvaluator {
               }
             }
           }
-          if (hasBlended) (state as unknown as Record<string, unknown>)[property] = blended as never
+          if (!hasBlended) continue
+          if (
+            dormant &&
+            this.#nodeTimeDrivesChannel(
+              node,
+              time,
+              (animation) => hasEnabledKeyframes(animation.shadowKeyframes(property)),
+              (clip) => hasEnabledKeyframes(clip.getShadowChannelKeyframes(property)),
+            )
+          ) {
+            continue
+          }
+          const shadowState = state as unknown as Record<string, unknown>
+          shadowState[property] = blended as never
         }
       }
     }

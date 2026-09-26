@@ -1,7 +1,7 @@
 # ADR 0012 — Control Track Persistence & Keyframeability on Host Node
 
 Date: 2026-09-12
-Status: Accepted (grill #332, wayfinder map #328)
+Status: Accepted (grill #332, wayfinder map #328) — amended by ADR 0018 (dormant Controls)
 Deciders: MKoth + Muse Spark (wayfinder grill)
 
 ## Context
@@ -35,11 +35,17 @@ Code anchors: `frontend/src/engine/nodeAnimation.ts:40` (`#tracks`, `#materialTr
   effectiveU = effectiveUForClip(clip, keyframes, normalized) // keeps isReversed+parametric flip, then #evaluateClipChannel
   ```
 - `evaluateControlTrack` reuses the same `evaluateSegment` / `effectiveUForClip:50` helpers as base tracks (disabled filtering via `enabledKeyframes`, parametric bounce/elastic/spring). No special "gap → default" rule — once a track has any keyframe, gaps are interpolated/hold per segment.
+
+> Amended by ADR 0018: the `default` fallback below still establishes the dormant Control's pose, but a dormant Control (no enabled keyframes on the slide) yields per channel to the target's enabled raw keyframes or an active clip instance on that channel.
+
 - Tangent overshoot outside `[min,max]` is clamped before normalize (so a bezier spike to 1.2 → 1.0).
 
 ### 4. Interaction with raw lanes — not locked, hidden not deleted
 
 - When Normal Mode exposes only `controlTracks` for a rig, raw property lanes on the same node/descendants that are driven by those Controls remain in `NodeAnimation` but are **hidden** (not deleted). Authoring Mode reveals them.
+
+> Amended by ADR 0018: lanes are hidden only while the driving Control is **active** (≥1 enabled control keyframe on the slide). A dormant Control leaves its raw lanes visible and editable; they hide again once the first control keyframe is added.
+
 - Raw lanes are **not locked**: both the control lane and any raw lane may be keyframed concurrently. Evaluator precedence (`base → ClipInstances → Controls`, ADR 0011) is the user-facing truth: "the animated Control value will overwrite the raw output at the same global time." Documented affordance, no write guard, no error.
 
 ### 5. Serialization — array shape, tolerant load, instance vs definition split

@@ -72,6 +72,8 @@ export function TimelinePanel({ height }: { height: number }) {
         materialDefinitions,
         authoringModeByHost,
         (clipId) => engine.clips.find((clip) => clip.id === clipId) ?? null,
+        (hostId, controlKey) =>
+          slide?.animation.node(hostId)?.hasEnabledControlKeyframes(controlKey) ?? false,
       )
     : []
 

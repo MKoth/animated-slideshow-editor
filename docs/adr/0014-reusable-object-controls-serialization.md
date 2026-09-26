@@ -1,7 +1,7 @@
 # ADR 0014 — Reusable Object Public API & .lesson Serialization for Controls
 
 Date: 2026-09-12
-Status: Accepted (grill #335, wayfinder map #328)
+Status: Accepted (grill #335, wayfinder map #328) — clarified by ADR 0018 (dormant Controls)
 Deciders: MKoth + Muse Spark (wayfinder grill)
 
 ## Context
@@ -25,6 +25,9 @@ Code anchors: `frontend/src/engine/reusableObject.ts` (`REUSABLE_OBJECT_VERSION`
 - **Definition data** (what the rig *is*): `NodeJSON.controlSet` embedded in `SceneJSON.nodes[]` + `library.clips` snapshots of `bindings` clipIds + embedded `shapes`. `LessonJSON.library` does **not** carry a separate `controls` array; `ReusableObjectJSON.library.controls` sidecar is not added. No top-level `LessonJSON.controlSets` or `Project.library.controls`.
 - **Instance data** (what is animated): `NodeAnimation.controlTracks` on the host node (`Map<controlKey, Keyframe[]>` keyed by `Control.key`, ADR 0012) serialized per slide as `SlideAnimationJSON.nodes[].controlTracks?: {key, keyframes}[]` tolerant array (alongside `materialTracks`/`shadowTracks`/`circleTracks`). Each `controlTrack` is seconds-based, `requireKeyframeTime(time, slide.duration)` in `[0, duration]`, finite value in `[min,max]` (v1 `0…1`), `hold|linear|bezier` + tangents + `disabled`, clamped via `SlideAnimation.clampKeyframesTo` with discriminator `{controlKey}`.
 - On import with no prior library entry, definitions are self-contained via the embedded node snapshot (like cross-blend shape portability, ADR 0008); per-slide `controlTracks` are **not** part of the reusable library — imported rig has empty tracks → evaluator falls back to `Control.default` (ADR 0012 §3). `captureAudioSnapshot` pattern not needed.
+
+> Clarified by ADR 0018: with empty tracks the imported rig is _dormant_ — it still shows its `Control.default` pose on channels the consumer has not animated, while the consumer may raw-animate any bound channel until they add the first control keyframe.
+
 - `.lesson` self-containment rides existing snapshot paths; old files without `controlSet`/`controlTracks` load unchanged (tolerant).
 - Rejected: `Project.library.controls` top-level array, `ReusableObjectJSON.controlSets` sidecar, or hybrid mirror — extra indirection, separates definition from its scene-graph owner (reason rejected in ADR 0010 §1).
 

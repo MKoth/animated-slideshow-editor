@@ -65,6 +65,18 @@ export class NodeAnimation {
     return this.#controlTracks.has(key)
   }
 
+  /**
+   * True when the control track has at least one enabled keyframe on this slide.
+   * A track with no enabled keyframes is dormant: its default pose still applies,
+   * but it yields per channel to the target's raw keyframes or active clips (ADR 0018).
+   */
+  hasEnabledControlKeyframes(key: string): boolean {
+    const keyframes = this.#controlTracks.get(key)
+    if (!keyframes) return false
+    for (const keyframe of keyframes) if (!keyframe.disabled) return true
+    return false
+  }
+
   addControl(key: string, keyframe: Keyframe): void {
     insertSorted(this.#controlTracks, key, keyframe)
   }

@@ -1,7 +1,7 @@
 # ADR 0011 — Evaluation Order: Controls Win Over Time Clips
 
 Date: 2026-09-12
-Status: Accepted (grill #331, wayfinder map #328)
+Status: Accepted (grill #331, wayfinder map #328) — amended by ADR 0018 (dormant Controls)
 Deciders: MKoth + Muse Spark (wayfinder grill)
 
 ## Context
@@ -21,6 +21,8 @@ base NodeAnimation keyframes @ clampedTime
 ```
 
 Within a `ControlSet`, `controls[]` order is Priority: lower index = lower priority, later wins — mirrors `ClipInstance` order and `Clip Lane` / `Collection Lane` Priority (CONTEXT.md Priority). No interleaving of clips and Controls; Controls are an unconditional final pass (`base → clips → Controls`).
+
+> Amended by ADR 0018: a Control with no enabled keyframes on the slide is _dormant_ — it still applies its `default` pose, but yields per channel to the target's own enabled raw keyframes or an active clip instance on that channel. Active Controls (≥1 enabled keyframe) keep the unconditional final-pass priority.
 
 Implementation sketch: after `#applyClipInstances(node, time, scratch)` the evaluator runs `#applyControlLayers(hostNode, time, scratchMap)` iterating host nodes in parent-after-children order (see §5), each evaluating its controls at `u = clamp(controlValue, 0, 1)` (v1 identity normalize) via `u → effectiveUForClip → #evaluateClipChannel` and writing through `#setChannelValue` / morph / material / shadow / circle / table equivalents.
 
@@ -48,7 +50,7 @@ When two Controls on the same host (e.g. `Mouth.Openness` and `Mouth.Smile`) tar
 
 For each Control-driven clip at `u`:
 
-- **Active:** Controls are always active — skip `isClipInstanceActive` (animationEvaluator.ts:67) and ignore `ClipInstance.speed` / `Stretch` (value is not time, no `duration/speed` divisor).
+- **Active:** Controls are always active — skip `isClipInstanceActive` (animationEvaluator.ts:67) and ignore `ClipInstance.speed` / `Stretch` (value is not time, no `duration/speed` divisor). _(Amended by ADR 0018: this holds for an active Control; a dormant Control with no enabled keyframes yields per channel to the target's raw keyframes or active clip instance.)_
 - **Disabled:** Respect session-only `disabled` via `enabledKeyframes` filter — same as base tracks.
 - **Reversed:** Respect `ClipDefinition.isReversed` + parametric (`isParametricInterpolation`) via `effectiveUForClip(clip, keyframes, u) → 1 - u` path.
 - **Interpolation:** Reuse all interpolation types: `hold`, `linear`, `bezier` (with tangents), and parametric family `bounce`/`elastic`/`spring` via `evaluateSegment` (already shared by `#evaluateClipChannel:1252`). Morph name-resolution `fromShapeName/toShapeName → fromShapeId/toShapeId` at animationEvaluator.ts:817 also reuses verbatim.

@@ -122,7 +122,7 @@ export function isParamAnimated(
         nodeAnim.tableKeyframes(key as never).length > 0
       )
     if (kind === 'control') {
-      return nodeAnim.controlKeyframes(key).length > 0
+      return nodeAnim.hasEnabledControlKeyframes(key)
     }
     return false
   })()

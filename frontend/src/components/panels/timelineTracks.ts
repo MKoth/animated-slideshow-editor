@@ -192,8 +192,17 @@ export function trackRows(scene: Scene): TrackRowEntry[] {
 }
 
 /**
+ * Whether a host control is active (has at least one enabled keyframe on the
+ * current slide). Dormant controls do not hide their raw lanes (ADR 0018).
+ */
+export type ControlDrivePredicate = (hostNodeId: string, controlKey: string) => boolean
+
+/**
  * Build the full list of timeline rows, including bone track entries
  * for nodes that have a bone component.
+ *
+ * `controlDrives` reports whether a host control is active on the current
+ * slide; when omitted every exposed bound control counts as driving.
  */
 export function timelineRows(
   scene: Scene,
@@ -204,6 +213,7 @@ export function timelineRows(
   }[] = [],
   authoringModeByHost: Readonly<Record<string, boolean>> = {},
   getClip: ((clipId: string) => ClipDefinition | null) | undefined = undefined,
+  controlDrives: ControlDrivePredicate | undefined = undefined,
 ): TimelineRow[] {
   const rows: TimelineRow[] = []
   for (const entry of trackRows(scene)) {
@@ -213,7 +223,7 @@ export function timelineRows(
     if (expandedNodeIds[entry.node.id] === true) {
       // count hidden subtracks that would be hidden in Normal
       for (const property of animatablePropertiesOf(entry.node)) {
-        const owners = getExposedControlOwners(entry.node, property, getClip)
+        const owners = getExposedControlOwners(entry.node, property, getClip, controlDrives)
         if (owners.length > 0) {
           const anyAuthoring = owners.some((o) => authoringModeByHost[o.split(':')[0]!] === true)
           if (!anyAuthoring) hiddenCountForEntry += 1
@@ -259,7 +269,7 @@ export function timelineRows(
         }
       }
       for (const property of animatablePropertiesOf(entry.node)) {
-        const owners = getExposedControlOwners(entry.node, property, getClip)
+        const owners = getExposedControlOwners(entry.node, property, getClip, controlDrives)
         if (owners.length > 0) {
           const anyAuthoring = owners.some((o) => authoringModeByHost[o.split(':')[0]!] === true)
           if (!anyAuthoring) {
@@ -349,8 +359,9 @@ export function getExposedControlOwner(
   node: SceneNode,
   property: AnimationProperty,
   getClip?: (clipId: string) => ClipDefinition | null,
+  controlDrives?: ControlDrivePredicate,
 ): string | null {
-  const owners = getExposedControlOwners(node, property, getClip)
+  const owners = getExposedControlOwners(node, property, getClip, controlDrives)
   return owners[0] ?? null
 }
 // keep exported for test compatibility
@@ -360,6 +371,7 @@ export function getExposedControlOwners(
   node: SceneNode,
   property: AnimationProperty,
   getClip?: (clipId: string) => ClipDefinition | null,
+  controlDrives?: ControlDrivePredicate,
 ): string[] {
   if (!getClip || !node.semanticName) return []
   const owners: string[] = []
@@ -367,6 +379,8 @@ export function getExposedControlOwners(
     const controls = host.controlSet?.controls ?? []
     for (const control of controls as readonly import('../../engine/control').Control[]) {
       if (!control.exposed) continue
+      // A dormant control (no enabled keyframes on this slide) does not hide lanes (ADR 0018)
+      if (controlDrives && !controlDrives(host.id, control.key)) continue
       // Check union across all groups: use merged bindings (control.bindings) which is union of groups
       // For legacy without groups, bindings is the source; for groups, merged is union
       const binding = (control.bindings as Record<string, unknown>)[
@@ -407,10 +421,11 @@ export function getHiddenCountForNode(
   node: SceneNode,
   authoringModeByHost: Readonly<Record<string, boolean>>,
   getClip?: (clipId: string) => ClipDefinition | null,
+  controlDrives?: ControlDrivePredicate,
 ): number {
   let count = 0
   for (const property of animatablePropertiesOf(node)) {
-    const owners = getExposedControlOwners(node, property, getClip)
+    const owners = getExposedControlOwners(node, property, getClip, controlDrives)
     if (owners.length > 0 && !owners.some((o) => authoringModeByHost[o.split(':')[0]!] === true))
       count++
   }

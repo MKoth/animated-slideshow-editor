@@ -1,7 +1,7 @@
 # ADR 0013 — Timeline Filtering: Normal vs Authoring Mode Lanes
 
 Date: 2026-09-12
-Status: Accepted (grill #334, wayfinder map #328)
+Status: Accepted (grill #334, wayfinder map #328) — amended by ADR 0018 (dormant Controls)
 Deciders: MKoth + Muse Spark (wayfinder grill)
 
 ## Context
@@ -18,6 +18,8 @@ When a subtree root `P` owns a `ControlSet` and at least one `Control.exposed ==
 
 - **Included:** every `controlTrack` on `P` where `Control.exposed` is true (lanes labeled `Mouth.Openness` etc., value axis `[min,max]` = `0…1` in v1), plus any remaining non-driven transform/material/shadow/circle lanes on `P` and its descendants that are **not** targeted by any exposed Control binding at the property level (i.e. the rig owner left them exposed).
 - **Hidden (not deleted):** any raw property lane on `P` or a descendant `D` that is driven by an exposed Control's normalized clip at the same property (same `AnimationProperty | morphCoefficient | shadowProperty | ...` and same descendant semantic). Hidden lanes remain in `NodeAnimation` (no data loss) and are simply filtered from `animationManagerModel.ts`'s `Animated Child` enumeration and from Timeline's `buildTimelineRows()`.
+
+> Amended by ADR 0018: "driven" requires the exposed Control to be **active** — at least one enabled keyframe on the current slide. An exposed but dormant Control leaves its raw lanes visible/editable; the muted placeholder and badge appear only once the Control is keyframed.
 
 **Toggle:** per-rig affordance, not global. Each host row in the main Timeline carries an eye-cone / authoring badge; each Animation Manager → Controls tab header carries a `Show internal lanes` toggle that mirrors the same per-host boolean. State is `timelineViewStore.expandedNodeIds` companion `authoringExpanded[hostNodeId]: boolean` or `timelineViewStore.authoringModeByHost: Record<hostNodeId, boolean>` persisted via `zustand/persist` `partialize` (like `expandedNodeIds`, `zoomLevel`). Default: **filtered (Normal) = false** — consumer sees single object. No global "show all" pref.
 

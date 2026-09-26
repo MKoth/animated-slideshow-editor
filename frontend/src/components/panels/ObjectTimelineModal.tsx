@@ -107,6 +107,8 @@ export function ObjectTimelineModal() {
     engine.materialDefinitions,
     authoringModeByHost,
     (clipId) => engine.clips.find((clip) => clip.id === clipId) ?? null,
+    (hostId, controlKey) =>
+      slide.animation.node(hostId)?.hasEnabledControlKeyframes(controlKey) ?? false,
   )
   let rows = allRows.filter(
     (row) => row.node.id === node.id && row.kind !== 'node' && row.kind !== 'bone',
