@@ -139,7 +139,14 @@ export interface PropertyEntry {
 }
 
 /** The method vocabulary of a statement receiver; the compiler owns diagnostics. */
-export const SCRIPT_METHOD_NAMES = ['tween', 'set'] as const
+export const SCRIPT_METHOD_NAMES = [
+  'tween',
+  'set',
+  'shadow',
+  'symmetry',
+  'morph',
+  'dataLabel',
+] as const
 
 /** Structural table selectors: `conj.cell(r, c)` / `conj.row(i)` / `conj.col(j)`. */
 export const SCRIPT_TABLE_SELECTOR_NAMES = ['cell', 'row', 'col'] as const
@@ -165,10 +172,28 @@ export interface StatementNode {
   readonly selectors: readonly SelectorNode[]
   readonly method: string
   readonly methodSpan: SourceSpan
+  /** The record a `tween`/`set`/`shadow`/`symmetry` carries; empty for positional methods. */
   readonly entries: readonly PropertyEntry[]
+  /**
+   * Positional arguments before the timing arguments: `morph(coefficient, ...)`
+   * and `dataLabel("label", value, ...)`. Empty for record-shaped methods.
+   */
+  readonly args: readonly ScriptExpression[]
   readonly duration?: ScriptExpression
   readonly ease?: string
   readonly easeSpan?: SourceSpan
+  readonly span: SourceSpan
+}
+
+/**
+ * `setText(alias, "content")` changes a text node's content statically, inside
+ * the run Transaction — never a timed lane. The target is a binding alias or a
+ * table selector; the content is a compile-time string.
+ */
+export interface SetTextNode {
+  readonly kind: 'setText'
+  readonly target: ScriptExpression
+  readonly content: ScriptExpression
   readonly span: SourceSpan
 }
 
@@ -220,7 +245,7 @@ export interface ParallelNode {
 }
 
 export type ScriptStatementNode =
-  BindNode | LetNode | StatementNode | WaitNode | MarkNode | AtNode | ParallelNode
+  BindNode | LetNode | StatementNode | SetTextNode | WaitNode | MarkNode | AtNode | ParallelNode
 
 export interface ScriptProgram {
   readonly header: HeaderNode | null
@@ -343,6 +368,9 @@ class Parser {
     if (this.#isIdentifier('let')) {
       return this.#parseLet()
     }
+    if (this.#isIdentifier('setText') && this.#nextIsPunctuation('(')) {
+      return this.#parseSetText()
+    }
     const operator = this.#operatorKeyword()
     if (operator === 'wait') return this.#parseWait()
     if (operator === 'mark') return this.#parseMark()
@@ -425,6 +453,26 @@ class Parser {
       easeSpan,
       span: { start, end: this.#previousEnd() },
     }
+  }
+
+  /**
+   * `setText(alias, "content")`: the one free-call statement. Its target is a
+   * binding or table selector expression, its content a compile-time string.
+   */
+  #parseSetText(): SetTextNode | null {
+    const start = this.#peek().span.start
+    this.#advance()
+    if (!this.#expectPunctuation('(')) return null
+    const target = this.#parseExpression('a node binding')
+    if (target === null) return null
+    if (!this.#matchPunctuation(',')) {
+      this.#report('Expected "," after the setText target', this.#peek().span)
+      return null
+    }
+    const content = this.#parseExpression('the new text content')
+    this.#expectPunctuation(')')
+    if (content === null) return null
+    return { kind: 'setText', target, content, span: { start, end: this.#previousEnd() } }
   }
 
   #parseWait(): WaitNode | null {
@@ -559,16 +607,19 @@ class Parser {
   }
 
   /**
-   * `alias [.selector(args)]* .method(record, duration?, ease?)`. A table
+   * `alias [.selector(args)]* .method(args..., duration?, ease?)`. A table
    * binding may carry structural selectors (`cell`, `row`, `col`) between the
    * alias and the method; the compiler types them against the bound table.
+   * Record-shaped methods (`tween`, `set`, `shadow`, `symmetry`) open with a
+   * property map; `morph` and `dataLabel` take positional values first.
    */
   #parseCallStatement(): StatementNode | null {
     const start = this.#peek().span.start
     const alias = this.#advance()
     const selectors: SelectorNode[] = []
     let method: Token | null = null
-    let entries: PropertyEntry[] | null = null
+    let entries: PropertyEntry[] = []
+    const args: ScriptExpression[] = []
     let duration: ScriptExpression | undefined
     let ease: string | undefined
     let easeSpan: SourceSpan | undefined
@@ -579,22 +630,41 @@ class Parser {
       if (name === null) return null
       this.#expectPunctuation('(')
       if (this.#isMethodSegment(name.text)) {
-        entries = this.#parseRecord()
+        method = name
+        if (name.text === 'morph') {
+          const coefficient = this.#parseExpression('a morph coefficient')
+          if (coefficient === null) return null
+          args.push(coefficient)
+        } else if (name.text === 'dataLabel') {
+          const label = this.#parseExpression('a data label name in quotes')
+          if (label === null) return null
+          args.push(label)
+          if (!this.#matchPunctuation(',')) {
+            this.#report('Expected "," after the data label name', this.#peek().span)
+            return null
+          }
+          const value = this.#parseExpression('a value for the data label')
+          if (value === null) return null
+          args.push(value)
+        } else {
+          const record = this.#parseRecord()
+          if (record === null) return null
+          entries = record
+        }
         const timing = this.#parseTimingArguments()
         if (timing === null) return null
         duration = timing.duration
         ease = timing.ease
         easeSpan = timing.easeSpan
-        method = name
         break
       }
-      const args = this.#parseSelectorArguments()
+      const selectorArgs = this.#parseSelectorArguments()
       if (!this.#expectPunctuation(')')) return null
       selectors.push({
         kind: 'selector',
         name: name.text,
         nameSpan: name.span,
-        args,
+        args: selectorArgs,
         span: { start: name.span.start, end: this.#previousEnd() },
       })
       if (!this.#matchPunctuation('.')) break
@@ -606,9 +676,6 @@ class Parser {
       )
       return null
     }
-    if (entries === null) {
-      return null
-    }
     return {
       kind: 'statement',
       alias: alias.text,
@@ -617,6 +684,7 @@ class Parser {
       method: method.text,
       methodSpan: method.span,
       entries,
+      args,
       duration,
       ease,
       easeSpan,
@@ -1033,6 +1101,9 @@ class Parser {
       return true
     }
     const next = this.#tokens[this.#index + 1]
+    if (token.text === 'setText' && next?.kind === 'punctuation' && next.text === '(') {
+      return true
+    }
     return next?.kind === 'punctuation' && (next.text === '.' || next.text === '=')
   }
 }

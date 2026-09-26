@@ -1,10 +1,19 @@
 import type { Command } from './commands'
 import { AddKeyframeCommand } from './commands/addKeyframeCommand'
+import { SetTextContentCommand } from './commands/setTextContentCommand'
 import { ZERO_TANGENT } from './keyframe'
+import { isDiscreteMaterialKind, isParametricInterpolation } from './keyframe'
 import type { AnimationProperty } from './animationProperties'
 import type { InterpolationType, KeyframeTangent } from './keyframe'
 import type { KeyframeTarget } from './keyframeTarget'
 import type { CompiledFootprint } from './compiledFootprint'
+import { requireMaterialKeyframeValue } from './materialKeyframes'
+import { requireSymmetryKeyframeValue } from './symmetry'
+import type { SymmetryKeyframeValue } from './symmetry'
+import { requireMorphKeyframeValue } from './shape'
+import type { MorphKeyframeValue } from './shape'
+import { SHADOW_ALL_PROPERTIES, requireShadowKeyframeValue } from './shadowEffect'
+import type { ShadowProperty } from './shadowEffect'
 import {
   SCRIPT_METHOD_NAMES,
   SCRIPT_TABLE_SELECTOR_NAMES,
@@ -19,10 +28,12 @@ import type {
   MarkNode,
   MemberExpression,
   ParallelNode,
+  PropertyEntry,
   ScriptExpression,
   ScriptProgram,
   ScriptStatementNode,
   SelectorNode,
+  SetTextNode,
   SourceSpan,
   StatementNode,
   WaitNode,
@@ -63,13 +74,42 @@ export const SCRIPT_NODE_PROPERTY_NAMES = [
   'zIndex',
 ] as const
 
-/** The full property vocabulary; table styles resolve by node kind. */
+/** Circle properties the write surface exposes; `segments` stays excluded. */
+export const SCRIPT_CIRCLE_PROPERTY_NAMES = ['radius', 'startAngle', 'endAngle'] as const
+
+export type ScriptCircleProperty = (typeof SCRIPT_CIRCLE_PROPERTY_NAMES)[number]
+
+/** The base node-property names plus table styles, for legacy diagnostics. */
 export const SCRIPT_PROPERTY_NAMES = [
   ...SCRIPT_NODE_PROPERTY_NAMES,
   ...SCRIPT_TABLE_PROPERTY_NAMES,
 ] as const
 
 export type ScriptProperty = (typeof SCRIPT_PROPERTY_NAMES)[number]
+
+export type ScriptNodeProperty = (typeof SCRIPT_NODE_PROPERTY_NAMES)[number]
+
+/** Names the language reserves for statements rather than bindings. */
+export const SCRIPT_RESERVED_NAMES = ['setText'] as const
+
+/**
+ * The engine track a script write lands on, resolved by node kind. The
+ * compiler never invents a track: every variant lowers to an existing
+ * `KeyframeTarget` kind and evaluates through the existing evaluator.
+ */
+export type ScriptTrack =
+  | { readonly kind: 'node'; readonly property: ScriptNodeProperty }
+  | { readonly kind: 'parameter'; readonly parameter: string; readonly kindOf: string }
+  | { readonly kind: 'circle'; readonly property: ScriptCircleProperty }
+  | { readonly kind: 'table'; readonly property: ScriptTableProperty }
+  | { readonly kind: 'morph' }
+  | { readonly kind: 'symmetry' }
+  | { readonly kind: 'shadow'; readonly property: ShadowProperty }
+  | { readonly kind: 'dataLabel'; readonly label: string }
+
+/** A track value in the shape its engine kind stores (Spec 07 / Shadow 04). */
+export type ScriptTrackValue =
+  number | string | readonly number[] | SymmetryKeyframeValue | MorphKeyframeValue
 
 /**
  * The properties `alias.property` reads at the cursor. `zIndex` and the table
@@ -88,6 +128,11 @@ export type ScriptReadableProperty = (typeof SCRIPT_READABLE_PROPERTY_NAMES)[num
 
 export function isScriptTableProperty(property: ScriptProperty): property is ScriptTableProperty {
   return (SCRIPT_TABLE_PROPERTY_NAMES as readonly string[]).includes(property)
+}
+
+export interface AnimationScriptMaterialParameterInfo {
+  readonly key: string
+  readonly kind: string
 }
 
 export interface AnimationScriptNodeInfo {
@@ -113,6 +158,29 @@ export interface AnimationScriptNodeInfo {
    * readable, by their stable key.
    */
   readonly controls?: readonly AnimationScriptControlInfo[]
+  /**
+   * The material parameters a write may address by name: the node's material
+   * definition parameters plus the built-ins (tint, opacityMultiplier) the
+   * engine always resolves. `sampler2D` never appears.
+   */
+  readonly materialParameters?: readonly AnimationScriptMaterialParameterInfo[]
+  /** The node carries a circle component; `radius`/`startAngle`/`endAngle` write to it. */
+  readonly isCircle?: boolean
+  /** The node carries a mesh component; `morph` and `symmetry` write to meshes. */
+  readonly isMesh?: boolean
+  /** The node carries a text component; `setText` writes to text nodes. */
+  readonly isText?: boolean
+  /** The node is a group host (`isGroupNode`). */
+  readonly isGroup?: boolean
+  /** The node carries a Shadow Effect; `shadow(...)` writes to its tracks. */
+  readonly hasShadowEffect?: boolean
+  /** The node's Morph Binding; `morph` writes against its shape pair. */
+  readonly morphBinding?: {
+    readonly fromShapeId: string | null
+    readonly toShapeId: string | null
+  } | null
+  /** The node's chart data-label names; `dataLabel(...)` resolves against them. */
+  readonly dataLabels?: readonly string[]
 }
 
 export interface AnimationScriptControlInfo {
@@ -135,6 +203,12 @@ export interface AnimationScriptCompileContext {
   readonly nodes: readonly AnimationScriptNodeInfo[]
   evaluateProperty(nodeId: string, property: ScriptProperty, time: number): number
   /**
+   * The pre-clear value of any written track at `time`, used for boundary and
+   * tween start pins. Evaluates the current scene state and never writes, so
+   * Check and Run read identically.
+   */
+  evaluateTrackValue(nodeId: string, track: ScriptTrack, time: number): ScriptTrackValue
+  /**
    * The compile-time read seam. Reads evaluate the current scene state at a
    * time and never write engine state, so Check and Run read identically.
    */
@@ -154,7 +228,12 @@ export interface AnimationScriptDiagnostic {
 export interface AnimationScriptTrackSummary {
   readonly nodeId: string
   readonly nodeName: string
-  readonly property: ScriptProperty
+  /**
+   * The author-facing track name: a base property (`x`, `zIndex`), a material
+   * parameter key, a circle or table property, `morphCoefficient`,
+   * `symmetry`, `shadow.<property>` or `dataLabel:<label>`.
+   */
+  readonly property: string
 }
 
 export interface AnimationScriptSummary {
@@ -197,8 +276,10 @@ interface BindingInfo {
 }
 
 interface ValidatedEntry {
-  readonly property: ScriptProperty
-  readonly value: number
+  readonly track: ScriptTrack
+  /** The author-facing name this entry resolved from, for diagnostics. */
+  readonly property: string
+  readonly value: ScriptTrackValue
   readonly keySpan: SourceSpan
   readonly valueSpan: SourceSpan
 }
@@ -232,13 +313,21 @@ interface PlannedKeyframe {
   readonly target: KeyframeTarget
   readonly nodeId: string
   readonly nodeName: string
-  readonly property: ScriptProperty
+  readonly track: ScriptTrack
+  readonly property: string
   readonly time: number
   readonly order: number
-  value: number
+  value: ScriptTrackValue
   interpolation: InterpolationType
   tangentIn: KeyframeTangent
   tangentOut: KeyframeTangent
+}
+
+interface TrackOrderEntry {
+  readonly nodeId: string
+  readonly nodeName: string
+  readonly property: string
+  readonly track: ScriptTrack
 }
 
 const HOLD_EASE: ResolvedScriptEase = {
@@ -288,7 +377,14 @@ class Compiler {
   /** Compile-time-only marker labels; never persisted, never a timeline marker. */
   readonly #markers = new Map<string, number>()
   readonly #planned = new Map<string, PlannedKeyframe>()
-  readonly #trackOrder: AnimationScriptTrackSummary[] = []
+  readonly #trackOrder: TrackOrderEntry[] = []
+  /** Static `setText` commands with their source order, dispatched inside the run Transaction. */
+  readonly #textCommands: { readonly order: number; readonly command: Command<unknown> }[] = []
+  /**
+   * Values validated once per track shape and value expression, so a group
+   * broadcast reports a bad value (or a cached good one) once, not per member.
+   */
+  readonly #entryValueCache = new Map<string, ScriptTrackValue | null>()
   #order = 0
   #cursor = 0
   /** The statement's own start frame; reads evaluate at this cursor. */
@@ -318,20 +414,23 @@ class Compiler {
       (a, b) => a.line - b.line || a.column - b.column,
     )
     const errors = diagnostics.some((diagnostic) => diagnostic.severity === 'error')
-    const tracks = this.#trackOrder
     const summary: AnimationScriptSummary = {
       from: this.#from,
       to: this.#cursor,
-      tracks,
+      tracks: this.#trackOrder.map((track) => ({
+        nodeId: track.nodeId,
+        nodeName: track.nodeName,
+        property: track.property,
+      })),
       keyframeCount: this.#planned.size,
       instanceCount: 0,
     }
     const footprint: CompiledFootprint = {
       from: this.#from,
       to: this.#cursor,
-      tracks: tracks.map((track) => ({
+      tracks: this.#trackOrder.map((track) => ({
         nodeId: track.nodeId,
-        target: this.#targetFor(track.nodeId, track.property),
+        target: this.#targetFor(track.nodeId, track.track),
       })),
       placementParents: [],
       instanceNodes: [],
@@ -399,6 +498,13 @@ class Compiler {
   #declareBinding(statement: BindNode): void {
     if (this.#bindings.has(statement.alias)) {
       this.#error(`Binding "${statement.alias}" is already declared`, statement.aliasSpan)
+      return
+    }
+    if ((SCRIPT_RESERVED_NAMES as readonly string[]).includes(statement.alias)) {
+      this.#error(
+        `Name "${statement.alias}" is reserved by the Animation Script language`,
+        statement.aliasSpan,
+      )
       return
     }
     if (this.#lookupValue(statement.alias) !== undefined) {
@@ -549,6 +655,8 @@ class Compiler {
         return this.#lowerAt(statement, cursor)
       case 'parallel':
         return this.#lowerParallel(statement, cursor)
+      case 'setText':
+        return this.#lowerSetText(statement, cursor)
       case 'statement':
         return this.#lowerCall(statement, cursor)
     }
@@ -639,15 +747,23 @@ class Compiler {
     if (!target) {
       return this.#advanceCursorByResolvedDuration(statement, cursor)
     }
-    if (statement.method === 'tween') {
-      return this.#lowerTween(statement, target, cursor)
-    }
-    if (statement.method === 'set') {
-      return this.#lowerSet(statement, target, cursor)
+    switch (statement.method) {
+      case 'tween':
+        return this.#lowerTween(statement, target, cursor)
+      case 'set':
+        return this.#lowerSet(statement, target, cursor)
+      case 'shadow':
+        return this.#lowerShadow(statement, target, cursor)
+      case 'symmetry':
+        return this.#lowerSymmetry(statement, target, cursor)
+      case 'morph':
+        return this.#lowerMorph(statement, target, cursor)
+      case 'dataLabel':
+        return this.#lowerDataLabel(statement, target, cursor)
     }
     const suggestion = nearMissSuggestion(statement.method, SCRIPT_METHOD_NAMES)
     this.#error(
-      `Unknown method "${statement.method}". Available methods: ${SCRIPT_METHOD_NAMES.join(' and ')}.${suggestion}`,
+      `Unknown method "${statement.method}". Available methods: ${SCRIPT_METHOD_NAMES.join(', ')}.${suggestion}`,
       statement.methodSpan,
     )
     return this.#advanceCursorByResolvedDuration(statement, cursor)
@@ -807,10 +923,30 @@ class Compiler {
   }
 
   #lowerTween(statement: StatementNode, binding: BindingInfo, cursor: number): number {
+    return this.#lowerTweenLike(statement, cursor, () =>
+      this.#validateWriteEntries(statement, binding),
+    )
+  }
+
+  /**
+   * The shared timed-statement lowering: resolve the duration (statement then
+   * header defaults), resolve the ease, validate the member writes, and plan a
+   * start pin plus an end keyframe per written track. The cursor advances by
+   * the duration even when the writes failed, so later statements keep times.
+   */
+  #lowerTweenLike(
+    statement: StatementNode,
+    cursor: number,
+    resolveWrites: () => MemberWrite[],
+  ): number {
     const duration = this.#resolveDuration(statement)
     if (duration.kind === 'missing') {
+      const example =
+        statement.args.length > 0
+          ? `${statement.method}(..., 0.4)`
+          : `${statement.method}({ ... }, 0.4)`
       this.#error(
-        'tween needs a duration — pass one after the property map, like tween({ x: 4 }, 0.4), or set defaults { duration }',
+        `${statement.method} needs a duration — pass one after its values, like ${example}, or set defaults { duration }`,
         statement.methodSpan,
       )
       return cursor
@@ -821,17 +957,12 @@ class Compiler {
     if (!this.#validateDuration(duration.seconds, duration.span)) {
       return cursor
     }
-    const entries = this.#validateEntries(statement)
     const ease = this.#resolveEase(statement)
-    if (entries.length === 0 || ease === null) {
-      return roundTime(cursor + duration.seconds)
+    const writes = resolveWrites()
+    const endTime = roundTime(cursor + duration.seconds)
+    if (writes.length === 0 || ease === null) {
+      return endTime
     }
-    const writes = this.#validateMemberWrites(binding, entries)
-    if (writes.length === 0) {
-      return roundTime(cursor + duration.seconds)
-    }
-    const startTime = cursor
-    const endTime = roundTime(startTime + duration.seconds)
     if (endTime > this.#context.slideDuration) {
       this.#error(
         `Statement ends at ${formatSeconds(endTime)}s, past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
@@ -841,12 +972,91 @@ class Compiler {
     }
     for (const write of writes) {
       for (const entry of write.entries) {
-        const entryEase = entry.property === 'zIndex' ? HOLD_EASE : ease
-        this.#plan(write.member, entry.property, startTime, entryEase, null)
-        this.#plan(write.member, entry.property, endTime, entryEase, { value: entry.value })
+        const entryEase = this.#resolveEntryEase(entry, ease.ease, ease.name)
+        if (entryEase === null) continue
+        this.#plan(write.member, entry.track, cursor, entryEase, null)
+        this.#plan(write.member, entry.track, endTime, entryEase, { value: entry.value })
       }
     }
     return endTime
+  }
+
+  /**
+   * Per-track ease: zIndex holds whatever the tween declares, and a discrete
+   * material kind rejects parametric eases exactly as the engine's
+   * interpolation setter does (its evaluation holds by kind either way).
+   */
+  #resolveEntryEase(
+    entry: ValidatedEntry,
+    ease: ResolvedScriptEase,
+    easeName: string,
+  ): ResolvedScriptEase | null {
+    if (entry.track.kind === 'node' && entry.track.property === 'zIndex') {
+      return HOLD_EASE
+    }
+    if (entry.track.kind === 'parameter' && isDiscreteMaterialKind(entry.track.kindOf)) {
+      if (isParametricInterpolation(ease.interpolation)) {
+        this.#error(
+          `Parametric interpolation "${easeName}" is not supported on discrete material kind "${entry.track.kindOf}"`,
+          entry.keySpan,
+        )
+        return null
+      }
+    }
+    return ease
+  }
+
+  #lowerShadow(statement: StatementNode, binding: BindingInfo, cursor: number): number {
+    return this.#lowerTweenLike(statement, cursor, () =>
+      this.#validateShadowEntries(statement, binding),
+    )
+  }
+
+  #lowerSymmetry(statement: StatementNode, binding: BindingInfo, cursor: number): number {
+    return this.#lowerTweenLike(statement, cursor, () =>
+      this.#validateSymmetryEntries(statement, binding),
+    )
+  }
+
+  #lowerMorph(statement: StatementNode, binding: BindingInfo, cursor: number): number {
+    return this.#lowerTweenLike(statement, cursor, () =>
+      this.#validateMorphEntries(statement, binding),
+    )
+  }
+
+  #lowerDataLabel(statement: StatementNode, binding: BindingInfo, cursor: number): number {
+    return this.#lowerTweenLike(statement, cursor, () =>
+      this.#validateDataLabelEntries(statement, binding),
+    )
+  }
+
+  /**
+   * `setText(alias, "content")`: a static text-content change in the run
+   * Transaction. Group targets broadcast to every member; each must be a text
+   * node. Never emits a keyframe and never advances the cursor.
+   */
+  #lowerSetText(statement: SetTextNode, cursor: number): number {
+    const target = this.#resolveReadTarget(statement.target, true, 'setText')
+    if (!target) return cursor
+    const content = this.#evaluateString(statement.content, 'the new text content')
+    if (content === null) return cursor
+    for (const member of target.members) {
+      const node = this.#nodeOf(member)
+      if (node?.isText !== true) {
+        this.#error(
+          target.members.length === 1
+            ? `setText needs a text node — "${member.nodeName}" has no text component`
+            : `Member "${member.nodeName}" has no text component`,
+          statement.span,
+        )
+        continue
+      }
+      this.#textCommands.push({
+        order: this.#order++,
+        command: new SetTextContentCommand({ nodeId: member.nodeId, content }),
+      })
+    }
+    return cursor
   }
 
   #lowerSet(statement: StatementNode, binding: BindingInfo, cursor: number): number {
@@ -862,8 +1072,8 @@ class Compiler {
         statement.easeSpan ?? statement.span,
       )
     }
-    const entries = this.#validateEntries(statement)
-    if (entries.length === 0) {
+    const writes = this.#validateWriteEntries(statement, binding)
+    if (writes.length === 0) {
       return cursor
     }
     const time = cursor
@@ -874,133 +1084,708 @@ class Compiler {
       )
       return cursor
     }
-    for (const write of this.#validateMemberWrites(binding, entries)) {
+    for (const write of writes) {
       for (const entry of write.entries) {
-        this.#plan(write.member, entry.property, time, HOLD_EASE, { value: entry.value })
+        this.#plan(write.member, entry.track, time, HOLD_EASE, { value: entry.value })
       }
     }
     return cursor
   }
 
-  #validateEntries(statement: StatementNode): ValidatedEntry[] {
-    const entries: ValidatedEntry[] = []
-    for (const entry of statement.entries) {
-      if (!isScriptProperty(entry.key)) {
-        const suggestion = nearMissSuggestion(entry.key, SCRIPT_PROPERTY_NAMES)
+  /**
+   * Resolve and validate a tween/set record per binding member: each key
+   * resolves to exactly one track on that node kind, and each value validates
+   * against that track's engine kind.
+   */
+  #validateWriteEntries(statement: StatementNode, binding: BindingInfo): MemberWrite[] {
+    if (statement.entries.length === 0) {
+      this.#error(`${statement.method} needs at least one property`, statement.methodSpan)
+      return []
+    }
+    const writes: MemberWrite[] = []
+    for (const member of binding.members) {
+      const node = this.#nodeOf(member)
+      if (!node) continue
+      const memberName = binding.kind === 'group' ? member.nodeName : null
+      const entries: ValidatedEntry[] = []
+      for (const entry of statement.entries) {
+        const validated = this.#resolveWriteEntry(entry, node, memberName)
+        if (validated) entries.push(validated)
+      }
+      if (entries.length > 0) writes.push({ member, entries })
+    }
+    return writes
+  }
+
+  /**
+   * One record entry on one member: resolve the key to its single track, then
+   * coerce the expression to that track's value shape. The value is checked
+   * once per (track shape, expression) so a broadcast reports it once.
+   */
+  #resolveWriteEntry(
+    entry: PropertyEntry,
+    node: AnimationScriptNodeInfo,
+    memberName: string | null,
+  ): ValidatedEntry | null {
+    if (containsDurationUnit(entry.value)) {
+      this.#error(
+        `Expected ${entry.key} without a duration suffix, found "${this.#source.slice(entry.value.span.start, entry.value.span.end)}"`,
+        entry.value.span,
+      )
+      return null
+    }
+    const material = node.materialParameters?.find((parameter) => parameter.key === entry.key)
+    const reserved = reservedTrackForKey(entry.key)
+    if (reserved !== null && 'error' in reserved) {
+      this.#error(reserved.error, entry.keySpan)
+      return null
+    }
+    if (reserved !== null) {
+      if (material) {
+        return this.#ambiguousKey(entry, node, reserved.track)
+      }
+      if (reserved.track.kind === 'morph') {
+        return this.#resolveMorphPropertyEntry(entry, node, memberName)
+      }
+      const value = this.#cachedTrackValue(entry.value, reserved.track, memberName)
+      if (value === null) return null
+      if (
+        !this.#validateTrackCapability(reserved.track, node, entry.key, memberName, entry.keySpan)
+      ) {
+        return null
+      }
+      return {
+        track: reserved.track,
+        property: this.#trackLabel(reserved.track),
+        value,
+        keySpan: entry.keySpan,
+        valueSpan: entry.value.span,
+      }
+    }
+    if (!material) {
+      const available = this.#availableKeyNames(node)
+      const suggestion = nearMissSuggestion(entry.key, available)
+      this.#error(
+        `Unknown property "${entry.key}". Available properties: ${available.join(', ')}.${suggestion}`,
+        entry.keySpan,
+      )
+      return null
+    }
+    if (material.kind === 'bool') {
+      this.#error(
+        `"${entry.key}" is a boolean material parameter and the Animation Script language has no boolean values`,
+        entry.keySpan,
+      )
+      return null
+    }
+    if (material.kind === 'sampler2D') {
+      this.#error(`"${entry.key}" is a texture parameter and cannot be animated`, entry.keySpan)
+      return null
+    }
+    const track: ScriptTrack = { kind: 'parameter', parameter: entry.key, kindOf: material.kind }
+    const value = this.#cachedTrackValue(entry.value, track, memberName)
+    if (value === null) return null
+    return {
+      track,
+      property: this.#trackLabel(track),
+      value,
+      keySpan: entry.keySpan,
+      valueSpan: entry.value.span,
+    }
+  }
+
+  /**
+   * A key that is both reserved vocabulary and a material parameter has two
+   * meanings; the write is rejected by name so every write has one target.
+   */
+  #ambiguousKey(entry: PropertyEntry, node: AnimationScriptNodeInfo, reserved: ScriptTrack): null {
+    this.#error(
+      `Property "${entry.key}" is ambiguous on "${node.name}" — it could mean ${describeReservedTrack(reserved)} and the material parameter. Rename one of them so the write has one meaning.`,
+      entry.keySpan,
+    )
+    return null
+  }
+
+  /** `{ x: 1, morphCoefficient: 0.5 }`: the coefficient against the node's binding. */
+  #resolveMorphPropertyEntry(
+    entry: PropertyEntry,
+    node: AnimationScriptNodeInfo,
+    memberName: string | null,
+  ): ValidatedEntry | null {
+    const cacheKey = `morphCoefficient|${entry.value.span.start}-${entry.value.span.end}`
+    let coefficient = this.#entryValueCache.get(cacheKey)
+    if (coefficient === undefined) {
+      coefficient = this.#evaluateNumberTrack(
+        entry.value,
+        'morphCoefficient',
+        memberName,
+        (value) => (value < 0 || value > 1 ? 'morphCoefficient must be between 0 and 1' : null),
+      )
+      this.#entryValueCache.set(cacheKey, coefficient)
+    }
+    if (coefficient === null || coefficient === undefined) return null
+    if (node.isMesh !== true) {
+      this.#error(
+        memberName === null
+          ? 'Only mesh nodes can animate morphCoefficient'
+          : `Member "${memberName}" is not a mesh and cannot animate morphCoefficient`,
+        entry.keySpan,
+      )
+      return null
+    }
+    const pair = node.morphBinding
+    if (!hasMorphShapePair(pair)) {
+      this.#error(
+        memberName === null
+          ? 'morphCoefficient needs a Morph Binding with both shapes selected'
+          : `Member "${memberName}" has no Morph Binding with both shapes selected`,
+        entry.keySpan,
+      )
+      return null
+    }
+    return {
+      track: { kind: 'morph' },
+      property: 'morphCoefficient',
+      value: {
+        fromShapeId: pair.fromShapeId,
+        toShapeId: pair.toShapeId,
+        coefficient: coefficient as number,
+      },
+      keySpan: entry.keySpan,
+      valueSpan: entry.value.span,
+    }
+  }
+
+  #cachedTrackValue(
+    expression: ScriptExpression,
+    track: ScriptTrack,
+    memberName: string | null,
+  ): ScriptTrackValue | null {
+    const cacheKey = `${trackKey(track)}|${expression.span.start}-${expression.span.end}`
+    const cached = this.#entryValueCache.get(cacheKey)
+    if (cached !== undefined) return cached
+    const value = this.#evaluateTrackExpression(expression, track, memberName)
+    this.#entryValueCache.set(cacheKey, value)
+    return value
+  }
+
+  /** Node-kind capability for a resolved track, with member-qualified wording. */
+  #validateTrackCapability(
+    track: ScriptTrack,
+    node: AnimationScriptNodeInfo,
+    key: string,
+    memberName: string | null,
+    keySpan: SourceSpan,
+  ): boolean {
+    if (track.kind === 'node') {
+      if (track.property === 'rotation' && node.isCamera) {
         this.#error(
-          `Unknown property "${entry.key}". Available properties: ${SCRIPT_NODE_PROPERTY_NAMES.join(', ')}. Table and cell nodes also accept ${SCRIPT_TABLE_PROPERTY_NAMES.join(' and ')}.${suggestion}`,
-          entry.keySpan,
+          memberName === null
+            ? 'Camera nodes cannot animate rotation'
+            : `Member "${memberName}" is a Camera node and cannot animate rotation`,
+          keySpan,
+        )
+        return false
+      }
+      if (track.property === 'opacity' && node.isBone) {
+        this.#error(
+          memberName === null
+            ? 'Bone nodes cannot animate opacity'
+            : `Member "${memberName}" is a Bone node and cannot animate opacity`,
+          keySpan,
+        )
+        return false
+      }
+      return true
+    }
+    if (track.kind === 'circle') {
+      if (node.isCircle === true) return true
+      this.#error(
+        memberName === null
+          ? `Only circle nodes can animate ${key}`
+          : `Member "${memberName}" is not a circle and cannot animate ${key}`,
+        keySpan,
+      )
+      return false
+    }
+    if (track.kind === 'table') {
+      if (node.isTable === true || node.isTableCell === true) return true
+      this.#error(
+        memberName === null
+          ? `Only table and table cell nodes can animate ${key}`
+          : `Member "${memberName}" is not a table or table cell and cannot animate ${key}`,
+        keySpan,
+      )
+      return false
+    }
+    return true
+  }
+
+  /** Every property name this node kind accepts, for near-miss suggestions. */
+  #availableKeyNames(node: AnimationScriptNodeInfo): string[] {
+    const names: string[] = [...SCRIPT_NODE_PROPERTY_NAMES]
+    if (node.isCircle) names.push(...SCRIPT_CIRCLE_PROPERTY_NAMES)
+    if (node.isTable === true || node.isTableCell === true) {
+      names.push(...SCRIPT_TABLE_PROPERTY_NAMES)
+    }
+    if (node.isMesh === true && hasMorphShapePair(node.morphBinding)) names.push('morphCoefficient')
+    for (const parameter of node.materialParameters ?? []) {
+      if (!names.includes(parameter.key)) names.push(parameter.key)
+    }
+    return names
+  }
+
+  /** Coerce an expression to the value shape the resolved track stores. */
+  #evaluateTrackExpression(
+    expression: ScriptExpression,
+    track: ScriptTrack,
+    memberName: string | null,
+  ): ScriptTrackValue | null {
+    if (track.kind === 'node') {
+      return this.#evaluateNumberTrack(expression, track.property, memberName, (value) => {
+        if (track.property === 'opacity' && (value < 0 || value > 1)) {
+          return 'opacity must be between 0 and 1'
+        }
+        if (track.property === 'zIndex' && !Number.isInteger(value)) {
+          return 'zIndex must be a whole number'
+        }
+        return null
+      })
+    }
+    if (track.kind === 'circle' || track.kind === 'table') {
+      return this.#evaluateNumberTrack(expression, track.property, memberName, (value) =>
+        value < 0 ? `${track.property} must be a non-negative number` : null,
+      )
+    }
+    if (track.kind === 'parameter') {
+      return this.#evaluateParameterValue(expression, track.parameter, track.kindOf, memberName)
+    }
+    return null
+  }
+
+  #evaluateNumberTrack(
+    expression: ScriptExpression,
+    property: string,
+    memberName: string | null,
+    check: (value: number) => string | null,
+  ): number | null {
+    const value = this.#evaluateNumber(expression, this.#valuePhrase(property, memberName))
+    if (value === null) return null
+    if (!Number.isFinite(value)) {
+      this.#error(`${property} must be a finite number`, expression.span)
+      return null
+    }
+    const problem = check(value)
+    if (problem !== null) {
+      this.#error(memberName === null ? problem : `${problem} on "${memberName}"`, expression.span)
+      return null
+    }
+    return value
+  }
+
+  /** Material parameters are kind-shaped: continuous interpolate, discrete hold. */
+  #evaluateParameterValue(
+    expression: ScriptExpression,
+    parameter: string,
+    kindOf: string,
+    memberName: string | null,
+  ): ScriptTrackValue | null {
+    const what = this.#valuePhrase(parameter, memberName)
+    if (kindOf === 'color') {
+      const raw = this.#evaluateString(expression, what)
+      if (raw === null) return null
+      return this.#requireEngineValue(
+        () => requireMaterialKeyframeValue(kindOf, raw) as ScriptTrackValue,
+        parameter,
+        memberName,
+        expression.span,
+      )
+    }
+    if (kindOf === 'vec2' || kindOf === 'vec3' || kindOf === 'vec4') {
+      const value = this.#evaluateValue(expression)
+      if (value === null || value.kind === 'invalid') return null
+      if (value.kind !== 'list') {
+        this.#error(`Expected ${what}, found ${describeScriptValue(value)}`, expression.span)
+        return null
+      }
+      const numbers: number[] = []
+      for (const element of value.values) {
+        if (element.kind !== 'number') {
+          this.#error(`Expected ${what} as a list of numbers`, expression.span)
+          return null
+        }
+        numbers.push(element.value)
+      }
+      return this.#requireEngineValue(
+        () => requireMaterialKeyframeValue(kindOf, numbers) as ScriptTrackValue,
+        parameter,
+        memberName,
+        expression.span,
+      )
+    }
+    const raw = this.#evaluateNumber(expression, what)
+    if (raw === null) return null
+    return this.#requireEngineValue(
+      () => requireMaterialKeyframeValue(kindOf, raw) as ScriptTrackValue,
+      parameter,
+      memberName,
+      expression.span,
+    )
+  }
+
+  /** Shadow parameters, each on its existing shadow track kind. */
+  #validateShadowEntries(statement: StatementNode, binding: BindingInfo): MemberWrite[] {
+    if (statement.entries.length === 0) {
+      this.#error('shadow needs at least one parameter', statement.methodSpan)
+      return []
+    }
+    const writes: MemberWrite[] = []
+    for (const member of binding.members) {
+      const node = this.#nodeOf(member)
+      if (!node) continue
+      const memberName = binding.kind === 'group' ? member.nodeName : null
+      if (node.hasShadowEffect !== true || node.isGroup !== true) {
+        this.#error(
+          memberName === null
+            ? 'shadow needs a group node carrying a Shadow Effect'
+            : `Member "${memberName}" is not a group carrying a Shadow Effect`,
+          statement.methodSpan,
         )
         continue
       }
+      const entries: ValidatedEntry[] = []
+      for (const entry of statement.entries) {
+        const validated = this.#resolveShadowEntry(entry, memberName)
+        if (validated) entries.push(validated)
+      }
+      if (entries.length > 0) writes.push({ member, entries })
+    }
+    return writes
+  }
+
+  #resolveShadowEntry(entry: PropertyEntry, memberName: string | null): ValidatedEntry | null {
+    if (!(SHADOW_ALL_PROPERTIES as readonly string[]).includes(entry.key)) {
+      const suggestion = nearMissSuggestion(entry.key, SHADOW_ALL_PROPERTIES)
+      this.#error(
+        `Unknown shadow parameter "${entry.key}". Available parameters: ${SHADOW_ALL_PROPERTIES.join(', ')}.${suggestion}`,
+        entry.keySpan,
+      )
+      return null
+    }
+    if (containsDurationUnit(entry.value)) {
+      this.#error(
+        `Expected ${entry.key} without a duration suffix, found "${this.#source.slice(entry.value.span.start, entry.value.span.end)}"`,
+        entry.value.span,
+      )
+      return null
+    }
+    const property = entry.key as ShadowProperty
+    const cacheKey = `shadow:${property}|${entry.value.span.start}-${entry.value.span.end}`
+    let value = this.#entryValueCache.get(cacheKey)
+    if (value === undefined) {
+      const what = this.#valuePhrase(property, memberName)
+      const raw =
+        property === 'color'
+          ? this.#evaluateString(entry.value, what)
+          : this.#evaluateNumber(entry.value, what)
+      value =
+        raw === null
+          ? null
+          : this.#requireEngineValue(
+              () => requireShadowKeyframeValue(property, raw),
+              property,
+              memberName,
+              entry.value.span,
+            )
+      this.#entryValueCache.set(cacheKey, value)
+    }
+    if (value === null || value === undefined) return null
+    return {
+      track: { kind: 'shadow', property },
+      property,
+      value,
+      keySpan: entry.keySpan,
+      valueSpan: entry.value.span,
+    }
+  }
+
+  /** `symmetry({ axis, factor }, ...)` on mesh nodes. */
+  #validateSymmetryEntries(statement: StatementNode, binding: BindingInfo): MemberWrite[] {
+    const value = this.#evaluateSymmetryRecord(statement)
+    if (value === null) return []
+    const writes: MemberWrite[] = []
+    for (const member of binding.members) {
+      const node = this.#nodeOf(member)
+      if (!node) continue
+      const memberName = binding.kind === 'group' ? member.nodeName : null
+      if (node.isMesh !== true) {
+        this.#error(
+          memberName === null
+            ? 'symmetry can only be written on mesh nodes'
+            : `Member "${memberName}" is not a mesh and cannot animate symmetry`,
+          statement.methodSpan,
+        )
+        continue
+      }
+      writes.push({
+        member,
+        entries: [
+          {
+            track: { kind: 'symmetry' },
+            property: 'symmetry',
+            value,
+            keySpan: statement.entries[0]?.keySpan ?? statement.methodSpan,
+            valueSpan: statement.methodSpan,
+          },
+        ],
+      })
+    }
+    return writes
+  }
+
+  #evaluateSymmetryRecord(statement: StatementNode): SymmetryKeyframeValue | null {
+    let axis: 'x' | 'y' | null = null
+    let factor: number | null = null
+    let failed = false
+    for (const entry of statement.entries) {
       if (containsDurationUnit(entry.value)) {
         this.#error(
           `Expected ${entry.key} without a duration suffix, found "${this.#source.slice(entry.value.span.start, entry.value.span.end)}"`,
           entry.value.span,
         )
+        failed = true
         continue
       }
-      const value = this.#evaluateNumber(entry.value, `a value for ${entry.key}`)
-      if (value === null) continue
-      const validated: ValidatedEntry = {
-        property: entry.key,
-        value,
-        keySpan: entry.keySpan,
-        valueSpan: entry.value.span,
+      if (entry.key === 'axis') {
+        const value = this.#evaluateString(entry.value, 'the symmetry axis ("x" or "y")')
+        if (value === null) {
+          failed = true
+          continue
+        }
+        if (value !== 'x' && value !== 'y') {
+          this.#error(`Symmetry axis must be "x" or "y", found "${value}"`, entry.value.span)
+          failed = true
+          continue
+        }
+        axis = value
+      } else if (entry.key === 'factor') {
+        const value = this.#evaluateNumber(entry.value, 'the symmetry factor')
+        if (value === null) {
+          failed = true
+          continue
+        }
+        factor = value
+      } else {
+        this.#error(
+          `Unknown symmetry parameter "${entry.key}". Available parameters: axis, factor.`,
+          entry.keySpan,
+        )
+        failed = true
       }
-      if (!this.#validateValue(validated)) continue
-      entries.push(validated)
     }
-    if (statement.entries.length === 0) {
-      this.#error(`${statement.method} needs at least one property`, statement.methodSpan)
+    if (failed) return null
+    if (axis === null || factor === null) {
+      this.#error(
+        'symmetry needs { axis, factor }, like symmetry({ axis: "x", factor: 1 }, 0.5)',
+        statement.methodSpan,
+      )
+      return null
     }
-    return entries
+    return this.#requireEngineValue(
+      () => requireSymmetryKeyframeValue({ axis, factor }),
+      'symmetry',
+      null,
+      statement.methodSpan,
+    )
   }
 
-  #validateValue(entry: ValidatedEntry): boolean {
-    if (!Number.isFinite(entry.value)) {
-      this.#error(`${entry.property} must be a finite number`, entry.valueSpan)
-      return false
+  /** `morph(coefficient, ...)` against each mesh's Morph Binding shape pair. */
+  #validateMorphEntries(statement: StatementNode, binding: BindingInfo): MemberWrite[] {
+    const coefficientExpression = statement.args[0]
+    if (statement.args.length !== 1 || coefficientExpression === undefined) {
+      this.#error('morph takes one coefficient, like morph(1, 0.5)', statement.methodSpan)
+      return []
     }
-    if (entry.property === 'opacity' && (entry.value < 0 || entry.value > 1)) {
-      this.#error('opacity must be between 0 and 1', entry.valueSpan)
-      return false
+    if (containsDurationUnit(coefficientExpression)) {
+      this.#error(
+        `Expected the morph coefficient without a duration suffix, found "${this.#source.slice(coefficientExpression.span.start, coefficientExpression.span.end)}"`,
+        coefficientExpression.span,
+      )
+      return []
     }
-    if (entry.property === 'zIndex' && !Number.isInteger(entry.value)) {
-      this.#error('zIndex must be a whole number', entry.valueSpan)
-      return false
-    }
-    if (isScriptTableProperty(entry.property) && entry.value < 0) {
-      this.#error(`${entry.property} must be a non-negative number`, entry.valueSpan)
-      return false
-    }
-    return true
-  }
-
-  /**
-   * Keep the entries each binding member can take: a group broadcast validates
-   * every member independently and names the offending member in capability
-   * errors, while a node binding keeps the unqualified wording.
-   */
-  #validateMemberWrites(binding: BindingInfo, entries: readonly ValidatedEntry[]): MemberWrite[] {
+    const coefficient = this.#evaluateNumber(coefficientExpression, 'the morph coefficient')
+    if (coefficient === null) return []
+    const coefficientValue = this.#requireEngineValue(
+      () =>
+        requireMorphKeyframeValue({
+          fromShapeId: null,
+          toShapeId: null,
+          coefficient,
+        }).coefficient,
+      'morphCoefficient',
+      null,
+      coefficientExpression.span,
+    )
+    if (coefficientValue === null) return []
     const writes: MemberWrite[] = []
     for (const member of binding.members) {
-      const node = this.#context.nodes.find((candidate) => candidate.id === member.nodeId)
+      const node = this.#nodeOf(member)
       if (!node) continue
-      const memberEntries = entries.filter((entry) =>
-        this.#validateCapability(entry, node, binding.kind === 'group' ? member.nodeName : null),
-      )
-      if (memberEntries.length > 0) writes.push({ member, entries: memberEntries })
+      const memberName = binding.kind === 'group' ? member.nodeName : null
+      if (node.isMesh !== true) {
+        this.#error(
+          memberName === null
+            ? 'morph can only be written on mesh nodes'
+            : `Member "${memberName}" is not a mesh and cannot animate morphCoefficient`,
+          statement.methodSpan,
+        )
+        continue
+      }
+      const pair = node.morphBinding
+      if (!hasMorphShapePair(pair)) {
+        this.#error(
+          memberName === null
+            ? 'morph needs a Morph Binding with both shapes selected'
+            : `Member "${memberName}" has no Morph Binding with both shapes selected`,
+          statement.methodSpan,
+        )
+        continue
+      }
+      writes.push({
+        member,
+        entries: [
+          {
+            track: { kind: 'morph' },
+            property: 'morphCoefficient',
+            value: {
+              fromShapeId: pair.fromShapeId,
+              toShapeId: pair.toShapeId,
+              coefficient: coefficientValue,
+            },
+            keySpan: coefficientExpression.span,
+            valueSpan: coefficientExpression.span,
+          },
+        ],
+      })
     }
     return writes
   }
 
-  #validateCapability(
-    entry: ValidatedEntry,
-    node: AnimationScriptNodeInfo,
-    memberName: string | null,
-  ): boolean {
-    if (entry.property === 'rotation' && node.isCamera) {
-      this.#error(
-        memberName === null
-          ? 'Camera nodes cannot animate rotation'
-          : `Member "${memberName}" is a Camera node and cannot animate rotation`,
-        entry.keySpan,
-      )
-      return false
-    }
-    if (entry.property === 'opacity' && node.isBone) {
-      this.#error(
-        memberName === null
-          ? 'Bone nodes cannot animate opacity'
-          : `Member "${memberName}" is a Bone node and cannot animate opacity`,
-        entry.keySpan,
-      )
-      return false
-    }
+  /** `dataLabel("label", value, ...)` on a chart's named data labels. */
+  #validateDataLabelEntries(statement: StatementNode, binding: BindingInfo): MemberWrite[] {
+    const labelExpression = statement.args[0]
+    const valueExpression = statement.args[1]
     if (
-      isScriptTableProperty(entry.property) &&
-      node.isTable !== true &&
-      node.isTableCell !== true
+      statement.args.length !== 2 ||
+      labelExpression === undefined ||
+      valueExpression === undefined
     ) {
       this.#error(
-        memberName === null
-          ? `Only table and table cell nodes can animate ${entry.property}`
-          : `Member "${memberName}" is not a table or table cell and cannot animate ${entry.property}`,
-        entry.keySpan,
+        'dataLabel takes a label and a value, like dataLabel("value", 42, 0.5)',
+        statement.methodSpan,
       )
-      return false
+      return []
     }
-    return true
+    if (containsDurationUnit(valueExpression)) {
+      this.#error(
+        `Expected the data label value without a duration suffix, found "${this.#source.slice(valueExpression.span.start, valueExpression.span.end)}"`,
+        valueExpression.span,
+      )
+      return []
+    }
+    const label = this.#evaluateString(labelExpression, 'a data label name in quotes')
+    if (label === null) return []
+    const value = this.#evaluateNumber(valueExpression, `a value for data label "${label}"`)
+    if (value === null) return []
+    const writes: MemberWrite[] = []
+    for (const member of binding.members) {
+      const node = this.#nodeOf(member)
+      if (!node) continue
+      const memberName = binding.kind === 'group' ? member.nodeName : null
+      const labels = node.dataLabels ?? []
+      if (!labels.includes(label)) {
+        const suggestion = nearMissSuggestion(label, labels)
+        this.#error(
+          memberName === null
+            ? `No data label "${label}" on "${member.nodeName}".${suggestion}`
+            : `Member "${member.nodeName}" has no data label "${label}".${suggestion}`,
+          labelExpression.span,
+        )
+        continue
+      }
+      writes.push({
+        member,
+        entries: [
+          {
+            track: { kind: 'dataLabel', label },
+            property: `dataLabel:${label}`,
+            value,
+            keySpan: labelExpression.span,
+            valueSpan: valueExpression.span,
+          },
+        ],
+      })
+    }
+    return writes
   }
 
-  #resolveEase(statement: StatementNode): ResolvedScriptEase | null {
+  #resolveEase(statement: StatementNode): { name: string; ease: ResolvedScriptEase } | null {
     const name = statement.ease ?? this.#defaults.ease ?? DEFAULT_SCRIPT_EASE
     const ease = resolveScriptEase(name)
-    if (ease) return ease
+    if (ease) return { name, ease }
     const suggestion = nearMissSuggestion(name, SCRIPT_EASE_NAMES)
     this.#error(`Unknown ease "${name}".${suggestion}`, statement.easeSpan ?? statement.methodSpan)
     return null
+  }
+
+  #nodeOf(member: ScriptMember): AnimationScriptNodeInfo | undefined {
+    return this.#context.nodes.find((candidate) => candidate.id === member.nodeId)
+  }
+
+  /** `"opacity"` for a node binding, `"opacity" on "Cell"` inside a broadcast. */
+  #valuePhrase(property: string, memberName: string | null): string {
+    return memberName === null
+      ? `a value for ${property}`
+      : `a value for ${property} on "${memberName}"`
+  }
+
+  #requireEngineValue<T extends ScriptTrackValue>(
+    validate: () => T,
+    property: string,
+    memberName: string | null,
+    span: SourceSpan,
+  ): T | null {
+    try {
+      return validate()
+    } catch (error) {
+      const suffix = memberName === null ? '' : ` on "${memberName}"`
+      this.#error(
+        `Invalid value for "${property}"${suffix}: ${error instanceof Error ? error.message : String(error)}`,
+        span,
+      )
+      return null
+    }
+  }
+
+  #trackLabel(track: ScriptTrack): string {
+    switch (track.kind) {
+      case 'node':
+        return track.property
+      case 'parameter':
+        return track.parameter
+      case 'circle':
+        return track.property
+      case 'table':
+        return track.property
+      case 'morph':
+        return 'morphCoefficient'
+      case 'symmetry':
+        return 'symmetry'
+      case 'shadow':
+        return `shadow.${track.property}`
+      case 'dataLabel':
+        return `dataLabel:${track.label}`
+    }
   }
 
   /** A tween's duration: its own argument first, the header defaults second. */
@@ -1026,12 +1811,12 @@ class Compiler {
 
   #plan(
     member: ScriptMember,
-    property: ScriptProperty,
+    track: ScriptTrack,
     time: number,
     ease: ResolvedScriptEase,
-    write: { readonly value: number } | null,
+    write: { readonly value: ScriptTrackValue } | null,
   ): void {
-    const slotKey = slotKeyFor(member.nodeId, property, time)
+    const slotKey = slotKeyFor(member.nodeId, track, time)
     const planned = this.#planned.get(slotKey)
     if (planned) {
       if (write) planned.value = write.value
@@ -1040,30 +1825,25 @@ class Compiler {
       planned.tangentOut = ease.tangentOut
       return
     }
-    const value = write?.value ?? this.#context.evaluateProperty(member.nodeId, property, time)
-    this.#addPlanned({
-      nodeId: member.nodeId,
-      nodeName: member.nodeName,
-      property,
-      time,
-      value,
-      ease,
-    })
+    const value = write?.value ?? this.#context.evaluateTrackValue(member.nodeId, track, time)
+    this.#addPlanned({ nodeId: member.nodeId, nodeName: member.nodeName, track, time, value, ease })
   }
 
   #addPlanned(input: {
     nodeId: string
     nodeName: string
-    property: ScriptProperty
+    track: ScriptTrack
     time: number
-    value: number
+    value: ScriptTrackValue
     ease: ResolvedScriptEase
   }): void {
-    const { nodeId, nodeName, property, time, value, ease } = input
-    this.#planned.set(slotKeyFor(nodeId, property, time), {
-      target: this.#targetFor(nodeId, property),
+    const { nodeId, nodeName, track, time, value, ease } = input
+    const property = this.#trackLabel(track)
+    this.#planned.set(slotKeyFor(nodeId, track, time), {
+      target: this.#targetFor(nodeId, track),
       nodeId,
       nodeName,
+      track,
       property,
       time,
       order: this.#order++,
@@ -1072,15 +1852,19 @@ class Compiler {
       tangentIn: ease.tangentIn,
       tangentOut: ease.tangentOut,
     })
-    if (!this.#trackOrder.some((track) => track.nodeId === nodeId && track.property === property)) {
-      this.#trackOrder.push({ nodeId, nodeName, property })
+    if (
+      !this.#trackOrder.some(
+        (entry) => entry.nodeId === nodeId && trackKey(entry.track) === trackKey(track),
+      )
+    ) {
+      this.#trackOrder.push({ nodeId, nodeName, property, track })
     }
   }
 
   #planBoundaryPins(): void {
-    for (const track of this.#trackOrder) {
-      if (this.#planned.has(slotKeyFor(track.nodeId, track.property, this.#from))) continue
-      this.#plan(track, track.property, this.#from, HOLD_EASE, null)
+    for (const entry of this.#trackOrder) {
+      if (this.#planned.has(slotKeyFor(entry.nodeId, entry.track, this.#from))) continue
+      this.#plan(entry, entry.track, this.#from, HOLD_EASE, null)
     }
   }
 
@@ -1095,12 +1879,12 @@ class Compiler {
   }
 
   /**
-   * The cursor a tween would have reached had it lowered cleanly. Recovery
-   * paths use it so later statements keep sensible times without re-reporting
-   * the failure; `set` never advances.
+   * The cursor a timed statement would have reached had it lowered cleanly.
+   * Recovery paths use it so later statements keep sensible times without
+   * re-reporting the failure; `set` and `setText` never advance.
    */
   #advanceCursorByResolvedDuration(statement: StatementNode, cursor: number): number {
-    if (statement.method !== 'tween') return cursor
+    if (!isTimedStatementMethod(statement.method)) return cursor
     const duration = this.#resolveDuration(statement)
     if (duration.kind !== 'resolved' || !isValidDuration(duration.seconds)) {
       return cursor
@@ -1118,7 +1902,10 @@ class Compiler {
     if (this.#bindings.has(statement.name)) {
       this.#error(`Name "${statement.name}" is already used by a binding`, statement.nameSpan)
       declared = false
-    } else if (SCRIPT_BUILTIN_NAMES.includes(statement.name)) {
+    } else if (
+      SCRIPT_BUILTIN_NAMES.includes(statement.name) ||
+      (SCRIPT_RESERVED_NAMES as readonly string[]).includes(statement.name)
+    ) {
       this.#error(`Name "${statement.name}" is reserved by a built-in`, statement.nameSpan)
       declared = false
     } else if (this.#scopes[this.#scopes.length - 1].has(statement.name)) {
@@ -1569,62 +2356,81 @@ class Compiler {
     return names
   }
 
-  #targetFor(nodeId: string, property: ScriptProperty): KeyframeTarget {
-    if (property === 'zIndex') {
-      return { kind: 'zIndex', nodeId }
+  #targetFor(nodeId: string, track: ScriptTrack): KeyframeTarget {
+    switch (track.kind) {
+      case 'node':
+        if (track.property === 'zIndex') return { kind: 'zIndex', nodeId }
+        return { kind: 'node', nodeId, property: enginePropertyForScriptProperty(track.property) }
+      case 'parameter':
+        return { kind: 'node', nodeId, parameter: track.parameter }
+      case 'circle':
+        return { kind: 'circle', nodeId, property: track.property }
+      case 'table':
+        return { kind: 'table', nodeId, property: track.property }
+      case 'morph':
+        return { kind: 'morph', nodeId }
+      case 'symmetry':
+        return { kind: 'symmetry', nodeId }
+      case 'shadow':
+        return { kind: 'shadow', nodeId, property: track.property }
+      case 'dataLabel':
+        return { kind: 'dataLabel', nodeId, label: track.label }
     }
-    if (isScriptTableProperty(property)) {
-      return { kind: 'table', nodeId, property }
-    }
-    return { kind: 'node', nodeId, property: enginePropertyForScriptProperty(property) }
   }
 
   #materializeCommands(): Command<unknown>[] {
-    const commands: Command<unknown>[] = []
-    const entries = [...this.#planned.values()].sort((a, b) => a.order - b.order)
-    for (const entry of entries) {
-      commands.push(
-        new AddKeyframeCommand({
-          target: entry.target,
-          time: entry.time,
-          value: entry.value,
-          interpolation: entry.interpolation,
-          ...(entry.interpolation === 'bezier'
-            ? { tangentIn: entry.tangentIn, tangentOut: entry.tangentOut }
-            : {}),
-        }),
-      )
-    }
-    return commands
+    const planned = [...this.#planned.values()].map((entry) => ({
+      order: entry.order,
+      command: new AddKeyframeCommand({
+        target: entry.target,
+        time: entry.time,
+        value: entry.value,
+        interpolation: entry.interpolation,
+        ...(entry.interpolation === 'bezier'
+          ? { tangentIn: entry.tangentIn, tangentOut: entry.tangentOut }
+          : {}),
+      }) as Command<unknown>,
+    }))
+    // Static text changes share the Transaction and the source order but are
+    // not keyframes, so they stay out of the footprint and the keyframe count.
+    return [...planned, ...this.#textCommands]
+      .sort((a, b) => a.order - b.order)
+      .map((entry) => entry.command)
   }
 
   #error(message: string, span: SourceSpan): void {
-    this.#diagnostics.push(this.#diagnostic('error', message, span))
+    this.#pushDiagnostic('error', message, span)
   }
 
   #warning(message: string, span: SourceSpan): void {
-    this.#diagnostics.push(this.#diagnostic('warning', message, span))
+    this.#pushDiagnostic('warning', message, span)
   }
 
-  #diagnostic(
-    severity: 'error' | 'warning',
-    message: string,
-    span: SourceSpan,
-  ): AnimationScriptDiagnostic {
+  /** One diagnostic per message and source span, so broadcasts stay readable. */
+  #pushDiagnostic(severity: 'error' | 'warning', message: string, span: SourceSpan): void {
     const position = lineColumnAt(this.#source, span.start)
-    return {
-      severity,
-      message,
-      line: position.line,
-      column: position.column,
-      length: Math.max(1, span.end - span.start),
+    const duplicate = this.#diagnostics.some(
+      (diagnostic) =>
+        diagnostic.severity === severity &&
+        diagnostic.message === message &&
+        diagnostic.line === position.line &&
+        diagnostic.column === position.column,
+    )
+    if (!duplicate) {
+      this.#diagnostics.push({
+        severity,
+        message,
+        line: position.line,
+        column: position.column,
+        length: Math.max(1, span.end - span.start),
+      })
     }
   }
 }
 
 /** Map an author-facing property to the engine property track it animates. */
 export function enginePropertyForScriptProperty(
-  property: Exclude<ScriptProperty, 'zIndex' | ScriptTableProperty>,
+  property: Exclude<ScriptNodeProperty, 'zIndex'>,
 ): AnimationProperty {
   if (property === 'x') return 'positionX'
   if (property === 'y') return 'positionY'
@@ -1633,6 +2439,93 @@ export function enginePropertyForScriptProperty(
 
 function isScriptProperty(value: string): value is ScriptProperty {
   return (SCRIPT_PROPERTY_NAMES as readonly string[]).includes(value)
+}
+
+function hasMorphShapePair(
+  binding:
+    { readonly fromShapeId: string | null; readonly toShapeId: string | null } | null | undefined,
+): binding is { readonly fromShapeId: string; readonly toShapeId: string } {
+  return (
+    binding !== null &&
+    binding !== undefined &&
+    binding.fromShapeId !== null &&
+    binding.toShapeId !== null
+  )
+}
+
+function isTimedStatementMethod(method: string): boolean {
+  return (
+    method === 'tween' ||
+    method === 'shadow' ||
+    method === 'symmetry' ||
+    method === 'morph' ||
+    method === 'dataLabel'
+  )
+}
+
+/**
+ * The fixed vocabulary a property key names, before any node-kind capability
+ * check. A key outside it is either a material parameter or unknown; `visible`
+ * and `segments` are deliberately excluded from the write surface.
+ */
+function reservedTrackForKey(
+  key: string,
+): { readonly track: ScriptTrack } | { readonly error: string } | null {
+  if (key === 'visible') {
+    return {
+      error:
+        'The visible lane is not part of the Animation Script surface — lower show/hide to opacity keyframes instead.',
+    }
+  }
+  if (key === 'segments') {
+    return {
+      error:
+        'circle segments are not part of the Animation Script surface — animate radius, startAngle and endAngle instead.',
+    }
+  }
+  if ((SCRIPT_NODE_PROPERTY_NAMES as readonly string[]).includes(key)) {
+    return { track: { kind: 'node', property: key as ScriptNodeProperty } }
+  }
+  if ((SCRIPT_CIRCLE_PROPERTY_NAMES as readonly string[]).includes(key)) {
+    return { track: { kind: 'circle', property: key as ScriptCircleProperty } }
+  }
+  if ((SCRIPT_TABLE_PROPERTY_NAMES as readonly string[]).includes(key)) {
+    return { track: { kind: 'table', property: key as ScriptTableProperty } }
+  }
+  if (key === 'morphCoefficient') {
+    return { track: { kind: 'morph' } }
+  }
+  return null
+}
+
+/** Only the reserved vocabulary ever collides with a material parameter. */
+function describeReservedTrack(track: ScriptTrack): string {
+  if (track.kind === 'circle') return 'the circle property'
+  if (track.kind === 'table') return 'the table style'
+  if (track.kind === 'morph') return 'morphCoefficient'
+  return 'the node property'
+}
+
+/** The key a track occupies in planning and caching; never a display name. */
+function trackKey(track: ScriptTrack): string {
+  switch (track.kind) {
+    case 'node':
+      return `node:${track.property}`
+    case 'parameter':
+      return `parameter:${track.parameter}:${track.kindOf}`
+    case 'circle':
+      return `circle:${track.property}`
+    case 'table':
+      return `table:${track.property}`
+    case 'morph':
+      return 'morph'
+    case 'symmetry':
+      return 'symmetry'
+    case 'shadow':
+      return `shadow:${track.property}`
+    case 'dataLabel':
+      return `dataLabel:${track.label}`
+  }
 }
 
 function isReadableProperty(value: string): value is ScriptReadableProperty {
@@ -1689,8 +2582,8 @@ function isValidDuration(seconds: number): boolean {
   return Number.isFinite(seconds) && seconds >= 0
 }
 
-function slotKeyFor(nodeId: string, property: ScriptProperty, time: number): string {
-  return `${nodeId}|${property}|${roundTime(time).toFixed(6)}`
+function slotKeyFor(nodeId: string, track: ScriptTrack, time: number): string {
+  return `${nodeId}|${trackKey(track)}|${roundTime(time).toFixed(6)}`
 }
 
 function roundTime(time: number): number {
