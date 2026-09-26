@@ -4,6 +4,8 @@
  * keeps going so a Check can surface more than the first mistake.
  */
 
+import { SCRIPT_EASE_NAMES } from './animationScriptEase'
+
 export interface SourceSpan {
   readonly start: number
   readonly end: number
@@ -18,8 +20,7 @@ export interface HeaderNode {
   readonly kind: 'header'
   readonly title: string
   readonly titleSpan: SourceSpan
-  readonly from: number
-  readonly fromSpan: SourceSpan
+  readonly from: ScriptExpression
   readonly span: SourceSpan
 }
 
@@ -30,8 +31,7 @@ export interface HeaderNode {
  */
 export interface DefaultsNode {
   readonly kind: 'defaults'
-  readonly duration?: number
-  readonly durationSpan?: SourceSpan
+  readonly duration?: ScriptExpression
   readonly ease?: string
   readonly easeSpan?: SourceSpan
   readonly span: SourceSpan
@@ -48,11 +48,78 @@ export interface BindNode {
   readonly span: SourceSpan
 }
 
+/**
+ * A compile-time value expression. Expressions are pure: number literals
+ * (bare seconds or `s`/`ms` suffixed), strings (rejected downstream), names of
+ * `let` variables, list literals, the math built-ins, and `+ − * / %` with
+ * parentheses and unary minus. Comparisons, conditionals, string operations,
+ * mutation, the wall clock and randomness are not part of the language and are
+ * reported by the parser with vocabulary-specific diagnostics.
+ */
+export interface NumberLiteralExpression {
+  readonly kind: 'number'
+  /** The literal's value in seconds; `ms` literals are already divided. */
+  readonly value: number
+  readonly unit?: 's' | 'ms'
+  readonly span: SourceSpan
+}
+
+export interface StringLiteralExpression {
+  readonly kind: 'string'
+  readonly value: string
+  readonly span: SourceSpan
+}
+
+export interface IdentifierExpression {
+  readonly kind: 'identifier'
+  readonly name: string
+  readonly span: SourceSpan
+}
+
+export interface CallExpression {
+  readonly kind: 'call'
+  readonly callee: string
+  readonly calleeSpan: SourceSpan
+  readonly args: readonly ScriptExpression[]
+  readonly span: SourceSpan
+}
+
+export interface ListLiteralExpression {
+  readonly kind: 'list'
+  readonly elements: readonly ScriptExpression[]
+  readonly span: SourceSpan
+}
+
+export interface UnaryExpression {
+  readonly kind: 'unary'
+  readonly operator: '-' | '+'
+  readonly operatorSpan: SourceSpan
+  readonly operand: ScriptExpression
+  readonly span: SourceSpan
+}
+
+export interface BinaryExpression {
+  readonly kind: 'binary'
+  readonly operator: '+' | '-' | '*' | '/' | '%'
+  readonly operatorSpan: SourceSpan
+  readonly left: ScriptExpression
+  readonly right: ScriptExpression
+  readonly span: SourceSpan
+}
+
+export type ScriptExpression =
+  | NumberLiteralExpression
+  | StringLiteralExpression
+  | IdentifierExpression
+  | CallExpression
+  | ListLiteralExpression
+  | UnaryExpression
+  | BinaryExpression
+
 export interface PropertyEntry {
   readonly key: string
   readonly keySpan: SourceSpan
-  readonly value: number
-  readonly valueSpan: SourceSpan
+  readonly value: ScriptExpression
 }
 
 export interface StatementNode {
@@ -62,18 +129,25 @@ export interface StatementNode {
   readonly method: string
   readonly methodSpan: SourceSpan
   readonly entries: readonly PropertyEntry[]
-  readonly duration?: number
-  readonly durationSpan?: SourceSpan
+  readonly duration?: ScriptExpression
   readonly ease?: string
   readonly easeSpan?: SourceSpan
+  readonly span: SourceSpan
+}
+
+/** `let name = expression` declares an immutable, block-scoped compile-time value. */
+export interface LetNode {
+  readonly kind: 'let'
+  readonly name: string
+  readonly nameSpan: SourceSpan
+  readonly value: ScriptExpression
   readonly span: SourceSpan
 }
 
 /** `wait(duration)` advances the cursor by `d` and emits nothing. */
 export interface WaitNode {
   readonly kind: 'wait'
-  readonly duration: number
-  readonly durationSpan: SourceSpan
+  readonly duration: ScriptExpression
   readonly span: SourceSpan
 }
 
@@ -91,8 +165,7 @@ export interface MarkNode {
  */
 export interface AtNode {
   readonly kind: 'at'
-  readonly time?: number
-  readonly timeSpan?: SourceSpan
+  readonly time?: ScriptExpression
   readonly marker?: string
   readonly markerSpan?: SourceSpan
   readonly statement: ScriptStatementNode
@@ -110,7 +183,7 @@ export interface ParallelNode {
 }
 
 export type ScriptStatementNode =
-  BindNode | StatementNode | WaitNode | MarkNode | AtNode | ParallelNode
+  BindNode | LetNode | StatementNode | WaitNode | MarkNode | AtNode | ParallelNode
 
 export interface ScriptProgram {
   readonly header: HeaderNode | null
@@ -130,12 +203,43 @@ interface Token {
   readonly span: SourceSpan
 }
 
-const PUNCTUATION = new Set(['{', '}', '(', ')', ',', '.', '=', ':'])
+const PUNCTUATION = new Set([
+  '{',
+  '}',
+  '(',
+  ')',
+  ',',
+  '.',
+  '=',
+  ':',
+  '+',
+  '-',
+  '*',
+  '/',
+  '%',
+  '[',
+  ']',
+])
+
+/**
+ * Tokens the tokenizer recognizes only so the parser can reject them with
+ * language-vocabulary diagnostics instead of "unexpected character".
+ */
+const COMPARISON_OPERATORS = new Set(['<', '>', '<=', '>=', '==', '!='])
+const LOGICAL_OPERATORS = new Set(['&&', '||', '!'])
+
+/** Statement keywords for constructs the language deliberately does not have. */
+const FORBIDDEN_KEYWORD_MESSAGES = new Map<string, string>([
+  ['if', 'Conditionals are not part of the Animation Script language.'],
+  ['else', 'Conditionals are not part of the Animation Script language.'],
+  ['while', 'Conditionals are not part of the Animation Script language.'],
+  ['return', 'Value-returning functions are not part of the Animation Script language.'],
+])
 
 /**
  * Identifiers that begin an operator statement. `wait(...)` is the operator
  * while `wait.tween(...)` is an alias named `wait`, which is why the `.` lookahead
- * keeps deciding; `bind` is handled separately because its form differs.
+ * keeps deciding; `bind` and `let` are handled separately because their forms differ.
  */
 const OPERATOR_KEYWORDS = new Set(['wait', 'mark', 'at', 'parallel'])
 
@@ -181,7 +285,7 @@ class Parser {
     const scriptToken = this.#advance()
     const title = this.#parseString('a script title in quotes')
     const fromToken = this.#expectIdentifier('the word "from"')
-    const from = this.#parseSeconds('a start time in seconds')
+    const from = this.#parseExpression('a start time in seconds')
     if (title === null || fromToken === null || from === null) {
       this.#report('Animation Script header is incomplete', scriptToken.span)
       return null
@@ -190,8 +294,7 @@ class Parser {
       kind: 'header',
       title: title.value as string,
       titleSpan: title.span,
-      from: from.seconds,
-      fromSpan: from.span,
+      from,
       span: { start: scriptToken.span.start, end: this.#previousEnd() },
     }
   }
@@ -199,6 +302,9 @@ class Parser {
   #parseStatement(): ScriptStatementNode | null {
     if (this.#isIdentifier('bind')) {
       return this.#parseBind()
+    }
+    if (this.#isIdentifier('let')) {
+      return this.#parseLet()
     }
     const operator = this.#operatorKeyword()
     if (operator === 'wait') return this.#parseWait()
@@ -210,6 +316,18 @@ class Parser {
       return null
     }
     if (this.#peek().kind === 'identifier') {
+      const forbidden = FORBIDDEN_KEYWORD_MESSAGES.get(this.#peek().text)
+      if (forbidden !== undefined) {
+        this.#report(forbidden, this.#peek().span)
+        return null
+      }
+      if (this.#nextIsPunctuation('=')) {
+        this.#report(
+          `Cannot reassign "${this.#peek().text}" — a value declared with let is immutable. Declare a new let instead.`,
+          this.#peek().span,
+        )
+        return null
+      }
       return this.#parseCallStatement()
     }
     const token = this.#peek()
@@ -223,8 +341,7 @@ class Parser {
     if (!this.#expectPunctuation('{')) {
       return null
     }
-    let duration: number | undefined
-    let durationSpan: SourceSpan | undefined
+    let duration: ScriptExpression | undefined
     let ease: string | undefined
     let easeSpan: SourceSpan | undefined
     const seen = new Set<string>()
@@ -237,11 +354,7 @@ class Parser {
       }
       seen.add(key.text)
       if (key.text === 'duration') {
-        const value = this.#parseSeconds('a duration in seconds')
-        if (value !== null) {
-          duration = value.seconds
-          durationSpan = value.span
-        }
+        duration = this.#parseExpression('a duration in seconds') ?? undefined
       } else if (key.text === 'ease') {
         const token = this.#expectIdentifier('an ease name')
         if (token !== null) {
@@ -271,7 +384,6 @@ class Parser {
     return {
       kind: 'defaults',
       duration,
-      durationSpan,
       ease,
       easeSpan,
       span: { start, end: this.#previousEnd() },
@@ -282,13 +394,28 @@ class Parser {
     const start = this.#peek().span.start
     this.#advance()
     if (!this.#expectPunctuation('(')) return null
-    const duration = this.#parseSeconds('a duration in seconds')
+    const duration = this.#parseExpression('a duration in seconds')
     this.#expectPunctuation(')')
     if (duration === null) return null
     return {
       kind: 'wait',
-      duration: duration.seconds,
-      durationSpan: duration.span,
+      duration,
+      span: { start, end: this.#previousEnd() },
+    }
+  }
+
+  #parseLet(): LetNode | null {
+    const start = this.#peek().span.start
+    this.#advance()
+    const name = this.#expectIdentifier('a variable name')
+    this.#expectPunctuation('=')
+    const value = this.#parseExpression('a value')
+    if (name === null || value === null) return null
+    return {
+      kind: 'let',
+      name: name.text,
+      nameSpan: name.span,
+      value,
       span: { start, end: this.#previousEnd() },
     }
   }
@@ -312,26 +439,15 @@ class Parser {
     const start = this.#peek().span.start
     this.#advance()
     if (!this.#expectPunctuation('(')) return null
-    let time: number | undefined
-    let timeSpan: SourceSpan | undefined
+    let time: ScriptExpression | undefined
     let marker: string | undefined
     let markerSpan: SourceSpan | undefined
-    if (this.#peek().kind === 'number') {
-      const value = this.#parseSeconds('a time or a marker name in quotes')
-      if (value !== null) {
-        time = value.seconds
-        timeSpan = value.span
-      }
-    } else if (this.#peek().kind === 'string') {
+    if (this.#peek().kind === 'string') {
       const token = this.#advance()
       marker = token.value as string
       markerSpan = token.span
     } else {
-      this.#report(
-        `Expected a time or a marker name in quotes, found ${describeToken(this.#peek())}`,
-        this.#peek().span,
-      )
-      return null
+      time = this.#parseExpression('a time or a marker name in quotes') ?? undefined
     }
     this.#expectPunctuation(')')
     if (time === undefined && marker === undefined) return null
@@ -341,10 +457,13 @@ class Parser {
       this.#report('"at" cannot place a binding', statement.aliasSpan)
       return null
     }
+    if (statement.kind === 'let') {
+      this.#report('"at" cannot place a let', statement.nameSpan)
+      return null
+    }
     return {
       kind: 'at',
       time,
-      timeSpan,
       marker,
       markerSpan,
       statement,
@@ -409,20 +528,11 @@ class Parser {
     const method = this.#expectIdentifier('a method name')
     this.#expectPunctuation('(')
     const entries = this.#parseRecord()
-    let duration: number | undefined
-    let durationSpan: SourceSpan | undefined
+    let duration: ScriptExpression | undefined
     let ease: string | undefined
     let easeSpan: SourceSpan | undefined
     while (this.#matchPunctuation(',')) {
-      if (this.#peek().kind === 'number') {
-        const token = this.#advance()
-        if (duration !== undefined) {
-          this.#report('Only one duration is allowed', token.span)
-          continue
-        }
-        duration = secondsOf(token)
-        durationSpan = token.span
-      } else if (this.#peek().kind === 'identifier') {
+      if (this.#isEaseName()) {
         const token = this.#advance()
         if (ease !== undefined) {
           this.#report('Only one ease is allowed', token.span)
@@ -430,6 +540,23 @@ class Parser {
         }
         ease = token.text
         easeSpan = token.span
+      } else if (this.#peek().kind === 'identifier' && duration !== undefined) {
+        // After a duration, an identifier is always an ease name — unknown
+        // eases get the compiler's near-miss diagnostic, not a syntax error.
+        const token = this.#advance()
+        if (ease !== undefined) {
+          this.#report('Only one ease is allowed', token.span)
+          continue
+        }
+        ease = token.text
+        easeSpan = token.span
+      } else if (this.#startsExpression()) {
+        if (duration !== undefined) {
+          this.#report('Only one duration is allowed', this.#peek().span)
+          this.#parseExpression('a duration in seconds')
+          continue
+        }
+        duration = this.#parseExpression('a duration in seconds') ?? undefined
       } else {
         const token = this.#peek()
         this.#report(
@@ -451,7 +578,6 @@ class Parser {
       methodSpan: method.span,
       entries,
       duration,
-      durationSpan,
       ease,
       easeSpan,
       span: { start, end: this.#previousEnd() },
@@ -472,7 +598,7 @@ class Parser {
     while (!this.#atEnd() && !this.#checkPunctuation('}')) {
       const key = this.#expectIdentifier('a property name')
       this.#expectPunctuation(':')
-      const value = this.#parseNumber('a number value')
+      const value = this.#parseExpression('a number value')
       if (key === null || value === null) {
         return null
       }
@@ -480,12 +606,7 @@ class Parser {
         this.#report(`Property "${key.text}" is written twice in one statement`, key.span)
       }
       seen.add(key.text)
-      entries.push({
-        key: key.text,
-        keySpan: key.span,
-        value,
-        valueSpan: this.#previousToken().span,
-      })
+      entries.push({ key: key.text, keySpan: key.span, value })
       if (!this.#matchPunctuation(',')) break
     }
     if (!this.#matchPunctuation('}')) {
@@ -507,27 +628,171 @@ class Parser {
     return this.#advance()
   }
 
-  /** A plain number: duration suffixes belong to durations, not values. */
-  #parseNumber(what: string): number | null {
-    if (this.#peek().kind !== 'number') {
-      this.#report(`Expected ${what}, found ${describeToken(this.#peek())}`, this.#peek().span)
-      return null
+  /**
+   * A full expression with the language's operator surface. Forbidden
+   * comparison and logical operators are reported with vocabulary-specific
+   * diagnostics and their right-hand side is consumed so recovery keeps going.
+   */
+  #parseExpression(what: string): ScriptExpression | null {
+    const left = this.#parseAdditive(what)
+    if (left === null) return null
+    const result = left
+    for (;;) {
+      const token = this.#peek()
+      if (!isForbiddenBinaryOperator(token)) return result
+      this.#report(forbiddenOperatorMessage(token.text), token.span)
+      this.#advance()
+      this.#parseAdditive('a number')
     }
-    const token = this.#advance()
-    if (token.unit !== undefined) {
-      this.#report(`Expected ${what} without a duration suffix, found "${token.text}"`, token.span)
-    }
-    return token.value as number
   }
 
-  /** A number in seconds, honoring the optional `s`/`ms` suffix. */
-  #parseSeconds(what: string): { seconds: number; span: SourceSpan } | null {
-    if (this.#peek().kind !== 'number') {
-      this.#report(`Expected ${what}, found ${describeToken(this.#peek())}`, this.#peek().span)
+  #parseAdditive(what: string): ScriptExpression | null {
+    let left = this.#parseMultiplicative(what)
+    if (left === null) return null
+    for (;;) {
+      const token = this.#peek()
+      if (token.kind !== 'punctuation' || (token.text !== '+' && token.text !== '-')) return left
+      this.#advance()
+      const right = this.#parseMultiplicative('a number')
+      if (right === null) return null
+      left = binaryExpression(token, left, right)
+    }
+  }
+
+  #parseMultiplicative(what: string): ScriptExpression | null {
+    let left = this.#parseUnary(what)
+    if (left === null) return null
+    for (;;) {
+      const token = this.#peek()
+      if (
+        token.kind !== 'punctuation' ||
+        (token.text !== '*' && token.text !== '/' && token.text !== '%')
+      ) {
+        return left
+      }
+      this.#advance()
+      const right = this.#parseUnary('a number')
+      if (right === null) return null
+      left = binaryExpression(token, left, right)
+    }
+  }
+
+  #parseUnary(what: string): ScriptExpression | null {
+    const token = this.#peek()
+    if (token.kind === 'punctuation' && (token.text === '-' || token.text === '+')) {
+      this.#advance()
+      const operand = this.#parseUnary('a number')
+      if (operand === null) return null
+      return {
+        kind: 'unary',
+        operator: token.text,
+        operatorSpan: token.span,
+        operand,
+        span: { start: token.span.start, end: operand.span.end },
+      }
+    }
+    if (token.kind === 'punctuation' && token.text === '!') {
+      this.#report(forbiddenOperatorMessage(token.text), token.span)
+      this.#advance()
+      this.#parseUnary('a number')
       return null
     }
-    const token = this.#advance()
-    return { seconds: secondsOf(token), span: token.span }
+    return this.#parsePrimary(what)
+  }
+
+  #parsePrimary(what: string): ScriptExpression | null {
+    const token = this.#peek()
+    if (token.kind === 'number') {
+      this.#advance()
+      return {
+        kind: 'number',
+        value: secondsOf(token),
+        ...(token.unit !== undefined ? { unit: token.unit } : {}),
+        span: token.span,
+      }
+    }
+    if (token.kind === 'string') {
+      this.#advance()
+      return { kind: 'string', value: token.value as string, span: token.span }
+    }
+    if (token.kind === 'identifier') {
+      this.#advance()
+      if (!this.#matchPunctuation('(')) {
+        return { kind: 'identifier', name: token.text, span: token.span }
+      }
+      const args: ScriptExpression[] = []
+      while (!this.#atEnd() && !this.#checkPunctuation(')')) {
+        const arg = this.#parseExpression('a value')
+        if (arg === null) return null
+        args.push(arg)
+        if (!this.#matchPunctuation(',')) break
+      }
+      if (!this.#matchPunctuation(')')) {
+        this.#report(
+          `Expected ")" to close the call to "${token.text}", found ${describeToken(this.#peek())}`,
+          this.#peek().span,
+        )
+        return null
+      }
+      return {
+        kind: 'call',
+        callee: token.text,
+        calleeSpan: token.span,
+        args,
+        span: { start: token.span.start, end: this.#previousEnd() },
+      }
+    }
+    if (token.kind === 'punctuation' && token.text === '(') {
+      this.#advance()
+      const inner = this.#parseExpression('a value')
+      this.#expectPunctuation(')')
+      return inner
+    }
+    if (token.kind === 'punctuation' && token.text === '[') {
+      this.#advance()
+      const elements: ScriptExpression[] = []
+      while (!this.#atEnd() && !this.#checkPunctuation(']')) {
+        const element = this.#parseExpression('a value')
+        if (element === null) return null
+        elements.push(element)
+        if (!this.#matchPunctuation(',')) break
+      }
+      if (!this.#matchPunctuation(']')) {
+        this.#report(
+          `Expected "]" to close the list, found ${describeToken(this.#peek())}`,
+          this.#peek().span,
+        )
+        return null
+      }
+      return { kind: 'list', elements, span: { start: token.span.start, end: this.#previousEnd() } }
+    }
+    if (token.kind === 'punctuation' && isForbiddenBinaryOperator(token)) {
+      this.#report(forbiddenOperatorMessage(token.text), token.span)
+      this.#advance()
+      this.#parseUnary('a number')
+      return null
+    }
+    this.#report(`Expected ${what}, found ${describeToken(token)}`, token.span)
+    return null
+  }
+
+  /** Whether the current token can begin an expression in an argument slot. */
+  #startsExpression(): boolean {
+    const token = this.#peek()
+    if (token.kind === 'number' || token.kind === 'string' || token.kind === 'identifier') {
+      return true
+    }
+    return (
+      token.kind === 'punctuation' &&
+      (token.text === '(' || token.text === '-' || token.text === '+' || token.text === '[')
+    )
+  }
+
+  #isEaseName(): boolean {
+    const token = this.#peek()
+    return (
+      token.kind === 'identifier' && (SCRIPT_EASE_NAMES as readonly string[]).includes(token.text)
+    )
   }
 
   #nextIsPunctuation(text: string): boolean {
@@ -610,10 +875,41 @@ class Parser {
   #isStatementStart(): boolean {
     const token = this.#peek()
     if (token.kind !== 'identifier') return false
-    if (token.text === 'bind' || this.#operatorKeyword() !== null) return true
+    if (token.text === 'bind' || token.text === 'let' || this.#operatorKeyword() !== null) {
+      return true
+    }
     const next = this.#tokens[this.#index + 1]
-    return next?.kind === 'punctuation' && next.text === '.'
+    return next?.kind === 'punctuation' && (next.text === '.' || next.text === '=')
   }
+}
+
+function binaryExpression(
+  operator: Token,
+  left: ScriptExpression,
+  right: ScriptExpression,
+): BinaryExpression {
+  return {
+    kind: 'binary',
+    operator: operator.text as BinaryExpression['operator'],
+    operatorSpan: operator.span,
+    left,
+    right,
+    span: { start: left.span.start, end: right.span.end },
+  }
+}
+
+function isForbiddenBinaryOperator(token: Token): boolean {
+  return (
+    token.kind === 'punctuation' &&
+    (COMPARISON_OPERATORS.has(token.text) || LOGICAL_OPERATORS.has(token.text))
+  )
+}
+
+function forbiddenOperatorMessage(operator: string): string {
+  if (COMPARISON_OPERATORS.has(operator)) {
+    return 'Comparisons are not part of the Animation Script language — script values are compile-time numbers and lists.'
+  }
+  return 'Logical operators are not part of the Animation Script language.'
 }
 
 function tokenize(source: string, diagnostics: ScriptParseDiagnostic[]): Token[] {
@@ -644,8 +940,7 @@ function tokenize(source: string, diagnostics: ScriptParseDiagnostic[]): Token[]
       })
       continue
     }
-    if (isDigit(char) || (char === '-' && isDigit(source[offset + 1]))) {
-      if (char === '-') offset += 1
+    if (isDigit(char)) {
       while (offset < source.length && isDigit(source[offset])) {
         offset += 1
       }
@@ -709,7 +1004,24 @@ function tokenize(source: string, diagnostics: ScriptParseDiagnostic[]): Token[]
       })
       continue
     }
-    if (PUNCTUATION.has(char)) {
+    const twoCharOperator = source.slice(offset, offset + 2)
+    if (
+      twoCharOperator === '<=' ||
+      twoCharOperator === '>=' ||
+      twoCharOperator === '==' ||
+      twoCharOperator === '!=' ||
+      twoCharOperator === '&&' ||
+      twoCharOperator === '||'
+    ) {
+      offset += 2
+      tokens.push({
+        kind: 'punctuation',
+        text: twoCharOperator,
+        span: { start, end: offset },
+      })
+      continue
+    }
+    if (PUNCTUATION.has(char) || char === '<' || char === '>' || char === '!') {
       offset += 1
       tokens.push({
         kind: 'punctuation',

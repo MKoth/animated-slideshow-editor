@@ -10,9 +10,10 @@ import type {
   AtNode,
   BindNode,
   DefaultsNode,
+  LetNode,
   MarkNode,
   ParallelNode,
-  PropertyEntry,
+  ScriptExpression,
   ScriptProgram,
   ScriptStatementNode,
   SourceSpan,
@@ -22,6 +23,12 @@ import type {
 import { DEFAULT_SCRIPT_EASE, SCRIPT_EASE_NAMES, resolveScriptEase } from './animationScriptEase'
 import type { ResolvedScriptEase } from './animationScriptEase'
 import { nearMissSuggestion } from './animationScriptNearMiss'
+import {
+  SCRIPT_BUILTIN_NAMES,
+  describeScriptValue,
+  evaluateScriptExpression,
+} from './animationScriptExpression'
+import type { ScriptExpressionContext, ScriptValue } from './animationScriptExpression'
 
 /** The property vocabulary a first-cut tween or set may write. */
 export const SCRIPT_PROPERTY_NAMES = [
@@ -130,6 +137,16 @@ interface ResolvedDuration {
   readonly span: SourceSpan
 }
 
+/**
+ * How a statement's duration resolved: from the statement, from the header
+ * defaults, or not at all. `failed` means the expression already reported an
+ * error, so callers must not pile a missing-duration diagnostic on top.
+ */
+type DurationResolution =
+  | ({ readonly kind: 'resolved' } & ResolvedDuration)
+  | { readonly kind: 'missing' }
+  | { readonly kind: 'failed' }
+
 interface ScriptDefaults {
   readonly duration?: ResolvedDuration
   readonly ease?: string
@@ -166,6 +183,11 @@ class Compiler {
   readonly #context: AnimationScriptCompileContext
   readonly #diagnostics: AnimationScriptDiagnostic[] = []
   readonly #bindings = new Map<string, BindingInfo>()
+  /**
+   * `let` values, innermost block last. The top-level scope is always present;
+   * `parallel` bodies (and, later, function and loop bodies) push their own.
+   */
+  readonly #scopes: Map<string, ScriptValue>[] = [new Map()]
   /** Compile-time-only marker labels; never persisted, never a timeline marker. */
   readonly #markers = new Map<string, number>()
   readonly #planned = new Map<string, PlannedKeyframe>()
@@ -232,11 +254,17 @@ class Compiler {
       this.#cursor = 0
       return
     }
-    this.#from = roundTime(header.from)
+    const from = this.#evaluateNumber(header.from, 'a start time in seconds')
+    if (from === null) {
+      this.#from = 0
+      this.#cursor = 0
+      return
+    }
+    this.#from = roundTime(from)
     if (this.#from < 0 || this.#from >= this.#context.slideDuration) {
       this.#error(
         `"from" must be between 0 and the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
-        header.fromSpan,
+        header.from.span,
       )
     }
     this.#cursor = this.#from
@@ -251,9 +279,10 @@ class Compiler {
   #applyDefaults(defaults: DefaultsNode | null): void {
     if (!defaults) return
     let duration: ResolvedDuration | undefined
-    if (defaults.duration !== undefined && defaults.durationSpan !== undefined) {
-      if (this.#validateDuration(defaults.duration, defaults.durationSpan)) {
-        duration = { seconds: defaults.duration, span: defaults.durationSpan }
+    if (defaults.duration !== undefined) {
+      const seconds = this.#evaluateNumber(defaults.duration, 'a duration in seconds')
+      if (seconds !== null && this.#validateDuration(seconds, defaults.duration.span)) {
+        duration = { seconds, span: defaults.duration.span }
       }
     }
     let ease: string | undefined
@@ -271,6 +300,10 @@ class Compiler {
   #declareBinding(statement: BindNode): void {
     if (this.#bindings.has(statement.alias)) {
       this.#error(`Binding "${statement.alias}" is already declared`, statement.aliasSpan)
+      return
+    }
+    if (this.#lookupValue(statement.alias) !== undefined) {
+      this.#error(`Name "${statement.alias}" is already used by a variable`, statement.aliasSpan)
       return
     }
     if (statement.resourceKind === 'node') {
@@ -369,6 +402,9 @@ class Compiler {
       case 'bind':
         this.#declareBinding(statement)
         return cursor
+      case 'let':
+        this.#declareLet(statement)
+        return cursor
       case 'wait':
         return this.#lowerWait(statement, cursor)
       case 'mark':
@@ -383,14 +419,14 @@ class Compiler {
   }
 
   #lowerWait(statement: WaitNode, cursor: number): number {
-    if (!this.#validateDuration(statement.duration, statement.durationSpan)) {
-      return cursor
-    }
-    const endTime = roundTime(cursor + statement.duration)
+    const duration = this.#evaluateNumber(statement.duration, 'a duration in seconds')
+    if (duration === null) return cursor
+    if (!this.#validateDuration(duration, statement.duration.span)) return cursor
+    const endTime = roundTime(cursor + duration)
     if (endTime > this.#context.slideDuration) {
       this.#error(
         `wait ends at ${formatSeconds(endTime)}s, past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
-        statement.durationSpan,
+        statement.duration.span,
       )
     }
     return endTime
@@ -407,17 +443,19 @@ class Compiler {
 
   #lowerAt(statement: AtNode, cursor: number): number {
     let target: number | null = null
-    if (statement.time !== undefined && statement.timeSpan !== undefined) {
-      target = roundTime(statement.time)
+    if (statement.time !== undefined) {
+      const seconds = this.#evaluateNumber(statement.time, 'a time in seconds')
+      if (seconds === null) return cursor
+      target = roundTime(seconds)
       if (target < this.#from) {
         this.#error(
           `"at" cannot be before the segment start (from = ${formatSeconds(this.#from)}s)`,
-          statement.timeSpan,
+          statement.time.span,
         )
       } else if (target > this.#context.slideDuration) {
         this.#error(
           `"at" is past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
-          statement.timeSpan,
+          statement.time.span,
         )
       }
     } else if (statement.marker !== undefined && statement.markerSpan !== undefined) {
@@ -443,10 +481,15 @@ class Compiler {
    * group advances by the latest child end (absolute placements count).
    */
   #lowerParallel(statement: ParallelNode, cursor: number): number {
+    this.#scopes.push(new Map())
     let latest = cursor
-    for (const child of statement.body) {
-      const end = this.#lowerStatement(child, cursor)
-      if (end > latest) latest = end
+    try {
+      for (const child of statement.body) {
+        const end = this.#lowerStatement(child, cursor)
+        if (end > latest) latest = end
+      }
+    } finally {
+      this.#scopes.pop()
     }
     return latest
   }
@@ -483,11 +526,14 @@ class Compiler {
 
   #lowerTween(statement: StatementNode, binding: BindingInfo, cursor: number): number {
     const duration = this.#resolveDuration(statement)
-    if (duration === null) {
+    if (duration.kind === 'missing') {
       this.#error(
         'tween needs a duration — pass one after the property map, like tween({ x: 4 }, 0.4), or set defaults { duration }',
         statement.methodSpan,
       )
+      return cursor
+    }
+    if (duration.kind === 'failed') {
       return cursor
     }
     if (!this.#validateDuration(duration.seconds, duration.span)) {
@@ -525,7 +571,7 @@ class Compiler {
     if (statement.duration !== undefined) {
       this.#error(
         'set does not take a duration — it writes an instant keyframe',
-        statement.durationSpan ?? statement.span,
+        statement.duration.span,
       )
     }
     if (statement.ease !== undefined) {
@@ -565,13 +611,23 @@ class Compiler {
         )
         continue
       }
-      if (!this.#validateValue(entry)) continue
-      entries.push({
+      if (containsDurationUnit(entry.value)) {
+        this.#error(
+          `Expected ${entry.key} without a duration suffix, found "${this.#source.slice(entry.value.span.start, entry.value.span.end)}"`,
+          entry.value.span,
+        )
+        continue
+      }
+      const value = this.#evaluateNumber(entry.value, `a value for ${entry.key}`)
+      if (value === null) continue
+      const validated: ValidatedEntry = {
         property: entry.key,
-        value: entry.value,
+        value,
         keySpan: entry.keySpan,
-        valueSpan: entry.valueSpan,
-      })
+        valueSpan: entry.value.span,
+      }
+      if (!this.#validateValue(validated)) continue
+      entries.push(validated)
     }
     if (statement.entries.length === 0) {
       this.#error(`${statement.method} needs at least one property`, statement.methodSpan)
@@ -579,16 +635,16 @@ class Compiler {
     return entries
   }
 
-  #validateValue(entry: PropertyEntry): boolean {
+  #validateValue(entry: ValidatedEntry): boolean {
     if (!Number.isFinite(entry.value)) {
-      this.#error(`${entry.key} must be a finite number`, entry.valueSpan)
+      this.#error(`${entry.property} must be a finite number`, entry.valueSpan)
       return false
     }
-    if (entry.key === 'opacity' && (entry.value < 0 || entry.value > 1)) {
+    if (entry.property === 'opacity' && (entry.value < 0 || entry.value > 1)) {
       this.#error('opacity must be between 0 and 1', entry.valueSpan)
       return false
     }
-    if (entry.key === 'zIndex' && !Number.isInteger(entry.value)) {
+    if (entry.property === 'zIndex' && !Number.isInteger(entry.value)) {
       this.#error('zIndex must be a whole number', entry.valueSpan)
       return false
     }
@@ -649,11 +705,16 @@ class Compiler {
   }
 
   /** A tween's duration: its own argument first, the header defaults second. */
-  #resolveDuration(statement: StatementNode): ResolvedDuration | null {
-    if (statement.duration !== undefined && statement.durationSpan !== undefined) {
-      return { seconds: statement.duration, span: statement.durationSpan }
+  #resolveDuration(statement: StatementNode): DurationResolution {
+    if (statement.duration !== undefined) {
+      const seconds = this.#evaluateNumber(statement.duration, 'a duration in seconds')
+      if (seconds === null) return { kind: 'failed' }
+      return { kind: 'resolved', seconds, span: statement.duration.span }
     }
-    return this.#defaults.duration ?? null
+    if (this.#defaults.duration !== undefined) {
+      return { kind: 'resolved', ...this.#defaults.duration }
+    }
+    return { kind: 'missing' }
   }
 
   #validateDuration(seconds: number, span: SourceSpan): boolean {
@@ -742,10 +803,99 @@ class Compiler {
   #advanceCursorByResolvedDuration(statement: StatementNode, cursor: number): number {
     if (statement.method !== 'tween') return cursor
     const duration = this.#resolveDuration(statement)
-    if (duration === null || !isValidDuration(duration.seconds)) {
+    if (duration.kind !== 'resolved' || !isValidDuration(duration.seconds)) {
       return cursor
     }
     return roundTime(cursor + duration.seconds)
+  }
+
+  /**
+   * Declare an immutable `let`. The initializer is evaluated even when the name
+   * itself is rejected, so expression errors surface once at their source; a
+   * failed initializer binds `invalid` so later uses stay silent.
+   */
+  #declareLet(statement: LetNode): void {
+    let declared = true
+    if (this.#bindings.has(statement.name)) {
+      this.#error(`Name "${statement.name}" is already used by a binding`, statement.nameSpan)
+      declared = false
+    } else if (SCRIPT_BUILTIN_NAMES.includes(statement.name)) {
+      this.#error(`Name "${statement.name}" is reserved by a built-in`, statement.nameSpan)
+      declared = false
+    } else if (this.#scopes[this.#scopes.length - 1].has(statement.name)) {
+      this.#error(
+        `Variable "${statement.name}" is already declared in this block`,
+        statement.nameSpan,
+      )
+      declared = false
+    }
+    const value = this.#evaluateValue(statement.value)
+    if (declared) {
+      this.#scopes[this.#scopes.length - 1].set(statement.name, value ?? { kind: 'invalid' })
+    }
+  }
+
+  #evaluateValue(expression: ScriptExpression): ScriptValue | null {
+    return evaluateScriptExpression(expression, this.#expressionContext())
+  }
+
+  /**
+   * Evaluate an expression in a number position. `null` means the value failed
+   * or is not a number; the diagnostic is already reported (or deliberately
+   * suppressed for an `invalid` value).
+   */
+  #evaluateNumber(expression: ScriptExpression, what: string): number | null {
+    const value = this.#evaluateValue(expression)
+    if (value === null || value.kind === 'invalid') return null
+    if (value.kind !== 'number') {
+      this.#error(`Expected ${what}, found ${describeScriptValue(value)}`, expression.span)
+      return null
+    }
+    return value.value
+  }
+
+  #expressionContext(): ScriptExpressionContext {
+    return {
+      lookup: (name) => this.#lookupValue(name),
+      explain: (name) => {
+        if (SCRIPT_BUILTIN_NAMES.includes(name)) {
+          return `Built-in "${name}" is a function — call it like ${name}(...)`
+        }
+        const binding = this.#bindings.get(name)
+        if (binding) {
+          return `Binding "${name}" is a ${binding.kind} and cannot be used as a value — declare a number with let first`
+        }
+        return undefined
+      },
+      suggest: (name) => nearMissSuggestion(name, this.#valueNames()),
+      report: (message, span) => this.#error(message, span),
+    }
+  }
+
+  #lookupValue(name: string): ScriptValue | undefined {
+    for (let index = this.#scopes.length - 1; index >= 0; index -= 1) {
+      const value = this.#scopes[index].get(name)
+      if (value !== undefined) return value
+    }
+    return undefined
+  }
+
+  /**
+   * Declared `let` names, innermost block first, for near-miss suggestions.
+   * Ease names join the candidates because a misspelled ease in a positional
+   * argument slot arrives here as an unknown name.
+   */
+  #valueNames(): string[] {
+    const names: string[] = []
+    for (let index = this.#scopes.length - 1; index >= 0; index -= 1) {
+      for (const name of this.#scopes[index].keys()) {
+        if (!names.includes(name)) names.push(name)
+      }
+    }
+    for (const ease of SCRIPT_EASE_NAMES) {
+      if (!names.includes(ease)) names.push(ease)
+    }
+    return names
   }
 
   #targetFor(nodeId: string, property: ScriptProperty): KeyframeTarget {
@@ -809,6 +959,28 @@ export function enginePropertyForScriptProperty(
 
 function isScriptProperty(value: string): value is ScriptProperty {
   return (SCRIPT_PROPERTY_NAMES as readonly string[]).includes(value)
+}
+
+/**
+ * Duration suffixes are a duration-position convenience; a property value that
+ * carries one is rejected wherever it sits in the expression.
+ */
+function containsDurationUnit(expression: ScriptExpression): boolean {
+  switch (expression.kind) {
+    case 'number':
+      return expression.unit !== undefined
+    case 'string':
+    case 'identifier':
+      return false
+    case 'list':
+      return expression.elements.some(containsDurationUnit)
+    case 'unary':
+      return containsDurationUnit(expression.operand)
+    case 'binary':
+      return containsDurationUnit(expression.left) || containsDurationUnit(expression.right)
+    case 'call':
+      return expression.args.some(containsDurationUnit)
+  }
 }
 
 function isValidDuration(seconds: number): boolean {
