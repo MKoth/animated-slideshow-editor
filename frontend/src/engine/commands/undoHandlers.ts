@@ -411,6 +411,25 @@ export function applyUndo(
       )
       return
     }
+    case 'SetScriptLibraryEntry': {
+      const previous = inv.previous as import('../scriptLibrary').ScriptLibraryEntry | null
+      const entryId = inv.entryId as string
+      if (previous === null) {
+        try {
+          engine.deleteScriptFunction(entryId)
+        } catch {
+          void 0
+        }
+      } else {
+        engine.upsertScriptFunction(previous)
+      }
+      return
+    }
+    case 'DeleteScriptLibraryEntry': {
+      const removed = inv.removed as import('../scriptLibrary').ScriptLibraryEntry
+      engine.upsertScriptFunction(removed)
+      return
+    }
     case 'SetFullscreenShader': {
       const slideId = inv.slideId as string
       const prev = inv.previous as import('../fullscreenShader').FullscreenShaderReference | null
@@ -2930,6 +2949,27 @@ export function applyRedo(
         compiledFootprintFromJSON(params.footprint as import('../json').CompiledFootprintJSON),
       )
       return
+    case 'SetScriptLibraryEntry': {
+      const inverse = _inverse as unknown as {
+        next?: import('../scriptLibrary').ScriptLibraryEntry
+      } | null
+      // The version is part of edit history; redo restores the recorded `next`
+      // verbatim so monotonicity never drifts. Older history entries without
+      // `next` cannot be redone safely.
+      if (!inverse?.next) {
+        throw new Error('SetScriptLibraryEntry redo requires the recorded entry version')
+      }
+      engine.upsertScriptFunction(inverse.next)
+      return
+    }
+    case 'DeleteScriptLibraryEntry': {
+      try {
+        engine.deleteScriptFunction(params.id as string)
+      } catch {
+        void 0
+      }
+      return
+    }
     case 'SetFullscreenShader':
       engine.setFullscreenShader(
         params.slideId as string,

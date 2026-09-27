@@ -71,6 +71,7 @@ import {
 } from './lessonSerializer'
 
 import type { EnginePublic } from './engine'
+import { normalizeScriptFunctionName } from './scriptLibrary'
 import { ClipManager } from './clipManager'
 import { ClipCollectionManager } from './clipCollectionManager'
 import { ClipCollection } from './clipCollection'
@@ -379,6 +380,52 @@ export class Engine {
     footprint: CompiledFootprint | null,
   ): CompiledFootprint | null {
     return this.#slides.setAnimationScriptFootprint(slideId, footprint)
+  }
+
+  // --- Animation Script library (project-scoped entries) ---
+
+  get scriptFunctions(): readonly import('./scriptLibrary').ScriptLibraryEntry[] {
+    return this.#projects.current?.scriptFunctions ?? []
+  }
+
+  getScriptFunction(entryId: string): import('./scriptLibrary').ScriptLibraryEntry {
+    const project = this.#projects.current
+    if (!project) throw new Error('No project exists in memory')
+    const entry = project.scriptFunctions.find((candidate) => candidate.id === entryId)
+    if (!entry) throw new Error(`Script function not found: ${entryId}`)
+    return entry
+  }
+
+  upsertScriptFunction(entry: import('./scriptLibrary').ScriptLibraryEntry): void {
+    const project = this.#projects.current
+    if (!project) throw new Error('No project exists in memory')
+    const duplicate = project.scriptFunctions.find(
+      (candidate) =>
+        candidate.id !== entry.id &&
+        normalizeScriptFunctionName(candidate.name) === normalizeScriptFunctionName(entry.name),
+    )
+    if (duplicate) {
+      throw new Error(
+        `A script function named "${entry.name}" already exists (matching "${duplicate.name}")`,
+      )
+    }
+    project.upsertScriptFunction(entry)
+    this.#bus.emit({
+      type: 'ProjectChanged',
+      projectId: project.id,
+    } as unknown as import('./events').EngineEvent)
+  }
+
+  deleteScriptFunction(entryId: string): import('./scriptLibrary').ScriptLibraryEntry {
+    const project = this.#projects.current
+    if (!project) throw new Error('No project exists in memory')
+    const removed = project.removeScriptFunction(entryId)
+    if (!removed) throw new Error(`Script function not found: ${entryId}`)
+    this.#bus.emit({
+      type: 'ProjectChanged',
+      projectId: project.id,
+    } as unknown as import('./events').EngineEvent)
+    return removed
   }
 
   setFullscreenShader(slideId: string, shaderDefinitionId: string | null): void {
@@ -6618,6 +6665,12 @@ export function toReadOnly(engine: Engine): EnginePublic {
     get clipCollections() {
       return engine.clipCollections
     },
+    get scriptFunctions() {
+      return engine.scriptFunctions
+    },
+    getScriptFunction: (entryId) => engine.getScriptFunction(entryId),
+    upsertScriptFunction: (entry) => engine.upsertScriptFunction(entry),
+    deleteScriptFunction: (entryId) => engine.deleteScriptFunction(entryId),
     subscribe: (listener) => engine.subscribe(listener),
     openProject: (project, clips, clipCollections) =>
       engine.openProject(project, clips, clipCollections),

@@ -465,6 +465,33 @@ export function parseAnimationScript(source: string): ScriptProgram {
   return new Parser(source).parse()
 }
 
+export interface ScriptLibraryFunctionParse {
+  readonly def: FunctionDefNode | null
+  readonly diagnostics: readonly ScriptParseDiagnostic[]
+}
+
+/**
+ * Parse a library entry source: exactly one top-level `function name(...) {...}`
+ * definition. Used for signature display and entry validation; the compiler
+ * reuses the same shape when inlining library calls.
+ */
+export function parseScriptLibraryFunction(source: string): ScriptLibraryFunctionParse {
+  return new Parser(source).parseSingleFunction()
+}
+
+export function describeScriptParamType(type: ScriptParamType): string {
+  if (type.kind === 'base') return type.name
+  if (type.kind === 'list') return `list<${describeScriptParamType(type.element)}>`
+  return `{ ${type.fields.map((field) => `${field.name}: ${describeScriptParamType(field.type)}`).join(', ')} }`
+}
+
+export function describeScriptFunctionSignature(def: FunctionDefNode): string {
+  const params = def.params
+    .map((param) => `${param.name}: ${describeScriptParamType(param.paramType)}`)
+    .join(', ')
+  return `${def.name}(${params})`
+}
+
 class Parser {
   readonly #tokens: Token[]
   readonly #diagnostics: ScriptParseDiagnostic[] = []
@@ -489,6 +516,34 @@ class Parser {
       if (this.#index === before) this.#index += 1
     }
     return { header, defaults, statements, diagnostics: this.#diagnostics }
+  }
+
+  parseSingleFunction(): ScriptLibraryFunctionParse {
+    if (this.#atEnd()) {
+      this.#report(
+        'Script function must define one function, like function fill(target: node) { ... }',
+        {
+          start: 0,
+          end: 0,
+        },
+      )
+      return { def: null, diagnostics: this.#diagnostics }
+    }
+    if (!this.#isIdentifier('function')) {
+      this.#report(
+        'Script function must define one function, like function fill(target: node) { ... }',
+        this.#peek().span,
+      )
+      return { def: null, diagnostics: this.#diagnostics }
+    }
+    const def = this.#parseFunctionDef()
+    if (def !== null && !this.#atEnd()) {
+      this.#report(
+        `Expected one function definition, found ${describeToken(this.#peek())}`,
+        this.#peek().span,
+      )
+    }
+    return { def, diagnostics: this.#diagnostics }
   }
 
   #parseHeader(): HeaderNode | null {

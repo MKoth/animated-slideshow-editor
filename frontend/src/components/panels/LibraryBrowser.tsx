@@ -1,11 +1,21 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useClipLibraryStore } from '../../stores/clipLibraryStore'
 import type { ClipLibraryEntry } from '../../api'
 import { useNotificationStore } from '../../stores/notificationStore'
-import { useEngine } from '../../app/useEngine'
-import { ReverseClipCommand, MirrorClipCommand } from '../../engine/commands'
+import { useEngine, useEngineEvent } from '../../app/useEngine'
+import {
+  ReverseClipCommand,
+  MirrorClipCommand,
+  SetScriptLibraryEntryCommand,
+  DeleteScriptLibraryEntryCommand,
+} from '../../engine/commands'
 import { mirrorClipDefaultName, mirrorSkippedLaneNames } from '../../engine/clipMirror'
 import type { MirrorAxis } from '../../engine/clipMirror'
+import {
+  describeScriptFunctionSignature,
+  parseScriptLibraryFunction,
+} from '../../engine/animationScriptParser'
+import type { ScriptLibraryEntry } from '../../engine/scriptLibrary'
 
 function formatDuration(seconds: number): string {
   return `${seconds}s`
@@ -41,12 +51,95 @@ export function LibraryBrowser() {
   } | null>(null)
   const [mirrorNameDraft, setMirrorNameDraft] = useState('')
   const [mirrorAxis, setMirrorAxis] = useState<MirrorAxis>('X')
+  const [, setScriptTick] = useState(0)
+  useEngineEvent(() => setScriptTick((tick) => tick + 1))
+  const [scriptSearch, setScriptSearch] = useState('')
+  const [scriptEditor, setScriptEditor] = useState<
+    { mode: 'create' } | { mode: 'edit'; entry: ScriptLibraryEntry } | null
+  >(null)
+  const [scriptNameDraft, setScriptNameDraft] = useState('')
+  const [scriptDescriptionDraft, setScriptDescriptionDraft] = useState('')
+  const [scriptSourceDraft, setScriptSourceDraft] = useState('')
+  const [scriptDeleteConfirm, setScriptDeleteConfirm] = useState<ScriptLibraryEntry | null>(null)
 
   useEffect(() => {
     if (visible && !loaded) {
       void loadLibrary()
     }
   }, [visible, loaded, loadLibrary])
+
+  const scriptFunctions = useMemo(
+    () => [...(engine.project?.scriptFunctions ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [engine, engine.project?.scriptFunctions],
+  )
+
+  const filteredScripts = scriptFunctions.filter((entry) => {
+    const query = scriptSearch.trim().toLowerCase()
+    if (!query) return true
+    return (
+      entry.name.toLowerCase().includes(query) || entry.description.toLowerCase().includes(query)
+    )
+  })
+
+  const openScriptCreate = () => {
+    setScriptNameDraft('')
+    setScriptDescriptionDraft('')
+    setScriptSourceDraft('function myFunction(target: node) {\n  target.fadeIn(0.4s)\n}')
+    setScriptEditor({ mode: 'create' })
+  }
+
+  const openScriptEdit = (entry: ScriptLibraryEntry) => {
+    setScriptNameDraft(entry.name)
+    setScriptDescriptionDraft(entry.description)
+    setScriptSourceDraft(entry.source)
+    setScriptEditor({ mode: 'edit', entry })
+  }
+
+  const saveScriptEntry = () => {
+    const name = scriptNameDraft.trim()
+    if (!name) {
+      notify('Script function name must not be empty')
+      return
+    }
+    const params =
+      scriptEditor?.mode === 'edit'
+        ? {
+            id: scriptEditor.entry.id,
+            name,
+            description: scriptDescriptionDraft,
+            source: scriptSourceDraft,
+          }
+        : { name, description: scriptDescriptionDraft, source: scriptSourceDraft }
+    const result = dispatch(new SetScriptLibraryEntryCommand(params))
+    if (!result.ok) {
+      notify(result.error.message)
+      return
+    }
+    notify(
+      scriptEditor?.mode === 'edit'
+        ? `Script function "${name}" saved`
+        : `Script function "${name}" created`,
+    )
+    setScriptEditor(null)
+  }
+
+  const confirmScriptDelete = () => {
+    if (!scriptDeleteConfirm) return
+    const result = dispatch(new DeleteScriptLibraryEntryCommand({ id: scriptDeleteConfirm.id }))
+    if (!result.ok) {
+      notify(result.error.message)
+      return
+    }
+    notify(`Script function "${scriptDeleteConfirm.name}" deleted`)
+    setScriptDeleteConfirm(null)
+  }
+
+  const scriptSignatureOf = (entry: ScriptLibraryEntry): string => {
+    const parsed = parseScriptLibraryFunction(entry.source)
+    if (parsed.def) return describeScriptFunctionSignature(parsed.def)
+    return `${entry.name}(...)`
+  }
 
   if (!visible) {
     return null
@@ -241,6 +334,76 @@ export function LibraryBrowser() {
               </ul>
             )}
           </>
+        )}
+        <h3 style={{ margin: '16px 0 8px', fontSize: 13 }}>Script Functions</h3>
+        <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
+          Project-scoped Animation Script functions, stored in the .lesson file. Renaming an entry
+          breaks call sites with a near-miss diagnostic — the source is never rewritten.
+        </p>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <input
+            type="search"
+            aria-label="Search script functions"
+            placeholder="Search functions"
+            value={scriptSearch}
+            onChange={(e) => setScriptSearch(e.target.value)}
+            style={{ flex: 1 }}
+          />
+          <button type="button" onClick={openScriptCreate} data-testid="script-function-create">
+            New Function
+          </button>
+        </div>
+        {filteredScripts.length === 0 && (
+          <p style={{ fontSize: 12, opacity: 0.7 }}>
+            {scriptFunctions.length === 0
+              ? 'No script functions yet. Create one to reuse across slides.'
+              : 'No functions match your search.'}
+          </p>
+        )}
+        {filteredScripts.length > 0 && (
+          <ul style={{ maxHeight: 220, overflowY: 'auto', padding: 0, listStyle: 'none' }}>
+            {filteredScripts.map((entry) => (
+              <li
+                key={entry.id}
+                data-testid={`script-function-${entry.id}`}
+                style={{
+                  border: '1px solid var(--color-border, #ddd)',
+                  borderRadius: 6,
+                  padding: 8,
+                  marginBottom: 6,
+                }}
+              >
+                <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                  <strong style={{ fontSize: 13 }}>{entry.name}</strong>
+                  <span style={{ fontSize: 11, opacity: 0.7 }}>v{entry.version}</span>
+                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                    <button
+                      type="button"
+                      aria-label={`Edit ${entry.name}`}
+                      onClick={() => openScriptEdit(entry)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Delete ${entry.name}`}
+                      onClick={() => setScriptDeleteConfirm(entry)}
+                    >
+                      Delete
+                    </button>
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, fontFamily: 'monospace', marginTop: 4 }}>
+                  {scriptSignatureOf(entry)}
+                </div>
+                {entry.description && (
+                  <div style={{ fontSize: 12, opacity: 0.8, marginTop: 2 }}>
+                    {entry.description}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
         )}
         <div className="projects-dialog__actions">
           <button className="projects-dialog__button" onClick={closeBrowser}>
@@ -515,6 +678,97 @@ export function LibraryBrowser() {
                 data-testid="library-mirror-confirm"
               >
                 Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {scriptEditor && (
+        <div
+          className="projects-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={
+            scriptEditor.mode === 'create' ? 'New script function' : 'Edit script function'
+          }
+          data-testid="script-function-modal"
+        >
+          <div
+            className="projects-dialog"
+            style={{ minWidth: 480 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: '0 0 12px', fontSize: 14 }}>
+              {scriptEditor.mode === 'create'
+                ? 'New Script Function'
+                : `Edit ${scriptEditor.entry.name}`}
+              {scriptEditor.mode === 'edit' && (
+                <span style={{ fontWeight: 400, opacity: 0.7 }}>
+                  {' '}
+                  — v{scriptEditor.entry.version}
+                </span>
+              )}
+            </h3>
+            <label style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>
+              Name (unique, case-insensitive)
+              <input
+                value={scriptNameDraft}
+                onChange={(e) => setScriptNameDraft(e.target.value)}
+                placeholder="fillConjugationTable"
+                style={{ display: 'block', width: '100%', marginTop: 4, padding: '6px 8px' }}
+                data-testid="script-function-name-input"
+              />
+            </label>
+            <label style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>
+              Description (one line, shown in the browser)
+              <input
+                value={scriptDescriptionDraft}
+                onChange={(e) => setScriptDescriptionDraft(e.target.value)}
+                placeholder="Fills a conjugation table row by row"
+                style={{ display: 'block', width: '100%', marginTop: 4, padding: '6px 8px' }}
+                data-testid="script-function-description-input"
+              />
+            </label>
+            <label style={{ display: 'block', marginBottom: 12, fontSize: 13 }}>
+              Source (one function — the name must match)
+              <textarea
+                value={scriptSourceDraft}
+                onChange={(e) => setScriptSourceDraft(e.target.value)}
+                rows={10}
+                spellCheck={false}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  marginTop: 4,
+                  padding: '6px 8px',
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                }}
+                data-testid="script-function-source-input"
+              />
+            </label>
+            <div className="projects-dialog__actions">
+              <button onClick={() => setScriptEditor(null)} data-testid="script-function-cancel">
+                Cancel
+              </button>
+              <button onClick={saveScriptEntry} data-testid="script-function-save">
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {scriptDeleteConfirm && (
+        <div className="projects-overlay">
+          <div className="projects-dialog" role="dialog" aria-label="Confirm function delete">
+            <p className="projects-dialog__message">
+              Delete script function &ldquo;{scriptDeleteConfirm.name}&rdquo;? Scripts calling it
+              will fail with a near-miss diagnostic.
+            </p>
+            <div className="projects-dialog__actions">
+              <button onClick={() => setScriptDeleteConfirm(null)}>Cancel</button>
+              <button onClick={confirmScriptDelete} data-testid="script-function-delete-confirm">
+                Delete
               </button>
             </div>
           </div>

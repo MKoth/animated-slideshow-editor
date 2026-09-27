@@ -22,6 +22,7 @@ import {
   SCRIPT_TABLE_SELECTOR_NAMES,
   lineColumnAt,
   parseAnimationScript,
+  parseScriptLibraryFunction,
 } from './animationScriptParser'
 import type {
   AtNode,
@@ -215,6 +216,14 @@ export interface AnimationScriptCollectionInfo {
   readonly bindings: Readonly<Record<string, string>>
 }
 
+/** A project-scoped library entry a script may call by name. */
+export interface AnimationScriptLibraryInfo {
+  readonly id: string
+  readonly name: string
+  readonly version: number
+  readonly source: string
+}
+
 /**
  * The slide state the compiler reads: node names and kinds plus pre-run
  * evaluated values. Pure and read-only — a Check against this context never
@@ -232,6 +241,8 @@ export interface AnimationScriptCompileContext {
   readonly clips: readonly AnimationScriptClipInfo[]
   /** Project collections, for `collection("...")` bindings; never minted. */
   readonly collections: readonly AnimationScriptCollectionInfo[]
+  /** Project library entries, resolved by name at compile time. */
+  readonly libraryFunctions?: readonly AnimationScriptLibraryInfo[]
   evaluateProperty(nodeId: string, property: ScriptProperty, time: number): number
   /**
    * The pre-clear value of any written track at `time`, used for boundary and
@@ -473,6 +484,21 @@ class Compiler {
   readonly #functions = new Map<string, FunctionDefNode>()
   /** Every `function` definition in the source, first wins, for diagnostics. */
   readonly #allFunctionDefs = new Map<string, FunctionDefNode>()
+  /**
+   * Library entries parsed from the compile context, keyed by exact name.
+   * Each holds the entry metadata plus its parsed definition; invalid entries
+   * stay out and report when called.
+   */
+  readonly #libraryDefs = new Map<
+    string,
+    { entry: AnimationScriptLibraryInfo; def: FunctionDefNode }
+  >()
+  /** Library names by lowercase, for case-insensitive duplicate/collision checks. */
+  readonly #libraryByLower = new Map<string, string>()
+  /** Library entries that failed to parse, keyed by exact name. */
+  readonly #libraryErrors = new Map<string, string>()
+  /** Entry versions actually inlined this compile, id → version, for the footprint. */
+  readonly #usedLibraryVersions = new Map<string, number>()
   /** Inlining stack for recursion detection and the call-depth budget. */
   readonly #callStack: string[] = []
   readonly #planned = new Map<string, PlannedKeyframe>()
@@ -518,6 +544,7 @@ class Compiler {
     for (const diagnostic of program.diagnostics) {
       this.#error(diagnostic.message, diagnostic.span)
     }
+    this.#loadLibraryFunctions()
     this.#applyHeader(program)
     this.#applyDefaults(program.defaults)
     this.#collectFunctionDefs(program.statements)
@@ -551,7 +578,7 @@ class Compiler {
       })),
       placementParents: [...this.#placementParents],
       instanceNodes: [...this.#instanceNodes],
-      entryVersions: {},
+      entryVersions: Object.fromEntries(this.#usedLibraryVersions),
     }
     return {
       diagnostics,
@@ -626,6 +653,54 @@ class Compiler {
     }
   }
 
+  /**
+   * Parse every library entry into an independent definition. Invalid entries
+   * stay out of `#libraryDefs` and report when called, so one broken entry
+   * never blocks an unrelated script; the entry commands own upfront validation.
+   */
+  #loadLibraryFunctions(): void {
+    const entries = this.#context.libraryFunctions ?? []
+    const seenLower = new Set<string>()
+    for (const entry of entries) {
+      const lower = entry.name.trim().toLowerCase()
+      if (seenLower.has(lower)) continue
+      seenLower.add(lower)
+      if (this.#libraryByLower.has(lower)) continue
+      this.#libraryByLower.set(lower, entry.name)
+      const parsed = parseScriptLibraryFunction(entry.source)
+      if (parsed.def === null || parsed.diagnostics.length > 0) {
+        const first = parsed.diagnostics[0]
+        this.#libraryErrors.set(
+          entry.name,
+          first !== undefined ? first.message : 'invalid function source',
+        )
+        continue
+      }
+      if (parsed.def.name !== entry.name) {
+        this.#libraryErrors.set(
+          entry.name,
+          `defines function "${parsed.def.name}", expected "${entry.name}"`,
+        )
+        // Still register by entry name so calls resolve and then report the
+        // mismatch at the call site rather than as an unknown function.
+        this.#libraryDefs.set(entry.name, { entry, def: parsed.def })
+        continue
+      }
+      if (
+        SCRIPT_FUNCTION_RESERVED_NAMES.includes(entry.name) ||
+        (SCRIPT_RESERVED_NAMES as readonly string[]).includes(entry.name)
+      ) {
+        this.#libraryErrors.set(entry.name, 'is reserved by the Animation Script language')
+        continue
+      }
+      this.#libraryDefs.set(entry.name, { entry, def: parsed.def })
+    }
+  }
+
+  #libraryNames(): string[] {
+    return [...this.#libraryDefs.keys(), ...this.#libraryErrors.keys()]
+  }
+
   #declareFunction(statement: FunctionDefNode): void {
     if (this.#loopDepth > 0 || this.#scopes.length > 1 || this.#callStack.length > 0) {
       this.#error(
@@ -674,6 +749,15 @@ class Compiler {
       )
       return
     }
+    const libraryLower = statement.name.trim().toLowerCase()
+    if (this.#libraryByLower.has(libraryLower)) {
+      const suggestion = nearMissSuggestion(statement.name, this.#libraryNames())
+      this.#error(
+        `Function "${statement.name}" collides with a library entry — rename the local function or the entry.${suggestion}`,
+        statement.nameSpan,
+      )
+      return
+    }
     const seen = new Set<string>()
     for (const param of statement.params) {
       if (seen.has(param.name)) {
@@ -696,10 +780,23 @@ class Compiler {
   #lowerFunctionCall(statement: FunctionCallNode, cursor: number): number {
     const known = this.#allFunctionDefs.get(statement.name)
     const declared = this.#functions.get(statement.name)
+    const library = this.#libraryDefs.get(statement.name)
+    const libraryError = this.#libraryErrors.get(statement.name)
+    if (known !== undefined && library !== undefined) {
+      this.#error(
+        `Function "${statement.name}" is defined both locally and in the library — rename one of them`,
+        statement.nameSpan,
+      )
+      return cursor
+    }
+    if (library !== undefined || libraryError !== undefined) {
+      return this.#lowerLibraryCall(statement, cursor)
+    }
     if (!known) {
       const suggestion = nearMissSuggestion(statement.name, [
         ...this.#allFunctionDefs.keys(),
         ...this.#functions.keys(),
+        ...this.#libraryNames(),
       ])
       this.#error(`Unknown function "${statement.name}".${suggestion}`, statement.nameSpan)
       return cursor
@@ -747,6 +844,174 @@ class Compiler {
     }
     if (failed) return cursor
     return this.#invokeFunction(declared, resolved, statement, cursor)
+  }
+
+  /**
+   * A library entry call: the entry is an independent self-contained unit with
+   * its own defaults and per-invocation markers. Missing or renamed entries
+   * error with near-miss candidates and never rewrite the source.
+   */
+  #lowerLibraryCall(statement: FunctionCallNode, cursor: number): number {
+    const libraryError = this.#libraryErrors.get(statement.name)
+    if (libraryError !== undefined) {
+      this.#error(
+        `Library entry "${statement.name}" cannot compile: ${libraryError}`,
+        statement.nameSpan,
+      )
+      return cursor
+    }
+    const found = this.#libraryDefs.get(statement.name)
+    if (!found) {
+      const suggestion = nearMissSuggestion(statement.name, [
+        ...this.#allFunctionDefs.keys(),
+        ...this.#libraryNames(),
+      ])
+      this.#error(
+        `Unknown library entry "${statement.name}" — no script function with that name.${suggestion} The source is unchanged.`,
+        statement.nameSpan,
+      )
+      return cursor
+    }
+    if (this.#callStack.includes(statement.name)) {
+      const chain = [...this.#callStack, statement.name].join(' → ')
+      this.#error(
+        `Recursion is not part of the Animation Script language — function call cycle ${chain}`,
+        statement.nameSpan,
+      )
+      return cursor
+    }
+    if (this.#callStack.length >= SCRIPT_MAX_CALL_DEPTH) {
+      this.#error(
+        `Function call depth passes the compile budget of ${SCRIPT_MAX_CALL_DEPTH} — flatten the call chain`,
+        statement.nameSpan,
+      )
+      return cursor
+    }
+    if (statement.args.length !== found.def.params.length) {
+      this.#error(
+        `Function "${statement.name}" takes ${found.def.params.length} argument${found.def.params.length === 1 ? '' : 's'}, got ${statement.args.length}`,
+        statement.span,
+      )
+      return cursor
+    }
+    const resolved: ScriptValue[] = []
+    let failed = false
+    for (let index = 0; index < found.def.params.length; index += 1) {
+      const param = found.def.params[index]
+      const arg = statement.args[index]
+      const value = this.#resolveFunctionArg(found.def.name, param, arg)
+      if (value === null) {
+        failed = true
+        continue
+      }
+      resolved.push(value)
+    }
+    if (failed) return cursor
+    return this.#invokeLibraryFunction(found.entry, found.def, resolved, cursor)
+  }
+
+  /**
+   * Inline a library entry with a fully closed scope: locals see only
+   * parameters, entry locals and library entries — never caller bindings,
+   * local functions, values or marks. Records the entry version for drift.
+   */
+  #invokeLibraryFunction(
+    entry: AnimationScriptLibraryInfo,
+    def: FunctionDefNode,
+    args: readonly ScriptValue[],
+    cursor: number,
+  ): number {
+    const paramBindings = new Map<string, BindingInfo>()
+    const paramValues = new Map<string, ScriptValue>()
+    for (let index = 0; index < def.params.length; index += 1) {
+      const param = def.params[index]
+      const value = args[index]
+      if (isBindingParamType(param.paramType)) {
+        const binding = bindingOf(value)
+        if (binding) {
+          paramBindings.set(param.name, {
+            alias: param.name,
+            aliasSpan: param.nameSpan,
+            kind: binding.kind,
+            members: binding.members,
+            ...(binding.grid !== undefined ? { grid: binding.grid } : {}),
+            ...(binding.clip !== undefined ? { clip: binding.clip } : {}),
+            ...(binding.collection !== undefined ? { collection: binding.collection } : {}),
+            used: false,
+          })
+          binding.used = true
+        }
+        continue
+      }
+      paramValues.set(param.name, value)
+    }
+    const savedBindings = this.#bindings
+    const savedScopes = this.#scopes
+    const savedOverrides = this.#aliasOverrides
+    const savedMarkers = this.#markers
+    const savedDefaults = this.#defaults
+    const savedLoopDepth = this.#loopDepth
+    const savedReadCursor = this.#readCursor
+    const savedFunctions = new Map(this.#functions)
+    const savedAllDefs = new Map(this.#allFunctionDefs)
+    this.#bindings = paramBindings
+    this.#scopes = [new Map(paramValues)]
+    this.#aliasOverrides = []
+    this.#markers = new Map()
+    this.#defaults = {}
+    this.#loopDepth = 0
+    this.#functions.clear()
+    this.#allFunctionDefs.clear()
+    this.#callStack.push(entry.name)
+    let current = cursor
+    try {
+      this.#usedLibraryVersions.set(entry.id, entry.version)
+      if (def.defaults) {
+        const duration =
+          def.defaults.duration !== undefined
+            ? this.#evaluateNumber(def.defaults.duration, 'a duration in seconds')
+            : undefined
+        let ease: string | undefined
+        if (def.defaults.ease !== undefined && def.defaults.easeSpan !== undefined) {
+          if (resolveScriptEase(def.defaults.ease)) {
+            ease = def.defaults.ease
+          } else {
+            const suggestion = nearMissSuggestion(def.defaults.ease, SCRIPT_EASE_NAMES)
+            this.#error(`Unknown ease "${def.defaults.ease}".${suggestion}`, def.defaults.easeSpan)
+          }
+        }
+        const validatedDuration =
+          duration !== undefined && duration !== null && def.defaults.duration
+            ? this.#validateDuration(duration, def.defaults.duration.span)
+              ? { seconds: duration, span: def.defaults.duration.span }
+              : undefined
+            : undefined
+        this.#defaults = {
+          ...(validatedDuration !== undefined ? { duration: validatedDuration } : {}),
+          ...(ease !== undefined ? { ease } : {}),
+        }
+      }
+      for (const child of def.body) {
+        if (!this.#claimUnrolledSlot(child.span)) {
+          break
+        }
+        current = this.#lowerStatement(child, current)
+      }
+    } finally {
+      this.#callStack.pop()
+      this.#bindings = savedBindings
+      this.#scopes = savedScopes
+      this.#aliasOverrides = savedOverrides
+      this.#markers = savedMarkers
+      this.#defaults = savedDefaults
+      this.#loopDepth = savedLoopDepth
+      this.#readCursor = savedReadCursor
+      this.#functions.clear()
+      for (const [key, value] of savedFunctions) this.#functions.set(key, value)
+      this.#allFunctionDefs.clear()
+      for (const [key, value] of savedAllDefs) this.#allFunctionDefs.set(key, value)
+    }
+    return current
   }
 
   /**

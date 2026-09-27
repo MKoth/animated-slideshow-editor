@@ -79,6 +79,13 @@ export function checkAnimationScript(
     })
   }
   const reads = createAnimationScriptReads(engine, options.measure)
+  const libraryFunctions =
+    engine.project?.scriptFunctions.map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      version: entry.version,
+      source: entry.source,
+    })) ?? []
   return compileAnimationScript(source, {
     slideDuration: slide.duration,
     nodes,
@@ -93,6 +100,7 @@ export function checkAnimationScript(
       name: collection.name,
       bindings: collection.getBindingsObject(),
     })),
+    libraryFunctions,
     evaluateProperty: (nodeId, property, time) => evaluateProperty(engine, nodeId, property, time),
     evaluateTrackValue: (nodeId, track, time) =>
       evaluateTrackValue(engine, reads, nodeId, track, time),

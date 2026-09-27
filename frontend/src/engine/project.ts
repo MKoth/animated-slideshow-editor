@@ -6,6 +6,7 @@ import type {
   EmbeddedDataSourceDefinition,
   EmbeddedFlowchartDataSourceDefinition,
 } from './embeddedDataSource'
+import type { ScriptLibraryEntry } from './scriptLibrary'
 
 export type EmbeddedDataSourceUnion =
   EmbeddedDataSourceDefinition | EmbeddedFlowchartDataSourceDefinition
@@ -38,6 +39,7 @@ export class Project {
   readonly #embeddedMaterials: EmbeddedMaterialDefinition[]
   readonly #embeddedShaders: EmbeddedShaderDefinition[]
   readonly #embeddedDataSources: EmbeddedDataSourceUnion[]
+  readonly #scriptFunctions: ScriptLibraryEntry[]
 
   constructor(
     metadata: ProjectMetadata,
@@ -47,6 +49,7 @@ export class Project {
     embeddedMaterials: readonly EmbeddedMaterialDefinition[] = [],
     embeddedShaders: readonly EmbeddedShaderDefinition[] = [],
     embeddedDataSources: readonly EmbeddedDataSourceUnion[] = [],
+    scriptFunctions: readonly ScriptLibraryEntry[] = [],
   ) {
     this.id = metadata.id
     this.#name = metadata.name
@@ -60,6 +63,7 @@ export class Project {
     this.#embeddedMaterials = [...embeddedMaterials]
     this.#embeddedShaders = [...embeddedShaders]
     this.#embeddedDataSources = [...embeddedDataSources]
+    this.#scriptFunctions = [...scriptFunctions]
   }
 
   get name(): string {
@@ -97,6 +101,26 @@ export class Project {
 
   get embeddedDataSources(): readonly EmbeddedDataSourceUnion[] {
     return this.#embeddedDataSources
+  }
+
+  get scriptFunctions(): readonly ScriptLibraryEntry[] {
+    return this.#scriptFunctions
+  }
+
+  upsertScriptFunction(entry: ScriptLibraryEntry): void {
+    const index = this.#scriptFunctions.findIndex((existing) => existing.id === entry.id)
+    if (index >= 0) {
+      this.#scriptFunctions[index] = entry
+    } else {
+      this.#scriptFunctions.push(entry)
+    }
+  }
+
+  removeScriptFunction(id: string): ScriptLibraryEntry | null {
+    const index = this.#scriptFunctions.findIndex((entry) => entry.id === id)
+    if (index < 0) return null
+    const [removed] = this.#scriptFunctions.splice(index, 1)
+    return removed ?? null
   }
 
   embedAsset(asset: EmbeddedAsset): void {

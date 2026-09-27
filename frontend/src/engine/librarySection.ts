@@ -9,6 +9,8 @@ import type { LessonLibraryJSON } from './json'
 import { isRecord } from './guards'
 import { ClipDefinition } from './clipDefinition'
 import { ClipCollection } from './clipCollection'
+import type { ScriptLibraryEntry } from './scriptLibrary'
+import { scriptLibraryEntryToJSON, validateScriptFunctionsJSON } from './scriptLibrary'
 
 export function embeddedLibraryJSON(
   assets: readonly EmbeddedAsset[],
@@ -19,6 +21,7 @@ export function embeddedLibraryJSON(
   )[] = [],
   clips: readonly ClipDefinition[] = [],
   clipCollections: readonly import('./clipCollection').ClipCollection[] = [],
+  scriptFunctions: readonly ScriptLibraryEntry[] = [],
 ): LessonLibraryJSON {
   const library: LessonLibraryJSON = {
     assets: assets.map((asset) => ({
@@ -84,6 +87,9 @@ export function embeddedLibraryJSON(
     ...(clipCollections.length > 0
       ? { clipCollections: clipCollections.map((c) => c.toJSON()) }
       : {}),
+    ...(scriptFunctions.length > 0
+      ? { scriptFunctions: scriptFunctions.map((entry) => scriptLibraryEntryToJSON(entry)) }
+      : {}),
   }
   return library
 }
@@ -103,6 +109,7 @@ export function validateLibrary(errors: string[], library: unknown): void {
     'data_sources',
     'clips',
     'clipCollections',
+    'scriptFunctions',
   ] as const) {
     if (library[reserved] !== undefined && !Array.isArray(library[reserved])) {
       errors.push(`Invalid lesson JSON: library.${reserved} must be an array`)
@@ -114,6 +121,7 @@ export function validateLibrary(errors: string[], library: unknown): void {
   validateLibraryDataSources(errors, library.data_sources)
   validateLibraryClips(errors, library.clips)
   validateLibraryClipCollections(errors, library.clipCollections)
+  validateScriptFunctionsJSON(errors, library.scriptFunctions)
 }
 
 function validateLibraryAssets(errors: string[], assets: unknown): void {

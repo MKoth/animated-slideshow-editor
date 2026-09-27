@@ -370,6 +370,9 @@ export function validateReusableObject(json: unknown): string[] {
           errors.push(`Reusable object library.${key} must be an array`)
         }
       }
+      if (library.scriptFunctions !== undefined) {
+        errors.push('Reusable object library must not carry script functions')
+      }
       if (Array.isArray(library.clips)) {
         const seen = new Set<string>()
         const controlClipIds = new Set<string>()

@@ -446,6 +446,14 @@ export type EmbeddedFlowchartDataSourceJSON = {
   }
 }
 
+export type ScriptFunctionJSON = {
+  readonly id: string
+  readonly name: string
+  readonly description: string
+  readonly source: string
+  readonly version: number
+}
+
 export type LessonLibraryJSON = {
   readonly assets?: readonly EmbeddedAssetJSON[]
   readonly materials?: readonly EmbeddedMaterialJSON[]
@@ -453,6 +461,7 @@ export type LessonLibraryJSON = {
   readonly data_sources?: readonly (EmbeddedDataSourceJSON | EmbeddedFlowchartDataSourceJSON)[]
   readonly clips?: readonly ClipJSON[]
   readonly clipCollections?: readonly ClipCollectionJSON[]
+  readonly scriptFunctions?: readonly ScriptFunctionJSON[]
 }
 
 export type ClipParamJSON = {

@@ -47,6 +47,10 @@ export interface EnginePublic {
   readonly activeSlideId: string | null
   readonly clips: readonly ClipDefinition[]
   readonly clipCollections: readonly ClipCollection[]
+  readonly scriptFunctions: readonly import('./scriptLibrary').ScriptLibraryEntry[]
+  getScriptFunction(entryId: string): import('./scriptLibrary').ScriptLibraryEntry
+  upsertScriptFunction(entry: import('./scriptLibrary').ScriptLibraryEntry): void
+  deleteScriptFunction(entryId: string): import('./scriptLibrary').ScriptLibraryEntry
   subscribe(listener: (event: EngineEvent) => void): Unsubscribe
   openProject(
     project: Project,

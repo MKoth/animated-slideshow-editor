@@ -35,6 +35,16 @@ export type {
   SetSlideAnimationScriptFootprintInverse,
   SetSlideAnimationScriptFootprintParameters,
 } from './setSlideAnimationScriptFootprintCommand'
+export { SetScriptLibraryEntryCommand } from './setScriptLibraryEntryCommand'
+export type {
+  SetScriptLibraryEntryInverse,
+  SetScriptLibraryEntryParameters,
+} from './setScriptLibraryEntryCommand'
+export { DeleteScriptLibraryEntryCommand } from './deleteScriptLibraryEntryCommand'
+export type {
+  DeleteScriptLibraryEntryInverse,
+  DeleteScriptLibraryEntryParameters,
+} from './deleteScriptLibraryEntryCommand'
 export { SetFullscreenShaderCommand } from './setFullscreenShaderCommand'
 export type {
   SetFullscreenShaderInverse,

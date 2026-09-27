@@ -29,6 +29,7 @@ import {
 import { validateAudioClipJSON, audioClipFromJSON } from './audioClip'
 import { validatePrompterJSON, prompterFromJSON } from './prompter'
 import { animationScriptFromJSON, validateAnimationScriptJSON } from './animationScript'
+import { buildScriptLibraryEntriesFromJSON } from './scriptLibrary'
 import type { MaterialParameterKindOf } from './nodeAnimation'
 import { DEFAULT_MATERIAL_DEFINITION_ID } from './materialInstance'
 import { DEFAULT_MATERIAL_PARAMETERS } from './materialResolution'
@@ -92,12 +93,16 @@ export function toLessonJSON(
     project.embeddedAssets.length > 0 ||
     project.embeddedMaterials.length > 0 ||
     project.embeddedShaders.length > 0 ||
-    project.embeddedDataSources.length > 0
+    project.embeddedDataSources.length > 0 ||
+    project.scriptFunctions.length > 0
       ? embeddedLibraryJSON(
           project.embeddedAssets,
           project.embeddedMaterials,
           project.embeddedShaders,
           project.embeddedDataSources,
+          [],
+          [],
+          project.scriptFunctions,
         )
       : undefined
   return {
@@ -1082,6 +1087,7 @@ export function buildProjectFromJSON(
     buildEmbeddedMaterialsFromJSON(json.library),
     buildEmbeddedShadersFromJSON(json.library),
     buildEmbeddedDataSourcesFromJSON(json.library),
+    buildScriptLibraryEntriesFromJSON(json.library),
   )
 }
 
