@@ -17,6 +17,7 @@ import { requireFiniteNumber, requireNonEmpty, requireStringAllowEmpty } from '.
 import { newAudioClipId } from './audioClip'
 import type { SlideAnimationScript } from './animationScript'
 import type { CompiledFootprint } from './compiledFootprint'
+import { remapCompiledFootprint } from './compiledFootprint'
 import { newPrompterPartId, newAudioSegmentId } from './prompter'
 
 const SLIDE_ORDINAL_PATTERN = /^Slide (\d+)$/
@@ -124,6 +125,16 @@ export class SlideManager {
           }),
         }
       : null
+    const sourceScript = source.animationScript
+    const scriptCopy: SlideAnimationScript | null =
+      sourceScript === null
+        ? null
+        : {
+            source: sourceScript.source,
+            ...(sourceScript.lastCompiled !== undefined
+              ? { lastCompiled: remapCompiledFootprint(sourceScript.lastCompiled, nodeIds) }
+              : {}),
+          }
     const copy = new SlideModel(
       newId('slide'),
       source.name,
@@ -138,6 +149,7 @@ export class SlideManager {
         : null,
       prompterCopy,
       { clips: newClips },
+      scriptCopy,
     )
     project.slides.splice(project.slides.indexOf(source) + 1, 0, copy)
     this.#bus.emit({ type: 'SlideDuplicated', slideId: copy.id })

@@ -8,6 +8,7 @@ import { BottomPanel } from '../components/editor/BottomPanel'
 import {
   CommandDispatcher,
   CreateNodeCommand,
+  SetScriptLibraryEntryCommand,
   SetSlideAnimationScriptCommand,
   UndoStack,
 } from '../engine/commands'
@@ -366,5 +367,68 @@ describe('Script tab Run', () => {
     expect(engine.getKeyframes(heroId, 'positionX')).toHaveLength(0)
     expect(engine.getActiveSlide()?.animationScript?.lastCompiled).toBeUndefined()
     expect(undoStack.entries).toHaveLength(undoBefore)
+  })
+})
+
+describe('Script tab library drift (issue 390)', () => {
+  const librarySource = 'function hop(target: node) {\n  target.set({ x: 1 })\n}'
+  const driftSource = ['script "Demo" from 0', 'bind hero = node("Hero")', 'hop(hero)'].join('\n')
+
+  function setEntry(
+    dispatcher: CommandDispatcher,
+    params: { id?: string; name: string; source: string },
+  ): string {
+    let entryId = ''
+    act(() => {
+      const result = dispatcher.dispatch(
+        new SetScriptLibraryEntryCommand({ ...params, description: '' }),
+      )
+      if (!result.ok) throw new Error(result.error.message)
+      entryId = (result.inverse as { entryId: string }).entryId
+    })
+    return entryId
+  }
+
+  it('shows no drift indicator immediately after a run', async () => {
+    const user = userEvent.setup()
+    const { engine, dispatcher } = renderPanel()
+    setupProject(engine)
+    addHero(dispatcher, engine)
+    setEntry(dispatcher, { name: 'hop', source: librarySource })
+    setScript(dispatcher, engine, driftSource)
+    await user.click(screen.getByTestId('bottom-tab-script'))
+    await user.click(screen.getByTestId('script-run'))
+
+    expect(screen.getByTestId('script-run-summary')).toHaveTextContent('Ran')
+    expect(screen.queryByTestId('script-drift-indicator')).not.toBeInTheDocument()
+  })
+
+  it('shows a drift indicator only after a recorded entry version changes, recommending an explicit re-run', async () => {
+    const user = userEvent.setup()
+    const { engine, dispatcher } = renderPanel()
+    setupProject(engine)
+    addHero(dispatcher, engine)
+    const entryId = setEntry(dispatcher, { name: 'hop', source: librarySource })
+    setScript(dispatcher, engine, driftSource)
+    await user.click(screen.getByTestId('bottom-tab-script'))
+    await user.click(screen.getByTestId('script-run'))
+    expect(screen.queryByTestId('script-drift-indicator')).not.toBeInTheDocument()
+
+    act(() => {
+      const result = dispatcher.dispatch(
+        new SetScriptLibraryEntryCommand({
+          id: entryId,
+          name: 'hop',
+          description: '',
+          source: 'function hop(target: node) {\n  target.set({ x: 2 })\n}',
+        }),
+      )
+      if (!result.ok) throw new Error(result.error.message)
+    })
+
+    const indicator = screen.getByTestId('script-drift-indicator')
+    expect(indicator).toHaveTextContent(/Library drift/i)
+    expect(indicator).toHaveTextContent(/hop/)
+    expect(indicator).toHaveTextContent(/re-run recommended, never automatic/i)
   })
 })

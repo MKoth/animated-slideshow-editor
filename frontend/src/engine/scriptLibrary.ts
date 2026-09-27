@@ -133,3 +133,42 @@ export function findDuplicateScriptFunctionName(
   }
   return null
 }
+
+export interface ScriptLibraryDrift {
+  readonly id: string
+  readonly name: string
+  readonly recordedVersion: number
+  /** Null when the entry was deleted since the recording run. */
+  readonly liveVersion: number | null
+}
+
+/**
+ * Library-version drift for the Script tab: the recorded entry versions a Run
+ * compiled against versus the live project entries. Reports an entry when its
+ * live version differs or when it no longer exists (deleted). Scene state is
+ * never consulted — the explicit compile remains the single gate, so no
+ * proactive scene-drift validation lives here or anywhere else.
+ */
+export function findScriptLibraryDrift(
+  recorded: Readonly<Record<string, number>>,
+  live: readonly { id: string; name: string; version: number }[],
+): ScriptLibraryDrift[] {
+  const liveById = new Map(live.map((entry) => [entry.id, entry] as const))
+  const drift: ScriptLibraryDrift[] = []
+  for (const [id, recordedVersion] of Object.entries(recorded)) {
+    const current = liveById.get(id)
+    if (!current) {
+      drift.push({ id, name: id, recordedVersion, liveVersion: null })
+      continue
+    }
+    if (current.version !== recordedVersion) {
+      drift.push({
+        id,
+        name: current.name,
+        recordedVersion,
+        liveVersion: current.version,
+      })
+    }
+  }
+  return drift
+}

@@ -28,6 +28,41 @@ export function compiledFootprintToJSON(footprint: CompiledFootprint): CompiledF
   }
 }
 
+/**
+ * Remap a footprint's node-id references through the same id map a scene copy
+ * builds, so the copy's recompile clears the copy's own output. Entries for
+ * deleted nodes (ids absent from the map) are kept verbatim — the clear path
+ * tolerates targets that no longer resolve, so stale references never block a
+ * recompile. Entry versions are project-scoped and travel unchanged.
+ */
+export function remapCompiledFootprint(
+  footprint: CompiledFootprint,
+  nodeIds: ReadonlyMap<string, string>,
+): CompiledFootprint {
+  const remapId = (id: string): string => nodeIds.get(id) ?? id
+  return {
+    from: footprint.from,
+    to: footprint.to,
+    tracks: footprint.tracks.map((track) => ({
+      nodeId: remapId(track.nodeId),
+      target: remapTargetNodeId(track.target, remapId),
+    })),
+    placementParents: footprint.placementParents.map(remapId),
+    instanceNodes: footprint.instanceNodes.map(remapId),
+    entryVersions: { ...footprint.entryVersions },
+  }
+}
+
+function remapTargetNodeId(
+  target: KeyframeTarget,
+  remapId: (id: string) => string,
+): KeyframeTarget {
+  if (!('nodeId' in target) || typeof target.nodeId !== 'string') {
+    return { ...target } as KeyframeTarget
+  }
+  return { ...target, nodeId: remapId(target.nodeId) } as KeyframeTarget
+}
+
 export function compiledFootprintFromJSON(json: CompiledFootprintJSON): CompiledFootprint {
   if (!isRecord(json)) {
     throw new Error('Animation Script lastCompiled must be an object')

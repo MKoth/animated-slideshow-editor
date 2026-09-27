@@ -9,6 +9,7 @@ import type {
   AnimationScriptSummary,
 } from '../../engine/animationScriptCompiler'
 import { SetSlideAnimationScriptCommand } from '../../engine/commands'
+import { findScriptLibraryDrift } from '../../engine/scriptLibrary'
 import { measuredNodeSize } from '../../pixi/renderer/nodeMeasurement'
 
 type ScriptOutcome =
@@ -47,6 +48,28 @@ export function ScriptPanel({
 
   const dirty = draft !== source
   const lineCount = draft.split('\n').length
+
+  // Library-version drift: recorded entry versions from the last Run versus
+  // the live project entries. Computed on every render (the parent re-renders
+  // on any engine event) so a library edit surfaces without a memo staleness
+  // trap. The indicator is the only drift surface — recompiles stay explicit
+  // and scene state never triggers it.
+  const drift = (() => {
+    let footprint: { entryVersions: Readonly<Record<string, number>> } | null | undefined
+    let live: readonly { id: string; name: string; version: number }[] = []
+    try {
+      footprint = engine.getSlide(slideId).animationScript?.lastCompiled ?? null
+    } catch {
+      footprint = null
+    }
+    try {
+      live = engine.project?.scriptFunctions ?? []
+    } catch {
+      live = []
+    }
+    if (!footprint) return []
+    return findScriptLibraryDrift(footprint.entryVersions, live)
+  })()
 
   const commit = () => {
     if (!dirty) {
@@ -173,6 +196,27 @@ export function ScriptPanel({
         free. bounds use renderer-measured sizes and ignore rotation; read times must stay within
         the slide.
       </div>
+      {drift.length > 0 && (
+        <div
+          data-testid="script-drift-indicator"
+          role="status"
+          style={{
+            padding: '4px 8px',
+            fontSize: 11,
+            color: 'var(--color-warning-text, #8a5a00)',
+            background: 'var(--color-warning-bg, #fff4d6)',
+            borderBottom: '1px solid var(--color-border)',
+          }}
+        >
+          Library drift:{' '}
+          {drift
+            .map((entry) =>
+              entry.liveVersion === null ? `deleted function ${entry.id.slice(0, 8)}` : entry.name,
+            )
+            .join(', ')}{' '}
+          changed since the last run — re-run recommended, never automatic.
+        </div>
+      )}
       <div
         style={{
           flex: 1,
