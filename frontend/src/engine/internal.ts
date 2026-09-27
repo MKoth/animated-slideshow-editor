@@ -2214,6 +2214,10 @@ export class Engine {
     return this.#animations.setKeyframeDisabled(target, keyframeId, disabled)
   }
 
+  setKeyframeWrap(target: KeyframeTarget, keyframeId: string, wrap: boolean): boolean {
+    return this.#animations.setKeyframeWrap(target, keyframeId, wrap)
+  }
+
   pasteKeyframes(target: KeyframeTarget, payload: PastePayload, atTime: number): Keyframe[] {
     return this.#animations.pasteKeyframes(target, payload, atTime)
   }
@@ -3492,6 +3496,15 @@ export class Engine {
     interpolation: unknown,
   ): InterpolationType {
     return this.#clips.setChannelKeyframeInterpolation(clipId, channel, keyframeId, interpolation)
+  }
+
+  setClipChannelKeyframeWrap(
+    clipId: string,
+    channel: AnimationProperty,
+    keyframeId: string,
+    wrap: unknown,
+  ): boolean {
+    return this.#clips.setChannelKeyframeWrap(clipId, channel, keyframeId, wrap)
   }
 
   setClipChannelKeyframeTangents(
@@ -5666,6 +5679,9 @@ export class Engine {
               (kfJson.interpolation as import('./keyframe').InterpolationType) ?? 'linear',
               (kfJson.tangentIn as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
               (kfJson.tangentOut as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+              false,
+              undefined,
+              kfJson.wrap === true,
             )
             try {
               targetAnim.add(
@@ -5690,6 +5706,9 @@ export class Engine {
                   time: 0,
                   value: 0,
                 },
+                false,
+                undefined,
+                kfJson.wrap === true,
               )
               try {
                 targetAnim.addMaterial(track.parameter, kf)
@@ -5720,6 +5739,9 @@ export class Engine {
                   time: 0,
                   value: 0,
                 },
+                false,
+                undefined,
+                kfJson.wrap === true,
               )
               try {
                 targetAnim.addDataLabel(track.label, kf)
@@ -5750,6 +5772,9 @@ export class Engine {
                   time: 0,
                   value: 0,
                 },
+                false,
+                undefined,
+                kfJson.wrap === true,
               )
               try {
                 targetAnim.addCircle(
@@ -5783,6 +5808,9 @@ export class Engine {
                   time: 0,
                   value: 0,
                 },
+                false,
+                undefined,
+                kfJson.wrap === true,
               )
               try {
                 targetAnim.addTable(
@@ -5809,6 +5837,9 @@ export class Engine {
               (kfJson.interpolation as import('./keyframe').InterpolationType) ?? 'hold',
               (kfJson.tangentIn as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
               (kfJson.tangentOut as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+              false,
+              undefined,
+              kfJson.wrap === true,
             )
             try {
               targetAnim.addVisible(kf)
@@ -5840,6 +5871,9 @@ export class Engine {
                   time: 0,
                   value: 0,
                 },
+                false,
+                undefined,
+                kfJson.wrap === true,
               )
               try {
                 targetAnim.addShadow(
@@ -5907,6 +5941,9 @@ export class Engine {
               (kfJson.interpolation as import('./keyframe').InterpolationType) ?? 'linear',
               (kfJson.tangentIn as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
               (kfJson.tangentOut as import('./keyframe').KeyframeTangent) ?? { time: 0, value: 0 },
+              false,
+              undefined,
+              kfJson.wrap === true,
             )
             try {
               targetAnim.addMorph(kf)

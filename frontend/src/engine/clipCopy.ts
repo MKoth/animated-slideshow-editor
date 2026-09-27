@@ -23,6 +23,7 @@ function copyAnimation(source: ClipChannelAnimation): ClipChannelAnimation {
         { time: kf.tangentOut.time, value: kf.tangentOut.value },
         kf.disabled,
         [...kf.blend],
+        !!kf.wrap,
       ),
     )
   }

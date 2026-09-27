@@ -3,7 +3,12 @@ import { isRecord, requireMaterialOverrideValue, requireString } from './guards'
 import type { AnimationProperty } from './animationProperties'
 import type { Keyframe, KeyframeValue } from './keyframe'
 import { Keyframe as KeyframeModel, newKeyframeId } from './keyframe'
-import { requireKeyframeInterpolation, requireKeyframeTangent, ZERO_TANGENT } from './keyframe'
+import {
+  requireKeyframeInterpolation,
+  requireKeyframeTangent,
+  requireKeyframeWrap,
+  ZERO_TANGENT,
+} from './keyframe'
 import type {
   PropertyTrackJSON,
   MaterialTrackJSON,
@@ -111,6 +116,7 @@ export class NodeAnimation {
               tangentOut: { time: keyframe.tangentOut.time, value: keyframe.tangentOut.value },
               ...(keyframe.disabled ? { disabled: true } : {}),
               ...(keyframe.blend.length > 0 ? { blend: [...keyframe.blend] } : {}),
+              ...(keyframe.wrap ? { wrap: true } : {}),
             },
       ),
     }))
@@ -238,6 +244,9 @@ export class NodeAnimation {
             interpolation as import('./keyframe').InterpolationType,
             tangentIn as import('./keyframe').KeyframeTangent,
             tangentOut as import('./keyframe').KeyframeTangent,
+            false,
+            undefined,
+            kfJson.wrap === true,
           )
           this.addShadow(prop, kf)
         } catch {
@@ -313,6 +322,9 @@ export class NodeAnimation {
             interpolation as import('./keyframe').InterpolationType,
             tangentIn as import('./keyframe').KeyframeTangent,
             tangentOut as import('./keyframe').KeyframeTangent,
+            false,
+            undefined,
+            kfJson.wrap === true,
           )
           this.addSymmetry(kf)
         } catch {
@@ -419,6 +431,9 @@ export class NodeAnimation {
             interpolation as import('./keyframe').InterpolationType,
             tangentIn as import('./keyframe').KeyframeTangent,
             tangentOut as import('./keyframe').KeyframeTangent,
+            false,
+            undefined,
+            kfJson.wrap === true,
           )
           this.addZIndex(kf)
         } catch {
@@ -1238,6 +1253,7 @@ function copyKeyframe(keyframe: Keyframe): Keyframe {
     { time: keyframe.tangentOut.time, value: keyframe.tangentOut.value },
     !!keyframe.disabled,
     keyframe.blend.length > 0 ? [...keyframe.blend] : [],
+    !!keyframe.wrap,
   )
 }
 
@@ -1277,6 +1293,17 @@ function trackKeyframeParser(
       record.tangentIn === undefined ? ZERO_TANGENT : requireKeyframeTangent(record.tangentIn)
     const tangentOut =
       record.tangentOut === undefined ? ZERO_TANGENT : requireKeyframeTangent(record.tangentOut)
-    return new KeyframeModel(id, time, value, interpolation, tangentIn, tangentOut)
+    const wrap = requireKeyframeWrap(record.wrap)
+    return new KeyframeModel(
+      id,
+      time,
+      value,
+      interpolation,
+      tangentIn,
+      tangentOut,
+      false,
+      undefined,
+      wrap,
+    )
   }
 }

@@ -1999,6 +1999,7 @@ export function TimelineBody({
                             shownTime={keyframe.time}
                             selected={selected}
                             disabled={keyframe.disabled}
+                            wrap={keyframe.wrap === true}
                             pps={pps}
                             step={step}
                             parameterLabel={`${row.label} (0…1)`}
@@ -2061,6 +2062,7 @@ export function TimelineBody({
                             property={row.property}
                             selected={selected}
                             disabled={disabled}
+                            wrap={keyframe.wrap === true}
                             pps={pps}
                             step={step}
                             onPointerDown={(event) =>
@@ -2179,6 +2181,7 @@ export function TimelineBody({
                             shownTime={shownTime}
                             selected={selected}
                             disabled={disabled}
+                            wrap={keyframe.wrap === true}
                             pps={pps}
                             step={step}
                             parameterLabel={materialParameterLabel(row.parameter)}
@@ -2218,6 +2221,7 @@ export function TimelineBody({
                             shownTime={shownTime}
                             selected={selected}
                             disabled={disabled}
+                            wrap={keyframe.wrap === true}
                             pps={pps}
                             step={step}
                             parameterLabel={row.label}
@@ -2257,6 +2261,7 @@ export function TimelineBody({
                             shownTime={shownTime}
                             selected={selected}
                             disabled={disabled}
+                            wrap={keyframe.wrap === true}
                             pps={pps}
                             step={step}
                             parameterLabel={CIRCLE_LABELS[row.property]}
@@ -2295,6 +2300,7 @@ export function TimelineBody({
                             shownTime={shownTime}
                             selected={selected}
                             disabled={disabled}
+                            wrap={keyframe.wrap === true}
                             pps={pps}
                             step={step}
                             parameterLabel={MORPH_LABEL}
@@ -2333,6 +2339,7 @@ export function TimelineBody({
                             shownTime={shownTime}
                             selected={selected}
                             disabled={disabled}
+                            wrap={keyframe.wrap === true}
                             pps={pps}
                             step={step}
                             parameterLabel={SYMMETRY_LABEL}
@@ -2454,6 +2461,7 @@ export function TimelineBody({
                             shownTime={shownTime}
                             selected={selected}
                             disabled={disabled}
+                            wrap={keyframe.wrap === true}
                             pps={pps}
                             step={step}
                             parameterLabel={

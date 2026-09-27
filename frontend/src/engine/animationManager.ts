@@ -50,6 +50,7 @@ export interface PastePayloadKeyframe {
   readonly tangentIn: KeyframeTangent
   readonly tangentOut: KeyframeTangent
   readonly blend?: readonly number[]
+  readonly wrap?: boolean
 }
 
 export interface PastePayload {
@@ -384,6 +385,32 @@ export class AnimationManager {
     return old
   }
 
+  /**
+   * Set the wrap-around flag for the segment starting at a keyframe.
+   * Only linear segments on [0,1]-valued tracks (Control tracks and opacity)
+   * accept `wrap: true`; other tracks throw. `false` is always accepted and
+   * clears the flag. Returns the previous value for undo.
+   */
+  setKeyframeWrap(target: KeyframeTarget, keyframeId: string, wrap: boolean): boolean {
+    if (typeof wrap !== 'boolean') {
+      throw new Error('Keyframe wrap must be a boolean')
+    }
+    const resolved = this.#resolve(target)
+    if (wrap && !isWrappableTrack(resolved.track)) {
+      throw new Error(
+        'Wrap-around interpolation is only supported on Control tracks and opacity tracks with linear interpolation',
+      )
+    }
+    const keyframe = this.#requireKeyframe(resolved, keyframeId)
+    if (wrap && keyframe.interpolation !== 'linear') {
+      throw new Error('Wrap-around interpolation requires linear interpolation on this keyframe')
+    }
+    const old = !!keyframe.wrap
+    keyframe.wrap = wrap
+    this.#bus.emit({ type: 'KeyframeWrapChanged', target, keyframeId })
+    return old
+  }
+
   pasteKeyframes(target: KeyframeTarget, payload: PastePayload, atTime: number): Keyframe[] {
     if (payload.keyframes.length === 0) {
       throw new Error('At least one keyframe is required to paste')
@@ -444,6 +471,7 @@ export class AnimationManager {
         requireKeyframeTangent(entry.payload.tangentOut, 'Keyframe tangent out'),
         false,
         entry.payload.blend ? [...entry.payload.blend] : [],
+        entry.payload.wrap === true,
       )
       if (resolved.track.kind === 'visible' || resolved.track.kind === 'zIndex') {
         keyframe.interpolation = 'hold'
@@ -498,6 +526,7 @@ export class AnimationManager {
         { time: source.tangentOut.time, value: source.tangentOut.value },
         !!source.disabled,
         source.blend.length > 0 ? [...source.blend] : [],
+        !!source.wrap,
       )
       this.#addToTrack(resolved, keyframe)
       created.push(keyframe)
@@ -787,6 +816,18 @@ export class AnimationManager {
     }
     return value
   }
+}
+
+/**
+ * Whether a resolved track can carry wrap-around segments: Control tracks
+ * (values in [0,1] driving normalized clips) and the opacity property
+ * (values in [0,1]). Absolute tracks (position, rotation, scale, …) are
+ * excluded even when a value happens to fall in [0,1].
+ */
+function isWrappableTrack(track: KeyframeTrackRef): boolean {
+  if (track.kind === 'control') return true
+  if (track.kind === 'property' && track.property === 'opacity') return true
+  return false
 }
 
 function previousInterpolation(

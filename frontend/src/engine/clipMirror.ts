@@ -221,6 +221,7 @@ function mapShadowLane(
         },
         kf.disabled,
         [...kf.blend],
+        !!kf.wrap,
       ),
     )
   }
@@ -310,6 +311,7 @@ function mirrorAnimation(source: ClipChannelAnimation, negate: boolean): ClipCha
         },
         kf.disabled,
         [...kf.blend],
+        !!kf.wrap,
       ),
     )
   }
@@ -382,6 +384,7 @@ function mirrorMorphAnimation(
         { time: kf.tangentOut.time, value: kf.tangentOut.value },
         kf.disabled,
         [...kf.blend],
+        !!kf.wrap,
       ),
     )
   }

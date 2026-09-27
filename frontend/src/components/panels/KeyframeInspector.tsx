@@ -8,9 +8,11 @@ import {
   SetKeyframeInterpolationCommand,
   SetKeyframeTangentsCommand,
   SetKeyframeValueCommand,
+  SetKeyframeWrapCommand,
   SetClipKeyframeInterpolationCommand,
   SetClipKeyframeTangentsCommand,
   SetClipKeyframeValueCommand,
+  SetClipKeyframeWrapCommand,
 } from '../../engine/commands'
 import { dispatchKeyframeCommands } from '../../engine/keyframeEdit'
 import { NumericField } from './inspectorFields'
@@ -86,6 +88,13 @@ export function KeyframeInspector({
   const isMorph = morphNodeId !== undefined
   const isZIndex = zIndexNodeId !== undefined
   const isSymmetry = symmetryNodeId !== undefined
+  // Wrap-around segments only exist on [0,1]-valued linear tracks: the node
+  // opacity property and the opacity clip channel. Control tracks are
+  // engine-supported but have no inspector surface yet.
+  const isWrappableTrack =
+    (isClip && clipTarget?.channel === 'opacity') ||
+    (!isClip && !isMorph && !isZIndex && !isSymmetry && !parameter && property === 'opacity')
+  const isWrapEnabled = isWrappableTrack && keyframe.interpolation === 'linear'
   const { engine: inspectorEngine } = useEngine()
   let morphShapes: readonly import('../../engine/shape').Shape[] = []
   let morphValue: import('../../engine/shape').MorphKeyframeValue | null = null
@@ -162,6 +171,39 @@ export function KeyframeInspector({
               | import('../../engine/keyframeTarget').NodeSymmetryTarget,
             keyframeId: keyframe.id,
             interpolation: newInterpolation,
+          }),
+        )
+        if (!result.ok) {
+          notify(result.error.message)
+        }
+      }
+    },
+    [dispatch, target, keyframe.id, notify, isClip, clipTarget],
+  )
+
+  const handleWrapChange = useCallback(
+    (nextWrap: boolean) => {
+      if (isClip && clipTarget) {
+        const result = dispatch(
+          new SetClipKeyframeWrapCommand({
+            target: { kind: 'clip', clipId: clipTarget.clipId, channel: clipTarget.channel },
+            keyframeId: keyframe.id,
+            wrap: nextWrap,
+          }),
+        )
+        if (!result.ok) {
+          notify(result.error.message)
+        }
+      } else {
+        const result = dispatch(
+          new SetKeyframeWrapCommand({
+            target: target as
+              | import('../../engine/keyframeTarget').NodePropertyTarget
+              | import('../../engine/keyframeTarget').NodeParameterTarget
+              | import('../../engine/keyframeTarget').NodeMorphTarget
+              | import('../../engine/keyframeTarget').NodeSymmetryTarget,
+            keyframeId: keyframe.id,
+            wrap: nextWrap,
           }),
         )
         if (!result.ok) {
@@ -583,6 +625,28 @@ export function KeyframeInspector({
         </select>
         {isZIndex && <p className="inspector-field__notice">Hold only — Z-Index is discrete</p>}
       </div>
+      {isWrappableTrack && (
+        <div className="inspector-field">
+          <label className="inspector-field__label" htmlFor="wrap-checkbox">
+            <input
+              id="wrap-checkbox"
+              type="checkbox"
+              aria-label="Wrap via 0/1"
+              disabled={playing || !isWrapEnabled}
+              checked={keyframe.wrap === true}
+              onChange={(event) => handleWrapChange(event.target.checked)}
+            />{' '}
+            Wrap via 0/1
+          </label>
+          {keyframe.interpolation !== 'linear' ? (
+            <p className="inspector-field__notice">Wrap needs linear interpolation</p>
+          ) : (
+            <p className="inspector-field__notice">
+              Go the other way around through the 0/1 boundary (e.g. 0.2 → 0 → 1 → 0.75)
+            </p>
+          )}
+        </div>
+      )}
       {keyframe.interpolation === 'bezier' && (
         <div className="keyframe-presets">
           <label className="inspector-field__label">Preset</label>

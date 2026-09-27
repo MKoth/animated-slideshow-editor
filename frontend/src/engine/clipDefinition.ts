@@ -8,7 +8,11 @@ import type { Keyframe, KeyframeValue } from './keyframe'
 import type { ClipChannelJSON, ClipJSON } from './json'
 import { newId } from './ids'
 import { Keyframe as KeyframeModel, newKeyframeId, ZERO_TANGENT } from './keyframe'
-import { requireKeyframeInterpolation, requireKeyframeTangent } from './keyframe'
+import {
+  requireKeyframeInterpolation,
+  requireKeyframeTangent,
+  requireKeyframeWrap,
+} from './keyframe'
 import { isRecord, requireFiniteNumber, requireString } from './guards'
 import { requireAnimationProperty } from './animationProperties'
 import type { ShadowProperty } from './shadowEffect'
@@ -117,6 +121,9 @@ export class ClipChannelAnimation {
           kf.interpolation,
           { time: kf.tangentIn.time, value: kf.tangentIn.value },
           { time: kf.tangentOut.time, value: kf.tangentOut.value },
+          false,
+          undefined,
+          !!kf.wrap,
         ),
       )
     }
@@ -186,7 +193,20 @@ function fromJSONWithValueValidator(
       record.tangentIn === undefined ? ZERO_TANGENT : requireKeyframeTangent(record.tangentIn)
     const tangentOut =
       record.tangentOut === undefined ? ZERO_TANGENT : requireKeyframeTangent(record.tangentOut)
-    anim.add(new KeyframeModel(id, time, value, interpolation, tangentIn, tangentOut))
+    const wrap = requireKeyframeWrap(record.wrap)
+    anim.add(
+      new KeyframeModel(
+        id,
+        time,
+        value,
+        interpolation,
+        tangentIn,
+        tangentOut,
+        false,
+        undefined,
+        wrap,
+      ),
+    )
   }
   return anim
 }
@@ -665,6 +685,9 @@ export class ClipDefinition {
           kf.interpolation,
           { time: kf.tangentIn.time, value: kf.tangentIn.value },
           { time: kf.tangentOut.time, value: kf.tangentOut.value },
+          false,
+          undefined,
+          !!kf.wrap,
         ),
       )
     }
@@ -677,6 +700,9 @@ export class ClipDefinition {
           kf.interpolation,
           { time: kf.tangentIn.time, value: kf.tangentIn.value },
           { time: kf.tangentOut.time, value: kf.tangentOut.value },
+          false,
+          undefined,
+          !!kf.wrap,
         ),
       )
     }
@@ -696,6 +722,8 @@ export class ClipDefinition {
           { time: kf.tangentIn.time, value: kf.tangentIn.value },
           { time: kf.tangentOut.time, value: kf.tangentOut.value },
           kf.disabled,
+          undefined,
+          !!kf.wrap,
         ),
       )
     }
@@ -708,6 +736,9 @@ export class ClipDefinition {
           kf.interpolation,
           { time: kf.tangentIn.time, value: kf.tangentIn.value },
           { time: kf.tangentOut.time, value: kf.tangentOut.value },
+          false,
+          undefined,
+          !!kf.wrap,
         ),
       )
     }
@@ -857,16 +888,7 @@ export class ClipDefinition {
         return value
       })
       for (const kf of anim.keyframes()) {
-        clip.#visibleAnimation.add(
-          new KeyframeModel(
-            kf.id,
-            kf.time,
-            kf.value,
-            kf.interpolation,
-            { time: kf.tangentIn.time, value: kf.tangentIn.value },
-            { time: kf.tangentOut.time, value: kf.tangentOut.value },
-          ),
-        )
+        clip.#visibleAnimation.add(kf)
       }
     }
     const zIndexAnim = (json as Record<string, unknown>).zIndexAnimation
@@ -878,16 +900,7 @@ export class ClipDefinition {
         return Math.trunc(value)
       })
       for (const kf of anim.keyframes()) {
-        clip.#zIndexAnimation.add(
-          new KeyframeModel(
-            kf.id,
-            kf.time,
-            kf.value,
-            kf.interpolation,
-            { time: kf.tangentIn.time, value: kf.tangentIn.value },
-            { time: kf.tangentOut.time, value: kf.tangentOut.value },
-          ),
-        )
+        clip.#zIndexAnimation.add(kf)
       }
     }
     const circleAnims = (json as Record<string, unknown>).circleChannelAnimations
@@ -991,16 +1004,7 @@ export class ClipDefinition {
         throw new Error(`Clip morph keyframe "${id}" value must be number or morph clip object`)
       })
       for (const kf of anim.keyframes()) {
-        clip.#morphAnimation.add(
-          new KeyframeModel(
-            kf.id,
-            kf.time,
-            kf.value,
-            kf.interpolation,
-            { time: kf.tangentIn.time, value: kf.tangentIn.value },
-            { time: kf.tangentOut.time, value: kf.tangentOut.value },
-          ),
-        )
+        clip.#morphAnimation.add(kf)
       }
     }
     const shadowAnims = (json as Record<string, unknown>).shadowChannelAnimations

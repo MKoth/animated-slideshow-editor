@@ -169,6 +169,7 @@ export function KeyframeMarker({
   property,
   selected,
   disabled,
+  wrap,
   pps,
   step,
   parameterLabel,
@@ -180,6 +181,7 @@ export function KeyframeMarker({
   property?: AnimationProperty
   selected: boolean
   disabled?: boolean
+  wrap?: boolean
   pps: number
   step: number
   parameterLabel?: string
@@ -189,15 +191,16 @@ export function KeyframeMarker({
   const label = parameterLabel ?? (property ? PROPERTY_LABELS[property] : 'Unknown')
   return (
     <div
-      className={`timeline-keyframe${selected ? ' timeline-keyframe--selected' : ''}${disabled ? ' timeline-keyframe--disabled' : ''}`}
+      className={`timeline-keyframe${selected ? ' timeline-keyframe--selected' : ''}${disabled ? ' timeline-keyframe--disabled' : ''}${wrap ? ' timeline-keyframe--wrap' : ''}`}
       data-testid="keyframe-marker"
       data-keyframe-id={keyframeId}
       data-property={property}
       data-parameter={parameterLabel}
       data-time={String(shownTime)}
       data-disabled={disabled ? 'true' : undefined}
+      data-wrap={wrap ? 'true' : undefined}
       role="button"
-      aria-label={`Keyframe at ${tickLabel(shownTime, step)} on ${label}${disabled ? ' (disabled)' : ''}`}
+      aria-label={`Keyframe at ${tickLabel(shownTime, step)} on ${label}${disabled ? ' (disabled)' : ''}${wrap ? ' (wrap via 0/1)' : ''}`}
       aria-disabled={disabled ? true : undefined}
       style={{ left: shownTime * pps }}
       onPointerDown={onPointerDown}

@@ -171,6 +171,7 @@ export class ProportionalCopyCommand implements Command<ProportionalCopyCommandI
           tangents.tangentOut,
           src.disabled,
           [...src.blend],
+          !!src.wrap,
         )
         // Direct insertion preserves full keyframe data (interpolation,
         // tangents, disabled, blend); the manager-level add would not.

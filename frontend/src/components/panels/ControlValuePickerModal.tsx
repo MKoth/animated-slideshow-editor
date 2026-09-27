@@ -4,6 +4,7 @@ import type { EnginePublic } from '../../engine'
 import type { Command, DispatchCommand } from '../../engine/commands'
 import {
   SetKeyframeValueCommand,
+  SetKeyframeWrapCommand,
   SetControlBlendCommand,
   TransactionCommand,
 } from '../../engine/commands'
@@ -56,13 +57,32 @@ export function ControlValuePickerModal({
   }
   const initialBlend = normalizeBlend(blend)
 
+  const readLiveWrap = (): boolean => {
+    try {
+      const kfs = engine.getKeyframesOf({ kind: 'control', nodeId, controlKey })
+      return kfs.find((k) => k.id === keyframeId)?.wrap === true
+    } catch {
+      return false
+    }
+  }
+  const liveInterpolation = (() => {
+    try {
+      const kfs = engine.getKeyframesOf({ kind: 'control', nodeId, controlKey })
+      return kfs.find((k) => k.id === keyframeId)?.interpolation ?? 'linear'
+    } catch {
+      return 'linear'
+    }
+  })()
+
   const [draft, setDraft] = useState<number>(value)
   const [blendDrafts, setBlendDrafts] = useState<number[]>(initialBlend)
+  const [wrapDraft, setWrapDraft] = useState<boolean>(false)
 
   useEffect(() => {
     if (open) {
       setDraft(value)
       setBlendDrafts(normalizeBlend(blend))
+      setWrapDraft(readLiveWrap())
     }
     // blend is a fresh array each render from TimelineBody — compare by content
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -88,6 +108,15 @@ export function ControlValuePickerModal({
           target: { kind: 'control', nodeId, controlKey },
           keyframeId,
           newValue: clamped,
+        }),
+      )
+    }
+    if (wrapDraft !== readLiveWrap()) {
+      commands.push(
+        new SetKeyframeWrapCommand({
+          target: { kind: 'control', nodeId, controlKey },
+          keyframeId,
+          wrap: wrapDraft,
         }),
       )
     }
@@ -205,6 +234,28 @@ export function ControlValuePickerModal({
               </span>
             </div>
           </label>
+          <label
+            style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 8 }}
+            title={
+              liveInterpolation !== 'linear'
+                ? 'Wrap needs linear interpolation on this keyframe'
+                : 'Go the other way around through the 0/1 boundary (e.g. 0.2 → 0 → 1 → 0.75)'
+            }
+          >
+            <input
+              type="checkbox"
+              checked={wrapDraft}
+              disabled={liveInterpolation !== 'linear'}
+              onChange={(e) => setWrapDraft(e.target.checked)}
+              data-testid="control-wrap-checkbox"
+            />
+            Wrap via 0/1
+          </label>
+          {liveInterpolation !== 'linear' && (
+            <div style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>
+              Wrap needs linear interpolation on this keyframe
+            </div>
+          )}
           {blendCount > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 4 }}>
               <div style={{ fontSize: 11, color: 'var(--color-text-muted, #666)' }}>

@@ -36,7 +36,32 @@ function holdSegment(from: Keyframe): number {
 
 function linearSegment(from: Keyframe, to: Keyframe, time: number): number {
   const ratio = (time - from.time) / (to.time - from.time)
+  if (from.wrap === true) {
+    const wrapped = wrappedLinearValue(from.value, to.value, ratio)
+    if (wrapped !== undefined) return wrapped
+  }
   return (from.value as number) + ((to.value as number) - (from.value as number)) * ratio
+}
+
+/**
+ * Wrap-around linear interpolation for [0,1]-normalized values.
+ * Forces the path through the 0/1 boundary (e.g. 0.2 → 0 → 1 → 0.75).
+ * Returns undefined when the segment is not wrappable (non-numeric or
+ * out-of-range values) so the caller falls back to direct interpolation.
+ */
+function wrappedLinearValue(
+  fromValue: unknown,
+  toValue: unknown,
+  ratio: number,
+): number | undefined {
+  if (typeof fromValue !== 'number' || typeof toValue !== 'number') return undefined
+  if (!Number.isFinite(fromValue) || !Number.isFinite(toValue)) return undefined
+  if (fromValue < 0 || fromValue > 1 || toValue < 0 || toValue > 1) return undefined
+  const delta = toValue - fromValue
+  if (delta === 0) return fromValue
+  const wrappedDelta = delta - Math.sign(delta)
+  const raw = fromValue + wrappedDelta * ratio
+  return ((raw % 1) + 1) % 1
 }
 
 /**

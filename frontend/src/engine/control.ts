@@ -5,6 +5,7 @@ import {
   requireKeyframeBlend,
   requireKeyframeInterpolation,
   requireKeyframeTangent,
+  requireKeyframeWrap,
   ZERO_TANGENT,
 } from './keyframe'
 import { evaluateSegment } from './interpolators'
@@ -1361,6 +1362,7 @@ export function controlTrackKeyframeFromJSON(
       record.tangentOut === undefined ? ZERO_TANGENT : requireKeyframeTangent(record.tangentOut),
       record.disabled === true,
       blend,
+      requireKeyframeWrap(record.wrap),
     )
   } catch {
     return undefined

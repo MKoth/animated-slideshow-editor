@@ -54,6 +54,7 @@ export function reverseHoldAnimation(source: ClipChannelAnimation): ClipChannelA
         { ...ZERO_TANGENT },
         only.disabled,
         [...only.blend],
+        !!only.wrap,
       ),
     )
     return dest
@@ -70,6 +71,7 @@ export function reverseHoldAnimation(source: ClipChannelAnimation): ClipChannelA
         { ...ZERO_TANGENT },
         last.disabled,
         [...last.blend],
+        !!last.wrap,
       ),
     )
   }
@@ -85,6 +87,7 @@ export function reverseHoldAnimation(source: ClipChannelAnimation): ClipChannelA
         { ...ZERO_TANGENT },
         prev.disabled,
         [...prev.blend],
+        !!prev.wrap,
       ),
     )
   }
@@ -111,6 +114,9 @@ function reverseAnimation(
           kf.interpolation,
           { time: kf.tangentIn.time, value: kf.tangentIn.value },
           { time: kf.tangentOut.time, value: kf.tangentOut.value },
+          false,
+          undefined,
+          !!kf.wrap,
         ),
       )
     }
@@ -142,6 +148,9 @@ function reverseAnimation(
         kf.interpolation,
         tangentIn,
         tangentOut,
+        false,
+        undefined,
+        !!kf.wrap,
       ),
     )
   }

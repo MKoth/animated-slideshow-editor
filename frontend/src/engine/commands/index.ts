@@ -161,6 +161,8 @@ export type {
   SetKeyframeDisabledInverse,
   SetKeyframeDisabledParameters,
 } from './setKeyframeDisabledCommand'
+export { SetKeyframeWrapCommand } from './setKeyframeWrapCommand'
+export type { SetKeyframeWrapInverse, SetKeyframeWrapParameters } from './setKeyframeWrapCommand'
 export { CreateClipCommand } from './createClipCommand'
 export type { CreateClipInverse, CreateClipParameters } from './createClipCommand'
 export { DeleteClipCommand } from './deleteClipCommand'
@@ -225,6 +227,11 @@ export type {
   SetClipKeyframeTangentsInverse,
   SetClipKeyframeTangentsParameters,
 } from './setClipKeyframeTangentsCommand'
+export { SetClipKeyframeWrapCommand } from './setClipKeyframeWrapCommand'
+export type {
+  SetClipKeyframeWrapInverse,
+  SetClipKeyframeWrapParameters,
+} from './setClipKeyframeWrapCommand'
 export { AssignClipCommand } from './assignClipCommand'
 export type { AssignClipCommandInverse, AssignClipCommandParameters } from './assignClipCommand'
 export { RemoveClipCommand } from './removeClipCommand'

@@ -1377,9 +1377,11 @@ export class AnimationEvaluator {
     // Reuse interpolators: evaluateSegment with 0→1 gives eased progress
     if (from.interpolation === 'hold') return 0
     if (from.interpolation === 'linear') return linearRatio
-    // Use registry via evaluateSegment on synthetic values
-    const synthFrom = { ...from, value: 0 } as Keyframe
-    const synthTo = { ...to, value: 1 } as Keyframe
+    // Use registry via evaluateSegment on synthetic values.
+    // Wrap is a plain-value [0,1] segment flag and must not leak into
+    // progress probes (0→1 would collapse to a constant under wrap math).
+    const synthFrom = { ...from, value: 0, wrap: false } as Keyframe
+    const synthTo = { ...to, value: 1, wrap: false } as Keyframe
     try {
       const v = evaluateSegment(synthFrom, synthTo, time)
       // clamp progress 0..1 for vertex blend (extrapolation beyond uses 0/1 via hold at ends)

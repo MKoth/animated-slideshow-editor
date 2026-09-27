@@ -653,6 +653,7 @@ export function ClipEditBody({
                           shownTime={shownTime}
                           property={row.channel}
                           selected={selected}
+                          wrap={keyframe.wrap === true}
                           pps={pps}
                           step={step}
                           onPointerDown={(event) =>

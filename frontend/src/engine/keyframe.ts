@@ -67,6 +67,13 @@ export class Keyframe {
   /** Session-only preview toggle — not serialized to LessonJSON */
   disabled: boolean
   /**
+   * Wrap-around flag for the segment from this keyframe to the next.
+   * When true with linear interpolation and both values numeric in [0,1],
+   * evaluation takes the path through the 0/1 boundary
+   * (e.g. 0.2 → 0 → 1 → 0.75). Ignored otherwise.
+   */
+  wrap: boolean
+  /**
    * Per-host-keyframe blend factors for Controls with N timelines.
    * Length is N-1 (one per gap between timelines). Missing = [] (=0s).
    * Only meaningful on host Control tracks; ignored elsewhere.
@@ -82,6 +89,7 @@ export class Keyframe {
     tangentOut: KeyframeTangent = ZERO_TANGENT,
     disabled = false,
     blend?: readonly number[],
+    wrap = false,
   ) {
     this.id = id
     this.time = time
@@ -91,6 +99,7 @@ export class Keyframe {
     this.tangentOut = tangentOut
     this.disabled = disabled
     this.blend = blend ? [...blend] : []
+    this.wrap = wrap
   }
 
   toJSON(): KeyframeJSON {
@@ -102,6 +111,7 @@ export class Keyframe {
       tangentIn: { time: this.tangentIn.time, value: this.tangentIn.value },
       tangentOut: { time: this.tangentOut.time, value: this.tangentOut.value },
       ...(this.blend.length > 0 ? { blend: [...this.blend] } : {}),
+      ...(this.wrap ? { wrap: true } : {}),
     }
   }
 }
@@ -120,6 +130,7 @@ export interface KeyframeSnapshot {
   readonly tangentOut: KeyframeTangent
   readonly disabled?: boolean
   readonly blend?: readonly number[]
+  readonly wrap?: boolean
 }
 
 export function snapshotOf(keyframe: Keyframe): KeyframeSnapshot {
@@ -132,7 +143,14 @@ export function snapshotOf(keyframe: Keyframe): KeyframeSnapshot {
     tangentOut: { time: keyframe.tangentOut.time, value: keyframe.tangentOut.value },
     ...(keyframe.disabled ? { disabled: true } : {}),
     ...(keyframe.blend.length > 0 ? { blend: [...keyframe.blend] } : {}),
+    ...(keyframe.wrap ? { wrap: true } : {}),
   }
+}
+
+export function requireKeyframeWrap(value: unknown): boolean {
+  if (value === undefined) return false
+  if (typeof value !== 'boolean') throw new Error('Keyframe wrap must be a boolean')
+  return value
 }
 
 export function requireKeyframeBlend(value: unknown): readonly number[] {

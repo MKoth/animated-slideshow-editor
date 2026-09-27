@@ -1153,6 +1153,7 @@ export function copyKeyframes(engine: EnginePublic): void {
         interpolation: kf.interpolation,
         tangentIn: { time: kf.tangentIn.time, value: kf.tangentIn.value },
         tangentOut: { time: kf.tangentOut.time, value: kf.tangentOut.value },
+        ...(kf.wrap ? { wrap: true as const } : {}),
       }
     })
 
@@ -1187,6 +1188,7 @@ export function copyKeyframes(engine: EnginePublic): void {
         interpolation: kf.interpolation,
         tangentIn: { time: kf.tangentIn.time, value: kf.tangentIn.value },
         tangentOut: { time: kf.tangentOut.time, value: kf.tangentOut.value },
+        ...(kf.wrap ? { wrap: true as const } : {}),
       }
     })
 

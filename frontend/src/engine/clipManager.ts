@@ -37,6 +37,7 @@ export interface ClipPastePayloadKeyframe {
   readonly interpolation: InterpolationType
   readonly tangentIn: KeyframeTangent
   readonly tangentOut: KeyframeTangent
+  readonly wrap?: boolean
 }
 
 export interface ClipPastePayload {
@@ -380,6 +381,39 @@ export class ClipManager {
     return oldInterpolation
   }
 
+  /**
+   * Set the wrap-around flag for the segment starting at a clip keyframe.
+   * Only the opacity channel (values in [0,1]) with linear interpolation
+   * accepts `wrap: true`; other channels throw. `false` always clears.
+   * Returns the previous value for undo.
+   */
+  setChannelKeyframeWrap(
+    clipId: string,
+    channel: AnimationProperty,
+    keyframeId: string,
+    wrap: unknown,
+  ): boolean {
+    if (typeof wrap !== 'boolean') {
+      throw new Error('Keyframe wrap must be a boolean')
+    }
+    if (wrap && channel !== 'opacity') {
+      throw new Error(
+        'Wrap-around interpolation is only supported on the opacity clip channel with linear interpolation',
+      )
+    }
+    const clip = this.getClip(clipId)
+    const keyframe = clip.getChannelKeyframe(channel, keyframeId)
+    if (!keyframe) throw new Error(`Keyframe not found: ${keyframeId}`)
+    if (wrap && keyframe.interpolation !== 'linear') {
+      throw new Error('Wrap-around interpolation requires linear interpolation on this keyframe')
+    }
+    const old = !!keyframe.wrap
+    keyframe.wrap = wrap
+    const target = { kind: 'clip' as const, clipId, channel }
+    this.#bus.emit({ type: 'KeyframeWrapChanged', target, keyframeId })
+    return old
+  }
+
   setChannelKeyframeTangents(
     clipId: string,
     channel: AnimationProperty,
@@ -438,6 +472,9 @@ export class ClipManager {
         requireKeyframeInterpolation(entry.payload.interpolation),
         requireKeyframeTangent(entry.payload.tangentIn, 'Keyframe tangent in'),
         requireKeyframeTangent(entry.payload.tangentOut, 'Keyframe tangent out'),
+        false,
+        undefined,
+        entry.payload.wrap === true,
       )
       clip.addChannelKeyframe(channel, keyframe)
       created.push(keyframe)
@@ -488,6 +525,9 @@ export class ClipManager {
         source.interpolation,
         { time: source.tangentIn.time, value: source.tangentIn.value },
         { time: source.tangentOut.time, value: source.tangentOut.value },
+        false,
+        undefined,
+        !!source.wrap,
       )
       clip.addChannelKeyframe(channel, keyframe)
       created.push(keyframe)

@@ -627,6 +627,13 @@ export function applyUndo(
           if (typeof kf.disabled === 'boolean') {
             engine.setKeyframeDisabled(target, kf.keyframeId, kf.disabled)
           }
+          if (typeof kf.wrap === 'boolean') {
+            try {
+              engine.setKeyframeWrap(target, kf.keyframeId, kf.wrap)
+            } catch {
+              void 0
+            }
+          }
         } catch {
           void 0
         }
@@ -696,6 +703,13 @@ export function applyUndo(
       const keyframeId = inv.keyframeId as string
       const oldDisabled = inv.oldDisabled as boolean
       engine.setKeyframeDisabled(target, keyframeId, oldDisabled)
+      return
+    }
+    case 'SetKeyframeWrap': {
+      const target = inv.target as import('../keyframeTarget').KeyframeTarget
+      const keyframeId = inv.keyframeId as string
+      const oldWrap = inv.oldWrap as boolean
+      engine.setKeyframeWrap(target, keyframeId, oldWrap)
       return
     }
     case 'CreateClip': {
@@ -875,6 +889,18 @@ export function applyUndo(
         keyframeId,
         oldIn,
         oldOut,
+      )
+      return
+    }
+    case 'SetClipKeyframeWrap': {
+      const target = inv.target as import('../keyframeTarget').ClipChannelTarget
+      const keyframeId = inv.keyframeId as string
+      const oldWrap = inv.oldWrap as boolean
+      engine.setClipChannelKeyframeWrap(
+        target.clipId,
+        target.channel as import('../animation').AnimationProperty,
+        keyframeId,
+        oldWrap,
       )
       return
     }
@@ -3157,6 +3183,16 @@ export function applyRedo(
       )
       return
     }
+    case 'SetKeyframeWrap': {
+      const targetW = params.target as import('../keyframeTarget').KeyframeTarget
+      engine.setKeyframeWrap(targetW, params.keyframeId as string, params.wrap as boolean)
+      return
+    }
+    case 'SetKeyframeDisabled': {
+      const targetD = params.target as import('../keyframeTarget').KeyframeTarget
+      engine.setKeyframeDisabled(targetD, params.keyframeId as string, params.disabled as boolean)
+      return
+    }
     case 'CreateClip': {
       engine.createClip(
         params.name as string,
@@ -3302,6 +3338,16 @@ export function applyRedo(
         params.keyframeId as string,
         params.tangentIn as import('../keyframe').KeyframeTangent,
         params.tangentOut as import('../keyframe').KeyframeTangent,
+      )
+      return
+    }
+    case 'SetClipKeyframeWrap': {
+      const tW = params.target as import('../keyframeTarget').ClipChannelTarget
+      engine.setClipChannelKeyframeWrap(
+        tW.clipId,
+        tW.channel as import('../animation').AnimationProperty,
+        params.keyframeId as string,
+        params.wrap as boolean,
       )
       return
     }

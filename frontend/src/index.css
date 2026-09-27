@@ -3158,6 +3158,16 @@ button:disabled {
   filter: grayscale(1) brightness(0.9);
 }
 
+.timeline-keyframe--wrap {
+  outline: 2px solid var(--color-warning, #f59e0b);
+  outline-offset: 1px;
+}
+
+.timeline-keyframe--wrap.timeline-keyframe--selected {
+  outline: 2px solid var(--color-warning, #f59e0b);
+  outline-offset: 1px;
+}
+
 .timeline-context-menu {
   position: fixed;
   z-index: 1000;
