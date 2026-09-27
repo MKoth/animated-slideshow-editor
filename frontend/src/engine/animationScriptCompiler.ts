@@ -199,6 +199,12 @@ export interface AnimationScriptNodeInfo {
 export interface AnimationScriptControlInfo {
   readonly key: string
   readonly exposed: boolean
+  /**
+   * The control's clip bindings as semantic → clip ids, normalized from the
+   * host ControlSet (intervals flattened to their clip). Absent when the host
+   * carries no bindings; the compiler resolves driven descendants from it.
+   */
+  readonly bindings?: Readonly<Record<string, readonly string[]>>
 }
 
 /** A project clip a script may play; the compiler never mints definitions. */
@@ -207,6 +213,12 @@ export interface AnimationScriptClipInfo {
   readonly name: string
   readonly duration: number
   readonly params: readonly string[]
+  /**
+   * The tracks a placement of this clip drives, for raw-vs-clip conflict
+   * detection. Empty when the clip drives nothing the script surface writes
+   * (for example a `visible`-only clip).
+   */
+  readonly channels?: readonly AnimationScriptClipChannel[]
 }
 
 /** A project Clip Collection a script may apply; broadcast by Semantic Name. */
@@ -244,6 +256,22 @@ export interface AnimationScriptCompileContext {
   readonly collections: readonly AnimationScriptCollectionInfo[]
   /** Project library entries, resolved by name at compile time. */
   readonly libraryFunctions?: readonly AnimationScriptLibraryInfo[]
+  /** Tunable budget overrides; absent means the `SCRIPT_MAX_*` defaults. */
+  readonly budgets?: AnimationScriptBudgets
+  /**
+   * Pre-existing clip instances on the slide (standalone `play` output,
+   * hand-placed clips, and collection-placement members), for overlap
+   * warnings. The compiler never clears them — it only warns when a script
+   * write drives the same property in an overlapping window.
+   */
+  readonly existingInstances?: readonly AnimationScriptExistingInstance[]
+  /**
+   * Pre-existing active Controls (≥1 enabled keyframe on the host track),
+   * for overlap warnings. Dormant controls yield to raw keyframes and never
+   * warn; active ones win evaluation precedence, so a same-property script
+   * write warns but still runs.
+   */
+  readonly existingControls?: readonly AnimationScriptExistingControl[]
   evaluateProperty(nodeId: string, property: ScriptProperty, time: number): number
   /**
    * The pre-clear value of any written track at `time`, used for boundary and
@@ -386,6 +414,39 @@ interface TrackOrderEntry {
   readonly track: ScriptTrack
 }
 
+/**
+ * A timed raw write the script plans on one node+track: a tween/move/fade/
+ * control interval `[start, end]`, an instant `set` point `[t, t]`, or baked
+ * `pointArrowAt` tracking. Same-property overlapping raws are compile errors;
+ * different properties may overlap freely.
+ */
+interface RawWriteInterval {
+  readonly nodeId: string
+  readonly nodeName: string
+  readonly track: ScriptTrack
+  readonly start: number
+  readonly end: number
+  readonly span: SourceSpan
+}
+
+/**
+ * A placed clip/collection/control window the script itself creates: one
+ * `play` instance, one `apply` member, or one control-driven descendant
+ * property over the control write's duration. A raw write overlapping its own
+ * placement on the same property is a compile error (evaluation precedence
+ * would otherwise silently override the raw).
+ */
+interface PlacedWriteInterval {
+  readonly nodeId: string
+  readonly nodeName: string
+  readonly track: ScriptTrack
+  readonly start: number
+  readonly end: number
+  readonly span: SourceSpan
+  readonly kind: 'clip' | 'collection' | 'control'
+  readonly label: string
+}
+
 const HOLD_EASE: ResolvedScriptEase = {
   interpolation: 'hold',
   tangentIn: ZERO_TANGENT,
@@ -448,6 +509,60 @@ export const SCRIPT_POINT_ARROW_DEFAULT_EVERY = 1 / 30
  * pathological chain into a diagnostic instead of a stack overflow.
  */
 export const SCRIPT_MAX_CALL_DEPTH = 32
+/**
+ * Maximum emitted raw keyframes one compile may plan. Like the loop budgets
+ * it turns a pathological script into a diagnostic naming the offending
+ * statement instead of a hang or an unbounded Transaction. Tunable via the
+ * compile context; the default keeps ordinary acceptance demos far below it
+ * while bounding worst-case output (unrolled statements × tracks × members).
+ */
+export const SCRIPT_MAX_EMITTED_KEYFRAMES = 100000
+/**
+ * Maximum emitted clip/collection instances (`play` members plus `apply`
+ * members) one compile may plan. Bounds the command list the same way the
+ * keyframe budget bounds raw tracks.
+ */
+export const SCRIPT_MAX_EMITTED_INSTANCES = 20000
+
+/** Tunable compile budgets, overriding the `SCRIPT_MAX_*` defaults per compile. */
+export interface AnimationScriptBudgets {
+  readonly maxUnrolledStatements?: number
+  readonly maxLoopIterations?: number
+  readonly maxPointArrowSamples?: number
+  readonly maxCallDepth?: number
+  readonly maxEmittedKeyframes?: number
+  readonly maxEmittedInstances?: number
+}
+
+/**
+ * A clip channel driving a track, in the compiler's `ScriptTrack` shape (the
+ * `kindOf` on material parameters is informational — conflict comparison
+ * matches by parameter name). The compiler never mints definitions; this is
+ * the read-only channel list a `play`/`apply` placement drives.
+ */
+export type AnimationScriptClipChannel =
+  | { readonly kind: 'node'; readonly property: ScriptNodeProperty }
+  | { readonly kind: 'parameter'; readonly parameter: string }
+  | { readonly kind: 'circle'; readonly property: ScriptCircleProperty }
+  | { readonly kind: 'table'; readonly property: ScriptTableProperty }
+  | { readonly kind: 'morph' }
+  | { readonly kind: 'symmetry' }
+  | { readonly kind: 'shadow'; readonly property: ShadowProperty }
+  | { readonly kind: 'zIndex' }
+
+/** A pre-existing clip instance on the slide, for overlap warnings. */
+export interface AnimationScriptExistingInstance {
+  readonly nodeId: string
+  readonly clipId: string
+  readonly start: number
+  readonly end: number
+}
+
+/** A pre-existing active Control (≥1 enabled keyframe), driving its bindings. */
+export interface AnimationScriptExistingControl {
+  readonly hostId: string
+  readonly key: string
+}
 
 /**
  * Names a `function` definition may not take: the expression built-ins, the
@@ -556,6 +671,28 @@ class Compiler {
   #loopDepth = 0
   /** Total unrolled body statements this compile; the budget stops hangs. */
   #unrolledStatements = 0
+  /**
+   * Timed raw writes planned so far, one interval per member+track per timed
+   * statement. Same-property overlaps are compile errors; the list stays small
+   * (one entry per written track per statement) so pairwise checks never hang.
+   */
+  readonly #rawIntervals: RawWriteInterval[] = []
+  /**
+   * Clip/collection/control windows the script itself places, one per driven
+   * member property. A raw overlapping its own placement on the same property
+   * is a compile error.
+   */
+  readonly #placedIntervals: PlacedWriteInterval[] = []
+  /** The statement currently lowering, for emitted-budget diagnostics. */
+  #currentSpan: SourceSpan | null = null
+  /** True after the emitted-keyframe budget fires; further plans stay silent. */
+  #emittedBudgetReported = false
+  /** True after the emitted-instance budget fires; further placements stay silent. */
+  #instanceBudgetReported = false
+  /** Cached control-driven tracks per host+key, so pre-existing warnings never hang. */
+  readonly #controlDrivenCache = new Map<string, { nodeId: string; track: ScriptTrack }[]>()
+  /** The last top-level statement lowered, for boundary-pin budget attribution. */
+  #lastStatementSpan: SourceSpan | null = null
 
   constructor(source: string, context: AnimationScriptCompileContext) {
     this.#source = source
@@ -573,9 +710,18 @@ class Compiler {
     this.#collectFunctionDefs(program.statements)
     for (const statement of program.statements) {
       this.#cursor = this.#lowerStatement(statement, this.#cursor)
+      this.#lastStatementSpan = statement.span
     }
     this.#warnUnusedBindings()
-    this.#planBoundaryPins()
+    // Boundary pins attribute to the last statement when they trip the
+    // emitted budget, so the diagnostic still names an offending statement.
+    const savedSpan = this.#currentSpan
+    this.#currentSpan = this.#lastStatementSpan
+    try {
+      this.#planBoundaryPins()
+    } finally {
+      this.#currentSpan = savedSpan
+    }
 
     const diagnostics = [...this.#diagnostics].sort(
       (a, b) => a.line - b.line || a.column - b.column,
@@ -839,9 +985,9 @@ class Compiler {
       )
       return cursor
     }
-    if (this.#callStack.length >= SCRIPT_MAX_CALL_DEPTH) {
+    if (this.#callStack.length >= this.#maxCallDepth) {
       this.#error(
-        `Function call depth passes the compile budget of ${SCRIPT_MAX_CALL_DEPTH} — flatten the call chain`,
+        `Function call depth passes the compile budget of ${this.#maxCallDepth} — flatten the call chain`,
         statement.nameSpan,
       )
       return cursor
@@ -903,9 +1049,9 @@ class Compiler {
       )
       return cursor
     }
-    if (this.#callStack.length >= SCRIPT_MAX_CALL_DEPTH) {
+    if (this.#callStack.length >= this.#maxCallDepth) {
       this.#error(
-        `Function call depth passes the compile budget of ${SCRIPT_MAX_CALL_DEPTH} — flatten the call chain`,
+        `Function call depth passes the compile budget of ${this.#maxCallDepth} — flatten the call chain`,
         statement.nameSpan,
       )
       return cursor
@@ -1503,38 +1649,44 @@ class Compiler {
    */
   #lowerStatement(statement: ScriptStatementNode, cursor: number): number {
     this.#readCursor = cursor
-    switch (statement.kind) {
-      case 'bind':
-        this.#declareBinding(statement)
-        return cursor
-      case 'let':
-        this.#declareLet(statement)
-        return cursor
-      case 'wait':
-        return this.#lowerWait(statement, cursor)
-      case 'mark':
-        return this.#lowerMark(statement, cursor)
-      case 'at':
-        return this.#lowerAt(statement, cursor)
-      case 'parallel':
-        return this.#lowerParallel(statement, cursor)
-      case 'repeat':
-        return this.#lowerRepeat(statement, cursor)
-      case 'for':
-        return this.#lowerFor(statement, cursor)
-      case 'stagger':
-        return this.#lowerStagger(statement, cursor)
-      case 'setText':
-        return this.#lowerSetText(statement, cursor)
-      case 'pointArrowAt':
-        return this.#lowerPointArrowAt(statement, cursor)
-      case 'statement':
-        return this.#lowerCall(statement, cursor)
-      case 'function':
-        this.#declareFunction(statement)
-        return cursor
-      case 'functionCall':
-        return this.#lowerFunctionCall(statement, cursor)
+    const savedSpan = this.#currentSpan
+    this.#currentSpan = statement.span
+    try {
+      switch (statement.kind) {
+        case 'bind':
+          this.#declareBinding(statement)
+          return cursor
+        case 'let':
+          this.#declareLet(statement)
+          return cursor
+        case 'wait':
+          return this.#lowerWait(statement, cursor)
+        case 'mark':
+          return this.#lowerMark(statement, cursor)
+        case 'at':
+          return this.#lowerAt(statement, cursor)
+        case 'parallel':
+          return this.#lowerParallel(statement, cursor)
+        case 'repeat':
+          return this.#lowerRepeat(statement, cursor)
+        case 'for':
+          return this.#lowerFor(statement, cursor)
+        case 'stagger':
+          return this.#lowerStagger(statement, cursor)
+        case 'setText':
+          return this.#lowerSetText(statement, cursor)
+        case 'pointArrowAt':
+          return this.#lowerPointArrowAt(statement, cursor)
+        case 'statement':
+          return this.#lowerCall(statement, cursor)
+        case 'function':
+          this.#declareFunction(statement)
+          return cursor
+        case 'functionCall':
+          return this.#lowerFunctionCall(statement, cursor)
+      }
+    } finally {
+      this.#currentSpan = savedSpan
     }
   }
 
@@ -1647,9 +1799,9 @@ class Compiler {
       this.#reportLoopBodyMarks(statement.body)
       return cursor
     }
-    if (count > SCRIPT_MAX_LOOP_ITERATIONS) {
+    if (count > this.#maxLoopIterations) {
       this.#error(
-        `repeat(${count}) would unroll past the compile budget of ${SCRIPT_MAX_LOOP_ITERATIONS} iterations`,
+        `repeat(${count}) would unroll past the compile budget of ${this.#maxLoopIterations} iterations`,
         statement.count.span,
       )
       return cursor
@@ -1691,9 +1843,9 @@ class Compiler {
       this.#reportLoopBodyMarks(statement.body)
       return cursor
     }
-    if (elements.length > SCRIPT_MAX_LOOP_ITERATIONS) {
+    if (elements.length > this.#maxLoopIterations) {
       this.#error(
-        `for "${statement.variable}" would unroll ${elements.length} iterations, past the compile budget of ${SCRIPT_MAX_LOOP_ITERATIONS}`,
+        `for "${statement.variable}" would unroll ${elements.length} iterations, past the compile budget of ${this.#maxLoopIterations}`,
         statement.iterable.span,
       )
       return cursor
@@ -1773,9 +1925,9 @@ class Compiler {
       )
       return cursor
     }
-    if (targets.members.length > SCRIPT_MAX_LOOP_ITERATIONS) {
+    if (targets.members.length > this.#maxLoopIterations) {
       this.#error(
-        `stagger would unroll ${targets.members.length} targets, past the compile budget of ${SCRIPT_MAX_LOOP_ITERATIONS}`,
+        `stagger would unroll ${targets.members.length} targets, past the compile budget of ${this.#maxLoopIterations}`,
         statement.targets.span,
       )
       return cursor
@@ -1819,15 +1971,303 @@ class Compiler {
 
   /** One unrolled body statement against the whole-compile budget. */
   #claimUnrolledSlot(span: SourceSpan): boolean {
-    if (this.#unrolledStatements >= SCRIPT_MAX_UNROLLED_STATEMENTS) {
+    if (this.#unrolledStatements >= this.#maxUnrolledStatements) {
       this.#error(
-        `Unrolled loops pass the compile budget of ${SCRIPT_MAX_UNROLLED_STATEMENTS} statements — split the loop or shorten the body`,
+        `Unrolled loops pass the compile budget of ${this.#maxUnrolledStatements} statements — split the loop or shorten the body`,
         span,
       )
       return false
     }
     this.#unrolledStatements += 1
     return true
+  }
+
+  get #maxUnrolledStatements(): number {
+    return this.#context.budgets?.maxUnrolledStatements ?? SCRIPT_MAX_UNROLLED_STATEMENTS
+  }
+
+  get #maxLoopIterations(): number {
+    return this.#context.budgets?.maxLoopIterations ?? SCRIPT_MAX_LOOP_ITERATIONS
+  }
+
+  get #maxPointArrowSamples(): number {
+    return this.#context.budgets?.maxPointArrowSamples ?? SCRIPT_MAX_POINT_ARROW_SAMPLES
+  }
+
+  get #maxCallDepth(): number {
+    return this.#context.budgets?.maxCallDepth ?? SCRIPT_MAX_CALL_DEPTH
+  }
+
+  get #maxEmittedKeyframes(): number {
+    return this.#context.budgets?.maxEmittedKeyframes ?? SCRIPT_MAX_EMITTED_KEYFRAMES
+  }
+
+  get #maxEmittedInstances(): number {
+    return this.#context.budgets?.maxEmittedInstances ?? SCRIPT_MAX_EMITTED_INSTANCES
+  }
+
+  /**
+   * Record a timed raw write on one member+track and report same-property
+   * overlaps. `start === end` is an instant point (a `set`); intervals touch
+   * at endpoints freely, but interior overlap is a compile error naming the
+   * offending statement. Also reports raw-vs-own-placement overlaps and
+   * pre-existing warnings.
+   */
+  #recordRawInterval(
+    member: ScriptMember,
+    track: ScriptTrack,
+    start: number,
+    end: number,
+    span: SourceSpan,
+  ): void {
+    const s = roundTime(start)
+    const e = roundTime(end)
+    for (const existing of this.#rawIntervals) {
+      if (existing.nodeId !== member.nodeId) continue
+      if (!tracksEqualForConflict(existing.track, track)) continue
+      if (!intervalsOverlap(existing.start, existing.end, s, e)) continue
+      this.#error(
+        `Write to ${this.#trackLabel(track)} on "${member.nodeName}" overlaps a previous write to the same property — same-property writes must not overlap in time, sequence them instead`,
+        span,
+      )
+      break
+    }
+    for (const placed of this.#placedIntervals) {
+      if (placed.nodeId !== member.nodeId) continue
+      if (!tracksEqualForConflict(placed.track, track)) continue
+      if (!intervalsOverlap(placed.start, placed.end, s, e)) continue
+      const kindName =
+        placed.kind === 'clip' ? 'clip' : placed.kind === 'collection' ? 'collection' : 'control'
+      this.#error(
+        `Write to ${this.#trackLabel(track)} on "${member.nodeName}" overlaps its own ${kindName} "${placed.label}" — a raw write and its own placed ${kindName} must not drive the same property in overlapping time`,
+        span,
+      )
+      break
+    }
+    this.#warnPreexistingForRaw(member, track, s, e, span)
+    this.#rawIntervals.push({
+      nodeId: member.nodeId,
+      nodeName: member.nodeName,
+      track,
+      start: s,
+      end: e,
+      span,
+    })
+  }
+
+  /**
+   * Record a placed window (play/apply/control-driven) on one member property
+   * and report raw-vs-own overlaps at the placing statement. Placed-placed
+   * overlaps are allowed (statement order is priority for lanes).
+   */
+  #recordPlacedInterval(
+    member: ScriptMember,
+    track: ScriptTrack,
+    start: number,
+    end: number,
+    span: SourceSpan,
+    kind: 'clip' | 'collection' | 'control',
+    label: string,
+  ): void {
+    const s = roundTime(start)
+    const e = roundTime(end)
+    for (const existing of this.#rawIntervals) {
+      if (existing.nodeId !== member.nodeId) continue
+      if (!tracksEqualForConflict(existing.track, track)) continue
+      if (!intervalsOverlap(existing.start, existing.end, s, e)) continue
+      this.#error(
+        `Placed ${kind} "${label}" on "${member.nodeName}" overlaps a raw write to ${this.#trackLabel(track)} — a raw write and its own placed ${kind} must not drive the same property in overlapping time`,
+        span,
+      )
+      break
+    }
+    this.#warnPreexistingForPlaced(member, track, s, e, span, kind, label)
+    this.#placedIntervals.push({
+      nodeId: member.nodeId,
+      nodeName: member.nodeName,
+      track,
+      start: s,
+      end: e,
+      span,
+      kind,
+      label,
+    })
+  }
+
+  /** Warn when a placed window overlaps pre-existing clips/controls on the same property. */
+  #warnPreexistingForPlaced(
+    member: ScriptMember,
+    track: ScriptTrack,
+    start: number,
+    end: number,
+    span: SourceSpan,
+    kind: 'clip' | 'collection' | 'control',
+    label: string,
+  ): void {
+    const existingInstances = this.#context.existingInstances ?? []
+    if (existingInstances.length > 0) {
+      const clipById = new Map(this.#context.clips.map((clip) => [clip.id, clip] as const))
+      for (const instance of existingInstances) {
+        if (instance.nodeId !== member.nodeId) continue
+        if (!intervalsOverlap(instance.start, instance.end, start, end)) continue
+        const clip = clipById.get(instance.clipId)
+        if (!clip) continue
+        if (!(clip.channels ?? []).some((channel) => clipChannelConflictsTrack(channel, track)))
+          continue
+        this.#warning(
+          `Placed ${kind} "${label}" on "${member.nodeName}" overlaps a pre-existing clip "${clip.name}" — evaluation precedence would otherwise silently override the script`,
+          span,
+        )
+        break
+      }
+    }
+    const existingControls = this.#context.existingControls ?? []
+    if (existingControls.length > 0) {
+      for (const control of existingControls) {
+        const driven = this.#controlDrivenTracks(control.hostId, control.key)
+        for (const entry of driven) {
+          if (entry.nodeId !== member.nodeId) continue
+          if (!tracksEqualForConflict(entry.track, track)) continue
+          const hostName = this.#nodeNameOf(control.hostId) ?? control.hostId
+          this.#warning(
+            `Placed ${kind} "${label}" on "${member.nodeName}" overlaps pre-existing control "${control.key}" on "${hostName}" — evaluation precedence would otherwise silently override the script`,
+            span,
+          )
+          break
+        }
+      }
+    }
+  }
+
+  /** Warn when a raw write overlaps pre-existing clips/controls on the same property. */
+  #warnPreexistingForRaw(
+    member: ScriptMember,
+    track: ScriptTrack,
+    start: number,
+    end: number,
+    span: SourceSpan,
+  ): void {
+    const existingInstances = this.#context.existingInstances ?? []
+    if (existingInstances.length > 0) {
+      const clipById = new Map(this.#context.clips.map((clip) => [clip.id, clip] as const))
+      for (const instance of existingInstances) {
+        if (instance.nodeId !== member.nodeId) continue
+        if (!intervalsOverlap(instance.start, instance.end, start, end)) continue
+        const clip = clipById.get(instance.clipId)
+        if (!clip) continue
+        const channels = clip.channels ?? []
+        if (!channels.some((channel) => clipChannelConflictsTrack(channel, track))) continue
+        this.#warning(
+          `Write to ${this.#trackLabel(track)} on "${member.nodeName}" overlaps a pre-existing clip "${clip.name}" — evaluation precedence would otherwise silently override the script`,
+          span,
+        )
+        break
+      }
+    }
+    const existingControls = this.#context.existingControls ?? []
+    if (existingControls.length > 0) {
+      for (const control of existingControls) {
+        const driven = this.#controlDrivenTracks(control.hostId, control.key)
+        for (const entry of driven) {
+          if (entry.nodeId !== member.nodeId) continue
+          if (!tracksEqualForConflict(entry.track, track)) continue
+          const hostName = this.#nodeNameOf(control.hostId) ?? control.hostId
+          this.#warning(
+            `Write to ${this.#trackLabel(track)} on "${member.nodeName}" overlaps pre-existing control "${control.key}" on "${hostName}" — evaluation precedence would otherwise silently override the script`,
+            span,
+          )
+          break
+        }
+      }
+    }
+  }
+
+  /** The tracks a host control drives, resolved via bindings + clip channels. */
+  #controlDrivenTracks(hostId: string, key: string): { nodeId: string; track: ScriptTrack }[] {
+    const cacheKey = `${hostId}|${key}`
+    const cached = this.#controlDrivenCache.get(cacheKey)
+    if (cached) return cached
+    const host = this.#context.nodes.find((node) => node.id === hostId)
+    const control = host?.controls?.find((entry) => entry.key === key)
+    const bindings = control?.bindings
+    if (!bindings) {
+      this.#controlDrivenCache.set(cacheKey, [])
+      return []
+    }
+    const clipById = new Map(this.#context.clips.map((clip) => [clip.id, clip] as const))
+    const out: { nodeId: string; track: ScriptTrack }[] = []
+    for (const [semantic, clipIds] of Object.entries(bindings)) {
+      for (const clipId of clipIds) {
+        const clip = clipById.get(clipId)
+        if (!clip) continue
+        const members = this.#descendantsWithSemantic(hostId, semantic.trim())
+        for (const member of members) {
+          for (const channel of clip.channels ?? []) {
+            out.push({ nodeId: member.id, track: clipChannelToTrack(channel) })
+          }
+        }
+      }
+    }
+    this.#controlDrivenCache.set(cacheKey, out)
+    return out
+  }
+
+  /** Descendants of a parent (including the parent) carrying a semantic name. */
+  #descendantsWithSemantic(parentId: string, semantic: string): AnimationScriptNodeInfo[] {
+    if (semantic === '') return []
+    return this.#descendantsOf(parentId).filter((node) => node.semanticName?.trim() === semantic)
+  }
+
+  #nodeNameOf(nodeId: string): string | undefined {
+    return this.#context.nodes.find((node) => node.id === nodeId)?.name
+  }
+
+  /** Claim one emitted keyframe slot; errors once naming the offending statement. */
+  #claimEmittedKeyframe(span: SourceSpan | null): boolean {
+    if (this.#planned.size < this.#maxEmittedKeyframes) return true
+    if (!this.#emittedBudgetReported) {
+      this.#emittedBudgetReported = true
+      this.#error(
+        `Emitted keyframes pass the compile budget of ${this.#maxEmittedKeyframes} — split the script or shorten loops`,
+        span ?? this.#rawIntervals[0]?.span ?? { start: 0, end: 1 },
+      )
+    }
+    return false
+  }
+
+  /** Claim `count` emitted instances; errors once naming the offending statement. */
+  #claimEmittedInstances(count: number, span: SourceSpan): boolean {
+    if (this.#instanceCount + count <= this.#maxEmittedInstances) return true
+    if (!this.#instanceBudgetReported) {
+      this.#instanceBudgetReported = true
+      this.#error(
+        `Emitted clip instances pass the compile budget of ${this.#maxEmittedInstances} — split the script or shorten loops`,
+        span,
+      )
+    }
+    return false
+  }
+
+  /**
+   * Claim `count` non-keyframe commands (static text shares the budget with
+   * placements). Bounds the command list the same way the keyframe budget
+   * bounds raw tracks; the diagnostic names the offending statement.
+   */
+  #claimEmittedCommand(count: number, span: SourceSpan): boolean {
+    if (
+      this.#textCommands.length + this.#clipCommands.length + count <=
+      this.#maxEmittedInstances
+    ) {
+      return true
+    }
+    if (!this.#instanceBudgetReported) {
+      this.#instanceBudgetReported = true
+      this.#error(
+        `Emitted clip instances pass the compile budget of ${this.#maxEmittedInstances} — split the script or shorten loops`,
+        span,
+      )
+    }
+    return false
   }
 
   /**
@@ -2548,6 +2988,7 @@ class Compiler {
     for (const member of binding.members) {
       for (const property of ['scaleX', 'scaleY'] as const) {
         const track: ScriptTrack = { kind: 'node', property }
+        this.#recordRawInterval(member, track, cursor, endTime, statement.span)
         // Plan the start pin first so a previous statement's end value on the
         // same track wins (statement-order priority, like sequential tweens);
         // the peak and the return then derive from that effective start.
@@ -2614,6 +3055,7 @@ class Compiler {
       for (const entry of write.entries) {
         const entryEase = this.#resolveEntryEase(entry, ease.ease, ease.name)
         if (entryEase === null) continue
+        this.#recordRawInterval(write.member, entry.track, cursor, endTime, statement.span)
         this.#plan(write.member, entry.track, cursor, entryEase, null)
         this.#plan(write.member, entry.track, endTime, entryEase, { value: entry.value })
       }
@@ -2685,9 +3127,88 @@ class Compiler {
    * pinned from its own pre-clear value.
    */
   #lowerControl(statement: StatementNode, binding: BindingInfo, cursor: number): number {
-    return this.#lowerTweenLike(statement, cursor, () =>
-      this.#validateControlEntries(statement, binding),
-    )
+    const duration = this.#resolveDuration(statement)
+    if (duration.kind === 'missing') {
+      this.#error(
+        `control needs a duration — pass one after its values, like control("Key", 1, 0.4), or set defaults { duration }`,
+        statement.methodSpan,
+      )
+      return cursor
+    }
+    if (duration.kind === 'failed') {
+      return cursor
+    }
+    if (!this.#validateDuration(duration.seconds, duration.span)) {
+      return cursor
+    }
+    const ease = this.#resolveEase(statement)
+    const writes = this.#validateControlEntries(statement, binding)
+    const endTime = roundTime(cursor + duration.seconds)
+    if (writes.length === 0 || ease === null) {
+      return endTime
+    }
+    if (endTime > this.#context.slideDuration) {
+      this.#error(
+        `Statement ends at ${formatSeconds(endTime)}s, past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
+        duration.span,
+      )
+      return endTime
+    }
+    for (const write of writes) {
+      for (const entry of write.entries) {
+        const entryEase = this.#resolveEntryEase(entry, ease.ease, ease.name)
+        if (entryEase === null) continue
+        this.#recordRawInterval(write.member, entry.track, cursor, endTime, statement.span)
+        this.#recordControlDriven(write.member, entry, cursor, endTime, statement.span)
+        this.#plan(write.member, entry.track, cursor, entryEase, null)
+        this.#plan(write.member, entry.track, endTime, entryEase, { value: entry.value })
+      }
+    }
+    return endTime
+  }
+
+  /**
+   * Record the descendant properties a script control write drives: each node
+   * under the host matching a binding semantic, per clip channel, over the
+   * write's duration. Powers raw-vs-own-control conflict errors.
+   */
+  #recordControlDriven(
+    host: ScriptMember,
+    entry: ValidatedEntry,
+    start: number,
+    end: number,
+    span: SourceSpan,
+  ): void {
+    if (entry.track.kind !== 'control') return
+    const key = entry.track.controlKey
+    const hostNode = this.#context.nodes.find((node) => node.id === host.nodeId)
+    const control = hostNode?.controls?.find((candidate) => candidate.key === key)
+    const bindings = control?.bindings
+    if (!bindings) return
+    const clipById = new Map(this.#context.clips.map((clip) => [clip.id, clip] as const))
+    for (const [semantic, clipIds] of Object.entries(bindings)) {
+      const trimmed = semantic.trim()
+      if (trimmed === '') continue
+      const members = this.#descendantsWithSemantic(host.nodeId, trimmed)
+      for (const node of members) {
+        for (const clipId of clipIds) {
+          const clip = clipById.get(clipId)
+          if (!clip) continue
+          const member: ScriptMember = { nodeId: node.id, nodeName: node.name }
+          for (const channel of clip.channels ?? []) {
+            this.#recordPlacedInterval(
+              member,
+              clipChannelToTrack(channel),
+              start,
+              end,
+              span,
+              'control',
+              key,
+            )
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -2791,7 +3312,22 @@ class Compiler {
       return options.at !== undefined ? Math.max(cursor, endTime) : endTime
     }
     const enabled = options.enabled?.value ?? true
+    if (!this.#claimEmittedInstances(target.members.length, statement.span)) {
+      return options.at !== undefined ? Math.max(cursor, endTime) : endTime
+    }
+    const clipChannels = clip.channels ?? []
     for (const member of target.members) {
+      for (const channel of clipChannels) {
+        this.#recordPlacedInterval(
+          member,
+          clipChannelToTrack(channel),
+          start,
+          endTime,
+          statement.span,
+          'clip',
+          clip.name,
+        )
+      }
       this.#clipCommands.push({
         order: this.#order++,
         command: new AssignClipCommand({
@@ -2871,6 +3407,10 @@ class Compiler {
       )
       return options.at !== undefined ? Math.max(cursor, endTime) : endTime
     }
+    if (!this.#claimEmittedInstances(memberCount, statement.span)) {
+      return options.at !== undefined ? Math.max(cursor, endTime) : endTime
+    }
+    this.#recordApplyDriven(collection, target.members, start, endTime, statement.span)
     for (const parent of target.members) {
       this.#clipCommands.push({
         order: this.#order++,
@@ -2884,6 +3424,44 @@ class Compiler {
     }
     this.#instanceCount += memberCount
     return options.at !== undefined ? Math.max(cursor, endTime) : endTime
+  }
+
+  /**
+   * Record the driven member properties an `apply` placement creates: each
+   * descendant matching a collection semantic, per clip channel, over the
+   * placed window. Powers raw-vs-own-collection conflict errors.
+   */
+  #recordApplyDriven(
+    collection: AnimationScriptCollectionInfo,
+    parents: readonly ScriptMember[],
+    start: number,
+    end: number,
+    span: SourceSpan,
+  ): void {
+    const clipById = new Map(this.#context.clips.map((clip) => [clip.id, clip] as const))
+    for (const parent of parents) {
+      const descendants = this.#descendantsOf(parent.nodeId)
+      for (const [semantic, clipId] of Object.entries(collection.bindings)) {
+        const clip = clipById.get(clipId)
+        if (!clip) continue
+        const trimmed = semantic.trim()
+        for (const node of descendants) {
+          if (node.semanticName?.trim() !== trimmed) continue
+          const member: ScriptMember = { nodeId: node.id, nodeName: node.name }
+          for (const channel of clip.channels ?? []) {
+            this.#recordPlacedInterval(
+              member,
+              clipChannelToTrack(channel),
+              start,
+              end,
+              span,
+              'collection',
+              collection.name,
+            )
+          }
+        }
+      }
+    }
   }
 
   /** The clip binding a `play` resource argument references, or null after reporting. */
@@ -3183,6 +3761,9 @@ class Compiler {
     if (!target) return cursor
     const content = this.#evaluateString(statement.content, 'the new text content')
     if (content === null) return cursor
+    // Static text shares the emitted-commands budget with placements so no
+    // compile path can emit unboundedly; the diagnostic names this statement.
+    if (!this.#claimEmittedCommand(target.members.length, statement.span)) return cursor
     for (const member of target.members) {
       const node = this.#nodeOf(member)
       if (node?.isText !== true) {
@@ -3247,6 +3828,7 @@ class Compiler {
       )
       if (rotation === null) return end
       const track: ScriptTrack = { kind: 'node', property: 'rotation' }
+      this.#recordRawInterval(arrowMember, track, time, time, statement.span)
       this.#plan(arrowMember, track, time, HOLD_EASE, { value: rotation })
       return end
     }
@@ -3279,9 +3861,9 @@ class Compiler {
     const endRounded = roundTime(start + seconds)
     const lastStepped = roundTime(start + intervals * step)
     const sampleCount = intervals + 1 + (lastStepped !== endRounded ? 1 : 0)
-    if (sampleCount > SCRIPT_MAX_POINT_ARROW_SAMPLES) {
+    if (sampleCount > this.#maxPointArrowSamples) {
       this.#error(
-        `pointArrowAt would bake ${sampleCount} samples, past the compile budget of ${SCRIPT_MAX_POINT_ARROW_SAMPLES} — lengthen every: or shorten over:`,
+        `pointArrowAt would bake ${sampleCount} samples, past the compile budget of ${this.#maxPointArrowSamples} — lengthen every: or shorten over:`,
         statement.variant.every !== undefined
           ? statement.variant.every.span
           : statement.variant.duration.span,
@@ -3301,6 +3883,7 @@ class Compiler {
     if (!this.#validatePointArrowCapability(arrowMember, statement)) return end
     if (end > this.#context.slideDuration) return end
     const track: ScriptTrack = { kind: 'node', property: 'rotation' }
+    this.#recordRawInterval(arrowMember, track, start, end, statement.span)
     for (let index = 0; index <= intervals; index += 1) {
       const time = roundTime(start + index * step)
       const rotation = this.#pointArrowRotation(
@@ -3401,6 +3984,7 @@ class Compiler {
     }
     for (const write of writes) {
       for (const entry of write.entries) {
+        this.#recordRawInterval(write.member, entry.track, time, time, statement.span)
         this.#plan(write.member, entry.track, time, HOLD_EASE, { value: entry.value })
       }
     }
@@ -3570,6 +4154,7 @@ class Compiler {
     }
     for (const write of writes) {
       for (const entry of write.entries) {
+        this.#recordRawInterval(write.member, entry.track, time, time, statement.span)
         this.#plan(write.member, entry.track, time, HOLD_EASE, { value: entry.value })
       }
     }
@@ -4419,6 +5004,7 @@ class Compiler {
     ease: ResolvedScriptEase
   }): void {
     const { nodeId, nodeName, track, time, value, ease } = input
+    if (!this.#claimEmittedKeyframe(this.#currentSpan)) return
     const property = this.#trackLabel(track)
     this.#planned.set(slotKeyFor(nodeId, track, time), {
       target: this.#targetFor(nodeId, track),
@@ -5429,4 +6015,93 @@ function expressionLabel(expression: ScriptExpression): string {
     return `${expression.object.name}.${expression.name}`
   }
   return 'the resource'
+}
+
+/**
+ * Same-property comparison for conflict detection: same track kind and same
+ * property name. Material parameters match by name (the clip channel's
+ * `kindOf` is informational); `zIndex` clip channels match node `zIndex`
+ * tracks. Control, data-label, morph and symmetry tracks only ever match
+ * their own kind.
+ */
+function tracksEqualForConflict(a: ScriptTrack, b: ScriptTrack): boolean {
+  if (a.kind !== b.kind) {
+    // A `zIndex` clip channel arrives as `{ kind: 'zIndex' }`; match it to the
+    // node `zIndex` track the script writes.
+    if (
+      (a.kind === 'node' &&
+        a.property === 'zIndex' &&
+        (b as ScriptTrack).kind === ('zIndex' as never)) ||
+      ((a as ScriptTrack).kind === ('zIndex' as never) &&
+        b.kind === 'node' &&
+        (b as { property: string }).property === 'zIndex')
+    ) {
+      return true
+    }
+    return false
+  }
+  switch (a.kind) {
+    case 'node':
+      return a.property === (b as { property: string }).property
+    case 'parameter':
+      return a.parameter === (b as { parameter: string }).parameter
+    case 'circle':
+      return a.property === (b as { property: string }).property
+    case 'table':
+      return a.property === (b as { property: string }).property
+    case 'morph':
+    case 'symmetry':
+      return true
+    case 'shadow':
+      return a.property === (b as { property: string }).property
+    case 'dataLabel':
+      return a.label === (b as { label: string }).label
+    case 'control':
+      return a.controlKey === (b as { controlKey: string }).controlKey
+  }
+}
+
+/** Whether a clip channel drives the same property a raw track writes. */
+function clipChannelConflictsTrack(
+  channel: AnimationScriptClipChannel,
+  track: ScriptTrack,
+): boolean {
+  return tracksEqualForConflict(clipChannelToTrack(channel), track)
+}
+
+/** A clip channel as the `ScriptTrack` shape conflict comparison uses. */
+function clipChannelToTrack(channel: AnimationScriptClipChannel): ScriptTrack {
+  switch (channel.kind) {
+    case 'node':
+      return { kind: 'node', property: channel.property }
+    case 'parameter':
+      return { kind: 'parameter', parameter: channel.parameter, kindOf: '' }
+    case 'circle':
+      return { kind: 'circle', property: channel.property }
+    case 'table':
+      return { kind: 'table', property: channel.property }
+    case 'morph':
+      return { kind: 'morph' }
+    case 'symmetry':
+      return { kind: 'symmetry' }
+    case 'shadow':
+      return { kind: 'shadow', property: channel.property }
+    case 'zIndex':
+      return { kind: 'node', property: 'zIndex' }
+  }
+}
+
+/**
+ * Strict interior overlap: touching at an endpoint is sequencing, not a
+ * conflict. Instant points (`start === end`, a `set`) conflict only when
+ * strictly inside another interval; coincident points are last-wins, not an
+ * overlap. All times are already 1e-6 rounded.
+ */
+function intervalsOverlap(s1: number, e1: number, s2: number, e2: number): boolean {
+  const point1 = s1 === e1
+  const point2 = s2 === e2
+  if (point1 && point2) return false
+  if (point1) return s2 < s1 && s1 < e2
+  if (point2) return s1 < s2 && s2 < e1
+  return Math.max(s1, s2) < Math.min(e1, e2)
 }

@@ -3,7 +3,11 @@ import type { SceneNode } from './sceneNode'
 import { isGroupNode, walkPreOrder } from './sceneNode'
 import { compileAnimationScript, isScriptTableProperty } from './animationScriptCompiler'
 import type {
+  AnimationScriptBudgets,
+  AnimationScriptClipChannel,
   AnimationScriptCompileResult,
+  AnimationScriptExistingControl,
+  AnimationScriptExistingInstance,
   AnimationScriptMaterialParameterInfo,
   AnimationScriptNodeInfo,
   ScriptProperty,
@@ -23,6 +27,9 @@ import {
   TINT_PARAMETER_KEY,
 } from './materialResolution'
 import { DEFAULT_SHADOW_EFFECT, lerpHexColor } from './shadowEffect'
+import { MIN_CLIP_SPEED } from './animationManagerModel'
+import type { ClipDefinition } from './clipDefinition'
+import { controlBindingClipId } from './control'
 
 export interface AnimationScriptCheckOptions {
   /**
@@ -30,6 +37,13 @@ export interface AnimationScriptCheckOptions {
    * headless compile, where bounds report no measurable geometry.
    */
   readonly measure?: AnimationScriptMeasure
+  /**
+   * Tunable compile budgets, overriding the `SCRIPT_MAX_*` defaults. Tests use
+   * small budgets to trigger diagnostics quickly; production uses defaults.
+   * Validation is identical no matter who authored the source — hand or AI —
+   * because Check and Run share this single compile path.
+   */
+  readonly budgets?: AnimationScriptBudgets
 }
 
 /**
@@ -64,6 +78,7 @@ export function checkAnimationScript(
         controls: node.controlSet.controls.map((control) => ({
           key: control.key,
           exposed: control.exposed,
+          bindings: controlBindingsOf(control.bindings),
         })),
       }),
       materialParameters: materialParametersOf(engine, node),
@@ -94,6 +109,7 @@ export function checkAnimationScript(
       name: clip.name,
       duration: clip.duration,
       params: clip.params.map((param) => param.key),
+      channels: clipChannelsOf(clip),
     })),
     collections: engine.clipCollections.map((collection) => ({
       id: collection.id,
@@ -101,11 +117,163 @@ export function checkAnimationScript(
       bindings: collection.getBindingsObject(),
     })),
     libraryFunctions,
+    ...(options.budgets !== undefined ? { budgets: options.budgets } : {}),
+    existingInstances: existingInstancesOf(engine, slide.scene.root),
+    existingControls: existingControlsOf(engine, slide.scene.root),
     evaluateProperty: (nodeId, property, time) => evaluateProperty(engine, nodeId, property, time),
     evaluateTrackValue: (nodeId, track, time) =>
       evaluateTrackValue(engine, reads, nodeId, track, time),
     reads,
   })
+}
+
+/**
+ * The tracks a clip placement drives, for raw-vs-clip conflict detection.
+ * Uniform channels map to the script's node vocabulary (`positionX` → `x`);
+ * material channels match by parameter name; circle/table/shadow/morph/
+ * symmetry/zIndex map to their script kinds. `visible` and `segments` never
+ * appear — the script surface excludes them.
+ */
+function clipChannelsOf(clip: ClipDefinition): AnimationScriptClipChannel[] {
+  const channels: AnimationScriptClipChannel[] = []
+  for (const channel of clip.channels) {
+    if (channel.materialParameter) {
+      channels.push({ kind: 'parameter', parameter: channel.materialParameter })
+      continue
+    }
+    switch (channel.property) {
+      case 'positionX':
+        channels.push({ kind: 'node', property: 'x' })
+        break
+      case 'positionY':
+        channels.push({ kind: 'node', property: 'y' })
+        break
+      case 'rotation':
+        channels.push({ kind: 'node', property: 'rotation' })
+        break
+      case 'scaleX':
+        channels.push({ kind: 'node', property: 'scaleX' })
+        break
+      case 'scaleY':
+        channels.push({ kind: 'node', property: 'scaleY' })
+        break
+      case 'opacity':
+        channels.push({ kind: 'node', property: 'opacity' })
+        break
+    }
+  }
+  for (const property of clip.circleTrackKeys) {
+    if (property === 'radius' || property === 'startAngle' || property === 'endAngle') {
+      channels.push({ kind: 'circle', property })
+    }
+  }
+  for (const property of clip.tableTrackKeys) {
+    if (property === 'borderRadius' || property === 'padding') {
+      channels.push({ kind: 'table', property })
+    }
+  }
+  if (clip.hasMorphTrack()) channels.push({ kind: 'morph' })
+  if (clip.getSymmetryKeyframes().length > 0) channels.push({ kind: 'symmetry' })
+  for (const property of clip.shadowChannelKeys) {
+    channels.push({ kind: 'shadow', property })
+  }
+  if (clip.hasZIndexTrack()) channels.push({ kind: 'zIndex' })
+  return channels
+}
+
+/** A control's semantic → clip ids, flattened from intervals and arrays. */
+function controlBindingsOf(
+  bindings: Readonly<Record<string, unknown>>,
+): Record<string, readonly string[]> {
+  const out: Record<string, readonly string[]> = {}
+  for (const [semantic, value] of Object.entries(bindings)) {
+    const ids: string[] = []
+    const push = (binding: unknown): void => {
+      if (typeof binding === 'string') {
+        if (binding !== '') ids.push(binding)
+        return
+      }
+      if (binding !== null && typeof binding === 'object') {
+        try {
+          ids.push(controlBindingClipId(binding as never))
+        } catch {
+          // Tolerant: a malformed binding never blocks a compile
+        }
+      }
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) push(entry)
+    } else {
+      push(value)
+    }
+    if (ids.length > 0) out[semantic] = ids
+  }
+  return out
+}
+
+/**
+ * Pre-existing clip instances overlapping the script window, for warnings.
+ * Includes placement members (they drive through their clip) and excludes
+ * disabled instances (they never evaluate). The window is the instance's
+ * visual span at its effective speed.
+ */
+function existingInstancesOf(
+  engine: EnginePublic,
+  root: SceneNode,
+): AnimationScriptExistingInstance[] {
+  const out: AnimationScriptExistingInstance[] = []
+  const clipById = new Map(engine.clips.map((clip) => [clip.id, clip] as const))
+  for (const node of walkPreOrder(root)) {
+    let instances: readonly {
+      clipId: string
+      startTime: number
+      speed: number
+      enabled: boolean
+    }[]
+    try {
+      instances = engine.getClipInstances(node.id)
+    } catch {
+      continue
+    }
+    for (const instance of instances) {
+      if (instance.enabled === false) continue
+      const clip = clipById.get(instance.clipId)
+      if (!clip) continue
+      const speed = Math.max(instance.speed, MIN_CLIP_SPEED)
+      const end = speed === 0 ? instance.startTime : instance.startTime + clip.duration / speed
+      out.push({ nodeId: node.id, clipId: clip.id, start: instance.startTime, end })
+    }
+  }
+  return out
+}
+
+/**
+ * Pre-existing active Controls (≥1 enabled keyframe), for warnings. Dormant
+ * controls yield to raw keyframes and never warn; active ones win evaluation
+ * precedence over the whole slide once keyed, so any same-property script
+ * write warns.
+ */
+function existingControlsOf(
+  engine: EnginePublic,
+  root: SceneNode,
+): AnimationScriptExistingControl[] {
+  const out: AnimationScriptExistingControl[] = []
+  for (const node of walkPreOrder(root)) {
+    const controlSet = node.controlSet
+    if (!controlSet) continue
+    for (const control of controlSet.controls) {
+      let track: readonly { disabled?: boolean }[]
+      try {
+        track = engine.getKeyframesOf({ kind: 'control', nodeId: node.id, controlKey: control.key })
+      } catch {
+        continue
+      }
+      if (track.some((keyframe) => keyframe.disabled !== true)) {
+        out.push({ hostId: node.id, key: control.key })
+      }
+    }
+  }
+  return out
 }
 
 /**

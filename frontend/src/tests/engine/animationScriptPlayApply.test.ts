@@ -548,7 +548,9 @@ describe('Animation Script play — lowering', () => {
       'at(5) hero.play(wave)',
       'parallel {',
       '  hero.play(wave)',
-      '  hero.tween({ x: 1 }, 0.4)',
+      // Wave drives x, so the concurrent raw writes y — same-property raw
+      // vs own clip overlaps are compile errors (#389).
+      '  hero.tween({ y: 1 }, 0.4)',
       '}',
     ].join('\n')
     const checked = check(system, slideId, source.split('\n'))
