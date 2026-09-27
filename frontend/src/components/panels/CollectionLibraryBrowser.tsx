@@ -18,6 +18,16 @@ import {
 import type { MirrorAxis } from '../../engine/clipMirror'
 import { reverseMirrorCollectionDefaultName } from '../../engine/clipReverseMirror'
 import { ALL_COLLECTION_CATEGORIES, distinctCollectionCategories } from './collectionCategories'
+import {
+  buildLibraryDestRows,
+  buildProportionalCopyDestRows,
+  buildProportionalCopySourceRows,
+  executeProportionalCopy,
+  longestSourceDuration,
+  previewProportionalCopy,
+  resolveLibraryDestIds,
+} from '../../app/clipProportionalCopyAction'
+import { ProportionalCopyModal } from './ProportionalCopyModal'
 
 export function CollectionLibraryBrowser({
   visible,
@@ -59,6 +69,7 @@ export function CollectionLibraryBrowser({
   } | null>(null)
   const [reverseMirrorNameDraft, setReverseMirrorNameDraft] = useState('')
   const [reverseMirrorAxis, setReverseMirrorAxis] = useState<MirrorAxis>('X')
+  const [proportionalCopySourceId, setProportionalCopySourceId] = useState<string | null>(null)
 
   const removeTemporaryImports = (name: string, importedId: string | null): void => {
     const ids = engine.clipCollections
@@ -361,6 +372,42 @@ export function CollectionLibraryBrowser({
                                 }}
                               >
                                 Reverse + Mirror and Save As…
+                              </button>
+                              <button
+                                role="menuitem"
+                                data-testid={`library-collection-proportional-copy-${entry.id}`}
+                                style={{
+                                  display: 'block',
+                                  width: '100%',
+                                  textAlign: 'left',
+                                  padding: '6px 10px',
+                                  border: 'none',
+                                  background: 'transparent',
+                                  cursor: 'pointer',
+                                  fontSize: 12,
+                                }}
+                                onClick={async () => {
+                                  setOverflowId(null)
+                                  try {
+                                    const existing = engine.clipCollections.find(
+                                      (c) => c.name === entry.name && c.sourceNodeId === undefined,
+                                    )
+                                    if (existing) {
+                                      setProportionalCopySourceId(existing.id)
+                                      return
+                                    }
+                                    const importedId = await importCollection(entry, engine)
+                                    if (!importedId) {
+                                      notify(`Collection "${entry.name}" could not be imported`)
+                                      return
+                                    }
+                                    setProportionalCopySourceId(importedId)
+                                  } catch (e) {
+                                    notify(e instanceof Error ? e.message : String(e))
+                                  }
+                                }}
+                              >
+                                Copy properties proportionally…
                               </button>
                             </div>
                           )}
@@ -731,6 +778,7 @@ export function CollectionLibraryBrowser({
           aria-label="Reverse and Mirror Collection and Save As"
           data-testid="library-collection-reverse-mirror-modal"
         >
+          {' '}
           <div
             className="projects-dialog"
             style={{ minWidth: 380 }}
@@ -893,6 +941,73 @@ export function CollectionLibraryBrowser({
           </div>
         </div>
       )}
+      {(() => {
+        if (!proportionalCopySourceId) return null
+        const sourceId: string = proportionalCopySourceId
+        let collectionName: string
+        try {
+          collectionName = engine.getClipCollection(sourceId).name
+        } catch {
+          return null
+        }
+        const entriesById = new Map(definitions.map((entry) => [entry.id, entry]))
+        return (
+          <ProportionalCopyModal
+            sourceCollectionName={collectionName}
+            sourceLongestDuration={longestSourceDuration(engine, sourceId)}
+            sourceRows={buildProportionalCopySourceRows(engine, sourceId)}
+            destRows={[
+              ...buildProportionalCopyDestRows(engine, sourceId),
+              ...buildLibraryDestRows(engine, definitions),
+            ]}
+            getPreview={(selection) =>
+              previewProportionalCopy(engine, {
+                sourceCollectionId: sourceId,
+                fromNorm: selection.fromNorm,
+                toNorm: selection.toNorm,
+                bindings: selection.bindings,
+                destCollectionIds: selection.destProjectIds,
+                mode: selection.mode,
+                reverse: selection.reverse,
+              })
+            }
+            onClose={() => setProportionalCopySourceId(null)}
+            onConfirm={async (selection) => {
+              const entries = selection.destLibraryIds.flatMap((id) => {
+                const entry = entriesById.get(id)
+                return entry ? [entry] : []
+              })
+              const resolved = await resolveLibraryDestIds(engine, sourceId, entries, (entry) =>
+                importCollection(entry, engine),
+              )
+              if (resolved.ids.length === 0 && resolved.skipped.length > 0) {
+                return resolved.skipped.join('; ')
+              }
+              const result = executeProportionalCopy(engine, dispatch, {
+                sourceCollectionId: sourceId,
+                fromNorm: selection.fromNorm,
+                toNorm: selection.toNorm,
+                bindings: selection.bindings,
+                destCollectionIds: [...selection.destProjectIds, ...resolved.ids],
+                mode: selection.mode,
+                reverse: selection.reverse,
+              })
+              if (!result.ok) {
+                return resolved.skipped.length > 0
+                  ? `${result.error} (${resolved.skipped.join('; ')})`
+                  : result.error
+              }
+              setProportionalCopySourceId(null)
+              notify(
+                resolved.skipped.length > 0
+                  ? `${result.message} · ${resolved.skipped.join('; ')}`
+                  : result.message,
+              )
+              return null
+            }}
+          />
+        )
+      })()}
     </div>
   )
 }

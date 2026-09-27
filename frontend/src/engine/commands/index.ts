@@ -622,3 +622,8 @@ export type {
   ReverseMirrorCollectionInverse,
   ReverseMirrorCollectionParameters,
 } from './reverseMirrorCollectionCommand'
+export { ProportionalCopyCommand } from './proportionalCopyCommand'
+export type {
+  ProportionalCopyCommandInverse,
+  ProportionalCopyCommandParameters,
+} from './proportionalCopyCommand'

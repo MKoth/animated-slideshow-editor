@@ -104,6 +104,18 @@ import type { BulkOffsetMap, BulkOffsetPreview } from '../../app/clipBulkOffsetA
 import { BulkOffsetModal } from './BulkOffsetModal'
 import type { BulkOffsetBindingRow } from './BulkOffsetModal'
 import {
+  buildLibraryDestRows,
+  buildProportionalCopyDestRows,
+  buildProportionalCopySourceRows,
+  executeProportionalCopy,
+  previewProportionalCopy,
+  resolveLibraryDestIds,
+} from '../../app/clipProportionalCopyAction'
+import type { ProportionalCopyPreview } from '../../app/clipProportionalCopyAction'
+import { ProportionalCopyModal } from './ProportionalCopyModal'
+import type { ProportionalCopyDialogSelection } from './ProportionalCopyModal'
+import { useClipCollectionLibraryStore } from '../../stores/clipCollectionLibraryStore'
+import {
   defaultSegmentRange,
   formatSec,
   parseSec,
@@ -468,6 +480,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   // Bulk additive offset of clip keyframe values across collection bindings (retarget flow)
   const [bulkOffsetOpen, setBulkOffsetOpen] = useState(false)
   const [bulkOffsetFilterSeed, setBulkOffsetFilterSeed] = useState('')
+  // Granular proportional copy of collection properties across collections
+  const [proportionalCopySourceId, setProportionalCopySourceId] = useState<string | null>(null)
   // Collection Lane placements (15-06)
   const [selectedPlacementId, setSelectedPlacementId] = useState<string | null>(null)
   const [placeCollectionId, setPlaceCollectionId] = useState<string>('')
@@ -609,6 +623,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       setReplaceOpen(false)
       setBulkOffsetOpen(false)
       setBulkOffsetFilterSeed('')
+      setProportionalCopySourceId(null)
       setSelectedPlacementId(null)
       setPlaceCollectionId('')
       setCollectionPlacementMenu(null)
@@ -683,6 +698,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         } else if (bulkOffsetOpen) {
           setBulkOffsetOpen(false)
           e.stopPropagation()
+        } else if (proportionalCopySourceId) {
+          setProportionalCopySourceId(null)
+          e.stopPropagation()
         } else if (orphanContextMenu) {
           setOrphanContextMenu(null)
           e.stopPropagation()
@@ -737,6 +755,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     collectionPlacementMenu,
     controlBlockMenu,
     bulkOffsetOpen,
+    proportionalCopySourceId,
     reverseClipPrompt,
     reverseCollectionPrompt,
     mirrorClipPrompt,
@@ -1921,6 +1940,107 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     (clipIds: string[], offsets: BulkOffsetMap): BulkOffsetPreview =>
       previewBulkClipOffset(engine, { clipIds, offsets }),
     [engine],
+  )
+
+  // Granular proportional copy: source collection picked from the lane menu.
+  // Destinations cover every project collection plus shared-library collections
+  // (imported on confirm), grouped by category in the modal.
+  const libraryDefinitions = useClipCollectionLibraryStore((s) => s.definitions)
+  const libraryLoaded = useClipCollectionLibraryStore((s) => s.loaded)
+  const libraryLoading = useClipCollectionLibraryStore((s) => s.loading)
+  const loadLibrary = useClipCollectionLibraryStore((s) => s.loadLibrary)
+  const importFromLibrary = useClipCollectionLibraryStore((s) => s.importCollectionFromLibrary)
+  useEffect(() => {
+    if (proportionalCopySourceId && !libraryLoaded && !libraryLoading) void loadLibrary()
+  }, [proportionalCopySourceId, libraryLoaded, libraryLoading, loadLibrary])
+
+  const proportionalCopySource = useMemo(() => {
+    void tick
+    if (!proportionalCopySourceId) return null
+    try {
+      const collection = engine.getClipCollection(proportionalCopySourceId)
+      return {
+        id: collection.id,
+        name: collection.name,
+        longest: longestClipDuration(engine, collection.id),
+        sourceRows: buildProportionalCopySourceRows(engine, collection.id),
+        destRows: [
+          ...buildProportionalCopyDestRows(engine, collection.id),
+          ...buildLibraryDestRows(engine, libraryDefinitions),
+        ],
+      }
+    } catch {
+      return null
+    }
+  }, [engine, tick, proportionalCopySourceId, libraryDefinitions])
+
+  const proportionalCopyPreview = useCallback(
+    (selection: ProportionalCopyDialogSelection): ProportionalCopyPreview => {
+      if (!proportionalCopySource) {
+        return {
+          keyframeCount: 0,
+          destClipCount: 0,
+          replacedCount: 0,
+          skippedLinked: 0,
+          skippedMissingSemantic: 0,
+          skippedMissingClip: 0,
+          skippedSelf: 0,
+        }
+      }
+      return previewProportionalCopy(engine, {
+        sourceCollectionId: proportionalCopySource.id,
+        fromNorm: selection.fromNorm,
+        toNorm: selection.toNorm,
+        bindings: selection.bindings,
+        destCollectionIds: selection.destProjectIds,
+        mode: selection.mode,
+        reverse: selection.reverse,
+      })
+    },
+    [engine, proportionalCopySource],
+  )
+
+  const handleProportionalCopyConfirm = useCallback(
+    async (selection: ProportionalCopyDialogSelection): Promise<string | null> => {
+      if (!proportionalCopySource) return 'No source collection selected'
+      const entriesById = new Map(libraryDefinitions.map((entry) => [entry.id, entry]))
+      const entries = selection.destLibraryIds.flatMap((id) => {
+        const entry = entriesById.get(id)
+        return entry ? [entry] : []
+      })
+      const resolved = await resolveLibraryDestIds(
+        engine,
+        proportionalCopySource.id,
+        entries,
+        (entry) => importFromLibrary(entry, engine),
+      )
+      if (resolved.ids.length === 0 && resolved.skipped.length > 0) {
+        return resolved.skipped.join('; ')
+      }
+      const result = executeProportionalCopy(engine, dispatch, {
+        sourceCollectionId: proportionalCopySource.id,
+        fromNorm: selection.fromNorm,
+        toNorm: selection.toNorm,
+        bindings: selection.bindings,
+        destCollectionIds: [...selection.destProjectIds, ...resolved.ids],
+        mode: selection.mode,
+        reverse: selection.reverse,
+      })
+      if (!result.ok) {
+        return resolved.skipped.length > 0
+          ? `${result.error} (${resolved.skipped.join('; ')})`
+          : result.error
+      }
+      setProportionalCopySourceId(null)
+      setTick((value) => value + 1)
+      notify(
+        resolved.skipped.length > 0
+          ? `${result.message} · ${resolved.skipped.join('; ')}`
+          : result.message,
+      )
+      return null
+    },
+    [engine, dispatch, notify, proportionalCopySource, libraryDefinitions, importFromLibrary],
   )
 
   // Global distinct collection categories for the filter dropdowns.
@@ -8865,6 +8985,35 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               </button>
               <button
                 role="menuitem"
+                data-testid="collection-lane-proportional-copy"
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+                onClick={() => {
+                  try {
+                    const placement = engine.getCollectionPlacement(
+                      collectionPlacementMenu.placementId,
+                    )
+                    engine.getClipCollection(placement.collectionId)
+                    setProportionalCopySourceId(placement.collectionId)
+                    setCollectionPlacementMenu(null)
+                  } catch (e) {
+                    notify(e instanceof Error ? e.message : String(e))
+                    setCollectionPlacementMenu(null)
+                  }
+                }}
+              >
+                Copy properties proportionally…
+              </button>
+              <button
+                role="menuitem"
                 data-testid="collection-lane-delete"
                 style={{
                   display: 'block',
@@ -9744,6 +9893,19 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             getPreview={bulkOffsetPreview}
             onClose={() => setBulkOffsetOpen(false)}
             onConfirm={handleBulkOffsetConfirm}
+          />
+        )}
+
+        {/* Granular proportional copy of collection properties across collections */}
+        {proportionalCopySource && (
+          <ProportionalCopyModal
+            sourceCollectionName={proportionalCopySource.name}
+            sourceLongestDuration={proportionalCopySource.longest}
+            sourceRows={proportionalCopySource.sourceRows}
+            destRows={proportionalCopySource.destRows}
+            getPreview={proportionalCopyPreview}
+            onClose={() => setProportionalCopySourceId(null)}
+            onConfirm={handleProportionalCopyConfirm}
           />
         )}
 

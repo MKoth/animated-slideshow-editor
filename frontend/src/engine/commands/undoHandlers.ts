@@ -2117,6 +2117,17 @@ export function applyUndo(
       }
       return
     }
+    case 'ProportionalCopy': {
+      const before = (inv as Record<string, unknown>).before as unknown[] | undefined
+      for (const snapshot of before ?? []) {
+        try {
+          engine.restoreClipFromJSON(snapshot)
+        } catch {
+          void 0
+        }
+      }
+      return
+    }
     case 'MirrorClip': {
       const mirrorInv = inv as Record<string, unknown> | null
       const newClipId = mirrorInv?.newClipId as string
@@ -4224,6 +4235,18 @@ export function applyRedo(
           } catch {
             void 0
           }
+        }
+      }
+      return
+    }
+    case 'ProportionalCopy': {
+      const redoInv = _inverse as Record<string, unknown> | null
+      const afterSnaps = (redoInv?.after ?? redoInv?.before) as unknown[] | undefined
+      for (const snapshot of afterSnaps ?? []) {
+        try {
+          engine.restoreClipFromJSON(snapshot)
+        } catch {
+          void 0
         }
       }
       return
