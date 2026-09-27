@@ -36,6 +36,7 @@ import type {
   MarkNode,
   MemberExpression,
   ParallelNode,
+  PointArrowAtNode,
   PropertyEntry,
   RepeatNode,
   ScriptExpression,
@@ -391,6 +392,16 @@ const HOLD_EASE: ResolvedScriptEase = {
   tangentOut: ZERO_TANGENT,
 }
 
+/**
+ * Baked tracking uses plain linear interpolation between samples so the
+ * evaluator reproduces each baked sample and blends straight across gaps.
+ */
+const POINT_ARROW_LINEAR_EASE: ResolvedScriptEase = {
+  interpolation: 'linear',
+  tangentIn: ZERO_TANGENT,
+  tangentOut: ZERO_TANGENT,
+}
+
 interface ScriptReadSpec {
   /** The call shape shown in arity diagnostics. */
   readonly shape: string
@@ -419,6 +430,18 @@ const SCRIPT_READ_SPECS: Readonly<Record<string, ScriptReadSpec>> = {
  */
 export const SCRIPT_MAX_LOOP_ITERATIONS = 10000
 export const SCRIPT_MAX_UNROLLED_STATEMENTS = 10000
+/**
+ * Maximum baked rotation samples one `pointArrowAt(..., over:, every:)` call
+ * may emit. Like the loop budgets it turns a pathological call into a
+ * diagnostic instead of a hang; the default 30 Hz rate keeps ordinary
+ * tracking far below it.
+ */
+export const SCRIPT_MAX_POINT_ARROW_SAMPLES = 10000
+/**
+ * Default tracking sample step for `pointArrowAt(..., over:)` without an
+ * explicit `every:`: 30 Hz with an exact end sample.
+ */
+export const SCRIPT_POINT_ARROW_DEFAULT_EVERY = 1 / 30
 /**
  * Maximum inlining depth for local function calls. Recursion is a compile
  * error, so depth is bounded by the acyclic call graph; this budget turns a
@@ -1249,7 +1272,10 @@ class Compiler {
       )
       return
     }
-    if ((SCRIPT_RESERVED_NAMES as readonly string[]).includes(statement.alias)) {
+    if (
+      (SCRIPT_RESERVED_NAMES as readonly string[]).includes(statement.alias) ||
+      statement.alias === 'pointArrowAt'
+    ) {
       this.#error(
         `Name "${statement.alias}" is reserved by the Animation Script language`,
         statement.aliasSpan,
@@ -1500,6 +1526,8 @@ class Compiler {
         return this.#lowerStagger(statement, cursor)
       case 'setText':
         return this.#lowerSetText(statement, cursor)
+      case 'pointArrowAt':
+        return this.#lowerPointArrowAt(statement, cursor)
       case 'statement':
         return this.#lowerCall(statement, cursor)
       case 'function':
@@ -1849,7 +1877,8 @@ class Compiler {
     }
     if (
       SCRIPT_BUILTIN_NAMES.includes(statement.variable) ||
-      (SCRIPT_RESERVED_NAMES as readonly string[]).includes(statement.variable)
+      (SCRIPT_RESERVED_NAMES as readonly string[]).includes(statement.variable) ||
+      statement.variable === 'pointArrowAt'
     ) {
       this.#error(`Name "${statement.variable}" is reserved by a built-in`, statement.variableSpan)
       return false
@@ -3173,6 +3202,178 @@ class Compiler {
     return cursor
   }
 
+  /**
+   * The shipped `pointArrowAt` built-in. The `at:` variant writes one hold
+   * rotation keyframe at `t` facing the target's pivot and returns
+   * `max(cursor, t)`; the `over:` variant samples the target across `d` from
+   * the cursor (default 30 Hz with an exact end sample), bakes one linear
+   * rotation keyframe per sample, and advances by `d`. Pointing math is
+   * compile-time only: pivot world positions, `atan2`, then world-to-local
+   * rotation through the arrow's parent (`relativeTransform` composition) —
+   * no engine change, mirroring the `lookAt` constraint.
+   */
+  #lowerPointArrowAt(statement: PointArrowAtNode, cursor: number): number {
+    if (statement.variant.kind === 'at') {
+      const seconds = this.#evaluateNumber(statement.variant.time, 'a time in seconds')
+      if (seconds === null) return cursor
+      const time = roundTime(seconds)
+      const end = Math.max(cursor, time)
+      const arrowTarget = this.#resolveReadTarget(statement.arrow, false, 'pointArrowAt')
+      const targetTarget = this.#resolveReadTarget(statement.target, false, 'pointArrowAt')
+      if (time < this.#from) {
+        this.#error(
+          `pointArrowAt at: ${formatSeconds(time)}s cannot be before the segment start (from = ${formatSeconds(this.#from)}s)`,
+          statement.variant.time.span,
+        )
+      } else if (time > this.#context.slideDuration) {
+        this.#error(
+          `pointArrowAt at: ${formatSeconds(time)}s is past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
+          statement.variant.time.span,
+        )
+      }
+      if (!arrowTarget || !targetTarget) return end
+      const arrowMember = arrowTarget.members[0]
+      const targetMember = targetTarget.members[0]
+      if (!arrowMember || !targetMember) return end
+      if (!this.#validatePointArrowCapability(arrowMember, statement)) return end
+      // Out-of-bounds writes report above and skip planning so no keyframe
+      // lands outside the declared segment.
+      if (time < this.#from || time > this.#context.slideDuration) return end
+      const rotation = this.#pointArrowRotation(
+        arrowMember.nodeId,
+        targetMember.nodeId,
+        time,
+        statement.span,
+      )
+      if (rotation === null) return end
+      const track: ScriptTrack = { kind: 'node', property: 'rotation' }
+      this.#plan(arrowMember, track, time, HOLD_EASE, { value: rotation })
+      return end
+    }
+    const seconds = this.#evaluateNumber(statement.variant.duration, 'a duration in seconds')
+    if (seconds === null) return cursor
+    if (!this.#validateDuration(seconds, statement.variant.duration.span)) return cursor
+    let step = SCRIPT_POINT_ARROW_DEFAULT_EVERY
+    if (statement.variant.every !== undefined) {
+      const everyValue = this.#evaluateNumber(statement.variant.every, 'a sample step in seconds')
+      if (everyValue === null) return cursor
+      step = everyValue
+    }
+    const stepSpan =
+      statement.variant.every !== undefined
+        ? statement.variant.every.span
+        : statement.variant.duration.span
+    if (!Number.isFinite(step) || step <= 0) {
+      this.#error('pointArrowAt every: must be greater than 0', stepSpan)
+      return cursor
+    }
+    const start = cursor
+    const end = roundTime(start + seconds)
+    const arrowTarget = this.#resolveReadTarget(statement.arrow, false, 'pointArrowAt')
+    const targetTarget = this.#resolveReadTarget(statement.target, false, 'pointArrowAt')
+    // Count arithmetically before looping so a pathological step cannot hang
+    // the compile: floor + an exact end sample when `every` misses the end.
+    // Budget first, so an over-budget call reports the budget even when its
+    // span also runs past the slide.
+    const intervals = Math.floor(seconds / step + 1e-9)
+    const endRounded = roundTime(start + seconds)
+    const lastStepped = roundTime(start + intervals * step)
+    const sampleCount = intervals + 1 + (lastStepped !== endRounded ? 1 : 0)
+    if (sampleCount > SCRIPT_MAX_POINT_ARROW_SAMPLES) {
+      this.#error(
+        `pointArrowAt would bake ${sampleCount} samples, past the compile budget of ${SCRIPT_MAX_POINT_ARROW_SAMPLES} — lengthen every: or shorten over:`,
+        statement.variant.every !== undefined
+          ? statement.variant.every.span
+          : statement.variant.duration.span,
+      )
+      return end
+    }
+    if (end > this.#context.slideDuration) {
+      this.#error(
+        `Statement ends at ${formatSeconds(end)}s, past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
+        statement.variant.duration.span,
+      )
+    }
+    if (!arrowTarget || !targetTarget) return end
+    const arrowMember = arrowTarget.members[0]
+    const targetMember = targetTarget.members[0]
+    if (!arrowMember || !targetMember) return end
+    if (!this.#validatePointArrowCapability(arrowMember, statement)) return end
+    if (end > this.#context.slideDuration) return end
+    const track: ScriptTrack = { kind: 'node', property: 'rotation' }
+    for (let index = 0; index <= intervals; index += 1) {
+      const time = roundTime(start + index * step)
+      const rotation = this.#pointArrowRotation(
+        arrowMember.nodeId,
+        targetMember.nodeId,
+        time,
+        statement.span,
+      )
+      if (rotation === null) return end
+      this.#plan(arrowMember, track, time, POINT_ARROW_LINEAR_EASE, { value: rotation })
+    }
+    if (lastStepped !== endRounded) {
+      const rotation = this.#pointArrowRotation(
+        arrowMember.nodeId,
+        targetMember.nodeId,
+        endRounded,
+        statement.span,
+      )
+      if (rotation === null) return end
+      this.#plan(arrowMember, track, endRounded, POINT_ARROW_LINEAR_EASE, { value: rotation })
+    }
+    return end
+  }
+
+  /** Rotation tracks cannot animate on cameras; the arrow keeps that rule. */
+  #validatePointArrowCapability(member: ScriptMember, statement: PointArrowAtNode): boolean {
+    const node = this.#nodeOf(member)
+    if (!node) return true
+    return this.#validateTrackCapability(
+      { kind: 'node', property: 'rotation' },
+      node,
+      'rotation',
+      null,
+      statement.nameSpan,
+    )
+  }
+
+  /**
+   * Desired local rotation for the arrow to face the target's pivot world
+   * position at `time`: `atan2` in world space, minus the parent world's
+   * rotation (additive composition, the `relativeTransform` rule). Null after
+   * reporting when either world position is unmeasurable.
+   */
+  #pointArrowRotation(
+    arrowId: string,
+    targetId: string,
+    time: number,
+    span: SourceSpan,
+  ): number | null {
+    let arrowWorld: { x: number; y: number }
+    let targetWorld: { x: number; y: number }
+    try {
+      arrowWorld = this.#context.reads.world(arrowId, time)
+      targetWorld = this.#context.reads.world(targetId, time)
+    } catch (error) {
+      this.#error(
+        `pointArrowAt could not measure the arrow and target at ${formatSeconds(time)}s — ${error instanceof Error ? error.message : String(error)}`,
+        span,
+      )
+      return null
+    }
+    const desired = Math.atan2(targetWorld.y - arrowWorld.y, targetWorld.x - arrowWorld.x)
+    const arrowNode = this.#context.nodes.find((candidate) => candidate.id === arrowId)
+    const parentId = arrowNode?.parentId
+    if (parentId === undefined) return desired
+    try {
+      const parentWorld = this.#context.reads.world(parentId, time)
+      return desired - parentWorld.rotation
+    } catch {
+      return desired
+    }
+  }
+
   #lowerSet(statement: StatementNode, binding: BindingInfo, cursor: number): number {
     if (statement.duration !== undefined) {
       this.#error(
@@ -4303,7 +4504,8 @@ class Compiler {
       declared = false
     } else if (
       SCRIPT_BUILTIN_NAMES.includes(statement.name) ||
-      (SCRIPT_RESERVED_NAMES as readonly string[]).includes(statement.name)
+      (SCRIPT_RESERVED_NAMES as readonly string[]).includes(statement.name) ||
+      statement.name === 'pointArrowAt'
     ) {
       this.#error(`Name "${statement.name}" is reserved by a built-in`, statement.nameSpan)
       declared = false

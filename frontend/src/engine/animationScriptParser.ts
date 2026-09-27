@@ -385,6 +385,26 @@ export interface FunctionCallNode {
   readonly span: SourceSpan
 }
 
+/**
+ * `pointArrowAt(arrow, target, at: t)` snaps one rotation keyframe at `t`;
+ * `pointArrowAt(arrow, target, over: d, every: s?)` bakes sampled tracking
+ * across `d`. The compiler owns the pointing math and the sample budget.
+ */
+export interface PointArrowAtNode {
+  readonly kind: 'pointArrowAt'
+  readonly nameSpan: SourceSpan
+  readonly arrow: ScriptExpression
+  readonly target: ScriptExpression
+  readonly variant:
+    | { readonly kind: 'at'; readonly time: ScriptExpression }
+    | {
+        readonly kind: 'over'
+        readonly duration: ScriptExpression
+        readonly every?: ScriptExpression
+      }
+  readonly span: SourceSpan
+}
+
 export type ScriptStatementNode =
   | BindNode
   | LetNode
@@ -392,6 +412,7 @@ export type ScriptStatementNode =
   | SetTextNode
   | FunctionDefNode
   | FunctionCallNode
+  | PointArrowAtNode
   | WaitNode
   | MarkNode
   | AtNode
@@ -585,6 +606,9 @@ class Parser {
     if (this.#isIdentifier('setText') && this.#nextIsPunctuation('(')) {
       return this.#parseSetText()
     }
+    if (this.#isIdentifier('pointArrowAt') && this.#nextIsPunctuation('(')) {
+      return this.#parsePointArrowAt()
+    }
     const operator = this.#operatorKeyword()
     if (operator === 'wait') return this.#parseWait()
     if (operator === 'mark') return this.#parseMark()
@@ -693,6 +717,98 @@ class Parser {
     this.#expectPunctuation(')')
     if (content === null) return null
     return { kind: 'setText', target, content, span: { start, end: this.#previousEnd() } }
+  }
+
+  /**
+   * `pointArrowAt(arrow, target, at: t)` / `pointArrowAt(arrow, target, over:
+   * d, every: s?)`: the shipped arrow-tracking built-in. The third argument is
+   * a named variant (`at:` a single snap time, `over:` a sampled span with an
+   * optional `every:` step); positional third arguments are rejected with the
+   * two shapes so the call reads as intent rather than a bare number.
+   */
+  #parsePointArrowAt(): PointArrowAtNode | null {
+    const start = this.#peek().span.start
+    const nameToken = this.#advance()
+    if (!this.#expectPunctuation('(')) return null
+    const arrow = this.#parseExpression('a node binding for the arrow')
+    if (arrow === null) return null
+    if (!this.#matchPunctuation(',')) {
+      this.#report('Expected "," after the pointArrowAt arrow', this.#peek().span)
+      return null
+    }
+    const target = this.#parseExpression('a node binding for the target')
+    if (target === null) return null
+    if (!this.#matchPunctuation(',')) {
+      this.#report(
+        'pointArrowAt needs a variant — pointArrowAt(arrow, target, at: 2.0) or pointArrowAt(arrow, target, over: 1.2s, every: 0.05s)',
+        this.#peek().span,
+      )
+      return null
+    }
+    const label = this.#expectIdentifier('a variant name ("at" or "over")')
+    if (label === null) return null
+    if (!this.#expectPunctuation(':')) return null
+    if (label.text === 'at') {
+      const time = this.#parseExpression('a time in seconds')
+      if (time === null) return null
+      if (this.#matchPunctuation(',')) {
+        this.#report(
+          'pointArrowAt with at: takes no every — use over: with every: for sampled tracking',
+          this.#peek().span,
+        )
+        return null
+      }
+      this.#expectPunctuation(')')
+      return {
+        kind: 'pointArrowAt',
+        nameSpan: nameToken.span,
+        arrow,
+        target,
+        variant: { kind: 'at', time },
+        span: { start, end: this.#previousEnd() },
+      }
+    }
+    if (label.text === 'over') {
+      const duration = this.#parseExpression('a duration in seconds')
+      if (duration === null) return null
+      let every: ScriptExpression | undefined
+      if (this.#matchPunctuation(',')) {
+        const everyLabel = this.#expectIdentifier('the word "every"')
+        if (everyLabel === null) return null
+        if (everyLabel.text !== 'every') {
+          this.#report(
+            `Unknown pointArrowAt option "${everyLabel.text}" — after over: pass every:, like over: 1.2s, every: 0.05s`,
+            everyLabel.span,
+          )
+          return null
+        }
+        if (!this.#expectPunctuation(':')) return null
+        const step = this.#parseExpression('a sample step in seconds')
+        if (step === null) return null
+        every = step
+        if (this.#matchPunctuation(',')) {
+          this.#report(
+            'pointArrowAt takes at most over: and every: — pointArrowAt(arrow, target, over: 1.2s, every: 0.05s)',
+            this.#peek().span,
+          )
+          return null
+        }
+      }
+      this.#expectPunctuation(')')
+      return {
+        kind: 'pointArrowAt',
+        nameSpan: nameToken.span,
+        arrow,
+        target,
+        variant: { kind: 'over', duration, ...(every !== undefined ? { every } : {}) },
+        span: { start, end: this.#previousEnd() },
+      }
+    }
+    this.#report(
+      `Unknown pointArrowAt variant "${label.text}" — pass at:, like pointArrowAt(arrow, target, at: 2.0), or over:, like pointArrowAt(arrow, target, over: 1.2s, every: 0.05s)`,
+      label.span,
+    )
+    return null
   }
 
   #parseWait(): WaitNode | null {
