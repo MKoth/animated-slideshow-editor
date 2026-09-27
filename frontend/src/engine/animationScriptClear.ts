@@ -1,5 +1,8 @@
 import type { EnginePublic } from './engine'
+import type { Command } from './commands/command'
 import { DeleteKeyframesCommand } from './commands/deleteKeyframesCommand'
+import { RemoveClipCommand } from './commands/removeClipCommand'
+import { DeleteCollectionPlacementCommand } from './commands/deleteCollectionPlacementCommand'
 import { deleteGroupKey, inSegment } from './timeSegmentExtraction'
 import type { CompiledFootprint } from './compiledFootprint'
 import type { Keyframe } from './keyframe'
@@ -16,20 +19,23 @@ interface TargetReplacement {
 }
 
 /**
- * The keyframe deletions a Run must perform before emitting: for the previous
- * and the new footprint alike, every keyframe on a written track whose time
- * lies inside that footprint's `[from, to]`. Reads current state, so
- * hand-deleted keyframes are tolerated and data outside the windows is never
- * touched; a target that no longer resolves (its node or track is gone) is
- * skipped rather than breaking the run.
+ * The deletions a Run must perform before emitting: for the previous and the
+ * new footprint alike, every keyframe on a written track whose time lies
+ * inside that footprint's `[from, to]`, every standalone Clip Instance on an
+ * instance-bearing node whose start lies in the span, and every collection
+ * placement on an addressed parent whose start lies in the span (its member
+ * instances go with it). Reads current state, so hand-deleted data is
+ * tolerated and data outside the windows is never touched; a target that no
+ * longer resolves (its node or track is gone) is skipped rather than breaking
+ * the run.
  */
 export function animationScriptClearCommands(
   engine: EnginePublic,
   previous: CompiledFootprint | null,
   next: CompiledFootprint,
-): DeleteKeyframesCommand[] {
+): Command<unknown>[] {
+  const commands: Command<unknown>[] = []
   const replacements = collectReplacements(previous, next)
-  const commands: DeleteKeyframesCommand[] = []
   for (const { target, windows } of replacements.values()) {
     const keyframes = readKeyframes(engine, target)
     if (!keyframes) continue
@@ -40,6 +46,47 @@ export function animationScriptClearCommands(
       .map((keyframe) => keyframe.id)
     if (keyframeIds.length > 0) {
       commands.push(new DeleteKeyframesCommand({ target, keyframeIds }))
+    }
+  }
+  for (const entry of collectNodeReplacements(previous, next).values()) {
+    const { nodeId, windows } = entry
+    let instances: readonly { id: string; startTime: number; placementId?: string }[]
+    try {
+      instances = engine.getClipInstances(nodeId)
+    } catch {
+      continue
+    }
+    for (const instance of instances) {
+      // Placement-linked members are cleared with their placement below;
+      // standalone instances (play output and hand-assigned clips) clear here.
+      if (instance.placementId !== undefined) continue
+      if (
+        !windows.some((window: ReplacementWindow) =>
+          inSegment(instance.startTime, window.from, window.to),
+        )
+      ) {
+        continue
+      }
+      commands.push(new RemoveClipCommand({ nodeId, instanceId: instance.id }))
+    }
+  }
+  for (const entry of collectPlacementReplacements(previous, next).values()) {
+    const { parentId, windows } = entry
+    let placements: readonly { id: string; startTime: number }[]
+    try {
+      placements = engine.getCollectionPlacements(parentId)
+    } catch {
+      continue
+    }
+    for (const placement of placements) {
+      if (
+        !windows.some((window: ReplacementWindow) =>
+          inSegment(placement.startTime, window.from, window.to),
+        )
+      ) {
+        continue
+      }
+      commands.push(new DeleteCollectionPlacementCommand({ placementId: placement.id }))
     }
   }
   return commands
@@ -77,4 +124,44 @@ function readKeyframes(engine: EnginePublic, target: KeyframeTarget): readonly K
     return null
   }
   return engine.getKeyframesOf(target)
+}
+
+function collectNodeReplacements(
+  previous: CompiledFootprint | null,
+  next: CompiledFootprint,
+): Map<string, { nodeId: string; windows: ReplacementWindow[] }> {
+  const replacements = new Map<string, { nodeId: string; windows: ReplacementWindow[] }>()
+  for (const footprint of [previous, next]) {
+    if (!footprint) continue
+    const window = { from: footprint.from, to: footprint.to }
+    for (const nodeId of footprint.instanceNodes) {
+      const existing = replacements.get(nodeId)
+      if (existing) {
+        existing.windows.push(window)
+      } else {
+        replacements.set(nodeId, { nodeId, windows: [window] })
+      }
+    }
+  }
+  return replacements
+}
+
+function collectPlacementReplacements(
+  previous: CompiledFootprint | null,
+  next: CompiledFootprint,
+): Map<string, { parentId: string; windows: ReplacementWindow[] }> {
+  const replacements = new Map<string, { parentId: string; windows: ReplacementWindow[] }>()
+  for (const footprint of [previous, next]) {
+    if (!footprint) continue
+    const window = { from: footprint.from, to: footprint.to }
+    for (const parentId of footprint.placementParents) {
+      const existing = replacements.get(parentId)
+      if (existing) {
+        existing.windows.push(window)
+      } else {
+        replacements.set(parentId, { parentId, windows: [window] })
+      }
+    }
+  }
+  return replacements
 }

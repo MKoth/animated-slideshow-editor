@@ -1,6 +1,9 @@
 import type { Command } from './commands'
 import { AddKeyframeCommand } from './commands/addKeyframeCommand'
 import { SetTextContentCommand } from './commands/setTextContentCommand'
+import { AssignClipCommand } from './commands/assignClipCommand'
+import { PlaceCollectionCommand } from './commands/placeCollectionCommand'
+import { MIN_CLIP_SPEED, MIN_VISUAL_DURATION } from './animationManagerModel'
 import { ZERO_TANGENT } from './keyframe'
 import { isDiscreteMaterialKind, isParametricInterpolation } from './keyframe'
 import type { AnimationProperty } from './animationProperties'
@@ -196,6 +199,22 @@ export interface AnimationScriptControlInfo {
   readonly exposed: boolean
 }
 
+/** A project clip a script may play; the compiler never mints definitions. */
+export interface AnimationScriptClipInfo {
+  readonly id: string
+  readonly name: string
+  readonly duration: number
+  readonly params: readonly string[]
+}
+
+/** A project Clip Collection a script may apply; broadcast by Semantic Name. */
+export interface AnimationScriptCollectionInfo {
+  readonly id: string
+  readonly name: string
+  /** Semantic Name → clip id, as the collection stores it. */
+  readonly bindings: Readonly<Record<string, string>>
+}
+
 /**
  * The slide state the compiler reads: node names and kinds plus pre-run
  * evaluated values. Pure and read-only — a Check against this context never
@@ -209,6 +228,10 @@ export interface AnimationScriptControlInfo {
 export interface AnimationScriptCompileContext {
   readonly slideDuration: number
   readonly nodes: readonly AnimationScriptNodeInfo[]
+  /** Project clips, for `clip("...")` bindings; never minted, only referenced. */
+  readonly clips: readonly AnimationScriptClipInfo[]
+  /** Project collections, for `collection("...")` bindings; never minted. */
+  readonly collections: readonly AnimationScriptCollectionInfo[]
   evaluateProperty(nodeId: string, property: ScriptProperty, time: number): number
   /**
    * The pre-clear value of any written track at `time`, used for boundary and
@@ -269,17 +292,23 @@ interface ScriptMember {
 interface BindingInfo {
   readonly alias: string
   readonly aliasSpan: SourceSpan
-  readonly kind: 'node' | 'group' | 'table' | 'cellRef'
+  readonly kind: 'node' | 'group' | 'table' | 'cellRef' | 'clip' | 'collection'
   /**
    * The binding's targets in scene pre-order. A node, table or cellRef binding
    * has exactly one member; a group binding has one per node carrying its
    * Semantic Name, in `walkPreOrder` order. Selector-resolved table members
    * follow the grid's engine layout order. Broadcast writes therefore touch
    * members in a deterministic, documented order and every write is per member.
+   * Clip and collection bindings address project resources and carry no node
+   * members.
    */
   readonly members: readonly ScriptMember[]
   /** Present only on table bindings: the Grid Slot map selectors resolve against. */
   readonly grid?: ScriptTableGrid
+  /** Present only on clip bindings: the referenced Clip Definition. */
+  readonly clip?: AnimationScriptClipInfo
+  /** Present only on collection bindings: the referenced Clip Collection. */
+  readonly collection?: AnimationScriptCollectionInfo
   used: boolean
 }
 
@@ -450,6 +479,19 @@ class Compiler {
   readonly #trackOrder: TrackOrderEntry[] = []
   /** Static `setText` commands with their source order, dispatched inside the run Transaction. */
   readonly #textCommands: { readonly order: number; readonly command: Command<unknown> }[] = []
+  /** `play` Clip Instances and `apply` placements in source order. */
+  readonly #clipCommands: { readonly order: number; readonly command: Command<unknown> }[] = []
+  /**
+   * Prospective Clip Instances the run will create: one per `play` member
+   * plus one per `apply` member matched under each addressed parent. A
+   * placement record itself is not an instance, so the summary counts what
+   * the timeline gains, matching the Check "emitted instance counts" promise.
+   */
+  #instanceCount = 0
+  /** Nodes carrying `play` instances, in first-addressed order (footprint). */
+  readonly #instanceNodes: string[] = []
+  /** Nodes carrying `apply` placements, in first-addressed order (footprint). */
+  readonly #placementParents: string[] = []
   /**
    * Values validated once per track shape and value expression, so a group
    * broadcast reports a bad value (or a cached good one) once, not per member.
@@ -498,7 +540,7 @@ class Compiler {
         property: track.property,
       })),
       keyframeCount: this.#planned.size,
-      instanceCount: 0,
+      instanceCount: this.#instanceCount,
     }
     const footprint: CompiledFootprint = {
       from: this.#from,
@@ -507,8 +549,8 @@ class Compiler {
         nodeId: track.nodeId,
         target: this.#targetFor(track.nodeId, track.track),
       })),
-      placementParents: [],
-      instanceNodes: [],
+      placementParents: [...this.#placementParents],
+      instanceNodes: [...this.#instanceNodes],
       entryVersions: {},
     }
     return {
@@ -771,7 +813,9 @@ class Compiler {
         case 'node':
         case 'group':
         case 'table':
-        case 'cellRef': {
+        case 'cellRef':
+        case 'clip':
+        case 'collection': {
           if (value.kind !== 'binding') return mismatch(describeScriptValue(value))
           const binding = bindingOf(value)
           if (!binding) return mismatch(describeScriptValue(value))
@@ -780,9 +824,6 @@ class Compiler {
           }
           return value
         }
-        case 'clip':
-        case 'collection':
-          return mismatch(describeScriptValue(value))
         case 'list':
           return value.kind === 'list' ? value : mismatch(describeScriptValue(value))
         default:
@@ -851,6 +892,8 @@ class Compiler {
             kind: binding.kind,
             members: binding.members,
             ...(binding.grid !== undefined ? { grid: binding.grid } : {}),
+            ...(binding.clip !== undefined ? { clip: binding.clip } : {}),
+            ...(binding.collection !== undefined ? { collection: binding.collection } : {}),
             used: false,
           })
           binding.used = true
@@ -971,8 +1014,16 @@ class Compiler {
       this.#declareTableBinding(statement)
       return
     }
+    if (statement.resourceKind === 'clip') {
+      this.#declareClipBinding(statement)
+      return
+    }
+    if (statement.resourceKind === 'collection') {
+      this.#declareCollectionBinding(statement)
+      return
+    }
     this.#error(
-      `Binding kind "${statement.resourceKind}" is not available yet — use node("Unique Name"), group("Semantic Name") or table("Unique Name")`,
+      `Unknown binding kind "${statement.resourceKind}". Available kinds: node, group, table, clip, collection.`,
       statement.resourceKindSpan,
     )
   }
@@ -1079,6 +1130,79 @@ class Compiler {
       }
     }
     return names
+  }
+
+  /**
+   * `clip("name")` binds one project Clip Definition by exact name. The
+   * compiler only references it — definitions are never minted. Zero matches
+   * and ambiguous names are compile errors, mirroring node bindings.
+   */
+  #declareClipBinding(statement: BindNode): void {
+    const matches = this.#context.clips.filter((clip) => clip.name === statement.resourceName)
+    if (matches.length === 0) {
+      const suggestion = nearMissSuggestion(
+        statement.resourceName,
+        this.#context.clips.map((clip) => clip.name),
+      )
+      this.#error(
+        `No clip named "${statement.resourceName}".${suggestion}`,
+        statement.resourceNameSpan,
+      )
+      return
+    }
+    if (matches.length > 1) {
+      this.#error(
+        `Clip name "${statement.resourceName}" is ambiguous — ${matches.length} clips share it`,
+        statement.resourceNameSpan,
+      )
+      return
+    }
+    const clip = matches[0]
+    this.#bindings.set(statement.alias, {
+      alias: statement.alias,
+      aliasSpan: statement.aliasSpan,
+      kind: 'clip',
+      members: [],
+      clip,
+      used: false,
+    })
+  }
+
+  /**
+   * `collection("name")` binds one project Clip Collection by exact name.
+   * Broadcast placement resolves its Semantic Name bindings at `apply` time.
+   */
+  #declareCollectionBinding(statement: BindNode): void {
+    const matches = this.#context.collections.filter(
+      (collection) => collection.name === statement.resourceName,
+    )
+    if (matches.length === 0) {
+      const suggestion = nearMissSuggestion(
+        statement.resourceName,
+        this.#context.collections.map((collection) => collection.name),
+      )
+      this.#error(
+        `No collection named "${statement.resourceName}".${suggestion}`,
+        statement.resourceNameSpan,
+      )
+      return
+    }
+    if (matches.length > 1) {
+      this.#error(
+        `Collection name "${statement.resourceName}" is ambiguous — ${matches.length} collections share it`,
+        statement.resourceNameSpan,
+      )
+      return
+    }
+    const collection = matches[0]
+    this.#bindings.set(statement.alias, {
+      alias: statement.alias,
+      aliasSpan: statement.aliasSpan,
+      kind: 'collection',
+      members: [],
+      collection,
+      used: false,
+    })
   }
 
   /**
@@ -1308,6 +1432,10 @@ class Compiler {
               kind: element.binding.kind,
               members: element.binding.members,
               ...(element.binding.grid !== undefined ? { grid: element.binding.grid } : {}),
+              ...(element.binding.clip !== undefined ? { clip: element.binding.clip } : {}),
+              ...(element.binding.collection !== undefined
+                ? { collection: element.binding.collection }
+                : {}),
               used: false,
             })
             element.binding.used = true
@@ -1751,6 +1879,26 @@ class Compiler {
     }
     const target = this.#resolveTarget(statement, binding)
     if (!target) {
+      return this.#advanceCursorByResolvedDuration(statement, cursor)
+    }
+    if (statement.method === 'play' || statement.method === 'apply') {
+      if (target.kind === 'clip' || target.kind === 'collection') {
+        this.#error(
+          `"${statement.method}" needs a node to play on — "${target.alias}" is a ${target.kind}. Bind a node first, like bind hero = node("Hero").`,
+          statement.aliasSpan,
+        )
+        return cursor
+      }
+      if (statement.method === 'play') {
+        return this.#lowerPlay(statement, target, cursor)
+      }
+      return this.#lowerApply(statement, target, cursor)
+    }
+    if (target.kind === 'clip' || target.kind === 'collection') {
+      this.#error(
+        `"${statement.method}" needs a node binding — "${target.alias}" is a ${target.kind}. Play clips with node.play(clip, ...) instead.`,
+        statement.aliasSpan,
+      )
       return this.#advanceCursorByResolvedDuration(statement, cursor)
     }
     switch (statement.method) {
@@ -2246,6 +2394,489 @@ class Compiler {
     return this.#lowerTweenLike(statement, cursor, () =>
       this.#validateControlEntries(statement, binding),
     )
+  }
+
+  /**
+   * `node.play(clip, { at?, duration? xor speed?, enabled?, params? })` lowers
+   * to one Clip Instance per addressed node. `duration` and `speed` are
+   * mutually exclusive with `speed = clip.duration / duration`; a visual
+   * duration below the engine minimum or a speed at the clamp warns. Later
+   * statements append later and win (statement order is priority).
+   */
+  #lowerPlay(statement: StatementNode, target: BindingInfo, cursor: number): number {
+    if (statement.args.length === 0 || statement.args.length > 2) {
+      this.#error(
+        `play takes a clip and at most one options argument, like play(wave) or play(wave, { duration: 1.2 })`,
+        statement.methodSpan,
+      )
+      return cursor
+    }
+    const clipBinding = this.#resolveClipReference(statement.args[0])
+    const options = this.#parsePlayOptions(statement.args[1])
+    if (!clipBinding || !options) return cursor
+    const clip = clipBinding.clip
+    if (!clip) return cursor
+    if (target.members.length === 0) {
+      this.#error(
+        `play needs at least one node — "${target.alias}" resolves to no nodes`,
+        statement.aliasSpan,
+      )
+      return cursor
+    }
+    if (options.duration !== undefined && options.speed !== undefined) {
+      this.#error(
+        `play takes duration or speed, not both — speed is clip.duration / duration`,
+        statement.args[1]?.span ?? statement.methodSpan,
+      )
+      return cursor
+    }
+    let requestedSpeed: number
+    let visual: number
+    if (options.duration !== undefined) {
+      visual = options.duration.seconds
+      if (visual <= 0) {
+        this.#error(`play duration must be greater than 0`, options.duration.span)
+        return cursor
+      }
+      requestedSpeed = clip.duration / visual
+    } else if (options.speed !== undefined) {
+      requestedSpeed = options.speed.value
+      if (requestedSpeed < 0 || !Number.isFinite(requestedSpeed)) {
+        this.#error(`play speed must be a non-negative number`, options.speed.span)
+        return cursor
+      }
+      visual = clip.duration / Math.max(requestedSpeed, MIN_CLIP_SPEED)
+    } else {
+      requestedSpeed = 1
+      visual = clip.duration
+    }
+    if (!Number.isFinite(requestedSpeed) || !Number.isFinite(visual)) {
+      this.#error(
+        `play on clip "${clip.name}" produces a non-finite visual duration — pass a finite duration or speed`,
+        statement.methodSpan,
+      )
+      return cursor
+    }
+    let effectiveSpeed = requestedSpeed
+    if (effectiveSpeed < MIN_CLIP_SPEED) {
+      this.#warning(
+        `play on clip "${clip.name}" clamps speed ${formatSeconds(requestedSpeed)} to the engine minimum (${MIN_CLIP_SPEED})`,
+        options.speed?.span ?? statement.methodSpan,
+      )
+      effectiveSpeed = MIN_CLIP_SPEED
+      visual = clip.duration / effectiveSpeed
+    }
+    if (visual < MIN_VISUAL_DURATION) {
+      this.#warning(
+        `play on clip "${clip.name}" has a visual duration of ${formatSeconds(visual)}s, below the engine minimum (${MIN_VISUAL_DURATION}s)`,
+        options.duration?.span ?? statement.methodSpan,
+      )
+    }
+    const overrides = this.#validatePlayParams(options, clip)
+    if (overrides === null) return cursor
+    const start = options.at !== undefined ? options.at.seconds : cursor
+    if (options.at !== undefined) {
+      if (start < this.#from) {
+        this.#error(
+          `"at" cannot be before the segment start (from = ${formatSeconds(this.#from)}s)`,
+          options.at.span,
+        )
+      } else if (start > this.#context.slideDuration) {
+        this.#error(
+          `"at" is past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
+          options.at.span,
+        )
+      }
+    }
+    const endTime = roundTime(start + visual)
+    if (endTime > this.#context.slideDuration) {
+      this.#error(
+        `Statement ends at ${formatSeconds(endTime)}s, past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
+        options.duration?.span ?? statement.methodSpan,
+      )
+      return options.at !== undefined ? Math.max(cursor, endTime) : endTime
+    }
+    const enabled = options.enabled?.value ?? true
+    for (const member of target.members) {
+      this.#clipCommands.push({
+        order: this.#order++,
+        command: new AssignClipCommand({
+          nodeId: member.nodeId,
+          clipId: clip.id,
+          startTime: start,
+          speed: effectiveSpeed,
+          enabled,
+          paramOverrides: { ...overrides },
+        }),
+      })
+      this.#trackInstanceNode(member.nodeId)
+      this.#instanceCount += 1
+    }
+    return options.at !== undefined ? Math.max(cursor, endTime) : endTime
+  }
+
+  /**
+   * `node.apply(collection, { at?, duration? })` places a Clip Collection by
+   * Semantic Name broadcast with timing only. Each addressed parent gets one
+   * placement at the start time; the cursor advances by the explicit duration
+   * or the placed span (the max member visual).
+   */
+  #lowerApply(statement: StatementNode, target: BindingInfo, cursor: number): number {
+    if (statement.args.length === 0 || statement.args.length > 2) {
+      this.#error(
+        `apply takes a collection and at most one options argument, like apply(rig) or apply(rig, { duration: 1.2 })`,
+        statement.methodSpan,
+      )
+      return cursor
+    }
+    const collectionBinding = this.#resolveCollectionReference(statement.args[0])
+    const options = this.#parseApplyOptions(statement.args[1])
+    if (!collectionBinding || !options) return cursor
+    const collection = collectionBinding.collection
+    if (!collection) return cursor
+    if (target.members.length === 0) {
+      this.#error(
+        `apply needs at least one node — "${target.alias}" resolves to no nodes`,
+        statement.aliasSpan,
+      )
+      return cursor
+    }
+    const start = options.at !== undefined ? options.at.seconds : cursor
+    if (options.at !== undefined) {
+      if (start < this.#from) {
+        this.#error(
+          `"at" cannot be before the segment start (from = ${formatSeconds(this.#from)}s)`,
+          options.at.span,
+        )
+      } else if (start > this.#context.slideDuration) {
+        this.#error(
+          `"at" is past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
+          options.at.span,
+        )
+      }
+    }
+    let naturalSpan = 0
+    let memberCount = 0
+    let failed = false
+    for (const parent of target.members) {
+      const placed = this.#collectionPlacedSpan(collection, parent, statement.args[0].span)
+      if (placed === null) {
+        failed = true
+        continue
+      }
+      if (placed.span > naturalSpan) naturalSpan = placed.span
+      memberCount += placed.memberCount
+    }
+    if (failed) return cursor
+    const extent = options.duration !== undefined ? options.duration.seconds : naturalSpan
+    const endTime = roundTime(start + extent)
+    if (endTime > this.#context.slideDuration) {
+      this.#error(
+        `Statement ends at ${formatSeconds(endTime)}s, past the slide duration (${formatSeconds(this.#context.slideDuration)}s)`,
+        options.duration?.span ?? statement.methodSpan,
+      )
+      return options.at !== undefined ? Math.max(cursor, endTime) : endTime
+    }
+    for (const parent of target.members) {
+      this.#clipCommands.push({
+        order: this.#order++,
+        command: new PlaceCollectionCommand({
+          collectionId: collection.id,
+          parentNodeId: parent.nodeId,
+          startTime: start,
+        }),
+      })
+      this.#trackPlacementParent(parent.nodeId)
+    }
+    this.#instanceCount += memberCount
+    return options.at !== undefined ? Math.max(cursor, endTime) : endTime
+  }
+
+  /** The clip binding a `play` resource argument references, or null after reporting. */
+  #resolveClipReference(expression: ScriptExpression): BindingInfo | null {
+    const value = this.#evaluateValue(expression)
+    if (value === null || value.kind === 'invalid') return null
+    if (value.kind !== 'binding') {
+      this.#error(
+        `play needs a clip binding — found ${describeScriptValue(value)}. Bind one first, like bind wave = clip("Robot Wave").`,
+        expression.span,
+      )
+      return null
+    }
+    const binding = bindingOf(value)
+    if (!binding) return null
+    if (binding.kind !== 'clip' || !binding.clip) {
+      const found = binding.kind === 'cellRef' ? 'a cell reference' : `a ${binding.kind} binding`
+      this.#error(
+        `play needs a clip binding — "${expressionLabel(expression)}" is ${found}.`,
+        expression.span,
+      )
+      return null
+    }
+    binding.used = true
+    return binding
+  }
+
+  /** The collection binding an `apply` resource argument references, or null after reporting. */
+  #resolveCollectionReference(expression: ScriptExpression): BindingInfo | null {
+    const value = this.#evaluateValue(expression)
+    if (value === null || value.kind === 'invalid') return null
+    if (value.kind !== 'binding') {
+      this.#error(
+        `apply needs a collection binding — found ${describeScriptValue(value)}. Bind one first, like bind rig = collection("Rig").`,
+        expression.span,
+      )
+      return null
+    }
+    const binding = bindingOf(value)
+    if (!binding) return null
+    if (binding.kind !== 'collection' || !binding.collection) {
+      const found = binding.kind === 'cellRef' ? 'a cell reference' : `a ${binding.kind} binding`
+      this.#error(
+        `apply needs a collection binding — "${expressionLabel(expression)}" is ${found}.`,
+        expression.span,
+      )
+      return null
+    }
+    binding.used = true
+    return binding
+  }
+
+  /** Parsed `play` options: inline `at`/`duration`/`speed`/`enabled`/`params`. */
+  #parsePlayOptions(expression: ScriptExpression | undefined): {
+    readonly at?: { readonly seconds: number; readonly span: SourceSpan }
+    readonly duration?: { readonly seconds: number; readonly span: SourceSpan }
+    readonly speed?: { readonly value: number; readonly span: SourceSpan }
+    readonly enabled?: { readonly value: boolean; readonly span: SourceSpan }
+    readonly params?: {
+      readonly fields: readonly { readonly key: string; readonly value: ScriptExpression }[]
+      readonly span: SourceSpan
+    }
+  } | null {
+    if (expression === undefined) return {}
+    if (expression.kind !== 'record') {
+      const seconds = this.#evaluateNumber(expression, 'a duration in seconds')
+      if (seconds === null) return null
+      if (!this.#validateDuration(seconds, expression.span)) return null
+      return { duration: { seconds, span: expression.span } }
+    }
+    let at: { seconds: number; span: SourceSpan } | undefined
+    let duration: { seconds: number; span: SourceSpan } | undefined
+    let speed: { value: number; span: SourceSpan } | undefined
+    let enabled: { value: boolean; span: SourceSpan } | undefined
+    let params:
+      | {
+          fields: readonly { readonly key: string; readonly value: ScriptExpression }[]
+          span: SourceSpan
+        }
+      | undefined
+    const seen = new Set<string>()
+    for (const field of expression.fields) {
+      if (seen.has(field.key)) continue
+      seen.add(field.key)
+      if (field.key === 'at') {
+        const seconds = this.#evaluateNumber(field.value, 'a time in seconds')
+        if (seconds === null) return null
+        at = { seconds: roundTime(seconds), span: field.value.span }
+      } else if (field.key === 'duration') {
+        const seconds = this.#evaluateNumber(field.value, 'a duration in seconds')
+        if (seconds === null) return null
+        if (!this.#validateDuration(seconds, field.value.span)) return null
+        duration = { seconds, span: field.value.span }
+      } else if (field.key === 'speed') {
+        if (containsDurationUnit(field.value)) {
+          this.#error(
+            `Expected speed without a duration suffix, found "${this.#source.slice(field.value.span.start, field.value.span.end)}"`,
+            field.value.span,
+          )
+          return null
+        }
+        const value = this.#evaluateNumber(field.value, 'a speed')
+        if (value === null) return null
+        speed = { value, span: field.value.span }
+      } else if (field.key === 'enabled') {
+        const parsed = this.#parseEnabledOption(field.value)
+        if (parsed === null) return null
+        enabled = { value: parsed, span: field.value.span }
+      } else if (field.key === 'params') {
+        if (field.value.kind !== 'record') {
+          this.#error(`params must be a record of numbers, like { gain: 0.5 }`, field.value.span)
+          return null
+        }
+        params = {
+          fields: field.value.fields.map((entry) => ({ key: entry.key, value: entry.value })),
+          span: field.value.span,
+        }
+      } else {
+        this.#error(
+          `Unknown play option "${field.key}". Available options: at, duration, speed, enabled, params.`,
+          field.keySpan,
+        )
+        return null
+      }
+    }
+    return {
+      ...(at !== undefined ? { at } : {}),
+      ...(duration !== undefined ? { duration } : {}),
+      ...(speed !== undefined ? { speed } : {}),
+      ...(enabled !== undefined ? { enabled } : {}),
+      ...(params !== undefined ? { params } : {}),
+    }
+  }
+
+  /** Parsed `apply` options: inline `at`/`duration` timing only. */
+  #parseApplyOptions(expression: ScriptExpression | undefined): {
+    readonly at?: { readonly seconds: number; readonly span: SourceSpan }
+    readonly duration?: { readonly seconds: number; readonly span: SourceSpan }
+  } | null {
+    if (expression === undefined) return {}
+    if (expression.kind !== 'record') {
+      const seconds = this.#evaluateNumber(expression, 'a duration in seconds')
+      if (seconds === null) return null
+      if (!this.#validateDuration(seconds, expression.span)) return null
+      return { duration: { seconds, span: expression.span } }
+    }
+    let at: { seconds: number; span: SourceSpan } | undefined
+    let duration: { seconds: number; span: SourceSpan } | undefined
+    const seen = new Set<string>()
+    for (const field of expression.fields) {
+      if (seen.has(field.key)) continue
+      seen.add(field.key)
+      if (field.key === 'at') {
+        const seconds = this.#evaluateNumber(field.value, 'a time in seconds')
+        if (seconds === null) return null
+        at = { seconds: roundTime(seconds), span: field.value.span }
+      } else if (field.key === 'duration') {
+        const seconds = this.#evaluateNumber(field.value, 'a duration in seconds')
+        if (seconds === null) return null
+        if (!this.#validateDuration(seconds, field.value.span)) return null
+        duration = { seconds, span: field.value.span }
+      } else {
+        this.#error(
+          `Unknown apply option "${field.key}". Available options: at, duration.`,
+          field.keySpan,
+        )
+        return null
+      }
+    }
+    return { ...(at !== undefined ? { at } : {}), ...(duration !== undefined ? { duration } : {}) }
+  }
+
+  /** `enabled: true|false` — the one boolean slot in the v1 language. */
+  #parseEnabledOption(expression: ScriptExpression): boolean | null {
+    if (
+      expression.kind === 'identifier' &&
+      (expression.name === 'true' || expression.name === 'false')
+    ) {
+      return expression.name === 'true'
+    }
+    this.#error(`enabled must be true or false`, expression.span)
+    return null
+  }
+
+  /** Numeric `params` overrides against the clip's declared params, or null after reporting. */
+  #validatePlayParams(
+    options: {
+      readonly params?: {
+        readonly fields: readonly { readonly key: string; readonly value: ScriptExpression }[]
+        readonly span: SourceSpan
+      }
+    },
+    clip: AnimationScriptClipInfo,
+  ): Record<string, number> | null {
+    const overrides: Record<string, number> = {}
+    if (options.params === undefined) return overrides
+    const seen = new Set<string>()
+    for (const field of options.params.fields) {
+      if (seen.has(field.key)) continue
+      seen.add(field.key)
+      if (containsDurationUnit(field.value)) {
+        this.#error(
+          `Expected ${field.key} without a duration suffix, found "${this.#source.slice(field.value.span.start, field.value.span.end)}"`,
+          field.value.span,
+        )
+        return null
+      }
+      const value = this.#evaluateNumber(field.value, `a value for clip param "${field.key}"`)
+      if (value === null) return null
+      if (!clip.params.includes(field.key)) {
+        const suggestion = nearMissSuggestion(field.key, [...clip.params])
+        this.#error(
+          `Clip "${clip.name}" has no param "${field.key}".${suggestion}`,
+          field.value.span,
+        )
+        return null
+      }
+      overrides[field.key] = value
+    }
+    return overrides
+  }
+
+  /**
+   * The placed span of a collection under one parent: the max member visual at
+   * speed 1, floored to the engine minimum like the placement lane displays
+   * it. Null after reporting when nothing matches or a referenced clip is
+   * gone.
+   */
+  #collectionPlacedSpan(
+    collection: AnimationScriptCollectionInfo,
+    parent: ScriptMember,
+    span: SourceSpan,
+  ): { readonly span: number; readonly memberCount: number } | null {
+    const descendants = this.#descendantsOf(parent.nodeId)
+    const clipById = new Map(this.#context.clips.map((clip) => [clip.id, clip] as const))
+    let maxDuration = 0
+    let matched = 0
+    for (const node of descendants) {
+      const semantic = node.semanticName?.trim()
+      if (!semantic) continue
+      const clipId = collection.bindings[semantic]
+      if (!clipId) continue
+      const clip = clipById.get(clipId)
+      if (!clip) {
+        this.#error(
+          `Collection "${collection.name}" references a clip that no longer exists (Semantic Name "${semantic}")`,
+          span,
+        )
+        return null
+      }
+      matched += 1
+      if (clip.duration > maxDuration) maxDuration = clip.duration
+    }
+    if (matched === 0) {
+      this.#error(
+        `Collection "${collection.name}" matches no nodes under "${parent.nodeName}" — no descendant carries a Semantic Name the collection binds`,
+        span,
+      )
+      return null
+    }
+    return { span: Math.max(maxDuration, MIN_VISUAL_DURATION), memberCount: matched }
+  }
+
+  /** A parent plus its descendants in scene pre-order (the broadcast scope). */
+  #descendantsOf(parentId: string): AnimationScriptNodeInfo[] {
+    const byId = new Map(this.#context.nodes.map((node) => [node.id, node] as const))
+    const parent = byId.get(parentId)
+    if (!parent) return []
+    const isBelow = (node: AnimationScriptNodeInfo): boolean => {
+      let current: AnimationScriptNodeInfo | undefined = node
+      while (current) {
+        if (current.id === parentId) return true
+        current = current.parentId !== undefined ? byId.get(current.parentId) : undefined
+      }
+      return false
+    }
+    return this.#context.nodes.filter(isBelow)
+  }
+
+  /** Record a `play` node for the footprint, first-addressed order, deduplicated. */
+  #trackInstanceNode(nodeId: string): void {
+    if (!this.#instanceNodes.includes(nodeId)) this.#instanceNodes.push(nodeId)
+  }
+
+  /** Record an `apply` parent for the footprint, first-addressed order, deduplicated. */
+  #trackPlacementParent(nodeId: string): void {
+    if (!this.#placementParents.includes(nodeId)) this.#placementParents.push(nodeId)
   }
 
   /**
@@ -3355,8 +3986,12 @@ class Compiler {
   #warnUnusedBindings(): void {
     for (const binding of this.#bindings.values()) {
       // A zero-member group already failed to resolve; do not pile an unused
-      // warning on top of the resolution error.
-      if (!binding.used && binding.members.length > 0) {
+      // warning on top of the resolution error. Clip and collection bindings
+      // carry no node members but still warn when never referenced.
+      if (
+        !binding.used &&
+        (binding.members.length > 0 || binding.kind === 'clip' || binding.kind === 'collection')
+      ) {
         this.#warning(`Binding "${binding.alias}" is never used`, binding.aliasSpan)
       }
     }
@@ -3371,6 +4006,11 @@ class Compiler {
   #advanceCursorByResolvedDuration(statement: StatementNode, cursor: number): number {
     if (!isTimedStatementMethod(statement.method)) return cursor
     if (statement.method === 'tint' && isBareTint(statement)) {
+      return cursor
+    }
+    // Play/apply timing lives in their options record, never in the header
+    // defaults — a failed play/apply leaves the cursor where it found it.
+    if (statement.method === 'play' || statement.method === 'apply') {
       return cursor
     }
     const duration = this.#resolveDuration(statement)
@@ -3443,6 +4083,13 @@ class Compiler {
           this.#errorGroupRead(binding.alias, expression.nameSpan)
           return null
         }
+        if (binding.kind === 'clip' || binding.kind === 'collection') {
+          this.#error(
+            `"${expression.name}" cannot be read from ${binding.kind} "${binding.alias}" — reads cover node properties`,
+            expression.nameSpan,
+          )
+          return null
+        }
         if (binding.members.length !== 1) {
           return null
         }
@@ -3478,6 +4125,13 @@ class Compiler {
         binding.used = true
         if (binding.kind === 'group') {
           this.#errorGroupRead(binding.alias, expression.nameSpan)
+          return null
+        }
+        if (binding.kind === 'clip' || binding.kind === 'collection') {
+          this.#error(
+            `"${expression.name}" cannot be read from ${binding.kind} "${binding.alias}" — reads cover node properties`,
+            expression.nameSpan,
+          )
           return null
         }
         if (binding.members.length !== 1) {
@@ -3732,6 +4386,13 @@ class Compiler {
       const binding = this.#lookupBinding(expression.name)
       if (binding) {
         binding.used = true
+        if (binding.kind === 'clip' || binding.kind === 'collection') {
+          this.#error(
+            `${what} needs a node binding — "${binding.alias}" is a ${binding.kind}.`,
+            expression.span,
+          )
+          return null
+        }
         if (binding.kind === 'group' && !allowGroup) {
           this.#error(
             `${what} needs a single node — binding "${binding.alias}" is a group. Bind an individual node, or use bounds(...) for a group.`,
@@ -3747,6 +4408,13 @@ class Compiler {
           const memberBinding = bindingOf(value)
           if (memberBinding) {
             memberBinding.used = true
+            if (memberBinding.kind === 'clip' || memberBinding.kind === 'collection') {
+              this.#error(
+                `${what} needs a node binding — "${expression.name}" is a ${memberBinding.kind}.`,
+                expression.span,
+              )
+              return null
+            }
             if (memberBinding.kind === 'group' && !allowGroup) {
               this.#error(
                 `${what} needs a single node — "${expression.name}" is a group. Bind an individual node, or use bounds(...) for a group.`,
@@ -3777,6 +4445,13 @@ class Compiler {
         const memberBinding = bindingOf(value)
         if (memberBinding) {
           memberBinding.used = true
+          if (memberBinding.kind === 'clip' || memberBinding.kind === 'collection') {
+            this.#error(
+              `${what} needs a node binding — a ${memberBinding.kind} field cannot be read here.`,
+              expression.span,
+            )
+            return null
+          }
           if (memberBinding.kind === 'group' && !allowGroup) {
             this.#error(
               `${what} needs a single node — a group field needs bounds(...) for a group.`,
@@ -4008,7 +4683,9 @@ class Compiler {
     }))
     // Static text changes share the Transaction and the source order but are
     // not keyframes, so they stay out of the footprint and the keyframe count.
-    return [...planned, ...this.#textCommands]
+    // Clip Instances and placements join the same source order: later
+    // statements append later and win (statement order is priority).
+    return [...planned, ...this.#textCommands, ...this.#clipCommands]
       .sort((a, b) => a.order - b.order)
       .map((entry) => entry.command)
   }
@@ -4080,7 +4757,9 @@ function isTimedStatementMethod(method: string): boolean {
     method === 'symmetry' ||
     method === 'morph' ||
     method === 'dataLabel' ||
-    method === 'control'
+    method === 'control' ||
+    method === 'play' ||
+    method === 'apply'
   )
 }
 
@@ -4264,10 +4943,23 @@ function bindingValueFor(binding: BindingInfo): ScriptValue {
         ? 'a group'
         : binding.kind === 'table'
           ? 'a table'
-          : 'a cell reference'
+          : binding.kind === 'clip'
+            ? 'a clip'
+            : binding.kind === 'collection'
+              ? 'a collection'
+              : 'a cell reference'
   return { kind: 'binding', label, bindingKind: binding.kind, payload: binding }
 }
 
 function bindingOf(value: ScriptValue): BindingInfo | null {
   return value.kind === 'binding' ? (value.payload as BindingInfo) : null
+}
+
+/** The source text of a resource argument, for kind-mismatch diagnostics. */
+function expressionLabel(expression: ScriptExpression): string {
+  if (expression.kind === 'identifier') return expression.name
+  if (expression.kind === 'member' && expression.object.kind === 'identifier') {
+    return `${expression.object.name}.${expression.name}`
+  }
+  return 'the resource'
 }

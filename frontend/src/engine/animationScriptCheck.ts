@@ -82,6 +82,17 @@ export function checkAnimationScript(
   return compileAnimationScript(source, {
     slideDuration: slide.duration,
     nodes,
+    clips: engine.clips.map((clip) => ({
+      id: clip.id,
+      name: clip.name,
+      duration: clip.duration,
+      params: clip.params.map((param) => param.key),
+    })),
+    collections: engine.clipCollections.map((collection) => ({
+      id: collection.id,
+      name: collection.name,
+      bindings: collection.getBindingsObject(),
+    })),
     evaluateProperty: (nodeId, property, time) => evaluateProperty(engine, nodeId, property, time),
     evaluateTrackValue: (nodeId, track, time) =>
       evaluateTrackValue(engine, reads, nodeId, track, time),

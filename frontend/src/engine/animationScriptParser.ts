@@ -165,6 +165,8 @@ export const SCRIPT_METHOD_NAMES = [
   'morph',
   'dataLabel',
   'control',
+  'play',
+  'apply',
 ] as const
 
 /** Structural table selectors: `conj.cell(r, c)` / `conj.row(i)` / `conj.col(j)`. */
@@ -1039,7 +1041,8 @@ class Parser {
    * Record-shaped methods (`tween`, `set`, `move`, `shadow`, `symmetry`) open
    * with a property map; `morph`, `dataLabel`, `control` and `tint` take
    * positional values first; `fadeIn`, `fadeOut` and `pulse` take only the
-   * timing arguments.
+   * timing arguments; `play` and `apply` take a clip/collection reference plus
+   * an optional duration shorthand or options record.
    */
   #parseCallStatement(): StatementNode | null {
     const start = this.#peek().span.start
@@ -1081,6 +1084,31 @@ class Parser {
       this.#expectPunctuation('(')
       if (this.#isMethodSegment(name.text)) {
         method = name
+        if (name.text === 'play' || name.text === 'apply') {
+          const resource = this.#parseExpression(
+            name.text === 'play' ? 'a clip binding' : 'a collection binding',
+          )
+          if (resource === null) return null
+          args.push(resource)
+          if (this.#matchPunctuation(',')) {
+            const options = this.#parseExpression(
+              name.text === 'play'
+                ? 'play options, like { duration: 1.2 } or 1.2'
+                : 'apply options, like { duration: 1.2 } or 1.2',
+            )
+            if (options === null) return null
+            args.push(options)
+            if (this.#matchPunctuation(',')) {
+              this.#report(
+                `${name.text} takes a resource and at most one options argument`,
+                this.#peek().span,
+              )
+              return null
+            }
+          }
+          this.#expectPunctuation(')')
+          break
+        }
         if (name.text === 'fadeIn' || name.text === 'fadeOut' || name.text === 'pulse') {
           const timing = this.#parseBareTimingArguments()
           if (timing === null) return null
