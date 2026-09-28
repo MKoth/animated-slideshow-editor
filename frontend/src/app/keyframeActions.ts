@@ -10,7 +10,7 @@ import {
   autoKeyCommands,
   dispatchKeyframeCommands,
   evaluatedPropertyValue,
-  keyframeAtTime,
+  keyframesNearTime,
   materialParameterEditCommands,
 } from '../engine/keyframeEdit'
 import type { KeyframeEdit, MaterialParameterEdit, TimedKeyframeEdit } from '../engine/keyframeEdit'
@@ -269,7 +269,7 @@ export function addKeyframeAtPlayhead(
   property: AnimationProperty,
 ): CommandResult<unknown> | null {
   const time = usePlaybackController.getState().getTime(slideId)
-  if (keyframeAtTime(engine.getKeyframes(nodeId, property), time)) {
+  if (keyframesNearTime(engine.getKeyframes(nodeId, property), time).length > 0) {
     return null
   }
   const value = evaluatedPropertyValue(engine, nodeId, property, time)
@@ -288,7 +288,7 @@ export function addPoseKeyframesAtPlayhead(
   const time = usePlaybackController.getState().getTime(slideId)
   const commands: Command<unknown>[] = []
   for (const property of animatablePropertiesOf(node)) {
-    if (keyframeAtTime(engine.getKeyframes(nodeId, property), time)) {
+    if (keyframesNearTime(engine.getKeyframes(nodeId, property), time).length > 0) {
       continue
     }
     commands.push(

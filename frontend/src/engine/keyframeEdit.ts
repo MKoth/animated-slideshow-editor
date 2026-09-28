@@ -4,6 +4,8 @@ import type { Command, CommandResult } from './commands/command'
 import type { DispatchCommand } from './commands/dispatcher'
 import { AddKeyframeCommand } from './commands/addKeyframeCommand'
 import { SetKeyframeValueCommand } from './commands/setKeyframeValueCommand'
+import { DeleteKeyframesCommand } from './commands/deleteKeyframesCommand'
+import { MoveKeyframesCommand } from './commands/moveKeyframesCommand'
 import { OverrideMaterialParameterCommand } from './commands/overrideMaterialParameterCommand'
 import { TransactionCommand } from './commands/transactionCommand'
 import type { KeyframeTarget } from './keyframeTarget'
@@ -36,6 +38,29 @@ export interface MaterialParameterEdit {
 
 export function keyframeAtTime(keyframes: readonly Keyframe[], time: number): Keyframe | undefined {
   return keyframes.find((keyframe) => keyframe.time === time)
+}
+
+/**
+ * Snap window (seconds) inside which an Animation-mode edit at `time`
+ * replaces nearby keyframes instead of stacking a new one on top.
+ * Float noise from time normalization (e.g. 0.30000000000000004) and
+ * playhead-vs-key residue live far below 1ms, while two keys genuinely
+ * 1ms apart are indistinguishable at any real frame rate.
+ */
+export const AUTO_KEY_SNAP_WINDOW = 1e-3
+
+/**
+ * Every keyframe within the snap window of `time`, nearest first.
+ * Used so edits snap-replace float-noise neighbours instead of layering.
+ */
+export function keyframesNearTime(
+  keyframes: readonly Keyframe[],
+  time: number,
+  window: number = AUTO_KEY_SNAP_WINDOW,
+): Keyframe[] {
+  return keyframes
+    .filter((keyframe) => Math.abs(keyframe.time - time) <= window)
+    .sort((a, b) => Math.abs(a.time - time) - Math.abs(b.time - time) || a.time - b.time)
 }
 
 export function evaluatedPropertyValue(
@@ -91,23 +116,42 @@ export function autoKeyCommands(
   const commands: Command<unknown>[] = []
   for (const edit of edits) {
     const keyframes = targetKeyframes(engine, edit.target)
-    const existing = keyframeAtTime(keyframes, edit.time)
-    if (existing) {
+    const nearby = keyframesNearTime(keyframes, edit.time)
+    if (nearby.length > 0) {
+      // Snap-replace: collapse every keyframe inside the window onto the
+      // nearest one, pinned exactly at the edit time, carrying the edit value.
+      const [nearest, ...rest] = nearby as [Keyframe, ...Keyframe[]]
+      if (rest.length > 0) {
+        commands.push(
+          new DeleteKeyframesCommand({
+            target: edit.target,
+            keyframeIds: rest.map((keyframe) => keyframe.id),
+          }),
+        )
+      }
+      if (nearest.time !== edit.time) {
+        commands.push(
+          new MoveKeyframesCommand({
+            target: edit.target,
+            moves: [{ keyframeId: nearest.id, newTime: edit.time }],
+          }),
+        )
+      }
       const equal = isMorphTarget(edit.target)
-        ? JSON.stringify(existing.value) === JSON.stringify(edit.value)
+        ? JSON.stringify(nearest.value) === JSON.stringify(edit.value)
         : isSymmetryTarget(edit.target)
-          ? JSON.stringify(existing.value) === JSON.stringify(edit.value)
+          ? JSON.stringify(nearest.value) === JSON.stringify(edit.value)
           : isShadowTarget(edit.target)
-            ? existing.value === edit.value
+            ? nearest.value === edit.value
             : uniformValuesEqual(
-                existing.value as unknown as import('./materialInstance').MaterialOverrideValue,
+                nearest.value as unknown as import('./materialInstance').MaterialOverrideValue,
                 edit.value as unknown as import('./materialInstance').MaterialOverrideValue,
               )
       if (!equal) {
         commands.push(
           new SetKeyframeValueCommand({
             target: edit.target,
-            keyframeId: existing.id,
+            keyframeId: nearest.id,
             newValue: edit.value,
           }),
         )

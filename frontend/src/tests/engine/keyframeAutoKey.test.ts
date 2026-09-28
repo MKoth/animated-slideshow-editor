@@ -2,10 +2,18 @@ import { describe, expect, it } from 'vitest'
 import type { KeyframeTarget } from '../../engine/keyframeTarget'
 import {
   AddKeyframeCommand,
+  CommandDispatcher,
+  DeleteKeyframesCommand,
+  MoveKeyframesCommand,
   OverrideMaterialParameterCommand,
   SetKeyframeValueCommand,
+  UndoStack,
 } from '../../engine/commands'
-import { autoKeyCommands, materialParameterEditCommands } from '../../engine/keyframeEdit'
+import {
+  autoKeyCommands,
+  dispatchKeyframeCommands,
+  materialParameterEditCommands,
+} from '../../engine/keyframeEdit'
 import { createEngine } from '../../engine/internal'
 
 const CUSTOM_MATERIAL = {
@@ -99,6 +107,73 @@ describe('autoKeyCommands for material parameters', () => {
       { target: propertyTarget(node.id), time: 2, value: 100 },
     ])
     expect(commands).toHaveLength(0)
+  })
+})
+
+describe('autoKeyCommands snap window', () => {
+  function dispatchAll(
+    engine: ReturnType<typeof createEngine>,
+    commands: ReturnType<typeof autoKeyCommands>,
+  ): void {
+    const undoStack = new UndoStack()
+    const dispatcher = new CommandDispatcher(engine, undoStack, () => {})
+    const result = dispatchKeyframeCommands(dispatcher.dispatch.bind(dispatcher), commands)
+    expect(result?.ok).toBe(true)
+  }
+
+  it('replaces a float-noise neighbour: moves it onto the edit time and sets the value', () => {
+    const { engine, node } = setup()
+    const target = propertyTarget(node.id)
+    engine.addKeyframe(target, 1.5000004, 100)
+    const commands = autoKeyCommands(engine, [{ target, time: 1.5, value: 200 }])
+    expect(commands).toHaveLength(2)
+    expect(commands[0]).toBeInstanceOf(MoveKeyframesCommand)
+    expect(commands[1]).toBeInstanceOf(SetKeyframeValueCommand)
+    dispatchAll(engine, commands)
+    const kfs = engine.getKeyframes(node.id, 'positionX')
+    expect(kfs).toHaveLength(1)
+    expect(kfs[0]?.time).toBe(1.5)
+    expect(kfs[0]?.value).toBe(200)
+  })
+
+  it('collapses several keys inside the window onto one at the edit time', () => {
+    const { engine, node } = setup()
+    const target = propertyTarget(node.id)
+    engine.addKeyframe(target, 1.5, 100)
+    engine.addKeyframe(target, 1.5000004, 150)
+    const commands = autoKeyCommands(engine, [{ target, time: 1.5, value: 200 }])
+    expect(commands).toHaveLength(2)
+    expect(commands[0]).toBeInstanceOf(DeleteKeyframesCommand)
+    expect(commands[1]).toBeInstanceOf(SetKeyframeValueCommand)
+    dispatchAll(engine, commands)
+    const kfs = engine.getKeyframes(node.id, 'positionX')
+    expect(kfs).toHaveLength(1)
+    expect(kfs[0]?.time).toBe(1.5)
+    expect(kfs[0]?.value).toBe(200)
+  })
+
+  it('snaps the time even when the value already matches', () => {
+    const { engine, node } = setup()
+    const target = propertyTarget(node.id)
+    engine.addKeyframe(target, 1.5000004, 200)
+    const commands = autoKeyCommands(engine, [{ target, time: 1.5, value: 200 }])
+    expect(commands).toHaveLength(1)
+    expect(commands[0]).toBeInstanceOf(MoveKeyframesCommand)
+    dispatchAll(engine, commands)
+    const kfs = engine.getKeyframes(node.id, 'positionX')
+    expect(kfs).toHaveLength(1)
+    expect(kfs[0]?.time).toBe(1.5)
+  })
+
+  it('still adds when the nearest key is outside the window', () => {
+    const { engine, node } = setup()
+    const target = propertyTarget(node.id)
+    engine.addKeyframe(target, 1.5, 100)
+    const commands = autoKeyCommands(engine, [{ target, time: 1.502, value: 200 }])
+    expect(commands).toHaveLength(1)
+    expect(commands[0]).toBeInstanceOf(AddKeyframeCommand)
+    dispatchAll(engine, commands)
+    expect(engine.getKeyframes(node.id, 'positionX')).toHaveLength(2)
   })
 })
 

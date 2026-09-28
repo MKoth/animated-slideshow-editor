@@ -201,6 +201,24 @@ describe('interpolation picker in InspectorPanel', () => {
     expect(screen.getByRole('combobox', { name: 'Interpolation' })).toHaveValue('linear')
   })
 
+  it('shows the exact keyframe time in full precision', () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    const keyframeId = addKeyframe(dispatcher, nodeId, 'positionX', 0.30000000000000004, 10)
+    selectKeyframes([keyframeId])
+
+    expect(screen.getByTestId('keyframe-time')).toHaveTextContent('0.30000000000000004s')
+  })
+
+  it('shows clean times without noise', () => {
+    const { engine, dispatcher } = renderPanel()
+    const { nodeId } = createSceneWithNode(engine)
+    const keyframeId = addKeyframe(dispatcher, nodeId, 'positionX', 1.5, 10)
+    selectKeyframes([keyframeId])
+
+    expect(screen.getByTestId('keyframe-time')).toHaveTextContent('1.5s')
+  })
+
   it('hides interpolation picker when multiple keyframes are selected', () => {
     const { engine, dispatcher } = renderPanel()
     const { nodeId } = createSceneWithNode(engine)

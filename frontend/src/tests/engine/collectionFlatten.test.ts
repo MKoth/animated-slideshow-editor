@@ -191,6 +191,31 @@ describe('executeCollectionFlatten', () => {
     expect(rightTimes).toEqual([6, 7, 8])
   })
 
+  it('rounds flattened times to milliseconds and merges sub-millisecond duplicates', () => {
+    const { engine, dispatcher, undoStack, collectionId, leftId } = setupCollection()
+    const collection = engine.getClipCollection(collectionId)
+    const clip = engine.getClip(collection.getBinding('left_hand')!)
+    // duration 3: 0.1 * 3 = 0.30000000000000004 without rounding
+    clip.addChannelKeyframe('positionX', new Keyframe('round-a', 0.1, 42))
+    clip.addChannelKeyframe('positionX', new Keyframe('round-b', 0.1000001, 43))
+    const result = executeCollectionFlatten(
+      engine,
+      dispatcher.dispatch.bind(dispatcher),
+      undoStack,
+      { collectionId, from: 0, to: 3 },
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error('expected ok')
+    const kfs = [...engine.getKeyframes(leftId, 'positionX')].sort((a, b) => a.time - b.time)
+    expect(kfs.map((k) => k.time)).toEqual([0, 0.3, 1, 2])
+    // Last wins on the merged slot, like evaluation precedence
+    expect(kfs.find((k) => k.time === 0.3)?.value).toBe(43)
+    expect(result.warnings.some((w) => w.includes('merged'))).toBe(true)
+    for (const kf of kfs) {
+      expect(Math.abs(kf.time * 1000 - Math.round(kf.time * 1000))).toBeLessThan(1e-6)
+    }
+  })
+
   it('scales bezier tangent time-components by clip duration', () => {
     const { engine, dispatcher, undoStack } = setupEngine()
     const slide = engine.getActiveSlide()!

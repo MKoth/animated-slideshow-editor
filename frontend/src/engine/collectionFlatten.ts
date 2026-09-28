@@ -279,12 +279,17 @@ function collectWrites(engine: EnginePublic, plan: FlattenPlan): Collected | { e
         return
       }
       const clamped = Math.min(Math.max(timeline, from), to)
+      // Round to the millisecond grid so float residue from normalization
+      // (e.g. 0.30000000000000004) never lands on the timeline as alien
+      // timestamps that defeat exact-time matching on later edits.
+      const rounded = Math.round(clamped * 1000) / 1000
+      const writeTime = Math.min(Math.max(rounded, from), to)
       let value: unknown = kf.value
       if (target.kind === 'morph') value = resolveMorphForNode(engine, node.id, kf.value)
       writes.push({
         target,
         nodeName: node.name,
-        time: clamped,
+        time: writeTime,
         value,
         interpolation: kf.interpolation,
         tangentIn: { time: kf.tangentIn.time * duration, value: kf.tangentIn.value },
@@ -344,7 +349,35 @@ function collectWrites(engine: EnginePublic, plan: FlattenPlan): Collected | { e
   if (writes.length === 0 && truncatedCount === 0) {
     return { error: 'Nothing to flatten: no clip keyframes resolve to the range.' }
   }
-  return { writes, perNode, truncatedCount, warnings }
+  // Millisecond rounding can map two writes onto the same instant on one
+  // track (sub-millisecond source spacing). Keep the last — consistent with
+  // last-wins evaluation — so the paste below never trips on duplicates.
+  const kept: PendingWrite[] = []
+  const indexBySlot = new Map<string, number>()
+  let mergedCount = 0
+  for (const w of writes) {
+    const slot = `${targetKey(w.target)}@${w.time}`
+    const prev = indexBySlot.get(slot)
+    if (prev === undefined) {
+      indexBySlot.set(slot, kept.length)
+      kept.push(w)
+    } else {
+      const dropped = kept[prev]!
+      const droppedNodeId = (dropped.target as { nodeId?: string }).nodeId
+      if (droppedNodeId !== undefined) {
+        const entry = perNode.get(droppedNodeId)
+        if (entry) entry.writeCount -= 1
+      }
+      kept[prev] = w
+      mergedCount += 1
+    }
+  }
+  if (mergedCount > 0) {
+    warnings.push(
+      `${mergedCount} keyframe(s) merged after millisecond rounding (sub-millisecond duplicates).`,
+    )
+  }
+  return { writes: kept, perNode, truncatedCount, warnings }
 }
 
 export function previewCollectionFlatten(engine: EnginePublic, plan: FlattenPlan): FlattenPreview {

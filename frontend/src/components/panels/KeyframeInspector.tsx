@@ -489,6 +489,17 @@ export function KeyframeInspector({
   return (
     <section className="inspector-section">
       <h3 className="inspector-section__title">Keyframe</h3>
+      <div className="inspector-field">
+        <label className="inspector-field__label">Time</label>
+        <span
+          className="inspector-field__value"
+          data-testid="keyframe-time"
+          title={`Exact keyframe time${isClip ? ' (normalized 0…1)' : ' in seconds'}: ${String(keyframe.time)}`}
+          style={{ fontSize: 12, flex: 1, minWidth: 0, overflowWrap: 'anywhere' }}
+        >
+          {isClip ? String(keyframe.time) : `${String(keyframe.time)}s`}
+        </span>
+      </div>
       {isMorph && morphValue ? (
         <>
           <div style={{ marginBottom: 8 }}>
