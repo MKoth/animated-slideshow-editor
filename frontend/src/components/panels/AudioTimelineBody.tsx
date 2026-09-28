@@ -107,7 +107,10 @@ export function AudioTimelineBody({
     const rect = timeAreaRef.current?.getBoundingClientRect()
     const state = useTimelineViewStore.getState()
     const p = pixelsPerSecond(state.zoomLevel)
-    return state.scrollTime + (clientX - (rect?.left ?? 0)) / p
+    if (!rect) {
+      return state.scrollTime
+    }
+    return (clientX - rect.left) / p
   }
 
   const trackFromClientY = (clientY: number): AudioTrackId | null => {
@@ -402,7 +405,7 @@ export function AudioTimelineBody({
       const state = useTimelineViewStore.getState()
       const p = pixelsPerSecond(state.zoomLevel)
       const rect = timeAreaRef.current?.getBoundingClientRect()
-      const anchor = state.scrollTime + (event.clientX - (rect?.left ?? 0)) / p
+      const anchor = rect ? (event.clientX - rect.left) / p : state.scrollTime
       const viewport = el.clientWidth > 0 ? el.clientWidth : DEFAULT_TIMELINE_VIEWPORT_WIDTH
       const factor = event.deltaY < 0 ? 2 : 0.5
       state.setZoom(state.zoomLevel * factor, anchor, viewport, duration)
@@ -436,7 +439,7 @@ export function AudioTimelineBody({
     const rect = timeAreaRef.current?.getBoundingClientRect()
     const state = useTimelineViewStore.getState()
     const p = pixelsPerSecond(state.zoomLevel)
-    lastPointerTimeRef.current = state.scrollTime + (event.clientX - (rect?.left ?? 0)) / p
+    lastPointerTimeRef.current = rect ? (event.clientX - rect.left) / p : state.scrollTime
   }
 
   const dragPlayhead = (clientX: number) => {

@@ -235,7 +235,13 @@ export function TimelineBody({
     const rect = timeAreaRef.current?.getBoundingClientRect()
     const state = useTimelineViewStore.getState()
     const p = pixelsPerSecond(state.zoomLevel)
-    return state.scrollTime + (clientX - (rect?.left ?? 0)) / p
+    if (!rect) {
+      return state.scrollTime
+    }
+    // rect.left already moves with scrollLeft (timeArea lives inside the
+    // scrolled content, time 0 == rect.left), so no scrollTime offset here.
+    // Adding scrollTime double-counts and desyncs mouse/zoom once scrolled.
+    return (clientX - rect.left) / p
   }
 
   const propertyKeyframeRefs = keyframeRefsOfScene(engine, scene)
@@ -470,7 +476,7 @@ export function TimelineBody({
       const state = useTimelineViewStore.getState()
       const p = pixelsPerSecond(state.zoomLevel)
       const rect = timeAreaRef.current?.getBoundingClientRect()
-      const anchor = state.scrollTime + (event.clientX - (rect?.left ?? 0)) / p
+      const anchor = rect ? (event.clientX - rect.left) / p : state.scrollTime
       const viewport = el.clientWidth > 0 ? el.clientWidth : DEFAULT_TIMELINE_VIEWPORT_WIDTH
       const factor = event.deltaY < 0 ? 2 : 0.5
       state.setZoom(state.zoomLevel * factor, anchor, viewport, duration)
@@ -506,7 +512,7 @@ export function TimelineBody({
     const rect = timeAreaRef.current?.getBoundingClientRect()
     const state = useTimelineViewStore.getState()
     const p = pixelsPerSecond(state.zoomLevel)
-    lastPointerTimeRef.current = state.scrollTime + (event.clientX - (rect?.left ?? 0)) / p
+    lastPointerTimeRef.current = rect ? (event.clientX - rect.left) / p : state.scrollTime
   }
 
   const dragPlayhead = (clientX: number) => {
