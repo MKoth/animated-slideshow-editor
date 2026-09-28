@@ -25,6 +25,7 @@ interface DragMove {
   readonly morph?: boolean
   readonly shadowProperty?: import('../../engine/shadowEffect').ShadowProperty
   readonly symmetry?: boolean
+  readonly zIndex?: boolean
   readonly controlKey?: string
   readonly originalTime: number
 }
@@ -48,6 +49,13 @@ export interface SymmetryKeyframeRefForDrag {
   readonly symmetry: true
 }
 
+export interface ZIndexKeyframeRefForDrag {
+  readonly nodeId: string
+  readonly keyframeId: string
+  readonly time: number
+  readonly zIndex: true
+}
+
 export interface KeyframeDragOptions {
   readonly keyframeRefs: ReadonlyMap<
     string,
@@ -56,6 +64,7 @@ export interface KeyframeDragOptions {
     | MorphKeyframeRef
     | ShadowKeyframeRef
     | SymmetryKeyframeRefForDrag
+    | ZIndexKeyframeRefForDrag
     | {
         readonly nodeId: string
         readonly controlKey: string
@@ -122,6 +131,13 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
           keyframeId,
           nodeId: ref.nodeId,
           symmetry: true,
+          originalTime: ref.time,
+        })
+      } else if ('zIndex' in ref && (ref as ZIndexKeyframeRefForDrag).zIndex) {
+        moves.push({
+          keyframeId,
+          nodeId: ref.nodeId,
+          zIndex: true,
           originalTime: ref.time,
         })
       } else if ('property' in ref) {
@@ -193,6 +209,9 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
     )
     const symmetryMoves = moved.filter(
       (move): move is MovedDragMove & { symmetry: true } => (move as DragMove).symmetry === true,
+    )
+    const zIndexMoves = moved.filter(
+      (move): move is MovedDragMove & { zIndex: true } => (move as DragMove).zIndex === true,
     )
     const controlMoves = moved.filter(
       (move): move is MovedDragMove & { controlKey: string } => move.controlKey !== undefined,
@@ -313,6 +332,29 @@ export function useKeyframeDrag(options: KeyframeDragOptions): KeyframeDrag {
         commands.push(
           new MoveKeyframesCommand({
             target: { kind: 'symmetry', nodeId: group.nodeId },
+            moves: group.items,
+          }),
+        )
+      }
+    }
+    // zIndex moves grouped by node
+    {
+      const groups = new Map<
+        string,
+        { nodeId: string; items: { keyframeId: string; newTime: number }[] }
+      >()
+      for (const move of zIndexMoves) {
+        let entry = groups.get(move.nodeId)
+        if (!entry) {
+          entry = { nodeId: move.nodeId, items: [] }
+          groups.set(move.nodeId, entry)
+        }
+        entry.items.push({ keyframeId: move.keyframeId, newTime: move.newTime })
+      }
+      for (const group of groups.values()) {
+        commands.push(
+          new MoveKeyframesCommand({
+            target: { kind: 'zIndex', nodeId: group.nodeId },
             moves: group.items,
           }),
         )

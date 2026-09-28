@@ -38,6 +38,13 @@ interface SymmetryKeyframeRefForScale {
   readonly symmetry: true
 }
 
+interface ZIndexKeyframeRefForScale {
+  readonly nodeId: string
+  readonly keyframeId: string
+  readonly time: number
+  readonly zIndex: true
+}
+
 interface ScaleSession {
   readonly keyframeRefs: ReadonlyMap<
     string,
@@ -46,6 +53,7 @@ interface ScaleSession {
     | MorphKeyframeRefForScale
     | ShadowKeyframeRef
     | SymmetryKeyframeRefForScale
+    | ZIndexKeyframeRefForScale
   >
   readonly isAlt: boolean
   readonly playheadTime: number
@@ -62,6 +70,7 @@ export interface KeyframeScaleOptions {
     | MorphKeyframeRefForScale
     | ShadowKeyframeRef
     | SymmetryKeyframeRefForScale
+    | ZIndexKeyframeRefForScale
   >
   readonly duration: number
   readonly pps: number
@@ -92,6 +101,7 @@ export function computeSelectionBounds(
     | MorphKeyframeRefForScale
     | ShadowKeyframeRef
     | SymmetryKeyframeRefForScale
+    | ZIndexKeyframeRefForScale
   >,
 ): SelectionBounds | null {
   if (selectedKeyframeIds.length === 0) {
@@ -164,6 +174,7 @@ export function useKeyframeScale(options: KeyframeScaleOptions): KeyframeScale {
     const morphRefs: (MorphKeyframeRefForScale & { keyframeId: string })[] = []
     const shadowRefs: (ShadowKeyframeRef & { keyframeId: string })[] = []
     const symmetryRefs: (SymmetryKeyframeRefForScale & { keyframeId: string })[] = []
+    const zIndexRefs: (ZIndexKeyframeRefForScale & { keyframeId: string })[] = []
 
     for (const [id, ref] of session.keyframeRefs) {
       if (!wanted.has(id)) {
@@ -175,6 +186,8 @@ export function useKeyframeScale(options: KeyframeScaleOptions): KeyframeScale {
         morphRefs.push(ref as MorphKeyframeRefForScale & { keyframeId: string })
       } else if ('symmetry' in ref && (ref as SymmetryKeyframeRef).symmetry) {
         symmetryRefs.push(ref as SymmetryKeyframeRefForScale & { keyframeId: string })
+      } else if ('zIndex' in ref && (ref as ZIndexKeyframeRefForScale).zIndex) {
+        zIndexRefs.push(ref as ZIndexKeyframeRefForScale & { keyframeId: string })
       } else if ('property' in ref) {
         propertyRefs.push(ref as KeyframeRef & { keyframeId: string })
       } else if ('parameter' in ref) {
@@ -292,6 +305,31 @@ export function useKeyframeScale(options: KeyframeScaleOptions): KeyframeScale {
         commands.push(
           new MoveKeyframesCommand({
             target: { kind: 'symmetry', nodeId: group.nodeId },
+            moves: group.items,
+          }),
+        )
+      }
+    }
+    // zIndex moves grouped by node
+    {
+      const groups = new Map<
+        string,
+        { nodeId: string; items: { keyframeId: string; newTime: number }[] }
+      >()
+      for (const ref of zIndexRefs) {
+        const previewTime = preview.get(ref.keyframeId)
+        if (previewTime === undefined || previewTime === ref.time) continue
+        let entry = groups.get(ref.nodeId)
+        if (!entry) {
+          entry = { nodeId: ref.nodeId, items: [] }
+          groups.set(ref.nodeId, entry)
+        }
+        entry.items.push({ keyframeId: ref.keyframeId, newTime: previewTime })
+      }
+      for (const group of groups.values()) {
+        commands.push(
+          new MoveKeyframesCommand({
+            target: { kind: 'zIndex', nodeId: group.nodeId },
             moves: group.items,
           }),
         )
