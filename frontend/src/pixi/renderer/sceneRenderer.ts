@@ -9,7 +9,7 @@ import {
   collectShadowCasters as collectShadowCastersPure,
   hexStringToTint,
 } from '../../engine/shadowEffect'
-import { tightBoundsSize, tightCasterUnion } from '../../engine/shadowBounds'
+import { shadowRenderScale, tightBoundsSize, tightCasterUnion } from '../../engine/shadowBounds'
 import type { EvaluatedNodeScratch } from '../../engine/animationEvaluator'
 import {
   copyEvaluatedState,
@@ -324,6 +324,10 @@ export class SceneRenderer {
     }
     const node = this.#engine.getNode(nodeId)
     this.#addNode(node)
+    // Mesh sizes are measured from deformed vertices. Populate them before a
+    // newly-created group's shadow is rebuilt, otherwise its tight bounds can
+    // use the placeholder/raw size and clip the first render.
+    this.refreshDeformedMeshSizes()
     this.#refreshOwningTable(node)
     this.#syncShadowLifecycleForNode(nodeId)
     // If parent is group with shadow, its silhouette changed (new caster) — mark dirty via climbing
@@ -2190,6 +2194,9 @@ export class SceneRenderer {
           quality: 2,
           kernelSize: 5,
         } as unknown as Record<string, unknown>) as unknown as PixiFilter
+        // Prevent the blur pass from sampling transparent RT edge texels as
+        // a dark one-pixel seam when the camera zoom changes.
+        ;(blurFilter as unknown as { repeatEdgePixels?: boolean }).repeatEdgePixels = true
       } catch {
         blurFilter = null
       }
@@ -2327,6 +2334,7 @@ export class SceneRenderer {
             quality: 2,
             kernelSize: 5,
           } as unknown as Record<string, unknown>) as unknown as PixiFilter
+          ;(blurFilter as unknown as { repeatEdgePixels?: boolean }).repeatEdgePixels = true
         } catch {
           blurFilter = null
         }
@@ -2483,20 +2491,19 @@ export class SceneRenderer {
     // Stable envelope is RT sizing ONLY — never projection input, never
     // silhouette/placement origin (that was the move-distort + history bug).
     const stable = this.#stableShadowBounds(groupId, union, effect.blur)
-    const k = this.#shadowRenderScale()
-    this.#shadowRenderScales.set(groupId, k)
     const pad = stable.pad
     const stableW = stable.maxX - stable.minX
     const stableH = stable.maxY - stable.minY
     const cap = 2048
-    let width = Math.max(4, Math.ceil((stableW + pad * 2) * k))
-    let height = Math.max(4, Math.ceil((stableH + pad * 2) * k))
-    if (width > cap || height > cap) {
-      const s = cap / Math.max(width, height)
-      width = Math.max(4, Math.ceil(width * s))
-      height = Math.max(4, Math.ceil(height * s))
-      console.warn(`[shadow] RT clamped to ${width}×${height}`)
-    }
+    const k = shadowRenderScale(
+      this.#shadowRenderScale(),
+      stableW + pad * 2,
+      stableH + pad * 2,
+      cap,
+    )
+    this.#shadowRenderScales.set(groupId, k)
+    const width = Math.max(4, Math.min(cap, Math.ceil((stableW + pad * 2) * k)))
+    const height = Math.max(4, Math.min(cap, Math.ceil((stableH + pad * 2) * k)))
     const rt = this.#shadowTextures.get(groupId)
     if (!rt) return
     if (rt.width !== width || rt.height !== height) {

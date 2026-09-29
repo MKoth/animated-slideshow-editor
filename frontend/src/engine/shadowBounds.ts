@@ -167,4 +167,31 @@ export function tightBoundsSize(
   return { w, h }
 }
 
+/**
+ * Effective silhouette scale after the render texture size cap is applied.
+ * Geometry and the texture must use the same scale or a clamped texture clips
+ * the silhouette to its corner.
+ */
+export function shadowRenderScale(
+  baseScale: number,
+  width: number,
+  height: number,
+  cap: number,
+): number {
+  if (
+    !Number.isFinite(baseScale) ||
+    baseScale <= 0 ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width < 0 ||
+    height < 0 ||
+    !Number.isFinite(cap) ||
+    cap <= 0
+  ) {
+    return 1
+  }
+  const unclamped = Math.max(width, height) * baseScale
+  return baseScale * Math.min(1, cap / Math.max(1, unclamped))
+}
+
 export type { HostLike }

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { tightCasterUnion, tightBoundsSize, isSilhouetteCaster } from '../engine/shadowBounds'
+import {
+  shadowRenderScale,
+  tightCasterUnion,
+  tightBoundsSize,
+  isSilhouetteCaster,
+} from '../engine/shadowBounds'
 import { deriveShadowProjection } from '../engine/shadowEffect'
 
 function caster(
@@ -92,5 +97,12 @@ describe('shadow tight bounds determinism', () => {
     expect(uP!.maxX - u0!.maxX).toBeCloseTo(-50, 9)
     // size is unchanged — only the frame moves
     expect(uP!.maxX - uP!.minX).toBeCloseTo(u0!.maxX - u0!.minX, 9)
+  })
+
+  it('reduces geometry scale together with a capped render texture', () => {
+    expect(shadowRenderScale(2, 500, 400, 2048)).toBe(2)
+    expect(shadowRenderScale(2, 2000, 1000, 2048)).toBeCloseTo(1.024, 9)
+    // The effective scale makes the largest texture dimension exactly fit.
+    expect(2000 * shadowRenderScale(2, 2000, 1000, 2048)).toBeCloseTo(2048, 9)
   })
 })
