@@ -41,6 +41,9 @@ interface CasterLike {
   visible: boolean
   opacity: number
   components: Record<string, unknown>
+  transform?: {
+    localPivot?: { x: number; y: number } | null
+  }
 }
 
 interface HostLike {
@@ -53,23 +56,49 @@ export function isSilhouetteCaster(node: { components: Record<string, unknown> }
   return Boolean(c.mesh || c.circle || c.assetInstance)
 }
 
-function worldAabbOfSize(size: ShadowWorldSize, t: ShadowWorldTransform): ShadowWorldAabb {
-  const hw = (size.width * t.scaleX) / 2
-  const hh = (size.height * t.scaleY) / 2
-  const ox = (size.offsetX ?? 0) * t.scaleX
-  const oy = (size.offsetY ?? 0) * t.scaleY
+/**
+ * World AABB of a size box under a world transform. Mirrors hitTest.aabbOf
+ * exactly (pivot-aware): the world transform x/y is the PIVOT point, the box
+ * spans [offset-half, offset+half] in local space, and corners are shifted by
+ * -pivotOffset + offset before scale/rotate. The silhouette drawing uses the
+ * same convention (verts minus pivotOffset), so the union and the drawn pixels
+ * agree — otherwise the tight render target clips the silhouette and only a
+ * fragment of the shadow survives.
+ */
+function worldAabbOfSize(
+  size: ShadowWorldSize,
+  t: ShadowWorldTransform,
+  pivot?: { x: number; y: number } | null,
+): ShadowWorldAabb | null {
+  if (
+    t.scaleX === 0 ||
+    t.scaleY === 0 ||
+    !Number.isFinite(t.scaleX) ||
+    !Number.isFinite(t.scaleY)
+  ) {
+    return null
+  }
+  const pivotOffset = pivot ? { x: pivot.x * size.width, y: pivot.y * size.height } : { x: 0, y: 0 }
+  const offsetX = size.offsetX ?? 0
+  const offsetY = size.offsetY ?? 0
   const cos = Math.cos(t.rotation)
   const sin = Math.sin(t.rotation)
-  const cx = t.x + ox * cos - oy * sin
-  const cy = t.y + ox * sin + oy * cos
+  // Box corners in center-relative coords; each maps to local space by
+  // (+offset) then to pivot-relative space (minus pivotOffset), matching both
+  // aabbOf and the silhouette vertex math ((v - pivotOffset) * scale + t).
+  const local = (cx: number, cy: number) => ({
+    x: (cx - pivotOffset.x + offsetX) * t.scaleX,
+    y: (cy - pivotOffset.y + offsetY) * t.scaleY,
+  })
+  const half = { x: size.width / 2, y: size.height / 2 }
   const corners = [
-    { x: -hw, y: -hh },
-    { x: hw, y: -hh },
-    { x: hw, y: hh },
-    { x: -hw, y: hh },
+    local(-half.x, -half.y),
+    local(half.x, -half.y),
+    local(half.x, half.y),
+    local(-half.x, half.y),
   ].map((p) => ({
-    x: cx + p.x * cos - p.y * sin,
-    y: cy + p.x * sin + p.y * cos,
+    x: t.x + p.x * cos - p.y * sin,
+    y: t.y + p.x * sin + p.y * cos,
   }))
   return {
     minX: Math.min(...corners.map((c) => c.x)),
@@ -114,7 +143,8 @@ export function tightCasterUnion(deps: TightBoundsDeps): ShadowWorldAabb | null 
     if (!size) continue
     const world = deps.worldOf(caster.id, deps.time)
     if (!world) continue
-    const aabb = worldAabbOfSize(size, world)
+    const aabb = worldAabbOfSize(size, world, caster.transform?.localPivot ?? null)
+    if (!aabb) continue
     union = union
       ? {
           minX: Math.min(union.minX, aabb.minX),

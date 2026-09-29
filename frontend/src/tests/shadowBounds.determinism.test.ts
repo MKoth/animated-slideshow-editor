@@ -76,4 +76,21 @@ describe('shadow tight bounds determinism', () => {
     expect(tightCasterUnion(depsOf(textOnly))).toBeNull()
     expect(tightBoundsSize(null)).toBeUndefined()
   })
+
+  it('localPivot shifts the union exactly like the silhouette vertex math', () => {
+    // Drawing maps local point p as R((p - pivotOff) * s) + t with
+    // pivotOff = pivot * size. The union must cover the same span or the
+    // tight render target clips the drawn silhouette to a fragment.
+    const pivot = { x: 0.5, y: 0 }
+    const withPivot = [{ ...caster('a', 'mesh', 100, 100), transform: { localPivot: pivot } }]
+    const without = [caster('a', 'mesh', 100, 100)]
+    const uP = tightCasterUnion(depsOf(withPivot))
+    const u0 = tightCasterUnion(depsOf(without))
+    expect(uP && u0).toBeTruthy()
+    // pivot.x=0.5 on a 100-wide box shifts the span by half the width
+    expect(uP!.minX - u0!.minX).toBeCloseTo(-50, 9)
+    expect(uP!.maxX - u0!.maxX).toBeCloseTo(-50, 9)
+    // size is unchanged — only the frame moves
+    expect(uP!.maxX - uP!.minX).toBeCloseTo(u0!.maxX - u0!.minX, 9)
+  })
 })

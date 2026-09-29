@@ -1915,6 +1915,7 @@ export class SceneRenderer {
         visible: boolean
         opacity: number
         components: Record<string, unknown>
+        transform: { localPivot?: { x: number; y: number } | null }
       }[],
       hostId: groupNode.id,
       time,
