@@ -9,6 +9,7 @@ import {
   collectShadowCasters as collectShadowCastersPure,
   hexStringToTint,
 } from '../../engine/shadowEffect'
+import { tightBoundsSize, tightCasterUnion } from '../../engine/shadowBounds'
 import type { EvaluatedNodeScratch } from '../../engine/animationEvaluator'
 import {
   copyEvaluatedState,
@@ -37,8 +38,6 @@ import {
 } from '../../engine/constraintEvaluator'
 import type { PixiContainer, PixiFilter, PixiRenderTexture, PixiSprite, RendererPixi } from './pixi'
 import type { WorldSize } from './worldGeometry'
-import { expandRect, mergeRect } from './worldGeometry'
-import { worldAabbOf } from './hitTest'
 import {
   applyCircleDataWithUV,
   applyEvaluatedState,
@@ -106,65 +105,10 @@ void main() {
 type WorldAabb = { minX: number; minY: number; maxX: number; maxY: number }
 type ShadowRenderBounds = WorldAabb & { pad: number }
 
-function rtSizeForAabb(
-  aabb: WorldAabb | null,
-  blur: number,
-  padOverride?: number,
-): { width: number; height: number; pad: number } {
-  const pad = padOverride ?? Math.ceil(blur * 2 + 4)
-  if (!aabb) return { width: 4, height: 4, pad }
-  const expanded = expandRect(
-    aabb as unknown as import('./worldGeometry').WorldRect,
-    pad,
-  ) as unknown as WorldAabb
-  void expanded
-  const w = Math.ceil(aabb.maxX - aabb.minX + pad * 2)
-  const h = Math.ceil(aabb.maxY - aabb.minY + pad * 2)
-  const cap = 2048
-  let rw = Math.max(4, Math.min(cap, w))
-  let rh = Math.max(4, Math.min(cap, h))
-  if (w > cap || h > cap) {
-    const s = cap / Math.max(w, h)
-    rw = Math.max(4, Math.ceil(w * s))
-    rh = Math.max(4, Math.ceil(h * s))
-    console.warn(`[shadow] RT clamped to ${rw}×${rh} (was ${w}×${h})`)
-  }
-  return { width: rw, height: rh, pad }
-}
-
 function collectShadowCasters(host: SceneNode): SceneNode[] {
   return collectShadowCastersPure(
     host as unknown as { children: readonly unknown[] },
   ) as SceneNode[]
-}
-
-function worldAabbOfNode(
-  size: WorldSize,
-  transform: { x: number; y: number; rotation: number; scaleX: number; scaleY: number },
-): WorldAabb {
-  const hw = (size.width * transform.scaleX) / 2
-  const hh = (size.height * transform.scaleY) / 2
-  const ox = (size.offsetX ?? 0) * transform.scaleX
-  const oy = (size.offsetY ?? 0) * transform.scaleY
-  const cos = Math.cos(transform.rotation)
-  const sin = Math.sin(transform.rotation)
-  const cx = transform.x + ox * cos - oy * sin
-  const cy = transform.y + ox * sin + oy * cos
-  const corners = [
-    { x: -hw, y: -hh },
-    { x: hw, y: -hh },
-    { x: hw, y: hh },
-    { x: -hw, y: hh },
-  ].map((p) => ({
-    x: cx + p.x * cos - p.y * sin,
-    y: cy + p.x * sin + p.y * cos,
-  }))
-  return {
-    minX: Math.min(...corners.map((c) => c.x)),
-    minY: Math.min(...corners.map((c) => c.y)),
-    maxX: Math.max(...corners.map((c) => c.x)),
-    maxY: Math.max(...corners.map((c) => c.y)),
-  }
 }
 
 interface NodeShaderState {
@@ -238,6 +182,14 @@ export class SceneRenderer {
   readonly #shadowLastCasterHash = new Map<string, string>()
   readonly #shadowLastParamHash = new Map<string, string>()
   readonly #shadowRenderBounds = new Map<string, ShadowRenderBounds>()
+  // Fixed 2x supersample for shadow silhouette raster. Render textures get no
+  // MSAA (canvas antialiasing doesn't apply offscreen, and the silhouette is
+  // rasterized inside the white-filter pass so RT-level MSAA couldn't smooth
+  // it anyway). 1:1 raster leaves hard stair-steps on triangle edges that the
+  // display blur can't fully hide — they resolve into a dark rim at some zooms
+  // and hide at others. 2x keeps edges smooth at every zoom with no
+  // zoom-coupled thresholds: same texels, same placement, fully deterministic.
+  readonly #shadowRenderScales = new Map<string, number>()
   readonly #renderToTexture: (options: {
     container: PixiContainer
     target: PixiRenderTexture
@@ -285,6 +237,11 @@ export class SceneRenderer {
         for (const node of walkPreOrder(this.#scene.root)) {
           if (node.components.mesh) this.#evaluateAndApply(node.id)
         }
+        // Preview vertices feed the silhouette directly — stale RT otherwise.
+        for (const node of walkPreOrder(this.#scene.root)) {
+          if (node.components.mesh) this.#markShadowDirtyForNode(node.id)
+        }
+        this.#flushShadowDirty()
       }
     })
     void useMeshEditStore.subscribe(() => {
@@ -503,18 +460,24 @@ export class SceneRenderer {
       if (this.#sculptPreviews.delete(nodeId)) {
         this.refreshDeformedMeshSizes()
         this.#onNodeSizeChanged(nodeId)
+        this.#markShadowDirtyForNode(nodeId)
+        this.#flushShadowDirty()
       }
       return
     }
     this.#sculptPreviews.set(nodeId, new Map(preview))
     this.refreshDeformedMeshSizes()
     this.#onNodeSizeChanged(nodeId)
+    this.#markShadowDirtyForNode(nodeId)
+    this.#flushShadowDirty()
   }
 
   clearSculptPreview(nodeId: string): void {
     if (this.#sculptPreviews.delete(nodeId)) {
       this.refreshDeformedMeshSizes()
       this.#onNodeSizeChanged(nodeId)
+      this.#markShadowDirtyForNode(nodeId)
+      this.#flushShadowDirty()
     }
   }
 
@@ -1942,7 +1905,37 @@ export class SceneRenderer {
     }
     // Also walk parents of node's parent via scene lookup if node removed? Already covered
     // For safety, if node is caster under multiple groups, all ancestors already added
-    void worldAabbOf // ensure import used per spec
+  }
+
+  #tightCasterUnionOf(groupNode: SceneNode, time: number): WorldAabb | null {
+    const casters = collectShadowCasters(groupNode) as SceneNode[]
+    return tightCasterUnion({
+      casters: casters as unknown as {
+        id: string
+        visible: boolean
+        opacity: number
+        components: Record<string, unknown>
+      }[],
+      hostId: groupNode.id,
+      time,
+      sizeOf: (id) => this.#sizes.get(id) ?? null,
+      worldOf: (id, t) => this.#engineWorldTransformForShadow(id, t),
+      evaluatedOf: (id, t) => {
+        try {
+          const st = this.#engine.evaluateNode(id, t)
+          return { visible: st.visible, opacity: this.#worldAlphaForNode(id) }
+        } catch {
+          return null
+        }
+      },
+    })
+  }
+
+  #tightProjectionBoundsOf(
+    groupNode: SceneNode,
+    time: number,
+  ): { w: number; h: number } | undefined {
+    return tightBoundsSize(this.#tightCasterUnionOf(groupNode, time))
   }
 
   #computeCasterHash(groupNode: SceneNode, time: number): string {
@@ -1975,13 +1968,13 @@ export class SceneRenderer {
       }
       const size = this.#sizes.get(caster.id)
       const sizeKey = size
-        ? `${size.width.toFixed(2)}x${size.height.toFixed(2)}:${(size.offsetX ?? 0).toFixed(1)},${(size.offsetY ?? 0).toFixed(1)}`
+        ? `${size.width.toFixed(3)}x${size.height.toFixed(3)}:${(size.offsetX ?? 0).toFixed(2)},${(size.offsetY ?? 0).toFixed(2)}`
         : '0x0'
       let extra = ''
       // morph coefficient
       try {
         const coeff = this.#engine.evaluateMorph(caster.id, time)
-        if (typeof coeff === 'number' && coeff !== 0) extra += `,morph:${coeff.toFixed(3)}`
+        if (typeof coeff === 'number' && coeff !== 0) extra += `,morph:${coeff.toFixed(4)}`
       } catch (_e) {
         void _e
       }
@@ -2021,31 +2014,36 @@ export class SceneRenderer {
             ? engineAny.evaluateMorphVertices(caster.id, t, base.vertices, shapes)
             : null
           const verts = deformed ?? base.vertices
-          // simple hash of first 4 vertices
+          // Hash first 16 vertices at 0.01 precision + vertex count so sculpt /
+          // bone distortion beyond the old first-4 window still invalidates RT.
           const h = verts
-            .slice(0, 4)
+            .slice(0, 16)
             .map(
               (v) =>
-                `${(v as { x: number; y: number }).x.toFixed(1)},${(v as { y: number }).y.toFixed(1)}`,
+                `${(v as { x: number; y: number }).x.toFixed(2)},${(v as { y: number }).y.toFixed(2)}`,
             )
             .join(';')
-          if (h) extra += `,def:${h}`
+          if (h) extra += `,def:${h},n:${verts.length}`
         } catch (_e) {
           void _e
         }
       }
       parts.push(
-        `${caster.id}:${wt.x.toFixed(2)},${wt.y.toFixed(2)},${wt.rotation.toFixed(3)},${wt.scaleX.toFixed(3)},${wt.scaleY.toFixed(3)},${visible ? 1 : 0},${worldAlpha.toFixed(3)},${sizeKey}${extra}`,
+        `${caster.id}:${wt.x.toFixed(3)},${wt.y.toFixed(3)},${wt.rotation.toFixed(4)},${wt.scaleX.toFixed(4)},${wt.scaleY.toFixed(4)},${visible ? 1 : 0},${worldAlpha.toFixed(3)},${sizeKey}${extra}`,
       )
     }
-    let gWorld: { x: number; y: number } | null = null
+    let gWorld: { x: number; y: number; rotation: number; scaleX: number; scaleY: number } | null =
+      null
     try {
       const gw = this.#engineWorldTransformForShadow(groupNode.id, time)
       if (gw) gWorld = gw
     } catch (_e) {
       void _e
     }
-    if (gWorld) parts.push(`g:${gWorld.x.toFixed(2)},${gWorld.y.toFixed(2)}`)
+    if (gWorld)
+      parts.push(
+        `g:${gWorld.x.toFixed(3)},${gWorld.y.toFixed(3)},${gWorld.rotation.toFixed(4)},${gWorld.scaleX.toFixed(4)},${gWorld.scaleY.toFixed(4)}`,
+      )
     return parts.join('|')
   }
 
@@ -2067,13 +2065,11 @@ export class SceneRenderer {
     }
     let evaluated: import('../../engine/shadowEffect').ShadowEffect | null = null
     try {
-      const previousBounds = this.#shadowRenderBounds.get(groupId)
-      const bounds = previousBounds
-        ? {
-            w: previousBounds.maxX - previousBounds.minX,
-            h: previousBounds.maxY - previousBounds.minY,
-          }
-        : undefined
+      // Deterministic projection: always derive from the LIVE tight union of
+      // silhouette-capable casters. Never feed the grow-only RT envelope back
+      // into evaluateShadow — that history made identical light params yield
+      // different offsets and distorted shadows after moves.
+      const bounds = this.#tightProjectionBoundsOf(groupNode, time)
       evaluated = this.#engine.evaluateShadow(groupId, time, bounds)
     } catch {
       evaluated = clampShadowEffect(groupNode.shadowEffect, groupId)
@@ -2117,6 +2113,7 @@ export class SceneRenderer {
     this.#shadowLastCasterHash.clear()
     this.#shadowLastParamHash.clear()
     this.#shadowRenderBounds.clear()
+    this.#shadowRenderScales.clear()
   }
 
   #destroyShadowForGroup(groupId: string): void {
@@ -2142,6 +2139,7 @@ export class SceneRenderer {
     this.#shadowLastCasterHash.delete(groupId)
     this.#shadowLastParamHash.delete(groupId)
     this.#shadowRenderBounds.delete(groupId)
+    this.#shadowRenderScales.delete(groupId)
     this.#shadowDirty.delete(groupId)
     if (container) {
       try {
@@ -2182,12 +2180,12 @@ export class SceneRenderer {
     container.label = `shadow:${groupId}`
     container.addChild(sprite as unknown as PixiContainer)
     container.sortableChildren = false
-    // Blur filter
+    // Blur filter (world-locked: scaled by renderScale in updates)
     let blurFilter: PixiFilter | null = null
     if (effect.blur > 0) {
       try {
         blurFilter = new this.#pixi.BlurFilter({
-          strength: effect.blur,
+          strength: effect.blur * this.#shadowRenderScale(),
           quality: 2,
           kernelSize: 5,
         } as unknown as Record<string, unknown>) as unknown as PixiFilter
@@ -2246,13 +2244,8 @@ export class SceneRenderer {
       const slideId = this.#slideId
       const time = slideId ? this.#currentTime.getTime(slideId) : 0
       try {
-        const previousBounds = this.#shadowRenderBounds.get(groupId)
-        const bounds = previousBounds
-          ? {
-              w: previousBounds.maxX - previousBounds.minX,
-              h: previousBounds.maxY - previousBounds.minY,
-            }
-          : undefined
+        // Same deterministic input as #updateShadowIfNeeded — never stale RT bounds.
+        const bounds = this.#tightProjectionBoundsOf(groupNode, time)
         const ev = this.#engine.evaluateShadow(groupId, time, bounds)
         effect = ev
           ? clampShadowEffect(ev, groupId)
@@ -2279,7 +2272,11 @@ export class SceneRenderer {
     s.x = effect.offsetX
     s.y = effect.offsetY
     s.rotation = (effect.rotation * Math.PI) / 180
-    s.scale.set(effect.scaleX, effect.scaleY)
+    // RT is rendered at renderScale texels per world px (world-locked); divide
+    // projection scale so 1 RT px maps back to 1/renderScale world px.
+    const rs = this.#shadowRenderScales.get(groupId) ?? 1
+    const inv = 1 / (Number.isFinite(rs) && rs > 0 ? rs : 1)
+    s.scale.set(effect.scaleX * inv, effect.scaleY * inv)
     s.skew.set((effect.skewX * Math.PI) / 180, (effect.skewY * Math.PI) / 180)
     // Alpha bakes groupChainOpacity * shadowOpacity — use worldAlpha chain
     // EvaluateShadow already baked own opacity; we recompute to include ancestors
@@ -2306,8 +2303,10 @@ export class SceneRenderer {
     s.alpha = sAlpha
     s.tint = hexStringToTint(effect.color)
     ;(sprite as unknown as { blendMode: string }).blendMode = 'normal'
-    // Blur filter update
+    // Blur filter update — strength is in RT px, so scale by renderScale to
+    // keep blur world-locked across zoom.
     const currentBlur = this.#shadowBlurFilters.get(groupId)
+    const blurStrength = effect.blur * (this.#shadowRenderScales.get(groupId) ?? 1)
     if (effect.blur <= 0) {
       if (currentBlur) {
         ;(sprite as unknown as { filters: unknown }).filters = []
@@ -2323,7 +2322,7 @@ export class SceneRenderer {
       if (!blurFilter) {
         try {
           blurFilter = new this.#pixi.BlurFilter({
-            strength: effect.blur,
+            strength: blurStrength,
             quality: 2,
             kernelSize: 5,
           } as unknown as Record<string, unknown>) as unknown as PixiFilter
@@ -2337,7 +2336,7 @@ export class SceneRenderer {
       } else {
         // Update strength if api allows
         try {
-          ;(blurFilter as unknown as { strength: number }).strength = effect.blur
+          ;(blurFilter as unknown as { strength: number }).strength = blurStrength
         } catch {
           void 0
         }
@@ -2381,8 +2380,10 @@ export class SceneRenderer {
       return previous ?? { minX: 0, minY: 0, maxX: 0, maxY: 0, pad }
     }
 
-    // Keep a small envelope around the current pose. It prevents RT reallocation
-    // and texel-density changes while an IK handle is being dragged.
+    // RT sizing envelope ONLY — never feed this back into projection math
+    // (see #tightProjectionBoundsOf). It prevents RT reallocation and
+    // texel-density changes while an IK handle is being dragged. Placement and
+    // silhouette origin always use the live tight union.
     const margin = 16
     const required: ShadowRenderBounds = {
       minX: union.minX - margin,
@@ -2392,19 +2393,38 @@ export class SceneRenderer {
       pad,
     }
     const stable = previous
-      ? {
-          minX: Math.min(previous.minX, required.minX),
-          minY: Math.min(previous.minY, required.minY),
-          maxX: Math.max(previous.maxX, required.maxX),
-          maxY: Math.max(previous.maxY, required.maxY),
-          pad: Math.max(previous.pad, required.pad),
-        }
+      ? (() => {
+          // Size envelope follows position: keep the max historical SIZE (plus
+          // margin) to avoid realloc during IK drags, but recenter on the live
+          // union so far moves don't grow the RT to cover the whole drag path.
+          const prevW = previous.maxX - previous.minX
+          const prevH = previous.maxY - previous.minY
+          const reqW = required.maxX - required.minX
+          const reqH = required.maxY - required.minY
+          const w = Math.max(prevW, reqW)
+          const h = Math.max(prevH, reqH)
+          return {
+            minX: required.minX,
+            minY: required.minY,
+            maxX: required.minX + w,
+            maxY: required.minY + h,
+            pad: Math.max(previous.pad, required.pad),
+          }
+        })()
       : required
     this.#shadowRenderBounds.set(groupId, stable)
     return stable
   }
 
-  #positionShadowAtBoundsOrigin(groupNode: SceneNode, bounds: ShadowRenderBounds): void {
+  #shadowRenderScale(): number {
+    return 2
+  }
+
+  #positionShadowAtBoundsOrigin(
+    groupNode: SceneNode,
+    origin: { minX: number; minY: number },
+    pad: number,
+  ): void {
     const container = this.#shadowContainers.get(groupNode.id)
     if (!container) return
     const renderParent = groupNode.components.tableCell
@@ -2417,10 +2437,14 @@ export class SceneRenderer {
         )
       : { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 }
     if (!parentWorld) return
+    // Tight origin (live union) placed exactly — the old stable-envelope
+    // origin lagged behind group moves and caused the detach/distort bug.
+    // No device-pixel snap: the shadow is blurred, so sub-pixel placement is
+    // invisible, while snap quanta would reintroduce zoom-dependent popping.
     const local = relativeTransform(
       {
-        x: bounds.minX - bounds.pad,
-        y: bounds.minY - bounds.pad,
+        x: origin.minX - pad,
+        y: origin.minY - pad,
         rotation: 0,
         scaleX: 1,
         scaleY: 1,
@@ -2450,59 +2474,28 @@ export class SceneRenderer {
     // Gate visible/opacity >0.01 at render time
     const slideId = this.#slideId
     const time = slideId ? this.#currentTime.getTime(slideId) : 0
-    let union: WorldAabb | null = null
-    for (const caster of casters) {
-      let visible = true
-      let worldAlpha = 1
-      try {
-        const st = this.#engine.evaluateNode(caster.id, time)
-        visible = st.visible
-        worldAlpha = st.opacity
-      } catch {
-        visible = caster.visible
-        worldAlpha = caster.opacity
-      }
-      if (!visible || worldAlpha <= 0.01) continue
-      const size = this.#sizes.get(caster.id)
-      if (!size) continue
-      let worldTr: {
-        x: number
-        y: number
-        rotation: number
-        scaleX: number
-        scaleY: number
-      } | null = null
-      try {
-        const ev = this.#engine.evaluateNode(caster.id, time)
-        worldTr = {
-          x: ev.transform.x,
-          y: ev.transform.y,
-          rotation: ev.transform.rotation,
-          scaleX: ev.transform.scaleX,
-          scaleY: ev.transform.scaleY,
-        }
-      } catch {
-        const t = caster.transform
-        worldTr = { x: t.x, y: t.y, rotation: t.rotation, scaleX: t.scaleX, scaleY: t.scaleY }
-      }
-      // Compute world transform chain — use worldAabbOf union + mergeRect per spec #304
-      const world = this.#engineWorldTransformForShadow(caster.id, time)
-      const trForAabb = world ?? worldTr
-      if (!trForAabb) continue
-      const aabbFromHitTest = this.#scene
-        ? worldAabbOf(
-            this.#scene,
-            caster.id,
-            (id) => this.#sizes.get(id) ?? null,
-            (id) => this.#engineWorldTransformForShadow(id, time) as unknown as WorldTransform,
-          )
-        : null
-      const aabbFallback = worldAabbOfNode(size, trForAabb)
-      const aabb = aabbFromHitTest ?? aabbFallback
-      union = union ? (mergeRect(union as never, aabb as never) as unknown as WorldAabb) : aabb
+    // Tight union of silhouette-capable casters ONLY — text/table/chart render
+    // no silhouette pixels, so including them detached bounds from pixels
+    // (shadow moved without content). Shared helper keeps renderer, hashes,
+    // and inspector snapshots on the same bounds.
+    const union = this.#tightCasterUnionOf(groupNode, time)
+    // Stable envelope is RT sizing ONLY — never projection input, never
+    // silhouette/placement origin (that was the move-distort + history bug).
+    const stable = this.#stableShadowBounds(groupId, union, effect.blur)
+    const k = this.#shadowRenderScale()
+    this.#shadowRenderScales.set(groupId, k)
+    const pad = stable.pad
+    const stableW = stable.maxX - stable.minX
+    const stableH = stable.maxY - stable.minY
+    const cap = 2048
+    let width = Math.max(4, Math.ceil((stableW + pad * 2) * k))
+    let height = Math.max(4, Math.ceil((stableH + pad * 2) * k))
+    if (width > cap || height > cap) {
+      const s = cap / Math.max(width, height)
+      width = Math.max(4, Math.ceil(width * s))
+      height = Math.max(4, Math.ceil(height * s))
+      console.warn(`[shadow] RT clamped to ${width}×${height}`)
     }
-    const bounds = this.#stableShadowBounds(groupId, union, effect.blur)
-    const { width, height, pad } = rtSizeForAabb(bounds, effect.blur, bounds.pad)
     const rt = this.#shadowTextures.get(groupId)
     if (!rt) return
     if (rt.width !== width || rt.height !== height) {
@@ -2512,12 +2505,16 @@ export class SceneRenderer {
         void 0
       }
     }
-    this.#positionShadowAtBoundsOrigin(groupNode, bounds)
+    // Placement + silhouette anchor at the LIVE tight origin (snapped), so the
+    // shadow follows group moves exactly. RT stays stable-sized (may be larger
+    // than tight) — extra texels are simply empty padding.
+    const origin = union ?? stable
+    this.#positionShadowAtBoundsOrigin(groupNode, origin, pad)
     // Silhouette generation: temp clone with white-alpha filter
     const temp = new this.#pixi.Container()
     temp.label = `shadow-silhouette:${groupId}`
-    // Build silhouette geometry for each caster centered at pad
-    // If union exists, place graphics relative to union.min
+    // Build silhouette geometry for each caster relative to the tight origin.
+    // RT may be larger (stable envelope) — extra area stays empty padding.
     if (union) {
       for (const caster of casters) {
         const size = this.#sizes.get(caster.id)
@@ -2544,7 +2541,7 @@ export class SceneRenderer {
         const isCircle = Boolean(comps.circle)
         const isAsset = Boolean(comps.assetInstance)
         if (isMesh || isCircle || isAsset) {
-          const g = this.#createSilhouetteGraphics(caster, world, bounds, pad, time, worldAlpha)
+          const g = this.#createSilhouetteGraphics(caster, world, origin, pad, time, worldAlpha, k)
           if (g) {
             temp.addChild(g as unknown as PixiContainer)
             continue
@@ -2553,8 +2550,8 @@ export class SceneRenderer {
           // Never replace alpha with a bounding-box approximation.
           continue
         }
-        // Text, tables and charts need their rendered alpha sampled here too;
-        // until that path exists, omitting them is safer than casting a square.
+        // Text, tables and charts render no silhouette pixels (and are excluded
+        // from the tight union above) until an alpha-sampling path exists.
       }
     } else {
       // No casters / hidden — keep temp empty, RT stays clear
@@ -2602,6 +2599,7 @@ export class SceneRenderer {
     pad: number,
     time: number,
     worldAlpha: number,
+    renderScale = 1,
   ): PixiContainer | null {
     try {
       const comps = (caster as unknown as { components: Record<string, unknown> }).components
@@ -2735,12 +2733,13 @@ export class SceneRenderer {
           const w1y = lx1 * sx * sin + ly1 * sy * cos + ty
           const w2x = lx2 * sx * cos - ly2 * sy * sin + tx
           const w2y = lx2 * sx * sin + ly2 * sy * cos + ty
-          const x0 = w0x - minX + pad
-          const y0 = w0y - minY + pad
-          const x1 = w1x - minX + pad
-          const y1 = w1y - minY + pad
-          const x2 = w2x - minX + pad
-          const y2 = w2y - minY + pad
+          const k = Number.isFinite(renderScale) && renderScale > 0 ? renderScale : 1
+          const x0 = (w0x - minX + pad) * k
+          const y0 = (w0y - minY + pad) * k
+          const x1 = (w1x - minX + pad) * k
+          const y1 = (w1y - minY + pad) * k
+          const x2 = (w2x - minX + pad) * k
+          const y2 = (w2y - minY + pad) * k
           g.moveTo(x0, y0).lineTo(x1, y1).lineTo(x2, y2).closePath()
         }
         g.fill({ color: 0xffffff, alpha: worldAlpha })
@@ -2768,8 +2767,9 @@ export class SceneRenderer {
         const sprite = new this.#pixi.Sprite(tex as unknown as import('pixi.js').Texture)
         sprite.anchor?.set?.(0.5, 0.5)
         try {
-          sprite.width = size.width
-          sprite.height = size.height
+          const k = Number.isFinite(renderScale) && renderScale > 0 ? renderScale : 1
+          sprite.width = size.width * k
+          sprite.height = size.height * k
         } catch {
           void 0
         }
@@ -2792,7 +2792,11 @@ export class SceneRenderer {
         const py = pivotOffY * meshWorld.scaleY
         const pivotWorldX = meshWorld.x - (px * cos - py * sin)
         const pivotWorldY = meshWorld.y - (px * sin + py * cos)
-        sprite.position?.set?.(pivotWorldX - union.minX + pad, pivotWorldY - union.minY + pad)
+        const kk = Number.isFinite(renderScale) && renderScale > 0 ? renderScale : 1
+        sprite.position?.set?.(
+          (pivotWorldX - union.minX + pad) * kk,
+          (pivotWorldY - union.minY + pad) * kk,
+        )
         sprite.rotation = meshWorld.rotation
         try {
           sprite.scale?.set?.(meshWorld.scaleX, meshWorld.scaleY)

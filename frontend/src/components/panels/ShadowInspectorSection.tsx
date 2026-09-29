@@ -11,8 +11,10 @@ import {
   type ShadowAnchor,
   SHADOW_ANCHORS,
   normalizeAzimuth,
-  deriveShadowProjection,
 } from '../../engine/shadowEffect'
+import { tightBoundsSize, tightCasterUnion } from '../../engine/shadowBounds'
+import { measuredNodeSize } from '../../pixi/renderer/nodeMeasurement'
+import { composeChain } from '../../engine/worldTransform'
 import {
   SetCastShadowCommand,
   SetShadowEffectCommand,
@@ -61,6 +63,85 @@ function parseNumber(raw: string, fallback: number): number {
   return Number.isFinite(v) ? v : fallback
 }
 
+/**
+ * Live tight bounds shared with the renderer (engine/shadowBounds). The
+ * inspector has no renderer sizes directly — it uses the mounted renderer's
+ * measured sizes via the global provider, so Auto display/snapshot uses the
+ * same w/h the canvas derives from. No more {100,100} magic or w0h0 fallback
+ * that made identical light params show different offsets.
+ */
+function tightProjectionBoundsOf(
+  host: SceneNode,
+  enginePublic: EnginePublicType,
+  time: number,
+): { w: number; h: number } | undefined {
+  try {
+    const casters = collectShadowCasters(
+      host as unknown as { children: readonly unknown[] },
+    ) as unknown as {
+      id: string
+      visible: boolean
+      opacity: number
+      components: Record<string, unknown>
+    }[]
+    const union = tightCasterUnion({
+      casters,
+      hostId: host.id,
+      time,
+      sizeOf: (id) => measuredNodeSize(id),
+      worldOf: (id, t) => {
+        try {
+          const node = enginePublic.getNode(id)
+          const chain: SceneNode[] = []
+          for (let cur: SceneNode | null = node; cur !== null; cur = cur.parent) chain.push(cur)
+          chain.reverse()
+          const composed = composeChain(chain, (link) => {
+            try {
+              return enginePublic.evaluateNode(link.id, t).transform
+            } catch {
+              return link.transform
+            }
+          })
+          if (!composed) return null
+          return {
+            x: composed.x,
+            y: composed.y,
+            rotation: composed.rotation,
+            scaleX: composed.scaleX,
+            scaleY: composed.scaleY,
+          }
+        } catch {
+          return null
+        }
+      },
+      evaluatedOf: (id, t) => {
+        try {
+          const st = enginePublic.evaluateNode(id, t)
+          return { visible: st.visible, opacity: st.opacity }
+        } catch {
+          return null
+        }
+      },
+    })
+    return tightBoundsSize(union)
+  } catch {
+    return undefined
+  }
+}
+
+function evaluateShadowTight(
+  enginePublic: EnginePublicType,
+  host: SceneNode,
+  time: number,
+): ShadowEffect | null {
+  try {
+    const bounds = tightProjectionBoundsOf(host, enginePublic, time)
+    return enginePublic.evaluateShadow(host.id, time, bounds) as unknown as ShadowEffect | null
+  } catch {
+    return null
+  }
+}
+
 export function ShadowInspectorSection({
   target,
   engine: _engine,
@@ -92,9 +173,8 @@ export function ShadowInspectorSection({
     if (!effect || !isAuto || !enginePublic) return null
     try {
       const time = playheadTimeOf(enginePublic as unknown as EnginePublic, target.id) ?? 0
-      // Try to get bounds estimate? Use 0 for now, inspector snapshot will use derived directly
-      const ev = enginePublic.evaluateShadow(target.id, time) as unknown as ShadowEffect | null
-      return ev ?? null
+      // Same tight bounds the renderer derives from — display agrees with canvas.
+      return evaluateShadowTight(enginePublic, target, time)
     } catch {
       return null
     }
@@ -132,7 +212,7 @@ export function ShadowInspectorSection({
     if (!enginePublic || !effect) return
     try {
       const time = playheadTime
-      const evaluated = enginePublic.evaluateShadow(target.id, time)
+      const evaluated = evaluateShadowTight(enginePublic, target, time)
       const rawVal = evaluated
         ? (evaluated as unknown as Record<string, unknown>)[prop]
         : (effect as unknown as Record<string, unknown>)[prop]
@@ -194,28 +274,23 @@ export function ShadowInspectorSection({
     try {
       const currentlyAuto = !!effect.auto
       if (currentlyAuto) {
-        // Auto -> manual: snapshot derived into raw so pose doesn't jump
+        // Auto -> manual: snapshot derived into raw so pose doesn't jump.
+        // Derived with the same tight bounds the renderer uses — no 100x100
+        // fallback that would bake a different offset than the canvas shows.
         let derived: ShadowEffect | null = null
         try {
           if (enginePublic) {
             const time = playheadTimeOf(enginePublic as unknown as EnginePublic, target.id) ?? 0
-            derived = enginePublic.evaluateShadow(target.id, time) as unknown as ShadowEffect | null
+            derived = evaluateShadowTight(enginePublic, target, time)
           }
         } catch (_e) {
           void _e
         }
-        // Also try pure derive with defaults for bounds 100x100 if no engine
-        let fallbackDerived: ShadowEffect | null = derived
         if (!derived) {
-          const anchor = (effect.anchor ?? 'bottom') as ShadowAnchor
-          const az = effect.lightAzimuth ?? 135
-          const el = effect.lightElevation ?? 45
-          const dist = effect.lightDistance ?? 28
-          const d = deriveShadowProjection({ w: 100, h: 100 }, anchor, az, el, dist)
-          fallbackDerived = { ...effect, ...d } as ShadowEffect
-        } else {
-          fallbackDerived = derived
+          notify('Cannot snapshot shadow — no live bounds (empty group?)')
+          return
         }
+        const fallbackDerived: ShadowEffect = derived
         const next: ShadowEffect = {
           ...effect,
           auto: false,
@@ -269,29 +344,23 @@ export function ShadowInspectorSection({
       property === 'skewY' ||
       property === 'rotation'
     if (isAuto && isRawProp) {
-      // Snap off then set
+      // Snap off then set — snapshot with live tight bounds so the pose
+      // doesn't jump away from what the canvas shows.
       try {
         let derived: ShadowEffect | null = null
         try {
           if (enginePublic) {
             const time = playheadTimeOf(enginePublic as unknown as EnginePublic, target.id) ?? 0
-            derived = enginePublic.evaluateShadow(target.id, time) as unknown as ShadowEffect | null
+            derived = evaluateShadowTight(enginePublic, target, time)
           }
         } catch (_e) {
           void _e
         }
+        if (!derived) {
+          notify('Cannot edit shadow — no live bounds (empty group?)')
+          return
+        }
         const d = derived
-          ? derived
-          : (() => {
-              const anchor = (effect.anchor ?? 'bottom') as ShadowAnchor
-              const az = effect.lightAzimuth ?? 135
-              const el = effect.lightElevation ?? 45
-              const dist = effect.lightDistance ?? 28
-              return {
-                ...effect,
-                ...deriveShadowProjection({ w: 100, h: 100 }, anchor, az, el, dist),
-              } as ShadowEffect
-            })()
         // Prepare next with auto false and derived snapshot plus edited value
         // isRawProp guarantees numeric raw prop, not color
         const nRaw = typeof rawValue === 'number' ? rawValue : Number(String(rawValue).trim())
