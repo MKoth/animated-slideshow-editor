@@ -1,6 +1,6 @@
 import type { Scene } from '../../engine'
 import type { SceneNode } from '../../engine'
-import { walkPreOrder } from '../../engine/sceneNode'
+import { isGroupNode, walkPreOrder } from '../../engine/sceneNode'
 import { worldTransformOf as storedWorldTransformOf } from '../../engine/worldTransform'
 import type { WorldPoint, WorldRect, WorldSize, WorldTransform } from './worldGeometry'
 
@@ -10,18 +10,113 @@ export type WorldTransformSource = (nodeId: string) => WorldTransform | null
 
 export type NodeFilter = (node: SceneNode) => boolean
 
+export type ZIndexSource = (nodeId: string) => number | null
+
 function storedTransformOf(scene: Scene): WorldTransformSource {
   return (nodeId) => storedWorldTransformOf(scene, nodeId)
 }
 
-export function topmostNodeAt(
+function zOf(scene: Scene, nodeId: string, getZ?: ZIndexSource | null): number {
+  if (getZ) {
+    try {
+      const explicit = getZ(nodeId)
+      if (typeof explicit === 'number' && Number.isFinite(explicit)) {
+        return explicit
+      }
+    } catch {
+      // fall through to stored zIndex
+    }
+  }
+  const z = scene.getNode(nodeId)?.zIndex
+  return typeof z === 'number' && Number.isFinite(z) ? z : 0
+}
+
+interface StackingFrame {
+  readonly z: number
+  readonly order: number
+}
+
+/**
+ * Ancestor chain (root-first) of (zIndex, sibling order) frames.
+ * Comparing these lexicographically reproduces the renderer's paint order:
+ * a higher z wins at the first level where chains differ (z is scoped to
+ * its parent, like Pixi's per-container sortableChildren), ties fall back
+ * to sibling order, and a descendant wins when its chain extends an
+ * ancestor's (children paint above their parent).
+ */
+function stackingKey(scene: Scene, nodeId: string, getZ?: ZIndexSource | null): StackingFrame[] {
+  const node = scene.getNode(nodeId)
+  if (!node) {
+    return []
+  }
+  const chain: SceneNode[] = []
+  for (let cursor: SceneNode | null = node; cursor !== null; cursor = cursor.parent) {
+    chain.push(cursor)
+  }
+  chain.reverse()
+  return chain.map((link) => ({
+    z: zOf(scene, link.id, getZ),
+    order: link.parent ? link.parent.children.indexOf(link) : 0,
+  }))
+}
+
+/** Positive when `a` paints above `b`. */
+function compareStacking(a: StackingFrame[], b: StackingFrame[]): number {
+  const shared = Math.min(a.length, b.length)
+  for (let i = 0; i < shared; i++) {
+    const fa = a[i]
+    const fb = b[i]
+    if (!fa || !fb) {
+      continue
+    }
+    if (fa.z !== fb.z) {
+      return fa.z - fb.z
+    }
+    if (fa.order !== fb.order) {
+      return fa.order - fb.order
+    }
+  }
+  // One chain extends the other: the deeper node paints above its ancestor.
+  return a.length - b.length
+}
+
+function depthOf(scene: Scene, nodeId: string): number {
+  let depth = 0
+  for (
+    let cursor: SceneNode | null = scene.getNode(nodeId) ?? null;
+    cursor !== null;
+    cursor = cursor.parent
+  ) {
+    depth += 1
+  }
+  return depth
+}
+
+/**
+ * All selectable nodes containing the point, best pick first.
+ *
+ * Order: renderer paint order (zIndex scoped per parent, then tree order,
+ * descendants above ancestors) first so clicks match what is seen; then
+ * smallest bounds area so a small foreground object beats a big background
+ * one sharing the same stacking; then non-group leaves before group
+ * unions, then deeper nodes — so repeat-click cycling walks from the leaf
+ * on top down through the stack.
+ */
+export function nodesAtSorted(
   scene: Scene,
   point: WorldPoint,
   sizes: NodeSizeSource,
   transformOf: WorldTransformSource = storedTransformOf(scene),
   filter?: NodeFilter | null,
-): string | null {
-  let topmost: string | null = null
+  getZ?: ZIndexSource | null,
+): string[] {
+  const hits: {
+    readonly id: string
+    readonly area: number
+    readonly depth: number
+    readonly group: boolean
+    readonly key: StackingFrame[]
+  }[] = []
   for (const node of walkPreOrder(scene.root)) {
     const size = sizes(node.id)
     const transform = transformOf(node.id)
@@ -31,9 +126,46 @@ export function topmostNodeAt(
     if (filter && !filter(node)) {
       continue
     }
-    topmost = node.id
+    const aabb = size && transform ? aabbOf(size, transform, node.transform.localPivot) : null
+    const area = aabb
+      ? Math.max(0, aabb.maxX - aabb.minX) * Math.max(0, aabb.maxY - aabb.minY)
+      : Infinity
+    hits.push({
+      id: node.id,
+      area,
+      depth: depthOf(scene, node.id),
+      group: isGroupNode(node),
+      key: stackingKey(scene, node.id, getZ),
+    })
   }
-  return topmost
+  hits.sort((a, b) => {
+    const stacking = compareStacking(b.key, a.key)
+    if (stacking !== 0) {
+      return stacking
+    }
+    if (a.area !== b.area) {
+      return a.area - b.area
+    }
+    if (a.group !== b.group) {
+      return a.group ? 1 : -1
+    }
+    if (a.depth !== b.depth) {
+      return b.depth - a.depth
+    }
+    return 0
+  })
+  return hits.map((hit) => hit.id)
+}
+
+export function topmostNodeAt(
+  scene: Scene,
+  point: WorldPoint,
+  sizes: NodeSizeSource,
+  transformOf: WorldTransformSource = storedTransformOf(scene),
+  filter?: NodeFilter | null,
+  getZ?: ZIndexSource | null,
+): string | null {
+  return nodesAtSorted(scene, point, sizes, transformOf, filter, getZ)[0] ?? null
 }
 
 export function nodesIntersectingRect(
@@ -46,6 +178,12 @@ export function nodesIntersectingRect(
   const hit: string[] = []
   for (const node of walkPreOrder(scene.root)) {
     if (!selectable(node)) {
+      continue
+    }
+    // Group unions always overlap their children — marquee stays leaf-only
+    // so a drag around grouped content selects the members, never both the
+    // group and its members (which would double-apply group moves).
+    if (isGroupNode(node)) {
       continue
     }
     if (filter && !filter(node)) {

@@ -46,6 +46,7 @@ import { SceneRenderer } from './sceneRenderer'
 import type { CurrentTimeSource } from './sceneRenderer'
 import type { ResolveShaderSource } from './sceneRenderer'
 import { ALWAYS_ZERO_TIME } from './sceneRenderer'
+import { groupSizeOf } from './groupBounds'
 import { SelectionOverlay } from './selectionOverlay'
 import type { ResolveAssetUrl } from './textureCache'
 import { TextureCache } from './textureCache'
@@ -247,13 +248,46 @@ export class Renderer {
         this.#engine.getConstraintManager(),
       )
       const transformOf = (nodeId: string) => this.#transformSource?.transformOf(nodeId) ?? null
+      // Group nodes record no renderer size (empty containers) — derive a
+      // virtual size from their descendants so outline, handles, and
+      // hit-testing treat a selected group like a single object.
+      const nodeSizeOf = (nodeId: string): WorldSize | null => {
+        const direct = this.#sceneRenderer?.nodeSize(nodeId) ?? null
+        if (direct) {
+          return direct
+        }
+        const scene = this.#sceneRenderer?.boundScene ?? null
+        if (!scene) {
+          return null
+        }
+        try {
+          return groupSizeOf(
+            scene,
+            nodeId,
+            (id) => this.#sceneRenderer?.nodeSize(id) ?? null,
+            transformOf,
+          )
+        } catch {
+          return null
+        }
+      }
+      const zIndexOf = (nodeId: string): number | null => {
+        try {
+          const slideId = this.#sceneRenderer?.boundSlideId ?? null
+          const time = slideId ? this.#currentTime.getTime(slideId) : 0
+          const z = this.#engine.evaluateZIndex(nodeId, time)
+          return Number.isFinite(z) ? z : null
+        } catch {
+          return null
+        }
+      }
 
       this.#selectionOverlay = new SelectionOverlay({
         pixi: this.#pixi,
         world,
         engine: this.#engine,
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
-        getNodeSize: (nodeId) => this.#sceneRenderer?.nodeSize(nodeId) ?? null,
+        getNodeSize: nodeSizeOf,
         getWorldTransform: transformOf,
         getCameraTransform: () => this.#cameraTransform(),
         subscribeTime: (listener) => this.#currentTime.subscribe(listener),
@@ -299,7 +333,8 @@ export class Renderer {
         engine: this.#engine,
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
         getCameraTransform: () => this.#cameraTransform(),
-        getNodeSize: (nodeId) => this.#sceneRenderer?.nodeSize(nodeId) ?? null,
+        getNodeSize: nodeSizeOf,
+        getZIndex: zIndexOf,
         store: useSelectionStore.getState(),
         dispatch: this.#dispatch,
         preview: {
@@ -504,7 +539,7 @@ export class Renderer {
         engine: this.#engine,
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
         getCameraTransform: () => this.#cameraTransform(),
-        getNodeSize: (nodeId) => this.#sceneRenderer?.nodeSize(nodeId) ?? null,
+        getNodeSize: nodeSizeOf,
         getWorldTransform: transformOf,
         store: useSelectionStore,
         dispatch: this.#dispatch,
@@ -532,7 +567,7 @@ export class Renderer {
         engine: this.#engine,
         getScene: () => this.#sceneRenderer?.boundScene ?? null,
         getCameraTransform: () => this.#cameraTransform(),
-        getNodeSize: (nodeId) => this.#sceneRenderer?.nodeSize(nodeId) ?? null,
+        getNodeSize: nodeSizeOf,
         getWorldTransform: transformOf,
         store: useSelectionStore,
         dispatch: this.#dispatch,

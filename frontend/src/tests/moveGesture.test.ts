@@ -566,13 +566,17 @@ describe('move gesture guard in base mode', () => {
     const before = harness.undoStack.entries.length
 
     mouseDown(harness.canvas, { x: 300, y: 200 })
-    expect(useSelectionStore.getState().selectedIds).toEqual([id])
+    // Selection is deferred until release/drag-start: mousedown alone
+    // selects nothing.
+    expect(useSelectionStore.getState().selectedIds).toEqual([])
     mouseMove({ x: 350, y: 240 })
 
     expect(harness.preview.positions.has(id)).toBe(false)
 
     mouseUp({ x: 350, y: 240 })
 
+    // The blocked drag still grabs (selects) the node, without moving it.
+    expect(useSelectionStore.getState().selectedIds).toEqual([id])
     expect(useNotificationStore.getState().notifications.map((n) => n.message)).toEqual([
       BLOCKED_ANIMATED_MOVE_MESSAGE,
     ])

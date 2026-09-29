@@ -1,7 +1,8 @@
 import type { EnginePublic, Scene } from '../../engine'
-import { walkPreOrder } from '../../engine/sceneNode'
+import { isGroupNode, walkPreOrder } from '../../engine/sceneNode'
 import { worldTransformOf as storedWorldTransformOf } from '../../engine/worldTransform'
 import { isPivotKeyPressed } from './pivotInteraction'
+import { registerShortcut } from '../../shortcuts/shortcutRegistry'
 import type { DispatchCommand } from '../../engine/commands'
 import { MoveNodeCommand, TransactionCommand } from '../../engine/commands'
 import type { SelectionActions } from '../../stores/selectionStore'
@@ -10,8 +11,8 @@ import { useEditingModeStore } from '../../stores/editingModeStore'
 import { useBoneEditStore } from '../../stores/boneEditStore'
 import { findAlignment } from './alignment'
 import { DEFAULT_GRID_STEP, snapDelta } from './gridSnap'
-import type { NodeFilter, NodeSizeSource, WorldTransformSource } from './hitTest'
-import { aabbOf, nodesIntersectingRect, topmostNodeAt, worldAabbOf } from './hitTest'
+import type { NodeFilter, NodeSizeSource, WorldTransformSource, ZIndexSource } from './hitTest'
+import { aabbOf, nodesAtSorted, nodesIntersectingRect, worldAabbOf } from './hitTest'
 import { cursorToWorld } from './screenToWorld'
 import { expandRect, mergeRect, rectIntersects, rectOf } from './worldGeometry'
 import type { ViewportTransform, WorldPoint, WorldRect } from './worldGeometry'
@@ -53,6 +54,7 @@ export interface CanvasSelectionContext {
   readonly getAnimationMode?: () => boolean
   readonly getWorldTransform?: WorldTransformSource
   readonly getNodeFilter?: () => NodeFilter | null
+  readonly getZIndex?: ZIndexSource
   readonly marquee?: MarqueeController
   readonly isIKHandleAt?: (worldX: number, worldY: number) => boolean
 }
@@ -61,6 +63,31 @@ const MARQUEE_START_DISTANCE = 4
 const MOVE_START_DISTANCE = 2
 const ALIGN_THRESHOLD_PX = 8
 const NEARBY_MARGIN_PX = 150
+const CYCLE_CLICK_DISTANCE_PX = 5
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+  return (
+    target.isContentEditable ||
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.tagName === 'SELECT'
+  )
+}
+
+function sameIdList(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) {
+    return false
+  }
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) {
+      return false
+    }
+  }
+  return true
+}
 
 export class CanvasSelection {
   readonly #canvas: HTMLCanvasElement
@@ -75,8 +102,10 @@ export class CanvasSelection {
   readonly #getMoveOptions?: () => MoveOptions
   readonly #getWorldTransform?: WorldTransformSource
   readonly #getNodeFilter?: () => NodeFilter | null
+  readonly #getZIndex?: ZIndexSource
   readonly #marquee?: MarqueeController
   readonly #isIKHandleAt?: (worldX: number, worldY: number) => boolean
+  #disposeEscape: (() => void) | null = null
   #attached = false
   #pressed = false
   #pressedOnNode = false
@@ -85,6 +114,16 @@ export class CanvasSelection {
   #startClientY = 0
   #startWorld: WorldPoint | null = null
   #sceneAtDown: Scene | null = null
+  #cycleIds: string[] = []
+  #cycleIndex = -1
+  #lastClickClientX: number | null = null
+  #lastClickClientY: number | null = null
+  #pressStacked: string[] = []
+  #pressPending = false
+  #pressIsMoveOfSelection = false
+  #pressCtrl = false
+  #pressShift = false
+  #pressContinuesCycle = false
   #canMove = false
   #moveActive = false
   #moveAnchorId: string | null = null
@@ -107,6 +146,7 @@ export class CanvasSelection {
     this.#getMoveOptions = context.getMoveOptions
     this.#getWorldTransform = context.getWorldTransform
     this.#getNodeFilter = context.getNodeFilter
+    this.#getZIndex = context.getZIndex
     this.#marquee = context.marquee
     this.#isIKHandleAt = context.isIKHandleAt
     this.#animatedMove = new AnimatedMoveGesture(context)
@@ -130,6 +170,7 @@ export class CanvasSelection {
     this.#canvas.addEventListener('contextmenu', this.#onContextMenu)
     window.addEventListener('mousemove', this.#onMouseMove)
     window.addEventListener('mouseup', this.#onMouseUp)
+    this.#disposeEscape = registerShortcut('escape', this.#onEscape)
   }
 
   detach(): void {
@@ -138,10 +179,66 @@ export class CanvasSelection {
     }
     this.#attached = false
     this.#resetGesture()
+    this.#resetCycle()
     this.#canvas.removeEventListener('mousedown', this.#onMouseDown)
     this.#canvas.removeEventListener('contextmenu', this.#onContextMenu)
     window.removeEventListener('mousemove', this.#onMouseMove)
     window.removeEventListener('mouseup', this.#onMouseUp)
+    this.#disposeEscape?.()
+    this.#disposeEscape = null
+  }
+
+  /** Figma-style drill-out: Esc climbs from the selected node to its nearest parent group. */
+  readonly #onEscape = (event: KeyboardEvent): void => {
+    if (isEditableTarget(event.target)) {
+      return
+    }
+    const scene = this.#getScene()
+    if (!scene) {
+      return
+    }
+    const selected = useSelectionStore.getState().selectedIds
+    if (selected.length !== 1) {
+      return
+    }
+    const node = scene.getNode(selected[0] ?? '')
+    if (!node) {
+      return
+    }
+    for (let cursor = node.parent; cursor !== null; cursor = cursor.parent) {
+      if (cursor.id !== scene.root.id && isGroupNode(cursor)) {
+        this.#store.select(cursor.id)
+        this.#resetCycle()
+        return
+      }
+    }
+  }
+
+  #resetCycle(): void {
+    this.#cycleIds = []
+    this.#cycleIndex = -1
+    this.#lastClickClientX = null
+    this.#lastClickClientY = null
+  }
+
+  #recordClick(clientX: number, clientY: number): void {
+    this.#lastClickClientX = clientX
+    this.#lastClickClientY = clientY
+  }
+
+  /**
+   * Same-spot repeat click, regardless of pace. There is deliberately no
+   * time limit — deliberate cycling clicks are seconds apart. Staleness is
+   * guarded structurally instead: the cached stack must still match, and
+   * the current selection must be the last cycled pick (any outside
+   * selection change, drag, or marquee resets the chain).
+   */
+  #isSameSpotClick(clientX: number, clientY: number): boolean {
+    if (this.#lastClickClientX === null || this.#lastClickClientY === null) {
+      return false
+    }
+    const moved = Math.hypot(clientX - this.#lastClickClientX, clientY - this.#lastClickClientY)
+    return moved <= CYCLE_CLICK_DISTANCE_PX
   }
 
   readonly #onContextMenu = (event: MouseEvent): void => {
@@ -188,25 +285,120 @@ export class CanvasSelection {
     this.#startClientY = event.clientY
     this.#startWorld = point
     const filter = this.#getNodeFilter?.() ?? null
-    const hit = topmostNodeAt(scene, point, this.#getNodeSize, this.#transformOf, filter)
-    this.#pressedOnNode = hit !== null
-    if (hit) {
-      if (event.ctrlKey || event.metaKey) {
-        this.#store.toggle(hit)
-      } else if (event.shiftKey) {
-        this.#store.extend(hit)
-      } else {
-        const selected = useSelectionStore.getState().selectedIds
-        if (!selected.includes(hit)) {
-          this.#store.select(hit)
-        }
+    const ctrl = event.ctrlKey || event.metaKey
+    const shift = event.shiftKey
+    const modifiers = ctrl || shift
+    const stacked = nodesAtSorted(
+      scene,
+      point,
+      this.#getNodeSize,
+      this.#transformOf,
+      filter,
+      this.#getZIndex ?? null,
+    )
+    const selected = useSelectionStore.getState().selectedIds
+    this.#pressStacked = [...stacked]
+    this.#pressPending = false
+    this.#pressIsMoveOfSelection = false
+    this.#pressCtrl = ctrl
+    this.#pressShift = shift
+    this.#pressContinuesCycle = this.#isSameSpotClick(event.clientX, event.clientY)
+    this.#recordClick(event.clientX, event.clientY)
+    const top = stacked[0] ?? null
+    let moveAnchor: string | null = null
+    if (top !== null && !modifiers && selected.some((id) => stacked.includes(id))) {
+      // Pressed on top of the current selection: the gesture manipulates
+      // the selection (press-and-hold drags it). The click-select/cycle
+      // decision is deferred to mouse-up, so pressing down to drag a
+      // cycled-to object never re-picks or advances past it.
+      this.#pressIsMoveOfSelection = true
+      moveAnchor = top
+    } else if (top !== null) {
+      // Pressed on an unselected node: defer selection — a quick
+      // press-and-release applies the click (select/toggle/extend/cycle)
+      // on mouse-up, while a plain press-and-drag grabs the topmost node.
+      this.#pressPending = true
+    } else if (!modifiers) {
+      // Clicking the empty interior of an already-selected group keeps the
+      // group so it can be dragged (clicking a child still drills into it).
+      moveAnchor = this.#selectedGroupAt(scene, selected, point)
+      if (moveAnchor !== null) {
+        this.#pressIsMoveOfSelection = true
       }
     }
-    const modifiers = event.ctrlKey || event.metaKey || event.shiftKey
-    this.#canMove = hit !== null && !modifiers && this.#moveEnabled()
-    if (hit !== null && this.#canMove) {
-      this.#beginMove(hit)
+    this.#pressedOnNode = top !== null || this.#pressIsMoveOfSelection
+    this.#canMove = this.#pressIsMoveOfSelection && this.#moveEnabled()
+    if (moveAnchor !== null && this.#canMove) {
+      this.#beginMove(moveAnchor)
     }
+  }
+
+  /**
+   * Applies the deferred click selection on mouse-up (quick press without
+   * a drag): plain clicks select the topmost node or advance the
+   * same-spot cycle, ctrl/cmd toggles, shift extends.
+   */
+  #applyClickSelection(): void {
+    const stacked = this.#pressStacked
+    if (stacked.length === 0) {
+      // Pressed the empty interior of the selected group: keep it.
+      return
+    }
+    const top = stacked[0] ?? null
+    if (!top) {
+      return
+    }
+    if (this.#pressCtrl) {
+      this.#store.toggle(top)
+      this.#resetCycle()
+      return
+    }
+    if (this.#pressShift) {
+      this.#store.extend(top)
+      this.#resetCycle()
+      return
+    }
+    const selected = useSelectionStore.getState().selectedIds
+    if (
+      this.#pressContinuesCycle &&
+      this.#cycleIds.length > 0 &&
+      sameIdList(this.#cycleIds, stacked) &&
+      selected.length === 1 &&
+      selected[0] === this.#cycleIds[this.#cycleIndex]
+    ) {
+      this.#cycleIndex = (this.#cycleIndex + 1) % stacked.length
+      const next = stacked[this.#cycleIndex] ?? null
+      if (next) {
+        this.#store.select(next)
+      }
+      return
+    }
+    this.#cycleIds = [...stacked]
+    this.#cycleIndex = 0
+    if (!selected.includes(top)) {
+      this.#store.select(top)
+    }
+  }
+
+  #selectedGroupAt(scene: Scene, selected: readonly string[], point: WorldPoint): string | null {
+    if (selected.length !== 1) {
+      return null
+    }
+    const selectedId = selected[0]
+    if (selectedId === undefined) {
+      return null
+    }
+    const bounds = worldAabbOf(scene, selectedId, this.#getNodeSize, this.#transformOf)
+    if (
+      bounds &&
+      point.x >= bounds.minX &&
+      point.x <= bounds.maxX &&
+      point.y >= bounds.minY &&
+      point.y <= bounds.maxY
+    ) {
+      return selectedId
+    }
+    return null
   }
 
   readonly #onMouseMove = (event: MouseEvent): void => {
@@ -214,6 +406,29 @@ export class CanvasSelection {
       return
     }
     if (this.#pressedOnNode) {
+      if (this.#pressPending) {
+        // A pending press becomes a drag only for a plain press when
+        // moving is possible; otherwise wait for mouse-up (quick click or
+        // modifier toggle/extend).
+        if (this.#pressCtrl || this.#pressShift || !this.#moveEnabled()) {
+          return
+        }
+        const dx = event.clientX - this.#startClientX
+        const dy = event.clientY - this.#startClientY
+        if (Math.hypot(dx, dy) < MARQUEE_START_DISTANCE) {
+          return
+        }
+        // Plain press-and-drag grabs the topmost node and moves it.
+        const dragTop = this.#pressStacked[0] ?? null
+        if (!dragTop) {
+          return
+        }
+        this.#store.select(dragTop)
+        this.#pressPending = false
+        this.#pressIsMoveOfSelection = true
+        this.#canMove = true
+        this.#beginMove(dragTop)
+      }
       if (this.#canMove) {
         this.#handleMove(event)
       } else if (this.#animatedMove.blocked) {
@@ -236,6 +451,7 @@ export class CanvasSelection {
       return
     }
     this.#marqueeActive = true
+    this.#resetCycle()
     const filter = this.#getNodeFilter?.() ?? null
     this.#store.selectMany(
       nodesIntersectingRect(
@@ -255,6 +471,11 @@ export class CanvasSelection {
     }
     if (this.#moveActive) {
       this.#commitMove()
+    } else if (this.#pressPending || this.#pressIsMoveOfSelection) {
+      // Quick press-and-release: apply the deferred click selection.
+      if (this.#getScene() === this.#sceneAtDown) {
+        this.#applyClickSelection()
+      }
     } else if (
       !this.#marqueeActive &&
       !this.#pressedOnNode &&
@@ -335,6 +556,8 @@ export class CanvasSelection {
   }
 
   #commitMove(): void {
+    // A drag changed object positions — the cached click stack is stale.
+    this.#resetCycle()
     const dispatch = this.#dispatch
     if (!dispatch) {
       return
@@ -465,6 +688,12 @@ export class CanvasSelection {
     this.#marqueeActive = false
     this.#startWorld = null
     this.#sceneAtDown = null
+    this.#pressStacked = []
+    this.#pressPending = false
+    this.#pressIsMoveOfSelection = false
+    this.#pressCtrl = false
+    this.#pressShift = false
+    this.#pressContinuesCycle = false
     this.#marquee?.clear()
     this.#resetMove()
   }
