@@ -25,6 +25,7 @@ import {
   rulerTickTimes,
   tickLabel,
 } from '../../stores/timelineViewStore'
+import { executeCollectionFreeze, previewCollectionFreeze } from '../../engine/collectionFreeze'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { walkPreOrder } from '../../engine/sceneNode'
 import type { SceneNode } from '../../engine/sceneNode'
@@ -9011,6 +9012,82 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 }}
               >
                 Copy properties proportionally…
+              </button>
+              <button
+                role="menuitem"
+                data-testid="collection-lane-freeze-first"
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+                onClick={() => {
+                  const pid = collectionPlacementMenu.placementId
+                  const preview = previewCollectionFreeze(engine, {
+                    placementId: pid,
+                    source: 'first',
+                  })
+                  if (preview.totalWrites === 0) {
+                    notify(preview.warnings.join('; ') || 'Nothing to freeze')
+                    setCollectionPlacementMenu(null)
+                    return
+                  }
+                  const res = executeCollectionFreeze(engine, dispatch as never, undoStack, {
+                    placementId: pid,
+                    source: 'first',
+                  })
+                  if (!res.ok) notify(res.error)
+                  else
+                    notify(
+                      `Froze first pose: ${res.writtenCount} keyframe(s) at ${res.targetTime.toFixed(2)}s`,
+                    )
+                  setCollectionPlacementMenu(null)
+                }}
+              >
+                Freeze FIRST pose after block
+              </button>
+              <button
+                role="menuitem"
+                data-testid="collection-lane-freeze-last"
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+                onClick={() => {
+                  const pid = collectionPlacementMenu.placementId
+                  const preview = previewCollectionFreeze(engine, {
+                    placementId: pid,
+                    source: 'last',
+                  })
+                  if (preview.totalWrites === 0) {
+                    notify(preview.warnings.join('; ') || 'Nothing to freeze')
+                    setCollectionPlacementMenu(null)
+                    return
+                  }
+                  const res = executeCollectionFreeze(engine, dispatch as never, undoStack, {
+                    placementId: pid,
+                    source: 'last',
+                  })
+                  if (!res.ok) notify(res.error)
+                  else
+                    notify(
+                      `Froze last pose: ${res.writtenCount} keyframe(s) at ${res.targetTime.toFixed(2)}s`,
+                    )
+                  setCollectionPlacementMenu(null)
+                }}
+              >
+                Freeze LAST pose after block
               </button>
               <button
                 role="menuitem"

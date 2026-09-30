@@ -38,6 +38,7 @@ import {
   useTimelineViewStore,
 } from '../../stores/timelineViewStore'
 import { useKeyframeDrag } from './keyframeDrag'
+import { TimelineCollectionBlocks } from './TimelineCollectionBlocks'
 import { useKeyframeScale, computeSelectionBounds } from './keyframeScale'
 import { MorphPickerModal } from './MorphPickerModal'
 import { SymmetryPickerModal } from './SymmetryPickerModal'
@@ -1934,6 +1935,25 @@ export function TimelineBody({
                   +
                 </button>
               </li>
+            ) : row.kind === 'collectionLane' ? (
+              <li
+                key={`${row.node.id}:collections`}
+                className="timeline-subtrack timeline-subtrack--collections"
+                data-node-id={row.node.id}
+                data-collections="true"
+                data-depth={row.depth}
+                style={{
+                  paddingLeft: 12 + row.depth * 16,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+                title="Placed collections on this object — drag blocks in the lane to move/stretch/reorder. Add blocks in Animation Manager."
+              >
+                <span className="timeline-subtrack__label" style={{ fontWeight: 600 }}>
+                  Collections ({row.node.collectionPlacements.length})
+                </span>
+              </li>
             ) : row.kind === 'node' || row.kind === 'bone' ? (
               <TrackRow
                 key={row.node.id}
@@ -2484,6 +2504,19 @@ export function TimelineBody({
                           />
                         )
                       })}
+                    </div>
+                  )
+                }
+                if (row.kind === 'collectionLane') {
+                  return (
+                    <div
+                      key={`${row.node.id}:collections`}
+                      className="timeline-lane-row timeline-lane-row--collections"
+                      data-node-id={row.node.id}
+                      data-collections="true"
+                      style={{ top: index * ROW_HEIGHT }}
+                    >
+                      <TimelineCollectionBlocks node={row.node} duration={duration} pps={pps} />
                     </div>
                   )
                 }

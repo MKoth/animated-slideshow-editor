@@ -112,6 +112,18 @@ export interface BoneTrackEntry {
   readonly visible: boolean
 }
 
+/**
+ * Collections lane — one sub-lane under a parent node header showing its
+ * placed Clip Collections as manipulable blocks (main-timeline mirror of the
+ * Animation Manager Collection Lanes). Clips are intentionally not shown here
+ * to save vertical space; creation stays in the Animation Manager.
+ */
+export interface CollectionLaneEntry {
+  readonly kind: 'collectionLane'
+  readonly node: SceneNode
+  readonly depth: number
+}
+
 export type TimelineRow =
   | TrackRowEntry
   | SubtrackEntry
@@ -126,6 +138,7 @@ export type TimelineRow =
   | HiddenSubtrackEntry
   | ShadowSubtrackEntry
   | BoneTrackEntry
+  | CollectionLaneEntry
 
 export const PROPERTY_LABELS: Record<AnimationProperty, string> = {
   positionX: 'Position X',
@@ -247,6 +260,12 @@ export function timelineRows(
       })
     } else {
       rows.push(entryWithBadge)
+    }
+    // Collections lane — always visible when the node hosts placements,
+    // even when collapsed, so a `cat` parent shows its blocks without
+    // expanding every paw/tail subtrack.
+    if (entry.node.collectionPlacements.length > 0) {
+      rows.push({ kind: 'collectionLane', node: entry.node, depth: entry.depth + 1 })
     }
     if (expandedNodeIds[entry.node.id] === true) {
       // Control lane visibility: Normal shows only exposed hosts, Authoring shows all.
