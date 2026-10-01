@@ -5,6 +5,7 @@ import { duplicateLessonJSON, getUniqueDuplicateName } from '../app/projectDupli
 import { validate, serialize } from '../engine/lessonSerializer'
 import { Keyframe } from '../engine/keyframe'
 import { ClipDefinition, newClipId } from '../engine/clipDefinition'
+import { createControl, createControlSet } from '../engine/control'
 import { duplicateLibraryProject } from '../app/projectBrowser'
 import { useProjectBrowserStore } from '../stores/projectBrowserStore'
 import { useNotificationStore } from '../stores/notificationStore'
@@ -311,6 +312,89 @@ describe('duplicateLessonJSON', () => {
     expect(dupNode.collectionPlacements![0].collectionId).toBe(dupCollection!.id)
     expect(dupNode.collectionPlacements![0].parentNodeId).toBe(dupNode.id)
     expect(dupNode.collectionPlacements![0].id).not.toBe('place-old')
+  })
+
+  it('remaps Control Sets: bindings, collection blocks, and control track keyframes', () => {
+    const engine = createEngine()
+    engine.createProject({ name: 'ControlDup' })
+    engine.createSlide('S1')
+    const slide = engine.project!.slides[0]!
+    const rig = engine.createNode(slide.scene.id, slide.scene.root.id, 'Rig', { components: {} })
+    const hand = engine.createNode(slide.scene.id, rig.id, 'Hand', { components: {} })
+    hand.semanticName = 'hand'
+    const controlClip = engine.createClip('Nod', 1, '', [], [{ property: 'positionX' }])
+    const collectionClip = engine.createClip('Wiggle', 1, '', [], [{ property: 'rotation' }])
+    const collection = engine.createClipCollection(
+      'Rig Collection',
+      { hand: collectionClip.id },
+      rig.id,
+    )
+    const controlSet = createControlSet(rig.id, [
+      createControl({
+        key: 'Nod',
+        exposed: true,
+        groups: [
+          { id: 'group-base', name: 'Base', bindings: { hand: controlClip.id } },
+          {
+            id: 'group-wave',
+            name: 'Wave',
+            bindings: {},
+            collectionBlocks: [
+              { id: 'block-wave', collectionId: collection.id, start: 0.2, end: 0.8 },
+            ],
+          },
+        ],
+      }),
+    ])
+    engine.setControlSet(rig.id, controlSet)
+    slide.animation
+      .ensure(rig.id)
+      .addControl('Nod', new Keyframe('kf-control-old', 0, 0.5, 'linear'))
+
+    const originalJson = engine.toJSON()
+    const dup = duplicateLessonJSON(originalJson, [])
+    expect(validate(dup)).toEqual([])
+
+    const dupRig = dup.slides[0].scene.nodes.find((n) => n.name === 'Rig')!
+    const dupSet = dupRig.controlSet!
+    expect(dupSet.id).not.toBe(controlSet.id)
+    expect(dupSet.hostNodeId).toBe(dupRig.id)
+    const dupControl = dupSet.controls[0]!
+    expect(dupControl.id).not.toBe(controlSet.controls[0]!.id)
+    expect(dupControl.key).toBe('Nod')
+
+    const dupCollection = (dup.clipCollections ??
+      (
+        dup as unknown as {
+          library?: {
+            clipCollections?: { id: string; name: string; bindings: Record<string, string> }[]
+          }
+        }
+      ).library?.clipCollections)!.find((c) => c.name === 'Rig Collection')!
+    expect(dupCollection.id).not.toBe(collection.id)
+    expect(dupCollection.bindings['hand']).not.toBe(collectionClip.id)
+
+    const baseGroup = dupControl.groups!.find((g) => g.name === 'Base')!
+    const baseBinding = baseGroup.bindings['hand'] as
+      string | { clipId: string; start: number; end: number }
+    const baseClipId = typeof baseBinding === 'string' ? baseBinding : baseBinding.clipId
+    expect(baseClipId).not.toBe(controlClip.id)
+    const topBinding = dupControl.bindings['hand'] as
+      string | { clipId: string; start: number; end: number }
+    const topClipId = typeof topBinding === 'string' ? topBinding : topBinding.clipId
+    expect(topClipId).toBe(baseClipId)
+
+    const waveGroup = dupControl.groups!.find((g) => g.name === 'Wave')!
+    const block = waveGroup.collectionBlocks![0]!
+    expect(block.id).not.toBe('block-wave')
+    expect(block.collectionId).toBe(dupCollection.id)
+    expect(block.start).toBe(0.2)
+    expect(block.end).toBe(0.8)
+
+    const dupTrack = dup.slides[0].animation!.nodes.find((n) => n.nodeId === dupRig.id)!
+      .controlTracks![0]!
+    expect(dupTrack.key).toBe('Nod')
+    expect(dupTrack.keyframes[0]!.id).not.toBe('kf-control-old')
   })
 
   describe('duplicateLibraryProject', () => {

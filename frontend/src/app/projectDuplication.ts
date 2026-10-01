@@ -149,6 +149,24 @@ export function duplicateLessonJSON(
       unknown[] | undefined,
   )
 
+  const remapControlBindings = (bindings: unknown): void => {
+    if (!bindings || typeof bindings !== 'object' || Array.isArray(bindings)) return
+    const remapOne = (value: unknown): unknown => {
+      if (typeof value === 'string') return clipIdMap.get(value) ?? value
+      if (Array.isArray(value)) return value.map(remapOne)
+      if (value && typeof value === 'object') {
+        const binding = value as Record<string, unknown>
+        if (typeof binding.clipId === 'string') {
+          const mapped = clipIdMap.get(binding.clipId)
+          if (mapped) return { ...binding, clipId: mapped }
+        }
+      }
+      return value
+    }
+    const record = bindings as Record<string, unknown>
+    for (const [semantic, value] of Object.entries(record)) record[semantic] = remapOne(value)
+  }
+
   if (clone.ikChains?.chains) {
     for (const chain of clone.ikChains.chains as Record<string, unknown>[]) {
       const oldId = chain.id as string
@@ -306,6 +324,37 @@ export function duplicateLessonJSON(
           }
         }
       }
+      const controlSet = (node as Record<string, unknown>).controlSet as
+        Record<string, unknown> | undefined
+      if (controlSet && typeof controlSet === 'object') {
+        controlSet.id = newId('control-set')
+        if (newNodeId) controlSet.hostNodeId = newNodeId
+        const controls = controlSet.controls as unknown[] | undefined
+        if (Array.isArray(controls)) {
+          for (const rawControl of controls) {
+            const control = rawControl as Record<string, unknown>
+            control.id = newId('control')
+            remapControlBindings(control.bindings)
+            const groups = control.groups as unknown[] | undefined
+            if (!Array.isArray(groups)) continue
+            for (const rawGroup of groups) {
+              const group = rawGroup as Record<string, unknown>
+              group.id = newId('control-group')
+              remapControlBindings(group.bindings)
+              const blocks = group.collectionBlocks as unknown[] | undefined
+              if (!Array.isArray(blocks)) continue
+              for (const rawBlock of blocks) {
+                const block = rawBlock as Record<string, unknown>
+                block.id = newId('control-collection-block')
+                if (typeof block.collectionId === 'string') {
+                  const mapped = collectionIdMap.get(block.collectionId)
+                  if (mapped) block.collectionId = mapped
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 
@@ -357,6 +406,9 @@ export function duplicateLessonJSON(
           ((nodeAnim as Record<string, unknown>).zIndexTrack as Record<string, unknown>)
             .keyframes as unknown[] | undefined,
         )
+      for (const track of ((nodeAnim as Record<string, unknown>).controlTracks as
+        unknown[] | undefined) ?? [])
+        remapKeyframes((track as Record<string, unknown>).keyframes as unknown[] | undefined)
       const morphBinding = (nodeAnim as Record<string, unknown>).morphBinding as
         Record<string, unknown> | null | undefined
       if (morphBinding && typeof morphBinding === 'object') {
