@@ -13,6 +13,9 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:perf": "playwright test --grep @perf",
+    "test:perf:prod": "npm run build && PERF_APP_MODE=production playwright test --grep @perf",
     "prepare": "husky"
   },
   "dependencies": {
@@ -27,6 +30,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
+    "@playwright/test": "^1.63.0",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.3",
