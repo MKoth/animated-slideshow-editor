@@ -15,6 +15,7 @@ import {
   SetClipKeyframeWrapCommand,
 } from '../../engine/commands'
 import { dispatchKeyframeCommands } from '../../engine/keyframeEdit'
+import { radiansToDegrees, rotationDegreesToRadians } from '../../app/inspectorActions'
 import { NumericField } from './inspectorFields'
 import { useEngine } from '../../app/useEngine'
 import { MorphPickerModal } from './MorphPickerModal'
@@ -94,6 +95,11 @@ export function KeyframeInspector({
   const isWrappableTrack =
     (isClip && clipTarget?.channel === 'opacity') ||
     (!isClip && !isMorph && !isZIndex && !isSymmetry && !parameter && property === 'opacity')
+  // Rotation stores radians but reads as degrees everywhere (single angle
+  // logic): the value field shows degrees and commits convert back.
+  const isRotation =
+    (isClip && clipTarget?.channel === 'rotation') ||
+    (!isClip && !isMorph && !isZIndex && !isSymmetry && !parameter && property === 'rotation')
   const isWrapEnabled = isWrappableTrack && keyframe.interpolation === 'linear'
   const { engine: inspectorEngine } = useEngine()
   let morphShapes: readonly import('../../engine/shape').Shape[] = []
@@ -329,12 +335,13 @@ export function KeyframeInspector({
       if (!Number.isFinite(num)) {
         return
       }
+      const commitValue = isRotation ? rotationDegreesToRadians(num) : num
       if (isClip && clipTarget) {
         const result = dispatch(
           new SetClipKeyframeValueCommand({
             target: { kind: 'clip', clipId: clipTarget.clipId, channel: clipTarget.channel },
             keyframeId: keyframe.id,
-            newValue: num,
+            newValue: commitValue,
           }),
         )
         if (!result.ok) {
@@ -377,7 +384,7 @@ export function KeyframeInspector({
               | import('../../engine/keyframeTarget').NodeMorphTarget
               | import('../../engine/keyframeTarget').NodeSymmetryTarget,
             keyframeId: keyframe.id,
-            newValue: num,
+            newValue: commitValue,
           }),
         )
         if (!result.ok) {
@@ -394,6 +401,7 @@ export function KeyframeInspector({
       isClip,
       clipTarget,
       isMorph,
+      isRotation,
       morphValue?.fromShapeId,
       morphValue?.toShapeId,
       morphValue?.coefficient,
@@ -592,8 +600,14 @@ export function KeyframeInspector({
       ) : (
         <div className="inspector-field">
           <NumericField
-            label="Value"
-            value={typeof keyframe.value === 'number' ? keyframe.value : null}
+            label={isRotation ? 'Value (degrees)' : 'Value'}
+            value={
+              typeof keyframe.value === 'number'
+                ? isRotation
+                  ? radiansToDegrees(keyframe.value)
+                  : keyframe.value
+                : null
+            }
             step={0.1}
             disabled={playing}
             onCommit={handleValueCommit}

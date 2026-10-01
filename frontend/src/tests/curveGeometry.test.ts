@@ -266,5 +266,52 @@ describe('curveGeometry', () => {
       const curves = [makeCurve([])]
       expect(computeCurveBounds(curves)).toBeNull()
     })
+
+    it('includes the swept arc in bounds for rotation curves', () => {
+      const DEG = Math.PI / 180
+      const curves = [
+        {
+          ...makeCurve([makeKeyframe(0, 170 * DEG), makeKeyframe(2, -170 * DEG)]),
+          property: 'rotation',
+        },
+      ]
+      const bounds = computeCurveBounds(curves)
+      expect(bounds).not.toBeNull()
+      // the short arc sweeps through 180 degrees, past both keyframe values
+      expect(bounds!.maxValue).toBeCloseTo(190 * DEG, 6)
+    })
+  })
+
+  describe('rotation curves', () => {
+    const DEG = Math.PI / 180
+
+    // computeCurvePoints samples uniformly; the middle sample sits at the segment midpoint
+    function midpointValue(curve: CurveData): number {
+      const points = computeCurvePoints(curve, makeViewport())
+      if (points.length === 0) throw new Error('expected curve points')
+      return points[Math.floor(points.length / 2)]!.value
+    }
+
+    it('samples rotation curves along the shortest arc', () => {
+      const curve = {
+        ...makeCurve([makeKeyframe(0, -70 * DEG), makeKeyframe(2, 281 * DEG)]),
+        property: 'rotation',
+      }
+      expect(midpointValue(curve)).toBeCloseTo(-74.5 * DEG, 4)
+    })
+
+    it('samples shadow rotation curves along the shortest degree arc', () => {
+      const curve = {
+        ...makeCurve([makeKeyframe(0, 170), makeKeyframe(2, -170)]),
+        property: 'rotation',
+        angleTurn: 360,
+      }
+      expect(midpointValue(curve)).toBeCloseTo(180, 4)
+    })
+
+    it('leaves non-rotation curves on plain numeric interpolation', () => {
+      const curve = makeCurve([makeKeyframe(0, 290), makeKeyframe(2, -79)])
+      expect(midpointValue(curve)).toBeCloseTo((290 + -79) / 2, 6)
+    })
   })
 })

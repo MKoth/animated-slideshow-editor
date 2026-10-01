@@ -142,10 +142,10 @@ describe('Bone Animation', () => {
       const boneId = createBoneNode(system, slide.scene.id, slide.scene.root.id, 'UpperArm')
 
       addKeyframe(system, boneId, 'rotation', 0, 0)
-      addKeyframe(system, boneId, 'rotation', 5, 45)
+      addKeyframe(system, boneId, 'rotation', 5, Math.PI / 4)
 
       const state = system.engine.evaluateNode(boneId, 2.5)
-      expect(state.transform.rotation).toBe(22.5)
+      expect(state.transform.rotation).toBeCloseTo(Math.PI / 8, 10)
     })
 
     it('bone nodes support all 5 transform properties', () => {
@@ -190,7 +190,7 @@ describe('Bone Animation', () => {
       const boneId = createBoneNode(system, slide.scene.id, slide.scene.root.id, 'UpperArm')
 
       addKeyframe(system, boneId, 'rotation', 0, 0)
-      addKeyframe(system, boneId, 'rotation', 5, 90)
+      addKeyframe(system, boneId, 'rotation', 5, Math.PI / 2)
       addKeyframe(system, boneId, 'positionX', 0, 100)
 
       const json = system.engine.toJSON()
@@ -205,7 +205,7 @@ describe('Bone Animation', () => {
       expect(keyframes[0].time).toBe(0)
       expect(keyframes[0].value).toBe(0)
       expect(keyframes[1].time).toBe(5)
-      expect(keyframes[1].value).toBe(90)
+      expect(keyframes[1].value).toBe(Math.PI / 2)
 
       const posXKeyframes = restored.getKeyframes(boneId, 'positionX')
       expect(posXKeyframes.length).toBe(1)
@@ -217,17 +217,17 @@ describe('Bone Animation', () => {
       const boneId = createBoneNode(system, slide.scene.id, slide.scene.root.id, 'Bone')
 
       addKeyframe(system, boneId, 'rotation', 0, 0)
-      addKeyframe(system, boneId, 'rotation', 10, 180)
+      addKeyframe(system, boneId, 'rotation', 10, (2 * Math.PI) / 3)
 
       const beforeState = system.engine.evaluateNode(boneId, 5)
-      expect(beforeState.transform.rotation).toBe(90)
+      expect(beforeState.transform.rotation).toBeCloseTo(Math.PI / 3, 10)
 
       const json = system.engine.toJSON()
       const restored = createEngineInternal()
       restored.restoreFromJSON(json)
 
       const afterState = restored.evaluateNode(boneId, 5)
-      expect(afterState.transform.rotation).toBe(90)
+      expect(afterState.transform.rotation).toBeCloseTo(Math.PI / 3, 10)
     })
   })
 
@@ -250,7 +250,7 @@ describe('Bone Animation', () => {
 
       // Add rotation keyframes to the bone
       addKeyframe(system, boneId, 'rotation', 0, 0)
-      addKeyframe(system, boneId, 'rotation', 10, 90)
+      addKeyframe(system, boneId, 'rotation', 10, Math.PI / 2)
 
       // evaluateNode returns the local transform, not world transform.
       // The image's local transform is always (100, 0) regardless of bone rotation.
@@ -260,7 +260,7 @@ describe('Bone Animation', () => {
 
       // The bone's rotation is animated correctly
       const boneState = system.engine.evaluateNode(boneId, 5)
-      expect(boneState.transform.rotation).toBe(45)
+      expect(boneState.transform.rotation).toBeCloseTo(Math.PI / 4, 10)
     })
 
     it('bone child nodes inherit parent bone transforms', () => {
@@ -294,18 +294,27 @@ describe('Bone Animation', () => {
       const boneId = createBoneNode(system, slide.scene.id, slide.scene.root.id, 'Bone')
 
       addKeyframe(system, boneId, 'rotation', 0, 0)
-      addKeyframe(system, boneId, 'rotation', 2, 45)
-      addKeyframe(system, boneId, 'rotation', 4, 90)
-      addKeyframe(system, boneId, 'rotation', 6, 135)
-      addKeyframe(system, boneId, 'rotation', 8, 180)
+      addKeyframe(system, boneId, 'rotation', 2, Math.PI / 4)
+      addKeyframe(system, boneId, 'rotation', 4, Math.PI / 2)
+      addKeyframe(system, boneId, 'rotation', 6, (3 * Math.PI) / 4)
+      addKeyframe(system, boneId, 'rotation', 8, Math.PI)
 
       const keyframes = system.engine.getKeyframes(boneId, 'rotation')
       expect(keyframes.length).toBe(5)
 
-      expect(system.engine.evaluateNode(boneId, 1).transform.rotation).toBe(22.5)
-      expect(system.engine.evaluateNode(boneId, 3).transform.rotation).toBe(67.5)
-      expect(system.engine.evaluateNode(boneId, 5).transform.rotation).toBe(112.5)
-      expect(system.engine.evaluateNode(boneId, 7).transform.rotation).toBe(157.5)
+      expect(system.engine.evaluateNode(boneId, 1).transform.rotation).toBeCloseTo(Math.PI / 8, 10)
+      expect(system.engine.evaluateNode(boneId, 3).transform.rotation).toBeCloseTo(
+        (3 * Math.PI) / 8,
+        10,
+      )
+      expect(system.engine.evaluateNode(boneId, 5).transform.rotation).toBeCloseTo(
+        (5 * Math.PI) / 8,
+        10,
+      )
+      expect(system.engine.evaluateNode(boneId, 7).transform.rotation).toBeCloseTo(
+        (7 * Math.PI) / 8,
+        10,
+      )
     })
 
     it('bone keyframes on different properties are independent', () => {
@@ -313,12 +322,12 @@ describe('Bone Animation', () => {
       const boneId = createBoneNode(system, slide.scene.id, slide.scene.root.id, 'Bone')
 
       addKeyframe(system, boneId, 'rotation', 0, 0)
-      addKeyframe(system, boneId, 'rotation', 10, 180)
+      addKeyframe(system, boneId, 'rotation', 10, Math.PI / 2)
       addKeyframe(system, boneId, 'scaleX', 0, 1)
       addKeyframe(system, boneId, 'scaleX', 10, 3)
 
       const state = system.engine.evaluateNode(boneId, 5)
-      expect(state.transform.rotation).toBe(90)
+      expect(state.transform.rotation).toBeCloseTo(Math.PI / 4, 10)
       expect(state.transform.scaleX).toBe(2)
     })
   })

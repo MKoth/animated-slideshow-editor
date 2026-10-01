@@ -1,5 +1,6 @@
 import type { Keyframe } from './keyframe'
-import { evaluateSegment } from './interpolators'
+import { ANGLE_TURN_RADIANS, evaluateAngleSegment, evaluateSegment } from './interpolators'
+import { normalizeAngleDelta } from './transform'
 
 export const CURVE_HIT_RADIUS = 8
 export const TANGENT_HANDLE_SIZE = 6
@@ -31,6 +32,12 @@ export interface CurveData {
   readonly label: string
   readonly keyframes: readonly Keyframe[]
   readonly color: string
+  /**
+   * Full turn of the value domain for `rotation` curves (radians by default,
+   * 360 for shadow rotation in degrees). Rotation curves interpolate along
+   * the shortest arc, matching playback; other properties ignore it.
+   */
+  readonly angleTurn?: number
 }
 
 export interface CurveBounds {
@@ -59,9 +66,12 @@ export function screenToWorld(x: number, y: number, viewport: CurveViewport): Wo
   }
 }
 
-function interpolateValue(from: Keyframe, to: Keyframe, time: number): number {
+function interpolateValue(from: Keyframe, to: Keyframe, time: number, curve: CurveData): number {
   if (from.interpolation === 'hold') {
     return from.value as number
+  }
+  if (curve.property === 'rotation') {
+    return evaluateAngleSegment(from, to, time, curve.angleTurn ?? ANGLE_TURN_RADIANS)
   }
   return evaluateSegment(from, to, time)
 }
@@ -121,7 +131,7 @@ export function computeCurvePoints(
 
     for (let s = startIdx; s <= sampleCount; s++) {
       const t = segStart + (segEnd - segStart) * (s / sampleCount)
-      const val = interpolateValue(prev, kf, t)
+      const val = interpolateValue(prev, kf, t, curve)
       const pt = worldToScreen(t, val, viewport)
       points.push({ ...pt, value: val })
     }
@@ -245,6 +255,20 @@ export function computeCurveBounds(curves: readonly CurveData[]): CurveBounds | 
       if (kf.time > maxTime) maxTime = kf.time
       if (val < minValue) minValue = val
       if (val > maxValue) maxValue = val
+    }
+    if (curve.property === 'rotation') {
+      // The drawn curve follows the shortest arc, which can sweep past both
+      // endpoint values (e.g. +170 to -170 passes through 180). Include the
+      // swept endpoints so fitting the viewport keeps the arc visible.
+      const turn = curve.angleTurn ?? ANGLE_TURN_RADIANS
+      for (let i = 1; i < curve.keyframes.length; i++) {
+        const a = curve.keyframes[i - 1].value
+        const b = curve.keyframes[i].value
+        if (typeof a !== 'number' || typeof b !== 'number') continue
+        const swept = a + normalizeAngleDelta(b - a, turn)
+        if (swept < minValue) minValue = swept
+        if (swept > maxValue) maxValue = swept
+      }
     }
   }
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { RefObject } from 'react'
 import type { AnimationProperty, Scene } from '../../engine'
 import { addKeyframeAtPlayhead, addPoseKeyframesAtPlayhead } from '../../app/keyframeActions'
+import { radiansToDegrees, rotationDegreesToRadians } from '../../app/inspectorActions'
 import {
   deleteSelectedKeyframes,
   isKeyframeDisabled,
@@ -1383,11 +1384,18 @@ export function TimelineBody({
     }
     let currentValue: unknown
     let target: import('../../engine/keyframeTarget').KeyframeTarget | null = null
+    let degreesEdit = false
     if (m.property) {
       target = { kind: 'node', nodeId: m.nodeId, property: m.property }
-      currentValue = engine
+      const stored = engine
         .getKeyframes(m.nodeId, m.property)
         .find((k) => k.id === m.keyframeId)?.value
+      currentValue = stored
+      // Rotation stores radians but reads as degrees everywhere (single angle logic)
+      if (m.property === 'rotation' && typeof stored === 'number') {
+        degreesEdit = true
+        currentValue = radiansToDegrees(stored)
+      }
     } else if ((m as unknown as { parameter?: string }).parameter) {
       const param = (m as unknown as { parameter: string }).parameter
       target = { kind: 'node', nodeId: m.nodeId, parameter: param }
@@ -1428,7 +1436,9 @@ export function TimelineBody({
     const isControl = (target as unknown as { controlKey?: string }).controlKey !== undefined
     const promptText = isControl
       ? `Edit control value (0…1) — current ${String(currentValue)}`
-      : `Edit value — current ${typeof currentValue === 'object' ? JSON.stringify(currentValue) : String(currentValue)}`
+      : degreesEdit
+        ? `Edit rotation (degrees) — current ${typeof currentValue === 'object' ? JSON.stringify(currentValue) : String(currentValue)}`
+        : `Edit value — current ${typeof currentValue === 'object' ? JSON.stringify(currentValue) : String(currentValue)}`
     const raw = window.prompt(promptText, String(currentValue))
     if (raw === null) return
     let nextValue: unknown = raw
@@ -1442,7 +1452,7 @@ export function TimelineBody({
         notify('Control value must be in [0, 1]')
         return
       }
-      nextValue = num
+      nextValue = degreesEdit ? rotationDegreesToRadians(num) : num
     } else if (typeof currentValue === 'boolean') {
       if (raw === 'true') nextValue = true
       else if (raw === 'false') nextValue = false

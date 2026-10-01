@@ -55,3 +55,23 @@ export function normalizeRotation(rotation: number): number {
   }
   return value
 }
+
+/**
+ * Shortest signed equivalent of an angle delta for a full turn of `turn`
+ * (radians by default, 360 for degree domains). Result lies in
+ * [-turn/2, turn/2): exactly half a turn resolves to the negative boundary
+ * so the direction is deterministic. Allocation-free.
+ */
+export function normalizeAngleDelta(delta: number, turn = Math.PI * 2): number {
+  if (!Number.isFinite(delta) || !Number.isFinite(turn) || turn <= 0) {
+    return delta
+  }
+  const half = turn / 2
+  let value = delta % turn
+  if (value < -half) {
+    value += turn
+  } else if (value >= half) {
+    value -= turn
+  }
+  return value
+}

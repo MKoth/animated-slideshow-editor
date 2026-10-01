@@ -10,6 +10,7 @@ import {
   orientedCornersForSelection,
   rotationHandleForSelection,
 } from '../pixi/renderer/selectionOverlay'
+import { normalizeAngleDelta, normalizeRotation } from '../engine/transform'
 
 function makeCanvas(): HTMLCanvasElement {
   const canvas = document.createElement('canvas')
@@ -28,7 +29,10 @@ function makeCanvas(): HTMLCanvasElement {
   return canvas
 }
 
-function harness(): any {
+function harness(preview?: {
+  setTransform: (nodeId: string, transform: never) => void
+  clear: () => void
+}): any {
   const engine = createEngine()
   engine.createProject({ name: 'Demo' })
   engine.createSlide('Slide 1')
@@ -50,6 +54,7 @@ function harness(): any {
     getWorldTransform,
     store: useSelectionStore,
     dispatch,
+    ...(preview ? { preview } : {}),
   })
   handle.attach()
   const h: any = {
@@ -233,5 +238,42 @@ describe('handle interaction', () => {
     expect(t.x).toBeCloseTo(300, 0)
     expect(t.y).toBeCloseTo(200, 0)
     expect(t.rotation).not.toBe(0)
+  })
+
+  it('rotation drag across the +/-180-degree branch cut follows the short arc without snapping', () => {
+    const previews: number[] = []
+    const h = harness({
+      setTransform: (_nodeId: string, transform: never) => {
+        previews.push((transform as unknown as { rotation: number }).rotation)
+      },
+      clear: () => {},
+    })
+    const id = nodeAt(h, 'Box', 300, 200)
+    useSelectionStore.getState().select(id)
+    // rotation handle sits above the top center at (300,126): start angle -90 degrees
+    fireMouse(h.canvas, 'mousedown', { button: 0, clientX: 300, clientY: 126 })
+    // sweep left across the atan2 branch cut (180 degrees) in small pointer steps
+    const moves: Array<[number, number]> = [
+      [224, 200],
+      [220, 185],
+      [230, 165],
+      [260, 145],
+    ]
+    for (const [x, y] of moves) {
+      fireMouse(window, 'mousemove', { clientX: x, clientY: y })
+    }
+    fireMouse(window, 'mouseup', { clientX: 260, clientY: 145 })
+    expect(previews.length).toBeGreaterThan(0)
+    // the crossing step (-90deg pointer to 180deg pointer) must take the
+    // -90deg short arc, not snap +270deg through the branch cut
+    expect(previews[0]).toBeCloseTo(-Math.PI / 2, 2)
+    // every preview step stays continuous: no +/-360-degree snap
+    const series = [0, ...previews]
+    for (let i = 1; i < series.length; i++) {
+      expect(Math.abs(normalizeAngleDelta(series[i]! - series[i - 1]!))).toBeLessThan(Math.PI)
+    }
+    // total travel is roughly -90deg -> -36deg, far from a full turn
+    expect(Math.abs(normalizeAngleDelta(previews[previews.length - 1]! - 0))).toBeLessThan(1.2)
+    expect(normalizeRotation(previews[previews.length - 1]!)).toBeCloseTo(-0.63, 1)
   })
 })

@@ -15,6 +15,7 @@ import {
   createCommandSystem,
 } from '../../engine/commands'
 import type { KeyframeTangent } from '../../engine/keyframe'
+import { normalizeRotation } from '../../engine/transform'
 
 function expectOk<T>(result: CommandResult<T>): T {
   if (!result.ok) {
@@ -428,5 +429,62 @@ describe('AnimationEvaluator', () => {
         expect(evaluate(system, nodeId, times[i]).transform.x).toBe(results[i])
       }
     }
+  })
+})
+
+describe('AnimationEvaluator rotation', () => {
+  const DEG = Math.PI / 180
+
+  it('takes the shortest arc from -70 to a contaminated +281 keyframe', () => {
+    const { system, nodeId } = setup()
+    addKeyframe(system, nodeId, 'rotation', 0, -70 * DEG)
+    addKeyframe(system, nodeId, 'rotation', 2, 281 * DEG)
+
+    expect(evaluate(system, nodeId, 0).transform.rotation).toBeCloseTo(-70 * DEG, 10)
+    expect(evaluate(system, nodeId, 1).transform.rotation).toBeCloseTo(-74.5 * DEG, 5)
+    // at the keyframe itself the stored value holds; displayed it is -79
+    expect(normalizeRotation(evaluate(system, nodeId, 2).transform.rotation)).toBeCloseTo(
+      -79 * DEG,
+      6,
+    )
+  })
+
+  it('takes the shortest arc from a contaminated +290 keyframe to -79', () => {
+    const { system, nodeId } = setup()
+    addKeyframe(system, nodeId, 'rotation', 0, 290 * DEG)
+    addKeyframe(system, nodeId, 'rotation', 2, -79 * DEG)
+
+    expect(normalizeRotation(evaluate(system, nodeId, 0).transform.rotation)).toBeCloseTo(
+      -70 * DEG,
+      6,
+    )
+    expect(normalizeRotation(evaluate(system, nodeId, 1).transform.rotation)).toBeCloseTo(
+      -74.5 * DEG,
+      5,
+    )
+    expect(normalizeRotation(evaluate(system, nodeId, 2).transform.rotation)).toBeCloseTo(
+      -79 * DEG,
+      6,
+    )
+  })
+
+  it('crosses the +/-180 boundary the short way (+170 to -170 is +20)', () => {
+    const { system, nodeId } = setup()
+    addKeyframe(system, nodeId, 'rotation', 0, 170 * DEG)
+    addKeyframe(system, nodeId, 'rotation', 2, -170 * DEG)
+
+    expect(evaluate(system, nodeId, 1).transform.rotation).toBeCloseTo(Math.PI, 6)
+    expect(normalizeRotation(evaluate(system, nodeId, 2).transform.rotation)).toBeCloseTo(
+      -170 * DEG,
+      6,
+    )
+  })
+
+  it('leaves non-rotation tracks on plain numeric interpolation', () => {
+    const { system, nodeId } = setup()
+    addKeyframe(system, nodeId, 'positionX', 0, 290)
+    addKeyframe(system, nodeId, 'positionX', 2, -79)
+
+    expect(evaluate(system, nodeId, 1).transform.x).toBeCloseTo((290 + -79) / 2, 10)
   })
 })

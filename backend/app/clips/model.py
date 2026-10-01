@@ -1,4 +1,5 @@
 from datetime import datetime
+from math import pi
 from typing import Any, cast
 from uuid import NAMESPACE_URL, uuid5
 
@@ -182,8 +183,11 @@ _raw_builtins: list[dict[str, object]] = [
         "category": "motion",
         "channels": [{"property": "rotation"}],
         "keyframes": [
+            # Rotation channels are radians (single angle logic everywhere).
+            # Shortest-path interpolation caps one segment below a full turn,
+            # so Rotate performs a half turn; chain the clip for a full spin.
             {"property": "rotation", "time": 0, "value": 0},
-            {"property": "rotation", "time": 1, "value": 360},
+            {"property": "rotation", "time": 1, "value": pi},
         ],
     },
     {
@@ -205,10 +209,11 @@ _raw_builtins: list[dict[str, object]] = [
         "category": "motion",
         "channels": [{"property": "rotation"}],
         "keyframes": [
+            # Rotation channels are radians (single angle logic everywhere).
             {"property": "rotation", "time": 0, "value": 0},
-            {"property": "rotation", "time": 0.25, "value": 10},
-            {"property": "rotation", "time": 0.5, "value": -10},
-            {"property": "rotation", "time": 0.75, "value": 5},
+            {"property": "rotation", "time": 0.25, "value": 10 * pi / 180},
+            {"property": "rotation", "time": 0.5, "value": -10 * pi / 180},
+            {"property": "rotation", "time": 0.75, "value": 5 * pi / 180},
             {"property": "rotation", "time": 1, "value": 0},
         ],
     },
@@ -272,8 +277,9 @@ _raw_builtins: list[dict[str, object]] = [
         "category": "ui",
         "channels": [{"property": "rotation"}],
         "keyframes": [
+            # Rotation channels are radians (single angle logic everywhere).
             {"property": "rotation", "time": 0, "value": 0},
-            {"property": "rotation", "time": 0.5, "value": 30},
+            {"property": "rotation", "time": 0.5, "value": 30 * pi / 180},
         ],
     },
     {
@@ -282,8 +288,9 @@ _raw_builtins: list[dict[str, object]] = [
         "category": "ui",
         "channels": [{"property": "rotation"}],
         "keyframes": [
+            # Rotation channels are radians (single angle logic everywhere).
             {"property": "rotation", "time": 0, "value": 0},
-            {"property": "rotation", "time": 0.25, "value": -20},
+            {"property": "rotation", "time": 0.25, "value": -20 * pi / 180},
             {"property": "rotation", "time": 0.5, "value": 0},
         ],
     },
@@ -293,12 +300,13 @@ _raw_builtins: list[dict[str, object]] = [
         "category": "motion",
         "channels": [{"property": "rotation"}],
         "keyframes": [
+            # Rotation channels are radians (single angle logic everywhere).
             {"property": "rotation", "time": 0, "value": 0},
-            {"property": "rotation", "time": 0.1667, "value": 20},
-            {"property": "rotation", "time": 0.3333, "value": -20},
-            {"property": "rotation", "time": 0.5, "value": 20},
-            {"property": "rotation", "time": 0.6667, "value": -20},
-            {"property": "rotation", "time": 0.8333, "value": 10},
+            {"property": "rotation", "time": 0.1667, "value": 20 * pi / 180},
+            {"property": "rotation", "time": 0.3333, "value": -20 * pi / 180},
+            {"property": "rotation", "time": 0.5, "value": 20 * pi / 180},
+            {"property": "rotation", "time": 0.6667, "value": -20 * pi / 180},
+            {"property": "rotation", "time": 0.8333, "value": 10 * pi / 180},
             {"property": "rotation", "time": 1, "value": 0},
         ],
     },
@@ -333,6 +341,6 @@ for _raw in _raw_builtins:
             "channel_animations": _make_channel_animations(
                 _name, list(cast(Any, _raw["keyframes"]))
             ),
-            "seed_version": 1,
+            "seed_version": 2,
         }
     )

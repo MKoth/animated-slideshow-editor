@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { InterpolationType, KeyframeTangent } from '../../engine/keyframe'
 import { Keyframe, ZERO_TANGENT } from '../../engine/keyframe'
-import { evaluateSegment, registerSegmentInterpolator } from '../../engine/interpolators'
+import {
+  evaluateAngleSegment,
+  evaluateSegment,
+  registerSegmentInterpolator,
+} from '../../engine/interpolators'
+import { normalizeAngleDelta, normalizeRotation } from '../../engine/transform'
+
+const DEG = Math.PI / 180
 
 function keyframe(
   time: number,
@@ -219,5 +226,132 @@ describe('interpolator registry', () => {
     const springTo = keyframe(2, 10, 'spring')
     expect(evaluateSegment(springFrom, springTo, 0)).toBeCloseTo(0)
     expect(evaluateSegment(springFrom, springTo, 2)).toBeCloseTo(10)
+  })
+})
+
+describe('shortest angle delta', () => {
+  it('wraps deltas into [-turn/2, turn/2)', () => {
+    expect(normalizeAngleDelta(9 * DEG)).toBeCloseTo(9 * DEG, 10)
+    expect(normalizeAngleDelta(340 * DEG)).toBeCloseTo(-20 * DEG, 10)
+    expect(normalizeAngleDelta(-340 * DEG)).toBeCloseTo(20 * DEG, 10)
+    expect(normalizeAngleDelta(2 * Math.PI)).toBeCloseTo(0, 10)
+    // exactly half a turn resolves to the negative boundary
+    expect(normalizeAngleDelta(Math.PI)).toBeCloseTo(-Math.PI, 10)
+    expect(normalizeAngleDelta(-Math.PI)).toBeCloseTo(-Math.PI, 10)
+  })
+
+  it('supports a degrees turn for shadow-style angles', () => {
+    expect(normalizeAngleDelta(200, 360)).toBeCloseTo(-160, 10)
+    expect(normalizeAngleDelta(-200, 360)).toBeCloseTo(160, 10)
+    expect(normalizeAngleDelta(30, 360)).toBeCloseTo(30, 10)
+  })
+})
+
+describe('angle segment interpolation', () => {
+  it('linear takes the shortest arc for a contaminated winding (-70 stored vs +290 stored)', () => {
+    const from = keyframe(0, -70 * DEG)
+    const to = keyframe(2, 290 * DEG)
+
+    expect(evaluateAngleSegment(from, to, 0)).toBeCloseTo(-70 * DEG, 10)
+    // delta normalizes to a full turn -> both ends are the same angle
+    expect(evaluateAngleSegment(from, to, 2)).toBeCloseTo(-70 * DEG, 10)
+    expect(evaluateAngleSegment(from, to, 1)).toBeCloseTo(-70 * DEG, 10)
+  })
+
+  it('linear interpolates to a contaminated +281 the short 9-degree way from -70', () => {
+    const from = keyframe(0, -70 * DEG)
+    const to = keyframe(2, 281 * DEG)
+
+    expect(evaluateAngleSegment(from, to, 0)).toBeCloseTo(-70 * DEG, 10)
+    // raw endpoint is the shortest-arc equivalent (to minus one full turn)
+    expect(evaluateAngleSegment(from, to, 2)).toBeCloseTo(-79 * DEG, 6)
+    expect(evaluateAngleSegment(from, to, 1)).toBeCloseTo(-74.5 * DEG, 5)
+  })
+
+  it('linear crosses the +/-180 boundary the short way (+170 to -170 is +20)', () => {
+    const from = keyframe(0, 170 * DEG)
+    const to = keyframe(2, -170 * DEG)
+
+    expect(evaluateAngleSegment(from, to, 1)).toBeCloseTo(Math.PI, 6)
+    // raw endpoint is 190 degrees; displayed it is -170
+    expect(evaluateAngleSegment(from, to, 2)).toBeCloseTo(190 * DEG, 6)
+    expect(normalizeRotation(evaluateAngleSegment(from, to, 2))).toBeCloseTo(-170 * DEG, 6)
+  })
+
+  it('linear equals the plain segment when the stored delta is already shortest', () => {
+    const from = keyframe(0, -70 * DEG)
+    const to = keyframe(2, -79 * DEG)
+
+    for (const time of [0, 0.5, 1, 1.5, 2]) {
+      expect(evaluateAngleSegment(from, to, time)).toBeCloseTo(evaluateSegment(from, to, time), 10)
+    }
+  })
+
+  it('hold stays constant for angles', () => {
+    const from = keyframe(0, 290 * DEG, 'hold')
+    const to = keyframe(2, -79 * DEG, 'hold')
+
+    expect(evaluateAngleSegment(from, to, 1)).toBeCloseTo(290 * DEG, 10)
+  })
+
+  it('bezier ends on the shortest-arc equivalent and preserves the plain-curve shape', () => {
+    const from = keyframe(0, -70 * DEG, 'bezier', ZERO_TANGENT, { time: 0.2, value: 0.05 })
+    const wrapped = keyframe(2, 290 * DEG, 'bezier', { time: -0.2, value: -0.03 }, ZERO_TANGENT)
+    const equivalent = keyframe(2, -70 * DEG, 'bezier', { time: -0.2, value: -0.03 }, ZERO_TANGENT)
+
+    expect(evaluateAngleSegment(from, wrapped, 0)).toBeCloseTo(-70 * DEG, 10)
+    expect(evaluateAngleSegment(from, wrapped, 2)).toBeCloseTo(-70 * DEG, 6)
+    for (const time of [0.5, 1, 1.5]) {
+      expect(evaluateAngleSegment(from, wrapped, time)).toBeCloseTo(
+        evaluateSegment(from, equivalent, time),
+        8,
+      )
+    }
+  })
+
+  it('parametric interpolators follow the short arc between the endpoints', () => {
+    for (const interpolation of ['bounce', 'elastic', 'spring'] as const) {
+      const from = keyframe(0, 170 * DEG, interpolation)
+      const to = keyframe(2, -170 * DEG, interpolation)
+
+      expect(evaluateAngleSegment(from, to, 0)).toBeCloseTo(170 * DEG, 10)
+      // raw endpoint is 190 degrees; displayed it is -170
+      expect(evaluateAngleSegment(from, to, 2)).toBeCloseTo(190 * DEG, 6)
+    }
+  })
+
+  it('parametric equals the plain segment when the stored delta is already shortest', () => {
+    for (const interpolation of ['bounce', 'elastic', 'spring'] as const) {
+      const from = keyframe(0, 0, interpolation)
+      const to = keyframe(2, -0.1, interpolation)
+
+      for (const time of [0.5, 1, 1.5]) {
+        expect(evaluateAngleSegment(from, to, time)).toBeCloseTo(
+          evaluateSegment(from, to, time),
+          10,
+        )
+      }
+    }
+  })
+
+  it('supports degree turns so shadow rotation takes the short arc', () => {
+    const from = keyframe(0, 170, 'linear')
+    const to = keyframe(2, -170, 'linear')
+
+    expect(evaluateAngleSegment(from, to, 1, 360)).toBeCloseTo(180, 8)
+    // raw endpoint is 190 degrees; displayed it is -170
+    expect(evaluateAngleSegment(from, to, 2, 360)).toBeCloseTo(190, 8)
+  })
+
+  it('falls back to plain evaluation for unknown interpolation names', () => {
+    const unregister = registerSegmentInterpolator('customWave', () => 42)
+    try {
+      const from = keyframe(0, 0, 'customWave' as InterpolationType)
+      const to = keyframe(2, 10, 'customWave' as InterpolationType)
+
+      expect(evaluateAngleSegment(from, to, 1)).toBe(42)
+    } finally {
+      unregister()
+    }
   })
 })

@@ -147,8 +147,11 @@ const BUILT_IN_CLIPS: readonly BuiltInClipDefinition[] = [
     params: [],
     channels: [{ property: 'rotation' }],
     keyframes: [
+      // Rotation channels are radians (single angle logic everywhere).
+      // Shortest-path interpolation caps one segment below a full turn, so
+      // Rotate performs a half turn; chain the clip for a full spin.
       { property: 'rotation', time: 0, value: 0 },
-      { property: 'rotation', time: 1, value: 360 },
+      { property: 'rotation', time: 1, value: Math.PI },
     ],
   },
   {
@@ -172,10 +175,11 @@ const BUILT_IN_CLIPS: readonly BuiltInClipDefinition[] = [
     params: [],
     channels: [{ property: 'rotation' }],
     keyframes: [
+      // Rotation channels are radians (single angle logic everywhere).
       { property: 'rotation', time: 0, value: 0 },
-      { property: 'rotation', time: 0.25, value: 10 },
-      { property: 'rotation', time: 0.5, value: -10 },
-      { property: 'rotation', time: 0.75, value: 5 },
+      { property: 'rotation', time: 0.25, value: (10 * Math.PI) / 180 },
+      { property: 'rotation', time: 0.5, value: (-10 * Math.PI) / 180 },
+      { property: 'rotation', time: 0.75, value: (5 * Math.PI) / 180 },
       { property: 'rotation', time: 1, value: 0 },
     ],
   },
@@ -241,8 +245,9 @@ const BUILT_IN_CLIPS: readonly BuiltInClipDefinition[] = [
     params: [],
     channels: [{ property: 'rotation' }],
     keyframes: [
+      // Rotation channels are radians (single angle logic everywhere).
       { property: 'rotation', time: 0, value: 0 },
-      { property: 'rotation', time: 0.5, value: 30 },
+      { property: 'rotation', time: 0.5, value: (30 * Math.PI) / 180 },
     ],
   },
   {
@@ -252,8 +257,9 @@ const BUILT_IN_CLIPS: readonly BuiltInClipDefinition[] = [
     params: [],
     channels: [{ property: 'rotation' }],
     keyframes: [
+      // Rotation channels are radians (single angle logic everywhere).
       { property: 'rotation', time: 0, value: 0 },
-      { property: 'rotation', time: 0.25, value: -20 },
+      { property: 'rotation', time: 0.25, value: (-20 * Math.PI) / 180 },
       { property: 'rotation', time: 0.5, value: 0 },
     ],
   },
@@ -264,12 +270,13 @@ const BUILT_IN_CLIPS: readonly BuiltInClipDefinition[] = [
     params: [],
     channels: [{ property: 'rotation' }],
     keyframes: [
+      // Rotation channels are radians (single angle logic everywhere).
       { property: 'rotation', time: 0, value: 0 },
-      { property: 'rotation', time: 0.1667, value: 20 },
-      { property: 'rotation', time: 0.3333, value: -20 },
-      { property: 'rotation', time: 0.5, value: 20 },
-      { property: 'rotation', time: 0.6667, value: -20 },
-      { property: 'rotation', time: 0.8333, value: 10 },
+      { property: 'rotation', time: 0.1667, value: (20 * Math.PI) / 180 },
+      { property: 'rotation', time: 0.3333, value: (-20 * Math.PI) / 180 },
+      { property: 'rotation', time: 0.5, value: (20 * Math.PI) / 180 },
+      { property: 'rotation', time: 0.6667, value: (-20 * Math.PI) / 180 },
+      { property: 'rotation', time: 0.8333, value: (10 * Math.PI) / 180 },
       { property: 'rotation', time: 1, value: 0 },
     ],
   },

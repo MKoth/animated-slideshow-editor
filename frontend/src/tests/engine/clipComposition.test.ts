@@ -112,6 +112,19 @@ function assignClip(
 }
 
 describe('clip composition', () => {
+  it('rotation channel: takes the shortest arc between clip keyframes', () => {
+    const DEG = Math.PI / 180
+    const { system, nodeId } = setup()
+    const clipId = createClipWithChannel(system, 'rotation', [
+      { time: 0, value: -70 * DEG },
+      { time: 1, value: 281 * DEG },
+    ])
+    assignClip(system, nodeId, clipId)
+
+    expect(evaluate(system, nodeId, 0).transform.rotation).toBeCloseTo(-70 * DEG, 10)
+    expect(evaluate(system, nodeId, 0.5).transform.rotation).toBeCloseTo(-74.5 * DEG, 5)
+  })
+
   it('single unlinked channel: kf(u) absolute overwrites base', () => {
     const { system, nodeId } = setup()
     const clipId = createClipWithChannel(system, 'positionX', [
@@ -682,6 +695,20 @@ describe('built-in clips', () => {
     expect(names).toContain('Blink')
     expect(names).toContain('Wobble')
     expect(names).toContain('Jump')
+  })
+
+  it('rotation channels are stored in radians (single logic for every angle)', () => {
+    const clips = createBuiltInClips()
+    let rotationChannels = 0
+    for (const clip of clips) {
+      const anim = clip.channelAnimation('rotation')
+      if (!anim) continue
+      rotationChannels += 1
+      for (const kf of anim.keyframes()) {
+        expect(Math.abs(kf.value as number)).toBeLessThanOrEqual(Math.PI + 1e-9)
+      }
+    }
+    expect(rotationChannels).toBeGreaterThan(0)
   })
 })
 

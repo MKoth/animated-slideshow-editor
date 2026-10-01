@@ -5,9 +5,9 @@ import type { MaterialParameterKindOf } from './keyframeTarget'
 import type { SceneNode } from './sceneNode'
 import { isGroupNode } from './sceneNode'
 import type { Slide } from './slide'
-import { identityTransform, pivotsEqual } from './transform'
+import { identityTransform, normalizeAngleDelta, pivotsEqual } from './transform'
 import type { Transform, Pivot } from './transform'
-import { evaluateSegment } from './interpolators'
+import { evaluateAngleSegment, evaluateSegment } from './interpolators'
 import { evaluateMaterialTrackValue } from './materialTrackEvaluation'
 import type { AnimationProperty } from './animationProperties'
 import type { ClipDefinition } from './clipDefinition'
@@ -227,6 +227,7 @@ export class AnimationEvaluator {
       animation?.keyframes('rotation'),
       clampedTime,
       transform.rotation,
+      true,
     )
     evaluated.scaleX = this.#evaluate(animation?.keyframes('scaleX'), clampedTime, transform.scaleX)
     evaluated.scaleY = this.#evaluate(animation?.keyframes('scaleY'), clampedTime, transform.scaleY)
@@ -462,7 +463,12 @@ export class AnimationEvaluator {
           result.color = this.#evaluateShadowColor(keyframes, clampedTime, base.color)
         } else {
           const fallback = base[prop as Exclude<ShadowProperty, 'color'>] as number
-          const evaluated = this.#evaluateShadowNumeric(keyframes, clampedTime, fallback)
+          const evaluated = this.#evaluateShadowNumeric(
+            keyframes,
+            clampedTime,
+            fallback,
+            prop === 'rotation' ? 360 : undefined,
+          )
           ;(result as unknown as Record<string, unknown>)[prop] = evaluated
         }
       }
@@ -532,7 +538,12 @@ export class AnimationEvaluator {
     return result
   }
 
-  #evaluateShadowNumeric(keyframes: readonly Keyframe[], time: number, fallback: number): number {
+  #evaluateShadowNumeric(
+    keyframes: readonly Keyframe[],
+    time: number,
+    fallback: number,
+    angleTurn?: number,
+  ): number {
     if (!keyframes || keyframes.length === 0) return fallback
     const enabled = enabledKeyframes(keyframes)
     if (enabled.length === 0) return fallback
@@ -544,7 +555,9 @@ export class AnimationEvaluator {
       const from = enabled[i]
       const to = enabled[i + 1]
       if (to.time > from.time && time >= from.time && time < to.time) {
-        return evaluateSegment(from, to, time)
+        return angleTurn === undefined
+          ? evaluateSegment(from, to, time)
+          : evaluateAngleSegment(from, to, time, angleTurn)
       }
     }
     return last.value as number
@@ -591,7 +604,11 @@ export class AnimationEvaluator {
         const anim = clip.shadowChannelAnimation(prop as ShadowProperty)
         if (!anim || anim.length === 0) continue
         const effU = effectiveUForClip(clip, anim.keyframes(), u)
-        const kfValue = this.#evaluateClipShadowNumeric(anim.keyframes(), effU)
+        const kfValue = this.#evaluateClipShadowNumeric(
+          anim.keyframes(),
+          effU,
+          prop === 'rotation' ? 360 : undefined,
+        )
         // Opacity clip should not be re-multiplied by nodeOpacity; last-wins directly
         ;(state as unknown as Record<string, unknown>)[prop] = kfValue
       }
@@ -622,7 +639,11 @@ export class AnimationEvaluator {
     }
   }
 
-  #evaluateClipShadowNumeric(keyframes: readonly Keyframe[], u: number): number {
+  #evaluateClipShadowNumeric(
+    keyframes: readonly Keyframe[],
+    u: number,
+    angleTurn?: number,
+  ): number {
     if (keyframes.length === 0) return 0
     const first = keyframes[0]
     if (u <= first.time) return first.value as number
@@ -632,7 +653,9 @@ export class AnimationEvaluator {
       const from = keyframes[i]
       const to = keyframes[i + 1]
       if (to.time > from.time && u >= from.time && u < to.time) {
-        return evaluateSegment(from, to, u)
+        return angleTurn === undefined
+          ? evaluateSegment(from, to, u)
+          : evaluateAngleSegment(from, to, u, angleTurn)
       }
     }
     return last.value as number
@@ -1733,7 +1756,11 @@ export class AnimationEvaluator {
         }
 
         const effU = effectiveUForClip(clip, channelAnim.keyframes(), u)
-        const kfValue = this.#evaluateClipChannel(channelAnim.keyframes(), effU)
+        const kfValue = this.#evaluateClipChannel(
+          channelAnim.keyframes(),
+          effU,
+          channel === 'rotation',
+        )
 
         let output: number
         if (channelDef.paramKey) {
@@ -1807,7 +1834,7 @@ export class AnimationEvaluator {
                   const enabled = enabledKeyframes(anim.keyframes())
                   if (enabled.length > 0) {
                     const effU = effectiveUForClip(entry.clip, enabled, entry.uPrime)
-                    const kfVal = this.#evaluateClipChannel(enabled, effU)
+                    const kfVal = this.#evaluateClipChannel(enabled, effU, channel === 'rotation')
                     if (channelDef.paramKey) {
                       const paramVal = entry.clip.getParam(channelDef.paramKey)?.default ?? 1
                       const base = baseValues.get(channel) ?? 0
@@ -1828,12 +1855,18 @@ export class AnimationEvaluator {
               if (gi === 0) blended = cur
               else {
                 const base = baseValues.get(channel) ?? 0
-                blended = base + ((cur as number) - base) * blend
+                blended =
+                  channel === 'rotation'
+                    ? base + normalizeAngleDelta((cur as number) - base) * blend
+                    : base + ((cur as number) - base) * blend
               }
             } else if (cur === undefined) {
               // keep blended verbatim
             } else {
-              blended = blended + (cur - blended) * blend
+              blended =
+                channel === 'rotation'
+                  ? blended + normalizeAngleDelta(cur - blended) * blend
+                  : blended + (cur - blended) * blend
             }
           }
           if (blended === undefined) continue
@@ -2271,7 +2304,11 @@ export class AnimationEvaluator {
                   cur =
                     property === 'color'
                       ? this.#evaluateClipShadowColorValue(kf, effU)
-                      : this.#evaluateClipShadowNumeric(kf, effU)
+                      : this.#evaluateClipShadowNumeric(
+                          kf,
+                          effU,
+                          property === 'rotation' ? 360 : undefined,
+                        )
                   hasCur = true
                 }
               }
@@ -2286,6 +2323,10 @@ export class AnimationEvaluator {
                 const base = baseMap.get(property)
                 if (property === 'color') {
                   blended = lerpHexColor(base as string, cur as string, blendEarly)
+                } else if (property === 'rotation') {
+                  blended =
+                    (base as number) +
+                    normalizeAngleDelta((cur as number) - (base as number), 360) * blendEarly
                 } else {
                   blended = (base as number) + ((cur as number) - (base as number)) * blendEarly
                 }
@@ -2296,6 +2337,10 @@ export class AnimationEvaluator {
             } else {
               if (property === 'color') {
                 blended = lerpHexColor(blended as string, cur as string, blendEarly)
+              } else if (property === 'rotation') {
+                blended =
+                  (blended as number) +
+                  normalizeAngleDelta((cur as number) - (blended as number), 360) * blendEarly
               } else {
                 blended = (blended as number) + ((cur as number) - (blended as number)) * blendEarly
               }
@@ -2423,7 +2468,7 @@ export class AnimationEvaluator {
     }
   }
 
-  #evaluateClipChannel(keyframes: readonly Keyframe[], u: number): number {
+  #evaluateClipChannel(keyframes: readonly Keyframe[], u: number, angle = false): number {
     if (keyframes.length === 0) {
       return 0
     }
@@ -2439,13 +2484,18 @@ export class AnimationEvaluator {
       const from = keyframes[i]
       const to = keyframes[i + 1]
       if (to.time > from.time && u >= from.time && u < to.time) {
-        return evaluateSegment(from, to, u)
+        return angle ? evaluateAngleSegment(from, to, u) : evaluateSegment(from, to, u)
       }
     }
     return last.value as number
   }
 
-  #evaluate(keyframes: readonly Keyframe[] | undefined, time: number, fallback: number): number {
+  #evaluate(
+    keyframes: readonly Keyframe[] | undefined,
+    time: number,
+    fallback: number,
+    angle = false,
+  ): number {
     if (!keyframes || keyframes.length === 0) {
       return fallback
     }
@@ -2463,7 +2513,7 @@ export class AnimationEvaluator {
       const from = enabled[i]
       const to = enabled[i + 1]
       if (to.time > from.time && time >= from.time && time < to.time) {
-        return evaluateSegment(from, to, time)
+        return angle ? evaluateAngleSegment(from, to, time) : evaluateSegment(from, to, time)
       }
     }
     return last.value as number

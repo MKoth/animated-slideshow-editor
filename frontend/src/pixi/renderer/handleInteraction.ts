@@ -28,6 +28,7 @@ import { useNotificationStore } from '../../stores/notificationStore'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { useUiStore } from '../../stores/uiStore'
 import type { Transform } from '../../engine/transform'
+import { normalizeAngleDelta, normalizeRotation } from '../../engine/transform'
 import { isGroupNode } from '../../engine/sceneNode'
 import { autoKeyCommands, dispatchKeyframeCommands } from '../../engine/keyframeEdit'
 import type { TimedKeyframeEdit } from '../../engine/keyframeEdit'
@@ -95,6 +96,8 @@ export class HandleInteraction {
   #startMouseWorld: WorldPoint | null = null
   #lastPreviewTransform: Transform | null = null
   #startAngle = 0
+  #lastPointerAngle: number | null = null
+  #rotationDelta = 0
   #blocked = false
   #blockedNotified = false
 
@@ -149,6 +152,8 @@ export class HandleInteraction {
     this.#handleLocal = null
     this.#startMouseWorld = null
     this.#lastPreviewTransform = null
+    this.#lastPointerAngle = null
+    this.#rotationDelta = 0
     this.#blocked = false
     this.#blockedNotified = false
   }
@@ -300,6 +305,8 @@ export class HandleInteraction {
     } else {
       this.#startMouseWorld = { ...point }
       this.#startAngle = Math.atan2(point.y - world.y, point.x - world.x)
+      this.#lastPointerAngle = this.#startAngle
+      this.#rotationDelta = 0
     }
     this.#dragging = false
     this.#startMouseWorld = { ...point }
@@ -353,8 +360,12 @@ export class HandleInteraction {
     if (!this.#nodeId || !this.#initialWorld || !this.#initialLocal) return
     const pivotWorld = { x: this.#initialWorld.x, y: this.#initialWorld.y }
     const currentAngle = Math.atan2(point.y - pivotWorld.y, point.x - pivotWorld.x)
-    const delta = currentAngle - this.#startAngle
-    const newWorldRotation = this.#initialWorld.rotation + delta
+    // Accumulate the shortest arc between consecutive pointer positions so
+    // crossing the atan2 +/-180-degree branch cut cannot inject a full turn.
+    const lastAngle = this.#lastPointerAngle ?? this.#startAngle
+    this.#rotationDelta += normalizeAngleDelta(currentAngle - lastAngle)
+    this.#lastPointerAngle = currentAngle
+    const newWorldRotation = this.#initialWorld.rotation + this.#rotationDelta
     const newWorld: WorldTransform = {
       x: pivotWorld.x,
       y: pivotWorld.y,
@@ -625,7 +636,7 @@ export class HandleInteraction {
       if (final.rotation !== initial.rotation) {
         edits.push({
           target: { kind: 'node', nodeId, property: 'rotation' },
-          value: final.rotation,
+          value: normalizeRotation(final.rotation),
           time,
         })
       }

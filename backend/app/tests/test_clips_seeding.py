@@ -54,7 +54,7 @@ def test_seeded_builtins_have_correct_metadata(settings: Settings) -> None:
         assert definition.duration == float(cast(float, builtin["duration"]))
         assert definition.category == str(builtin["category"])
         assert definition.is_builtin is True
-        assert definition.seed_version == 1
+        assert definition.seed_version == 2
 
 
 def test_seeded_builtins_have_channel_animations(settings: Settings) -> None:
@@ -155,7 +155,7 @@ def test_seed_upgrades_a_stale_builtin_in_place(settings: Settings) -> None:
 
     definition = library.get(fade_in_id)
     assert definition.name == "Fade In"
-    assert definition.seed_version == 1
+    assert definition.seed_version == 2
 
 
 def test_seeded_clip_ids_are_deterministic(settings: Settings) -> None:
@@ -167,3 +167,18 @@ def test_seeded_clip_ids_are_deterministic(settings: Settings) -> None:
 
     second_ids = {definition.id for definition in restarted.list_all()}
     assert first_ids == second_ids
+
+
+def test_builtin_rotation_channels_are_radians() -> None:
+    from math import pi
+
+    found = 0
+    for builtin in BUILTIN_CLIPS:
+        animations = cast(dict[str, Any], builtin["channel_animations"])
+        rotation = animations.get("rotation")
+        if rotation is None:
+            continue
+        found += 1
+        for kf in cast(list[dict[str, Any]], cast(dict[str, Any], rotation)["keyframes"]):
+            assert abs(float(kf["value"])) <= pi + 1e-9
+    assert found > 0

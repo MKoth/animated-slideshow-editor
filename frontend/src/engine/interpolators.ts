@@ -1,4 +1,5 @@
 import type { Keyframe } from './keyframe'
+import { normalizeAngleDelta } from './transform'
 
 /**
  * The interpolation rule for the values between two keyframes of a track.
@@ -6,6 +7,9 @@ import type { Keyframe } from './keyframe'
  * (Spec 07 R12). Read-only, deterministic, and allocation-free.
  */
 export type SegmentInterpolator = (from: Keyframe, to: Keyframe, time: number) => number
+
+/** Full turn assumed by angle interpolation when the caller passes none. */
+export const ANGLE_TURN_RADIANS = Math.PI * 2
 
 const registry = new Map<string, SegmentInterpolator>()
 
@@ -70,15 +74,23 @@ function wrappedLinearValue(
  * curve time is solved analytically (Cardano) — no sampling, deterministic.
  */
 function bezierSegment(from: Keyframe, to: Keyframe, time: number): number {
-  const segmentTime = to.time - from.time
-  const ratio = (time - from.time) / segmentTime
-  const x1 = from.tangentOut.time / segmentTime
-  const x2 = 1 + to.tangentIn.time / segmentTime
-  const u = cubicRootInUnitInterval(x1, x2, ratio) ?? ratio
+  const u = curveTimeForSegment(from, to, time)
   const v0 = from.value as number
   const v1 = v0 + from.tangentOut.value
   const v2 = (to.value as number) + to.tangentIn.value
   const v3 = to.value as number
+  return bezierValueAt(u, v0, v1, v2, v3)
+}
+
+function curveTimeForSegment(from: Keyframe, to: Keyframe, time: number): number {
+  const segmentTime = to.time - from.time
+  const ratio = (time - from.time) / segmentTime
+  const x1 = from.tangentOut.time / segmentTime
+  const x2 = 1 + to.tangentIn.time / segmentTime
+  return cubicRootInUnitInterval(x1, x2, ratio) ?? ratio
+}
+
+function bezierValueAt(u: number, v0: number, v1: number, v2: number, v3: number): number {
   const oneMinus = 1 - u
   return (
     oneMinus * oneMinus * oneMinus * v0 +
@@ -88,11 +100,67 @@ function bezierSegment(from: Keyframe, to: Keyframe, time: number): number {
   )
 }
 
+/**
+ * Angle-aware segment evaluation: like {@link evaluateSegment} but the
+ * segment travels the shortest arc between the endpoint angles. `turn` is
+ * the full turn of the value domain (2π for radian rotation, 360 for
+ * degree domains such as shadow rotation). `hold` is unchanged; `linear`,
+ * `bezier`, and the parametric easing types interpolate along the shortest
+ * delta; unknown interpolation names fall back to plain evaluation.
+ * Read-only, deterministic, and allocation-free.
+ */
+export function evaluateAngleSegment(
+  from: Keyframe,
+  to: Keyframe,
+  time: number,
+  turn: number = ANGLE_TURN_RADIANS,
+): number {
+  const v0 = from.value as number
+  const v3raw = to.value as number
+  if (from.interpolation === 'hold') {
+    return v0
+  }
+  const delta = normalizeAngleDelta(v3raw - v0, turn)
+  if (from.interpolation === 'linear') {
+    const ratio = (time - from.time) / (to.time - from.time)
+    return v0 + delta * ratio
+  }
+  if (from.interpolation === 'bezier') {
+    // Translate the tail of the curve by whole turns so it ends on the
+    // shortest-arc equivalent of `to`; tangents keep their slope shape.
+    const shift = delta - (v3raw - v0)
+    const u = curveTimeForSegment(from, to, time)
+    const v1 = v0 + from.tangentOut.value
+    const v2 = v3raw + to.tangentIn.value + shift
+    const v3 = v3raw + shift
+    return bezierValueAt(u, v0, v1, v2, v3)
+  }
+  const easing = easingFor(from.interpolation)
+  if (easing !== undefined) {
+    const ratio = (time - from.time) / (to.time - from.time)
+    return v0 + delta * easing(ratio)
+  }
+  return evaluateSegment(from, to, time)
+}
+
 registerSegmentInterpolator('hold', holdSegment)
 registerSegmentInterpolator('linear', linearSegment)
 registerSegmentInterpolator('bezier', bezierSegment)
 
 type EasingFn = (t: number) => number
+
+function easingFor(interpolation: string): EasingFn | undefined {
+  switch (interpolation) {
+    case 'bounce':
+      return bounceEaseOut
+    case 'elastic':
+      return elasticEaseOut
+    case 'spring':
+      return springEase
+    default:
+      return undefined
+  }
+}
 
 function parametricSegment(easing: EasingFn): SegmentInterpolator {
   return (from: Keyframe, to: Keyframe, time: number): number => {

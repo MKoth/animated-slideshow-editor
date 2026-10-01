@@ -200,6 +200,8 @@ function buildCurves(
             label,
             keyframes,
             color: PROPERTY_COLORS[prop] ?? '#ffffff',
+            // Shadow rotation is degrees; node/clip rotation is radians.
+            ...(prop === 'rotation' ? { angleTurn: 360 } : {}),
           })
         }
       }
