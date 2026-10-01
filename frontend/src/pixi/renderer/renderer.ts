@@ -851,7 +851,7 @@ export class Renderer {
         const time = this.#currentTime.getTime(slideId)
         this.#transformSource?.updateIKOverrides(slideId, time)
       }
-      this.#sceneRenderer?.handleTimeChanged()
+      this.#sceneRenderer?.handleTimeChanged({ refreshMeshSizes: false })
       if (this.#transformSource) {
         const rotations = this.#transformSource.getIKOverrides()
         this.#sceneRenderer?.applyIKOverrides(rotations)

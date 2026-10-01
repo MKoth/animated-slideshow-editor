@@ -273,6 +273,7 @@ export class MeshOverlay {
   #unsubscribeShapePreview: (() => void) | null = null
   #unsubscribeVisibility: (() => void) | null = null
   #lastCameraScale: number | null = null
+  #edgesByFaces = new WeakMap<MeshData['faces'], readonly MeshEdge[]>()
 
   constructor(context: MeshOverlayContext) {
     this.#pixi = context.pixi
@@ -392,6 +393,14 @@ export class MeshOverlay {
     })
   }
 
+  #edgesFor(mesh: MeshData): readonly MeshEdge[] {
+    const cached = this.#edgesByFaces.get(mesh.faces)
+    if (cached) return cached
+    const edges = extractEdges(mesh)
+    this.#edgesByFaces.set(mesh.faces, edges)
+    return edges
+  }
+
   setPreviewVertices(positions: Map<number, { x: number; y: number }>): void {
     this.#previewVertices = positions
   }
@@ -501,28 +510,16 @@ export class MeshOverlay {
     const worldVertices = deformed.map((v) => localToWorld(v.x, v.y, transform, pivotOffset))
     const scale = this.#cameraScale()
     const wireWidth = WIREFRAME_WIDTH / scale
-    for (const face of mesh.faces) {
-      const v0 = worldVertices[face.v0]
-      const v1 = worldVertices[face.v1]
-      const v2 = worldVertices[face.v2]
-      if (v0 && v1) {
-        graphics
-          .moveTo(v0.x, v0.y)
-          .lineTo(v1.x, v1.y)
-          .stroke({ width: wireWidth, color: WIREFRAME_COLOR })
-      }
-      if (v1 && v2) {
-        graphics
-          .moveTo(v1.x, v1.y)
-          .lineTo(v2.x, v2.y)
-          .stroke({ width: wireWidth, color: WIREFRAME_COLOR })
-      }
-      if (v2 && v0) {
-        graphics
-          .moveTo(v2.x, v2.y)
-          .lineTo(v0.x, v0.y)
-          .stroke({ width: wireWidth, color: WIREFRAME_COLOR })
-      }
+    let hasEdge = false
+    for (const edge of this.#edgesFor(mesh)) {
+      const v0 = worldVertices[edge.v0]
+      const v1 = worldVertices[edge.v1]
+      if (!v0 || !v1) continue
+      graphics.moveTo(v0.x, v0.y).lineTo(v1.x, v1.y)
+      hasEdge = true
+    }
+    if (hasEdge) {
+      graphics.stroke({ width: wireWidth, color: WIREFRAME_COLOR })
     }
   }
 

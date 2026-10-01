@@ -91,6 +91,30 @@ export class FakeGraphics extends FakeContainer {
   readonly kind = 'graphics'
   readonly ops: string[] = []
   readonly calls: FakeGraphicsCall[] = []
+  /**
+   * Mirrors `Graphics#destroy` in pixi.js v8: a Graphics created without an
+   * explicit context owns one, and that owned context is only destroyed when
+   * destroy is called with no options or with `{ context: true }`. Passing
+   * `{ children: true }` silently keeps the owned context alive — the exact
+   * leak that exhausts the heap when silhouettes are rebuilt per frame.
+   */
+  contextDestroyed = false
+
+  constructor() {
+    super()
+    pixiRegistry.graphics.push(this)
+  }
+
+  override destroy(options?: { children?: boolean; context?: boolean } | boolean): void {
+    if (
+      options === undefined ||
+      options === true ||
+      (typeof options === 'object' && options.context === true)
+    ) {
+      this.contextDestroyed = true
+    }
+    super.destroy(options as { children?: boolean })
+  }
 
   #record(method: string, args: unknown[]): void {
     this.ops.push(method)
@@ -331,10 +355,15 @@ export class FakeBlurFilter extends FakeFilter {
   constructor(
     options: { strength?: number; quality?: number; kernelSize?: number } & FakeFilterOptions = {
       glProgram: fakeGlPrograms.from({ vertex: '', fragment: '' }),
-    } as unknown as { strength?: number; quality?: number; kernelSize?: number } & FakeFilterOptions,
+    } as unknown as {
+      strength?: number
+      quality?: number
+      kernelSize?: number
+    } & FakeFilterOptions,
   ) {
     // Allow calling with just {strength, quality, kernelSize} without glProgram
-    const glProgram = (options as FakeFilterOptions).glProgram ?? fakeGlPrograms.from({ vertex: '', fragment: '' })
+    const glProgram =
+      (options as FakeFilterOptions).glProgram ?? fakeGlPrograms.from({ vertex: '', fragment: '' })
     super({ glProgram, resources: (options as FakeFilterOptions).resources })
     this.strength = (options as { strength?: number }).strength ?? 8
     this.quality = (options as { quality?: number }).quality ?? 4
@@ -485,9 +514,11 @@ export class FakeApplication {
 
 export const pixiRegistry = {
   applications: [] as FakeApplication[],
+  graphics: [] as FakeGraphics[],
   failNextInit: false,
   reset(): void {
     this.applications.length = 0
+    this.graphics.length = 0
     this.failNextInit = false
   },
 }

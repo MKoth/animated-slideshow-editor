@@ -414,7 +414,7 @@ export class SceneRenderer {
     this.#flushShadowDirty()
   }
 
-  handleTimeChanged(): void {
+  handleTimeChanged(options: { refreshMeshSizes?: boolean } = {}): void {
     const scene = this.#scene
     if (!scene) {
       return
@@ -422,7 +422,9 @@ export class SceneRenderer {
     for (const node of walkPreOrder(scene.root)) {
       this.#evaluateAndApply(node.id)
     }
-    this.refreshDeformedMeshSizes()
+    if (options.refreshMeshSizes !== false) {
+      this.refreshDeformedMeshSizes()
+    }
     const time = this.#slideId ? this.#currentTime.getTime(this.#slideId) : 0
     for (const gid of [...this.#shadowContainers.keys()]) {
       this.#updateShadowIfNeeded(gid, time)
@@ -492,14 +494,15 @@ export class SceneRenderer {
       return
     }
     const time = this.#currentTime.getTime(slideId)
+    const nodes = [...walkPreOrder(scene.root)]
     const bones = new Map<string, WorldTransform>()
-    for (const node of walkPreOrder(scene.root)) {
+    for (const node of nodes) {
       if (node.components.bone) {
         const transform = this.#engineWorldTransform(node.id, time)
         if (transform) bones.set(node.id, transform)
       }
     }
-    for (const node of walkPreOrder(scene.root)) {
+    for (const node of nodes) {
       const rawMesh = node.components.mesh?.mesh
       if (rawMesh) {
         // If shape preview is active (Inspector highlight), reuse preview mesh directly
@@ -2593,7 +2596,7 @@ export class SceneRenderer {
         void 0
       }
     }
-    temp.destroy({ children: true })
+    temp.destroy({ children: true, context: true })
     // Update sprite with evaluated projection (position→rotation→scale→skew) and bake alpha
     this.#updateShadowSpriteProps(groupId, evaluated)
     this.#shadowLastCasterHash.set(groupId, casterHash)
