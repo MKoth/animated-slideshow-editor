@@ -61,17 +61,20 @@ describe('collectionFreeze', () => {
     expect(end).toBe(6)
   })
 
-  it('preview last copies one key per driven track at block end', () => {
+  it('preview last copies end keys plus hold prefixes at block start', () => {
     const { engine, placementId } = setupPlacedCollection()
     const preview = previewCollectionFreeze(engine, { placementId, source: 'last' })
-    expect(preview.totalWrites).toBe(2)
+    // 2 end keys + 2 hold prefixes (tracks start empty; a lone key would
+    // otherwise drive the whole slide, including before the block)
+    expect(preview.totalWrites).toBe(4)
     expect(preview.targetTime).toBe(6)
     const byName = new Map(preview.entries.map((e) => [e.nodeName, e.writeCount]))
-    expect(byName.get('Paw')).toBe(1)
-    expect(byName.get('Tail')).toBe(1)
+    expect(byName.get('Paw')).toBe(2)
+    expect(byName.get('Tail')).toBe(2)
+    expect(preview.warnings.some((w) => w.includes('hold key'))).toBe(true)
   })
 
-  it('execute last writes last clip values at block end', () => {
+  it('execute last writes last clip values at block end with base hold at start', () => {
     const { engine, dispatcher, undoStack, placementId, paw, tail } = setupPlacedCollection()
     const res = executeCollectionFreeze(engine, dispatcher.dispatch.bind(dispatcher), undoStack, {
       placementId,
@@ -79,14 +82,19 @@ describe('collectionFreeze', () => {
     })
     expect(res.ok).toBe(true)
     if (!res.ok) throw new Error('expected ok')
-    expect(res.writtenCount).toBe(2)
+    expect(res.writtenCount).toBe(4)
     expect(res.targetTime).toBe(6)
     expect(engine.getKeyframes(paw.id, 'positionX').map((k) => [k.time, k.value])).toEqual([
+      [2, 0],
       [6, 30],
     ])
     expect(engine.getKeyframes(tail.id, 'positionX').map((k) => [k.time, k.value])).toEqual([
+      [2, 0],
       [6, 300],
     ])
+    // prefix is hold with zero tangents so the pre-block pose is untouched
+    const prefix = engine.getKeyframes(paw.id, 'positionX').find((k) => k.time === 2)!
+    expect(prefix.interpolation).toBe('hold')
   })
 
   it('execute first writes first clip values at block end', () => {
@@ -98,10 +106,28 @@ describe('collectionFreeze', () => {
     expect(res.ok).toBe(true)
     if (!res.ok) throw new Error('expected ok')
     expect(engine.getKeyframes(paw.id, 'positionX').map((k) => [k.time, k.value])).toEqual([
+      [2, 0],
       [6, 10],
     ])
     expect(engine.getKeyframes(tail.id, 'positionX').map((k) => [k.time, k.value])).toEqual([
+      [2, 0],
       [6, 100],
+    ])
+  })
+
+  it('skips the hold prefix on tracks that already have keys', () => {
+    const { engine, dispatcher, undoStack, placementId, paw } = setupPlacedCollection()
+    engine.addKeyframe({ kind: 'node', nodeId: paw.id, property: 'positionX' }, 1, 5)
+    const res = executeCollectionFreeze(engine, dispatcher.dispatch.bind(dispatcher), undoStack, {
+      placementId,
+      source: 'last',
+    })
+    expect(res.ok).toBe(true)
+    if (!res.ok) throw new Error('expected ok')
+    // pre-existing key at 1, frozen key at 6, no prefix at 2 for paw
+    expect(engine.getKeyframes(paw.id, 'positionX').map((k) => [k.time, k.value])).toEqual([
+      [1, 5],
+      [6, 30],
     ])
   })
 })

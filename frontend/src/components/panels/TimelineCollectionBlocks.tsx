@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { SceneNode } from '../../engine'
-import { useEngine } from '../../app/useEngine'
+import { useEngine, useEngineEvent } from '../../app/useEngine'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useTimelineViewStore } from '../../stores/timelineViewStore'
 import {
@@ -16,6 +16,7 @@ import {
 } from '../../app/collectionLaneActions'
 import { executeCollectionFreeze, previewCollectionFreeze } from '../../engine/collectionFreeze'
 import type { FreezePoseSource } from '../../engine/collectionFreeze'
+import { DeleteCollectionPlacementCommand } from '../../engine/commands'
 
 interface DragState {
   mode: 'move' | 'resize-left' | 'resize-right' | 'reorder'
@@ -80,6 +81,12 @@ export function TimelineCollectionBlocks({
     dragRef.current = d
     setDrag(d)
   }
+
+  // Invalidate the packed lanes on ANY engine mutation (placement deleted in
+  // the Animation Manager, undo/redo, member edits elsewhere). Scene nodes
+  // are mutated in place, so the lanes memo on stable node/engine refs would
+  // otherwise keep showing deleted blocks as ghosts.
+  useEngineEvent(() => setTick((t) => t + 1))
 
   const getClip = (id: string) => {
     try {
@@ -147,10 +154,15 @@ export function TimelineCollectionBlocks({
         }
         let raw = cur.initialStart + deltaPx / ppsNow
         raw = Math.max(0, raw)
+        // Clamp to slide duration: beyond-duration placements never evaluate
+        // and go invisible in the Animation Manager (%-positioned, clipped),
+        // while lingering in the timeline padding zone as phantoms.
+        raw = Math.min(raw, durationRef.current)
         if (gridSnapRef.current) {
           // light grid snap to 0.1s like timeline ruler; full bar-edge snap
           // would need sibling edges — keep move simple on main lane.
           raw = Math.round(raw * 10) / 10
+          raw = Math.min(raw, durationRef.current)
         }
         const updated: DragState = { ...cur, previewStart: raw }
         dragRef.current = updated
@@ -202,6 +214,7 @@ export function TimelineCollectionBlocks({
             cur.placementId,
             cur.previewStart,
             cur.initialStart,
+            { maxStartTime: durationRef.current },
           )
         } else if (cur.mode === 'resize-right') {
           commitCollectionStretch(env, dispatchRef.current as never, {
@@ -466,9 +479,45 @@ export function TimelineCollectionBlocks({
             >
               Freeze LAST pose after block
             </button>
+            <button
+              role="menuitem"
+              data-testid="timeline-collection-delete"
+              style={{ ...menuItemStyle, color: 'var(--color-danger, #c00)' }}
+              onClick={() => {
+                const id = menu.placementId
+                let name = id.slice(0, 8)
+                try {
+                  const placement = engine.getCollectionPlacement(id)
+                  name = engine.getClipCollection(placement.collectionId).name
+                } catch {
+                  // fall back to short id
+                }
+                setMenu(null)
+                if (!window.confirm(`Delete collection placement "${name}" and its clip lanes?`))
+                  return
+                const result = dispatch(
+                  new DeleteCollectionPlacementCommand({ placementId: id }) as never,
+                )
+                if (!result.ok) notify(result.error.message)
+                else {
+                  const count =
+                    (result.inverse as { memberInstances?: readonly unknown[] }).memberInstances
+                      ?.length ?? 0
+                  notify(
+                    count > 0
+                      ? `Deleted collection placement (+${count} clip lane(s) removed)`
+                      : 'Deleted collection placement',
+                  )
+                  setTick((t) => t + 1)
+                }
+              }}
+            >
+              Delete placement
+            </button>
             <div style={{ fontSize: 10, color: '#888', padding: '4px 10px' }}>
               Copies first/last clip keys to node tracks at block end so the pose holds after the
-              collection ends. Add blocks in Animation Manager.
+              collection ends, plus a hold key at block start on untouched tracks. Add blocks in
+              Animation Manager.
             </div>
           </div>
         </>

@@ -39,14 +39,19 @@ export function commitCollectionMove(
   placementId: string,
   previewStart: number,
   initialStart: number,
+  options?: { maxStartTime?: number },
 ): boolean {
-  const delta = previewStart - initialStart
+  const clampedPreview =
+    options?.maxStartTime !== undefined
+      ? Math.min(Math.max(0, previewStart), options.maxStartTime)
+      : previewStart
+  const delta = clampedPreview - initialStart
   if (Math.abs(delta) <= 1e-6) return false
   const members = env.getPlacementMembers(placementId)
   const cmds: import('../engine/commands').Command<unknown>[] = [
     new SetCollectionPlacementStartTimeCommand({
       placementId,
-      startTime: Math.max(0, previewStart),
+      startTime: Math.max(0, clampedPreview),
     }) as unknown as import('../engine/commands').Command<unknown>,
   ]
   for (const m of members) {

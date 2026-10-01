@@ -5,7 +5,9 @@ import { PasteKeyframesCommand } from './commands/pasteKeyframesCommand'
 import { walkPreOrder } from './sceneNode'
 import type { KeyframeTarget } from './keyframeTarget'
 import type { InterpolationType, Keyframe, KeyframeTangent } from './keyframe'
+import { ZERO_TANGENT } from './keyframe'
 import { CLIP_CHANNELS } from './clipDefinition'
+import type { ClipChannel } from './clipDefinition'
 import { resolveClipShapeByNameAndPath } from './shape'
 import { MIN_VISUAL_DURATION, MIN_CLIP_SPEED } from './animationManagerModel'
 
@@ -172,11 +174,19 @@ function collectFreezeWrites(
       return null
     }
   })()
-  const { end } = placementEndTime(engine, plan.placementId)
+  const { end, start } = placementEndTime(engine, plan.placementId)
   let target = plan.atTime ?? end
   if (!Number.isFinite(target) || target < 0) return { error: 'Target time must be ≥ 0.' }
   if (active) target = Math.min(target, active.duration)
   target = Math.round(target * 1000) / 1000
+  // Hold prefix: a lone frozen keyframe drives its whole track (the evaluator
+  // returns the first/last value outside the key range), so on a track with no
+  // keys it would hijack the pose BEFORE the block too — surviving placement
+  // deletion and looking like irreparably broken posing. Anchor such tracks
+  // with a hold key of the static base value at block start.
+  let prefixTime = Math.max(0, start)
+  if (active) prefixTime = Math.min(prefixTime, active.duration)
+  prefixTime = Math.round(prefixTime * 1000) / 1000
 
   let parent = null as null | ReturnType<EnginePublic['getNode']>
   try {
@@ -232,6 +242,61 @@ function collectFreezeWrites(
       })
   }
 
+  const baseValueFor = (node: ReturnType<EnginePublic['getNode']>, prop: ClipChannel): number => {
+    if (prop === 'positionX') return node.transform.x
+    if (prop === 'positionY') return node.transform.y
+    if (prop === 'rotation') return node.transform.rotation
+    if (prop === 'scaleX') return node.transform.scaleX
+    if (prop === 'scaleY') return node.transform.scaleY
+    return node.opacity
+  }
+
+  const hasEnabledKeys = (nodeId: string, prop: ClipChannel): boolean => {
+    let kfs: readonly Keyframe[] = []
+    try {
+      kfs = engine.getKeyframes(nodeId, prop)
+    } catch {
+      return false
+    }
+    for (const kf of kfs) {
+      if (!(kf as unknown as { disabled?: boolean }).disabled) return true
+    }
+    return false
+  }
+
+  let prefixCount = 0
+  const pushPrefix = (
+    node: ReturnType<EnginePublic['getNode']>,
+    sem: string,
+    clipId: string,
+    clipName: string,
+    prop: ClipChannel,
+  ) => {
+    if (!(prefixTime < target - 1e-9)) return
+    if (hasEnabledKeys(node.id, prop)) return
+    writes.push({
+      target: { kind: 'node', nodeId: node.id, property: prop },
+      nodeName: node.name,
+      time: prefixTime,
+      value: baseValueFor(node, prop),
+      interpolation: 'hold',
+      tangentIn: { ...ZERO_TANGENT },
+      tangentOut: { ...ZERO_TANGENT },
+    })
+    prefixCount += 1
+    const entry = perNode.get(node.id)
+    if (entry) entry.writeCount += 1
+    else
+      perNode.set(node.id, {
+        nodeId: node.id,
+        nodeName: node.name,
+        semanticName: sem,
+        clipId,
+        clipName,
+        writeCount: 1,
+      })
+  }
+
   for (const [sem, clipId] of Object.entries(bindings)) {
     const targets = bySemantic.get(sem.trim())
     if (!targets || targets.length === 0) {
@@ -246,6 +311,8 @@ function collectFreezeWrites(
     }
     for (const node of targets) {
       for (const prop of CLIP_CHANNELS) {
+        const edge = pickEdge(clip.getChannelKeyframes(prop), plan.source)
+        if (!edge) continue
         pushEdge(
           node,
           sem,
@@ -253,8 +320,9 @@ function collectFreezeWrites(
           clip.name,
           clip.duration,
           { kind: 'node', nodeId: node.id, property: prop },
-          pickEdge(clip.getChannelKeyframes(prop), plan.source),
+          edge,
         )
+        pushPrefix(node, sem, clip.id, clip.name, prop)
       }
       for (const param of clip.materialChannelParameterKeys) {
         pushEdge(
@@ -351,6 +419,11 @@ function collectFreezeWrites(
   for (const [id, entry] of perNode) {
     entry.writeCount = counts.get(id) ?? 0
     if (entry.writeCount === 0) perNode.delete(id)
+  }
+  if (prefixCount > 0) {
+    warnings.push(
+      `${prefixCount} hold key(s) at block start preserve the pre-block pose on tracks with no keys — a lone frozen key would otherwise drive the whole slide.`,
+    )
   }
   return { writes: kept, perNode, targetTime: target, warnings }
 }

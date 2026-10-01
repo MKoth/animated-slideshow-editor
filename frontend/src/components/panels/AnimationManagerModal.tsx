@@ -3132,7 +3132,13 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         const snapped = gridSnapEnabled
           ? snapStartTime(clampedRaw, movePps, true, snapCandidateTimes)
           : clampedRaw
-        setDragState((prev) => (prev ? ({ ...prev, previewStart: snapped } as DragState) : prev))
+        // Clamp to slide duration: beyond-duration placements never evaluate
+        // and render outside the %-positioned lanes area (invisible phantom).
+        const clampedToSlide =
+          activeSlide != null ? Math.min(snapped, activeSlide.duration) : snapped
+        setDragState((prev) =>
+          prev ? ({ ...prev, previewStart: clampedToSlide } as DragState) : prev,
+        )
       } else if (dragState.mode === 'collection-resize-right') {
         const resizePps = dragState.effectivePps ?? pps
         const newWidthPx = dragState.initialVisual * resizePps + deltaPx
@@ -4859,7 +4865,14 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             ) : (
               (() => {
                 const collectionSlideDuration = activeSlide?.duration ?? 10
-                void collectionSlideDuration
+                // Widen the lanes content past the slide end when a placement
+                // sits beyond the duration (legacy drags pre-clamp): %-positioned
+                // bars past 100% would otherwise be clipped invisible with no
+                // way to select or delete them here.
+                const lanesContentSpan = Math.max(
+                  collectionSlideDuration,
+                  ...packedCollectionLanes.map((l) => l.end),
+                )
                 void pps
                 return (
                   <div
@@ -4885,7 +4898,12 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         .setScrollTime(target.scrollLeft / p, viewport, duration)
                     }}
                   >
-                    <div style={{ width: '100%' }}>
+                    <div
+                      style={{
+                        width: `${(lanesContentSpan / collectionSlideDuration) * 100}%`,
+                        minWidth: '100%',
+                      }}
+                    >
                       <div
                         style={{
                           position: 'relative',
@@ -4898,7 +4916,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         data-testid="collection-ruler"
                       >
                         {(() => {
-                          const span = collectionSlideDuration
+                          const span = lanesContentSpan
                           const step = rulerTickStep(pps)
                           const ticks = rulerTickTimes(0, span, step)
                           return ticks.map((time) => (
@@ -4928,7 +4946,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                           data-testid="manager-collection-ruler-playhead"
                           style={{
                             position: 'absolute',
-                            left: `${(currentPlayheadTime / collectionSlideDuration) * 100}%`,
+                            left: `${(currentPlayheadTime / lanesContentSpan) * 100}%`,
                             top: 0,
                             bottom: 0,
                             width: 1,
@@ -4956,7 +4974,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                           data-testid="manager-collection-playhead"
                           style={{
                             position: 'absolute',
-                            left: `${(currentPlayheadTime / collectionSlideDuration) * 100}%`,
+                            left: `${(currentPlayheadTime / lanesContentSpan) * 100}%`,
                             top: 0,
                             bottom: 0,
                             width: 1,
@@ -4990,8 +5008,8 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                           }
                           const barStyle: React.CSSProperties = {
                             position: 'absolute',
-                            left: `${(lane.start / collectionSlideDuration) * 100}%`,
-                            width: `${(lane.visualDuration / collectionSlideDuration) * 100}%`,
+                            left: `${(lane.start / lanesContentSpan) * 100}%`,
+                            width: `${(lane.visualDuration / lanesContentSpan) * 100}%`,
                             top: lane.track * CLIP_LANE_HEIGHT_PX + 2,
                             height: CLIP_LANE_BAR_HEIGHT_PX,
                             background: isSelected ? 'var(--color-accent, #7c5cff)' : '#d4c5ff',
