@@ -97,7 +97,17 @@ describe('collectionFreeze', () => {
     expect(prefix.interpolation).toBe('hold')
   })
 
-  it('execute first writes first clip values at block end', () => {
+  it('preview first writes first keys at block start (before the block)', () => {
+    const { engine, placementId } = setupPlacedCollection()
+    const preview = previewCollectionFreeze(engine, { placementId, source: 'first' })
+    expect(preview.totalWrites).toBe(2)
+    expect(preview.targetTime).toBe(2)
+    const byName = new Map(preview.entries.map((e) => [e.nodeName, e.writeCount]))
+    expect(byName.get('Paw')).toBe(1)
+    expect(byName.get('Tail')).toBe(1)
+  })
+
+  it('execute first writes first clip values at block start', () => {
     const { engine, dispatcher, undoStack, placementId, paw, tail } = setupPlacedCollection()
     const res = executeCollectionFreeze(engine, dispatcher.dispatch.bind(dispatcher), undoStack, {
       placementId,
@@ -105,13 +115,52 @@ describe('collectionFreeze', () => {
     })
     expect(res.ok).toBe(true)
     if (!res.ok) throw new Error('expected ok')
+    expect(res.targetTime).toBe(2)
     expect(engine.getKeyframes(paw.id, 'positionX').map((k) => [k.time, k.value])).toEqual([
-      [2, 0],
-      [6, 10],
+      [2, 10],
     ])
     expect(engine.getKeyframes(tail.id, 'positionX').map((k) => [k.time, k.value])).toEqual([
+      [2, 100],
+    ])
+  })
+
+  it('first then last leaves an entry anchor and an exit anchor', () => {
+    const { engine, dispatcher, undoStack, placementId, paw } = setupPlacedCollection()
+    const dispatch = dispatcher.dispatch.bind(dispatcher)
+    expect(
+      executeCollectionFreeze(engine, dispatch, undoStack, { placementId, source: 'first' }).ok,
+    ).toBe(true)
+    expect(
+      executeCollectionFreeze(engine, dispatch, undoStack, { placementId, source: 'last' }).ok,
+    ).toBe(true)
+    expect(engine.getKeyframes(paw.id, 'positionX').map((k) => [k.time, k.value])).toEqual([
+      [2, 10],
+      [6, 30],
+    ])
+  })
+
+  it('last then first replaces the base hold prefix with the first pose', () => {
+    const { engine, dispatcher, undoStack, placementId, paw } = setupPlacedCollection()
+    const dispatch = dispatcher.dispatch.bind(dispatcher)
+    expect(
+      executeCollectionFreeze(engine, dispatch, undoStack, { placementId, source: 'last' }).ok,
+    ).toBe(true)
+    expect(engine.getKeyframes(paw.id, 'positionX').map((k) => [k.time, k.value])).toEqual([
       [2, 0],
-      [6, 100],
+      [6, 30],
+    ])
+    expect(
+      executeCollectionFreeze(engine, dispatch, undoStack, { placementId, source: 'first' }).ok,
+    ).toBe(true)
+    expect(engine.getKeyframes(paw.id, 'positionX').map((k) => [k.time, k.value])).toEqual([
+      [2, 10],
+      [6, 30],
+    ])
+    // Undo of the replace-restoring freeze brings the base hold prefix back.
+    undoStack.undo(engine)
+    expect(engine.getKeyframes(paw.id, 'positionX').map((k) => [k.time, k.value])).toEqual([
+      [2, 0],
+      [6, 30],
     ])
   })
 
@@ -129,6 +178,36 @@ describe('collectionFreeze', () => {
       [1, 5],
       [6, 30],
     ])
+  })
+
+  it('keeps the hold prefix when the only existing key is after the block', () => {
+    const { engine, dispatcher, undoStack, placementId, paw } = setupPlacedCollection()
+    engine.addKeyframe({ kind: 'node', nodeId: paw.id, property: 'positionX' }, 10, 7)
+    const res = executeCollectionFreeze(engine, dispatcher.dispatch.bind(dispatcher), undoStack, {
+      placementId,
+      source: 'last',
+    })
+    expect(res.ok).toBe(true)
+    if (!res.ok) throw new Error('expected ok')
+    // A lone key at 6 would otherwise drive the whole track (base 0 before the
+    // block, drifting toward the key at 10). The prefix at 2 pins the pose.
+    expect(engine.getKeyframes(paw.id, 'positionX').map((k) => [k.time, k.value])).toEqual([
+      [2, 0],
+      [6, 30],
+      [10, 7],
+    ])
+  })
+
+  it('refuses to freeze a block that starts at or after the slide end', () => {
+    const { engine, dispatcher, undoStack, placementId } = setupPlacedCollection()
+    engine.setCollectionPlacementStartTime(placementId, 20)
+    const res = executeCollectionFreeze(engine, dispatcher.dispatch.bind(dispatcher), undoStack, {
+      placementId,
+      source: 'last',
+    })
+    expect(res.ok).toBe(false)
+    if (res.ok) throw new Error('expected error')
+    expect(res.error).toContain('starts at or after the end of the slide')
   })
 })
 

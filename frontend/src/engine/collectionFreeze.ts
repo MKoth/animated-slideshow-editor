@@ -1,7 +1,9 @@
 import type { EnginePublic } from './internal'
 import type { DispatchCommand } from './commands/dispatcher'
+import type { Command } from './commands/command'
 import type { UndoStack } from './commands/undoStack'
 import { PasteKeyframesCommand } from './commands/pasteKeyframesCommand'
+import { DeleteKeyframesCommand } from './commands/deleteKeyframesCommand'
 import { walkPreOrder } from './sceneNode'
 import type { KeyframeTarget } from './keyframeTarget'
 import type { InterpolationType, Keyframe, KeyframeTangent } from './keyframe'
@@ -175,15 +177,27 @@ function collectFreezeWrites(
     }
   })()
   const { end, start } = placementEndTime(engine, plan.placementId)
-  let target = plan.atTime ?? end
+  if (active && start >= active.duration - 1e-9) {
+    return {
+      error:
+        'This block starts at or after the end of the slide — move it onto the slide before freezing.',
+    }
+  }
+  // Freeze-first pins the clip's 0s pose at the block START (it holds before
+  // the block via extrapolation). Freeze-last pins the clip's final pose at
+  // the block END so the pose holds after it. Both edges alone drive their
+  // whole track, which is exactly what each command is for: first = entry
+  // anchor, last = exit anchor.
+  const edgeTime = plan.source === 'first' ? start : end
+  let target = plan.atTime ?? edgeTime
   if (!Number.isFinite(target) || target < 0) return { error: 'Target time must be ≥ 0.' }
   if (active) target = Math.min(target, active.duration)
   target = Math.round(target * 1000) / 1000
-  // Hold prefix: a lone frozen keyframe drives its whole track (the evaluator
-  // returns the first/last value outside the key range), so on a track with no
-  // keys it would hijack the pose BEFORE the block too — surviving placement
-  // deletion and looking like irreparably broken posing. Anchor such tracks
-  // with a hold key of the static base value at block start.
+  // Hold prefix (freeze-last only): a lone frozen end key drives its whole
+  // track (the evaluator returns the last value outside the key range), so it
+  // would hijack the pose BEFORE the block too — surviving placement deletion
+  // and looking like irreparably broken posing. Anchor tracks that have no key
+  // at or before block start with a hold key of the static base value there.
   let prefixTime = Math.max(0, start)
   if (active) prefixTime = Math.min(prefixTime, active.duration)
   prefixTime = Math.round(prefixTime * 1000) / 1000
@@ -251,7 +265,7 @@ function collectFreezeWrites(
     return node.opacity
   }
 
-  const hasEnabledKeys = (nodeId: string, prop: ClipChannel): boolean => {
+  const hasEnabledKeyAtOrBefore = (nodeId: string, prop: ClipChannel, time: number): boolean => {
     let kfs: readonly Keyframe[] = []
     try {
       kfs = engine.getKeyframes(nodeId, prop)
@@ -259,7 +273,7 @@ function collectFreezeWrites(
       return false
     }
     for (const kf of kfs) {
-      if (!(kf as unknown as { disabled?: boolean }).disabled) return true
+      if (!(kf as unknown as { disabled?: boolean }).disabled && kf.time <= time + 1e-9) return true
     }
     return false
   }
@@ -273,7 +287,7 @@ function collectFreezeWrites(
     prop: ClipChannel,
   ) => {
     if (!(prefixTime < target - 1e-9)) return
-    if (hasEnabledKeys(node.id, prop)) return
+    if (hasEnabledKeyAtOrBefore(node.id, prop, prefixTime)) return
     writes.push({
       target: { kind: 'node', nodeId: node.id, property: prop },
       nodeName: node.name,
@@ -322,7 +336,7 @@ function collectFreezeWrites(
           { kind: 'node', nodeId: node.id, property: prop },
           edge,
         )
-        pushPrefix(node, sem, clip.id, clip.name, prop)
+        if (plan.source === 'last') pushPrefix(node, sem, clip.id, clip.name, prop)
       }
       for (const param of clip.materialChannelParameterKeys) {
         pushEdge(
@@ -477,8 +491,22 @@ export function executeCollectionFreeze(
     if (g) g.items.push(w)
     else groups.set(key, { target: w.target, items: [w] })
   }
-  const cmds = [...groups.values()].map(
-    (g) =>
+  const cmds: Command<unknown>[] = []
+  for (const g of groups.values()) {
+    // Re-freezing the same edge (or freezing first over freeze-last's base
+    // hold prefix) must replace the key already sitting at that instant, not
+    // fail with "already has a keyframe".
+    const times = new Set(g.items.map((w) => w.time))
+    const occupied = engine.getKeyframesOf(g.target).filter((kf) => times.has(kf.time))
+    if (occupied.length > 0) {
+      cmds.push(
+        new DeleteKeyframesCommand({
+          target: g.target,
+          keyframeIds: occupied.map((kf) => kf.id),
+        }) as unknown as Command<unknown>,
+      )
+    }
+    cmds.push(
       new PasteKeyframesCommand({
         target: g.target,
         atTime: 0,
@@ -493,8 +521,9 @@ export function executeCollectionFreeze(
               tangentOut: { ...w.tangentOut },
             })),
         },
-      }),
-  )
+      }) as unknown as Command<unknown>,
+    )
+  }
   let records = 0
   for (const cmd of cmds) {
     const res = dispatch(cmd as never)
@@ -507,7 +536,9 @@ export function executeCollectionFreeze(
   mergeRecords(undoStack, records)
   const warnings = [...collected.warnings]
   warnings.push(
-    'Collection lane left in place — frozen keyframes hold the pose after the block ends.',
+    plan.source === 'first'
+      ? 'Collection lane left in place — frozen first pose holds before the block starts.'
+      : 'Collection lane left in place — frozen keyframes hold the pose after the block ends.',
   )
   return {
     ok: true,

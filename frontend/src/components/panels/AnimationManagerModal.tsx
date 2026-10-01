@@ -9067,7 +9067,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   setCollectionPlacementMenu(null)
                 }}
               >
-                Freeze FIRST pose after block
+                Freeze first pose BEFORE block
               </button>
               <button
                 role="menuitem"
@@ -9105,7 +9105,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                   setCollectionPlacementMenu(null)
                 }}
               >
-                Freeze LAST pose after block
+                Freeze last pose AFTER block
               </button>
               <button
                 role="menuitem"

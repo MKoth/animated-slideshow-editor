@@ -465,7 +465,7 @@ export function TimelineCollectionBlocks({
                 runFreeze(id, 'first')
               }}
             >
-              Freeze FIRST pose after block
+              Freeze first pose BEFORE block
             </button>
             <button
               role="menuitem"
@@ -477,7 +477,7 @@ export function TimelineCollectionBlocks({
                 runFreeze(id, 'last')
               }}
             >
-              Freeze LAST pose after block
+              Freeze last pose AFTER block
             </button>
             <button
               role="menuitem"
@@ -515,9 +515,9 @@ export function TimelineCollectionBlocks({
               Delete placement
             </button>
             <div style={{ fontSize: 10, color: '#888', padding: '4px 10px' }}>
-              Copies first/last clip keys to node tracks at block end so the pose holds after the
-              collection ends, plus a hold key at block start on untouched tracks. Add blocks in
-              Animation Manager.
+              Freeze first pins the collection&apos;s 0s pose at the block start so it holds before
+              the block; freeze last pins the final pose at the block end so it holds after. Add
+              blocks in Animation Manager.
             </div>
           </div>
         </>
