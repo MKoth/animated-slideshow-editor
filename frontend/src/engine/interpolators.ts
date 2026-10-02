@@ -74,6 +74,11 @@ function wrappedLinearValue(
  * curve time is solved analytically (Cardano) — no sampling, deterministic.
  */
 function bezierSegment(from: Keyframe, to: Keyframe, time: number): number {
+  // Exact endpoint values at the segment boundaries: the numeric root solver
+  // can only approach u=0/1, and evaluation at a keyframe's own time must
+  // return that keyframe's value bit-for-bit.
+  if (time <= from.time) return from.value as number
+  if (time >= to.time) return to.value as number
   const u = curveTimeForSegment(from, to, time)
   const v0 = from.value as number
   const v1 = v0 + from.tangentOut.value
@@ -239,8 +244,14 @@ function cubicRootInUnitInterval(x1: number, x2: number, ratio: number): number 
     const q = (2 * b * b * b - 9 * a * b * c + 27 * a * a * d) / (27 * a * a * a)
     const discriminant = (q * q) / 4 + (p * p * p) / 27
     if (discriminant >= 0) {
+      // Cardano gives the real root of the depressed cubic t³ + pt + q = 0;
+      // the original cubic's root is t - b/(3a) (same shift as the other
+      // branches). Omitting it silently returns the wrong curve time whenever
+      // b ≠ 0 and the discriminant is positive (the ease-preset S-curve).
       cubicRootScratch.push(
-        Math.cbrt(-q / 2 + Math.sqrt(discriminant)) + Math.cbrt(-q / 2 - Math.sqrt(discriminant)),
+        Math.cbrt(-q / 2 + Math.sqrt(discriminant)) +
+          Math.cbrt(-q / 2 - Math.sqrt(discriminant)) -
+          b / (3 * a),
       )
       if (discriminant === 0) {
         cubicRootScratch.push(Math.cbrt(q / 2) - b / (3 * a))
@@ -270,7 +281,9 @@ function cubicRootInUnitInterval(x1: number, x2: number, ratio: number): number 
       }
     }
   }
-  return best
+  // Reject roots that do not actually solve x(u) = ratio (numerically
+  // ill-conditioned curves) so the caller falls back to the linear ratio.
+  return bestError <= 1e-6 ? best : undefined
 }
 
 function collectQuadraticRoots(b: number, c: number, d: number): void {

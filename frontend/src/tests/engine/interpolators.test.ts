@@ -75,6 +75,21 @@ describe('segment interpolators', () => {
     expect(evaluateSegment(from, to, 2)).toBeCloseTo(2)
   })
 
+  it('bezier solves the curve time when the cubic needs the depressed-cubic shift', () => {
+    // Both tangent time offsets non-zero and the cubic discriminant positive:
+    // the S-curve the ease presets produce at a 1s segment (x1=0.42, x2=0.58,
+    // so b = 3*x2 - 6*x1 !== 0). The real root of the depressed cubic must be
+    // shifted back by -b/(3a) before use.
+    const from = keyframe(0, 0, 'bezier', ZERO_TANGENT, { time: 0.42, value: 0 })
+    const to = keyframe(1, 1, 'bezier', { time: -0.42, value: 0 }, ZERO_TANGENT)
+
+    expect(evaluateSegment(from, to, 0.5)).toBeCloseTo(0.5, 4)
+    const atQuarter = evaluateSegment(from, to, 0.25)
+    expect(atQuarter).toBeGreaterThan(0)
+    expect(atQuarter).toBeLessThan(0.25)
+    expect(evaluateSegment(from, to, 0.75)).toBeGreaterThan(0.75)
+  })
+
   it('bezier is deterministic across repeated evaluations of different segments', () => {
     const first = keyframe(0, 0, 'bezier', ZERO_TANGENT, { time: 1, value: 0 })
     const firstTo = keyframe(2, 2, 'bezier', { time: 0, value: -1 }, ZERO_TANGENT)
