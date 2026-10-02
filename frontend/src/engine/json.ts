@@ -348,6 +348,10 @@ export type CompiledFootprintJSON = {
   readonly placementParents: readonly string[]
   readonly instanceNodes: readonly string[]
   readonly entryVersions: Readonly<Record<string, number>>
+  /** Root node ids the run minted; absent on footprint files from before creation. */
+  readonly createdNodes?: readonly string[]
+  /** Data source ids the run embedded; absent on older footprint files. */
+  readonly createdDataSources?: readonly string[]
 }
 
 export type AnimationScriptJSON = {

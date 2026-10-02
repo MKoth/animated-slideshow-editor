@@ -121,6 +121,8 @@ describe('Issue 390 — duplicate carries script verbatim as independent copy', 
       placementParents: ['old-a', 'gone'],
       instanceNodes: ['old-b', 'gone'],
       entryVersions: { e1: 2 },
+      createdNodes: ['old-a', 'gone'],
+      createdDataSources: ['ds-1'],
     }
     const remapped = remapCompiledFootprint(
       footprint,
@@ -137,6 +139,13 @@ describe('Issue 390 — duplicate carries script verbatim as independent copy', 
     expect(remapped.placementParents).toEqual(['new-a', 'gone'])
     expect(remapped.instanceNodes).toEqual(['new-b', 'gone'])
     expect(remapped.entryVersions).toEqual({ e1: 2 })
+    expect(remapped.createdNodes).toEqual(['new-a', 'gone'])
+    expect(remapped.createdDataSources).toEqual(['ds-1'])
+    // Slide duplication drops script data sources: ids are slide-scoped.
+    const copied = remapCompiledFootprint(footprint, new Map(), {
+      dropCreatedDataSources: true,
+    })
+    expect(copied.createdDataSources).toEqual([])
     expect(remapped).not.toBe(footprint)
   })
 

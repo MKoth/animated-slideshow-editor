@@ -132,7 +132,11 @@ export class SlideManager {
         : {
             source: sourceScript.source,
             ...(sourceScript.lastCompiled !== undefined
-              ? { lastCompiled: remapCompiledFootprint(sourceScript.lastCompiled, nodeIds) }
+              ? {
+                  lastCompiled: remapCompiledFootprint(sourceScript.lastCompiled, nodeIds, {
+                    dropCreatedDataSources: true,
+                  }),
+                }
               : {}),
           }
     const copy = new SlideModel(

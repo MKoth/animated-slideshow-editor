@@ -123,6 +123,10 @@ export type {
   CreateAssetInstanceInverse,
   CreateAssetInstanceParameters,
 } from './createAssetInstanceCommand'
+export { EmbedDataSourceCommand } from './embedDataSourceCommand'
+export type { EmbedDataSourceInverse, EmbedDataSourceParameters } from './embedDataSourceCommand'
+export { DeleteDataSourceCommand } from './deleteDataSourceCommand'
+export type { DeleteDataSourceInverse, DeleteDataSourceParameters } from './deleteDataSourceCommand'
 export { DuplicateNodeCommand, DUPLICATE_OFFSET } from './duplicateNodeCommand'
 export type { DuplicateNodeInverse, DuplicateNodeParameters } from './duplicateNodeCommand'
 export { ChangeZOrderCommand, Z_ORDER_MODES, zOrderTargetsReversed } from './changeZOrderCommand'

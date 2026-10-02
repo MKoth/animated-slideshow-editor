@@ -24,6 +24,8 @@ const FOOTPRINT: CompiledFootprint = {
   placementParents: ['node-rig'],
   instanceNodes: ['node-boy'],
   entryVersions: { 'entry-wave': 2, 'entry-fly': 7 },
+  createdNodes: ['script-node:slide-1:0'],
+  createdDataSources: ['script-ds:slide-1:1'],
 }
 
 function buildEngine() {

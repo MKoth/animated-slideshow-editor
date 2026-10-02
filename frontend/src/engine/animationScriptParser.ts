@@ -405,11 +405,41 @@ export interface PointArrowAtNode {
   readonly span: SourceSpan
 }
 
+/** The object kinds `create` can mint. */
+export const SCRIPT_CREATE_KINDS = ['text', 'table', 'asset', 'data', 'chart'] as const
+
+export type ScriptCreateKind = (typeof SCRIPT_CREATE_KINDS)[number]
+
+/**
+ * `create <kind> "Name" [as alias] [at (x, y)] [inside parent] { props }`
+ * mints a scene object (or a data source) that later statements can address by
+ * its alias. Everything kind-specific travels in the property record; `at` is
+ * the transform position, `inside` the parent node.
+ */
+export interface CreateNode {
+  readonly kind: 'create'
+  readonly createKind: ScriptCreateKind
+  readonly createKindSpan: SourceSpan
+  readonly resourceName: string
+  readonly resourceNameSpan: SourceSpan
+  readonly alias?: string
+  readonly aliasSpan?: SourceSpan
+  readonly position?: {
+    readonly x: ScriptExpression
+    readonly y: ScriptExpression
+    readonly span: SourceSpan
+  }
+  readonly parent?: ScriptExpression
+  readonly entries: readonly PropertyEntry[]
+  readonly span: SourceSpan
+}
+
 export type ScriptStatementNode =
   | BindNode
   | LetNode
   | StatementNode
   | SetTextNode
+  | CreateNode
   | FunctionDefNode
   | FunctionCallNode
   | PointArrowAtNode
@@ -608,6 +638,13 @@ class Parser {
     }
     if (this.#isIdentifier('pointArrowAt') && this.#nextIsPunctuation('(')) {
       return this.#parsePointArrowAt()
+    }
+    if (
+      this.#isIdentifier('create') &&
+      !this.#nextIsPunctuation('(') &&
+      !this.#nextIsPunctuation('.')
+    ) {
+      return this.#parseCreate()
     }
     const operator = this.#operatorKeyword()
     if (operator === 'wait') return this.#parseWait()
@@ -809,6 +846,83 @@ class Parser {
       label.span,
     )
     return null
+  }
+
+  /**
+   * `create <kind> "Name" [as alias] [at (x, y)] [inside parent] { props }`.
+   * Kind-specific configuration travels in the optional property record; the
+   * parser only owns the header shape so the compiler can report vocabulary
+   * diagnostics per kind.
+   */
+  #parseCreate(): CreateNode | null {
+    const start = this.#peek().span.start
+    this.#advance()
+    const kindToken = this.#expectIdentifier(`a create kind (${SCRIPT_CREATE_KINDS.join(', ')})`)
+    if (kindToken === null) return null
+    if (!(SCRIPT_CREATE_KINDS as readonly string[]).includes(kindToken.text)) {
+      this.#report(
+        `Unknown create kind "${kindToken.text}". Available kinds: ${SCRIPT_CREATE_KINDS.join(', ')}.`,
+        kindToken.span,
+      )
+      return null
+    }
+    const createKind = kindToken.text as ScriptCreateKind
+    const name = this.#parseString(`a name for the created ${createKind} in quotes`)
+    if (name === null) return null
+
+    let alias: string | undefined
+    let aliasSpan: SourceSpan | undefined
+    if (this.#isIdentifier('as')) {
+      this.#advance()
+      const aliasToken = this.#expectIdentifier('an alias name')
+      if (aliasToken === null) return null
+      alias = aliasToken.text
+      aliasSpan = aliasToken.span
+    }
+
+    let position: CreateNode['position']
+    if (this.#isIdentifier('at')) {
+      const positionStart = this.#peek().span.start
+      this.#advance()
+      if (!this.#expectPunctuation('(')) return null
+      const x = this.#parseExpression('an x position')
+      if (x === null) return null
+      if (!this.#matchPunctuation(',')) {
+        this.#report('Expected "," between the x and y positions', this.#peek().span)
+        return null
+      }
+      const y = this.#parseExpression('a y position')
+      if (y === null) return null
+      if (!this.#expectPunctuation(')')) return null
+      position = { x, y, span: { start: positionStart, end: this.#previousEnd() } }
+    }
+
+    let parent: ScriptExpression | undefined
+    if (this.#isIdentifier('inside')) {
+      this.#advance()
+      parent = this.#parseExpression('a parent binding') ?? undefined
+      if (parent === undefined) return null
+    }
+
+    let entries: PropertyEntry[] = []
+    if (this.#checkPunctuation('{')) {
+      const record = this.#parseRecord()
+      if (record === null) return null
+      entries = record
+    }
+
+    return {
+      kind: 'create',
+      createKind,
+      createKindSpan: kindToken.span,
+      resourceName: name.value as string,
+      resourceNameSpan: name.span,
+      ...(alias !== undefined ? { alias, aliasSpan } : {}),
+      ...(position !== undefined ? { position } : {}),
+      ...(parent !== undefined ? { parent } : {}),
+      entries,
+      span: { start, end: this.#previousEnd() },
+    }
   }
 
   #parseWait(): WaitNode | null {
@@ -1896,6 +2010,9 @@ class Parser {
       return true
     }
     const next = this.#tokens[this.#index + 1]
+    if (token.text === 'create' && next?.kind !== 'punctuation') {
+      return true
+    }
     if (token.text === 'setText' && next?.kind === 'punctuation' && next.text === '(') {
       return true
     }

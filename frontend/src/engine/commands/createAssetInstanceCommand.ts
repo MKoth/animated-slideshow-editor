@@ -14,6 +14,8 @@ export interface CreateAssetInstanceParameters {
   readonly scaleX?: number
   readonly scaleY?: number
   readonly semanticName?: string
+  /** Explicit id, used by Animation Script creations for deterministic re-runs. */
+  readonly id?: string
 }
 
 export interface CreateAssetInstanceInverse {
@@ -33,6 +35,7 @@ export class CreateAssetInstanceCommand implements Command<CreateAssetInstanceIn
   readonly #scaleX: number | undefined
   readonly #scaleY: number | undefined
   readonly #semanticName: string | undefined
+  readonly #id: string | undefined
 
   constructor(input: CreateAssetInstanceParameters) {
     this.#sceneId = input.sceneId
@@ -48,6 +51,7 @@ export class CreateAssetInstanceCommand implements Command<CreateAssetInstanceIn
       input.semanticName !== undefined && input.semanticName.trim() !== ''
         ? input.semanticName.trim()
         : undefined
+    this.#id = input.id
     const parameters: Record<string, unknown> = {
       sceneId: input.sceneId,
       parentId: input.parentId,
@@ -67,11 +71,17 @@ export class CreateAssetInstanceCommand implements Command<CreateAssetInstanceIn
     if (this.#semanticName !== undefined) {
       parameters.semanticName = this.#semanticName
     }
+    if (this.#id !== undefined) {
+      parameters.id = this.#id
+    }
     this.parameters = parameters
   }
 
   validate(engine: Engine): void {
     requireNonEmpty(this.#name, 'Node name')
+    if (this.#id !== undefined && nodeExists(engine, this.#id)) {
+      throw new Error(`A node with id "${this.#id}" already exists`)
+    }
     requireFiniteNumber(this.#x, 'Position x')
     requireFiniteNumber(this.#y, 'Position y')
     if (this.#rotation !== undefined) {
@@ -99,6 +109,7 @@ export class CreateAssetInstanceCommand implements Command<CreateAssetInstanceIn
       this.#definitionId,
       name,
       {
+        ...(this.#id !== undefined ? { id: this.#id } : {}),
         transform: {
           ...identityTransform(),
           x: this.#x,
@@ -115,5 +126,14 @@ export class CreateAssetInstanceCommand implements Command<CreateAssetInstanceIn
 
   toJSON(): Readonly<Record<string, unknown>> {
     return { type: this.type, ...this.parameters }
+  }
+}
+
+function nodeExists(engine: Engine, nodeId: string): boolean {
+  try {
+    engine.getNode(nodeId)
+    return true
+  } catch {
+    return false
   }
 }

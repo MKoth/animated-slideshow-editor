@@ -308,6 +308,22 @@ export function applyUndo(
       }
       return
     }
+    case 'EmbedDataSource': {
+      const previous = inv.previous as
+        import('../embeddedDataSource').EmbeddedDataSourceDefinition | null
+      if (previous === null) {
+        engine.removeDataSource(inv.id as string)
+      } else {
+        engine.embedDataSource(previous)
+      }
+      return
+    }
+    case 'DeleteDataSource': {
+      const definition =
+        inv.definition as import('../embeddedDataSource').EmbeddedDataSourceDefinition
+      engine.embedDataSource(definition)
+      return
+    }
     case 'DuplicateNode': {
       const nodeId = inv.nodeId as string
       try {
@@ -2927,9 +2943,23 @@ export function applyRedo(
       const rotation = params.rotation as number | undefined
       const scaleX = params.scaleX as number | undefined
       const scaleY = params.scaleY as number | undefined
+      const id = params.id as string | undefined
+      const semanticName = params.semanticName as string | undefined
       engine.createAssetInstance(sceneId, parentId, definitionId, name, {
+        ...(id !== undefined ? { id } : {}),
+        ...(semanticName !== undefined ? { semanticName } : {}),
         transform: { x, y, rotation: rotation ?? 0, scaleX: scaleX ?? 1, scaleY: scaleY ?? 1 },
       })
+      return
+    }
+    case 'EmbedDataSource': {
+      const definition =
+        params.definition as import('../embeddedDataSource').EmbeddedDataSourceDefinition
+      engine.embedDataSource(definition)
+      return
+    }
+    case 'DeleteDataSource': {
+      engine.removeDataSource(params.dataSourceId as string)
       return
     }
     case 'DeleteNode': {

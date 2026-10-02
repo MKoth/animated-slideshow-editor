@@ -101,9 +101,43 @@ export function checkAnimationScript(
       version: entry.version,
       source: entry.source,
     })) ?? []
+  // Assets a `create asset "Name"` may resolve: the registered library
+  // definitions plus the project's embedded snapshots, deduplicated by id.
+  // Embedded bytes win; they are what Run would use.
+  const assetsById = new Map<
+    string,
+    { id: string; name: string; embedded?: boolean; mimeType?: string }
+  >()
+  for (const definition of engine.assetDefinitions) {
+    const embedded = engine.getEmbeddedAsset(definition.id)
+    assetsById.set(definition.id, {
+      id: definition.id,
+      name: definition.name,
+      ...(embedded !== undefined
+        ? { embedded: true, mimeType: embedded.mimeType }
+        : { embedded: false }),
+    })
+  }
+  for (const embedded of engine.embeddedAssets) {
+    if (!assetsById.has(embedded.id)) {
+      assetsById.set(embedded.id, {
+        id: embedded.id,
+        name: embedded.name,
+        embedded: true,
+        mimeType: embedded.mimeType,
+      })
+    }
+  }
   return compileAnimationScript(source, {
     slideDuration: slide.duration,
     nodes,
+    sceneId: slide.scene.id,
+    createScope: slideId,
+    rootNodeId: slide.scene.root.id,
+    assets: [...assetsById.values()],
+    dataSources: engine.embeddedDataSources.flatMap((definition) =>
+      'dataPoints' in definition ? [{ id: definition.id, name: definition.name }] : [],
+    ),
     clips: engine.clips.map((clip) => ({
       id: clip.id,
       name: clip.name,

@@ -1,8 +1,9 @@
 import { useRef, useState } from 'react'
 import { useEngine } from '../../app/useEngine'
 import { checkAnimationScript } from '../../engine/animationScriptCheck'
-import { runAnimationScript } from '../../engine/animationScriptRun'
+import { runAnimationScriptAsync } from '../../engine/animationScriptRun'
 import type { AnimationScriptRunResult } from '../../engine/animationScriptRun'
+import { captureAssetSnapshot } from '../../app/assetSnapshot'
 import type {
   AnimationScriptCompileResult,
   AnimationScriptDiagnostic,
@@ -37,6 +38,7 @@ export function ScriptPanel({
   const [draft, setDraft] = useState(source)
   const [syncedFrom, setSyncedFrom] = useState({ slideId, source })
   const [outcome, setOutcome] = useState<ScriptOutcome | null>(null)
+  const [running, setRunning] = useState(false)
 
   if (syncedFrom.slideId !== slideId || syncedFrom.source !== source) {
     if (syncedFrom.slideId !== slideId) {
@@ -86,12 +88,18 @@ export function ScriptPanel({
     })
   }
 
-  const runScript = () => {
-    setOutcome({
-      kind: 'run',
-      source,
-      result: runAnimationScript(engine, dispatch, slideId, source, { measure: measuredNodeSize }),
-    })
+  const runScript = async () => {
+    if (running) return
+    setRunning(true)
+    try {
+      const result = await runAnimationScriptAsync(engine, dispatch, slideId, source, {
+        measure: measuredNodeSize,
+        captureAsset: (definitionId) => captureAssetSnapshot(engine, definitionId),
+      })
+      setOutcome({ kind: 'run', source, result })
+    } finally {
+      setRunning(false)
+    }
   }
 
   const editDraft = (value: string) => {
@@ -150,8 +158,8 @@ export function ScriptPanel({
         <button
           type="button"
           data-testid="script-run"
-          onClick={runScript}
-          disabled={dirty}
+          onClick={() => void runScript()}
+          disabled={dirty || running}
           title={dirty ? 'Save your changes before running' : 'Compile and apply this script'}
           style={{
             padding: '4px 12px',
@@ -194,7 +202,8 @@ export function ScriptPanel({
       >
         Reads (alias.x, worldAt, bounds, cellRect, controlValue) are compile-time and side-effect
         free. bounds use renderer-measured sizes and ignore rotation; read times must stay within
-        the slide.
+        the slide. Objects a script creates belong to the run: re-running deletes and recreates
+        them.
       </div>
       {drift.length > 0 && (
         <div
@@ -339,6 +348,10 @@ function CompileOutcome({
     tracks,
     count(summary.keyframeCount, 'keyframe'),
     count(summary.instanceCount, 'instance'),
+    ...(summary.createdNodeCount > 0 ? [count(summary.createdNodeCount, 'created node')] : []),
+    ...(summary.createdDataSourceCount > 0
+      ? [count(summary.createdDataSourceCount, 'data source')]
+      : []),
   ]
     .filter((part) => part.length > 0)
     .join(' · ')

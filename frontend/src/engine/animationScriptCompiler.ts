@@ -3,6 +3,14 @@ import { AddKeyframeCommand } from './commands/addKeyframeCommand'
 import { SetTextContentCommand } from './commands/setTextContentCommand'
 import { AssignClipCommand } from './commands/assignClipCommand'
 import { PlaceCollectionCommand } from './commands/placeCollectionCommand'
+import { CreateNodeCommand } from './commands/createNodeCommand'
+import { CreateAssetInstanceCommand } from './commands/createAssetInstanceCommand'
+import { ApplyTableLayoutCommand } from './commands/tableCommands'
+import { EmbedDataSourceCommand } from './commands/embedDataSourceCommand'
+import { identityTransform } from './transform'
+import { createChartComponent } from './chartComponent'
+import type { ChartType, TableCellComponent, TextAlignment } from './components'
+import type { EmbeddedDataSourceDefinition, EmbeddedDataPoint } from './embeddedDataSource'
 import { MIN_CLIP_SPEED, MIN_VISUAL_DURATION } from './animationManagerModel'
 import { ZERO_TANGENT } from './keyframe'
 import { isDiscreteMaterialKind, isParametricInterpolation } from './keyframe'
@@ -27,6 +35,7 @@ import {
 import type {
   AtNode,
   BindNode,
+  CreateNode,
   DefaultsNode,
   ForNode,
   FunctionCallNode,
@@ -69,6 +78,13 @@ import {
 import type { ScriptExpressionContext, ScriptValue } from './animationScriptExpression'
 import { mergeBounds } from './animationScriptReads'
 import type { AnimationScriptBoundsRead, AnimationScriptReadSource } from './animationScriptReads'
+import {
+  DEFAULT_MATERIAL_PARAMETERS,
+  DEFAULT_OPACITY_MULTIPLIER,
+  DEFAULT_TINT,
+  OPACITY_MULTIPLIER_PARAMETER_KEY,
+  TINT_PARAMETER_KEY,
+} from './materialResolution'
 
 /** Table styles travel the engine's existing table tracks, not node tracks. */
 export const SCRIPT_TABLE_PROPERTY_NAMES = ['borderRadius', 'padding'] as const
@@ -102,7 +118,7 @@ export type ScriptProperty = (typeof SCRIPT_PROPERTY_NAMES)[number]
 export type ScriptNodeProperty = (typeof SCRIPT_NODE_PROPERTY_NAMES)[number]
 
 /** Names the language reserves for statements rather than bindings. */
-export const SCRIPT_RESERVED_NAMES = ['setText'] as const
+export const SCRIPT_RESERVED_NAMES = ['setText', 'create'] as const
 
 /**
  * The engine track a script write lands on, resolved by node kind. The
@@ -147,6 +163,10 @@ export interface AnimationScriptMaterialParameterInfo {
   readonly key: string
   readonly kind: string
 }
+
+/** The built-in material parameters every engine-created node resolves. */
+const DEFAULT_SCRIPT_MATERIAL_PARAMETERS: readonly AnimationScriptMaterialParameterInfo[] =
+  DEFAULT_MATERIAL_PARAMETERS.map((parameter) => ({ key: parameter.key, kind: parameter.kind }))
 
 export interface AnimationScriptNodeInfo {
   readonly id: string
@@ -194,6 +214,64 @@ export interface AnimationScriptNodeInfo {
   } | null
   /** The node's chart data-label names; `dataLabel(...)` resolves against them. */
   readonly dataLabels?: readonly string[]
+}
+
+/** The mesh-generation parameters a `create asset ... mesh` request carries. */
+export const SCRIPT_MESH_PARAMETER_NAMES = [
+  'meshDensity',
+  'boundarySpacing',
+  'jointDensity',
+  'jointRadius',
+  'jointMinDist',
+  'maxVertices',
+] as const
+
+export type ScriptMeshParameterName = (typeof SCRIPT_MESH_PARAMETER_NAMES)[number]
+
+/** The generator's defaults and validation ranges, mirrored for compile checks. */
+export const SCRIPT_MESH_PARAMETER_SPECS: Readonly<
+  Record<
+    ScriptMeshParameterName,
+    { readonly default: number; readonly min: number; readonly max: number }
+  >
+> = {
+  meshDensity: { default: 30, min: 10, max: 80 },
+  boundarySpacing: { default: 8, min: 2, max: 30 },
+  jointDensity: { default: 2.0, min: 1.0, max: 5.0 },
+  jointRadius: { default: 60, min: 10, max: 150 },
+  jointMinDist: { default: 20, min: 5, max: 80 },
+  maxVertices: { default: 300, min: 50, max: 1000 },
+}
+
+/** One asset instance a run must generate a mesh for, after the create command. */
+export interface AnimationScriptMeshRequest {
+  readonly nodeId: string
+  readonly assetDefinitionId: string
+  readonly assetName: string
+  readonly params: Readonly<Partial<Record<ScriptMeshParameterName, number>>>
+}
+
+/** A scene node a script mints; `order` is its create command's source order. */
+export interface AnimationScriptCreatedNodeInfo {
+  readonly nodeId: string
+  readonly kind: 'text' | 'table' | 'asset' | 'chart'
+  readonly name: string
+  readonly order: number
+  readonly assetDefinitionId?: string
+  readonly mesh?: AnimationScriptMeshRequest
+}
+
+/** A project data source a script mints. */
+export interface AnimationScriptCreatedDataSourceInfo {
+  readonly id: string
+  readonly name: string
+  readonly order: number
+}
+
+/** Everything a run prep step needs to embed assets and generate meshes. */
+export interface AnimationScriptCreations {
+  readonly nodes: readonly AnimationScriptCreatedNodeInfo[]
+  readonly dataSources: readonly AnimationScriptCreatedDataSourceInfo[]
 }
 
 export interface AnimationScriptControlInfo {
@@ -256,6 +334,28 @@ export interface AnimationScriptCompileContext {
   readonly collections: readonly AnimationScriptCollectionInfo[]
   /** Project library entries, resolved by name at compile time. */
   readonly libraryFunctions?: readonly AnimationScriptLibraryInfo[]
+  /** The slide's scene id; script-created nodes dispatch commands against it. */
+  readonly sceneId?: string
+  /**
+   * The id namespace for script-created objects, so a re-run mints the same
+   * ids and Replace-by-footprint can delete them. Check passes the slide id.
+   */
+  readonly createScope?: string
+  /** The scene root, the default parent of script-created nodes. */
+  readonly rootNodeId?: string
+  /**
+   * Asset definitions a `create asset "Name"` may resolve by name. `embedded`
+   * marks a definition whose bytes are in the project; `mimeType` lets Check
+   * reject mesh generation on non-PNGs before Run reaches the image loader.
+   */
+  readonly assets?: readonly {
+    readonly id: string
+    readonly name: string
+    readonly embedded?: boolean
+    readonly mimeType?: string
+  }[]
+  /** Flat project data sources a `create chart` may reference by name. */
+  readonly dataSources?: readonly { readonly id: string; readonly name: string }[]
   /** Tunable budget overrides; absent means the `SCRIPT_MAX_*` defaults. */
   readonly budgets?: AnimationScriptBudgets
   /**
@@ -313,6 +413,10 @@ export interface AnimationScriptSummary {
   readonly tracks: readonly AnimationScriptTrackSummary[]
   readonly keyframeCount: number
   readonly instanceCount: number
+  /** Scene nodes the run will mint, including table rows, cells and cell text. */
+  readonly createdNodeCount: number
+  /** Project data sources the run will embed. */
+  readonly createdDataSourceCount: number
 }
 
 export interface AnimationScriptCompileResult {
@@ -320,6 +424,10 @@ export interface AnimationScriptCompileResult {
   /** False when any error diagnostic blocks a prospective run. */
   readonly runnable: boolean
   readonly commands: readonly Command<unknown>[]
+  /** The source order of each command, parallel to `commands`. */
+  readonly commandOrders: readonly number[]
+  /** Created-object metadata for the async run prep (embed assets, meshes). */
+  readonly creations: AnimationScriptCreations
   readonly footprint: CompiledFootprint
   readonly summary: AnimationScriptSummary
 }
@@ -332,7 +440,7 @@ interface ScriptMember {
 interface BindingInfo {
   readonly alias: string
   readonly aliasSpan: SourceSpan
-  readonly kind: 'node' | 'group' | 'table' | 'cellRef' | 'clip' | 'collection'
+  readonly kind: 'node' | 'group' | 'table' | 'cellRef' | 'clip' | 'collection' | 'data'
   /**
    * The binding's targets in scene pre-order. A node, table or cellRef binding
    * has exactly one member; a group binding has one per node carrying its
@@ -349,6 +457,8 @@ interface BindingInfo {
   readonly clip?: AnimationScriptClipInfo
   /** Present only on collection bindings: the referenced Clip Collection. */
   readonly collection?: AnimationScriptCollectionInfo
+  /** Present only on data bindings: the project data source a chart can use. */
+  readonly dataSource?: { readonly id: string; readonly name: string }
   used: boolean
 }
 
@@ -523,6 +633,12 @@ export const SCRIPT_MAX_EMITTED_KEYFRAMES = 100000
  * keyframe budget bounds raw tracks.
  */
 export const SCRIPT_MAX_EMITTED_INSTANCES = 20000
+/**
+ * Maximum scene nodes one compile may mint (`create text/table/asset/chart`),
+ * counting table rows, cells and cell text. Bounds the create command list the
+ * same way the keyframe budget bounds raw tracks.
+ */
+export const SCRIPT_MAX_CREATED_NODES = 2000
 
 /** Tunable compile budgets, overriding the `SCRIPT_MAX_*` defaults per compile. */
 export interface AnimationScriptBudgets {
@@ -532,6 +648,7 @@ export interface AnimationScriptBudgets {
   readonly maxCallDepth?: number
   readonly maxEmittedKeyframes?: number
   readonly maxEmittedInstances?: number
+  readonly maxCreatedNodes?: number
 }
 
 /**
@@ -573,6 +690,7 @@ const SCRIPT_FUNCTION_RESERVED_NAMES: readonly string[] = [
   ...SCRIPT_BUILTIN_NAMES,
   'pointArrowAt',
   'setText',
+  'create',
   'bind',
   'let',
   'function',
@@ -645,6 +763,29 @@ class Compiler {
   readonly #textCommands: { readonly order: number; readonly command: Command<unknown> }[] = []
   /** `play` Clip Instances and `apply` placements in source order. */
   readonly #clipCommands: { readonly order: number; readonly command: Command<unknown> }[] = []
+  /** `create` output (embeds, node creates, table layout) in source order. */
+  readonly #createCommands: { readonly order: number; readonly command: Command<unknown> }[] = []
+  /** Synthesized node info for created nodes, appended in creation order. */
+  readonly #createdNodes: AnimationScriptNodeInfo[] = []
+  readonly #createdNodeIds = new Set<string>()
+  /** Source order of each created node's create command, for `inside` ordering. */
+  readonly #createdNodeOrder = new Map<string, number>()
+  /** Declared initial values, served to reads on created nodes. */
+  readonly #createdInitial = new Map<
+    string,
+    { x: number; y: number; rotation: number; scaleX: number; scaleY: number; opacity: number }
+  >()
+  /** Declared table styles on created tables and cells, for tween start pins. */
+  readonly #createdTableStyles = new Map<string, { borderRadius: number; padding: number }>()
+  /** Created-node metadata for the async run prep (asset embed, mesh generation). */
+  readonly #createdNodeInfos: AnimationScriptCreatedNodeInfo[] = []
+  /** Created data-source metadata for the footprint and the summary. */
+  readonly #createdDataSourceInfos: AnimationScriptCreatedDataSourceInfo[] = []
+  readonly #createdDataSourceIds = new Set<string>()
+  /** Monotonic id index for created objects, so re-runs mint the same ids. */
+  #creationIndex = 0
+  #createdNodeCount = 0
+  #createdBudgetReported = false
   /**
    * Prospective Clip Instances the run will create: one per `play` member
    * plus one per `apply` member matched under each addressed parent. A
@@ -737,6 +878,8 @@ class Compiler {
       })),
       keyframeCount: this.#planned.size,
       instanceCount: this.#instanceCount,
+      createdNodeCount: this.#createdNodeCount,
+      createdDataSourceCount: this.#createdDataSourceInfos.length,
     }
     const footprint: CompiledFootprint = {
       from: this.#from,
@@ -748,11 +891,21 @@ class Compiler {
       placementParents: [...this.#placementParents],
       instanceNodes: [...this.#instanceNodes],
       entryVersions: Object.fromEntries(this.#usedLibraryVersions),
+      createdNodes: [...this.#createdNodeInfos.map((entry) => entry.nodeId)],
+      createdDataSources: [...this.#createdDataSourceInfos.map((entry) => entry.id)],
     }
+    const materialized = errors
+      ? { commands: [] as Command<unknown>[], orders: [] as number[] }
+      : this.#materializeCommands()
     return {
       diagnostics,
       runnable: !errors,
-      commands: errors ? [] : this.#materializeCommands(),
+      commands: materialized.commands,
+      commandOrders: materialized.orders,
+      creations: {
+        nodes: [...this.#createdNodeInfos],
+        dataSources: [...this.#createdDataSourceInfos],
+      },
       footprint,
       summary,
     }
@@ -1504,11 +1657,11 @@ class Compiler {
 
   /** The one node with the binding's exact Unique Name, or null after reporting. */
   #resolveUniqueNode(statement: BindNode): AnimationScriptNodeInfo | null {
-    const matches = this.#context.nodes.filter((node) => node.name === statement.resourceName)
+    const matches = this.#allNodes().filter((node) => node.name === statement.resourceName)
     if (matches.length === 0) {
       const suggestion = nearMissSuggestion(
         statement.resourceName,
-        this.#context.nodes.map((node) => node.name),
+        this.#allNodes().map((node) => node.name),
       )
       this.#error(
         `No node named "${statement.resourceName}".${suggestion}`,
@@ -1528,7 +1681,7 @@ class Compiler {
 
   #declareGroupBinding(statement: BindNode): void {
     const semanticName = statement.resourceName.trim()
-    const members = this.#context.nodes
+    const members = this.#allNodes()
       .filter((node) => node.semanticName?.trim() === semanticName)
       .map((node) => ({ nodeId: node.id, nodeName: node.name }))
     if (members.length === 0) {
@@ -1560,7 +1713,7 @@ class Compiler {
   /** Distinct Semantic Names on the slide, in scene pre-order. */
   #semanticNames(): string[] {
     const names: string[] = []
-    for (const node of this.#context.nodes) {
+    for (const node of this.#allNodes()) {
       const semanticName = node.semanticName?.trim()
       if (semanticName !== undefined && semanticName !== '' && !names.includes(semanticName)) {
         names.push(semanticName)
@@ -1675,6 +1828,8 @@ class Compiler {
           return this.#lowerStagger(statement, cursor)
         case 'setText':
           return this.#lowerSetText(statement, cursor)
+        case 'create':
+          return this.#lowerCreate(statement, cursor)
         case 'pointArrowAt':
           return this.#lowerPointArrowAt(statement, cursor)
         case 'statement':
@@ -3727,7 +3882,8 @@ class Compiler {
 
   /** A parent plus its descendants in scene pre-order (the broadcast scope). */
   #descendantsOf(parentId: string): AnimationScriptNodeInfo[] {
-    const byId = new Map(this.#context.nodes.map((node) => [node.id, node] as const))
+    const nodes = this.#allNodes()
+    const byId = new Map(nodes.map((node) => [node.id, node] as const))
     const parent = byId.get(parentId)
     if (!parent) return []
     const isBelow = (node: AnimationScriptNodeInfo): boolean => {
@@ -3749,6 +3905,1182 @@ class Compiler {
   /** Record an `apply` parent for the footprint, first-addressed order, deduplicated. */
   #trackPlacementParent(nodeId: string): void {
     if (!this.#placementParents.includes(nodeId)) this.#placementParents.push(nodeId)
+  }
+
+  /**
+   * `create ...` mints one object and registers its alias as a binding for
+   * later statements. Creating is timeless — the cursor never moves. Commands
+   * carry deterministic ids derived from the create scope, so a re-run replaces
+   * exactly what the previous run minted.
+   */
+  #lowerCreate(statement: CreateNode, cursor: number): number {
+    if (statement.resourceName.trim() === '') {
+      this.#error('A created object needs a non-empty name', statement.resourceNameSpan)
+      return cursor
+    }
+    this.#readCursor = cursor
+    if (statement.createKind === 'data') {
+      if (statement.position !== undefined || statement.parent !== undefined) {
+        this.#error(
+          'create data has no position or parent — data sources are project-scoped',
+          statement.span,
+        )
+        return cursor
+      }
+      this.#createDataSource(statement)
+      return cursor
+    }
+    const position = this.#evaluateCreatePosition(statement)
+    if (position === null) return cursor
+    const parentId = this.#resolveCreateParent(statement)
+    if (parentId === null) return cursor
+    switch (statement.createKind) {
+      case 'text':
+        this.#createText(statement, parentId, position)
+        break
+      case 'table':
+        this.#createTable(statement, parentId, position)
+        break
+      case 'asset':
+        this.#createAsset(statement, parentId, position)
+        break
+      case 'chart':
+        this.#createChart(statement, parentId, position)
+        break
+    }
+    return cursor
+  }
+
+  #evaluateCreatePosition(
+    statement: CreateNode,
+  ): { readonly x: number; readonly y: number } | null {
+    if (statement.position === undefined) return { x: 0, y: 0 }
+    const x = this.#evaluateNumber(statement.position.x, 'an x position')
+    const y = this.#evaluateNumber(statement.position.y, 'a y position')
+    if (x === null || y === null) return null
+    return { x, y }
+  }
+
+  /**
+   * The parent a create places under: the scene root by default, or a `node`
+   * or `cellRef` binding named by `inside`. Groups, tables, clips, collections
+   * and data sources are not valid parents, and a parent minted later in the
+   * same script cannot be used.
+   */
+  #resolveCreateParent(statement: CreateNode): string | null {
+    const rootId = this.#context.rootNodeId ?? this.#context.nodes[0]?.id
+    if (statement.parent === undefined) {
+      if (rootId === undefined) {
+        this.#error('Cannot create without a scene root', statement.span)
+        return null
+      }
+      return rootId
+    }
+    const value = this.#evaluateValue(statement.parent)
+    if (value === null || value.kind === 'invalid') return null
+    if (value.kind !== 'binding') {
+      this.#error(
+        `"inside" needs a node binding, found ${describeScriptValue(value)}`,
+        statement.parent.span,
+      )
+      return null
+    }
+    const binding = bindingOf(value)
+    if (!binding) return null
+    if (binding.kind !== 'node' && binding.kind !== 'cellRef') {
+      this.#error(
+        `"inside" needs a node or table-cell binding — "${binding.alias}" is a ${binding.kind} binding`,
+        statement.parent.span,
+      )
+      return null
+    }
+    const member = binding.members[0]
+    if (!member) return null
+    const parentCreatedAt = this.#createdNodeOrder.get(member.nodeId)
+    if (parentCreatedAt !== undefined && parentCreatedAt > this.#order) {
+      this.#error(
+        `"inside" needs a parent that already exists — create "${binding.alias}" before placing under it`,
+        statement.parent.span,
+      )
+      return null
+    }
+    return member.nodeId
+  }
+
+  #entryExpression(statement: CreateNode, key: string): ScriptExpression | undefined {
+    return statement.entries.find((entry) => entry.key === key)?.value
+  }
+
+  /** `undefined` when absent, `null` when present but not a number. */
+  #optionalEntryNumber(
+    statement: CreateNode,
+    key: string,
+    what: string,
+  ): number | null | undefined {
+    const expression = this.#entryExpression(statement, key)
+    if (expression === undefined) return undefined
+    return this.#evaluateNumber(expression, what)
+  }
+
+  /** `undefined` when absent, `null` when present but not a string. */
+  #optionalEntryString(
+    statement: CreateNode,
+    key: string,
+    what: string,
+  ): string | null | undefined {
+    const expression = this.#entryExpression(statement, key)
+    if (expression === undefined) return undefined
+    return this.#evaluateString(expression, what)
+  }
+
+  /**
+   * Report unknown property keys so a typo does not silently create an object.
+   * Only the keys a kind lists are meaningful; everything else is an error.
+   */
+  #rejectUnknownCreateProps(statement: CreateNode, allowed: readonly string[]): void {
+    for (const entry of statement.entries) {
+      if (!allowed.includes(entry.key)) {
+        const suggestion = nearMissSuggestion(entry.key, allowed)
+        this.#error(
+          `Unknown ${statement.createKind} property "${entry.key}". Available properties: ${allowed.join(', ')}.${suggestion}`,
+          entry.keySpan,
+        )
+      }
+    }
+  }
+
+  #claimCreatedNode(count: number, span: SourceSpan): boolean {
+    if (this.#createdNodeCount + count <= this.#maxCreatedNodes) {
+      this.#createdNodeCount += count
+      return true
+    }
+    if (!this.#createdBudgetReported) {
+      this.#createdBudgetReported = true
+      this.#error(
+        `Created nodes pass the compile budget of ${this.#maxCreatedNodes} — split the script or shorten loops`,
+        span,
+      )
+    }
+    return false
+  }
+
+  get #maxCreatedNodes(): number {
+    return this.#context.budgets?.maxCreatedNodes ?? SCRIPT_MAX_CREATED_NODES
+  }
+
+  #claimCreatedDataSource(span: SourceSpan): boolean {
+    if (this.#createdDataSourceInfos.length + 1 <= this.#maxCreatedNodes) return true
+    if (!this.#createdBudgetReported) {
+      this.#createdBudgetReported = true
+      this.#error(
+        `Created objects pass the compile budget of ${this.#maxCreatedNodes} — split the script or shorten loops`,
+        span,
+      )
+    }
+    return false
+  }
+
+  #nextCreatedId(kind: 'node' | 'ds'): string {
+    const scope = this.#context.createScope ?? 'script'
+    return `script-${kind}:${scope}:${this.#creationIndex++}`
+  }
+
+  #emitCreate(command: Command<unknown>): number {
+    const order = this.#order++
+    this.#createCommands.push({ order, command })
+    return order
+  }
+
+  /**
+   * Validate an optional alias and register the created object's binding.
+   * Re-running the same statement inside an unrolled loop revisits the same
+   * alias span; the alias then rebinds to the newest object, so the loop's
+   * later statements address the current iteration.
+   */
+  #registerCreatedBinding(statement: CreateNode, build: () => BindingInfo): void {
+    if (statement.alias === undefined || statement.aliasSpan === undefined) return
+    const alias = statement.alias
+    const existing = this.#bindings.get(alias)
+    if (existing) {
+      if (
+        existing.aliasSpan.start === statement.aliasSpan.start &&
+        existing.aliasSpan.end === statement.aliasSpan.end
+      ) {
+        this.#bindings.set(alias, build())
+        return
+      }
+      this.#error(`Binding "${alias}" is already declared`, statement.aliasSpan)
+      return
+    }
+    if (
+      (SCRIPT_RESERVED_NAMES as readonly string[]).includes(alias) ||
+      alias === 'pointArrowAt' ||
+      alias === 'create'
+    ) {
+      this.#error(
+        `Name "${alias}" is reserved by the Animation Script language`,
+        statement.aliasSpan,
+      )
+      return
+    }
+    if (this.#lookupOverride(alias) !== undefined) {
+      this.#error(`Name "${alias}" is already used by a loop variable`, statement.aliasSpan)
+      return
+    }
+    if (this.#lookupValue(alias) !== undefined) {
+      this.#error(`Name "${alias}" is already used by a variable`, statement.aliasSpan)
+      return
+    }
+    if (this.#functions.has(alias)) {
+      this.#error(
+        `Name "${alias}" is already used by a function — call it like ${alias}(...)`,
+        statement.aliasSpan,
+      )
+      return
+    }
+    this.#bindings.set(alias, build())
+  }
+
+  /** The declared transform/opacity properties every `create` kind accepts. */
+  #createNodeProps(statement: CreateNode): {
+    readonly rotation: number
+    readonly scaleX: number
+    readonly scaleY: number
+    readonly opacity?: number
+    readonly semanticName?: string
+  } | null {
+    const rotation = this.#optionalEntryNumber(statement, 'rotation', 'a rotation in radians')
+    const scaleX = this.#optionalEntryNumber(statement, 'scaleX', 'a scaleX value')
+    const scaleY = this.#optionalEntryNumber(statement, 'scaleY', 'a scaleY value')
+    const opacity = this.#optionalEntryNumber(statement, 'opacity', 'an opacity value')
+    const semanticName = this.#optionalEntryString(statement, 'semanticName', 'a Semantic Name')
+    if (
+      rotation === null ||
+      scaleX === null ||
+      scaleY === null ||
+      opacity === null ||
+      semanticName === null
+    ) {
+      return null
+    }
+    if (opacity !== undefined && (opacity < 0 || opacity > 1)) {
+      this.#error(
+        'opacity must be between 0 and 1',
+        this.#entryExpression(statement, 'opacity')!.span,
+      )
+      return null
+    }
+    return {
+      rotation: rotation ?? 0,
+      scaleX: scaleX ?? 1,
+      scaleY: scaleY ?? 1,
+      ...(opacity !== undefined ? { opacity } : {}),
+      ...(semanticName !== undefined && semanticName.trim() !== ''
+        ? { semanticName: semanticName.trim() }
+        : {}),
+    }
+  }
+
+  #recordCreatedNode(
+    info: AnimationScriptNodeInfo,
+    order: number,
+    details: {
+      readonly kind: AnimationScriptCreatedNodeInfo['kind']
+      readonly assetDefinitionId?: string
+      readonly mesh?: AnimationScriptMeshRequest
+    },
+    initial: {
+      x: number
+      y: number
+      rotation: number
+      scaleX: number
+      scaleY: number
+      opacity: number
+    },
+  ): void {
+    this.#createdNodes.push(info)
+    this.#createdNodeIds.add(info.id)
+    this.#createdNodeOrder.set(info.id, order)
+    this.#createdInitial.set(info.id, initial)
+    this.#createdNodeInfos.push({
+      nodeId: info.id,
+      kind: details.kind,
+      name: info.name,
+      order,
+      ...(details.assetDefinitionId !== undefined
+        ? { assetDefinitionId: details.assetDefinitionId }
+        : {}),
+      ...(details.mesh !== undefined ? { mesh: details.mesh } : {}),
+    })
+  }
+
+  #createText(
+    statement: CreateNode,
+    parentId: string,
+    position: { readonly x: number; readonly y: number },
+  ): void {
+    this.#rejectUnknownCreateProps(statement, [
+      'content',
+      'fontSize',
+      'alignment',
+      'rotation',
+      'scaleX',
+      'scaleY',
+      'opacity',
+      'semanticName',
+    ])
+    const props = this.#createNodeProps(statement)
+    if (props === null) return
+    const content = this.#optionalEntryString(statement, 'content', 'the text content') ?? 'Text'
+    const fontSize = this.#optionalEntryNumber(statement, 'fontSize', 'a font size') ?? 24
+    const alignment =
+      this.#optionalEntryString(statement, 'alignment', 'a text alignment') ?? 'left'
+    if (content === null || fontSize === null || alignment === null) return
+    if (fontSize <= 0) {
+      this.#error(
+        'fontSize must be greater than 0',
+        this.#entryExpression(statement, 'fontSize')!.span,
+      )
+      return
+    }
+    if (alignment !== 'left' && alignment !== 'center' && alignment !== 'right') {
+      this.#error(
+        `Unknown text alignment "${alignment}". Available alignments: left, center, right.`,
+        this.#entryExpression(statement, 'alignment')!.span,
+      )
+      return
+    }
+    if (!this.#claimCreatedNode(1, statement.span)) return
+    const id = this.#nextCreatedId('node')
+    const transform = {
+      ...identityTransform(),
+      x: position.x,
+      y: position.y,
+      rotation: props.rotation,
+      scaleX: props.scaleX,
+      scaleY: props.scaleY,
+    }
+    const order = this.#emitCreate(
+      new CreateNodeCommand({
+        sceneId: this.#sceneId(),
+        parentId,
+        name: statement.resourceName,
+        id,
+        transform,
+        ...(props.opacity !== undefined ? { opacity: props.opacity } : {}),
+        components: {
+          text: {
+            kind: 'text',
+            content,
+            fontSize,
+            alignment: alignment as TextAlignment,
+          },
+        },
+        ...(props.semanticName !== undefined ? { semanticName: props.semanticName } : {}),
+      }),
+    )
+    const info: AnimationScriptNodeInfo = {
+      id,
+      name: statement.resourceName,
+      isBone: false,
+      isCamera: false,
+      parentId,
+      isText: true,
+      isGroup: false,
+      ...(props.semanticName !== undefined ? { semanticName: props.semanticName } : {}),
+    }
+    this.#recordCreatedNode(
+      info,
+      order,
+      { kind: 'text' },
+      {
+        x: position.x,
+        y: position.y,
+        rotation: props.rotation,
+        scaleX: props.scaleX,
+        scaleY: props.scaleY,
+        opacity: props.opacity ?? 1,
+      },
+    )
+    this.#registerCreatedBinding(statement, () => ({
+      alias: statement.alias!,
+      aliasSpan: statement.aliasSpan!,
+      kind: 'node',
+      members: [{ nodeId: id, nodeName: statement.resourceName }],
+      used: false,
+    }))
+  }
+
+  #createAsset(
+    statement: CreateNode,
+    parentId: string,
+    position: { readonly x: number; readonly y: number },
+  ): void {
+    this.#rejectUnknownCreateProps(statement, [
+      'rotation',
+      'scaleX',
+      'scaleY',
+      'opacity',
+      'semanticName',
+      'mesh',
+    ])
+    const props = this.#createNodeProps(statement)
+    if (props === null) return
+    const matches = (this.#context.assets ?? []).filter(
+      (asset) => asset.name === statement.resourceName,
+    )
+    if (matches.length === 0) {
+      const suggestion = nearMissSuggestion(
+        statement.resourceName,
+        (this.#context.assets ?? []).map((asset) => asset.name),
+      )
+      this.#error(
+        `No asset named "${statement.resourceName}".${suggestion} Import it into the asset library first.`,
+        statement.resourceNameSpan,
+      )
+      return
+    }
+    if (matches.length > 1) {
+      this.#error(
+        `Asset name "${statement.resourceName}" is ambiguous — ${matches.length} library assets share it`,
+        statement.resourceNameSpan,
+      )
+      return
+    }
+    const definition = matches[0]
+    const meshExpression = this.#entryExpression(statement, 'mesh')
+    const meshParams =
+      meshExpression !== undefined ? this.#evaluateMeshParams(meshExpression) : undefined
+    if (meshExpression !== undefined && meshParams === null) return
+    if (definition.embedded !== true) {
+      this.#warning(
+        `Asset "${definition.name}" is not embedded in this project — Run will embed a snapshot from the library`,
+        statement.resourceNameSpan,
+      )
+    } else if (
+      meshExpression !== undefined &&
+      definition.mimeType !== undefined &&
+      !definition.mimeType.startsWith('image/png')
+    ) {
+      this.#error(
+        `Mesh generation needs a PNG — "${definition.name}" is ${definition.mimeType || 'not a PNG'}`,
+        statement.resourceNameSpan,
+      )
+      return
+    } else if (meshExpression !== undefined && definition.mimeType === undefined) {
+      this.#warning(
+        `Mesh for "${definition.name}" will be generated on Run — Check cannot inspect its pixel data`,
+        statement.resourceNameSpan,
+      )
+    }
+    if (!this.#claimCreatedNode(1, statement.span)) return
+    const id = this.#nextCreatedId('node')
+    const order = this.#emitCreate(
+      new CreateAssetInstanceCommand({
+        sceneId: this.#sceneId(),
+        parentId,
+        definitionId: definition.id,
+        name: statement.resourceName,
+        position: { x: position.x, y: position.y },
+        rotation: props.rotation,
+        scaleX: props.scaleX,
+        scaleY: props.scaleY,
+        id,
+        ...(props.semanticName !== undefined ? { semanticName: props.semanticName } : {}),
+      }),
+    )
+    const meshRequest: AnimationScriptMeshRequest | undefined =
+      meshParams !== null && meshParams !== undefined
+        ? {
+            nodeId: id,
+            assetDefinitionId: definition.id,
+            assetName: definition.name,
+            params: meshParams,
+          }
+        : undefined
+    const info: AnimationScriptNodeInfo = {
+      id,
+      name: statement.resourceName,
+      isBone: false,
+      isCamera: false,
+      parentId,
+      isMesh: meshRequest !== undefined,
+      isGroup: false,
+      ...(props.semanticName !== undefined ? { semanticName: props.semanticName } : {}),
+    }
+    this.#recordCreatedNode(
+      info,
+      order,
+      {
+        kind: 'asset',
+        assetDefinitionId: definition.id,
+        ...(meshRequest !== undefined ? { mesh: meshRequest } : {}),
+      },
+      {
+        x: position.x,
+        y: position.y,
+        rotation: props.rotation,
+        scaleX: props.scaleX,
+        scaleY: props.scaleY,
+        opacity: props.opacity ?? 1,
+      },
+    )
+    this.#registerCreatedBinding(statement, () => ({
+      alias: statement.alias!,
+      aliasSpan: statement.aliasSpan!,
+      kind: 'node',
+      members: [{ nodeId: id, nodeName: statement.resourceName }],
+      used: false,
+    }))
+  }
+
+  /** Mesh generator parameters: a record of finite numbers inside their ranges. */
+  #evaluateMeshParams(
+    expression: ScriptExpression,
+  ): Partial<Record<ScriptMeshParameterName, number>> | null {
+    const value = this.#evaluateValue(expression)
+    if (value === null || value.kind === 'invalid') return null
+    if (value.kind !== 'record') {
+      this.#error(
+        `"mesh" needs a parameter record like mesh { meshDensity: 30 }, found ${describeScriptValue(value)}`,
+        expression.span,
+      )
+      return null
+    }
+    const params: Partial<Record<ScriptMeshParameterName, number>> = {}
+    for (const [key, raw] of value.fields) {
+      if (!(SCRIPT_MESH_PARAMETER_NAMES as readonly string[]).includes(key)) {
+        const suggestion = nearMissSuggestion(key, SCRIPT_MESH_PARAMETER_NAMES)
+        this.#error(
+          `Unknown mesh parameter "${key}". Available parameters: ${SCRIPT_MESH_PARAMETER_NAMES.join(', ')}.${suggestion}`,
+          expression.span,
+        )
+        return null
+      }
+      if (raw.kind !== 'number') {
+        this.#error(
+          `Mesh parameter "${key}" must be a number, found ${describeScriptValue(raw)}`,
+          expression.span,
+        )
+        return null
+      }
+      const spec = SCRIPT_MESH_PARAMETER_SPECS[key as ScriptMeshParameterName]
+      if (raw.value < spec.min || raw.value > spec.max) {
+        this.#error(
+          `Mesh parameter "${key}" must be between ${spec.min} and ${spec.max}`,
+          expression.span,
+        )
+        return null
+      }
+      params[key as ScriptMeshParameterName] = raw.value
+    }
+    return params
+  }
+
+  #createChart(
+    statement: CreateNode,
+    parentId: string,
+    position: { readonly x: number; readonly y: number },
+  ): void {
+    this.#rejectUnknownCreateProps(statement, [
+      'from',
+      'type',
+      'rotation',
+      'scaleX',
+      'scaleY',
+      'opacity',
+      'semanticName',
+    ])
+    const props = this.#createNodeProps(statement)
+    if (props === null) return
+    const dataSourceId = this.#resolveChartDataSource(statement)
+    if (dataSourceId === null) return
+    const typeExpression = this.#entryExpression(statement, 'type')
+    if (typeExpression === undefined) {
+      this.#error('create chart needs a type, like { type: "bar" }', statement.span)
+      return
+    }
+    const chartType = this.#evaluateString(typeExpression, 'a chart type')
+    if (chartType === null) return
+    if (
+      chartType !== 'bar' &&
+      chartType !== 'line' &&
+      chartType !== 'pie' &&
+      chartType !== 'area'
+    ) {
+      this.#error(
+        `Unknown chart type "${chartType}". Available types: bar, line, pie, area.`,
+        typeExpression.span,
+      )
+      return
+    }
+    if (!this.#claimCreatedNode(1, statement.span)) return
+    const id = this.#nextCreatedId('node')
+    const order = this.#emitCreate(
+      new CreateNodeCommand({
+        sceneId: this.#sceneId(),
+        parentId,
+        name: statement.resourceName,
+        id,
+        transform: {
+          ...identityTransform(),
+          x: position.x,
+          y: position.y,
+          rotation: props.rotation,
+          scaleX: props.scaleX,
+          scaleY: props.scaleY,
+        },
+        ...(props.opacity !== undefined ? { opacity: props.opacity } : {}),
+        components: { chart: createChartComponent(chartType as ChartType, dataSourceId) },
+        ...(props.semanticName !== undefined ? { semanticName: props.semanticName } : {}),
+      }),
+    )
+    const info: AnimationScriptNodeInfo = {
+      id,
+      name: statement.resourceName,
+      isBone: false,
+      isCamera: false,
+      parentId,
+      isGroup: false,
+      dataLabels: [],
+      ...(props.semanticName !== undefined ? { semanticName: props.semanticName } : {}),
+    }
+    this.#recordCreatedNode(
+      info,
+      order,
+      { kind: 'chart' },
+      {
+        x: position.x,
+        y: position.y,
+        rotation: props.rotation,
+        scaleX: props.scaleX,
+        scaleY: props.scaleY,
+        opacity: props.opacity ?? 1,
+      },
+    )
+    this.#registerCreatedBinding(statement, () => ({
+      alias: statement.alias!,
+      aliasSpan: statement.aliasSpan!,
+      kind: 'node',
+      members: [{ nodeId: id, nodeName: statement.resourceName }],
+      used: false,
+    }))
+  }
+
+  /**
+   * The data source a chart reads: a `data` binding minted earlier in the
+   * script, or the exact name of a flat project data source.
+   */
+  #resolveChartDataSource(statement: CreateNode): string | null {
+    const expression = this.#entryExpression(statement, 'from')
+    if (expression === undefined) {
+      this.#error(
+        'create chart needs a data source: { from: <data binding or name> }',
+        statement.span,
+      )
+      return null
+    }
+    const value = this.#evaluateValue(expression)
+    if (value === null || value.kind === 'invalid') return null
+    if (value.kind === 'binding') {
+      const binding = bindingOf(value)
+      if (!binding) return null
+      if (binding.kind !== 'data' || binding.dataSource === undefined) {
+        this.#error(
+          `"from" needs a data binding or a data source name — "${binding.alias}" is a ${binding.kind} binding`,
+          expression.span,
+        )
+        return null
+      }
+      return binding.dataSource.id
+    }
+    if (value.kind === 'string') {
+      const matches = (this.#context.dataSources ?? []).filter(
+        (dataSource) => dataSource.name === value.value,
+      )
+      if (matches.length === 0) {
+        const suggestion = nearMissSuggestion(
+          value.value,
+          (this.#context.dataSources ?? []).map((dataSource) => dataSource.name),
+        )
+        this.#error(
+          `No data source named "${value.value}".${suggestion} Create one with create data first.`,
+          expression.span,
+        )
+        return null
+      }
+      if (matches.length > 1) {
+        this.#error(
+          `Data source name "${value.value}" is ambiguous — ${matches.length} sources share it`,
+          expression.span,
+        )
+        return null
+      }
+      return matches[0].id
+    }
+    this.#error(
+      `"from" needs a data binding or a data source name, found ${describeScriptValue(value)}`,
+      expression.span,
+    )
+    return null
+  }
+
+  /**
+   * `create data "Name" as alias { points: [{ label, value, ... }] }` embeds a
+   * flat project data source the script owns. Re-runs replace it by footprint.
+   */
+  #createDataSource(statement: CreateNode): void {
+    this.#rejectUnknownCreateProps(statement, ['points'])
+    const pointsExpression = this.#entryExpression(statement, 'points')
+    if (pointsExpression === undefined) {
+      this.#error(
+        'create data needs points, like { points: [{ label: "A", value: 1 }] }',
+        statement.span,
+      )
+      return
+    }
+    const value = this.#evaluateValue(pointsExpression)
+    if (value === null || value.kind === 'invalid') return
+    if (value.kind !== 'list') {
+      this.#error(
+        `"points" needs a list of records, found ${describeScriptValue(value)}`,
+        pointsExpression.span,
+      )
+      return
+    }
+    const dataPoints: EmbeddedDataPoint[] = []
+    const labels = new Set<string>()
+    for (const element of value.values) {
+      const point = this.#dataPointOf(element, pointsExpression.span)
+      if (point === null) return
+      if (labels.has(point.label)) {
+        this.#error(`Data point label "${point.label}" is written twice`, pointsExpression.span)
+        return
+      }
+      labels.add(point.label)
+      dataPoints.push(point)
+    }
+    if (!this.#claimCreatedDataSource(statement.span)) return
+    const id = this.#nextCreatedId('ds')
+    const definition: EmbeddedDataSourceDefinition = {
+      id,
+      name: statement.resourceName,
+      dataPoints,
+    }
+    const order = this.#emitCreate(new EmbedDataSourceCommand({ definition }))
+    this.#createdDataSourceIds.add(id)
+    this.#createdDataSourceInfos.push({ id, name: statement.resourceName, order })
+    this.#registerCreatedBinding(statement, () => ({
+      alias: statement.alias!,
+      aliasSpan: statement.aliasSpan!,
+      kind: 'data',
+      members: [],
+      dataSource: { id, name: statement.resourceName },
+      used: false,
+    }))
+  }
+
+  #dataPointOf(value: ScriptValue, span: SourceSpan): EmbeddedDataPoint | null {
+    if (value.kind !== 'record') {
+      this.#error(
+        `A data point needs a record like { label: "A", value: 1 }, found ${describeScriptValue(value)}`,
+        span,
+      )
+      return null
+    }
+    const label = value.fields.get('label')
+    const numeric = value.fields.get('value')
+    if (label === undefined || label.kind !== 'string' || label.value === '') {
+      this.#error('A data point needs a non-empty string "label"', span)
+      return null
+    }
+    if (numeric === undefined || numeric.kind !== 'number') {
+      this.#error(`Data point "${label.value}" needs a finite number "value"`, span)
+      return null
+    }
+    const point: {
+      label: string
+      value: number
+      series?: string
+      tooltip?: string
+      color?: string
+    } = { label: label.value, value: numeric.value }
+    for (const key of ['series', 'tooltip', 'color'] as const) {
+      const field = value.fields.get(key)
+      if (field === undefined) continue
+      if (field.kind !== 'string') {
+        this.#error(`Data point "${label.value}" field "${key}" must be a string`, span)
+        return null
+      }
+      point[key] = field.value
+    }
+    return point
+  }
+
+  #sceneId(): string {
+    return this.#context.sceneId ?? ''
+  }
+
+  #createTable(
+    statement: CreateNode,
+    parentId: string,
+    position: { readonly x: number; readonly y: number },
+  ): void {
+    this.#rejectUnknownCreateProps(statement, [
+      'columns',
+      'rows',
+      'gap',
+      'padding',
+      'borderWidth',
+      'borderRadius',
+      'borderColor',
+      'background',
+      'rotation',
+      'scaleX',
+      'scaleY',
+      'opacity',
+      'semanticName',
+    ])
+    const props = this.#createNodeProps(statement)
+    if (props === null) return
+    const columns = this.#resolveTableColumns(statement)
+    if (columns === null) return
+    const rows = this.#resolveTableRows(statement, columns.length)
+    if (rows === null) return
+    const gap = this.#optionalEntryNumber(statement, 'gap', 'a gap') ?? 0
+    const padding = this.#optionalEntryNumber(statement, 'padding', 'a padding') ?? 0
+    const borderWidth = this.#optionalEntryNumber(statement, 'borderWidth', 'a border width') ?? 1
+    const borderRadius =
+      this.#optionalEntryNumber(statement, 'borderRadius', 'a border radius') ?? 0
+    const borderColor =
+      this.#optionalEntryString(statement, 'borderColor', 'a border color') ?? '#000000'
+    const background =
+      this.#optionalEntryString(statement, 'background', 'a background color') ?? '#ffffff'
+    if (
+      gap === null ||
+      padding === null ||
+      borderWidth === null ||
+      borderRadius === null ||
+      borderColor === null ||
+      background === null
+    ) {
+      return
+    }
+    const nodeCount = 1 + rows.reduce((count, row) => count + 1 + row.length + row.length, 0)
+    if (!this.#claimCreatedNode(nodeCount, statement.span)) return
+
+    const tableId = this.#nextCreatedId('node')
+    const tableOrder = this.#emitCreate(
+      new CreateNodeCommand({
+        sceneId: this.#sceneId(),
+        parentId,
+        name: statement.resourceName,
+        id: tableId,
+        transform: {
+          ...identityTransform(),
+          x: position.x,
+          y: position.y,
+          rotation: props.rotation,
+          scaleX: props.scaleX,
+          scaleY: props.scaleY,
+        },
+        ...(props.opacity !== undefined ? { opacity: props.opacity } : {}),
+        components: {
+          table: {
+            kind: 'table',
+            columns,
+            gap,
+            borderWidth,
+            borderColor,
+            borderRadius,
+            padding,
+            background,
+          },
+        },
+        ...(props.semanticName !== undefined ? { semanticName: props.semanticName } : {}),
+      }),
+    )
+    const tableInfo: AnimationScriptNodeInfo = {
+      id: tableId,
+      name: statement.resourceName,
+      isBone: false,
+      isCamera: false,
+      parentId,
+      isTable: true,
+      tableColumnCount: columns.length,
+      isGroup: false,
+      ...(props.semanticName !== undefined ? { semanticName: props.semanticName } : {}),
+    }
+    this.#recordCreatedNode(
+      tableInfo,
+      tableOrder,
+      { kind: 'table' },
+      {
+        x: position.x,
+        y: position.y,
+        rotation: props.rotation,
+        scaleX: props.scaleX,
+        scaleY: props.scaleY,
+        opacity: props.opacity ?? 1,
+      },
+    )
+    this.#createdTableStyles.set(tableId, { borderRadius, padding })
+
+    rows.forEach((row, rowIndex) => {
+      const rowName = `Row ${rowIndex + 1}`
+      const rowId = this.#nextCreatedId('node')
+      this.#emitCreate(
+        new CreateNodeCommand({
+          sceneId: this.#sceneId(),
+          parentId: tableId,
+          name: rowName,
+          id: rowId,
+          components: { tableRow: { kind: 'tableRow' } },
+        }),
+      )
+      const rowInfo: AnimationScriptNodeInfo = {
+        id: rowId,
+        name: rowName,
+        isBone: false,
+        isCamera: false,
+        parentId: tableId,
+        isGroup: false,
+      }
+      this.#createdNodes.push(rowInfo)
+      this.#createdNodeIds.add(rowId)
+      this.#createdInitial.set(rowId, {
+        x: 0,
+        y: 0,
+        rotation: 0,
+        scaleX: 1,
+        scaleY: 1,
+        opacity: 1,
+      })
+      row.forEach((cell, columnIndex) => {
+        const cellName = `Cell ${rowIndex + 1},${columnIndex + 1}`
+        const cellId = this.#nextCreatedId('node')
+        const cellComponent: TableCellComponent = {
+          kind: 'tableCell',
+          colSpan: cell.colSpan,
+          rowSpan: cell.rowSpan,
+          borderRadius: 0,
+          padding: 0,
+        }
+        this.#emitCreate(
+          new CreateNodeCommand({
+            sceneId: this.#sceneId(),
+            parentId: rowId,
+            name: cellName,
+            id: cellId,
+            components: { tableCell: cellComponent },
+          }),
+        )
+        const cellInfo: AnimationScriptNodeInfo = {
+          id: cellId,
+          name: cellName,
+          isBone: false,
+          isCamera: false,
+          parentId: rowId,
+          isTableCell: true,
+          colSpan: cell.colSpan,
+          rowSpan: cell.rowSpan,
+          isGroup: false,
+        }
+        this.#createdNodes.push(cellInfo)
+        this.#createdNodeIds.add(cellId)
+        this.#createdInitial.set(cellId, {
+          x: 0,
+          y: 0,
+          rotation: 0,
+          scaleX: 1,
+          scaleY: 1,
+          opacity: 1,
+        })
+        this.#createdTableStyles.set(cellId, {
+          borderRadius: cellComponent.borderRadius ?? 0,
+          padding: cellComponent.padding ?? 0,
+        })
+        const textId = this.#nextCreatedId('node')
+        this.#emitCreate(
+          new CreateNodeCommand({
+            sceneId: this.#sceneId(),
+            parentId: cellId,
+            name: 'Text',
+            id: textId,
+            components: {
+              text: { kind: 'text', content: cell.text, fontSize: 14, alignment: 'left' },
+            },
+          }),
+        )
+        const textInfo: AnimationScriptNodeInfo = {
+          id: textId,
+          name: 'Text',
+          isBone: false,
+          isCamera: false,
+          parentId: cellId,
+          isText: true,
+          isGroup: false,
+        }
+        this.#createdNodes.push(textInfo)
+        this.#createdNodeIds.add(textId)
+        this.#createdInitial.set(textId, {
+          x: 0,
+          y: 0,
+          rotation: 0,
+          scaleX: 1,
+          scaleY: 1,
+          opacity: 1,
+        })
+      })
+    })
+    this.#emitCreate(new ApplyTableLayoutCommand({ tableNodeId: tableId, availableWidth: 400 }))
+    this.#registerCreatedBinding(statement, () => ({
+      alias: statement.alias!,
+      aliasSpan: statement.aliasSpan!,
+      kind: 'table',
+      members: [{ nodeId: tableId, nodeName: statement.resourceName }],
+      grid: buildScriptTableGrid(tableInfo, this.#allNodes()),
+      used: false,
+    }))
+  }
+
+  #resolveTableColumns(statement: CreateNode): readonly { width: number | 'auto' }[] | null {
+    const expression = this.#entryExpression(statement, 'columns')
+    if (expression === undefined) {
+      return [{ width: 100 }, { width: 100 }]
+    }
+    const value = this.#evaluateValue(expression)
+    if (value === null || value.kind === 'invalid') return null
+    if (value.kind !== 'list') {
+      this.#error(`"columns" needs a list, found ${describeScriptValue(value)}`, expression.span)
+      return null
+    }
+    const columns: { width: number | 'auto' }[] = []
+    for (const element of value.values) {
+      if (element.kind === 'number') {
+        if (element.value <= 0) {
+          this.#error('Column widths must be greater than 0 or "auto"', expression.span)
+          return null
+        }
+        columns.push({ width: element.value })
+        continue
+      }
+      if (element.kind === 'string' && element.value === 'auto') {
+        columns.push({ width: 'auto' })
+        continue
+      }
+      this.#error(
+        `Column widths must be numbers or "auto", found ${describeScriptValue(element)}`,
+        expression.span,
+      )
+      return null
+    }
+    if (columns.length === 0) {
+      this.#error('A table needs at least one column', expression.span)
+      return null
+    }
+    return columns
+  }
+
+  #resolveTableRows(
+    statement: CreateNode,
+    columnCount: number,
+  ):
+    | readonly (readonly {
+        readonly text: string
+        readonly colSpan: number
+        readonly rowSpan: number
+      }[])[]
+    | null {
+    const expression = this.#entryExpression(statement, 'rows')
+    if (expression === undefined) {
+      const empty = Array.from({ length: columnCount }, () => ({
+        text: '',
+        colSpan: 1,
+        rowSpan: 1,
+      }))
+      return [empty]
+    }
+    const value = this.#evaluateValue(expression)
+    if (value === null || value.kind === 'invalid') return null
+    if (value.kind !== 'list') {
+      this.#error(
+        `"rows" needs a list of rows, found ${describeScriptValue(value)}`,
+        expression.span,
+      )
+      return null
+    }
+    const rows: { text: string; colSpan: number; rowSpan: number }[][] = []
+    for (const rowValue of value.values) {
+      if (rowValue.kind !== 'list') {
+        this.#error(
+          `A row needs a list of cells, found ${describeScriptValue(rowValue)}`,
+          expression.span,
+        )
+        return null
+      }
+      const cells: { text: string; colSpan: number; rowSpan: number }[] = []
+      for (const cellValue of rowValue.values) {
+        const cell = this.#tableCellOf(cellValue, expression.span)
+        if (cell === null) return null
+        cells.push(cell)
+      }
+      if (cells.length > columnCount) {
+        this.#error(
+          `A row has ${cells.length} cells but the table declares ${columnCount} column${columnCount === 1 ? '' : 's'}`,
+          expression.span,
+        )
+        return null
+      }
+      rows.push(cells)
+    }
+    return rows
+  }
+
+  #tableCellOf(
+    value: ScriptValue,
+    span: SourceSpan,
+  ): { text: string; colSpan: number; rowSpan: number } | null {
+    if (value.kind === 'string') {
+      return { text: value.value, colSpan: 1, rowSpan: 1 }
+    }
+    if (value.kind !== 'record') {
+      this.#error(
+        `A cell needs text or a record like { text: "A", colSpan: 2 }, found ${describeScriptValue(value)}`,
+        span,
+      )
+      return null
+    }
+    const text = value.fields.get('text')
+    if (text !== undefined && text.kind !== 'string') {
+      this.#error(`A cell "text" must be a string, found ${describeScriptValue(text)}`, span)
+      return null
+    }
+    const colSpan = value.fields.get('colSpan')
+    const rowSpan = value.fields.get('rowSpan')
+    for (const [key, field] of [
+      ['colSpan', colSpan],
+      ['rowSpan', rowSpan],
+    ] as const) {
+      if (
+        field !== undefined &&
+        (field.kind !== 'number' || !Number.isInteger(field.value) || field.value < 1)
+      ) {
+        this.#error(`A cell "${key}" must be a whole number of at least 1`, span)
+        return null
+      }
+    }
+    for (const key of value.fields.keys()) {
+      if (key !== 'text' && key !== 'colSpan' && key !== 'rowSpan') {
+        this.#error(`Unknown cell field "${key}". Available fields: text, colSpan, rowSpan.`, span)
+        return null
+      }
+    }
+    return {
+      text: text !== undefined && text.kind === 'string' ? text.value : '',
+      colSpan: colSpan !== undefined && colSpan.kind === 'number' ? colSpan.value : 1,
+      rowSpan: rowSpan !== undefined && rowSpan.kind === 'number' ? rowSpan.value : 1,
+    }
   }
 
   /**
@@ -3912,6 +5244,10 @@ class Compiler {
   #validatePointArrowCapability(member: ScriptMember, statement: PointArrowAtNode): boolean {
     const node = this.#nodeOf(member)
     if (!node) return true
+    if (this.#isCreatedNode(node.id)) {
+      this.#errorCreatedRead(node.id, node.name, statement.nameSpan, 'pointArrowAt')
+      return false
+    }
     return this.#validateTrackCapability(
       { kind: 'node', property: 'rotation' },
       node,
@@ -4903,7 +6239,32 @@ class Compiler {
   }
 
   #nodeOf(member: ScriptMember): AnimationScriptNodeInfo | undefined {
-    return this.#context.nodes.find((candidate) => candidate.id === member.nodeId)
+    const found = this.#allNodes().find((candidate) => candidate.id === member.nodeId)
+    // Created nodes carry the engine's default material instance; expose its
+    // built-in parameters so tint/opacityMultiplier writes type-check.
+    if (
+      found !== undefined &&
+      this.#isCreatedNode(found.id) &&
+      found.materialParameters === undefined
+    ) {
+      return { ...found, materialParameters: DEFAULT_SCRIPT_MATERIAL_PARAMETERS }
+    }
+    return found
+  }
+
+  /**
+   * Every node the compile can address: the pre-run slide snapshot plus the
+   * nodes earlier `create` statements minted. Created nodes append in creation
+   * order, so scene pre-order and lookup stay deterministic.
+   */
+  #allNodes(): readonly AnimationScriptNodeInfo[] {
+    return this.#createdNodes.length === 0
+      ? this.#context.nodes
+      : [...this.#context.nodes, ...this.#createdNodes]
+  }
+
+  #isCreatedNode(nodeId: string): boolean {
+    return this.#createdNodeIds.has(nodeId)
   }
 
   /** `"opacity"` for a node binding, `"opacity" on "Cell"` inside a broadcast. */
@@ -4991,8 +6352,52 @@ class Compiler {
       planned.tangentOut = ease.tangentOut
       return
     }
-    const value = write?.value ?? this.#context.evaluateTrackValue(member.nodeId, track, time)
+    const value =
+      write?.value ??
+      this.#initialTrackValue(member.nodeId, track) ??
+      (this.#isCreatedNode(member.nodeId)
+        ? // A created node has no pre-run state; capability reporting has
+          // already flagged unsupported tracks, so pin a benign value rather
+          // than reaching the evaluator with an id it cannot resolve.
+          (0 as unknown as ScriptTrackValue)
+        : this.#context.evaluateTrackValue(member.nodeId, track, time))
     this.#addPlanned({ nodeId: member.nodeId, nodeName: member.nodeName, track, time, value, ease })
+  }
+
+  /** The declared value a created node's track starts from. */
+  #initialTrackValue(nodeId: string, track: ScriptTrack): ScriptTrackValue | undefined {
+    const initial = this.#createdInitial.get(nodeId)
+    if (initial === undefined) return undefined
+    if (track.kind === 'node') {
+      switch (track.property) {
+        case 'x':
+          return initial.x
+        case 'y':
+          return initial.y
+        case 'rotation':
+          return initial.rotation
+        case 'scaleX':
+          return initial.scaleX
+        case 'scaleY':
+          return initial.scaleY
+        case 'opacity':
+          return initial.opacity
+        case 'zIndex':
+          return 0
+      }
+      return undefined
+    }
+    if (track.kind === 'table') {
+      const styles = this.#createdTableStyles.get(nodeId)
+      if (styles === undefined) return undefined
+      return track.property === 'borderRadius' ? styles.borderRadius : styles.padding
+    }
+    if (track.kind === 'parameter') {
+      if (track.parameter === TINT_PARAMETER_KEY) return DEFAULT_TINT
+      if (track.parameter === OPACITY_MULTIPLIER_PARAMETER_KEY) return DEFAULT_OPACITY_MULTIPLIER
+      return undefined
+    }
+    return undefined
   }
 
   #addPlanned(input: {
@@ -5263,6 +6668,15 @@ class Compiler {
     }
     const time = this.#validateReadTime(this.#readCursor, expression.nameSpan)
     if (time === null) return null
+    // A created node has no pre-run scene state: reads report its declared
+    // initial values, served statically rather than through the evaluator.
+    const createdInitial = this.#createdInitial.get(member.nodeId)
+    if (createdInitial !== undefined) {
+      return {
+        kind: 'number',
+        value: createdInitial[expression.name as keyof typeof createdInitial],
+      }
+    }
     return {
       kind: 'number',
       value: this.#context.evaluateProperty(member.nodeId, expression.name, time),
@@ -5284,11 +6698,28 @@ class Compiler {
     }
   }
 
+  /**
+   * A read target that does not exist until the run: `worldAt`, `bounds` and
+   * `cellRect` sample pre-run scene state, which a created node has none of.
+   */
+  #errorCreatedRead(nodeId: string, nodeName: string, span: SourceSpan, what: string): void {
+    void nodeId
+    this.#error(
+      `"${what}" cannot read "${nodeName}" — it is created by this script and has no pre-run scene state`,
+      span,
+    )
+  }
+
   /** `worldAt(node, t?)` — the node's world x, y and rotation at `t`. */
   #evaluateWorldAt(expression: Extract<ScriptExpression, { kind: 'call' }>): ScriptValue | null {
     if (!this.#checkReadArity(expression)) return null
     const target = this.#resolveReadTarget(expression.args[0], false, 'worldAt')
     if (!target) return null
+    const head = target.members[0]
+    if (head && this.#isCreatedNode(head.nodeId)) {
+      this.#errorCreatedRead(head.nodeId, head.nodeName, expression.span, 'worldAt')
+      return null
+    }
     const time = this.#resolveReadTime(expression.args[1], expression)
     if (time === null) return null
     const world = this.#context.reads.world(target.members[0].nodeId, time)
@@ -5311,6 +6742,12 @@ class Compiler {
     // A zero-member group already failed to resolve; do not pile a second
     // unmeasurable-geometry error onto the resolution error.
     if (target.members.length === 0) return null
+    for (const member of target.members) {
+      if (this.#isCreatedNode(member.nodeId)) {
+        this.#errorCreatedRead(member.nodeId, member.nodeName, expression.span, 'bounds')
+        return null
+      }
+    }
     const time = this.#resolveReadTime(expression.args[1], expression)
     if (time === null) return null
     let union: AnimationScriptBoundsRead | null = null
@@ -5370,6 +6807,10 @@ class Compiler {
     if (row === null || column === null) return null
     const cell = this.#resolveGridSlot(binding.grid, row, column, expression.span)
     if (!cell) return null
+    if (this.#isCreatedNode(cell.nodeId)) {
+      this.#errorCreatedRead(cell.nodeId, cell.nodeName, expression.span, 'cellRect')
+      return null
+    }
     const time = this.#resolveReadTime(expression.args[3], expression)
     if (time === null) return null
     const rect = this.#context.reads.cellRect(binding.members[0].nodeId, cell.nodeId, time)
@@ -5721,7 +7162,7 @@ class Compiler {
     }
   }
 
-  #materializeCommands(): Command<unknown>[] {
+  #materializeCommands(): { commands: Command<unknown>[]; orders: number[] } {
     const planned = [...this.#planned.values()].map((entry) => ({
       order: entry.order,
       command: new AddKeyframeCommand({
@@ -5736,11 +7177,20 @@ class Compiler {
     }))
     // Static text changes share the Transaction and the source order but are
     // not keyframes, so they stay out of the footprint and the keyframe count.
-    // Clip Instances and placements join the same source order: later
-    // statements append later and win (statement order is priority).
-    return [...planned, ...this.#textCommands, ...this.#clipCommands]
-      .sort((a, b) => a.order - b.order)
-      .map((entry) => entry.command)
+    // Clip Instances, placements and creates join the same source order: later
+    // statements append later and win (statement order is priority). Creates
+    // must precede any keyframe addressing their nodes, which source order
+    // guarantees: a statement can only bind what an earlier statement minted.
+    const sorted = [
+      ...planned,
+      ...this.#textCommands,
+      ...this.#clipCommands,
+      ...this.#createCommands,
+    ].sort((a, b) => a.order - b.order)
+    return {
+      commands: sorted.map((entry) => entry.command),
+      orders: sorted.map((entry) => entry.order),
+    }
   }
 
   #error(message: string, span: SourceSpan): void {

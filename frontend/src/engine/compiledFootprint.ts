@@ -15,6 +15,10 @@ export interface CompiledFootprint {
   readonly placementParents: readonly string[]
   readonly instanceNodes: readonly string[]
   readonly entryVersions: Readonly<Record<string, number>>
+  /** Root node ids this run minted; a re-run deletes them before recreating. */
+  readonly createdNodes: readonly string[]
+  /** Data source ids this run embedded; a re-run replaces them. */
+  readonly createdDataSources: readonly string[]
 }
 
 export function compiledFootprintToJSON(footprint: CompiledFootprint): CompiledFootprintJSON {
@@ -25,6 +29,8 @@ export function compiledFootprintToJSON(footprint: CompiledFootprint): CompiledF
     placementParents: [...footprint.placementParents],
     instanceNodes: [...footprint.instanceNodes],
     entryVersions: { ...footprint.entryVersions },
+    createdNodes: [...footprint.createdNodes],
+    createdDataSources: [...footprint.createdDataSources],
   }
 }
 
@@ -34,10 +40,15 @@ export function compiledFootprintToJSON(footprint: CompiledFootprint): CompiledF
  * deleted nodes (ids absent from the map) are kept verbatim — the clear path
  * tolerates targets that no longer resolve, so stale references never block a
  * recompile. Entry versions are project-scoped and travel unchanged.
+ *
+ * `dropCreatedDataSources` is for slide duplication: script data-source ids
+ * are scoped to their slide, so the copy must not inherit (and later delete)
+ * the source slide's data sources; its first run mints its own.
  */
 export function remapCompiledFootprint(
   footprint: CompiledFootprint,
   nodeIds: ReadonlyMap<string, string>,
+  options: { readonly dropCreatedDataSources?: boolean } = {},
 ): CompiledFootprint {
   const remapId = (id: string): string => nodeIds.get(id) ?? id
   return {
@@ -50,6 +61,8 @@ export function remapCompiledFootprint(
     placementParents: footprint.placementParents.map(remapId),
     instanceNodes: footprint.instanceNodes.map(remapId),
     entryVersions: { ...footprint.entryVersions },
+    createdNodes: footprint.createdNodes.map(remapId),
+    createdDataSources: options.dropCreatedDataSources ? [] : [...footprint.createdDataSources],
   }
 }
 
@@ -92,6 +105,14 @@ export function compiledFootprintFromJSON(json: CompiledFootprintJSON): Compiled
       'Animation Script lastCompiled.instanceNodes',
     ),
     entryVersions: requireEntryVersions(json.entryVersions),
+    createdNodes: requireOptionalStringList(
+      json.createdNodes,
+      'Animation Script lastCompiled.createdNodes',
+    ),
+    createdDataSources: requireOptionalStringList(
+      json.createdDataSources,
+      'Animation Script lastCompiled.createdDataSources',
+    ),
   }
 }
 
@@ -130,6 +151,8 @@ export function validateCompiledFootprintJSON(
   }
   validateStringListJSON(errors, value.placementParents, `${label}.placementParents`)
   validateStringListJSON(errors, value.instanceNodes, `${label}.instanceNodes`)
+  validateOptionalStringListJSON(errors, value.createdNodes, `${label}.createdNodes`)
+  validateOptionalStringListJSON(errors, value.createdDataSources, `${label}.createdDataSources`)
   if (!isRecord(value.entryVersions)) {
     errors.push(`${label}.entryVersions must be an object`)
   } else {
@@ -153,11 +176,23 @@ function validateStringListJSON(errors: string[], value: unknown, label: string)
   }
 }
 
+function validateOptionalStringListJSON(errors: string[], value: unknown, label: string): void {
+  // Pre-creation footprints omit these; only a present non-list is invalid.
+  if (value === undefined) return
+  validateStringListJSON(errors, value, label)
+}
+
 function requireStringList(value: unknown, what: string): string[] {
   if (!Array.isArray(value)) {
     throw new Error(`${what} must be an array`)
   }
   return value.map((entry, index) => requireString(entry, `${what}[${index}]`))
+}
+
+function requireOptionalStringList(value: unknown, what: string): string[] {
+  // Older `.lesson` files carry no created lists; read them as empty.
+  if (value === undefined) return []
+  return requireStringList(value, what)
 }
 
 function requireEntryVersions(value: unknown): Record<string, number> {

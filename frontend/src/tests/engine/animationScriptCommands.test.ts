@@ -109,6 +109,8 @@ describe('SetSlideAnimationScriptCommand', () => {
       placementParents: [],
       instanceNodes: [],
       entryVersions: {},
+      createdNodes: [],
+      createdDataSources: [],
     }
     system.engine.getSlide(slideId).animationScript = { source: 'one', lastCompiled: footprint }
 

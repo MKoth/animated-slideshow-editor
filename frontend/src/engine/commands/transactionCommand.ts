@@ -30,16 +30,16 @@ export class TransactionCommand implements Command<TransactionInverse> {
     this.parameters = { commands: this.#children.map((command) => command.toJSON()) }
   }
 
-  validate(engine: Engine): void {
-    for (const command of this.#children) {
-      command.validate(engine)
-    }
+  validate(): void {
+    // Children validate immediately before they execute: later children may
+    // reference nodes an earlier child just created (script-created objects).
   }
 
   execute(engine: Engine): TransactionInverse {
     const children: TransactionInverseChild[] = []
     try {
       for (const command of this.#children) {
+        command.validate(engine)
         const inverse = command.execute(engine)
         children.push({ type: command.type, parameters: command.parameters, inverse })
       }
