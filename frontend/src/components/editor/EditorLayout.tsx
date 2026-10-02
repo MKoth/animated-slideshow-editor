@@ -4,6 +4,7 @@ import { useUiStore } from '../../stores/uiStore'
 import { DebugPanel } from '../debug/DebugPanel'
 import { CanvasPanel } from '../panels/CanvasPanel'
 import { InspectorPanel } from '../panels/InspectorPanel'
+import { LibraryBrowser } from '../panels/LibraryBrowser'
 import { BottomPanel } from './BottomPanel'
 import { LeftSidebar } from './LeftSidebar'
 import { MenuBar } from './MenuBar'
@@ -74,6 +75,7 @@ export function EditorLayout() {
       </div>
       <StatusBar />
       {debugPanelVisible && <DebugPanel />}
+      <LibraryBrowser />
     </div>
   )
 }

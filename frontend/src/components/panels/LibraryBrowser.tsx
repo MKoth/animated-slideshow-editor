@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useClipLibraryStore } from '../../stores/clipLibraryStore'
 import type { ClipLibraryEntry } from '../../api'
 import { useNotificationStore } from '../../stores/notificationStore'
@@ -23,6 +23,7 @@ function formatDuration(seconds: number): string {
 
 export function LibraryBrowser() {
   const visible = useClipLibraryStore((state) => state.libraryBrowserVisible)
+  const libraryBrowserSection = useClipLibraryStore((state) => state.libraryBrowserSection)
   const definitions = useClipLibraryStore((state) => state.definitions)
   const loaded = useClipLibraryStore((state) => state.loaded)
   const loading = useClipLibraryStore((state) => state.loading)
@@ -61,12 +62,19 @@ export function LibraryBrowser() {
   const [scriptDescriptionDraft, setScriptDescriptionDraft] = useState('')
   const [scriptSourceDraft, setScriptSourceDraft] = useState('')
   const [scriptDeleteConfirm, setScriptDeleteConfirm] = useState<ScriptLibraryEntry | null>(null)
+  const scriptSectionRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (visible && !loaded) {
       void loadLibrary()
     }
   }, [visible, loaded, loadLibrary])
+
+  useEffect(() => {
+    if (visible && libraryBrowserSection === 'scriptFunctions') {
+      scriptSectionRef.current?.scrollIntoView?.({ block: 'start' })
+    }
+  }, [visible, libraryBrowserSection, loading])
 
   const scriptFunctions = useMemo(
     () => [...(engine.project?.scriptFunctions ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
@@ -175,7 +183,7 @@ export function LibraryBrowser() {
         className="projects-dialog"
         role="dialog"
         aria-label="Browse Library"
-        style={{ maxWidth: 600, width: '100%' }}
+        style={{ maxWidth: 600, width: '100%', overflowY: 'auto' }}
       >
         <h2 className="projects-dialog__title">Browse Library</h2>
         {error && (
@@ -335,76 +343,94 @@ export function LibraryBrowser() {
             )}
           </>
         )}
-        <h3 style={{ margin: '16px 0 8px', fontSize: 13 }}>Script Functions</h3>
-        <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
-          Project-scoped Animation Script functions, stored in the .lesson file. Renaming an entry
-          breaks call sites with a near-miss diagnostic — the source is never rewritten.
-        </p>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          <input
-            type="search"
-            aria-label="Search script functions"
-            placeholder="Search functions"
-            value={scriptSearch}
-            onChange={(e) => setScriptSearch(e.target.value)}
-            style={{ flex: 1 }}
-          />
-          <button type="button" onClick={openScriptCreate} data-testid="script-function-create">
-            New Function
-          </button>
-        </div>
-        {filteredScripts.length === 0 && (
-          <p style={{ fontSize: 12, opacity: 0.7 }}>
-            {scriptFunctions.length === 0
-              ? 'No script functions yet. Create one to reuse across slides.'
-              : 'No functions match your search.'}
+        <div
+          ref={scriptSectionRef}
+          data-testid="script-functions-section"
+          data-focused={libraryBrowserSection === 'scriptFunctions'}
+          style={{
+            margin: '16px -10px 0',
+            padding: '8px 10px',
+            borderRadius: 6,
+            border:
+              libraryBrowserSection === 'scriptFunctions'
+                ? '1px solid var(--color-accent)'
+                : '1px solid transparent',
+            background:
+              libraryBrowserSection === 'scriptFunctions' ? 'var(--color-bg)' : 'transparent',
+            scrollMarginTop: 8,
+          }}
+        >
+          <h3 style={{ margin: '0 0 8px', fontSize: 13 }}>Script Functions</h3>
+          <p style={{ fontSize: 12, color: 'var(--color-text-muted, #666)', margin: '0 0 8px' }}>
+            Project-scoped Animation Script functions, stored in the .lesson file. Renaming an entry
+            breaks call sites with a near-miss diagnostic — the source is never rewritten.
           </p>
-        )}
-        {filteredScripts.length > 0 && (
-          <ul style={{ maxHeight: 220, overflowY: 'auto', padding: 0, listStyle: 'none' }}>
-            {filteredScripts.map((entry) => (
-              <li
-                key={entry.id}
-                data-testid={`script-function-${entry.id}`}
-                style={{
-                  border: '1px solid var(--color-border, #ddd)',
-                  borderRadius: 6,
-                  padding: 8,
-                  marginBottom: 6,
-                }}
-              >
-                <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
-                  <strong style={{ fontSize: 13 }}>{entry.name}</strong>
-                  <span style={{ fontSize: 11, opacity: 0.7 }}>v{entry.version}</span>
-                  <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
-                    <button
-                      type="button"
-                      aria-label={`Edit ${entry.name}`}
-                      onClick={() => openScriptEdit(entry)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Delete ${entry.name}`}
-                      onClick={() => setScriptDeleteConfirm(entry)}
-                    >
-                      Delete
-                    </button>
-                  </span>
-                </div>
-                <div style={{ fontSize: 12, fontFamily: 'monospace', marginTop: 4 }}>
-                  {scriptSignatureOf(entry)}
-                </div>
-                {entry.description && (
-                  <div style={{ fontSize: 12, opacity: 0.8, marginTop: 2 }}>
-                    {entry.description}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <input
+              type="search"
+              aria-label="Search script functions"
+              placeholder="Search functions"
+              value={scriptSearch}
+              onChange={(e) => setScriptSearch(e.target.value)}
+              style={{ flex: 1 }}
+            />
+            <button type="button" onClick={openScriptCreate} data-testid="script-function-create">
+              New Function
+            </button>
+          </div>
+          {filteredScripts.length === 0 && (
+            <p style={{ fontSize: 12, opacity: 0.7 }}>
+              {scriptFunctions.length === 0
+                ? 'No script functions yet. Create one to reuse across slides.'
+                : 'No functions match your search.'}
+            </p>
+          )}
+          {filteredScripts.length > 0 && (
+            <ul style={{ maxHeight: 220, overflowY: 'auto', padding: 0, listStyle: 'none' }}>
+              {filteredScripts.map((entry) => (
+                <li
+                  key={entry.id}
+                  data-testid={`script-function-${entry.id}`}
+                  style={{
+                    border: '1px solid var(--color-border, #ddd)',
+                    borderRadius: 6,
+                    padding: 8,
+                    marginBottom: 6,
+                  }}
+                >
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                    <strong style={{ fontSize: 13 }}>{entry.name}</strong>
+                    <span style={{ fontSize: 11, opacity: 0.7 }}>v{entry.version}</span>
+                    <span style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                      <button
+                        type="button"
+                        aria-label={`Edit ${entry.name}`}
+                        onClick={() => openScriptEdit(entry)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={`Delete ${entry.name}`}
+                        onClick={() => setScriptDeleteConfirm(entry)}
+                      >
+                        Delete
+                      </button>
+                    </span>
                   </div>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
+                  <div style={{ fontSize: 12, fontFamily: 'monospace', marginTop: 4 }}>
+                    {scriptSignatureOf(entry)}
+                  </div>
+                  {entry.description && (
+                    <div style={{ fontSize: 12, opacity: 0.8, marginTop: 2 }}>
+                      {entry.description}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
         <div className="projects-dialog__actions">
           <button className="projects-dialog__button" onClick={closeBrowser}>
             Close

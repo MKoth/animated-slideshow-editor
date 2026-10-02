@@ -10,7 +10,6 @@ import type { ClipLibraryClip } from '../../stores/clipLibraryStore'
 import { useKeyframeClipboardStore } from '../../stores/keyframeClipboardStore'
 import { useTimelineSelectionStore } from '../../stores/timelineSelectionStore'
 import { useNotificationStore } from '../../stores/notificationStore'
-import { LibraryBrowser } from './LibraryBrowser'
 import {
   RenameClipCollectionCommand,
   SetClipCollectionCategoryCommand,
@@ -477,7 +476,7 @@ export function AnimationsPanel() {
           </button>
           <button
             className="animations-toolbar__create"
-            onClick={openLibraryBrowser}
+            onClick={() => openLibraryBrowser()}
             data-testid="clips-browse-button"
           >
             Browse Library
@@ -1134,7 +1133,6 @@ export function AnimationsPanel() {
           </div>
         </div>
       )}
-      <LibraryBrowser />
       <CollectionLibraryBrowser
         visible={browseCollectionsOpen}
         onClose={() => setBrowseCollectionsOpen(false)}

@@ -1,14 +1,16 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EngineProvider } from '../app/EngineProvider'
 import { useEngine } from '../app/useEngine'
 import { AnimationsPanel } from '../components/panels/AnimationsPanel'
+import { LibraryBrowser } from '../components/panels/LibraryBrowser'
 import { Notifications } from '../components/notifications/Notifications'
 import { useClipLibraryStore } from '../stores/clipLibraryStore'
 import { useNotificationStore } from '../stores/notificationStore'
 import { CreateProjectCommand } from '../engine/commands/createProjectCommand'
 import { CreateClipCommand } from '../engine/commands/createClipCommand'
+import { SetScriptLibraryEntryCommand } from '../engine/commands'
 import type { ClipLibraryEntry } from '../api'
 
 vi.mock('pixi.js', async () => {
@@ -61,6 +63,7 @@ function renderPanel() {
     <EngineProvider>
       <SetupProject />
       <AnimationsPanel />
+      <LibraryBrowser />
       <Notifications />
     </EngineProvider>,
   )
@@ -71,6 +74,7 @@ function renderPanelWithClips() {
     <EngineProvider>
       <SetupClips />
       <AnimationsPanel />
+      <LibraryBrowser />
       <Notifications />
     </EngineProvider>,
   )
@@ -81,6 +85,7 @@ beforeEach(() => {
     selectedId: null,
     error: null,
     libraryBrowserVisible: false,
+    libraryBrowserSection: 'clips',
     definitions: [],
     loaded: false,
     loading: false,
@@ -438,6 +443,57 @@ describe('LibraryBrowser', () => {
       await user.click(screen.getByRole('button', { name: 'Close' }))
 
       expect(screen.queryByRole('dialog', { name: 'Browse Library' })).not.toBeInTheDocument()
+    })
+  })
+
+  describe('Script Functions section', () => {
+    function SetupScriptFunction() {
+      const { engine, dispatch } = useEngine()
+      if (engine.project && engine.project.scriptFunctions.length === 0) {
+        dispatch(
+          new SetScriptLibraryEntryCommand({
+            name: 'fillTable',
+            description: 'Fades a table in',
+            source: 'function fillTable(target: node) {\n  target.fadeIn(0.4s)\n}',
+          }),
+        )
+      }
+      return null
+    }
+
+    it('lists project script functions with signature and version', async () => {
+      stubFetch(() => Promise.resolve(new Response(JSON.stringify([]), { status: 200 })))
+      render(
+        <EngineProvider>
+          <SetupProject />
+          <SetupScriptFunction />
+          <LibraryBrowser />
+        </EngineProvider>,
+      )
+
+      act(() => {
+        useClipLibraryStore.getState().openLibraryBrowser('scriptFunctions')
+      })
+
+      const section = screen.getByTestId('script-functions-section')
+      expect(section).toHaveAttribute('data-focused', 'true')
+      expect(within(section).getByText('fillTable')).toBeInTheDocument()
+      expect(within(section).getByText('fillTable(target: node)')).toBeInTheDocument()
+      expect(within(section).getByText('v1')).toBeInTheDocument()
+    })
+
+    it('leaves the section unfocused when opened from the Animations panel', async () => {
+      stubFetch(() => Promise.resolve(new Response(JSON.stringify([]), { status: 200 })))
+      const user = userEvent.setup()
+      renderPanel()
+      await screen.findByTestId('clips-browse-button')
+
+      await user.click(screen.getByTestId('clips-browse-button'))
+
+      expect(screen.getByTestId('script-functions-section')).toHaveAttribute(
+        'data-focused',
+        'false',
+      )
     })
   })
 

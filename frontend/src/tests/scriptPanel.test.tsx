@@ -15,6 +15,7 @@ import {
 import type { Engine } from '../engine/internal'
 import { createEngineInternal, toReadOnly } from '../engine/internal'
 import { serialize } from '../engine/lessonSerializer'
+import { useClipLibraryStore } from '../stores/clipLibraryStore'
 import { usePlaybackController } from '../stores/playbackStore'
 import { useSelectionStore } from '../stores/selectionStore'
 import { DEFAULT_TIMELINE_HEIGHT } from '../stores/uiPrefs'
@@ -71,6 +72,7 @@ function setScript(dispatcher: CommandDispatcher, engine: Engine, source: string
 }
 
 beforeEach(() => {
+  useClipLibraryStore.setState({ libraryBrowserVisible: false, libraryBrowserSection: 'clips' })
   useSelectionStore.setState({ selectedIds: [] })
   usePlaybackController.setState({ currentTimes: {} })
   useTimelineViewStore.persist.clearStorage()
@@ -210,6 +212,18 @@ describe('Script tab shell', () => {
 
     expect(engine.getActiveSlide()?.animationScript?.source).toBe('script "Keys" from 0')
     expect(undoStack.entries[0].type).toBe('SetSlideAnimationScript')
+  })
+
+  it('opens the library browser focused on Script Functions', async () => {
+    const user = userEvent.setup()
+    const { engine } = renderPanel()
+    setupProject(engine)
+    await user.click(screen.getByTestId('bottom-tab-create-script'))
+
+    await user.click(screen.getByTestId('script-functions'))
+
+    expect(useClipLibraryStore.getState().libraryBrowserVisible).toBe(true)
+    expect(useClipLibraryStore.getState().libraryBrowserSection).toBe('scriptFunctions')
   })
 })
 

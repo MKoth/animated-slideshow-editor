@@ -63,6 +63,8 @@ export function clipToRecord(clip: ClipDefinition): ClipLibraryClip {
   }
 }
 
+export type LibraryBrowserSection = 'clips' | 'scriptFunctions'
+
 interface ClipLibraryState {
   definitions: ClipLibraryEntry[]
   loaded: boolean
@@ -71,6 +73,7 @@ interface ClipLibraryState {
   unavailable: boolean
   selectedId: string | null
   libraryBrowserVisible: boolean
+  libraryBrowserSection: LibraryBrowserSection
   loadLibrary: () => Promise<void>
   saveToLibrary: (
     clip: ClipDefinition,
@@ -80,7 +83,7 @@ interface ClipLibraryState {
   deleteFromLibrary: (clipId: string) => Promise<void>
   selectClip: (clipId: string | null) => void
   clearError: () => void
-  openLibraryBrowser: () => void
+  openLibraryBrowser: (section?: LibraryBrowserSection) => void
   closeLibraryBrowser: () => void
   importClipFromLibrary: (entry: ClipLibraryEntry) => void
   createClip: (name: string) => void
@@ -106,6 +109,7 @@ export const useClipLibraryStore = create<ClipLibraryState>()((set) => ({
   unavailable: false,
   selectedId: null,
   libraryBrowserVisible: false,
+  libraryBrowserSection: 'clips',
 
   loadLibrary: async () => {
     const seq = ++requestSeq
@@ -196,7 +200,8 @@ export const useClipLibraryStore = create<ClipLibraryState>()((set) => ({
 
   clearError: () => set({ error: null }),
 
-  openLibraryBrowser: () => set({ libraryBrowserVisible: true }),
+  openLibraryBrowser: (section) =>
+    set({ libraryBrowserVisible: true, libraryBrowserSection: section ?? 'clips' }),
 
   closeLibraryBrowser: () => set({ libraryBrowserVisible: false }),
 

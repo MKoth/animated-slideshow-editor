@@ -11,6 +11,7 @@ import type {
 } from '../../engine/animationScriptCompiler'
 import { SetSlideAnimationScriptCommand } from '../../engine/commands'
 import { findScriptLibraryDrift } from '../../engine/scriptLibrary'
+import { useClipLibraryStore } from '../../stores/clipLibraryStore'
 import { measuredNodeSize } from '../../pixi/renderer/nodeMeasurement'
 
 type ScriptOutcome =
@@ -33,6 +34,7 @@ export function ScriptPanel({
   height: number
 }) {
   const { engine, dispatch } = useEngine()
+  const openLibraryBrowser = useClipLibraryStore((state) => state.openLibraryBrowser)
   const gutterRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<HTMLTextAreaElement>(null)
   const [draft, setDraft] = useState(source)
@@ -188,6 +190,23 @@ export function ScriptPanel({
           }}
         >
           Save
+        </button>
+        <button
+          type="button"
+          data-testid="script-functions"
+          onClick={() => openLibraryBrowser('scriptFunctions')}
+          title="Browse reusable script functions"
+          style={{
+            padding: '4px 12px',
+            borderRadius: 4,
+            border: '1px solid var(--color-border)',
+            background: 'transparent',
+            color: 'var(--color-text)',
+            cursor: 'pointer',
+            fontSize: 11,
+          }}
+        >
+          Functions
         </button>
       </div>
       <div
