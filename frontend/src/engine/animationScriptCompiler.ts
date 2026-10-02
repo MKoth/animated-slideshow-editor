@@ -758,6 +758,8 @@ class Compiler {
   /** Inlining stack for recursion detection and the call-depth budget. */
   readonly #callStack: string[] = []
   readonly #planned = new Map<string, PlannedKeyframe>()
+  /** The same keyframes indexed by node+track, sorted by time, for start pins. */
+  readonly #plannedByTrack = new Map<string, PlannedKeyframe[]>()
   readonly #trackOrder: TrackOrderEntry[] = []
   /** Static `setText` commands with their source order, dispatched inside the run Transaction. */
   readonly #textCommands: { readonly order: number; readonly command: Command<unknown> }[] = []
@@ -6256,11 +6258,18 @@ class Compiler {
    * Every node the compile can address: the pre-run slide snapshot plus the
    * nodes earlier `create` statements minted. Created nodes append in creation
    * order, so scene pre-order and lookup stay deterministic.
+   *
+   * A pre-run node whose id a `create` statement mints this run is the previous
+   * run's output, still in the scene until the Run replaces it; it is shadowed
+   * here so addressing resolves to the new node, never the stale duplicate
+   * (duplicate ids would otherwise corrupt table grid resolution).
    */
   #allNodes(): readonly AnimationScriptNodeInfo[] {
-    return this.#createdNodes.length === 0
-      ? this.#context.nodes
-      : [...this.#context.nodes, ...this.#createdNodes]
+    const preRun =
+      this.#createdNodeIds.size === 0
+        ? this.#context.nodes
+        : this.#context.nodes.filter((node) => !this.#createdNodeIds.has(node.id))
+    return this.#createdNodes.length === 0 ? preRun : [...preRun, ...this.#createdNodes]
   }
 
   #isCreatedNode(nodeId: string): boolean {
@@ -6352,8 +6361,12 @@ class Compiler {
       planned.tangentOut = ease.tangentOut
       return
     }
+    // The start of a timed write is the value the track holds there: what the
+    // script already planned on it (statement order chains), then the created
+    // node's declared value, then the engine's pre-run pose.
     const value =
       write?.value ??
+      this.#plannedTrackValueAt(member.nodeId, track, time) ??
       this.#initialTrackValue(member.nodeId, track) ??
       (this.#isCreatedNode(member.nodeId)
         ? // A created node has no pre-run state; capability reporting has
@@ -6411,7 +6424,7 @@ class Compiler {
     const { nodeId, nodeName, track, time, value, ease } = input
     if (!this.#claimEmittedKeyframe(this.#currentSpan)) return
     const property = this.#trackLabel(track)
-    this.#planned.set(slotKeyFor(nodeId, track, time), {
+    const planned: PlannedKeyframe = {
       target: this.#targetFor(nodeId, track),
       nodeId,
       nodeName,
@@ -6423,7 +6436,9 @@ class Compiler {
       interpolation: ease.interpolation,
       tangentIn: ease.tangentIn,
       tangentOut: ease.tangentOut,
-    })
+    }
+    this.#planned.set(slotKeyFor(nodeId, track, time), planned)
+    this.#indexPlanned(planned)
     if (
       !this.#trackOrder.some(
         (entry) => entry.nodeId === nodeId && trackKey(entry.track) === trackKey(track),
@@ -6431,6 +6446,49 @@ class Compiler {
     ) {
       this.#trackOrder.push({ nodeId, nodeName, property, track })
     }
+  }
+
+  /** Keep the per-track time index in order; `at` can backfill earlier times. */
+  #indexPlanned(planned: PlannedKeyframe): void {
+    const key = plannedTrackKey(planned.nodeId, planned.track)
+    const list = this.#plannedByTrack.get(key)
+    if (list === undefined) {
+      this.#plannedByTrack.set(key, [planned])
+      return
+    }
+    let low = 0
+    let high = list.length
+    while (low < high) {
+      const mid = (low + high) >> 1
+      if (list[mid].time < planned.time) low = mid + 1
+      else high = mid
+    }
+    list.splice(low, 0, planned)
+  }
+
+  /**
+   * The value the track holds at `time` according to what the script has
+   * already planned: hold the last keyframe at or before `time` forward, so an
+   * earlier statement's end value reaches a later statement's start. Returns
+   * `undefined` when the track is untouched there (or first written only
+   * later), so callers fall back to the declared value for a created node, or
+   * the engine's pre-run pose — which is what a boundary pin must hold.
+   */
+  #plannedTrackValueAt(
+    nodeId: string,
+    track: ScriptTrack,
+    time: number,
+  ): ScriptTrackValue | undefined {
+    const list = this.#plannedByTrack.get(plannedTrackKey(nodeId, track))
+    if (list === undefined || list.length === 0) return undefined
+    let low = 0
+    let high = list.length
+    while (low < high) {
+      const mid = (low + high) >> 1
+      if (list[mid].time <= time) low = mid + 1
+      else high = mid
+    }
+    return low === 0 ? undefined : list[low - 1].value
   }
 
   #planBoundaryPins(): void {
@@ -7398,6 +7456,11 @@ function isValidDuration(seconds: number): boolean {
 
 function slotKeyFor(nodeId: string, track: ScriptTrack, time: number): string {
   return `${nodeId}|${trackKey(track)}|${roundTime(time).toFixed(6)}`
+}
+
+/** The node+track index key; the time lives in the sorted list, not the key. */
+function plannedTrackKey(nodeId: string, track: ScriptTrack): string {
+  return `${nodeId}|${trackKey(track)}`
 }
 
 function roundTime(time: number): number {

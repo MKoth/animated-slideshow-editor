@@ -41,7 +41,12 @@ export function animationScriptClearCommands(
   // (and script-embedded data sources) go before anything else, so their ids
   // are free for the new run and their tracks vanish with them. Deleted by
   // hand in the meantime? Tolerate and move on.
-  for (const nodeId of previous?.createdNodes ?? []) {
+  //
+  // Children first: a created node may sit inside another one's subtree (e.g.
+  // `create text ... inside grid.cell(...)`), and the compile order always
+  // records the parent before the child. Reversing deletes each child before
+  // the parent command takes the parent's whole subtree with it.
+  for (const nodeId of [...(previous?.createdNodes ?? [])].reverse()) {
     try {
       engine.getNode(nodeId)
     } catch {

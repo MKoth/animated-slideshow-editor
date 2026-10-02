@@ -164,6 +164,92 @@ describe('Animation Script create — text, table, asset, data, chart', () => {
     expect(footprint?.createdNodes).toHaveLength(1)
   })
 
+  it('replaces its own created table subtree on re-run instead of failing', () => {
+    const { system, slideId } = setup()
+    const source = [
+      'script "Builder" from 0',
+      'create table "Grid" as grid { columns: [100], rows: [["A"], ["B"]] }',
+    ].join('\n')
+    runOk(system, slideId, source)
+
+    const second = runAnimationScript(system.engine, boundDispatch(system), slideId, source)
+
+    expect(second.error).toBeNull()
+    expect(second.ran).toBe(true)
+    expect(nodesNamed(system, slideId, 'Grid')).toHaveLength(1)
+    expect(nodesNamed(system, slideId, 'Cell 2,1')).toHaveLength(1)
+  })
+
+  it('chains a fadeOut after a fadeIn from the faded-in value on a created node', () => {
+    const { system, slideId } = setup()
+    const source = [
+      'script "Builder" from 0',
+      'create text "Title" as title { content: "Hello", opacity: 0 }',
+      'at(0.8) title.fadeIn(1)',
+      'at(4) title.fadeOut(1)',
+    ].join('\n')
+    runOk(system, slideId, source)
+    const title = nodeNamed(system, slideId, 'Title')
+
+    const opacityAt = (time: number) => system.engine.evaluateNode(title.id, time).opacity
+
+    expect(opacityAt(0.8)).toBeCloseTo(0, 6)
+    expect(opacityAt(1.8)).toBe(1)
+    // The fade-in's end value holds until the fade-out starts, and the
+    // fade-out then runs from 1 down to 0.
+    expect(opacityAt(3)).toBe(1)
+    expect(opacityAt(4)).toBe(1)
+    expect(opacityAt(4.5)).toBeCloseTo(0.5, 5)
+    expect(opacityAt(5)).toBe(0)
+  })
+
+  const TABLE_WITH_CELL_TEXT = [
+    'script "Builder" from 0',
+    'create table "Grid" as grid { columns: [100, 100], rows: [["", ""], ["", ""]] }',
+    'create text "Note a" as noteA inside grid.cell(0, 0) { content: "In cell" }',
+    'create text "Note b" as noteB inside grid.cell(1, 1) { content: "In cell too" }',
+  ].join('\n')
+
+  it('replaces a created table holding created cell text on re-run', () => {
+    const { system, slideId } = setup()
+    runOk(system, slideId, TABLE_WITH_CELL_TEXT)
+
+    const second = runAnimationScript(
+      system.engine,
+      boundDispatch(system),
+      slideId,
+      TABLE_WITH_CELL_TEXT,
+    )
+
+    expect(second.error).toBeNull()
+    expect(second.ran).toBe(true)
+    expect(nodesNamed(system, slideId, 'Grid')).toHaveLength(1)
+    expect(nodesNamed(system, slideId, 'Note a')).toHaveLength(1)
+    // The stale previous run's cells must not shift the grid: each note stays
+    // in the cell its selector named.
+    expect(nodeNamed(system, slideId, 'Note a').parent?.name).toBe('Cell 1,1')
+    expect(nodeNamed(system, slideId, 'Note b').parent?.name).toBe('Cell 2,2')
+  })
+
+  it('replaces a created table holding created cell text after a save/reload round trip', () => {
+    const { system, slideId } = setup()
+    runOk(system, slideId, TABLE_WITH_CELL_TEXT)
+
+    system.engine.restoreFromJSON(system.engine.toJSON())
+    const second = runAnimationScript(
+      system.engine,
+      boundDispatch(system),
+      slideId,
+      TABLE_WITH_CELL_TEXT,
+    )
+
+    expect(second.error).toBeNull()
+    expect(second.ran).toBe(true)
+    expect(nodesNamed(system, slideId, 'Grid')).toHaveLength(1)
+    expect(nodeNamed(system, slideId, 'Note a').parent?.name).toBe('Cell 1,1')
+    expect(nodeNamed(system, slideId, 'Note b').parent?.name).toBe('Cell 2,2')
+  })
+
   it('undo removes the created subtree in one step', () => {
     const { system, slideId } = setup()
     runOk(system, slideId, TEXT_SCRIPT)

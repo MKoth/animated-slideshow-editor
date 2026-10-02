@@ -243,6 +243,33 @@ describe('Animation Script sugar gestures — fadeIn and fadeOut', () => {
   })
 })
 
+describe('Animation Script timed writes — sequential chaining', () => {
+  it('starts a later gesture from the previous statement end value', () => {
+    const { system, slideId } = setup()
+    const heroId = addNode(system, slideId, 'Hero')
+    const source = [
+      'script "Demo" from 0',
+      'bind hero = node("Hero")',
+      'hero.tween({ x: 5 }, 1)',
+      'wait(1)',
+      'hero.tween({ x: 9 }, 1)',
+    ].join('\n')
+    dispatchOk(system, new SetSlideAnimationScriptCommand({ slideId, source }))
+    runOk(system, slideId, source)
+
+    expect(
+      system.engine
+        .getKeyframes(heroId, 'positionX')
+        .map((keyframe) => [keyframe.time, keyframe.value]),
+    ).toEqual([
+      [0, 0],
+      [1, 5],
+      [2, 5],
+      [3, 9],
+    ])
+  })
+})
+
 describe('Animation Script sugar gestures — tint', () => {
   it('sets without a duration and tweens with one, like the raw forms', () => {
     const { system, slideId } = setup()
