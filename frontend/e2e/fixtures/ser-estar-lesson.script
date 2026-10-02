@@ -1,0 +1,210 @@
+// Lesson 01 — Ser and estar
+//
+// Runs on slide 1 of the project "Animation Script test".
+// 1. Fades in the blackboard background (asset "blackboar-background",
+//    asset-library folder "Backgrounds").
+// 2. Shows the lesson title, then fades it away.
+// 3. Fades in an empty conjugation table and fills it cell by cell:
+//    pronoun | SER | ESTAR (six persons).
+// 4. Below the table, six examples (three SER, three ESTAR) with their
+//    translations; the conjugated verb is tinted to match its column.
+//
+// World units are canvas pixels with the origin at the canvas top-left
+// (camera at identity). Canvas is 1090 x 893 at the 1600 x 1200 editor
+// viewport used by the e2e test.
+
+script "Lesson 01. Ser and estar" from 0
+defaults { duration: 0.5s, ease: easeInOut }
+
+// ── Geometry ──────────────────────────────────────────────────────────────
+let cw = 1090
+let ch = 893
+let tableScale = 1.5
+
+// ── Background ────────────────────────────────────────────────────────────
+create asset "blackboar-background" as bg at (cw / 2, ch / 2) { scaleX: ch / 4320, scaleY: ch / 4320, opacity: 0 }
+
+// ── Title ─────────────────────────────────────────────────────────────────
+create text "Lesson title" as title at (cw / 2, 118) { content: "Lesson 01. Ser and estar", fontSize: 56, alignment: "center", opacity: 0 }
+title.tint("#F5E6C8")
+
+// ── Conjugation table, created empty ──────────────────────────────────────
+create table "Grammar table" as grid at (183, 168) { columns: [150, 160, 160], rows: [["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""]], padding: 6, borderWidth: 2, borderColor: "#4E342E", background: "#FFFDF5", opacity: 0, scaleX: tableScale, scaleY: tableScale }
+
+// Header row
+create text "Cell header pronoun" as h0 at (6, 5) inside grid.cell(0, 0) { content: "Pronombre", fontSize: 15, opacity: 0 }
+create text "Cell header ser" as h1 at (6, 5) inside grid.cell(0, 1) { content: "SER", fontSize: 17, opacity: 0 }
+create text "Cell header estar" as h2 at (6, 5) inside grid.cell(0, 2) { content: "ESTAR", fontSize: 17, opacity: 0 }
+
+// yo
+create text "Cell yo" as p1 at (6, 5) inside grid.cell(1, 0) { content: "yo", fontSize: 15, opacity: 0 }
+create text "Cell soy" as s1 at (6, 5) inside grid.cell(1, 1) { content: "soy", fontSize: 17, opacity: 0 }
+create text "Cell estoy" as e1 at (6, 5) inside grid.cell(1, 2) { content: "estoy", fontSize: 17, opacity: 0 }
+
+// tú
+create text "Cell tu" as p2 at (6, 5) inside grid.cell(2, 0) { content: "tú", fontSize: 15, opacity: 0 }
+create text "Cell eres" as s2 at (6, 5) inside grid.cell(2, 1) { content: "eres", fontSize: 17, opacity: 0 }
+create text "Cell estas" as e2 at (6, 5) inside grid.cell(2, 2) { content: "estás", fontSize: 17, opacity: 0 }
+
+// él / ella
+create text "Cell el ella" as p3 at (6, 5) inside grid.cell(3, 0) { content: "él / ella", fontSize: 15, opacity: 0 }
+create text "Cell es" as s3 at (6, 5) inside grid.cell(3, 1) { content: "es", fontSize: 17, opacity: 0 }
+create text "Cell esta" as e3 at (6, 5) inside grid.cell(3, 2) { content: "está", fontSize: 17, opacity: 0 }
+
+// nosotros
+create text "Cell nosotros" as p4 at (6, 5) inside grid.cell(4, 0) { content: "nosotros", fontSize: 15, opacity: 0 }
+create text "Cell somos" as s4 at (6, 5) inside grid.cell(4, 1) { content: "somos", fontSize: 17, opacity: 0 }
+create text "Cell estamos" as e4 at (6, 5) inside grid.cell(4, 2) { content: "estamos", fontSize: 17, opacity: 0 }
+
+// vosotros
+create text "Cell vosotros" as p5 at (6, 5) inside grid.cell(5, 0) { content: "vosotros", fontSize: 15, opacity: 0 }
+create text "Cell sois" as s5 at (6, 5) inside grid.cell(5, 1) { content: "sois", fontSize: 17, opacity: 0 }
+create text "Cell estais" as e5 at (6, 5) inside grid.cell(5, 2) { content: "estáis", fontSize: 17, opacity: 0 }
+
+// ellos
+create text "Cell ellos" as p6 at (6, 5) inside grid.cell(6, 0) { content: "ellos", fontSize: 15, opacity: 0 }
+create text "Cell son" as s6 at (6, 5) inside grid.cell(6, 1) { content: "son", fontSize: 17, opacity: 0 }
+create text "Cell estan" as e6 at (6, 5) inside grid.cell(6, 2) { content: "están", fontSize: 17, opacity: 0 }
+
+// Palette: SER is blue, ESTAR is orange, pronouns stay slate.
+h0.tint("#37474F")
+h1.tint("#1565C0")
+h2.tint("#C2410C")
+p1.tint("#455A64")
+p2.tint("#455A64")
+p3.tint("#455A64")
+p4.tint("#455A64")
+p5.tint("#455A64")
+p6.tint("#455A64")
+s1.tint("#1565C0")
+s2.tint("#1565C0")
+s3.tint("#1565C0")
+s4.tint("#1565C0")
+s5.tint("#1565C0")
+s6.tint("#1565C0")
+e1.tint("#C2410C")
+e2.tint("#C2410C")
+e3.tint("#C2410C")
+e4.tint("#C2410C")
+e5.tint("#C2410C")
+e6.tint("#C2410C")
+
+// ── Examples (three SER on the left, three ESTAR on the right) ────────────
+// 1. Yo soy estudiante. / I am a student.
+create text "ex1a" as ex1a at (107, 555) { content: "Yo ", fontSize: 30, opacity: 0 }
+create text "ex1b" as ex1b at (161, 555) { content: "soy", fontSize: 30, opacity: 0 }
+create text "ex1c" as ex1c at (296, 555) { content: " estudiante.", fontSize: 30, opacity: 0 }
+create text "ex1t" as ex1t at (175, 599) { content: "I am a student.", fontSize: 21, opacity: 0 }
+ex1a.tint("#F5E6C8")
+ex1b.tint("#4FC3F7")
+ex1c.tint("#F5E6C8")
+ex1t.tint("#A8A092")
+
+// 2. Estoy en el trabajo. / I am at work.
+create text "ex2a" as ex2a at (635, 555) { content: "Estoy", fontSize: 30, opacity: 0 }
+create text "ex2b" as ex2b at (815, 555) { content: " en el trabajo.", fontSize: 30, opacity: 0 }
+create text "ex2t" as ex2t at (672, 599) { content: "I am at work.", fontSize: 21, opacity: 0 }
+ex2a.tint("#FFB74D")
+ex2b.tint("#F5E6C8")
+ex2t.tint("#A8A092")
+
+// 3. Tú eres mi amigo. / You are my friend.
+create text "ex3a" as ex3a at (107, 665) { content: "Tú ", fontSize: 30, opacity: 0 }
+create text "ex3b" as ex3b at (170, 665) { content: "eres", fontSize: 30, opacity: 0 }
+create text "ex3c" as ex3c at (296, 665) { content: " mi amigo.", fontSize: 30, opacity: 0 }
+create text "ex3t" as ex3t at (193, 709) { content: "You are my friend.", fontSize: 21, opacity: 0 }
+ex3a.tint("#F5E6C8")
+ex3b.tint("#4FC3F7")
+ex3c.tint("#F5E6C8")
+ex3t.tint("#A8A092")
+
+// 4. Ella está en casa. / She is at home.
+create text "ex4a" as ex4a at (635, 665) { content: "Ella ", fontSize: 30, opacity: 0 }
+create text "ex4b" as ex4b at (716, 665) { content: "está", fontSize: 30, opacity: 0 }
+create text "ex4c" as ex4c at (833, 665) { content: " en casa.", fontSize: 30, opacity: 0 }
+create text "ex4t" as ex4t at (685, 709) { content: "She is at home.", fontSize: 21, opacity: 0 }
+ex4a.tint("#F5E6C8")
+ex4b.tint("#FFB74D")
+ex4c.tint("#F5E6C8")
+ex4t.tint("#A8A092")
+
+// 5. Nosotros somos amigos. / We are friends.
+create text "ex5a" as ex5a at (161, 775) { content: "Nosotros ", fontSize: 30, opacity: 0 }
+create text "ex5b" as ex5b at (287, 775) { content: "somos", fontSize: 30, opacity: 0 }
+create text "ex5c" as ex5c at (404, 775) { content: " amigos.", fontSize: 30, opacity: 0 }
+create text "ex5t" as ex5t at (175, 819) { content: "We are friends.", fontSize: 21, opacity: 0 }
+ex5a.tint("#F5E6C8")
+ex5b.tint("#4FC3F7")
+ex5c.tint("#F5E6C8")
+ex5t.tint("#A8A092")
+
+// 6. Ellos están cansados. / They are tired.
+create text "ex6a" as ex6a at (644, 775) { content: "Ellos ", fontSize: 30, opacity: 0 }
+create text "ex6b" as ex6b at (743, 775) { content: "están", fontSize: 30, opacity: 0 }
+create text "ex6c" as ex6c at (878, 775) { content: " cansados.", fontSize: 30, opacity: 0 }
+create text "ex6t" as ex6t at (685, 819) { content: "They are tired.", fontSize: 21, opacity: 0 }
+ex6a.tint("#F5E6C8")
+ex6b.tint("#FFB74D")
+ex6c.tint("#F5E6C8")
+ex6t.tint("#A8A092")
+
+// ── Closing line ──────────────────────────────────────────────────────────
+create text "Recap" as recap at (cw / 2, 852) { content: "SER = cómo es  ·  ESTAR = cómo está", fontSize: 24, alignment: "center", opacity: 0 }
+recap.tint("#F5E6C8")
+
+// ── Timing ────────────────────────────────────────────────────────────────
+at(0) bg.fadeIn(1.4)
+at(0.8) title.fadeIn(1.0)
+at(4.2) title.fadeOut(0.6)
+at(5.0) grid.fadeIn(0.8)
+
+at(6.0) h0.fadeIn(0.45)
+at(6.2) h1.fadeIn(0.45)
+at(6.4) h2.fadeIn(0.45)
+
+at(7.4) p1.fadeIn(0.45)
+at(7.6) s1.fadeIn(0.45)
+at(7.8) e1.fadeIn(0.45)
+at(8.55) p2.fadeIn(0.45)
+at(8.75) s2.fadeIn(0.45)
+at(8.95) e2.fadeIn(0.45)
+at(9.7) p3.fadeIn(0.45)
+at(9.9) s3.fadeIn(0.45)
+at(10.1) e3.fadeIn(0.45)
+at(10.85) p4.fadeIn(0.45)
+at(11.05) s4.fadeIn(0.45)
+at(11.25) e4.fadeIn(0.45)
+at(12.0) p5.fadeIn(0.45)
+at(12.2) s5.fadeIn(0.45)
+at(12.4) e5.fadeIn(0.45)
+at(13.15) p6.fadeIn(0.45)
+at(13.35) s6.fadeIn(0.45)
+at(13.55) e6.fadeIn(0.45)
+
+at(15.6) ex1a.fadeIn(0.7)
+at(15.6) ex1b.fadeIn(0.7)
+at(15.6) ex1c.fadeIn(0.7)
+at(15.95) ex1t.fadeIn(0.7)
+at(16.5) ex2a.fadeIn(0.7)
+at(16.5) ex2b.fadeIn(0.7)
+at(16.85) ex2t.fadeIn(0.7)
+
+at(19.2) ex3a.fadeIn(0.7)
+at(19.2) ex3b.fadeIn(0.7)
+at(19.2) ex3c.fadeIn(0.7)
+at(19.55) ex3t.fadeIn(0.7)
+at(20.1) ex4a.fadeIn(0.7)
+at(20.1) ex4b.fadeIn(0.7)
+at(20.1) ex4c.fadeIn(0.7)
+at(20.45) ex4t.fadeIn(0.7)
+
+at(22.8) ex5a.fadeIn(0.7)
+at(22.8) ex5b.fadeIn(0.7)
+at(22.8) ex5c.fadeIn(0.7)
+at(23.15) ex5t.fadeIn(0.7)
+at(23.7) ex6a.fadeIn(0.7)
+at(23.7) ex6b.fadeIn(0.7)
+at(23.7) ex6c.fadeIn(0.7)
+at(24.05) ex6t.fadeIn(0.7)
+
+at(26.0) recap.fadeIn(1.0)
