@@ -44,13 +44,15 @@ def test_init_schema_adds_new_columns_to_existing_tables(settings: Settings) -> 
 
 
 def test_app_boots_and_seeds_on_a_legacy_database(settings: Settings) -> None:
+    from app.materials.model import builtin_material_ids
+
     database = _create_legacy_materials_table(settings)
 
     app = AppFactory(settings).create()
 
     with database.engine.begin() as connection:
         count = connection.execute(text("SELECT COUNT(*) FROM material_definitions")).scalar()
-    assert count == 1
+    assert count == len(builtin_material_ids())
     assert app.state.material_library is not None
 
 

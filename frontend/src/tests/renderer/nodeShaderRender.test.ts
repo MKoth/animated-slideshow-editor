@@ -431,6 +431,96 @@ void main() {
   })
 })
 
+describe('per-group shader filtering', () => {
+  function createChild(
+    engine: Engine,
+    dispatcher: CommandDispatcher,
+    parentId: string,
+    name: string,
+    components: Record<string, unknown>,
+  ): string {
+    const slide = engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('expected a slide')
+    }
+    return expectOk(
+      dispatcher.dispatch(
+        new CreateNodeCommand({
+          sceneId: slide.scene.id,
+          parentId,
+          name,
+          components: components as never,
+        }),
+      ),
+    ).nodeId
+  }
+
+  it('filters the whole subtree when a shader material is assigned to a group', async () => {
+    const { engine, dispatcher, app } = await mount()
+    const groupId = createNode(engine, dispatcher, 'Group', {})
+    createChild(engine, dispatcher, groupId, 'Child', {
+      assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-a' },
+    })
+
+    const groupContainer = nodeContainer(app, 'Group')
+    expect(groupContainer.filters).toHaveLength(0)
+
+    expectOk(
+      dispatcher.dispatch(
+        new AssignMaterialCommand({ nodeId: groupId, materialDefinitionId: 'mat-gray' }),
+      ),
+    )
+
+    expect(groupContainer.filters).toHaveLength(1)
+    expect(groupContainer.filters[0]?.glProgram.fragment).toBe(GRAYSCALE_SOURCE)
+    // The child keeps its own rendering; only the group composites the shader.
+    const childContainer = groupContainer.children.find((child) => child.label === 'Child')
+    expect(childContainer?.children[0]?.filters ?? []).toHaveLength(0)
+  })
+
+  it('attaches the group filter when the first child arrives after assignment', async () => {
+    const { engine, dispatcher, app } = await mount()
+    const groupId = createNode(engine, dispatcher, 'Group', {})
+    expectOk(
+      dispatcher.dispatch(
+        new AssignMaterialCommand({ nodeId: groupId, materialDefinitionId: 'mat-gray' }),
+      ),
+    )
+
+    createChild(engine, dispatcher, groupId, 'Child', {
+      assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-a' },
+    })
+
+    expect(nodeContainer(app, 'Group').filters).toHaveLength(1)
+  })
+
+  it('detaches and destroys the filter when the material drops its shader', async () => {
+    const { engine, dispatcher, app } = await mount()
+    const groupId = createNode(engine, dispatcher, 'Group', {})
+    createChild(engine, dispatcher, groupId, 'Child', {
+      assetInstance: { kind: 'assetInstance', assetDefinitionId: 'def-a' },
+    })
+    expectOk(
+      dispatcher.dispatch(
+        new AssignMaterialCommand({ nodeId: groupId, materialDefinitionId: 'mat-gray' }),
+      ),
+    )
+    const filter = nodeContainer(app, 'Group').filters[0]
+
+    expectOk(
+      dispatcher.dispatch(
+        new AssignMaterialCommand({
+          nodeId: groupId,
+          materialDefinitionId: '0d3f4464-8300-5b6d-ae14-45246fefbeae',
+        }),
+      ),
+    )
+
+    expect(nodeContainer(app, 'Group').filters).toHaveLength(0)
+    expect(filter?.destroyed).toBe(true)
+  })
+})
+
 describe('per-node sampler2D uniform binding', () => {
   const MASK_SOURCE = `#version 300 es
 precision highp float;

@@ -51,12 +51,12 @@ class AppFactory:
             database, storage, ImagePipeline(self._settings.max_upload_bytes)
         )
         app.state.asset_library = AssetLibrary(database, storage)
-        material_library = MaterialLibrary(database)
-        material_library.ensure_seeded(now_utc())
-        app.state.material_library = material_library
         shader_library = ShaderLibrary(database)
         shader_library.ensure_seeded(now_utc())
         app.state.shader_library = shader_library
+        material_library = MaterialLibrary(database)
+        material_library.ensure_seeded(now_utc())
+        app.state.material_library = material_library
         app.state.project_library = ProjectLibrary(database)
         clip_library = ClipLibrary(database)
         clip_library.ensure_seeded(now_utc())

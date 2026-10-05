@@ -22,6 +22,12 @@ import { DEFAULT_TIMELINE_HEIGHT } from '../stores/uiPrefs'
 import { useTimelineViewStore } from '../stores/timelineViewStore'
 import { noopPersistence } from './contextHarness'
 
+// Check/Run load the material and shader libraries first; the real stores
+// would hit the backend from jsdom.
+vi.mock('../app/materialLibraries', () => ({
+  ensureMaterialLibrariesLoaded: vi.fn(async () => undefined),
+}))
+
 function renderPanel() {
   const engine = createEngineInternal()
   const undoStack = new UndoStack()

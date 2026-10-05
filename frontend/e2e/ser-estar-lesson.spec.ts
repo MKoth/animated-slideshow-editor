@@ -58,6 +58,16 @@ test.describe('ser and estar lesson', () => {
     const project = projects.find((entry) => entry.name === PROJECT_NAME)
     expect(project, `project "${PROJECT_NAME}" exists`).toBeTruthy()
 
+    // The lesson binds `material("Chalk")` and assigns it to its group. The
+    // backend seeds the Chalk shader and material as built-ins on startup, so
+    // a running backend older than the seed needs a restart before this test.
+    const materials = (await (await request.get(`${BACKEND_URL}/api/materials`)).json()) as {
+      id: string
+      name: string
+    }[]
+    const chalk = materials.find((entry) => entry.name === 'Chalk')
+    expect(chalk, 'the built-in Chalk material is seeded').toBeTruthy()
+
     // The lesson needs more than the stored 10 seconds. Patch the slide
     // duration through the same endpoint the editor saves with.
     const lesson = JSON.parse(
@@ -73,8 +83,12 @@ test.describe('ser and estar lesson', () => {
     await page.goto('/')
     await page.getByRole('button', { name: 'File' }).click()
     await page.getByRole('menuitem', { name: 'Open', exact: true }).click()
-    await page.getByRole('dialog', { name: 'Projects' }).waitFor()
+    const projectsDialog = page.getByRole('dialog', { name: 'Projects' })
+    await projectsDialog.waitFor()
     await page.getByRole('button', { name: `Open ${PROJECT_NAME}` }).click()
+    // The project embeds the background PNG, so its .lesson is tens of MB and
+    // the open can take longer than the default action timeout.
+    await projectsDialog.waitFor({ state: 'hidden', timeout: 60_000 })
     await page.locator('.canvas-host canvas').waitFor()
 
     await page
@@ -84,6 +98,8 @@ test.describe('ser and estar lesson', () => {
     await page.getByLabel('Folder Backgrounds').dblclick()
     await page.getByRole('button', { name: 'Select blackboar-background' }).waitFor()
 
+    // The Script tab alone must resolve `material("Chalk")`: Check/Run load the
+    // material and shader libraries themselves, without a Materials panel visit.
     // Open the Script tab, creating the slide's script on first run.
     const createScript = page.getByTestId('bottom-tab-create-script')
     if ((await createScript.count()) > 0) {
@@ -118,7 +134,9 @@ test.describe('ser and estar lesson', () => {
     // The editor auto-saves after the Run. Read the stored .lesson back and
     // check the created table landed in the right shape: one table, and every
     // cell text inside the cell its selector named (a re-run must replace the
-    // previous output, not shift the grid).
+    // previous output, not shift the grid). Everything but the background sits
+    // under the one "Lesson board" group, and the group carries the Chalk
+    // material, so the whole lesson renders through the grain shader.
     await expect
       .poll(
         async () => {
@@ -129,22 +147,37 @@ test.describe('ser and estar lesson', () => {
             id: string
             name: string
             parentId?: string
+            material?: { definitionId?: string }
           }[]
           const byId = new Map(nodes.map((node) => [node.id, node]))
           const parentNameOf = (name: string) => {
             const node = nodes.find((candidate) => candidate.name === name)
             return node?.parentId === undefined ? null : (byId.get(node.parentId)?.name ?? null)
           }
+          const board = nodes.find((node) => node.name === 'Lesson board')
           return {
             tables: nodes.filter((node) => node.name === 'Grammar table').length,
             header: parentNameOf('Cell header pronoun'),
             yo: parentNameOf('Cell yo'),
             estan: parentNameOf('Cell estan'),
+            boards: nodes.filter((node) => node.name === 'Lesson board').length,
+            titleParent: parentNameOf('Lesson title'),
+            tableParent: parentNameOf('Grammar table'),
+            boardMaterial: board?.material?.definitionId ?? null,
           }
         },
         { timeout: 30_000 },
       )
-      .toEqual({ tables: 1, header: 'Cell 1,1', yo: 'Cell 2,1', estan: 'Cell 7,3' })
+      .toEqual({
+        tables: 1,
+        header: 'Cell 1,1',
+        yo: 'Cell 2,1',
+        estan: 'Cell 7,3',
+        boards: 1,
+        titleParent: 'Lesson board',
+        tableParent: 'Lesson board',
+        boardMaterial: chalk!.id,
+      })
 
     // Review frames: scrub to each checkpoint and attach a canvas capture.
     await page.getByTestId('bottom-tab-timeline').click()

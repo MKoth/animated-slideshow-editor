@@ -56,7 +56,7 @@ export function createTableCellContainer(
   container.label = `table-cell:${node.name}`
   const cell = node.components.tableCell
   const borderColor = cell?.borderColor ?? table.borderColor
-  const background = cell?.background ?? '#ffffff'
+  const background = fillColorOf(cell?.background ?? table.background)
   const graphics = new pixi.Graphics()
   const effectiveRadius = cell?.borderRadius ?? table.borderRadius ?? 0
   const radius = clampRadius(effectiveRadius, rect.width, rect.height)
@@ -65,7 +65,9 @@ export function createTableCellContainer(
   } else {
     graphics.rect(0, 0, rect.width, rect.height)
   }
-  graphics.fill({ color: hexColorToNumber(background), alpha: 1 })
+  if (background) {
+    graphics.fill({ color: hexColorToNumber(background), alpha: 1 })
+  }
   graphics.stroke({ width: table.borderWidth, color: hexColorToNumber(borderColor) })
   container.addChild(graphics)
   const size = { width: rect.width, height: rect.height }
@@ -165,7 +167,7 @@ function createTableCellContainerWithEvaluated(
   container.label = `table-cell:${node.name}`
   const cell = node.components.tableCell
   const borderColor = cell?.borderColor ?? table.borderColor
-  const background = cell?.background ?? '#ffffff'
+  const background = fillColorOf(cell?.background ?? table.background)
   const graphics = new pixi.Graphics()
   const radius = clampRadius(evaluated.borderRadius, rect.width, rect.height)
   if (radius > 0) {
@@ -173,7 +175,9 @@ function createTableCellContainerWithEvaluated(
   } else {
     graphics.rect(0, 0, rect.width, rect.height)
   }
-  graphics.fill({ color: hexColorToNumber(background), alpha: 1 })
+  if (background) {
+    graphics.fill({ color: hexColorToNumber(background), alpha: 1 })
+  }
   graphics.stroke({ width: table.borderWidth, color: hexColorToNumber(borderColor) })
   container.addChild(graphics)
   const size = { width: rect.width, height: rect.height }
@@ -212,12 +216,24 @@ function createBorder(
   } else {
     graphics.rect(0, 0, layout.totalWidth, layout.totalHeight)
   }
-  const background = table.background
+  const background = fillColorOf(table.background)
   if (background) {
     graphics.fill({ color: hexColorToNumber(background), alpha: 1 })
   }
   graphics.stroke({ width: table.borderWidth, color })
   return graphics
+}
+
+/**
+ * A paint that skips the fill: absent, empty, or an explicit transparent /
+ * none keyword. `transparent` lets a script (or the inspector) strip a table's
+ * white plate without removing the component.
+ */
+function fillColorOf(background: string | undefined): string | undefined {
+  if (background === undefined) return undefined
+  const value = background.trim().toLowerCase()
+  if (value === '' || value === 'transparent' || value === 'none') return undefined
+  return background
 }
 
 function clampRadius(radius: number, width: number, height: number): number {

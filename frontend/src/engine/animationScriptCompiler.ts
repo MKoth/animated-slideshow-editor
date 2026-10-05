@@ -1,6 +1,7 @@
 import type { Command } from './commands'
 import { AddKeyframeCommand } from './commands/addKeyframeCommand'
 import { SetTextContentCommand } from './commands/setTextContentCommand'
+import { AssignMaterialCommand } from './commands/assignMaterialCommand'
 import { AssignClipCommand } from './commands/assignClipCommand'
 import { PlaceCollectionCommand } from './commands/placeCollectionCommand'
 import { CreateNodeCommand } from './commands/createNodeCommand'
@@ -254,7 +255,7 @@ export interface AnimationScriptMeshRequest {
 /** A scene node a script mints; `order` is its create command's source order. */
 export interface AnimationScriptCreatedNodeInfo {
   readonly nodeId: string
-  readonly kind: 'text' | 'table' | 'asset' | 'chart'
+  readonly kind: 'text' | 'table' | 'asset' | 'chart' | 'group'
   readonly name: string
   readonly order: number
   readonly assetDefinitionId?: string
@@ -268,10 +269,17 @@ export interface AnimationScriptCreatedDataSourceInfo {
   readonly order: number
 }
 
-/** Everything a run prep step needs to embed assets and generate meshes. */
+/** A material a run must pull into the project from the library. */
+export interface AnimationScriptReferencedMaterialInfo {
+  readonly id: string
+  readonly name: string
+}
+
+/** Everything a run prep step needs to embed assets, materials and meshes. */
 export interface AnimationScriptCreations {
   readonly nodes: readonly AnimationScriptCreatedNodeInfo[]
   readonly dataSources: readonly AnimationScriptCreatedDataSourceInfo[]
+  readonly materials: readonly AnimationScriptReferencedMaterialInfo[]
 }
 
 export interface AnimationScriptControlInfo {
@@ -315,6 +323,12 @@ export interface AnimationScriptLibraryInfo {
   readonly source: string
 }
 
+/** A material definition a `material("...")` binding may resolve by name. */
+export interface AnimationScriptMaterialInfo {
+  readonly id: string
+  readonly name: string
+}
+
 /**
  * The slide state the compiler reads: node names and kinds plus pre-run
  * evaluated values. Pure and read-only — a Check against this context never
@@ -334,6 +348,11 @@ export interface AnimationScriptCompileContext {
   readonly collections: readonly AnimationScriptCollectionInfo[]
   /** Project library entries, resolved by name at compile time. */
   readonly libraryFunctions?: readonly AnimationScriptLibraryInfo[]
+  /**
+   * Material definitions a `material("Name")` binding may resolve by name:
+   * library-registered definitions plus the project's embedded snapshots.
+   */
+  readonly materials?: readonly AnimationScriptMaterialInfo[]
   /** The slide's scene id; script-created nodes dispatch commands against it. */
   readonly sceneId?: string
   /**
@@ -440,7 +459,8 @@ interface ScriptMember {
 interface BindingInfo {
   readonly alias: string
   readonly aliasSpan: SourceSpan
-  readonly kind: 'node' | 'group' | 'table' | 'cellRef' | 'clip' | 'collection' | 'data'
+  readonly kind:
+    'node' | 'group' | 'table' | 'cellRef' | 'clip' | 'collection' | 'data' | 'material'
   /**
    * The binding's targets in scene pre-order. A node, table or cellRef binding
    * has exactly one member; a group binding has one per node carrying its
@@ -459,6 +479,8 @@ interface BindingInfo {
   readonly collection?: AnimationScriptCollectionInfo
   /** Present only on data bindings: the project data source a chart can use. */
   readonly dataSource?: { readonly id: string; readonly name: string }
+  /** Present only on material bindings: the referenced material definition. */
+  readonly material?: AnimationScriptMaterialInfo
   used: boolean
 }
 
@@ -763,6 +785,13 @@ class Compiler {
   readonly #trackOrder: TrackOrderEntry[] = []
   /** Static `setText` commands with their source order, dispatched inside the run Transaction. */
   readonly #textCommands: { readonly order: number; readonly command: Command<unknown> }[] = []
+  /** Static `material` assignments with their source order. */
+  readonly #materialCommands: { readonly order: number; readonly command: Command<unknown> }[] = []
+  /**
+   * Material definitions addressed by `material(...)` bindings, first-addressed
+   * order, deduplicated by id — the run prep embeds each as a project snapshot.
+   */
+  readonly #referencedMaterials = new Map<string, string>()
   /** `play` Clip Instances and `apply` placements in source order. */
   readonly #clipCommands: { readonly order: number; readonly command: Command<unknown> }[] = []
   /** `create` output (embeds, node creates, table layout) in source order. */
@@ -907,6 +936,7 @@ class Compiler {
       creations: {
         nodes: [...this.#createdNodeInfos],
         dataSources: [...this.#createdDataSourceInfos],
+        materials: [...this.#referencedMaterials].map(([id, name]) => ({ id, name })),
       },
       footprint,
       summary,
@@ -1261,6 +1291,7 @@ class Compiler {
             ...(binding.grid !== undefined ? { grid: binding.grid } : {}),
             ...(binding.clip !== undefined ? { clip: binding.clip } : {}),
             ...(binding.collection !== undefined ? { collection: binding.collection } : {}),
+            ...(binding.material !== undefined ? { material: binding.material } : {}),
             used: false,
           })
           binding.used = true
@@ -1404,7 +1435,8 @@ class Compiler {
         case 'table':
         case 'cellRef':
         case 'clip':
-        case 'collection': {
+        case 'collection':
+        case 'material': {
           if (value.kind !== 'binding') return mismatch(describeScriptValue(value))
           const binding = bindingOf(value)
           if (!binding) return mismatch(describeScriptValue(value))
@@ -1483,6 +1515,7 @@ class Compiler {
             ...(binding.grid !== undefined ? { grid: binding.grid } : {}),
             ...(binding.clip !== undefined ? { clip: binding.clip } : {}),
             ...(binding.collection !== undefined ? { collection: binding.collection } : {}),
+            ...(binding.material !== undefined ? { material: binding.material } : {}),
             used: false,
           })
           binding.used = true
@@ -1614,10 +1647,49 @@ class Compiler {
       this.#declareCollectionBinding(statement)
       return
     }
+    if (statement.resourceKind === 'material') {
+      this.#declareMaterialBinding(statement)
+      return
+    }
     this.#error(
-      `Unknown binding kind "${statement.resourceKind}". Available kinds: node, group, table, clip, collection.`,
+      `Unknown binding kind "${statement.resourceKind}". Available kinds: node, group, table, clip, collection, material.`,
       statement.resourceKindSpan,
     )
+  }
+
+  /**
+   * `material("Name")` binds a material definition from the library (or the
+   * project's embedded snapshots) for `node.material(mat)` assignment.
+   */
+  #declareMaterialBinding(statement: BindNode): void {
+    const materials = this.#context.materials ?? []
+    const matches = materials.filter((material) => material.name === statement.resourceName)
+    if (matches.length === 0) {
+      const suggestion = nearMissSuggestion(
+        statement.resourceName,
+        materials.map((material) => material.name),
+      )
+      this.#error(
+        `No material named "${statement.resourceName}".${suggestion}`,
+        statement.resourceNameSpan,
+      )
+      return
+    }
+    if (matches.length > 1) {
+      this.#error(
+        `Material name "${statement.resourceName}" is ambiguous — ${matches.length} materials share it`,
+        statement.resourceNameSpan,
+      )
+      return
+    }
+    this.#bindings.set(statement.alias, {
+      alias: statement.alias,
+      aliasSpan: statement.aliasSpan,
+      kind: 'material',
+      members: [],
+      material: { id: matches[0].id, name: matches[0].name },
+      used: false,
+    })
   }
 
   /**
@@ -2412,7 +2484,10 @@ class Compiler {
    */
   #claimEmittedCommand(count: number, span: SourceSpan): boolean {
     if (
-      this.#textCommands.length + this.#clipCommands.length + count <=
+      this.#textCommands.length +
+        this.#materialCommands.length +
+        this.#clipCommands.length +
+        count <=
       this.#maxEmittedInstances
     ) {
       return true
@@ -2773,7 +2848,12 @@ class Compiler {
       return this.#advanceCursorByResolvedDuration(statement, cursor)
     }
     if (statement.method === 'play' || statement.method === 'apply') {
-      if (target.kind === 'clip' || target.kind === 'collection') {
+      if (
+        target.kind === 'clip' ||
+        target.kind === 'collection' ||
+        target.kind === 'material' ||
+        target.kind === 'data'
+      ) {
         this.#error(
           `"${statement.method}" needs a node to play on — "${target.alias}" is a ${target.kind}. Bind a node first, like bind hero = node("Hero").`,
           statement.aliasSpan,
@@ -2785,9 +2865,20 @@ class Compiler {
       }
       return this.#lowerApply(statement, target, cursor)
     }
-    if (target.kind === 'clip' || target.kind === 'collection') {
+    if (
+      target.kind === 'clip' ||
+      target.kind === 'collection' ||
+      target.kind === 'material' ||
+      target.kind === 'data'
+    ) {
+      const hint =
+        target.kind === 'clip' || target.kind === 'collection'
+          ? ' Play clips with node.play(clip, ...) instead.'
+          : target.kind === 'material'
+            ? ' Assign materials with node.material(mat) instead.'
+            : ''
       this.#error(
-        `"${statement.method}" needs a node binding — "${target.alias}" is a ${target.kind}. Play clips with node.play(clip, ...) instead.`,
+        `"${statement.method}" needs a node binding — "${target.alias}" is a ${target.kind}.${hint}`,
         statement.aliasSpan,
       )
       return this.#advanceCursorByResolvedDuration(statement, cursor)
@@ -2817,6 +2908,8 @@ class Compiler {
         return this.#lowerDataLabel(statement, target, cursor)
       case 'control':
         return this.#lowerControl(statement, target, cursor)
+      case 'material':
+        return this.#lowerMaterial(statement, target, cursor)
     }
     const suggestion = nearMissSuggestion(statement.method, SCRIPT_METHOD_NAMES)
     this.#error(
@@ -3949,6 +4042,9 @@ class Compiler {
       case 'chart':
         this.#createChart(statement, parentId, position)
         break
+      case 'group':
+        this.#createGroup(statement, parentId, position)
+        break
     }
     return cursor
   }
@@ -4295,6 +4391,76 @@ class Compiler {
       info,
       order,
       { kind: 'text' },
+      {
+        x: position.x,
+        y: position.y,
+        rotation: props.rotation,
+        scaleX: props.scaleX,
+        scaleY: props.scaleY,
+        opacity: props.opacity ?? 1,
+      },
+    )
+    this.#registerCreatedBinding(statement, () => ({
+      alias: statement.alias!,
+      aliasSpan: statement.aliasSpan!,
+      kind: 'node',
+      members: [{ nodeId: id, nodeName: statement.resourceName }],
+      used: false,
+    }))
+  }
+
+  /**
+   * `create group` mints an empty parent node. It carries no component of its
+   * own; later `create ... inside alias` statements attach children to it, and
+   * addressing the alias writes/broadcasts over the group's subtree.
+   */
+  #createGroup(
+    statement: CreateNode,
+    parentId: string,
+    position: { readonly x: number; readonly y: number },
+  ): void {
+    this.#rejectUnknownCreateProps(statement, [
+      'rotation',
+      'scaleX',
+      'scaleY',
+      'opacity',
+      'semanticName',
+    ])
+    const props = this.#createNodeProps(statement)
+    if (props === null) return
+    if (!this.#claimCreatedNode(1, statement.span)) return
+    const id = this.#nextCreatedId('node')
+    const order = this.#emitCreate(
+      new CreateNodeCommand({
+        sceneId: this.#sceneId(),
+        parentId,
+        name: statement.resourceName,
+        id,
+        transform: {
+          ...identityTransform(),
+          x: position.x,
+          y: position.y,
+          rotation: props.rotation,
+          scaleX: props.scaleX,
+          scaleY: props.scaleY,
+        },
+        ...(props.opacity !== undefined ? { opacity: props.opacity } : {}),
+        ...(props.semanticName !== undefined ? { semanticName: props.semanticName } : {}),
+      }),
+    )
+    const info: AnimationScriptNodeInfo = {
+      id,
+      name: statement.resourceName,
+      isBone: false,
+      isCamera: false,
+      parentId,
+      isGroup: true,
+      ...(props.semanticName !== undefined ? { semanticName: props.semanticName } : {}),
+    }
+    this.#recordCreatedNode(
+      info,
+      order,
+      { kind: 'group' },
       {
         x: position.x,
         y: position.y,
@@ -5115,6 +5281,80 @@ class Compiler {
       })
     }
     return cursor
+  }
+
+  /**
+   * `alias.material(mat)`: assign a library material to every addressed node.
+   * Static, like `setText` — never emits a keyframe and never advances the
+   * cursor. Group targets broadcast per member. The referenced material joins
+   * the run's creation list so prep embeds it into the project.
+   */
+  #lowerMaterial(statement: StatementNode, target: BindingInfo, cursor: number): number {
+    if (statement.args.length !== 1) {
+      this.#error(
+        'material takes exactly one material binding, like board.material(chalk)',
+        statement.methodSpan,
+      )
+      return cursor
+    }
+    const material = this.#resolveMaterialReference(statement.args[0])
+    if (!material) return cursor
+    if (
+      target.kind === 'clip' ||
+      target.kind === 'collection' ||
+      target.kind === 'material' ||
+      target.kind === 'data'
+    ) {
+      this.#error(
+        `material needs a node binding — "${target.alias}" is a ${target.kind} binding`,
+        statement.aliasSpan,
+      )
+      return cursor
+    }
+    if (target.members.length === 0) {
+      this.#error(
+        `material needs a node to assign to — "${target.alias}" has no members`,
+        statement.aliasSpan,
+      )
+      return cursor
+    }
+    if (!this.#claimEmittedCommand(target.members.length, statement.span)) return cursor
+    this.#referencedMaterials.set(material.id, material.name)
+    for (const member of target.members) {
+      this.#materialCommands.push({
+        order: this.#order++,
+        command: new AssignMaterialCommand({
+          nodeId: member.nodeId,
+          materialDefinitionId: material.id,
+        }),
+      })
+    }
+    return cursor
+  }
+
+  /** The material a `material(...)` argument references, or null after reporting. */
+  #resolveMaterialReference(expression: ScriptExpression): AnimationScriptMaterialInfo | null {
+    const value = this.#evaluateValue(expression)
+    if (value === null || value.kind === 'invalid') return null
+    if (value.kind !== 'binding') {
+      this.#error(
+        `material needs a material binding — found ${describeScriptValue(value)}. Bind one first, like bind chalk = material("Chalk").`,
+        expression.span,
+      )
+      return null
+    }
+    const binding = bindingOf(value)
+    if (!binding) return null
+    if (binding.kind !== 'material' || !binding.material) {
+      const found = binding.kind === 'cellRef' ? 'a cell reference' : `a ${binding.kind} binding`
+      this.#error(
+        `material needs a material binding — "${expressionLabel(expression)}" is ${found}.`,
+        expression.span,
+      )
+      return null
+    }
+    binding.used = true
+    return binding.material
   }
 
   /**
@@ -6505,7 +6745,10 @@ class Compiler {
       // carry no node members but still warn when never referenced.
       if (
         !binding.used &&
-        (binding.members.length > 0 || binding.kind === 'clip' || binding.kind === 'collection')
+        (binding.members.length > 0 ||
+          binding.kind === 'clip' ||
+          binding.kind === 'collection' ||
+          binding.kind === 'material')
       ) {
         this.#warning(`Binding "${binding.alias}" is never used`, binding.aliasSpan)
       }
@@ -7242,6 +7485,7 @@ class Compiler {
     const sorted = [
       ...planned,
       ...this.#textCommands,
+      ...this.#materialCommands,
       ...this.#clipCommands,
       ...this.#createCommands,
     ].sort((a, b) => a.order - b.order)
@@ -7484,7 +7728,8 @@ function isBindingParamType(type: ScriptParamType): boolean {
       type.name === 'table' ||
       type.name === 'cellRef' ||
       type.name === 'clip' ||
-      type.name === 'collection'
+      type.name === 'collection' ||
+      type.name === 'material'
     )
   }
   return false

@@ -167,6 +167,7 @@ export const SCRIPT_METHOD_NAMES = [
   'control',
   'play',
   'apply',
+  'material',
 ] as const
 
 /** Structural table selectors: `conj.cell(r, c)` / `conj.row(i)` / `conj.col(j)`. */
@@ -183,6 +184,7 @@ export const SCRIPT_PARAM_BASE_TYPES = [
   'cellRef',
   'clip',
   'collection',
+  'material',
   'number',
   'color',
   'string',
@@ -406,7 +408,7 @@ export interface PointArrowAtNode {
 }
 
 /** The object kinds `create` can mint. */
-export const SCRIPT_CREATE_KINDS = ['text', 'table', 'asset', 'data', 'chart'] as const
+export const SCRIPT_CREATE_KINDS = ['text', 'table', 'asset', 'data', 'chart', 'group'] as const
 
 export type ScriptCreateKind = (typeof SCRIPT_CREATE_KINDS)[number]
 
@@ -1400,6 +1402,14 @@ class Parser {
           duration = timing.duration
           ease = timing.ease
           easeSpan = timing.easeSpan
+          break
+        }
+        if (name.text === 'material') {
+          // A static assignment: exactly one material binding, no timing.
+          const reference = this.#parseExpression('a material binding')
+          if (reference === null) return null
+          args.push(reference)
+          this.#expectPunctuation(')')
           break
         }
         if (name.text === 'tint') {

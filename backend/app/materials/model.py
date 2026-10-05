@@ -5,6 +5,7 @@ from sqlalchemy import JSON, DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.model import Base
+from app.shaders.model import CHALK_DEFAULT_UNIFORMS
 
 BUILTIN_TINT: dict[str, object] = {"key": "tint", "kind": "color", "default": "#ffffff"}
 BUILTIN_OPACITY: dict[str, object] = {
@@ -23,9 +24,28 @@ DEFAULT_MATERIAL_DESCRIPTION = (
 )
 DEFAULT_MATERIAL_TAGS = ["built-in", "default"]
 
+CHALK_MATERIAL_ID: str = str(
+    uuid5(NAMESPACE_URL, "animated-slideshow-editor/builtin-material/chalk")
+)
+CHALK_MATERIAL_NAME = "Chalk"
+CHALK_MATERIAL_DESCRIPTION = (
+    "The built-in Chalk shader over a node's rendered subtree: grainy edges, chalk-dust texture."
+)
+CHALK_MATERIAL_TAGS = ["built-in", "texture"]
+
+# The material parameters the Chalk shader reflects, seeded alongside the
+# built-in tint and opacity multiplier so a script can address them by name.
+CHALK_MATERIAL_PARAMETERS: list[dict[str, object]] = [dict(parameter) for parameter in BUILTINS] + [
+    dict(uniform) for uniform in CHALK_DEFAULT_UNIFORMS
+]
+
 
 def _builtin_defaults() -> list[dict[str, object]]:
     return [dict(parameter) for parameter in BUILTINS]
+
+
+def builtin_material_ids() -> set[str]:
+    return {DEFAULT_MATERIAL_ID, CHALK_MATERIAL_ID}
 
 
 class MaterialDefinition(Base):

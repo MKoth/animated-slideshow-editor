@@ -45,6 +45,12 @@ export interface AnimationScriptRunOptions extends AnimationScriptCheckOptions {
    */
   readonly captureAsset?: (definitionId: string) => Promise<boolean>
   /**
+   * Embed a material (and its shader) snapshot for a script `material(...)`
+   * assignment. The app wires this to the material library. When omitted, the
+   * material must already be embedded or registered in the library.
+   */
+  readonly captureMaterial?: (definitionId: string) => boolean | Promise<boolean>
+  /**
    * Image loader seam for mesh generation, so tests can supply pixels without
    * a canvas. Defaults to the renderer's data-URL loader.
    */
@@ -119,6 +125,18 @@ export async function runAnimationScriptAsync(
       if (failure !== null) {
         return { ran: false, error: failure, ...outcome }
       }
+    }
+  }
+  // Embed the materials a `material(...)` statement assigned so the project
+  // stays self-contained. A material still registered in the library resolves
+  // even when embedding fails; the dispatch reports an unresolvable id cleanly.
+  for (const material of compiled.creations.materials) {
+    if (engine.getEmbeddedMaterial(material.id) !== undefined) continue
+    if (options.captureMaterial === undefined) continue
+    try {
+      await options.captureMaterial(material.id)
+    } catch {
+      // Fall through: the assignment validates against the library instead.
     }
   }
   return dispatchCompiled(engine, dispatch, slideId, compiled, extrasByOrder, outcome)

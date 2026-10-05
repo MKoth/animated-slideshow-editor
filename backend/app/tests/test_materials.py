@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.app_factory import AppFactory
 from app.config import Settings
-from app.materials.model import DEFAULT_MATERIAL_ID, MaterialDefinition
+from app.materials.model import DEFAULT_MATERIAL_ID, MaterialDefinition, builtin_material_ids
 
 BUILTIN_PARAMETERS = [
     {"key": "tint", "kind": "color", "default": "#ffffff"},
@@ -129,7 +129,7 @@ def test_list_returns_all_definitions_newest_first(client: TestClient) -> None:
 
     body = client.get("/api/materials").json()
 
-    listed = [material["id"] for material in body if material["id"] != DEFAULT_MATERIAL_ID]
+    listed = [material["id"] for material in body if material["id"] not in builtin_material_ids()]
     assert listed == [second["id"], first["id"]]
 
 
@@ -304,7 +304,7 @@ def test_delete_default_material_returns_meaningful_error(client: TestClient) ->
     response = client.delete(f"/api/materials/{DEFAULT_MATERIAL_ID}")
 
     assert response.status_code == 409
-    assert "default" in response.json()["detail"].lower()
+    assert "built-in" in response.json()["detail"].lower()
     assert client.get(f"/api/materials/{DEFAULT_MATERIAL_ID}").status_code == 200
 
 

@@ -203,6 +203,64 @@ describe('Animation Script create — text, table, asset, data, chart', () => {
     expect(opacityAt(5)).toBe(0)
   })
 
+  it('creates an empty group and places child creates inside it', () => {
+    const { system, slideId } = setup()
+    const source = [
+      'script "Builder" from 0',
+      'create group "Board" as board at (10, 20) { opacity: 0.5 }',
+      'create text "Title" as title at (5, 5) inside board { content: "Hello" }',
+      'create group "Inner" as inner inside board',
+      'create text "Deep" as deep at (1, 1) inside inner { content: "Deep" }',
+    ].join('\n')
+    const result = runOk(system, slideId, source)
+
+    expect(result.summary.createdNodeCount).toBe(4)
+    const board = nodeNamed(system, slideId, 'Board')
+    expect(board.components.text).toBeUndefined()
+    expect(board.components.assetInstance).toBeUndefined()
+    expect(board.transform.x).toBe(10)
+    expect(board.transform.y).toBe(20)
+    expect(board.opacity).toBe(0.5)
+    const title = nodeNamed(system, slideId, 'Title')
+    const inner = nodeNamed(system, slideId, 'Inner')
+    const deep = nodeNamed(system, slideId, 'Deep')
+    expect(title.parent?.id).toBe(board.id)
+    expect(inner.parent?.id).toBe(board.id)
+    expect(deep.parent?.id).toBe(inner.id)
+  })
+
+  it('replaces a group and its whole subtree on re-run', () => {
+    const { system, slideId } = setup()
+    const source = [
+      'script "Builder" from 0',
+      'create group "Board" as board',
+      'create text "Title" as title inside board { content: "V1" }',
+    ].join('\n')
+    runOk(system, slideId, source)
+    const v2 = source.replace('"V1"', '"V2"')
+
+    runOk(system, slideId, v2)
+
+    expect(nodesNamed(system, slideId, 'Board')).toHaveLength(1)
+    expect(nodesNamed(system, slideId, 'Title')).toHaveLength(1)
+    expect(nodeNamed(system, slideId, 'Title').components.text?.content).toBe('V2')
+  })
+
+  it('rejects unknown group properties with a near-miss diagnostic', () => {
+    const { system, slideId } = setup()
+    const checked = checkAnimationScript(
+      system.engine,
+      slideId,
+      ['script "Builder" from 0', 'create group "Board" { colour: "black" }'].join('\n'),
+    )
+    expect(checked.runnable).toBe(false)
+    expect(
+      checked.diagnostics.some((diagnostic) =>
+        diagnostic.message.includes('Unknown group property "colour"'),
+      ),
+    ).toBe(true)
+  })
+
   const TABLE_WITH_CELL_TEXT = [
     'script "Builder" from 0',
     'create table "Grid" as grid { columns: [100, 100], rows: [["", ""], ["", ""]] }',

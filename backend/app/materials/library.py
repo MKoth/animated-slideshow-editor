@@ -9,12 +9,18 @@ from sqlalchemy import desc, select
 from app.database import Database
 from app.materials.model import (
     BUILTINS,
+    CHALK_MATERIAL_DESCRIPTION,
+    CHALK_MATERIAL_ID,
+    CHALK_MATERIAL_NAME,
+    CHALK_MATERIAL_PARAMETERS,
+    CHALK_MATERIAL_TAGS,
     DEFAULT_MATERIAL_DESCRIPTION,
     DEFAULT_MATERIAL_ID,
     DEFAULT_MATERIAL_NAME,
     DEFAULT_MATERIAL_TAGS,
     MaterialDefinition,
     _builtin_defaults,
+    builtin_material_ids,
 )
 from app.materials.schemas import MaterialParameter, parameter_from_stored
 from app.parameters import (
@@ -23,7 +29,7 @@ from app.parameters import (
     ParameterValidationError,
     normalize_parameter_default,
 )
-from app.shaders.model import ShaderDefinition
+from app.shaders.model import CHALK_SHADER_ID, ShaderDefinition
 
 _MAX_PARAMETER_KEY_LENGTH = 64
 
@@ -51,21 +57,50 @@ class MaterialLibrary:
         self._database = database
 
     def ensure_seeded(self, now: datetime) -> None:
-        """Create the protected default material, only when it is still missing."""
+        """Create the protected built-in materials, only when still missing.
+
+        The shader library seeds before this, so the Chalk material can point
+        at its built-in shader id on a fresh database. An existing Chalk
+        material has its shader uniforms re-seeded from the (possibly upgraded)
+        built-in shader, preserving its tint and opacity values.
+        """
         with self._database.session() as session:
-            if session.get(MaterialDefinition, DEFAULT_MATERIAL_ID) is not None:
-                return
-            session.add(
-                MaterialDefinition(
-                    id=DEFAULT_MATERIAL_ID,
-                    name=DEFAULT_MATERIAL_NAME,
-                    description=DEFAULT_MATERIAL_DESCRIPTION,
-                    tags=list(DEFAULT_MATERIAL_TAGS),
-                    created_at=now,
-                    updated_at=now,
-                    parameters=_builtin_defaults(),
+            if session.get(MaterialDefinition, DEFAULT_MATERIAL_ID) is None:
+                session.add(
+                    MaterialDefinition(
+                        id=DEFAULT_MATERIAL_ID,
+                        name=DEFAULT_MATERIAL_NAME,
+                        description=DEFAULT_MATERIAL_DESCRIPTION,
+                        tags=list(DEFAULT_MATERIAL_TAGS),
+                        created_at=now,
+                        updated_at=now,
+                        parameters=_builtin_defaults(),
+                    )
                 )
-            )
+            chalk = session.get(MaterialDefinition, CHALK_MATERIAL_ID)
+            if chalk is None:
+                session.add(
+                    MaterialDefinition(
+                        id=CHALK_MATERIAL_ID,
+                        name=CHALK_MATERIAL_NAME,
+                        description=CHALK_MATERIAL_DESCRIPTION,
+                        tags=list(CHALK_MATERIAL_TAGS),
+                        created_at=now,
+                        updated_at=now,
+                        parameters=[dict(parameter) for parameter in CHALK_MATERIAL_PARAMETERS],
+                        shader_id=CHALK_SHADER_ID,
+                    )
+                )
+            else:
+                shader = session.get(ShaderDefinition, CHALK_SHADER_ID)
+                if shader is not None:
+                    expected = self._parameters_with_uniforms(
+                        chalk.parameters, shader.default_uniforms
+                    )
+                    if chalk.parameters != expected or chalk.shader_id != CHALK_SHADER_ID:
+                        chalk.parameters = expected
+                        chalk.shader_id = CHALK_SHADER_ID
+                        chalk.updated_at = now
             session.commit()
 
     def list_all(self) -> list[MaterialDefinition]:
@@ -210,9 +245,9 @@ class MaterialLibrary:
             definition = session.get(MaterialDefinition, material_id)
             if definition is None:
                 raise MaterialNotFoundError(material_id)
-            if material_id == DEFAULT_MATERIAL_ID:
+            if material_id in builtin_material_ids():
                 raise MaterialProtectedError(
-                    f"material {definition.name!r} is the default material and cannot be deleted"
+                    f"material {definition.name!r} is a built-in and cannot be deleted"
                 )
             session.delete(definition)
             session.commit()

@@ -13,6 +13,7 @@ from app.shaders.library import (
 from app.shaders.model import (
     BUILTIN_SHADER_NAMES,
     BUILTIN_SHADERS,
+    CHALK_DEFAULT_UNIFORMS,
     GRADIENT_SOURCE,
     ShaderDefinition,
 )
@@ -81,11 +82,21 @@ def test_seeded_builtins_are_fragment_shaders_sampling_u_texture(settings: Setti
     for definition in library.list_all():
         assert "out vec4" in definition.source
         assert definition.is_builtin is True
-        if definition.name != "Gradient":
-            assert "uniform sampler2D uTexture;" in definition.source
-            assert definition.default_uniforms == []
-        else:
+        if definition.name == "Gradient":
             assert "uniform sampler2D uTexture;" not in definition.source
+        else:
+            assert "uniform sampler2D uTexture;" in definition.source
+        if definition.name not in ("Gradient", "Chalk"):
+            assert definition.default_uniforms == []
+
+
+def test_chalk_seeds_its_grain_uniforms_with_defaults(settings: Settings) -> None:
+    library = create_library(settings)
+
+    chalk = next(definition for definition in library.list_all() if definition.name == "Chalk")
+
+    assert chalk.default_uniforms == CHALK_DEFAULT_UNIFORMS
+    assert chalk.seed_version == 3
 
 
 def test_gradient_seeds_parameterized_uniforms_with_defaults(settings: Settings) -> None:

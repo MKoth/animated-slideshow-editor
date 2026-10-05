@@ -4,6 +4,8 @@ import { checkAnimationScript } from '../../engine/animationScriptCheck'
 import { runAnimationScriptAsync } from '../../engine/animationScriptRun'
 import type { AnimationScriptRunResult } from '../../engine/animationScriptRun'
 import { captureAssetSnapshot } from '../../app/assetSnapshot'
+import { captureMaterialSnapshot, captureShaderSnapshot } from '../../app/definitionSnapshot'
+import { ensureMaterialLibrariesLoaded } from '../../app/materialLibraries'
 import type {
   AnimationScriptCompileResult,
   AnimationScriptDiagnostic,
@@ -82,7 +84,8 @@ export function ScriptPanel({
     dispatch(new SetSlideAnimationScriptCommand({ slideId, source: draft }))
   }
 
-  const runCheck = () => {
+  const runCheck = async () => {
+    await ensureMaterialLibrariesLoaded()
     setOutcome({
       kind: 'check',
       source: draft,
@@ -94,9 +97,15 @@ export function ScriptPanel({
     if (running) return
     setRunning(true)
     try {
+      await ensureMaterialLibrariesLoaded()
       const result = await runAnimationScriptAsync(engine, dispatch, slideId, source, {
         measure: measuredNodeSize,
         captureAsset: (definitionId) => captureAssetSnapshot(engine, definitionId),
+        captureMaterial: (definitionId) => {
+          if (!captureMaterialSnapshot(engine, definitionId)) return false
+          const shaderId = engine.getMaterialDefinition(definitionId).shaderId
+          return shaderId === null || captureShaderSnapshot(engine, shaderId)
+        },
       })
       setOutcome({ kind: 'run', source, result })
     } finally {
@@ -144,7 +153,7 @@ export function ScriptPanel({
         <button
           type="button"
           data-testid="script-check"
-          onClick={runCheck}
+          onClick={() => void runCheck()}
           style={{
             padding: '4px 12px',
             borderRadius: 4,

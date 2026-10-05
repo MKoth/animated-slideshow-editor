@@ -9,12 +9,18 @@
 // 4. Below the table, six examples (three SER, three ESTAR) with their
 //    translations; the conjugated verb is tinted to match its column.
 //
+// Everything except the background lives under the "Lesson board" group, and
+// the built-in Chalk material is assigned to that group so the whole lesson
+// composites through its grain shader — chalk on the blackboard.
+//
 // World units are canvas pixels with the origin at the canvas top-left
 // (camera at identity). Canvas is 1090 x 893 at the 1600 x 1200 editor
 // viewport used by the e2e test.
 
 script "Lesson 01. Ser and estar" from 0
 defaults { duration: 0.5s, ease: easeInOut }
+
+bind chalk = material("Chalk")
 
 // ── Geometry ──────────────────────────────────────────────────────────────
 let cw = 1090
@@ -24,12 +30,16 @@ let tableScale = 1.5
 // ── Background ────────────────────────────────────────────────────────────
 create asset "blackboar-background" as bg at (cw / 2, ch / 2) { scaleX: ch / 4320, scaleY: ch / 4320, opacity: 0 }
 
+// ── Chalk group: title, table, examples and recap all filter through Chalk ─
+create group "Lesson board" as board
+
 // ── Title ─────────────────────────────────────────────────────────────────
-create text "Lesson title" as title at (cw / 2, 118) { content: "Lesson 01. Ser and estar", fontSize: 56, alignment: "center", opacity: 0 }
+create text "Lesson title" as title at (cw / 2, 118) inside board { content: "Lesson 01. Ser and estar", fontSize: 56, alignment: "center", opacity: 0 }
 title.tint("#F5E6C8")
 
 // ── Conjugation table, created empty ──────────────────────────────────────
-create table "Grammar table" as grid at (183, 168) { columns: [150, 160, 160], rows: [["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""]], padding: 6, borderWidth: 2, borderColor: "#4E342E", background: "#FFFDF5", opacity: 0, scaleX: tableScale, scaleY: tableScale }
+// Transparent plate and white chalk borders: the blackboard shows through.
+create table "Grammar table" as grid at (183, 168) inside board { columns: [150, 160, 160], rows: [["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""], ["", "", ""]], padding: 6, borderWidth: 2, borderColor: "#FFFFFF", background: "transparent", opacity: 0, scaleX: tableScale, scaleY: tableScale }
 
 // Header row
 create text "Cell header pronoun" as h0 at (6, 5) inside grid.cell(0, 0) { content: "Pronombre", fontSize: 15, opacity: 0 }
@@ -66,91 +76,95 @@ create text "Cell ellos" as p6 at (6, 5) inside grid.cell(6, 0) { content: "ello
 create text "Cell son" as s6 at (6, 5) inside grid.cell(6, 1) { content: "son", fontSize: 17, opacity: 0 }
 create text "Cell estan" as e6 at (6, 5) inside grid.cell(6, 2) { content: "están", fontSize: 17, opacity: 0 }
 
-// Palette: SER is blue, ESTAR is orange, pronouns stay slate.
-h0.tint("#37474F")
-h1.tint("#1565C0")
-h2.tint("#C2410C")
-p1.tint("#455A64")
-p2.tint("#455A64")
-p3.tint("#455A64")
-p4.tint("#455A64")
-p5.tint("#455A64")
-p6.tint("#455A64")
-s1.tint("#1565C0")
-s2.tint("#1565C0")
-s3.tint("#1565C0")
-s4.tint("#1565C0")
-s5.tint("#1565C0")
-s6.tint("#1565C0")
-e1.tint("#C2410C")
-e2.tint("#C2410C")
-e3.tint("#C2410C")
-e4.tint("#C2410C")
-e5.tint("#C2410C")
-e6.tint("#C2410C")
+// Palette: SER is blue, ESTAR is orange, pronouns stay slate — lightened so
+// the chalk reads on the dark board.
+h0.tint("#B0BEC5")
+h1.tint("#81D4FA")
+h2.tint("#FFCC80")
+p1.tint("#CFD8DC")
+p2.tint("#CFD8DC")
+p3.tint("#CFD8DC")
+p4.tint("#CFD8DC")
+p5.tint("#CFD8DC")
+p6.tint("#CFD8DC")
+s1.tint("#81D4FA")
+s2.tint("#81D4FA")
+s3.tint("#81D4FA")
+s4.tint("#81D4FA")
+s5.tint("#81D4FA")
+s6.tint("#81D4FA")
+e1.tint("#FFCC80")
+e2.tint("#FFCC80")
+e3.tint("#FFCC80")
+e4.tint("#FFCC80")
+e5.tint("#FFCC80")
+e6.tint("#FFCC80")
 
 // ── Examples (three SER on the left, three ESTAR on the right) ────────────
 // 1. Yo soy estudiante. / I am a student.
-create text "ex1a" as ex1a at (107, 555) { content: "Yo ", fontSize: 30, opacity: 0 }
-create text "ex1b" as ex1b at (161, 555) { content: "soy", fontSize: 30, opacity: 0 }
-create text "ex1c" as ex1c at (296, 555) { content: " estudiante.", fontSize: 30, opacity: 0 }
-create text "ex1t" as ex1t at (175, 599) { content: "I am a student.", fontSize: 21, opacity: 0 }
+create text "ex1a" as ex1a at (107, 555) inside board { content: "Yo ", fontSize: 30, opacity: 0 }
+create text "ex1b" as ex1b at (161, 555) inside board { content: "soy", fontSize: 30, opacity: 0 }
+create text "ex1c" as ex1c at (296, 555) inside board { content: " estudiante.", fontSize: 30, opacity: 0 }
+create text "ex1t" as ex1t at (175, 599) inside board { content: "I am a student.", fontSize: 21, opacity: 0 }
 ex1a.tint("#F5E6C8")
 ex1b.tint("#4FC3F7")
 ex1c.tint("#F5E6C8")
 ex1t.tint("#A8A092")
 
 // 2. Estoy en el trabajo. / I am at work.
-create text "ex2a" as ex2a at (635, 555) { content: "Estoy", fontSize: 30, opacity: 0 }
-create text "ex2b" as ex2b at (815, 555) { content: " en el trabajo.", fontSize: 30, opacity: 0 }
-create text "ex2t" as ex2t at (672, 599) { content: "I am at work.", fontSize: 21, opacity: 0 }
+create text "ex2a" as ex2a at (635, 555) inside board { content: "Estoy", fontSize: 30, opacity: 0 }
+create text "ex2b" as ex2b at (815, 555) inside board { content: " en el trabajo.", fontSize: 30, opacity: 0 }
+create text "ex2t" as ex2t at (672, 599) inside board { content: "I am at work.", fontSize: 21, opacity: 0 }
 ex2a.tint("#FFB74D")
 ex2b.tint("#F5E6C8")
 ex2t.tint("#A8A092")
 
 // 3. Tú eres mi amigo. / You are my friend.
-create text "ex3a" as ex3a at (107, 665) { content: "Tú ", fontSize: 30, opacity: 0 }
-create text "ex3b" as ex3b at (170, 665) { content: "eres", fontSize: 30, opacity: 0 }
-create text "ex3c" as ex3c at (296, 665) { content: " mi amigo.", fontSize: 30, opacity: 0 }
-create text "ex3t" as ex3t at (193, 709) { content: "You are my friend.", fontSize: 21, opacity: 0 }
+create text "ex3a" as ex3a at (107, 665) inside board { content: "Tú ", fontSize: 30, opacity: 0 }
+create text "ex3b" as ex3b at (170, 665) inside board { content: "eres", fontSize: 30, opacity: 0 }
+create text "ex3c" as ex3c at (296, 665) inside board { content: " mi amigo.", fontSize: 30, opacity: 0 }
+create text "ex3t" as ex3t at (193, 709) inside board { content: "You are my friend.", fontSize: 21, opacity: 0 }
 ex3a.tint("#F5E6C8")
 ex3b.tint("#4FC3F7")
 ex3c.tint("#F5E6C8")
 ex3t.tint("#A8A092")
 
 // 4. Ella está en casa. / She is at home.
-create text "ex4a" as ex4a at (635, 665) { content: "Ella ", fontSize: 30, opacity: 0 }
-create text "ex4b" as ex4b at (716, 665) { content: "está", fontSize: 30, opacity: 0 }
-create text "ex4c" as ex4c at (833, 665) { content: " en casa.", fontSize: 30, opacity: 0 }
-create text "ex4t" as ex4t at (685, 709) { content: "She is at home.", fontSize: 21, opacity: 0 }
+create text "ex4a" as ex4a at (635, 665) inside board { content: "Ella ", fontSize: 30, opacity: 0 }
+create text "ex4b" as ex4b at (716, 665) inside board { content: "está", fontSize: 30, opacity: 0 }
+create text "ex4c" as ex4c at (833, 665) inside board { content: " en casa.", fontSize: 30, opacity: 0 }
+create text "ex4t" as ex4t at (685, 709) inside board { content: "She is at home.", fontSize: 21, opacity: 0 }
 ex4a.tint("#F5E6C8")
 ex4b.tint("#FFB74D")
 ex4c.tint("#F5E6C8")
 ex4t.tint("#A8A092")
 
 // 5. Nosotros somos amigos. / We are friends.
-create text "ex5a" as ex5a at (161, 775) { content: "Nosotros ", fontSize: 30, opacity: 0 }
-create text "ex5b" as ex5b at (287, 775) { content: "somos", fontSize: 30, opacity: 0 }
-create text "ex5c" as ex5c at (404, 775) { content: " amigos.", fontSize: 30, opacity: 0 }
-create text "ex5t" as ex5t at (175, 819) { content: "We are friends.", fontSize: 21, opacity: 0 }
+create text "ex5a" as ex5a at (161, 775) inside board { content: "Nosotros ", fontSize: 30, opacity: 0 }
+create text "ex5b" as ex5b at (287, 775) inside board { content: "somos", fontSize: 30, opacity: 0 }
+create text "ex5c" as ex5c at (404, 775) inside board { content: " amigos.", fontSize: 30, opacity: 0 }
+create text "ex5t" as ex5t at (175, 819) inside board { content: "We are friends.", fontSize: 21, opacity: 0 }
 ex5a.tint("#F5E6C8")
 ex5b.tint("#4FC3F7")
 ex5c.tint("#F5E6C8")
 ex5t.tint("#A8A092")
 
 // 6. Ellos están cansados. / They are tired.
-create text "ex6a" as ex6a at (644, 775) { content: "Ellos ", fontSize: 30, opacity: 0 }
-create text "ex6b" as ex6b at (743, 775) { content: "están", fontSize: 30, opacity: 0 }
-create text "ex6c" as ex6c at (878, 775) { content: " cansados.", fontSize: 30, opacity: 0 }
-create text "ex6t" as ex6t at (685, 819) { content: "They are tired.", fontSize: 21, opacity: 0 }
+create text "ex6a" as ex6a at (644, 775) inside board { content: "Ellos ", fontSize: 30, opacity: 0 }
+create text "ex6b" as ex6b at (743, 775) inside board { content: "están", fontSize: 30, opacity: 0 }
+create text "ex6c" as ex6c at (878, 775) inside board { content: " cansados.", fontSize: 30, opacity: 0 }
+create text "ex6t" as ex6t at (685, 819) inside board { content: "They are tired.", fontSize: 21, opacity: 0 }
 ex6a.tint("#F5E6C8")
 ex6b.tint("#FFB74D")
 ex6c.tint("#F5E6C8")
 ex6t.tint("#A8A092")
 
 // ── Closing line ──────────────────────────────────────────────────────────
-create text "Recap" as recap at (cw / 2, 852) { content: "SER = cómo es  ·  ESTAR = cómo está", fontSize: 24, alignment: "center", opacity: 0 }
+create text "Recap" as recap at (cw / 2, 852) inside board { content: "SER = cómo es  ·  ESTAR = cómo está", fontSize: 24, alignment: "center", opacity: 0 }
 recap.tint("#F5E6C8")
+
+// The whole board renders through the built-in Chalk shader.
+board.material(chalk)
 
 // ── Timing ────────────────────────────────────────────────────────────────
 at(0) bg.fadeIn(1.4)

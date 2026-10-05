@@ -58,14 +58,73 @@ describe('InspectorPanel Material section', () => {
     expect(screen.queryByRole('combobox', { name: 'Material' })).not.toBeInTheDocument()
   })
 
-  it('shows no Material section for non-renderable group nodes', () => {
+  it('renders for group nodes so a shader material can filter their subtree', () => {
     const { engine } = renderMaterialInspector()
     createSceneWithNode(engine)
     const groupId = createGroupNode(engine)
     registerMaterials(engine)
     select(groupId)
 
+    expect(screen.getByRole('heading', { name: 'Material' })).toBeInTheDocument()
+    expect(materialPicker().value).toBe(defaultMaterialDefinitionId())
+
+    fireEvent.change(materialPicker(), { target: { value: 'mat-red' } })
+    expect(engine.getNode(groupId).material.materialDefinitionId).toBe('mat-red')
+  })
+
+  it('renders for an empty group before its first child arrives', () => {
+    const { engine } = renderMaterialInspector()
+    createSceneWithNode(engine)
+    const groupId = createGroupNode(engine)
+    expect(engine.getNode(groupId).children).toHaveLength(0)
+    registerMaterials(engine)
+    select(groupId)
+
+    expect(screen.getByRole('heading', { name: 'Material' })).toBeInTheDocument()
+  })
+
+  it('shows no Material section for the scene root', () => {
+    const { engine } = renderMaterialInspector()
+    engine.createProject({ name: 'Demo' })
+    const slide = engine.createSlide('Slide 1')
+    registerMaterials(engine)
+    select(slide.scene.root.id)
+
     expect(screen.queryByRole('heading', { name: 'Material' })).not.toBeInTheDocument()
+  })
+
+  it('notes the ancestor group shader that composites the selected child', () => {
+    const { engine } = renderMaterialInspector()
+    engine.createProject({ name: 'Demo' })
+    const slide = engine.createSlide('Slide 1')
+    engine.registerShaderDefinition('shader-chalk', 'Chalk')
+    engine.registerMaterialDefinition('mat-chalk', 'Chalk', [], 'shader-chalk')
+    const group = engine.createNode(slide.scene.id, slide.scene.root.id, 'Board')
+    engine.assignMaterial(group.id, 'mat-chalk')
+    const child = engine.createNode(slide.scene.id, group.id, 'Title', {
+      components: { text: { kind: 'text', content: 'Hi', fontSize: 24, alignment: 'left' } },
+    })
+    select(child.id)
+
+    const notice = screen.getByTestId('inherited-shader-notice')
+    expect(notice).toHaveTextContent('Composited through the Chalk shader on group “Board”')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Select group' }))
+    expect(useSelectionStore.getState().selectedIds).toEqual([group.id])
+  })
+
+  it('shows no inherited shader note when no ancestor group carries a shader', () => {
+    const { engine } = renderMaterialInspector()
+    engine.createProject({ name: 'Demo' })
+    const slide = engine.createSlide('Slide 1')
+    const group = engine.createNode(slide.scene.id, slide.scene.root.id, 'Board')
+    const child = engine.createNode(slide.scene.id, group.id, 'Title', {
+      components: { text: { kind: 'text', content: 'Hi', fontSize: 24, alignment: 'left' } },
+    })
+    select(child.id)
+
+    expect(screen.getByRole('heading', { name: 'Material' })).toBeInTheDocument()
+    expect(screen.queryByTestId('inherited-shader-notice')).not.toBeInTheDocument()
   })
 
   it('renders for text nodes', () => {

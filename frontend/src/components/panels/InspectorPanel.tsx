@@ -57,7 +57,7 @@ import { TextureInspectorSection } from './TextureInspectorSection'
 import { ShadowInspectorSection } from './ShadowInspectorSection'
 import { SymmetryInspectorSection } from './SymmetryInspectorSection'
 import { PROPERTY_LABELS } from './timelineTracks'
-import { isGroupNode } from '../../engine/sceneNode'
+import { isGroupContainerNode, isGroupNode } from '../../engine/sceneNode'
 import {
   RenameClipCommand,
   SetClipDurationCommand,
@@ -71,7 +71,14 @@ import {
 const COMING_SOON_SECTIONS = ['Anchors', 'Physics', 'AI Metadata']
 
 function isRenderableNode(node: SceneNode): boolean {
-  return Boolean(node.components.assetInstance || node.components.text)
+  // Groups render no content of their own, but a material assigned to one
+  // filters its whole subtree — so they are material targets too. The scene
+  // root is a container as well; it is not a user node, so exclude it.
+  return Boolean(
+    node.components.assetInstance ||
+    node.components.text ||
+    (node.parent !== null && isGroupContainerNode(node)),
+  )
 }
 
 function inspectedTargets(engine: EnginePublic, selectedIds: readonly string[]): SceneNode[] {

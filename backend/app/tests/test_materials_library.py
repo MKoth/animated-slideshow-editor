@@ -8,7 +8,12 @@ from app.app_factory import AppFactory
 from app.config import Settings
 from app.database import Database
 from app.materials.library import MaterialNotFoundError, MaterialProtectedError
-from app.materials.model import DEFAULT_MATERIAL_ID, MaterialDefinition
+from app.materials.model import (
+    CHALK_MATERIAL_ID,
+    DEFAULT_MATERIAL_ID,
+    MaterialDefinition,
+    builtin_material_ids,
+)
 
 
 def naive_utc(year: int, month: int, day: int) -> datetime:
@@ -66,7 +71,7 @@ def test_delete_removes_only_the_target_material(client: TestClient, settings: S
     assert response.status_code == 204
     remaining = client.get("/api/materials").json()
     remaining_ids = [
-        material["id"] for material in remaining if material["id"] != DEFAULT_MATERIAL_ID
+        material["id"] for material in remaining if material["id"] not in builtin_material_ids()
     ]
     assert remaining_ids == [second]
     with database.session() as session:
@@ -99,12 +104,75 @@ def test_seeding_is_idempotent(settings: Settings) -> None:
         count = len(
             list(
                 session.scalars(
-                    select(MaterialDefinition).where(MaterialDefinition.id == DEFAULT_MATERIAL_ID)
+                    select(MaterialDefinition).where(
+                        MaterialDefinition.id.in_(builtin_material_ids())
+                    )
                 )
             )
         )
 
-    assert count == 1
+    assert count == len(builtin_material_ids())
+    assert CHALK_MATERIAL_ID in builtin_material_ids()
+
+
+def test_ensure_seeded_creates_the_chalk_material_with_its_shader(settings: Settings) -> None:
+    app = AppFactory(settings).create()
+    database = app.state.database
+
+    with database.session() as session:
+        stored = session.get(MaterialDefinition, CHALK_MATERIAL_ID)
+
+    assert stored is not None
+    assert stored.name == "Chalk"
+    assert stored.tags == ["built-in", "texture"]
+    assert stored.shader_id is not None
+    assert stored.parameters == [
+        {"key": "tint", "kind": "color", "default": "#ffffff"},
+        {"key": "opacityMultiplier", "kind": "number", "default": 1.0},
+        {"key": "uGrain", "kind": "float", "default": 0.65},
+        {"key": "uNoiseScale", "kind": "float", "default": 220.0},
+    ]
+
+
+def test_seeding_upgrades_stale_chalk_uniforms_in_place(settings: Settings) -> None:
+    AppFactory(settings).create()
+    database = Database(settings.database_url)
+    with database.session() as session:
+        stored = session.get(MaterialDefinition, CHALK_MATERIAL_ID)
+        assert stored is not None
+        stored.parameters = [
+            {"key": "tint", "kind": "color", "default": "#ffffff"},
+            {"key": "opacityMultiplier", "kind": "number", "default": 1.0},
+            {"key": "uGrain", "kind": "number", "default": 0.65},
+        ]
+        session.commit()
+
+    AppFactory(settings).create()
+
+    with database.session() as session:
+        upgraded = session.get(MaterialDefinition, CHALK_MATERIAL_ID)
+    assert upgraded is not None
+    assert upgraded.parameters == [
+        {"key": "tint", "kind": "color", "default": "#ffffff"},
+        {"key": "opacityMultiplier", "kind": "number", "default": 1.0},
+        {"key": "uGrain", "kind": "float", "default": 0.65},
+        {"key": "uNoiseScale", "kind": "float", "default": 220.0},
+    ]
+
+
+def test_delete_chalk_material_raises_protected(settings: Settings) -> None:
+    library = AppFactory(settings).create().state.material_library
+
+    try:
+        library.delete(CHALK_MATERIAL_ID)
+    except MaterialProtectedError:
+        pass
+    else:
+        raise AssertionError("expected MaterialProtectedError")
+
+    database = Database(settings.database_url)
+    with database.session() as session:
+        assert session.get(MaterialDefinition, CHALK_MATERIAL_ID) is not None
 
 
 def test_delete_default_material_raises_protected(settings: Settings) -> None:

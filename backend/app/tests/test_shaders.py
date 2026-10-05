@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.app_factory import AppFactory
 from app.config import Settings
-from app.shaders.model import BUILTIN_SHADERS, ShaderDefinition
+from app.shaders.model import BUILTIN_SHADER_NAMES, BUILTIN_SHADERS, ShaderDefinition
 
 FRAGMENT_SOURCE = """#version 300 es
 precision highp float;
@@ -120,7 +120,7 @@ def test_list_includes_the_seeded_builtins(client: TestClient) -> None:
 
     builtins = {shader["name"] for shader in body if shader["is_builtin"]}
 
-    assert builtins == {"Grayscale", "Sepia", "Glow", "Blur", "Gradient"}
+    assert builtins == set(BUILTIN_SHADER_NAMES)
 
 
 def test_detail_returns_full_definition(client: TestClient) -> None:

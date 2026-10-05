@@ -114,6 +114,8 @@ function collectShadowCasters(host: SceneNode): SceneNode[] {
 interface NodeShaderState {
   filter: PixiFilter | null
   scratch: EffectiveShaderScratch
+  /** The container the filter is attached to: the node's visual or its group container. */
+  target: PixiContainer | null
 }
 
 export type ResolveShaderSource = (shaderId: string) => string | null
@@ -333,7 +335,11 @@ export class SceneRenderer {
     // If parent is group with shadow, its silhouette changed (new caster) — mark dirty via climbing
     this.#markShadowDirtyForNode(nodeId)
     this.#flushShadowDirty()
-    // If new node itself is group with shadow, its parent's shadow may need update? Already handled
+    // A first child turns an empty parent into a group host, so its material
+    // shader (if any) must start filtering the new subtree.
+    if (node.parent) {
+      this.#evaluateAndApply(node.parent.id)
+    }
   }
 
   handleNodeRemoved(nodeId: string): void {
@@ -373,6 +379,11 @@ export class SceneRenderer {
     container.destroy({ children: true })
     if (tableId) {
       this.handleTableChanged(tableId)
+    }
+    // Losing the last child stops a parent being a group host; re-evaluate so a
+    // material shader filter attached to the parent container is detached.
+    if (parentId) {
+      this.#evaluateAndApply(parentId)
     }
     if (parentId && this.#shadowContainers.has(parentId)) {
       this.#markShadowDirtyForNode(parentId)
@@ -1586,25 +1597,45 @@ export class SceneRenderer {
     container: PixiContainer,
     scratch: EffectiveShaderScratch,
   ): boolean {
-    const placeholder = placeholderOf(container)
-    if (!placeholder) {
-      return false
-    }
+    // A group node renders no content of its own, so its material shader goes
+    // on the container itself and filters the whole subtree. Other node kinds
+    // filter their placeholder (the node's rendered visual).
+    const node = this.#scene?.getNode(nodeId)
+    const filterTarget = placeholderOf(container) ?? (node && isGroupNode(node) ? container : null)
     let state = this.#nodeShaders.get(nodeId)
     if (!state) {
-      state = { filter: null, scratch: effectiveShaderScratch() }
+      state = { filter: null, scratch: effectiveShaderScratch(), target: null }
       this.#nodeShaders.set(nodeId, state)
     }
-    if (shaderUniformsEqual(state.scratch, scratch)) {
+    // Without a shader source and with no filter installed there is nothing to
+    // do; keep the scratch current and skip. (uTime makes the full comparison
+    // report a difference every frame even when no shader is involved.)
+    if (!scratch.source && state.filter === null) {
+      copyShaderUniforms(state.scratch, scratch)
       return false
     }
-    if (state.filter && !scratch.source) {
-      placeholder.filters = []
+    const attached = state.filter !== null && state.target === filterTarget
+    if (shaderUniformsEqual(state.scratch, scratch) && (!scratch.source || attached)) {
+      return false
+    }
+    // Detach the previous filter when its host changed (group ↔ rendered
+    // visual) or the shader was removed from the material.
+    if (state.filter && (state.target !== filterTarget || !scratch.source)) {
+      if (state.target) {
+        state.target.filters = []
+      }
       state.filter.destroy()
       state.filter = null
+      state.target = null
+      copyShaderUniforms(state.scratch, scratch)
+      return true
     }
-    const previousFilter = state.filter
+    if (!filterTarget) {
+      copyShaderUniforms(state.scratch, scratch)
+      return false
+    }
     if (scratch.source) {
+      const previousFilter = state.filter
       const sameSource = previousFilter !== null && state.scratch.source === scratch.source
       const filter = sameSource
         ? previousFilter
@@ -1620,8 +1651,9 @@ export class SceneRenderer {
       }
       applyFilterUniforms(filter, scratch)
       bindFilterSamplers(filter, scratch.samplers, this.#resolveAssetUrl, this.#textureCache)
-      placeholder.filters = [filter]
+      filterTarget.filters = [filter]
       state.filter = filter
+      state.target = filterTarget
     }
     copyShaderUniforms(state.scratch, scratch)
     return true

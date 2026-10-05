@@ -71,6 +71,24 @@ export function ensureReferencedMaterialAndShaderSnapshots(engine: EnginePublic)
   }
 }
 
+/**
+ * The source the renderer should compile for a shader id. A library shader
+ * resolves only once compiled, matching the Materials panel's gating; a
+ * project's embedded snapshot resolves whenever the shader library has not
+ * loaded it, keeping a saved project self-contained without a Materials visit.
+ */
+export function resolveShaderSourceForRender(
+  engine: EnginePublic,
+  shaderId: string,
+): string | null {
+  const library = useShaderLibraryStore.getState()
+  const definition = library.definitions.find((entry) => entry.id === shaderId)
+  if (definition) {
+    return library.compileStatus[shaderId]?.status === 'Compiled' ? definition.source : null
+  }
+  return engine.getEmbeddedShader(shaderId)?.source ?? null
+}
+
 function shaderIdOfMaterial(engine: EnginePublic, materialDefinitionId: string): string | null {
   try {
     return engine.getMaterialDefinition(materialDefinitionId).shaderId

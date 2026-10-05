@@ -6,6 +6,7 @@ import {
   createCommandSystem,
 } from '../../engine/commands'
 import { CreateTableCommand } from '../../engine/commands/tableCommands'
+import { SetTableComponentCommand } from '../../engine/commands'
 import { pixiRegistry } from './pixiFake'
 import { findByLabel, mountRenderer, worldOf } from './testUtils'
 
@@ -164,6 +165,57 @@ describe('TableRenderer', () => {
     expect(table?.position).toBeDefined()
     expect(table?.scale).toBeDefined()
     expect(table?.rotation).toBe(0)
+  })
+
+  it('skips the fill when the table background is transparent', async () => {
+    const system = createCommandSystem()
+    system.dispatcher.dispatch(new CreateProjectCommand({ name: 'Demo' }))
+    system.dispatcher.dispatch(new CreateSlideCommand({ name: 'Slide 1' }))
+    const slide = system.engine.project?.slides[0]
+    if (!slide) {
+      throw new Error('Slide was not created')
+    }
+    const { renderer, app } = await mountRenderer(system.engine)
+    const inverse = system.dispatcher.dispatch(
+      new CreateTableCommand({ sceneId: slide.scene.id, parentId: slide.scene.root.id }),
+    )
+    if (!inverse.ok) {
+      throw new Error('CreateTableCommand failed')
+    }
+    const tableId = inverse.inverse.tableNodeId
+
+    const root = findByLabel(worldOf(app), 'Root')
+    const table = findByLabel(root ?? { children: [] }, 'Table')
+    const cell = findByLabel(table ?? { children: [] }, 'Cell 1,1')
+    const cellVisual = findByLabel(cell ?? { children: [] }, 'table-cell:Cell 1,1')
+    const cellGraphics = cellVisual?.children.find((child) => child.kind === 'graphics')
+    const borderGraphics = findTablePlaceholder(table)?.children.find(
+      (child) => child.kind === 'graphics',
+    )
+    expect(cellGraphics?.calls?.some((call) => call.method === 'fill')).toBe(true)
+    expect(borderGraphics?.calls?.some((call) => call.method === 'fill')).toBe(true)
+
+    const tableComponent = system.engine.getNode(tableId).components.table!
+    system.dispatcher.dispatch(
+      new SetTableComponentCommand({
+        nodeId: tableId,
+        table: { ...tableComponent, background: 'transparent' },
+      }),
+    )
+    renderer.refreshNodeRendering()
+
+    const updatedRoot = findByLabel(worldOf(app), 'Root')
+    const updatedTable = findByLabel(updatedRoot ?? { children: [] }, 'Table')
+    const updatedCell = findByLabel(updatedTable ?? { children: [] }, 'Cell 1,1')
+    const updatedCellVisual = findByLabel(updatedCell ?? { children: [] }, 'table-cell:Cell 1,1')
+    const updatedCellGraphics = updatedCellVisual?.children.find(
+      (child) => child.kind === 'graphics',
+    )
+    const updatedBorder = findTablePlaceholder(updatedTable)?.children.find(
+      (child) => child.kind === 'graphics',
+    )
+    expect(updatedCellGraphics?.calls?.some((call) => call.method === 'fill')).toBe(false)
+    expect(updatedBorder?.calls?.some((call) => call.method === 'fill')).toBe(false)
   })
 
   it('re-renders border when a new table node is created after initial render', async () => {

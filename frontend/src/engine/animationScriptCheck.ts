@@ -128,6 +128,15 @@ export function checkAnimationScript(
       })
     }
   }
+  // Materials `material("Name")` may resolve: library-registered definitions
+  // plus the project's embedded snapshots, deduplicated by id; embedded wins.
+  const materialsById = new Map<string, { id: string; name: string }>()
+  for (const definition of engine.materialDefinitions) {
+    materialsById.set(definition.id, { id: definition.id, name: definition.name })
+  }
+  for (const embedded of engine.embeddedMaterials) {
+    materialsById.set(embedded.id, { id: embedded.id, name: embedded.name })
+  }
   return compileAnimationScript(source, {
     slideDuration: slide.duration,
     nodes,
@@ -135,6 +144,7 @@ export function checkAnimationScript(
     createScope: slideId,
     rootNodeId: slide.scene.root.id,
     assets: [...assetsById.values()],
+    materials: [...materialsById.values()],
     dataSources: engine.embeddedDataSources.flatMap((definition) =>
       'dataPoints' in definition ? [{ id: definition.id, name: definition.name }] : [],
     ),

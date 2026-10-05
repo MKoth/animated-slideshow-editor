@@ -19,6 +19,7 @@ import { commonValueOf, parseFiniteNumber } from '../../app/inspectorActions'
 import { materialParameterStateOf, materialEditAtPlayhead } from '../../app/keyframeActions'
 import { useMaterialLibraryStore } from '../../stores/materialLibraryStore'
 import { useShaderLibraryStore } from '../../stores/shaderLibraryStore'
+import { useSelectionStore } from '../../stores/selectionStore'
 import { useUiStore } from '../../stores/uiStore'
 import { NumericField } from './inspectorFields'
 import { definitionNameOf, runCommand } from './sectionHelpers'
@@ -27,6 +28,7 @@ import { overrideStateOf } from './uniforms'
 import { ShaderSourceViewer } from './ShaderSourceViewer'
 import { ShaderEditor } from './ShaderEditor'
 import { uniqueNodeName } from '../../engine/naming'
+import { isGroupContainerNode } from '../../engine/sceneNode'
 
 function toKeyframeValue(value: unknown): KeyframeValue {
   if (Array.isArray(value)) {
@@ -131,6 +133,22 @@ export function MaterialInspectorSection({
   const setActiveSidebarTab = useUiStore((state) => state.setActiveSidebarTab)
   const setActiveMaterialsSection = useUiStore((state) => state.setActiveMaterialsSection)
 
+  const shaderNameOf = (shaderId: string): string => {
+    const fromLibrary = shaderLibraryDefinitions.find((s) => s.id === shaderId)?.name
+    if (fromLibrary) return fromLibrary
+    try {
+      const embedded = engine.getEmbeddedShader(shaderId)
+      if (embedded?.name) return embedded.name
+    } catch {
+      // ignore
+    }
+    try {
+      return engine.getShaderDefinition(shaderId).name
+    } catch {
+      return shaderId
+    }
+  }
+
   let materialShaderId: string | null = null
   if (currentDefinitionId !== null) {
     try {
@@ -158,21 +176,28 @@ export function MaterialInspectorSection({
     }
     return null
   })()
-  const shaderName = (() => {
-    if (!materialShaderId) return null
-    const fromLibrary = shaderLibraryDefinitions.find((s) => s.id === materialShaderId)?.name
-    if (fromLibrary) return fromLibrary
-    try {
-      const embedded = engine.getEmbeddedShader(materialShaderId)
-      if (embedded?.name) return embedded.name
-    } catch {
-      // ignore
+  const shaderName = materialShaderId ? shaderNameOf(materialShaderId) : null
+
+  // A group's material shader filters its whole subtree, so a child without a
+  // shader of its own still composites through the nearest ancestor group's.
+  const inheritedShader = (() => {
+    if (targets.length !== 1) return null
+    let ancestor = targets[0]!.parent
+    while (ancestor !== null) {
+      if (isGroupContainerNode(ancestor)) {
+        let shaderId: string | null = null
+        try {
+          shaderId = engine.getMaterialDefinition(ancestor.material.materialDefinitionId).shaderId
+        } catch {
+          shaderId = null
+        }
+        if (shaderId) {
+          return { groupId: ancestor.id, groupName: ancestor.name, shaderId }
+        }
+      }
+      ancestor = ancestor.parent
     }
-    try {
-      return engine.getShaderDefinition(materialShaderId).name
-    } catch {
-      return materialShaderId
-    }
+    return null
   })()
 
   const handleOpenInLibrary = () => {
@@ -215,6 +240,19 @@ export function MaterialInspectorSection({
   return (
     <section className="inspector-section">
       <h3 className="inspector-section__title">Material</h3>
+      {inheritedShader && (
+        <p className="inspector-section__notice" data-testid="inherited-shader-notice">
+          Composited through the {shaderNameOf(inheritedShader.shaderId)} shader on group “
+          {inheritedShader.groupName}”.{' '}
+          <button
+            type="button"
+            className="inspector-section__link"
+            onClick={() => useSelectionStore.getState().select(inheritedShader.groupId)}
+          >
+            Select group
+          </button>
+        </p>
+      )}
       <div className="inspector-field">
         <label className="inspector-field__label" htmlFor="material-picker">
           Material

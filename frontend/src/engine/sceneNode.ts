@@ -224,8 +224,13 @@ export class SceneNode {
   }
 }
 
+/** A componentless container: a group, empty or populated (scenes' roots included). */
+export function isGroupContainerNode(node: SceneNode): boolean {
+  return Object.values(node.components).every((value) => value === undefined)
+}
+
 export function isGroupNode(node: SceneNode): boolean {
-  return Object.values(node.components).every((v) => v === undefined) && node.children.length > 0
+  return isGroupContainerNode(node) && node.children.length > 0
 }
 
 function requireTransform(value: unknown, nodeId: string): Transform {
@@ -549,8 +554,8 @@ function parseTableComponent(component: Record<string, unknown>, nodeId: string)
   if (padding < 0) throw new Error(`${ctx} padding must be a non-negative number`)
   if (borderWidth < 0) throw new Error(`${ctx} borderWidth must be a non-negative number`)
   if (gap < 0) throw new Error(`${ctx} gap must be a non-negative number`)
-  if (background !== undefined && !/^#[0-9a-f]{6}$/i.test(background)) {
-    throw new Error(`${ctx} background must be a hex color`)
+  if (background !== undefined && !isTableBackground(background)) {
+    throw new Error(`${ctx} background must be a hex color, "transparent" or "none"`)
   }
   return {
     kind: 'table',
@@ -562,6 +567,12 @@ function parseTableComponent(component: Record<string, unknown>, nodeId: string)
     padding,
     background,
   }
+}
+
+/** A table background paint: a hex color, or an explicit no-fill keyword. */
+function isTableBackground(value: string): boolean {
+  const trimmed = value.trim().toLowerCase()
+  return /^#[0-9a-f]{6}$/i.test(value) || trimmed === 'transparent' || trimmed === 'none'
 }
 
 function parseChartComponent(component: Record<string, unknown>, nodeId: string): ChartComponent {

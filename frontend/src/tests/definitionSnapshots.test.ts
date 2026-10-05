@@ -5,6 +5,7 @@ import {
   captureMaterialSnapshot,
   captureShaderSnapshot,
   ensureReferencedMaterialAndShaderSnapshots,
+  resolveShaderSourceForRender,
 } from '../app/definitionSnapshot'
 import { createEngine } from '../engine/internal'
 import { deserialize, serialize } from '../engine/lessonSerializer'
@@ -57,7 +58,12 @@ function libraryJson(engine: ReturnType<typeof createEngine>) {
 
 beforeEach(() => {
   useMaterialLibraryStore.setState({ definitions: [], loaded: false, unavailable: false })
-  useShaderLibraryStore.setState({ definitions: [], loaded: false, unavailable: false })
+  useShaderLibraryStore.setState({
+    definitions: [],
+    compileStatus: {},
+    loaded: false,
+    unavailable: false,
+  })
 })
 
 describe('captureMaterialSnapshot', () => {
@@ -138,6 +144,54 @@ describe('captureShaderSnapshot', () => {
 
     expect(captureShaderSnapshot(engine, SHADER.id)).toBe(false)
     expect(engine.getEmbeddedShader(SHADER.id)).toBeUndefined()
+  })
+})
+
+describe('resolveShaderSourceForRender', () => {
+  it('returns the library source once the library shader has compiled', () => {
+    const { engine } = engineWithMaterial()
+    useShaderLibraryStore.setState({
+      definitions: [SHADER],
+      compileStatus: { [SHADER.id]: { status: 'Compiled', errors: [] } },
+      loaded: true,
+      unavailable: false,
+    })
+
+    expect(resolveShaderSourceForRender(engine, SHADER.id)).toBe(SHADER.source)
+  })
+
+  it('withholds an uncompiled library shader even when a snapshot exists', () => {
+    const { engine } = engineWithMaterial()
+    useShaderLibraryStore.setState({ definitions: [SHADER], loaded: true, unavailable: false })
+    captureShaderSnapshot(engine, SHADER.id)
+    useShaderLibraryStore.setState({
+      definitions: [SHADER],
+      compileStatus: { [SHADER.id]: { status: 'Failed', errors: [] } },
+      loaded: true,
+      unavailable: false,
+    })
+
+    expect(resolveShaderSourceForRender(engine, SHADER.id)).toBeNull()
+  })
+
+  it('falls back to the project snapshot when the library has not loaded the shader', () => {
+    const { engine } = engineWithMaterial()
+    useShaderLibraryStore.setState({ definitions: [SHADER], loaded: true, unavailable: false })
+    captureShaderSnapshot(engine, SHADER.id)
+    useShaderLibraryStore.setState({
+      definitions: [],
+      compileStatus: {},
+      loaded: false,
+      unavailable: false,
+    })
+
+    expect(resolveShaderSourceForRender(engine, SHADER.id)).toBe(SHADER.source)
+  })
+
+  it('returns null when neither the library nor the project holds the shader', () => {
+    const { engine } = engineWithMaterial()
+
+    expect(resolveShaderSourceForRender(engine, 'missing-shader')).toBeNull()
   })
 })
 

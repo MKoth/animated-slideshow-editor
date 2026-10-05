@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { captureAssetSnapshot, embeddedDataUrl } from '../../app/assetSnapshot'
+import { resolveShaderSourceForRender } from '../../app/definitionSnapshot'
 import { useEngine } from '../../app/useEngine'
 import { realPixi } from '../../pixi/renderer/pixi'
 import { Renderer } from '../../pixi/renderer/renderer'
@@ -45,14 +46,8 @@ export function CanvasPanel() {
       }
       return url
     }
-    const resolveShaderSource = (shaderId: string): string | null => {
-      const state = useShaderLibraryStore.getState()
-      const compiled = state.compileStatus[shaderId]?.status === 'Compiled'
-      if (!compiled) {
-        return null
-      }
-      return state.definitions.find((definition) => definition.id === shaderId)?.source ?? null
-    }
+    const resolveShaderSource = (shaderId: string): string | null =>
+      resolveShaderSourceForRender(engine, shaderId)
     const isAssetMissing = (definitionId: string): boolean => {
       const report = useMissingAssetsStore.getState().report
       return report?.missing.some((entry) => entry.assetDefinitionId === definitionId) ?? false

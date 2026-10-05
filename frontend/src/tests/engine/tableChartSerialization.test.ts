@@ -57,6 +57,28 @@ describe('TableComponent serialization', () => {
     })
   })
 
+  it('round-trips a transparent table background', () => {
+    const engine = engineWithProject()
+    const slide = engine.project!.slides[0]
+    const node = engine.createNode(slide.scene.id, slide.scene.root.id, 'Table')
+    const table: TableComponent = {
+      kind: 'table',
+      columns: [{ width: 100 }],
+      gap: 0,
+      borderWidth: 2,
+      borderColor: '#ffffff',
+      borderRadius: 0,
+      padding: 0,
+      background: 'transparent',
+    }
+    engine.setTableComponent(node.id, table)
+
+    const json = JSON.parse(serialize(engine.project as never)) as LessonJSON
+    const restored = deserialize(JSON.stringify(json))
+    const restoredNode = restored.slides[0].scene.root.children.find((n) => n.name === 'Table')
+    expect(restoredNode!.components.table!).toEqual(table)
+  })
+
   it('round-trips table with default values', () => {
     const engine = engineWithProject()
     const slide = engine.project!.slides[0]
