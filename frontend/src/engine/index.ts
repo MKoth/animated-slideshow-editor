@@ -42,7 +42,7 @@ export type { EmbeddedMaterialDefinition, EmbeddedMaterialParameter } from './em
 export type { EmbeddedShaderDefinition } from './embeddedShader'
 export type { FullscreenShaderReference } from './fullscreenShader'
 export type { SlideAnimationScript } from './animationScript'
-export type { SceneEffect, RevealEffect } from './sceneEffect'
+export type { SceneEffect, RevealEffect, WipeEffect } from './sceneEffect'
 export { revealCoverage } from './sceneEffect'
 export type { CompiledFootprint, CompiledFootprintTrack } from './compiledFootprint'
 export { remapCompiledFootprint } from './compiledFootprint'

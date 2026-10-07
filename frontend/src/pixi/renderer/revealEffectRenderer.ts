@@ -1,5 +1,5 @@
 import type { Scene } from '../../engine'
-import type { RevealEffect } from '../../engine/sceneEffect'
+import type { SceneEffect } from '../../engine/sceneEffect'
 import { revealCoverage } from '../../engine/sceneEffect'
 import type { WorldSize } from './worldGeometry'
 import type { PixiContainer, PixiGraphics, PixiSprite, RendererPixi } from './pixi'
@@ -62,7 +62,7 @@ export class RevealEffectRenderer {
   }
 
   update(
-    effects: readonly RevealEffect[],
+    effects: readonly SceneEffect[],
     scene: Scene,
     time: number,
     containers: ReadonlyMap<string, PixiContainer>,
@@ -97,17 +97,15 @@ export class RevealEffectRenderer {
       const effect =
         [...relevant].reverse().find((candidate) => candidate.start <= time) ?? relevant[0]
       if (!effect) continue
-      const width =
-        Math.max(0, effect.bounds.maxX - effect.bounds.minX) * revealCoverage(effect, time)
+      const fieldWidth = Math.max(0, effect.bounds.maxX - effect.bounds.minX)
+      const progress = revealCoverage(effect, time)
       mask.clear()
-      if (width > 0) {
+      if (fieldWidth > 0) {
+        const x =
+          effect.kind === 'wipe' ? effect.bounds.minX + fieldWidth * progress : effect.bounds.minX
+        const width = effect.kind === 'wipe' ? fieldWidth * (1 - progress) : fieldWidth * progress
         mask
-          .rect(
-            effect.bounds.minX,
-            effect.bounds.minY,
-            width,
-            effect.bounds.maxY - effect.bounds.minY,
-          )
+          .rect(x, effect.bounds.minY, width, effect.bounds.maxY - effect.bounds.minY)
           .fill({ color: 0xffffff })
       }
     }
@@ -129,7 +127,9 @@ export class RevealEffectRenderer {
       })
     })
     const pawIds = new Set(
-      performers.filter((effect) => effect.visual.kind === 'paw').map((effect) => effect.id),
+      performers
+        .filter((effect) => effect.visual.kind === 'paw' || effect.visual.kind === 'cloth')
+        .map((effect) => effect.id),
     )
     const assetEffects = new Map(
       performers
@@ -158,7 +158,7 @@ export class RevealEffectRenderer {
       const y =
         (effect.bounds.minY + effect.bounds.maxY) / 2 +
         Math.sin(progress * Math.PI * 4) * height * 0.02
-      if (effect.visual.kind === 'paw') {
+      if (effect.visual.kind === 'paw' || effect.visual.kind === 'cloth') {
         let paw = this.#paws.get(effect.id)
         if (!paw) {
           paw = new this.#pixi.Graphics()
@@ -166,7 +166,8 @@ export class RevealEffectRenderer {
           this.#world.addChild(paw)
           this.#paws.set(effect.id, paw)
         }
-        this.#drawPaw(paw, x, y, height)
+        if (effect.visual.kind === 'cloth') this.#drawCloth(paw, x, y, height)
+        else this.#drawPaw(paw, x, y, height)
       } else if (effect.visual.kind === 'asset') {
         this.#drawAsset(effect, x, y, time)
       }
@@ -185,7 +186,26 @@ export class RevealEffectRenderer {
     }
   }
 
-  #drawAsset(effect: RevealEffect, x: number, y: number, time: number): void {
+  #drawCloth(cloth: PixiGraphics, x: number, y: number, height: number): void {
+    const width = Math.max(14, height * 0.16)
+    const clothHeight = Math.max(8, height * 0.09)
+    cloth.clear()
+    cloth
+      .rect(x - width / 2, y - clothHeight / 2, width, clothHeight)
+      .fill({ color: 0x4aa8d8 })
+      .stroke({ width: 1, color: 0x17384a })
+    cloth
+      .moveTo(x - width / 2, y + clothHeight / 2)
+      .lineTo(x - width / 3, y + clothHeight / 2 + clothHeight * 0.35)
+      .lineTo(x - width / 6, y + clothHeight / 2)
+      .lineTo(x, y + clothHeight / 2 + clothHeight * 0.35)
+      .lineTo(x + width / 6, y + clothHeight / 2)
+      .lineTo(x + width / 3, y + clothHeight / 2 + clothHeight * 0.35)
+      .lineTo(x + width / 2, y + clothHeight / 2)
+      .stroke({ width: 1, color: 0x17384a })
+  }
+
+  #drawAsset(effect: SceneEffect, x: number, y: number, time: number): void {
     if (effect.visual.kind !== 'asset') return
     const nodeId = effect.visual.nodeId
     const state = this.#resolveAssetState(nodeId, time)

@@ -221,6 +221,25 @@ describe('scene renderer display tree sync', () => {
     expect(mask.calls.find((call) => call.method === 'rect')?.args).toEqual([10, 20, 50, 40])
     setTime(3)
     expect(mask.calls.find((call) => call.method === 'rect')?.args).toEqual([10, 20, 100, 40])
+    system.dispatcher.dispatch(
+      new SetSlideSceneEffectsCommand({
+        slideId: slide.id,
+        effects: [
+          {
+            kind: 'wipe',
+            id: 'test-wipe',
+            start: 1,
+            duration: 2,
+            scopeNodeIds: [nodeId],
+            nodeIds: [nodeId],
+            bounds: { minX: 10, minY: 20, maxX: 110, maxY: 60 },
+            visual: { kind: 'cloth' },
+          },
+        ],
+      }),
+    )
+    setTime(2)
+    expect(mask.calls.find((call) => call.method === 'rect')?.args).toEqual([60, 20, 50, 40])
     expect(
       (world.children as FakeContainer[]).some(
         (child) => child.kind === 'graphics' && child.zIndex === Number.MAX_SAFE_INTEGER,

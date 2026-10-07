@@ -1,6 +1,6 @@
-import type { RevealNode, ScriptExpression, SourceSpan } from './animationScriptParser'
+import type { RevealNode, ScriptExpression, SourceSpan, WipeNode } from './animationScriptParser'
 import type { AnimationScriptBoundsRead } from './animationScriptReads'
-import type { RevealEffect } from './sceneEffect'
+import type { SceneEffect } from './sceneEffect'
 import { sampleAnimationScriptRevealTarget } from './animationScriptRevealTarget'
 
 export interface RevealCompileNode {
@@ -32,24 +32,25 @@ export interface AnimationScriptRevealCompileContext {
 
 /** Compile one reveal call into a fixed, measurable effect target. */
 export function compileAnimationScriptReveal(
-  statement: RevealNode,
+  statement: RevealNode | WipeNode,
   cursor: number,
   context: AnimationScriptRevealCompileContext,
-): { readonly cursor: number; readonly effect?: RevealEffect } {
+): { readonly cursor: number; readonly effect?: SceneEffect } {
+  const label = statement.kind
   const startValue =
     statement.at === undefined
       ? cursor
-      : context.evaluateNumber(statement.at, 'a reveal start time in seconds')
+      : context.evaluateNumber(statement.at, `a ${label} start time in seconds`)
   const duration =
     statement.over === undefined
       ? 1
-      : context.evaluateNumber(statement.over, 'a reveal duration in seconds')
+      : context.evaluateNumber(statement.over, `a ${label} duration in seconds`)
   if (startValue === null || duration === null) return { cursor }
   const start = context.roundTime(startValue)
   const end = context.roundTime(start + duration)
   if (duration <= 0 || !Number.isFinite(duration)) {
     context.reportError(
-      'reveal over: duration must be greater than 0',
+      `${label} over: duration must be greater than 0`,
       statement.over?.span ?? statement.span,
     )
     return { cursor }
@@ -57,14 +58,14 @@ export function compileAnimationScriptReveal(
   const invalidStart = start < context.from || start > context.slideDuration
   if (invalidStart) {
     context.reportError(
-      `reveal at: ${context.formatSeconds(start)}s is outside the slide segment`,
+      `${label} at: ${context.formatSeconds(start)}s is outside the slide segment`,
       statement.at?.span ?? statement.span,
     )
   }
   const invalidEnd = end > context.slideDuration
   if (invalidEnd) {
     context.reportError(
-      `reveal ends at ${context.formatSeconds(end)}s, past the slide duration (${context.formatSeconds(context.slideDuration)}s)`,
+      `${label} ends at ${context.formatSeconds(end)}s, past the slide duration (${context.formatSeconds(context.slideDuration)}s)`,
       statement.over?.span ?? statement.span,
     )
   }
@@ -80,7 +81,7 @@ export function compileAnimationScriptReveal(
     targetExpression = statement.target.args[0]
     includeDescendants = true
   }
-  const target = context.resolveTarget(targetExpression, true, 'reveal')
+  const target = context.resolveTarget(targetExpression, true, label)
   if (!target) return { cursor: Math.max(cursor, end) }
   const bindingKind = context.bindingKind(targetExpression)
   includeDescendants ||= bindingKind === 'group' || bindingKind === 'table'
@@ -94,22 +95,22 @@ export function compileAnimationScriptReveal(
   })
   if (!sampledTarget) {
     context.reportError(
-      'reveal target has no visible, measurable renderable content at its start time',
+      `${label} target has no visible, measurable renderable content at its start time`,
       targetExpression.span,
     )
     return { cursor: Math.max(cursor, end) }
   }
 
-  let visual: RevealEffect['visual'] = { kind: 'paw' }
+  let visual: SceneEffect['visual'] = { kind: label === 'wipe' ? 'cloth' : 'paw' }
   if (statement.visual !== undefined) {
     if (statement.visual.kind === 'identifier' && statement.visual.name === 'none') {
       visual = { kind: 'none' }
     } else {
-      const visualTarget = context.resolveTarget(statement.visual, false, 'reveal visual')
+      const visualTarget = context.resolveTarget(statement.visual, false, `${label} visual`)
       if (!visualTarget) return { cursor: Math.max(cursor, end) }
       if (visualTarget.members.length !== 1) {
         context.reportError(
-          'reveal visual must resolve to exactly one Asset Instance',
+          `${label} visual must resolve to exactly one Asset Instance`,
           statement.visual.span,
         )
         return { cursor: Math.max(cursor, end) }
@@ -122,7 +123,7 @@ export function compileAnimationScriptReveal(
         visual = { kind: 'asset', nodeId: visualNode.nodeId }
       } else {
         context.reportError(
-          'reveal visual must be an Asset Instance binding or none',
+          `${label} visual must be an Asset Instance binding or none`,
           statement.visual.span,
         )
       }
@@ -130,17 +131,30 @@ export function compileAnimationScriptReveal(
     }
   }
 
+  const effect: SceneEffect =
+    label === 'wipe'
+      ? {
+          kind: 'wipe',
+          id: `script-effect:${context.slideScope}:${context.effectIndex}`,
+          start,
+          duration,
+          scopeNodeIds: [...new Set(target.members.map((member) => member.nodeId))],
+          nodeIds: sampledTarget.nodeIds,
+          bounds: sampledTarget.bounds,
+          visual: visual as Extract<SceneEffect, { kind: 'wipe' }>['visual'],
+        }
+      : {
+          kind: 'reveal',
+          id: `script-effect:${context.slideScope}:${context.effectIndex}`,
+          start,
+          duration,
+          scopeNodeIds: [...new Set(target.members.map((member) => member.nodeId))],
+          nodeIds: sampledTarget.nodeIds,
+          bounds: sampledTarget.bounds,
+          visual: visual as Extract<SceneEffect, { kind: 'reveal' }>['visual'],
+        }
   return {
-    cursor: Math.max(context.roundTime(cursor + duration), end),
-    effect: {
-      kind: 'reveal',
-      id: `script-effect:${context.slideScope}:${context.effectIndex}`,
-      start,
-      duration,
-      scopeNodeIds: [...new Set(target.members.map((member) => member.nodeId))],
-      nodeIds: sampledTarget.nodeIds,
-      bounds: sampledTarget.bounds,
-      visual,
-    },
+    cursor: context.roundTime(cursor + duration),
+    effect,
   }
 }

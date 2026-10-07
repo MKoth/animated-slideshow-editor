@@ -92,16 +92,24 @@ export class SlideManager {
     }
     const source = this.get(slideId)
     const { scene, nodeIds } = this.#scenes.copyScene(source.scene)
-    const duplicatedEffects = source.effects.map((effect) => ({
-      ...effect,
-      id: newId('scene-effect'),
-      scopeNodeIds: effect.scopeNodeIds.map((nodeId) => nodeIds.get(nodeId) ?? nodeId),
-      nodeIds: effect.nodeIds.map((nodeId) => nodeIds.get(nodeId) ?? nodeId),
-      visual:
-        effect.visual.kind === 'asset'
-          ? { ...effect.visual, nodeId: nodeIds.get(effect.visual.nodeId) ?? effect.visual.nodeId }
-          : { ...effect.visual },
-    }))
+    const duplicatedEffects = source.effects.map((effect) => {
+      const common = {
+        ...effect,
+        id: newId('scene-effect'),
+        scopeNodeIds: effect.scopeNodeIds.map((nodeId) => nodeIds.get(nodeId) ?? nodeId),
+        nodeIds: effect.nodeIds.map((nodeId) => nodeIds.get(nodeId) ?? nodeId),
+        visual:
+          effect.visual.kind === 'asset'
+            ? {
+                ...effect.visual,
+                nodeId: nodeIds.get(effect.visual.nodeId) ?? effect.visual.nodeId,
+              }
+            : { ...effect.visual },
+      }
+      return effect.kind === 'reveal'
+        ? { ...common, kind: 'reveal' as const, visual: common.visual as typeof effect.visual }
+        : { ...common, kind: 'wipe' as const, visual: common.visual as typeof effect.visual }
+    })
     const effectIds = new Map(
       source.effects.map((effect, index) => [effect.id, duplicatedEffects[index].id]),
     )

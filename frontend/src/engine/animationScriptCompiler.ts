@@ -48,6 +48,7 @@ import type {
   ParallelNode,
   PointArrowAtNode,
   RevealNode,
+  WipeNode,
   PropertyEntry,
   RepeatNode,
   ScriptExpression,
@@ -80,7 +81,7 @@ import {
 import type { ScriptExpressionContext, ScriptValue } from './animationScriptExpression'
 import { mergeBounds } from './animationScriptReads'
 import type { AnimationScriptBoundsRead, AnimationScriptReadSource } from './animationScriptReads'
-import type { RevealEffect } from './sceneEffect'
+import type { SceneEffect } from './sceneEffect'
 import { compileAnimationScriptReveal } from './animationScriptRevealCompiler'
 import {
   DEFAULT_MATERIAL_PARAMETERS,
@@ -455,7 +456,7 @@ export interface AnimationScriptCompileResult {
   readonly creations: AnimationScriptCreations
   readonly footprint: CompiledFootprint
   readonly summary: AnimationScriptSummary
-  readonly effects: readonly RevealEffect[]
+  readonly effects: readonly SceneEffect[]
 }
 
 interface ScriptMember {
@@ -714,7 +715,12 @@ export interface AnimationScriptExistingControl {
  * Names a `function` definition may not take: expression and statement
  * built-ins, `setText`, and the statement keywords. Collisions are errors.
  */
-const SCRIPT_STATEMENT_BUILTIN_NAMES: readonly string[] = ['pointArrowAt', 'reveal', 'subtree']
+const SCRIPT_STATEMENT_BUILTIN_NAMES: readonly string[] = [
+  'pointArrowAt',
+  'reveal',
+  'wipe',
+  'subtree',
+]
 
 const SCRIPT_FUNCTION_RESERVED_NAMES: readonly string[] = [
   ...SCRIPT_BUILTIN_NAMES,
@@ -834,7 +840,7 @@ class Compiler {
   #instanceCount = 0
   /** Nodes carrying `play` instances, in first-addressed order (footprint). */
   readonly #instanceNodes: string[] = []
-  readonly #effects: RevealEffect[] = []
+  readonly #effects: SceneEffect[] = []
   /** Nodes carrying `apply` placements, in first-addressed order (footprint). */
   readonly #placementParents: string[] = []
   /**
@@ -1919,6 +1925,8 @@ class Compiler {
         case 'pointArrowAt':
           return this.#lowerPointArrowAt(statement, cursor)
         case 'reveal':
+          return this.#lowerReveal(statement, cursor)
+        case 'wipe':
           return this.#lowerReveal(statement, cursor)
         case 'statement':
           return this.#lowerCall(statement, cursor)
@@ -5496,7 +5504,7 @@ class Compiler {
     return end
   }
 
-  #lowerReveal(statement: RevealNode, cursor: number): number {
+  #lowerReveal(statement: RevealNode | WipeNode, cursor: number): number {
     const compiled = compileAnimationScriptReveal(statement, cursor, {
       from: this.#from,
       slideDuration: this.#context.slideDuration,

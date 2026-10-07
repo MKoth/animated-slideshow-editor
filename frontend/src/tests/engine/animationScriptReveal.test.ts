@@ -58,6 +58,52 @@ function setup() {
 }
 
 describe('Animation Script reveal', () => {
+  it('compiles wipe calls with deterministic timing and a cloth performer', () => {
+    const { system, slide, group, first, second, measure } = setup()
+    const result = checkAnimationScript(
+      system.engine,
+      slide.id,
+      'script "Wipe" from 0\nbind target = group("content")\nwipe(target, at: 2, over: 0.5)',
+      { measure },
+    )
+    expect(result.runnable).toBe(true)
+    expect(result.summary.to).toBe(0.5)
+    expect(result.effects[0]).toMatchObject({
+      kind: 'wipe',
+      start: 2,
+      duration: 0.5,
+      scopeNodeIds: [group.id, first.id],
+      nodeIds: [first.id, second.id],
+      visual: { kind: 'cloth' },
+    })
+    const silent = checkAnimationScript(
+      system.engine,
+      slide.id,
+      'script "Wipe" from 0\nbind target = node("First")\nwipe(target, visual: none)',
+      { measure },
+    )
+    expect(silent.effects[0].visual).toEqual({ kind: 'none' })
+    const source =
+      'script "Wipe" from 0\nbind target = node("First")\nwipe(target, over: 0.5, visual: none)'
+    system.dispatcher.dispatch(new SetSlideAnimationScriptCommand({ slideId: slide.id, source }))
+    expect(
+      runAnimationScript(
+        system.engine,
+        (command) => system.dispatcher.dispatch(command),
+        slide.id,
+        source,
+        { measure },
+      ).ran,
+    ).toBe(true)
+    expect(system.engine.getSlide(slide.id).effects[0]).toMatchObject({
+      kind: 'wipe',
+      duration: 0.5,
+      visual: { kind: 'none' },
+    })
+    system.dispatcher.undo()
+    expect(system.engine.getSlide(slide.id).effects).toEqual([])
+  })
+
   it('checks a subtree target, captures a deduplicated composite, and advances by duration', () => {
     const { system, slide, group, first, second, measure } = setup()
     const result = checkAnimationScript(
@@ -67,7 +113,7 @@ describe('Animation Script reveal', () => {
       { measure },
     )
     expect(result.diagnostics.filter((item) => item.severity === 'error')).toEqual([])
-    expect(result.summary.to).toBe(2.5)
+    expect(result.summary.to).toBe(0.5)
     expect(result.effects).toHaveLength(1)
     expect(result.effects[0]).toMatchObject({
       start: 2,

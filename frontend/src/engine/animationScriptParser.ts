@@ -418,6 +418,10 @@ export interface RevealNode {
   readonly span: SourceSpan
 }
 
+export interface WipeNode extends Omit<RevealNode, 'kind'> {
+  readonly kind: 'wipe'
+}
+
 /** The object kinds `create` can mint. */
 export const SCRIPT_CREATE_KINDS = ['text', 'table', 'asset', 'data', 'chart', 'group'] as const
 
@@ -457,6 +461,7 @@ export type ScriptStatementNode =
   | FunctionCallNode
   | PointArrowAtNode
   | RevealNode
+  | WipeNode
   | WaitNode
   | MarkNode
   | AtNode
@@ -654,7 +659,10 @@ class Parser {
       return this.#parsePointArrowAt()
     }
     if (this.#isIdentifier('reveal') && this.#nextIsPunctuation('(')) {
-      return this.#parseReveal()
+      return this.#parseEffect('reveal')
+    }
+    if (this.#isIdentifier('wipe') && this.#nextIsPunctuation('(')) {
+      return this.#parseEffect('wipe')
     }
     if (
       this.#isIdentifier('create') &&
@@ -865,7 +873,7 @@ class Parser {
     return null
   }
 
-  #parseReveal(): RevealNode | null {
+  #parseEffect(kind: 'reveal' | 'wipe'): RevealNode | WipeNode | null {
     const start = this.#peek().span.start
     const name = this.#advance()
     if (!this.#expectPunctuation('(')) return null
@@ -876,25 +884,25 @@ class Parser {
     let visual: ScriptExpression | undefined
     const seen = new Set<string>()
     while (this.#matchPunctuation(',')) {
-      const option = this.#expectIdentifier('a reveal option (at, over, visual)')
+      const option = this.#expectIdentifier(`a ${kind} option (at, over, visual)`)
       if (option === null || !this.#expectPunctuation(':')) return null
       if (seen.has(option.text))
-        this.#report(`Reveal option "${option.text}" is written twice`, option.span)
+        this.#report(`${kind} option "${option.text}" is written twice`, option.span)
       seen.add(option.text)
-      const value = this.#parseExpression(`a value for reveal ${option.text}`)
+      const value = this.#parseExpression(`a value for ${kind} ${option.text}`)
       if (value === null) return null
       if (option.text === 'at') at = value
       else if (option.text === 'over') over = value
       else if (option.text === 'visual') visual = value
       else
         this.#report(
-          `Unknown reveal option "${option.text}". Available options: at, over, visual.`,
+          `Unknown ${kind} option "${option.text}". Available options: at, over, visual.`,
           option.span,
         )
     }
     if (!this.#expectPunctuation(')')) return null
     return {
-      kind: 'reveal',
+      kind,
       nameSpan: name.span,
       target,
       ...(at ? { at } : {}),
