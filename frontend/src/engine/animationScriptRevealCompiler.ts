@@ -1,4 +1,10 @@
-import type { RevealNode, ScriptExpression, SourceSpan, WipeNode } from './animationScriptParser'
+import type {
+  MarkEffectNode,
+  RevealNode,
+  ScriptExpression,
+  SourceSpan,
+  WipeNode,
+} from './animationScriptParser'
 import type { AnimationScriptBoundsRead } from './animationScriptReads'
 import type { SceneEffect } from './sceneEffect'
 import { sampleAnimationScriptRevealTarget } from './animationScriptRevealTarget'
@@ -32,7 +38,7 @@ export interface AnimationScriptRevealCompileContext {
 
 /** Compile one reveal call into a fixed, measurable effect target. */
 export function compileAnimationScriptReveal(
-  statement: RevealNode | WipeNode,
+  statement: RevealNode | WipeNode | MarkEffectNode,
   cursor: number,
   context: AnimationScriptRevealCompileContext,
 ): { readonly cursor: number; readonly effect?: SceneEffect } {
@@ -101,7 +107,8 @@ export function compileAnimationScriptReveal(
     return { cursor: Math.max(cursor, end) }
   }
 
-  let visual: SceneEffect['visual'] = { kind: label === 'wipe' ? 'cloth' : 'paw' }
+  let visual: SceneEffect['visual'] =
+    label === 'wipe' ? { kind: 'cloth' } : label === 'mark' ? { kind: 'marker' } : { kind: 'paw' }
   if (statement.visual !== undefined) {
     if (statement.visual.kind === 'identifier' && statement.visual.name === 'none') {
       visual = { kind: 'none' }
@@ -132,27 +139,38 @@ export function compileAnimationScriptReveal(
   }
 
   const effect: SceneEffect =
-    label === 'wipe'
+    label === 'mark'
       ? {
-          kind: 'wipe',
+          kind: 'mark',
           id: `script-effect:${context.slideScope}:${context.effectIndex}`,
           start,
           duration,
           scopeNodeIds: [...new Set(target.members.map((member) => member.nodeId))],
           nodeIds: sampledTarget.nodeIds,
           bounds: sampledTarget.bounds,
-          visual: visual as Extract<SceneEffect, { kind: 'wipe' }>['visual'],
+          visual: visual as Extract<SceneEffect, { kind: 'mark' }>['visual'],
         }
-      : {
-          kind: 'reveal',
-          id: `script-effect:${context.slideScope}:${context.effectIndex}`,
-          start,
-          duration,
-          scopeNodeIds: [...new Set(target.members.map((member) => member.nodeId))],
-          nodeIds: sampledTarget.nodeIds,
-          bounds: sampledTarget.bounds,
-          visual: visual as Extract<SceneEffect, { kind: 'reveal' }>['visual'],
-        }
+      : label === 'wipe'
+        ? {
+            kind: 'wipe',
+            id: `script-effect:${context.slideScope}:${context.effectIndex}`,
+            start,
+            duration,
+            scopeNodeIds: [...new Set(target.members.map((member) => member.nodeId))],
+            nodeIds: sampledTarget.nodeIds,
+            bounds: sampledTarget.bounds,
+            visual: visual as Extract<SceneEffect, { kind: 'wipe' }>['visual'],
+          }
+        : {
+            kind: 'reveal',
+            id: `script-effect:${context.slideScope}:${context.effectIndex}`,
+            start,
+            duration,
+            scopeNodeIds: [...new Set(target.members.map((member) => member.nodeId))],
+            nodeIds: sampledTarget.nodeIds,
+            bounds: sampledTarget.bounds,
+            visual: visual as Extract<SceneEffect, { kind: 'reveal' }>['visual'],
+          }
   return {
     cursor: context.roundTime(cursor + duration),
     effect,

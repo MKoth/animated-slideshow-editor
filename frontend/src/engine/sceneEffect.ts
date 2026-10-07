@@ -1,7 +1,7 @@
 import { isRecord, requireFiniteNumber, requireString } from './guards'
 
 interface SweepEffect {
-  readonly kind: 'reveal' | 'wipe'
+  readonly kind: 'reveal' | 'wipe' | 'mark'
   readonly id: string
   readonly start: number
   readonly duration: number
@@ -18,6 +18,7 @@ interface SweepEffect {
   readonly visual:
     | { readonly kind: 'paw' }
     | { readonly kind: 'cloth' }
+    | { readonly kind: 'marker' }
     | { readonly kind: 'none' }
     | { readonly kind: 'asset'; readonly nodeId: string }
 }
@@ -38,7 +39,15 @@ export interface WipeEffect extends Omit<SweepEffect, 'kind' | 'visual'> {
     | { readonly kind: 'asset'; readonly nodeId: string }
 }
 
-export type SceneEffect = RevealEffect | WipeEffect
+export interface TemporaryMark extends Omit<SweepEffect, 'kind' | 'visual'> {
+  readonly kind: 'mark'
+  readonly visual:
+    | { readonly kind: 'marker' }
+    | { readonly kind: 'none' }
+    | { readonly kind: 'asset'; readonly nodeId: string }
+}
+
+export type SceneEffect = RevealEffect | WipeEffect | TemporaryMark
 
 export function sceneEffectToJSON(effect: SceneEffect): unknown {
   return {
@@ -50,10 +59,10 @@ export function sceneEffectToJSON(effect: SceneEffect): unknown {
 }
 
 export function sceneEffectFromJSON(value: unknown): SceneEffect {
-  if (!isRecord(value) || (value.kind !== 'reveal' && value.kind !== 'wipe')) {
-    throw new Error('Scene effect must be a reveal or wipe')
+  if (!isRecord(value) || !['reveal', 'wipe', 'mark'].includes(String(value.kind))) {
+    throw new Error('Scene effect must be a reveal, wipe, or mark')
   }
-  const label = value.kind === 'wipe' ? 'Wipe' : 'Reveal'
+  const label = value.kind === 'wipe' ? 'Wipe' : value.kind === 'mark' ? 'Mark' : 'Reveal'
   if (
     !Array.isArray(value.scopeNodeIds) ||
     !Array.isArray(value.nodeIds) ||
@@ -77,7 +86,10 @@ export function sceneEffectFromJSON(value: unknown): SceneEffect {
   }
   const visualKind = value.visual.kind
   const visual =
-    visualKind === 'paw' || visualKind === 'cloth' || visualKind === 'none'
+    visualKind === 'paw' ||
+    visualKind === 'cloth' ||
+    visualKind === 'none' ||
+    visualKind === 'marker'
       ? ({ kind: visualKind } as const)
       : visualKind === 'asset'
         ? {
@@ -85,11 +97,13 @@ export function sceneEffectFromJSON(value: unknown): SceneEffect {
             nodeId: requireString(value.visual.nodeId, 'Reveal visual.nodeId'),
           }
         : (() => {
-            throw new Error(`${label} visual.kind must be paw, cloth, none, or asset`)
+            throw new Error(`${label} visual.kind must be paw, cloth, marker, none, or asset`)
           })()
   if (
     (value.kind === 'reveal' && visual.kind === 'cloth') ||
-    (value.kind === 'wipe' && visual.kind === 'paw')
+    (value.kind === 'wipe' && visual.kind === 'paw') ||
+    (value.kind === 'mark' && (visual.kind === 'paw' || visual.kind === 'cloth')) ||
+    (value.kind !== 'mark' && visual.kind === 'marker')
   ) {
     throw new Error(`${label} visual is incompatible with its effect kind`)
   }
@@ -108,9 +122,11 @@ export function sceneEffectFromJSON(value: unknown): SceneEffect {
     visual,
   }
   const effect: SceneEffect =
-    value.kind === 'reveal'
-      ? { ...shared, kind: 'reveal', visual: visual as RevealEffect['visual'] }
-      : { ...shared, kind: 'wipe', visual: visual as WipeEffect['visual'] }
+    value.kind === 'mark'
+      ? { ...shared, kind: 'mark', visual: visual as TemporaryMark['visual'] }
+      : value.kind === 'reveal'
+        ? { ...shared, kind: 'reveal', visual: visual as RevealEffect['visual'] }
+        : { ...shared, kind: 'wipe', visual: visual as WipeEffect['visual'] }
   if (effect.start < 0 || effect.duration <= 0) {
     throw new Error(`${label} start must be non-negative and duration must be greater than zero`)
   }
@@ -122,4 +138,19 @@ export function sceneEffectFromJSON(value: unknown): SceneEffect {
 
 export function revealCoverage(effect: SceneEffect, time: number): number {
   return Math.max(0, Math.min(1, (time - effect.start) / effect.duration))
+}
+
+/** The mark is drawn, held, then faded in fixed 50/20/30 phase proportions. */
+export function markLifecycle(
+  effect: TemporaryMark,
+  time: number,
+): {
+  readonly drawProgress: number
+  readonly opacity: number
+} {
+  const progress = revealCoverage(effect, time)
+  return {
+    drawProgress: Math.min(1, progress / 0.5),
+    opacity: progress < 0.7 ? 1 : Math.max(0, (1 - progress) / 0.3),
+  }
 }

@@ -49,6 +49,7 @@ import type {
   PointArrowAtNode,
   RevealNode,
   WipeNode,
+  MarkEffectNode,
   PropertyEntry,
   RepeatNode,
   ScriptExpression,
@@ -719,6 +720,7 @@ const SCRIPT_STATEMENT_BUILTIN_NAMES: readonly string[] = [
   'pointArrowAt',
   'reveal',
   'wipe',
+  'mark',
   'subtree',
 ]
 
@@ -1907,7 +1909,9 @@ class Compiler {
         case 'wait':
           return this.#lowerWait(statement, cursor)
         case 'mark':
-          return this.#lowerMark(statement, cursor)
+          return 'target' in statement
+            ? this.#lowerReveal(statement, cursor)
+            : this.#lowerMark(statement, cursor)
         case 'at':
           return this.#lowerAt(statement, cursor)
         case 'parallel':
@@ -2531,7 +2535,7 @@ class Compiler {
    */
   #reportLoopBodyMarks(body: readonly ScriptStatementNode[]): void {
     for (const child of body) {
-      if (child.kind === 'mark') {
+      if (child.kind === 'mark' && !('target' in child)) {
         this.#error(
           `Marker "${child.name}" cannot be declared inside a repeat/for/stagger body — a label would duplicate per iteration`,
           child.nameSpan,
@@ -5504,7 +5508,7 @@ class Compiler {
     return end
   }
 
-  #lowerReveal(statement: RevealNode | WipeNode, cursor: number): number {
+  #lowerReveal(statement: RevealNode | WipeNode | MarkEffectNode, cursor: number): number {
     const compiled = compileAnimationScriptReveal(statement, cursor, {
       from: this.#from,
       slideDuration: this.#context.slideDuration,

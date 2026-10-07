@@ -1,6 +1,6 @@
 import type { Scene } from '../../engine'
 import type { SceneEffect } from '../../engine/sceneEffect'
-import { revealCoverage } from '../../engine/sceneEffect'
+import { markLifecycle, revealCoverage } from '../../engine/sceneEffect'
 import type { WorldSize } from './worldGeometry'
 import type { PixiContainer, PixiGraphics, PixiSprite, RendererPixi } from './pixi'
 import type { TextureCache } from './textureCache'
@@ -22,6 +22,7 @@ export class RevealEffectRenderer {
   readonly #textureCache: TextureCache
   readonly #resolveAssetState: (nodeId: string, time: number) => RevealPerformerAssetState | null
   readonly #masks = new Map<string, PixiGraphics>()
+  readonly #marks = new Map<string, PixiGraphics>()
   readonly #paws = new Map<string, PixiGraphics>()
   readonly #assetPerformers = new Map<
     string,
@@ -48,6 +49,11 @@ export class RevealEffectRenderer {
       mask.destroy()
     }
     this.#masks.clear()
+    for (const mark of this.#marks.values()) {
+      this.#world.removeChild(mark)
+      mark.destroy()
+    }
+    this.#marks.clear()
     for (const performers of [
       this.#paws.values(),
       [...this.#assetPerformers.values()].map((entry) => entry.sprite),
@@ -69,6 +75,7 @@ export class RevealEffectRenderer {
   ): void {
     const targetIds = new Set(
       effects
+        .filter((effect) => effect.kind !== 'mark')
         .flatMap((effect) => effect.nodeIds)
         .filter((nodeId) => scene.getNode(nodeId) !== undefined),
     )
@@ -79,6 +86,66 @@ export class RevealEffectRenderer {
       this.#world.removeChild(mask)
       mask.destroy()
       this.#masks.delete(nodeId)
+    }
+
+    const activeMarks = effects.filter(
+      (effect) =>
+        effect.kind === 'mark' && time >= effect.start && time < effect.start + effect.duration,
+    )
+    for (const [id, graphic] of this.#marks) {
+      if (activeMarks.some((effect) => effect.id === id)) continue
+      this.#world.removeChild(graphic)
+      graphic.destroy()
+      this.#marks.delete(id)
+    }
+    for (const effect of activeMarks) {
+      if (effect.kind !== 'mark') continue
+      let graphic = this.#marks.get(effect.id)
+      if (!graphic) {
+        graphic = new this.#pixi.Graphics()
+        graphic.zIndex = Number.MAX_SAFE_INTEGER
+        this.#world.addChild(graphic)
+        this.#marks.set(effect.id, graphic)
+      }
+      const { drawProgress, opacity } = markLifecycle(effect, time)
+      const width = effect.bounds.maxX - effect.bounds.minX
+      const height = effect.bounds.maxY - effect.bounds.minY
+      // A fixed, deterministic open loop; the trigonometric perturbation gives
+      // the sampled ellipse a hand-drawn character without per-frame randomness.
+      const count = 49
+      const startAngle = -Math.PI * 0.82
+      const endAngle = startAngle + Math.PI * 1.82
+      const point = (index: number) => {
+        const angle = startAngle + ((endAngle - startAngle) * index) / (count - 1)
+        const irregularity = 1 + 0.035 * Math.sin(index * 2.31) + 0.018 * Math.sin(index * 0.73)
+        return {
+          x:
+            (effect.bounds.minX + effect.bounds.maxX) / 2 +
+            Math.cos(angle) * width * 0.55 * irregularity,
+          y:
+            (effect.bounds.minY + effect.bounds.maxY) / 2 +
+            Math.sin(angle) * height * 0.55 * irregularity,
+        }
+      }
+      const lastPoint = Math.ceil(drawProgress * (count - 1))
+      graphic.clear()
+      if (lastPoint > 0) {
+        const first = point(0)
+        graphic.moveTo(first.x, first.y)
+        for (let index = 1; index <= lastPoint; index += 1) {
+          const next = point(index)
+          graphic.lineTo(next.x, next.y)
+        }
+        graphic.stroke({
+          width: Math.max(2, Math.min(width, height) * 0.025),
+          color: 0xe53935,
+          alpha: opacity,
+        })
+      }
+      if (effect.visual.kind === 'asset') {
+        const pen = point(lastPoint)
+        this.#drawAsset(effect, pen.x, pen.y, time)
+      }
     }
     for (const nodeId of targetIds) {
       const container = containers.get(nodeId)
@@ -92,7 +159,7 @@ export class RevealEffectRenderer {
         this.#masks.set(nodeId, mask)
       }
       const relevant = effects
-        .filter((effect) => effect.nodeIds.includes(nodeId))
+        .filter((effect) => effect.kind !== 'mark' && effect.nodeIds.includes(nodeId))
         .sort((a, b) => a.start - b.start || effects.indexOf(a) - effects.indexOf(b))
       const effect =
         [...relevant].reverse().find((candidate) => candidate.start <= time) ?? relevant[0]
@@ -111,7 +178,8 @@ export class RevealEffectRenderer {
     }
 
     const active = effects.filter(
-      (effect) => time >= effect.start && time <= effect.start + effect.duration,
+      (effect) =>
+        effect.kind !== 'mark' && time >= effect.start && time <= effect.start + effect.duration,
     )
     const performers = active.filter((effect) => {
       const index = effects.indexOf(effect)

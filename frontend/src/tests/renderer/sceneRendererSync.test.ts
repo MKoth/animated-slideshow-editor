@@ -284,6 +284,54 @@ describe('scene renderer display tree sync', () => {
         (child) => child.kind === 'graphics' && child.zIndex === Number.MAX_SAFE_INTEGER,
       ),
     ).toBe(false)
+    system.dispatcher.dispatch(
+      new SetSlideSceneEffectsCommand({
+        slideId: slide.id,
+        effects: [
+          {
+            kind: 'mark',
+            id: 'test-mark',
+            start: 1,
+            duration: 2,
+            scopeNodeIds: [nodeId],
+            nodeIds: [nodeId],
+            bounds: { minX: 10, minY: 20, maxX: 110, maxY: 60 },
+            visual: { kind: 'marker' },
+          },
+        ],
+      }),
+    )
+    setTime(1)
+    const redStrokeAtStart = (world.children as FakeContainer[]).some(
+      (child) =>
+        'calls' in child &&
+        (child as FakeGraphics).calls.some(
+          (call) =>
+            call.method === 'stroke' &&
+            (call.args[0] as { color?: number } | undefined)?.color === 0xe53935,
+        ),
+    )
+    expect(redStrokeAtStart).toBe(false)
+    setTime(1.5)
+    const mark = (world.children as FakeGraphics[]).find(
+      (child) =>
+        child.kind === 'graphics' &&
+        child.calls.some(
+          (call) =>
+            call.method === 'stroke' &&
+            (call.args[0] as { color?: number } | undefined)?.color === 0xe53935,
+        ),
+    )
+    expect(mark).toBeDefined()
+    expect(mark?.calls.filter((call) => call.method === 'lineTo')).toHaveLength(24)
+    expect((target as unknown as { mask: unknown }).mask).toBeNull()
+    setTime(2.8)
+    expect(mark?.calls.find((call) => call.method === 'stroke')?.args[0]).toMatchObject({
+      color: 0xe53935,
+      alpha: expect.closeTo(1 / 3),
+    })
+    setTime(3)
+    expect((world.children as FakeContainer[]).includes(mark as FakeContainer)).toBe(false)
     renderer.dispose()
   })
 })

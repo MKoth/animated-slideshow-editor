@@ -422,6 +422,10 @@ export interface WipeNode extends Omit<RevealNode, 'kind'> {
   readonly kind: 'wipe'
 }
 
+export interface MarkEffectNode extends Omit<RevealNode, 'kind'> {
+  readonly kind: 'mark'
+}
+
 /** The object kinds `create` can mint. */
 export const SCRIPT_CREATE_KINDS = ['text', 'table', 'asset', 'data', 'chart', 'group'] as const
 
@@ -462,6 +466,7 @@ export type ScriptStatementNode =
   | PointArrowAtNode
   | RevealNode
   | WipeNode
+  | MarkEffectNode
   | WaitNode
   | MarkNode
   | AtNode
@@ -663,6 +668,13 @@ class Parser {
     }
     if (this.#isIdentifier('wipe') && this.#nextIsPunctuation('(')) {
       return this.#parseEffect('wipe')
+    }
+    if (
+      this.#isIdentifier('mark') &&
+      this.#nextIsPunctuation('(') &&
+      this.#tokens[this.#index + 2]?.kind === 'identifier'
+    ) {
+      return this.#parseEffect('mark')
     }
     if (
       this.#isIdentifier('create') &&
@@ -873,7 +885,7 @@ class Parser {
     return null
   }
 
-  #parseEffect(kind: 'reveal' | 'wipe'): RevealNode | WipeNode | null {
+  #parseEffect(kind: 'reveal' | 'wipe' | 'mark'): RevealNode | WipeNode | MarkEffectNode | null {
     const start = this.#peek().span.start
     const name = this.#advance()
     if (!this.#expectPunctuation('(')) return null

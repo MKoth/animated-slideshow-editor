@@ -11,7 +11,7 @@ import {
 import type { CreateNodeParameters } from '../../engine/commands/createNodeCommand'
 import { runAnimationScript } from '../../engine/animationScriptRun'
 import { checkAnimationScript } from '../../engine/animationScriptCheck'
-import { revealCoverage } from '../../engine/sceneEffect'
+import { markLifecycle, revealCoverage } from '../../engine/sceneEffect'
 import { deserialize, serialize, validate } from '../../engine/lessonSerializer'
 
 function setup() {
@@ -58,6 +58,62 @@ function setup() {
 }
 
 describe('Animation Script reveal', () => {
+  it('compiles a temporary red mark with proportional draw, hold, and fade phases', () => {
+    const { system, slide, first, measure } = setup()
+    const source =
+      'script "Mark" from 0\nbind target = node("First")\nmark(target, at: 1, over: 2, visual: none)'
+    const result = checkAnimationScript(system.engine, slide.id, source, { measure })
+    expect(result.runnable).toBe(true)
+    expect(result.effects).toHaveLength(1)
+    expect(result.effects[0]).toMatchObject({
+      kind: 'mark',
+      start: 1,
+      duration: 2,
+      scopeNodeIds: [first.id],
+      nodeIds: [first.id],
+      visual: { kind: 'none' },
+    })
+    const mark = result.effects[0] as Extract<(typeof result.effects)[number], { kind: 'mark' }>
+    const phases = [1, 1.5, 2.2, 2.8, 3].map((time) => markLifecycle(mark, time))
+    expect(phases.map(({ drawProgress }) => drawProgress)).toEqual([0, 0.5, 1, 1, 1])
+    expect(phases.map(({ opacity }) => opacity)).toEqual([1, 1, 1, expect.closeTo(1 / 3), 0])
+    system.dispatcher.dispatch(new SetSlideAnimationScriptCommand({ slideId: slide.id, source }))
+    expect(
+      runAnimationScript(
+        system.engine,
+        (command) => system.dispatcher.dispatch(command),
+        slide.id,
+        source,
+        { measure },
+      ).ran,
+    ).toBe(true)
+    const saved = JSON.parse(serialize(system.engine.project!))
+    expect(validate(saved)).toEqual([])
+    expect(deserialize(JSON.stringify(saved)).slides[0].effects[0]).toMatchObject({ kind: 'mark' })
+    const priorEffect = system.engine.getSlide(slide.id).effects[0]
+    const rerunSource = source.replace('over: 2', 'over: 1.5')
+    system.dispatcher.dispatch(
+      new SetSlideAnimationScriptCommand({ slideId: slide.id, source: rerunSource }),
+    )
+    expect(
+      runAnimationScript(
+        system.engine,
+        (command) => system.dispatcher.dispatch(command),
+        slide.id,
+        rerunSource,
+        { measure },
+      ).ran,
+    ).toBe(true)
+    expect(system.engine.getSlide(slide.id).effects).toHaveLength(1)
+    expect(system.engine.getSlide(slide.id).effects[0].duration).toBe(1.5)
+    expect(system.dispatcher.undo()).toBe(true)
+    expect(system.engine.getSlide(slide.id).effects).toEqual([priorEffect])
+    expect(system.dispatcher.undo()).toBe(true)
+    expect(system.engine.getSlide(slide.id).effects).toEqual([priorEffect])
+    expect(system.dispatcher.undo()).toBe(true)
+    expect(system.engine.getSlide(slide.id).effects).toEqual([])
+  })
+
   it('compiles wipe calls with deterministic timing and a cloth performer', () => {
     const { system, slide, group, first, second, measure } = setup()
     const result = checkAnimationScript(

@@ -106,9 +106,11 @@ export class SlideManager {
               }
             : { ...effect.visual },
       }
-      return effect.kind === 'reveal'
-        ? { ...common, kind: 'reveal' as const, visual: common.visual as typeof effect.visual }
-        : { ...common, kind: 'wipe' as const, visual: common.visual as typeof effect.visual }
+      return effect.kind === 'mark'
+        ? { ...common, kind: 'mark' as const, visual: common.visual as typeof effect.visual }
+        : effect.kind === 'reveal'
+          ? { ...common, kind: 'reveal' as const, visual: common.visual as typeof effect.visual }
+          : { ...common, kind: 'wipe' as const, visual: common.visual as typeof effect.visual }
     })
     const effectIds = new Map(
       source.effects.map((effect, index) => [effect.id, duplicatedEffects[index].id]),
