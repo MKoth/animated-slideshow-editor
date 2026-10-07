@@ -749,6 +749,12 @@ export function applyUndo(
       }
       return
     }
+    case 'SetClipDefinition': {
+      const clip = inv.clip as import('../json').ClipJSON
+      engine.restoreClipFromJSON(clip)
+      engine.emitClipChanged(clip.id)
+      return
+    }
     case 'RenameClip': {
       const clipId = inv.clipId as string
       const oldName = inv.oldName as string
@@ -3243,6 +3249,13 @@ export function applyRedo(
     }
     case 'DeleteClip':
       engine.deleteClip(params.clipId as string)
+      return
+    case 'SetClipDefinition':
+      {
+        const clip = params.clip as import('../json').ClipJSON
+        engine.restoreClipFromJSON(clip)
+        engine.emitClipChanged(clip.id)
+      }
       return
     case 'RenameClip':
       engine.renameClip(params.clipId as string, params.name as string)

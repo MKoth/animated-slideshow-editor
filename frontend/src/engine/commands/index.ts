@@ -192,6 +192,7 @@ export type {
 export { AddClipKeyframeCommand } from './addClipKeyframeCommand'
 export type { AddClipKeyframeInverse, AddClipKeyframeParameters } from './addClipKeyframeCommand'
 export { DeleteClipKeyframesCommand } from './deleteClipKeyframesCommand'
+export { SetClipDefinitionCommand } from './setClipDefinitionCommand'
 export type {
   DeleteClipKeyframesInverse,
   DeleteClipKeyframesParameters,

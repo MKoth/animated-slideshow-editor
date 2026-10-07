@@ -102,6 +102,7 @@ import {
   matchesCollectionCategory,
 } from './collectionCategories'
 import { executeDeleteClipCollection } from '../../app/deleteClipCollectionAction'
+import { executeRemoveCollectionContent } from '../../app/collectionContentRemoval'
 import { executeReapplyClipCollections } from '../../app/reapplyClipCollectionsAction'
 import { executeBulkClipOffset, previewBulkClipOffset } from '../../app/clipBulkOffsetAction'
 import type { BulkOffsetMap, BulkOffsetPreview } from '../../app/clipBulkOffsetAction'
@@ -117,6 +118,7 @@ import {
 } from '../../app/clipProportionalCopyAction'
 import type { ProportionalCopyPreview } from '../../app/clipProportionalCopyAction'
 import { ProportionalCopyModal } from './ProportionalCopyModal'
+import { RemoveCollectionContentModal } from './RemoveCollectionContentModal'
 import type { ProportionalCopyDialogSelection } from './ProportionalCopyModal'
 import { useClipCollectionLibraryStore } from '../../stores/clipCollectionLibraryStore'
 import {
@@ -495,6 +497,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     y: number
     placementId: string
   } | null>(null)
+  const [removeCollectionContentId, setRemoveCollectionContentId] = useState<string | null>(null)
   // Control timeline Clip Block context menu (Controls tab per-timeline lanes)
   const [controlBlockMenu, setControlBlockMenu] = useState<{
     x: number
@@ -632,6 +635,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
       setSelectedPlacementId(null)
       setPlaceCollectionId('')
       setCollectionPlacementMenu(null)
+      setRemoveCollectionContentId(null)
       setControlBlockMenu(null)
       setReverseClipPrompt(null)
       setReverseCollectionPrompt(null)
@@ -730,6 +734,9 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
         } else if (collectionPlacementMenu) {
           setCollectionPlacementMenu(null)
           e.stopPropagation()
+        } else if (removeCollectionContentId) {
+          setRemoveCollectionContentId(null)
+          e.stopPropagation()
         } else if (controlBlockMenu) {
           setControlBlockMenu(null)
           e.stopPropagation()
@@ -758,6 +765,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
     editingCollectionId,
     deleteConfirmCollectionId,
     collectionPlacementMenu,
+    removeCollectionContentId,
     controlBlockMenu,
     bulkOffsetOpen,
     proportionalCopySourceId,
@@ -8916,6 +8924,34 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             >
               <button
                 role="menuitem"
+                data-testid="collection-lane-remove-content"
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+                onClick={() => {
+                  try {
+                    const placement = engine.getCollectionPlacement(
+                      collectionPlacementMenu.placementId,
+                    )
+                    engine.getClipCollection(placement.collectionId)
+                    setRemoveCollectionContentId(placement.collectionId)
+                  } catch (error) {
+                    notify(error instanceof Error ? error.message : String(error))
+                  }
+                  setCollectionPlacementMenu(null)
+                }}
+              >
+                Delete keyframes from collection…
+              </button>
+              <button
+                role="menuitem"
                 data-testid="collection-lane-align"
                 style={{
                   display: 'block',
@@ -10076,6 +10112,33 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
               </div>
             </div>
           </div>
+        )}
+
+        {removeCollectionContentId && (
+          <RemoveCollectionContentModal
+            collectionId={removeCollectionContentId}
+            onClose={() => setRemoveCollectionContentId(null)}
+            onConfirm={(selection) => {
+              const result = executeRemoveCollectionContent(engine, dispatch, undoStack, selection)
+              if (!result.ok) {
+                notify(result.error)
+                return
+              }
+              const details = [
+                result.removedMemberCount > 0
+                  ? `${result.removedMemberCount} semantic name(s)`
+                  : '',
+                result.removedKeyframeCount > 0 ? `${result.removedKeyframeCount} keyframe(s)` : '',
+              ].filter(Boolean)
+              notify(
+                details.length
+                  ? `Removed ${details.join(' and ')} from collection`
+                  : 'Nothing removed',
+              )
+              setRemoveCollectionContentId(null)
+              setTick((value) => value + 1)
+            }}
+          />
         )}
 
         {/* Bulk additive offset of clip values across collection bindings */}
