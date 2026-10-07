@@ -27,6 +27,8 @@ import {
 } from '../../stores/timelineViewStore'
 import { executeCollectionFreeze, previewCollectionFreeze } from '../../engine/collectionFreeze'
 import { ClipCollectionAlignmentEditor } from './ClipCollectionAlignmentEditor'
+import { CollectionSilhouettePreview } from './CollectionSilhouettePreview'
+import { refreshCollectionSilhouettePreviews } from './collectionSilhouetteCache'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { walkPreOrder } from '../../engine/sceneNode'
 import type { SceneNode } from '../../engine/sceneNode'
@@ -7724,6 +7726,25 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                 {collectionsForParent.length} collection(s) ·{' '}
                 {collectionCategoryLabel(collectionCategoryFilter)}
               </span>
+              <button
+                type="button"
+                data-testid="refresh-collection-previews"
+                onClick={() => {
+                  refreshCollectionSilhouettePreviews(engine)
+                  setTick((value) => value + 1)
+                }}
+                title="Recalculate cached collection pose previews"
+                style={{
+                  padding: '4px 8px',
+                  borderRadius: 4,
+                  border: '1px solid var(--color-border, #ddd)',
+                  background: 'var(--color-bg-panel, #fff)',
+                  fontSize: 11,
+                  cursor: 'pointer',
+                }}
+              >
+                Refresh previews
+              </button>
             </div>
             {collectionsForParent.length === 0 ? (
               <div
@@ -7848,6 +7869,14 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                         )
                       })}
                     </div>
+                    {parentNodeId && (
+                      <CollectionSilhouettePreview
+                        engine={engine}
+                        collectionId={col.id}
+                        parentNodeId={parentNodeId}
+                        revision={tick}
+                      />
+                    )}
                   </div>
                 ))}
               </div>
