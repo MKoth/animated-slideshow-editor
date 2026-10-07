@@ -145,6 +145,17 @@ export function checkAnimationScript(
   for (const embedded of engine.embeddedMaterials) {
     materialsById.set(embedded.id, { id: embedded.id, name: embedded.name })
   }
+  // Audio assets an effect `sound:` may reference: the project's embedded
+  // audio (including snapshotted library audio). Duration comes from metadata;
+  // assets without a usable duration are still listed so the compiler can
+  // report them instead of claiming they are missing.
+  const audioAssets = engine.embeddedAssets
+    .filter((asset) => asset.mimeType.startsWith('audio/'))
+    .map((asset) => {
+      const raw = (asset.metadata as Record<string, unknown> | undefined)?.duration
+      const duration = typeof raw === 'number' ? raw : Number.NaN
+      return { id: asset.id, name: asset.name, duration }
+    })
   return compileAnimationScript(source, {
     slideDuration: slide.duration,
     nodes,
@@ -153,6 +164,7 @@ export function checkAnimationScript(
     rootNodeId: slide.scene.root.id,
     assets: [...assetsById.values()],
     materials: [...materialsById.values()],
+    audioAssets,
     dataSources: engine.embeddedDataSources.flatMap((definition) =>
       'dataPoints' in definition ? [{ id: definition.id, name: definition.name }] : [],
     ),

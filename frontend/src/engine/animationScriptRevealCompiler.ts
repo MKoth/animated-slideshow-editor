@@ -6,6 +6,7 @@ import type {
   WipeNode,
 } from './animationScriptParser'
 import type { AnimationScriptBoundsRead } from './animationScriptReads'
+import type { PlannedEffectAudioClip } from './animationScriptCompiler'
 import type { SceneEffect } from './sceneEffect'
 import { sampleAnimationScriptRevealTarget } from './animationScriptRevealTarget'
 
@@ -28,6 +29,10 @@ export interface AnimationScriptRevealCompileContext {
     allowGroup: boolean,
     what: string,
   ) => { readonly members: readonly { readonly nodeId: string }[] } | null
+  readonly resolveAudio: (
+    expression: ScriptExpression,
+    what: string,
+  ) => { readonly assetId: string; readonly duration: number } | null
   readonly bindingKind: (expression: ScriptExpression) => string | undefined
   readonly isVisible: (nodeId: string, time: number) => boolean
   readonly nodeBounds: (nodeId: string, time: number) => AnimationScriptBoundsRead | null
@@ -36,12 +41,18 @@ export interface AnimationScriptRevealCompileContext {
   readonly reportError: (message: string, span: SourceSpan) => void
 }
 
+export interface CompiledRevealEffect {
+  readonly cursor: number
+  readonly effect?: SceneEffect
+  readonly audioClips?: readonly PlannedEffectAudioClip[]
+}
+
 /** Compile one reveal call into a fixed, measurable effect target. */
 export function compileAnimationScriptReveal(
   statement: RevealNode | WipeNode | MarkEffectNode,
   cursor: number,
   context: AnimationScriptRevealCompileContext,
-): { readonly cursor: number; readonly effect?: SceneEffect } {
+): CompiledRevealEffect {
   const label = statement.kind
   const startValue =
     statement.at === undefined
@@ -171,8 +182,41 @@ export function compileAnimationScriptReveal(
             bounds: sampledTarget.bounds,
             visual: visual as Extract<SceneEffect, { kind: 'reveal' }>['visual'],
           }
+
+  if (statement.sound === undefined) {
+    return {
+      cursor: context.roundTime(cursor + duration),
+      effect,
+    }
+  }
+
+  const sound = context.resolveAudio(statement.sound, `${label} sound`)
+  if (!sound) return { cursor: Math.max(cursor, end) }
+  if (!Number.isFinite(sound.duration) || sound.duration <= 0) {
+    context.reportError(
+      `${label} sound audio has no usable duration — re-import it so its duration is known`,
+      statement.sound.span,
+    )
+    return { cursor: Math.max(cursor, end) }
+  }
+
+  const repetitions = Math.max(1, Math.ceil(duration / sound.duration))
+  const audioClips = Array.from({ length: repetitions }, (_, index) => {
+    const timelineStart = context.roundTime(start + index * sound.duration)
+    const remaining = duration - index * sound.duration
+    const sourceEnd = context.roundTime(Math.min(sound.duration, remaining))
+    return {
+      id: `script-effect-clip:${context.slideScope}:${context.effectIndex}:${index}`,
+      assetId: sound.assetId,
+      timelineStart,
+      sourceStart: 0,
+      sourceEnd,
+    }
+  })
+
   return {
     cursor: context.roundTime(cursor + duration),
     effect,
+    audioClips,
   }
 }

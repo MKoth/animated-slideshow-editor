@@ -185,6 +185,7 @@ export const SCRIPT_PARAM_BASE_TYPES = [
   'clip',
   'collection',
   'material',
+  'audio',
   'number',
   'color',
   'string',
@@ -415,6 +416,7 @@ export interface RevealNode {
   readonly at?: ScriptExpression
   readonly over?: ScriptExpression
   readonly visual?: ScriptExpression
+  readonly sound?: ScriptExpression
   readonly span: SourceSpan
 }
 
@@ -894,9 +896,10 @@ class Parser {
     let at: ScriptExpression | undefined
     let over: ScriptExpression | undefined
     let visual: ScriptExpression | undefined
+    let sound: ScriptExpression | undefined
     const seen = new Set<string>()
     while (this.#matchPunctuation(',')) {
-      const option = this.#expectIdentifier(`a ${kind} option (at, over, visual)`)
+      const option = this.#expectIdentifier(`a ${kind} option (at, over, visual, sound)`)
       if (option === null || !this.#expectPunctuation(':')) return null
       if (seen.has(option.text))
         this.#report(`${kind} option "${option.text}" is written twice`, option.span)
@@ -906,9 +909,10 @@ class Parser {
       if (option.text === 'at') at = value
       else if (option.text === 'over') over = value
       else if (option.text === 'visual') visual = value
+      else if (option.text === 'sound') sound = value
       else
         this.#report(
-          `Unknown ${kind} option "${option.text}". Available options: at, over, visual.`,
+          `Unknown ${kind} option "${option.text}". Available options: at, over, visual, sound.`,
           option.span,
         )
     }
@@ -920,6 +924,7 @@ class Parser {
       ...(at ? { at } : {}),
       ...(over ? { over } : {}),
       ...(visual ? { visual } : {}),
+      ...(sound ? { sound } : {}),
       span: { start, end: this.#previousEnd() },
     }
   }

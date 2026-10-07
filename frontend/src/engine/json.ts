@@ -355,6 +355,8 @@ export type CompiledFootprintJSON = {
   /** Data source ids the run embedded; absent on older footprint files. */
   readonly createdDataSources?: readonly string[]
   readonly effectIds?: readonly string[]
+  /** Ordinary SFX AudioClip ids generated for effect sounds. */
+  readonly audioClipIds?: readonly string[]
 }
 
 export type AnimationScriptJSON = {

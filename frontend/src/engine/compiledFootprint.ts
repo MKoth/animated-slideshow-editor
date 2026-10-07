@@ -20,6 +20,8 @@ export interface CompiledFootprint {
   /** Data source ids this run embedded; a re-run replaces them. */
   readonly createdDataSources: readonly string[]
   readonly effectIds?: readonly string[]
+  /** Ordinary SFX AudioClip ids this run generated for effect sounds. */
+  readonly audioClipIds?: readonly string[]
 }
 
 export function compiledFootprintToJSON(footprint: CompiledFootprint): CompiledFootprintJSON {
@@ -34,6 +36,9 @@ export function compiledFootprintToJSON(footprint: CompiledFootprint): CompiledF
     createdDataSources: [...footprint.createdDataSources],
     ...(footprint.effectIds && footprint.effectIds.length > 0
       ? { effectIds: [...footprint.effectIds] }
+      : {}),
+    ...(footprint.audioClipIds && footprint.audioClipIds.length > 0
+      ? { audioClipIds: [...footprint.audioClipIds] }
       : {}),
   }
 }
@@ -55,6 +60,7 @@ export function remapCompiledFootprint(
   options: {
     readonly dropCreatedDataSources?: boolean
     readonly effectIds?: ReadonlyMap<string, string>
+    readonly audioClipIds?: ReadonlyMap<string, string>
   } = {},
 ): CompiledFootprint {
   const remapId = (id: string): string => nodeIds.get(id) ?? id
@@ -71,6 +77,7 @@ export function remapCompiledFootprint(
     createdNodes: footprint.createdNodes.map(remapId),
     createdDataSources: options.dropCreatedDataSources ? [] : [...footprint.createdDataSources],
     effectIds: (footprint.effectIds ?? []).map((id) => options.effectIds?.get(id) ?? id),
+    audioClipIds: (footprint.audioClipIds ?? []).map((id) => options.audioClipIds?.get(id) ?? id),
   }
 }
 
@@ -104,6 +111,13 @@ export function compiledFootprintFromJSON(json: CompiledFootprintJSON): Compiled
     json.effectIds === undefined
       ? []
       : requireOptionalStringList(json.effectIds, 'Animation Script lastCompiled.effectIds')
+  const audioClipIds =
+    (json as { audioClipIds?: unknown }).audioClipIds === undefined
+      ? []
+      : requireOptionalStringList(
+          (json as { audioClipIds?: unknown }).audioClipIds,
+          'Animation Script lastCompiled.audioClipIds',
+        )
   return {
     from: requireFiniteNumber(json.from, 'Animation Script lastCompiled.from'),
     to: requireFiniteNumber(json.to, 'Animation Script lastCompiled.to'),
@@ -126,6 +140,7 @@ export function compiledFootprintFromJSON(json: CompiledFootprintJSON): Compiled
       'Animation Script lastCompiled.createdDataSources',
     ),
     ...(effectIds.length > 0 ? { effectIds } : {}),
+    ...(audioClipIds.length > 0 ? { audioClipIds } : {}),
   }
 }
 
@@ -167,6 +182,11 @@ export function validateCompiledFootprintJSON(
   validateOptionalStringListJSON(errors, value.createdNodes, `${label}.createdNodes`)
   validateOptionalStringListJSON(errors, value.createdDataSources, `${label}.createdDataSources`)
   validateOptionalStringListJSON(errors, value.effectIds, `${label}.effectIds`)
+  validateOptionalStringListJSON(
+    errors,
+    (value as Record<string, unknown>).audioClipIds,
+    `${label}.audioClipIds`,
+  )
   if (!isRecord(value.entryVersions)) {
     errors.push(`${label}.entryVersions must be an object`)
   } else {

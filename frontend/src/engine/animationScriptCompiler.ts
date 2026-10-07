@@ -336,6 +336,22 @@ export interface AnimationScriptMaterialInfo {
   readonly name: string
 }
 
+/** An audio asset an effect `sound:` may reference, with its source duration. */
+export interface AnimationScriptAudioAssetInfo {
+  readonly id: string
+  readonly name: string
+  readonly duration: number
+}
+
+/** One ordinary SFX AudioClip an effect sound plans, adjacent and trimmed. */
+export interface PlannedEffectAudioClip {
+  readonly id: string
+  readonly assetId: string
+  readonly timelineStart: number
+  readonly sourceStart: number
+  readonly sourceEnd: number
+}
+
 /**
  * The slide state the compiler reads: node names and kinds plus pre-run
  * evaluated values. Pure and read-only — a Check against this context never
@@ -360,6 +376,12 @@ export interface AnimationScriptCompileContext {
    * library-registered definitions plus the project's embedded snapshots.
    */
   readonly materials?: readonly AnimationScriptMaterialInfo[]
+  /**
+   * Audio assets an effect `sound:` may reference by name: the project's
+   * embedded audio (including snapshotted library audio), with source
+   * durations from their metadata. Absent means no audio is available.
+   */
+  readonly audioAssets?: readonly AnimationScriptAudioAssetInfo[]
   /** The slide's scene id; script-created nodes dispatch commands against it. */
   readonly sceneId?: string
   /**
@@ -458,6 +480,8 @@ export interface AnimationScriptCompileResult {
   readonly footprint: CompiledFootprint
   readonly summary: AnimationScriptSummary
   readonly effects: readonly SceneEffect[]
+  /** Ordinary SFX AudioClips planned for effect `sound:` options. */
+  readonly audioClips: readonly PlannedEffectAudioClip[]
 }
 
 interface ScriptMember {
@@ -469,7 +493,7 @@ interface BindingInfo {
   readonly alias: string
   readonly aliasSpan: SourceSpan
   readonly kind:
-    'node' | 'group' | 'table' | 'cellRef' | 'clip' | 'collection' | 'data' | 'material'
+    'node' | 'group' | 'table' | 'cellRef' | 'clip' | 'collection' | 'data' | 'material' | 'audio'
   /**
    * The binding's targets in scene pre-order. A node, table or cellRef binding
    * has exactly one member; a group binding has one per node carrying its
@@ -490,6 +514,8 @@ interface BindingInfo {
   readonly dataSource?: { readonly id: string; readonly name: string }
   /** Present only on material bindings: the referenced material definition. */
   readonly material?: AnimationScriptMaterialInfo
+  /** Present only on audio bindings: the referenced AudioAsset and duration. */
+  readonly audio?: AnimationScriptAudioAssetInfo
   used: boolean
 }
 
@@ -843,6 +869,8 @@ class Compiler {
   /** Nodes carrying `play` instances, in first-addressed order (footprint). */
   readonly #instanceNodes: string[] = []
   readonly #effects: SceneEffect[] = []
+  /** Ordinary SFX AudioClips planned for effect `sound:` options. */
+  readonly #audioClips: PlannedEffectAudioClip[] = []
   /** Nodes carrying `apply` placements, in first-addressed order (footprint). */
   readonly #placementParents: string[] = []
   /**
@@ -942,6 +970,7 @@ class Compiler {
       createdNodes: [...this.#createdNodeInfos.map((entry) => entry.nodeId)],
       createdDataSources: [...this.#createdDataSourceInfos.map((entry) => entry.id)],
       effectIds: this.#effects.map((effect) => effect.id),
+      audioClipIds: this.#audioClips.map((clip) => clip.id),
     }
     const materialized = errors
       ? { commands: [] as Command<unknown>[], orders: [] as number[] }
@@ -959,6 +988,7 @@ class Compiler {
       footprint,
       summary,
       effects: [...this.#effects],
+      audioClips: [...this.#audioClips],
     }
   }
 
@@ -1312,6 +1342,8 @@ class Compiler {
             ...(binding.clip !== undefined ? { clip: binding.clip } : {}),
             ...(binding.collection !== undefined ? { collection: binding.collection } : {}),
             ...(binding.material !== undefined ? { material: binding.material } : {}),
+            ...(binding.audio !== undefined ? { audio: binding.audio } : {}),
+            ...(binding.dataSource !== undefined ? { dataSource: binding.dataSource } : {}),
             used: false,
           })
           binding.used = true
@@ -1456,7 +1488,8 @@ class Compiler {
         case 'cellRef':
         case 'clip':
         case 'collection':
-        case 'material': {
+        case 'material':
+        case 'audio': {
           if (value.kind !== 'binding') return mismatch(describeScriptValue(value))
           const binding = bindingOf(value)
           if (!binding) return mismatch(describeScriptValue(value))
@@ -1536,6 +1569,8 @@ class Compiler {
             ...(binding.clip !== undefined ? { clip: binding.clip } : {}),
             ...(binding.collection !== undefined ? { collection: binding.collection } : {}),
             ...(binding.material !== undefined ? { material: binding.material } : {}),
+            ...(binding.audio !== undefined ? { audio: binding.audio } : {}),
+            ...(binding.dataSource !== undefined ? { dataSource: binding.dataSource } : {}),
             used: false,
           })
           binding.used = true
@@ -1671,10 +1706,60 @@ class Compiler {
       this.#declareMaterialBinding(statement)
       return
     }
+    if (statement.resourceKind === 'audio') {
+      this.#declareAudioBinding(statement)
+      return
+    }
     this.#error(
-      `Unknown binding kind "${statement.resourceKind}". Available kinds: node, group, table, clip, collection, material.`,
+      `Unknown binding kind "${statement.resourceKind}". Available kinds: node, group, table, clip, collection, material, audio.`,
       statement.resourceKindSpan,
     )
+  }
+
+  /**
+   * `audio("Name")` binds one project AudioAsset by exact name. The compiler
+   * only references it — assets are never minted. Zero matches and ambiguous
+   * names are compile errors, mirroring clip bindings. Duration comes from the
+   * asset metadata the Check assembled; missing or non-positive durations
+   * block the compile so effect sounds can plan adjacent SFX clips.
+   */
+  #declareAudioBinding(statement: BindNode): void {
+    const assets = this.#context.audioAssets ?? []
+    const matches = assets.filter((asset) => asset.name === statement.resourceName)
+    if (matches.length === 0) {
+      const suggestion = nearMissSuggestion(
+        statement.resourceName,
+        assets.map((asset) => asset.name),
+      )
+      this.#error(
+        `No audio named "${statement.resourceName}".${suggestion}`,
+        statement.resourceNameSpan,
+      )
+      return
+    }
+    if (matches.length > 1) {
+      this.#error(
+        `Audio name "${statement.resourceName}" is ambiguous — ${matches.length} audio assets share it`,
+        statement.resourceNameSpan,
+      )
+      return
+    }
+    const audio = matches[0]
+    if (!Number.isFinite(audio.duration) || audio.duration <= 0) {
+      this.#error(
+        `Audio "${statement.resourceName}" has no usable duration — re-import it so its duration is known`,
+        statement.resourceNameSpan,
+      )
+      return
+    }
+    this.#bindings.set(statement.alias, {
+      alias: statement.alias,
+      aliasSpan: statement.aliasSpan,
+      kind: 'audio',
+      members: [],
+      audio: { id: audio.id, name: audio.name, duration: audio.duration },
+      used: false,
+    })
   }
 
   /**
@@ -5518,6 +5603,7 @@ class Compiler {
       evaluateNumber: (expression, what) => this.#evaluateNumber(expression, what),
       resolveTarget: (expression, allowGroup, what) =>
         this.#resolveReadTarget(expression, allowGroup, what),
+      resolveAudio: (expression, what) => this.#resolveEffectAudio(expression, what),
       bindingKind: (expression) =>
         expression.kind === 'identifier' ? this.#lookupBinding(expression.name)?.kind : undefined,
       isVisible: this.#context.isVisible,
@@ -5527,7 +5613,69 @@ class Compiler {
       reportError: (message, span) => this.#error(message, span),
     })
     if (compiled.effect) this.#effects.push(compiled.effect)
+    if (compiled.audioClips) this.#audioClips.push(...compiled.audioClips)
     return compiled.cursor
+  }
+
+  /**
+   * Resolve an effect `sound:` to its caller-supplied AudioAsset. Only
+   * `audio("Name")` bindings qualify; node, group, clip, material and other
+   * bindings report a kind mismatch rather than silently staying silent.
+   */
+  #resolveEffectAudio(
+    expression: ScriptExpression,
+    what: string,
+  ): { readonly assetId: string; readonly duration: number } | null {
+    if (expression.kind === 'identifier') {
+      const binding = this.#lookupBinding(expression.name)
+      if (binding) {
+        binding.used = true
+        if (binding.kind !== 'audio' || !binding.audio) {
+          this.#error(
+            `${what} needs an audio binding — "${binding.alias}" is a ${binding.kind}. Bind one first, like bind sfx = audio("Scratch").`,
+            expression.span,
+          )
+          return null
+        }
+        return { assetId: binding.audio.id, duration: binding.audio.duration }
+      }
+      const value = this.#lookupValue(expression.name)
+      if (value !== undefined) {
+        if (value.kind === 'binding') {
+          const memberBinding = bindingOf(value)
+          if (memberBinding) {
+            memberBinding.used = true
+            if (memberBinding.kind !== 'audio' || !memberBinding.audio) {
+              this.#error(
+                `${what} needs an audio binding — "${expression.name}" is a ${memberBinding.kind}.`,
+                expression.span,
+              )
+              return null
+            }
+            return {
+              assetId: memberBinding.audio.id,
+              duration: memberBinding.audio.duration,
+            }
+          }
+        }
+        this.#error(
+          `${what} needs an audio binding — "${expression.name}" is ${describeScriptValue(value)}, not audio`,
+          expression.span,
+        )
+        return null
+      }
+      const suggestion = nearMissSuggestion(expression.name, [
+        ...this.#bindings.keys(),
+        ...this.#overrideNames(),
+      ])
+      this.#error(`Unknown binding "${expression.name}".${suggestion}`, expression.span)
+      return null
+    }
+    this.#error(
+      `${what} needs an audio binding, like sound: sfx where bind sfx = audio("Scratch")`,
+      expression.span,
+    )
+    return null
   }
 
   /** Rotation tracks cannot animate on cameras; the arrow keeps that rule. */
@@ -7229,7 +7377,13 @@ class Compiler {
       const binding = this.#lookupBinding(expression.name)
       if (binding) {
         binding.used = true
-        if (binding.kind === 'clip' || binding.kind === 'collection') {
+        if (
+          binding.kind === 'clip' ||
+          binding.kind === 'collection' ||
+          binding.kind === 'material' ||
+          binding.kind === 'audio' ||
+          binding.kind === 'data'
+        ) {
           this.#error(
             `${what} needs a node binding — "${binding.alias}" is a ${binding.kind}.`,
             expression.span,
@@ -7251,7 +7405,13 @@ class Compiler {
           const memberBinding = bindingOf(value)
           if (memberBinding) {
             memberBinding.used = true
-            if (memberBinding.kind === 'clip' || memberBinding.kind === 'collection') {
+            if (
+              memberBinding.kind === 'clip' ||
+              memberBinding.kind === 'collection' ||
+              memberBinding.kind === 'material' ||
+              memberBinding.kind === 'audio' ||
+              memberBinding.kind === 'data'
+            ) {
               this.#error(
                 `${what} needs a node binding — "${expression.name}" is a ${memberBinding.kind}.`,
                 expression.span,
@@ -7288,7 +7448,13 @@ class Compiler {
         const memberBinding = bindingOf(value)
         if (memberBinding) {
           memberBinding.used = true
-          if (memberBinding.kind === 'clip' || memberBinding.kind === 'collection') {
+          if (
+            memberBinding.kind === 'clip' ||
+            memberBinding.kind === 'collection' ||
+            memberBinding.kind === 'material' ||
+            memberBinding.kind === 'audio' ||
+            memberBinding.kind === 'data'
+          ) {
             this.#error(
               `${what} needs a node binding — a ${memberBinding.kind} field cannot be read here.`,
               expression.span,
@@ -7777,7 +7943,8 @@ function isBindingParamType(type: ScriptParamType): boolean {
       type.name === 'cellRef' ||
       type.name === 'clip' ||
       type.name === 'collection' ||
-      type.name === 'material'
+      type.name === 'material' ||
+      type.name === 'audio'
     )
   }
   return false
@@ -7806,7 +7973,13 @@ function bindingValueFor(binding: BindingInfo): ScriptValue {
             ? 'a clip'
             : binding.kind === 'collection'
               ? 'a collection'
-              : 'a cell reference'
+              : binding.kind === 'material'
+                ? 'a material'
+                : binding.kind === 'audio'
+                  ? 'an audio asset'
+                  : binding.kind === 'data'
+                    ? 'a data source'
+                    : 'a cell reference'
   return { kind: 'binding', label, bindingKind: binding.kind, payload: binding }
 }
 

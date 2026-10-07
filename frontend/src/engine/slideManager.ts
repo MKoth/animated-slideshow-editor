@@ -160,6 +160,7 @@ export class SlideManager {
                   lastCompiled: remapCompiledFootprint(sourceScript.lastCompiled, nodeIds, {
                     dropCreatedDataSources: true,
                     effectIds,
+                    audioClipIds: clipIdMap,
                   }),
                 }
               : {}),

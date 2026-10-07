@@ -3,6 +3,8 @@ import type { DispatchCommand } from './commands/dispatcher'
 import { TransactionCommand } from './commands/transactionCommand'
 import { SetSlideSceneEffectsCommand } from './commands/setSlideSceneEffectsCommand'
 import { SetSlideAnimationScriptFootprintCommand } from './commands/setSlideAnimationScriptFootprintCommand'
+import { CreateAudioClipCommand } from './commands/createAudioClipCommand'
+import { DeleteAudioClipCommand } from './commands/deleteAudioClipCommand'
 import { GenerateMeshCommand } from './commands/generateMeshCommand'
 import type { Command } from './commands/command'
 import { animationScriptClearCommands } from './animationScriptClear'
@@ -206,6 +208,34 @@ function dispatchCompiled(
     ...(previousFootprint?.effectIds ?? []),
     ...(compiled.footprint.effectIds ?? []),
   ])
+  // Generated effect sounds are ordinary SFX AudioClips tracked by footprint.
+  // Rerun deletes the previous and new footprint ids first (tolerating
+  // hand-deleted clips), then recreates the planned placements, so edits
+  // replace without duplication and unrelated/manual audio is preserved.
+  const replacedAudioClipIds = new Set([
+    ...(previousFootprint?.audioClipIds ?? []),
+    ...(compiled.footprint.audioClipIds ?? []),
+  ])
+  const existingClipIds = new Set(engine.getSlide(slideId).audio.clips.map((clip) => clip.id))
+  const deleteAudioCommands: Command<unknown>[] = []
+  for (const clipId of replacedAudioClipIds) {
+    if (!existingClipIds.has(clipId)) continue
+    deleteAudioCommands.push(new DeleteAudioClipCommand({ slideId, clipId }))
+  }
+  const createAudioCommands: Command<unknown>[] = compiled.audioClips.map(
+    (clip) =>
+      new CreateAudioClipCommand({
+        id: clip.id,
+        slideId,
+        assetId: clip.assetId,
+        trackId: 'sfx',
+        timelineStart: clip.timelineStart,
+        sourceStart: clip.sourceStart,
+        sourceEnd: clip.sourceEnd,
+        // No time-stretching: the source repeats adjacently at rate 1.
+        playbackRate: 1,
+      }) as Command<unknown>,
+  )
   const commands: Command<unknown>[] = []
   compiled.commands.forEach((command, index) => {
     commands.push(command)
@@ -217,6 +247,8 @@ function dispatchCompiled(
   const result = dispatch(
     new TransactionCommand([
       ...animationScriptClearCommands(engine, previousFootprint, compiled.footprint),
+      ...deleteAudioCommands,
+      ...createAudioCommands,
       ...commands,
       new SetSlideSceneEffectsCommand({
         slideId,
