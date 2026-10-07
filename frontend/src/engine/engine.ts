@@ -224,6 +224,10 @@ export interface EnginePublic {
     category?: string,
   ): ClipCollection
   setClipCollectionCategory(collectionId: string, category: string): void
+  setClipCollectionAlignmentOffsets(
+    collectionId: string,
+    offsets: import('./clipCollection').ClipCollectionAlignmentOffsets,
+  ): Record<string, import('./clipCollection').ClipCollectionAlignmentOffset>
   createReversedCollection(
     sourceCollectionId: string,
     newName?: string,

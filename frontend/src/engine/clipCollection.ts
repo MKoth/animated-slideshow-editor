@@ -6,12 +6,20 @@ export interface ClipCollectionBindings {
   readonly [semanticName: string]: string
 }
 
+export interface ClipCollectionAlignmentOffset {
+  readonly x: number
+  readonly y: number
+}
+
+export type ClipCollectionAlignmentOffsets = Readonly<Record<string, ClipCollectionAlignmentOffset>>
+
 export class ClipCollection {
   readonly id: string
   #name: string
   #bindings: Map<string, string>
   #sourceNodeId?: string
   #category: string
+  #alignmentOffsets: Record<string, ClipCollectionAlignmentOffset>
 
   constructor(
     id: string,
@@ -19,6 +27,7 @@ export class ClipCollection {
     bindings: ReadonlyMap<string, string> | Record<string, string>,
     sourceNodeId?: string,
     category?: string,
+    alignmentOffsets: ClipCollectionAlignmentOffsets = {},
   ) {
     this.id = id
     this.#name = name
@@ -31,6 +40,7 @@ export class ClipCollection {
       this.#sourceNodeId = sourceNodeId
     }
     this.#category = normalizeCollectionCategory(category)
+    this.#alignmentOffsets = normalizeAlignmentOffsets(alignmentOffsets)
   }
 
   get name(): string {
@@ -51,6 +61,18 @@ export class ClipCollection {
 
   get category(): string {
     return this.#category
+  }
+
+  get alignmentOffsets(): ClipCollectionAlignmentOffsets {
+    return this.#alignmentOffsets
+  }
+
+  setAlignmentOffsets(offsets: ClipCollectionAlignmentOffsets): void {
+    this.#alignmentOffsets = normalizeAlignmentOffsets(offsets)
+  }
+
+  getAlignmentOffset(semanticName: string): ClipCollectionAlignmentOffset | undefined {
+    return this.#alignmentOffsets[semanticName]
   }
 
   set category(value: string) {
@@ -91,6 +113,7 @@ export class ClipCollection {
       new Map(this.#bindings),
       this.#sourceNodeId,
       this.#category,
+      this.#alignmentOffsets,
     )
   }
 
@@ -101,6 +124,9 @@ export class ClipCollection {
       bindings: Object.fromEntries(this.#bindings),
       ...(this.#sourceNodeId !== undefined ? { sourceNodeId: this.#sourceNodeId } : {}),
       ...(this.#category !== '' ? { category: this.#category } : {}),
+      ...(Object.keys(this.#alignmentOffsets).length > 0
+        ? { alignmentOffsets: { ...this.#alignmentOffsets } }
+        : {}),
     }
   }
 
@@ -137,8 +163,34 @@ export class ClipCollection {
       }
       category = normalizeCollectionCategory(json.category)
     }
-    return new ClipCollection(id, name, bindings, sourceNodeId, category)
+    const alignmentOffsets =
+      json.alignmentOffsets === undefined ? {} : normalizeAlignmentOffsets(json.alignmentOffsets)
+    return new ClipCollection(id, name, bindings, sourceNodeId, category, alignmentOffsets)
   }
+}
+
+export function normalizeAlignmentOffsets(
+  value: unknown,
+): Record<string, ClipCollectionAlignmentOffset> {
+  if (!isRecord(value)) throw new Error('ClipCollection alignmentOffsets must be an object')
+  const result: Record<string, ClipCollectionAlignmentOffset> = {}
+  for (const [semanticName, raw] of Object.entries(value)) {
+    if (semanticName.trim() === '')
+      throw new Error('Alignment offset semantic name must not be empty')
+    if (!isRecord(raw)) throw new Error(`Alignment offset for "${semanticName}" must be an object`)
+    const x = raw.x
+    const y = raw.y
+    if (
+      typeof x !== 'number' ||
+      !Number.isFinite(x) ||
+      typeof y !== 'number' ||
+      !Number.isFinite(y)
+    ) {
+      throw new Error(`Alignment offset for "${semanticName}" must have finite x and y values`)
+    }
+    if (x !== 0 || y !== 0) result[semanticName.trim()] = { x, y }
+  }
+  return result
 }
 
 export function normalizeCollectionCategory(value: unknown): string {

@@ -2450,6 +2450,14 @@ export function applyUndo(
       engine.setClipCollectionBindings(collectionId, oldBindings)
       return
     }
+    case 'SetClipCollectionAlignmentOffsets': {
+      const inverse = inv as Record<string, unknown>
+      engine.setClipCollectionAlignmentOffsets(
+        inverse.collectionId as string,
+        inverse.oldOffsets as Record<string, { x: number; y: number }>,
+      )
+      return
+    }
     case 'SetClipCollectionCategory': {
       const collectionId = (inv as Record<string, unknown>).collectionId as string
       const oldCategory = (inv as Record<string, unknown>).oldCategory as string
@@ -4098,6 +4106,12 @@ export function applyRedo(
       engine.setClipCollectionBindings(
         params.collectionId as string,
         params.bindings as Record<string, string>,
+      )
+      return
+    case 'SetClipCollectionAlignmentOffsets':
+      engine.setClipCollectionAlignmentOffsets(
+        params.collectionId as string,
+        params.alignmentOffsets as Record<string, { x: number; y: number }>,
       )
       return
     case 'SetClipCollectionCategory':

@@ -45,6 +45,56 @@ beforeEach(() => {
 })
 
 describe('timeline collection lane drag commits once', () => {
+  it('opens the alignment editor from the lane menu and stores semantic X/Y offsets', async () => {
+    const { engine, undoStack, dispatcher, parent, paw, placementId } = setupPlaced()
+    const value: EngineContextValue = {
+      engine: toReadOnly(engine),
+      undoStack,
+      dispatch: (c) => dispatcher.dispatch(c as never) as never,
+      persistence: noopPersistence,
+    }
+    render(
+      <EngineContext.Provider value={value}>
+        <TimelineCollectionBlocks node={parent} duration={20} pps={100} />
+      </EngineContext.Provider>,
+    )
+    fireEvent.contextMenu(await screen.findByTestId(`timeline-collection-block-${placementId}`), {
+      clientX: 20,
+      clientY: 30,
+    })
+    fireEvent.click(screen.getByTestId('timeline-collection-align'))
+    const xInput = await screen.findByTestId('collection-alignment-x')
+    const yInput = screen.getByTestId('collection-alignment-y')
+    fireEvent.change(xInput, { target: { value: '12' } })
+    fireEvent.blur(xInput)
+    fireEvent.change(yInput, { target: { value: '-4' } })
+    fireEvent.blur(yInput)
+
+    expect(
+      engine
+        .getClipCollection(engine.getCollectionPlacement(placementId).collectionId)
+        .getAlignmentOffset('paw'),
+    ).toEqual({ x: 12, y: -4 })
+    expect(engine.evaluateNode(paw.id, 2).transform.x).toBe(22)
+    expect(engine.evaluateNode(paw.id, 2).transform.y).toBe(-4)
+
+    const dragPad = screen.getByTestId('collection-alignment-drag-pad')
+    fireEvent.pointerDown(dragPad, { pointerId: 1, clientX: 0, clientY: 0 })
+    fireEvent.pointerMove(dragPad, { pointerId: 1, clientX: 8, clientY: 6 })
+    fireEvent.pointerUp(dragPad, { pointerId: 1 })
+    expect(
+      engine
+        .getClipCollection(engine.getCollectionPlacement(placementId).collectionId)
+        .getAlignmentOffset('paw'),
+    ).toEqual({ x: 20, y: 2 })
+    undoStack.undo(engine)
+    expect(
+      engine
+        .getClipCollection(engine.getCollectionPlacement(placementId).collectionId)
+        .getAlignmentOffset('paw'),
+    ).toEqual({ x: 12, y: -4 })
+  })
+
   it('move across several pointermoves applies delta exactly once', async () => {
     const { engine, undoStack, dispatcher, parent, placementId } = setupPlaced()
     const value: EngineContextValue = {

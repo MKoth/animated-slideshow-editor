@@ -529,6 +529,7 @@ export type ClipCollectionJSON = {
   readonly id: string
   readonly name: string
   readonly bindings: Readonly<Record<string, string>>
+  readonly alignmentOffsets?: Readonly<Record<string, { readonly x: number; readonly y: number }>>
   readonly sourceNodeId?: string
   readonly category?: string
 }

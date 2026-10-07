@@ -160,11 +160,32 @@ export class ClipCollectionManager {
     const old = new Map(c.bindings)
     // Replace internal map via copy trick
     // Directly mutate via private hack: we have setters per binding but easier to recreate
-    const copy = new ClipCollection(c.id, c.name, bindings, c.sourceNodeId, c.category)
+    const copy = new ClipCollection(
+      c.id,
+      c.name,
+      bindings,
+      c.sourceNodeId,
+      c.category,
+      c.alignmentOffsets,
+    )
     // replace in map
     this.#collections.set(collectionId, copy)
     this.#bus.emit({
       type: 'ClipCollectionBindingsChanged',
+      collectionId,
+    } as unknown as import('./events').EngineEvent)
+    return old
+  }
+
+  setAlignmentOffsets(
+    collectionId: string,
+    offsets: import('./clipCollection').ClipCollectionAlignmentOffsets,
+  ): Record<string, import('./clipCollection').ClipCollectionAlignmentOffset> {
+    const collection = this.getCollection(collectionId)
+    const old = { ...collection.alignmentOffsets }
+    collection.setAlignmentOffsets(offsets)
+    this.#bus.emit({
+      type: 'ClipCollectionAlignmentChanged',
       collectionId,
     } as unknown as import('./events').EngineEvent)
     return old

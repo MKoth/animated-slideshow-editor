@@ -520,6 +520,8 @@ export type {
   RenameClipCollectionParameters,
 } from './renameClipCollectionCommand'
 export { SetClipCollectionBindingsCommand } from './setClipCollectionBindingsCommand'
+export { SetClipCollectionAlignmentOffsetsCommand } from './setClipCollectionAlignmentOffsetsCommand'
+export type { SetClipCollectionAlignmentOffsetsParameters } from './setClipCollectionAlignmentOffsetsCommand'
 export type {
   SetClipCollectionBindingsInverse,
   SetClipCollectionBindingsParameters,

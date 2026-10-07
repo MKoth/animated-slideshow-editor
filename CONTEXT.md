@@ -246,6 +246,10 @@ _Avoid_: Bake to clip, export keyframes
 A named grouping of per-node clips bound by semantic name: a map from semanticName → clipId plus parent id and a top-level category (blank = Uncategorized) used to filter the Animation Manager, panels, and library browsers. Export walks a parent subtree collecting each node's clip instances (including `morphCoefficient` clips); apply walks a target subtree and broadcasts each clip to all nodes matching the semantic name. No morph-specific naming convention — the same `semanticName` (e.g. `left_hand`) carries any morph clip; binding remains node-local (`MorphBinding` stays on `NodeAnimation`, not in the clip).
 _Avoid_: Animation set, pose library
 
+**Clip Collection Alignment Offset**:
+A reusable per-semantic-name X/Y translation added to the evaluated position of a matching child while its Clip Collection animation is active. Stored on the Clip Collection, shared by its placements, independent of clip keyframes, and composed in the child’s local coordinates.
+_Avoid_: Pose freeze, pivot correction
+
 **Scale Group** (also **Group Node** alias):
 An empty scene node used as a parent to uniformly scale a rig and its animations without breaking relative motion; clips remain in local space and compose via world transform. No new component — reuses Rig Handle / Locator primitive.
 _Avoid_: Scale container, multiplier node

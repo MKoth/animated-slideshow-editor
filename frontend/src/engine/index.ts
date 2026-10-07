@@ -198,6 +198,7 @@ export {
   DuplicateClipKeyframesCommand,
   SetClipKeyframeInterpolationCommand,
   SetClipKeyframeTangentsCommand,
+  SetClipCollectionAlignmentOffsetsCommand,
 } from './commands'
 export type {
   CreateProjectInverse,
@@ -295,6 +296,7 @@ export type {
   SetClipKeyframeInterpolationParameters,
   SetClipKeyframeTangentsInverse,
   SetClipKeyframeTangentsParameters,
+  SetClipCollectionAlignmentOffsetsParameters,
 } from './commands'
 export {
   ANIMATABLE_PROPERTIES,
@@ -314,6 +316,11 @@ export type {
 export type { KeyframeTarget, KeyframeTrackRef, ClipChannelTarget } from './keyframeTarget'
 export { isParameterTarget, isPropertyTarget, isClipChannelTarget } from './keyframeTarget'
 export type { ClipDefinition, ClipChannel, ClipParam, ClipChannelDef } from './clipDefinition'
+export type {
+  ClipCollectionAlignmentOffset,
+  ClipCollectionAlignmentOffsets,
+} from './clipCollection'
+export type { ClipCollection } from './clipCollection'
 export { newClipId } from './clipDefinition'
 export type { EvaluatedNodeState, EvaluatedNodeScratch } from './animation'
 export { evaluatedNodeScratch } from './animation'

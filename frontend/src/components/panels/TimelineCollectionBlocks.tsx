@@ -17,6 +17,7 @@ import {
 import { executeCollectionFreeze, previewCollectionFreeze } from '../../engine/collectionFreeze'
 import type { FreezePoseSource } from '../../engine/collectionFreeze'
 import { DeleteCollectionPlacementCommand } from '../../engine/commands'
+import { ClipCollectionAlignmentEditor } from './ClipCollectionAlignmentEditor'
 
 interface DragState {
   mode: 'move' | 'resize-left' | 'resize-right' | 'reorder'
@@ -48,6 +49,7 @@ export function TimelineCollectionBlocks({
   const gridSnapEnabled = useTimelineViewStore((s) => s.gridSnapEnabled)
   const [drag, setDrag] = useState<DragState | null>(null)
   const [menu, setMenu] = useState<{ x: number; y: number; placementId: string } | null>(null)
+  const [alignmentPlacementId, setAlignmentPlacementId] = useState<string | null>(null)
   const [tick, setTick] = useState(0)
   // Latest drag snapshot for window listeners attached once per gesture.
   // Without this, re-subscribing on every preview update stacks pointerup
@@ -427,6 +429,21 @@ export function TimelineCollectionBlocks({
           </div>
         )
       })}
+      {alignmentPlacementId &&
+        (() => {
+          try {
+            const placement = engine.getCollectionPlacement(alignmentPlacementId)
+            return (
+              <ClipCollectionAlignmentEditor
+                collectionId={placement.collectionId}
+                parentNodeId={placement.parentNodeId}
+                onClose={() => setAlignmentPlacementId(null)}
+              />
+            )
+          } catch {
+            return null
+          }
+        })()}
       {menu && (
         <>
           <div
@@ -455,6 +472,17 @@ export function TimelineCollectionBlocks({
             }}
             onClick={(e) => e.stopPropagation()}
           >
+            <button
+              role="menuitem"
+              data-testid="timeline-collection-align"
+              style={menuItemStyle}
+              onClick={() => {
+                setAlignmentPlacementId(menu.placementId)
+                setMenu(null)
+              }}
+            >
+              Edit alignment offsets…
+            </button>
             <button
               role="menuitem"
               data-testid="timeline-collection-freeze-first"

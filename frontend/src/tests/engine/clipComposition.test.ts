@@ -7,6 +7,10 @@ import {
   CreateProjectCommand,
   CreateSlideCommand,
   CreateClipCommand,
+  CreateClipCollectionCommand,
+  SetClipCollectionAlignmentOffsetsCommand,
+  PlaceCollectionCommand,
+  SetSemanticNameCommand,
   AddClipKeyframeCommand,
   AddKeyframeCommand,
   AssignClipCommand,
@@ -112,6 +116,39 @@ function assignClip(
 }
 
 describe('clip composition', () => {
+  it('applies collection X/Y alignment offsets for the full active clip duration', () => {
+    const { system, nodeId, slide } = setup()
+    const clipId = createClipWithChannel(system, 'positionX', [{ time: 0, value: 10 }])
+    const created = expectOk(
+      system.dispatcher.dispatch(
+        new CreateClipCollectionCommand({ name: 'Aligned', bindings: { head: clipId } }),
+      ),
+    )
+    expectOk(
+      system.dispatcher.dispatch(
+        new SetClipCollectionAlignmentOffsetsCommand({
+          collectionId: created.collectionId,
+          alignmentOffsets: { head: { x: 5, y: -3 } },
+        }),
+      ),
+    )
+    expectOk(
+      system.dispatcher.dispatch(new SetSemanticNameCommand({ nodeId, semanticName: 'head' })),
+    )
+    expectOk(
+      system.dispatcher.dispatch(
+        new PlaceCollectionCommand({
+          collectionId: created.collectionId,
+          parentNodeId: slide.scene.root.id,
+        }),
+      ),
+    )
+
+    expect(evaluate(system, nodeId, 0.5).transform.x).toBe(15)
+    expect(evaluate(system, nodeId, 0.5).transform.y).toBe(-3)
+    expect(evaluate(system, nodeId, 1.5).transform.x).toBe(0)
+  })
+
   it('rotation channel: takes the shortest arc between clip keyframes', () => {
     const DEG = Math.PI / 180
     const { system, nodeId } = setup()

@@ -186,6 +186,7 @@ const CHANNEL_TO_TRANSFORM_KEY: Record<AnimationProperty, string> = {
  */
 export interface ControlCollectionResolution {
   getBinding(semanticName: string): string | undefined
+  getAlignmentOffset?(semanticName: string): { readonly x: number; readonly y: number } | undefined
 }
 
 /** Lookup for live-linked control collection blocks; null = missing (gap). */
@@ -241,6 +242,7 @@ export class AnimationEvaluator {
 
     this.#applyClipInstances(node, clampedTime, state)
     this.#applyControls(node, clampedTime, state)
+    this.#applyCollectionAlignmentOffsets(node, clampedTime, state)
 
     return state
   }
@@ -1781,6 +1783,31 @@ export class AnimationEvaluator {
         this.#setChannelValue(state, channel, output)
       }
     }
+  }
+
+  #applyCollectionAlignmentOffsets(
+    node: SceneNode,
+    time: number,
+    state: EvaluatedNodeScratch,
+  ): void {
+    let winningOffset: { readonly x: number; readonly y: number } | undefined
+    for (const instance of node.clipInstances) {
+      if (!instance.enabled || !instance.collectionId || !instance.collectionSemantic) continue
+      let clip: ClipDefinition
+      try {
+        clip = this.#clipLookup(instance.clipId)
+      } catch {
+        continue
+      }
+      if (!isClipInstanceActive(instance, clip, time)) continue
+      const offset = this.#collectionLookup(instance.collectionId)?.getAlignmentOffset?.(
+        instance.collectionSemantic,
+      )
+      if (offset) winningOffset = offset
+    }
+    if (!winningOffset) return
+    state.transform.x += winningOffset.x
+    state.transform.y += winningOffset.y
   }
 
   /** Controls are evaluated after time clips. Nearest hosts run first so ancestors win. Blended groups fold with per-property absent pass-through. */

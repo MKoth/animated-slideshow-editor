@@ -389,6 +389,11 @@ export interface ClipCollectionBindingsChanged {
   readonly collectionId: string
 }
 
+export interface ClipCollectionAlignmentChanged {
+  readonly type: 'ClipCollectionAlignmentChanged'
+  readonly collectionId: string
+}
+
 export interface ClipCollectionApplied {
   readonly type: 'ClipCollectionApplied'
   readonly collectionId: string
@@ -491,6 +496,7 @@ export type EngineEvent =
   | ClipCollectionRemoved
   | ClipCollectionRenamed
   | ClipCollectionBindingsChanged
+  | ClipCollectionAlignmentChanged
   | ClipCollectionApplied
   | CollectionPlacementCreated
   | CollectionPlacementDeleted

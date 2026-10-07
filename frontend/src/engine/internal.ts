@@ -3598,6 +3598,13 @@ export class Engine {
     this.#clipCollections.setCategory(collectionId, category)
   }
 
+  setClipCollectionAlignmentOffsets(
+    collectionId: string,
+    offsets: import('./clipCollection').ClipCollectionAlignmentOffsets,
+  ): Record<string, import('./clipCollection').ClipCollectionAlignmentOffset> {
+    return this.#clipCollections.setAlignmentOffsets(collectionId, offsets)
+  }
+
   private ensureUniqueCollectionName(sourceNodeId: string | undefined, base: string): string {
     const trimmed = base.trim() || 'Collection'
     if (!this.#clipCollections.findByRigAndName(sourceNodeId, trimmed)) return trimmed
@@ -3640,6 +3647,7 @@ export class Engine {
       source.sourceNodeId,
       source.category,
     )
+    this.setClipCollectionAlignmentOffsets(collection.id, source.alignmentOffsets)
     return { collection, clipIdMap }
   }
 
@@ -3691,6 +3699,7 @@ export class Engine {
       source.sourceNodeId,
       source.category,
     )
+    this.setClipCollectionAlignmentOffsets(collection.id, source.alignmentOffsets)
     return { collection, clipIdMap, skipped }
   }
 
@@ -3737,6 +3746,7 @@ export class Engine {
       source.sourceNodeId,
       source.category,
     )
+    this.setClipCollectionAlignmentOffsets(collection.id, source.alignmentOffsets)
     return { collection, clipIdMap, skipped }
   }
 
@@ -3767,6 +3777,7 @@ export class Engine {
       source.sourceNodeId,
       source.category,
     )
+    this.setClipCollectionAlignmentOffsets(collection.id, source.alignmentOffsets)
     return { collection, clipIdMap }
   }
 
@@ -5100,6 +5111,11 @@ export class Engine {
           newBindings,
           existing.sourceNodeId,
           importedCategory,
+          (
+            colJson as unknown as {
+              alignmentOffsets?: import('./clipCollection').ClipCollectionAlignmentOffsets
+            }
+          ).alignmentOffsets,
         )
         this.#clipCollections.importCollection(replacement)
         continue
@@ -5110,6 +5126,11 @@ export class Engine {
         newBindings,
         (colJson as unknown as { sourceNodeId?: string }).sourceNodeId,
         importedCategory,
+        (
+          colJson as unknown as {
+            alignmentOffsets?: import('./clipCollection').ClipCollectionAlignmentOffsets
+          }
+        ).alignmentOffsets,
       )
       this.#clipCollections.importCollection(collection)
     }
@@ -6816,6 +6837,8 @@ export function toReadOnly(engine: Engine): EnginePublic {
       engine.createClipCollection(name, bindings, sourceNodeId, category),
     setClipCollectionCategory: (collectionId, category) =>
       engine.setClipCollectionCategory(collectionId, category),
+    setClipCollectionAlignmentOffsets: (collectionId, offsets) =>
+      engine.setClipCollectionAlignmentOffsets(collectionId, offsets),
     createReversedCollection: (sourceCollectionId, newName) =>
       engine.createReversedCollection(sourceCollectionId, newName),
     createReversedClip: (clipId, newName) => engine.createReversedClip(clipId, newName),

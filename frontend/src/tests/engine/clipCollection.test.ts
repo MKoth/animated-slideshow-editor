@@ -18,6 +18,7 @@ import {
   RenameClipCollectionCommand,
   ExportClipCollectionCommand,
   ApplyClipCollectionCommand,
+  SetClipCollectionAlignmentOffsetsCommand,
 } from '../../engine/commands'
 import { ClipCollection } from '../../engine/clipCollection'
 import { validate } from '../../engine/lessonSerializer'
@@ -52,6 +53,25 @@ describe('ClipCollection schema', () => {
     expect(restored.getBinding('right_hand')).toBe('clip2')
   })
 
+  it('round-trips semantic X/Y alignment offsets and omits zero entries', () => {
+    const col = new ClipCollection('id1', 'RigAnim', { head: 'clip1' }, undefined, undefined, {
+      head: { x: 45, y: -2 },
+      body: { x: 0, y: 0 },
+    })
+    expect(col.toJSON().alignmentOffsets).toEqual({ head: { x: 45, y: -2 } })
+    const restored = ClipCollection.fromJSON(col.toJSON())
+    expect(restored.getAlignmentOffset('head')).toEqual({ x: 45, y: -2 })
+    expect(restored.getAlignmentOffset('body')).toBeUndefined()
+    expect(() =>
+      ClipCollection.fromJSON({
+        id: 'id',
+        name: 'Rig',
+        bindings: {},
+        alignmentOffsets: { head: { x: Number.NaN, y: 0 } },
+      }),
+    ).toThrow()
+  })
+
   it('rejects empty name or bindings with empty keys/values', () => {
     expect(() => ClipCollection.fromJSON({ id: '', name: 'n', bindings: {} })).toThrow()
     expect(() => ClipCollection.fromJSON({ id: 'id', name: '', bindings: {} })).toThrow()
@@ -84,6 +104,38 @@ describe('ClipCollection schema', () => {
       new CreateClipCollectionCommand({ name: 'Bad', bindings: { hand: 'ghost' } }),
     )
     expect(bad.ok).toBe(false)
+  })
+
+  it('undoes and redoes collection alignment offsets', () => {
+    const { engine, dispatcher, undoStack } = setupEngine()
+    const clipId = expectOk(
+      dispatcher.dispatch(new CreateClipCommand({ name: 'Walk', duration: 1 })),
+    ).clipId
+    const collectionId = expectOk(
+      dispatcher.dispatch(
+        new CreateClipCollectionCommand({ name: 'Walk', bindings: { head: clipId } }),
+      ),
+    ).collectionId
+    expectOk(
+      dispatcher.dispatch(
+        new SetClipCollectionAlignmentOffsetsCommand({
+          collectionId,
+          alignmentOffsets: { head: { x: 30, y: -5 } },
+        }),
+      ),
+    )
+    expect(engine.getClipCollection(collectionId).getAlignmentOffset('head')).toEqual({
+      x: 30,
+      y: -5,
+    })
+
+    undoStack.undo(engine)
+    expect(engine.getClipCollection(collectionId).getAlignmentOffset('head')).toBeUndefined()
+    undoStack.redo(engine)
+    expect(engine.getClipCollection(collectionId).getAlignmentOffset('head')).toEqual({
+      x: 30,
+      y: -5,
+    })
   })
 })
 

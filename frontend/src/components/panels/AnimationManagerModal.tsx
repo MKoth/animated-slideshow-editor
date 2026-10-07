@@ -26,6 +26,7 @@ import {
   tickLabel,
 } from '../../stores/timelineViewStore'
 import { executeCollectionFreeze, previewCollectionFreeze } from '../../engine/collectionFreeze'
+import { ClipCollectionAlignmentEditor } from './ClipCollectionAlignmentEditor'
 import { usePlaybackController } from '../../stores/playbackStore'
 import { walkPreOrder } from '../../engine/sceneNode'
 import type { SceneNode } from '../../engine/sceneNode'
@@ -485,6 +486,7 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
   const [proportionalCopySourceId, setProportionalCopySourceId] = useState<string | null>(null)
   // Collection Lane placements (15-06)
   const [selectedPlacementId, setSelectedPlacementId] = useState<string | null>(null)
+  const [alignmentPlacementId, setAlignmentPlacementId] = useState<string | null>(null)
   const [placeCollectionId, setPlaceCollectionId] = useState<string>('')
   const [collectionPlacementMenu, setCollectionPlacementMenu] = useState<{
     x: number
@@ -8853,6 +8855,26 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             >
               <button
                 role="menuitem"
+                data-testid="collection-lane-align"
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '6px 10px',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+                onClick={() => {
+                  setAlignmentPlacementId(collectionPlacementMenu.placementId)
+                  setCollectionPlacementMenu(null)
+                }}
+              >
+                Edit alignment offsets…
+              </button>
+              <button
+                role="menuitem"
                 data-testid="collection-lane-reverse"
                 style={{
                   display: 'block',
@@ -9139,6 +9161,22 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
             </div>
           </>
         )}
+
+        {alignmentPlacementId &&
+          (() => {
+            try {
+              const placement = engine.getCollectionPlacement(alignmentPlacementId)
+              return (
+                <ClipCollectionAlignmentEditor
+                  collectionId={placement.collectionId}
+                  parentNodeId={placement.parentNodeId}
+                  onClose={() => setAlignmentPlacementId(null)}
+                />
+              )
+            } catch {
+              return null
+            }
+          })()}
 
         {/* Control timeline Clip Block context menu – Delete */}
         {controlBlockMenu && (
