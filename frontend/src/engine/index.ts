@@ -43,7 +43,12 @@ export type { EmbeddedShaderDefinition } from './embeddedShader'
 export type { FullscreenShaderReference } from './fullscreenShader'
 export type { SlideAnimationScript } from './animationScript'
 export type { SceneEffect, RevealEffect, WipeEffect, TemporaryMark } from './sceneEffect'
-export { revealCoverage } from './sceneEffect'
+export {
+  markLifecycle,
+  revealCoverage,
+  selectActiveMarks,
+  selectRevealWipeForNode,
+} from './sceneEffect'
 export type { CompiledFootprint, CompiledFootprintTrack } from './compiledFootprint'
 export { remapCompiledFootprint } from './compiledFootprint'
 export type { ScriptLibraryEntry, ScriptLibraryDrift } from './scriptLibrary'

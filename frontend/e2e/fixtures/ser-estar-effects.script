@@ -1,0 +1,24 @@
+// Lesson 01 effects — reveal, wipe, and mark acceptance.
+//
+// Runs AFTER ser-estar-lesson.script on slide 1 of "Animation Script test".
+// It preserves the chalk-board scene and cell-by-cell content created by the
+// base lesson and demonstrates one of each effect:
+//
+// - reveal on the conjugation table as a composite subtree (cell text is
+//   ordinary renderable content; empty layout slots stay out),
+// - wipe on one example translation sentence (a single text node holding the
+//   full sentence),
+// - mark on the lesson title as a temporary overlay.
+//
+// Timing sits inside the base lesson so seeks stay meaningful: the mark draws
+// while the title is shown, the table reveal starts with the table fade, and
+// the wipe runs after its example appears. The reveal carries an optional
+// `sound:` SFX; the wipe and mark stay silent.
+script "Lesson 01 effects" from 0
+bind grid = table("Grammar table")
+bind sentence = node("ex1t")
+bind title = node("Lesson title")
+bind sfx = audio("Scratch")
+mark(title, at: 1, over: 1, visual: none)
+reveal(grid, at: 5, over: 1, visual: none, sound: sfx)
+wipe(sentence, at: 18, over: 1, visual: none)

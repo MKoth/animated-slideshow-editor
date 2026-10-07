@@ -140,6 +140,37 @@ export function revealCoverage(effect: SceneEffect, time: number): number {
   return Math.max(0, Math.min(1, (time - effect.start) / effect.duration))
 }
 
+/** Latest scheduled reveal/wipe governing one node: later starts win once reached. */
+export function selectRevealWipeForNode(
+  effects: readonly SceneEffect[],
+  nodeId: string,
+  time: number,
+): Exclude<SceneEffect, TemporaryMark> | undefined {
+  const relevant = effects
+    .filter((effect) => effect.kind !== 'mark' && effect.nodeIds.includes(nodeId))
+    .sort((a, b) => a.start - b.start || effects.indexOf(a) - effects.indexOf(b))
+  return ([...relevant].reverse().find((candidate) => candidate.start <= time) ?? relevant[0]) as
+    Exclude<SceneEffect, TemporaryMark> | undefined
+}
+
+/** Active marks with latest-scheduled precedence on overlapping targets. */
+export function selectActiveMarks(effects: readonly SceneEffect[], time: number): TemporaryMark[] {
+  const active = effects.filter(
+    (effect): effect is TemporaryMark =>
+      effect.kind === 'mark' && time >= effect.start && time < effect.start + effect.duration,
+  )
+  return active.filter(
+    (mark) =>
+      !active.some((other) => {
+        if (other === mark) return false
+        const later =
+          other.start > mark.start ||
+          (other.start === mark.start && effects.indexOf(other) > effects.indexOf(mark))
+        return later && other.nodeIds.some((nodeId) => mark.nodeIds.includes(nodeId))
+      }),
+  )
+}
+
 /** The mark is drawn, held, then faded in fixed 50/20/30 phase proportions. */
 export function markLifecycle(
   effect: TemporaryMark,

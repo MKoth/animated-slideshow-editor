@@ -1,6 +1,11 @@
 import type { Scene } from '../../engine'
 import type { SceneEffect } from '../../engine/sceneEffect'
-import { markLifecycle, revealCoverage } from '../../engine/sceneEffect'
+import {
+  markLifecycle,
+  revealCoverage,
+  selectActiveMarks,
+  selectRevealWipeForNode,
+} from '../../engine/sceneEffect'
 import type { WorldSize } from './worldGeometry'
 import type { PixiContainer, PixiGraphics, PixiSprite, RendererPixi } from './pixi'
 import type { TextureCache } from './textureCache'
@@ -88,10 +93,7 @@ export class RevealEffectRenderer {
       this.#masks.delete(nodeId)
     }
 
-    const activeMarks = effects.filter(
-      (effect) =>
-        effect.kind === 'mark' && time >= effect.start && time < effect.start + effect.duration,
-    )
+    const activeMarks = selectActiveMarks(effects, time)
     for (const [id, graphic] of this.#marks) {
       if (activeMarks.some((effect) => effect.id === id)) continue
       this.#world.removeChild(graphic)
@@ -99,7 +101,6 @@ export class RevealEffectRenderer {
       this.#marks.delete(id)
     }
     for (const effect of activeMarks) {
-      if (effect.kind !== 'mark') continue
       let graphic = this.#marks.get(effect.id)
       if (!graphic) {
         graphic = new this.#pixi.Graphics()
@@ -158,11 +159,7 @@ export class RevealEffectRenderer {
         container.mask = mask
         this.#masks.set(nodeId, mask)
       }
-      const relevant = effects
-        .filter((effect) => effect.kind !== 'mark' && effect.nodeIds.includes(nodeId))
-        .sort((a, b) => a.start - b.start || effects.indexOf(a) - effects.indexOf(b))
-      const effect =
-        [...relevant].reverse().find((candidate) => candidate.start <= time) ?? relevant[0]
+      const effect = selectRevealWipeForNode(effects, nodeId, time)
       if (!effect) continue
       const fieldWidth = Math.max(0, effect.bounds.maxX - effect.bounds.minX)
       const progress = revealCoverage(effect, time)
@@ -183,6 +180,9 @@ export class RevealEffectRenderer {
     )
     const performers = active.filter((effect) => {
       const index = effects.indexOf(effect)
+      // Later scheduled sweeps keep governing the mask after their performer
+      // window ends, so suppression looks at any started later effect — unlike
+      // selectActiveMarks, which only considers still-active marks.
       return !effects.some((other) => {
         const later =
           other.start > effect.start ||

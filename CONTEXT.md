@@ -180,6 +180,18 @@ _Avoid_: Spawn, instance template
 A named, immutable alias declared in an Animation Script's prelude that resolves at compile time to one scene node (by Unique Name), a semantic group, a table, a project clip or Clip Collection, or a material definition (by library name); unresolved, duplicate, or ambiguous references block the compile. A semantic group collects every node carrying that Semantic Name in scene pre-order, so broadcast writes and their per-member pins are reproducible. Node bindings are scoped to the script's slide; clip, collection and material bindings to the project.
 _Avoid_: Selector, reference, alias
 
+**Effect Target**:
+The renderable scene content affected by an authored reveal, mark, or wipe: a node target names only that node, a subtree target includes its parent and renderable descendants, and a semantic-group target unions the subtree of each member. Overlapping paths count each node once; table-cell text is renderable content, while empty cell layout slots are not.
+_Avoid_: Effect selection
+
+**Composite Effect Target**:
+An effect target containing multiple renderable nodes that an effect treats as one unit, using their combined measured world-space bounds and a single effect timing rather than per-node sequencing. Membership is determined by visibility at the effect's scheduled start time; an empty or unmeasurable target is invalid.
+_Avoid_: Staggered effect target
+
+**Temporary Mark**:
+A short-lived, hand-drawn red loop shown over an Effect Target to call attention to it; it is a separate visual overlay and leaves the target content unchanged.
+_Avoid_: Mark effect (when referring to the visible stroke)
+
 **Animation Script Cursor**:
 The compile-time position in an Animation Script from which cursor-relative statements start, beginning at the segment's declared origin and advancing by each statement's extent; never a runtime playhead and never persisted.
 _Avoid_: Playhead, play position
