@@ -50,6 +50,38 @@ beforeEach(() => {
 })
 
 describe('Animation Manager 15-05 – Clip Collection grouping', () => {
+  it('adds a collection from its list row to the parent timeline at the playhead', async () => {
+    const engine = createEngineInternal()
+    const undo = new UndoStack()
+    engine.createProject({ name: 'P' })
+    const slide = engine.createSlide('S1')
+    const parent = engine.createNode(slide.scene.id, slide.scene.root.id, 'Parent')
+    const child = engine.createNode(slide.scene.id, parent.id, 'Child')
+    engine.setSemanticName(child.id, 'hand')
+    const clipId = (
+      new CommandDispatcher(engine, undo, () => undefined).dispatch(
+        new CreateClipCommand({
+          name: 'Wave',
+          duration: 5,
+          category: '',
+          params: [],
+          channels: [{ property: 'positionX' }],
+        }),
+      ) as { ok: true; inverse: { clipId: string } }
+    ).inverse.clipId
+    const collection = engine.createClipCollection('Wave Collection', { hand: clipId }, parent.id)
+
+    renderManager(engine, undo, parent.id)
+    const row = await screen.findByTestId(`manager-collection-${collection.id}`)
+    await userEvent
+      .setup()
+      .click(within(row).getByTestId(`collection-add-to-timeline-${collection.id}`))
+
+    expect(parent.collectionPlacements).toHaveLength(1)
+    expect(parent.collectionPlacements[0]!.collectionId).toBe(collection.id)
+    expect(parent.collectionPlacements[0]!.startTime).toBe(0)
+  })
+
   it('multi-select Clip Lanes → Create Collection yields subset-pointed ClipCollection with sourceNodeId', async () => {
     const engine = createEngineInternal()
     const undo = new UndoStack()

@@ -7811,6 +7811,38 @@ export function AnimationManagerModal({ open, parentNodeId, onClose }: Animation
                       </span>
                       <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
                         <button
+                          type="button"
+                          data-testid={`collection-add-to-timeline-${col.id}`}
+                          onClick={() => {
+                            if (!parentNodeId || !activeSlide) return
+                            const playhead = usePlaybackController
+                              .getState()
+                              .getTime(activeSlide.id)
+                            const result = dispatch(
+                              new PlaceCollectionCommand({
+                                collectionId: col.id,
+                                parentNodeId,
+                                startTime: playhead,
+                              }),
+                            )
+                            if (!result.ok) {
+                              notify(result.error.message)
+                            } else {
+                              notify(`Placed collection at ${playhead.toFixed(2)}s`)
+                            }
+                          }}
+                          title="Add this collection to the timeline at the playhead"
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: 4,
+                            border: '1px solid var(--color-border, #ddd)',
+                            fontSize: 12,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Add to timeline
+                        </button>
+                        <button
                           data-testid={`collection-edit-${col.id}`}
                           onClick={() => openEditCollection(col.id)}
                           style={{
