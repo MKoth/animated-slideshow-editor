@@ -12,6 +12,7 @@ import { ClipCollection } from '../clipCollection'
 import { defaultTableComponent } from '../defaultTable'
 import { applyTableLayout } from '../tableLayoutApply'
 import { compiledFootprintFromJSON } from '../compiledFootprint'
+import { sceneEffectFromJSON } from '../sceneEffect'
 import { relativeTransform, transformsEqual, worldTransformOf } from '../worldTransform'
 import type { MirrorCollectionShapeSnapshot } from './mirrorCollectionCommand'
 
@@ -424,6 +425,13 @@ export function applyUndo(
       engine.setSlideAnimationScriptFootprint(
         slideId,
         previousFootprint === null ? null : compiledFootprintFromJSON(previousFootprint),
+      )
+      return
+    }
+    case 'SetSlideSceneEffects': {
+      engine.setSlideSceneEffects(
+        inv.slideId as string,
+        (inv.effects as unknown[]).map(sceneEffectFromJSON),
       )
       return
     }
@@ -3028,6 +3036,12 @@ export function applyRedo(
       engine.setSlideAnimationScriptFootprint(
         params.slideId as string,
         compiledFootprintFromJSON(params.footprint as import('../json').CompiledFootprintJSON),
+      )
+      return
+    case 'SetSlideSceneEffects':
+      engine.setSlideSceneEffects(
+        params.slideId as string,
+        (params.effects as unknown[]).map(sceneEffectFromJSON),
       )
       return
     case 'SetScriptLibraryEntry': {

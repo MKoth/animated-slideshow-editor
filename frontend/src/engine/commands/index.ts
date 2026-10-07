@@ -31,6 +31,7 @@ export type {
   SetSlideAnimationScriptParameters,
 } from './setSlideAnimationScriptCommand'
 export { SetSlideAnimationScriptFootprintCommand } from './setSlideAnimationScriptFootprintCommand'
+export { SetSlideSceneEffectsCommand } from './setSlideSceneEffectsCommand'
 export type {
   SetSlideAnimationScriptFootprintInverse,
   SetSlideAnimationScriptFootprintParameters,

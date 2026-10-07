@@ -1,6 +1,7 @@
 import type { EnginePublic } from './engine'
 import type { DispatchCommand } from './commands/dispatcher'
 import { TransactionCommand } from './commands/transactionCommand'
+import { SetSlideSceneEffectsCommand } from './commands/setSlideSceneEffectsCommand'
 import { SetSlideAnimationScriptFootprintCommand } from './commands/setSlideAnimationScriptFootprintCommand'
 import { GenerateMeshCommand } from './commands/generateMeshCommand'
 import type { Command } from './commands/command'
@@ -201,6 +202,10 @@ function dispatchCompiled(
   outcome: { diagnostics: readonly AnimationScriptDiagnostic[]; summary: AnimationScriptSummary },
 ): AnimationScriptRunResult {
   const previousFootprint = engine.getSlide(slideId).animationScript?.lastCompiled ?? null
+  const replacedEffectIds = new Set([
+    ...(previousFootprint?.effectIds ?? []),
+    ...(compiled.footprint.effectIds ?? []),
+  ])
   const commands: Command<unknown>[] = []
   compiled.commands.forEach((command, index) => {
     commands.push(command)
@@ -213,6 +218,13 @@ function dispatchCompiled(
     new TransactionCommand([
       ...animationScriptClearCommands(engine, previousFootprint, compiled.footprint),
       ...commands,
+      new SetSlideSceneEffectsCommand({
+        slideId,
+        effects: [
+          ...engine.getSlide(slideId).effects.filter((effect) => !replacedEffectIds.has(effect.id)),
+          ...compiled.effects,
+        ],
+      }),
       new SetSlideAnimationScriptFootprintCommand({
         slideId,
         footprint: compiledFootprintToJSON(compiled.footprint),

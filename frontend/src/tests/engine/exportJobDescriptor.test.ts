@@ -1,6 +1,11 @@
 import { describe, expect, it, beforeEach } from 'vitest'
 import { createEngineInternal } from '../../engine/internal'
-import { CreateAudioAssetCommand, CreateAudioClipCommand } from '../../engine/commands'
+import {
+  CreateAudioAssetCommand,
+  CreateAudioClipCommand,
+  CreateNodeCommand,
+  SetSlideSceneEffectsCommand,
+} from '../../engine/commands'
 import { CommandDispatcher, UndoStack } from '../../engine/commands'
 import {
   EXPORT_AMIX_FILTER,
@@ -22,8 +27,22 @@ function wavBase64ForDuration(duration: number): string {
   const dataSize = Math.round(duration * byteRate)
   const buffer = new ArrayBuffer(44 + dataSize)
   const view = new DataView(buffer)
-  const write = (off: number, s: string) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)) }
-  write(0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); write(8, 'WAVE'); write(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, channels, true); view.setUint32(24, sampleRate, true); view.setUint32(28, byteRate, true); view.setUint16(32, channels * 2, true); view.setUint16(34, 16, true); write(36, 'data'); view.setUint32(40, dataSize, true)
+  const write = (off: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i))
+  }
+  write(0, 'RIFF')
+  view.setUint32(4, 36 + dataSize, true)
+  write(8, 'WAVE')
+  write(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, channels, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, byteRate, true)
+  view.setUint16(32, channels * 2, true)
+  view.setUint16(34, 16, true)
+  write(36, 'data')
+  view.setUint32(40, dataSize, true)
   const bytes = new Uint8Array(buffer)
   let bin = ''
   for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
@@ -61,7 +80,14 @@ describe('Spec 15.11 — Deterministic Export Mix (Frames + 3 Lanes via FFmpeg)'
     expect(desc.video.timestamps).toEqual(desc.frameTimestamps)
     expect(desc.video.pixelFormat).toBe(EXPORT_VIDEO_PIX_FMT)
     expect(desc.video.movflags).toBe(EXPORT_VIDEO_MOVFLAGS)
-    expect(desc.video.ffmpegArgs).toEqual(expect.arrayContaining(['-pix_fmt', EXPORT_VIDEO_PIX_FMT, '-movflags', EXPORT_VIDEO_MOVFLAGS]))
+    expect(desc.video.ffmpegArgs).toEqual(
+      expect.arrayContaining([
+        '-pix_fmt',
+        EXPORT_VIDEO_PIX_FMT,
+        '-movflags',
+        EXPORT_VIDEO_MOVFLAGS,
+      ]),
+    )
     // via shared evaluator — preview equals export per timestamp: at each timestamp evaluator gives same
     // We smoke-test that evaluator and descriptor timestamps align
     const nodeId = slide.scene.root.children[0]?.id ?? slide.scene.root.id
@@ -82,7 +108,14 @@ describe('Spec 15.11 — Deterministic Export Mix (Frames + 3 Lanes via FFmpeg)'
     // Create 3 assets for each lane
     const mkAsset = (name: string, dur: number) => {
       const base64 = wavBase64ForDuration(dur)
-      const res = dispatcher.dispatch(new CreateAudioAssetCommand({ name, data: base64, mimeType: 'audio/wav', metadata: { duration: dur, sampleRate: 44100, channels: 1 } }))
+      const res = dispatcher.dispatch(
+        new CreateAudioAssetCommand({
+          name,
+          data: base64,
+          mimeType: 'audio/wav',
+          metadata: { duration: dur, sampleRate: 44100, channels: 1 },
+        }),
+      )
       expect(res.ok).toBe(true)
       if (!res.ok) throw res.error
       return (res.inverse as { assetId: string }).assetId
@@ -92,9 +125,38 @@ describe('Spec 15.11 — Deterministic Export Mix (Frames + 3 Lanes via FFmpeg)'
     const assetMusic = mkAsset('music', 3)
 
     // Voice clip with playbackRate !=1 (stretched), sfx normal, music muted
-    dispatcher.dispatch(new CreateAudioClipCommand({ slideId: slide.id, assetId: assetVoice, trackId: 'voice', timelineStart: 0, sourceEnd: 2, volume: 0.8, playbackRate: 1.5 }))
-    dispatcher.dispatch(new CreateAudioClipCommand({ slideId: slide.id, assetId: assetSfx, trackId: 'sfx', timelineStart: 1.0, sourceEnd: 1.5, volume: 0.6 }))
-    dispatcher.dispatch(new CreateAudioClipCommand({ slideId: slide.id, assetId: assetMusic, trackId: 'music', timelineStart: 0.5, sourceEnd: 3, volume: 0.5, muted: true }))
+    dispatcher.dispatch(
+      new CreateAudioClipCommand({
+        slideId: slide.id,
+        assetId: assetVoice,
+        trackId: 'voice',
+        timelineStart: 0,
+        sourceEnd: 2,
+        volume: 0.8,
+        playbackRate: 1.5,
+      }),
+    )
+    dispatcher.dispatch(
+      new CreateAudioClipCommand({
+        slideId: slide.id,
+        assetId: assetSfx,
+        trackId: 'sfx',
+        timelineStart: 1.0,
+        sourceEnd: 1.5,
+        volume: 0.6,
+      }),
+    )
+    dispatcher.dispatch(
+      new CreateAudioClipCommand({
+        slideId: slide.id,
+        assetId: assetMusic,
+        trackId: 'music',
+        timelineStart: 0.5,
+        sourceEnd: 3,
+        volume: 0.5,
+        muted: true,
+      }),
+    )
 
     const desc = engine.buildPerSlideExportDescriptor(slide.id, { fps })
     // video+3 audio inputs
@@ -118,7 +180,9 @@ describe('Spec 15.11 — Deterministic Export Mix (Frames + 3 Lanes via FFmpeg)'
     const stretched = desc.audio.clips.find((c) => c.playbackRate !== 1)!
     expect(stretched).toBeDefined()
     expect(stretched.rubberbandTempo).toBeCloseTo(1 / stretched.playbackRate, 6)
-    expect(stretched.derivedAssetKey).toBe(engine.getDerivedAssetCacheKey(stretched.assetId, stretched.playbackRate))
+    expect(stretched.derivedAssetKey).toBe(
+      engine.getDerivedAssetCacheKey(stretched.assetId, stretched.playbackRate),
+    )
     expect(stretched.filterFragment).toContain('rubberband=tempo=')
     // normal clip should NOT have rubberband
     const normal = desc.audio.clips.find((c) => c.playbackRate === 1)!
@@ -147,8 +211,17 @@ describe('Spec 15.11 — Deterministic Export Mix (Frames + 3 Lanes via FFmpeg)'
     // yuv420p + faststart globally and per slide
     expect(job.global.video.pixelFormat).toBe(EXPORT_VIDEO_PIX_FMT)
     expect(job.global.video.movflags).toBe(EXPORT_VIDEO_MOVFLAGS)
-    expect(job.global.video.ffmpegArgs).toEqual(expect.arrayContaining(['-pix_fmt', EXPORT_VIDEO_PIX_FMT, '-movflags', EXPORT_VIDEO_MOVFLAGS]))
-    expect(job.ffmpegGlobalArgs).toEqual(expect.arrayContaining([EXPORT_VIDEO_PIX_FMT, EXPORT_VIDEO_MOVFLAGS, EXPORT_CONCAT_METHOD]))
+    expect(job.global.video.ffmpegArgs).toEqual(
+      expect.arrayContaining([
+        '-pix_fmt',
+        EXPORT_VIDEO_PIX_FMT,
+        '-movflags',
+        EXPORT_VIDEO_MOVFLAGS,
+      ]),
+    )
+    expect(job.ffmpegGlobalArgs).toEqual(
+      expect.arrayContaining([EXPORT_VIDEO_PIX_FMT, EXPORT_VIDEO_MOVFLAGS, EXPORT_CONCAT_METHOD]),
+    )
     // final loudnorm pass
     expect(job.global.audio.loudnorm).toBe(EXPORT_LOUDNORM_FILTER)
     expect(job.global.audio.finalFilter).toBe(EXPORT_LOUDNORM_FILTER)
@@ -157,7 +230,14 @@ describe('Spec 15.11 — Deterministic Export Mix (Frames + 3 Lanes via FFmpeg)'
     for (const s of job.slides) {
       expect(s.video.pixelFormat).toBe(EXPORT_VIDEO_PIX_FMT)
       expect(s.video.movflags).toBe(EXPORT_VIDEO_MOVFLAGS)
-      expect(s.segment.videoArgs).toEqual(expect.arrayContaining(['-pix_fmt', EXPORT_VIDEO_PIX_FMT, '-movflags', EXPORT_VIDEO_MOVFLAGS]))
+      expect(s.segment.videoArgs).toEqual(
+        expect.arrayContaining([
+          '-pix_fmt',
+          EXPORT_VIDEO_PIX_FMT,
+          '-movflags',
+          EXPORT_VIDEO_MOVFLAGS,
+        ]),
+      )
     }
     // loudnorm final pass present in global audio filter
     expect(job.global.audio.loudnorm).toBe(EXPORT_LOUDNORM_FILTER)
@@ -167,17 +247,64 @@ describe('Spec 15.11 — Deterministic Export Mix (Frames + 3 Lanes via FFmpeg)'
     const slide = engine.createSlide('S1')
     engine.setSlideDuration(slide.id, 2.0)
     const base64 = wavBase64ForDuration(3) // longer than slide duration to test bleed trim
-    const assetRes = dispatcher.dispatch(new CreateAudioAssetCommand({ name: 'long', data: base64, mimeType: 'audio/wav', metadata: { duration: 3, sampleRate: 44100, channels: 1 } }))
+    const assetRes = dispatcher.dispatch(
+      new CreateAudioAssetCommand({
+        name: 'long',
+        data: base64,
+        mimeType: 'audio/wav',
+        metadata: { duration: 3, sampleRate: 44100, channels: 1 },
+      }),
+    )
     if (!assetRes.ok) throw assetRes.error
     const assetId = (assetRes.inverse as { assetId: string }).assetId
     // place clip that would bleed beyond slide.duration if not trimmed
-    dispatcher.dispatch(new CreateAudioClipCommand({ slideId: slide.id, assetId, trackId: 'voice', timelineStart: 1.5, sourceEnd: 3 }))
+    dispatcher.dispatch(
+      new CreateAudioClipCommand({
+        slideId: slide.id,
+        assetId,
+        trackId: 'voice',
+        timelineStart: 1.5,
+        sourceEnd: 3,
+      }),
+    )
 
     const settings = { fps: 30 }
     const job1 = engine.buildExportJobDescriptor(settings)
     const job2 = engine.buildExportJobDescriptor(settings)
     expect(JSON.stringify(job1)).toEqual(JSON.stringify(job2))
     expect(job1.determinismKey).toBe(job2.determinismKey)
+
+    const nodeResult = dispatcher.dispatch(
+      new CreateNodeCommand({
+        sceneId: slide.scene.id,
+        parentId: slide.scene.root.id,
+        name: 'Reveal Target',
+        components: { circle: { kind: 'circle', radius: 10, startAngle: 0, endAngle: 360 } },
+      }),
+    )
+    if (!nodeResult.ok) throw nodeResult.error
+    const nodeId = (nodeResult.inverse as { nodeId: string }).nodeId
+    dispatcher.dispatch(
+      new SetSlideSceneEffectsCommand({
+        slideId: slide.id,
+        effects: [
+          {
+            kind: 'reveal',
+            id: 'export-reveal',
+            start: 0,
+            duration: 1,
+            scopeNodeIds: [nodeId],
+            nodeIds: [nodeId],
+            bounds: { minX: -10, minY: -10, maxX: 10, maxY: 10 },
+            visual: { kind: 'none' },
+          },
+        ],
+      }),
+    )
+    expect(engine.getSlide(slide.id).effects).toHaveLength(1)
+    const jobWithReveal = engine.buildExportJobDescriptor(settings)
+    expect(jobWithReveal.determinismKey).not.toBe(job2.determinismKey)
+    expect(jobWithReveal.slides[0].effects[0].id).toBe('export-reveal')
 
     // trim at slide.duration — no bleed
     const clipDesc = job1.slides[0].audio.clips[0]
@@ -188,24 +315,63 @@ describe('Spec 15.11 — Deterministic Export Mix (Frames + 3 Lanes via FFmpeg)'
     // fixed lanes voice|sfx|music — no dynamic bus
     expect(job1.slides[0].audio.lanes).toEqual(['voice', 'sfx', 'music'])
     expect(job1.slides[0].audio.laneInputs).toBe(3)
-    expect(job1.slides[0].audio.inputs).toEqual(['video', 'audio:voice', 'audio:sfx', 'audio:music'])
+    expect(job1.slides[0].audio.inputs).toEqual([
+      'video',
+      'audio:voice',
+      'audio:sfx',
+      'audio:music',
+    ])
   })
 
   it('rubberband derived asset cached by assetId+rate, original WAV untouched', () => {
     const slide = engine.createSlide('S1')
     engine.setSlideDuration(slide.id, 2.0)
     const base64Orig = wavBase64ForDuration(2)
-    const assetRes = dispatcher.dispatch(new CreateAudioAssetCommand({ name: 'orig', data: base64Orig, mimeType: 'audio/wav', metadata: { duration: 2, sampleRate: 44100, channels: 1 } }))
+    const assetRes = dispatcher.dispatch(
+      new CreateAudioAssetCommand({
+        name: 'orig',
+        data: base64Orig,
+        mimeType: 'audio/wav',
+        metadata: { duration: 2, sampleRate: 44100, channels: 1 },
+      }),
+    )
     if (!assetRes.ok) throw assetRes.error
     const assetId = (assetRes.inverse as { assetId: string }).assetId
     const origAssetBefore = engine.getEmbeddedAsset(assetId)!
     const origDataBefore = origAssetBefore.data
 
     // two clips sharing same asset but different playbackRate => two cache entries
-    dispatcher.dispatch(new CreateAudioClipCommand({ slideId: slide.id, assetId, trackId: 'voice', timelineStart: 0, sourceEnd: 2, playbackRate: 1.5 }))
-    dispatcher.dispatch(new CreateAudioClipCommand({ slideId: slide.id, assetId, trackId: 'sfx', timelineStart: 0, sourceEnd: 2, playbackRate: 0.75 }))
+    dispatcher.dispatch(
+      new CreateAudioClipCommand({
+        slideId: slide.id,
+        assetId,
+        trackId: 'voice',
+        timelineStart: 0,
+        sourceEnd: 2,
+        playbackRate: 1.5,
+      }),
+    )
+    dispatcher.dispatch(
+      new CreateAudioClipCommand({
+        slideId: slide.id,
+        assetId,
+        trackId: 'sfx',
+        timelineStart: 0,
+        sourceEnd: 2,
+        playbackRate: 0.75,
+      }),
+    )
     // third clip same asset+rate as first should NOT duplicate cache entry
-    dispatcher.dispatch(new CreateAudioClipCommand({ slideId: slide.id, assetId, trackId: 'music', timelineStart: 0, sourceEnd: 2, playbackRate: 1.5 }))
+    dispatcher.dispatch(
+      new CreateAudioClipCommand({
+        slideId: slide.id,
+        assetId,
+        trackId: 'music',
+        timelineStart: 0,
+        sourceEnd: 2,
+        playbackRate: 1.5,
+      }),
+    )
 
     const job = engine.buildExportJobDescriptor({ fps: 24 })
     // cache key assetId:rate unique
@@ -240,10 +406,25 @@ describe('Spec 15.11 — Deterministic Export Mix (Frames + 3 Lanes via FFmpeg)'
     const slide = engine.createSlide('S1')
     engine.setSlideDuration(slide.id, 1.0)
     const base64 = wavBase64ForDuration(1)
-    const assetRes = dispatcher.dispatch(new CreateAudioAssetCommand({ name: 'a', data: base64, mimeType: 'audio/wav', metadata: { duration: 1, sampleRate: 44100, channels: 1 } }))
+    const assetRes = dispatcher.dispatch(
+      new CreateAudioAssetCommand({
+        name: 'a',
+        data: base64,
+        mimeType: 'audio/wav',
+        metadata: { duration: 1, sampleRate: 44100, channels: 1 },
+      }),
+    )
     if (!assetRes.ok) throw assetRes.error
     const assetId = (assetRes.inverse as { assetId: string }).assetId
-    dispatcher.dispatch(new CreateAudioClipCommand({ slideId: slide.id, assetId, trackId: 'voice', timelineStart: 0, sourceEnd: 1 }))
+    dispatcher.dispatch(
+      new CreateAudioClipCommand({
+        slideId: slide.id,
+        assetId,
+        trackId: 'voice',
+        timelineStart: 0,
+        sourceEnd: 1,
+      }),
+    )
     const job = engine.buildExportJobDescriptor({ fps: 30 })
     const slideDesc = job.slides[0]
     // video input
@@ -257,10 +438,26 @@ describe('Spec 15.11 — Deterministic Export Mix (Frames + 3 Lanes via FFmpeg)'
     const slide = engine.createSlide('S1')
     engine.setSlideDuration(slide.id, 1.5)
     const base64 = wavBase64ForDuration(1)
-    const aRes = dispatcher.dispatch(new CreateAudioAssetCommand({ name: 'a', data: base64, mimeType: 'audio/wav', metadata: { duration: 1, sampleRate: 44100, channels: 1 } }))
+    const aRes = dispatcher.dispatch(
+      new CreateAudioAssetCommand({
+        name: 'a',
+        data: base64,
+        mimeType: 'audio/wav',
+        metadata: { duration: 1, sampleRate: 44100, channels: 1 },
+      }),
+    )
     if (!aRes.ok) throw aRes.error
     const assetId = (aRes.inverse as { assetId: string }).assetId
-    dispatcher.dispatch(new CreateAudioClipCommand({ slideId: slide.id, assetId, trackId: 'voice', timelineStart: 0, sourceEnd: 1, playbackRate: 1.2 }))
+    dispatcher.dispatch(
+      new CreateAudioClipCommand({
+        slideId: slide.id,
+        assetId,
+        trackId: 'voice',
+        timelineStart: 0,
+        sourceEnd: 1,
+        playbackRate: 1.2,
+      }),
+    )
     const descriptor = engine.buildExportJobDescriptor({ fps: 30 })
 
     // Mock fetch to backend — but using real validation logic via direct import would need backend.

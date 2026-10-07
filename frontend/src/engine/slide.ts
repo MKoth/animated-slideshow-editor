@@ -8,6 +8,8 @@ import type { AudioClip } from './audioClip'
 import { audioClipToJSON } from './audioClip'
 import type { SlideAnimationScript } from './animationScript'
 import { animationScriptToJSON } from './animationScript'
+import type { SceneEffect } from './sceneEffect'
+import { sceneEffectToJSON } from './sceneEffect'
 
 export const DEFAULT_SLIDE_DURATION = 10
 export const MIN_SLIDE_DURATION = 0.1
@@ -23,6 +25,7 @@ export class Slide {
   prompter: Prompter | null
   audio: { clips: AudioClip[] }
   animationScript: SlideAnimationScript | null
+  effects: readonly SceneEffect[]
 
   constructor(
     id: string,
@@ -34,6 +37,7 @@ export class Slide {
     prompter: Prompter | null = null,
     audio?: { clips: AudioClip[] },
     animationScript: SlideAnimationScript | null = null,
+    effects: readonly SceneEffect[] = [],
   ) {
     this.id = id
     this.name = name
@@ -44,6 +48,7 @@ export class Slide {
     this.prompter = prompter
     this.audio = audio ?? { clips: [] }
     this.animationScript = animationScript
+    this.effects = effects
   }
 
   toJSON(): SlideJSON {
@@ -62,6 +67,9 @@ export class Slide {
         : {}),
       ...(this.animationScript !== null
         ? { animationScript: animationScriptToJSON(this.animationScript) }
+        : {}),
+      ...(this.effects.length > 0
+        ? { effects: this.effects.map(sceneEffectToJSON) as import('./json').SceneEffectJSON[] }
         : {}),
     }
   }

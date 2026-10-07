@@ -85,6 +85,14 @@ export function checkAnimationScript(
       isCircle: node.components.circle !== undefined,
       isMesh: node.components.mesh !== undefined,
       isText: node.components.text !== undefined,
+      isRenderable:
+        node.components.assetInstance !== undefined ||
+        node.components.text !== undefined ||
+        node.components.mesh !== undefined ||
+        node.components.circle !== undefined ||
+        node.components.chart !== undefined ||
+        node.components.table !== undefined,
+      isAssetInstance: node.components.assetInstance !== undefined,
       isGroup: isGroupNode(node),
       hasShadowEffect: node.shadowEffect !== undefined,
       morphBinding: engine.getMorphBinding(node.id),
@@ -168,6 +176,15 @@ export function checkAnimationScript(
     evaluateTrackValue: (nodeId, track, time) =>
       evaluateTrackValue(engine, reads, nodeId, track, time),
     reads,
+    isVisible(nodeId, time) {
+      let node: SceneNode | undefined = slide.scene.getNode(nodeId) ?? undefined
+      while (node) {
+        const state = engine.evaluateNode(node.id, time)
+        if (!state.visible || state.opacity <= 0) return false
+        node = node.parent ?? undefined
+      }
+      return true
+    },
   })
 }
 

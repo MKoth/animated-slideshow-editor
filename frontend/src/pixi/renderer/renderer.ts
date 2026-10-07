@@ -945,6 +945,9 @@ export class Renderer {
         this.#syncFullscreenShader()
         this.#thumbnails.handleEvent(event)
         break
+      case 'SlideSceneEffectsChanged':
+        if (event.slideId === sceneRenderer.boundSlideId) this.#handleTimeChanged()
+        break
       case 'KeyframeAdded':
       case 'KeyframeRemoved':
       case 'KeyframeMoved':

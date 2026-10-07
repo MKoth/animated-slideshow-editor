@@ -29,6 +29,7 @@ import {
 import { validateAudioClipJSON, audioClipFromJSON } from './audioClip'
 import { validatePrompterJSON, prompterFromJSON } from './prompter'
 import { animationScriptFromJSON, validateAnimationScriptJSON } from './animationScript'
+import { sceneEffectFromJSON } from './sceneEffect'
 import { buildScriptLibraryEntriesFromJSON } from './scriptLibrary'
 import type { MaterialParameterKindOf } from './nodeAnimation'
 import { DEFAULT_MATERIAL_DEFINITION_ID } from './materialInstance'
@@ -359,6 +360,24 @@ function validateSlide(
       slideJson.animationScript,
       `Slide "${String(slideJson.id)}"`,
     )
+  }
+  if (slideJson.effects !== undefined) {
+    if (!Array.isArray(slideJson.effects)) {
+      errors.push(`Slide "${String(slideJson.id)}" effects must be an array`)
+    } else {
+      const ids = new Set<string>()
+      for (let i = 0; i < slideJson.effects.length; i += 1) {
+        try {
+          const effect = sceneEffectFromJSON(slideJson.effects[i])
+          if (ids.has(effect.id)) errors.push(`Duplicate scene effect id: ${effect.id}`)
+          ids.add(effect.id)
+        } catch (error) {
+          errors.push(
+            `Slide "${String(slideJson.id)}" effects[${i}] is invalid: ${error instanceof Error ? error.message : String(error)}`,
+          )
+        }
+      }
+    }
   }
   if (slideJson.audio !== undefined) {
     if (!isRecord(slideJson.audio) || !Array.isArray(slideJson.audio.clips)) {
@@ -1153,6 +1172,7 @@ function buildSlideFromJSON(json: SlideJSON, parameterKindOf: MaterialParameterK
     prompter,
     { clips: audioClips },
     json.animationScript === undefined ? null : animationScriptFromJSON(json.animationScript),
+    json.effects?.map(sceneEffectFromJSON) ?? [],
   )
 }
 

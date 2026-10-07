@@ -58,6 +58,8 @@ export interface AnimationScriptReadSource {
    * box of the unrotated node) and uses renderer-measured sizes.
    */
   bounds(nodeId: string, time: number): AnimationScriptBoundsRead | null
+  /** The renderer-measured world AABB of this node only (never its children). */
+  nodeBounds(nodeId: string, time: number): AnimationScriptBoundsRead | null
   /**
    * The world-space rectangle of a Grid Slot cell composed with the table's
    * world transform at `time`: `x`/`y` are the mapped top-left corner,
@@ -87,12 +89,47 @@ export function createAnimationScriptReads(
     bounds(nodeId, time) {
       return subtreeBounds(engine, measure, nodeId, time)
     },
+    nodeBounds(nodeId, time) {
+      return nodeBounds(engine, measure, nodeId, time)
+    },
     cellRect(tableNodeId, cellNodeId, time) {
       return gridSlotRect(engine, tableNodeId, cellNodeId, time)
     },
     controlValue(nodeId, key, time) {
       return controlValueAt(engine, nodeId, key, time)
     },
+  }
+}
+
+function nodeBounds(
+  engine: EnginePublic,
+  measure: AnimationScriptMeasure | undefined,
+  nodeId: string,
+  time: number,
+): AnimationScriptBoundsRead | null {
+  const size = measure?.(nodeId)
+  if (
+    !size ||
+    !Number.isFinite(size.width) ||
+    !Number.isFinite(size.height) ||
+    size.width <= 0 ||
+    size.height <= 0 ||
+    !Number.isFinite(size.offsetX ?? 0) ||
+    !Number.isFinite(size.offsetY ?? 0)
+  ) {
+    return null
+  }
+  const world = evaluatedWorldTransformOf(engine, nodeId, time)
+  if (!world || world.scaleX === 0 || world.scaleY === 0) return null
+  const halfWidth = Math.abs(size.width * world.scaleX) / 2
+  const halfHeight = Math.abs(size.height * world.scaleY) / 2
+  const centerX = world.x + (size.offsetX ?? 0) * world.scaleX
+  const centerY = world.y + (size.offsetY ?? 0) * world.scaleY
+  return {
+    minX: centerX - halfWidth,
+    minY: centerY - halfHeight,
+    maxX: centerX + halfWidth,
+    maxY: centerY + halfHeight,
   }
 }
 

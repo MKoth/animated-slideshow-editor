@@ -16,6 +16,7 @@ import type { ClampedKeyframe } from './slideAnimation'
 import { requireFiniteNumber, requireNonEmpty, requireStringAllowEmpty } from './guards'
 import { newAudioClipId } from './audioClip'
 import type { SlideAnimationScript } from './animationScript'
+import type { SceneEffect } from './sceneEffect'
 import type { CompiledFootprint } from './compiledFootprint'
 import { remapCompiledFootprint } from './compiledFootprint'
 import { newPrompterPartId, newAudioSegmentId } from './prompter'
@@ -91,6 +92,19 @@ export class SlideManager {
     }
     const source = this.get(slideId)
     const { scene, nodeIds } = this.#scenes.copyScene(source.scene)
+    const duplicatedEffects = source.effects.map((effect) => ({
+      ...effect,
+      id: newId('scene-effect'),
+      scopeNodeIds: effect.scopeNodeIds.map((nodeId) => nodeIds.get(nodeId) ?? nodeId),
+      nodeIds: effect.nodeIds.map((nodeId) => nodeIds.get(nodeId) ?? nodeId),
+      visual:
+        effect.visual.kind === 'asset'
+          ? { ...effect.visual, nodeId: nodeIds.get(effect.visual.nodeId) ?? effect.visual.nodeId }
+          : { ...effect.visual },
+    }))
+    const effectIds = new Map(
+      source.effects.map((effect, index) => [effect.id, duplicatedEffects[index].id]),
+    )
     const clipIdMap = new Map<string, string>()
     const newClips = source.audio.clips.map((clip) => {
       const newId = newAudioClipId()
@@ -135,6 +149,7 @@ export class SlideManager {
               ? {
                   lastCompiled: remapCompiledFootprint(sourceScript.lastCompiled, nodeIds, {
                     dropCreatedDataSources: true,
+                    effectIds,
                   }),
                 }
               : {}),
@@ -154,6 +169,7 @@ export class SlideManager {
       prompterCopy,
       { clips: newClips },
       scriptCopy,
+      duplicatedEffects,
     )
     project.slides.splice(project.slides.indexOf(source) + 1, 0, copy)
     this.#bus.emit({ type: 'SlideDuplicated', slideId: copy.id })
@@ -231,6 +247,14 @@ export class SlideManager {
     }
     this.#bus.emit({ type: 'SlideAnimationScriptChanged', slideId })
     return previousFootprint
+  }
+
+  setSceneEffects(slideId: string, effects: readonly SceneEffect[]): readonly SceneEffect[] {
+    const slide = this.get(slideId)
+    const previous = slide.effects
+    slide.effects = [...effects]
+    this.#bus.emit({ type: 'SlideSceneEffectsChanged', slideId })
+    return previous
   }
 
   /** Assign a fullscreen shader to a slide, or clear it; assigning resets overrides. */

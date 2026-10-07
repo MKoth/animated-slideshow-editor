@@ -65,6 +65,11 @@ export interface SlideAnimationScriptChanged {
   readonly slideId: string
 }
 
+export interface SlideSceneEffectsChanged {
+  readonly type: 'SlideSceneEffectsChanged'
+  readonly slideId: string
+}
+
 export interface NodeCreated {
   readonly type: 'NodeCreated'
   readonly nodeId: string
@@ -439,6 +444,7 @@ export type EngineEvent =
   | SlideShaderUniformChanged
   | SlideDuplicated
   | SlideAnimationScriptChanged
+  | SlideSceneEffectsChanged
   | NodeCreated
   | NodeRemoved
   | NodeReparented

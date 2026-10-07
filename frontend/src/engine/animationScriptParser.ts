@@ -407,6 +407,17 @@ export interface PointArrowAtNode {
   readonly span: SourceSpan
 }
 
+/** `reveal(node)`, `reveal(subtree(node))`, or `reveal(group)` authors a sweep. */
+export interface RevealNode {
+  readonly kind: 'reveal'
+  readonly nameSpan: SourceSpan
+  readonly target: ScriptExpression
+  readonly at?: ScriptExpression
+  readonly over?: ScriptExpression
+  readonly visual?: ScriptExpression
+  readonly span: SourceSpan
+}
+
 /** The object kinds `create` can mint. */
 export const SCRIPT_CREATE_KINDS = ['text', 'table', 'asset', 'data', 'chart', 'group'] as const
 
@@ -445,6 +456,7 @@ export type ScriptStatementNode =
   | FunctionDefNode
   | FunctionCallNode
   | PointArrowAtNode
+  | RevealNode
   | WaitNode
   | MarkNode
   | AtNode
@@ -640,6 +652,9 @@ class Parser {
     }
     if (this.#isIdentifier('pointArrowAt') && this.#nextIsPunctuation('(')) {
       return this.#parsePointArrowAt()
+    }
+    if (this.#isIdentifier('reveal') && this.#nextIsPunctuation('(')) {
+      return this.#parseReveal()
     }
     if (
       this.#isIdentifier('create') &&
@@ -848,6 +863,45 @@ class Parser {
       label.span,
     )
     return null
+  }
+
+  #parseReveal(): RevealNode | null {
+    const start = this.#peek().span.start
+    const name = this.#advance()
+    if (!this.#expectPunctuation('(')) return null
+    const target = this.#parseExpression('a node or semantic-group binding')
+    if (target === null) return null
+    let at: ScriptExpression | undefined
+    let over: ScriptExpression | undefined
+    let visual: ScriptExpression | undefined
+    const seen = new Set<string>()
+    while (this.#matchPunctuation(',')) {
+      const option = this.#expectIdentifier('a reveal option (at, over, visual)')
+      if (option === null || !this.#expectPunctuation(':')) return null
+      if (seen.has(option.text))
+        this.#report(`Reveal option "${option.text}" is written twice`, option.span)
+      seen.add(option.text)
+      const value = this.#parseExpression(`a value for reveal ${option.text}`)
+      if (value === null) return null
+      if (option.text === 'at') at = value
+      else if (option.text === 'over') over = value
+      else if (option.text === 'visual') visual = value
+      else
+        this.#report(
+          `Unknown reveal option "${option.text}". Available options: at, over, visual.`,
+          option.span,
+        )
+    }
+    if (!this.#expectPunctuation(')')) return null
+    return {
+      kind: 'reveal',
+      nameSpan: name.span,
+      target,
+      ...(at ? { at } : {}),
+      ...(over ? { over } : {}),
+      ...(visual ? { visual } : {}),
+      span: { start, end: this.#previousEnd() },
+    }
   }
 
   /**

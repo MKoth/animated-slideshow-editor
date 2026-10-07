@@ -336,6 +336,8 @@ export type SlideAudioJSON = {
   readonly clips: readonly AudioClipJSON[]
 }
 
+export type SceneEffectJSON = Readonly<Record<string, unknown>>
+
 export type CompiledFootprintTrackJSON = {
   readonly nodeId: string
   readonly target: KeyframeTarget
@@ -352,6 +354,7 @@ export type CompiledFootprintJSON = {
   readonly createdNodes?: readonly string[]
   /** Data source ids the run embedded; absent on older footprint files. */
   readonly createdDataSources?: readonly string[]
+  readonly effectIds?: readonly string[]
 }
 
 export type AnimationScriptJSON = {
@@ -368,6 +371,7 @@ export type SlideJSON = {
   readonly fullscreenShader?: FullscreenShaderJSON
   readonly prompter?: PrompterJSON
   readonly audio?: SlideAudioJSON
+  readonly effects?: readonly SceneEffectJSON[]
   readonly animationScript?: AnimationScriptJSON
 }
 

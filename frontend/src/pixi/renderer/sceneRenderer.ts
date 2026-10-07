@@ -79,6 +79,8 @@ import { generateCircleMeshData } from '../../engine/circleComponent'
 import { useShapePreviewStore } from '../../stores/shapePreviewStore'
 import { useMeshEditStore } from '../../stores/meshEditStore'
 import type { MeshData, MeshVertex } from '../../engine/mesh'
+import { RevealEffectRenderer } from './revealEffectRenderer'
+import type { RevealPerformerAssetState } from './revealEffectRenderer'
 
 export interface CurrentTimeSource {
   getTime(slideId: string): number
@@ -154,6 +156,7 @@ export class SceneRenderer {
   readonly #world: PixiContainer
   readonly #currentTime: CurrentTimeSource
   readonly #containers = new Map<string, PixiContainer>()
+  readonly #revealEffectRenderer: RevealEffectRenderer
   readonly #nodeIds = new WeakMap<PixiContainer, string>()
   readonly #sizes = new Map<string, WorldSize>()
   readonly #lastEvaluated = new Map<string, EvaluatedNodeScratch>()
@@ -233,6 +236,12 @@ export class SceneRenderer {
     this.#resolveShaderSource = resolveShaderSource
     this.#resolveDataSource = resolveDataSource
     this.#renderToTexture = renderToTexture
+    this.#revealEffectRenderer = new RevealEffectRenderer(
+      this.#world,
+      this.#pixi,
+      this.#textureCache,
+      (nodeId, time) => this.#revealPerformerAssetState(nodeId, time),
+    )
     void useShapePreviewStore.subscribe(() => {
       this.refreshDeformedMeshSizes()
       if (this.#scene) {
@@ -284,6 +293,7 @@ export class SceneRenderer {
   bind(scene: Scene | null, slideId: string | null = null): void {
     // Destroy existing shadows (RT lifecycle: bind(null) destroys)
     this.#destroyAllShadows()
+    this.#revealEffectRenderer.clear(this.#containers)
     this.#sculptPreviews.clear()
     for (const container of this.#containers.values()) {
       container.destroy({ children: true })
@@ -315,6 +325,7 @@ export class SceneRenderer {
         this.#ensureShadowForGroup(node)
       }
     }
+    this.#updateRevealEffects()
   }
 
   handleNodeCreated(nodeId: string): void {
@@ -340,6 +351,7 @@ export class SceneRenderer {
     if (node.parent) {
       this.#evaluateAndApply(node.parent.id)
     }
+    this.#updateRevealEffects()
   }
 
   handleNodeRemoved(nodeId: string): void {
@@ -349,6 +361,7 @@ export class SceneRenderer {
     if (!container) {
       // Still need to destroy shadow if group removed but container missing (e.g., root)
       this.#destroyShadowForGroup(nodeId)
+      this.#updateRevealEffects()
       return
     }
     // Capture parent before destroy for shadow update
@@ -393,6 +406,7 @@ export class SceneRenderer {
       this.#markShadowDirtyForNode(nodeId)
       this.#flushShadowDirty()
     }
+    this.#updateRevealEffects()
   }
 
   handleTransformChanged(nodeId: string): void {
@@ -433,12 +447,49 @@ export class SceneRenderer {
     for (const node of walkPreOrder(scene.root)) {
       this.#evaluateAndApply(node.id)
     }
+    this.#updateRevealEffects()
     if (options.refreshMeshSizes !== false) {
       this.refreshDeformedMeshSizes()
     }
     const time = this.#slideId ? this.#currentTime.getTime(this.#slideId) : 0
     for (const gid of [...this.#shadowContainers.keys()]) {
       this.#updateShadowIfNeeded(gid, time)
+    }
+  }
+
+  #updateRevealEffects(): void {
+    const slideId = this.#slideId
+    const scene = this.#scene
+    if (!slideId || !scene) return
+    const time = this.#currentTime.getTime(slideId)
+    this.#revealEffectRenderer.update(
+      this.#engine.getSlide(slideId).effects,
+      scene,
+      time,
+      this.#containers,
+    )
+  }
+
+  #revealPerformerAssetState(nodeId: string, time: number): RevealPerformerAssetState | null {
+    const node = this.#scene?.getNode(nodeId)
+    const assetId = node?.material.textureId ?? node?.components.assetInstance?.assetDefinitionId
+    const size = this.#sizes.get(nodeId)
+    const world = this.#engineWorldTransform(nodeId, time)
+    if (!node || !assetId || !size || !world) return null
+    const overrides = this.#engine.evaluateMaterialOverrides(
+      nodeId,
+      time,
+      this.#materialOverridesScratch,
+    )
+    const material = this.#resolveMaterial(nodeId, overrides, this.#materialScratch)
+    return {
+      assetId,
+      size,
+      rotation: world.rotation,
+      scaleX: world.scaleX,
+      scaleY: world.scaleY,
+      tint: hexStringToTint(material.tint),
+      alpha: this.#engine.evaluateNode(nodeId, time).opacity * material.opacityMultiplier,
     }
   }
 

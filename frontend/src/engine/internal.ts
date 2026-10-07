@@ -57,6 +57,7 @@ import type { ShadowEffect } from './shadowEffect'
 import type { Slide } from './slide'
 import type { SlideDurationChange } from './slideManager'
 import type { SlideAnimationScript } from './animationScript'
+import type { SceneEffect } from './sceneEffect'
 import type { CompiledFootprint } from './compiledFootprint'
 import type { EngineEvent, Unsubscribe } from './events'
 import type { CreateNodeOptions } from './nodeManager'
@@ -380,6 +381,10 @@ export class Engine {
     footprint: CompiledFootprint | null,
   ): CompiledFootprint | null {
     return this.#slides.setAnimationScriptFootprint(slideId, footprint)
+  }
+
+  setSlideSceneEffects(slideId: string, effects: readonly SceneEffect[]): readonly SceneEffect[] {
+    return this.#slides.setSceneEffects(slideId, effects)
   }
 
   // --- Animation Script library (project-scoped entries) ---

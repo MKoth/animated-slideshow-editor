@@ -8,6 +8,8 @@ import type { AudioClip } from './audioClip'
 import { AUDIO_TRACK_IDS, getPitchScaleForSemitones } from './audioClip'
 import type { Slide } from './slide'
 import type { Project } from './project'
+import type { SceneEffect } from './sceneEffect'
+import { sceneEffectToJSON } from './sceneEffect'
 
 // ---------------------------------------------------------------------------
 // Constants — Spec 15.11 contract
@@ -142,6 +144,8 @@ export interface ExportPerSlideDescriptor {
   readonly fps: number
   readonly frameCount: number
   readonly frameTimestamps: readonly number[]
+  /** Persisted visual effects that frame renderers must evaluate at each timestamp. */
+  readonly effects: readonly SceneEffect[]
   readonly video: {
     readonly inputKind: 'frames'
     readonly frameCount: number
@@ -348,6 +352,7 @@ export function buildPerSlideExportDescriptor(
     fps,
     frameCount,
     frameTimestamps,
+    effects: slide.effects,
     video: {
       inputKind: 'frames',
       frameCount,
@@ -479,6 +484,7 @@ export function buildExportJobDescriptor(
       id: s.slideId,
       duration: s.duration,
       frameCount: s.frameCount,
+      effects: s.effects.map(sceneEffectToJSON),
       clips: s.audio.clips.map((c) => ({
         id: c.id,
         assetId: c.assetId,
@@ -511,8 +517,9 @@ export function buildExportJobDescriptor(
       })
       .sort(),
   }
-  // Simple deterministic JSON + hash-like base64 of JSON (not crypto, just stable)
-  const determinismKey = btoa(JSON.stringify(determinismPayload)).slice(0, 48)
+  // Stable FNV-1a digest of the full payload; truncating base64 of the JSON
+  // would ignore fields such as later slide effects.
+  const determinismKey = determinismKeyOf(determinismPayload)
 
   return {
     version: EXPORT_VERSION,
@@ -542,4 +549,14 @@ export function buildExportJobDescriptor(
     determinismKey,
     ffmpegGlobalArgs,
   }
+}
+
+function determinismKeyOf(payload: unknown): string {
+  const source = JSON.stringify(payload)
+  let hash = 0xcbf29ce484222325n
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= BigInt(source.charCodeAt(index))
+    hash = (hash * 0x100000001b3n) & 0xffffffffffffffffn
+  }
+  return `fnv1a64-${hash.toString(16).padStart(16, '0')}`
 }

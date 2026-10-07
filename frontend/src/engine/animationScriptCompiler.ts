@@ -47,6 +47,7 @@ import type {
   MemberExpression,
   ParallelNode,
   PointArrowAtNode,
+  RevealNode,
   PropertyEntry,
   RepeatNode,
   ScriptExpression,
@@ -79,6 +80,8 @@ import {
 import type { ScriptExpressionContext, ScriptValue } from './animationScriptExpression'
 import { mergeBounds } from './animationScriptReads'
 import type { AnimationScriptBoundsRead, AnimationScriptReadSource } from './animationScriptReads'
+import type { RevealEffect } from './sceneEffect'
+import { compileAnimationScriptReveal } from './animationScriptRevealCompiler'
 import {
   DEFAULT_MATERIAL_PARAMETERS,
   DEFAULT_OPACITY_MULTIPLIER,
@@ -215,6 +218,8 @@ export interface AnimationScriptNodeInfo {
   } | null
   /** The node's chart data-label names; `dataLabel(...)` resolves against them. */
   readonly dataLabels?: readonly string[]
+  readonly isRenderable?: boolean
+  readonly isAssetInstance?: boolean
 }
 
 /** The mesh-generation parameters a `create asset ... mesh` request carries. */
@@ -403,6 +408,7 @@ export interface AnimationScriptCompileContext {
    * time and never write engine state, so Check and Run read identically.
    */
   readonly reads: AnimationScriptReadSource
+  readonly isVisible: (nodeId: string, time: number) => boolean
 }
 
 export interface AnimationScriptDiagnostic {
@@ -449,6 +455,7 @@ export interface AnimationScriptCompileResult {
   readonly creations: AnimationScriptCreations
   readonly footprint: CompiledFootprint
   readonly summary: AnimationScriptSummary
+  readonly effects: readonly RevealEffect[]
 }
 
 interface ScriptMember {
@@ -704,13 +711,14 @@ export interface AnimationScriptExistingControl {
 }
 
 /**
- * Names a `function` definition may not take: the expression built-ins, the
- * shipped `pointArrowAt` built-in (owned by #388), the `setText` free call,
- * and the statement keywords. Collisions are compile errors.
+ * Names a `function` definition may not take: expression and statement
+ * built-ins, `setText`, and the statement keywords. Collisions are errors.
  */
+const SCRIPT_STATEMENT_BUILTIN_NAMES: readonly string[] = ['pointArrowAt', 'reveal', 'subtree']
+
 const SCRIPT_FUNCTION_RESERVED_NAMES: readonly string[] = [
   ...SCRIPT_BUILTIN_NAMES,
-  'pointArrowAt',
+  ...SCRIPT_STATEMENT_BUILTIN_NAMES,
   'setText',
   'create',
   'bind',
@@ -826,6 +834,7 @@ class Compiler {
   #instanceCount = 0
   /** Nodes carrying `play` instances, in first-addressed order (footprint). */
   readonly #instanceNodes: string[] = []
+  readonly #effects: RevealEffect[] = []
   /** Nodes carrying `apply` placements, in first-addressed order (footprint). */
   readonly #placementParents: string[] = []
   /**
@@ -924,6 +933,7 @@ class Compiler {
       entryVersions: Object.fromEntries(this.#usedLibraryVersions),
       createdNodes: [...this.#createdNodeInfos.map((entry) => entry.nodeId)],
       createdDataSources: [...this.#createdDataSourceInfos.map((entry) => entry.id)],
+      effectIds: this.#effects.map((effect) => effect.id),
     }
     const materialized = errors
       ? { commands: [] as Command<unknown>[], orders: [] as number[] }
@@ -940,6 +950,7 @@ class Compiler {
       },
       footprint,
       summary,
+      effects: [...this.#effects],
     }
   }
 
@@ -1073,7 +1084,8 @@ class Compiler {
     ) {
       const suggestion = nearMissSuggestion(statement.name, [...this.#allFunctionDefs.keys()])
       const builtin =
-        SCRIPT_BUILTIN_NAMES.includes(statement.name) || statement.name === 'pointArrowAt'
+        SCRIPT_BUILTIN_NAMES.includes(statement.name) ||
+        SCRIPT_STATEMENT_BUILTIN_NAMES.includes(statement.name)
           ? ` — "${statement.name}" is a built-in`
           : ''
       this.#error(
@@ -1608,7 +1620,7 @@ class Compiler {
     }
     if (
       (SCRIPT_RESERVED_NAMES as readonly string[]).includes(statement.alias) ||
-      statement.alias === 'pointArrowAt'
+      SCRIPT_STATEMENT_BUILTIN_NAMES.includes(statement.alias)
     ) {
       this.#error(
         `Name "${statement.alias}" is reserved by the Animation Script language`,
@@ -1906,6 +1918,8 @@ class Compiler {
           return this.#lowerCreate(statement, cursor)
         case 'pointArrowAt':
           return this.#lowerPointArrowAt(statement, cursor)
+        case 'reveal':
+          return this.#lowerReveal(statement, cursor)
         case 'statement':
           return this.#lowerCall(statement, cursor)
         case 'function':
@@ -2550,7 +2564,7 @@ class Compiler {
     if (
       SCRIPT_BUILTIN_NAMES.includes(statement.variable) ||
       (SCRIPT_RESERVED_NAMES as readonly string[]).includes(statement.variable) ||
-      statement.variable === 'pointArrowAt'
+      SCRIPT_STATEMENT_BUILTIN_NAMES.includes(statement.variable)
     ) {
       this.#error(`Name "${statement.variable}" is reserved by a built-in`, statement.variableSpan)
       return false
@@ -4212,7 +4226,7 @@ class Compiler {
     }
     if (
       (SCRIPT_RESERVED_NAMES as readonly string[]).includes(alias) ||
-      alias === 'pointArrowAt' ||
+      SCRIPT_STATEMENT_BUILTIN_NAMES.includes(alias) ||
       alias === 'create'
     ) {
       this.#error(
@@ -5480,6 +5494,28 @@ class Compiler {
       this.#plan(arrowMember, track, endRounded, POINT_ARROW_LINEAR_EASE, { value: rotation })
     }
     return end
+  }
+
+  #lowerReveal(statement: RevealNode, cursor: number): number {
+    const compiled = compileAnimationScriptReveal(statement, cursor, {
+      from: this.#from,
+      slideDuration: this.#context.slideDuration,
+      slideScope: this.#context.createScope ?? 'slide',
+      effectIndex: this.#effects.length,
+      nodes: this.#context.nodes,
+      evaluateNumber: (expression, what) => this.#evaluateNumber(expression, what),
+      resolveTarget: (expression, allowGroup, what) =>
+        this.#resolveReadTarget(expression, allowGroup, what),
+      bindingKind: (expression) =>
+        expression.kind === 'identifier' ? this.#lookupBinding(expression.name)?.kind : undefined,
+      isVisible: this.#context.isVisible,
+      nodeBounds: (nodeId, time) => this.#context.reads.nodeBounds(nodeId, time),
+      roundTime,
+      formatSeconds,
+      reportError: (message, span) => this.#error(message, span),
+    })
+    if (compiled.effect) this.#effects.push(compiled.effect)
+    return compiled.cursor
   }
 
   /** Rotation tracks cannot animate on cameras; the arrow keeps that rule. */
@@ -6797,7 +6833,7 @@ class Compiler {
     } else if (
       SCRIPT_BUILTIN_NAMES.includes(statement.name) ||
       (SCRIPT_RESERVED_NAMES as readonly string[]).includes(statement.name) ||
-      statement.name === 'pointArrowAt'
+      SCRIPT_STATEMENT_BUILTIN_NAMES.includes(statement.name)
     ) {
       this.#error(`Name "${statement.name}" is reserved by a built-in`, statement.nameSpan)
       declared = false

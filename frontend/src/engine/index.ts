@@ -42,6 +42,8 @@ export type { EmbeddedMaterialDefinition, EmbeddedMaterialParameter } from './em
 export type { EmbeddedShaderDefinition } from './embeddedShader'
 export type { FullscreenShaderReference } from './fullscreenShader'
 export type { SlideAnimationScript } from './animationScript'
+export type { SceneEffect, RevealEffect } from './sceneEffect'
+export { revealCoverage } from './sceneEffect'
 export type { CompiledFootprint, CompiledFootprintTrack } from './compiledFootprint'
 export { remapCompiledFootprint } from './compiledFootprint'
 export type { ScriptLibraryEntry, ScriptLibraryDrift } from './scriptLibrary'
@@ -52,10 +54,10 @@ export { runAnimationScript } from './animationScriptRun'
 export type { AnimationScriptRunResult } from './animationScriptRun'
 export { createAnimationScriptReads, mergeBounds } from './animationScriptReads'
 export type {
-  AnimationScriptBoundsRead,
   AnimationScriptMeasure,
   AnimationScriptNodeSize,
   AnimationScriptReadSource,
+  AnimationScriptBoundsRead,
   AnimationScriptRectRead,
   AnimationScriptWorldRead,
 } from './animationScriptReads'
