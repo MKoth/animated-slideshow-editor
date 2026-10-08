@@ -98,13 +98,39 @@ float noise(vec2 p) {
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
+// Deterministic domain warp: offsets the lookup by low-frequency noise so
+// cell edges never align to a visible grid. Same input => same output, so
+// timeline determinism (same time => same pixels) is preserved.
+vec2 warpVec(vec2 p) {
+  return vec2(
+    noise(p * 0.45 + vec2(13.7, 5.3)),
+    noise(p * 0.45 + vec2(7.1, 17.9))
+  ) - 0.5;
+}
+
+// Minification guard: when a noise cell covers less than a pixel (zoomed
+// out), single-sample evaluation aliases into shimmer. Returns 0..1; scale the
+// octave's amount so unresolvable detail fades to neutral instead of swimming.
+float lodFade(vec2 p) {
+  vec2 fw = fwidth(p) + vec2(1e-5);
+  return 1.0 - smoothstep(0.35, 1.4, max(fw.x, fw.y));
+}
+
 void main() {
   vec4 color = texture(uTexture, vUv);
   float amount = clamp(uGrain, 0.0, 1.0);
-  float grain = mix(0.5, noise(vUv * uNoiseScale), amount);
+  // uNoiseScale is the coarse<->fine control: higher packs more cells across
+  // the surface (finer grain), lower stretches them (coarser grain).
+  vec2 base = vUv * uNoiseScale;
+  vec2 w = warpVec(base) * 1.6;
+  float grain = mix(0.5, noise(base + w), amount * lodFade(base));
   float edge = smoothstep(0.2, 0.55, color.a * (0.75 + grain * 0.5));
-  float dustNoise = noise(vUv * uNoiseScale * 2.5);
-  float dust = mix(1.0, smoothstep(0.35, 0.7, dustNoise), amount);
+  // Second octave rotated ~35 degrees and offset so its grid never aligns
+  // with the first — this breaks the repeating pattern seen on zoom-out.
+  mat2 rot = mat2(0.819, -0.574, 0.574, 0.819);
+  vec2 dustP = rot * base * 2.5 + vec2(19.7, 7.9) + w * 2.0;
+  float dustNoise = noise(dustP);
+  float dust = mix(1.0, smoothstep(0.35, 0.7, dustNoise), amount * lodFade(dustP));
   vec3 chalk = clamp(color.rgb * (0.9 + grain * 0.3), 0.0, 1.0);
   // Pixi composites filter output with premultiplied alpha: the alpha must
   // scale the color, or dusted pixels keep full brightness and opaque strokes
@@ -177,7 +203,11 @@ BUILTIN_SHADERS: list[dict[str, object]] = [
         # GLSL kinds or the API cannot serialize the definition.
         # v3: opaque strokes dust too, emitted premultiplied so Pixi's
         # premultiplied blending actually thins them.
-        "seed_version": 3,
+        # v4: domain-warped lookups plus a rotated second octave break the
+        # visible grid/repeating pattern; an fwidth minification guard fades
+        # unresolvable detail to neutral instead of shimmering on zoom-out.
+        # uNoiseScale keeps its coarse<->fine meaning. No new uniforms.
+        "seed_version": 4,
     },
 ]
 

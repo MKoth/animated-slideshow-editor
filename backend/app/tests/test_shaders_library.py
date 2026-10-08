@@ -96,7 +96,7 @@ def test_chalk_seeds_its_grain_uniforms_with_defaults(settings: Settings) -> Non
     chalk = next(definition for definition in library.list_all() if definition.name == "Chalk")
 
     assert chalk.default_uniforms == CHALK_DEFAULT_UNIFORMS
-    assert chalk.seed_version == 3
+    assert chalk.seed_version == 4
 
 
 def test_gradient_seeds_parameterized_uniforms_with_defaults(settings: Settings) -> None:
