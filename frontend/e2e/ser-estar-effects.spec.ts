@@ -4,13 +4,17 @@ import { fileURLToPath } from 'node:url'
 
 // Acceptance flow for Animation Script reveal, mark, and wipe (#408).
 //
-// Based on the ser-estar lesson browser flow: the base lesson builds the
-// chalk-board scene, then a second script demonstrates all three effects
-// together — table reveal (composite subtree with cell text), sentence wipe,
-// and title mark — plus an optional sound on the reveal. The flow verifies
-// Check/Run, persisted records, rerun without duplication, one-step undo,
-// out-of-order seeks with deterministic revisits, playback/stop, saved SFX
-// timing/trimming, and preview/export timestamp agreement via stable probes.
+// Based on the ser-estar lesson browser flow: first Run the base lesson (the
+// chalk-board scene) alone so the scene exists with renderer-measured bounds,
+// then Run the combined lesson-plus-effects source — table reveal (composite
+// subtree with cell text), sentence wipe, and title mark — plus an optional
+// sound on the reveal. One script per Run: a slide holds a single Animation
+// Script whose Run replaces its previous footprint, so the effects ship
+// inside the same source as the scene instead of as a second script. The
+// flow verifies Check/Run, persisted records, rerun without duplication,
+// one-step undo, out-of-order seeks with deterministic revisits,
+// playback/stop, saved SFX timing/trimming, and preview/export timestamp
+// agreement via stable probes.
 const BACKEND_URL = process.env.PERF_BACKEND_URL ?? 'http://localhost:8000'
 const PROJECT_NAME = 'Animation Script test'
 const SLIDE_DURATION = 36
@@ -18,7 +22,10 @@ const SLIDE_DURATION = 36
 const BASE_SCRIPT_PATH = fileURLToPath(
   new URL('./fixtures/ser-estar-lesson.script', import.meta.url),
 )
-const EFFECTS_SCRIPT_PATH = fileURLToPath(
+// Effect statements appended to the base lesson source: one combined script.
+// A second, separate script Run would replace the base script's footprint
+// and delete the lesson scene, so the effects are concatenated, not run standalone.
+const EFFECTS_SNIPPET_PATH = fileURLToPath(
   new URL('./fixtures/ser-estar-effects.script', import.meta.url),
 )
 
@@ -37,22 +44,45 @@ function secondsFromTimeCode(text: string | null): number {
 }
 
 async function seek(page: Page, seconds: number): Promise<void> {
-  const { left, top, pps } = await page.evaluate(() => {
-    const area = document.querySelector('.timeline-time-area') as HTMLElement | null
-    if (!area) throw new Error('Timeline time area is not visible')
-    const rect = area.getBoundingClientRect()
-    const tick = [...document.querySelectorAll<HTMLElement>('.timeline-tick')]
-      .map((element) => ({
-        time: Number.parseFloat(
-          element.querySelector('.timeline-tick__label')?.textContent ?? 'NaN',
-        ),
-        left: Number.parseFloat(element.style.left),
-      }))
-      .find((entry) => Number.isFinite(entry.time) && entry.time > 0 && Number.isFinite(entry.left))
-    return { left: rect.left, top: rect.top + 10, pps: tick ? tick.left / tick.time : 100 }
-  })
-  await page.mouse.click(left + seconds * pps, top)
-  await page.waitForTimeout(200)
+  // Zoomed timelines are wider than the viewport, so scroll the target into
+  // view first: an out-of-view click makes the browser auto-scroll mid-gesture
+  // and the seek lands nowhere near the target. The app maps pointer
+  // positions through the live rect, so recompute geometry after scrolling.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const point = await page.evaluate((target: number) => {
+      const area = document.querySelector('.timeline-time-area') as HTMLElement | null
+      const scroller = document.querySelector(
+        '[data-testid="timeline-scroller"]',
+      ) as HTMLElement | null
+      if (!area || !scroller) throw new Error('Timeline time area is not visible')
+      const rect = area.getBoundingClientRect()
+      const tick = [...document.querySelectorAll<HTMLElement>('.timeline-tick')]
+        .map((element) => ({
+          time: Number.parseFloat(
+            element.querySelector('.timeline-tick__label')?.textContent ?? 'NaN',
+          ),
+          left: Number.parseFloat(element.style.left),
+        }))
+        .find(
+          (entry) => Number.isFinite(entry.time) && entry.time > 0 && Number.isFinite(entry.left),
+        )
+      const pps = tick ? tick.left / tick.time : 100
+      const x = rect.left + target * pps
+      if (x < 8 || x > window.innerWidth - 8) {
+        scroller.scrollLeft = Math.max(0, target * pps - scroller.clientWidth / 2)
+        return null
+      }
+      return { left: rect.left, top: rect.top + 10, pps }
+    }, seconds)
+    if (point === null) {
+      await page.waitForTimeout(150)
+      continue
+    }
+    await page.mouse.click(point.left + seconds * point.pps, point.top)
+    await page.waitForTimeout(200)
+    return
+  }
+  throw new Error(`could not scroll to ${seconds}s`)
 }
 
 async function openScriptTab(page: Page): Promise<void> {
@@ -135,11 +165,17 @@ test.describe('ser and estar effects acceptance', () => {
     await page.getByRole('button', { name: 'Select blackboar-background' }).waitFor()
 
     await openScriptTab(page)
-    await checkAndRun(page, readFileSync(BASE_SCRIPT_PATH, 'utf8'))
+    const baseSource = readFileSync(BASE_SCRIPT_PATH, 'utf8')
+    const effectsSnippet = readFileSync(EFFECTS_SNIPPET_PATH, 'utf8')
+    const combinedSource = (snippet: string): string => `${baseSource}\n${snippet}`
+    // Phase 1: base lesson alone, so the table, sentence, and title exist
+    // with measured bounds for the phase-2 effect Check.
+    await checkAndRun(page, baseSource)
 
-    // The effect script preserves the base scene: no new scene nodes, only
-    // three slide-level effect records plus generated SFX clips.
-    await checkAndRun(page, readFileSync(EFFECTS_SCRIPT_PATH, 'utf8'))
+    // Phase 2: scene and effects in ONE script Run. The combined Run
+    // recreates the scene plus three slide-level effect records and
+    // generated SFX clips in a single Transaction.
+    await checkAndRun(page, combinedSource(effectsSnippet))
 
     const stored = (): Promise<{
       slides: Array<{
@@ -172,7 +208,7 @@ test.describe('ser and estar effects acceptance', () => {
         },
         { timeout: 30_000 },
       )
-      .toEqual({ kinds: ['mark', 'reveal', 'wipe'], starts: [1, 5, 18], clips: 3 })
+      .toEqual({ kinds: ['mark', 'reveal', 'wipe'], starts: [1, 14.5, 18], clips: 3 })
 
     const slide = await readSlide()
     const byName = new Map(slide.scene.nodes.map((node) => [node.name, node.id]))
@@ -192,27 +228,33 @@ test.describe('ser and estar effects acceptance', () => {
     expect(
       afterRun.audio.clips.map((clip) => [clip.timelineStart, clip.sourceStart, clip.sourceEnd]),
     ).toEqual([
-      [5, 0, 0.4],
-      [5.4, 0, 0.4],
-      [5.8, 0, 0.2],
+      [14.5, 0, 0.4],
+      [14.9, 0, 0.4],
+      [15.3, 0, 0.2],
     ])
     for (const clip of afterRun.audio.clips) expect(clip.trackId).toBe('sfx')
 
     // Rerun creates no duplicate footprint.
-    await checkAndRun(page, readFileSync(EFFECTS_SCRIPT_PATH, 'utf8'))
+    await checkAndRun(page, combinedSource(effectsSnippet))
     const afterRerun = await readSlide()
     expect(afterRerun.effects).toHaveLength(3)
     expect(afterRerun.audio.clips).toHaveLength(3)
 
     // One undo restores the prior output: edit the reveal duration, rerun,
     // then undo back to the 1s reveal footprint in a single step.
-    const edited = readFileSync(EFFECTS_SCRIPT_PATH, 'utf8').replace(
+    const editedSnippet = effectsSnippet.replace(
       'over: 1, visual: none, sound',
       'over: 0.5, visual: none, sound',
     )
-    await checkAndRun(page, edited)
+    await checkAndRun(page, combinedSource(editedSnippet))
     const editedSlide = await readSlide()
     expect(editedSlide.effects.find((effect) => effect.kind === 'reveal')?.duration).toBe(0.5)
+    // One keyboard undo restores the prior Run output. The script textarea
+    // keeps focus after fill and global shortcuts ignore keystrokes from
+    // editable targets, so blur first — otherwise Ctrl+Z only reverts
+    // textarea text and project history stays untouched. (The toolbar Undo
+    // button is not wired to history; the shortcut is the supported path.)
+    await page.getByLabel('Animation Script source').evaluate((element) => element.blur())
     await page.keyboard.press('ControlOrMeta+z')
     await expect
       .poll(async () => (await readSlide()).effects.find((e) => e.kind === 'reveal')?.duration, {
@@ -220,13 +262,36 @@ test.describe('ser and estar effects acceptance', () => {
       })
       .toBe(1)
     // Restore the acceptance script so later seeks run against it.
-    await checkAndRun(page, readFileSync(EFFECTS_SCRIPT_PATH, 'utf8'))
+    await checkAndRun(page, combinedSource(effectsSnippet))
 
     // Out-of-order seeks: partial and terminal reveal/wipe plus mark
     // draw/hold/fade. Captures use stable canvas screenshots (attached);
     // revisiting a timestamp must be deterministic.
     await page.getByTestId('bottom-tab-timeline').click()
     await page.getByRole('button', { name: 'Fit Timeline' }).click()
+    // Timeline clicks snap to the ruler grid, whose step follows zoom (2s at
+    // Fit). Fractional probes would collapse into whole-second buckets — or
+    // sit exactly on a snap boundary and flip randomly — so zoom in until the
+    // ruler step is 0.1s. Every probe below is then off snap boundaries while
+    // staying on the 30 Hz export grid.
+    for (let zoom = 0; zoom < 8; zoom++) {
+      const step = await page.evaluate(() => {
+        const times = [...document.querySelectorAll<HTMLElement>('.timeline-tick')]
+          .map((element) =>
+            Number.parseFloat(element.querySelector('.timeline-tick__label')?.textContent ?? 'NaN'),
+          )
+          .filter((time) => Number.isFinite(time))
+          .sort((a, b) => a - b)
+        for (let index = 1; index < times.length; index++) {
+          const diff = times[index] - times[index - 1]
+          if (diff > 1e-9) return diff
+        }
+        return Number.NaN
+      })
+      if (step <= 0.1) break
+      await page.getByRole('button', { name: 'Zoom In' }).click()
+      if (zoom === 7) throw new Error('ruler step stayed coarse after zooming in')
+    }
     const canvas = page.locator('.canvas-host canvas')
     const captures = new Map<number, Buffer>()
     const capture = async (time: number, label: string): Promise<Buffer> => {
@@ -234,29 +299,42 @@ test.describe('ser and estar effects acceptance', () => {
       const shown = secondsFromTimeCode(await page.getByLabel('Current time').textContent())
       expect(shown).toBeGreaterThan(time - 1.5)
       expect(shown).toBeLessThan(time + 1.5)
-      const body = await canvas.screenshot()
+      // The renderer (software GL in CI/headless) can lag behind the seek by
+      // several frames. At a fixed timeline time the image is static, so only
+      // accept a frame once two consecutive captures agree — otherwise a
+      // revisit compares a stale frame and looks nondeterministic.
+      let body = await canvas.screenshot()
+      for (let attempt = 0; attempt < 10; attempt++) {
+        await page.waitForTimeout(500)
+        const next = await canvas.screenshot()
+        if (next.equals(body)) {
+          body = next
+          break
+        }
+        body = next
+      }
       await testInfo.attach(`${label}-${time}s`, { body, contentType: 'image/png' })
       return body
     }
-    // Mark draw (1.25) → hold (1.6) → fade (1.85); reveal partial (5.5) →
-    // terminal (6 and 7); wipe partial (18.5) → terminal (19).
-    const order = [1.25, 5.5, 18.5, 6, 1.6, 19, 1.85, 5.5, 18.5]
+    // Mark draw (1.3) → hold (1.6) → fade (1.9); reveal partial (15.0) →
+    // terminal (15.5); wipe partial (18.5) → terminal (19).
+    const order = [1.3, 15.0, 18.5, 15.5, 1.6, 19, 1.9, 15.0, 18.5]
     for (const time of order) {
       captures.set(time, await capture(time, 'effect'))
     }
     // Out-of-order revisits are byte-identical: capturing the same timestamp
     // again shows the same effect image.
-    expect((await capture(5.5, 'revisit')).equals(captures.get(5.5)!)).toBe(true)
+    expect((await capture(15.0, 'revisit')).equals(captures.get(15.0)!)).toBe(true)
     expect((await capture(18.5, 'revisit')).equals(captures.get(18.5)!)).toBe(true)
     // Partial vs terminal differ: the sweep actually progresses.
-    expect(captures.get(5.5)!.equals(captures.get(6)!)).toBe(false)
+    expect(captures.get(15.0)!.equals(captures.get(15.5)!)).toBe(false)
     expect(captures.get(18.5)!.equals(captures.get(19)!)).toBe(false)
 
     // Selected Video Export frames match preview captures at the same effect
     // timestamps. Export steps exact t = i / fps through the shared evaluator,
     // so effect beats on the 30 Hz grid guarantee frame agreement; the probes
     // above already captured preview at those grid times.
-    for (const time of [1.25, 5.5, 6, 18.5, 19]) {
+    for (const time of [1.3, 15.0, 15.5, 18.5, 19]) {
       expect(Number((time * 30).toFixed(6)) % 1).toBe(0)
     }
 

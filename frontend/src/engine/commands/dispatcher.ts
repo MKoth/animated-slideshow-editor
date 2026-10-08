@@ -59,6 +59,7 @@ export class CommandDispatcher {
       const entry = this.#undoStack.undo(this.#engine)
       if (!entry) return false
       this.#log(`undo ${entry.type}`)
+      this.#onCommandSucceeded?.()
       return true
     } catch (error) {
       console.error('[undo] failed', error)
@@ -71,6 +72,7 @@ export class CommandDispatcher {
       const entry = this.#undoStack.redo(this.#engine)
       if (!entry) return false
       this.#log(`redo ${entry.type}`)
+      this.#onCommandSucceeded?.()
       return true
     } catch (error) {
       console.error('[redo] failed', error)

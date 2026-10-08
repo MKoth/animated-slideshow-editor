@@ -298,6 +298,22 @@ export function applyUndo(
           }
         }
       }
+      // Reinstall the deleted subtree's animation: removing a node drops its
+      // tracks from the slide animation store, and recreating the node does
+      // not bring them back. Without this, undoing a run that replaced
+      // script-created nodes resurrects the nodes with no keyframes.
+      const animations = (inv.animations ?? []) as readonly {
+        nodeId: string
+        animation: import('../nodeAnimation').NodeAnimation
+      }[]
+      for (const { nodeId, animation } of animations) {
+        try {
+          engine.getNode(nodeId)
+          engine.getSlideOfNode(nodeId).animation.setNodeAnimation(nodeId, animation.copy())
+        } catch {
+          void 0
+        }
+      }
       return
     }
     case 'CreateAssetInstance': {

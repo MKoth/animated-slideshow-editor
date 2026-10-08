@@ -154,7 +154,10 @@ export class RevealEffectRenderer {
       let mask = this.#masks.get(nodeId)
       if (!mask) {
         mask = new this.#pixi.Graphics()
-        mask.renderable = false
+        // Do NOT set renderable = false here: Pixi v8 hides assigned masks
+        // from normal rendering itself (StencilMask sets includeInBuild =
+        // false), while renderable = false also skips the mask's geometry in
+        // the stencil pass — leaving every masked node fully hidden.
         this.#world.addChild(mask)
         container.mask = mask
         this.#masks.set(nodeId, mask)

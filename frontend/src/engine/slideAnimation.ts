@@ -98,6 +98,16 @@ export class SlideAnimation {
     this.#nodes.delete(nodeId)
   }
 
+  /**
+   * Install a previously snapshotted node animation, replacing whatever the
+   * node currently holds. Undo of node deletion restores keyframes this way:
+   * deleting a node drops its animation, and recreating the node does not
+   * bring the tracks back on its own.
+   */
+  setNodeAnimation(nodeId: string, animation: NodeAnimation): void {
+    this.#nodes.set(nodeId, animation)
+  }
+
   copyFor(nodeIdMap: ReadonlyMap<string, string>): SlideAnimation {
     const copy = new SlideAnimation()
     for (const [nodeId, animation] of this.#nodes) {

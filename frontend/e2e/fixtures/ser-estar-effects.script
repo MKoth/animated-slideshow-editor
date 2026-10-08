@@ -1,8 +1,17 @@
 // Lesson 01 effects — reveal, wipe, and mark acceptance.
 //
-// Runs AFTER ser-estar-lesson.script on slide 1 of "Animation Script test".
-// It preserves the chalk-board scene and cell-by-cell content created by the
-// base lesson and demonstrates one of each effect:
+// This is NOT a standalone script: it is appended to ser-estar-lesson.script
+// and run as ONE Animation Script. A slide holds a single Animation Script
+// whose Run replaces that script's previous footprint, so running the effects
+// as a second, separate script would delete the lesson scene the base script
+// created. Appending keeps scene and effects in one footprint: reruns replace
+// everything without duplication, and one undo restores the prior output.
+//
+// The flow still needs two Runs: first the base lesson alone (so the table,
+// sentence, and title exist and the renderer has measured bounds), then the
+// combined source (so effect Check samples the rendered scene).
+//
+// Demonstrates one of each effect:
 //
 // - reveal on the conjugation table as a composite subtree (cell text is
 //   ordinary renderable content; empty layout slots stay out),
@@ -11,14 +20,17 @@
 // - mark on the lesson title as a temporary overlay.
 //
 // Timing sits inside the base lesson so seeks stay meaningful: the mark draws
-// while the title is shown, the table reveal starts with the table fade, and
-// the wipe runs after its example appears. The reveal carries an optional
+// while the title is shown, the table reveal runs once the table is fully
+// filled (last cell fades in by 14.0, next examples start at 15.6), and the
+// wipe runs after its example appears. The reveal carries an optional
 // `sound:` SFX; the wipe and mark stay silent.
-script "Lesson 01 effects" from 0
-bind grid = table("Grammar table")
-bind sentence = node("ex1t")
-bind title = node("Lesson title")
-bind sfx = audio("Scratch")
-mark(title, at: 1, over: 1, visual: none)
-reveal(grid, at: 5, over: 1, visual: none, sound: sfx)
-wipe(sentence, at: 18, over: 1, visual: none)
+//
+// Binding names are prefixed (`egrid`, ...) so they cannot collide with the
+// base lesson's bindings when concatenated.
+bind egrid = table("Grammar table")
+bind esentence = node("ex1t")
+bind etitle = node("Lesson title")
+bind esfx = audio("Scratch")
+mark(etitle, at: 1, over: 1, visual: none)
+reveal(egrid, at: 14.5, over: 1, visual: none, sound: esfx)
+wipe(esentence, at: 18, over: 1, visual: none)

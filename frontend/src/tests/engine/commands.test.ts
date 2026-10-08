@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { EngineEvent } from '../../engine/events'
 import type { Command, CommandResult } from '../../engine/commands'
 import {
+  AddKeyframeCommand,
   CreateNodeCommand,
   CreateProjectCommand,
   CreateSlideCommand,
@@ -400,6 +401,30 @@ describe('CreateNodeCommand', () => {
       visible: false,
     })
   })
+
+  it('notifies the succeeded listener on dispatch, undo, and redo so persistence follows history', () => {
+    const { system, sceneId, rootId } = setupProjectWithSlide()
+    const listener = vi.fn()
+    system.dispatcher.setOnCommandSucceeded(listener)
+
+    expectOk(
+      system.dispatcher.dispatch(new CreateNodeCommand({ sceneId, parentId: rootId, name: 'A' })),
+    )
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(system.dispatcher.undo()).toBe(true)
+    expect(listener).toHaveBeenCalledTimes(2)
+    expect(system.dispatcher.redo()).toBe(true)
+    expect(listener).toHaveBeenCalledTimes(3)
+  })
+
+  it('does not notify the succeeded listener when undo or redo has nothing to do', () => {
+    const { system } = setupProjectWithSlide()
+    const listener = vi.fn()
+    system.dispatcher.setOnCommandSucceeded(listener)
+
+    expect(system.dispatcher.redo()).toBe(false)
+    expect(listener).not.toHaveBeenCalled()
+  })
 })
 
 describe('DeleteNodeCommand', () => {
@@ -423,6 +448,27 @@ describe('DeleteNodeCommand', () => {
     expect(inverse).toMatchObject({ nodeId: aId, parentId: rootId })
     expect(inverse.nodes.map((node) => node.id).sort()).toEqual([aId, bId].sort())
     expect(system.undoStack.entries[0]).toMatchObject({ type: 'DeleteNode' })
+  })
+
+  it('restores the deleted subtree animation keyframes on undo', () => {
+    const { system, sceneId, rootId } = setupProjectWithSlide()
+    const { nodeId } = expectOk(
+      system.dispatcher.dispatch(new CreateNodeCommand({ sceneId, parentId: rootId, name: 'A' })),
+    )
+    const target = { kind: 'node', nodeId, property: 'opacity' } as const
+    expectOk(system.dispatcher.dispatch(new AddKeyframeCommand({ target, time: 0, value: 0 })))
+    expectOk(system.dispatcher.dispatch(new AddKeyframeCommand({ target, time: 1, value: 1 })))
+    expect(system.engine.getKeyframes(nodeId, 'opacity').map((keyframe) => keyframe.value)).toEqual(
+      [0, 1],
+    )
+
+    expectOk(system.dispatcher.dispatch(new DeleteNodeCommand({ nodeId })))
+
+    expect(system.dispatcher.undo()).toBe(true)
+    expect(system.engine.getNode(nodeId).name).toBe('A')
+    expect(system.engine.getKeyframes(nodeId, 'opacity').map((keyframe) => keyframe.value)).toEqual(
+      [0, 1],
+    )
   })
 
   it('rejects deleting the root node', () => {
