@@ -6247,6 +6247,55 @@ export class Engine {
     }
   }
 
+  /**
+   * Apply a lesson snapshot without clearing history (issue #428). Same
+   * restore path as restoreFromJSON but emits ProjectChanged (never
+   * ProjectLoaded, so the UndoStack is preserved) plus SlideActivated for
+   * the repointed active slide. Used by ImportSlidesCommand execute/undo/redo
+   * so one undo restores pre-merge exactly.
+   */
+  applyLessonSnapshot(json: LessonJSON, activeSlideId: string | null): void {
+    this.#validateOrThrow(json)
+    const project = buildProjectFromJSON(json, this.#materials.definitions)
+    this.#replaceProject(project)
+    this.#clips.clear()
+    for (const clip of parseClipsFromLessonJSON(json)) {
+      this.#clips.importClip(clip)
+    }
+    const collections = parseClipCollectionsFromLessonJSON(json)
+    for (const col of collections) {
+      this.#clipCollections.importCollection(col)
+    }
+    try {
+      this.deduplicateClipCollections()
+    } catch {
+      void 0
+    }
+    if (json.ikChains) {
+      this.#ik.restoreFromJSON(json.ikChains)
+    } else {
+      this.#ik.clear()
+    }
+    if (json.constraints) {
+      this.#constraints.restoreFromJSON(json.constraints)
+    } else {
+      this.#constraints.clear()
+    }
+    const slides = project.slides
+    const active =
+      activeSlideId && slides.some((slide) => slide.id === activeSlideId)
+        ? activeSlideId
+        : (slides[0]?.id ?? null)
+    this.#activeSlideId = active
+    this.#bus.emit({
+      type: 'ProjectChanged',
+      projectId: project.id,
+    } as unknown as import('./events').EngineEvent)
+    if (active) {
+      this.#bus.emit({ type: 'SlideActivated', slideId: active })
+    }
+  }
+
   // --- Clip instance methods ---
 
   getClipInstances(nodeId: string): readonly ClipInstance[] {
@@ -6886,6 +6935,7 @@ export function toReadOnly(engine: Engine): EnginePublic {
     buildExportJobDescriptor: (settings) => engine.buildExportJobDescriptor(settings),
     toJSON: () => engine.toJSON(),
     restoreFromJSON: (json) => engine.restoreFromJSON(json),
+    applyLessonSnapshot: (json, activeSlideId) => engine.applyLessonSnapshot(json, activeSlideId),
     exportReusableObject: (rootNodeId, name, description) =>
       engine.exportReusableObject(rootNodeId, name, description),
     importReusableObject: (objectJson, targetParentId) =>

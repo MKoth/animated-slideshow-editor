@@ -8,16 +8,17 @@ import { UpdatePrompterPartWithShiftCommand } from '../engine/commands/updatePro
 import { ReplacePrompterWordsCommand } from '../engine/commands/replacePrompterWordsCommand'
 import { SetPrompterPartAudioCommand } from '../engine/commands/setPrompterPartAudioCommand'
 import { SetSlideAnimationScriptCommand } from '../engine/commands/setSlideAnimationScriptCommand'
+import { ImportSlidesCommand } from '../engine/commands/importSlidesCommand'
 import type { EnginePublic } from '../engine'
 
 /**
  * Canonical AI Edit Proposal allowlist (issue #422). Server schema validation
  * runs first; the client dry-run validate() against the live engine runs
- * second, in order. Stage D/merge placeholders carry typed params here;
+ * second, in order. Stage D placeholders carry typed params here;
  * AiCommitTts landed as a real Stage C command (#425), Stage E boards execute
  * as SetSlideAnimationScript (create-then-reveal inside the script, #427) —
  * AiCreateBoardText/Table stay schema-valid placeholders that never execute
- * a board. The merge lands its real command in its own ticket.
+ * a board. The assembly merge lands as ImportSlidesCommand (#428).
  */
 export const AI_COMMAND_ALLOWLIST: readonly string[] = [
   'CreateSlide',
@@ -219,14 +220,128 @@ export function validateProposalSchema(commands: unknown): ProposalSchemaResult 
       errors.push(...required(command, index, ctype, ['slideId', 'rows', 'columns']))
     else if (ctype === 'AiImportSlides') {
       const ids = command.slideIds
-      if (!Array.isArray(ids) || ids.length === 0)
+      const slides = command.slides
+      const hasIds = Array.isArray(ids) && ids.length > 0
+      const hasSlides = Array.isArray(slides) && slides.length > 0
+      if (!hasIds && !hasSlides) {
         errors.push(
           error(
             index,
             ctype,
-            `command #${index} (AiImportSlides): field 'slideIds' must be a non-empty list.`,
+            `command #${index} (AiImportSlides): provide 'slides' (source SlideJSON list) with 'slideIds' for traceability — open the named intro/outro project first.`,
           ),
         )
+      } else if (hasIds) {
+        if (!ids.every((entry) => typeof entry === 'string' && entry.trim())) {
+          errors.push(
+            error(
+              index,
+              ctype,
+              `command #${index} (AiImportSlides): field 'slideIds' must be a list of non-empty strings.`,
+            ),
+          )
+        }
+      }
+      if (slides !== undefined) {
+        if (!Array.isArray(slides) || slides.length === 0) {
+          errors.push(
+            error(
+              index,
+              ctype,
+              `command #${index} (AiImportSlides): field 'slides' must be a non-empty list when present.`,
+            ),
+          )
+        } else {
+          slides.forEach((raw, slideOrder) => {
+            if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+              errors.push(
+                error(
+                  index,
+                  ctype,
+                  `command #${index} (AiImportSlides): slides[${slideOrder}] must be a SlideJSON object.`,
+                ),
+              )
+              return
+            }
+            const slide = raw as Record<string, unknown>
+            if (typeof slide.id !== 'string' || !slide.id.trim()) {
+              errors.push(
+                error(
+                  index,
+                  ctype,
+                  `command #${index} (AiImportSlides): slides[${slideOrder}] is missing its id.`,
+                ),
+              )
+            }
+            if (typeof slide.name !== 'string' || !slide.name.trim()) {
+              errors.push(
+                error(
+                  index,
+                  ctype,
+                  `command #${index} (AiImportSlides): slides[${slideOrder}] is missing its name.`,
+                ),
+              )
+            }
+          })
+        }
+      }
+      for (const field of ['clips', 'clipCollections'] as const) {
+        const entries = command[field] as unknown
+        if (entries === undefined) continue
+        if (!Array.isArray(entries)) {
+          errors.push(
+            error(
+              index,
+              ctype,
+              `command #${index} (AiImportSlides): field '${field}' must be a list when present.`,
+            ),
+          )
+          continue
+        }
+        entries.forEach((raw, entryOrder) => {
+          if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+            errors.push(
+              error(
+                index,
+                ctype,
+                `command #${index} (AiImportSlides): ${field}[${entryOrder}] must be an object.`,
+              ),
+            )
+            return
+          }
+          const entry = raw as Record<string, unknown>
+          if (typeof entry.id !== 'string' || !(entry.id as string).trim()) {
+            errors.push(
+              error(
+                index,
+                ctype,
+                `command #${index} (AiImportSlides): ${field}[${entryOrder}] is missing its id.`,
+              ),
+            )
+          }
+          if (typeof entry.name !== 'string' || !(entry.name as string).trim()) {
+            errors.push(
+              error(
+                index,
+                ctype,
+                `command #${index} (AiImportSlides): ${field}[${entryOrder}] is missing its name.`,
+              ),
+            )
+          }
+        })
+      }
+      const targetIndex = command.targetIndex
+      if (targetIndex !== undefined) {
+        if (!Number.isInteger(targetIndex) || (targetIndex as number) < 0) {
+          errors.push(
+            error(
+              index,
+              ctype,
+              `command #${index} (AiImportSlides): field 'targetIndex' must be a non-negative integer.`,
+            ),
+          )
+        }
+      }
     }
     // Inline base64 guard: proposals reference asset ids, never inline bytes.
     const ttsData = command.ttsData
@@ -377,6 +492,44 @@ export function buildCommandFromJson(json: AiCommandJson): Command<unknown> {
         timelineStart: asNumber(params.timelineStart, 'timelineStart', ctype),
         sourceEnd: asNumber(params.sourceEnd, 'sourceEnd', ctype),
       })
+    case 'AiImportSlides': {
+      // Assembly merge (issue #428): cross-project import with full remap.
+      // Legacy slideIds-only proposals block with a fixable embed-first
+      // message — the merge needs the source SlideJSON payload.
+      const slides = params.slides as unknown
+      if (!Array.isArray(slides) || slides.length === 0) {
+        throw new Error(
+          'AiImportSlides needs the source slides payload (slides: SlideJSON[]) — open the named intro/outro project read-only and include its slides, then re-validate',
+        )
+      }
+      const library = (params.library ?? null) as Record<string, unknown> | null
+      const clips = Array.isArray(params.clips)
+        ? (params.clips as import('../engine/json').ClipJSON[])
+        : undefined
+      const clipCollections = Array.isArray(params.clipCollections)
+        ? (params.clipCollections as import('../engine/json').ClipCollectionJSON[])
+        : undefined
+      const targetIndex =
+        typeof params.targetIndex === 'number' ? (params.targetIndex as number) : undefined
+      const slideIds = Array.isArray(params.slideIds)
+        ? (params.slideIds as unknown[]).filter(
+            (entry): entry is string => typeof entry === 'string',
+          )
+        : undefined
+      return new ImportSlidesCommand({
+        slides: slides as import('../engine/json').SlideJSON[],
+        ...(clips ? { clips } : {}),
+        ...(clipCollections ? { clipCollections } : {}),
+        ...(library
+          ? {
+              library:
+                library as import('../engine/commands/importSlidesCommand').ImportSlidesParameters['library'],
+            }
+          : {}),
+        ...(typeof targetIndex === 'number' ? { targetIndex } : {}),
+        ...(slideIds ? { slideIds } : {}),
+      })
+    }
     default:
       if (isPlaceholder(ctype)) {
         throw new Error(

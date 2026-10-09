@@ -568,6 +568,8 @@ export type {
   ImportReusableObjectInverse,
   ImportReusableObjectParameters,
 } from './importReusableObjectCommand'
+export { ImportSlidesCommand } from './importSlidesCommand'
+export type { ImportSlidesInverse, ImportSlidesParameters } from './importSlidesCommand'
 export { CreateShapeCommand } from './createShapeCommand'
 export type { CreateShapeInverse, CreateShapeParameters } from './createShapeCommand'
 export { CreateBakedShapeCommand } from './createBakedShapeCommand'

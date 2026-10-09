@@ -3,7 +3,9 @@
 The single execution seam every proposing stage (C, D, E, merge) rides on.
 Server validation runs first; the client dry-run validate() against the live
 engine runs second, in order. Stages land the real commands in their own
-tickets — here the stage commands ride as typed placeholders.
+tickets — AiCommitTts landed in #425, boards execute as
+SetSlideAnimationScript in #427, the assembly merge lands as AiImportSlides
+in #428 (AiCreateBoardText/Table and mouth coefficients stay placeholders).
 """
 
 from __future__ import annotations
@@ -11,10 +13,10 @@ from __future__ import annotations
 from typing import Any
 
 # Canonical allowlist. Real engine commands first (Stage C prompter/audio +
-# Stage E board scripts via SetSlideAnimationScript), then typed placeholders
-# for the stage commands whose real implementations land in their own tickets
-# (#425 landed AiCommitTts, #427 executes boards as SetSlideAnimationScript with
-# AiCreateBoardText/Table staying non-executing placeholders, #426/#428 pending).
+# Stage E board scripts via SetSlideAnimationScript + Stage F assembly merge
+# via AiImportSlides), then typed placeholders for the stage commands whose
+# real implementations land in their own tickets (AiCreateBoardText/Table and
+# mouth coefficients stay non-executing placeholders).
 ALLOWLIST: tuple[str, ...] = (
     # Stage C: prompter/audio (real engine commands)
     "CreateSlide",
@@ -33,7 +35,7 @@ ALLOWLIST: tuple[str, ...] = (
     "SetSlideAnimationScript",
     "AiCreateBoardText",
     "AiCreateBoardTable",
-    # Merge: cross-project import (placeholder — ImportSlidesCommand lands in #428)
+    # Merge: cross-project import (ImportSlidesCommand, issue #428)
     "AiImportSlides",
 )
 
@@ -303,14 +305,65 @@ def _validate_fields(ctype: str, command: dict[str, Any], index: int) -> list[di
         if isinstance(columns, int) and (columns < 1 or columns > 20):
             errors.append(_field_error(index, ctype, "columns", "must be between 1 and 20"))
     elif ctype == "AiImportSlides":
-        if command.get("slideIds") is None:
-            errors.append(_field_error(index, ctype, "slideIds", "is required"))
-        elif not isinstance(command.get("slideIds"), list) or not command["slideIds"]:
-            errors.append(_field_error(index, ctype, "slideIds", "must be a non-empty list"))
-        elif not all(_is_non_empty_string(s) for s in command["slideIds"]):
+        slide_ids = command.get("slideIds")
+        slides = command.get("slides")
+        has_ids = isinstance(slide_ids, list) and len(slide_ids) > 0
+        has_slides = isinstance(slides, list) and len(slides) > 0
+        if not has_ids and not has_slides:
+            errors.append(
+                _field_error(
+                    index,
+                    ctype,
+                    "slides",
+                    "provide 'slides' (source SlideJSON list) with 'slideIds' — "
+                    "open the named intro/outro project first",
+                )
+            )
+        elif has_ids and not all(_is_non_empty_string(s) for s in slide_ids or []):
             errors.append(
                 _field_error(index, ctype, "slideIds", "must be a list of non-empty strings")
             )
+        if slides is not None:
+            if not isinstance(slides, list) or not slides:
+                errors.append(
+                    _field_error(index, ctype, "slides", "must be a non-empty list when present")
+                )
+            else:
+                for order, raw in enumerate(slides):
+                    if not isinstance(raw, dict):
+                        errors.append(
+                            _field_error(
+                                index, ctype, f"slides[{order}]", "must be a SlideJSON object"
+                            )
+                        )
+                        continue
+                    if not _is_non_empty_string(raw.get("id")):
+                        errors.append(
+                            _field_error(index, ctype, f"slides[{order}].id", "is required")
+                        )
+                    if not _is_non_empty_string(raw.get("name")):
+                        errors.append(
+                            _field_error(index, ctype, f"slides[{order}].name", "is required")
+                        )
+        for field in ("clips", "clipCollections"):
+            entries = command.get(field)
+            if entries is None:
+                continue
+            if not isinstance(entries, list):
+                errors.append(_field_error(index, ctype, field, "must be a list when present"))
+                continue
+            for order, raw in enumerate(entries):
+                if not isinstance(raw, dict):
+                    errors.append(
+                        _field_error(index, ctype, f"{field}[{order}]", "must be an object")
+                    )
+                    continue
+                if not _is_non_empty_string(raw.get("id")):
+                    errors.append(_field_error(index, ctype, f"{field}[{order}].id", "is required"))
+                if not _is_non_empty_string(raw.get("name")):
+                    errors.append(
+                        _field_error(index, ctype, f"{field}[{order}].name", "is required")
+                    )
         ints("targetIndex") if command.get("targetIndex") is not None else None
     return errors
 

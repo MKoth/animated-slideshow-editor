@@ -306,6 +306,7 @@ export interface EnginePublic {
   buildExportJobDescriptor(settings: ExportSettings): ExportJobDescriptor
   toJSON(): LessonJSON
   restoreFromJSON(json: LessonJSON): void
+  applyLessonSnapshot(json: LessonJSON, activeSlideId: string | null): void
   exportReusableObject(
     rootNodeId: string,
     name: string,

@@ -16,6 +16,26 @@ import { sceneEffectFromJSON } from '../sceneEffect'
 import { relativeTransform, transformsEqual, worldTransformOf } from '../worldTransform'
 import type { MirrorCollectionShapeSnapshot } from './mirrorCollectionCommand'
 
+/**
+ * Assembly merge snapshot restore (issue #428), shared by undo and redo.
+ * Applies the stored LessonJSON without clearing history (ProjectChanged
+ * only, never ProjectLoaded) and keeps the ambient active slide when it
+ * still exists in the restored content.
+ */
+function restoreMergeSnapshot(
+  engine: Engine,
+  inverse: unknown,
+  key: 'preMerge' | 'postMerge',
+  label: 'undo' | 'redo',
+): void {
+  const snapshot = (inverse as Record<string, unknown> | null)?.[key] as
+    import('../json').LessonJSON | undefined
+  if (!snapshot || typeof snapshot !== 'object') {
+    throw new Error(`AiImportSlides inverse is corrupt — cannot ${label} the merge`)
+  }
+  engine.applyLessonSnapshot(snapshot, engine.activeSlideId)
+}
+
 export function applyUndo(
   engine: Engine,
   type: string,
@@ -2092,6 +2112,16 @@ export function applyUndo(
       }
       return
     }
+    case 'AiImportSlides': {
+      // Assembly merge (issue #428): one undo restores the pre-merge
+      // content exactly via the stored snapshot. Snapshot apply emits
+      // ProjectChanged only (never ProjectLoaded), so the remaining
+      // history is preserved. The active slide is ambient (never
+      // undoable, per CONTEXT.md): the live active id is kept when it
+      // still exists, else the first slide takes over.
+      restoreMergeSnapshot(engine, inv, 'preMerge', 'undo')
+      return
+    }
     case 'CreateTable': {
       const tableNodeId = inv.tableNodeId as string
       try {
@@ -4122,6 +4152,12 @@ export function applyRedo(
         duration: params.sourceEnd as number,
         shiftDownstream: true,
       })
+      return
+    }
+    case 'AiImportSlides': {
+      // Assembly merge redo: re-apply the stored post-merge snapshot,
+      // keeping the ambient active slide when it still exists.
+      restoreMergeSnapshot(engine, _inverse, 'postMerge', 'redo')
       return
     }
     case 'CreateTable': {
