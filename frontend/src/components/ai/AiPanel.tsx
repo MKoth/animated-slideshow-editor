@@ -6,6 +6,7 @@ import { useAiStore } from '../../stores/aiStore'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
 import { useSelectionStore } from '../../stores/selectionStore'
 import { useBackendStore } from '../../stores/backendStore'
+import { AiPlanView } from './AiPlanView'
 
 export function AiPanel() {
   const { engine } = useEngine()
@@ -85,9 +86,12 @@ export function AiPanel() {
       </div>
 
       {unavailable ? (
-        <div data-testid="ai-unavailable">
-          AI unavailable — the backend is unreachable. The editor still works.
-        </div>
+        <>
+          <div data-testid="ai-unavailable">
+            AI unavailable — the backend is unreachable. The editor still works.
+          </div>
+          <AiPlanView projectId={projectId} conversationId={activeId} context={context} disabled />
+        </>
       ) : (
         <>
           <div className="ai-panel__conversations">
@@ -233,6 +237,13 @@ export function AiPanel() {
               AI Settings
             </button>
           </div>
+
+          <AiPlanView
+            projectId={projectId}
+            conversationId={activeId}
+            context={context}
+            disabled={unavailable}
+          />
         </>
       )}
     </div>

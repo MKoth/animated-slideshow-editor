@@ -6,7 +6,13 @@ from uuid import uuid4
 from sqlalchemy import delete, func, select
 
 from app.ai.crypto import decrypt_key, encrypt_key, mask_key
-from app.ai.model import AiConversationRow, AiMessageRow, AiSettingsRow
+from app.ai.model import (
+    AiConversationRow,
+    AiMessageRow,
+    AiPlanRevisionRow,
+    AiPlanRow,
+    AiSettingsRow,
+)
 from app.config import DEFAULT_CONTEXT_BUDGET, DEFAULT_SYSTEM_PROMPT, DEFAULT_ZEN_URL, Settings
 from app.database import Database
 
@@ -210,7 +216,15 @@ class AiLibrary:
                 session.execute(
                     delete(AiConversationRow).where(AiConversationRow.project_id == project_id)
                 )
-                session.commit()
+            plan_ids = list(
+                session.scalars(select(AiPlanRow.id).where(AiPlanRow.project_id == project_id))
+            )
+            if plan_ids:
+                session.execute(
+                    delete(AiPlanRevisionRow).where(AiPlanRevisionRow.plan_id.in_(plan_ids))
+                )
+                session.execute(delete(AiPlanRow).where(AiPlanRow.project_id == project_id))
+            session.commit()
 
     # -- messages ------------------------------------------------------
 
@@ -303,3 +317,310 @@ class AiLibrary:
     def context_budget(self) -> int:
         budget = getattr(self._settings, "ai_context_budget", DEFAULT_CONTEXT_BUDGET)
         return budget if isinstance(budget, int) and budget > 0 else DEFAULT_CONTEXT_BUDGET
+
+    # -- lesson plans ----------------------------------------------------
+
+    def list_plans(self, project_id: str) -> list[AiPlanRow]:
+        statement = (
+            select(AiPlanRow)
+            .where(AiPlanRow.project_id == project_id)
+            .order_by(AiPlanRow.updated_at.desc(), AiPlanRow.id)
+        )
+        with self._database.session() as session:
+            return list(session.scalars(statement))
+
+    def get_plan(self, plan_id: str) -> AiPlanRow:
+        with self._database.session() as session:
+            row = session.get(AiPlanRow, plan_id)
+        if row is None:
+            raise KeyError(plan_id)
+        return row
+
+    def list_plan_revisions(self, plan_id: str) -> list[AiPlanRevisionRow]:
+        self.get_plan(plan_id)
+        statement = (
+            select(AiPlanRevisionRow)
+            .where(AiPlanRevisionRow.plan_id == plan_id)
+            .order_by(AiPlanRevisionRow.created_at.asc(), AiPlanRevisionRow.id)
+        )
+        with self._database.session() as session:
+            return list(session.scalars(statement))
+
+    def create_plan(
+        self,
+        *,
+        project_id: str,
+        conversation_id: str,
+        content: dict[str, object],
+        source_request: str,
+    ) -> AiPlanRow:
+        import json as _json
+
+        slides = _normalize_plan_slides(content.get("slides"))
+        now = _now()
+        plan_id = str(uuid4())
+        with self._database.session() as session:
+            # Conversation must exist for project scoping.
+            conv = session.get(AiConversationRow, conversation_id)
+            if conv is None:
+                raise AiConversationNotFoundError(conversation_id)
+            row = AiPlanRow(
+                id=plan_id,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                title=str(content.get("title", ""))[:255],
+                description=str(content.get("description", "")),
+                language=str(content.get("language", "en") or "en")[:64],
+                estimated_duration_sec=_safe_float(content.get("estimatedDurationSec")),
+                learning_objective=str(content.get("learningObjective", "")),
+                teaching_strategy=str(content.get("teachingStrategy", "")),
+                status="draft",
+                slides_json=_json.dumps(slides),
+                user_edits_json="{}",
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.add(
+                AiPlanRevisionRow(
+                    id=str(uuid4()),
+                    plan_id=plan_id,
+                    source_request=source_request,
+                    snapshot_json=_json.dumps(_plan_snapshot(content, slides)),
+                    created_at=now,
+                )
+            )
+            session.commit()
+        return self.get_plan(plan_id)
+
+    def revise_plan(
+        self,
+        plan_id: str,
+        *,
+        content: dict[str, object],
+        source_request: str,
+    ) -> AiPlanRow:
+        import json as _json
+
+        slides = _normalize_plan_slides(content.get("slides"))
+        snapshot = _plan_snapshot(content, slides)
+        with self._database.session() as session:
+            row = session.get(AiPlanRow, plan_id)
+            if row is None:
+                raise KeyError(plan_id)
+            row.title = str(content.get("title", row.title))[:255]
+            row.description = str(content.get("description", row.description))
+            language = str(content.get("language", row.language) or row.language)
+            row.language = language[:64]
+            row.estimated_duration_sec = _safe_float(
+                content.get("estimatedDurationSec", row.estimated_duration_sec)
+            )
+            row.learning_objective = str(content.get("learningObjective", row.learning_objective))
+            row.teaching_strategy = str(content.get("teachingStrategy", row.teaching_strategy))
+            row.slides_json = _json.dumps(slides)
+            row.updated_at = _now()
+            session.add(
+                AiPlanRevisionRow(
+                    id=str(uuid4()),
+                    plan_id=plan_id,
+                    source_request=source_request,
+                    snapshot_json=_json.dumps(snapshot),
+                    created_at=_now(),
+                )
+            )
+            session.commit()
+        return self.get_plan(plan_id)
+
+    def update_plan_edits(
+        self,
+        plan_id: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        language: str | None = None,
+        estimated_duration_sec: float | None = None,
+        learning_objective: str | None = None,
+        teaching_strategy: str | None = None,
+        slides: list[dict[str, object]] | None = None,
+    ) -> AiPlanRow:
+        import json as _json
+
+        with self._database.session() as session:
+            row = session.get(AiPlanRow, plan_id)
+            if row is None:
+                raise KeyError(plan_id)
+            try:
+                loaded_edits: object = _json.loads(row.user_edits_json or "{}")
+                user_edits = loaded_edits if isinstance(loaded_edits, dict) else {}
+            except (ValueError, TypeError):
+                user_edits = {}
+            if not isinstance(user_edits, dict):
+                user_edits = {}
+            current_slides: list[dict[str, object]] = _load_slides(row.slides_json)
+
+            if title is not None:
+                row.title = title[:255]
+                user_edits["title"] = title
+            if description is not None:
+                row.description = description
+                user_edits["description"] = description
+            if language is not None and language.strip():
+                row.language = language.strip()[:64]
+                user_edits["language"] = row.language
+            if estimated_duration_sec is not None:
+                row.estimated_duration_sec = estimated_duration_sec
+            if learning_objective is not None:
+                row.learning_objective = learning_objective
+                user_edits["learningObjective"] = learning_objective
+            if teaching_strategy is not None:
+                row.teaching_strategy = teaching_strategy
+                user_edits["teachingStrategy"] = teaching_strategy
+            if slides is not None:
+                by_id = {s.get("id"): s for s in current_slides if isinstance(s.get("id"), str)}
+                merged: list[dict[str, object]] = []
+                slide_fields = user_edits.get("slideFields")
+                if not isinstance(slide_fields, dict):
+                    slide_fields = {}
+                    user_edits["slideFields"] = slide_fields
+                for order, patch in enumerate(slides):
+                    sid = str(patch.get("id", ""))
+                    existing = by_id.get(sid)
+                    if existing is None:
+                        raise ValueError(f"unknown slide id: {sid}")
+                    updated = dict(existing)
+                    updated["order"] = order
+                    override = (
+                        dict(slide_fields.get(sid, {}))
+                        if isinstance(slide_fields.get(sid), dict)
+                        else {}
+                    )
+                    if "_oldTitle" not in override and isinstance(existing.get("title"), str):
+                        override["_oldTitle"] = existing.get("title")
+                    for field in ("title", "goal", "explanation", "suggestedNarration"):
+                        if patch.get(field) is not None:
+                            updated[field] = patch[field]
+                            override[field] = patch[field]
+                    if patch.get("estimatedDurationSec") is not None:
+                        updated["estimatedDurationSec"] = patch["estimatedDurationSec"]
+                        override["estimatedDurationSec"] = patch["estimatedDurationSec"]
+                    merged.append(updated)
+                    slide_fields[sid] = override
+                row.slides_json = _json.dumps(merged)
+                user_edits["slideOrder"] = [str(p.get("id", "")) for p in slides]
+            row.user_edits_json = _json.dumps(user_edits)
+            row.updated_at = _now()
+            session.commit()
+        return self.get_plan(plan_id)
+
+    def set_plan_status(self, plan_id: str, status: str) -> AiPlanRow:
+        if status not in ("draft", "accepted", "rejected"):
+            raise ValueError("status must be draft, accepted, or rejected")
+        with self._database.session() as session:
+            row = session.get(AiPlanRow, plan_id)
+            if row is None:
+                raise KeyError(plan_id)
+            row.status = status
+            row.updated_at = _now()
+            session.commit()
+        return self.get_plan(plan_id)
+
+    def get_user_edits(self, plan_id: str) -> dict[str, object]:
+        import json as _json
+
+        row = self.get_plan(plan_id)
+        try:
+            data: object = _json.loads(row.user_edits_json or "{}")
+        except (ValueError, TypeError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+
+def _load_slides(raw: str) -> list[dict[str, object]]:
+    import json as _json
+
+    try:
+        data: object = _json.loads(raw or "[]")
+    except (ValueError, TypeError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _normalize_plan_slides(raw: object) -> list[dict[str, object]]:
+    slides: list[dict[str, object]] = []
+    if not isinstance(raw, list):
+        return slides
+    for order, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            continue
+        title = str(entry.get("title", ""))
+        if not title.strip():
+            continue
+        assets: list[dict[str, object]] = []
+        raw_assets = entry.get("requiredAssets", [])
+        if isinstance(raw_assets, list):
+            for asset in raw_assets:
+                if not isinstance(asset, dict):
+                    continue
+                name = str(asset.get("name", ""))
+                if not name.strip():
+                    continue
+                classification = str(asset.get("classification", "missing"))
+                if classification not in ("existing", "missing", "optional"):
+                    classification = "missing"
+                item: dict[str, object] = {"name": name, "classification": classification}
+                definition_id = asset.get("definitionId")
+                if isinstance(definition_id, str) and definition_id.strip():
+                    item["definitionId"] = definition_id
+                assets.append(item)
+        slide_id = entry.get("id")
+        slides.append(
+            {
+                "id": slide_id if isinstance(slide_id, str) and slide_id else str(uuid4()),
+                "order": order,
+                "title": title,
+                "goal": str(entry.get("goal", "")),
+                "estimatedDurationSec": _safe_float(entry.get("estimatedDurationSec")),
+                "explanation": str(entry.get("explanation", "")),
+                "suggestedNarration": str(entry.get("suggestedNarration", "")),
+                "requiredAssets": assets,
+                "recommendedMaterials": _safe_str_list(entry.get("recommendedMaterials")),
+                "recommendedShaders": _safe_str_list(entry.get("recommendedShaders")),
+                "recommendedClips": _safe_str_list(entry.get("recommendedClips")),
+            }
+        )
+    return slides
+
+
+def _plan_snapshot(
+    content: dict[str, object], slides: list[dict[str, object]]
+) -> dict[str, object]:
+    return {
+        "title": content.get("title", ""),
+        "description": content.get("description", ""),
+        "language": content.get("language", "en"),
+        "estimatedDurationSec": content.get("estimatedDurationSec", 0.0),
+        "learningObjective": content.get("learningObjective", ""),
+        "teachingStrategy": content.get("teachingStrategy", ""),
+        "slides": slides,
+    }
+
+
+def _safe_float(value: object) -> float:
+    try:
+        if value is None:
+            return 0.0
+        if isinstance(value, (int, float)):
+            number = float(value)
+        elif isinstance(value, str) and value.strip():
+            number = float(value.strip())
+        else:
+            return 0.0
+    except (TypeError, ValueError):
+        return 0.0
+    return number if number >= 0 else 0.0
+
+
+def _safe_str_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if isinstance(item, (str, int, float))]

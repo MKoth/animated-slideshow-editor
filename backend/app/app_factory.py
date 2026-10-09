@@ -3,7 +3,13 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.ai.library import AiLibrary
-from app.ai.model import AiConversationRow, AiMessageRow, AiSettingsRow  # noqa: F401
+from app.ai.model import (  # noqa: F401
+    AiConversationRow,
+    AiMessageRow,
+    AiPlanRevisionRow,
+    AiPlanRow,
+    AiSettingsRow,
+)
 from app.api import (
     ai,
     assets,
