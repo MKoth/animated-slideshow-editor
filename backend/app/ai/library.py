@@ -11,8 +11,11 @@ from app.ai.model import (
     AiMessageRow,
     AiPlanRevisionRow,
     AiPlanRow,
+    AiProposalExecutionRow,
+    AiProposalRow,
     AiSettingsRow,
 )
+from app.ai.proposals import validate_proposal_commands
 from app.config import DEFAULT_CONTEXT_BUDGET, DEFAULT_SYSTEM_PROMPT, DEFAULT_ZEN_URL, Settings
 from app.database import Database
 
@@ -224,6 +227,18 @@ class AiLibrary:
                     delete(AiPlanRevisionRow).where(AiPlanRevisionRow.plan_id.in_(plan_ids))
                 )
                 session.execute(delete(AiPlanRow).where(AiPlanRow.project_id == project_id))
+            proposal_ids = list(
+                session.scalars(
+                    select(AiProposalRow.id).where(AiProposalRow.project_id == project_id)
+                )
+            )
+            if proposal_ids:
+                session.execute(
+                    delete(AiProposalExecutionRow).where(
+                        AiProposalExecutionRow.proposal_id.in_(proposal_ids)
+                    )
+                )
+                session.execute(delete(AiProposalRow).where(AiProposalRow.project_id == project_id))
             session.commit()
 
     # -- messages ------------------------------------------------------
@@ -533,6 +548,216 @@ class AiLibrary:
         except (ValueError, TypeError):
             return {}
         return data if isinstance(data, dict) else {}
+
+    # -- edit proposals --------------------------------------------------
+
+    def list_proposals(self, project_id: str) -> list[AiProposalRow]:
+        statement = (
+            select(AiProposalRow)
+            .where(AiProposalRow.project_id == project_id)
+            .order_by(AiProposalRow.updated_at.desc(), AiProposalRow.id)
+        )
+        with self._database.session() as session:
+            return list(session.scalars(statement))
+
+    def get_proposal(self, proposal_id: str) -> AiProposalRow:
+        with self._database.session() as session:
+            row = session.get(AiProposalRow, proposal_id)
+        if row is None:
+            raise KeyError(proposal_id)
+        return row
+
+    def list_proposal_executions(self, proposal_id: str) -> list[AiProposalExecutionRow]:
+        self.get_proposal(proposal_id)
+        statement = (
+            select(AiProposalExecutionRow)
+            .where(AiProposalExecutionRow.proposal_id == proposal_id)
+            .order_by(AiProposalExecutionRow.created_at.asc(), AiProposalExecutionRow.id)
+        )
+        with self._database.session() as session:
+            return list(session.scalars(statement))
+
+    def create_proposal(
+        self,
+        *,
+        project_id: str,
+        conversation_id: str,
+        title: str,
+        commands: list[dict[str, object]],
+        project_fingerprint: str,
+    ) -> AiProposalRow:
+        import json as _json
+
+        ok, errors = validate_proposal_commands(commands)
+        now = _now()
+        proposal_id = str(uuid4())
+        with self._database.session() as session:
+            conv = session.get(AiConversationRow, conversation_id)
+            if conv is None:
+                raise AiConversationNotFoundError(conversation_id)
+            row = AiProposalRow(
+                id=proposal_id,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                title=(title or "")[:255],
+                status="validated" if ok else "draft",
+                commands_json=_json.dumps(commands),
+                validation_json=_json.dumps({"ok": ok, "errors": errors}),
+                base_fingerprint=project_fingerprint,
+                validated_fingerprint=None,
+                dry_run_json=_json.dumps({}),
+                selected_indexes_json="[]",
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.commit()
+        return self.get_proposal(proposal_id)
+
+    def report_dry_run(
+        self,
+        proposal_id: str,
+        *,
+        project_fingerprint: str,
+        ok: bool,
+        errors: list[dict[str, object]],
+        validated_indexes: list[int] | None = None,
+    ) -> AiProposalRow:
+        import json as _json
+
+        with self._database.session() as session:
+            row = session.get(AiProposalRow, proposal_id)
+            if row is None:
+                raise KeyError(proposal_id)
+            row.validated_fingerprint = project_fingerprint
+            row.dry_run_json = _json.dumps(
+                {
+                    "ok": bool(ok),
+                    "errors": errors,
+                    "validatedIndexes": validated_indexes,
+                }
+            )
+            row.status = "dry_run_ok" if ok else "dry_run_failed"
+            row.updated_at = _now()
+            session.commit()
+        return self.get_proposal(proposal_id)
+
+    def approve_proposal(
+        self,
+        proposal_id: str,
+        *,
+        current_fingerprint: str,
+        selected_indexes: list[int] | None,
+    ) -> tuple[AiProposalRow, list[dict[str, object]]]:
+        import json as _json
+
+        with self._database.session() as session:
+            row = session.get(AiProposalRow, proposal_id)
+            if row is None:
+                raise KeyError(proposal_id)
+            try:
+                validation: object = _json.loads(row.validation_json or "{}")
+            except (ValueError, TypeError):
+                validation = {}
+            if not isinstance(validation, dict) or not validation.get("ok"):
+                raise ValueError(
+                    "proposal failed server schema validation — "
+                    "fix the listed errors and re-validate before approval"
+                )
+            try:
+                dry: object = _json.loads(row.dry_run_json or "{}")
+            except (ValueError, TypeError):
+                dry = {}
+            if not isinstance(dry, dict) or not dry.get("ok"):
+                raise LookupError(
+                    "client dry-run validate() has not passed — "
+                    "run a dry-run against the live engine first"
+                )
+            if not row.validated_fingerprint:
+                raise LookupError(
+                    "client dry-run validate() has not passed — "
+                    "run a dry-run against the live engine first"
+                )
+            if current_fingerprint != row.validated_fingerprint:
+                raise StaleProposalError(
+                    f"stale proposal: project changed since validation "
+                    f"(validated at {row.validated_fingerprint}). "
+                    "Re-run the dry-run against the live engine, then approve again."
+                )
+            try:
+                commands: object = _json.loads(row.commands_json or "[]")
+            except (ValueError, TypeError):
+                commands = []
+            if not isinstance(commands, list):
+                raise ValueError("proposal commands are corrupt")  # noqa: TRY004
+            count = len(commands)
+            if selected_indexes is None:
+                selected = list(range(count))
+            else:
+                selected = list(selected_indexes)
+            if not selected:
+                raise ValueError("select at least one command to approve")
+            if any(not isinstance(i, int) or i < 0 or i >= count for i in selected):
+                raise ValueError("selectedIndexes are out of range")
+            validated = dry.get("validatedIndexes")
+            if isinstance(validated, list) and validated:
+                validated_set = {i for i in validated if isinstance(i, int)}
+                outside = [i for i in selected if i not in validated_set]
+                if outside:
+                    raise ValueError(
+                        f"selectedIndexes {outside} were not covered by the passing "
+                        "client dry-run — dry-run the full subset against the live "
+                        "engine first, then approve again"
+                    )
+            seen: set[int] = set()
+            ordered: list[int] = []
+            for i in selected:
+                if i not in seen:
+                    seen.add(i)
+                    ordered.append(i)
+            subset = [commands[i] for i in ordered if isinstance(commands[i], dict)]
+            row.selected_indexes_json = _json.dumps(ordered)
+            row.status = "approved"
+            row.updated_at = _now()
+            session.commit()
+        return self.get_proposal(proposal_id), [dict(c) for c in subset]
+
+    def record_execution(
+        self,
+        proposal_id: str,
+        *,
+        history_entry_id: str,
+        executed_indexes: list[int],
+        success: bool,
+        error: str,
+    ) -> AiProposalRow:
+        import json as _json
+
+        with self._database.session() as session:
+            row = session.get(AiProposalRow, proposal_id)
+            if row is None:
+                raise KeyError(proposal_id)
+            if row.status not in ("approved", "executed", "execution_failed"):
+                raise ValueError("proposal must be approved before execution can be recorded")
+            session.add(
+                AiProposalExecutionRow(
+                    id=str(uuid4()),
+                    proposal_id=proposal_id,
+                    executed_indexes_json=_json.dumps(list(executed_indexes)),
+                    history_entry_id=history_entry_id,
+                    success=bool(success),
+                    error=error or "",
+                    created_at=_now(),
+                )
+            )
+            row.status = "executed" if success else "execution_failed"
+            row.updated_at = _now()
+            session.commit()
+        return self.get_proposal(proposal_id)
+
+
+class StaleProposalError(ValueError):
+    pass
 
 
 def _load_slides(raw: str) -> list[dict[str, object]]:

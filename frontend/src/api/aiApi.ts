@@ -145,6 +145,59 @@ export interface AiPlanPatch {
   slides?: AiPlanSlidePatch[]
 }
 
+export type AiProposalStatus =
+  | 'draft'
+  | 'validated'
+  | 'dry_run_ok'
+  | 'dry_run_failed'
+  | 'approved'
+  | 'executed'
+  | 'execution_failed'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type AiProposalCommand = { type: string } & Record<string, any>
+
+export interface AiProposalValidationError {
+  index: number
+  type: string
+  message: string
+}
+
+export interface AiProposalExecution {
+  id: string
+  executedIndexes: number[]
+  historyEntryId: string
+  success: boolean
+  error: string
+  created: string
+}
+
+export interface AiProposal {
+  id: string
+  projectId: string
+  conversationId: string
+  title: string
+  status: AiProposalStatus
+  commands: AiProposalCommand[]
+  validation: { ok: boolean; errors: AiProposalValidationError[] }
+  baseFingerprint: string
+  validatedFingerprint: string | null
+  dryRun: { ok?: boolean; errors?: AiProposalValidationError[] }
+  selectedIndexes: number[]
+  executions: AiProposalExecution[]
+  executableCommands?: AiProposalCommand[]
+  created: string
+  modified: string
+}
+
+export interface AiProposalCreateInput {
+  projectId: string
+  conversationId: string
+  title?: string
+  commands: AiProposalCommand[]
+  projectFingerprint: string
+}
+
 export class AiApi {
   private readonly client: ApiClient
 
@@ -221,5 +274,54 @@ export class AiApi {
 
   async rejectPlan(id: string): Promise<AiPlan> {
     return this.client.post<AiPlan>(`/api/ai/plans/${encodeURIComponent(id)}/reject`, '')
+  }
+
+  async createProposal(input: AiProposalCreateInput): Promise<AiProposal> {
+    return this.client.post<AiProposal>('/api/ai/proposals', JSON.stringify(input))
+  }
+
+  async listProposals(projectId: string): Promise<AiProposal[]> {
+    return this.client.get<AiProposal[]>(
+      `/api/ai/proposals?projectId=${encodeURIComponent(projectId)}`,
+    )
+  }
+
+  async getProposal(id: string): Promise<AiProposal> {
+    return this.client.get<AiProposal>(`/api/ai/proposals/${encodeURIComponent(id)}`)
+  }
+
+  async reportDryRun(
+    id: string,
+    input: {
+      projectFingerprint: string
+      ok: boolean
+      errors: AiProposalValidationError[]
+      validatedIndexes?: number[]
+    },
+  ): Promise<AiProposal> {
+    return this.client.post<AiProposal>(
+      `/api/ai/proposals/${encodeURIComponent(id)}/dry-run`,
+      JSON.stringify(input),
+    )
+  }
+
+  async approveProposal(
+    id: string,
+    input: { currentFingerprint: string; selectedIndexes?: number[] },
+  ): Promise<AiProposal> {
+    return this.client.post<AiProposal>(
+      `/api/ai/proposals/${encodeURIComponent(id)}/approve`,
+      JSON.stringify(input),
+    )
+  }
+
+  async recordExecution(
+    id: string,
+    input: { historyEntryId: string; executedIndexes: number[]; success: boolean; error?: string },
+  ): Promise<AiProposal> {
+    return this.client.post<AiProposal>(
+      `/api/ai/proposals/${encodeURIComponent(id)}/execute`,
+      JSON.stringify(input),
+    )
   }
 }

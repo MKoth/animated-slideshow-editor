@@ -84,3 +84,30 @@ class AiPlanUpdate(BaseModel):
     learningObjective: str | None = None
     teachingStrategy: str | None = None
     slides: list[AiPlanUpdateSlide] | None = None
+
+
+class AiProposalCreate(BaseModel):
+    projectId: str = Field(min_length=1)
+    conversationId: str = Field(min_length=1)
+    title: str = ""
+    commands: list[dict[str, Any]] = Field(min_length=1)
+    projectFingerprint: str = Field(min_length=1)
+
+
+class AiProposalDryRun(BaseModel):
+    projectFingerprint: str = Field(min_length=1)
+    ok: bool
+    errors: list[dict[str, Any]] = Field(default_factory=list)
+    validatedIndexes: list[int] | None = None
+
+
+class AiProposalApprove(BaseModel):
+    currentFingerprint: str = Field(min_length=1)
+    selectedIndexes: list[int] | None = None
+
+
+class AiProposalExecute(BaseModel):
+    historyEntryId: str = ""
+    executedIndexes: list[int] = Field(min_length=1)
+    success: bool
+    error: str = ""

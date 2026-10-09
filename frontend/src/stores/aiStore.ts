@@ -8,6 +8,9 @@ import {
   type AiPlan,
   type AiPlanPatch,
   type AiPlanSummary,
+  type AiProposal,
+  type AiProposalCreateInput,
+  type AiProposalValidationError,
 } from '../api/aiApi'
 import { streamAiChat } from '../ai/sse'
 
@@ -33,6 +36,11 @@ interface AiState {
   planGenerating: boolean
   planError: { code: string; message: string } | null
   planRequest: string
+  proposals: AiProposal[]
+  proposalById: Record<string, AiProposal>
+  activeProposalId: string | null
+  proposalBusy: boolean
+  proposalError: { code: string; message: string } | null
 
   setPanelOpen: (open: boolean) => void
   setSettingsOpen: (open: boolean) => void
@@ -70,6 +78,29 @@ interface AiState {
   updatePlan: (id: string, patch: AiPlanPatch) => Promise<void>
   acceptPlan: (id: string) => Promise<void>
   rejectPlan: (id: string) => Promise<void>
+
+  setActiveProposal: (id: string | null) => void
+  loadProposals: (projectId: string) => Promise<void>
+  createProposal: (input: AiProposalCreateInput) => Promise<AiProposal | null>
+  loadProposal: (id: string) => Promise<void>
+  reportDryRun: (
+    id: string,
+    input: {
+      projectFingerprint: string
+      ok: boolean
+      errors: AiProposalValidationError[]
+      validatedIndexes?: number[]
+    },
+  ) => Promise<void>
+  approveProposal: (
+    id: string,
+    currentFingerprint: string,
+    selectedIndexes: number[],
+  ) => Promise<AiProposal | null>
+  recordExecution: (
+    id: string,
+    input: { historyEntryId: string; executedIndexes: number[]; success: boolean; error?: string },
+  ) => Promise<void>
 }
 
 function isBackendDown(error: unknown): boolean {
@@ -101,6 +132,11 @@ export const useAiStore = create<AiState>()(
       planGenerating: false,
       planError: null,
       planRequest: '',
+      proposals: [],
+      proposalById: {},
+      activeProposalId: null,
+      proposalBusy: false,
+      proposalError: null,
 
       setPanelOpen: (open) => set({ panelOpen: open }),
       setSettingsOpen: (open) => set({ settingsOpen: open }),
@@ -460,6 +496,128 @@ export const useAiStore = create<AiState>()(
           if (isBackendDown(error)) set({ status: 'unavailable' })
         }
       },
+
+      setActiveProposal: (id) => set({ activeProposalId: id }),
+
+      loadProposals: async (projectId) => {
+        try {
+          const proposals = await get().api.listProposals(projectId)
+          set((state) => ({
+            proposals,
+            proposalById: {
+              ...state.proposalById,
+              ...Object.fromEntries(proposals.map((p) => [p.id, p])),
+            },
+            activeProposalId:
+              state.activeProposalId && proposals.some((p) => p.id === state.activeProposalId)
+                ? state.activeProposalId
+                : (proposals[0]?.id ?? null),
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      createProposal: async (input) => {
+        if (get().proposalBusy) return null
+        set({ proposalBusy: true, proposalError: null })
+        try {
+          const proposal = await get().api.createProposal(input)
+          set((state) => ({
+            proposalById: { ...state.proposalById, [proposal.id]: proposal },
+            proposals: [proposal, ...state.proposals.filter((p) => p.id !== proposal.id)],
+            activeProposalId: proposal.id,
+          }))
+          return proposal
+        } catch (error) {
+          if (isBackendDown(error)) {
+            set({ status: 'unavailable' })
+            return null
+          }
+          set({
+            proposalError: {
+              code: 'proposal_create_failed',
+              message: error instanceof Error ? error.message : 'Proposal creation failed.',
+            },
+          })
+          return null
+        } finally {
+          set({ proposalBusy: false })
+        }
+      },
+
+      loadProposal: async (id) => {
+        try {
+          const proposal = await get().api.getProposal(id)
+          set((state) => ({
+            proposalById: { ...state.proposalById, [id]: proposal },
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      reportDryRun: async (id, input) => {
+        try {
+          const proposal = await get().api.reportDryRun(id, input)
+          set((state) => ({
+            proposalById: { ...state.proposalById, [id]: proposal },
+            proposals: state.proposals.map((p) => (p.id === id ? proposal : p)),
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      approveProposal: async (id, currentFingerprint, selectedIndexes) => {
+        set({ proposalBusy: true, proposalError: null })
+        try {
+          const proposal = await get().api.approveProposal(id, {
+            currentFingerprint,
+            selectedIndexes,
+          })
+          set((state) => ({
+            proposalById: { ...state.proposalById, [id]: proposal },
+            proposals: state.proposals.map((p) => (p.id === id ? proposal : p)),
+          }))
+          return proposal
+        } catch (error) {
+          if (isBackendDown(error)) {
+            set({ status: 'unavailable' })
+            return null
+          }
+          set({
+            proposalError: {
+              code: 'proposal_approve_failed',
+              message: error instanceof Error ? error.message : 'Approval failed.',
+            },
+          })
+          try {
+            const refreshed = await get().api.getProposal(id)
+            set((state) => ({
+              proposalById: { ...state.proposalById, [id]: refreshed },
+              proposals: state.proposals.map((p) => (p.id === id ? refreshed : p)),
+            }))
+          } catch {
+            // Keep the approval error visible even if refresh fails.
+          }
+          return null
+        } finally {
+          set({ proposalBusy: false })
+        }
+      },
+
+      recordExecution: async (id, input) => {
+        try {
+          const proposal = await get().api.recordExecution(id, input)
+          set((state) => ({
+            proposalById: { ...state.proposalById, [id]: proposal },
+            proposals: state.proposals.map((p) => (p.id === id ? proposal : p)),
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
     }),
     {
       name: 'ai-ui-prefs',
@@ -469,6 +627,7 @@ export const useAiStore = create<AiState>()(
         panelOpen: state.panelOpen,
         activePlanId: state.activePlanId,
         planRequest: state.planRequest,
+        activeProposalId: state.activeProposalId,
       }),
     },
   ),

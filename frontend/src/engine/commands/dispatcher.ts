@@ -12,7 +12,10 @@ export type CommandLogger = (message: string) => void
 
 export type CommandSucceededListener = () => void
 
-export type DispatchCommand = <Inverse>(command: Command<Inverse>) => CommandResult<Inverse>
+export type DispatchCommand = <Inverse>(
+  command: Command<Inverse>,
+  source?: 'user' | 'ai',
+) => CommandResult<Inverse>
 
 const defaultLogger: CommandLogger = (message) => {
   console.info(`[command] ${message}`)
@@ -34,7 +37,10 @@ export class CommandDispatcher {
     this.#onCommandSucceeded = listener
   }
 
-  dispatch<Inverse>(command: Command<Inverse>): CommandResult<Inverse> {
+  dispatch<Inverse>(
+    command: Command<Inverse>,
+    source: 'user' | 'ai' = 'user',
+  ): CommandResult<Inverse> {
     try {
       command.validate(this.#engine)
       const inverse = command.execute(this.#engine)
@@ -44,7 +50,7 @@ export class CommandDispatcher {
         parameters: command.parameters,
         inverse,
         timestamp: Date.now(),
-        source: 'user',
+        source,
       })
       this.#log(`${command.type} ${formatParameters(command.parameters)}`)
       this.#onCommandSucceeded?.()

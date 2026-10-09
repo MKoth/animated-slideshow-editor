@@ -89,3 +89,45 @@ class AiPlanRevisionRow(Base):
     source_request: Mapped[str] = mapped_column(Text, nullable=False, default="")
     snapshot_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AiProposalRow(Base):
+    """Canonical AI Edit Proposal: server-validated commands, client dry-run,
+    stale-blocking at approval, partial acceptance, execution records."""
+
+    __tablename__ = "ai_proposals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    conversation_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="draft")
+    commands_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    validation_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    base_fingerprint: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    validated_fingerprint: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, default=None
+    )
+    dry_run_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    selected_indexes_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AiProposalExecutionRow(Base):
+    """One execution attempt of a proposal subset as one Transaction."""
+
+    __tablename__ = "ai_proposal_executions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    proposal_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("ai_proposals.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    executed_indexes_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    history_entry_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    success: Mapped[bool] = mapped_column(nullable=False, default=False)
+    error: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

@@ -11,7 +11,12 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.ai.library import AiConversationNotFoundError, AiLibrary, AiSecretMissingError
+from app.ai.library import (
+    AiConversationNotFoundError,
+    AiLibrary,
+    AiSecretMissingError,
+    StaleProposalError,
+)
 from app.ai.plans import (
     PLAN_JSON_SCHEMA,
     apply_user_edits_preservation,
@@ -25,6 +30,10 @@ from app.ai.schemas import (
     AiConversationRename,
     AiPlanCreate,
     AiPlanUpdate,
+    AiProposalApprove,
+    AiProposalCreate,
+    AiProposalDryRun,
+    AiProposalExecute,
     AiSettingsUpdate,
 )
 from app.ai.zen import ZenClient, ZenFetchError, friendly_error_for_status
@@ -729,3 +738,155 @@ def reject_ai_plan(request: Request, plan_id: str) -> dict[str, object]:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="plan not found") from exc
     return _plan_to_out(request, plan_id)
+
+
+# -- edit proposals ------------------------------------------------------
+
+
+def _proposal_to_out(request: Request, proposal_id: str) -> dict[str, object]:
+    import json as _json
+
+    library = _library(request)
+    try:
+        row = library.get_proposal(proposal_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="proposal not found") from exc
+    try:
+        commands: object = _json.loads(row.commands_json or "[]")
+    except (ValueError, TypeError):
+        commands = []
+    try:
+        validation: object = _json.loads(row.validation_json or "{}")
+    except (ValueError, TypeError):
+        validation = {"ok": False, "errors": []}
+    try:
+        dry_run: object = _json.loads(row.dry_run_json or "{}")
+    except (ValueError, TypeError):
+        dry_run = {}
+    try:
+        selected: object = _json.loads(row.selected_indexes_json or "[]")
+    except (ValueError, TypeError):
+        selected = []
+    executions = [
+        {
+            "id": e.id,
+            "executedIndexes": _json.loads(e.executed_indexes_json or "[]"),
+            "historyEntryId": e.history_entry_id,
+            "success": bool(e.success),
+            "error": e.error,
+            "created": _iso(e.created_at),
+        }
+        for e in library.list_proposal_executions(proposal_id)
+    ]
+    return {
+        "id": row.id,
+        "projectId": row.project_id,
+        "conversationId": row.conversation_id,
+        "title": row.title,
+        "status": row.status,
+        "commands": commands if isinstance(commands, list) else [],
+        "validation": validation if isinstance(validation, dict) else {},
+        "baseFingerprint": row.base_fingerprint,
+        "validatedFingerprint": row.validated_fingerprint,
+        "dryRun": dry_run if isinstance(dry_run, dict) else {},
+        "selectedIndexes": selected if isinstance(selected, list) else [],
+        "executions": executions,
+        "created": _iso(row.created_at),
+        "modified": _iso(row.updated_at),
+    }
+
+
+@router.post("/ai/proposals", status_code=201)
+def post_ai_proposal(request: Request, body: AiProposalCreate) -> dict[str, object]:
+    library = _library(request)
+    if not body.projectFingerprint.strip():
+        raise HTTPException(status_code=422, detail="projectFingerprint is required")
+    commands = [dict(c) for c in body.commands]
+    try:
+        row = library.create_proposal(
+            project_id=body.projectId,
+            conversation_id=body.conversationId,
+            title=body.title or "",
+            commands=commands,
+            project_fingerprint=body.projectFingerprint,
+        )
+    except AiConversationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
+    return _proposal_to_out(request, row.id)
+
+
+@router.get("/ai/proposals")
+def list_ai_proposals(request: Request, projectId: str = "") -> list[dict[str, object]]:
+    if not projectId.strip():
+        raise HTTPException(status_code=422, detail="projectId is required")
+    library = _library(request)
+    return [_proposal_to_out(request, row.id) for row in library.list_proposals(projectId)]
+
+
+@router.get("/ai/proposals/{proposal_id}")
+def get_ai_proposal(request: Request, proposal_id: str) -> dict[str, object]:
+    return _proposal_to_out(request, proposal_id)
+
+
+@router.post("/ai/proposals/{proposal_id}/dry-run")
+def post_ai_proposal_dry_run(
+    request: Request, proposal_id: str, body: AiProposalDryRun
+) -> dict[str, object]:
+    library = _library(request)
+    try:
+        row = library.report_dry_run(
+            proposal_id,
+            project_fingerprint=body.projectFingerprint,
+            ok=body.ok,
+            errors=[dict(e) for e in body.errors],
+            validated_indexes=(
+                list(body.validatedIndexes) if body.validatedIndexes is not None else None
+            ),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="proposal not found") from exc
+    return _proposal_to_out(request, row.id)
+
+
+@router.post("/ai/proposals/{proposal_id}/approve")
+def post_ai_proposal_approve(
+    request: Request, proposal_id: str, body: AiProposalApprove
+) -> dict[str, object]:
+    library = _library(request)
+    try:
+        row, subset = library.approve_proposal(
+            proposal_id,
+            current_fingerprint=body.currentFingerprint,
+            selected_indexes=body.selectedIndexes,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="proposal not found") from exc
+    except StaleProposalError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    out = _proposal_to_out(request, row.id)
+    out["executableCommands"] = subset
+    return out
+
+
+@router.post("/ai/proposals/{proposal_id}/execute")
+def post_ai_proposal_execute(
+    request: Request, proposal_id: str, body: AiProposalExecute
+) -> dict[str, object]:
+    library = _library(request)
+    try:
+        row = library.record_execution(
+            proposal_id,
+            history_entry_id=body.historyEntryId,
+            executed_indexes=list(body.executedIndexes),
+            success=body.success,
+            error=body.error or "",
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="proposal not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _proposal_to_out(request, row.id)

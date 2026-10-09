@@ -8,6 +8,8 @@ from app.ai.model import (  # noqa: F401
     AiMessageRow,
     AiPlanRevisionRow,
     AiPlanRow,
+    AiProposalExecutionRow,
+    AiProposalRow,
     AiSettingsRow,
 )
 from app.api import (
