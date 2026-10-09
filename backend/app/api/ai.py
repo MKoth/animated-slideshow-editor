@@ -34,6 +34,9 @@ from app.ai.schemas import (
     AiProposalCreate,
     AiProposalDryRun,
     AiProposalExecute,
+    AiReconciliationCreate,
+    AiReconciliationDecision,
+    AiReconciliationUpdate,
     AiScenarioCreate,
     AiScenarioUpdate,
     AiSettingsUpdate,
@@ -1072,6 +1075,364 @@ def reject_ai_scenario(request: Request, scenario_id: str) -> dict[str, object]:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="scenario not found") from exc
     return _scenario_to_out(request, scenario_id)
+
+
+# -- reconciliations (Stage B) ---------------------------------------------
+
+
+def _context_list(context: object, *keys: str) -> list[str]:
+    if not isinstance(context, dict):
+        return []
+    out: list[str] = []
+    for key in keys:
+        value = context.get(key)
+        if isinstance(value, list):
+            for entry in value:
+                if isinstance(entry, str) and entry.strip():
+                    out.append(entry.strip())
+                elif isinstance(entry, dict) and isinstance(entry.get("name"), str):
+                    name = str(entry["name"]).strip()
+                    if name:
+                        out.append(name)
+    return out
+
+
+def _reconciliation_to_out(request: Request, reconciliation_id: str) -> dict[str, object]:
+    import json as _json
+
+    library = _library(request)
+    try:
+        row = library.get_reconciliation(reconciliation_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="reconciliation not found") from exc
+    try:
+        verdicts: object = _json.loads(row.verdicts_json or "[]")
+    except (ValueError, TypeError):
+        verdicts = []
+    try:
+        briefs: object = _json.loads(row.briefs_json or "[]")
+    except (ValueError, TypeError):
+        briefs = []
+    try:
+        decisions: object = _json.loads(row.decisions_json or "{}")
+    except (ValueError, TypeError):
+        decisions = {}
+    revisions = [
+        {
+            "id": rev.id,
+            "sourceRequest": rev.source_request,
+            "created": _iso(rev.created_at),
+        }
+        for rev in library.list_reconciliation_revisions(reconciliation_id)
+    ]
+    middle = (
+        [v for v in verdicts if isinstance(v, dict) and not v.get("skipped")]
+        if isinstance(verdicts, list)
+        else []
+    )
+    missing = 0
+    if isinstance(verdicts, list):
+        for step in verdicts:
+            if not isinstance(step, dict) or step.get("skipped"):
+                continue
+            for verdict in step.get("assetVerdicts", []) or []:
+                if isinstance(verdict, dict) and verdict.get("verdict") == "missing":
+                    missing += 1
+    return {
+        "id": row.id,
+        "projectId": row.project_id,
+        "scenarioId": row.scenario_id,
+        "conversationId": row.conversation_id,
+        "title": row.title,
+        "status": row.status,
+        "verdicts": verdicts if isinstance(verdicts, list) else [],
+        "briefs": briefs if isinstance(briefs, list) else [],
+        "decisions": decisions if isinstance(decisions, dict) else {},
+        "revisions": revisions,
+        "middleStepCount": len(middle),
+        "missingCount": missing,
+        "created": _iso(row.created_at),
+        "modified": _iso(row.updated_at),
+    }
+
+
+@router.post("/ai/reconciliations", status_code=201)
+def post_ai_reconciliation(request: Request, body: AiReconciliationCreate) -> dict[str, object]:
+    from app.ai.reconciliations import (
+        ANIMATABLE_PARAMS,
+        SCRIPT_VERBS,
+        reconcile_middle_steps,
+    )
+
+    library = _library(request)
+    try:
+        conversation = library.get_conversation(body.conversationId)
+    except AiConversationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
+    if conversation.project_id != body.projectId:
+        raise HTTPException(status_code=422, detail="conversation does not belong to this project")
+    try:
+        canonical = library.scenario_canonical_json(body.scenarioId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="scenario not found") from exc
+    except ValueError as exc:
+        # Draft/rejected scenario: Stage B refuses to run.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if str(canonical.get("projectId", "")) != body.projectId:
+        raise HTTPException(status_code=422, detail="scenario does not belong to this project")
+
+    steps = canonical.get("steps", [])
+    step_list = [dict(s) for s in steps if isinstance(s, dict)] if isinstance(steps, list) else []
+
+    # Live library state (server-side source of truth).
+    asset_library = request.app.state.asset_library
+    clip_library = request.app.state.clip_library
+    collection_library = request.app.state.clip_collection_library
+    definitions: list[dict[str, object]] = []
+    for definition in asset_library.list():
+        definitions.append(
+            {
+                "id": definition.id,
+                "name": definition.name,
+                "tags": list(definition.tags or []),
+                "category": definition.category,
+                "ai_description": definition.ai_description,
+            }
+        )
+    clip_names = [clip.name for clip in clip_library.list_all()]
+    collections: list[dict[str, object]] = []
+    for collection in collection_library.list_all():
+        collections.append({"name": collection.name, "bindings": dict(collection.bindings or {})})
+    audio_defs = [d for d in definitions if str(d.get("category", "")) == "audio"]
+
+    context = body.context
+    context_clips = _context_list(context, "clips", "clipNames", "libraryClips")
+    context_collections = _context_list(context, "clipCollections", "collections")
+    embedded_audio = _context_list(context, "embeddedAudio", "audio", "audioAssets")
+    animatable = _context_list(context, "animatableParams")
+    script_verbs = _context_list(context, "scriptVerbs")
+    style_profile: dict[str, str] | None = None
+    if isinstance(context, dict) and isinstance(context.get("styleProfile"), dict):
+        raw_style = context["styleProfile"]
+        assert isinstance(raw_style, dict)
+        name = str(raw_style.get("name", "")).strip()
+        if name:
+            style_profile = {
+                "name": name,
+                "description": str(raw_style.get("description", "")),
+                "promptSuffix": str(raw_style.get("promptSuffix", "")),
+            }
+
+    motion_surface: dict[str, object] = {
+        "clips": [*clip_names, *context_clips],
+        "clipCollections": [
+            *collections,
+            *[{"name": name, "bindings": {}} for name in context_collections],
+        ],
+        "animatableParams": animatable or list(ANIMATABLE_PARAMS),
+        "scriptVerbs": script_verbs or list(SCRIPT_VERBS),
+    }
+
+    verdicts, briefs = reconcile_middle_steps(
+        steps=step_list,
+        definitions=definitions,
+        motion_surface=motion_surface,
+        audio_definitions=audio_defs,
+        embedded_audio_names=embedded_audio,
+        style_profile=style_profile,
+    )
+
+    try:
+        row = library.create_reconciliation(
+            project_id=body.projectId,
+            scenario_id=body.scenarioId,
+            conversation_id=body.conversationId,
+            title=str(canonical.get("title", "")),
+            verdicts=[dict(v) for v in verdicts],
+            briefs=[dict(b) for b in briefs],
+            source_request=f"reconcile scenario {body.scenarioId}",
+            source_steps=step_list,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="scenario not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    middle_count = len([v for v in verdicts if not v.get("skipped")])
+    library.append_message(
+        body.conversationId,
+        "assistant",
+        f"Reconciled {middle_count} middle steps against the live library "
+        f"({len(briefs)} missing assets have image-gen briefs). "
+        "Review verdicts, accept/reject/replace assets, edit briefs, then accept — "
+        "Stage C waits on the accepted version. Intro/outro references were left alone.",
+    )
+    return _reconciliation_to_out(request, row.id)
+
+
+@router.get("/ai/reconciliations")
+def list_ai_reconciliations(
+    request: Request, projectId: str = "", scenarioId: str | None = None
+) -> list[dict[str, object]]:
+    if not projectId.strip():
+        raise HTTPException(status_code=422, detail="projectId is required")
+    library = _library(request)
+    out: list[dict[str, object]] = []
+    for row in library.list_reconciliations(projectId, scenarioId or None):
+        import json as _json
+
+        try:
+            loaded_verdicts: object = _json.loads(row.verdicts_json or "[]")
+            middle = (
+                len([v for v in loaded_verdicts if isinstance(v, dict) and not v.get("skipped")])
+                if isinstance(loaded_verdicts, list)
+                else 0
+            )
+        except (ValueError, TypeError):
+            middle = 0
+        out.append(
+            {
+                "id": row.id,
+                "projectId": row.project_id,
+                "scenarioId": row.scenario_id,
+                "conversationId": row.conversation_id,
+                "title": row.title,
+                "status": row.status,
+                "middleStepCount": middle,
+                "modified": _iso(row.updated_at),
+            }
+        )
+    return out
+
+
+@router.get("/ai/reconciliations/{reconciliation_id}")
+def get_ai_reconciliation(request: Request, reconciliation_id: str) -> dict[str, object]:
+    return _reconciliation_to_out(request, reconciliation_id)
+
+
+@router.get("/ai/reconciliations/{reconciliation_id}/canonical")
+def get_ai_reconciliation_canonical(request: Request, reconciliation_id: str) -> dict[str, object]:
+    """Stage C handoff: accepted mappings + feasibility + briefs only."""
+    library = _library(request)
+    try:
+        return library.reconciliation_canonical_json(reconciliation_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="reconciliation not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/ai/reconciliations/{reconciliation_id}/decisions")
+def post_ai_reconciliation_decision(
+    request: Request, reconciliation_id: str, body: AiReconciliationDecision
+) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.get_reconciliation(reconciliation_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="reconciliation not found") from exc
+    if body.decision == "accept":
+        if not (body.definitionId or "").strip():
+            raise HTTPException(
+                status_code=422,
+                detail="accept requires a definitionId (any ranked or alternative candidate)",
+            )
+        definition_id = (body.definitionId or "").strip()
+        if not definition_id.startswith("embedded:"):
+            asset_library = request.app.state.asset_library
+            try:
+                asset_library.get(definition_id)
+            except Exception as exc:
+                raise HTTPException(status_code=422, detail="definitionId does not exist") from exc
+    try:
+        library.record_reconciliation_decision(
+            reconciliation_id,
+            step_id=body.stepId,
+            hint=body.hint,
+            decision=body.decision,
+            definition_id=body.definitionId,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="reconciliation not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _reconciliation_to_out(request, reconciliation_id)
+
+
+@router.delete("/ai/reconciliations/{reconciliation_id}/decisions", status_code=200)
+def delete_ai_reconciliation_decision(
+    request: Request, reconciliation_id: str, stepId: str = "", hint: str = ""
+) -> dict[str, object]:
+    if not stepId.strip() or not hint.strip():
+        raise HTTPException(status_code=422, detail="stepId and hint are required")
+    library = _library(request)
+    try:
+        library.clear_reconciliation_decision(reconciliation_id, step_id=stepId, hint=hint)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="reconciliation not found") from exc
+    return _reconciliation_to_out(request, reconciliation_id)
+
+
+@router.patch("/ai/reconciliations/{reconciliation_id}")
+def patch_ai_reconciliation(
+    request: Request, reconciliation_id: str, body: AiReconciliationUpdate
+) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.get_reconciliation(reconciliation_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="reconciliation not found") from exc
+    if body.title is not None and not body.title.strip():
+        raise HTTPException(status_code=422, detail="title must be a non-empty string")
+    if body.briefs is not None:
+        patches: list[dict[str, object]] = []
+        for brief in body.briefs:
+            item: dict[str, object] = {"id": brief.id}
+            if brief.prompt is not None:
+                item["prompt"] = brief.prompt
+            if brief.name is not None:
+                item["name"] = brief.name
+            if brief.note is not None:
+                item["note"] = brief.note
+            if brief.variants is not None:
+                variants: dict[str, object] = {}
+                if brief.variants.detailed is not None:
+                    variants["detailed"] = brief.variants.detailed
+                if brief.variants.concise is not None:
+                    variants["concise"] = brief.variants.concise
+                if brief.variants.stylized is not None:
+                    variants["stylized"] = brief.variants.stylized
+                item["variants"] = variants
+            if brief.styleProfile is not None:
+                item["styleProfile"] = dict(brief.styleProfile)
+            patches.append(item)
+        try:
+            library.update_reconciliation_briefs(reconciliation_id, briefs=patches)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="reconciliation not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _reconciliation_to_out(request, reconciliation_id)
+
+
+@router.post("/ai/reconciliations/{reconciliation_id}/accept")
+def accept_ai_reconciliation(request: Request, reconciliation_id: str) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.set_reconciliation_status(reconciliation_id, "accepted")
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="reconciliation not found") from exc
+    return _reconciliation_to_out(request, reconciliation_id)
+
+
+@router.post("/ai/reconciliations/{reconciliation_id}/reject")
+def reject_ai_reconciliation(request: Request, reconciliation_id: str) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.set_reconciliation_status(reconciliation_id, "rejected")
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="reconciliation not found") from exc
+    return _reconciliation_to_out(request, reconciliation_id)
 
 
 # -- edit proposals ------------------------------------------------------

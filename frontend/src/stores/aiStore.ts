@@ -11,6 +11,9 @@ import {
   type AiProposal,
   type AiProposalCreateInput,
   type AiProposalValidationError,
+  type AiReconciliation,
+  type AiReconciliationBriefPatch,
+  type AiReconciliationSummary,
   type AiScenario,
   type AiScenarioPatch,
   type AiScenarioSummary,
@@ -45,6 +48,11 @@ interface AiState {
   scenarioGenerating: boolean
   scenarioError: { code: string; message: string } | null
   scenarioRequest: string
+  reconciliations: AiReconciliationSummary[]
+  reconciliationById: Record<string, AiReconciliation>
+  activeReconciliationId: string | null
+  reconciliationBusy: boolean
+  reconciliationError: { code: string; message: string } | null
   proposals: AiProposal[]
   proposalById: Record<string, AiProposal>
   activeProposalId: string | null
@@ -102,6 +110,24 @@ interface AiState {
   updateScenario: (id: string, patch: AiScenarioPatch) => Promise<void>
   acceptScenario: (id: string) => Promise<void>
   rejectScenario: (id: string) => Promise<void>
+
+  setActiveReconciliation: (id: string | null) => void
+  loadReconciliations: (projectId: string, scenarioId?: string) => Promise<void>
+  reconcileScenario: (
+    projectId: string,
+    scenarioId: string,
+    conversationId: string,
+    context: unknown,
+  ) => Promise<AiReconciliation | null>
+  loadReconciliation: (id: string) => Promise<void>
+  decideReconciliation: (
+    id: string,
+    input: { stepId: string; hint: string; decision: 'accept' | 'reject'; definitionId?: string },
+  ) => Promise<void>
+  clearReconciliationDecision: (id: string, stepId: string, hint: string) => Promise<void>
+  updateReconciliationBriefs: (id: string, briefs: AiReconciliationBriefPatch[]) => Promise<void>
+  acceptReconciliation: (id: string) => Promise<void>
+  rejectReconciliation: (id: string) => Promise<void>
 
   setActiveProposal: (id: string | null) => void
   loadProposals: (projectId: string) => Promise<void>
@@ -162,6 +188,11 @@ export const useAiStore = create<AiState>()(
       scenarioGenerating: false,
       scenarioError: null,
       scenarioRequest: '',
+      reconciliations: [],
+      reconciliationById: {},
+      activeReconciliationId: null,
+      reconciliationBusy: false,
+      reconciliationError: null,
       proposals: [],
       proposalById: {},
       activeProposalId: null,
@@ -663,6 +694,170 @@ export const useAiStore = create<AiState>()(
         }
       },
 
+      setActiveReconciliation: (id) => set({ activeReconciliationId: id }),
+
+      loadReconciliations: async (projectId, scenarioId) => {
+        try {
+          const reconciliations = await get().api.listReconciliations(projectId, scenarioId)
+          set((state) => ({
+            reconciliations,
+            activeReconciliationId:
+              state.activeReconciliationId &&
+              reconciliations.some((r) => r.id === state.activeReconciliationId)
+                ? state.activeReconciliationId
+                : (reconciliations[0]?.id ?? null),
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      reconcileScenario: async (projectId, scenarioId, conversationId, context) => {
+        if (get().reconciliationBusy) return null
+        set({ reconciliationBusy: true, reconciliationError: null })
+        try {
+          const reconciliation = await get().api.reconcileScenario({
+            projectId,
+            scenarioId,
+            conversationId,
+            context,
+          })
+          set((state) => ({
+            reconciliationById: {
+              ...state.reconciliationById,
+              [reconciliation.id]: reconciliation,
+            },
+            reconciliations: [
+              {
+                id: reconciliation.id,
+                projectId: reconciliation.projectId,
+                scenarioId: reconciliation.scenarioId,
+                conversationId: reconciliation.conversationId,
+                title: reconciliation.title,
+                status: reconciliation.status,
+                middleStepCount: reconciliation.middleStepCount,
+                modified: reconciliation.modified,
+              },
+              ...state.reconciliations.filter((r) => r.id !== reconciliation.id),
+            ],
+            activeReconciliationId: reconciliation.id,
+          }))
+          try {
+            const messages = await get().api.listMessages(conversationId)
+            set((state) => ({
+              messagesById: { ...state.messagesById, [conversationId]: messages },
+            }))
+          } catch {
+            // Reconciliation itself succeeded; message refresh is best-effort.
+          }
+          return reconciliation
+        } catch (error) {
+          if (isBackendDown(error)) {
+            set({ status: 'unavailable' })
+            return null
+          }
+          set({
+            reconciliationError: {
+              code: 'reconcile_failed',
+              message: error instanceof Error ? error.message : 'Reconciliation failed — retry.',
+            },
+          })
+          return null
+        } finally {
+          set({ reconciliationBusy: false })
+        }
+      },
+
+      loadReconciliation: async (id) => {
+        try {
+          const reconciliation = await get().api.getReconciliation(id)
+          set((state) => ({
+            reconciliationById: { ...state.reconciliationById, [id]: reconciliation },
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      decideReconciliation: async (id, input) => {
+        try {
+          const reconciliation = await get().api.decideReconciliation(id, input)
+          set((state) => ({
+            reconciliationById: { ...state.reconciliationById, [id]: reconciliation },
+            reconciliations: state.reconciliations.map((r) =>
+              r.id === id
+                ? { ...r, status: reconciliation.status, modified: reconciliation.modified }
+                : r,
+            ),
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) {
+            set({ status: 'unavailable' })
+            return
+          }
+          set({
+            reconciliationError: {
+              code: 'decision_failed',
+              message: error instanceof Error ? error.message : 'Decision failed.',
+            },
+          })
+        }
+      },
+
+      clearReconciliationDecision: async (id, stepId, hint) => {
+        try {
+          const reconciliation = await get().api.clearReconciliationDecision(id, stepId, hint)
+          set((state) => ({
+            reconciliationById: { ...state.reconciliationById, [id]: reconciliation },
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      updateReconciliationBriefs: async (id, briefs) => {
+        try {
+          const reconciliation = await get().api.updateReconciliation(id, { briefs })
+          set((state) => ({
+            reconciliationById: { ...state.reconciliationById, [id]: reconciliation },
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      acceptReconciliation: async (id) => {
+        try {
+          const reconciliation = await get().api.acceptReconciliation(id)
+          set((state) => ({
+            reconciliationById: { ...state.reconciliationById, [id]: reconciliation },
+            reconciliations: state.reconciliations.map((r) =>
+              r.id === id
+                ? { ...r, status: reconciliation.status, modified: reconciliation.modified }
+                : r,
+            ),
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      rejectReconciliation: async (id) => {
+        try {
+          const reconciliation = await get().api.rejectReconciliation(id)
+          set((state) => ({
+            reconciliationById: { ...state.reconciliationById, [id]: reconciliation },
+            reconciliations: state.reconciliations.map((r) =>
+              r.id === id
+                ? { ...r, status: reconciliation.status, modified: reconciliation.modified }
+                : r,
+            ),
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
       setActiveProposal: (id) => set({ activeProposalId: id }),
 
       loadProposals: async (projectId) => {
@@ -795,6 +990,7 @@ export const useAiStore = create<AiState>()(
         planRequest: state.planRequest,
         activeScenarioId: state.activeScenarioId,
         scenarioRequest: state.scenarioRequest,
+        activeReconciliationId: state.activeReconciliationId,
         activeProposalId: state.activeProposalId,
       }),
     },

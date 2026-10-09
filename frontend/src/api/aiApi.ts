@@ -211,6 +211,116 @@ export interface AiScenarioPatch {
   steps?: AiScenarioStepPatch[]
 }
 
+export type AiReconciliationStatus = 'draft' | 'accepted' | 'rejected'
+export type AiMotionState =
+  'feasible' | 'feasible-with-substitution' | 'needs-new-asset' | 'needs-new-motion'
+
+export interface AiReconciliationCandidate {
+  definitionId: string
+  name: string
+  score: number
+  explanation: string
+}
+
+export interface AiAssetVerdict {
+  hint: string
+  verdict: 'matched' | 'missing'
+  candidates: AiReconciliationCandidate[]
+  alternatives: AiReconciliationCandidate[]
+}
+
+export interface AiMotionVerdict {
+  state: AiMotionState
+  explanation: string
+  evidence: Record<string, unknown>
+}
+
+export interface AiStepReconciliation {
+  stepId: string
+  order: number
+  partTag: AiScenarioPartTag
+  skipped: boolean
+  reason?: string
+  assetVerdicts: AiAssetVerdict[]
+  motion: AiMotionVerdict | null
+  soundVerdicts: AiAssetVerdict[]
+}
+
+export interface AiImageBrief {
+  id: string
+  stepId: string
+  hint: string
+  name: string
+  note: string
+  styleProfile: { name: string; description: string; promptSuffix: string }
+  productionConstraints: string
+  providerNote: string
+  variants: { detailed: string; concise: string; stylized: string }
+  prompt: string
+  editable: boolean
+  wizardEntry: {
+    assetName: string
+    note: string
+    styleProfile: { name: string; description: string; promptSuffix: string }
+    productionConstraints: string
+    providerNote: string
+  }
+}
+
+export interface AiReconciliationRevision {
+  id: string
+  sourceRequest: string
+  created: string
+}
+
+export interface AiReconciliation {
+  id: string
+  projectId: string
+  scenarioId: string
+  conversationId: string
+  title: string
+  status: AiReconciliationStatus
+  verdicts: AiStepReconciliation[]
+  briefs: AiImageBrief[]
+  decisions: Record<
+    string,
+    { stepId: string; hint: string; decision: string; definitionId: string | null }
+  >
+  revisions: AiReconciliationRevision[]
+  middleStepCount: number
+  missingCount: number
+  created: string
+  modified: string
+}
+
+export interface AiReconciliationSummary {
+  id: string
+  projectId: string
+  scenarioId: string
+  conversationId: string
+  title: string
+  status: AiReconciliationStatus
+  middleStepCount: number
+  modified: string
+}
+
+export interface AiReconciliationCreateInput {
+  projectId: string
+  scenarioId: string
+  conversationId: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any
+}
+
+export interface AiReconciliationBriefPatch {
+  id: string
+  prompt?: string
+  name?: string
+  note?: string
+  variants?: { detailed?: string; concise?: string; stylized?: string }
+  styleProfile?: { name: string; description: string; promptSuffix: string }
+}
+
 export type AiProposalStatus =
   | 'draft'
   | 'validated'
@@ -381,6 +491,83 @@ export class AiApi {
 
   async rejectScenario(id: string): Promise<AiScenario> {
     return this.client.post<AiScenario>(`/api/ai/scenarios/${encodeURIComponent(id)}/reject`, '')
+  }
+
+  async reconcileScenario(input: AiReconciliationCreateInput): Promise<AiReconciliation> {
+    return this.client.post<AiReconciliation>('/api/ai/reconciliations', JSON.stringify(input))
+  }
+
+  async listReconciliations(
+    projectId: string,
+    scenarioId?: string,
+  ): Promise<AiReconciliationSummary[]> {
+    const params = new URLSearchParams({ projectId })
+    if (scenarioId) params.set('scenarioId', scenarioId)
+    return this.client.get<AiReconciliationSummary[]>(
+      `/api/ai/reconciliations?${params.toString()}`,
+    )
+  }
+
+  async getReconciliation(id: string): Promise<AiReconciliation> {
+    return this.client.get<AiReconciliation>(`/api/ai/reconciliations/${encodeURIComponent(id)}`)
+  }
+
+  async getReconciliationCanonical(id: string): Promise<{
+    id: string
+    projectId: string
+    scenarioId: string
+    conversationId: string
+    status: AiReconciliationStatus
+    verdicts: AiStepReconciliation[]
+    briefs: AiImageBrief[]
+    decisions: AiReconciliation['decisions']
+  }> {
+    return this.client.get(`/api/ai/reconciliations/${encodeURIComponent(id)}/canonical`)
+  }
+
+  async decideReconciliation(
+    id: string,
+    input: { stepId: string; hint: string; decision: 'accept' | 'reject'; definitionId?: string },
+  ): Promise<AiReconciliation> {
+    return this.client.post<AiReconciliation>(
+      `/api/ai/reconciliations/${encodeURIComponent(id)}/decisions`,
+      JSON.stringify(input),
+    )
+  }
+
+  async clearReconciliationDecision(
+    id: string,
+    stepId: string,
+    hint: string,
+  ): Promise<AiReconciliation> {
+    const params = new URLSearchParams({ stepId, hint })
+    return this.client.deleteJson<AiReconciliation>(
+      `/api/ai/reconciliations/${encodeURIComponent(id)}/decisions?${params.toString()}`,
+    )
+  }
+
+  async updateReconciliation(
+    id: string,
+    patch: { title?: string; briefs?: AiReconciliationBriefPatch[] },
+  ): Promise<AiReconciliation> {
+    return this.client.patch<AiReconciliation>(
+      `/api/ai/reconciliations/${encodeURIComponent(id)}`,
+      JSON.stringify(patch),
+    )
+  }
+
+  async acceptReconciliation(id: string): Promise<AiReconciliation> {
+    return this.client.post<AiReconciliation>(
+      `/api/ai/reconciliations/${encodeURIComponent(id)}/accept`,
+      '',
+    )
+  }
+
+  async rejectReconciliation(id: string): Promise<AiReconciliation> {
+    return this.client.post<AiReconciliation>(
+      `/api/ai/reconciliations/${encodeURIComponent(id)}/reject`,
+      '',
+    )
   }
 
   async createProposal(input: AiProposalCreateInput): Promise<AiProposal> {

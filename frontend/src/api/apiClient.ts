@@ -72,6 +72,14 @@ export class ApiClient {
     await this.request(path, { method: 'DELETE' })
   }
 
+  async deleteJson<T>(path: string): Promise<T> {
+    const response = await this.request(path, {
+      method: 'DELETE',
+      headers: { Accept: 'application/json' },
+    })
+    return (await response.json()) as T
+  }
+
   async postForWav(path: string, body: string): Promise<Uint8Array> {
     const response = await this.request(path, {
       method: 'POST',

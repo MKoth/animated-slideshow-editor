@@ -10,6 +10,8 @@ from app.ai.model import (  # noqa: F401
     AiPlanRow,
     AiProposalExecutionRow,
     AiProposalRow,
+    AiReconciliationRevisionRow,
+    AiReconciliationRow,
     AiScenarioRevisionRow,
     AiScenarioRow,
     AiSettingsRow,

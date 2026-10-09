@@ -148,3 +148,37 @@ class AiScenarioUpdate(BaseModel):
     title: str | None = None
     description: str | None = None
     steps: list[AiScenarioUpdateStep] | None = None
+
+
+class AiReconciliationCreate(BaseModel):
+    projectId: str = Field(min_length=1)
+    scenarioId: str = Field(min_length=1)
+    conversationId: str = Field(min_length=1)
+    context: Any = None
+
+
+class AiReconciliationDecision(BaseModel):
+    stepId: str = Field(min_length=1)
+    hint: str = Field(min_length=1)
+    decision: Literal["accept", "reject"]
+    definitionId: str | None = None
+
+
+class AiReconciliationBriefVariantPatch(BaseModel):
+    detailed: str | None = None
+    concise: str | None = None
+    stylized: str | None = None
+
+
+class AiReconciliationBriefPatch(BaseModel):
+    id: str = Field(min_length=1)
+    prompt: str | None = None
+    name: str | None = None
+    note: str | None = None
+    variants: AiReconciliationBriefVariantPatch | None = None
+    styleProfile: dict[str, Any] | None = None
+
+
+class AiReconciliationUpdate(BaseModel):
+    title: str | None = None
+    briefs: list[AiReconciliationBriefPatch] | None = None

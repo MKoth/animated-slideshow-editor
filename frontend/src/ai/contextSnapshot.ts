@@ -17,12 +17,39 @@ export interface ContextSnapshot {
   shaders: string[]
   clips: string[]
   assets: string[]
+  clipCollections: string[]
+  audio: string[]
+  embeddedAudio: string[]
+  animatableParams: string[]
+  scriptVerbs: string[]
 }
 
 export interface SnapshotSources {
   selection?: readonly string[]
   assetNames?: readonly string[]
+  audioNames?: readonly string[]
 }
+
+/** Animatable surface mirrored from engine/animationProperties.ts (Stage B motion checks). */
+export const SNAPSHOT_ANIMATABLE_PARAMS: readonly string[] = [
+  'positionX',
+  'positionY',
+  'rotation',
+  'scaleX',
+  'scaleY',
+  'opacity',
+  'radius',
+  'startAngle',
+  'endAngle',
+  'segments',
+  'borderRadius',
+  'padding',
+  'morphCoefficient',
+  'tint',
+]
+
+/** Animation Script reveal/mark/wipe verbs. */
+export const SNAPSHOT_SCRIPT_VERBS: readonly string[] = ['reveal', 'mark', 'wipe']
 
 /**
  * Assemble a read-only digest of the current project state for AI requests.
@@ -75,6 +102,11 @@ export function buildContextSnapshot(
     shaders: engine.shaderDefinitions.map((s) => s.name).slice(0, 200),
     clips: engine.clips.map((c) => c.name).slice(0, 200),
     assets: [...(sources.assetNames ?? [])].slice(0, 300),
+    clipCollections: readCollectionNames(engine).slice(0, 200),
+    audio: [...(sources.audioNames ?? [])].slice(0, 200),
+    embeddedAudio: readEmbeddedAudioNames(engine).slice(0, 200),
+    animatableParams: [...SNAPSHOT_ANIMATABLE_PARAMS],
+    scriptVerbs: [...SNAPSHOT_SCRIPT_VERBS],
   }
   const elapsed = performance.now() - started
   if (elapsed > 50) {
@@ -83,6 +115,61 @@ export function buildContextSnapshot(
     console.warn(`Context snapshot took ${elapsed.toFixed(1)} ms`)
   }
   return snapshot
+}
+
+function readCollectionNames(engine: EnginePublic): string[] {
+  try {
+    const collections = (
+      engine as unknown as {
+        clipCollections?: readonly {
+          name?: unknown
+          bindings?: unknown
+        }[]
+      }
+    ).clipCollections
+    if (!Array.isArray(collections)) return []
+    const names: string[] = []
+    for (const collection of collections) {
+      if (typeof collection?.name === 'string' && collection.name.trim()) {
+        names.push(collection.name.trim())
+      }
+      const bindings = (collection as { bindings?: unknown }).bindings
+      if (bindings instanceof Map) {
+        for (const key of bindings.keys()) {
+          if (typeof key === 'string' && key.trim()) names.push(key.trim())
+        }
+      } else if (bindings && typeof bindings === 'object') {
+        for (const key of Object.keys(bindings)) {
+          if (key.trim()) names.push(key.trim())
+        }
+      }
+    }
+    return names
+  } catch {
+    return []
+  }
+}
+
+function readEmbeddedAudioNames(engine: EnginePublic): string[] {
+  try {
+    const embedded = (
+      engine as unknown as {
+        embeddedAssets?: readonly { name?: unknown; mimeType?: unknown }[]
+      }
+    ).embeddedAssets
+    if (!Array.isArray(embedded)) return []
+    return embedded
+      .filter(
+        (asset) =>
+          typeof asset?.mimeType === 'string' &&
+          (asset.mimeType as string).startsWith('audio/') &&
+          typeof asset?.name === 'string' &&
+          (asset.name as string).trim(),
+      )
+      .map((asset) => (asset.name as string).trim())
+  } catch {
+    return []
+  }
 }
 
 export function filterConversations<

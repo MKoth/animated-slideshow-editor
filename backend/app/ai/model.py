@@ -169,3 +169,42 @@ class AiScenarioRevisionRow(Base):
     source_request: Mapped[str] = mapped_column(Text, nullable=False, default="")
     snapshot_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AiReconciliationRow(Base):
+    """Stage B reconciliation: middle-step asset/motion/sound verdicts + briefs.
+
+    Own versioned record with an explicit accept gate; Stage C reads only the
+    accepted version. Never part of the .lesson file.
+    """
+
+    __tablename__ = "ai_reconciliations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    scenario_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    conversation_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    verdicts_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    briefs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    decisions_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AiReconciliationRevisionRow(Base):
+    """One reconciliation run of an Action Scenario version."""
+
+    __tablename__ = "ai_reconciliation_revisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    reconciliation_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("ai_reconciliations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_request: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    snapshot_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

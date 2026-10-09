@@ -13,6 +13,8 @@ from app.ai.model import (
     AiPlanRow,
     AiProposalExecutionRow,
     AiProposalRow,
+    AiReconciliationRevisionRow,
+    AiReconciliationRow,
     AiScenarioRevisionRow,
     AiScenarioRow,
     AiSettingsRow,
@@ -253,6 +255,22 @@ class AiLibrary:
                     )
                 )
                 session.execute(delete(AiScenarioRow).where(AiScenarioRow.project_id == project_id))
+            reconciliation_ids = list(
+                session.scalars(
+                    select(AiReconciliationRow.id).where(
+                        AiReconciliationRow.project_id == project_id
+                    )
+                )
+            )
+            if reconciliation_ids:
+                session.execute(
+                    delete(AiReconciliationRevisionRow).where(
+                        AiReconciliationRevisionRow.reconciliation_id.in_(reconciliation_ids)
+                    )
+                )
+                session.execute(
+                    delete(AiReconciliationRow).where(AiReconciliationRow.project_id == project_id)
+                )
             session.commit()
 
     # -- messages ------------------------------------------------------
@@ -805,6 +823,295 @@ class AiLibrary:
             "description": row.description,
             "status": row.status,
             "steps": steps if isinstance(steps, list) else [],
+        }
+
+    # -- reconciliations (Stage B) -----------------------------------------
+
+    def list_reconciliations(
+        self, project_id: str, scenario_id: str | None = None
+    ) -> list[AiReconciliationRow]:
+        statement = select(AiReconciliationRow).where(AiReconciliationRow.project_id == project_id)
+        if scenario_id:
+            statement = statement.where(AiReconciliationRow.scenario_id == scenario_id)
+        statement = statement.order_by(
+            AiReconciliationRow.updated_at.desc(), AiReconciliationRow.id
+        )
+        with self._database.session() as session:
+            return list(session.scalars(statement))
+
+    def get_reconciliation(self, reconciliation_id: str) -> AiReconciliationRow:
+        with self._database.session() as session:
+            row = session.get(AiReconciliationRow, reconciliation_id)
+        if row is None:
+            raise KeyError(reconciliation_id)
+        return row
+
+    def list_reconciliation_revisions(
+        self, reconciliation_id: str
+    ) -> list[AiReconciliationRevisionRow]:
+        self.get_reconciliation(reconciliation_id)
+        statement = (
+            select(AiReconciliationRevisionRow)
+            .where(AiReconciliationRevisionRow.reconciliation_id == reconciliation_id)
+            .order_by(AiReconciliationRevisionRow.created_at.asc(), AiReconciliationRevisionRow.id)
+        )
+        with self._database.session() as session:
+            return list(session.scalars(statement))
+
+    def create_reconciliation(
+        self,
+        *,
+        project_id: str,
+        scenario_id: str,
+        conversation_id: str,
+        title: str,
+        verdicts: list[dict[str, object]],
+        briefs: list[dict[str, object]],
+        source_request: str,
+        source_steps: list[dict[str, object]] | None = None,
+    ) -> AiReconciliationRow:
+        import json as _json
+
+        now = _now()
+        reconciliation_id = str(uuid4())
+        with self._database.session() as session:
+            conv = session.get(AiConversationRow, conversation_id)
+            if conv is None:
+                raise AiConversationNotFoundError(conversation_id)
+            scenario = session.get(AiScenarioRow, scenario_id)
+            if scenario is None:
+                raise KeyError(scenario_id)
+            if scenario.status != "accepted":
+                raise ValueError(
+                    f"scenario {scenario_id} is {scenario.status} — "
+                    "accept it before reconciliation (Stage B reads only the accepted version)"
+                )
+            if scenario.project_id != project_id:
+                raise ValueError("scenario does not belong to this project")
+            row = AiReconciliationRow(
+                id=reconciliation_id,
+                project_id=project_id,
+                scenario_id=scenario_id,
+                conversation_id=conversation_id,
+                title=(title or scenario.title or "")[:255],
+                status="draft",
+                verdicts_json=_json.dumps(verdicts),
+                briefs_json=_json.dumps(briefs),
+                decisions_json=_json.dumps({}),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.add(
+                AiReconciliationRevisionRow(
+                    id=str(uuid4()),
+                    reconciliation_id=reconciliation_id,
+                    source_request=source_request,
+                    snapshot_json=_json.dumps(
+                        {
+                            "scenarioId": scenario_id,
+                            "steps": list(source_steps or []),
+                            "verdicts": verdicts,
+                            "briefs": briefs,
+                        }
+                    ),
+                    created_at=now,
+                )
+            )
+            session.commit()
+        return self.get_reconciliation(reconciliation_id)
+
+    def record_reconciliation_decision(
+        self,
+        reconciliation_id: str,
+        *,
+        step_id: str,
+        hint: str,
+        decision: str,
+        definition_id: str | None = None,
+    ) -> AiReconciliationRow:
+        import json as _json
+
+        if decision not in ("accept", "reject"):
+            raise ValueError("decision must be accept or reject")
+        clean_hint = hint.strip()
+        if not clean_hint:
+            raise ValueError("hint must be a non-empty string")
+        if decision == "accept" and not (definition_id or "").strip():
+            raise ValueError("accept requires a definitionId (any ranked or alternative candidate)")
+        with self._database.session() as session:
+            row = session.get(AiReconciliationRow, reconciliation_id)
+            if row is None:
+                raise KeyError(reconciliation_id)
+            try:
+                loaded: object = _json.loads(row.decisions_json or "{}")
+                decisions = loaded if isinstance(loaded, dict) else {}
+            except (ValueError, TypeError):
+                decisions = {}
+            key = f"{step_id}:{clean_hint}"
+            if decision == "accept":
+                decisions[key] = {
+                    "stepId": step_id,
+                    "hint": clean_hint,
+                    "decision": "accepted",
+                    "definitionId": (definition_id or "").strip(),
+                    "updated": _now().isoformat(),
+                }
+            else:
+                decisions[key] = {
+                    "stepId": step_id,
+                    "hint": clean_hint,
+                    "decision": "rejected",
+                    "definitionId": None,
+                    "updated": _now().isoformat(),
+                }
+            row.decisions_json = _json.dumps(decisions)
+            # A new decision re-opens the gate: the author must re-accept.
+            row.status = "draft"
+            row.updated_at = _now()
+            session.commit()
+        return self.get_reconciliation(reconciliation_id)
+
+    def clear_reconciliation_decision(
+        self, reconciliation_id: str, *, step_id: str, hint: str
+    ) -> AiReconciliationRow:
+        import json as _json
+
+        with self._database.session() as session:
+            row = session.get(AiReconciliationRow, reconciliation_id)
+            if row is None:
+                raise KeyError(reconciliation_id)
+            try:
+                loaded: object = _json.loads(row.decisions_json or "{}")
+                decisions = loaded if isinstance(loaded, dict) else {}
+            except (ValueError, TypeError):
+                decisions = {}
+            decisions.pop(f"{step_id}:{hint.strip()}", None)
+            row.decisions_json = _json.dumps(decisions)
+            row.status = "draft"
+            row.updated_at = _now()
+            session.commit()
+        return self.get_reconciliation(reconciliation_id)
+
+    def update_reconciliation_briefs(
+        self,
+        reconciliation_id: str,
+        *,
+        briefs: list[dict[str, object]],
+    ) -> AiReconciliationRow:
+        import json as _json
+
+        with self._database.session() as session:
+            row = session.get(AiReconciliationRow, reconciliation_id)
+            if row is None:
+                raise KeyError(reconciliation_id)
+            try:
+                loaded: object = _json.loads(row.briefs_json or "[]")
+                current = loaded if isinstance(loaded, list) else []
+            except (ValueError, TypeError):
+                current = []
+            by_id = {b.get("id"): b for b in current if isinstance(b, dict)}
+            merged: list[dict[str, object]] = []
+            for patch in briefs:
+                if not isinstance(patch, dict):
+                    continue
+                bid = patch.get("id")
+                existing = by_id.get(bid)
+                if existing is None:
+                    raise ValueError(f"unknown brief id: {bid}")
+                updated = dict(existing)
+                for field in ("prompt", "name", "note"):
+                    if patch.get(field) is not None:
+                        updated[field] = patch[field]
+                variants = patch.get("variants")
+                if isinstance(variants, dict):
+                    current_variants = (
+                        dict(updated["variants"])
+                        if isinstance(updated.get("variants"), dict)
+                        else {}
+                    )
+                    for kind in ("detailed", "concise", "stylized"):
+                        if isinstance(variants.get(kind), str):
+                            current_variants[kind] = variants[kind]
+                    updated["variants"] = current_variants
+                    if isinstance(patch.get("prompt"), str):
+                        pass
+                    elif isinstance(variants.get("detailed"), str):
+                        updated["prompt"] = variants["detailed"]
+                style = patch.get("styleProfile")
+                if isinstance(style, dict):
+                    updated["styleProfile"] = style
+                merged.append(updated)
+            # Preserve unpatched briefs in place.
+            patched_ids = {p.get("id") for p in briefs if isinstance(p, dict)}
+            full = [b for b in current if isinstance(b, dict) and b.get("id") not in patched_ids]
+            full.extend(merged)
+            # Keep stable order by hint for readability.
+            full.sort(key=lambda b: str(b.get("hint", "")))
+            row.briefs_json = _json.dumps(full)
+            row.status = "draft"
+            row.updated_at = _now()
+            session.commit()
+        return self.get_reconciliation(reconciliation_id)
+
+    def set_reconciliation_status(self, reconciliation_id: str, status: str) -> AiReconciliationRow:
+        if status not in ("draft", "accepted", "rejected"):
+            raise ValueError("status must be draft, accepted, or rejected")
+        with self._database.session() as session:
+            row = session.get(AiReconciliationRow, reconciliation_id)
+            if row is None:
+                raise KeyError(reconciliation_id)
+            row.status = status
+            row.updated_at = _now()
+            session.commit()
+        return self.get_reconciliation(reconciliation_id)
+
+    def get_reconciliation_decisions(self, reconciliation_id: str) -> dict[str, object]:
+        import json as _json
+
+        row = self.get_reconciliation(reconciliation_id)
+        try:
+            data: object = _json.loads(row.decisions_json or "{}")
+        except (ValueError, TypeError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def require_accepted_reconciliation(self, reconciliation_id: str) -> AiReconciliationRow:
+        """Stage C gate: Prompter work waits on the accepted reconciliation."""
+        row = self.get_reconciliation(reconciliation_id)
+        if row.status != "accepted":
+            raise ValueError(
+                f"reconciliation {reconciliation_id} is {row.status} — "
+                "accept it before Prompter work (Stage C reads only the accepted version)"
+            )
+        return row
+
+    def reconciliation_canonical_json(self, reconciliation_id: str) -> dict[str, object]:
+        """Accepted mappings + feasibility + briefs for the Stage C handoff."""
+        import json as _json
+
+        row = self.require_accepted_reconciliation(reconciliation_id)
+        try:
+            verdicts: object = _json.loads(row.verdicts_json or "[]")
+        except (ValueError, TypeError):
+            verdicts = []
+        try:
+            briefs: object = _json.loads(row.briefs_json or "[]")
+        except (ValueError, TypeError):
+            briefs = []
+        try:
+            decisions: object = _json.loads(row.decisions_json or "{}")
+        except (ValueError, TypeError):
+            decisions = {}
+        return {
+            "id": row.id,
+            "projectId": row.project_id,
+            "scenarioId": row.scenario_id,
+            "conversationId": row.conversation_id,
+            "status": row.status,
+            "verdicts": verdicts if isinstance(verdicts, list) else [],
+            "briefs": briefs if isinstance(briefs, list) else [],
+            "decisions": decisions if isinstance(decisions, dict) else {},
         }
 
     # -- edit proposals --------------------------------------------------

@@ -8,6 +8,7 @@ import { useSelectionStore } from '../../stores/selectionStore'
 import { useBackendStore } from '../../stores/backendStore'
 import { AiPlanView } from './AiPlanView'
 import { AiProposalView } from './AiProposalView'
+import { AiReconciliationView } from './AiReconciliationView'
 import { AiScenarioView } from './AiScenarioView'
 
 export function AiPanel() {
@@ -48,13 +49,19 @@ export function AiPanel() {
   const selection = useSelectionStore((s) => s.selectedIds)
   const definitions = useAssetLibraryStore((s) => s.definitions)
   const assetNames = useMemo(() => definitions.map((d) => d.name), [definitions])
+  const audioNames = useMemo(
+    () => definitions.filter((d) => d.category === 'audio').map((d) => d.name),
+    [definitions],
+  )
+  const activeScenarioId = useAiStore((s) => s.activeScenarioId)
   const selectionKey = selection.join(',')
   const assetKey = assetNames.join(',')
+  const audioKey = audioNames.join(',')
 
   const context = useMemo(
-    () => buildContextSnapshot(engine, { selection, assetNames }),
+    () => buildContextSnapshot(engine, { selection, assetNames, audioNames }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [engine, projectId, selectionKey, assetKey],
+    [engine, projectId, selectionKey, assetKey, audioKey],
   )
 
   const visibleConversations = useMemo(
@@ -95,6 +102,13 @@ export function AiPanel() {
           <AiPlanView projectId={projectId} conversationId={activeId} context={context} disabled />
           <AiScenarioView
             projectId={projectId}
+            conversationId={activeId}
+            context={context}
+            disabled
+          />
+          <AiReconciliationView
+            projectId={projectId}
+            scenarioId={activeScenarioId}
             conversationId={activeId}
             context={context}
             disabled
@@ -256,6 +270,14 @@ export function AiPanel() {
 
           <AiScenarioView
             projectId={projectId}
+            conversationId={activeId}
+            context={context}
+            disabled={unavailable}
+          />
+
+          <AiReconciliationView
+            projectId={projectId}
+            scenarioId={activeScenarioId}
             conversationId={activeId}
             context={context}
             disabled={unavailable}
