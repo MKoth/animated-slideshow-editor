@@ -1,3 +1,4 @@
+import logging
 import re
 from datetime import UTC, datetime
 
@@ -58,6 +59,12 @@ def delete_project(request: Request, project_id: str) -> None:
         library.delete(project_id)
     except ProjectNotFoundError as exc:
         raise _project_not_found(project_id) from exc
+    ai_library = getattr(request.app.state, "ai_library", None)
+    if ai_library is not None:
+        try:
+            ai_library.delete_by_project(project_id)
+        except Exception as exc:  # noqa: BLE001 - cascade best-effort, project already deleted
+            logging.getLogger(__name__).warning("ai cascade delete failed: %s", exc)
 
 
 @router.get("/projects/{project_id}/download", response_class=Response)

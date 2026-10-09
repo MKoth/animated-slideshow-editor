@@ -1,5 +1,7 @@
 import { useEffect } from 'react'
 import { useEngine } from '../app/useEngine'
+import { AiPanel } from '../components/ai/AiPanel'
+import { AiSettingsDialog } from '../components/ai/AiSettingsDialog'
 import { DocumentTitle } from '../components/editor/DocumentTitle'
 import { EditorLayout } from '../components/editor/EditorLayout'
 import { MissingAssetsDialog } from '../components/missingAssets/MissingAssetsDialog'
@@ -45,6 +47,8 @@ export function EditorPage() {
       <RecoveryDialog />
       <MissingAssetsDialog />
       <ProjectsDialog />
+      <AiPanel />
+      <AiSettingsDialog />
     </>
   )
 }

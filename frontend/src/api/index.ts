@@ -1,4 +1,5 @@
 import { ApiClient } from './apiClient'
+import { AiApi } from './aiApi'
 import { AssetsApi } from './assetsApi'
 import { ClipsApi } from './clipsApi'
 import { ClipCollectionsApi } from './clipCollectionsApi'
@@ -12,6 +13,7 @@ import { VoicePromptsApi } from './voicePromptsApi'
 import { TtsSettingsApi } from './ttsSettingsApi'
 
 export const apiClient = new ApiClient()
+export const aiApi = new AiApi(apiClient)
 export const assetsApi = new AssetsApi(apiClient)
 export const clipsApi = new ClipsApi(apiClient)
 export const clipCollectionsApi = new ClipCollectionsApi(apiClient)

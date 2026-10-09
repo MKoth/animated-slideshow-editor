@@ -1,0 +1,112 @@
+import { ApiClient } from './apiClient'
+
+export interface AiSettings {
+  endpoint: string
+  model: string
+  temperature: number
+  maxTokens: number
+  streaming: boolean
+  systemPrompt: string
+  keyMasked: string
+  hasKey: boolean
+}
+
+export interface AiSettingsUpdate {
+  endpoint?: string
+  model?: string
+  temperature?: number
+  maxTokens?: number
+  streaming?: boolean
+  systemPrompt?: string
+  apiKey?: string
+}
+
+export interface AiConversationSummary {
+  id: string
+  projectId: string
+  title: string
+  modified: string
+}
+
+export interface AiConversation {
+  id: string
+  projectId: string
+  title: string
+  created: string
+  modified: string
+}
+
+export interface AiMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  stopped: boolean
+  errorCode: string | null
+  created: string
+}
+
+export interface AiModels {
+  models: string[]
+  selected: string
+  fallback: boolean
+}
+
+export type AiChatMode = 'send' | 'regenerate'
+
+export interface AiChatInput {
+  conversationId: string
+  message?: string
+  mode: AiChatMode
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any
+}
+
+export class AiApi {
+  private readonly client: ApiClient
+
+  constructor(client: ApiClient) {
+    this.client = client
+  }
+
+  async getSettings(): Promise<AiSettings> {
+    return this.client.get<AiSettings>('/api/ai/settings')
+  }
+
+  async updateSettings(input: AiSettingsUpdate): Promise<AiSettings> {
+    return this.client.put<AiSettings>('/api/ai/settings', JSON.stringify(input))
+  }
+
+  async listModels(): Promise<AiModels> {
+    return this.client.get<AiModels>('/api/ai/models')
+  }
+
+  async listConversations(projectId: string): Promise<AiConversationSummary[]> {
+    return this.client.get<AiConversationSummary[]>(
+      `/api/ai/conversations?projectId=${encodeURIComponent(projectId)}`,
+    )
+  }
+
+  async createConversation(projectId: string, title?: string): Promise<AiConversation> {
+    return this.client.post<AiConversation>(
+      '/api/ai/conversations',
+      JSON.stringify(title ? { projectId, title } : { projectId }),
+    )
+  }
+
+  async renameConversation(id: string, title: string): Promise<AiConversation> {
+    return this.client.patch<AiConversation>(
+      `/api/ai/conversations/${encodeURIComponent(id)}`,
+      JSON.stringify({ title }),
+    )
+  }
+
+  async deleteConversation(id: string): Promise<void> {
+    return this.client.delete(`/api/ai/conversations/${encodeURIComponent(id)}`)
+  }
+
+  async listMessages(conversationId: string): Promise<AiMessage[]> {
+    return this.client.get<AiMessage[]>(
+      `/api/ai/conversations/${encodeURIComponent(conversationId)}/messages`,
+    )
+  }
+}

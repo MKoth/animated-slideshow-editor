@@ -14,6 +14,7 @@ import {
 import { useEngine, useEngineEvent } from '../../app/useEngine'
 import { openProjectBrowser, requestNewProject } from '../../app/projectBrowser'
 import { useAssetLibraryStore } from '../../stores/assetLibraryStore'
+import { useAiStore } from '../../stores/aiStore'
 import { useClipboardStore } from '../../stores/clipboardStore'
 import { useNotificationStore } from '../../stores/notificationStore'
 import { useSelectionStore } from '../../stores/selectionStore'
@@ -61,7 +62,7 @@ const MENUS = [
   },
   {
     label: 'AI',
-    items: ['AI Assistant'],
+    items: ['AI Assistant', 'AI Settings'],
   },
   {
     label: 'Settings',
@@ -182,6 +183,12 @@ export function MenuBar() {
   const handleItemClick = (item: string): boolean => {
     if (item === SAVE_ITEM) {
       persistence.save()
+    } else if (item === 'AI Assistant') {
+      const open = useAiStore.getState().panelOpen
+      useAiStore.getState().setPanelOpen(!open)
+    } else if (item === 'AI Settings') {
+      useAiStore.getState().setPanelOpen(true)
+      useAiStore.getState().setSettingsOpen(true)
     } else if (item === 'Open') {
       openProjectBrowser()
     } else if (item === 'New Project') {

@@ -24,8 +24,11 @@
     "poly2tri": "^1.5.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.2",
+    "remark-gfm": "^4.0.1",
     "rubberband-wasm": "^3.3.0",
+    "shiki": "^4.5.0",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

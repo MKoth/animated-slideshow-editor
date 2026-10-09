@@ -1,6 +1,7 @@
 import { openProjectBrowser, requestNewProject } from '../../app/projectBrowser'
 import { useEngine } from '../../app/useEngine'
 import { useNotificationStore } from '../../stores/notificationStore'
+import { useAiStore } from '../../stores/aiStore'
 import { CreateNodeCommand } from '../../engine/commands'
 import { createCircleComponent } from '../../engine/circleComponent'
 import { namesInTree, uniqueNodeName } from '../../engine/naming'
@@ -56,6 +57,11 @@ export function Toolbar() {
       } else {
         useNotificationStore.getState().notify(result.error.message)
       }
+      return
+    }
+    if (label === 'AI Assistant') {
+      const open = useAiStore.getState().panelOpen
+      useAiStore.getState().setPanelOpen(!open)
       return
     }
     useNotificationStore.getState().notify('Not implemented yet.')

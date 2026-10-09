@@ -2,7 +2,10 @@
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from app.ai.library import AiLibrary
+from app.ai.model import AiConversationRow, AiMessageRow, AiSettingsRow  # noqa: F401
 from app.api import (
+    ai,
     assets,
     audio,
     clip_collections,
@@ -63,6 +66,7 @@ class AppFactory:
         app.state.clip_library = clip_library
         app.state.clip_collection_library = ClipCollectionLibrary(database)
         app.state.voice_prompt_library = VoicePromptLibrary(database)
+        app.state.ai_library = AiLibrary(database, self._settings)
         # TTS engine singleton (lazy model load on first generate, cached in app.state like asset_library)
         try:
             from app.tts.engine import MlxNotAvailableError, SineTtsEngine, get_tts_engine
@@ -102,6 +106,7 @@ class AppFactory:
         app.include_router(voice_prompts.router, prefix="/api")
         app.include_router(tts.router, prefix="/api")
         app.include_router(export.router, prefix="/api")
+        app.include_router(ai.router, prefix="/api")
         app.mount(
             "/api/assets/originals",
             StaticFiles(directory=storage.originals_dir),
