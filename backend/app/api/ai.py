@@ -34,6 +34,8 @@ from app.ai.schemas import (
     AiProposalCreate,
     AiProposalDryRun,
     AiProposalExecute,
+    AiScenarioCreate,
+    AiScenarioUpdate,
     AiSettingsUpdate,
 )
 from app.ai.zen import ZenClient, ZenFetchError, friendly_error_for_status
@@ -738,6 +740,338 @@ def reject_ai_plan(request: Request, plan_id: str) -> dict[str, object]:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="plan not found") from exc
     return _plan_to_out(request, plan_id)
+
+
+# -- action scenarios (Stage A) --------------------------------------------
+
+
+def _generate_scenario_structured(
+    *,
+    endpoint: str,
+    api_key: str,
+    model: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+    max_tokens: int,
+) -> dict[str, object]:
+    """Call Zen chat/completions with an Action Scenario JSON schema. Mock seam for tests."""
+    from app.ai.scenarios import SCENARIO_JSON_SCHEMA
+
+    payload: dict[str, object] = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": False,
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {"name": "action_scenario", "schema": SCENARIO_JSON_SCHEMA},
+        },
+    }
+    try:
+        response = httpx.post(
+            f"{endpoint.rstrip('/')}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=60.0,
+        )
+    except httpx.HTTPError as exc:
+        raise ZenFetchError(0, str(exc)) from exc
+    if response.status_code != 200:
+        raise ZenFetchError(response.status_code, response.text)
+    try:
+        data = response.json()
+        choices = data.get("choices", [])
+        if not choices or not isinstance(choices[0], dict):
+            raise TypeError("empty scenario choices")
+        message = choices[0].get("message", {})
+        content = message.get("content", "") if isinstance(message, dict) else ""
+        if not isinstance(content, str) or not content.strip():
+            raise TypeError("empty scenario content")
+        parsed: object = json.loads(content)
+        if not isinstance(parsed, dict):
+            raise TypeError("scenario content is not an object")
+        return parsed
+    except ZenFetchError:
+        raise
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise ZenFetchError(0, f"malformed scenario content: {exc}") from exc
+
+
+def _scenario_to_out(request: Request, scenario_id: str) -> dict[str, object]:
+    import json as _json
+
+    library = _library(request)
+    try:
+        row = library.get_scenario(scenario_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="scenario not found") from exc
+    try:
+        loaded_steps: object = _json.loads(row.steps_json or "[]")
+        steps = loaded_steps if isinstance(loaded_steps, list) else []
+    except (ValueError, TypeError):
+        steps = []
+    revisions = []
+    for rev in library.list_scenario_revisions(scenario_id):
+        revisions.append(
+            {
+                "id": rev.id,
+                "sourceRequest": rev.source_request,
+                "created": _iso(rev.created_at),
+            }
+        )
+    try:
+        loaded_edits: object = _json.loads(row.user_edits_json or "{}")
+        user_edits = loaded_edits if isinstance(loaded_edits, dict) else {}
+    except (ValueError, TypeError):
+        user_edits = {}
+    return {
+        "id": row.id,
+        "projectId": row.project_id,
+        "conversationId": row.conversation_id,
+        "title": row.title,
+        "description": row.description,
+        "status": row.status,
+        "steps": steps,
+        "revisions": revisions,
+        "userEdits": user_edits if isinstance(user_edits, dict) else {},
+        "created": _iso(row.created_at),
+        "modified": _iso(row.updated_at),
+    }
+
+
+@router.post("/ai/scenarios", status_code=200)
+def post_ai_scenario(request: Request, body: AiScenarioCreate) -> dict[str, object]:
+    from app.ai.scenarios import (
+        apply_scenario_edits_preservation,
+        build_scenario_user_text,
+        parse_and_validate_scenario,
+    )
+
+    library = _library(request)
+    try:
+        conversation = library.get_conversation(body.conversationId)
+    except AiConversationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
+    if conversation.project_id != body.projectId:
+        raise HTTPException(status_code=422, detail="conversation does not belong to this project")
+    current_text = (body.request or "").strip()
+    if not current_text:
+        raise HTTPException(status_code=422, detail="request must be a non-empty string")
+
+    prior_scenario_dict: dict[str, object] | None = None
+    user_edits: dict[str, object] = {}
+    if body.scenarioId:
+        try:
+            existing = library.get_scenario(body.scenarioId)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="scenario not found") from exc
+        if existing.project_id != body.projectId:
+            raise HTTPException(status_code=422, detail="scenario does not belong to this project")
+        prior_scenario_dict = _scenario_to_out(request, existing.id)
+        user_edits = library.get_scenario_user_edits(existing.id)
+
+    library.append_message(body.conversationId, "user", current_text)
+
+    settings = request.app.state.settings
+    fallback_models: list[str] = list(getattr(settings, "ai_fallback_models", []))
+    row, key = library.get_settings_raw()
+
+    if not key:
+        text = _error_assistant_text("missing_key", "")
+        library.append_message(body.conversationId, "assistant", text, error_code="missing_key")
+        raise HTTPException(status_code=409, detail={"code": "missing_key", "message": text})
+
+    live_models, _ = _resolve_live_models(row.endpoint, key, fallback_models or [row.model])
+    if row.model not in live_models:
+        text = _error_assistant_text("model_unlisted", "")
+        library.append_message(body.conversationId, "assistant", text, error_code="model_unlisted")
+        raise HTTPException(status_code=409, detail={"code": "model_unlisted", "message": text})
+
+    context_text = context_to_text(body.context)
+    stored = library.list_messages(body.conversationId)
+    history = [ChatMessage(role=m.role, content=m.content) for m in stored]
+    budget = library.context_budget
+    user_text = build_scenario_user_text(
+        current_text, prior_scenario=prior_scenario_dict, user_edits=user_edits
+    )
+    composed = compose_messages(row.system_prompt, context_text, history, user_text, budget)
+    zen_messages = [{"role": m.role, "content": m.content} for m in composed]
+
+    try:
+        raw = _generate_scenario_structured(
+            endpoint=row.endpoint,
+            api_key=key,
+            model=row.model,
+            messages=zen_messages,
+            temperature=row.temperature,
+            max_tokens=row.max_tokens,
+        )
+    except ZenFetchError as exc:
+        code, friendly = friendly_error_for_status(exc.status, exc.body)
+        text = _error_assistant_text(code, friendly)
+        library.append_message(body.conversationId, "assistant", text, error_code=code)
+        raise HTTPException(
+            status_code=409 if code != "provider_error" else 502,
+            detail={"code": code, "message": text},
+        ) from exc
+    except Exception as exc:
+        logger.warning("ai scenario unexpected error: %s", exc)
+        text = _error_assistant_text("provider_error", "Provider error — retry.")
+        library.append_message(body.conversationId, "assistant", text, error_code="provider_error")
+        raise HTTPException(
+            status_code=502, detail={"code": "provider_error", "message": text}
+        ) from exc
+
+    try:
+        merged_raw: dict[str, object] = dict(raw)
+        if user_edits and body.scenarioId:
+            merged_raw = apply_scenario_edits_preservation(merged_raw, user_edits, current_text)
+        validated = parse_and_validate_scenario(merged_raw)
+        content = validated.model_dump(by_alias=False)
+    except ValueError as exc:
+        text = _error_assistant_text("provider_error", "Provider error — retry.")
+        library.append_message(body.conversationId, "assistant", text, error_code="provider_error")
+        raise HTTPException(
+            status_code=502, detail={"code": "provider_error", "message": text}
+        ) from exc
+
+    if body.scenarioId:
+        scenario_row = library.revise_scenario(
+            body.scenarioId, content=content, source_request=current_text
+        )
+    else:
+        scenario_row = library.create_scenario(
+            project_id=body.projectId,
+            conversation_id=body.conversationId,
+            content=content,
+            source_request=current_text,
+        )
+    narration = (
+        f'Proposed action scenario "{scenario_row.title}" with '
+        f"{len(content.get('steps', [])) if isinstance(content.get('steps'), list) else 0} steps. "
+        "Review it in the AI panel, edit, revise, then accept — the project is untouched. "
+        "Stage B runs only on the accepted version."
+    )
+    library.append_message(body.conversationId, "assistant", narration)
+    return _scenario_to_out(request, scenario_row.id)
+
+
+@router.get("/ai/scenarios")
+def list_ai_scenarios(request: Request, projectId: str = "") -> list[dict[str, object]]:
+    if not projectId.strip():
+        raise HTTPException(status_code=422, detail="projectId is required")
+    library = _library(request)
+    out: list[dict[str, object]] = []
+    for row in library.list_scenarios(projectId):
+        import json as _json
+
+        try:
+            loaded: object = _json.loads(row.steps_json or "[]")
+            count = len(loaded) if isinstance(loaded, list) else 0
+        except (ValueError, TypeError):
+            count = 0
+        out.append(
+            {
+                "id": row.id,
+                "projectId": row.project_id,
+                "conversationId": row.conversation_id,
+                "title": row.title,
+                "status": row.status,
+                "stepCount": count,
+                "modified": _iso(row.updated_at),
+            }
+        )
+    return out
+
+
+@router.get("/ai/scenarios/{scenario_id}")
+def get_ai_scenario(request: Request, scenario_id: str) -> dict[str, object]:
+    return _scenario_to_out(request, scenario_id)
+
+
+@router.get("/ai/scenarios/{scenario_id}/canonical")
+def get_ai_scenario_canonical(request: Request, scenario_id: str) -> dict[str, object]:
+    """Stage B handoff: canonical JSON of the accepted version only.
+
+    Draft versions are refused with 409 so downstream reconciliation never
+    builds on a version the author has not approved.
+    """
+    library = _library(request)
+    try:
+        return library.scenario_canonical_json(scenario_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="scenario not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.patch("/ai/scenarios/{scenario_id}")
+def patch_ai_scenario(
+    request: Request, scenario_id: str, body: AiScenarioUpdate
+) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.get_scenario(scenario_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="scenario not found") from exc
+    steps_patch: list[dict[str, object]] | None = None
+    if body.steps is not None:
+        steps_patch = []
+        for step in body.steps:
+            item: dict[str, object] = {"id": step.id}
+            if step.partTag is not None:
+                item["partTag"] = step.partTag
+            if step.spokenLine is not None:
+                if not step.spokenLine.strip():
+                    raise HTTPException(status_code=422, detail="spokenLine must be non-empty")
+                item["spokenLine"] = step.spokenLine
+            if step.onScreenAction is not None:
+                if not step.onScreenAction.strip():
+                    raise HTTPException(status_code=422, detail="onScreenAction must be non-empty")
+                item["onScreenAction"] = step.onScreenAction
+            if step.assetHints is not None:
+                item["assetHints"] = list(step.assetHints)
+            if step.estimatedDurationSec is not None:
+                item["estimatedDurationSec"] = step.estimatedDurationSec
+            steps_patch.append(item)
+    if body.title is not None and not body.title.strip():
+        raise HTTPException(status_code=422, detail="title must be a non-empty string")
+    try:
+        library.update_scenario_edits(
+            scenario_id,
+            title=body.title,
+            description=body.description,
+            steps=steps_patch,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="scenario not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _scenario_to_out(request, scenario_id)
+
+
+@router.post("/ai/scenarios/{scenario_id}/accept")
+def accept_ai_scenario(request: Request, scenario_id: str) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.set_scenario_status(scenario_id, "accepted")
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="scenario not found") from exc
+    return _scenario_to_out(request, scenario_id)
+
+
+@router.post("/ai/scenarios/{scenario_id}/reject")
+def reject_ai_scenario(request: Request, scenario_id: str) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.set_scenario_status(scenario_id, "rejected")
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="scenario not found") from exc
+    return _scenario_to_out(request, scenario_id)
 
 
 # -- edit proposals ------------------------------------------------------

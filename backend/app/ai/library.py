@@ -13,6 +13,8 @@ from app.ai.model import (
     AiPlanRow,
     AiProposalExecutionRow,
     AiProposalRow,
+    AiScenarioRevisionRow,
+    AiScenarioRow,
     AiSettingsRow,
 )
 from app.ai.proposals import validate_proposal_commands
@@ -239,6 +241,18 @@ class AiLibrary:
                     )
                 )
                 session.execute(delete(AiProposalRow).where(AiProposalRow.project_id == project_id))
+            scenario_ids = list(
+                session.scalars(
+                    select(AiScenarioRow.id).where(AiScenarioRow.project_id == project_id)
+                )
+            )
+            if scenario_ids:
+                session.execute(
+                    delete(AiScenarioRevisionRow).where(
+                        AiScenarioRevisionRow.scenario_id.in_(scenario_ids)
+                    )
+                )
+                session.execute(delete(AiScenarioRow).where(AiScenarioRow.project_id == project_id))
             session.commit()
 
     # -- messages ------------------------------------------------------
@@ -549,6 +563,250 @@ class AiLibrary:
             return {}
         return data if isinstance(data, dict) else {}
 
+    # -- action scenarios (Stage A) ----------------------------------------
+
+    def list_scenarios(self, project_id: str) -> list[AiScenarioRow]:
+        statement = (
+            select(AiScenarioRow)
+            .where(AiScenarioRow.project_id == project_id)
+            .order_by(AiScenarioRow.updated_at.desc(), AiScenarioRow.id)
+        )
+        with self._database.session() as session:
+            return list(session.scalars(statement))
+
+    def get_scenario(self, scenario_id: str) -> AiScenarioRow:
+        with self._database.session() as session:
+            row = session.get(AiScenarioRow, scenario_id)
+        if row is None:
+            raise KeyError(scenario_id)
+        return row
+
+    def list_scenario_revisions(self, scenario_id: str) -> list[AiScenarioRevisionRow]:
+        self.get_scenario(scenario_id)
+        statement = (
+            select(AiScenarioRevisionRow)
+            .where(AiScenarioRevisionRow.scenario_id == scenario_id)
+            .order_by(AiScenarioRevisionRow.created_at.asc(), AiScenarioRevisionRow.id)
+        )
+        with self._database.session() as session:
+            return list(session.scalars(statement))
+
+    def create_scenario(
+        self,
+        *,
+        project_id: str,
+        conversation_id: str,
+        content: dict[str, object],
+        source_request: str,
+    ) -> AiScenarioRow:
+        import json as _json
+
+        steps = _normalize_scenario_steps(content.get("steps"))
+        now = _now()
+        scenario_id = str(uuid4())
+        with self._database.session() as session:
+            conv = session.get(AiConversationRow, conversation_id)
+            if conv is None:
+                raise AiConversationNotFoundError(conversation_id)
+            row = AiScenarioRow(
+                id=scenario_id,
+                project_id=project_id,
+                conversation_id=conversation_id,
+                title=str(content.get("title", ""))[:255],
+                description=str(content.get("description", "")),
+                status="draft",
+                steps_json=_json.dumps(steps),
+                user_edits_json="{}",
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.add(
+                AiScenarioRevisionRow(
+                    id=str(uuid4()),
+                    scenario_id=scenario_id,
+                    source_request=source_request,
+                    snapshot_json=_json.dumps(_scenario_snapshot(content, steps)),
+                    created_at=now,
+                )
+            )
+            session.commit()
+        return self.get_scenario(scenario_id)
+
+    def revise_scenario(
+        self,
+        scenario_id: str,
+        *,
+        content: dict[str, object],
+        source_request: str,
+    ) -> AiScenarioRow:
+        import json as _json
+
+        steps = _normalize_scenario_steps(content.get("steps"))
+        snapshot = _scenario_snapshot(content, steps)
+        with self._database.session() as session:
+            row = session.get(AiScenarioRow, scenario_id)
+            if row is None:
+                raise KeyError(scenario_id)
+            row.title = str(content.get("title", row.title))[:255]
+            row.description = str(content.get("description", row.description))
+            row.steps_json = _json.dumps(steps)
+            # Regeneration invalidates any prior acceptance: the author must
+            # re-accept the new version before Stage B may read it.
+            row.status = "draft"
+            row.updated_at = _now()
+            session.add(
+                AiScenarioRevisionRow(
+                    id=str(uuid4()),
+                    scenario_id=scenario_id,
+                    source_request=source_request,
+                    snapshot_json=_json.dumps(snapshot),
+                    created_at=_now(),
+                )
+            )
+            session.commit()
+        return self.get_scenario(scenario_id)
+
+    def update_scenario_edits(
+        self,
+        scenario_id: str,
+        *,
+        title: str | None = None,
+        description: str | None = None,
+        steps: list[dict[str, object]] | None = None,
+    ) -> AiScenarioRow:
+        import json as _json
+
+        with self._database.session() as session:
+            row = session.get(AiScenarioRow, scenario_id)
+            if row is None:
+                raise KeyError(scenario_id)
+            try:
+                loaded_edits: object = _json.loads(row.user_edits_json or "{}")
+                user_edits = loaded_edits if isinstance(loaded_edits, dict) else {}
+            except (ValueError, TypeError):
+                user_edits = {}
+            if not isinstance(user_edits, dict):
+                user_edits = {}
+            current_steps: list[dict[str, object]] = _load_scenario_steps(row.steps_json)
+
+            if title is not None:
+                row.title = title[:255]
+                user_edits["title"] = title
+            if description is not None:
+                row.description = description
+                user_edits["description"] = description
+            if steps is not None:
+                by_id = {s.get("id"): s for s in current_steps if isinstance(s.get("id"), str)}
+                merged: list[dict[str, object]] = []
+                step_fields = user_edits.get("stepFields")
+                if not isinstance(step_fields, dict):
+                    step_fields = {}
+                    user_edits["stepFields"] = step_fields
+                for order, patch in enumerate(steps):
+                    sid = str(patch.get("id", ""))
+                    existing = by_id.get(sid)
+                    if existing is None:
+                        raise ValueError(f"unknown step id: {sid}")
+                    updated = dict(existing)
+                    updated["order"] = order
+                    override = (
+                        dict(step_fields.get(sid, {}))
+                        if isinstance(step_fields.get(sid), dict)
+                        else {}
+                    )
+                    if "_oldSpokenLine" not in override and isinstance(
+                        existing.get("spokenLine"), str
+                    ):
+                        override["_oldSpokenLine"] = existing.get("spokenLine")
+                    if patch.get("partTag") is not None:
+                        tag = patch["partTag"]
+                        if tag not in ("intro", "middle", "outro"):
+                            raise ValueError("partTag must be intro, middle, or outro")
+                        updated["partTag"] = tag
+                        override["partTag"] = tag
+                    for field in ("spokenLine", "onScreenAction"):
+                        if patch.get(field) is not None:
+                            updated[field] = patch[field]
+                            override[field] = patch[field]
+                    if patch.get("assetHints") is not None:
+                        hints = patch["assetHints"]
+                        if not isinstance(hints, list) or any(
+                            not isinstance(h, str) for h in hints
+                        ):
+                            raise ValueError("assetHints must be a list of names")
+                        updated["assetHints"] = [str(h) for h in hints]
+                        override["assetHints"] = [str(h) for h in hints]
+                    if patch.get("estimatedDurationSec") is not None:
+                        updated["estimatedDurationSec"] = patch["estimatedDurationSec"]
+                        override["estimatedDurationSec"] = patch["estimatedDurationSec"]
+                    merged.append(updated)
+                    step_fields[sid] = override
+                row.steps_json = _json.dumps(merged)
+                user_edits["stepOrder"] = [str(p.get("id", "")) for p in steps]
+            row.user_edits_json = _json.dumps(user_edits)
+            # Author edits invalidate any prior acceptance: the edited version
+            # must be re-accepted before Stage B may read it.
+            row.status = "draft"
+            row.updated_at = _now()
+            session.commit()
+        return self.get_scenario(scenario_id)
+
+    def set_scenario_status(self, scenario_id: str, status: str) -> AiScenarioRow:
+        if status not in ("draft", "accepted", "rejected"):
+            raise ValueError("status must be draft, accepted, or rejected")
+        with self._database.session() as session:
+            row = session.get(AiScenarioRow, scenario_id)
+            if row is None:
+                raise KeyError(scenario_id)
+            row.status = status
+            row.updated_at = _now()
+            session.commit()
+        return self.get_scenario(scenario_id)
+
+    def get_scenario_user_edits(self, scenario_id: str) -> dict[str, object]:
+        import json as _json
+
+        row = self.get_scenario(scenario_id)
+        try:
+            data: object = _json.loads(row.user_edits_json or "{}")
+        except (ValueError, TypeError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def require_accepted_scenario(self, scenario_id: str) -> AiScenarioRow:
+        """Stage B gate: downstream reconciliation reads only accepted versions.
+
+        Raises ValueError on a draft/rejected version so Stage B refuses to run
+        until the author explicitly accepts.
+        """
+        row = self.get_scenario(scenario_id)
+        if row.status != "accepted":
+            raise ValueError(
+                f"scenario {scenario_id} is {row.status} — "
+                "accept it before reconciliation (Stage B reads only the accepted version)"
+            )
+        return row
+
+    def scenario_canonical_json(self, scenario_id: str) -> dict[str, object]:
+        """Canonical JSON of the accepted scenario version for Stage B handoff."""
+        import json as _json
+
+        row = self.require_accepted_scenario(scenario_id)
+        try:
+            steps: object = _json.loads(row.steps_json or "[]")
+        except (ValueError, TypeError):
+            steps = []
+        return {
+            "id": row.id,
+            "projectId": row.project_id,
+            "conversationId": row.conversation_id,
+            "title": row.title,
+            "description": row.description,
+            "status": row.status,
+            "steps": steps if isinstance(steps, list) else [],
+        }
+
     # -- edit proposals --------------------------------------------------
 
     def list_proposals(self, project_id: str) -> list[AiProposalRow]:
@@ -849,3 +1107,60 @@ def _safe_str_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if isinstance(item, (str, int, float))]
+
+
+def _load_scenario_steps(raw: str) -> list[dict[str, object]]:
+    import json as _json
+
+    try:
+        data: object = _json.loads(raw or "[]")
+    except (ValueError, TypeError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def _normalize_scenario_steps(raw: object) -> list[dict[str, object]]:
+    steps: list[dict[str, object]] = []
+    if not isinstance(raw, list):
+        return steps
+    for order, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            continue
+        part_tag = str(entry.get("partTag", ""))
+        if part_tag not in ("intro", "middle", "outro"):
+            continue
+        spoken = str(entry.get("spokenLine", ""))
+        if not spoken.strip():
+            continue
+        action = str(entry.get("onScreenAction", ""))
+        if not action.strip():
+            continue
+        hints = entry.get("assetHints", [])
+        clean_hints: list[str] = []
+        if isinstance(hints, list):
+            for hint in hints:
+                if isinstance(hint, str) and hint.strip():
+                    clean_hints.append(hint.strip())
+        step_id = entry.get("id")
+        steps.append(
+            {
+                "id": step_id if isinstance(step_id, str) and step_id else str(uuid4()),
+                "order": order,
+                "partTag": part_tag,
+                "spokenLine": spoken,
+                "onScreenAction": action,
+                "assetHints": clean_hints,
+                "estimatedDurationSec": _safe_float(entry.get("estimatedDurationSec")),
+            }
+        )
+    return steps
+
+
+def _scenario_snapshot(
+    content: dict[str, object], steps: list[dict[str, object]]
+) -> dict[str, object]:
+    return {
+        "title": content.get("title", ""),
+        "description": content.get("description", ""),
+        "steps": steps,
+    }

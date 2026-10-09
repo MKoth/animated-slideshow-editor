@@ -111,3 +111,40 @@ class AiProposalExecute(BaseModel):
     executedIndexes: list[int] = Field(min_length=1)
     success: bool
     error: str = ""
+
+
+class AiScenarioStepIn(BaseModel):
+    partTag: Literal["intro", "middle", "outro"]
+    spokenLine: str = Field(min_length=1)
+    onScreenAction: str = Field(min_length=1)
+    assetHints: list[str] = Field(default_factory=list)
+    estimatedDurationSec: float = Field(default=0.0, ge=0)
+
+
+class AiScenarioContent(BaseModel):
+    title: str = Field(min_length=1)
+    description: str = ""
+    steps: list[AiScenarioStepIn] = Field(min_length=1)
+
+
+class AiScenarioCreate(BaseModel):
+    projectId: str = Field(min_length=1)
+    conversationId: str = Field(min_length=1)
+    request: str = Field(min_length=1)
+    context: Any = None
+    scenarioId: str | None = None
+
+
+class AiScenarioUpdateStep(BaseModel):
+    id: str = Field(min_length=1)
+    partTag: Literal["intro", "middle", "outro"] | None = None
+    spokenLine: str | None = None
+    onScreenAction: str | None = None
+    assetHints: list[str] | None = None
+    estimatedDurationSec: float | None = Field(default=None, ge=0)
+
+
+class AiScenarioUpdate(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    steps: list[AiScenarioUpdateStep] | None = None

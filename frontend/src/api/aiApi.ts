@@ -145,6 +145,72 @@ export interface AiPlanPatch {
   slides?: AiPlanSlidePatch[]
 }
 
+export type AiScenarioPartTag = 'intro' | 'middle' | 'outro'
+export type AiScenarioStatus = 'draft' | 'accepted' | 'rejected'
+
+export interface AiScenarioStep {
+  id: string
+  order: number
+  partTag: AiScenarioPartTag
+  spokenLine: string
+  onScreenAction: string
+  assetHints: string[]
+  estimatedDurationSec: number
+}
+
+export interface AiScenarioSummary {
+  id: string
+  projectId: string
+  conversationId: string
+  title: string
+  status: AiScenarioStatus
+  stepCount: number
+  modified: string
+}
+
+export interface AiScenarioRevision {
+  id: string
+  sourceRequest: string
+  created: string
+}
+
+export interface AiScenario {
+  id: string
+  projectId: string
+  conversationId: string
+  title: string
+  description: string
+  status: AiScenarioStatus
+  steps: AiScenarioStep[]
+  revisions: AiScenarioRevision[]
+  created: string
+  modified: string
+}
+
+export interface AiScenarioProposeInput {
+  projectId: string
+  conversationId: string
+  request: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  context: any
+  scenarioId?: string
+}
+
+export interface AiScenarioStepPatch {
+  id: string
+  partTag?: AiScenarioPartTag
+  spokenLine?: string
+  onScreenAction?: string
+  assetHints?: string[]
+  estimatedDurationSec?: number
+}
+
+export interface AiScenarioPatch {
+  title?: string
+  description?: string
+  steps?: AiScenarioStepPatch[]
+}
+
 export type AiProposalStatus =
   | 'draft'
   | 'validated'
@@ -274,6 +340,47 @@ export class AiApi {
 
   async rejectPlan(id: string): Promise<AiPlan> {
     return this.client.post<AiPlan>(`/api/ai/plans/${encodeURIComponent(id)}/reject`, '')
+  }
+
+  async proposeScenario(input: AiScenarioProposeInput): Promise<AiScenario> {
+    return this.client.post<AiScenario>('/api/ai/scenarios', JSON.stringify(input))
+  }
+
+  async listScenarios(projectId: string): Promise<AiScenarioSummary[]> {
+    return this.client.get<AiScenarioSummary[]>(
+      `/api/ai/scenarios?projectId=${encodeURIComponent(projectId)}`,
+    )
+  }
+
+  async getScenario(id: string): Promise<AiScenario> {
+    return this.client.get<AiScenario>(`/api/ai/scenarios/${encodeURIComponent(id)}`)
+  }
+
+  async getScenarioCanonical(id: string): Promise<{
+    id: string
+    projectId: string
+    conversationId: string
+    title: string
+    description: string
+    status: AiScenarioStatus
+    steps: AiScenarioStep[]
+  }> {
+    return this.client.get(`/api/ai/scenarios/${encodeURIComponent(id)}/canonical`)
+  }
+
+  async updateScenario(id: string, patch: AiScenarioPatch): Promise<AiScenario> {
+    return this.client.patch<AiScenario>(
+      `/api/ai/scenarios/${encodeURIComponent(id)}`,
+      JSON.stringify(patch),
+    )
+  }
+
+  async acceptScenario(id: string): Promise<AiScenario> {
+    return this.client.post<AiScenario>(`/api/ai/scenarios/${encodeURIComponent(id)}/accept`, '')
+  }
+
+  async rejectScenario(id: string): Promise<AiScenario> {
+    return this.client.post<AiScenario>(`/api/ai/scenarios/${encodeURIComponent(id)}/reject`, '')
   }
 
   async createProposal(input: AiProposalCreateInput): Promise<AiProposal> {

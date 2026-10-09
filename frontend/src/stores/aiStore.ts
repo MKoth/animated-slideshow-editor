@@ -11,6 +11,9 @@ import {
   type AiProposal,
   type AiProposalCreateInput,
   type AiProposalValidationError,
+  type AiScenario,
+  type AiScenarioPatch,
+  type AiScenarioSummary,
 } from '../api/aiApi'
 import { streamAiChat } from '../ai/sse'
 
@@ -36,6 +39,12 @@ interface AiState {
   planGenerating: boolean
   planError: { code: string; message: string } | null
   planRequest: string
+  scenarios: AiScenarioSummary[]
+  scenarioById: Record<string, AiScenario>
+  activeScenarioId: string | null
+  scenarioGenerating: boolean
+  scenarioError: { code: string; message: string } | null
+  scenarioRequest: string
   proposals: AiProposal[]
   proposalById: Record<string, AiProposal>
   activeProposalId: string | null
@@ -78,6 +87,21 @@ interface AiState {
   updatePlan: (id: string, patch: AiPlanPatch) => Promise<void>
   acceptPlan: (id: string) => Promise<void>
   rejectPlan: (id: string) => Promise<void>
+
+  setScenarioRequest: (request: string) => void
+  setActiveScenario: (id: string | null) => void
+  loadScenarios: (projectId: string) => Promise<void>
+  proposeScenario: (
+    projectId: string,
+    conversationId: string,
+    requestText: string,
+    context: unknown,
+    scenarioId?: string,
+  ) => Promise<AiScenario | null>
+  loadScenario: (id: string) => Promise<void>
+  updateScenario: (id: string, patch: AiScenarioPatch) => Promise<void>
+  acceptScenario: (id: string) => Promise<void>
+  rejectScenario: (id: string) => Promise<void>
 
   setActiveProposal: (id: string | null) => void
   loadProposals: (projectId: string) => Promise<void>
@@ -132,6 +156,12 @@ export const useAiStore = create<AiState>()(
       planGenerating: false,
       planError: null,
       planRequest: '',
+      scenarios: [],
+      scenarioById: {},
+      activeScenarioId: null,
+      scenarioGenerating: false,
+      scenarioError: null,
+      scenarioRequest: '',
       proposals: [],
       proposalById: {},
       activeProposalId: null,
@@ -497,6 +527,142 @@ export const useAiStore = create<AiState>()(
         }
       },
 
+      setScenarioRequest: (request) => set({ scenarioRequest: request }),
+      setActiveScenario: (id) => set({ activeScenarioId: id }),
+
+      loadScenarios: async (projectId) => {
+        try {
+          const scenarios = await get().api.listScenarios(projectId)
+          set((state) => ({
+            scenarios,
+            activeScenarioId:
+              state.activeScenarioId && scenarios.some((p) => p.id === state.activeScenarioId)
+                ? state.activeScenarioId
+                : (scenarios[0]?.id ?? null),
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      proposeScenario: async (projectId, conversationId, requestText, context, scenarioId) => {
+        const clean = requestText.trim()
+        if (!clean || get().scenarioGenerating) return null
+        set({ scenarioGenerating: true, scenarioError: null })
+        try {
+          const scenario = await get().api.proposeScenario({
+            projectId,
+            conversationId,
+            request: clean,
+            context,
+            scenarioId,
+          })
+          set((state) => ({
+            scenarioById: { ...state.scenarioById, [scenario.id]: scenario },
+            scenarios: [
+              {
+                id: scenario.id,
+                projectId: scenario.projectId,
+                conversationId: scenario.conversationId,
+                title: scenario.title,
+                status: scenario.status,
+                stepCount: scenario.steps.length,
+                modified: scenario.modified,
+              },
+              ...state.scenarios.filter((p) => p.id !== scenario.id),
+            ],
+            activeScenarioId: scenario.id,
+            scenarioRequest: '',
+          }))
+          try {
+            const messages = await get().api.listMessages(conversationId)
+            set((state) => ({
+              messagesById: { ...state.messagesById, [conversationId]: messages },
+            }))
+          } catch {
+            // Scenario itself succeeded; message refresh is best-effort.
+          }
+          return scenario
+        } catch (error) {
+          if (isBackendDown(error)) {
+            set({ status: 'unavailable' })
+            return null
+          }
+          const message =
+            error instanceof Error ? error.message : 'Scenario generation failed — retry.'
+          set({ scenarioError: { code: 'provider_error', message } })
+          try {
+            const messages = await get().api.listMessages(conversationId)
+            set((state) => ({
+              messagesById: { ...state.messagesById, [conversationId]: messages },
+            }))
+          } catch {
+            // Keep the scenario error visible even if refresh fails.
+          }
+          return null
+        } finally {
+          set({ scenarioGenerating: false })
+        }
+      },
+
+      loadScenario: async (id) => {
+        try {
+          const scenario = await get().api.getScenario(id)
+          set((state) => ({ scenarioById: { ...state.scenarioById, [id]: scenario } }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      updateScenario: async (id, patch) => {
+        try {
+          const scenario = await get().api.updateScenario(id, patch)
+          set((state) => ({
+            scenarioById: { ...state.scenarioById, [id]: scenario },
+            scenarios: state.scenarios.map((p) =>
+              p.id === id
+                ? {
+                    ...p,
+                    title: scenario.title,
+                    status: scenario.status,
+                    modified: scenario.modified,
+                  }
+                : p,
+            ),
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      acceptScenario: async (id) => {
+        try {
+          const scenario = await get().api.acceptScenario(id)
+          set((state) => ({
+            scenarioById: { ...state.scenarioById, [id]: scenario },
+            scenarios: state.scenarios.map((p) =>
+              p.id === id ? { ...p, status: scenario.status, modified: scenario.modified } : p,
+            ),
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      rejectScenario: async (id) => {
+        try {
+          const scenario = await get().api.rejectScenario(id)
+          set((state) => ({
+            scenarioById: { ...state.scenarioById, [id]: scenario },
+            scenarios: state.scenarios.map((p) =>
+              p.id === id ? { ...p, status: scenario.status, modified: scenario.modified } : p,
+            ),
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
       setActiveProposal: (id) => set({ activeProposalId: id }),
 
       loadProposals: async (projectId) => {
@@ -627,6 +793,8 @@ export const useAiStore = create<AiState>()(
         panelOpen: state.panelOpen,
         activePlanId: state.activePlanId,
         planRequest: state.planRequest,
+        activeScenarioId: state.activeScenarioId,
+        scenarioRequest: state.scenarioRequest,
         activeProposalId: state.activeProposalId,
       }),
     },

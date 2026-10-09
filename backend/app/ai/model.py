@@ -131,3 +131,41 @@ class AiProposalExecutionRow(Base):
     success: Mapped[bool] = mapped_column(nullable=False, default=False)
     error: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AiScenarioRow(Base):
+    """Action Scenario (Stage A): slide-agnostic ordered steps. Never in .lesson.
+
+    Implements R27 ai_action_scenarios record: project-scoped,
+    conversation-linked, revision history preserving author edits.
+    """
+
+    __tablename__ = "ai_scenarios"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    conversation_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    steps_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    user_edits_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AiScenarioRevisionRow(Base):
+    """One generation of an Action Scenario with its source request."""
+
+    __tablename__ = "ai_scenario_revisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    scenario_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("ai_scenarios.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_request: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    snapshot_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
