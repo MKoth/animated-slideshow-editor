@@ -26,6 +26,9 @@ from app.ai.plans import (
 )
 from app.ai.prompting import ChatMessage, compose_messages, context_to_text, estimate_tokens
 from app.ai.schemas import (
+    AiBoardCompile,
+    AiBoardCreate,
+    AiBoardUpdate,
     AiCalibrationAlign,
     AiCalibrationCreate,
     AiCalibrationFallback,
@@ -2267,6 +2270,324 @@ def reject_ai_calibration(request: Request, calibration_id: str) -> dict[str, ob
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _calibration_to_out(request, calibration_id)
+
+
+# -- boards (Stage E) ----------------------------------------------------------
+
+
+def _board_to_out(request: Request, board_id: str) -> dict[str, object]:
+    import json as _json
+
+    from app.ai.boards import board_accept_blockers
+
+    library = _library(request)
+    try:
+        row = library.get_board(board_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="board not found") from exc
+    try:
+        scripts: object = _json.loads(row.scripts_json or "[]")
+    except (ValueError, TypeError):
+        scripts = []
+    try:
+        footprints: object = _json.loads(row.footprints_json or "[]")
+    except (ValueError, TypeError):
+        footprints = []
+    try:
+        marks_map: object = _json.loads(row.marks_map_json or "{}")
+    except (ValueError, TypeError):
+        marks_map = {}
+    try:
+        checks: object = _json.loads(row.checks_json or "{}")
+    except (ValueError, TypeError):
+        checks = {}
+    try:
+        diagnostics: object = _json.loads(row.diagnostics_json or "[]")
+    except (ValueError, TypeError):
+        diagnostics = []
+    script_list = [dict(s) for s in scripts] if isinstance(scripts, list) else []
+    footprint_list = [dict(f) for f in footprints] if isinstance(footprints, list) else []
+    marks_dict = dict(marks_map) if isinstance(marks_map, dict) else {}
+    checks_dict = dict(checks) if isinstance(checks, dict) else {}
+    diagnostics_list = [dict(d) for d in diagnostics] if isinstance(diagnostics, list) else []
+    parts = checks_dict.get("parts", [])
+    part_list = [dict(p) for p in parts] if isinstance(parts, list) else []
+    blockers = board_accept_blockers(
+        {
+            "parts": part_list,
+            "scripts": script_list,
+            "footprints": footprint_list,
+            "marksMap": marks_dict,
+            "diagnostics": diagnostics_list,
+            "checks": checks_dict,
+        }
+    )
+    revisions = [
+        {
+            "id": rev.id,
+            "sourceRequest": rev.source_request,
+            "created": _iso(rev.created_at),
+        }
+        for rev in library.list_board_revisions(board_id)
+    ]
+    return {
+        "id": row.id,
+        "projectId": row.project_id,
+        "narrationId": row.narration_id,
+        "scenarioId": row.scenario_id,
+        "conversationId": row.conversation_id,
+        "title": row.title,
+        "status": row.status,
+        "scripts": script_list,
+        "footprints": footprint_list,
+        "marksMap": marks_dict,
+        "checks": checks_dict,
+        "diagnostics": diagnostics_list,
+        "blockers": blockers,
+        "revisions": revisions,
+        "created": _iso(row.created_at),
+        "modified": _iso(row.updated_at),
+    }
+
+
+@router.post("/ai/board-scripts", status_code=201)
+def post_ai_board(request: Request, body: AiBoardCreate) -> dict[str, object]:
+    from app.ai.boards import (
+        board_move_requested,
+        build_template_source,
+        marks_map_for_parts,
+    )
+
+    library = _library(request)
+    try:
+        conversation = library.get_conversation(body.conversationId)
+    except AiConversationNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="conversation not found") from exc
+    if conversation.project_id != body.projectId:
+        raise HTTPException(status_code=422, detail="conversation does not belong to this project")
+    try:
+        narration_row = library.get_narration(body.narrationId)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="narration not found") from exc
+    if narration_row.status != "accepted":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"narration {body.narrationId} is {narration_row.status} — "
+                "accept it before board work (Stage E reads only the accepted version)"
+            ),
+        )
+    if narration_row.project_id != body.projectId:
+        raise HTTPException(status_code=422, detail="narration does not belong to this project")
+    import json as _json
+
+    try:
+        loaded: object = _json.loads(narration_row.parts_json or "[]")
+        parts = [dict(p) for p in loaded] if isinstance(loaded, list) else []
+    except (ValueError, TypeError):
+        parts = []
+    # Scenario actions license a board move: static camera is the default.
+    actions: list[str] = []
+    try:
+        canonical = library.scenario_canonical_json(narration_row.scenario_id)
+        steps = canonical.get("steps", [])
+        if isinstance(steps, list):
+            actions = [
+                str(s.get("onScreenAction", ""))
+                for s in steps
+                if isinstance(s, dict) and str(s.get("partTag", "")) == "middle"
+            ]
+    except (KeyError, ValueError):
+        actions = []
+    move = board_move_requested(actions)
+    marks_map = marks_map_for_parts(parts)
+    template = build_template_source(parts, narration_row.title or "Board middle")
+    slides_in = list(body.slides or [])
+    if slides_in:
+        scripts = [
+            {
+                "slideId": (entry.slideId or "").strip(),
+                "slideIndex": entry.slideIndex if entry.slideIndex is not None else idx,
+                "source": template,
+            }
+            for idx, entry in enumerate(slides_in)
+        ]
+    else:
+        scripts = [{"slideId": "", "slideIndex": 0, "source": template}]
+    scene = {
+        "catNodes": list(body.catNodes or []),
+        "cameraKeys": [dict(k) for k in (body.cameraKeys or [])],
+        "boardMove": move,
+        "boardMoveRequested": move,
+    }
+    try:
+        row = library.create_board(
+            project_id=body.projectId,
+            narration_id=body.narrationId,
+            conversation_id=body.conversationId,
+            title=(body.title or narration_row.title or ""),
+            scripts=[dict(s) for s in scripts],
+            parts=parts,
+            marks_map=dict(marks_map),
+            scene=scene,
+            source_request=f"author board scripts from narration {body.narrationId}",
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="narration not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    library.append_message(
+        body.conversationId,
+        "assistant",
+        f"Authored {len(scripts)} blackboard script(s) from zero with marks at every "
+        "PrompterPart boundary. Compile each script (Check seam) to report footprints, "
+        "keep every effect inside its owning narration window — overruns block the gate, "
+        "no auto-shift. Content rides create-then-reveal with built-ins only.",
+    )
+    return _board_to_out(request, row.id)
+
+
+@router.get("/ai/board-scripts")
+def list_ai_boards(
+    request: Request, projectId: str = "", narrationId: str | None = None
+) -> list[dict[str, object]]:
+    if not projectId.strip():
+        raise HTTPException(status_code=422, detail="projectId is required")
+    library = _library(request)
+    out: list[dict[str, object]] = []
+    for row in library.list_boards(projectId, narrationId or None):
+        import json as _json
+
+        try:
+            loaded: object = _json.loads(row.scripts_json or "[]")
+            count = len(loaded) if isinstance(loaded, list) else 0
+        except (ValueError, TypeError):
+            count = 0
+        out.append(
+            {
+                "id": row.id,
+                "projectId": row.project_id,
+                "narrationId": row.narration_id,
+                "conversationId": row.conversation_id,
+                "title": row.title,
+                "status": row.status,
+                "scriptCount": count,
+                "modified": _iso(row.updated_at),
+            }
+        )
+    return out
+
+
+@router.get("/ai/board-scripts/{board_id}")
+def get_ai_board(request: Request, board_id: str) -> dict[str, object]:
+    return _board_to_out(request, board_id)
+
+
+@router.get("/ai/board-scripts/{board_id}/canonical")
+def get_ai_board_canonical(request: Request, board_id: str) -> dict[str, object]:
+    """Merge handoff: accepted scripts + footprints + marks map, accepted only."""
+    library = _library(request)
+    try:
+        return library.board_canonical_json(board_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="board not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.patch("/ai/board-scripts/{board_id}")
+def patch_ai_board(request: Request, board_id: str, body: AiBoardUpdate) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.get_board(board_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="board not found") from exc
+    if body.scripts is not None:
+        patches: list[dict[str, object]] = []
+        for patch in body.scripts:
+            item: dict[str, object] = {"source": patch.source}
+            if patch.slideId is not None:
+                item["slideId"] = patch.slideId
+            if patch.slideIndex is not None:
+                item["slideIndex"] = patch.slideIndex
+            patches.append(item)
+        try:
+            library.update_board_scripts(board_id, scripts=patches)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="board not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if body.catNodes is not None or body.cameraKeys is not None:
+        try:
+            library.update_board_scene(
+                board_id,
+                cat_nodes=list(body.catNodes) if body.catNodes is not None else None,
+                camera_keys=(
+                    [dict(k) for k in body.cameraKeys] if body.cameraKeys is not None else None
+                ),
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="board not found") from exc
+    return _board_to_out(request, board_id)
+
+
+@router.post("/ai/board-scripts/{board_id}/compile")
+def post_ai_board_compile(
+    request: Request, board_id: str, body: AiBoardCompile
+) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.get_board(board_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="board not found") from exc
+    try:
+        library.report_board_compile(
+            board_id,
+            footprints=[dict(f) for f in body.footprints],
+            marks_map=dict(body.marksMap) if body.marksMap is not None else None,
+            diagnostics=[dict(d) for d in (body.diagnostics or [])],
+            cat_nodes=list(body.catNodes) if body.catNodes is not None else None,
+            camera_keys=(
+                [dict(k) for k in body.cameraKeys] if body.cameraKeys is not None else None
+            ),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="board not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _board_to_out(request, board_id)
+
+
+@router.post("/ai/board-scripts/{board_id}/accept")
+def accept_ai_board(request: Request, board_id: str) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.set_board_status(board_id, "accepted")
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="board not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    out = _board_to_out(request, board_id)
+    library.append_message(
+        str(out["conversationId"]),
+        "assistant",
+        "Board scripts accepted — hard-locked to voice, create-then-reveal with "
+        "built-ins only, no cat in the middle, static board camera. "
+        "Hands scripts + footprints + marks map to the merge.",
+    )
+    return out
+
+
+@router.post("/ai/board-scripts/{board_id}/reject")
+def reject_ai_board(request: Request, board_id: str) -> dict[str, object]:
+    library = _library(request)
+    try:
+        library.set_board_status(board_id, "rejected")
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="board not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _board_to_out(request, board_id)
 
 
 # -- edit proposals ------------------------------------------------------

@@ -3,6 +3,8 @@ import { persist } from 'zustand/middleware'
 import { apiClient } from '../api'
 import {
   AiApi,
+  type AiBoard,
+  type AiBoardSummary,
   type AiCalibration,
   type AiCalibrationSummary,
   type AiConversationSummary,
@@ -68,6 +70,11 @@ interface AiState {
   activeCalibrationId: string | null
   calibrationBusy: boolean
   calibrationError: { code: string; message: string } | null
+  boards: AiBoardSummary[]
+  boardById: Record<string, AiBoard>
+  activeBoardId: string | null
+  boardBusy: boolean
+  boardError: { code: string; message: string } | null
   proposals: AiProposal[]
   proposalById: Record<string, AiProposal>
   activeProposalId: string | null
@@ -186,6 +193,30 @@ interface AiState {
   acceptCalibration: (id: string) => Promise<void>
   rejectCalibration: (id: string) => Promise<void>
 
+  setActiveBoard: (id: string | null) => void
+  loadBoards: (projectId: string, narrationId?: string) => Promise<void>
+  createBoard: (
+    projectId: string,
+    narrationId: string,
+    conversationId: string,
+    input?: { slides?: { slideId?: string; slideIndex?: number }[] },
+  ) => Promise<AiBoard | null>
+  loadBoard: (id: string) => Promise<void>
+  updateBoardScripts: (
+    id: string,
+    scripts: { slideId?: string; slideIndex?: number; source: string }[],
+  ) => Promise<void>
+  compileBoard: (
+    id: string,
+    input: {
+      footprints: AiBoard['footprints']
+      marksMap?: AiBoard['marksMap']
+      diagnostics?: AiBoard['diagnostics']
+    },
+  ) => Promise<void>
+  acceptBoard: (id: string) => Promise<void>
+  rejectBoard: (id: string) => Promise<void>
+
   setActiveProposal: (id: string | null) => void
   loadProposals: (projectId: string) => Promise<void>
   createProposal: (input: AiProposalCreateInput) => Promise<AiProposal | null>
@@ -260,6 +291,11 @@ export const useAiStore = create<AiState>()(
       activeCalibrationId: null,
       calibrationBusy: false,
       calibrationError: null,
+      boards: [],
+      boardById: {},
+      activeBoardId: null,
+      boardBusy: false,
+      boardError: null,
       proposals: [],
       proposalById: {},
       activeProposalId: null,
@@ -1283,6 +1319,149 @@ export const useAiStore = create<AiState>()(
         }
       },
 
+      setActiveBoard: (id) => set({ activeBoardId: id }),
+
+      loadBoards: async (projectId, narrationId) => {
+        try {
+          const boards = await get().api.listBoards(projectId, narrationId)
+          set((state) => ({
+            boards,
+            activeBoardId:
+              state.activeBoardId && boards.some((b) => b.id === state.activeBoardId)
+                ? state.activeBoardId
+                : (boards[0]?.id ?? null),
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      createBoard: async (projectId, narrationId, conversationId, input) => {
+        if (get().boardBusy) return null
+        set({ boardBusy: true, boardError: null })
+        try {
+          const board = await get().api.createBoard({
+            projectId,
+            narrationId,
+            conversationId,
+            ...(input?.slides ? { slides: input.slides } : {}),
+          })
+          set((state) => ({
+            boardById: { ...state.boardById, [board.id]: board },
+            boards: [
+              {
+                id: board.id,
+                projectId: board.projectId,
+                narrationId: board.narrationId,
+                conversationId: board.conversationId,
+                title: board.title,
+                status: board.status,
+                scriptCount: board.scripts.length,
+                modified: board.modified,
+              },
+              ...state.boards.filter((b) => b.id !== board.id),
+            ],
+            activeBoardId: board.id,
+          }))
+          try {
+            const messages = await get().api.listMessages(conversationId)
+            set((state) => ({
+              messagesById: { ...state.messagesById, [conversationId]: messages },
+            }))
+          } catch {
+            // Board itself succeeded; message refresh is best-effort.
+          }
+          return board
+        } catch (error) {
+          if (isBackendDown(error)) {
+            set({ status: 'unavailable' })
+            return null
+          }
+          set({
+            boardError: {
+              code: 'board_create_failed',
+              message: error instanceof Error ? error.message : 'Board authoring failed — retry.',
+            },
+          })
+          return null
+        } finally {
+          set({ boardBusy: false })
+        }
+      },
+
+      loadBoard: async (id) => {
+        try {
+          const board = await get().api.getBoard(id)
+          set((state) => ({ boardById: { ...state.boardById, [id]: board } }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      updateBoardScripts: async (id, scripts) => {
+        try {
+          const board = await get().api.updateBoard(id, { scripts })
+          set((state) => ({ boardById: { ...state.boardById, [id]: board } }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      compileBoard: async (id, input) => {
+        try {
+          const board = await get().api.compileBoard(id, input)
+          set((state) => ({ boardById: { ...state.boardById, [id]: board } }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
+      acceptBoard: async (id) => {
+        try {
+          const board = await get().api.acceptBoard(id)
+          set((state) => ({
+            boardById: { ...state.boardById, [id]: board },
+            boards: state.boards.map((b) =>
+              b.id === id ? { ...b, status: board.status, modified: board.modified } : b,
+            ),
+          }))
+          try {
+            const messages = await get().api.listMessages(board.conversationId)
+            set((state) => ({
+              messagesById: { ...state.messagesById, [board.conversationId]: messages },
+            }))
+          } catch {
+            // Accept itself succeeded; message refresh is best-effort.
+          }
+        } catch (error) {
+          if (isBackendDown(error)) {
+            set({ status: 'unavailable' })
+            return
+          }
+          set({
+            boardError: {
+              code: 'board_accept_blocked',
+              message:
+                error instanceof Error ? error.message : 'Accept blocked — resolve scripts first.',
+            },
+          })
+        }
+      },
+
+      rejectBoard: async (id) => {
+        try {
+          const board = await get().api.rejectBoard(id)
+          set((state) => ({
+            boardById: { ...state.boardById, [id]: board },
+            boards: state.boards.map((b) =>
+              b.id === id ? { ...b, status: board.status, modified: board.modified } : b,
+            ),
+          }))
+        } catch (error) {
+          if (isBackendDown(error)) set({ status: 'unavailable' })
+        }
+      },
+
       setActiveProposal: (id) => set({ activeProposalId: id }),
 
       loadProposals: async (projectId) => {
@@ -1419,6 +1598,7 @@ export const useAiStore = create<AiState>()(
         activeProposalId: state.activeProposalId,
         activeNarrationId: state.activeNarrationId,
         activeCalibrationId: state.activeCalibrationId,
+        activeBoardId: state.activeBoardId,
       }),
     },
   ),

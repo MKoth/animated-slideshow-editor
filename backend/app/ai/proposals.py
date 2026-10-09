@@ -11,8 +11,10 @@ from __future__ import annotations
 from typing import Any
 
 # Canonical allowlist. Real engine commands first (Stage C prompter/audio +
-# Stage E board scripts), then typed placeholders for the stage commands whose
-# real implementations land in their own tickets (#425/#426/#427/#428).
+# Stage E board scripts via SetSlideAnimationScript), then typed placeholders
+# for the stage commands whose real implementations land in their own tickets
+# (#425 landed AiCommitTts, #427 executes boards as SetSlideAnimationScript with
+# AiCreateBoardText/Table staying non-executing placeholders, #426/#428 pending).
 ALLOWLIST: tuple[str, ...] = (
     # Stage C: prompter/audio (real engine commands)
     "CreateSlide",

@@ -299,3 +299,47 @@ class AiCalibrationRevisionRow(Base):
     source_request: Mapped[str] = mapped_column(Text, nullable=False, default="")
     snapshot_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AiBoardRow(Base):
+    """Stage E board scripts: hard-locked blackboard Animation Scripts.
+
+    Own versioned record with an explicit accept gate; the merge reads only
+    the accepted version. One fresh script per middle slide from zero with
+    marks at each PrompterPart boundary; compiled footprints plus the
+    marks-to-part map ride the record. Never part of the .lesson file.
+    """
+
+    __tablename__ = "ai_boards"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    narration_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    scenario_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    conversation_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    scripts_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    footprints_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    marks_map_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    checks_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    diagnostics_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class AiBoardRevisionRow(Base):
+    """One board authoring run of an accepted narration version."""
+
+    __tablename__ = "ai_board_revisions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    board_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("ai_boards.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_request: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    snapshot_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

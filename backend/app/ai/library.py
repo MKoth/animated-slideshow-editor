@@ -7,6 +7,8 @@ from sqlalchemy import delete, func, select
 
 from app.ai.crypto import decrypt_key, encrypt_key, mask_key
 from app.ai.model import (
+    AiBoardRevisionRow,
+    AiBoardRow,
     AiCalibrationRevisionRow,
     AiCalibrationRow,
     AiConversationRow,
@@ -303,6 +305,14 @@ class AiLibrary:
                 session.execute(
                     delete(AiCalibrationRow).where(AiCalibrationRow.project_id == project_id)
                 )
+            board_ids = list(
+                session.scalars(select(AiBoardRow.id).where(AiBoardRow.project_id == project_id))
+            )
+            if board_ids:
+                session.execute(
+                    delete(AiBoardRevisionRow).where(AiBoardRevisionRow.board_id.in_(board_ids))
+                )
+                session.execute(delete(AiBoardRow).where(AiBoardRow.project_id == project_id))
             session.commit()
 
     # -- messages ------------------------------------------------------
@@ -1764,6 +1774,362 @@ class AiLibrary:
             "phonemeMap": phoneme_map if isinstance(phoneme_map, dict) else {},
             "checks": checks if isinstance(checks, dict) else {},
             "timings": timings if isinstance(timings, list) else [],
+        }
+
+    # -- boards (Stage E) ----------------------------------------------------
+
+    def list_boards(self, project_id: str, narration_id: str | None = None) -> list[AiBoardRow]:
+        statement = select(AiBoardRow).where(AiBoardRow.project_id == project_id)
+        if narration_id:
+            statement = statement.where(AiBoardRow.narration_id == narration_id)
+        statement = statement.order_by(AiBoardRow.updated_at.desc(), AiBoardRow.id)
+        with self._database.session() as session:
+            return list(session.scalars(statement))
+
+    def get_board(self, board_id: str) -> AiBoardRow:
+        with self._database.session() as session:
+            row = session.get(AiBoardRow, board_id)
+        if row is None:
+            raise KeyError(board_id)
+        return row
+
+    def list_board_revisions(self, board_id: str) -> list[AiBoardRevisionRow]:
+        self.get_board(board_id)
+        statement = (
+            select(AiBoardRevisionRow)
+            .where(AiBoardRevisionRow.board_id == board_id)
+            .order_by(AiBoardRevisionRow.created_at.asc(), AiBoardRevisionRow.id)
+        )
+        with self._database.session() as session:
+            return list(session.scalars(statement))
+
+    def _load_board_parts(self, row: AiBoardRow) -> list[dict[str, object]]:
+        # Parts are the accepted narration snapshot, copied at creation so the
+        # hard lock stays pinned even if narration is later revised. Stored
+        # inside checks_json under "parts" to avoid a new column.
+        import json as _json
+
+        try:
+            checks: object = _json.loads(row.checks_json or "{}")
+        except (ValueError, TypeError):
+            return []
+        if isinstance(checks, dict):
+            parts = checks.get("parts", [])
+            if isinstance(parts, list):
+                return [dict(p) for p in parts if isinstance(p, dict)]
+        return []
+
+    def _load_board_scripts(self, row: AiBoardRow) -> list[dict[str, object]]:
+        import json as _json
+
+        try:
+            loaded: object = _json.loads(row.scripts_json or "[]")
+        except (ValueError, TypeError):
+            return []
+        return [dict(s) for s in loaded] if isinstance(loaded, list) else []
+
+    def _load_board_footprints(self, row: AiBoardRow) -> list[dict[str, object]]:
+        import json as _json
+
+        try:
+            loaded: object = _json.loads(row.footprints_json or "[]")
+        except (ValueError, TypeError):
+            return []
+        return [dict(f) for f in loaded] if isinstance(loaded, list) else []
+
+    def _load_board_marks_map(self, row: AiBoardRow) -> dict[str, object]:
+        import json as _json
+
+        try:
+            loaded: object = _json.loads(row.marks_map_json or "{}")
+        except (ValueError, TypeError):
+            return {}
+        return dict(loaded) if isinstance(loaded, dict) else {}
+
+    def _load_board_checks(self, row: AiBoardRow) -> dict[str, object]:
+        import json as _json
+
+        try:
+            loaded: object = _json.loads(row.checks_json or "{}")
+        except (ValueError, TypeError):
+            return {}
+        return dict(loaded) if isinstance(loaded, dict) else {}
+
+    def _load_board_diagnostics(self, row: AiBoardRow) -> list[dict[str, object]]:
+        import json as _json
+
+        try:
+            loaded: object = _json.loads(row.diagnostics_json or "[]")
+        except (ValueError, TypeError):
+            return []
+        return [dict(d) for d in loaded] if isinstance(loaded, list) else []
+
+    def create_board(
+        self,
+        *,
+        project_id: str,
+        narration_id: str,
+        conversation_id: str,
+        title: str,
+        scripts: list[dict[str, object]],
+        parts: list[dict[str, object]],
+        marks_map: dict[str, object],
+        scene: dict[str, object],
+        source_request: str,
+    ) -> AiBoardRow:
+        import json as _json
+
+        from app.ai.boards import middle_parts_from_narration
+
+        now = _now()
+        board_id = str(uuid4())
+        with self._database.session() as session:
+            conv = session.get(AiConversationRow, conversation_id)
+            if conv is None:
+                raise AiConversationNotFoundError(conversation_id)
+            narration = session.get(AiNarrationRow, narration_id)
+            if narration is None:
+                raise KeyError(narration_id)
+            if narration.status != "accepted":
+                raise ValueError(
+                    f"narration {narration_id} is {narration.status} — "
+                    "accept it before board work (Stage E reads only the accepted version)"
+                )
+            if narration.project_id != project_id:
+                raise ValueError("narration does not belong to this project")
+            scenario = session.get(AiScenarioRow, narration.scenario_id)
+            scenario_id = narration.scenario_id if scenario is not None else ""
+            # Pin the accepted timing source; raises on unmeasurable parts.
+            ordered = middle_parts_from_narration([dict(p) for p in parts])
+            if not scripts:
+                raise ValueError("no board scripts — author one fresh script per middle slide")
+            checks = {"parts": ordered, "scene": dict(scene)}
+            row = AiBoardRow(
+                id=board_id,
+                project_id=project_id,
+                narration_id=narration_id,
+                scenario_id=scenario_id,
+                conversation_id=conversation_id,
+                title=(title or narration.title or "")[:255],
+                status="draft",
+                scripts_json=_json.dumps(scripts),
+                footprints_json=_json.dumps([]),
+                marks_map_json=_json.dumps(dict(marks_map)),
+                checks_json=_json.dumps(checks),
+                diagnostics_json=_json.dumps([]),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.add(
+                AiBoardRevisionRow(
+                    id=str(uuid4()),
+                    board_id=board_id,
+                    source_request=source_request,
+                    snapshot_json=_json.dumps(
+                        {"narrationId": narration_id, "scripts": scripts, "parts": ordered}
+                    ),
+                    created_at=now,
+                )
+            )
+            session.commit()
+        return self.get_board(board_id)
+
+    def update_board_scripts(
+        self, board_id: str, *, scripts: list[dict[str, object]]
+    ) -> AiBoardRow:
+        import json as _json
+
+        if not scripts:
+            raise ValueError("no board scripts — author one fresh script per middle slide")
+        for index, script in enumerate(scripts):
+            if not isinstance(script, dict):
+                raise ValueError(f"slide #{index}: script entry is corrupt")  # noqa: TRY004
+            if not str(script.get("slideId", "")).strip() and script.get("slideIndex") is None:
+                raise ValueError(f"slide #{index}: script needs a slideId or slideIndex")
+            if not isinstance(script.get("source"), str) or not str(script.get("source")).strip():
+                raise ValueError(f"slide #{index}: script is empty — author it before accepting")
+        with self._database.session() as session:
+            row = session.get(AiBoardRow, board_id)
+            if row is None:
+                raise KeyError(board_id)
+            row.scripts_json = _json.dumps([dict(s) for s in scripts])
+            # New sources invalidate the last compile: footprints must be
+            # re-reported before the gate can pass (stale-blocking at build).
+            row.footprints_json = _json.dumps([])
+            row.diagnostics_json = _json.dumps([])
+            row.status = "draft"
+            row.updated_at = _now()
+            session.add(
+                AiBoardRevisionRow(
+                    id=str(uuid4()),
+                    board_id=board_id,
+                    source_request="edit board scripts",
+                    snapshot_json=_json.dumps({"scripts": [dict(s) for s in scripts]}),
+                    created_at=_now(),
+                )
+            )
+            session.commit()
+        return self.get_board(board_id)
+
+    def update_board_scene(
+        self,
+        board_id: str,
+        *,
+        cat_nodes: list[str] | None = None,
+        camera_keys: list[dict[str, object]] | None = None,
+    ) -> AiBoardRow:
+        import json as _json
+
+        with self._database.session() as session:
+            row = session.get(AiBoardRow, board_id)
+            if row is None:
+                raise KeyError(board_id)
+            try:
+                checks: object = _json.loads(row.checks_json or "{}")
+            except (ValueError, TypeError):
+                checks = {}
+            checks_dict = dict(checks) if isinstance(checks, dict) else {}
+            scene = checks_dict.get("scene", {})
+            scene_dict = dict(scene) if isinstance(scene, dict) else {}
+            if cat_nodes is not None:
+                scene_dict["catNodes"] = [str(c) for c in cat_nodes]
+            if camera_keys is not None:
+                scene_dict["cameraKeys"] = [dict(k) for k in camera_keys]
+            checks_dict["scene"] = scene_dict
+            row.checks_json = _json.dumps(checks_dict)
+            row.status = "draft"
+            row.updated_at = _now()
+            session.add(
+                AiBoardRevisionRow(
+                    id=str(uuid4()),
+                    board_id=board_id,
+                    source_request="update board scene",
+                    snapshot_json=_json.dumps({"scene": scene_dict}),
+                    created_at=_now(),
+                )
+            )
+            session.commit()
+        return self.get_board(board_id)
+
+    def report_board_compile(
+        self,
+        board_id: str,
+        *,
+        footprints: list[dict[str, object]],
+        marks_map: dict[str, object] | None = None,
+        diagnostics: list[dict[str, object]] | None = None,
+        cat_nodes: list[str] | None = None,
+        camera_keys: list[dict[str, object]] | None = None,
+    ) -> AiBoardRow:
+        import json as _json
+
+        with self._database.session() as session:
+            row = session.get(AiBoardRow, board_id)
+            if row is None:
+                raise KeyError(board_id)
+            row.footprints_json = _json.dumps([dict(f) for f in footprints])
+            if marks_map is not None:
+                row.marks_map_json = _json.dumps(dict(marks_map))
+            row.diagnostics_json = _json.dumps([dict(d) for d in (diagnostics or [])])
+            try:
+                checks: object = _json.loads(row.checks_json or "{}")
+            except (ValueError, TypeError):
+                checks = {}
+            checks_dict = dict(checks) if isinstance(checks, dict) else {}
+            scene = checks_dict.get("scene", {})
+            scene_dict = dict(scene) if isinstance(scene, dict) else {}
+            if cat_nodes is not None:
+                scene_dict["catNodes"] = [str(c) for c in cat_nodes]
+            if camera_keys is not None:
+                scene_dict["cameraKeys"] = [dict(k) for k in camera_keys]
+            checks_dict["scene"] = scene_dict
+            row.checks_json = _json.dumps(checks_dict)
+            row.status = "draft"
+            row.updated_at = _now()
+            session.add(
+                AiBoardRevisionRow(
+                    id=str(uuid4()),
+                    board_id=board_id,
+                    source_request="compile board scripts",
+                    snapshot_json=_json.dumps({"footprints": [dict(f) for f in footprints]}),
+                    created_at=_now(),
+                )
+            )
+            session.commit()
+        return self.get_board(board_id)
+
+    def set_board_status(self, board_id: str, status: str) -> AiBoardRow:
+        from app.ai.boards import board_accept_blockers
+
+        if status not in ("draft", "accepted", "rejected"):
+            raise ValueError("status must be draft, accepted, or rejected")
+        row = self.get_board(board_id)
+        if status == "accepted":
+            blockers = board_accept_blockers(
+                {
+                    "parts": self._load_board_parts(row),
+                    "scripts": self._load_board_scripts(row),
+                    "footprints": self._load_board_footprints(row),
+                    "marksMap": self._load_board_marks_map(row),
+                    "diagnostics": self._load_board_diagnostics(row),
+                    "checks": self._load_board_checks(row),
+                }
+            )
+            if blockers:
+                raise ValueError("board is not ready to accept — " + "; ".join(blockers))
+        with self._database.session() as session:
+            stored = session.get(AiBoardRow, board_id)
+            if stored is None:
+                raise KeyError(board_id)
+            stored.status = status
+            stored.updated_at = _now()
+            session.commit()
+        return self.get_board(board_id)
+
+    def require_accepted_board(self, board_id: str) -> AiBoardRow:
+        """Merge gate: assembly reads only the accepted board version."""
+        row = self.get_board(board_id)
+        if row.status != "accepted":
+            raise ValueError(
+                f"board {board_id} is {row.status} — "
+                "accept it before the merge (assembly reads only the accepted version)"
+            )
+        return row
+
+    def board_canonical_json(self, board_id: str) -> dict[str, object]:
+        """Accepted per-slide scripts + footprints + marks map for the merge."""
+        import json as _json
+
+        row = self.require_accepted_board(board_id)
+        try:
+            scripts: object = _json.loads(row.scripts_json or "[]")
+        except (ValueError, TypeError):
+            scripts = []
+        try:
+            footprints: object = _json.loads(row.footprints_json or "[]")
+        except (ValueError, TypeError):
+            footprints = []
+        try:
+            marks_map: object = _json.loads(row.marks_map_json or "{}")
+        except (ValueError, TypeError):
+            marks_map = {}
+        try:
+            checks: object = _json.loads(row.checks_json or "{}")
+        except (ValueError, TypeError):
+            checks = {}
+        return {
+            "id": row.id,
+            "projectId": row.project_id,
+            "narrationId": row.narration_id,
+            "scenarioId": row.scenario_id,
+            "conversationId": row.conversation_id,
+            "status": row.status,
+            "title": row.title,
+            "scripts": scripts if isinstance(scripts, list) else [],
+            "footprints": footprints if isinstance(footprints, list) else [],
+            "marksMap": marks_map if isinstance(marks_map, dict) else {},
+            "checks": checks if isinstance(checks, dict) else {},
         }
 
     # -- edit proposals --------------------------------------------------

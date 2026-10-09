@@ -8,6 +8,7 @@ import { useSelectionStore } from '../../stores/selectionStore'
 import { useBackendStore } from '../../stores/backendStore'
 import { AiPlanView } from './AiPlanView'
 import { AiProposalView } from './AiProposalView'
+import { AiBoardView } from './AiBoardView'
 import { AiCalibrationView } from './AiCalibrationView'
 import { AiNarrationView } from './AiNarrationView'
 import { AiReconciliationView } from './AiReconciliationView'
@@ -124,6 +125,12 @@ export function AiPanel() {
             disabled
           />
           <AiCalibrationView
+            projectId={projectId}
+            narrationId={activeNarrationId}
+            conversationId={activeId}
+            disabled
+          />
+          <AiBoardView
             projectId={projectId}
             narrationId={activeNarrationId}
             conversationId={activeId}
@@ -307,6 +314,13 @@ export function AiPanel() {
           />
 
           <AiCalibrationView
+            projectId={projectId}
+            narrationId={activeNarrationId}
+            conversationId={activeId}
+            disabled={unavailable}
+          />
+
+          <AiBoardView
             projectId={projectId}
             narrationId={activeNarrationId}
             conversationId={activeId}

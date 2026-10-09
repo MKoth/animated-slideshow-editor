@@ -235,3 +235,38 @@ class AiCalibrationAlign(BaseModel):
 class AiCalibrationFallback(BaseModel):
     peaks: list[int] = Field(min_length=1)
     audioDuration: float | None = Field(default=None, gt=0)
+
+
+class AiBoardSlideIn(BaseModel):
+    slideId: str | None = None
+    slideIndex: int | None = None
+
+
+class AiBoardCreate(BaseModel):
+    projectId: str = Field(min_length=1)
+    narrationId: str = Field(min_length=1)
+    conversationId: str = Field(min_length=1)
+    title: str | None = None
+    slides: list[AiBoardSlideIn] | None = None
+    catNodes: list[str] | None = None
+    cameraKeys: list[dict[str, Any]] | None = None
+
+
+class AiBoardScriptPatch(BaseModel):
+    slideIndex: int | None = None
+    slideId: str | None = None
+    source: str = Field(min_length=1)
+
+
+class AiBoardUpdate(BaseModel):
+    scripts: list[AiBoardScriptPatch] | None = None
+    catNodes: list[str] | None = None
+    cameraKeys: list[dict[str, Any]] | None = None
+
+
+class AiBoardCompile(BaseModel):
+    footprints: list[dict[str, Any]] = Field(default_factory=list)
+    marksMap: dict[str, Any] | None = None
+    diagnostics: list[dict[str, Any]] | None = None
+    catNodes: list[str] | None = None
+    cameraKeys: list[dict[str, Any]] | None = None

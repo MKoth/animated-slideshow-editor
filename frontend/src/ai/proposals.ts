@@ -13,9 +13,11 @@ import type { EnginePublic } from '../engine'
 /**
  * Canonical AI Edit Proposal allowlist (issue #422). Server schema validation
  * runs first; the client dry-run validate() against the live engine runs
- * second, in order. Stage D/E/merge placeholders carry typed params here;
- * AiCommitTts landed as a real Stage C command (#425) — the remaining stages
- * land their real commands in their own tickets.
+ * second, in order. Stage D/merge placeholders carry typed params here;
+ * AiCommitTts landed as a real Stage C command (#425), Stage E boards execute
+ * as SetSlideAnimationScript (create-then-reveal inside the script, #427) —
+ * AiCreateBoardText/Table stay schema-valid placeholders that never execute
+ * a board. The merge lands its real command in its own ticket.
  */
 export const AI_COMMAND_ALLOWLIST: readonly string[] = [
   'CreateSlide',

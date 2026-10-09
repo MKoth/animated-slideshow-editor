@@ -331,6 +331,50 @@ export type AiProposalStatus =
   | 'execution_failed'
 
 export type AiCalibrationStatus = 'draft' | 'accepted' | 'rejected'
+export type AiBoardStatus = 'draft' | 'accepted' | 'rejected'
+
+export interface AiBoardScript {
+  slideId: string
+  slideIndex?: number
+  source: string
+}
+
+export interface AiBoardFootprint {
+  from: number
+  to: number
+  effects?: { start: number; duration: number }[]
+  entryVersions?: Record<string, number>
+}
+
+export interface AiBoard {
+  id: string
+  projectId: string
+  narrationId: string
+  scenarioId: string
+  conversationId: string
+  title: string
+  status: AiBoardStatus
+  scripts: AiBoardScript[]
+  footprints: AiBoardFootprint[]
+  marksMap: Record<string, { stepId: string; time: number }>
+  checks: Record<string, unknown>
+  diagnostics: { severity: string; message: string }[]
+  blockers: string[]
+  revisions: { id: string; sourceRequest: string; created: string }[]
+  created: string
+  modified: string
+}
+
+export interface AiBoardSummary {
+  id: string
+  projectId: string
+  narrationId: string
+  conversationId: string
+  title: string
+  status: AiBoardStatus
+  scriptCount: number
+  modified: string
+}
 
 export interface AiCalibrationWord {
   word: string
@@ -915,5 +959,80 @@ export class AiApi {
       `/api/ai/calibrations/${encodeURIComponent(id)}/reject`,
       '',
     )
+  }
+
+  async createBoard(input: {
+    projectId: string
+    narrationId: string
+    conversationId: string
+    title?: string
+    slides?: { slideId?: string; slideIndex?: number }[]
+    catNodes?: string[]
+    cameraKeys?: { property?: string; partTag?: string }[]
+  }): Promise<AiBoard> {
+    return this.client.post<AiBoard>('/api/ai/board-scripts', JSON.stringify(input))
+  }
+
+  async listBoards(projectId: string, narrationId?: string): Promise<AiBoardSummary[]> {
+    const params = new URLSearchParams({ projectId })
+    if (narrationId) params.set('narrationId', narrationId)
+    return this.client.get<AiBoardSummary[]>(`/api/ai/board-scripts?${params.toString()}`)
+  }
+
+  async getBoard(id: string): Promise<AiBoard> {
+    return this.client.get<AiBoard>(`/api/ai/board-scripts/${encodeURIComponent(id)}`)
+  }
+
+  async getBoardCanonical(id: string): Promise<{
+    id: string
+    projectId: string
+    narrationId: string
+    scenarioId: string
+    conversationId: string
+    status: AiBoardStatus
+    title: string
+    scripts: AiBoardScript[]
+    footprints: AiBoardFootprint[]
+    marksMap: AiBoard['marksMap']
+  }> {
+    return this.client.get(`/api/ai/board-scripts/${encodeURIComponent(id)}/canonical`)
+  }
+
+  async updateBoard(
+    id: string,
+    patch: {
+      scripts?: { slideId?: string; slideIndex?: number; source: string }[]
+      catNodes?: string[]
+      cameraKeys?: { property?: string; partTag?: string }[]
+    },
+  ): Promise<AiBoard> {
+    return this.client.patch<AiBoard>(
+      `/api/ai/board-scripts/${encodeURIComponent(id)}`,
+      JSON.stringify(patch),
+    )
+  }
+
+  async compileBoard(
+    id: string,
+    input: {
+      footprints: AiBoardFootprint[]
+      marksMap?: Record<string, { stepId: string; time: number }>
+      diagnostics?: { severity: string; message: string }[]
+      catNodes?: string[]
+      cameraKeys?: { property?: string; partTag?: string }[]
+    },
+  ): Promise<AiBoard> {
+    return this.client.post<AiBoard>(
+      `/api/ai/board-scripts/${encodeURIComponent(id)}/compile`,
+      JSON.stringify(input),
+    )
+  }
+
+  async acceptBoard(id: string): Promise<AiBoard> {
+    return this.client.post<AiBoard>(`/api/ai/board-scripts/${encodeURIComponent(id)}/accept`, '')
+  }
+
+  async rejectBoard(id: string): Promise<AiBoard> {
+    return this.client.post<AiBoard>(`/api/ai/board-scripts/${encodeURIComponent(id)}/reject`, '')
   }
 }
